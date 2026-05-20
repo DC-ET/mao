@@ -1,0 +1,83 @@
+server:
+  port: 9080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: workbench-backend
+  profiles:
+    active: dev
+
+  # MySQL
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://120.26.109.221:3306/agentworkbench2?useSSL=false&serverTimezone=Asia/Shanghai&allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&useUnicode=true&characterEncoding=utf-8
+    username: root
+    password: REDACTED_MYSQL_PASSWORD
+
+  # Redis
+  data:
+    redis:
+      host: 120.26.109.221
+      port: 6379
+      password: REDACTED_MYSQL_PASSWORD
+      database: 1
+      timeout: 5000ms
+
+  # Jackson
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+# MyBatis-Plus
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  type-aliases-package: com.agentworkbench.**.entity
+
+# JWT
+jwt:
+  secret: ${JWT_SECRET:workbench-default-secret-change-in-production}
+  expiration: 86400000  # 24 hours in milliseconds
+  refresh-expiration: 604800000  # 7 days
+
+# MinIO
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  bucket: ${MINIO_BUCKET:workbench}
+
+# App config
+app:
+  # Agent Harness
+  harness:
+    max-concurrent-agents: 100
+    agent-thread-pool-size: 20
+    agent-thread-pool-max: 100
+    agent-thread-pool-queue: 200
+    default-max-rounds: 10
+    default-context-rounds: 20
+
+  # Rate limiting
+  rate-limit:
+    user-qps: 10
+    model-qpm: 60
+
+# SpringDoc
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html

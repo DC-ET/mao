@@ -1,0 +1,11 @@
+# Development profile
+
+logging:
+  level:
+    com.agentworkbench: DEBUG
+    org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
+
+# JWT (shorter expiration for dev)
+jwt:
+  expiration: 86400000
