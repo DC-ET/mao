@@ -1,20 +1,41 @@
 package com.agentworkbench.harness.core;
 
+import com.agentworkbench.agent.entity.Agent;
+import com.agentworkbench.agent.entity.AgentMcpConfig;
+import com.agentworkbench.agent.entity.AgentSkill;
+import com.agentworkbench.agent.mapper.AgentMapper;
+import com.agentworkbench.agent.mapper.AgentMcpConfigMapper;
+import com.agentworkbench.agent.mapper.AgentSkillMapper;
+import com.agentworkbench.common.exception.BusinessException;
+import com.agentworkbench.common.result.ErrorCode;
+import com.agentworkbench.harness.llm.ChatRequest;
+import com.agentworkbench.harness.llm.ChatUsage;
 import com.agentworkbench.harness.llm.LlmModelConfig;
-import com.agentworkbench.harness.mcp.McpClient;
 import com.agentworkbench.harness.mcp.McpTool;
+import com.agentworkbench.harness.mcp.McpToolRegistry;
 import com.agentworkbench.harness.skill.Skill;
 import com.agentworkbench.harness.skill.SkillRegistry;
+import com.agentworkbench.skill.entity.SkillEntity;
+import com.agentworkbench.skill.mapper.SkillEntityMapper;
+import com.agentworkbench.model.entity.LlmModel;
+import com.agentworkbench.model.mapper.LlmModelMapper;
+import com.agentworkbench.session.entity.Message;
+import com.agentworkbench.session.entity.Session;
+import com.agentworkbench.session.mapper.MessageMapper;
+import com.agentworkbench.session.mapper.SessionMapper;
+import com.agentworkbench.session.service.SessionService;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Harness 服务 - 协调 Agent 执行
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -22,60 +43,148 @@ public class HarnessService {
 
     private final AgentLoop agentLoop;
     private final SkillRegistry skillRegistry;
-    private final McpClient mcpClient;
+    private final McpToolRegistry mcpToolRegistry;
+    private final SessionMapper sessionMapper;
+    private final AgentMapper agentMapper;
+    private final AgentSkillMapper agentSkillMapper;
+    private final AgentMcpConfigMapper agentMcpConfigMapper;
+    private final SkillEntityMapper skillEntityMapper;
+    private final LlmModelMapper llmModelMapper;
+    private final MessageMapper messageMapper;
+    private final SessionService sessionService;
+    private final ObjectMapper objectMapper;
 
-    /**
-     * 执行 Agent
-     *
-     * @param sessionId 会话 ID
-     * @param eventId   事件 ID
-     * @param listener  事件监听器
-     */
-    public void execute(Long sessionId, String eventId, AgentEventListener listener) {
-        // 1. Load session and agent config from database
-        // TODO: Implement database loading
+    // In-memory event content store
+    private static final ConcurrentHashMap<String, String> EVENT_CONTENT_STORE = new ConcurrentHashMap<>();
 
-        // 2. Build execution context
-        AgentExecutionContext context = buildContext(sessionId);
-
-        // 3. Execute agent loop
-        agentLoop.execute(context, listener);
+    public String prepareMessage(Long sessionId, String userContent) {
+        String eventId = java.util.UUID.randomUUID().toString();
+        EVENT_CONTENT_STORE.put(eventId, userContent);
+        return eventId;
     }
 
-    /**
-     * 构建执行上下文
-     */
+    public void executeFromEvent(Long sessionId, String eventId, AgentEventListener listener) {
+        String userContent = EVENT_CONTENT_STORE.remove(eventId);
+        execute(sessionId, userContent, listener);
+    }
+
+    public void execute(Long sessionId, String userContent, AgentEventListener listener) {
+        AgentExecutionContext context = buildContext(sessionId);
+
+        if (userContent != null && !userContent.isEmpty()) {
+            context.addUserMessage(userContent);
+        }
+
+        AgentLoop.MessagePersistenceCallback persistenceCallback = new AgentLoop.MessagePersistenceCallback() {
+            @Override
+            public void onSaveAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage) {
+                String toolCallsJson = null;
+                if (toolCalls != null && !toolCalls.isEmpty()) {
+                    try {
+                        toolCallsJson = objectMapper.writeValueAsString(toolCalls);
+                    } catch (JsonProcessingException e) {
+                        log.warn("Failed to serialize tool calls", e);
+                    }
+                }
+                int tokenCount = usage != null ? usage.getTotalTokens() : 0;
+                Long modelId = context.getModelConfig() != null ? context.getModelConfig().getId() : null;
+                sessionService.saveMessage(sessionId, "ASSISTANT", content, null, toolCallsJson, tokenCount, modelId);
+            }
+
+            @Override
+            public void onSaveToolMessage(String toolCallId, String content) {
+                sessionService.saveMessage(sessionId, "TOOL", content, toolCallId, null, 0, null);
+            }
+        };
+
+        agentLoop.execute(context, listener, persistenceCallback);
+    }
+
     private AgentExecutionContext buildContext(Long sessionId) {
+        // 1. Load session
+        Session session = sessionMapper.selectById(sessionId);
+        if (session == null) {
+            throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+        }
+
+        // 2. Load agent
+        Agent agent = agentMapper.selectById(session.getAgentId());
+        if (agent == null) {
+            throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
+        }
+
+        // 3. Load model config
+        LlmModel llmModel = llmModelMapper.selectById(agent.getModelId());
+        if (llmModel == null) {
+            throw new BusinessException(ErrorCode.MODEL_NOT_FOUND);
+        }
+
+        // 4. Build context
         AgentExecutionContext context = new AgentExecutionContext();
         context.setSessionId(sessionId);
-
-        // TODO: Load from database
-        // 1. Load session -> get agentId, userId
-        // 2. Load agent -> get systemPrompt, modelId, skillIds, mcpConfigs
-        // 3. Load model config -> get baseUrl, apiKey, modelId
-        // 4. Load skills -> get Skill instances
-        // 5. Load MCP tools -> get McpTool instances
-        // 6. Load message history
-
-        // Placeholder values
-        context.setSystemPrompt("You are a helpful assistant.");
-        context.setMaxRounds(10);
+        context.setUserId(session.getUserId());
+        context.setAgentId(agent.getId());
+        context.setSystemPrompt(agent.getSystemPrompt());
+        context.setAgentName(agent.getName());
+        context.setMaxRounds(agent.getMaxRounds() != null && agent.getMaxRounds() > 0 ? agent.getMaxRounds() : 10);
         context.setModelConfig(LlmModelConfig.builder()
-                .id(1L)
-                .name("gpt-4o")
-                .baseUrl("https://api.openai.com/v1")
-                .apiKey("sk-placeholder")
-                .modelId("gpt-4o")
-                .maxTokens(4096)
+                .id(llmModel.getId())
+                .name(llmModel.getName())
+                .provider(llmModel.getProvider())
+                .baseUrl(llmModel.getBaseUrl())
+                .apiKey(llmModel.getApiKey())
+                .modelId(llmModel.getModelId())
+                .maxTokens(llmModel.getMaxTokens())
+                .temperatureMax(llmModel.getTemperatureMax() != null ? llmModel.getTemperatureMax().doubleValue() : null)
                 .build());
 
-        // Load available skills
-        List<Skill> skills = skillRegistry.getAllSkills();
-        context.setSkills(skills);
+        // 5. Load message history
+        List<Message> history = messageMapper.selectList(
+                new QueryWrapper<Message>()
+                        .eq("session_id", sessionId)
+                        .orderByAsc("created_at"));
+        for (Message msg : history) {
+            var msgBuilder = ChatRequest.Message.builder()
+                    .role(msg.getRole().toLowerCase())
+                    .content(msg.getContent());
+            if (msg.getToolCallId() != null) {
+                msgBuilder.toolCallId(msg.getToolCallId());
+            }
+            if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
+                try {
+                    List<ChatRequest.ToolCall> toolCalls = objectMapper.readValue(
+                            msg.getToolCalls(), new TypeReference<List<ChatRequest.ToolCall>>() {});
+                    msgBuilder.toolCalls(toolCalls);
+                } catch (JsonProcessingException e) {
+                    log.warn("Failed to parse tool_calls for message {}", msg.getId(), e);
+                }
+            }
+            context.getMessages().add(msgBuilder.build());
+        }
 
-        // Load MCP tools
-        // TODO: Load MCP configs from database and connect
+        // 6. Load per-agent skills
+        List<AgentSkill> agentSkills = agentSkillMapper.selectList(
+                new QueryWrapper<AgentSkill>().eq("agent_id", agent.getId()));
+        if (!agentSkills.isEmpty()) {
+            List<Long> skillIds = agentSkills.stream().map(AgentSkill::getSkillId).toList();
+            List<SkillEntity> skillEntities = skillEntityMapper.selectBatchIds(skillIds);
+            List<String> skillNames = skillEntities.stream().map(SkillEntity::getName).toList();
+            List<Skill> skills = skillRegistry.getSkillsByNames(skillNames);
+            context.setSkills(skills);
+        } else {
+            context.setSkills(new ArrayList<>());
+        }
+
+        // 7. Load MCP tools for this agent
+        List<AgentMcpConfig> mcpConfigs = agentMcpConfigMapper.selectList(
+                new QueryWrapper<AgentMcpConfig>()
+                        .eq("agent_id", agent.getId())
+                        .eq("status", 1));
         List<McpTool> mcpTools = new ArrayList<>();
+        for (AgentMcpConfig config : mcpConfigs) {
+            List<McpTool> discovered = mcpToolRegistry.discoverAndRegister(config.getServerUrl());
+            mcpTools.addAll(discovered);
+        }
         context.setMcpTools(mcpTools);
 
         return context;

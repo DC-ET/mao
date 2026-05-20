@@ -242,3 +242,9 @@ SELECT 1, id FROM `permission`;
 -- 普通用户只有查看权限
 INSERT INTO `role_permission` (`role_id`, `permission_id`)
 SELECT 2, id FROM `permission` WHERE `code` IN ('agent:read', 'model:read');
+
+-- 默认管理员账号 (admin / admin123)
+INSERT INTO `user` (`username`, `display_name`, `email`, `auth_type`, `password_hash`, `status`) VALUES
+('admin', '管理员', 'admin@agentworkbench.com', 'LOCAL', '$2b$12$HDT85UDBpTv30P8kKrs1euencz94fhd1tw/W7zrOjyF8WrDQF1Z3G', 1);
+
+INSERT INTO `user_role` (`user_id`, `role_id`) VALUES (1, 1);

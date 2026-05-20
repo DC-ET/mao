@@ -1,6 +1,7 @@
 package com.agentworkbench.config;
 
 import com.agentworkbench.audit.interceptor.AuditInterceptor;
+import com.agentworkbench.permission.interceptor.PermissionInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
@@ -12,6 +13,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final AuditInterceptor auditInterceptor;
+    private final PermissionInterceptor permissionInterceptor;
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
@@ -26,6 +28,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(auditInterceptor)
+                .addPathPatterns("/v1/**")
+                .excludePathPatterns("/v1/auth/**");
+        registry.addInterceptor(permissionInterceptor)
                 .addPathPatterns("/v1/**")
                 .excludePathPatterns("/v1/auth/**");
     }

@@ -65,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../../api'
 
@@ -130,13 +130,10 @@ async function handleSend() {
 
 function startStream(eventId: string) {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api'
-  const url = `${baseUrl}/v1/sessions/${sessionId.value}/stream?eventId=${eventId}`
+  const token = localStorage.getItem('token')
+  const url = `${baseUrl}/v1/sessions/${sessionId.value}/stream?eventId=${eventId}&token=${token}`
 
-  eventSource = new EventSource(url, {
-    headers: {
-      'Authorization': `Bearer ${localStorage.getItem('token')}`
-    }
-  })
+  eventSource = new EventSource(url)
 
   // Add empty assistant message
   messages.value.push({
@@ -165,8 +162,7 @@ function startStream(eventId: string) {
     }
   })
 
-  eventSource.addEventListener('tool_call_result', (event) => {
-    const data = JSON.parse(event.data)
+  eventSource.addEventListener('tool_call_result', (_event) => {
     const lastMessage = messages.value[messages.value.length - 1]
     if (lastMessage.role === 'assistant') {
       lastMessage.content += `\n✅ 工具返回结果\n`

@@ -33,15 +33,33 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
     @Override
     public ChatResponse chat(ChatRequest request, LlmModelConfig config) {
-        // TODO: Implement synchronous chat
-        throw new UnsupportedOperationException("Not implemented yet");
+        Request httpRequest = buildRequest(request, config, false);
+
+        try (Response response = httpClient.newCall(httpRequest).execute()) {
+            if (!response.isSuccessful()) {
+                throw new RuntimeException("LLM API returned " + response.code());
+            }
+
+            ResponseBody body = response.body();
+            if (body == null) {
+                throw new RuntimeException("LLM API returned empty body");
+            }
+
+            String json = body.string();
+            return objectMapper.readValue(json, ChatResponse.class);
+
+        } catch (IOException e) {
+            throw new RuntimeException("LLM call failed: " + e.getMessage(), e);
+        }
     }
 
     @Override
     public void stream(ChatRequest request, LlmModelConfig config, StreamCallback callback) {
+        log.debug("stream: starting, model={}", config.getModelId());
         Request httpRequest = buildRequest(request, config, true);
 
         try (Response response = httpClient.newCall(httpRequest).execute()) {
+            log.debug("stream: response code={}", response.code());
             if (!response.isSuccessful()) {
                 callback.onError(new RuntimeException("LLM API returned " + response.code()));
                 return;

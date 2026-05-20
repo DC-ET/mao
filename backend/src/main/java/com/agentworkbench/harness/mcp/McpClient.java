@@ -1,56 +1,188 @@
 package com.agentworkbench.harness.mcp;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.*;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.Map;
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
 
-/**
- * MCP 协议客户端
- * 连接外部 MCP Server 获取工具和资源
- */
 @Slf4j
 @Component
 public class McpClient {
 
-    // TODO: Implement MCP protocol client
-    // 1. Connect to MCP Server (SSE or STDIO transport)
-    // 2. Initialize handshake
-    // 3. List available tools
-    // 4. Call tools
+    private final OkHttpClient httpClient;
+    private final ObjectMapper objectMapper;
+    private int rpcId = 0;
 
-    /**
-     * 连接到 MCP Server
-     */
-    public void connect(String serverUrl, String transport) {
-        log.info("Connecting to MCP Server: {} via {}", serverUrl, transport);
-        // TODO: Implement connection
+    public McpClient(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+        this.httpClient = new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(10, TimeUnit.SECONDS)
+                .build();
     }
 
     /**
-     * 获取 MCP Server 提供的工具列表
+     * Discover tools from an MCP server via SSE transport
+     * Sends initialize + tools/list via HTTP POST (JSON-RPC), reads SSE response
      */
-    public List<McpTool> listTools(String serverUrl) {
-        log.info("Listing tools from MCP Server: {}", serverUrl);
-        // TODO: Implement tools/list
-        return List.of();
+    public List<McpTool> discoverTools(String serverUrl) {
+        try {
+            // 1. Initialize
+            Map<String, Object> initResult = sendRequest(serverUrl, "initialize", Map.of(
+                    "protocolVersion", "2024-11-05",
+                    "capabilities", Map.of(),
+                    "clientInfo", Map.of("name", "agent-workbench", "version", "1.0.0")
+            ));
+
+            // 2. Send initialized notification
+            sendNotification(serverUrl, "notifications/initialized", Map.of());
+
+            // 3. List tools
+            Map<String, Object> toolsResult = sendRequest(serverUrl, "tools/list", Map.of());
+
+            List<McpTool> tools = new ArrayList<>();
+            JsonNode toolsNode = objectMapper.valueToTree(toolsResult);
+            JsonNode toolsArray = toolsNode.path("tools");
+            if (toolsArray.isArray()) {
+                for (JsonNode toolNode : toolsArray) {
+                    McpTool tool = McpTool.builder()
+                            .name(toolNode.path("name").asText())
+                            .description(toolNode.path("description").asText(""))
+                            .inputSchema(toJsonMap(toolNode.path("inputSchema")))
+                            .serverUrl(serverUrl)
+                            .build();
+                    tools.add(tool);
+                }
+            }
+
+            log.info("Discovered {} tools from MCP server: {}", tools.size(), serverUrl);
+            return tools;
+
+        } catch (Exception e) {
+            log.error("Failed to discover tools from MCP server: {}", serverUrl, e);
+            return List.of();
+        }
     }
 
     /**
-     * 调用 MCP 工具
+     * Call a tool on an MCP server
      */
     public String callTool(String serverUrl, String toolName, Map<String, Object> arguments) {
-        log.info("Calling MCP tool: {} on server: {}", toolName, serverUrl);
-        // TODO: Implement tools/call
-        return "";
+        try {
+            Map<String, Object> result = sendRequest(serverUrl, "tools/call", Map.of(
+                    "name", toolName,
+                    "arguments", arguments
+            ));
+            JsonNode resultNode = objectMapper.valueToTree(result);
+            JsonNode content = resultNode.path("content");
+            if (content.isArray() && content.size() > 0) {
+                JsonNode first = content.get(0);
+                if ("text".equals(first.path("type").asText())) {
+                    return first.path("text").asText();
+                }
+            }
+            return objectMapper.writeValueAsString(result);
+        } catch (Exception e) {
+            log.error("Failed to call MCP tool {} on server {}", toolName, serverUrl, e);
+            return "Error: " + e.getMessage();
+        }
     }
 
-    /**
-     * 断开与 MCP Server 的连接
-     */
-    public void disconnect(String serverUrl) {
-        log.info("Disconnecting from MCP Server: {}", serverUrl);
-        // TODO: Implement disconnect
+    private Map<String, Object> sendRequest(String serverUrl, String method, Map<String, Object> params) throws IOException {
+        int id = ++rpcId;
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("jsonrpc", "2.0");
+        request.put("id", id);
+        request.put("method", method);
+        request.put("params", params);
+
+        String json = objectMapper.writeValueAsString(request);
+        Request httpRequest = new Request.Builder()
+                .url(serverUrl)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .post(RequestBody.create(json, MediaType.parse("application/json")))
+                .build();
+
+        try (Response response = httpClient.newCall(httpRequest).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IOException("MCP server returned " + response.code());
+            }
+            ResponseBody body = response.body();
+            if (body == null) {
+                throw new IOException("MCP server returned empty body");
+            }
+
+            String contentType = response.header("Content-Type", "");
+            if (contentType.contains("text/event-stream")) {
+                return parseSseResponse(body.string(), id);
+            } else {
+                return parseJsonResponse(body.string());
+            }
+        }
+    }
+
+    private void sendNotification(String serverUrl, String method, Map<String, Object> params) throws IOException {
+        Map<String, Object> notification = new LinkedHashMap<>();
+        notification.put("jsonrpc", "2.0");
+        notification.put("method", method);
+        notification.put("params", params);
+
+        String json = objectMapper.writeValueAsString(notification);
+        Request httpRequest = new Request.Builder()
+                .url(serverUrl)
+                .header("Content-Type", "application/json")
+                .post(RequestBody.create(json, MediaType.parse("application/json")))
+                .build();
+
+        try (Response response = httpClient.newCall(httpRequest).execute()) {
+            // Notifications don't require a response
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseSseResponse(String sseBody, int expectedId) throws IOException {
+        for (String line : sseBody.split("\n")) {
+            if (line.startsWith("data: ")) {
+                String data = line.substring(6).trim();
+                if (!data.isEmpty()) {
+                    JsonNode node = objectMapper.readTree(data);
+                    if (node.has("id") && node.get("id").asInt() == expectedId) {
+                        if (node.has("result")) {
+                            return objectMapper.convertValue(node.get("result"), Map.class);
+                        }
+                        if (node.has("error")) {
+                            throw new IOException("MCP error: " + node.get("error"));
+                        }
+                    }
+                }
+            }
+        }
+        throw new IOException("No matching response found in SSE stream");
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseJsonResponse(String json) throws IOException {
+        JsonNode node = objectMapper.readTree(json);
+        if (node.has("result")) {
+            return objectMapper.convertValue(node.get("result"), Map.class);
+        }
+        if (node.has("error")) {
+            throw new IOException("MCP error: " + node.get("error"));
+        }
+        throw new IOException("Unexpected MCP response: " + json);
+    }
+
+    private Map<String, Object> toJsonMap(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) {
+            return Map.of();
+        }
+        return objectMapper.convertValue(node, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
     }
 }

@@ -1,16 +1,14 @@
 package com.agentworkbench.harness.core;
 
 import com.agentworkbench.harness.llm.*;
+import com.agentworkbench.harness.skill.SkillDispatcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
-/**
- * Agent 核心循环：Think → Act → Observe → 反馈
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -19,11 +17,19 @@ public class AgentLoop {
     private final LlmAdapter llmAdapter;
     private final PromptEngine promptEngine;
     private final ContextManager contextManager;
+    private final SkillDispatcher skillDispatcher;
 
-    /**
-     * 执行 Agent 循环
-     */
+    public interface MessagePersistenceCallback {
+        void onSaveAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage);
+        void onSaveToolMessage(String toolCallId, String content);
+    }
+
     public void execute(AgentExecutionContext context, AgentEventListener listener) {
+        execute(context, listener, null);
+    }
+
+    public void execute(AgentExecutionContext context, AgentEventListener listener,
+                        MessagePersistenceCallback persistenceCallback) {
         int round = 0;
         int maxRounds = context.getMaxRounds();
 
@@ -31,13 +37,14 @@ public class AgentLoop {
             round++;
             log.debug("Agent loop round {}/{}", round, maxRounds);
 
-            // 1. 构建 Prompt
+            // 1. Build Prompt
             ChatRequest request = promptEngine.buildRequest(context);
 
-            // 2. 调用 LLM
+            // 2. Call LLM
+            final int currentRound = round;
             llmAdapter.stream(request, context.getModelConfig(), new StreamCallback() {
                 private final StringBuilder contentBuilder = new StringBuilder();
-                private final java.util.List<ChatRequest.ToolCall> toolCalls = new java.util.ArrayList<>();
+                private final List<ChatRequest.ToolCall> toolCalls = new ArrayList<>();
 
                 @Override
                 public void onChunk(StreamChunk chunk) {
@@ -47,16 +54,13 @@ public class AgentLoop {
                     StreamChunk.Delta delta = choice.getDelta();
 
                     if (delta != null) {
-                        // Handle content delta
                         if (delta.getContent() != null) {
                             contentBuilder.append(delta.getContent());
                             listener.onContentDelta(delta.getContent());
                         }
 
-                        // Handle tool calls
                         if (delta.getToolCalls() != null) {
                             for (ChatRequest.ToolCall tc : delta.getToolCalls()) {
-                                // Merge tool call deltas
                                 mergeToolCall(toolCalls, tc);
                             }
                         }
@@ -68,18 +72,19 @@ public class AgentLoop {
                     context.addUsage(usage);
 
                     if (!toolCalls.isEmpty()) {
-                        // Tool calls detected - notify listener
                         for (ChatRequest.ToolCall tc : toolCalls) {
                             listener.onToolCallStart(tc);
                         }
-                        // Store tool calls for execution
                         context.setPendingToolCalls(toolCalls);
                     }
 
-                    // Store assistant message
                     String content = contentBuilder.toString();
                     if (!content.isEmpty() || !toolCalls.isEmpty()) {
                         context.addAssistantMessage(content, toolCalls);
+                        // Persist assistant message
+                        if (persistenceCallback != null) {
+                            persistenceCallback.onSaveAssistantMessage(content, toolCalls, usage);
+                        }
                     }
                 }
 
@@ -93,12 +98,29 @@ public class AgentLoop {
             // 3. Check if we have tool calls to execute
             List<ChatRequest.ToolCall> pendingCalls = context.getPendingToolCalls();
             if (pendingCalls == null || pendingCalls.isEmpty()) {
-                // No tool calls - conversation complete
                 break;
             }
 
-            // 4. Execute tool calls (to be implemented by SkillDispatcher/McpClient)
-            // TODO: Execute tool calls and add results to context
+            // 4. Execute tool calls via SkillDispatcher
+            for (ChatRequest.ToolCall tc : pendingCalls) {
+                String toolName = tc.getFunction().getName();
+                String arguments = tc.getFunction().getArguments();
+                try {
+                    String result = skillDispatcher.dispatch(toolName, arguments);
+                    context.addToolResult(tc.getId(), result);
+                    listener.onToolCallResult(tc.getId(), result);
+                    if (persistenceCallback != null) {
+                        persistenceCallback.onSaveToolMessage(tc.getId(), result);
+                    }
+                } catch (Exception e) {
+                    String errorResult = "Tool execution failed: " + e.getMessage();
+                    context.addToolResult(tc.getId(), errorResult);
+                    listener.onToolCallResult(tc.getId(), errorResult);
+                    if (persistenceCallback != null) {
+                        persistenceCallback.onSaveToolMessage(tc.getId(), errorResult);
+                    }
+                }
+            }
 
             // 5. Clear pending calls for next round
             context.clearPendingToolCalls();
@@ -107,15 +129,10 @@ public class AgentLoop {
         listener.onMessageEnd(context.getTotalUsage());
     }
 
-    /**
-     * Merge streaming tool call deltas
-     */
     private void mergeToolCall(List<ChatRequest.ToolCall> existing, ChatRequest.ToolCall delta) {
-        // Simple merge - in production, need proper index-based merging
         if (delta.getId() != null) {
             existing.add(delta);
         } else if (!existing.isEmpty()) {
-            // Append to last tool call's arguments
             ChatRequest.ToolCall last = existing.get(existing.size() - 1);
             if (last.getFunction() == null) {
                 last.setFunction(ChatRequest.FunctionCall.builder()

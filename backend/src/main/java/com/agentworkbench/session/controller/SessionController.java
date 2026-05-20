@@ -1,11 +1,15 @@
 package com.agentworkbench.session.controller;
 
+import com.agentworkbench.agent.entity.Agent;
+import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.common.result.Result;
 import com.agentworkbench.harness.core.AgentEventListener;
-import com.agentworkbench.harness.core.AgentExecutionContext;
+import com.agentworkbench.harness.core.HarnessService;
 import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.llm.ChatUsage;
-import com.agentworkbench.harness.core.AgentLoop;
+import com.agentworkbench.session.entity.Message;
+import com.agentworkbench.session.entity.Session;
+import com.agentworkbench.session.service.SessionService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 @Slf4j
 @RestController
@@ -25,36 +30,38 @@ import java.util.concurrent.Executors;
 @RequiredArgsConstructor
 public class SessionController {
 
-    private final AgentLoop agentLoop;
+    private final SessionService sessionService;
+    private final HarnessService harnessService;
+    private final AgentMapper agentMapper;
     private final ExecutorService agentExecutor = Executors.newFixedThreadPool(20);
 
     @PostMapping
     public Result<SessionVO> createSession(
             @AuthenticationPrincipal Long userId,
             @RequestBody CreateSessionRequest request) {
-        // TODO: Create new session
-        return Result.ok();
+        Session session = sessionService.createSession(userId, request.getAgentId(), request.getTitle());
+        return Result.ok(toSessionVO(session));
     }
 
     @GetMapping
     public Result<List<SessionVO>> listSessions(@AuthenticationPrincipal Long userId) {
-        // TODO: List user's sessions
-        return Result.ok();
+        List<Session> sessions = sessionService.listSessions(userId);
+        List<SessionVO> voList = sessions.stream().map(this::toSessionVO).collect(Collectors.toList());
+        return Result.ok(voList);
     }
 
     @GetMapping("/{id}")
     public Result<SessionVO> getSession(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
-        // TODO: Get session detail
-        return Result.ok();
+        return Result.ok(toSessionVO(sessionService.getSession(id)));
     }
 
     @DeleteMapping("/{id}")
     public Result<Void> deleteSession(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
-        // TODO: Delete session
+        sessionService.deleteSession(id);
         return Result.ok();
     }
 
@@ -62,8 +69,27 @@ public class SessionController {
     public Result<Void> togglePin(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
-        // TODO: Toggle pin status
+        sessionService.togglePin(id);
         return Result.ok();
+    }
+
+    @PostMapping("/{id}/messages")
+    public Result<SendMessageVO> sendMessage(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id,
+            @RequestBody SendMessageRequest request) {
+        // Validate session exists
+        sessionService.getSession(id);
+
+        // Save user message to DB immediately
+        sessionService.saveMessage(id, "USER", request.getContent(), null, null, 0, null);
+
+        // Prepare event: store content in Redis for stream to pick up
+        String eventId = harnessService.prepareMessage(id, request.getContent());
+
+        SendMessageVO vo = new SendMessageVO();
+        vo.setEventId(eventId);
+        return Result.ok(vo);
     }
 
     @GetMapping(value = "/{id}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -72,17 +98,11 @@ public class SessionController {
             @PathVariable Long id,
             @RequestParam String eventId) {
 
-        SseEmitter emitter = new SseEmitter(5 * 60 * 1000L); // 5 min timeout
+        SseEmitter emitter = new SseEmitter(5 * 60 * 1000L);
 
         agentExecutor.submit(() -> {
             try {
-                // TODO: Load session, agent config, and build context
-                AgentExecutionContext context = new AgentExecutionContext();
-                context.setSessionId(id);
-                context.setUserId(userId);
-                context.setMaxRounds(10);
-
-                agentLoop.execute(context, new AgentEventListener() {
+                harnessService.executeFromEvent(id, eventId, new AgentEventListener() {
                     @Override
                     public void onContentDelta(String delta) {
                         try {
@@ -172,8 +192,42 @@ public class SessionController {
     public Result<List<MessageVO>> getMessages(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
-        // TODO: Get session messages
-        return Result.ok();
+        List<Message> messages = sessionService.getMessages(id);
+        List<MessageVO> voList = messages.stream().map(this::toMessageVO).collect(Collectors.toList());
+        return Result.ok(voList);
+    }
+
+    private SessionVO toSessionVO(Session session) {
+        SessionVO vo = new SessionVO();
+        vo.setId(session.getId());
+        vo.setAgentId(session.getAgentId());
+        vo.setTitle(session.getTitle());
+        vo.setStatus(session.getStatus());
+        vo.setIsPinned(session.getIsPinned() != null && session.getIsPinned() == 1);
+        vo.setIsFavorite(session.getIsFavorite() != null && session.getIsFavorite() == 1);
+        vo.setCreatedAt(session.getCreatedAt() != null ? session.getCreatedAt().toString() : null);
+        vo.setUpdatedAt(session.getUpdatedAt() != null ? session.getUpdatedAt().toString() : null);
+
+        // Load agent name
+        if (session.getAgentId() != null) {
+            Agent agent = agentMapper.selectById(session.getAgentId());
+            if (agent != null) {
+                vo.setAgentName(agent.getName());
+            }
+        }
+        return vo;
+    }
+
+    private MessageVO toMessageVO(Message message) {
+        MessageVO vo = new MessageVO();
+        vo.setId(message.getId());
+        vo.setRole(message.getRole());
+        vo.setContent(message.getContent());
+        vo.setToolCallId(message.getToolCallId());
+        vo.setToolCalls(message.getToolCalls());
+        vo.setTokenCount(message.getTokenCount());
+        vo.setCreatedAt(message.getCreatedAt() != null ? message.getCreatedAt().toString() : null);
+        return vo;
     }
 
     // DTOs
@@ -182,6 +236,16 @@ public class SessionController {
     public static class CreateSessionRequest {
         private Long agentId;
         private String title;
+    }
+
+    @Data
+    public static class SendMessageRequest {
+        private String content;
+    }
+
+    @Data
+    public static class SendMessageVO {
+        private String eventId;
     }
 
     @Data

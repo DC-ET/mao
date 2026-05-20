@@ -1,7 +1,7 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import { join } from 'path'
+const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { join } = require('path')
 
-let mainWindow: BrowserWindow | null = null
+let mainWindow = null
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -11,23 +11,20 @@ function createWindow() {
     minHeight: 600,
     title: 'Agent 工作台',
     webPreferences: {
-      preload: join(__dirname, 'preload.js'),
+      preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
     }
   })
 
-  // In development, load from Vite dev server
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5201')
     mainWindow.webContents.openDevTools()
   } else {
-    // In production, load from built files
     mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }
 
-  // Handle external links
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
@@ -52,7 +49,6 @@ app.on('activate', () => {
   }
 })
 
-// IPC handlers
 ipcMain.handle('get-app-version', () => {
   return app.getVersion()
 })
