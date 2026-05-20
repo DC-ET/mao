@@ -47,6 +47,15 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 
+declare global {
+  interface Window {
+    electronAPI?: {
+      getAppVersion: () => Promise<string>
+      getPlatform: () => Promise<string>
+    }
+  }
+}
+
 const activeTab = ref('general')
 const appVersion = ref('')
 const platform = ref('')
