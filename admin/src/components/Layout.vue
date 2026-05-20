@@ -11,6 +11,11 @@
         router
         class="sidebar-menu"
       >
+        <el-menu-item index="/dashboard">
+          <el-icon><DataLine /></el-icon>
+          <span>数据概览</span>
+        </el-menu-item>
+
         <el-menu-item index="/agents">
           <el-icon><Monitor /></el-icon>
           <span>Agent 管理</span>
@@ -34,6 +39,11 @@
         <el-menu-item index="/hub">
           <el-icon><Share /></el-icon>
           <span>Hub 管理</span>
+        </el-menu-item>
+
+        <el-menu-item index="/api-keys">
+          <el-icon><Key /></el-icon>
+          <span>API Key</span>
         </el-menu-item>
 
         <el-menu-item index="/audit">

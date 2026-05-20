@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Component
@@ -16,7 +17,7 @@ public class McpClient {
 
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
-    private int rpcId = 0;
+    private final AtomicInteger rpcId = new AtomicInteger(0);
 
     public McpClient(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
@@ -95,7 +96,7 @@ public class McpClient {
     }
 
     private Map<String, Object> sendRequest(String serverUrl, String method, Map<String, Object> params) throws IOException {
-        int id = ++rpcId;
+        int id = rpcId.incrementAndGet();
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("jsonrpc", "2.0");
         request.put("id", id);

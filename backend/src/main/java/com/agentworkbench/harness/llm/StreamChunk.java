@@ -1,5 +1,7 @@
 package com.agentworkbench.harness.llm;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -7,6 +9,7 @@ import java.util.List;
 
 @Data
 @Builder
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class StreamChunk {
 
     private String id;
@@ -15,17 +18,23 @@ public class StreamChunk {
 
     @Data
     @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class DeltaChoice {
         private int index;
         private Delta delta;
+        @JsonProperty("finish_reason")
         private String finishReason;
     }
 
     @Data
     @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Delta {
         private String role;
         private String content;
+        @JsonProperty("tool_calls")
         private List<ChatRequest.ToolCall> toolCalls;
+        @JsonProperty("reasoning_content")
+        private String reasoningContent;
     }
 }

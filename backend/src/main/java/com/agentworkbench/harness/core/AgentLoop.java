@@ -8,6 +8,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+
 
 @Slf4j
 @Component
@@ -18,6 +24,10 @@ public class AgentLoop {
     private final PromptEngine promptEngine;
     private final ContextManager contextManager;
     private final SkillDispatcher skillDispatcher;
+    private final BackgroundTaskManager backgroundTaskManager;
+    private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
+
+    private static final int TODO_REMINDER_INTERVAL = 3;
 
     public interface MessagePersistenceCallback {
         void onSaveAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage);
@@ -32,10 +42,43 @@ public class AgentLoop {
                         MessagePersistenceCallback persistenceCallback) {
         int round = 0;
         int maxRounds = context.getMaxRounds();
+        int roundsSinceTodoUpdate = 0;
 
         while (round < maxRounds) {
             round++;
             log.debug("Agent loop round {}/{}", round, maxRounds);
+
+            // 0. Compress context if needed
+            int maxTokens = context.getModelConfig() != null && context.getModelConfig().getMaxTokens() != null
+                    ? context.getModelConfig().getMaxTokens() : 0;
+            if (contextManager.needsCompression(context, maxTokens)) {
+                // Micro-compact first: replace old tool results with placeholders
+                contextManager.microCompact(context, TODO_REMINDER_INTERVAL);
+                // Then auto-compress if still over limit
+                if (contextManager.needsCompression(context, maxTokens)) {
+                    List<ChatRequest.Message> compressed = contextManager.compress(context, 0);
+                    context.setMessages(compressed);
+                    listener.onContextCompressed(compressed.size());
+                    log.info("Context compressed to {} messages before round {}", compressed.size(), round);
+                }
+            }
+
+            // 0.5. Inject completed background task results
+            Map<String, String> bgResults = backgroundTaskManager.consumeCompletedResults();
+            if (!bgResults.isEmpty()) {
+                StringBuilder sb = new StringBuilder("<background-task-results>\n");
+                bgResults.forEach((taskId, result) ->
+                        sb.append("Task ").append(taskId).append(": ").append(result).append("\n"));
+                sb.append("</background-task-results>");
+                context.addSystemMessage(sb.toString());
+                log.info("Injected {} background task results", bgResults.size());
+            }
+
+            // 0.6. Todo nag reminder
+            if (roundsSinceTodoUpdate >= TODO_REMINDER_INTERVAL) {
+                context.addSystemMessage("<reminder>Please update your task plan using the todo tool.</reminder>");
+                roundsSinceTodoUpdate = 0;
+            }
 
             // 1. Build Prompt
             ChatRequest request = promptEngine.buildRequest(context);
@@ -70,6 +113,8 @@ public class AgentLoop {
                 @Override
                 public void onComplete(ChatUsage usage) {
                     context.addUsage(usage);
+                    log.debug("LLM round {} complete: contentLength={}, toolCallCount={}, usage={}",
+                            currentRound, contentBuilder.length(), toolCalls.size(), usage);
 
                     if (!toolCalls.isEmpty()) {
                         for (ChatRequest.ToolCall tc : toolCalls) {
@@ -81,7 +126,6 @@ public class AgentLoop {
                     String content = contentBuilder.toString();
                     if (!content.isEmpty() || !toolCalls.isEmpty()) {
                         context.addAssistantMessage(content, toolCalls);
-                        // Persist assistant message
                         if (persistenceCallback != null) {
                             persistenceCallback.onSaveAssistantMessage(content, toolCalls, usage);
                         }
@@ -101,25 +145,14 @@ public class AgentLoop {
                 break;
             }
 
-            // 4. Execute tool calls via SkillDispatcher
-            for (ChatRequest.ToolCall tc : pendingCalls) {
-                String toolName = tc.getFunction().getName();
-                String arguments = tc.getFunction().getArguments();
-                try {
-                    String result = skillDispatcher.dispatch(toolName, arguments);
-                    context.addToolResult(tc.getId(), result);
-                    listener.onToolCallResult(tc.getId(), result);
-                    if (persistenceCallback != null) {
-                        persistenceCallback.onSaveToolMessage(tc.getId(), result);
-                    }
-                } catch (Exception e) {
-                    String errorResult = "Tool execution failed: " + e.getMessage();
-                    context.addToolResult(tc.getId(), errorResult);
-                    listener.onToolCallResult(tc.getId(), errorResult);
-                    if (persistenceCallback != null) {
-                        persistenceCallback.onSaveToolMessage(tc.getId(), errorResult);
-                    }
-                }
+            // 4. Execute tool calls in parallel
+            boolean calledTodo = executeToolCalls(pendingCalls, context, listener, persistenceCallback);
+
+            // Track todo usage for nag reminder
+            if (calledTodo) {
+                roundsSinceTodoUpdate = 0;
+            } else {
+                roundsSinceTodoUpdate++;
             }
 
             // 5. Clear pending calls for next round
@@ -127,6 +160,67 @@ public class AgentLoop {
         }
 
         listener.onMessageEnd(context.getTotalUsage());
+    }
+
+    /**
+     * Execute tool calls in parallel using CompletableFuture.
+     * Returns true if any tool call was to the "todo" skill.
+     */
+    private boolean executeToolCalls(List<ChatRequest.ToolCall> pendingCalls,
+                                     AgentExecutionContext context,
+                                     AgentEventListener listener,
+                                     MessagePersistenceCallback persistenceCallback) {
+        boolean calledTodo = false;
+
+        if (pendingCalls.size() == 1) {
+            // Single tool call - execute directly without async overhead
+            ChatRequest.ToolCall tc = pendingCalls.get(0);
+            String toolName = tc.getFunction().getName();
+            if ("todo".equals(toolName)) calledTodo = true;
+            String result = dispatchTool(toolName, tc.getFunction().getArguments());
+            context.addToolResult(tc.getId(), result);
+            listener.onToolCallResult(tc.getId(), result);
+            if (persistenceCallback != null) {
+                persistenceCallback.onSaveToolMessage(tc.getId(), result);
+            }
+        } else {
+            // Multiple tool calls - execute in parallel
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
+            String[] results = new String[pendingCalls.size()];
+
+            for (int i = 0; i < pendingCalls.size(); i++) {
+                final int index = i;
+                ChatRequest.ToolCall tc = pendingCalls.get(i);
+                String toolName = tc.getFunction().getName();
+                if ("todo".equals(toolName)) calledTodo = true;
+
+                futures.add(CompletableFuture.runAsync(() -> {
+                    results[index] = dispatchTool(toolName, tc.getFunction().getArguments());
+                }, toolExecutor));
+            }
+
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+            // Collect results in order
+            for (int i = 0; i < pendingCalls.size(); i++) {
+                ChatRequest.ToolCall tc = pendingCalls.get(i);
+                context.addToolResult(tc.getId(), results[i]);
+                listener.onToolCallResult(tc.getId(), results[i]);
+                if (persistenceCallback != null) {
+                    persistenceCallback.onSaveToolMessage(tc.getId(), results[i]);
+                }
+            }
+        }
+
+        return calledTodo;
+    }
+
+    private String dispatchTool(String toolName, String arguments) {
+        try {
+            return skillDispatcher.dispatch(toolName, arguments);
+        } catch (Exception e) {
+            return "Tool execution failed: " + e.getMessage();
+        }
     }
 
     private void mergeToolCall(List<ChatRequest.ToolCall> existing, ChatRequest.ToolCall delta) {

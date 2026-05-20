@@ -40,11 +40,19 @@ public class SessionService {
         return session;
     }
 
-    public List<Session> listSessions(Long userId) {
-        return sessionMapper.selectList(
-                new QueryWrapper<Session>()
-                        .eq("user_id", userId)
-                        .orderByDesc("updated_at"));
+    public List<Session> listSessions(Long userId, String keyword, String status) {
+        QueryWrapper<Session> qw = new QueryWrapper<>();
+        qw.eq("user_id", userId);
+        if (keyword != null && !keyword.isEmpty()) {
+            qw.and(w -> w.like("title", keyword));
+        }
+        if (status != null && !status.isEmpty()) {
+            qw.eq("status", status);
+        } else {
+            qw.eq("status", "ACTIVE");
+        }
+        qw.orderByDesc("is_pinned").orderByDesc("updated_at");
+        return sessionMapper.selectList(qw);
     }
 
     public Session getSession(Long id) {
@@ -67,6 +75,18 @@ public class SessionService {
         sessionMapper.updateById(session);
     }
 
+    public void toggleFavorite(Long id) {
+        Session session = getSession(id);
+        session.setIsFavorite(session.getIsFavorite() != null && session.getIsFavorite() == 1 ? 0 : 1);
+        sessionMapper.updateById(session);
+    }
+
+    public void archiveSession(Long id) {
+        Session session = getSession(id);
+        session.setStatus("ARCHIVED");
+        sessionMapper.updateById(session);
+    }
+
     public Message saveMessage(Long sessionId, String role, String content,
                                 String toolCallId, String toolCalls,
                                 Integer tokenCount, Long modelId) {
@@ -83,6 +103,14 @@ public class SessionService {
         // Update session's updated_at
         Session session = sessionMapper.selectById(sessionId);
         if (session != null) {
+            sessionMapper.updateById(session);
+        }
+
+        // Auto-generate title from first user message
+        if ("USER".equals(role) && session != null && session.getTitle() != null
+                && session.getTitle().equals(agentMapper.selectById(session.getAgentId()).getName())) {
+            String autoTitle = content.length() > 50 ? content.substring(0, 50) + "..." : content;
+            session.setTitle(autoTitle);
             sessionMapper.updateById(session);
         }
 

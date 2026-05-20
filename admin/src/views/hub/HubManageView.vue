@@ -53,7 +53,7 @@ async function fetchHubAgents() {
 async function handleApprove(row: any) {
   try {
     await ElMessageBox.confirm('确定要审核通过此 Agent 吗？', '确认')
-    await api.put(`/hub/agents/${row.id}/approve`)
+    await api.post(`/hub/agents/${row.id}/approve`)
     ElMessage.success('审核通过')
     fetchHubAgents()
   } catch {
@@ -66,7 +66,7 @@ async function handleReject(row: any) {
     await ElMessageBox.confirm(`确定要下架 Agent "${row.name}" 吗？`, '确认', {
       type: 'warning'
     })
-    await api.put(`/hub/agents/${row.id}/reject`)
+    await api.post(`/hub/agents/${row.id}/reject`)
     ElMessage.success('已下架')
     fetchHubAgents()
   } catch {

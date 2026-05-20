@@ -1,5 +1,7 @@
 package com.agentworkbench.harness.llm;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -8,6 +10,7 @@ import java.util.Map;
 
 @Data
 @Builder
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class ChatRequest {
 
     private List<Message> messages;
@@ -18,11 +21,14 @@ public class ChatRequest {
 
     @Data
     @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Message {
         private String role;      // system, user, assistant, tool
         private String content;
         private String name;
+        @JsonProperty("tool_call_id")
         private String toolCallId;
+        @JsonProperty("tool_calls")
         private List<ToolCall> toolCalls;
     }
 
@@ -43,6 +49,7 @@ public class ChatRequest {
 
     @Data
     @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ToolCall {
         private String id;
         private String type;      // "function"
@@ -51,6 +58,7 @@ public class ChatRequest {
 
     @Data
     @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class FunctionCall {
         private String name;
         private String arguments;

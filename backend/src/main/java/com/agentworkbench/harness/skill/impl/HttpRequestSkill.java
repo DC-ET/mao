@@ -7,8 +7,11 @@ import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.springframework.stereotype.Component;
 
+import java.net.InetAddress;
+import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -62,12 +65,19 @@ public class HttpRequestSkill implements Skill {
         return schema;
     }
 
+    private static final Set<String> BLOCKED_HOSTS = Set.of(
+            "localhost", "127.0.0.1", "0.0.0.0", "::1"
+    );
+
     @Override
     public String execute(String arguments) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
             String method = args.get("method").asText();
             String url = args.get("url").asText();
+
+            // SSRF protection: block internal network access
+            validateUrl(url);
 
             Request.Builder builder = new Request.Builder().url(url);
 
@@ -98,6 +108,30 @@ public class HttpRequestSkill implements Skill {
         } catch (Exception e) {
             log.error("HttpRequestSkill execution failed", e);
             return "{\"status\":0,\"body\":\"Error: " + e.getMessage().replace("\"", "'") + "\"}";
+        }
+    }
+
+    private void validateUrl(String url) {
+        try {
+            URI uri = URI.create(url);
+            String host = uri.getHost();
+            if (host == null) {
+                throw new SecurityException("Invalid URL: no host");
+            }
+
+            if (BLOCKED_HOSTS.contains(host.toLowerCase())) {
+                throw new SecurityException("Access to internal host blocked: " + host);
+            }
+
+            // Resolve and check for private IP ranges
+            InetAddress address = InetAddress.getByName(host);
+            if (address.isLoopbackAddress() || address.isSiteLocalAddress() || address.isLinkLocalAddress()) {
+                throw new SecurityException("Access to internal/private network blocked: " + host);
+            }
+        } catch (SecurityException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new SecurityException("URL validation failed: " + e.getMessage());
         }
     }
 }

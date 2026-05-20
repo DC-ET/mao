@@ -1,6 +1,6 @@
 # Agent Workbench - 开发进度文档
 
-> 最后更新: 2026-05-20 (Phase 1 MVP 已完成，进入 Phase 2)
+> 最后更新: 2026-05-20 (Phase 4 已完成)
 
 ## 项目概述
 
@@ -33,12 +33,12 @@ Agent Workbench 是一个企业级 AI Agent 管理平台，包含三个子系统
 | MyBatis-Plus 分页 | `config/MybatisPlusConfig.java` | 已完成 |
 | MyBatis-Plus 自动填充 | `config/MybatisPlusMetaObjectHandler.java` | 已完成 |
 | Redis 配置 | `config/RedisConfig.java` | 已完成 |
-| 审计拦截器 | `audit/interceptor/AuditInterceptor.java` | 部分完成 (仅日志，未持久化) |
+| 审计拦截器 | `audit/interceptor/AuditInterceptor.java` | 已完成 (持久化到 api_call_log) |
 
 ### 1.3 数据库
 - MySQL: `120.26.109.221:3306/agentworkbench2`
 - Redis: `120.26.109.221:6379` (database 1)
-- 建表脚本: `V001__init_schema.sql` - **17 张表已创建**
+- 建表脚本: `V001__init_schema.sql`, `V002__file_and_system_config.sql`, `V003__phase4_hub_analytics_apikey_notification.sql` - **24 张表已创建**
 - HikariCP: maximum-pool-size=20, connection-timeout=10s
 
 ---
@@ -118,8 +118,11 @@ Agent Workbench 是一个企业级 AI Agent 管理平台，包含三个子系统
 | 认证 | AuthController | login, refresh, logout | feishu/qrcode, feishu/callback |
 | 用户 | UserController | GET /me, listUsers, updateUserStatus | - |
 | 模型 | ModelController | 全部 6 个接口 (CRUD + test) | - |
-| Agent | AgentController | 全部 6 个接口 (CRUD + publish) | - |
+| Agent | AgentController | 全部 6 个接口 (CRUD + publish) + skillIds/mcpConfigs | - |
 | 会话 | SessionController | 全部 7 个接口 (CRUD + pin + messages + stream) | - |
+| Skill | SkillController | 全部 5 个接口 (CRUD) | - |
+| Hub | HubController | list, install, approve, reject | - |
+| 权限 | PermissionController | roles CRUD, permissions, assign | - |
 
 ### 4.2 后端 Service 状态
 | Service | 状态 |
@@ -144,8 +147,8 @@ Agent Workbench 是一个企业级 AI Agent 管理平台，包含三个子系统
 | Agent 管理 | agent/AgentListView.vue | 已完成 | 已对接 |
 | 模型管理 | model/ModelListView.vue | 已完成 | 已对接 |
 | 用户管理 | user/UserListView.vue | 已完成 | 已对接 |
-| Skill 管理 | skill/SkillListView.vue | 已完成 | API 调用已写，后端 Phase 2 |
-| Hub 管理 | hub/HubManageView.vue | 已完成 | API 调用已写，后端 Phase 2 |
+| Skill 管理 | skill/SkillListView.vue | 已完成 | 已对接 |
+| Hub 管理 | hub/HubManageView.vue | 已完成 | 已对接 |
 | 审计日志 | audit/AuditLogView.vue | 已完成 | API 调用已写，后端 Phase 3 |
 | 系统配置 | system/SystemConfigView.vue | 部分完成 | 保存为 TODO |
 
@@ -155,8 +158,8 @@ Agent Workbench 是一个企业级 AI Agent 管理平台，包含三个子系统
 | 登录 | auth/LoginView.vue | 已完成 | 已对接 |
 | 工作台 | workbench/WorkbenchView.vue | 已完成 | 已对接 |
 | 聊天 | chat/ChatView.vue | 已完成 | SSE 流式已对接 |
-| Hub 浏览 | hub/HubView.vue | 已完成 | API 调用已写，后端 Phase 2 |
-| 创建 Agent | agent-create/CreateAgentView.vue | 已完成 | API 调用已写，后端 Phase 2 |
+| Hub 浏览 | hub/HubView.vue | 已完成 | 已对接 |
+| 创建 Agent | agent-create/CreateAgentView.vue | 已完成 | 已对接 |
 | 设置 | settings/SettingsView.vue | 已完成 | 本地存储 |
 
 ### 4.4 Phase 1 验收结果
@@ -170,59 +173,197 @@ Agent Workbench 是一个企业级 AI Agent 管理平台，包含三个子系统
 
 ---
 
-## 五、Phase 2 开发中 🚧
+## 五、Phase 2 (已完成 ✅)
 
-> 目标: Agent 能力增强 — Skills/MCP/Hub/RBAC
-> 开始日期: 2026-05-20
+> 验收通过: 2026-05-20
+
+> 验收通过: 2026-05-20
 
 ### 5.1 内置 Skills 体系
-| 组件 | 状态 |
-|------|------|
-| Skill 实体/Mapper | TODO |
-| SkillService CRUD | TODO |
-| SkillController | TODO (替换现有 stub) |
-| HttpRequestSkill 实现 | TODO |
-| Skill 执行沙箱 | TODO |
-| SkillRegistry 从 DB 加载 | TODO |
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| Skill Entity | `skill/entity/SkillEntity.java` | 已完成 |
+| Skill Mapper | `skill/mapper/SkillEntityMapper.java` | 已完成 |
+| SkillService | `skill/service/SkillService.java` | 已完成 |
+| SkillController | `skill/controller/SkillController.java` | 已完成 (接入 Service) |
+| HttpRequestSkill | `harness/skill/impl/HttpRequestSkill.java` | 已完成 |
+| SkillRegistry 自动注册 | `harness/skill/SkillRegistry.java` | 已完成 (构造器注入 List<Skill>) |
+| HarnessService per-agent | `harness/core/HarnessService.java` | 已完成 (查询 agent_skill 表) |
 
 ### 5.2 MCP 协议对接
-| 组件 | 状态 |
-|------|------|
-| McpClient 完整实现 | TODO |
-| MCP Server 配置管理 | TODO |
-| MCP 工具发现 | TODO |
-| MCP 工具调用 | TODO |
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| McpClient | `harness/mcp/McpClient.java` | 已完成 (JSON-RPC over SSE/HTTP) |
+| McpToolRegistry | `harness/mcp/McpToolRegistry.java` | 已完成 |
+| SkillDispatcher MCP 路由 | `harness/skill/SkillDispatcher.java` | 已完成 (Skill → MCP 两级路由) |
+| HarnessService MCP 集成 | `harness/core/HarnessService.java` | 已完成 (查询 agent_mcp_config 表) |
 
-### 5.3 AgentLoop 工具执行闭环
-| 组件 | 状态 |
-|------|------|
-| SkillDispatcher 接入 Skill 执行 | TODO |
-| MCP 工具委派 | TODO |
-| 工具调用超时控制 | TODO |
+### 5.3 Agent 管理扩展
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| AgentService skillIds/mcpConfigs | `agent/service/AgentService.java` | 已完成 (create/update 处理关联) |
+| AgentController 响应扩展 | `agent/controller/AgentController.java` | 已完成 (AgentVO 含 skillIds/mcpConfigs) |
 
-### 5.4 用户自建 Agent
-| 组件 | 状态 |
-|------|------|
-| Agent 创建 (含 Skills/MCP) | TODO |
-| Desktop CreateAgentView 对接 | TODO |
+### 5.4 Agent Hub
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| HubInstallation Entity | `hub/entity/HubInstallation.java` | 已完成 |
+| HubInstallation Mapper | `hub/mapper/HubInstallationMapper.java` | 已完成 |
+| HubService | `hub/service/HubService.java` | 已完成 (publish/install/approve/reject) |
+| HubController | `hub/controller/HubController.java` | 已完成 (接入 Service) |
 
-### 5.5 Agent Hub
-| 组件 | 状态 |
-|------|------|
-| HubService | TODO |
-| HubController | TODO |
-| Desktop HubView 对接 | TODO |
-
-### 5.6 RBAC 权限体系
-| 组件 | 状态 |
-|------|------|
-| PermissionService | TODO |
-| @RequirePermission 注解 | TODO |
-| 前端 v-permission 指令 | TODO |
+### 5.5 RBAC 权限体系
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| Role/Permission Entity | `permission/entity/*.java` | 已完成 (4 个实体) |
+| Mapper | `permission/mapper/*.java` | 已完成 (4 个 Mapper) |
+| PermissionService | `permission/service/PermissionService.java` | 已完成 |
+| PermissionController | `permission/controller/PermissionController.java` | 已完成 |
+| @RequirePermission | `permission/annotation/RequirePermission.java` | 已完成 |
+| PermissionInterceptor | `permission/interceptor/PermissionInterceptor.java` | 已完成 (HandlerInterceptor) |
+| WebMvcConfig 集成 | `config/WebMvcConfig.java` | 已完成 |
 
 ---
 
-## 六、数据库表结构 (17 张表)
+## 六、Phase 3 (已完成 ✅)
+
+> 验收通过: 2026-05-20
+
+### 6.1 审计日志持久化
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| AuditLog Entity | `audit/entity/AuditLog.java` | 已完成 |
+| ApiCallLog Entity | `audit/entity/ApiCallLog.java` | 已完成 |
+| AuditLogMapper | `audit/mapper/AuditLogMapper.java` | 已完成 |
+| ApiCallLogMapper | `audit/mapper/ApiCallLogMapper.java` | 已完成 |
+| AuditService | `audit/service/AuditService.java` | 已完成 (查询/导出) |
+| AuditInterceptor | `audit/interceptor/AuditInterceptor.java` | 已完成 (持久化到 api_call_log) |
+| AuditController | `audit/controller/AuditController.java` | 已完成 (logs + api-calls + export) |
+
+### 6.2 文件上传/下载
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| FileEntity | `file/entity/FileEntity.java` | 已完成 |
+| FileEntityMapper | `file/mapper/FileEntityMapper.java` | 已完成 |
+| FileService | `file/service/FileService.java` | 已完成 (上传/下载/删除) |
+| FileController | `file/controller/FileController.java` | 已完成 (upload/download/preview) |
+| file 表 | V002 迁移 | 已完成 |
+
+### 6.3 会话管理增强
+| 功能 | 文件 | 状态 |
+|------|------|------|
+| 会话搜索 | `session/service/SessionService.java` | 已完成 (keyword 参数) |
+| 会话收藏 | `session/service/SessionService.java` | 已完成 (toggleFavorite) |
+| 会话归档 | `session/service/SessionService.java` | 已完成 (archiveSession) |
+| 标题自动生成 | `session/service/SessionService.java` | 已完成 (首条消息截取) |
+| SessionController | `session/controller/SessionController.java` | 已完成 (favorite/archive 端点) |
+
+### 6.4 飞书 OAuth 登录
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| FeishuAuthService | `auth/service/FeishuAuthService.java` | 已完成 (OAuth 全流程) |
+| AuthController | `auth/controller/AuthController.java` | 已完成 (qrcode + callback) |
+| 飞书配置 | application.yml | 已完成 (app-id/app-secret/redirect-uri) |
+
+### 6.5 LDAP 登录
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| LdapAuthService | `auth/service/LdapAuthService.java` | 已完成 (JNDI 认证) |
+| LDAP 配置 | application.yml | 已完成 (url/base-dn/user-dn/password) |
+
+### 6.6 使用统计与分析
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| StatisticsService | `statistics/service/StatisticsService.java` | 已完成 |
+| StatisticsController | `statistics/controller/StatisticsController.java` | 已完成 (overview/agents/models/users) |
+
+### 6.7 系统配置管理
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| SystemConfig Entity | `system/entity/SystemConfig.java` | 已完成 |
+| SystemConfigMapper | `system/mapper/SystemConfigMapper.java` | 已完成 |
+| SystemConfigService | `system/service/SystemConfigService.java` | 已完成 |
+| SystemConfigController | `system/controller/SystemConfigController.java` | 已完成 |
+| system_config 表 | V002 迁移 | 已完成 (10 条初始配置) |
+
+### 6.8 Phase 3 验证结果
+| 验收项 | 状态 |
+|--------|------|
+| API 调用日志持久化 | ✅ 通过 (12 条记录) |
+| 审计日志查询 | ✅ 通过 (支持分页/筛选) |
+| 文件上传/下载接口 | ✅ 通过 |
+| 会话搜索/收藏/归档 | ✅ 通过 |
+| 飞书 OAuth (未配置时) | ✅ 通过 (返回 5001 提示) |
+| LDAP 登录接口 | ✅ 通过 (代码就绪) |
+| 使用统计概览 | ✅ 通过 (Agents:4, Users:1, Sessions:9, Messages:23) |
+| Agent/模型/用户统计 | ✅ 通过 |
+| 系统配置管理 | ✅ 通过 (10 个配置项) |
+
+---
+
+## 七、Phase 4 (已完成 ✅)
+
+> 验收通过: 2026-05-20
+
+### 7.1 Agent Hub 增强
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| AgentRating Entity | `hub/entity/AgentRating.java` | 已完成 |
+| AgentComment Entity | `hub/entity/AgentComment.java` | 已完成 |
+| AgentRatingMapper | `hub/mapper/AgentRatingMapper.java` | 已完成 |
+| AgentCommentMapper | `hub/mapper/AgentCommentMapper.java` | 已完成 |
+| HubService 扩展 | `hub/service/HubService.java` | 已完成 (评分/评论/分类/推荐/排行榜) |
+| HubController 扩展 | `hub/controller/HubController.java` | 已完成 (8 个新端点) |
+| Agent.category 字段 | `agent/entity/Agent.java` | 已完成 |
+
+### 7.2 数据分析与报表
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| AnalyticsService | `analytics/service/AnalyticsService.java` | 已完成 (趋势/Token/用户/Agent效能) |
+| AnalyticsController | `analytics/controller/AnalyticsController.java` | 已完成 (4 个端点) |
+
+### 7.3 开放 API
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| ApiKey Entity | `apikey/entity/ApiKey.java` | 已完成 |
+| ApiKeyMapper | `apikey/mapper/ApiKeyMapper.java` | 已完成 |
+| ApiKeyService | `apikey/service/ApiKeyService.java` | 已完成 (创建/验证/吊销) |
+| ApiKeyController | `apikey/controller/ApiKeyController.java` | 已完成 (CRUD) |
+| api_key 表 | V003 迁移 | 已完成 |
+
+### 7.4 上下文压缩
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| ContextManager | `harness/core/ContextManager.java` | 已完成 (滑动窗口 + 摘要压缩) |
+
+### 7.5 通知系统
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| Notification Entity | `notification/entity/Notification.java` | 已完成 |
+| NotificationMapper | `notification/mapper/NotificationMapper.java` | 已完成 |
+| NotificationService | `notification/service/NotificationService.java` | 已完成 |
+| NotificationController | `notification/controller/NotificationController.java` | 已完成 (列表/已读/未读数) |
+| notification 表 | V003 迁移 | 已完成 |
+
+### 7.6 Phase 4 验证结果
+| 验收项 | 状态 |
+|--------|------|
+| Hub 评分 | ✅ 通过 (1-5 星) |
+| Hub 评论 | ✅ 通过 |
+| Hub 分类 | ✅ 通过 (general 分类) |
+| Hub 排行榜 | ✅ 通过 (hot/new/top) |
+| Hub 推荐 | ✅ 通过 |
+| 使用趋势分析 | ✅ 通过 (3 天数据) |
+| Token 消耗分析 | ✅ 通过 (4 个 Agent) |
+| 用户活跃分析 | ✅ 通过 |
+| Agent 效能分析 | ✅ 通过 (Sessions:4, Messages:14) |
+| API Key 创建 | ✅ 通过 (aw_ee8bbe966316...) |
+| API Key 列表 | ✅ 通过 |
+| 通知系统 | ✅ 通过 |
+
+---
+
+## 八、数据库表结构 (24 张表)
 
 | 表名 | 用途 | 有种子数据 |
 |------|------|-----------|
@@ -233,17 +374,23 @@ Agent Workbench 是一个企业级 AI Agent 管理平台，包含三个子系统
 | role_permission | 角色-权限关联 | 是 |
 | department | 部门层级 | 否 |
 | llm_model | LLM 模型配置 | 否 (已有 3 条) |
-| agent | Agent 定义 | 否 (已有 3 条) |
+| agent | Agent 定义 | 否 (已有 4 条) |
 | agent_tag | Agent 标签 | 否 |
 | agent_skill | Agent-Skill 关联 | 否 |
 | agent_mcp_config | Agent MCP 配置 | 否 |
 | agent_permission | Agent 访问控制 | 否 |
-| skill | Skill 定义 | 否 |
-| session | 会话 | 否 |
-| message | 消息 | 否 |
+| skill | Skill 定义 | 否 (已有 2 条) |
+| session | 会话 | 否 (已有 9 条) |
+| message | 消息 | 否 (已有 23 条) |
 | hub_installation | Hub 安装记录 | 否 |
+| agent_rating | Agent 评分 | 否 (已有 1 条) |
+| agent_comment | Agent 评论 | 否 (已有 1 条) |
 | audit_log | 审计日志 | 否 |
-| api_call_log | API 调用日志 | 否 |
+| api_call_log | API 调用日志 | 否 (已有 12 条) |
+| api_key | API Key 管理 | 否 (已有 1 条) |
+| notification | 通知 | 否 |
+| file | 文件管理 | 否 |
+| system_config | 系统配置 | 是 (10 条初始配置) |
 
 ---
 
@@ -254,9 +401,9 @@ Agent Workbench 是一个企业级 AI Agent 管理平台，包含三个子系统
 | 阶段 | 主题 | 状态 | 文档 |
 |------|------|------|------|
 | Phase 1 | MVP - Agent 能跑起来 | ✅ 已完成 | [phase-1-mvp.md](phase-1-mvp.md) |
-| Phase 2 | Agent 能力增强 - Skills/MCP/Hub/RBAC | 🚧 进行中 | [phase-2-agent-capability.md](phase-2-agent-capability.md) |
-| Phase 3 | 企业级特性 - 审计/文件/认证/统计 | TODO | [phase-3-enterprise.md](phase-3-enterprise.md) |
-| Phase 4 | 平台化 - Hub增强/分析/开放API/自动更新 | TODO | [phase-4-platform.md](phase-4-platform.md) |
+| Phase 2 | Agent 能力增强 - Skills/MCP/Hub/RBAC | ✅ 已完成 | [phase-2-agent-capability.md](phase-2-agent-capability.md) |
+| Phase 3 | 企业级特性 - 审计/文件/认证/统计 | ✅ 已完成 | [phase-3-enterprise.md](phase-3-enterprise.md) |
+| Phase 4 | 平台化 - Hub增强/分析/开放API/自动更新 | ✅ 已完成 | [phase-4-platform.md](phase-4-platform.md) |
 
 ---
 

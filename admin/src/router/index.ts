@@ -12,8 +12,14 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     name: 'Layout',
     component: () => import('../components/Layout.vue'),
-    redirect: '/agents',
+    redirect: '/dashboard',
     children: [
+      {
+        path: 'dashboard',
+        name: 'Dashboard',
+        component: () => import('../views/dashboard/DashboardView.vue'),
+        meta: { title: '数据概览' }
+      },
       {
         path: 'agents',
         name: 'Agents',
@@ -43,6 +49,12 @@ const routes: RouteRecordRaw[] = [
         name: 'Hub',
         component: () => import('../views/hub/HubManageView.vue'),
         meta: { title: 'Hub 管理' }
+      },
+      {
+        path: 'api-keys',
+        name: 'ApiKeys',
+        component: () => import('../views/apikey/ApiKeyView.vue'),
+        meta: { title: 'API Key 管理' }
       },
       {
         path: 'audit',

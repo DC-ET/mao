@@ -17,6 +17,4 @@ public class Role {
     private String code;
 
     private String description;
-
-    private Integer status;
 }

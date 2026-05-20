@@ -32,9 +32,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -54,17 +57,23 @@ public class HarnessService {
     private final SessionService sessionService;
     private final ObjectMapper objectMapper;
 
-    // In-memory event content store
-    private static final ConcurrentHashMap<String, String> EVENT_CONTENT_STORE = new ConcurrentHashMap<>();
+    // In-memory event content store with TTL
+    private final Cache<String, String> eventContentStore = Caffeine.newBuilder()
+            .expireAfterWrite(10, TimeUnit.MINUTES)
+            .maximumSize(1000)
+            .build();
 
     public String prepareMessage(Long sessionId, String userContent) {
         String eventId = java.util.UUID.randomUUID().toString();
-        EVENT_CONTENT_STORE.put(eventId, userContent);
+        eventContentStore.put(eventId, userContent);
         return eventId;
     }
 
     public void executeFromEvent(Long sessionId, String eventId, AgentEventListener listener) {
-        String userContent = EVENT_CONTENT_STORE.remove(eventId);
+        String userContent = eventContentStore.getIfPresent(eventId);
+        if (userContent != null) {
+            eventContentStore.invalidate(eventId);
+        }
         execute(sessionId, userContent, listener);
     }
 

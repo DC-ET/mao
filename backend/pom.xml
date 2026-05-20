@@ -124,6 +124,12 @@
             <version>${hutool.version}</version>
         </dependency>
 
+        <!-- Caffeine Cache -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- Jackson (JSON) -->
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>

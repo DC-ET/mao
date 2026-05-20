@@ -11,29 +11,46 @@ import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.service.SessionService;
 import lombok.Data;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 @Slf4j
 @RestController
 @RequestMapping("/v1/sessions")
-@RequiredArgsConstructor
 public class SessionController {
 
     private final SessionService sessionService;
     private final HarnessService harnessService;
     private final AgentMapper agentMapper;
-    private final ExecutorService agentExecutor = Executors.newFixedThreadPool(20);
+    private final ExecutorService agentExecutor;
+
+    public SessionController(SessionService sessionService, HarnessService harnessService,
+                             AgentMapper agentMapper,
+                             @Value("${app.harness.agent-thread-pool-size:20}") int poolSize,
+                             @Value("${app.harness.agent-thread-pool-max:100}") int maxPoolSize,
+                             @Value("${app.harness.agent-thread-pool-queue:200}") int queueCapacity) {
+        this.sessionService = sessionService;
+        this.harnessService = harnessService;
+        this.agentMapper = agentMapper;
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(poolSize);
+        executor.setMaxPoolSize(maxPoolSize);
+        executor.setQueueCapacity(queueCapacity);
+        executor.setThreadNamePrefix("agent-");
+        executor.initialize();
+        this.agentExecutor = executor.getThreadPoolExecutor();
+    }
 
     @PostMapping
     public Result<SessionVO> createSession(
@@ -44,8 +61,11 @@ public class SessionController {
     }
 
     @GetMapping
-    public Result<List<SessionVO>> listSessions(@AuthenticationPrincipal Long userId) {
-        List<Session> sessions = sessionService.listSessions(userId);
+    public Result<List<SessionVO>> listSessions(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String status) {
+        List<Session> sessions = sessionService.listSessions(userId, keyword, status);
         List<SessionVO> voList = sessions.stream().map(this::toSessionVO).collect(Collectors.toList());
         return Result.ok(voList);
     }
@@ -70,6 +90,22 @@ public class SessionController {
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
         sessionService.togglePin(id);
+        return Result.ok();
+    }
+
+    @PutMapping("/{id}/favorite")
+    public Result<Void> toggleFavorite(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id) {
+        sessionService.toggleFavorite(id);
+        return Result.ok();
+    }
+
+    @PutMapping("/{id}/archive")
+    public Result<Void> archiveSession(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id) {
+        sessionService.archiveSession(id);
         return Result.ok();
     }
 
@@ -156,6 +192,17 @@ public class SessionController {
                             emitter.complete();
                         } catch (Exception e) {
                             log.warn("Failed to send SSE event", e);
+                        }
+                    }
+
+                    @Override
+                    public void onContextCompressed(int messageCount) {
+                        try {
+                            emitter.send(SseEmitter.event()
+                                    .name("context_compressed")
+                                    .data(Map.of("message_count", messageCount)));
+                        } catch (Exception e) {
+                            log.warn("Failed to send SSE context_compressed event", e);
                         }
                     }
 
