@@ -1,6 +1,8 @@
 package com.agentworkbench.harness.mcp;
 
-import lombok.RequiredArgsConstructor;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -8,13 +10,25 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class McpToolRegistry {
 
     private final McpClient mcpClient;
+    private final ObjectMapper objectMapper;
+
+    // Cache discovered tools per server URL (TTL 5 minutes)
+    private final Cache<String, List<McpTool>> discoveryCache = Caffeine.newBuilder()
+            .expireAfterWrite(5, TimeUnit.MINUTES)
+            .maximumSize(100)
+            .build();
+
+    public McpToolRegistry(McpClient mcpClient, ObjectMapper objectMapper) {
+        this.mcpClient = mcpClient;
+        this.objectMapper = objectMapper;
+    }
 
     // serverUrl -> tools
     private final Map<String, List<McpTool>> serverTools = new ConcurrentHashMap<>();
@@ -22,15 +36,22 @@ public class McpToolRegistry {
     private final Map<String, String> toolServerMap = new ConcurrentHashMap<>();
 
     /**
-     * Discover and register tools from an MCP server
+     * Discover and register tools from an MCP server (with caching)
      */
     public List<McpTool> discoverAndRegister(String serverUrl) {
+        List<McpTool> cached = discoveryCache.getIfPresent(serverUrl);
+        if (cached != null) {
+            log.debug("Using cached tools for MCP server: {} ({} tools)", serverUrl, cached.size());
+            return cached;
+        }
+
         List<McpTool> tools = mcpClient.discoverTools(serverUrl);
         serverTools.put(serverUrl, tools);
         for (McpTool tool : tools) {
             toolServerMap.put(tool.getName(), serverUrl);
             log.info("Registered MCP tool: {} from server: {}", tool.getName(), serverUrl);
         }
+        discoveryCache.put(serverUrl, tools);
         return tools;
     }
 
@@ -62,8 +83,7 @@ public class McpToolRegistry {
         }
         try {
             @SuppressWarnings("unchecked")
-            Map<String, Object> args = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .readValue(arguments, Map.class);
+            Map<String, Object> args = objectMapper.readValue(arguments, Map.class);
             return mcpClient.callTool(serverUrl, toolName, args);
         } catch (Exception e) {
             log.error("Failed to call MCP tool: {}", toolName, e);
@@ -77,5 +97,6 @@ public class McpToolRegistry {
     public void clear() {
         serverTools.clear();
         toolServerMap.clear();
+        discoveryCache.invalidateAll();
     }
 }

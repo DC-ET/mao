@@ -17,4 +17,8 @@ public interface AgentEventListener {
     void onMessageEnd(ChatUsage usage);
 
     void onError(Throwable t);
+
+    default void onContextCompressed(int messageCount) {
+        // optional: notify frontend that context was compressed
+    }
 }

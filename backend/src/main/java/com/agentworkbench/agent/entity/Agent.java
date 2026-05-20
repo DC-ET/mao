@@ -28,6 +28,8 @@ public class Agent {
 
     private String visibility;
 
+    private String category;
+
     private String status;
 
     private Integer tokenLimit;

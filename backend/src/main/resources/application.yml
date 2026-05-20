@@ -39,6 +39,12 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
+  # File upload
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
 # MyBatis-Plus
 mybatis-plus:
   configuration:
@@ -65,8 +71,27 @@ minio:
   secret-key: ${MINIO_SECRET_KEY:minioadmin}
   bucket: ${MINIO_BUCKET:workbench}
 
+# LDAP
+ldap:
+  url: ${LDAP_URL:}
+  base-dn: ${LDAP_BASE_DN:}
+  user-dn: ${LDAP_USER_DN:}
+  password: ${LDAP_PASSWORD:}
+  user-search-base: ${LDAP_USER_SEARCH_BASE:ou=users}
+
+# Feishu
+feishu:
+  app-id: ${FEISHU_APP_ID:}
+  app-secret: ${FEISHU_APP_SECRET:}
+  redirect-uri: ${FEISHU_REDIRECT_URI:http://localhost:5200/auth/feishu/callback}
+
 # App config
 app:
+  # File storage
+  file:
+    upload-dir: ${FILE_UPLOAD_DIR:./uploads}
+    max-size-mb: 50
+
   # Agent Harness
   harness:
     max-concurrent-agents: 100

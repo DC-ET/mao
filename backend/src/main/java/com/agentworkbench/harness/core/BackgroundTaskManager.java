@@ -1,0 +1,87 @@
+package com.agentworkbench.harness.core;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.Map;
+import java.util.concurrent.*;
+
+/**
+ * Manages background tasks for async tool execution (e.g., long-running bash commands).
+ */
+@Slf4j
+@Component
+public class BackgroundTaskManager {
+
+    private static final int MAX_OUTPUT_LENGTH = 500;
+
+    private final ExecutorService executor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "bg-task-" + System.nanoTime());
+        t.setDaemon(true);
+        return t;
+    });
+
+    private final Map<String, Future<String>> tasks = new ConcurrentHashMap<>();
+
+    /**
+     * Submit a task for background execution.
+     * Returns a taskId for later retrieval.
+     */
+    public String submit(Callable<String> task) {
+        String taskId = "bg-" + System.nanoTime();
+        Future<String> future = executor.submit(task);
+        tasks.put(taskId, future);
+        log.debug("Submitted background task: {}", taskId);
+        return taskId;
+    }
+
+    /**
+     * Get results of all completed tasks, removing them from the map.
+     */
+    public Map<String, String> consumeCompletedResults() {
+        Map<String, String> completed = new ConcurrentHashMap<>();
+        tasks.forEach((taskId, future) -> {
+            if (future.isDone()) {
+                try {
+                    String result = future.get(0, TimeUnit.SECONDS);
+                    if (result.length() > MAX_OUTPUT_LENGTH) {
+                        result = result.substring(0, MAX_OUTPUT_LENGTH) + "... [truncated]";
+                    }
+                    completed.put(taskId, result);
+                } catch (ExecutionException e) {
+                    completed.put(taskId, "Error: " + e.getCause().getMessage());
+                } catch (TimeoutException | InterruptedException e) {
+                    // not ready yet, skip
+                }
+                tasks.remove(taskId);
+            }
+        });
+        return completed;
+    }
+
+    /**
+     * Get result of a specific task (blocking with timeout).
+     */
+    public String getResult(String taskId, int timeoutSeconds) {
+        Future<String> future = tasks.get(taskId);
+        if (future == null) {
+            return "Error: task not found: " + taskId;
+        }
+        try {
+            String result = future.get(timeoutSeconds, TimeUnit.SECONDS);
+            tasks.remove(taskId);
+            if (result.length() > MAX_OUTPUT_LENGTH) {
+                result = result.substring(0, MAX_OUTPUT_LENGTH) + "... [truncated]";
+            }
+            return result;
+        } catch (TimeoutException e) {
+            return "Error: task timed out after " + timeoutSeconds + " seconds";
+        } catch (ExecutionException e) {
+            tasks.remove(taskId);
+            return "Error: " + e.getCause().getMessage();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "Error: interrupted";
+        }
+    }
+}

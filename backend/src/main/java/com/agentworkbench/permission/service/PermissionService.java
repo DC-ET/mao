@@ -37,17 +37,15 @@ public class PermissionService {
         role.setName(name);
         role.setCode(code);
         role.setDescription(description);
-        role.setStatus(1);
         roleMapper.insert(role);
         return role;
     }
 
-    public Role updateRole(Long id, String name, String description, Integer status) {
+    public Role updateRole(Long id, String name, String description) {
         Role role = roleMapper.selectById(id);
         if (role == null) return null;
         if (name != null) role.setName(name);
         if (description != null) role.setDescription(description);
-        if (status != null) role.setStatus(status);
         roleMapper.updateById(role);
         return role;
     }

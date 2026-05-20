@@ -52,6 +52,13 @@ public class AgentExecutionContext {
                 .build());
     }
 
+    public void addSystemMessage(String content) {
+        messages.add(ChatRequest.Message.builder()
+                .role("system")
+                .content(content)
+                .build());
+    }
+
     public void addAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls) {
         messages.add(ChatRequest.Message.builder()
                 .role("assistant")

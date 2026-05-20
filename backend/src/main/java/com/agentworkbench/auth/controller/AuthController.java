@@ -1,6 +1,7 @@
 package com.agentworkbench.auth.controller;
 
 import com.agentworkbench.auth.service.AuthService;
+import com.agentworkbench.auth.service.FeishuAuthService;
 import com.agentworkbench.common.result.Result;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+    private final FeishuAuthService feishuAuthService;
 
     @PostMapping("/login")
     public Result<LoginVO> login(@RequestBody LoginRequest request) {
@@ -20,16 +22,15 @@ public class AuthController {
         return Result.ok(loginVO);
     }
 
-    @PostMapping("/feishu/qrcode")
+    @GetMapping("/feishu/qrcode")
     public Result<FeishuQrCodeVO> getFeishuQrCode() {
-        // TODO: Generate Feishu OAuth QR code URL
-        return Result.ok();
+        return Result.ok(feishuAuthService.getQrCodeUrl());
     }
 
     @PostMapping("/feishu/callback")
     public Result<LoginVO> feishuCallback(@RequestBody FeishuCallbackRequest request) {
-        // TODO: Handle Feishu OAuth callback
-        return Result.ok();
+        LoginVO loginVO = feishuAuthService.handleCallback(request.getCode());
+        return Result.ok(loginVO);
     }
 
     @PostMapping("/refresh")

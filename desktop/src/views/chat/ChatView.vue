@@ -23,6 +23,11 @@
         </div>
         <div class="message-content">
           <div class="message-text" v-html="renderMarkdown(msg.content)" />
+          <div v-if="msg.files && msg.files.length > 0" class="file-attachments">
+            <el-tag v-for="file in msg.files" :key="file.id" size="small" type="info" class="file-tag">
+              <el-icon><Document /></el-icon> {{ file.originalName || file.name }}
+            </el-tag>
+          </div>
           <div class="message-time">{{ msg.createdAt }}</div>
         </div>
       </div>
@@ -44,22 +49,35 @@
 
     <!-- Input -->
     <div class="input-area">
-      <el-input
-        v-model="inputText"
-        type="textarea"
-        :rows="3"
-        placeholder="输入消息..."
-        @keydown.enter.ctrl="handleSend"
-        @keydown.enter.meta="handleSend"
-      />
-      <el-button
-        type="primary"
-        :loading="sending"
-        @click="handleSend"
-        :disabled="!inputText.trim()"
-      >
-        发送
-      </el-button>
+      <div class="pending-files" v-if="pendingFiles.length > 0">
+        <div v-for="(file, idx) in pendingFiles" :key="idx" class="pending-file">
+          <el-icon><Document /></el-icon>
+          <span class="file-name">{{ file.name }}</span>
+          <el-icon class="remove-file" @click="removePendingFile(idx)"><Close /></el-icon>
+        </div>
+      </div>
+      <div class="input-row">
+        <label class="upload-btn">
+          <input type="file" multiple @change="handleFileSelect" style="display: none" />
+          <el-icon :size="18"><Paperclip /></el-icon>
+        </label>
+        <el-input
+          v-model="inputText"
+          type="textarea"
+          :rows="3"
+          placeholder="输入消息... (Ctrl/⌘+Enter 发送)"
+          @keydown.enter.ctrl="handleSend"
+          @keydown.enter.meta="handleSend"
+        />
+        <el-button
+          type="primary"
+          :loading="sending"
+          @click="handleSend"
+          :disabled="!inputText.trim() && pendingFiles.length === 0"
+        >
+          发送
+        </el-button>
+      </div>
     </div>
   </div>
 </template>
@@ -67,6 +85,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 
 const route = useRoute()
@@ -78,6 +97,8 @@ const messages = ref<any[]>([])
 const inputText = ref('')
 const sending = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
+const pendingFiles = ref<File[]>([])
+const uploadedFiles = ref<any[]>([])
 
 // SSE EventSource for streaming
 let eventSource: EventSource | null = null
@@ -96,18 +117,30 @@ async function fetchMessages() {
 
 async function handleSend() {
   const text = inputText.value.trim()
-  if (!text || sending.value) return
+  if ((!text && pendingFiles.value.length === 0) || sending.value) return
+
+  // Upload files first
+  sending.value = true
+  const files = await uploadFiles()
+  uploadedFiles.value = files
+
+  // Build message content with file references
+  let displayContent = text
+  if (files.length > 0) {
+    const fileLinks = files.map(f => `[附件: ${f.originalName || f.name}]`).join(' ')
+    displayContent = displayContent ? `${displayContent}\n${fileLinks}` : fileLinks
+  }
 
   // Add user message to UI
   messages.value.push({
     id: Date.now(),
     role: 'user',
-    content: text,
-    createdAt: new Date().toLocaleString()
+    content: displayContent,
+    createdAt: new Date().toLocaleString(),
+    files: files
   })
 
   inputText.value = ''
-  sending.value = true
   scrollToBottom()
 
   try {
@@ -117,8 +150,14 @@ async function handleSend() {
       sessionId.value = data.id
     }
 
+    // Build message payload
+    const payload: any = { content: text || '(文件附件)' }
+    if (files.length > 0) {
+      payload.fileIds = files.map((f: any) => f.id)
+    }
+
     // Send message and start streaming
-    const response = await api.post(`/sessions/${sessionId.value}/messages`, { content: text })
+    const response = await api.post(`/sessions/${sessionId.value}/messages`, payload)
 
     // Start SSE stream
     startStream(response.data.eventId)
@@ -188,6 +227,42 @@ function startStream(eventId: string) {
     eventSource?.close()
     eventSource = null
   }
+}
+
+function handleFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  if (input.files) {
+    for (const file of Array.from(input.files)) {
+      pendingFiles.value.push(file)
+    }
+  }
+  input.value = ''
+}
+
+function removePendingFile(index: number) {
+  pendingFiles.value.splice(index, 1)
+}
+
+async function uploadFiles(): Promise<any[]> {
+  if (pendingFiles.value.length === 0) return []
+  const results: any[] = []
+  for (const file of pendingFiles.value) {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (sessionId.value) {
+      formData.append('sessionId', sessionId.value)
+    }
+    try {
+      const { data } = await api.post('/files/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      results.push(data)
+    } catch (e) {
+      ElMessage.error(`文件 ${file.name} 上传失败`)
+    }
+  }
+  pendingFiles.value = []
+  return results
 }
 
 function handleNewSession() {
@@ -307,13 +382,80 @@ onUnmounted(() => {
 }
 
 .input-area {
-  display: flex;
-  gap: 12px;
   padding-top: 12px;
   border-top: 1px solid #e6e6e6;
 }
 
-.input-area .el-input {
+.input-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.input-row .el-input {
   flex: 1;
+}
+
+.upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid #dcdfe6;
+  cursor: pointer;
+  color: #606266;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.upload-btn:hover {
+  border-color: #409eff;
+  color: #409eff;
+}
+
+.pending-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.pending-file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #f4f4f5;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.pending-file .file-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remove-file {
+  cursor: pointer;
+  color: #909399;
+}
+
+.remove-file:hover {
+  color: #f56c6c;
+}
+
+.file-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.file-tag {
+  font-size: 11px;
 }
 </style>

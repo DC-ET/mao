@@ -86,6 +86,9 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
                     try {
                         StreamChunk chunk = objectMapper.readValue(data, StreamChunk.class);
+                        if (log.isTraceEnabled()) {
+                            log.trace("SSE chunk parsed: {}", data);
+                        }
                         callback.onChunk(chunk);
 
                         // Try to extract usage from the last chunk

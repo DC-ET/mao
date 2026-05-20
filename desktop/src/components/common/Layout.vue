@@ -44,6 +44,7 @@
         </div>
 
         <div class="header-right">
+          <NotificationBell />
           <el-dropdown @command="handleCommand">
             <span class="user-info">
               <el-avatar :size="32" icon="User" />
@@ -69,6 +70,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+import NotificationBell from './NotificationBell.vue'
 
 const route = useRoute()
 const router = useRouter()

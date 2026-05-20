@@ -38,7 +38,7 @@ public class PermissionController {
             @PathVariable Long id,
             @RequestBody UpdateRoleRequest request) {
         Role role = permissionService.updateRole(
-                id, request.getName(), request.getDescription(), request.getStatus());
+                id, request.getName(), request.getDescription());
         return Result.ok(toRoleVO(role));
     }
 
@@ -72,7 +72,6 @@ public class PermissionController {
         vo.setName(role.getName());
         vo.setCode(role.getCode());
         vo.setDescription(role.getDescription());
-        vo.setStatus(role.getStatus());
         return vo;
     }
 
@@ -96,7 +95,6 @@ public class PermissionController {
     public static class UpdateRoleRequest {
         private String name;
         private String description;
-        private Integer status;
     }
 
     @Data
@@ -115,7 +113,6 @@ public class PermissionController {
         private String name;
         private String code;
         private String description;
-        private Integer status;
     }
 
     @Data

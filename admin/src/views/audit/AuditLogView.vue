@@ -38,17 +38,24 @@
       <!-- Table -->
       <el-table :data="logs" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="username" label="用户" width="120" />
-        <el-table-column prop="action" label="操作" width="120" />
-        <el-table-column prop="resourceType" label="资源类型" width="120" />
-        <el-table-column prop="resourceId" label="资源 ID" width="100" />
-        <el-table-column prop="ip" label="IP 地址" width="140" />
-        <el-table-column prop="createdAt" label="时间" width="180" />
-        <el-table-column label="详情" width="100">
+        <el-table-column prop="userId" label="用户ID" width="80" />
+        <el-table-column prop="method" label="方法" width="80">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="handleDetail(row)">查看</el-button>
+            <el-tag :type="row.method === 'GET' ? 'success' : row.method === 'POST' ? 'primary' : 'warning'" size="small">
+              {{ row.method }}
+            </el-tag>
           </template>
         </el-table-column>
+        <el-table-column prop="endpoint" label="接口路径" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="responseCode" label="状态码" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.responseCode === 200 ? 'success' : 'danger'" size="small">
+              {{ row.responseCode }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="latencyMs" label="耗时(ms)" width="100" />
+        <el-table-column prop="createdAt" label="时间" width="180" />
       </el-table>
 
       <el-pagination
@@ -83,16 +90,17 @@ const searchForm = ref({
 async function fetchLogs() {
   loading.value = true
   try {
-    const { data } = await api.get('/audit/logs', {
-      params: {
-        page: currentPage.value,
-        size: pageSize.value,
-        username: searchForm.value.username,
-        action: searchForm.value.action
-      }
-    })
-    logs.value = data || []
-    total.value = data?.length || 0
+    const params: any = {
+      page: currentPage.value,
+      size: pageSize.value
+    }
+    if (searchForm.value.action) params.action = searchForm.value.action
+    if (searchForm.value.dateRange?.[0]) params.startDate = searchForm.value.dateRange[0].toISOString()
+    if (searchForm.value.dateRange?.[1]) params.endDate = searchForm.value.dateRange[1].toISOString()
+
+    const { data } = await api.get('/audit/api-calls', { params })
+    logs.value = data?.records || []
+    total.value = data?.total || 0
   } finally {
     loading.value = false
   }
@@ -112,8 +120,26 @@ function handleDetail(row: any) {
   ElMessage.info(`查看日志详情: ${row.id}`)
 }
 
-function handleExport() {
-  ElMessage.info('导出功能开发中')
+async function handleExport() {
+  try {
+    const { data } = await api.get('/audit/logs/export', {
+      params: {
+        action: searchForm.value.action,
+        startDate: searchForm.value.dateRange?.[0]?.toISOString(),
+        endDate: searchForm.value.dateRange?.[1]?.toISOString()
+      }
+    })
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `audit-logs-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch {
+    ElMessage.error('导出失败')
+  }
 }
 
 onMounted(fetchLogs)
