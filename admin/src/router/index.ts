@@ -1,0 +1,78 @@
+import { createRouter, createWebHistory } from 'vue-router'
+import type { RouteRecordRaw } from 'vue-router'
+
+const routes: RouteRecordRaw[] = [
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('../views/auth/LoginView.vue'),
+    meta: { requiresAuth: false }
+  },
+  {
+    path: '/',
+    name: 'Layout',
+    component: () => import('../components/Layout.vue'),
+    redirect: '/agents',
+    children: [
+      {
+        path: 'agents',
+        name: 'Agents',
+        component: () => import('../views/agent/AgentListView.vue'),
+        meta: { title: 'Agent 管理' }
+      },
+      {
+        path: 'models',
+        name: 'Models',
+        component: () => import('../views/model/ModelListView.vue'),
+        meta: { title: '模型管理' }
+      },
+      {
+        path: 'users',
+        name: 'Users',
+        component: () => import('../views/user/UserListView.vue'),
+        meta: { title: '用户管理' }
+      },
+      {
+        path: 'skills',
+        name: 'Skills',
+        component: () => import('../views/skill/SkillListView.vue'),
+        meta: { title: 'Skills 管理' }
+      },
+      {
+        path: 'hub',
+        name: 'Hub',
+        component: () => import('../views/hub/HubManageView.vue'),
+        meta: { title: 'Hub 管理' }
+      },
+      {
+        path: 'audit',
+        name: 'Audit',
+        component: () => import('../views/audit/AuditLogView.vue'),
+        meta: { title: '审计日志' }
+      },
+      {
+        path: 'system',
+        name: 'System',
+        component: () => import('../views/system/SystemConfigView.vue'),
+        meta: { title: '系统配置' }
+      }
+    ]
+  }
+]
+
+const router = createRouter({
+  history: createWebHistory('/admin'),
+  routes
+})
+
+// Navigation guard
+router.beforeEach((to, _from, next) => {
+  const token = localStorage.getItem('token')
+  if (to.meta.requiresAuth !== false && !token) {
+    next('/login')
+  } else {
+    next()
+  }
+})
+
+export default router

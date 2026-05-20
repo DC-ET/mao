@@ -1,0 +1,125 @@
+package com.agentworkbench.harness.llm;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
+import okhttp3.*;
+import okio.BufferedSource;
+import org.springframework.stereotype.Component;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * OpenAI 兼容协议的 LLM 适配器实现
+ */
+@Slf4j
+@Component
+public class OpenAiLlmAdapter implements LlmAdapter {
+
+    private final OkHttpClient httpClient;
+    private final ObjectMapper objectMapper;
+
+    public OpenAiLlmAdapter(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+        this.httpClient = new OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(5, TimeUnit.MINUTES)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build();
+    }
+
+    @Override
+    public ChatResponse chat(ChatRequest request, LlmModelConfig config) {
+        // TODO: Implement synchronous chat
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
+    public void stream(ChatRequest request, LlmModelConfig config, StreamCallback callback) {
+        Request httpRequest = buildRequest(request, config, true);
+
+        try (Response response = httpClient.newCall(httpRequest).execute()) {
+            if (!response.isSuccessful()) {
+                callback.onError(new RuntimeException("LLM API returned " + response.code()));
+                return;
+            }
+
+            ResponseBody body = response.body();
+            if (body == null) {
+                callback.onError(new RuntimeException("LLM API returned empty body"));
+                return;
+            }
+
+            ChatUsage.ChatUsageBuilder usageBuilder = ChatUsage.builder();
+            BufferedSource source = body.source();
+
+            while (!source.exhausted()) {
+                String line = source.readUtf8Line();
+                if (line == null) break;
+
+                if (line.startsWith("data: ")) {
+                    String data = line.substring(6).trim();
+                    if ("[DONE]".equals(data)) {
+                        break;
+                    }
+
+                    try {
+                        StreamChunk chunk = objectMapper.readValue(data, StreamChunk.class);
+                        callback.onChunk(chunk);
+
+                        // Try to extract usage from the last chunk
+                        JsonNode node = objectMapper.readTree(data);
+                        if (node.has("usage")) {
+                            JsonNode usage = node.get("usage");
+                            usageBuilder.promptTokens(usage.path("prompt_tokens").asInt(0));
+                            usageBuilder.completionTokens(usage.path("completion_tokens").asInt(0));
+                            usageBuilder.totalTokens(usage.path("total_tokens").asInt(0));
+                        }
+                    } catch (Exception e) {
+                        log.warn("Failed to parse SSE chunk: {}", data, e);
+                    }
+                }
+            }
+
+            callback.onComplete(usageBuilder.build());
+
+        } catch (IOException e) {
+            callback.onError(e);
+        }
+    }
+
+    private Request buildRequest(ChatRequest request, LlmModelConfig config, boolean stream) {
+        try {
+            // Build OpenAI-compatible request body
+            var body = new java.util.HashMap<String, Object>();
+            body.put("model", config.getModelId());
+            body.put("messages", request.getMessages());
+            body.put("stream", stream);
+
+            if (request.getTemperature() != null) {
+                body.put("temperature", request.getTemperature());
+            }
+            if (request.getMaxTokens() != null) {
+                body.put("max_tokens", request.getMaxTokens());
+            }
+            if (request.getTools() != null && !request.getTools().isEmpty()) {
+                body.put("tools", request.getTools());
+            }
+
+            String json = objectMapper.writeValueAsString(body);
+
+            return new Request.Builder()
+                    .url(config.getBaseUrl() + "/chat/completions")
+                    .header("Authorization", "Bearer " + config.getApiKey())
+                    .header("Content-Type", "application/json")
+                    .post(RequestBody.create(json, MediaType.parse("application/json")))
+                    .build();
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to build LLM request", e);
+        }
+    }
+}
