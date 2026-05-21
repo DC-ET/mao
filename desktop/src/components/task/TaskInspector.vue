@@ -28,19 +28,27 @@
 
     <div class="inspector-section">
       <h4 class="section-title">待审批</h4>
-      <div class="approval-empty">无待审批事项</div>
+      <BashApprovalBar
+        v-if="pendingBashCommand"
+        :command="pendingBashCommand"
+        class="inspector-approval"
+        @confirm="$emit('bashConfirm', $event)"
+      />
+      <div v-else class="approval-empty">无待审批事项</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import ProgressChecklist from './ProgressChecklist.vue'
+import BashApprovalBar from '../chat/BashApprovalBar.vue'
 
 defineProps<{
   steps?: Array<{ id: string; label: string; done: boolean }>
   workspace?: string
   executionMode?: string
   wsConnected?: boolean
+  pendingBashCommand?: string
   activities: Array<{
     id?: number
     type: string
@@ -48,6 +56,10 @@ defineProps<{
     summary: string
     status?: string
   }>
+}>()
+
+defineEmits<{
+  bashConfirm: [approved: boolean]
 }>()
 
 function typeLabel(type: string) {
@@ -152,6 +164,10 @@ function typeLabel(type: string) {
 }
 
 /* Approval */
+.inspector-approval {
+  margin-top: 0;
+}
+
 .approval-empty {
   font-size: var(--aw-text-caption);
   color: var(--aw-ink-muted-48);

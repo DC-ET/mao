@@ -3,37 +3,33 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useSSE, type ToolCallStartData, type ToolCallResultData, type ActivityData } from './useSSE'
 import { useSessionStore } from '../stores/session'
+import {
+  appendTextDelta,
+  appendToolCallStart,
+  mapApiMessagesToChat
+} from '../utils/chatMessage'
 
-export interface FileAttachment {
-  id: string
-  name: string
-  originalName?: string
-}
+export type {
+  ChatMessage,
+  FileAttachment,
+  MessageSegment,
+  ToolCall
+} from '../types/chat'
+export { normalizeMessageRole } from '../types/chat'
 
-export interface ToolCall {
-  id: string
-  name: string
-  input?: Record<string, any>
-  result?: string
-  summary?: string
-  status: 'pending' | 'running' | 'success' | 'error'
-  isExpanded: boolean
-}
+import type { ChatMessage, FileAttachment, ToolCall } from '../types/chat'
+import { normalizeMessageRole } from '../types/chat'
 
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  createdAt: string
-  files?: FileAttachment[]
-  toolCalls?: ToolCall[]
-}
-
-/** 后端存 USER/ASSISTANT，前端 UI 使用小写 role */
-export function normalizeMessageRole(role: string): ChatMessage['role'] {
-  const r = (role || '').toLowerCase()
-  if (r === 'user' || r === 'assistant' || r === 'system') return r
-  return 'assistant'
+function inferResultStatus(result: string): ToolCall['status'] {
+  const lower = (result || '').toLowerCase()
+  if (
+    lower.includes('failed') ||
+    lower.includes('error') ||
+    lower.startsWith('tool execution failed')
+  ) {
+    return 'error'
+  }
+  return 'success'
 }
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
@@ -47,11 +43,29 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const agentName = ref('Agent')
   const activities = ref<ActivityData[]>([])
 
-  // Bash confirmation
+  // Bash approval (inline UI, not modal)
   const pendingBashCommand = ref('')
-  let pendingBashResolve: ((approved: boolean) => void) | null = null
+  const pendingBashRequestId = ref('')
+  let bashApprovalListenerSetup = false
 
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
+
+  function setupBashApprovalListener() {
+    if (!isElectron || bashApprovalListenerSetup) return
+    bashApprovalListenerSetup = true
+
+    ;(window as any).electronAPI.onBashApprovalRequest((data: { requestId: string; command: string }) => {
+      pendingBashRequestId.value = data.requestId
+      pendingBashCommand.value = data.command
+    })
+
+    ;(window as any).electronAPI.onBashApprovalDismiss((data: { requestId: string }) => {
+      if (data.requestId === pendingBashRequestId.value) {
+        pendingBashCommand.value = ''
+        pendingBashRequestId.value = ''
+      }
+    })
+  }
 
   // SSE composable — created lazily
   let sse: ReturnType<typeof useSSE> | null = null
@@ -63,19 +77,18 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       onContentDelta(delta) {
         const lastMsg = messages.value[messages.value.length - 1]
         if (lastMsg && normalizeMessageRole(lastMsg.role) === 'assistant') {
-          lastMsg.content += delta
+          appendTextDelta(lastMsg, delta)
         }
       },
       onToolCallStart(data: ToolCallStartData) {
         const lastMsg = messages.value[messages.value.length - 1]
         if (lastMsg && normalizeMessageRole(lastMsg.role) === 'assistant') {
-          if (!lastMsg.toolCalls) lastMsg.toolCalls = []
-          lastMsg.toolCalls.push({
+          appendToolCallStart(lastMsg, {
             id: data.call_id,
             name: data.tool_name,
             input: data.tool_input,
             status: 'running',
-            isExpanded: true
+            isExpanded: false
           })
         }
       },
@@ -85,7 +98,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
           const call = lastMsg.toolCalls.find(c => c.id === data.call_id)
           if (call) {
             call.result = data.result
-            call.status = data.status
+            call.status = data.status || inferResultStatus(data.result)
             call.isExpanded = false
             if (data.summary) call.summary = data.summary
           }
@@ -111,12 +124,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if (!sessionId.value) return
     try {
       const { data } = await api.get(`/sessions/${sessionId.value}/messages`)
-      messages.value = (data || []).map((m: any) => ({
-        ...m,
-        id: String(m.id ?? `msg_${Date.now()}_${Math.random()}`),
-        role: normalizeMessageRole(m.role),
-        toolCalls: m.toolCalls || []
-      }))
+      messages.value = mapApiMessagesToChat(data || [])
     } catch {
       // session might not exist yet
     }
@@ -171,6 +179,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         }
       })
 
+      setupBashApprovalListener()
       ;(window as any).electronAPI.connectLocalSession(sessionIdVal, token, wsBase)
     })
   }
@@ -188,6 +197,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     }
 
     sending.value = true
+    activities.value = []
     const uploadedFiles = await uploadFiles(files || [])
 
     // Build display content
@@ -235,7 +245,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         role: 'assistant',
         content: '',
         createdAt: new Date().toLocaleString(),
-        toolCalls: []
+        toolCalls: [],
+        segments: []
       })
 
       // Build payload
@@ -283,6 +294,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
     // Reconnect WebSocket for LOCAL mode
     if (mode === 'LOCAL' && isElectron) {
+      setupBashApprovalListener()
       const token = localStorage.getItem('token') || ''
       connectLocalWebSocket(sessionIdVal, token).catch(() => {
         ElMessage.warning('本地客户端连接失败，请检查桌面应用')
@@ -290,11 +302,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     }
   }
 
-  function confirmBash(approved: boolean) {
+  async function confirmBash(approved: boolean) {
+    const requestId = pendingBashRequestId.value
     pendingBashCommand.value = ''
-    if (pendingBashResolve) {
-      pendingBashResolve(approved)
-      pendingBashResolve = null
+    pendingBashRequestId.value = ''
+    if (requestId && isElectron) {
+      await (window as any).electronAPI.respondBashApproval(requestId, approved)
     }
   }
 
@@ -303,8 +316,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if (executionMode.value === 'LOCAL' && isElectron) {
       ;(window as any).electronAPI.disconnectLocalSession()
       ;(window as any).electronAPI.removeWsConnectionChangeListener()
-      ;(window as any).electronAPI.removeToolRequestListener()
+      ;(window as any).electronAPI.removeBashApprovalRequestListener?.()
+      ;(window as any).electronAPI.removeBashApprovalDismissListener?.()
+      bashApprovalListenerSetup = false
     }
+    pendingBashCommand.value = ''
+    pendingBashRequestId.value = ''
   }
 
   return {

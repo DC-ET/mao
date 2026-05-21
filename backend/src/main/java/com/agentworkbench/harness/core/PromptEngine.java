@@ -56,6 +56,13 @@ public class PromptEngine {
             sb.append("\n\n");
         }
 
+        // Workspace directory hint
+        if (context.getWorkspace() != null && !context.getWorkspace().isEmpty()) {
+            sb.append("## Working Directory\n\n");
+            sb.append("Your current working directory is: `").append(context.getWorkspace()).append("`\n");
+            sb.append("All relative file paths are resolved against this directory. Use `ls` or `read_file` to explore the project.\n\n");
+        }
+
         // Skill catalog (Layer 1) — name + description, ~100 token/skill
         String skillDescriptions = skillLoader.getDescriptions(context.getAvailableSkillNames());
         if (skillDescriptions != null && !skillDescriptions.isEmpty()) {

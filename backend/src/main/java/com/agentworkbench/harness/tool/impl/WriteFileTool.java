@@ -60,12 +60,17 @@ public class WriteFileTool implements Tool {
 
     @Override
     public String execute(String arguments) {
+        return execute(arguments, null);
+    }
+
+    @Override
+    public String execute(String arguments, String workspace) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
             String path = args.get("path").asText();
             String content = args.get("content").asText();
 
-            Path filePath = pathSandbox.resolve(path);
+            Path filePath = pathSandbox.resolve(path, workspace);
 
             Path parent = filePath.getParent();
             if (parent != null && !Files.exists(parent)) {

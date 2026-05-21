@@ -12,6 +12,44 @@ let wsReconnectDelay = 1000
 let wsExplicitDisconnect = false
 let currentWorkspace = ''
 const WS_MAX_RECONNECT_DELAY = 30000
+const BASH_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
+/** @type {Map<string, (approved: boolean) => void>} */
+const pendingBashApprovals = new Map()
+
+function sendToRenderer(channel, data) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, data)
+  }
+}
+
+function requestBashApproval(command) {
+  return new Promise((resolve) => {
+    const requestId = `bash_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+
+    const timer = setTimeout(() => {
+      if (!pendingBashApprovals.has(requestId)) return
+      pendingBashApprovals.delete(requestId)
+      resolve(false)
+      sendToRenderer('bash-approval-dismiss', { requestId })
+    }, BASH_APPROVAL_TIMEOUT_MS)
+
+    pendingBashApprovals.set(requestId, (approved) => {
+      clearTimeout(timer)
+      pendingBashApprovals.delete(requestId)
+      resolve(approved)
+    })
+
+    sendToRenderer('bash-approval-request', { requestId, command })
+  })
+}
+
+ipcMain.handle('bash-approval-response', (event, { requestId, approved }) => {
+  const resolve = pendingBashApprovals.get(requestId)
+  if (resolve) {
+    pendingBashApprovals.delete(requestId)
+    resolve(!!approved)
+  }
+})
 
 function resolveWorkspacePath(filePath) {
   if (!filePath || !currentWorkspace) return filePath
@@ -89,18 +127,8 @@ ipcMain.handle('select-directory', async () => {
 // ========== Local tool execution IPC handlers ==========
 
 ipcMain.handle('local-execute-bash', async (event, { command, timeout = 30, workdir }) => {
-  // Show confirmation dialog
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'warning',
-    title: '命令执行确认',
-    message: 'Agent 请求执行以下命令：',
-    detail: command,
-    buttons: ['拒绝', '允许执行'],
-    defaultId: 1,
-    cancelId: 0
-  })
-
-  if (response === 0) {
+  const approved = await requestBashApproval(command)
+  if (!approved) {
     return { exit_code: -1, output: 'User denied command execution.' }
   }
 
@@ -244,8 +272,6 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
           parsedArgs = {}
         }
 
-        sendToRenderer('tool-request', { requestId, toolName, arguments: parsedArgs })
-
         try {
           let result
           switch (toolName) {
@@ -305,17 +331,8 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
 }
 
 async function handleBashFromWebSocket(args) {
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'warning',
-    title: '命令执行确认',
-    message: 'Agent 请求执行以下命令：',
-    detail: args.command,
-    buttons: ['拒绝', '允许执行'],
-    defaultId: 1,
-    cancelId: 0
-  })
-
-  if (response === 0) {
+  const approved = await requestBashApproval(args.command)
+  if (!approved) {
     return { exit_code: -1, output: 'User denied command execution.' }
   }
 
@@ -386,11 +403,5 @@ async function handleLocalHttpRequest(args) {
     return { status: resp.status, body: await resp.text() }
   } catch (e) {
     return { error: e.message }
-  }
-}
-
-function sendToRenderer(channel, data) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(channel, data)
   }
 }
