@@ -31,11 +31,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localEditFile: (args) => ipcRenderer.invoke('local-edit-file', args),
   localHttpRequest: (args) => ipcRenderer.invoke('local-http-request', args),
 
-  // Tool request notifications from WebSocket
-  onToolRequest: (callback) => {
-    ipcRenderer.on('tool-request', (event, data) => callback(data))
+  // Bash approval — renderer UI, main process waits for response
+  onBashApprovalRequest: (callback) => {
+    ipcRenderer.on('bash-approval-request', (event, data) => callback(data))
   },
-  removeToolRequestListener: () => {
-    ipcRenderer.removeAllListeners('tool-request')
-  }
+  removeBashApprovalRequestListener: () => {
+    ipcRenderer.removeAllListeners('bash-approval-request')
+  },
+  onBashApprovalDismiss: (callback) => {
+    ipcRenderer.on('bash-approval-dismiss', (event, data) => callback(data))
+  },
+  removeBashApprovalDismissListener: () => {
+    ipcRenderer.removeAllListeners('bash-approval-dismiss')
+  },
+  respondBashApproval: (requestId, approved) =>
+    ipcRenderer.invoke('bash-approval-response', { requestId, approved })
 })

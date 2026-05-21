@@ -27,13 +27,11 @@
           <p>描述你想完成的任务</p>
         </div>
 
-        <template v-for="msg in messages" :key="msg.id">
-          <MessageBubble :message="msg" />
-          <ActivityFeed
-            v-if="normalizeMessageRole(msg.role) === 'assistant' && msg === messages[messages.length - 1] && currentActivities.length > 0"
-            :activities="currentActivities"
-          />
-        </template>
+        <MessageBubble
+          v-for="msg in messages"
+          :key="msg.id"
+          :message="msg"
+        />
 
         <div v-if="showTypingIndicator" class="typing-indicator">
           <div class="message-bubble assistant">
@@ -49,16 +47,16 @@
         </div>
       </div>
 
+      <BashApprovalBar
+        class="main-area-approval"
+        :command="pendingBashCommand"
+        @confirm="confirmBash"
+      />
+
       <ChatInput
         :disabled="sending"
         :loading="sending"
         @send="handleSend"
-      />
-
-      <BashConfirmDialog
-        :visible="!!pendingBashCommand"
-        :command="pendingBashCommand"
-        @confirm="confirmBash"
       />
     </div>
 
@@ -68,13 +66,15 @@
       :execution-mode="executionMode"
       :ws-connected="wsConnected"
       :activities="activities"
+      :pending-bash-command="pendingBashCommand"
+      @bash-confirm="confirmBash"
     />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole } from '../../composables/useChat'
 import { useAgentStore } from '../../stores/agent'
@@ -82,14 +82,12 @@ import { useSessionStore, type TaskPhase } from '../../stores/session'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskHeader from '../../components/task/TaskHeader.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
-import ActivityFeed from '../../components/task/ActivityFeed.vue'
 import WorkspaceBar from '../../components/chat/WorkspaceBar.vue'
 import MessageBubble from '../../components/chat/MessageBubble.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
-import BashConfirmDialog from '../../components/chat/BashConfirmDialog.vue'
+import BashApprovalBar from '../../components/chat/BashApprovalBar.vue'
 
 const route = useRoute()
-const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 
@@ -126,16 +124,14 @@ const sessionTitle = computed(() => {
   return session?.summary || session?.title || agentName.value || '新任务'
 })
 
-// Activities from the current execution round
-const currentActivities = computed(() => {
-  return activities.value
-})
-
 // 仅在尚未收到流式内容时显示打字动画，避免与 MessageBubble 重复
 const showTypingIndicator = computed(() => {
   if (!sending.value) return false
   const lastMsg = messages.value[messages.value.length - 1]
-  return normalizeMessageRole(lastMsg?.role ?? '') !== 'assistant' || !lastMsg.content
+  if (normalizeMessageRole(lastMsg?.role ?? '') !== 'assistant') return true
+  const hasText = !!(lastMsg.content?.trim() || lastMsg.segments?.some(s => s.type === 'text' && s.content.trim()))
+  const hasTools = (lastMsg.toolCalls?.length ?? 0) > 0
+  return !hasText && !hasTools
 })
 
 // Watch for SSE session_status events to update phase
@@ -167,16 +163,23 @@ watch(() => messages.value.length, () => {
   })
 })
 
-watch(() => {
-  const last = messages.value[messages.value.length - 1]
-  return last?.content?.length || 0
-}, () => {
-  nextTick(() => {
-    if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-    }
-  })
-})
+watch(
+  () => {
+    const last = messages.value[messages.value.length - 1]
+    return [
+      last?.content?.length || 0,
+      last?.toolCalls?.length || 0,
+      last?.toolCalls?.map(t => t.status).join(',') || ''
+    ].join('|')
+  },
+  () => {
+    nextTick(() => {
+      if (messagesContainer.value) {
+        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      }
+    })
+  }
+)
 
 function handleSend(text: string, files: File[]) {
   sendMessage(text, files)
@@ -338,10 +341,14 @@ onUnmounted(() => {
   background: var(--aw-ink-muted-48);
 }
 
-/* Hide inspector on narrow screens */
+/* 宽屏：审批在右侧 Inspector；窄屏：审批在输入框上方 */
+.main-area-approval {
+  display: none;
+}
+
 @media (max-width: 1024px) {
-  .task-inspector {
-    display: none;
+  .main-area-approval {
+    display: block;
   }
 }
 </style>

@@ -7,18 +7,38 @@
       <div v-if="role === 'user'" class="message-text user-text">
         {{ message.content }}
       </div>
-      <div
-        v-else
-        class="message-text assistant-text markdown-body"
-        v-html="renderedContent"
-      />
-      <div v-if="message.toolCalls && message.toolCalls.length > 0" class="tool-calls">
-        <ToolCallCard
-          v-for="tc in message.toolCalls"
-          :key="tc.id"
-          :tool-call="tc"
+
+      <!-- assistant：按时间线穿插正文与工具 -->
+      <template v-else-if="timelineSegments.length > 0">
+        <template v-for="(seg, idx) in timelineSegments" :key="`${message.id}-seg-${idx}`">
+          <div
+            v-if="seg.type === 'text'"
+            class="message-text assistant-text markdown-body"
+            v-html="renderSegmentMarkdown(seg.content)"
+          />
+          <ToolCallCard
+            v-else-if="getToolCall(seg.callId)"
+            :tool-call="getToolCall(seg.callId)!"
+          />
+        </template>
+      </template>
+
+      <!-- assistant 回退：无 segments 时 -->
+      <template v-else-if="role === 'assistant'">
+        <div
+          v-if="message.content"
+          class="message-text assistant-text markdown-body"
+          v-html="renderedContent"
         />
-      </div>
+        <div v-if="message.toolCalls && message.toolCalls.length > 0" class="tool-calls">
+          <ToolCallCard
+            v-for="tc in message.toolCalls"
+            :key="tc.id"
+            :tool-call="tc"
+          />
+        </div>
+      </template>
+
       <div v-if="message.files && message.files.length > 0" class="file-attachments">
         <el-tag v-for="file in message.files" :key="file.id" size="small" type="info" class="file-tag">
           <el-icon><Document /></el-icon>
@@ -35,16 +55,41 @@ import { computed } from 'vue'
 import { Document } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../composables/useMarkdown'
 import ToolCallCard from './ToolCallCard.vue'
-import { normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
+import {
+  normalizeMessageRole,
+  type ChatMessage,
+  type MessageSegment,
+  type ToolCall
+} from '../../composables/useChat'
+import { buildSegmentsFromContentAndTools } from '../../utils/chatMessage'
 
 const props = defineProps<{ message: ChatMessage }>()
 
 const role = computed(() => normalizeMessageRole(props.message.role))
 
-const renderedContent = computed(() => {
-  if (role.value === 'user') return props.message.content
-  return renderMarkdown(props.message.content)
+const timelineSegments = computed((): MessageSegment[] => {
+  if (role.value !== 'assistant') return []
+  if (props.message.segments?.length) {
+    return props.message.segments
+  }
+  if (props.message.toolCalls?.length || props.message.content?.trim()) {
+    return buildSegmentsFromContentAndTools(
+      props.message.content || '',
+      props.message.toolCalls || []
+    )
+  }
+  return []
 })
+
+const renderedContent = computed(() => renderMarkdown(props.message.content))
+
+function renderSegmentMarkdown(content: string) {
+  return renderMarkdown(content)
+}
+
+function getToolCall(callId: string): ToolCall | undefined {
+  return props.message.toolCalls?.find(c => c.id === callId)
+}
 </script>
 
 <style scoped>
@@ -101,6 +146,11 @@ const renderedContent = computed(() => {
   background: var(--aw-canvas-parchment);
   color: var(--aw-body);
   border-top-left-radius: var(--aw-radius-xs);
+  margin-bottom: 4px;
+}
+
+.assistant-text:last-child {
+  margin-bottom: 0;
 }
 
 /* Markdown body styles */

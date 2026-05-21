@@ -61,13 +61,18 @@ public class EditFileTool implements Tool {
 
     @Override
     public String execute(String arguments) {
+        return execute(arguments, null);
+    }
+
+    @Override
+    public String execute(String arguments, String workspace) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
             String path = args.get("path").asText();
             String oldString = args.get("old_string").asText();
             String newString = args.get("new_string").asText();
 
-            Path filePath = pathSandbox.resolve(path);
+            Path filePath = pathSandbox.resolve(path, workspace);
 
             if (!Files.exists(filePath)) {
                 return objectMapper.writeValueAsString(Map.of(

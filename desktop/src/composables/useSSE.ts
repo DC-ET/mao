@@ -2,7 +2,7 @@ import { ref, onUnmounted } from 'vue'
 
 export interface ToolCallStartData {
   tool_name: string
-  tool_input?: Record<string, any>
+  tool_input?: Record<string, unknown>
   call_id: string
 }
 
@@ -53,10 +53,23 @@ export function useSSE(options: SSEOptions) {
 
     eventSource.addEventListener('tool_call_start', (event) => {
       const data = JSON.parse(event.data)
+      let toolInput: Record<string, unknown> | undefined
+      const rawArgs = data.arguments ?? data.tool_input
+      if (rawArgs != null) {
+        if (typeof rawArgs === 'string') {
+          try {
+            toolInput = JSON.parse(rawArgs)
+          } catch {
+            toolInput = undefined
+          }
+        } else if (typeof rawArgs === 'object') {
+          toolInput = rawArgs
+        }
+      }
       options.onToolCallStart({
         tool_name: data.tool_name,
-        tool_input: data.tool_input,
-        call_id: data.call_id || `call_${Date.now()}`
+        tool_input: toolInput,
+        call_id: data.tool_call_id || data.call_id || `call_${Date.now()}`
       })
     })
 

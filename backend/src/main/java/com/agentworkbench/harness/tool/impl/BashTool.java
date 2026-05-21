@@ -68,6 +68,11 @@ public class BashTool implements Tool {
 
     @Override
     public String execute(String arguments) {
+        return execute(arguments, null);
+    }
+
+    @Override
+    public String execute(String arguments, String workspace) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
             String command = args.get("command").asText();
@@ -76,7 +81,7 @@ public class BashTool implements Tool {
             boolean async = args.has("async") && args.get("async").asBoolean();
 
             if (async) {
-                String taskId = backgroundTaskManager.submit(() -> executeCommand(command, timeout, workdir));
+                String taskId = backgroundTaskManager.submit(() -> executeCommand(command, timeout, workdir, workspace));
                 return objectMapper.writeValueAsString(Map.of(
                         "async", true,
                         "task_id", taskId,
@@ -84,7 +89,7 @@ public class BashTool implements Tool {
                 ));
             }
 
-            return executeCommand(command, timeout, workdir);
+            return executeCommand(command, timeout, workdir, workspace);
         } catch (Exception e) {
             log.error("BashTool execution failed", e);
             try {
@@ -98,12 +103,12 @@ public class BashTool implements Tool {
         }
     }
 
-    private String executeCommand(String command, int timeout, String workdir) throws Exception {
+    private String executeCommand(String command, int timeout, String workdir, String workspace) throws Exception {
         ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
         pb.redirectErrorStream(true);
 
         if (workdir != null) {
-            File dir = pathSandbox.resolveAsFile(workdir);
+            File dir = pathSandbox.resolve(workdir, workspace).toFile();
             if (!dir.isDirectory()) {
                 return objectMapper.writeValueAsString(Map.of(
                         "exit_code", -1,
@@ -112,7 +117,7 @@ public class BashTool implements Tool {
             }
             pb.directory(dir);
         } else {
-            pb.directory(pathSandbox.getWorkspaceRoot().toFile());
+            pb.directory(pathSandbox.getEffectiveWorkspaceRoot(workspace).toFile());
         }
 
         Process process = pb.start();

@@ -66,13 +66,18 @@ public class ReadFileTool implements Tool {
 
     @Override
     public String execute(String arguments) {
+        return execute(arguments, null);
+    }
+
+    @Override
+    public String execute(String arguments, String workspace) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
             String path = args.get("path").asText();
             int offset = args.has("offset") ? args.get("offset").asInt() : 0;
             int limit = args.has("limit") ? args.get("limit").asInt() : Integer.MAX_VALUE;
 
-            Path filePath = pathSandbox.resolve(path);
+            Path filePath = pathSandbox.resolve(path, workspace);
 
             if (!Files.exists(filePath)) {
                 return objectMapper.writeValueAsString(Map.of(

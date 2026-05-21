@@ -11,10 +11,14 @@
         <span v-if="toolCall.status === 'running'" class="status-spinner"></span>
         <el-icon v-else-if="toolCall.status === 'success'" class="status-icon success"><Select /></el-icon>
         <el-icon v-else-if="toolCall.status === 'error'" class="status-icon error"><CloseBold /></el-icon>
-        <el-icon class="expand-icon" :class="{ expanded: isExpanded }"><ArrowDown /></el-icon>
+        <el-icon
+          v-if="hasExpandableBody"
+          class="expand-icon"
+          :class="{ expanded: isExpanded }"
+        ><ArrowDown /></el-icon>
       </div>
     </div>
-    <div v-if="isExpanded" class="tool-body">
+    <div v-if="isExpanded && hasExpandableBody" class="tool-body">
       <div v-if="commandText" class="tool-command">
         <pre><code>{{ commandText }}</code></pre>
       </div>
@@ -24,20 +28,27 @@
       </div>
       <div v-if="toolCall.result" class="tool-result">
         <div class="result-label">输出</div>
-        <pre class="result-content"><code>{{ toolCall.result }}</code></pre>
+        <pre class="result-content"><code>{{ truncatedResult }}</code></pre>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { Select, CloseBold, ArrowDown, Document, Monitor, Edit, Search, SetUp } from '@element-plus/icons-vue'
 import type { ToolCall } from '../../composables/useChat'
 
 const props = defineProps<{ toolCall: ToolCall }>()
 
-const isExpanded = ref(false)
+const isExpanded = ref(props.toolCall.isExpanded ?? false)
+
+watch(
+  () => props.toolCall.isExpanded,
+  val => {
+    if (val !== undefined) isExpanded.value = val
+  }
+)
 
 const toolIcon = computed(() => {
   const name = props.toolCall.name.toLowerCase()
@@ -49,9 +60,7 @@ const toolIcon = computed(() => {
 })
 
 const displaySummary = computed(() => {
-  // Prefer backend-generated summary
   if (props.toolCall.summary) return props.toolCall.summary
-  // Fallback: tool name + input preview
   const preview = inputPreview.value
   return preview ? `${props.toolCall.name} · ${preview}` : props.toolCall.name
 })
@@ -59,28 +68,42 @@ const displaySummary = computed(() => {
 const inputPreview = computed(() => {
   const input = props.toolCall.input
   if (!input) return ''
-  if (input.command) return input.command.slice(0, 60) + (input.command.length > 60 ? '...' : '')
-  if (input.path) return input.path
-  if (input.query) return input.query
+  const cmd = input.command
+  if (typeof cmd === 'string') {
+    return cmd.slice(0, 60) + (cmd.length > 60 ? '...' : '')
+  }
+  const path = input.path ?? input.file_path
+  if (typeof path === 'string') return path
+  const query = input.query
+  if (typeof query === 'string') return query
   return ''
 })
 
 const commandText = computed(() => {
-  const input = props.toolCall.input
-  if (!input) return ''
-  if (input.command) return input.command
-  return ''
+  const cmd = props.toolCall.input?.command
+  return typeof cmd === 'string' ? cmd : ''
 })
 
 const filePath = computed(() => {
   const input = props.toolCall.input
   if (!input) return ''
-  if (input.path) return input.path
-  if (input.file_path) return input.file_path
-  return ''
+  const path = input.path ?? input.file_path
+  return typeof path === 'string' ? path : ''
+})
+
+const hasExpandableBody = computed(
+  () => !!(commandText.value || filePath.value || props.toolCall.result)
+)
+
+const truncatedResult = computed(() => {
+  const r = props.toolCall.result || ''
+  const max = 4000
+  if (r.length <= max) return r
+  return r.slice(0, max) + '\n…（输出已截断）'
 })
 
 function toggleExpand() {
+  if (!hasExpandableBody.value) return
   isExpanded.value = !isExpanded.value
 }
 </script>
@@ -89,7 +112,7 @@ function toggleExpand() {
 .tool-call-card {
   border: 1px solid var(--aw-hairline);
   border-radius: var(--aw-radius-lg);
-  margin: 8px 0;
+  margin: 6px 0;
   overflow: hidden;
   background: var(--aw-canvas);
   transition: border-color 0.2s;
@@ -107,7 +130,7 @@ function toggleExpand() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 8px 12px;
   cursor: pointer;
   user-select: none;
   transition: background 0.15s;
