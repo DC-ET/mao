@@ -1,10 +1,10 @@
 package com.agentworkbench.hub.service;
 
 import com.agentworkbench.agent.entity.Agent;
-import com.agentworkbench.agent.entity.AgentSkill;
+import com.agentworkbench.agent.entity.AgentTool;
 import com.agentworkbench.agent.entity.AgentTag;
 import com.agentworkbench.agent.mapper.AgentMapper;
-import com.agentworkbench.agent.mapper.AgentSkillMapper;
+import com.agentworkbench.agent.mapper.AgentToolMapper;
 import com.agentworkbench.agent.mapper.AgentTagMapper;
 import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
@@ -30,7 +30,7 @@ public class HubService {
 
     private final AgentMapper agentMapper;
     private final AgentTagMapper agentTagMapper;
-    private final AgentSkillMapper agentSkillMapper;
+    private final AgentToolMapper agentToolMapper;
     private final HubInstallationMapper hubInstallationMapper;
     private final AgentRatingMapper agentRatingMapper;
     private final AgentCommentMapper agentCommentMapper;
@@ -117,15 +117,15 @@ public class HubService {
             agentTagMapper.insert(newTag);
         }
 
-        // Copy skills
-        List<AgentSkill> skills = agentSkillMapper.selectList(
-                new QueryWrapper<AgentSkill>().eq("agent_id", agentId));
-        for (AgentSkill skill : skills) {
-            AgentSkill newSkill = new AgentSkill();
-            newSkill.setAgentId(copy.getId());
-            newSkill.setSkillId(skill.getSkillId());
-            newSkill.setConfig(skill.getConfig());
-            agentSkillMapper.insert(newSkill);
+        // Copy tools
+        List<AgentTool> tools = agentToolMapper.selectList(
+                new QueryWrapper<AgentTool>().eq("agent_id", agentId));
+        for (AgentTool tool : tools) {
+            AgentTool newTool = new AgentTool();
+            newTool.setAgentId(copy.getId());
+            newTool.setToolId(tool.getToolId());
+            newTool.setConfig(tool.getConfig());
+            agentToolMapper.insert(newTool);
         }
 
         // Record installation

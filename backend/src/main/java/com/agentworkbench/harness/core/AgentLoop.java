@@ -1,7 +1,7 @@
 package com.agentworkbench.harness.core;
 
 import com.agentworkbench.harness.llm.*;
-import com.agentworkbench.harness.skill.SkillDispatcher;
+import com.agentworkbench.harness.tool.ToolDispatcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -23,7 +23,7 @@ public class AgentLoop {
     private final LlmAdapter llmAdapter;
     private final PromptEngine promptEngine;
     private final ContextManager contextManager;
-    private final SkillDispatcher skillDispatcher;
+    private final ToolDispatcher toolDispatcher;
     private final BackgroundTaskManager backgroundTaskManager;
     private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
 
@@ -177,7 +177,7 @@ public class AgentLoop {
             ChatRequest.ToolCall tc = pendingCalls.get(0);
             String toolName = tc.getFunction().getName();
             if ("todo".equals(toolName)) calledTodo = true;
-            String result = dispatchTool(toolName, tc.getFunction().getArguments());
+            String result = dispatchTool(toolName, tc.getFunction().getArguments(), context);
             context.addToolResult(tc.getId(), result);
             listener.onToolCallResult(tc.getId(), result);
             if (persistenceCallback != null) {
@@ -195,7 +195,7 @@ public class AgentLoop {
                 if ("todo".equals(toolName)) calledTodo = true;
 
                 futures.add(CompletableFuture.runAsync(() -> {
-                    results[index] = dispatchTool(toolName, tc.getFunction().getArguments());
+                    results[index] = dispatchTool(toolName, tc.getFunction().getArguments(), context);
                 }, toolExecutor));
             }
 
@@ -215,9 +215,9 @@ public class AgentLoop {
         return calledTodo;
     }
 
-    private String dispatchTool(String toolName, String arguments) {
+    private String dispatchTool(String toolName, String arguments, AgentExecutionContext context) {
         try {
-            return skillDispatcher.dispatch(toolName, arguments);
+            return toolDispatcher.dispatch(toolName, arguments, context.getExecutionMode(), context.getSessionId());
         } catch (Exception e) {
             return "Tool execution failed: " + e.getMessage();
         }

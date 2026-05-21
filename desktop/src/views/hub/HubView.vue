@@ -1,75 +1,80 @@
 <template>
   <div class="hub">
-    <el-row :gutter="20">
-      <el-col :span="24">
-        <div class="hub-header">
-          <h2>Agent Hub</h2>
-          <div class="header-actions">
-            <el-select v-model="selectedCategory" placeholder="全部分类" clearable class="category-select">
-              <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
-            </el-select>
-            <el-select v-model="listType" class="type-select">
-              <el-option label="推荐" value="recommended" />
-              <el-option label="最热" value="hot" />
-              <el-option label="最新" value="new" />
-              <el-option label="全部" value="all" />
-            </el-select>
-            <el-input
-              v-model="searchQuery"
-              placeholder="搜索 Agent..."
-              prefix-icon="Search"
-              clearable
-              class="search-input"
-            />
-          </div>
-        </div>
-      </el-col>
-    </el-row>
+    <div class="hub-header">
+      <h1 class="hub-title">Agent Hub</h1>
+      <div class="header-actions">
+        <el-select v-model="selectedCategory" placeholder="全部分类" clearable class="category-select">
+          <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
+        </el-select>
+        <el-select v-model="listType" class="type-select">
+          <el-option label="推荐" value="recommended" />
+          <el-option label="最热" value="hot" />
+          <el-option label="最新" value="new" />
+          <el-option label="全部" value="all" />
+        </el-select>
+        <el-input
+          v-model="searchQuery"
+          placeholder="搜索 Agent..."
+          prefix-icon="Search"
+          clearable
+          class="search-input"
+        />
+      </div>
+    </div>
 
-    <el-row :gutter="20">
-      <el-col :span="6" v-for="agent in filteredAgents" :key="agent.id">
-        <el-card class="agent-card" @click="showAgentDetail(agent)">
-          <div class="agent-icon">
-            <el-avatar :size="64" :src="agent.iconUrl" icon="Monitor" />
-          </div>
+    <div v-if="loading" class="loading-state">
+      <el-icon class="loading-spinner"><Loading /></el-icon>
+    </div>
+
+    <div v-else-if="filteredAgents.length === 0" class="empty-state">
+      <el-empty description="暂无可用的 Agent" />
+    </div>
+
+    <div v-else class="agent-grid">
+      <div
+        v-for="agent in filteredAgents"
+        :key="agent.id"
+        class="agent-card"
+        @click="showAgentDetail(agent)"
+      >
+        <div class="agent-icon">
+          <el-avatar :size="48" :src="agent.iconUrl" icon="Monitor" />
+        </div>
+        <div class="agent-info">
           <h3>{{ agent.name }}</h3>
           <p class="description">{{ agent.description }}</p>
-          <div class="rating-row">
-            <el-rate v-model="agent.avgRating" disabled show-score text-color="#ff9900" size="small" />
-            <span class="rating-count">({{ agent.ratingCount || 0 }})</span>
-          </div>
           <div class="meta">
+            <span class="rating">
+              <el-rate v-model="agent.avgRating" disabled text-color="#ff9900" size="small" />
+              <span class="rating-count">({{ agent.ratingCount || 0 }})</span>
+            </span>
             <span class="installs">
               <el-icon><Download /></el-icon>
-              {{ agent.installCount }} 次安装
+              {{ agent.installCount }}
             </span>
-            <el-tag v-if="agent.category" size="small" type="info">{{ agent.category }}</el-tag>
           </div>
           <el-button
             type="primary"
-            class="install-btn"
+            size="small"
+            class="install-btn pill-btn"
             @click.stop="handleInstall(agent)"
             :disabled="agent.installed"
           >
             {{ agent.installed ? '已安装' : '安装' }}
           </el-button>
-        </el-card>
-      </el-col>
-
-      <el-col :span="24" v-if="filteredAgents.length === 0 && !loading">
-        <el-empty description="暂无可用的 Agent" />
-      </el-col>
-    </el-row>
+        </div>
+      </div>
+    </div>
 
     <!-- Agent Detail Dialog -->
-    <el-dialog v-model="detailVisible" :title="detailAgent?.name" width="600px">
+    <el-dialog v-model="detailVisible" :title="detailAgent?.name" width="600px" class="detail-dialog">
       <div v-if="detailAgent">
-        <p>{{ detailAgent.description }}</p>
+        <p class="detail-desc">{{ detailAgent.description }}</p>
         <el-divider />
-        <h4>评分</h4>
+        <h4 class="detail-section-title">评分</h4>
         <el-rate v-model="myRating" :max="5" show-text @change="handleRate" />
         <el-divider />
-        <h4>评论 ({{ comments.length }})</h4>
+        <h4 class="detail-section-title">评论 ({{ comments.length }})</h4>
         <div v-for="comment in comments" :key="comment.id" class="comment-item">
           <div class="comment-header">
             <span class="comment-user">用户 #{{ comment.userId }}</span>
@@ -77,10 +82,10 @@
           </div>
           <div class="comment-content">{{ comment.content }}</div>
         </div>
-        <div v-if="comments.length === 0" style="color: #909399; text-align: center; padding: 20px">暂无评论</div>
+        <div v-if="comments.length === 0" class="no-comments">暂无评论</div>
         <el-divider />
         <el-input v-model="newComment" type="textarea" :rows="2" placeholder="发表评论..." />
-        <el-button type="primary" style="margin-top: 8px" @click="handleComment" :disabled="!newComment.trim()">发表评论</el-button>
+        <el-button type="primary" class="pill-btn" style="margin-top: 8px" @click="handleComment" :disabled="!newComment.trim()">发表评论</el-button>
       </div>
     </el-dialog>
   </div>
@@ -89,6 +94,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Download, Loading } from '@element-plus/icons-vue'
 import { api } from '../../api'
 
 const loading = ref(false)
@@ -157,7 +163,6 @@ async function showAgentDetail(agent: any) {
   myRating.value = agent.avgRating || 0
   newComment.value = ''
   detailVisible.value = true
-  // Fetch comments
   const { data } = await api.get(`/hub/agents/${agent.id}/comments`)
   comments.value = (data as any) || []
 }
@@ -196,112 +201,184 @@ onMounted(() => {
 
 <style scoped>
 .hub {
-  padding: 20px 0;
+  padding: var(--aw-space-section) var(--aw-space-xl);
+  max-width: 1068px;
+  margin: 0 auto;
 }
 
 .hub-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-}
-
-.hub-header h2 {
-  margin: 0;
-  color: #303133;
-}
-
-.search-input {
-  width: 300px;
-}
-
-.agent-card {
-  margin-bottom: 20px;
-  transition: all 0.3s;
-}
-
-.agent-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.agent-icon {
-  text-align: center;
-  margin-bottom: 12px;
-}
-
-.agent-card h3 {
-  text-align: center;
-  margin: 0 0 8px 0;
-  color: #303133;
-}
-
-.description {
-  color: #909399;
-  font-size: 12px;
-  text-align: center;
-  margin: 0 0 12px 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.meta {
-  display: flex;
-  justify-content: center;
-  gap: 16px;
-  margin-bottom: 12px;
-  font-size: 12px;
-  color: #909399;
-}
-
-.meta .el-icon {
-  margin-right: 4px;
-}
-
-.tags {
-  display: flex;
-  justify-content: center;
-  gap: 4px;
+  margin-bottom: var(--aw-space-xl);
   flex-wrap: wrap;
-  margin-bottom: 12px;
+  gap: var(--aw-space-sm);
 }
 
-.install-btn {
-  width: 100%;
+.hub-title {
+  margin: 0;
+  font-family: var(--aw-font-display);
+  font-size: var(--aw-text-display-lg);
+  font-weight: 600;
+  color: var(--aw-ink);
+  letter-spacing: 0;
+  line-height: 1.1;
 }
 
 .header-actions {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
+}
+
+.search-input {
+  width: 240px;
+}
+
+.search-input :deep(.el-input__wrapper) {
+  border-radius: var(--aw-radius-pill);
 }
 
 .category-select {
-  width: 140px;
+  width: 130px;
 }
 
 .type-select {
-  width: 100px;
+  width: 90px;
 }
 
-.rating-row {
+.loading-state {
+  display: flex;
+  justify-content: center;
+  padding: 60px;
+}
+
+.loading-spinner {
+  font-size: 24px;
+  color: var(--aw-ink-muted-48);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.empty-state {
+  padding: 80px;
+}
+
+/* Agent Grid */
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--aw-space-md);
+}
+
+.agent-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--aw-space-sm);
+  padding: var(--aw-space-lg);
+  background: var(--aw-canvas);
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-lg);
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.agent-card:hover {
+  border-color: var(--aw-primary);
+  transform: translateY(-1px);
+}
+
+.agent-icon {
+  flex-shrink: 0;
+}
+
+.agent-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-info h3 {
+  margin: 0 0 var(--aw-space-xxs);
+  font-family: var(--aw-font-display);
+  font-size: var(--aw-text-body);
+  font-weight: 600;
+  color: var(--aw-ink);
+  letter-spacing: -0.374px;
+}
+
+.description {
+  color: var(--aw-ink-muted-80);
+  font-size: var(--aw-text-caption);
+  margin: 0 0 var(--aw-space-xs);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.43;
+  letter-spacing: -0.224px;
+}
+
+.meta {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--aw-space-sm);
+  margin-bottom: 10px;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
+}
+
+.rating {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .rating-count {
-  font-size: 12px;
-  color: #909399;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
+}
+
+.installs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.install-btn {
+  width: 100%;
+  border-radius: var(--aw-radius-pill) !important;
+}
+
+/* Dialog */
+.detail-desc {
+  color: var(--aw-ink-muted-80);
+  line-height: 1.47;
+  letter-spacing: -0.374px;
+  font-size: var(--aw-text-body);
+}
+
+.detail-section-title {
+  margin: 0 0 var(--aw-space-xs);
+  font-family: var(--aw-font-display);
+  font-size: var(--aw-text-body);
+  font-weight: 600;
+  color: var(--aw-ink);
+  letter-spacing: -0.374px;
+}
+
+.no-comments {
+  color: var(--aw-ink-muted-48);
+  text-align: center;
+  padding: var(--aw-space-lg);
+  font-size: var(--aw-text-caption);
 }
 
 .comment-item {
   padding: 12px 0;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--aw-divider-soft);
 }
 
 .comment-item:last-child {
@@ -312,23 +389,54 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .comment-user {
-  font-size: 14px;
-  font-weight: 500;
-  color: #303133;
+  font-size: var(--aw-text-body);
+  font-weight: 600;
+  color: var(--aw-ink);
+  letter-spacing: -0.374px;
 }
 
 .comment-time {
-  font-size: 12px;
-  color: #c0c4cc;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
+  letter-spacing: -0.12px;
 }
 
 .comment-content {
-  font-size: 14px;
-  color: #606266;
-  line-height: 1.6;
+  font-size: var(--aw-text-body);
+  color: var(--aw-ink-muted-80);
+  line-height: 1.47;
+  letter-spacing: -0.374px;
+}
+
+.pill-btn {
+  border-radius: var(--aw-radius-pill) !important;
+}
+
+/* Dialog overrides */
+:deep(.el-dialog) {
+  border-radius: var(--aw-radius-lg);
+}
+
+:deep(.el-dialog__header) {
+  padding: 20px 24px 0;
+}
+
+:deep(.el-dialog__title) {
+  font-family: var(--aw-font-display);
+  font-size: var(--aw-text-tagline);
+  font-weight: 600;
+  letter-spacing: 0.231px;
+}
+
+:deep(.el-dialog__body) {
+  padding: 16px 24px;
+}
+
+:deep(.el-dialog__footer) {
+  padding: 0 24px 20px;
 }
 </style>

@@ -24,6 +24,31 @@ public class Session {
 
     private Integer isFavorite;
 
+    private String executionMode;
+
+    private String workspace;
+
+    /** Task phase: IDLE|RUNNING|WAITING_USER|WAITING_APPROVAL|COMPLETED|FAILED */
+    private String phase;
+
+    /** One-line task summary */
+    private String summary;
+
+    /** When the current execution round started */
+    private LocalDateTime startedAt;
+
+    /** Accumulated execution time in milliseconds */
+    private Long elapsedMs;
+
+    /** Progress steps as JSON: [{id, label, done}] */
+    private String stepsJson;
+
+    /** Project key: workspace basename or user-defined project name */
+    private String projectKey;
+
+    /** Last activity timestamp */
+    private LocalDateTime lastActivityAt;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

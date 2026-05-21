@@ -3,81 +3,71 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>Skills 管理</span>
-          <el-button type="primary" @click="handleCreate">
-            <el-icon><Plus /></el-icon>
-            添加 Skill
-          </el-button>
+          <span>Skill 知识文档</span>
+          <el-tag type="info" size="small">基于文件系统管理</el-tag>
         </div>
       </template>
 
-      <el-table :data="skills" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="名称" width="150" />
-        <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="type" label="类型" width="100">
+      <el-table :data="skillDocs" v-loading="loading" stripe>
+        <el-table-column prop="name" label="名称" width="180" />
+        <el-table-column prop="description" label="描述" min-width="300" show-overflow-tooltip />
+        <el-table-column prop="filePath" label="文件路径" min-width="250" show-overflow-tooltip />
+        <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
-            <el-tag size="small">{{ row.type }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" size="small">
-              {{ row.status === 'ACTIVE' ? '启用' : '禁用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            <el-button type="primary" link size="small" @click="handleView(row)">查看内容</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- Skill 内容查看弹窗 -->
+    <el-dialog
+      v-model="detailVisible"
+      :title="`Skill: ${currentDoc?.name || ''}`"
+      width="700px"
+    >
+      <div v-if="currentDoc" class="skill-detail">
+        <p><strong>描述：</strong>{{ currentDoc.description }}</p>
+        <p><strong>文件路径：</strong>{{ currentDoc.filePath }}</p>
+        <el-divider />
+        <div class="skill-body">
+          <pre>{{ currentDoc.body }}</pre>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 
 const loading = ref(false)
-const skills = ref<any[]>([])
+const skillDocs = ref<any[]>([])
+const detailVisible = ref(false)
+const currentDoc = ref<any>(null)
 
-async function fetchSkills() {
+async function fetchSkillDocs() {
   loading.value = true
   try {
-    const { data } = await api.get('/skills')
-    skills.value = data || []
+    const { data } = await api.get('/skill-docs')
+    skillDocs.value = data || []
   } finally {
     loading.value = false
   }
 }
 
-function handleCreate() {
-  ElMessage.info('添加 Skill 功能开发中')
-}
-
-function handleEdit(row: any) {
-  ElMessage.info(`编辑 Skill: ${row.name}`)
-}
-
-async function handleDelete(row: any) {
+async function handleView(row: any) {
   try {
-    await ElMessageBox.confirm(`确定要删除 Skill "${row.name}" 吗？`, '确认', {
-      type: 'warning'
-    })
-    await api.delete(`/skills/${row.id}`)
-    ElMessage.success('删除成功')
-    fetchSkills()
+    const { data } = await api.get(`/skill-docs/${row.name}`)
+    currentDoc.value = data
+    detailVisible.value = true
   } catch {
-    // Cancelled
+    // Error handled by interceptor
   }
 }
 
-onMounted(fetchSkills)
+onMounted(fetchSkillDocs)
 </script>
 
 <style scoped>
@@ -85,5 +75,19 @@ onMounted(fetchSkills)
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+.skill-detail p {
+  margin: 8px 0;
+}
+.skill-body pre {
+  background: var(--el-fill-color-light);
+  padding: 16px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 500px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>

@@ -1,5 +1,5 @@
 -- Agent Hub 增强
-CREATE TABLE `agent_rating` (
+CREATE TABLE IF NOT EXISTS `agent_rating` (
     `id`         BIGINT PRIMARY KEY AUTO_INCREMENT,
     `user_id`    BIGINT NOT NULL,
     `agent_id`   BIGINT NOT NULL,
@@ -10,7 +10,7 @@ CREATE TABLE `agent_rating` (
     INDEX `idx_agent` (`agent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `agent_comment` (
+CREATE TABLE IF NOT EXISTS `agent_comment` (
     `id`         BIGINT PRIMARY KEY AUTO_INCREMENT,
     `user_id`    BIGINT NOT NULL,
     `agent_id`   BIGINT NOT NULL,
@@ -20,11 +20,21 @@ CREATE TABLE `agent_comment` (
     INDEX `idx_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Agent 分类字段
-ALTER TABLE `agent` ADD COLUMN `category` VARCHAR(64) DEFAULT 'general' COMMENT 'Agent 分类' AFTER `visibility`;
+-- Agent 分类字段 (idempotent)
+DROP PROCEDURE IF EXISTS add_column_if_not_exists;
+DELIMITER //
+CREATE PROCEDURE add_column_if_not_exists()
+BEGIN
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'agent' AND COLUMN_NAME = 'category') THEN
+        ALTER TABLE `agent` ADD COLUMN `category` VARCHAR(64) DEFAULT 'general' COMMENT 'Agent 分类' AFTER `visibility`;
+    END IF;
+END //
+DELIMITER ;
+CALL add_column_if_not_exists();
+DROP PROCEDURE add_column_if_not_exists;
 
 -- API Key 管理
-CREATE TABLE `api_key` (
+CREATE TABLE IF NOT EXISTS `api_key` (
     `id`          BIGINT PRIMARY KEY AUTO_INCREMENT,
     `user_id`     BIGINT NOT NULL,
     `name`        VARCHAR(128) NOT NULL COMMENT 'Key 名称',
@@ -40,7 +50,7 @@ CREATE TABLE `api_key` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 通知系统
-CREATE TABLE `notification` (
+CREATE TABLE IF NOT EXISTS `notification` (
     `id`          BIGINT PRIMARY KEY AUTO_INCREMENT,
     `user_id`     BIGINT NOT NULL,
     `type`        VARCHAR(32) NOT NULL COMMENT '通知类型: SYSTEM/TASK/AGENT',

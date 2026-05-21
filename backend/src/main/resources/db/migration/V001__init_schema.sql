@@ -1,6 +1,6 @@
 -- ========== 用户与权限 ==========
 
-CREATE TABLE `user` (
+CREATE TABLE IF NOT EXISTS `user` (
     `id`              BIGINT PRIMARY KEY AUTO_INCREMENT,
     `username`        VARCHAR(64) NOT NULL UNIQUE,
     `display_name`    VARCHAR(128) NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE `user` (
     `updated_at`      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `role` (
+CREATE TABLE IF NOT EXISTS `role` (
     `id`          BIGINT PRIMARY KEY AUTO_INCREMENT,
     `name`        VARCHAR(64) NOT NULL UNIQUE COMMENT '角色名称',
     `code`        VARCHAR(64) NOT NULL UNIQUE COMMENT '角色编码',
@@ -24,14 +24,14 @@ CREATE TABLE `role` (
     `created_at`  DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `user_role` (
+CREATE TABLE IF NOT EXISTS `user_role` (
     `id`      BIGINT PRIMARY KEY AUTO_INCREMENT,
     `user_id` BIGINT NOT NULL,
     `role_id` BIGINT NOT NULL,
     UNIQUE KEY `uk_user_role` (`user_id`, `role_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `permission` (
+CREATE TABLE IF NOT EXISTS `permission` (
     `id`          BIGINT PRIMARY KEY AUTO_INCREMENT,
     `name`        VARCHAR(128) NOT NULL,
     `code`        VARCHAR(128) NOT NULL UNIQUE COMMENT '权限编码，如 agent:read, agent:write',
@@ -39,14 +39,14 @@ CREATE TABLE `permission` (
     `created_at`  DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `role_permission` (
+CREATE TABLE IF NOT EXISTS `role_permission` (
     `id`            BIGINT PRIMARY KEY AUTO_INCREMENT,
     `role_id`       BIGINT NOT NULL,
     `permission_id` BIGINT NOT NULL,
     UNIQUE KEY `uk_role_perm` (`role_id`, `permission_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `department` (
+CREATE TABLE IF NOT EXISTS `department` (
     `id`         BIGINT PRIMARY KEY AUTO_INCREMENT,
     `name`       VARCHAR(128) NOT NULL,
     `parent_id`  BIGINT DEFAULT 0,
@@ -56,7 +56,7 @@ CREATE TABLE `department` (
 
 -- ========== AI 模型配置 ==========
 
-CREATE TABLE `llm_model` (
+CREATE TABLE IF NOT EXISTS `llm_model` (
     `id`              BIGINT PRIMARY KEY AUTO_INCREMENT,
     `name`            VARCHAR(128) NOT NULL COMMENT '模型显示名称',
     `provider`        VARCHAR(64) COMMENT '供应商标识',
@@ -72,7 +72,7 @@ CREATE TABLE `llm_model` (
 
 -- ========== Agent ==========
 
-CREATE TABLE `agent` (
+CREATE TABLE IF NOT EXISTS `agent` (
     `id`            BIGINT PRIMARY KEY AUTO_INCREMENT,
     `name`          VARCHAR(128) NOT NULL,
     `description`   TEXT,
@@ -91,22 +91,32 @@ CREATE TABLE `agent` (
     `updated_at`    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `agent_tag` (
+CREATE TABLE IF NOT EXISTS `agent_tag` (
     `id`       BIGINT PRIMARY KEY AUTO_INCREMENT,
     `agent_id` BIGINT NOT NULL,
     `tag`      VARCHAR(64) NOT NULL,
     INDEX `idx_agent_tag` (`agent_id`, `tag`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `agent_skill` (
-    `id`       BIGINT PRIMARY KEY AUTO_INCREMENT,
-    `agent_id` BIGINT NOT NULL,
-    `skill_id` BIGINT NOT NULL COMMENT '关联 skill 表',
-    `config`   JSON COMMENT '该 Agent 对此 Skill 的定制配置',
-    UNIQUE KEY `uk_agent_skill` (`agent_id`, `skill_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+DROP PROCEDURE IF EXISTS create_agent_skill_table;
+DELIMITER //
+CREATE PROCEDURE create_agent_skill_table()
+BEGIN
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'agent_tool') THEN
+        CREATE TABLE IF NOT EXISTS `agent_skill` (
+            `id`       BIGINT PRIMARY KEY AUTO_INCREMENT,
+            `agent_id` BIGINT NOT NULL,
+            `skill_id` BIGINT NOT NULL COMMENT '关联 skill 表',
+            `config`   JSON COMMENT '该 Agent 对此 Skill 的定制配置',
+            UNIQUE KEY `uk_agent_skill` (`agent_id`, `skill_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    END IF;
+END //
+DELIMITER ;
+CALL create_agent_skill_table();
+DROP PROCEDURE create_agent_skill_table;
 
-CREATE TABLE `agent_mcp_config` (
+CREATE TABLE IF NOT EXISTS `agent_mcp_config` (
     `id`         BIGINT PRIMARY KEY AUTO_INCREMENT,
     `agent_id`   BIGINT NOT NULL,
     `server_url` VARCHAR(512) NOT NULL COMMENT 'MCP Server 地址',
@@ -116,7 +126,7 @@ CREATE TABLE `agent_mcp_config` (
     INDEX `idx_agent` (`agent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `agent_permission` (
+CREATE TABLE IF NOT EXISTS `agent_permission` (
     `id`               BIGINT PRIMARY KEY AUTO_INCREMENT,
     `agent_id`         BIGINT NOT NULL,
     `permission_type`  VARCHAR(20) NOT NULL COMMENT 'ROLE / DEPARTMENT / USER',
@@ -124,25 +134,35 @@ CREATE TABLE `agent_permission` (
     UNIQUE KEY `uk_agent_perm` (`agent_id`, `permission_type`, `permission_value`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- ========== Skills ==========
+-- ========== Skills (skip if already renamed to tool by V008) ==========
 
-CREATE TABLE `skill` (
-    `id`           BIGINT PRIMARY KEY AUTO_INCREMENT,
-    `name`         VARCHAR(128) NOT NULL,
-    `description`  TEXT,
-    `type`         VARCHAR(20) NOT NULL COMMENT 'BUILTIN-内置',
-    `input_schema`  JSON COMMENT '输入参数 JSON Schema',
-    `output_schema` JSON COMMENT '输出参数 JSON Schema',
-    `impl_class`   VARCHAR(256) COMMENT '内置 Skill 的 Java 实现类全限定名',
-    `creator_id`   BIGINT,
-    `status`       VARCHAR(20) DEFAULT 'ACTIVE' COMMENT 'ACTIVE/DISABLED',
-    `created_at`   DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `updated_at`   DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+DROP PROCEDURE IF EXISTS create_skill_tables;
+DELIMITER //
+CREATE PROCEDURE create_skill_tables()
+BEGIN
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tool') THEN
+        CREATE TABLE IF NOT EXISTS `skill` (
+            `id`           BIGINT PRIMARY KEY AUTO_INCREMENT,
+            `name`         VARCHAR(128) NOT NULL,
+            `description`  TEXT,
+            `type`         VARCHAR(20) NOT NULL COMMENT 'BUILTIN-内置',
+            `input_schema`  JSON COMMENT '输入参数 JSON Schema',
+            `output_schema` JSON COMMENT '输出参数 JSON Schema',
+            `impl_class`   VARCHAR(256) COMMENT '内置 Skill 的 Java 实现类全限定名',
+            `creator_id`   BIGINT,
+            `status`       VARCHAR(20) DEFAULT 'ACTIVE' COMMENT 'ACTIVE/DISABLED',
+            `created_at`   DATETIME DEFAULT CURRENT_TIMESTAMP,
+            `updated_at`   DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    END IF;
+END //
+DELIMITER ;
+CALL create_skill_tables();
+DROP PROCEDURE create_skill_tables;
 
 -- ========== 会话与消息 ==========
 
-CREATE TABLE `session` (
+CREATE TABLE IF NOT EXISTS `session` (
     `id`         BIGINT PRIMARY KEY AUTO_INCREMENT,
     `user_id`    BIGINT NOT NULL,
     `agent_id`   BIGINT NOT NULL,
@@ -156,7 +176,7 @@ CREATE TABLE `session` (
     INDEX `idx_agent` (`agent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `message` (
+CREATE TABLE IF NOT EXISTS `message` (
     `id`           BIGINT PRIMARY KEY AUTO_INCREMENT,
     `session_id`   BIGINT NOT NULL,
     `role`         VARCHAR(20) NOT NULL COMMENT 'USER / ASSISTANT / SYSTEM / TOOL',
@@ -173,7 +193,7 @@ CREATE TABLE `message` (
 
 -- ========== Hub ==========
 
-CREATE TABLE `hub_installation` (
+CREATE TABLE IF NOT EXISTS `hub_installation` (
     `id`           BIGINT PRIMARY KEY AUTO_INCREMENT,
     `user_id`      BIGINT NOT NULL,
     `agent_id`     BIGINT NOT NULL COMMENT 'Hub 中的 Agent',
@@ -183,7 +203,7 @@ CREATE TABLE `hub_installation` (
 
 -- ========== 审计日志 ==========
 
-CREATE TABLE `audit_log` (
+CREATE TABLE IF NOT EXISTS `audit_log` (
     `id`            BIGINT PRIMARY KEY AUTO_INCREMENT,
     `user_id`       BIGINT,
     `username`      VARCHAR(64),
@@ -199,7 +219,7 @@ CREATE TABLE `audit_log` (
     INDEX `idx_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `api_call_log` (
+CREATE TABLE IF NOT EXISTS `api_call_log` (
     `id`             BIGINT PRIMARY KEY AUTO_INCREMENT,
     `user_id`        BIGINT,
     `session_id`     BIGINT,
@@ -220,31 +240,31 @@ CREATE TABLE `api_call_log` (
 -- ========== 初始数据 ==========
 
 -- 默认角色
-INSERT INTO `role` (`name`, `code`, `description`) VALUES
-('系统管理员', 'ADMIN', '拥有所有权限'),
-('普通用户', 'USER', '基本使用权限');
+INSERT IGNORE INTO `role` (`id`, `name`, `code`, `description`) VALUES
+(1, '系统管理员', 'ADMIN', '拥有所有权限'),
+(2, '普通用户', 'USER', '基本使用权限');
 
 -- 默认权限
-INSERT INTO `permission` (`name`, `code`, `description`) VALUES
-('查看Agent', 'agent:read', '查看 Agent 列表和详情'),
-('管理Agent', 'agent:write', '创建、编辑、删除 Agent'),
-('查看用户', 'user:read', '查看用户列表'),
-('管理用户', 'user:write', '创建、编辑、禁用用户'),
-('查看模型', 'model:read', '查看模型配置'),
-('管理模型', 'model:write', '创建、编辑、删除模型配置'),
-('查看审计日志', 'audit:read', '查看审计日志'),
-('管理Hub', 'hub:write', '审核和管理 Hub 中的 Agent');
+INSERT IGNORE INTO `permission` (`id`, `name`, `code`, `description`) VALUES
+(1, '查看Agent', 'agent:read', '查看 Agent 列表和详情'),
+(2, '管理Agent', 'agent:write', '创建、编辑、删除 Agent'),
+(3, '查看用户', 'user:read', '查看用户列表'),
+(4, '管理用户', 'user:write', '创建、编辑、禁用用户'),
+(5, '查看模型', 'model:read', '查看模型配置'),
+(6, '管理模型', 'model:write', '创建、编辑、删除模型配置'),
+(7, '查看审计日志', 'audit:read', '查看审计日志'),
+(8, '管理Hub', 'hub:write', '审核和管理 Hub 中的 Agent');
 
 -- 管理员拥有所有权限
-INSERT INTO `role_permission` (`role_id`, `permission_id`)
-SELECT 1, id FROM `permission`;
+INSERT IGNORE INTO `role_permission` (`role_id`, `permission_id`)
+SELECT 1, id FROM `permission` WHERE NOT EXISTS (SELECT 1 FROM `role_permission` WHERE `role_id` = 1 AND `permission_id` = `permission`.`id`);
 
 -- 普通用户只有查看权限
-INSERT INTO `role_permission` (`role_id`, `permission_id`)
-SELECT 2, id FROM `permission` WHERE `code` IN ('agent:read', 'model:read');
+INSERT IGNORE INTO `role_permission` (`role_id`, `permission_id`)
+SELECT 2, id FROM `permission` WHERE `code` IN ('agent:read', 'model:read') AND NOT EXISTS (SELECT 1 FROM `role_permission` WHERE `role_id` = 2 AND `permission_id` = `permission`.`id`);
 
 -- 默认管理员账号 (admin / admin123)
-INSERT INTO `user` (`username`, `display_name`, `email`, `auth_type`, `password_hash`, `status`) VALUES
-('admin', '管理员', 'admin@agentworkbench.com', 'LOCAL', '$2b$12$HDT85UDBpTv30P8kKrs1euencz94fhd1tw/W7zrOjyF8WrDQF1Z3G', 1);
+INSERT IGNORE INTO `user` (`id`, `username`, `display_name`, `email`, `auth_type`, `password_hash`, `status`) VALUES
+(1, 'admin', '管理员', 'admin@agentworkbench.com', 'LOCAL', '$2b$12$HDT85UDBpTv30P8kKrs1euencz94fhd1tw/W7zrOjyF8WrDQF1Z3G', 1);
 
-INSERT INTO `user_role` (`user_id`, `role_id`) VALUES (1, 1);
+INSERT IGNORE INTO `user_role` (`user_id`, `role_id`) VALUES (1, 1);
