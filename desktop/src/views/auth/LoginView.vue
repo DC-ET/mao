@@ -1,16 +1,20 @@
 <template>
   <div class="login-container">
-    <el-card class="login-card">
-      <template #header>
-        <h2>Agent 工作台</h2>
-      </template>
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-logo">
+          <el-icon :size="24"><Monitor /></el-icon>
+        </div>
+        <h2 class="login-title">Agent Workbench</h2>
+      </div>
 
-      <el-form :model="form" @submit.prevent="handleLogin">
+      <el-form :model="form" @submit.prevent="handleLogin" class="login-form">
         <el-form-item>
           <el-input
             v-model="form.username"
             placeholder="用户名"
             prefix-icon="User"
+            size="large"
           />
         </el-form-item>
         <el-form-item>
@@ -20,26 +24,29 @@
             placeholder="密码"
             prefix-icon="Lock"
             show-password
+            size="large"
           />
         </el-form-item>
         <el-form-item>
           <el-button
             type="primary"
             :loading="loading"
-            style="width: 100%"
+            size="large"
+            class="login-btn"
             @click="handleLogin"
           >
             登录
           </el-button>
         </el-form-item>
       </el-form>
-    </el-card>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { Monitor } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
 
 const router = useRouter()
@@ -52,9 +59,7 @@ const form = ref({
 })
 
 async function handleLogin() {
-  if (!form.value.username || !form.value.password) {
-    return
-  }
+  if (!form.value.username || !form.value.password) return
 
   loading.value = true
   try {
@@ -72,16 +77,68 @@ async function handleLogin() {
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--aw-canvas-parchment);
 }
 
 .login-card {
   width: 400px;
+  padding: 48px 40px;
+  background: var(--aw-canvas);
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-lg);
 }
 
-.login-card h2 {
-  text-align: center;
+.login-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.login-logo {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--aw-primary);
+  border-radius: var(--aw-radius-md);
+  color: var(--aw-on-primary);
+}
+
+.login-title {
   margin: 0;
-  color: #303133;
+  font-family: var(--aw-font-display);
+  font-size: var(--aw-text-tagline);
+  font-weight: 600;
+  color: var(--aw-ink);
+  letter-spacing: 0.231px;
+}
+
+.login-form {
+  width: 100%;
+}
+
+.login-form :deep(.el-input__wrapper) {
+  border-radius: var(--aw-radius-pill);
+  padding: 4px 16px;
+}
+
+.login-form :deep(.el-form-item) {
+  margin-bottom: 20px;
+}
+
+.login-btn {
+  width: 100%;
+  border-radius: var(--aw-radius-pill) !important;
+  font-size: var(--aw-text-body);
+  font-weight: 400;
+  padding: 11px 22px;
+  height: auto;
+}
+
+.login-btn:active {
+  transform: scale(0.95);
 }
 </style>

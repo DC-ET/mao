@@ -7,7 +7,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
 
 @SpringBootApplication
 @EnableAsync
-@MapperScan("com.agentworkbench.**.mapper")
+@MapperScan({"com.agentworkbench.**.mapper", "com.agentworkbench.**.activity"})
 public class WorkbenchApplication {
 
     public static void main(String[] args) {

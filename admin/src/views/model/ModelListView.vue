@@ -33,6 +33,12 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <ModelFormDialog
+      v-model:visible="dialogVisible"
+      :model-data="currentModel"
+      @saved="fetchModels"
+    />
   </div>
 </template>
 
@@ -40,9 +46,12 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import ModelFormDialog from './ModelFormDialog.vue'
 
 const loading = ref(false)
 const models = ref<any[]>([])
+const dialogVisible = ref(false)
+const currentModel = ref<any>(null)
 
 async function fetchModels() {
   loading.value = true
@@ -55,11 +64,13 @@ async function fetchModels() {
 }
 
 function handleCreate() {
-  ElMessage.info('添加模型功能开发中')
+  currentModel.value = null
+  dialogVisible.value = true
 }
 
 function handleEdit(row: any) {
-  ElMessage.info(`编辑模型: ${row.name}`)
+  currentModel.value = row
+  dialogVisible.value = true
 }
 
 async function handleTest(row: any) {

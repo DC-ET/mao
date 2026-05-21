@@ -17,32 +17,32 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'workbench',
         name: 'Workbench',
-        component: () => import('../views/workbench/WorkbenchView.vue'),
-        meta: { title: '工作台' }
+        component: () => import('../views/task/TaskHomeView.vue')
+      },
+      {
+        path: 'tasks/:sessionId',
+        name: 'Task',
+        component: () => import('../views/task/TaskView.vue')
       },
       {
         path: 'chat/:agentId',
         name: 'Chat',
-        component: () => import('../views/chat/ChatView.vue'),
-        meta: { title: '对话' }
+        component: () => import('../views/task/TaskView.vue')
       },
       {
         path: 'hub',
         name: 'Hub',
-        component: () => import('../views/hub/HubView.vue'),
-        meta: { title: 'Agent Hub' }
+        component: () => import('../views/hub/HubView.vue')
       },
       {
         path: 'agent/create',
         name: 'CreateAgent',
-        component: () => import('../views/agent-create/CreateAgentView.vue'),
-        meta: { title: '创建 Agent' }
+        component: () => import('../views/agent-create/CreateAgentView.vue')
       },
       {
         path: 'settings',
         name: 'Settings',
-        component: () => import('../views/settings/SettingsView.vue'),
-        meta: { title: '设置' }
+        component: () => import('../views/settings/SettingsView.vue')
       }
     ]
   }

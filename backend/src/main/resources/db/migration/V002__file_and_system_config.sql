@@ -1,5 +1,5 @@
 -- 文件管理表
-CREATE TABLE `file` (
+CREATE TABLE IF NOT EXISTS `file` (
     `id`            BIGINT PRIMARY KEY AUTO_INCREMENT,
     `original_name` VARCHAR(256) NOT NULL COMMENT '原始文件名',
     `stored_name`   VARCHAR(256) NOT NULL COMMENT '存储文件名',
@@ -14,7 +14,7 @@ CREATE TABLE `file` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 系统配置表
-CREATE TABLE `system_config` (
+CREATE TABLE IF NOT EXISTS `system_config` (
     `id`          BIGINT PRIMARY KEY AUTO_INCREMENT,
     `config_key`  VARCHAR(128) NOT NULL UNIQUE COMMENT '配置键',
     `config_value` TEXT COMMENT '配置值',
@@ -23,7 +23,7 @@ CREATE TABLE `system_config` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 初始系统配置
-INSERT INTO `system_config` (`config_key`, `config_value`, `description`) VALUES
+INSERT IGNORE INTO `system_config` (`config_key`, `config_value`, `description`) VALUES
 ('site.name', 'Agent Workbench', '站点名称'),
 ('site.logo', '', '站点 Logo URL'),
 ('feishu.app_id', '', '飞书应用 App ID'),

@@ -38,6 +38,9 @@ public class Agent {
 
     private String configJson;
 
+    /** 该 Agent 可用的 Skill 知识文档名称列表（JSON 数组），为空则加载全部 */
+    private String skillNames;
+
     private LocalDateTime publishedAt;
 
     @TableField(fill = FieldFill.INSERT)

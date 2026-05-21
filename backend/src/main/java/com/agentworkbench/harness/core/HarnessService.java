@@ -2,10 +2,10 @@ package com.agentworkbench.harness.core;
 
 import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.entity.AgentMcpConfig;
-import com.agentworkbench.agent.entity.AgentSkill;
+import com.agentworkbench.agent.entity.AgentTool;
 import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.agent.mapper.AgentMcpConfigMapper;
-import com.agentworkbench.agent.mapper.AgentSkillMapper;
+import com.agentworkbench.agent.mapper.AgentToolMapper;
 import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
 import com.agentworkbench.harness.llm.ChatRequest;
@@ -13,10 +13,11 @@ import com.agentworkbench.harness.llm.ChatUsage;
 import com.agentworkbench.harness.llm.LlmModelConfig;
 import com.agentworkbench.harness.mcp.McpTool;
 import com.agentworkbench.harness.mcp.McpToolRegistry;
-import com.agentworkbench.harness.skill.Skill;
-import com.agentworkbench.harness.skill.SkillRegistry;
-import com.agentworkbench.skill.entity.SkillEntity;
-import com.agentworkbench.skill.mapper.SkillEntityMapper;
+import com.agentworkbench.harness.skill.SkillLoader;
+import com.agentworkbench.harness.tool.Tool;
+import com.agentworkbench.harness.tool.ToolRegistry;
+import com.agentworkbench.tool.entity.ToolEntity;
+import com.agentworkbench.tool.mapper.ToolEntityMapper;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.session.entity.Message;
@@ -45,13 +46,14 @@ import java.util.concurrent.TimeUnit;
 public class HarnessService {
 
     private final AgentLoop agentLoop;
-    private final SkillRegistry skillRegistry;
+    private final ToolRegistry toolRegistry;
+    private final SkillLoader skillLoader;
     private final McpToolRegistry mcpToolRegistry;
     private final SessionMapper sessionMapper;
     private final AgentMapper agentMapper;
-    private final AgentSkillMapper agentSkillMapper;
+    private final AgentToolMapper agentToolMapper;
     private final AgentMcpConfigMapper agentMcpConfigMapper;
-    private final SkillEntityMapper skillEntityMapper;
+    private final ToolEntityMapper toolEntityMapper;
     private final LlmModelMapper llmModelMapper;
     private final MessageMapper messageMapper;
     private final SessionService sessionService;
@@ -136,6 +138,7 @@ public class HarnessService {
         context.setSystemPrompt(agent.getSystemPrompt());
         context.setAgentName(agent.getName());
         context.setMaxRounds(agent.getMaxRounds() != null && agent.getMaxRounds() > 0 ? agent.getMaxRounds() : 10);
+        context.setExecutionMode(session.getExecutionMode() != null ? session.getExecutionMode() : "CLOUD");
         context.setModelConfig(LlmModelConfig.builder()
                 .id(llmModel.getId())
                 .name(llmModel.getName())
@@ -171,20 +174,33 @@ public class HarnessService {
             context.getMessages().add(msgBuilder.build());
         }
 
-        // 6. Load per-agent skills
-        List<AgentSkill> agentSkills = agentSkillMapper.selectList(
-                new QueryWrapper<AgentSkill>().eq("agent_id", agent.getId()));
-        if (!agentSkills.isEmpty()) {
-            List<Long> skillIds = agentSkills.stream().map(AgentSkill::getSkillId).toList();
-            List<SkillEntity> skillEntities = skillEntityMapper.selectBatchIds(skillIds);
-            List<String> skillNames = skillEntities.stream().map(SkillEntity::getName).toList();
-            List<Skill> skills = skillRegistry.getSkillsByNames(skillNames);
-            context.setSkills(skills);
+        // 6. Load per-agent tools (fallback: all built-in tools if none configured)
+        List<AgentTool> agentTools = agentToolMapper.selectList(
+                new QueryWrapper<AgentTool>().eq("agent_id", agent.getId()));
+        if (!agentTools.isEmpty()) {
+            List<Long> toolIds = agentTools.stream().map(AgentTool::getToolId).toList();
+            List<ToolEntity> toolEntities = toolEntityMapper.selectBatchIds(toolIds);
+            List<String> toolNames = toolEntities.stream().map(ToolEntity::getName).toList();
+            List<Tool> tools = toolRegistry.getToolsByNames(toolNames);
+            context.setTools(tools);
         } else {
-            context.setSkills(new ArrayList<>());
+            context.setTools(toolRegistry.getAllTools());
         }
 
-        // 7. Load MCP tools for this agent
+        // 7. Load available Skill names for this agent
+        List<String> agentSkillNames = null;
+        if (agent.getSkillNames() != null && !agent.getSkillNames().isEmpty()) {
+            try {
+                agentSkillNames = objectMapper.readValue(
+                        agent.getSkillNames(), new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+            } catch (Exception e) {
+                log.warn("Failed to parse skillNames for agent {}: {}", agent.getId(), e.getMessage());
+            }
+        }
+        context.setAvailableSkillNames(
+                agentSkillNames != null ? agentSkillNames : skillLoader.getAllNames());
+
+        // 8. Load MCP tools for this agent
         List<AgentMcpConfig> mcpConfigs = agentMcpConfigMapper.selectList(
                 new QueryWrapper<AgentMcpConfig>()
                         .eq("agent_id", agent.getId())

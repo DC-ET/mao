@@ -9,6 +9,7 @@ import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.user.entity.User;
 import com.agentworkbench.user.mapper.UserMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class AgentController {
     private final AgentService agentService;
     private final LlmModelMapper llmModelMapper;
     private final UserMapper userMapper;
+    private final ObjectMapper objectMapper;
 
     @GetMapping
     public Result<List<AgentVO>> listAgents(
@@ -63,7 +65,8 @@ public class AgentController {
                 userId, request.getName(), request.getDescription(),
                 request.getIconUrl(), request.getSystemPrompt(),
                 request.getModelId(), request.getVisibility(),
-                request.getTags(), request.getSkillIds(), mcpConfigs);
+                request.getTags(), request.getToolIds(),
+                request.getSkillNames(), mcpConfigs);
         return Result.ok(toVO(agent));
     }
 
@@ -86,7 +89,7 @@ public class AgentController {
                 request.getIconUrl(), request.getSystemPrompt(),
                 request.getModelId(), request.getVisibility(),
                 request.getTokenLimit(), request.getMaxRounds(),
-                request.getSkillIds(), mcpConfigs);
+                request.getToolIds(), request.getSkillNames(), mcpConfigs);
         return Result.ok(toVO(agent));
     }
 
@@ -143,11 +146,22 @@ public class AgentController {
         List<AgentTag> tags = agentService.getAgentTags(agent.getId());
         vo.setTags(tags.stream().map(AgentTag::getTag).collect(Collectors.toList()));
 
-        // Load skill IDs
-        vo.setSkillIds(agentService.getAgentSkillIds(agent.getId()));
+        // Load tool IDs
+        vo.setToolIds(agentService.getAgentToolIds(agent.getId()));
 
         // Load MCP configs
         vo.setMcpConfigs(agentService.getAgentMcpConfigs(agent.getId()));
+
+        // Load skill names
+        if (agent.getSkillNames() != null) {
+            try {
+                List<String> skillNames = objectMapper.readValue(agent.getSkillNames(),
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+                vo.setSkillNames(skillNames);
+            } catch (Exception e) {
+                // ignore deserialization error
+            }
+        }
 
         return vo;
     }
@@ -163,7 +177,8 @@ public class AgentController {
         private Long modelId;
         private String visibility;
         private List<String> tags;
-        private List<Long> skillIds;
+        private List<Long> toolIds;
+        private List<String> skillNames;
         private List<McpConfigRequest> mcpConfigs;
     }
 
@@ -177,7 +192,8 @@ public class AgentController {
         private String visibility;
         private Integer tokenLimit;
         private Integer maxRounds;
-        private List<Long> skillIds;
+        private List<Long> toolIds;
+        private List<String> skillNames;
         private List<McpConfigRequest> mcpConfigs;
     }
 
@@ -204,7 +220,8 @@ public class AgentController {
         private Integer tokenLimit;
         private Integer maxRounds;
         private List<String> tags;
-        private List<Long> skillIds;
+        private List<Long> toolIds;
+        private List<String> skillNames;
         private List<AgentMcpConfig> mcpConfigs;
         private String publishedAt;
         private String createdAt;

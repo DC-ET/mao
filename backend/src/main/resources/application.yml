@@ -31,6 +31,14 @@ spring:
       database: 1
       timeout: 5000ms
 
+  # Flyway
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    validate-on-migrate: false
+    locations: classpath:db/migration
+
   # Jackson
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss

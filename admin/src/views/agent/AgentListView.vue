@@ -72,6 +72,12 @@
         @current-change="handlePageChange"
       />
     </el-card>
+
+    <AgentFormDialog
+      v-model:visible="dialogVisible"
+      :agent-data="currentAgent"
+      @saved="fetchAgents"
+    />
   </div>
 </template>
 
@@ -79,6 +85,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import AgentFormDialog from './AgentFormDialog.vue'
 
 const loading = ref(false)
 const agents = ref<any[]>([])
@@ -87,6 +94,8 @@ const filterType = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const dialogVisible = ref(false)
+const currentAgent = ref<any>(null)
 
 const statusMap: Record<string, string> = {
   DRAFT: '草稿',
@@ -123,13 +132,13 @@ function handlePageChange(page: number) {
 }
 
 function handleCreate() {
-  // TODO: Navigate to create page or open dialog
-  ElMessage.info('创建 Agent 功能开发中')
+  currentAgent.value = null
+  dialogVisible.value = true
 }
 
 function handleEdit(row: any) {
-  // TODO: Navigate to edit page or open dialog
-  ElMessage.info(`编辑 Agent: ${row.name}`)
+  currentAgent.value = row
+  dialogVisible.value = true
 }
 
 async function handlePublish(row: any) {
