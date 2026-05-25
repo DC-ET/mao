@@ -88,6 +88,7 @@ async function handleCommand(command: string) {
   display: flex;
   align-items: center;
   gap: 24px;
+  padding-left: 78px; /* space for macOS traffic lights */
   -webkit-app-region: no-drag;
 }
 

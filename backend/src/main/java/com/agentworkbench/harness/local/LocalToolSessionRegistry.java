@@ -43,7 +43,7 @@ public class LocalToolSessionRegistry {
      * Send a tool execution request to the connected desktop client.
      * Returns a CompletableFuture that completes when the client responds.
      */
-    public CompletableFuture<String> sendToolRequest(Long sessionId, String toolName, String arguments) {
+    public CompletableFuture<String> sendToolRequest(Long sessionId, String toolName, String arguments, String workspace) {
         LocalToolConnection conn = connections.get(sessionId);
         if (conn == null || !conn.wsSession.isOpen()) {
             CompletableFuture<String> f = new CompletableFuture<>();
@@ -55,9 +55,10 @@ public class LocalToolSessionRegistry {
         CompletableFuture<String> future = new CompletableFuture<>();
         conn.pendingRequests.put(requestId, future);
 
+        String escapedWorkspace = workspace != null ? workspace.replace("\\", "\\\\").replace("\"", "\\\"") : "";
         String message = String.format(
-                "{\"type\":\"tool_execute\",\"requestId\":\"%s\",\"toolName\":\"%s\",\"arguments\":\"%s\",\"sessionId\":%d}",
-                requestId, toolName, arguments.replace("\"", "\\\""), sessionId);
+                "{\"type\":\"tool_execute\",\"requestId\":\"%s\",\"toolName\":\"%s\",\"arguments\":\"%s\",\"sessionId\":%d,\"workspace\":\"%s\"}",
+                requestId, toolName, arguments.replace("\"", "\\\""), sessionId, escapedWorkspace);
 
         try {
             synchronized (conn.wsSession) {

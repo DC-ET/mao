@@ -33,11 +33,7 @@ spring:
 
   # Flyway
   flyway:
-    enabled: true
-    baseline-on-migrate: true
-    baseline-version: 0
-    validate-on-migrate: false
-    locations: classpath:db/migration
+    enabled: false
 
   # Jackson
   jackson:
