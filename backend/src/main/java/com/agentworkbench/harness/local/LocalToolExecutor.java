@@ -26,14 +26,14 @@ public class LocalToolExecutor {
      * @param arguments JSON arguments string
      * @return JSON result string, or JSON error if client is not connected / timed out
      */
-    public String execute(Long sessionId, String toolName, String arguments) {
+    public String execute(Long sessionId, String toolName, String arguments, String workspace) {
         if (!sessionRegistry.isConnected(sessionId)) {
             log.warn("No local client connected for session {}", sessionId);
             return "{\"error\":\"Local client is not connected. Please ensure the desktop app is running and connected.\"}";
         }
 
         try {
-            String result = sessionRegistry.sendToolRequest(sessionId, toolName, arguments).get(60, java.util.concurrent.TimeUnit.SECONDS);
+            String result = sessionRegistry.sendToolRequest(sessionId, toolName, arguments, workspace).get(60, java.util.concurrent.TimeUnit.SECONDS);
             return result;
         } catch (java.util.concurrent.TimeoutException e) {
             log.warn("Local tool execution timed out for session {}: tool={}", sessionId, toolName);

@@ -52,7 +52,7 @@ public class ToolDispatcher {
     public String dispatch(String toolName, String arguments, String executionMode, Long sessionId, String workspace) {
         if ("LOCAL".equals(executionMode)) {
             log.debug("Routing tool call to local executor: {} (session={})", toolName, sessionId);
-            return localToolExecutor.execute(sessionId, toolName, arguments);
+            return localToolExecutor.execute(sessionId, toolName, arguments, workspace);
         }
         return dispatch(toolName, arguments, workspace);
     }

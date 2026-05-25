@@ -151,11 +151,16 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     return results
   }
 
+  let explicitDisconnect = false
+
   async function connectLocalWebSocket(sessionIdVal: string, token: string): Promise<void> {
     if (!isElectron) throw new Error('Not running in Electron')
 
     const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api'
     const wsBase = apiBase.replace(/^http/, 'ws').replace(/\/api$/, '') + '/api'
+
+    // Remove previous listener to avoid accumulation
+    ;(window as any).electronAPI.removeWsConnectionChangeListener()
 
     return new Promise((resolve, reject) => {
       let resolved = false
@@ -174,12 +179,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
           clearTimeout(timeout)
           resolve()
         }
-        if (!data.connected) {
+        if (!data.connected && !explicitDisconnect) {
           ElMessage.warning('本地执行连接已断开，正在重连...')
         }
       })
 
       setupBashApprovalListener()
+      explicitDisconnect = false
       ;(window as any).electronAPI.connectLocalSession(sessionIdVal, token, wsBase)
     })
   }
@@ -276,6 +282,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
   function newSession() {
     if (executionMode.value === 'LOCAL' && isElectron) {
+      explicitDisconnect = true
       ;(window as any).electronAPI.disconnectLocalSession()
       wsConnected.value = false
     }
@@ -314,6 +321,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   function cleanup() {
     sse?.stop()
     if (executionMode.value === 'LOCAL' && isElectron) {
+      explicitDisconnect = true
       ;(window as any).electronAPI.disconnectLocalSession()
       ;(window as any).electronAPI.removeWsConnectionChangeListener()
       ;(window as any).electronAPI.removeBashApprovalRequestListener?.()

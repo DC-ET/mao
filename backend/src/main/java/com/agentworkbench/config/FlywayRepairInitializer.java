@@ -2,6 +2,7 @@ package com.agentworkbench.config;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.flyway.FlywayMigrationInitializer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,6 +18,7 @@ import java.sql.Statement;
 @Slf4j
 @Configuration
 @RequiredArgsConstructor
+@ConditionalOnBean(org.flywaydb.core.Flyway.class)
 public class FlywayRepairInitializer {
 
     private final DataSource dataSource;

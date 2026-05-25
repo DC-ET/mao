@@ -62,6 +62,14 @@ public class SubagentTool implements Tool {
     }
 
     @Override
+    public String execute(String arguments, String workspace) {
+        this.cachedWorkspace = workspace;
+        return execute(arguments);
+    }
+
+    private transient String cachedWorkspace;
+
+    @Override
     public String execute(String arguments) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
@@ -69,6 +77,7 @@ public class SubagentTool implements Tool {
             int maxRounds = args.has("max_rounds") ? Math.min(args.get("max_rounds").asInt(), MAX_SUBAGENT_ROUNDS) : 10;
 
             AgentExecutionContext subContext = new AgentExecutionContext();
+            subContext.setWorkspace(cachedWorkspace);
             subContext.setMaxRounds(maxRounds);
             subContext.addUserMessage(prompt);
 

@@ -64,6 +64,8 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     title: 'Agent 工作台',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 16, y: 12 },
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -100,6 +102,30 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
+  }
+})
+
+// ========== Window control IPC handlers ==========
+
+ipcMain.handle('window-minimize', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.minimize()
+  }
+})
+
+ipcMain.handle('window-maximize', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow.maximize()
+    }
+  }
+})
+
+ipcMain.handle('window-close', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.close()
   }
 })
 
@@ -264,7 +290,8 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
       }
 
       if (msg.type === 'tool_execute') {
-        const { requestId, toolName, arguments: args } = msg
+        const { requestId, toolName, arguments: args, workspace: ws } = msg
+        if (ws) currentWorkspace = ws
         let parsedArgs
         try {
           parsedArgs = typeof args === 'string' ? JSON.parse(args) : args

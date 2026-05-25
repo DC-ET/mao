@@ -128,7 +128,8 @@ const sessionTitle = computed(() => {
 const showTypingIndicator = computed(() => {
   if (!sending.value) return false
   const lastMsg = messages.value[messages.value.length - 1]
-  if (normalizeMessageRole(lastMsg?.role ?? '') !== 'assistant') return true
+  if (!lastMsg) return true
+  if (normalizeMessageRole(lastMsg.role ?? '') !== 'assistant') return true
   const hasText = !!(lastMsg.content?.trim() || lastMsg.segments?.some(s => s.type === 'text' && s.content.trim()))
   const hasTools = (lastMsg.toolCalls?.length ?? 0) > 0
   return !hasText && !hasTools
@@ -204,32 +205,44 @@ async function selectWorkspace() {
   }
 }
 
+async function loadSession(sid: string) {
+  cleanup()
+  sessionStore.setActiveSession(sid)
+
+  // Load session details to get agentId and mode
+  try {
+    const { data } = await (await import('../../api')).api.get(`/sessions/${sid}`)
+    if (data) {
+      agentId.value = data.agentId
+      executionMode.value = data.executionMode || 'CLOUD'
+      currentPhase.value = data.phase || 'IDLE'
+      elapsedMs.value = data.elapsedMs || 0
+      projectKey.value = data.projectKey || ''
+      if (data.agentName) agentName.value = data.agentName
+      await agentStore.fetchAgent(data.agentId)
+    }
+  } catch {
+    // ignore
+  }
+
+  restoreSession(sid, executionMode.value)
+}
+
+// Handle session switch from sidebar (component reuse prevents onMounted re-fire)
+watch(sessionIdParam, (newSid, oldSid) => {
+  if (newSid && newSid !== oldSid) {
+    loadSession(newSid)
+  }
+})
+
 onMounted(async () => {
+  // Load session list for the left sidebar
+  sessionStore.fetchSessions()
+
   const sid = sessionIdParam.value
 
   if (sid) {
-    // Restore existing session
-    sessionStore.setActiveSession(sid)
-
-    // Load session details to get agentId and mode
-    try {
-      const { data } = await (await import('../../api')).api.get(`/sessions/${sid}`)
-      if (data) {
-        agentId.value = data.agentId
-        executionMode.value = data.executionMode || 'CLOUD'
-        currentPhase.value = data.phase || 'IDLE'
-        elapsedMs.value = data.elapsedMs || 0
-        projectKey.value = data.projectKey || ''
-        if (data.agentName) agentName.value = data.agentName
-
-        // Load agent info
-        await agentStore.fetchAgent(data.agentId)
-      }
-    } catch {
-      // ignore
-    }
-
-    restoreSession(sid, executionMode.value)
+    await loadSession(sid)
   } else {
     // New task flow: agentId from query
     const queryAgentId = route.query.agentId as string
