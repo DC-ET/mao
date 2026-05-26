@@ -82,9 +82,7 @@ public class HarnessService {
     public void execute(Long sessionId, String userContent, AgentEventListener listener) {
         AgentExecutionContext context = buildContext(sessionId);
 
-        if (userContent != null && !userContent.isEmpty()) {
-            context.addUserMessage(userContent);
-        }
+        // User message is already persisted by SessionController before streaming starts.
 
         AgentLoop.MessagePersistenceCallback persistenceCallback = new AgentLoop.MessagePersistenceCallback() {
             @Override
@@ -137,7 +135,7 @@ public class HarnessService {
         context.setAgentId(agent.getId());
         context.setSystemPrompt(agent.getSystemPrompt());
         context.setAgentName(agent.getName());
-        context.setMaxRounds(agent.getMaxRounds() != null && agent.getMaxRounds() > 0 ? agent.getMaxRounds() : 10);
+        context.setMaxRounds(resolveMaxRounds(agent.getMaxRounds()));
         context.setExecutionMode(session.getExecutionMode() != null ? session.getExecutionMode() : "CLOUD");
         context.setWorkspace(session.getWorkspace());
         context.setModelConfig(LlmModelConfig.builder()
@@ -214,5 +212,18 @@ public class HarnessService {
         context.setMcpTools(mcpTools);
 
         return context;
+    }
+
+    /**
+     * Resolve agent max LLM rounds.
+     * 0 or null = unlimited (capped for safety); values &lt; 2 are bumped to 2 so a tool call
+     * can be followed by at least one synthesis round.
+     */
+    static int resolveMaxRounds(Integer configured) {
+        int maxRounds = configured != null ? configured : 30;
+        if (maxRounds <= 0) {
+            return 100;
+        }
+        return Math.max(maxRounds, 2);
     }
 }

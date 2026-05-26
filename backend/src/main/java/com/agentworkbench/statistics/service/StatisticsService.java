@@ -1,7 +1,6 @@
 package com.agentworkbench.statistics.service;
 
 import com.agentworkbench.agent.mapper.AgentMapper;
-import com.agentworkbench.audit.mapper.ApiCallLogMapper;
 import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.session.mapper.MessageMapper;
 import com.agentworkbench.session.mapper.SessionMapper;
@@ -24,7 +23,6 @@ public class StatisticsService {
     private final UserMapper userMapper;
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
-    private final ApiCallLogMapper apiCallLogMapper;
 
     public Map<String, Object> getOverview() {
         Map<String, Object> overview = new HashMap<>();

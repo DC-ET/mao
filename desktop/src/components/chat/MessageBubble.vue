@@ -1,8 +1,5 @@
 <template>
   <div :class="['message-bubble', role]">
-    <div class="message-avatar">
-      <el-avatar :size="32" :icon="role === 'user' ? 'User' : 'Monitor'" />
-    </div>
     <div class="message-content">
       <div v-if="role === 'user'" class="message-text user-text">
         {{ message.content }}
@@ -45,14 +42,20 @@
           {{ file.originalName || file.name }}
         </el-tag>
       </div>
-      <div class="message-time">{{ message.createdAt }}</div>
+      <div class="message-footer">
+        <span class="message-time">{{ message.createdAt }}</span>
+        <button v-if="message.content" class="copy-btn" :class="{ copied }" @click="copyMessage">
+          <el-icon :size="12"><CopyDocument /></el-icon>
+          <span v-if="copied">已复制</span>
+        </button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Document } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
+import { Document, CopyDocument } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../composables/useMarkdown'
 import ToolCallCard from './ToolCallCard.vue'
 import {
@@ -90,6 +93,20 @@ function renderSegmentMarkdown(content: string) {
 function getToolCall(callId: string): ToolCall | undefined {
   return props.message.toolCalls?.find(c => c.id === callId)
 }
+
+const copied = ref(false)
+let copyTimer: ReturnType<typeof setTimeout> | null = null
+
+async function copyMessage() {
+  const text = props.message.content?.trim()
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    copied.value = true
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => { copied.value = false }, 1500)
+  } catch {}
+}
 </script>
 
 <style scoped>
@@ -101,21 +118,6 @@ function getToolCall(callId: string): ToolCall | undefined {
 
 .message-bubble.user {
   flex-direction: row-reverse;
-}
-
-.message-avatar {
-  flex-shrink: 0;
-  padding-top: 2px;
-}
-
-.message-avatar :deep(.el-avatar) {
-  background: var(--aw-canvas-parchment);
-  color: var(--aw-ink-muted-48);
-}
-
-.message-bubble.user .message-avatar :deep(.el-avatar) {
-  background: var(--aw-primary);
-  color: var(--aw-on-primary);
 }
 
 .message-content {
@@ -133,7 +135,7 @@ function getToolCall(callId: string): ToolCall | undefined {
   line-height: 1.47;
   letter-spacing: -0.374px;
   word-break: break-word;
-  font-size: var(--aw-text-body);
+  font-size: var(--aw-text-caption);
 }
 
 .user-text {
@@ -303,14 +305,44 @@ function getToolCall(callId: string): ToolCall | undefined {
   border-radius: var(--aw-radius-pill);
 }
 
+.message-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.message-bubble.user .message-footer {
+  flex-direction: row-reverse;
+}
+
 .message-time {
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
-  margin-top: 4px;
   letter-spacing: -0.12px;
 }
 
-.message-bubble.user .message-time {
-  text-align: right;
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  border-radius: var(--aw-radius-xs);
+  transition: color 0.15s, background 0.15s;
+  letter-spacing: -0.12px;
+}
+
+.copy-btn:hover {
+  color: var(--aw-ink);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.copy-btn.copied {
+  color: var(--aw-success);
 }
 </style>

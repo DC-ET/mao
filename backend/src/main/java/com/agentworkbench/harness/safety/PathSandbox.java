@@ -19,6 +19,12 @@ public class PathSandbox {
 
     public PathSandbox(@Value("${app.harness.workspace-root:./workspace}") String workspaceRoot) {
         this.workspaceRoot = Paths.get(workspaceRoot).toAbsolutePath().normalize();
+        // Ensure the default workspace directory exists for CLOUD mode
+        File rootDir = this.workspaceRoot.toFile();
+        if (!rootDir.exists()) {
+            rootDir.mkdirs();
+            log.info("Created default workspace directory: {}", this.workspaceRoot);
+        }
     }
 
     /**

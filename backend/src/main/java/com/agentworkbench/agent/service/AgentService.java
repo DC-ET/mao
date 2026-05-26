@@ -125,6 +125,13 @@ public class AgentService {
         if (visibility != null) agent.setVisibility(visibility);
         if (tokenLimit != null) agent.setTokenLimit(tokenLimit);
         if (maxRounds != null) agent.setMaxRounds(maxRounds);
+        if (skillNames != null) {
+            try {
+                agent.setSkillNames(skillNames.isEmpty() ? null : objectMapper.writeValueAsString(skillNames));
+            } catch (Exception e) {
+                // ignore serialization error
+            }
+        }
         agentMapper.updateById(agent);
 
         // Update tools (delete old + insert new)
@@ -135,15 +142,6 @@ public class AgentService {
                 agentTool.setAgentId(id);
                 agentTool.setToolId(toolId);
                 agentToolMapper.insert(agentTool);
-            }
-        }
-
-        // Update skill names
-        if (skillNames != null) {
-            try {
-                agent.setSkillNames(skillNames.isEmpty() ? null : objectMapper.writeValueAsString(skillNames));
-            } catch (Exception e) {
-                // ignore serialization error
             }
         }
 

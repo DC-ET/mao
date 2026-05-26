@@ -2,10 +2,6 @@ package com.agentworkbench.analytics.service;
 
 import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.mapper.AgentMapper;
-import com.agentworkbench.audit.entity.ApiCallLog;
-import com.agentworkbench.audit.mapper.ApiCallLogMapper;
-import com.agentworkbench.model.entity.LlmModel;
-import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.mapper.MessageMapper;
@@ -21,7 +17,6 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -30,9 +25,7 @@ public class AnalyticsService {
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
     private final AgentMapper agentMapper;
-    private final LlmModelMapper llmModelMapper;
     private final UserMapper userMapper;
-    private final ApiCallLogMapper apiCallLogMapper;
 
     /**
      * Get usage trends (daily session/message counts for last N days)

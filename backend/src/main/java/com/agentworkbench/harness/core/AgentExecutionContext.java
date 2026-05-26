@@ -65,10 +65,12 @@ public class AgentExecutionContext {
     }
 
     public void addAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls) {
+        boolean hasToolCalls = toolCalls != null && !toolCalls.isEmpty();
+        String normalizedContent = content != null && !content.isEmpty() ? content : null;
         messages.add(ChatRequest.Message.builder()
                 .role("assistant")
-                .content(content)
-                .toolCalls(toolCalls != null && !toolCalls.isEmpty() ? toolCalls : null)
+                .content(normalizedContent)
+                .toolCalls(hasToolCalls ? toolCalls : null)
                 .build());
     }
 

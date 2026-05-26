@@ -18,7 +18,6 @@
         type="textarea"
         :autosize="{ minRows: 1, maxRows: 8 }"
         placeholder="继续说明本次任务... (Ctrl/⌘+Enter 发送)"
-        :disabled="disabled"
         @keydown.enter.ctrl.prevent="handleSend"
         @keydown.enter.meta.prevent="handleSend"
       />

@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 
@@ -85,6 +86,7 @@ public class AgentLoop {
 
             // 2. Call LLM
             final int currentRound = round;
+            final AtomicBoolean llmFailed = new AtomicBoolean(false);
             llmAdapter.stream(request, context.getModelConfig(), new StreamCallback() {
                 private final StringBuilder contentBuilder = new StringBuilder();
                 private final List<ChatRequest.ToolCall> toolCalls = new ArrayList<>();
@@ -134,10 +136,15 @@ public class AgentLoop {
 
                 @Override
                 public void onError(Throwable t) {
+                    llmFailed.set(true);
                     log.error("LLM call failed", t);
                     listener.onError(t);
                 }
             });
+
+            if (llmFailed.get()) {
+                return;
+            }
 
             // 3. Check if we have tool calls to execute
             List<ChatRequest.ToolCall> pendingCalls = context.getPendingToolCalls();

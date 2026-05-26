@@ -1,0 +1,12 @@
+{
+  "name": "bigdata-cli",
+  "version": "0.1.0",
+  "description": "通过 bd.acg.team 网关访问大数据接口并自动处理 SSO token 的命令行工具。",
+  "type": "module",
+  "bin": {
+    "bigdata-cli": "./bin/bigdata-cli.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

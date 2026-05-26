@@ -182,7 +182,7 @@ public class SessionController {
             @PathVariable Long id,
             @RequestParam String eventId) {
 
-        SseEmitter emitter = new SseEmitter(5 * 60 * 1000L);
+        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
 
         agentExecutor.submit(() -> {
             try {
@@ -322,6 +322,11 @@ public class SessionController {
 
             } catch (Exception e) {
                 log.error("Agent execution failed", e);
+                try {
+                    emitter.send(SseEmitter.event()
+                            .name("error")
+                            .data(Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常")));
+                } catch (Exception ignored) {}
                 try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
                 emitter.completeWithError(e);
             }
@@ -329,6 +334,12 @@ public class SessionController {
 
         emitter.onTimeout(() -> {
             log.warn("SSE connection timed out for session: {}", id);
+            try {
+                emitter.send(SseEmitter.event()
+                        .name("error")
+                        .data(Map.of("message", "任务执行超时")));
+            } catch (Exception ignored) {}
+            try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
             emitter.complete();
         });
 

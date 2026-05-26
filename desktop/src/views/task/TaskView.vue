@@ -6,7 +6,7 @@
       <TaskHeader
         :title="sessionTitle"
         :agent-name="agentName"
-        :project-key="projectKey"
+        :workspace="executionMode === 'LOCAL' ? workspace : ''"
         :phase="currentPhase"
         :elapsed-ms="elapsedMs"
         :started-at="startedAt"
@@ -24,7 +24,10 @@
       <div class="messages" ref="messagesContainer">
         <div v-if="messages.length === 0 && !sending" class="empty-state">
           <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
-          <p>描述你想完成的任务</p>
+          <p>选择一个 Agent 开始新任务</p>
+          <el-button type="primary" class="pill-btn" @click="showNewTaskDialog = true">
+            <el-icon><Plus /></el-icon> 新任务
+          </el-button>
         </div>
 
         <MessageBubble
@@ -35,9 +38,6 @@
 
         <div v-if="showTypingIndicator" class="typing-indicator">
           <div class="message-bubble assistant">
-            <div class="message-avatar">
-              <el-avatar :size="32" icon="Monitor" />
-            </div>
             <div class="typing-dots">
               <span></span>
               <span></span>
@@ -69,13 +69,18 @@
       :pending-bash-command="pendingBashCommand"
       @bash-confirm="confirmBash"
     />
+
+    <NewTaskDialog
+      v-model="showNewTaskDialog"
+      @created="onSessionCreated"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
-import { ChatDotRound } from '@element-plus/icons-vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ChatDotRound, Plus } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole } from '../../composables/useChat'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
@@ -86,16 +91,18 @@ import WorkspaceBar from '../../components/chat/WorkspaceBar.vue'
 import MessageBubble from '../../components/chat/MessageBubble.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
 import BashApprovalBar from '../../components/chat/BashApprovalBar.vue'
+import NewTaskDialog from '../../components/task/NewTaskDialog.vue'
 
 const route = useRoute()
+const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 
 const sessionIdParam = computed(() => route.params.sessionId as string)
 const agentId = ref('')
 const executionMode = ref('CLOUD')
-const messagesContainer = ref<HTMLElement | null>(null)
 const panelCollapsed = ref(false)
+const showNewTaskDialog = ref(false)
 
 // Task state
 const currentPhase = ref<TaskPhase>('IDLE')
@@ -112,7 +119,6 @@ const {
   pendingBashCommand,
   activities,
   sendMessage,
-  fetchMessages,
   newSession,
   restoreSession,
   confirmBash,
@@ -137,62 +143,66 @@ const showTypingIndicator = computed(() => {
 
 // Watch for SSE session_status events to update phase
 watch(() => sending.value, (isSending) => {
+  // Skip transitions when between sessions (e.g. after clicking "新任务")
+  if (!sessionStore.activeSessionId) return
+
   if (isSending) {
     currentPhase.value = 'RUNNING'
     startedAt.value = new Date().toISOString()
-    if (sessionStore.activeSessionId) {
-      sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'RUNNING')
-    }
+    sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'RUNNING')
   } else {
     currentPhase.value = 'IDLE'
-    // Update elapsed
     if (startedAt.value) {
       elapsedMs.value += Date.now() - new Date(startedAt.value).getTime()
       startedAt.value = null
     }
-    if (sessionStore.activeSessionId) {
-      sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
-    }
+    sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
   }
 })
 
-watch(() => messages.value.length, () => {
-  nextTick(() => {
-    if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-    }
-  })
-})
+// Auto-scroll disabled for stable reading experience
+// watch(() => messages.value.length, () => {
+//   nextTick(() => {
+//     if (messagesContainer.value) {
+//       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+//     }
+//   })
+// })
 
-watch(
-  () => {
-    const last = messages.value[messages.value.length - 1]
-    return [
-      last?.content?.length || 0,
-      last?.toolCalls?.length || 0,
-      last?.toolCalls?.map(t => t.status).join(',') || ''
-    ].join('|')
-  },
-  () => {
-    nextTick(() => {
-      if (messagesContainer.value) {
-        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-      }
-    })
-  }
-)
+// watch(
+//   () => {
+//     const last = messages.value[messages.value.length - 1]
+//     return [
+//       last?.content?.length || 0,
+//       last?.toolCalls?.length || 0,
+//       last?.toolCalls?.map(t => t.status).join(',') || ''
+//     ].join('|')
+//   },
+//   () => {
+//     nextTick(() => {
+//       if (messagesContainer.value) {
+//         messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+//       }
+//     })
+//   }
+// )
 
 function handleSend(text: string, files: File[]) {
   sendMessage(text, files)
 }
 
 function handleNewTask() {
+  if (sessionStore.activeSessionId && currentPhase.value === 'RUNNING') {
+    sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
+  }
   newSession()
-  // Reset task state
-  currentPhase.value = 'IDLE'
-  elapsedMs.value = 0
-  startedAt.value = null
-  projectKey.value = ''
+  showNewTaskDialog.value = true
+}
+
+function onSessionCreated(session: any) {
+  showNewTaskDialog.value = false
+  sessionStore.setActiveSession(session.id)
+  router.push(`/tasks/${session.id}`)
 }
 
 async function selectWorkspace() {
@@ -219,40 +229,42 @@ async function loadSession(sid: string) {
       elapsedMs.value = data.elapsedMs || 0
       projectKey.value = data.projectKey || ''
       if (data.agentName) agentName.value = data.agentName
+      if (data.workspace) workspace.value = data.workspace
       await agentStore.fetchAgent(data.agentId)
     }
   } catch {
     // ignore
   }
 
-  restoreSession(sid, executionMode.value)
+  restoreSession(sid, executionMode.value, workspace.value || undefined)
 }
 
 // Handle session switch from sidebar (component reuse prevents onMounted re-fire)
 watch(sessionIdParam, (newSid, oldSid) => {
   if (newSid && newSid !== oldSid) {
     loadSession(newSid)
+  } else if (!newSid && oldSid) {
+    // Navigated back to home — reset and show dialog
+    cleanup()
+    sessionStore.setActiveSession(null)
+    messages.value = []
+    agentId.value = ''
+    executionMode.value = 'CLOUD'
+    currentPhase.value = 'IDLE'
+    elapsedMs.value = 0
+    projectKey.value = ''
+    showNewTaskDialog.value = true
   }
 })
 
 onMounted(async () => {
-  // Load session list for the left sidebar
   sessionStore.fetchSessions()
 
   const sid = sessionIdParam.value
-
   if (sid) {
     await loadSession(sid)
   } else {
-    // New task flow: agentId from query
-    const queryAgentId = route.query.agentId as string
-    if (queryAgentId) {
-      agentId.value = queryAgentId
-      executionMode.value = (route.query.mode as string) || 'CLOUD'
-      const agent = await agentStore.fetchAgent(queryAgentId)
-      if (agent) agentName.value = agent.name
-      fetchMessages()
-    }
+    showNewTaskDialog.value = true
   }
 })
 

@@ -68,22 +68,44 @@ const groupedSessions = computed(() => {
   const groups = new Map<string, Session[]>()
 
   for (const s of sessions) {
-    const key = s.projectKey || '未分类'
+    let key: string
+    if (s.executionMode === 'CLOUD') {
+      key = 'CLOUD'
+    } else {
+      key = s.workspace ? `LOCAL:${s.workspace}` : 'LOCAL:未设置'
+    }
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key)!.push(s)
   }
 
-  return Array.from(groups.entries()).map(([key, sessions]) => ({
+  const entries = Array.from(groups.entries())
+  entries.sort(([a], [b]) => {
+    if (a === 'CLOUD') return -1
+    if (b === 'CLOUD') return 1
+    return a.localeCompare(b)
+  })
+
+  return entries.map(([key, sessions]) => ({
     key,
-    label: key,
+    label: formatGroupLabel(key),
     sessions: sessions.sort((a, b) => {
-      // Running first, then by updatedAt
       if (a.running && !b.running) return -1
       if (!a.running && b.running) return 1
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     })
   }))
 })
+
+function formatGroupLabel(key: string): string {
+  if (key === 'CLOUD') return '云端模式'
+  if (key.startsWith('LOCAL:')) {
+    const ws = key.substring(6)
+    if (ws === '未设置') return '本地 - 未设置'
+    const parts = ws.split('/').filter(Boolean)
+    return `本地 - ${parts[parts.length - 1] || ws}`
+  }
+  return key
+}
 
 function phaseClass(phase: TaskPhase) {
   switch (phase) {

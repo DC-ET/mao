@@ -25,6 +25,7 @@ export interface Session {
   elapsedMs: number
   steps?: TaskStep[]
   projectKey?: string
+  workspace?: string
   running: boolean
 }
 
@@ -48,6 +49,18 @@ export const useSessionStore = defineStore('session', () => {
       sessions.value = data || []
     } finally {
       loading.value = false
+    }
+  }
+
+  async function fetchSession(id: string) {
+    try {
+      const { data } = await api.get(`/sessions/${id}`)
+      if (data) {
+        updateSession(id, data)
+      }
+      return data
+    } catch {
+      return null
     }
   }
 
@@ -100,6 +113,7 @@ export const useSessionStore = defineStore('session', () => {
     activeSession,
     sessionsByAgent,
     fetchSessions,
+    fetchSession,
     createSession,
     setActiveSession,
     updateSession,

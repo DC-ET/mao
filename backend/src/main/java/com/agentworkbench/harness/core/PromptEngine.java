@@ -1,6 +1,7 @@
 package com.agentworkbench.harness.core;
 
 import com.agentworkbench.harness.llm.ChatRequest;
+import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.harness.skill.SkillLoader;
 import com.agentworkbench.harness.tool.Tool;
 import com.agentworkbench.harness.mcp.McpTool;
@@ -20,6 +21,7 @@ import java.util.*;
 public class PromptEngine {
 
     private final SkillLoader skillLoader;
+    private final PathSandbox pathSandbox;
 
     /**
      * 构建 LLM 请求
@@ -56,12 +58,13 @@ public class PromptEngine {
             sb.append("\n\n");
         }
 
-        // Workspace directory hint
-        if (context.getWorkspace() != null && !context.getWorkspace().isEmpty()) {
-            sb.append("## Working Directory\n\n");
-            sb.append("Your current working directory is: `").append(context.getWorkspace()).append("`\n");
-            sb.append("All relative file paths are resolved against this directory. Use `ls` or `read_file` to explore the project.\n\n");
-        }
+        // Workspace directory hint — always provide so the LLM never guesses
+        String effectiveWorkspace = (context.getWorkspace() != null && !context.getWorkspace().isEmpty())
+                ? context.getWorkspace()
+                : pathSandbox.getWorkspaceRoot().toString();
+        sb.append("## Working Directory\n\n");
+        sb.append("Your current working directory is: `").append(effectiveWorkspace).append("`\n");
+        sb.append("All relative file paths are resolved against this directory. Use `ls` or `read_file` to explore the project.\n\n");
 
         // Skill catalog (Layer 1) — name + description, ~100 token/skill
         String skillDescriptions = skillLoader.getDescriptions(context.getAvailableSkillNames());

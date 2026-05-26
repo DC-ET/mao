@@ -32,6 +32,7 @@ public class McpClient {
      * Discover tools from an MCP server via SSE transport
      * Sends initialize + tools/list via HTTP POST (JSON-RPC), reads SSE response
      */
+    @SuppressWarnings("unused")
     public List<McpTool> discoverTools(String serverUrl) {
         try {
             // 1. Initialize
