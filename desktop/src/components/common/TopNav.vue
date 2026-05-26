@@ -1,7 +1,7 @@
 <template>
   <nav class="top-nav">
     <div class="nav-left">
-      <div class="nav-logo" @click="router.push('/workbench')">
+      <div class="nav-logo" @click="router.push('/')">
         <div class="logo-icon">
           <el-icon :size="16"><Monitor /></el-icon>
         </div>
@@ -48,14 +48,13 @@ const route = useRoute()
 const authStore = useAuthStore()
 
 const navLinks = [
-  { path: '/workbench', label: '工作台' },
   { path: '/hub', label: 'Hub' },
   { path: '/agent/create', label: '创建 Agent' }
 ]
 
-// Hide product tabs when inside a task/chat page to reduce distraction
 const showNavLinks = computed(() => {
-  return !route.path.startsWith('/chat/') && !route.path.startsWith('/tasks/')
+  if (route.path === '/') return true
+  return !route.path.startsWith('/tasks/')
 })
 
 function isActive(path: string) {

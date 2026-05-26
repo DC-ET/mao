@@ -22,7 +22,7 @@ import TopNav from './TopNav.vue'
 .layout-main {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--aw-canvas);
 }
 </style>

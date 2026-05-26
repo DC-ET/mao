@@ -113,9 +113,23 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       },
       onMessageEnd() {
         sending.value = false
+        // Refresh session to pick up server-generated title/summary
+        if (sessionId.value) {
+          sessionStore.fetchSession(sessionId.value)
+        }
       },
-      onError() {
+      onError(message: string) {
         sending.value = false
+        // Remove empty assistant bubble left by the failed stream
+        const lastMsg = messages.value[messages.value.length - 1]
+        if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
+          messages.value.pop()
+        }
+        ElMessage.error(message || 'Agent 执行中断')
+        // Refresh session to pick up FAILED phase from server
+        if (sessionId.value) {
+          sessionStore.fetchSession(sessionId.value)
+        }
       }
     })
   }
@@ -193,15 +207,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   async function sendMessage(text: string, files?: File[]) {
     if ((!text && (!files || files.length === 0)) || sending.value) return
 
-    // For LOCAL mode, ensure workspace
-    if (executionMode.value === 'LOCAL' && isElectron) {
-      if (!workspace.value) {
-        const dir = await (window as any).electronAPI.selectDirectory()
-        if (dir) workspace.value = dir
-        else return
-      }
-    }
-
     sending.value = true
     activities.value = []
     const uploadedFiles = await uploadFiles(files || [])
@@ -223,8 +228,19 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     })
 
     try {
-      // Create session if needed
+      // Create session if needed (e.g. "new task" from within TaskView)
       if (!sessionId.value) {
+        // Ensure workspace is set for LOCAL mode before creating session
+        if (executionMode.value === 'LOCAL' && isElectron && !workspace.value) {
+          const dir = await (window as any).electronAPI.selectDirectory()
+          if (dir) workspace.value = dir
+          else {
+            sending.value = false
+            messages.value.pop()
+            return
+          }
+        }
+
         const sessionData = await sessionStore.createSession(
           agentId.value,
           executionMode.value,
@@ -281,21 +297,22 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   }
 
   function newSession() {
-    if (executionMode.value === 'LOCAL' && isElectron) {
-      explicitDisconnect = true
-      ;(window as any).electronAPI.disconnectLocalSession()
-      wsConnected.value = false
-    }
+    // Stop SSE stream and disconnect WebSocket
+    cleanup()
+    // Reset execution state
+    sending.value = false
     sessionId.value = null
     workspace.value = ''
     messages.value = []
     activities.value = []
+    agentName.value = 'Agent'
     sessionStore.setActiveSession(null)
   }
 
-  function restoreSession(sessionIdVal: string, mode: string) {
+  function restoreSession(sessionIdVal: string, mode: string, initialWorkspace?: string) {
     sessionId.value = sessionIdVal
     executionMode.value = mode
+    if (initialWorkspace) workspace.value = initialWorkspace
     sessionStore.setActiveSession(sessionIdVal)
     fetchMessages()
 

@@ -70,6 +70,7 @@ public class HttpRequestTool implements Tool {
     );
 
     @Override
+    @SuppressWarnings("deprecation")
     public String execute(String arguments) {
         try {
             JsonNode args = objectMapper.readTree(arguments);

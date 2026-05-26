@@ -12,21 +12,15 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     name: 'Layout',
     component: () => import('../components/common/Layout.vue'),
-    redirect: '/workbench',
     children: [
       {
-        path: 'workbench',
-        name: 'Workbench',
-        component: () => import('../views/task/TaskHomeView.vue')
+        path: '',
+        name: 'Home',
+        component: () => import('../views/task/TaskView.vue')
       },
       {
         path: 'tasks/:sessionId',
         name: 'Task',
-        component: () => import('../views/task/TaskView.vue')
-      },
-      {
-        path: 'chat/:agentId',
-        name: 'Chat',
         component: () => import('../views/task/TaskView.vue')
       },
       {

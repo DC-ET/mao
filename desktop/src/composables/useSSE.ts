@@ -29,7 +29,7 @@ export interface SSEOptions {
   onActivity?: (data: ActivityData) => void
   onSessionStatus?: (data: { phase: string }) => void
   onMessageEnd: () => void
-  onError: (error: Event) => void
+  onError: (message: string) => void
 }
 
 export function useSSE(options: SSEOptions) {
@@ -99,14 +99,20 @@ export function useSSE(options: SSEOptions) {
       stop()
     })
 
-    eventSource.addEventListener('error', (event) => {
+    eventSource.addEventListener('error', (event: any) => {
       isConnected.value = false
-      options.onError(event)
+      let msg = 'Agent 执行中断'
+      try {
+        const data = JSON.parse(event.data)
+        if (data?.message) msg = data.message
+      } catch {}
+      options.onError(msg)
       stop()
     })
 
     eventSource.onerror = () => {
       isConnected.value = false
+      options.onError('连接中断，请检查网络或稍后重试')
       stop()
     }
   }

@@ -248,7 +248,7 @@ async function handleSubmit() {
   try {
     await api.post('/agents', form.value)
     ElMessage.success('创建成功')
-    router.push('/workbench')
+    router.push('/')
   } finally {
     submitting.value = false
   }

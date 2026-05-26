@@ -8,8 +8,8 @@
         <h3 class="task-title">{{ displayTitle }}</h3>
         <span class="task-meta">
           <span v-if="agentName" class="meta-agent">{{ agentName }}</span>
-          <span v-if="projectKey" class="meta-separator">·</span>
-          <span v-if="projectKey" class="meta-project">{{ projectKey }}</span>
+          <span v-if="workspace" class="meta-separator">·</span>
+          <span v-if="workspace" class="meta-project">{{ workspaceDisplayName }}</span>
         </span>
       </div>
     </div>
@@ -37,7 +37,7 @@ import type { TaskPhase } from '../../stores/session'
 const props = defineProps<{
   title: string
   agentName?: string
-  projectKey?: string
+  workspace?: string
   phase: TaskPhase
   elapsedMs: number
   startedAt?: string | null
@@ -73,6 +73,12 @@ const phaseClass = computed(() => {
 
 const displayTitle = computed(() => {
   return props.title || '新任务'
+})
+
+const workspaceDisplayName = computed(() => {
+  if (!props.workspace) return ''
+  const parts = props.workspace.split('/').filter(Boolean)
+  return parts[parts.length - 1] || props.workspace
 })
 
 // Live elapsed timer

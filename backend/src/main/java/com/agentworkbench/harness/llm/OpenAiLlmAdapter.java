@@ -8,8 +8,6 @@ import okio.BufferedSource;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -26,7 +24,7 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         this.objectMapper = objectMapper;
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(5, TimeUnit.MINUTES)
+                .readTimeout(15, TimeUnit.MINUTES)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .build();
     }
@@ -37,7 +35,13 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
         try (Response response = httpClient.newCall(httpRequest).execute()) {
             if (!response.isSuccessful()) {
-                throw new RuntimeException("LLM API returned " + response.code());
+                String errorBody = "";
+                try {
+                    ResponseBody rb = response.body();
+                    if (rb != null) errorBody = rb.string();
+                } catch (Exception ignored) {}
+                String detail = errorBody.length() > 500 ? errorBody.substring(0, 500) : errorBody;
+                throw new RuntimeException("LLM API returned " + response.code() + ": " + detail);
             }
 
             ResponseBody body = response.body();
@@ -61,7 +65,13 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         try (Response response = httpClient.newCall(httpRequest).execute()) {
             log.debug("stream: response code={}", response.code());
             if (!response.isSuccessful()) {
-                callback.onError(new RuntimeException("LLM API returned " + response.code()));
+                String errorBody = "";
+                try {
+                    ResponseBody rb = response.body();
+                    if (rb != null) errorBody = rb.string();
+                } catch (Exception ignored) {}
+                String detail = errorBody.length() > 500 ? errorBody.substring(0, 500) : errorBody;
+                callback.onError(new RuntimeException("LLM API returned " + response.code() + ": " + detail));
                 return;
             }
 

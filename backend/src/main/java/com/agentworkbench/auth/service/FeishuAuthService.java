@@ -20,6 +20,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+@SuppressWarnings("deprecation")
 @Slf4j
 @Service
 @RequiredArgsConstructor
