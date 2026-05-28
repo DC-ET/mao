@@ -18,6 +18,10 @@
         <span v-if="phase === 'RUNNING'" class="phase-spinner"></span>
         {{ phaseLabel }}
       </span>
+      <span v-if="contextDisplay" class="context-window">
+        <span class="context-label">上下文</span>
+        <span class="context-tokens">{{ contextDisplay }}</span>
+      </span>
       <span v-if="elapsedDisplay" class="elapsed">{{ elapsedDisplay }}</span>
     </div>
     <div class="header-right">
@@ -33,6 +37,7 @@
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { Plus, ChatDotRound } from '@element-plus/icons-vue'
 import type { TaskPhase } from '../../stores/session'
+import type { ContextWindowInfo } from '../../types/chat'
 
 const props = defineProps<{
   title: string
@@ -42,6 +47,7 @@ const props = defineProps<{
   elapsedMs: number
   startedAt?: string | null
   panelCollapsed: boolean
+  contextWindow?: ContextWindowInfo | null
 }>()
 
 defineEmits<{
@@ -79,6 +85,22 @@ const workspaceDisplayName = computed(() => {
   if (!props.workspace) return ''
   const parts = props.workspace.split('/').filter(Boolean)
   return parts[parts.length - 1] || props.workspace
+})
+
+function formatTokenCompact(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '--'
+  if (value < 1000) return `${Math.round(value)}`
+  if (value < 10000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return `${Math.round(value / 1000)}k`
+}
+
+const contextDisplay = computed(() => {
+  if (!props.contextWindow) return ''
+  const tokens = props.contextWindow.actual > 0
+    ? props.contextWindow.actual
+    : props.contextWindow.estimated
+  if (tokens <= 0) return ''
+  return formatTokenCompact(tokens)
 })
 
 // Live elapsed timer
@@ -246,6 +268,23 @@ onUnmounted(() => {
   font-size: var(--aw-text-caption);
   color: var(--aw-ink-muted-48);
   letter-spacing: -0.224px;
+}
+
+.context-window {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--aw-text-caption);
+  letter-spacing: -0.224px;
+}
+
+.context-label {
+  color: var(--aw-ink-muted-48);
+}
+
+.context-tokens {
+  font-family: var(--aw-font-mono);
+  color: var(--aw-ink);
 }
 
 .header-right {

@@ -36,7 +36,7 @@ public class PromptEngine {
                 .content(systemPrompt)
                 .build());
 
-        // 2. Conversation history (managed by ContextManager)
+        // 2. Conversation history (may include compaction summaries injected as system messages)
         messages.addAll(context.getMessages());
 
         // 3. Build tool definitions

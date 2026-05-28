@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -47,11 +48,13 @@ public class SessionController {
     private final LocalToolSessionRegistry localToolSessionRegistry;
     private final ActivityService activityService;
     private final SessionTodoMapper sessionTodoMapper;
+    private final com.agentworkbench.harness.core.AgentLoop agentLoop;
     private final ExecutorService agentExecutor;
 
     public SessionController(SessionService sessionService, HarnessService harnessService,
                              AgentMapper agentMapper, LocalToolSessionRegistry localToolSessionRegistry,
                              ActivityService activityService, SessionTodoMapper sessionTodoMapper,
+                             com.agentworkbench.harness.core.AgentLoop agentLoop,
                              @Value("${app.harness.agent-thread-pool-size:20}") int poolSize,
                              @Value("${app.harness.agent-thread-pool-max:100}") int maxPoolSize,
                              @Value("${app.harness.agent-thread-pool-queue:200}") int queueCapacity) {
@@ -61,6 +64,7 @@ public class SessionController {
         this.localToolSessionRegistry = localToolSessionRegistry;
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
+        this.agentLoop = agentLoop;
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(poolSize);
         executor.setMaxPoolSize(maxPoolSize);
@@ -189,6 +193,9 @@ public class SessionController {
 
         SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
 
+        // Register cancel flag so AgentLoop can be stopped when SSE disconnects
+        AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(id);
+
         agentExecutor.submit(() -> {
             try {
                 // Track tool call metadata for summary generation
@@ -241,9 +248,12 @@ public class SessionController {
                             String arguments = info != null ? info[1] : null;
                             String summary = ToolResultSummarizer.summarize(toolName, arguments, result);
 
+                            boolean isError = isErrorResult(result);
+
                             Map<String, Object> data = new java.util.LinkedHashMap<>();
                             data.put("tool_call_id", toolCallId);
                             data.put("result", result);
+                            data.put("status", isError ? "error" : "success");
                             if (summary != null) {
                                 data.put("summary", summary);
                             }
@@ -257,7 +267,7 @@ public class SessionController {
                                 String activityType = ActivityTypeMapper.mapToolToType(toolName);
                                 String target = extractActivityTarget(toolName, arguments);
                                 String activitySummary = summary != null ? summary : toolName;
-                                String status = isErrorResult(result) ? "ERROR" : "SUCCESS";
+                                String status = isError ? "ERROR" : "SUCCESS";
 
                                 SessionActivity activity = activityService.record(
                                         id, activityType, target, activitySummary, null, status, null);
@@ -311,6 +321,9 @@ public class SessionController {
                                     )));
                             // Transition to IDLE on successful completion
                             sessionService.updatePhase(id, "IDLE");
+                            emitter.send(SseEmitter.event()
+                                    .name("session_status")
+                                    .data(Map.of("phase", "IDLE")));
                             emitter.complete();
                         } catch (Exception e) {
                             log.warn("Failed to send SSE event", e);
@@ -318,13 +331,48 @@ public class SessionController {
                     }
 
                     @Override
-                    public void onContextCompressed(int messageCount) {
+                    public void onContextWindow(int estimatedTokens, int actualTokens, int maxTokens) {
                         try {
                             emitter.send(SseEmitter.event()
-                                    .name("context_compressed")
-                                    .data(Map.of("message_count", messageCount)));
+                                    .name("context_window")
+                                    .data(Map.of(
+                                            "estimated", estimatedTokens,
+                                            "actual", actualTokens,
+                                            "maxTokens", maxTokens
+                                    )));
                         } catch (Exception e) {
-                            log.warn("Failed to send SSE context_compressed event", e);
+                            log.warn("Failed to send SSE context_window event", e);
+                        }
+                    }
+
+                    @Override
+                    public void onCompactionStart(String type, int messageCount, int estimatedTokens) {
+                        try {
+                            emitter.send(SseEmitter.event()
+                                    .name("compaction_start")
+                                    .data(Map.of(
+                                            "type", type,
+                                            "messageCount", messageCount,
+                                            "estimatedTokens", estimatedTokens
+                                    )));
+                        } catch (Exception e) {
+                            log.warn("Failed to send SSE compaction_start event", e);
+                        }
+                    }
+
+                    @Override
+                    public void onCompactionEnd(String type, int summaryTokens, int savedTokens, long durationMs) {
+                        try {
+                            emitter.send(SseEmitter.event()
+                                    .name("compaction_end")
+                                    .data(Map.of(
+                                            "type", type,
+                                            "summaryTokens", summaryTokens,
+                                            "savedTokens", savedTokens,
+                                            "durationMs", durationMs
+                                    )));
+                        } catch (Exception e) {
+                            log.warn("Failed to send SSE compaction_end event", e);
                         }
                     }
 
@@ -336,12 +384,17 @@ public class SessionController {
                                     .data(Map.of("message", t.getMessage())));
                             // Transition to FAILED on error
                             try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
+                            try {
+                                emitter.send(SseEmitter.event()
+                                        .name("session_status")
+                                        .data(Map.of("phase", "FAILED")));
+                            } catch (Exception ignored) {}
                             emitter.completeWithError(t);
                         } catch (Exception e) {
                             log.warn("Failed to send SSE error event", e);
                         }
                     }
-                });
+                }, cancelFlag);
 
             } catch (Exception e) {
                 log.error("Agent execution failed", e);
@@ -351,6 +404,11 @@ public class SessionController {
                             .data(Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常")));
                 } catch (Exception ignored) {}
                 try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
+                try {
+                    emitter.send(SseEmitter.event()
+                            .name("session_status")
+                            .data(Map.of("phase", "FAILED")));
+                } catch (Exception ignored) {}
                 emitter.completeWithError(e);
             }
         });
@@ -363,10 +421,23 @@ public class SessionController {
                         .data(Map.of("message", "任务执行超时")));
             } catch (Exception ignored) {}
             try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
+            try {
+                emitter.send(SseEmitter.event()
+                        .name("session_status")
+                        .data(Map.of("phase", "FAILED")));
+            } catch (Exception ignored) {}
             emitter.complete();
         });
 
-        emitter.onError(e -> log.warn("SSE connection error for session: {}", id, e));
+        emitter.onError(e -> {
+            log.warn("SSE connection error for session: {}", id, e);
+            // Signal AgentLoop to cancel
+            cancelFlag.set(true);
+            // Transition phase to FAILED
+            try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
+            // Cleanup cancel flag from AgentLoop
+            agentLoop.removeCancelFlag(id);
+        });
 
         return emitter;
     }

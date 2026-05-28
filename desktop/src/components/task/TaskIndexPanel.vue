@@ -3,8 +3,8 @@
     <template v-if="!collapsed">
       <div class="panel-header">
         <span class="panel-title">任务</span>
-        <button class="close-btn" @click="$emit('toggle')">
-          <el-icon :size="14"><Close /></el-icon>
+        <button class="refresh-btn" @click="refreshSessions" :disabled="loading">
+          <el-icon :size="14" :class="{ 'is-loading': loading }"><Refresh /></el-icon>
         </button>
       </div>
       <div class="panel-content">
@@ -18,10 +18,13 @@
           <div v-for="group in groupedSessions" :key="group.key" class="session-group">
             <div class="group-header">{{ group.label }}</div>
             <div
-              v-for="session in group.sessions"
+              v-for="session in group.sessions.slice(0, getVisibleCount(group.key))"
               :key="session.id"
               class="session-item"
-              :class="{ active: session.id === activeSessionId }"
+              :class="{
+                active: session.id === activeSessionId,
+                'confirming-delete': confirmingDeleteId === session.id
+              }"
               @click="selectSession(session)"
             >
               <div class="session-item-main">
@@ -32,6 +35,35 @@
                 <span v-if="session.running" class="session-spinner"></span>
                 <span class="session-elapsed">{{ formatElapsed(session) }}</span>
               </div>
+              <div class="session-item-actions">
+                <template v-if="confirmingDeleteId === session.id">
+                  <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除">
+                    <el-icon :size="13"><Check /></el-icon>
+                  </button>
+                  <button class="action-btn action-cancel" @click="cancelDelete($event)" title="取消">
+                    <el-icon :size="13"><Close /></el-icon>
+                  </button>
+                </template>
+                <template v-else>
+                  <button class="action-btn action-delete" @click="startDelete($event, session.id)" title="删除任务">
+                    <el-icon :size="13"><Delete /></el-icon>
+                  </button>
+                </template>
+              </div>
+            </div>
+            <div
+              v-if="group.sessions.length > getVisibleCount(group.key)"
+              class="group-toggle"
+              @click="showMore(group.key, group.sessions.length)"
+            >
+              Show more
+            </div>
+            <div
+              v-else-if="group.sessions.length > DEFAULT_VISIBLE"
+              class="group-toggle"
+              @click="showLess(group.key)"
+            >
+              Show less
             </div>
           </div>
         </template>
@@ -44,8 +76,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Close, Loading, ChatDotRound } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
+import { Refresh, Loading, ChatDotRound, Delete, Check, Close } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 
@@ -60,8 +92,13 @@ defineEmits<{
 const router = useRouter()
 const sessionStore = useSessionStore()
 
+const DEFAULT_VISIBLE = 5
+const EXPAND_STEP = 20
+
 const loading = computed(() => sessionStore.loading)
 const activeSessionId = computed(() => sessionStore.activeSessionId)
+const confirmingDeleteId = ref<string | null>(null)
+const expandedCounts = ref<Map<string, number>>(new Map())
 
 const groupedSessions = computed(() => {
   const sessions = sessionStore.sessions
@@ -129,9 +166,52 @@ function formatElapsed(session: Session) {
   return `${hours}h ${minutes % 60}m`
 }
 
+async function refreshSessions() {
+  await sessionStore.fetchSessions()
+}
+
 function selectSession(session: Session) {
+  confirmingDeleteId.value = null
   sessionStore.setActiveSession(session.id)
   router.push(`/tasks/${session.id}`)
+}
+
+function startDelete(e: MouseEvent, sessionId: string) {
+  e.stopPropagation()
+  confirmingDeleteId.value = sessionId
+}
+
+function cancelDelete(e?: MouseEvent) {
+  e?.stopPropagation()
+  confirmingDeleteId.value = null
+}
+
+async function confirmDelete(e: MouseEvent, sessionId: string) {
+  e.stopPropagation()
+  const wasActive = sessionStore.activeSessionId === sessionId
+  await sessionStore.deleteSession(sessionId)
+  confirmingDeleteId.value = null
+  if (wasActive && sessionStore.sessions.length > 0) {
+    const next = sessionStore.sessions[0]
+    sessionStore.setActiveSession(next.id)
+    router.push(`/tasks/${next.id}`)
+  } else if (wasActive) {
+    router.push('/tasks')
+  }
+}
+
+function getVisibleCount(key: string): number {
+  return expandedCounts.value.get(key) ?? DEFAULT_VISIBLE
+}
+
+function showMore(key: string, total: number) {
+  const current = getVisibleCount(key)
+  const next = Math.min(current + EXPAND_STEP, total)
+  expandedCounts.value.set(key, next)
+}
+
+function showLess(key: string) {
+  expandedCounts.value.set(key, DEFAULT_VISIBLE)
 }
 </script>
 
@@ -170,7 +250,7 @@ function selectSession(session: Session) {
   letter-spacing: 0.231px;
 }
 
-.close-btn {
+.refresh-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -181,11 +261,17 @@ function selectSession(session: Session) {
   border-radius: var(--aw-radius-xs);
   color: var(--aw-ink-muted-48);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 
-.close-btn:hover {
+.refresh-btn:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.06);
+  color: var(--aw-primary);
+}
+
+.refresh-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .panel-content {
@@ -214,6 +300,19 @@ function selectSession(session: Session) {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: 8px 8px 4px;
+}
+
+.group-toggle {
+  font-size: var(--aw-text-micro);
+  color: var(--aw-ink-muted-48);
+  padding: 4px 10px 6px 24px;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s;
+}
+
+.group-toggle:hover {
+  color: var(--aw-ink);
 }
 
 .session-item {
@@ -292,6 +391,57 @@ function selectSession(session: Session) {
   letter-spacing: -0.1px;
 }
 
+.session-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.session-item:hover .session-item-actions,
+.session-item.confirming-delete .session-item-actions {
+  opacity: 1;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  color: var(--aw-ink-muted-48);
+}
+
+.action-delete:hover {
+  background: rgba(220, 53, 69, 0.1);
+  color: var(--aw-danger);
+}
+
+.action-confirm {
+  background: rgba(220, 53, 69, 0.1);
+  color: var(--aw-danger);
+}
+
+.action-confirm:hover {
+  background: rgba(220, 53, 69, 0.2);
+}
+
+.action-cancel:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--aw-ink);
+}
+
+.session-item.confirming-delete {
+  background: rgba(220, 53, 69, 0.04);
+}
+
 .collapsed-toggle {
   display: flex;
   align-items: center;
@@ -337,5 +487,28 @@ function selectSession(session: Session) {
 
 [data-theme="dark"] .session-item.active {
   background: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .action-delete:hover {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+}
+
+[data-theme="dark"] .action-confirm {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+}
+
+[data-theme="dark"] .action-confirm:hover {
+  background: rgba(248, 81, 73, 0.25);
+}
+
+[data-theme="dark"] .action-cancel:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--aw-ink);
+}
+
+[data-theme="dark"] .session-item.confirming-delete {
+  background: rgba(248, 81, 73, 0.06);
 }
 </style>

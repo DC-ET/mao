@@ -37,10 +37,22 @@ public class AgentExecutionContext {
     // 可用 Skill 知识文档名称列表（为空则加载全部）
     private List<String> availableSkillNames = new ArrayList<>();
 
+    // 会话压缩摘要（跨轮次）
+    private String sessionSummary;
+
+    // 工作记忆摘要（当前请求内 loop 压缩）
+    private String workingSummary;
+
+    // 压缩配置（Agent 级覆盖，为 null 时使用全局默认）
+    private CompactionConfig compactionConfig;
+
     // 执行状态
     private List<ChatRequest.ToolCall> pendingToolCalls;
     private ChatUsage totalUsage;
     private int currentRound = 0;
+
+    // Loop 压缩计数
+    private int loopToolRounds = 0;
 
     public AgentExecutionContext() {
         this.totalUsage = ChatUsage.builder()

@@ -89,8 +89,8 @@ public class LocalToolWebSocketHandler extends TextWebSocketHandler {
                     sessionRegistry.completeToolRequestError(sessionId, requestId, error);
                     break;
                 }
-                case "pong":
-                    // Heartbeat response, no action needed
+                case "ping":
+                    session.sendMessage(new TextMessage("{\"type\":\"pong\"}"));
                     break;
                 default:
                     log.warn("Unknown message type '{}' from session {}", type, sessionId);

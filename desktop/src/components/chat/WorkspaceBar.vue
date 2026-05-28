@@ -5,9 +5,6 @@
     <span class="workspace-path" :class="{ empty: !workspace }">
       {{ workspace || '未选择目录' }}
     </span>
-    <button class="workspace-btn" @click="$emit('select')">
-      {{ workspace ? '更换' : '选择目录' }}
-    </button>
   </div>
 </template>
 
@@ -15,7 +12,6 @@
 import { FolderOpened } from '@element-plus/icons-vue'
 
 defineProps<{ workspace: string }>()
-defineEmits<{ select: [] }>()
 </script>
 
 <style scoped>
@@ -58,23 +54,5 @@ defineEmits<{ select: [] }>()
   color: var(--aw-ink-muted-48);
   font-style: italic;
   font-family: var(--aw-font-text);
-}
-
-.workspace-btn {
-  font-family: var(--aw-font-text);
-  font-size: var(--aw-text-caption);
-  color: var(--aw-primary);
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: var(--aw-radius-xs);
-  transition: background 0.15s;
-  flex-shrink: 0;
-  letter-spacing: -0.224px;
-}
-
-.workspace-btn:hover {
-  background: rgba(0, 102, 204, 0.08);
 }
 </style>

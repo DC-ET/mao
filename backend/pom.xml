@@ -146,6 +146,13 @@
             <artifactId>caffeine</artifactId>
         </dependency>
 
+        <!-- jtokkit (cl100k_base tokenizer for accurate token estimation) -->
+        <dependency>
+            <groupId>com.knuddels</groupId>
+            <artifactId>jtokkit</artifactId>
+            <version>1.1.0</version>
+        </dependency>
+
         <!-- Jackson (JSON) -->
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>

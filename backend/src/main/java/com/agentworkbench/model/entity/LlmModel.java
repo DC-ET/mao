@@ -25,6 +25,9 @@ public class LlmModel {
 
     private Integer maxTokens;
 
+    /** 模型上下文窗口大小（token），用于压缩触发判定 */
+    private Integer contextWindowTokens;
+
     private BigDecimal temperatureMax;
 
     private Integer status;

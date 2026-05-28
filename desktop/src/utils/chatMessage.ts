@@ -156,13 +156,17 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
 }
 
 function inferToolStatus(result: string): ToolCall['status'] {
-  const lower = result.toLowerCase()
-  if (
-    lower.includes('failed') ||
-    lower.includes('error') ||
-    lower.startsWith('tool execution failed')
-  ) {
-    return 'error'
+  const text = result || ''
+  // Try JSON-based detection: {"error": ...} or {"exit_code": non-zero}
+  try {
+    const obj = JSON.parse(text)
+    if (obj && typeof obj === 'object') {
+      if (obj.error) return 'error'
+      if (typeof obj.exit_code === 'number' && obj.exit_code !== 0) return 'error'
+    }
+  } catch {
+    // Not JSON — fall back to plain text heuristic
   }
+  if (text.startsWith('Tool execution failed')) return 'error'
   return 'success'
 }

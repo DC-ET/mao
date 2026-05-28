@@ -11,6 +11,7 @@
         :elapsed-ms="elapsedMs"
         :started-at="startedAt"
         :panel-collapsed="panelCollapsed"
+        :context-window="contextWindow"
         @new-task="handleNewTask"
         @toggle-panel="panelCollapsed = !panelCollapsed"
       />
@@ -18,22 +19,27 @@
       <WorkspaceBar
         v-if="executionMode === 'LOCAL'"
         :workspace="workspace"
-        @select="selectWorkspace"
       />
 
       <div class="messages" ref="messagesContainer">
         <div v-if="messages.length === 0 && !sending" class="empty-state">
-          <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
-          <p>选择一个 Agent 开始新任务</p>
-          <el-button type="primary" class="pill-btn" @click="showNewTaskDialog = true">
-            <el-icon><Plus /></el-icon> 新任务
-          </el-button>
+          <template v-if="!sessionId">
+            <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
+            <p>选择一个 Agent 开始新任务</p>
+            <el-button type="primary" class="pill-btn" @click="showNewTaskDialog = true">
+              <el-icon><Plus /></el-icon> 新任务
+            </el-button>
+          </template>
+          <template v-else>
+            <p class="guidance-text">在下方输入框描述你的任务，我会帮你完成</p>
+          </template>
         </div>
 
         <MessageBubble
-          v-for="msg in messages"
+          v-for="(msg, idx) in messages"
           :key="msg.id"
           :message="msg"
+          :show-time="shouldShowTime(msg, idx)"
         />
 
         <div v-if="showTypingIndicator" class="typing-indicator">
@@ -47,15 +53,10 @@
         </div>
       </div>
 
-      <BashApprovalBar
-        class="main-area-approval"
-        :command="pendingBashCommand"
-        @confirm="confirmBash"
-      />
-
       <ChatInput
         :disabled="sending"
         :loading="sending"
+        :workspace="workspace"
         @send="handleSend"
       />
     </div>
@@ -65,7 +66,7 @@
       :workspace="workspace"
       :execution-mode="executionMode"
       :ws-connected="wsConnected"
-      :pending-bash-command="pendingBashCommand"
+      :pending-bash-approvals="pendingBashApprovals"
       @bash-confirm="confirmBash"
     />
 
@@ -89,7 +90,6 @@ import TaskInspector from '../../components/task/TaskInspector.vue'
 import WorkspaceBar from '../../components/chat/WorkspaceBar.vue'
 import MessageBubble from '../../components/chat/MessageBubble.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
-import BashApprovalBar from '../../components/chat/BashApprovalBar.vue'
 import NewTaskDialog from '../../components/task/NewTaskDialog.vue'
 
 const route = useRoute()
@@ -112,11 +112,13 @@ const projectKey = ref('')
 const {
   messages,
   sending,
+  sessionId,
   wsConnected,
   workspace,
   agentName,
-  pendingBashCommand,
+  pendingBashApprovals,
   todos,
+  contextWindow,
   sendMessage,
   newSession,
   restoreSession,
@@ -140,22 +142,34 @@ const showTypingIndicator = computed(() => {
   return !hasText && !hasTools
 })
 
-// Watch for SSE session_status events to update phase
+// Track local timing state; phase is driven by server SSE session_status events
 watch(() => sending.value, (isSending) => {
-  // Skip transitions when between sessions (e.g. after clicking "新任务")
   if (!sessionStore.activeSessionId) return
 
   if (isSending) {
     currentPhase.value = 'RUNNING'
     startedAt.value = new Date().toISOString()
-    sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'RUNNING')
   } else {
-    currentPhase.value = 'IDLE'
+    // Only reset to IDLE if server hasn't set a terminal phase (FAILED/COMPLETED)
+    if (currentPhase.value === 'RUNNING') {
+      currentPhase.value = 'IDLE'
+    }
     if (startedAt.value) {
       elapsedMs.value += Date.now() - new Date(startedAt.value).getTime()
       startedAt.value = null
     }
-    sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
+  }
+})
+
+// Sync phase from store (updated by SSE session_status events from server)
+watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
+  if (serverPhase && serverPhase !== currentPhase.value) {
+    currentPhase.value = serverPhase
+    // If server says FAILED/IDLE, stop the local timer
+    if (serverPhase !== 'RUNNING' && startedAt.value) {
+      elapsedMs.value += Date.now() - new Date(startedAt.value).getTime()
+      startedAt.value = null
+    }
   }
 })
 
@@ -186,6 +200,19 @@ watch(() => sending.value, (isSending) => {
 //   }
 // )
 
+function shouldShowTime(msg: any, idx: number): boolean {
+  // 用户消息总是显示时间戳
+  if (normalizeMessageRole(msg.role) === 'user') return true
+
+  // assistant消息：有durationMs时显示（当前任务的最后一轮）
+  if (msg.durationMs) return true
+
+  // assistant消息：如果是最后一个assistant消息则显示
+  const isLastAssistant = idx === messages.value.length - 1 ||
+    messages.value.slice(idx + 1).every(m => normalizeMessageRole(m.role) !== 'assistant')
+  return isLastAssistant
+}
+
 function handleSend(text: string, files: File[]) {
   sendMessage(text, files)
 }
@@ -202,16 +229,6 @@ function onSessionCreated(session: any) {
   showNewTaskDialog.value = false
   sessionStore.setActiveSession(session.id)
   router.push(`/tasks/${session.id}`)
-}
-
-async function selectWorkspace() {
-  const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
-  if (!isElectron) return
-  const dir = await (window as any).electronAPI.selectDirectory()
-  if (dir) {
-    workspace.value = dir
-    projectKey.value = dir.split('/').filter(Boolean).pop() || ''
-  }
 }
 
 async function loadSession(sid: string) {
@@ -238,12 +255,22 @@ async function loadSession(sid: string) {
   restoreSession(sid, executionMode.value, workspace.value || undefined)
 }
 
+// Navigate to the most recent session, or show new-task dialog if none exist
+function navigateToLatestSession() {
+  const latest = sessionStore.sessions[0]
+  if (latest) {
+    router.replace(`/tasks/${latest.id}`)
+  } else {
+    showNewTaskDialog.value = true
+  }
+}
+
 // Handle session switch from sidebar (component reuse prevents onMounted re-fire)
 watch(sessionIdParam, (newSid, oldSid) => {
   if (newSid && newSid !== oldSid) {
     loadSession(newSid)
   } else if (!newSid && oldSid) {
-    // Navigated back to home — reset and show dialog
+    // Navigated back to home — reset and go to latest session
     cleanup()
     sessionStore.setActiveSession(null)
     messages.value = []
@@ -252,23 +279,34 @@ watch(sessionIdParam, (newSid, oldSid) => {
     currentPhase.value = 'IDLE'
     elapsedMs.value = 0
     projectKey.value = ''
-    showNewTaskDialog.value = true
+    navigateToLatestSession()
   }
 })
 
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
 onMounted(async () => {
-  sessionStore.fetchSessions()
+  await sessionStore.fetchSessions()
 
   const sid = sessionIdParam.value
   if (sid) {
     await loadSession(sid)
   } else {
-    showNewTaskDialog.value = true
+    navigateToLatestSession()
   }
+
+  // Periodically sync session list to pick up server-side phase changes (e.g. sweep)
+  pollTimer = setInterval(() => {
+    sessionStore.fetchSessions(true)
+  }, 30_000)
 })
 
 onUnmounted(() => {
   cleanup()
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
 })
 </script>
 
@@ -308,6 +346,12 @@ onUnmounted(() => {
 .empty-icon {
   color: var(--aw-hairline);
   margin-bottom: 12px;
+}
+
+.guidance-text {
+  font-size: var(--aw-text-body);
+  color: var(--aw-ink-muted-48);
+  margin: 0;
 }
 
 .empty-state p {
@@ -365,14 +409,4 @@ onUnmounted(() => {
   background: var(--aw-ink-muted-48);
 }
 
-/* 宽屏：审批在右侧 Inspector；窄屏：审批在输入框上方 */
-.main-area-approval {
-  display: none;
-}
-
-@media (max-width: 1024px) {
-  .main-area-approval {
-    display: block;
-  }
-}
 </style>

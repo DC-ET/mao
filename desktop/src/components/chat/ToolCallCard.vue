@@ -112,7 +112,7 @@ function toggleExpand() {
 .tool-call-card {
   border: 1px solid var(--aw-hairline);
   border-radius: var(--aw-radius-lg);
-  margin: 6px 0;
+  margin: 2px 0;
   overflow: hidden;
   background: var(--aw-canvas);
   transition: border-color 0.2s;

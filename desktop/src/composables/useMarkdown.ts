@@ -3,6 +3,7 @@ import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 
 const marked = new Marked({
+  breaks: false,
   renderer: {
     code({ text, lang }: { text: string; lang?: string }) {
       const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'

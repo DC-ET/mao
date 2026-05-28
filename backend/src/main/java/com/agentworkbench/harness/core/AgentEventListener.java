@@ -18,7 +18,30 @@ public interface AgentEventListener {
 
     void onError(Throwable t);
 
-    default void onContextCompressed(int messageCount) {
-        // optional: notify frontend that context was compressed
+    /**
+     * 上下文窗口大小变更通知
+     * @param estimatedTokens 估算 token 数（cl100k_base，快速反馈）
+     * @param actualTokens LLM 真实返回的 prompt_tokens（0 表示尚未返回）
+     * @param maxTokens 模型上下文窗口大小
+     */
+    default void onContextWindow(int estimatedTokens, int actualTokens, int maxTokens) {
+        // optional: notify frontend of context window size
     }
+
+    /**
+     * 压缩开始
+     * @param type "session" 或 "loop"
+     * @param messageCount 参与压缩的消息数
+     * @param estimatedTokens 压缩前估算 token 数
+     */
+    default void onCompactionStart(String type, int messageCount, int estimatedTokens) {}
+
+    /**
+     * 压缩完成
+     * @param type "session" 或 "loop"
+     * @param summaryTokens 摘要 token 数
+     * @param savedTokens 节省的 token 数
+     * @param durationMs 压缩耗时（毫秒）
+     */
+    default void onCompactionEnd(String type, int summaryTokens, int savedTokens, long durationMs) {}
 }

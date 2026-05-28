@@ -2,7 +2,7 @@ import { ref, type Ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useSSE, type ToolCallStartData, type ToolCallResultData, type ActivityData } from './useSSE'
-import { useSessionStore } from '../stores/session'
+import { useSessionStore, type TaskPhase } from '../stores/session'
 import {
   appendTextDelta,
   appendToolCallStart,
@@ -18,18 +18,27 @@ export type {
 } from '../types/chat'
 export { normalizeMessageRole } from '../types/chat'
 
-import type { ChatMessage, FileAttachment, ToolCall, TodoItem } from '../types/chat'
+import type { ChatMessage, FileAttachment, ToolCall, TodoItem, ContextWindowInfo } from '../types/chat'
+
+export interface BashApprovalItem {
+  requestId: string
+  command: string
+}
 import { normalizeMessageRole } from '../types/chat'
 
 function inferResultStatus(result: string): ToolCall['status'] {
-  const lower = (result || '').toLowerCase()
-  if (
-    lower.includes('failed') ||
-    lower.includes('error') ||
-    lower.startsWith('tool execution failed')
-  ) {
-    return 'error'
+  const text = result || ''
+  // Try JSON-based detection: {"error": ...} or {"exit_code": non-zero}
+  try {
+    const obj = JSON.parse(text)
+    if (obj && typeof obj === 'object') {
+      if (obj.error) return 'error'
+      if (typeof obj.exit_code === 'number' && obj.exit_code !== 0) return 'error'
+    }
+  } catch {
+    // Not JSON — fall back to plain text heuristic
   }
+  if (text.startsWith('Tool execution failed')) return 'error'
   return 'success'
 }
 
@@ -44,10 +53,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const agentName = ref('Agent')
   const activities = ref<ActivityData[]>([])
   const todos = ref<TodoItem[]>([])
+  const contextWindow = ref<ContextWindowInfo | null>(null)
+  const startedAt = ref<string | null>(null)
 
-  // Bash approval (inline UI, not modal)
-  const pendingBashCommand = ref('')
-  const pendingBashRequestId = ref('')
+  // Bash approval queue — supports multiple concurrent approvals
+  const pendingBashApprovals = ref<BashApprovalItem[]>([])
   let bashApprovalListenerSetup = false
 
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
@@ -57,15 +67,14 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     bashApprovalListenerSetup = true
 
     ;(window as any).electronAPI.onBashApprovalRequest((data: { requestId: string; command: string }) => {
-      pendingBashRequestId.value = data.requestId
-      pendingBashCommand.value = data.command
+      // Avoid duplicates from re-delivery
+      if (!pendingBashApprovals.value.some(a => a.requestId === data.requestId)) {
+        pendingBashApprovals.value.push({ requestId: data.requestId, command: data.command })
+      }
     })
 
     ;(window as any).electronAPI.onBashApprovalDismiss((data: { requestId: string }) => {
-      if (data.requestId === pendingBashRequestId.value) {
-        pendingBashCommand.value = ''
-        pendingBashRequestId.value = ''
-      }
+      pendingBashApprovals.value = pendingBashApprovals.value.filter(a => a.requestId !== data.requestId)
     })
   }
 
@@ -118,8 +127,24 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       onTodoUpdated(data: { todos: TodoItem[] }) {
         todos.value = data.todos || []
       },
+      onContextWindow(data: ContextWindowInfo) {
+        contextWindow.value = data
+      },
+      onSessionStatus(data: { phase: string }) {
+        if (sessionId.value) {
+          sessionStore.updateSessionPhase(sessionId.value, data.phase as TaskPhase)
+        }
+      },
       onMessageEnd() {
         sending.value = false
+        // Set duration for the last assistant message
+        if (startedAt.value) {
+          const lastMsg = messages.value[messages.value.length - 1]
+          if (lastMsg && normalizeMessageRole(lastMsg.role) === 'assistant') {
+            lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
+          }
+          startedAt.value = null
+        }
         // Refresh session to pick up server-generated title/summary
         if (sessionId.value) {
           sessionStore.fetchSession(sessionId.value)
@@ -216,6 +241,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
     sending.value = true
     activities.value = []
+    startedAt.value = new Date().toISOString()
     const uploadedFiles = await uploadFiles(files || [])
 
     // Build display content
@@ -254,6 +280,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
           workspace.value || undefined
         )
         sessionId.value = sessionData.id
+
+        // Optimistic title: show user's first message in sidebar immediately
+        if (text) {
+          sessionStore.updateSession(sessionData.id, {
+            title: text.length > 50 ? text.substring(0, 50) : text
+          })
+        }
 
         // Connect WebSocket for LOCAL mode
         if (executionMode.value === 'LOCAL') {
@@ -313,6 +346,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     messages.value = []
     activities.value = []
     todos.value = []
+    contextWindow.value = null
     agentName.value = 'Agent'
     sessionStore.setActiveSession(null)
   }
@@ -345,10 +379,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     }
   }
 
-  async function confirmBash(approved: boolean) {
-    const requestId = pendingBashRequestId.value
-    pendingBashCommand.value = ''
-    pendingBashRequestId.value = ''
+  async function confirmBash(requestId: string, approved: boolean) {
+    pendingBashApprovals.value = pendingBashApprovals.value.filter(a => a.requestId !== requestId)
     if (requestId && isElectron) {
       await (window as any).electronAPI.respondBashApproval(requestId, approved)
     }
@@ -364,8 +396,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       ;(window as any).electronAPI.removeBashApprovalDismissListener?.()
       bashApprovalListenerSetup = false
     }
-    pendingBashCommand.value = ''
-    pendingBashRequestId.value = ''
+    pendingBashApprovals.value = []
   }
 
   return {
@@ -375,9 +406,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     wsConnected,
     workspace,
     agentName,
-    pendingBashCommand,
+    pendingBashApprovals,
     activities,
     todos,
+    contextWindow,
+    startedAt,
     sendMessage,
     fetchMessages,
     newSession,

@@ -42,11 +42,26 @@ export const useSessionStore = defineStore('session', () => {
     return sessions.value.filter(s => s.agentId === agentId)
   }
 
-  async function fetchSessions() {
-    loading.value = true
+  async function fetchSessions(silent = false) {
+    if (!silent) loading.value = true
     try {
       const { data } = await api.get('/sessions')
-      sessions.value = data || []
+      const incoming = data || []
+      // Merge: preserve local updates (e.g. server-generated title) that
+      // arrived after the request was fired but before it resolved.
+      const serverMap = new Map(incoming.map((s: Session) => [s.id, s]))
+      const merged = incoming.map((s: Session) => {
+        const local = sessions.value.find(ls => ls.id === s.id)
+        // Server data is authoritative; only preserve client-only optimistic fields
+        return local ? { ...local, ...s } : s
+      })
+      // Keep local-only sessions (created client-side, not yet in server list)
+      for (const local of sessions.value) {
+        if (!serverMap.has(local.id)) {
+          merged.unshift(local)
+        }
+      }
+      sessions.value = merged
     } finally {
       loading.value = false
     }

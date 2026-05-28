@@ -8,10 +8,12 @@ const WebSocket = require('ws')
 let mainWindow = null
 let wsClient = null
 let wsReconnectTimer = null
+let wsPingInterval = null
 let wsReconnectDelay = 1000
 let wsExplicitDisconnect = false
 let currentWorkspace = ''
 const WS_MAX_RECONNECT_DELAY = 30000
+const WS_PING_INTERVAL_MS = 10000
 const BASH_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 /** @type {Map<string, (approved: boolean) => void>} */
 const pendingBashApprovals = new Map()
@@ -246,6 +248,8 @@ ipcMain.handle('ws-connect', (event, { sessionId, token, backendUrl }) => {
     wsClient = null
   }
   clearTimeout(wsReconnectTimer)
+  clearInterval(wsPingInterval)
+  wsPingInterval = null
 
   const wsUrl = `${backendUrl || 'ws://localhost:9080'}/ws/local-tool?sessionId=${sessionId}&token=${token}`
   console.log('Connecting WebSocket to:', wsUrl)
@@ -256,6 +260,8 @@ ipcMain.handle('ws-disconnect', () => {
   wsExplicitDisconnect = true
   clearTimeout(wsReconnectTimer)
   wsReconnectTimer = null
+  clearInterval(wsPingInterval)
+  wsPingInterval = null
   if (wsClient) {
     wsClient.close()
     wsClient = null
@@ -271,6 +277,14 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
     console.log('WebSocket open for session', sessionId)
     wsReconnectDelay = 1000 // Reset backoff
     sendToRenderer('ws-connection-change', { connected: true, sessionId })
+
+    // Start heartbeat: send ping every 30s
+    clearInterval(wsPingInterval)
+    wsPingInterval = setInterval(() => {
+      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+        wsClient.send(JSON.stringify({ type: 'ping' }))
+      }
+    }, WS_PING_INTERVAL_MS)
   })
 
   wsClient.on('message', async (data) => {
@@ -284,8 +298,8 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
         return
       }
 
-      if (msg.type === 'ping') {
-        wsClient.send(JSON.stringify({ type: 'pong' }))
+      if (msg.type === 'pong') {
+        // Heartbeat acknowledged, connection is alive
         return
       }
 
@@ -340,6 +354,8 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
   })
 
   wsClient.on('close', () => {
+    clearInterval(wsPingInterval)
+    wsPingInterval = null
     sendToRenderer('ws-connection-change', { connected: false })
     wsClient = null
 
