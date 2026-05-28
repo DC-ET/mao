@@ -1,5 +1,5 @@
 <template>
-  <div :class="['message-bubble', role]">
+  <div :class="['message-bubble', role, { 'tool-only': isToolOnly }]">
     <div class="message-content">
       <!-- Agent消息顶部耗时显示 -->
       <div v-if="role === 'assistant' && message.durationMs" class="message-duration">
@@ -79,6 +79,12 @@ const visibleToolCalls = computed(() =>
   props.message.toolCalls?.filter(tc => tc.name !== 'todo') || []
 )
 
+const isToolOnly = computed(() =>
+  role.value === 'assistant' &&
+  visibleToolCalls.value.length > 0 &&
+  !props.message.content?.trim()
+)
+
 const timelineSegments = computed((): MessageSegment[] => {
   if (role.value !== 'assistant') return []
   if (props.message.segments?.length) {
@@ -142,6 +148,15 @@ async function copyMessage() {
   flex-direction: row-reverse;
 }
 
+/* Reduce margin between consecutive tool-only assistant messages */
+.message-bubble:has(+ .message-bubble.tool-only) {
+  margin-bottom: 2px;
+}
+
+.message-bubble.tool-only:has(+ .message-bubble.tool-only) {
+  margin-bottom: 2px;
+}
+
 .message-content {
   max-width: 75%;
   min-width: 0;
@@ -166,11 +181,12 @@ async function copyMessage() {
   border-top-right-radius: var(--aw-radius-xs);
 }
 
-.message-text.assistant-text {
-  background: transparent;
+.assistant-text {
   color: var(--aw-body);
-  padding: 0;
-  border-radius: 0;
+  font-size: var(--aw-text-caption);
+  line-height: 1.47;
+  letter-spacing: -0.374px;
+  word-break: break-word;
 }
 
 .assistant-text:last-child {
