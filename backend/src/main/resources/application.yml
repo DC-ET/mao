@@ -109,6 +109,22 @@ app:
     default-max-rounds: 10
     default-context-rounds: 20
 
+    # Context Compaction
+    compaction:
+      enabled: true
+      context-window-tokens: 96000
+      trigger-ratio: 0.72
+      recent-turns: 6
+      min-compact-message-count: 10
+      min-new-message-count: 8
+      min-new-token-count: 20000
+      max-compaction-batch-messages: 200
+      max-rounds-per-request: 30
+      loop-enabled: true
+      loop-trigger-tool-rounds: 5
+      loop-trigger-tokens: 96000
+      loop-recent-tool-rounds: 5
+
   # Rate limiting
   rate-limit:
     user-qps: 10

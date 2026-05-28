@@ -38,3 +38,6 @@ desktop/release/
 .sso_token.txt
 .account.json
 
+# Runtime PID files
+*.pid
+

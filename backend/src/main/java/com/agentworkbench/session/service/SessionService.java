@@ -9,20 +9,27 @@ import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.mapper.MessageMapper;
 import com.agentworkbench.session.mapper.SessionMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.agentworkbench.session.util.TitleGenerator;
+import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SessionService {
+
+    /** Stale threshold: sessions RUNNING longer than this are swept to FAILED */
+    private static final int STALE_MINUTES = 10;
 
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
@@ -204,6 +211,27 @@ public class SessionService {
         result.put("recent", sessionMapper.selectList(recentQw));
 
         return result;
+    }
+
+    /**
+     * Sweep sessions stuck in RUNNING phase beyond the stale threshold.
+     * Runs every 60 seconds to catch orphaned sessions from crashes, network drops, etc.
+     */
+    @Scheduled(fixedRate = 60_000)
+    public void sweepStaleRunningSessions() {
+        LocalDateTime threshold = LocalDateTime.now().minusMinutes(STALE_MINUTES);
+        log.debug("Sweeping stale RUNNING sessions older than {}", threshold);
+        UpdateWrapper<Session> uw = new UpdateWrapper<>();
+        uw.eq("phase", "RUNNING")
+          .and(w -> w.lt("last_activity_at", threshold)
+                     .or()
+                     .isNull("last_activity_at"));
+        Session update = new Session();
+        update.setPhase("FAILED");
+        int affected = sessionMapper.update(update, uw);
+        if (affected > 0) {
+            log.warn("Swept {} stale RUNNING sessions to FAILED (no activity for {}min)", affected, STALE_MINUTES);
+        }
     }
 
     /** Derive project_key from workspace path (last segment) */

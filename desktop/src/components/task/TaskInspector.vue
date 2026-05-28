@@ -19,10 +19,10 @@
     <div class="inspector-section">
       <h4 class="section-title">待审批</h4>
       <BashApprovalBar
-        v-if="pendingBashCommand"
-        :command="pendingBashCommand"
+        v-if="pendingBashApprovals.length > 0"
+        :items="pendingBashApprovals"
         class="inspector-approval"
-        @confirm="$emit('bashConfirm', $event)"
+        @confirm="(requestId, approved) => $emit('bashConfirm', requestId, approved)"
       />
       <div v-else class="approval-empty">无待审批事项</div>
     </div>
@@ -33,17 +33,18 @@
 import TodoChecklist from './TodoChecklist.vue'
 import type { TodoItem } from '../../types/chat'
 import BashApprovalBar from '../chat/BashApprovalBar.vue'
+import type { BashApprovalItem } from '../chat/BashApprovalBar.vue'
 
 defineProps<{
   todos?: TodoItem[]
   workspace?: string
   executionMode?: string
   wsConnected?: boolean
-  pendingBashCommand?: string
+  pendingBashApprovals?: BashApprovalItem[]
 }>()
 
 defineEmits<{
-  bashConfirm: [approved: boolean]
+  bashConfirm: [requestId: string, approved: boolean]
 }>()
 
 </script>

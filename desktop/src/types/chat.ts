@@ -26,12 +26,19 @@ export interface ChatMessage {
   files?: FileAttachment[]
   toolCalls?: ToolCall[]
   segments?: MessageSegment[]
+  durationMs?: number
 }
 
 export interface TodoItem {
   id: number
   content: string
   status: 'pending' | 'in_progress' | 'completed'
+}
+
+export interface ContextWindowInfo {
+  estimated: number
+  actual: number
+  maxTokens: number
 }
 
 export function normalizeMessageRole(role: string): ChatMessage['role'] {

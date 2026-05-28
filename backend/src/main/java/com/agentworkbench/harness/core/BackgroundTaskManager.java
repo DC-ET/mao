@@ -14,6 +14,8 @@ import java.util.concurrent.*;
 public class BackgroundTaskManager {
 
     private static final int MAX_OUTPUT_LENGTH = 500;
+    /** Abandoned tasks older than this are cleaned up on next consume() call */
+    private static final long ABANDONED_THRESHOLD_MS = 30 * 60 * 1000L; // 30 minutes
 
     private final ExecutorService executor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "bg-task-" + System.nanoTime());
@@ -22,6 +24,7 @@ public class BackgroundTaskManager {
     });
 
     private final Map<String, Future<String>> tasks = new ConcurrentHashMap<>();
+    private final Map<String, Long> taskSubmitTimes = new ConcurrentHashMap<>();
 
     /**
      * Submit a task for background execution.
@@ -31,6 +34,7 @@ public class BackgroundTaskManager {
         String taskId = "bg-" + System.nanoTime();
         Future<String> future = executor.submit(task);
         tasks.put(taskId, future);
+        taskSubmitTimes.put(taskId, System.currentTimeMillis());
         log.debug("Submitted background task: {}", taskId);
         return taskId;
     }
@@ -40,6 +44,7 @@ public class BackgroundTaskManager {
      */
     public Map<String, String> consumeCompletedResults() {
         Map<String, String> completed = new ConcurrentHashMap<>();
+        long now = System.currentTimeMillis();
         tasks.forEach((taskId, future) -> {
             if (future.isDone()) {
                 try {
@@ -54,6 +59,16 @@ public class BackgroundTaskManager {
                     // not ready yet, skip
                 }
                 tasks.remove(taskId);
+                taskSubmitTimes.remove(taskId);
+            } else {
+                // Cancel abandoned tasks that have been running too long
+                Long submitTime = taskSubmitTimes.get(taskId);
+                if (submitTime != null && (now - submitTime) > ABANDONED_THRESHOLD_MS) {
+                    future.cancel(true);
+                    tasks.remove(taskId);
+                    taskSubmitTimes.remove(taskId);
+                    log.warn("Cancelled abandoned background task: {}", taskId);
+                }
             }
         });
         return completed;

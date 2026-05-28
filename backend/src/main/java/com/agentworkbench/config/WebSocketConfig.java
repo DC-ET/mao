@@ -2,10 +2,12 @@ package com.agentworkbench.config;
 
 import com.agentworkbench.harness.local.LocalToolWebSocketHandler;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
+import org.springframework.web.socket.server.standard.ServletServerContainerFactoryBean;
 
 @Configuration
 @EnableWebSocket
@@ -18,5 +20,14 @@ public class WebSocketConfig implements WebSocketConfigurer {
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(localToolWebSocketHandler, "/ws/local-tool")
                 .setAllowedOrigins("*");
+    }
+
+    @Bean
+    public ServletServerContainerFactoryBean createWebSocketContainer() {
+        ServletServerContainerFactoryBean container = new ServletServerContainerFactoryBean();
+        // Idle timeout: 90s (3 missed heartbeats at 30s interval)
+        container.setMaxSessionIdleTimeout(90_000L);
+        container.setMaxTextMessageBufferSize(1024 * 1024);
+        return container;
     }
 }

@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,7 +29,25 @@ public class AgentLoop {
     private final BackgroundTaskManager backgroundTaskManager;
     private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
 
+    /** Per-session cancel flags: set to true to request cancellation */
+    private final ConcurrentHashMap<Long, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
+
     private static final int TODO_REMINDER_INTERVAL = 10;
+
+    /**
+     * Register a cancel flag for a session. Call before execute().
+     * Set the returned flag to true to request cancellation.
+     */
+    public AtomicBoolean registerCancelFlag(Long sessionId) {
+        AtomicBoolean flag = new AtomicBoolean(false);
+        cancelFlags.put(sessionId, flag);
+        return flag;
+    }
+
+    /** Remove cancel flag after execution completes. */
+    public void removeCancelFlag(Long sessionId) {
+        cancelFlags.remove(sessionId);
+    }
 
     public interface MessagePersistenceCallback {
         void onSaveAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage);
@@ -45,22 +64,18 @@ public class AgentLoop {
         int maxRounds = context.getMaxRounds();
         int roundsSinceTodoUpdate = 0;
 
+        try {
         while (round < maxRounds) {
             round++;
             log.debug("Agent loop round {}/{}", round, maxRounds);
 
-            // 0. Compress context if needed
-            int maxTokens = context.getModelConfig() != null && context.getModelConfig().getMaxTokens() != null
-                    ? context.getModelConfig().getMaxTokens() : 0;
-            if (contextManager.needsCompression(context, maxTokens)) {
-                // Micro-compact first: replace old tool results with placeholders
-                contextManager.microCompact(context, TODO_REMINDER_INTERVAL);
-                // Then auto-compress if still over limit
-                if (contextManager.needsCompression(context, maxTokens)) {
-                    List<ChatRequest.Message> compressed = contextManager.compress(context, 0);
-                    context.setMessages(compressed);
-                    listener.onContextCompressed(compressed.size());
-                    log.info("Context compressed to {} messages before round {}", compressed.size(), round);
+            // Check cancellation
+            Long sessionId = context.getSessionId();
+            if (sessionId != null) {
+                AtomicBoolean cancelFlag = cancelFlags.get(sessionId);
+                if (cancelFlag != null && cancelFlag.get()) {
+                    log.info("Agent loop cancelled for session {}", sessionId);
+                    return;
                 }
             }
 
@@ -83,6 +98,12 @@ public class AgentLoop {
 
             // 1. Build Prompt
             ChatRequest request = promptEngine.buildRequest(context);
+
+            // 1.5. Emit estimated context window before LLM call
+            int estimatedTokens = contextManager.estimateRequestTokens(request);
+            int maxContextTokens = context.getModelConfig() != null && context.getModelConfig().getMaxTokens() != null
+                    ? context.getModelConfig().getMaxTokens() : 0;
+            listener.onContextWindow(estimatedTokens, 0, maxContextTokens);
 
             // 2. Call LLM
             final int currentRound = round;
@@ -117,6 +138,11 @@ public class AgentLoop {
                     context.addUsage(usage);
                     log.debug("LLM round {} complete: contentLength={}, toolCallCount={}, usage={}",
                             currentRound, contentBuilder.length(), toolCalls.size(), usage);
+
+                    // Emit actual prompt_tokens from LLM response
+                    if (usage != null && usage.getPromptTokens() > 0) {
+                        listener.onContextWindow(estimatedTokens, usage.getPromptTokens(), maxContextTokens);
+                    }
 
                     if (!toolCalls.isEmpty()) {
                         for (ChatRequest.ToolCall tc : toolCalls) {
@@ -164,9 +190,34 @@ public class AgentLoop {
 
             // 5. Clear pending calls for next round
             context.clearPendingToolCalls();
+
+            // 6. Loop compaction — compress working memory if tool loop is growing
+            CompactionConfig loopConfig = context.getCompactionConfig();
+            if (loopConfig != null && loopConfig.isLoopEnabled()) {
+                try {
+                    var loopResult = contextManager.compactLoop(
+                            context.getMessages(), context.getModelConfig(), loopConfig,
+                            context.getWorkingSummary());
+                    if (loopResult != null) {
+                        context.getMessages().clear();
+                        context.getMessages().addAll(loopResult.compactedMessages());
+                        context.setWorkingSummary(loopResult.summaryText());
+                        log.info("Loop compaction applied: {} messages compacted, ~{} tokens saved",
+                                loopResult.compactedCount(), loopResult.savedTokens());
+                    }
+                } catch (Exception e) {
+                    log.warn("Loop compaction failed, continuing with full history", e);
+                }
+            }
         }
 
         listener.onMessageEnd(context.getTotalUsage());
+        } finally {
+            Long sessionId = context.getSessionId();
+            if (sessionId != null) {
+                cancelFlags.remove(sessionId);
+            }
+        }
     }
 
     /**

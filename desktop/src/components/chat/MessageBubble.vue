@@ -1,6 +1,11 @@
 <template>
   <div :class="['message-bubble', role]">
     <div class="message-content">
+      <!-- Agent消息顶部耗时显示 -->
+      <div v-if="role === 'assistant' && message.durationMs" class="message-duration">
+        {{ formatDuration(message.durationMs) }}
+      </div>
+
       <div v-if="role === 'user'" class="message-text user-text">
         {{ message.content }}
       </div>
@@ -10,7 +15,7 @@
         <template v-for="(seg, idx) in timelineSegments" :key="`${message.id}-seg-${idx}`">
           <div
             v-if="seg.type === 'text'"
-            class="message-text assistant-text markdown-body"
+            class="assistant-text markdown-body"
             v-html="renderSegmentMarkdown(seg.content)"
           />
           <ToolCallCard
@@ -24,12 +29,12 @@
       <template v-else-if="role === 'assistant'">
         <div
           v-if="message.content"
-          class="message-text assistant-text markdown-body"
+          class="assistant-text markdown-body"
           v-html="renderedContent"
         />
-        <div v-if="message.toolCalls && message.toolCalls.length > 0" class="tool-calls">
+        <div v-if="visibleToolCalls.length > 0" class="tool-calls">
           <ToolCallCard
-            v-for="tc in message.toolCalls"
+            v-for="tc in visibleToolCalls"
             :key="tc.id"
             :tool-call="tc"
           />
@@ -42,7 +47,7 @@
           {{ file.originalName || file.name }}
         </el-tag>
       </div>
-      <div class="message-footer">
+      <div v-if="showTime" class="message-footer">
         <span class="message-time">{{ message.createdAt }}</span>
         <button v-if="message.content" class="copy-btn" :class="{ copied }" @click="copyMessage">
           <el-icon :size="12"><CopyDocument /></el-icon>
@@ -66,19 +71,25 @@ import {
 } from '../../composables/useChat'
 import { buildSegmentsFromContentAndTools } from '../../utils/chatMessage'
 
-const props = defineProps<{ message: ChatMessage }>()
+const props = defineProps<{ message: ChatMessage; showTime?: boolean }>()
 
 const role = computed(() => normalizeMessageRole(props.message.role))
+
+const visibleToolCalls = computed(() =>
+  props.message.toolCalls?.filter(tc => tc.name !== 'todo') || []
+)
 
 const timelineSegments = computed((): MessageSegment[] => {
   if (role.value !== 'assistant') return []
   if (props.message.segments?.length) {
-    return props.message.segments
+    return props.message.segments.filter(seg =>
+      seg.type === 'text' || !!visibleToolCalls.value.find(tc => tc.id === seg.callId)
+    )
   }
-  if (props.message.toolCalls?.length || props.message.content?.trim()) {
+  if (visibleToolCalls.value.length || props.message.content?.trim()) {
     return buildSegmentsFromContentAndTools(
       props.message.content || '',
-      props.message.toolCalls || []
+      visibleToolCalls.value
     )
   }
   return []
@@ -91,11 +102,22 @@ function renderSegmentMarkdown(content: string) {
 }
 
 function getToolCall(callId: string): ToolCall | undefined {
-  return props.message.toolCalls?.find(c => c.id === callId)
+  return visibleToolCalls.value.find(c => c.id === callId)
 }
 
 const copied = ref(false)
 let copyTimer: ReturnType<typeof setTimeout> | null = null
+
+function formatDuration(ms: number): string {
+  if (!ms || ms <= 0) return ''
+  const seconds = Math.floor(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const remainSeconds = seconds % 60
+  if (minutes < 60) return `${minutes}m ${remainSeconds}s`
+  const hours = Math.floor(minutes / 60)
+  return `${hours}h ${minutes % 60}m`
+}
 
 async function copyMessage() {
   const text = props.message.content?.trim()
@@ -144,11 +166,11 @@ async function copyMessage() {
   border-top-right-radius: var(--aw-radius-xs);
 }
 
-.assistant-text {
-  background: var(--aw-canvas-parchment);
+.message-text.assistant-text {
+  background: transparent;
   color: var(--aw-body);
-  border-top-left-radius: var(--aw-radius-xs);
-  margin-bottom: 4px;
+  padding: 0;
+  border-radius: 0;
 }
 
 .assistant-text:last-child {
@@ -157,24 +179,20 @@ async function copyMessage() {
 
 /* Markdown body styles */
 .markdown-body :deep(p) {
-  margin: 0 0 8px;
-  font-size: var(--aw-text-body);
+  margin: 0;
+  font-size: var(--aw-text-caption);
   line-height: 1.47;
   letter-spacing: -0.374px;
 }
 
-.markdown-body :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
 .markdown-body :deep(pre) {
-  margin: 8px 0;
+  margin: 2px 0;
   border-radius: var(--aw-radius-sm);
   overflow: hidden;
 }
 
 .markdown-body :deep(.code-block) {
-  margin: 8px 0;
+  margin: 2px 0;
   border-radius: var(--aw-radius-sm);
   overflow: hidden;
 }
@@ -225,18 +243,18 @@ async function copyMessage() {
 
 .markdown-body :deep(ul),
 .markdown-body :deep(ol) {
-  margin: 4px 0;
+  margin: 2px 0;
   padding-left: 20px;
 }
 
 .markdown-body :deep(li) {
-  font-size: var(--aw-text-body);
+  font-size: var(--aw-text-caption);
   line-height: 1.47;
   letter-spacing: -0.374px;
 }
 
 .markdown-body :deep(blockquote) {
-  margin: 8px 0;
+  margin: 2px 0;
   padding: 4px 12px;
   border-left: 3px solid var(--aw-primary);
   color: var(--aw-ink-muted-80);
@@ -246,7 +264,7 @@ async function copyMessage() {
 
 .markdown-body :deep(table) {
   border-collapse: collapse;
-  margin: 8px 0;
+  margin: 2px 0;
   width: 100%;
 }
 
@@ -266,7 +284,7 @@ async function copyMessage() {
 .markdown-body :deep(hr) {
   border: none;
   border-top: 1px solid var(--aw-divider-soft);
-  margin: 12px 0;
+  margin: 2px 0;
 }
 
 .markdown-body :deep(h1),
@@ -276,17 +294,27 @@ async function copyMessage() {
   font-family: var(--aw-font-display);
   font-weight: 600;
   color: var(--aw-ink);
-  margin: 16px 0 8px;
+  margin: 4px 0 2px;
   letter-spacing: 0;
 }
 
-.markdown-body :deep(h1) { font-size: var(--aw-text-display-md); }
-.markdown-body :deep(h2) { font-size: var(--aw-text-lead); }
-.markdown-body :deep(h3) { font-size: var(--aw-text-tagline); }
-.markdown-body :deep(h4) { font-size: var(--aw-text-body); }
+.markdown-body :deep(h1) { font-size: var(--aw-text-lead); }
+.markdown-body :deep(h2) { font-size: var(--aw-text-tagline); }
+.markdown-body :deep(h3) { font-size: var(--aw-text-body); }
+.markdown-body :deep(h4) { font-size: var(--aw-text-caption); }
 
 .tool-calls {
-  margin-top: 4px;
+  margin-top: 0;
+}
+
+.message-duration {
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
+  background: var(--aw-canvas-parchment);
+  padding: 4px 8px;
+  border-radius: var(--aw-radius-xs);
+  margin-bottom: 6px;
+  display: inline-block;
 }
 
 .file-attachments {

@@ -1,14 +1,20 @@
 <template>
-  <div v-if="command" class="bash-approval-bar">
-    <div class="approval-header">
-      <el-icon class="approval-icon" :size="16"><WarningFilled /></el-icon>
-      <span class="approval-title">命令执行待审批</span>
-    </div>
-    <p class="approval-desc">Agent 请求执行以下命令：</p>
-    <pre class="command-preview"><code>{{ command }}</code></pre>
-    <div class="approval-actions">
-      <el-button class="pill-btn" @click="$emit('confirm', false)">拒绝</el-button>
-      <el-button type="primary" class="pill-btn" @click="$emit('confirm', true)">允许执行</el-button>
+  <div v-if="items.length > 0" class="bash-approval-bar">
+    <div
+      v-for="item in items"
+      :key="item.requestId"
+      class="approval-card"
+    >
+      <div class="approval-header">
+        <el-icon class="approval-icon" :size="16"><WarningFilled /></el-icon>
+        <span class="approval-title">命令执行待审批</span>
+      </div>
+      <p class="approval-desc">Agent 请求执行以下命令：</p>
+      <pre class="command-preview"><code>{{ item.command }}</code></pre>
+      <div class="approval-actions">
+        <el-button class="pill-btn" @click="$emit('confirm', item.requestId, false)">拒绝</el-button>
+        <el-button type="primary" class="pill-btn" @click="$emit('confirm', item.requestId, true)">允许执行</el-button>
+      </div>
     </div>
   </div>
 </template>
@@ -16,12 +22,17 @@
 <script setup lang="ts">
 import { WarningFilled } from '@element-plus/icons-vue'
 
-defineProps<{
+export interface BashApprovalItem {
+  requestId: string
   command: string
+}
+
+defineProps<{
+  items: BashApprovalItem[]
 }>()
 
 defineEmits<{
-  confirm: [approved: boolean]
+  confirm: [requestId: string, approved: boolean]
 }>()
 </script>
 
@@ -29,6 +40,12 @@ defineEmits<{
 .bash-approval-bar {
   flex-shrink: 0;
   margin-top: var(--aw-space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.approval-card {
   padding: 14px 16px;
   background: var(--aw-surface-pearl);
   border: 1px solid var(--aw-warning);
