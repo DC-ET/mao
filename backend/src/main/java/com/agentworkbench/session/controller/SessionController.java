@@ -15,6 +15,9 @@ import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.service.SessionService;
 import com.agentworkbench.session.util.ToolResultSummarizer;
+import com.agentworkbench.harness.todo.entity.SessionTodo;
+import com.agentworkbench.harness.todo.mapper.SessionTodoMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
@@ -43,11 +46,12 @@ public class SessionController {
     private final AgentMapper agentMapper;
     private final LocalToolSessionRegistry localToolSessionRegistry;
     private final ActivityService activityService;
+    private final SessionTodoMapper sessionTodoMapper;
     private final ExecutorService agentExecutor;
 
     public SessionController(SessionService sessionService, HarnessService harnessService,
                              AgentMapper agentMapper, LocalToolSessionRegistry localToolSessionRegistry,
-                             ActivityService activityService,
+                             ActivityService activityService, SessionTodoMapper sessionTodoMapper,
                              @Value("${app.harness.agent-thread-pool-size:20}") int poolSize,
                              @Value("${app.harness.agent-thread-pool-max:100}") int maxPoolSize,
                              @Value("${app.harness.agent-thread-pool-queue:200}") int queueCapacity) {
@@ -56,6 +60,7 @@ public class SessionController {
         this.agentMapper = agentMapper;
         this.localToolSessionRegistry = localToolSessionRegistry;
         this.activityService = activityService;
+        this.sessionTodoMapper = sessionTodoMapper;
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(poolSize);
         executor.setMaxPoolSize(maxPoolSize);
@@ -271,6 +276,24 @@ public class SessionController {
                             } catch (Exception activityEx) {
                                 log.warn("Failed to record activity", activityEx);
                             }
+
+                            // Push todo_updated SSE event when todo tool is called
+                            if ("todo".equals(toolName)) {
+                                try {
+                                    List<SessionTodo> todos = sessionTodoMapper.selectList(
+                                            new LambdaQueryWrapper<SessionTodo>()
+                                                    .eq(SessionTodo::getSessionId, id)
+                                                    .orderByAsc(SessionTodo::getId));
+                                    List<TodoVO> todoVOs = todos.stream()
+                                            .map(SessionController.this::toTodoVO)
+                                            .collect(Collectors.toList());
+                                    emitter.send(SseEmitter.event()
+                                            .name("todo_updated")
+                                            .data(Map.of("todos", todoVOs)));
+                                } catch (Exception todoEx) {
+                                    log.warn("Failed to send SSE todo_updated event", todoEx);
+                                }
+                            }
                         } catch (Exception e) {
                             log.warn("Failed to send SSE event", e);
                         }
@@ -369,6 +392,26 @@ public class SessionController {
         return Result.ok(voList);
     }
 
+    @GetMapping("/{id}/todos")
+    public Result<List<TodoVO>> getTodos(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id) {
+        List<SessionTodo> todos = sessionTodoMapper.selectList(
+                new LambdaQueryWrapper<SessionTodo>()
+                        .eq(SessionTodo::getSessionId, id)
+                        .orderByAsc(SessionTodo::getId));
+        List<TodoVO> voList = todos.stream().map(this::toTodoVO).collect(Collectors.toList());
+        return Result.ok(voList);
+    }
+
+    private TodoVO toTodoVO(SessionTodo todo) {
+        TodoVO vo = new TodoVO();
+        vo.setId(todo.getId());
+        vo.setContent(todo.getContent());
+        vo.setStatus(todo.getStatus());
+        return vo;
+    }
+
     private ActivityVO toActivityVO(SessionActivity activity) {
         ActivityVO vo = new ActivityVO();
         vo.setId(activity.getId());
@@ -390,7 +433,6 @@ public class SessionController {
                         node.has("path") ? node.get("path").asText(null) : null;
                 case "bash" -> node.has("command") ? node.get("command").asText(null) : null;
                 case "glob", "list" -> node.has("pattern") ? node.get("pattern").asText(null) : null;
-                case "http_request" -> node.has("url") ? node.get("url").asText(null) : null;
                 default -> null;
             };
         } catch (Exception e) {
@@ -528,5 +570,12 @@ public class SessionController {
         private String status;
         private Integer durationMs;
         private String createdAt;
+    }
+
+    @Data
+    public static class TodoVO {
+        private Long id;
+        private String content;
+        private String status;
     }
 }

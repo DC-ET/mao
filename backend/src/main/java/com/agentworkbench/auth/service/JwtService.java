@@ -5,12 +5,14 @@ import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
 import java.util.Date;
 
+@Slf4j
 @Service
 public class JwtService {
 
@@ -59,8 +61,10 @@ public class JwtService {
             parseClaims(token);
             return true;
         } catch (ExpiredJwtException e) {
+            log.warn("JWT token expired: {}", e.getMessage());
             return false;
         } catch (Exception e) {
+            log.warn("JWT token validation error: {} - {}", e.getClass().getSimpleName(), e.getMessage());
             return false;
         }
     }

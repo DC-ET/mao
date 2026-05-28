@@ -46,4 +46,17 @@ public interface Tool {
     default String execute(String arguments, String workspace) {
         return execute(arguments);
     }
+
+    /**
+     * 执行 Tool（带会话 ID 和工作空间上下文）
+     * 默认实现忽略 sessionId，子类可覆盖以使用会话 ID
+     *
+     * @param arguments JSON 格式的参数
+     * @param sessionId 当前会话 ID（可能为 null）
+     * @param workspace 会话工作空间目录路径（可能为 null）
+     * @return 执行结果
+     */
+    default String execute(String arguments, Long sessionId, String workspace) {
+        return execute(arguments, workspace);
+    }
 }

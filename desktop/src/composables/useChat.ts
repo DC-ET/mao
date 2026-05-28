@@ -13,11 +13,12 @@ export type {
   ChatMessage,
   FileAttachment,
   MessageSegment,
-  ToolCall
+  ToolCall,
+  TodoItem
 } from '../types/chat'
 export { normalizeMessageRole } from '../types/chat'
 
-import type { ChatMessage, FileAttachment, ToolCall } from '../types/chat'
+import type { ChatMessage, FileAttachment, ToolCall, TodoItem } from '../types/chat'
 import { normalizeMessageRole } from '../types/chat'
 
 function inferResultStatus(result: string): ToolCall['status'] {
@@ -42,6 +43,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const workspace = ref('')
   const agentName = ref('Agent')
   const activities = ref<ActivityData[]>([])
+  const todos = ref<TodoItem[]>([])
 
   // Bash approval (inline UI, not modal)
   const pendingBashCommand = ref('')
@@ -81,6 +83,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         }
       },
       onToolCallStart(data: ToolCallStartData) {
+        // Skip todo tool calls — they are displayed in the sidebar progress panel
+        if (data.tool_name === 'todo') return
         const lastMsg = messages.value[messages.value.length - 1]
         if (lastMsg && normalizeMessageRole(lastMsg.role) === 'assistant') {
           appendToolCallStart(lastMsg, {
@@ -110,6 +114,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         if (activities.value.length > 100) {
           activities.value = activities.value.slice(-100)
         }
+      },
+      onTodoUpdated(data: { todos: TodoItem[] }) {
+        todos.value = data.todos || []
       },
       onMessageEnd() {
         sending.value = false
@@ -305,8 +312,19 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     workspace.value = ''
     messages.value = []
     activities.value = []
+    todos.value = []
     agentName.value = 'Agent'
     sessionStore.setActiveSession(null)
+  }
+
+  async function fetchTodos() {
+    if (!sessionId.value) return
+    try {
+      const { data } = await api.get(`/sessions/${sessionId.value}/todos`)
+      todos.value = data || []
+    } catch {
+      // session might not exist yet
+    }
   }
 
   function restoreSession(sessionIdVal: string, mode: string, initialWorkspace?: string) {
@@ -315,6 +333,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if (initialWorkspace) workspace.value = initialWorkspace
     sessionStore.setActiveSession(sessionIdVal)
     fetchMessages()
+    fetchTodos()
 
     // Reconnect WebSocket for LOCAL mode
     if (mode === 'LOCAL' && isElectron) {
@@ -358,6 +377,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     agentName,
     pendingBashCommand,
     activities,
+    todos,
     sendMessage,
     fetchMessages,
     newSession,

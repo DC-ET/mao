@@ -28,6 +28,12 @@ export interface ChatMessage {
   segments?: MessageSegment[]
 }
 
+export interface TodoItem {
+  id: number
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
 export function normalizeMessageRole(role: string): ChatMessage['role'] {
   const r = (role || '').toLowerCase()
   if (r === 'user' || r === 'assistant' || r === 'system') return r

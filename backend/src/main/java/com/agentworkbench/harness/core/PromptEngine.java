@@ -1,10 +1,10 @@
 package com.agentworkbench.harness.core;
 
 import com.agentworkbench.harness.llm.ChatRequest;
+import com.agentworkbench.harness.mcp.McpTool;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.harness.skill.SkillLoader;
 import com.agentworkbench.harness.tool.Tool;
-import com.agentworkbench.harness.mcp.McpTool;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -66,30 +66,16 @@ public class PromptEngine {
         sb.append("Your current working directory is: `").append(effectiveWorkspace).append("`\n");
         sb.append("All relative file paths are resolved against this directory. Use `ls` or `read_file` to explore the project.\n\n");
 
-        // Skill catalog (Layer 1) — name + description, ~100 token/skill
-        String skillDescriptions = skillLoader.getDescriptions(context.getAvailableSkillNames());
-        if (skillDescriptions != null && !skillDescriptions.isEmpty()) {
-            sb.append("## Available Skills\n\n");
-            sb.append(skillDescriptions);
-            sb.append("\n\n");
-            sb.append("Use the `load_skill` tool to load a skill's full content when you need domain-specific guidance.\n\n");
-        }
-
-        // Tool descriptions
-        List<Tool> tools = context.getTools();
-        List<McpTool> mcpTools = context.getMcpTools();
-
-        if (!tools.isEmpty() || !mcpTools.isEmpty()) {
-            sb.append("## Available Tools\n\n");
-
-            for (Tool tool : tools) {
-                sb.append("- **").append(tool.getName()).append("**: ");
-                sb.append(tool.getDescription()).append("\n");
-            }
-
-            for (McpTool tool : mcpTools) {
-                sb.append("- **").append(tool.getName()).append("**: ");
-                sb.append(tool.getDescription()).append("\n");
+        // Skill content — inject full skill knowledge into system prompt
+        List<String> skillNames = context.getAvailableSkillNames();
+        if (skillNames != null && !skillNames.isEmpty()) {
+            for (String name : skillNames) {
+                String content = skillLoader.getContent(name);
+                if (content != null && !content.isEmpty()) {
+                    sb.append("## Skill: ").append(name).append("\n\n");
+                    sb.append(content);
+                    sb.append("\n\n");
+                }
             }
         }
 
@@ -98,25 +84,6 @@ public class PromptEngine {
 
     private List<ChatRequest.ToolDefinition> buildToolDefinitions(AgentExecutionContext context) {
         List<ChatRequest.ToolDefinition> tools = new ArrayList<>();
-
-        // load_skill tool (Skill system entry point — Layer 2)
-        if (!skillLoader.getAllNames().isEmpty()) {
-            tools.add(ChatRequest.ToolDefinition.builder()
-                    .type("function")
-                    .function(ChatRequest.Function.builder()
-                            .name("load_skill")
-                            .description("Load the full knowledge content of a specified Skill. Call this when you need domain-specific guidance for a particular task area.")
-                            .parameters(Map.of(
-                                    "type", "object",
-                                    "properties", Map.of("name", Map.of(
-                                            "type", "string",
-                                            "description", "The Skill name to load"
-                                    )),
-                                    "required", List.of("name")
-                            ))
-                            .build())
-                    .build());
-        }
 
         // Built-in tools
         for (Tool tool : context.getTools()) {

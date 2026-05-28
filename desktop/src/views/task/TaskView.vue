@@ -61,11 +61,10 @@
     </div>
 
     <TaskInspector
-      :steps="sessionStore.activeSession?.steps"
+      :todos="todos"
       :workspace="workspace"
       :execution-mode="executionMode"
       :ws-connected="wsConnected"
-      :activities="activities"
       :pending-bash-command="pendingBashCommand"
       @bash-confirm="confirmBash"
     />
@@ -117,7 +116,7 @@ const {
   workspace,
   agentName,
   pendingBashCommand,
-  activities,
+  todos,
   sendMessage,
   newSession,
   restoreSession,

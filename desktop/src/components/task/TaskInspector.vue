@@ -2,7 +2,7 @@
   <div class="task-inspector">
     <div class="inspector-section">
       <h4 class="section-title">进度</h4>
-      <ProgressChecklist :steps="steps" />
+      <TodoChecklist :todos="todos" />
     </div>
 
     <div class="inspector-section">
@@ -13,16 +13,6 @@
           <span class="mode-dot" :class="wsConnected ? 'connected' : 'disconnected'"></span>
           {{ executionMode === 'LOCAL' ? (wsConnected ? '本地已连接' : '本地未连接') : '云端模式' }}
         </span>
-      </div>
-    </div>
-
-    <div v-if="activities.length > 0" class="inspector-section">
-      <h4 class="section-title">最近活动</h4>
-      <div class="activity-list">
-        <div v-for="act in activities.slice(0, 10)" :key="act.id" class="activity-item">
-          <span class="activity-type-badge" :class="`type-${act.type}`">{{ typeLabel(act.type) }}</span>
-          <span class="activity-text">{{ act.summary }}</span>
-        </div>
       </div>
     </div>
 
@@ -40,37 +30,22 @@
 </template>
 
 <script setup lang="ts">
-import ProgressChecklist from './ProgressChecklist.vue'
+import TodoChecklist from './TodoChecklist.vue'
+import type { TodoItem } from '../../types/chat'
 import BashApprovalBar from '../chat/BashApprovalBar.vue'
 
 defineProps<{
-  steps?: Array<{ id: string; label: string; done: boolean }>
+  todos?: TodoItem[]
   workspace?: string
   executionMode?: string
   wsConnected?: boolean
   pendingBashCommand?: string
-  activities: Array<{
-    id?: number
-    type: string
-    target?: string
-    summary: string
-    status?: string
-  }>
 }>()
 
 defineEmits<{
   bashConfirm: [approved: boolean]
 }>()
 
-function typeLabel(type: string) {
-  switch (type) {
-    case 'READ': return '读'
-    case 'EDIT': return '改'
-    case 'RUN': return '跑'
-    case 'EXPLORE': return '查'
-    default: return '做'
-  }
-}
 </script>
 
 <style scoped>
@@ -130,38 +105,6 @@ function typeLabel(type: string) {
 
 .mode-dot.connected { background: var(--aw-success); }
 .mode-dot.disconnected { background: var(--aw-danger); }
-
-/* Activity */
-.activity-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.activity-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--aw-text-caption);
-}
-
-.activity-type-badge {
-  font-size: var(--aw-text-micro);
-  padding: 1px 6px;
-  border-radius: var(--aw-radius-xs);
-  background: var(--aw-surface-pearl);
-  color: var(--aw-ink-muted-80);
-  flex-shrink: 0;
-  letter-spacing: 0.5px;
-}
-
-.activity-text {
-  color: var(--aw-ink-muted-80);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
 
 /* Approval */
 .inspector-approval {

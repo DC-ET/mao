@@ -28,7 +28,7 @@ public class AgentLoop {
     private final BackgroundTaskManager backgroundTaskManager;
     private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
 
-    private static final int TODO_REMINDER_INTERVAL = 3;
+    private static final int TODO_REMINDER_INTERVAL = 10;
 
     public interface MessagePersistenceCallback {
         void onSaveAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage);
