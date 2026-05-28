@@ -19,7 +19,6 @@
       </div>
     </div>
     <div class="nav-right">
-      <NotificationBell />
       <el-dropdown @command="handleCommand" trigger="click">
         <div class="nav-user">
           <el-avatar :size="24" icon="User" />
@@ -41,7 +40,6 @@ import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Monitor, ArrowDown } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
-import NotificationBell from './NotificationBell.vue'
 
 const router = useRouter()
 const route = useRoute()

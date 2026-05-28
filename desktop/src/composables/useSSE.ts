@@ -1,4 +1,5 @@
 import { ref, onUnmounted } from 'vue'
+import type { TodoItem } from '../types/chat'
 
 export interface ToolCallStartData {
   tool_name: string
@@ -27,6 +28,7 @@ export interface SSEOptions {
   onToolCallStart: (data: ToolCallStartData) => void
   onToolCallResult: (data: ToolCallResultData) => void
   onActivity?: (data: ActivityData) => void
+  onTodoUpdated?: (data: { todos: TodoItem[] }) => void
   onSessionStatus?: (data: { phase: string }) => void
   onMessageEnd: () => void
   onError: (message: string) => void
@@ -88,6 +90,11 @@ export function useSSE(options: SSEOptions) {
       options.onActivity?.(data)
     })
 
+    eventSource.addEventListener('todo_updated', (event) => {
+      const data = JSON.parse(event.data)
+      options.onTodoUpdated?.(data)
+    })
+
     eventSource.addEventListener('session_status', (event) => {
       const data = JSON.parse(event.data)
       options.onSessionStatus?.(data)
@@ -110,9 +117,31 @@ export function useSSE(options: SSEOptions) {
       stop()
     })
 
-    eventSource.onerror = () => {
+    eventSource.onerror = async () => {
       isConnected.value = false
-      options.onError('连接中断，请检查网络或稍后重试')
+      // Check if this is an auth failure by testing the token
+      const currentToken = localStorage.getItem('token')
+      if (!currentToken) {
+        options.onError('登录已过期，请重新登录')
+      } else {
+        // Quick token validity check via a lightweight API call
+        try {
+          const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api'
+          const resp = await fetch(`${baseUrl}/v1/users/me`, {
+            headers: { Authorization: `Bearer ${currentToken}` }
+          })
+          if (resp.status === 401 || resp.status === 403) {
+            options.onError('登录已过期，请重新登录')
+            localStorage.removeItem('token')
+            localStorage.removeItem('refreshToken')
+            window.location.href = '/login'
+          } else {
+            options.onError('连接中断，请检查网络或稍后重试')
+          }
+        } catch {
+          options.onError('连接中断，请检查网络或稍后重试')
+        }
+      }
       stop()
     }
   }

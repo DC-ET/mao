@@ -9,10 +9,8 @@ public class ActivityTypeMapper {
             case "write_file", "edit_file" -> "EDIT";
             case "bash" -> "RUN";
             case "glob", "list" -> "EXPLORE";
-            case "http_request" -> "TOOL";
             case "todo" -> "TOOL";
             case "subagent" -> "TOOL";
-            case "load_skill" -> "TOOL";
             default -> "TOOL";
         };
     }

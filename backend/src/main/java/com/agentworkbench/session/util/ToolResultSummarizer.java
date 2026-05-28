@@ -17,8 +17,6 @@ public class ToolResultSummarizer {
             case "glob", "list" -> summarizeGlob(result);
             case "todo" -> summarizeTodo(result);
             case "subagent" -> summarizeSubagent(result);
-            case "http_request" -> summarizeHttpRequest(result);
-            case "load_skill" -> summarizeLoadSkill(arguments);
             default -> summarizeGeneric(toolName, result);
         };
     }
@@ -135,24 +133,6 @@ public class ToolResultSummarizer {
             return "子任务完成 (" + rounds + " 轮)";
         }
         return "子任务完成";
-    }
-
-    private static String summarizeHttpRequest(String result) {
-        if (result == null) return "HTTP 请求";
-
-        JsonNode node = parseJson(result);
-        if (node == null) return "HTTP 请求";
-
-        int status = node.has("status") ? node.get("status").asInt(0) : 0;
-        if (status > 0) {
-            return "HTTP " + status;
-        }
-        return "HTTP 请求";
-    }
-
-    private static String summarizeLoadSkill(String arguments) {
-        String name = extractJsonString(arguments, "name");
-        return name != null ? "加载技能: " + name : "加载技能";
     }
 
     private static String summarizeGeneric(String toolName, String result) {

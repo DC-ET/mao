@@ -141,6 +141,7 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             }
 
             String json = objectMapper.writeValueAsString(body);
+            log.info("LLM request to {}: {}", config.getBaseUrl() + "/chat/completions", json);
 
             return new Request.Builder()
                     .url(config.getBaseUrl() + "/chat/completions")

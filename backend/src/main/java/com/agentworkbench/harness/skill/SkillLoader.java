@@ -15,10 +15,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Loads Anthropic-style Skill knowledge documents from SKILL.md files.
- * Implements two-layer loading:
- *   Layer 1: name + description in system prompt (~100 token/skill)
- *   Layer 2: full body loaded on demand via load_skill tool (~2000 token)
+ * Loads Skill knowledge documents from SKILL.md files.
+ * Full skill content is injected into the system prompt at request time.
  */
 @Slf4j
 @Component
@@ -82,7 +80,7 @@ public class SkillLoader {
     }
 
     /**
-     * Layer 2: Get full skill content for on-demand loading via load_skill tool.
+     * Get full skill content for system prompt injection.
      */
     public String getContent(String name) {
         SkillDocument doc = skills.get(name);

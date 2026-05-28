@@ -54,6 +54,17 @@ public class ToolDispatcher {
             log.debug("Routing tool call to local executor: {} (session={})", toolName, sessionId);
             return localToolExecutor.execute(sessionId, toolName, arguments, workspace);
         }
-        return dispatch(toolName, arguments, workspace);
+
+        // CLOUD mode — route to built-in tool or MCP tool with sessionId
+        Tool tool = toolRegistry.getTool(toolName);
+        if (tool != null) {
+            log.debug("Routing to built-in tool: {} (session={})", toolName, sessionId);
+            return tool.execute(arguments, sessionId, workspace);
+        }
+        if (mcpToolRegistry.hasTool(toolName)) {
+            log.debug("Routing to MCP tool: {}", toolName);
+            return mcpToolRegistry.callTool(toolName, arguments);
+        }
+        throw new IllegalArgumentException("Unknown tool: " + toolName);
     }
 }
