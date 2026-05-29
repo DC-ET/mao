@@ -111,7 +111,6 @@ const {
   messages,
   sending,
   sessionId,
-  wsConnected,
   workspace,
   agentName,
   pendingBashApprovals,

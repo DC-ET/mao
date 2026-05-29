@@ -218,7 +218,7 @@ async function copyMessage() {
   justify-content: space-between;
   align-items: center;
   padding: 6px 12px;
-  background: #2a2a2e;
+  background: var(--aw-surface-code-header);
   font-size: var(--aw-text-fine);
 }
 
@@ -252,7 +252,7 @@ async function copyMessage() {
 
 .markdown-body :deep(.hljs) {
   padding: 12px;
-  background: var(--aw-ink);
+  background: var(--aw-surface-code);
   color: #d4d4d4;
   overflow-x: auto;
 }
