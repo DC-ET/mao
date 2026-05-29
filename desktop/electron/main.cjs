@@ -313,40 +313,44 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
           parsedArgs = {}
         }
 
-        try {
-          let result
-          switch (toolName) {
-            case 'bash':
-              result = await handleBashFromWebSocket(parsedArgs)
-              break
-            case 'read_file':
-              result = await handleLocalReadFile(parsedArgs)
-              break
-            case 'write_file':
-              result = await handleLocalWriteFile(parsedArgs)
-              break
-            case 'edit_file':
-              result = await handleLocalEditFile(parsedArgs)
-              break
-            case 'http_request':
-              result = await handleLocalHttpRequest(parsedArgs)
-              break
-            default:
-              result = { error: `Unknown tool: ${toolName}` }
-          }
+        // Fire-and-forget: each tool executes independently so a slow bash
+        // approval does not block other tools (e.g. write_file) from completing.
+        ;(async () => {
+          try {
+            let result
+            switch (toolName) {
+              case 'bash':
+                result = await handleBashFromWebSocket(parsedArgs)
+                break
+              case 'read_file':
+                result = await handleLocalReadFile(parsedArgs)
+                break
+              case 'write_file':
+                result = await handleLocalWriteFile(parsedArgs)
+                break
+              case 'edit_file':
+                result = await handleLocalEditFile(parsedArgs)
+                break
+              case 'http_request':
+                result = await handleLocalHttpRequest(parsedArgs)
+                break
+              default:
+                result = { error: `Unknown tool: ${toolName}` }
+            }
 
-          wsClient.send(JSON.stringify({
-            type: 'tool_result',
-            requestId,
-            result: JSON.stringify(result)
-          }))
-        } catch (e) {
-          wsClient.send(JSON.stringify({
-            type: 'tool_error',
-            requestId,
-            error: e.message
-          }))
-        }
+            wsClient.send(JSON.stringify({
+              type: 'tool_result',
+              requestId,
+              result: JSON.stringify(result)
+            }))
+          } catch (e) {
+            wsClient.send(JSON.stringify({
+              type: 'tool_error',
+              requestId,
+              error: e.message
+            }))
+          }
+        })()
       }
     } catch (e) {
       console.error('Failed to handle WebSocket message:', e)

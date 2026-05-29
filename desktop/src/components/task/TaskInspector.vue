@@ -6,17 +6,6 @@
     </div>
 
     <div class="inspector-section">
-      <h4 class="section-title">工作区</h4>
-      <div class="workspace-info">
-        <span class="workspace-path">{{ workspace || '未设置' }}</span>
-        <span class="workspace-mode">
-          <span class="mode-dot" :class="wsConnected ? 'connected' : 'disconnected'"></span>
-          {{ executionMode === 'LOCAL' ? (wsConnected ? '本地已连接' : '本地未连接') : '云端模式' }}
-        </span>
-      </div>
-    </div>
-
-    <div class="inspector-section">
       <h4 class="section-title">待审批</h4>
       <BashApprovalBar
         v-if="pendingBashApprovals.length > 0"
@@ -37,9 +26,6 @@ import type { BashApprovalItem } from '../chat/BashApprovalBar.vue'
 
 defineProps<{
   todos?: TodoItem[]
-  workspace?: string
-  executionMode?: string
-  wsConnected?: boolean
   pendingBashApprovals?: BashApprovalItem[]
 }>()
 
@@ -72,40 +58,6 @@ defineEmits<{
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-
-/* Workspace */
-.workspace-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.workspace-path {
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink-muted-80);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-mode {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--aw-text-micro);
-  color: var(--aw-ink-muted-48);
-}
-
-.mode-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.mode-dot.connected { background: var(--aw-success); }
-.mode-dot.disconnected { background: var(--aw-danger); }
 
 /* Approval */
 .inspector-approval {

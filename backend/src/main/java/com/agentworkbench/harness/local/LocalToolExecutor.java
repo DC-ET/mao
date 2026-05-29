@@ -24,7 +24,7 @@ public class LocalToolExecutor {
      * @param sessionId the session ID (used to find the connected WebSocket)
      * @param toolName  the tool to execute (bash, read_file, write_file, etc.)
      * @param arguments JSON arguments string
-     * @return JSON result string, or JSON error if client is not connected / timed out
+     * @return JSON result string, or JSON error if client is not connected
      */
     public String execute(Long sessionId, String toolName, String arguments, String workspace) {
         if (!sessionRegistry.isConnected(sessionId)) {
@@ -33,11 +33,7 @@ public class LocalToolExecutor {
         }
 
         try {
-            String result = sessionRegistry.sendToolRequest(sessionId, toolName, arguments, workspace).get(60, java.util.concurrent.TimeUnit.SECONDS);
-            return result;
-        } catch (java.util.concurrent.TimeoutException e) {
-            log.warn("Local tool execution timed out for session {}: tool={}", sessionId, toolName);
-            return "{\"error\":\"Local tool execution timed out (60s). The desktop client may be unresponsive.\"}";
+            return sessionRegistry.sendToolRequest(sessionId, toolName, arguments, workspace).get();
         } catch (Exception e) {
             log.error("Local tool execution failed for session {}: tool={}", sessionId, toolName, e);
             return "{\"error\":\"Local tool execution failed: " + e.getMessage() + "\"}";

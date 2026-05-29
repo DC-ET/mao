@@ -1,18 +1,14 @@
 package com.agentworkbench.harness.core;
 
 import com.agentworkbench.agent.entity.Agent;
-import com.agentworkbench.agent.entity.AgentMcpConfig;
 import com.agentworkbench.agent.entity.AgentTool;
 import com.agentworkbench.agent.mapper.AgentMapper;
-import com.agentworkbench.agent.mapper.AgentMcpConfigMapper;
 import com.agentworkbench.agent.mapper.AgentToolMapper;
 import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
 import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.llm.ChatUsage;
 import com.agentworkbench.harness.llm.LlmModelConfig;
-import com.agentworkbench.harness.mcp.McpTool;
-import com.agentworkbench.harness.mcp.McpToolRegistry;
 import com.agentworkbench.harness.skill.SkillLoader;
 import com.agentworkbench.harness.tool.Tool;
 import com.agentworkbench.harness.tool.ToolRegistry;
@@ -49,11 +45,9 @@ public class HarnessService {
     private final AgentLoop agentLoop;
     private final ToolRegistry toolRegistry;
     private final SkillLoader skillLoader;
-    private final McpToolRegistry mcpToolRegistry;
     private final SessionMapper sessionMapper;
     private final AgentMapper agentMapper;
     private final AgentToolMapper agentToolMapper;
-    private final AgentMcpConfigMapper agentMcpConfigMapper;
     private final ToolEntityMapper toolEntityMapper;
     private final LlmModelMapper llmModelMapper;
     private final MessageMapper messageMapper;
@@ -243,18 +237,6 @@ public class HarnessService {
         }
         context.setAvailableSkillNames(
                 agentSkillNames != null ? agentSkillNames : skillLoader.getAllNames());
-
-        // 8. Load MCP tools for this agent
-        List<AgentMcpConfig> mcpConfigs = agentMcpConfigMapper.selectList(
-                new QueryWrapper<AgentMcpConfig>()
-                        .eq("agent_id", agent.getId())
-                        .eq("status", 1));
-        List<McpTool> mcpTools = new ArrayList<>();
-        for (AgentMcpConfig config : mcpConfigs) {
-            List<McpTool> discovered = mcpToolRegistry.discoverAndRegister(config.getServerUrl());
-            mcpTools.addAll(discovered);
-        }
-        context.setMcpTools(mcpTools);
 
         return context;
     }

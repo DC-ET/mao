@@ -125,36 +125,6 @@
           </el-form-item>
         </div>
 
-        <!-- MCP -->
-        <div class="form-section">
-          <h2 class="section-title">MCP 配置</h2>
-
-          <el-form-item
-            v-for="(config, index) in form.mcpConfigs"
-            :key="index"
-            :label="'MCP Server ' + (index + 1)"
-          >
-            <el-row :gutter="12">
-              <el-col :span="12">
-                <el-input v-model="config.serverUrl" placeholder="MCP Server URL" />
-              </el-col>
-              <el-col :span="8">
-                <el-select v-model="config.transport" placeholder="传输方式">
-                  <el-option label="SSE" value="SSE" />
-                  <el-option label="STDIO" value="STDIO" />
-                </el-select>
-              </el-col>
-              <el-col :span="4">
-                <el-button type="danger" class="pill-btn" @click="handleRemoveMcp(index)">删除</el-button>
-              </el-col>
-            </el-row>
-          </el-form-item>
-
-          <el-form-item>
-            <el-button class="pill-btn" @click="handleAddMcp">添加 MCP Server</el-button>
-          </el-form-item>
-        </div>
-
         <!-- Visibility -->
         <div class="form-section">
           <h2 class="section-title">可见性</h2>
@@ -197,7 +167,6 @@ const form = ref({
   modelId: null as number | null,
   toolIds: [] as number[],
   skillNames: [] as string[],
-  mcpConfigs: [] as { serverUrl: string; transport: string }[],
   visibility: 'PRIVATE',
   tags: [] as string[]
 })
@@ -230,14 +199,6 @@ async function fetchData() {
 
 function handleIconSuccess(response: any) {
   form.value.iconUrl = response.data?.url || ''
-}
-
-function handleAddMcp() {
-  form.value.mcpConfigs.push({ serverUrl: '', transport: 'SSE' })
-}
-
-function handleRemoveMcp(index: number) {
-  form.value.mcpConfigs.splice(index, 1)
 }
 
 async function handleSubmit() {

@@ -28,7 +28,6 @@ public enum ErrorCode {
     HUB_ALREADY_INSTALLED(3006, "已安装该 Agent"),
     LLM_CALL_FAILED(3007, "LLM 调用失败"),
     LLM_TIMEOUT(3008, "LLM 调用超时"),
-    MCP_CONNECT_FAILED(3009, "MCP Server 连接失败"),
     SKILL_NAME_DUPLICATE(3010, "Skill 名称已存在"),
 
     // 服务端内部错误 5001-5999
