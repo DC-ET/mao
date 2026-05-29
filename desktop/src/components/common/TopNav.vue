@@ -45,11 +45,10 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 
-const navLinks = [
-  { path: '/agent/create', label: '创建 Agent' }
-]
+const navLinks: { path: string; label: string }[] = []
 
 const showNavLinks = computed(() => {
+  if (navLinks.length === 0) return false
   if (route.path === '/') return true
   return !route.path.startsWith('/tasks/')
 })
