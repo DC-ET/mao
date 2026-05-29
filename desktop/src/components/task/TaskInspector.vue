@@ -8,7 +8,7 @@
     <div class="inspector-section">
       <h4 class="section-title">待审批</h4>
       <BashApprovalBar
-        v-if="pendingBashApprovals.length > 0"
+        v-if="pendingBashApprovals && pendingBashApprovals.length > 0"
         :items="pendingBashApprovals"
         class="inspector-approval"
         @confirm="(requestId, approved) => $emit('bashConfirm', requestId, approved)"

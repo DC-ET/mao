@@ -1,6 +1,7 @@
 package com.agentworkbench.harness.core;
 
 import com.agentworkbench.harness.llm.*;
+import com.agentworkbench.harness.shell.ShellSessionManager;
 import com.agentworkbench.harness.tool.ToolDispatcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +28,7 @@ public class AgentLoop {
     private final ContextManager contextManager;
     private final ToolDispatcher toolDispatcher;
     private final BackgroundTaskManager backgroundTaskManager;
+    private final ShellSessionManager shellSessionManager;
     private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
 
     /** Per-session cancel flags: set to true to request cancellation */
@@ -61,13 +63,12 @@ public class AgentLoop {
     public void execute(AgentExecutionContext context, AgentEventListener listener,
                         MessagePersistenceCallback persistenceCallback) {
         int round = 0;
-        int maxRounds = context.getMaxRounds();
         int roundsSinceTodoUpdate = 0;
 
         try {
-        while (round < maxRounds) {
+        while (true) {
             round++;
-            log.debug("Agent loop round {}/{}", round, maxRounds);
+            log.debug("Agent loop round {}", round);
 
             // Check cancellation
             Long sessionId = context.getSessionId();
@@ -216,6 +217,8 @@ public class AgentLoop {
             Long sessionId = context.getSessionId();
             if (sessionId != null) {
                 cancelFlags.remove(sessionId);
+                // 清理该对话的所有 Shell 会话
+                shellSessionManager.closeByConversation(sessionId);
             }
         }
     }

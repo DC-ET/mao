@@ -8,6 +8,7 @@
     "dev": "vite",
     "dev:electron": "concurrently \"vite --port 5201\" \"wait-on http://localhost:5201 && env -u ELECTRON_RUN_AS_NODE NODE_ENV=development electron .\"",
     "build": "vue-tsc -b && vite build",
+    "dist": "vue-tsc -b && vite build && electron-builder",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -34,5 +35,20 @@
     "vite": "^8.0.12",
     "vue-tsc": "^3.2.8",
     "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "com.agentworkbench.desktop",
+    "productName": "Agent Workbench",
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": "dmg"
+    },
+    "directories": {
+      "output": "release"
+    }
   }
 }

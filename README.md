@@ -130,6 +130,17 @@ npm run dev           # 浏览器预览模式
 npm run dev:electron  # Electron 桌面应用模式
 ```
 
+### 打包桌面客户端
+
+```bash
+cd desktop
+npm run dist          # 构建并打包成 dmg 安装包
+```
+
+打包产物位于 `desktop/release/` 目录：
+- `mac-arm64/Agent Workbench.app` - macOS 应用
+- `Agent Workbench-0.0.0-arm64.dmg` - macOS 安装镜像
+
 ### 默认账号
 
 | 用户名 | 密码 | 角色 |

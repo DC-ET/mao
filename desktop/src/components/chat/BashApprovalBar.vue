@@ -79,7 +79,7 @@ defineEmits<{
 .command-preview {
   margin: 0 0 var(--aw-space-sm);
   padding: 10px 12px;
-  background: var(--aw-ink);
+  background: var(--aw-surface-code);
   border-radius: var(--aw-radius-sm);
   overflow-x: auto;
 }

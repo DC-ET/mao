@@ -203,7 +203,7 @@ function toggleExpand() {
 .tool-command pre {
   margin: 0;
   padding: 8px 12px;
-  background: var(--aw-ink);
+  background: var(--aw-surface-code);
   border-radius: var(--aw-radius-sm);
   overflow-x: auto;
 }
@@ -237,7 +237,7 @@ function toggleExpand() {
 .result-content {
   margin: 0;
   padding: 8px 12px;
-  background: var(--aw-ink);
+  background: var(--aw-surface-code);
   border-radius: var(--aw-radius-sm);
   overflow-x: auto;
   max-height: 200px;

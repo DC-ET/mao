@@ -78,6 +78,18 @@ public class PromptEngine {
             }
         }
 
+        // 自动注入 shell-guide 技能（如果 Agent 配置了 shell 工具）
+        boolean hasShellTool = context.getTools().stream()
+                .anyMatch(tool -> "shell".equals(tool.getName()));
+        if (hasShellTool && !skillNames.contains("shell-guide")) {
+            String shellGuide = skillLoader.getContent("shell-guide");
+            if (shellGuide != null && !shellGuide.isEmpty()) {
+                sb.append("## Skill: shell-guide\n\n");
+                sb.append(shellGuide);
+                sb.append("\n\n");
+            }
+        }
+
         return sb.toString();
     }
 
