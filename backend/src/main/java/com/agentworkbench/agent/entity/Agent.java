@@ -28,8 +28,6 @@ public class Agent {
 
     private String visibility;
 
-    private String category;
-
     private String status;
 
     private Integer tokenLimit;
@@ -40,8 +38,6 @@ public class Agent {
 
     /** 该 Agent 可用的 Skill 知识文档名称列表（JSON 数组），为空则加载全部 */
     private String skillNames;
-
-    private LocalDateTime publishedAt;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

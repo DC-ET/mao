@@ -125,22 +125,10 @@
           </el-form-item>
         </div>
 
-        <!-- Visibility -->
-        <div class="form-section">
-          <h2 class="section-title">可见性</h2>
-
-          <el-form-item label="可见范围">
-            <el-radio-group v-model="form.visibility">
-              <el-radio value="PRIVATE">仅自己可见</el-radio>
-              <el-radio value="HUB">发布到 Hub</el-radio>
-            </el-radio-group>
-          </el-form-item>
-        </div>
-
         <!-- Submit -->
         <el-form-item>
           <el-button type="primary" class="pill-btn" :loading="submitting" @click="handleSubmit">
-            {{ form.visibility === 'HUB' ? '创建并发布' : '创建' }}
+            创建
           </el-button>
           <el-button class="pill-btn" @click="handleCancel">取消</el-button>
         </el-form-item>
@@ -167,7 +155,6 @@ const form = ref({
   modelId: null as number | null,
   toolIds: [] as number[],
   skillNames: [] as string[],
-  visibility: 'PRIVATE',
   tags: [] as string[]
 })
 

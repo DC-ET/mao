@@ -36,11 +36,6 @@
           <span>用户管理</span>
         </el-menu-item>
 
-        <el-menu-item index="/hub">
-          <el-icon><Share /></el-icon>
-          <span>Hub 管理</span>
-        </el-menu-item>
-
         <el-menu-item index="/api-keys">
           <el-icon><Key /></el-icon>
           <span>API Key</span>

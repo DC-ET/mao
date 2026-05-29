@@ -46,7 +46,6 @@ const route = useRoute()
 const authStore = useAuthStore()
 
 const navLinks = [
-  { path: '/hub', label: 'Hub' },
   { path: '/agent/create', label: '创建 Agent' }
 ]
 

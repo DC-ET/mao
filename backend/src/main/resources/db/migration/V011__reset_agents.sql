@@ -7,8 +7,6 @@ SET CHARACTER SET utf8mb4;
 -- ========== 1. 清理Agent相关数据 ==========
 
 -- 清除Agent关联数据（按外键依赖顺序）
-DELETE FROM `agent_comment`;
-DELETE FROM `agent_rating`;
 DELETE FROM `agent_permission`;
 DELETE FROM `agent_mcp_config`;
 DELETE FROM `agent_tag`;
@@ -44,8 +42,6 @@ INSERT INTO `agent` (
     `model_id`,
     `creator_id`,
     `type`,
-    `visibility`,
-    `status`,
     `token_limit`,
     `max_rounds`,
     `created_at`,
@@ -79,8 +75,6 @@ INSERT INTO `agent` (
     3,  -- Access GPT-5.4 模型
     1,
     'SYSTEM',
-    'HUB',
-    'PUBLISHED',
     0,
     0,
     NOW(),
@@ -95,8 +89,6 @@ INSERT INTO `agent` (
     `model_id`,
     `creator_id`,
     `type`,
-    `visibility`,
-    `status`,
     `token_limit`,
     `max_rounds`,
     `created_at`,
@@ -131,8 +123,6 @@ INSERT INTO `agent` (
     3,  -- Access GPT-5.4 模型
     1,
     'SYSTEM',
-    'HUB',
-    'PUBLISHED',
     0,
     0,
     NOW(),
