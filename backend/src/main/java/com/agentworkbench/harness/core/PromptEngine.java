@@ -1,7 +1,6 @@
 package com.agentworkbench.harness.core;
 
 import com.agentworkbench.harness.llm.ChatRequest;
-import com.agentworkbench.harness.mcp.McpTool;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.harness.skill.SkillLoader;
 import com.agentworkbench.harness.tool.Tool;
@@ -93,18 +92,6 @@ public class PromptEngine {
                             .name(tool.getName())
                             .description(tool.getDescription())
                             .parameters(tool.getInputSchema())
-                            .build())
-                    .build());
-        }
-
-        // MCP tools
-        for (McpTool mcpTool : context.getMcpTools()) {
-            tools.add(ChatRequest.ToolDefinition.builder()
-                    .type("function")
-                    .function(ChatRequest.Function.builder()
-                            .name(mcpTool.getName())
-                            .description(mcpTool.getDescription())
-                            .parameters(mcpTool.getInputSchema())
                             .build())
                     .build());
         }

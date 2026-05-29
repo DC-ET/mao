@@ -1,7 +1,6 @@
 package com.agentworkbench.harness.tool;
 
 import com.agentworkbench.harness.local.LocalToolExecutor;
-import com.agentworkbench.harness.mcp.McpToolRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -12,11 +11,10 @@ import org.springframework.stereotype.Component;
 public class ToolDispatcher {
 
     private final ToolRegistry toolRegistry;
-    private final McpToolRegistry mcpToolRegistry;
     private final LocalToolExecutor localToolExecutor;
 
     /**
-     * Execute a tool call - routes to built-in Tool or MCP tool (cloud mode)
+     * Execute a tool call - routes to built-in tool (cloud mode)
      */
     public String dispatch(String toolName, String arguments) {
         return dispatch(toolName, arguments, null);
@@ -28,17 +26,10 @@ public class ToolDispatcher {
     public String dispatch(String toolName, String arguments, String workspace) {
         log.debug("Dispatching tool call (cloud): {}", toolName);
 
-        // 1. Try built-in tools
         Tool tool = toolRegistry.getTool(toolName);
         if (tool != null) {
             log.debug("Routing to built-in tool: {}", toolName);
             return tool.execute(arguments, workspace);
-        }
-
-        // 2. Try MCP tools
-        if (mcpToolRegistry.hasTool(toolName)) {
-            log.debug("Routing to MCP tool: {}", toolName);
-            return mcpToolRegistry.callTool(toolName, arguments);
         }
 
         throw new IllegalArgumentException("Unknown tool: " + toolName);
@@ -55,15 +46,11 @@ public class ToolDispatcher {
             return localToolExecutor.execute(sessionId, toolName, arguments, workspace);
         }
 
-        // CLOUD mode — route to built-in tool or MCP tool with sessionId
+        // CLOUD mode — route to built-in tool
         Tool tool = toolRegistry.getTool(toolName);
         if (tool != null) {
             log.debug("Routing to built-in tool: {} (session={})", toolName, sessionId);
             return tool.execute(arguments, sessionId, workspace);
-        }
-        if (mcpToolRegistry.hasTool(toolName)) {
-            log.debug("Routing to MCP tool: {}", toolName);
-            return mcpToolRegistry.callTool(toolName, arguments);
         }
         throw new IllegalArgumentException("Unknown tool: " + toolName);
     }

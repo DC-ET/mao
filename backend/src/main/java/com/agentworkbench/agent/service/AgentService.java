@@ -1,11 +1,9 @@
 package com.agentworkbench.agent.service;
 
 import com.agentworkbench.agent.entity.Agent;
-import com.agentworkbench.agent.entity.AgentMcpConfig;
 import com.agentworkbench.agent.entity.AgentTool;
 import com.agentworkbench.agent.entity.AgentTag;
 import com.agentworkbench.agent.mapper.AgentMapper;
-import com.agentworkbench.agent.mapper.AgentMcpConfigMapper;
 import com.agentworkbench.agent.mapper.AgentToolMapper;
 import com.agentworkbench.agent.mapper.AgentTagMapper;
 import com.agentworkbench.common.exception.BusinessException;
@@ -26,7 +24,6 @@ public class AgentService {
     private final AgentMapper agentMapper;
     private final AgentTagMapper agentTagMapper;
     private final AgentToolMapper agentToolMapper;
-    private final AgentMcpConfigMapper agentMcpConfigMapper;
     private final ObjectMapper objectMapper;
 
     public List<Agent> listAgents(Long userId, String keyword, String type) {
@@ -53,8 +50,7 @@ public class AgentService {
     public Agent createAgent(Long userId, String name, String description, String iconUrl,
                               String systemPrompt, Long modelId, String visibility,
                               List<String> tags, List<Long> toolIds,
-                              List<String> skillNames,
-                              List<AgentMcpConfig> mcpConfigs) {
+                              List<String> skillNames) {
         Agent agent = new Agent();
         agent.setName(name);
         agent.setDescription(description);
@@ -96,17 +92,6 @@ public class AgentService {
             }
         }
 
-        // Save MCP configs
-        if (mcpConfigs != null) {
-            for (AgentMcpConfig config : mcpConfigs) {
-                config.setAgentId(agent.getId());
-                if (config.getStatus() == null) {
-                    config.setStatus(1);
-                }
-                agentMcpConfigMapper.insert(config);
-            }
-        }
-
         return agent;
     }
 
@@ -114,8 +99,7 @@ public class AgentService {
     public Agent updateAgent(Long id, String name, String description, String iconUrl,
                               String systemPrompt, Long modelId, String visibility,
                               Integer tokenLimit, Integer maxRounds,
-                              List<Long> toolIds, List<String> skillNames,
-                              List<AgentMcpConfig> mcpConfigs) {
+                              List<Long> toolIds, List<String> skillNames) {
         Agent agent = getAgent(id);
         if (name != null) agent.setName(name);
         if (description != null) agent.setDescription(description);
@@ -145,18 +129,6 @@ public class AgentService {
             }
         }
 
-        // Update MCP configs (delete old + insert new)
-        if (mcpConfigs != null) {
-            agentMcpConfigMapper.delete(new QueryWrapper<AgentMcpConfig>().eq("agent_id", id));
-            for (AgentMcpConfig config : mcpConfigs) {
-                config.setAgentId(id);
-                if (config.getStatus() == null) {
-                    config.setStatus(1);
-                }
-                agentMcpConfigMapper.insert(config);
-            }
-        }
-
         return agent;
     }
 
@@ -166,16 +138,10 @@ public class AgentService {
                 .stream().map(AgentTool::getToolId).toList();
     }
 
-    public List<AgentMcpConfig> getAgentMcpConfigs(Long agentId) {
-        return agentMcpConfigMapper.selectList(
-                new QueryWrapper<AgentMcpConfig>().eq("agent_id", agentId));
-    }
-
     @Transactional
     public void deleteAgent(Long id) {
         agentTagMapper.delete(new QueryWrapper<AgentTag>().eq("agent_id", id));
         agentToolMapper.delete(new QueryWrapper<AgentTool>().eq("agent_id", id));
-        agentMcpConfigMapper.delete(new QueryWrapper<AgentMcpConfig>().eq("agent_id", id));
         agentMapper.deleteById(id);
     }
 

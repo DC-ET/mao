@@ -16,13 +16,16 @@ public class ActivityService {
         return record(sessionId, type, target, summary, null, null, null);
     }
 
+    private static final int MAX_TARGET_LENGTH = 2048;
+    private static final int MAX_SUMMARY_LENGTH = 512;
+
     public SessionActivity record(Long sessionId, String type, String target, String summary,
                                    String detailJson, String status, Integer durationMs) {
         SessionActivity activity = new SessionActivity();
         activity.setSessionId(sessionId);
         activity.setType(type);
-        activity.setTarget(target);
-        activity.setSummary(summary);
+        activity.setTarget(truncate(target, MAX_TARGET_LENGTH));
+        activity.setSummary(truncate(summary, MAX_SUMMARY_LENGTH));
         activity.setDetailJson(detailJson);
         activity.setStatus(status != null ? status : "SUCCESS");
         activity.setDurationMs(durationMs);
@@ -40,5 +43,10 @@ public class ActivityService {
 
     public List<SessionActivity> listBySession(Long sessionId) {
         return listBySession(sessionId, 50);
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) return null;
+        return s.length() <= max ? s : s.substring(0, max);
     }
 }

@@ -57,15 +57,13 @@
         :disabled="sending"
         :loading="sending"
         :workspace="workspace"
+        :execution-mode="executionMode"
         @send="handleSend"
       />
     </div>
 
     <TaskInspector
       :todos="todos"
-      :workspace="workspace"
-      :execution-mode="executionMode"
-      :ws-connected="wsConnected"
       :pending-bash-approvals="pendingBashApprovals"
       @bash-confirm="confirmBash"
     />

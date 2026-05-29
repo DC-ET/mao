@@ -46,7 +46,7 @@
         </div>
       </div>
       <div class="toolbar-right">
-        <span class="mode-label">本地</span>
+        <span class="mode-label">{{ executionMode === 'LOCAL' ? '本地' : '云端' }}</span>
         <span class="model-name">{{ modelName }}</span>
         <button
           class="send-btn"
@@ -73,12 +73,14 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   loading?: boolean
   workspace?: string
+  executionMode?: string
   modelName?: string
   placeholder?: string
 }>(), {
   disabled: false,
   loading: false,
   workspace: '',
+  executionMode: 'CLOUD',
   modelName: 'gpt-5.4',
   placeholder: '描述你希望 Agent 完成的任务',
 })

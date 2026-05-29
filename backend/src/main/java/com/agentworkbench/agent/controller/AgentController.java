@@ -1,7 +1,6 @@
 package com.agentworkbench.agent.controller;
 
 import com.agentworkbench.agent.entity.Agent;
-import com.agentworkbench.agent.entity.AgentMcpConfig;
 import com.agentworkbench.agent.entity.AgentTag;
 import com.agentworkbench.agent.service.AgentService;
 import com.agentworkbench.common.result.Result;
@@ -50,21 +49,12 @@ public class AgentController {
     public Result<AgentVO> createAgent(
             @AuthenticationPrincipal Long userId,
             @RequestBody CreateAgentRequest request) {
-        List<AgentMcpConfig> mcpConfigs = null;
-        if (request.getMcpConfigs() != null) {
-            mcpConfigs = request.getMcpConfigs().stream().map(r -> {
-                AgentMcpConfig c = new AgentMcpConfig();
-                c.setServerUrl(r.getServerUrl());
-                c.setTransport(r.getTransport());
-                return c;
-            }).toList();
-        }
         Agent agent = agentService.createAgent(
                 userId, request.getName(), request.getDescription(),
                 request.getIconUrl(), request.getSystemPrompt(),
                 request.getModelId(), request.getVisibility(),
                 request.getTags(), request.getToolIds(),
-                request.getSkillNames(), mcpConfigs);
+                request.getSkillNames());
         return Result.ok(toVO(agent));
     }
 
@@ -73,21 +63,12 @@ public class AgentController {
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id,
             @RequestBody UpdateAgentRequest request) {
-        List<AgentMcpConfig> mcpConfigs = null;
-        if (request.getMcpConfigs() != null) {
-            mcpConfigs = request.getMcpConfigs().stream().map(r -> {
-                AgentMcpConfig c = new AgentMcpConfig();
-                c.setServerUrl(r.getServerUrl());
-                c.setTransport(r.getTransport());
-                return c;
-            }).toList();
-        }
         Agent agent = agentService.updateAgent(
                 id, request.getName(), request.getDescription(),
                 request.getIconUrl(), request.getSystemPrompt(),
                 request.getModelId(), request.getVisibility(),
                 request.getTokenLimit(), request.getMaxRounds(),
-                request.getToolIds(), request.getSkillNames(), mcpConfigs);
+                request.getToolIds(), request.getSkillNames());
         return Result.ok(toVO(agent));
     }
 
@@ -147,9 +128,6 @@ public class AgentController {
         // Load tool IDs
         vo.setToolIds(agentService.getAgentToolIds(agent.getId()));
 
-        // Load MCP configs
-        vo.setMcpConfigs(agentService.getAgentMcpConfigs(agent.getId()));
-
         // Load skill names
         if (agent.getSkillNames() != null) {
             try {
@@ -177,7 +155,6 @@ public class AgentController {
         private List<String> tags;
         private List<Long> toolIds;
         private List<String> skillNames;
-        private List<McpConfigRequest> mcpConfigs;
     }
 
     @Data
@@ -192,13 +169,6 @@ public class AgentController {
         private Integer maxRounds;
         private List<Long> toolIds;
         private List<String> skillNames;
-        private List<McpConfigRequest> mcpConfigs;
-    }
-
-    @Data
-    public static class McpConfigRequest {
-        private String serverUrl;
-        private String transport;
     }
 
     @Data
@@ -220,7 +190,6 @@ public class AgentController {
         private List<String> tags;
         private List<Long> toolIds;
         private List<String> skillNames;
-        private List<AgentMcpConfig> mcpConfigs;
         private String publishedAt;
         private String createdAt;
     }
