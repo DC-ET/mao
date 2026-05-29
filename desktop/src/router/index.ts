@@ -24,11 +24,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/task/TaskView.vue')
       },
       {
-        path: 'agent/create',
-        name: 'CreateAgent',
-        component: () => import('../views/agent-create/CreateAgentView.vue')
-      },
-      {
         path: 'settings',
         name: 'Settings',
         component: () => import('../views/settings/SettingsView.vue')
