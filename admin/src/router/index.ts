@@ -45,12 +45,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Skills 管理' }
       },
       {
-        path: 'hub',
-        name: 'Hub',
-        component: () => import('../views/hub/HubManageView.vue'),
-        meta: { title: 'Hub 管理' }
-      },
-      {
         path: 'api-keys',
         name: 'ApiKeys',
         component: () => import('../views/apikey/ApiKeyView.vue'),

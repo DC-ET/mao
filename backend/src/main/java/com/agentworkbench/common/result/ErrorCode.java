@@ -25,7 +25,6 @@ public enum ErrorCode {
     MODEL_NOT_FOUND(3003, "模型配置不存在"),
     SKILL_NOT_FOUND(3004, "Skill 不存在"),
     AGENT_ACCESS_DENIED(3005, "无权访问该 Agent"),
-    HUB_ALREADY_INSTALLED(3006, "已安装该 Agent"),
     LLM_CALL_FAILED(3007, "LLM 调用失败"),
     LLM_TIMEOUT(3008, "LLM 调用超时"),
     SKILL_NAME_DUPLICATE(3010, "Skill 名称已存在"),

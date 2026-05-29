@@ -14,7 +14,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -143,13 +142,6 @@ public class AgentService {
         agentTagMapper.delete(new QueryWrapper<AgentTag>().eq("agent_id", id));
         agentToolMapper.delete(new QueryWrapper<AgentTool>().eq("agent_id", id));
         agentMapper.deleteById(id);
-    }
-
-    public void publishAgent(Long id) {
-        Agent agent = getAgent(id);
-        agent.setStatus("PUBLISHED");
-        agent.setPublishedAt(LocalDateTime.now());
-        agentMapper.updateById(agent);
     }
 
     public List<AgentTag> getAgentTags(Long agentId) {

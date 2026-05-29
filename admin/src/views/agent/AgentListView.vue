@@ -47,16 +47,15 @@
         <el-table-column prop="modelName" label="模型" width="120" />
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'PUBLISHED' ? 'success' : 'info'" size="small">
+            <el-tag :type="row.status === 'ARCHIVED' ? 'info' : 'success'" size="small">
               {{ statusMap[row.status] || row.status }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" />
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button type="primary" link size="small" @click="handlePublish(row)">发布</el-button>
             <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -99,7 +98,6 @@ const currentAgent = ref<any>(null)
 
 const statusMap: Record<string, string> = {
   DRAFT: '草稿',
-  PUBLISHED: '已发布',
   ARCHIVED: '已归档'
 }
 
@@ -139,17 +137,6 @@ function handleCreate() {
 function handleEdit(row: any) {
   currentAgent.value = row
   dialogVisible.value = true
-}
-
-async function handlePublish(row: any) {
-  try {
-    await ElMessageBox.confirm('确定要将此 Agent 发布到 Hub 吗？', '确认')
-    await api.post(`/agents/${row.id}/publish`)
-    ElMessage.success('发布成功')
-    fetchAgents()
-  } catch {
-    // Cancelled
-  }
 }
 
 async function handleDelete(row: any) {

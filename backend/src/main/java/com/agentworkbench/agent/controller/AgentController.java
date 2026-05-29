@@ -80,14 +80,6 @@ public class AgentController {
         return Result.ok();
     }
 
-    @PostMapping("/{id}/publish")
-    public Result<Void> publishToHub(
-            @AuthenticationPrincipal Long userId,
-            @PathVariable Long id) {
-        agentService.publishAgent(id);
-        return Result.ok();
-    }
-
     private AgentVO toVO(Agent agent) {
         AgentVO vo = new AgentVO();
         vo.setId(agent.getId());
@@ -102,7 +94,6 @@ public class AgentController {
         vo.setStatus(agent.getStatus());
         vo.setTokenLimit(agent.getTokenLimit());
         vo.setMaxRounds(agent.getMaxRounds());
-        vo.setPublishedAt(agent.getPublishedAt() != null ? agent.getPublishedAt().toString() : null);
         vo.setCreatedAt(agent.getCreatedAt() != null ? agent.getCreatedAt().toString() : null);
 
         // Load model name
@@ -190,7 +181,6 @@ public class AgentController {
         private List<String> tags;
         private List<Long> toolIds;
         private List<String> skillNames;
-        private String publishedAt;
         private String createdAt;
     }
 }
