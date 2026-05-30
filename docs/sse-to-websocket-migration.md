@@ -184,7 +184,9 @@ public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
 
 #### `SessionController.java`
 
-**改造 `sendMessage()` 方法**（当前 line 168-191）：
+**删除旧端点**：`POST /v1/sessions/{id}/messages`（line 168）和 `GET /v1/sessions/{id}/stream`（line 192）整体删除，逻辑迁入 `StreamingWsHandler`。
+
+`SessionController` 保留其余端点（创建 session、获取消息列表、删除 session 等 REST API）。
 
 当前流程：
 ```
@@ -198,15 +200,15 @@ GET  /stream   → 创建 SseEmitter → 提交 AgentLoop 到线程池
 客户端 WS send_message
   → StreamingWsHandler.onTextMessage()
   → 校验 session 存在且有权限
-  → 如果 executionMode=LOCAL，校验 LocalToolSessionRegistry 有对应连接（同当前 POST /messages 逻辑）
-  → 保存用户消息到 DB（同当前 SessionService.saveMessage）
-  → 缓存内容到 Caffeine（同当前 HarnessService.prepareMessage）
+  → 如果 executionMode=LOCAL，校验 LocalToolSessionRegistry 有对应连接
+  → 保存用户消息到 DB
+  → 缓存内容到 Caffeine
   → 创建 WsStreamingEventListener（绑定 userId + sessionId + registry）
-  → 提交 AgentLoop 到线程池（同当前 agentExecutor.submit）
+  → 提交 AgentLoop 到线程池
   → AgentLoop 事件回调 → WsStreamingEventListener → WS 推送给客户端
 ```
 
-降级路径：如果 WS 连接失败，客户端回退到 REST + SSE 两步流程（保留 `POST /messages` + `GET /stream` 端点不动）。
+旧的 `POST /v1/sessions/{id}/messages` 和 `GET /v1/sessions/{id}/stream` 端点**删除**，不再保留。
 
 **AgentLoop 生命周期（与当前 SSE 路径完全一致）：**
 
@@ -225,9 +227,9 @@ send_message 到达
 
 线程池配置沿用当前 `agentExecutor`（core=8, max=16, queue=200）。同一 session 不会并发执行——`send_message` 处理时检查 session phase，RUNNING 状态拒绝新请求（同当前逻辑）。
 
-#### `SseEmitterRegistry.java`
+#### `SseEmitterRegistry.java` — 删除
 
-保留不动，作为 SSE 降级路径。新路径走 `StreamingWsRegistry`。
+SSE 路径整体移除，`StreamingWsRegistry` 完全替代。
 
 #### `AgentEventListener` 实现
 
@@ -301,8 +303,7 @@ StreamingWsRegistry
 
 | 文件 | 说明 |
 |------|------|
-| `composables/useStreamWS.ts` | WebSocket 连接管理（替代 useSSE.ts） |
-| `composables/useSessionMessages.ts` | 多 session 消息缓存（Pinia store） |
+| `composables/useStreamWS.ts` | WebSocket 连接管理，替代 useSSE.ts |
 
 ### 5.2 改造文件
 
@@ -423,7 +424,7 @@ export function useChat() {
       await createSession()
     }
 
-    // 3. 通过 WS 发送（替代 POST /messages + GET /stream）
+    // 3. 通过 WS 发送
     const eventId = crypto.randomUUID()
     wsSend(sessionStore.activeSessionId, content, eventId)
   }
@@ -445,9 +446,10 @@ export function useChat() {
 
 ```typescript
 // 删除：
-// - useSSE 相关调用
-// - cleanup() 中的 sse.stop()
-// - messages.value = [] 等手动状态重置
+// - useSSE.ts 导入和所有相关调用
+// - cleanup() 中的 sse.stop()、SSE 相关逻辑
+// - messages.value = [] 等手动状态重置（消息从 store 读）
+// - 30s 轮询 fetchSessions（session_list_update 已通过 WS 实时推送）
 
 // 改造 watch：
 watch(sessionIdParam, (newSid, oldSid) => {
@@ -467,9 +469,10 @@ watch(sessionIdParam, (newSid, oldSid) => {
 
 ## 6. 改造步骤
 
-### Phase 1：后端 WS 流式通道（2-3天）
+一次性完成，不分阶段。
 
 ```
+后端：
 1. 新建 StreamingWsHandler + StreamingWsRegistry + WsStreamingEventListener
 2. WebSocketConfig 注册 /ws/stream 端点
 3. StreamingWsHandler 实现消息路由：
@@ -478,28 +481,21 @@ watch(sessionIdParam, (newSid, oldSid) => {
    - cancel → 取消对应 session 的 AgentLoop
    - ping → 回 pong
 4. WsStreamingEventListener 接入 AgentLoop，事件通过 registry 推送给 userId
-5. 保留 POST /messages + GET /stream 不动，作为 SSE 降级路径
-6. session_list_update 广播：phase 变更时推送给 session 创建者的所有连接
-```
+5. session_list_update 广播：phase 变更时推送给 session 创建者的所有连接
+6. 删除 SessionController 中的 POST /messages + GET /stream 端点
+7. 删除 SseEmitterRegistry.java
 
-### Phase 2：前端 WS 消费 + Store 改造（2-3天）
+前端：
+8. 新建 useStreamWS.ts，实现全局 WS 连接管理
+9. stores/session.ts 新增 sessionMessages Map 和相关 actions
+10. 改造 useChat.ts：messages 从 store computed 读取，sendMessage 走 WS
+11. 改造 TaskView.vue：loadSession 只切订阅，删除 SSE/cleanup 逻辑和 30s 轮询
+12. 删除 useSSE.ts
 
-```
-1. 新建 useStreamWS.ts，实现全局 WS 连接管理
-2. stores/session.ts 新增 sessionMessages Map 和相关 actions
-3. 改造 useChat.ts：messages 从 store computed 读取，sendMessage 走 WS
-4. 改造 TaskView.vue：loadSession 只切订阅，不 cleanup
-5. 删除 useSSE.ts 依赖（或保留用于降级）
-```
-
-### Phase 3：联调 + 降级 + 清理（1-2天）
-
-```
-1. 端到端测试：多任务并行执行 + 切换 + 返回
-2. 断线重连测试：断网 → 恢复 → 消息不丢失
-3. 降级测试：无 WS 连接时回退 SSE
-4. 清理旧代码：移除 SseEmitterRegistry、useSSE.ts（可选）
-5. 性能测试：50+ 并发 session 的 WS 广播
+验证：
+13. 多任务并行执行 + 切换 + 返回，确认流式输出不中断
+14. 断线重连：断网 → 恢复 → session_snapshot 补发 → 消息不丢失
+15. 50+ 并发 session 的 WS 广播性能
 ```
 
 ---
@@ -544,10 +540,6 @@ watch(sessionIdParam, (newSid, oldSid) => {
 
 桌面端用 Electron 走原生 WS。如果未来有 Web 版，浏览器端也直接用 `new WebSocket()`，逻辑完全一致。不需要 SockJS/STOMP。
 
-### 7.4 向后兼容
-
-Phase 1 保留 SSE 路径。客户端优先尝试 WS，失败则降级 SSE。Phase 3 验证稳定后可移除 SSE。
-
 ---
 
 ## 8. 风险评估
@@ -580,24 +572,23 @@ desktop/src/composables/
 ```
 backend/
   ├── config/WebSocketConfig.java          — 注册 /ws/stream 端点
-  ├── session/controller/SessionController.java — sendMessage 新增 WS 路径
   └── session/service/SessionService.java  — 广播 phase 变更到 WS
 
 desktop/
   ├── stores/session.ts                    — 新增 sessionMessages Map
-  ├── composables/useChat.ts              — 简化，消息从 store 读
-  ├── views/task/TaskView.vue             — loadSession 不再 cleanup
-  └── components/task/TaskIndexPanel.vue   — 无变化（已从 store 读数据）
+  ├── composables/useChat.ts              — 简化，消息从 store 读，sendMessage 走 WS
+  └── views/task/TaskView.vue             — 删除 SSE 逻辑，loadSession 只切订阅
 ```
 
-### 可删除（Phase 3 验证后）
+### 删除
 
 ```
 backend/
-  └── session/SseEmitterRegistry.java
+  ├── session/SseEmitterRegistry.java          — SSE 注册表，整体移除
+  └── session/controller/SessionController.java — 删除 POST /messages + GET /stream 端点
 
 desktop/
-  └── composables/useSSE.ts
+  └── composables/useSSE.ts                    — SSE 客户端，整体移除
 ```
 
 ---
@@ -611,6 +602,6 @@ desktop/
 | 后台监听 | 不支持 | 支持（subscribe 机制） |
 | 双向通信 | 不支持 | 支持（可发送消息、取消） |
 | 浏览器兼容性 | 好 | 好（IE 不支持但已不需考虑） |
-| 代理/网关穿透 | 好 | 需确认 Nginx proxy_read_timeout |
+| 代理/网关穿透 | 好 | 需确认 Nginx proxy_read_timeout（默认 60s，心跳 30s 可覆盖） |
 | 实现复杂度 | 低 | 中 |
 | 多任务体验 | 差（断流） | 好（无缝切换） |
