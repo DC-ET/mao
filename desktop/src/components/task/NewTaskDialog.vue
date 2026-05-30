@@ -87,6 +87,9 @@ import { useAgentStore, type Agent } from '../../stores/agent'
 
 const props = defineProps<{
   modelValue: boolean
+  defaultAgentId?: string
+  defaultMode?: 'CLOUD' | 'LOCAL'
+  defaultWorkspace?: string
 }>()
 
 const emit = defineEmits<{
@@ -104,12 +107,18 @@ const workspace = ref('')
 
 async function onOpen() {
   selectedAgent.value = null
-  selectedMode.value = 'CLOUD'
-  workspace.value = ''
+  selectedMode.value = props.defaultMode || 'CLOUD'
+  workspace.value = props.defaultWorkspace || ''
   if (agentStore.agents.length === 0) {
     await agentStore.fetchAgents()
   }
   agents.value = agentStore.agents
+
+  // Pre-select agent from defaults
+  if (props.defaultAgentId) {
+    const match = agents.value.find(a => String(a.id) === String(props.defaultAgentId))
+    if (match) selectedAgent.value = match
+  }
 }
 
 async function selectWorkspace() {
@@ -282,6 +291,20 @@ function close() {
 
 .workspace-row {
   margin-top: 12px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+:deep(.workspace-row .pill-btn) {
+  max-width: 100% !important;
+  width: 100% !important;
+  display: block !important;
+  text-align: left !important;
+  font-size: 12px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  box-sizing: border-box !important;
 }
 
 .pill-btn {
@@ -304,6 +327,15 @@ function close() {
 
 :deep(.el-dialog__body) {
   padding: 16px 24px;
+  overflow: hidden;
+}
+
+:deep(.workspace-row .pill-btn span) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  max-width: 100%;
 }
 
 :deep(.el-dialog__footer) {

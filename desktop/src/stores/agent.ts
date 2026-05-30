@@ -9,6 +9,8 @@ export interface Agent {
   iconUrl: string
   tags: string[]
   executionMode: string
+  modelId?: number
+  modelName?: string
 }
 
 export const useAgentStore = defineStore('agent', () => {

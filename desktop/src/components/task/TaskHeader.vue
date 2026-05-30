@@ -187,7 +187,7 @@ onUnmounted(() => {
 .task-title {
   margin: 0;
   font-family: var(--aw-font-display);
-  font-size: var(--aw-text-tagline);
+  font-size: var(--aw-text-body);
   font-weight: 600;
   color: var(--aw-ink);
   letter-spacing: 0.231px;

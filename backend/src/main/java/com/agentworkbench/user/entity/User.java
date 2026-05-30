@@ -26,8 +26,6 @@ public class User {
 
     private String feishuUserId;
 
-    private Long departmentId;
-
     private Integer status;
 
     private LocalDateTime lastLoginAt;

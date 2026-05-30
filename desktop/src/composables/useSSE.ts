@@ -31,6 +31,7 @@ export interface SSEOptions {
   onActivity?: (data: ActivityData) => void
   onTodoUpdated?: (data: { todos: TodoItem[] }) => void
   onSessionStatus?: (data: { phase: string }) => void
+  onSessionListUpdate?: (data: { sessionId: string; phase: string }) => void
   onContextWindow?: (data: ContextWindowInfo) => void
   onMessageEnd: () => void
   onError: (message: string) => void
@@ -100,6 +101,11 @@ export function useSSE(options: SSEOptions) {
     eventSource.addEventListener('session_status', (event) => {
       const data = JSON.parse(event.data)
       options.onSessionStatus?.(data)
+    })
+
+    eventSource.addEventListener('session_list_update', (event) => {
+      const data = JSON.parse(event.data)
+      options.onSessionListUpdate?.(data)
     })
 
     eventSource.addEventListener('context_window', (event) => {

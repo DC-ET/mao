@@ -29,13 +29,17 @@ export interface Session {
   running: boolean
 }
 
+function normalizeId(id: any): string {
+  return id != null ? String(id) : ''
+}
+
 export const useSessionStore = defineStore('session', () => {
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<string | null>(null)
   const loading = ref(false)
 
   const activeSession = computed(() =>
-    sessions.value.find(s => s.id === activeSessionId.value) || null
+    sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
   )
 
   function sessionsByAgent(agentId: string) {
@@ -46,18 +50,18 @@ export const useSessionStore = defineStore('session', () => {
     if (!silent) loading.value = true
     try {
       const { data } = await api.get('/sessions')
-      const incoming = data || []
+      const incoming: Session[] = (data || []).map((s: any) => ({ ...s, id: normalizeId(s.id) }))
       // Merge: preserve local updates (e.g. server-generated title) that
       // arrived after the request was fired but before it resolved.
-      const serverMap = new Map(incoming.map((s: Session) => [s.id, s]))
-      const merged = incoming.map((s: Session) => {
-        const local = sessions.value.find(ls => ls.id === s.id)
+      const serverMap = new Map(incoming.map(s => [s.id, s]))
+      const merged = incoming.map(s => {
+        const local = sessions.value.find(ls => String(ls.id) === String(s.id))
         // Server data is authoritative; only preserve client-only optimistic fields
         return local ? { ...local, ...s } : s
       })
       // Keep local-only sessions (created client-side, not yet in server list)
       for (const local of sessions.value) {
-        if (!serverMap.has(local.id)) {
+        if (!serverMap.has(String(local.id))) {
           merged.unshift(local)
         }
       }
@@ -71,7 +75,7 @@ export const useSessionStore = defineStore('session', () => {
     try {
       const { data } = await api.get(`/sessions/${id}`)
       if (data) {
-        updateSession(id, data)
+        updateSession(id, { ...data, id: normalizeId(data.id) })
       }
       return data
     } catch {
@@ -86,6 +90,7 @@ export const useSessionStore = defineStore('session', () => {
       workspace: workspace || undefined
     })
     if (data) {
+      data.id = normalizeId(data.id)
       sessions.value.unshift(data)
     }
     return data
@@ -96,9 +101,10 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function updateSession(id: string, updates: Partial<Session>) {
-    const idx = sessions.value.findIndex(s => s.id === id)
+    const sid = String(id)
+    const idx = sessions.value.findIndex(s => String(s.id) === sid)
     if (idx !== -1) {
-      sessions.value[idx] = { ...sessions.value[idx], ...updates }
+      sessions.value[idx] = { ...sessions.value[idx], ...updates, id: normalizeId(updates.id ?? sessions.value[idx].id) }
     }
   }
 
@@ -112,8 +118,8 @@ export const useSessionStore = defineStore('session', () => {
   async function deleteSession(id: string) {
     try {
       await api.delete(`/sessions/${id}`)
-      sessions.value = sessions.value.filter(s => s.id !== id)
-      if (activeSessionId.value === id) {
+      sessions.value = sessions.value.filter(s => String(s.id) !== String(id))
+      if (activeSessionId.value === String(id)) {
         activeSessionId.value = null
       }
     } catch {

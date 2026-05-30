@@ -8,6 +8,7 @@ import com.agentworkbench.harness.core.HarnessService;
 import com.agentworkbench.harness.local.LocalToolSessionRegistry;
 import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.llm.ChatUsage;
+import com.agentworkbench.session.SseEmitterRegistry;
 import com.agentworkbench.session.activity.ActivityService;
 import com.agentworkbench.session.activity.ActivityTypeMapper;
 import com.agentworkbench.session.activity.SessionActivity;
@@ -49,12 +50,14 @@ public class SessionController {
     private final ActivityService activityService;
     private final SessionTodoMapper sessionTodoMapper;
     private final com.agentworkbench.harness.core.AgentLoop agentLoop;
+    private final SseEmitterRegistry sseRegistry;
     private final ExecutorService agentExecutor;
 
     public SessionController(SessionService sessionService, HarnessService harnessService,
                              AgentMapper agentMapper, LocalToolSessionRegistry localToolSessionRegistry,
                              ActivityService activityService, SessionTodoMapper sessionTodoMapper,
                              com.agentworkbench.harness.core.AgentLoop agentLoop,
+                             SseEmitterRegistry sseRegistry,
                              @Value("${app.harness.agent-thread-pool-size:20}") int poolSize,
                              @Value("${app.harness.agent-thread-pool-max:100}") int maxPoolSize,
                              @Value("${app.harness.agent-thread-pool-queue:200}") int queueCapacity) {
@@ -65,6 +68,7 @@ public class SessionController {
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
         this.agentLoop = agentLoop;
+        this.sseRegistry = sseRegistry;
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(poolSize);
         executor.setMaxPoolSize(maxPoolSize);
@@ -192,6 +196,7 @@ public class SessionController {
             @RequestParam String eventId) {
 
         SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
+        sseRegistry.register(id, emitter);
 
         // Register cancel flag so AgentLoop can be stopped when SSE disconnects
         AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(id);
@@ -203,6 +208,7 @@ public class SessionController {
 
                 // Set phase to RUNNING at execution start
                 sessionService.updatePhase(id, "RUNNING");
+                sseRegistry.broadcastPhaseChange(id, "RUNNING");
                 try {
                     emitter.send(SseEmitter.event()
                             .name("session_status")
@@ -312,6 +318,8 @@ public class SessionController {
                     @Override
                     public void onMessageEnd(ChatUsage usage) {
                         try {
+                            sessionService.updatePhase(id, "COMPLETED");
+                            sseRegistry.broadcastPhaseChange(id, "COMPLETED");
                             emitter.send(SseEmitter.event()
                                     .name("message_end")
                                     .data(Map.of(
@@ -319,14 +327,14 @@ public class SessionController {
                                             "completion_tokens", usage.getCompletionTokens(),
                                             "total_tokens", usage.getTotalTokens()
                                     )));
-                            // Transition to IDLE on successful completion
-                            sessionService.updatePhase(id, "IDLE");
                             emitter.send(SseEmitter.event()
                                     .name("session_status")
-                                    .data(Map.of("phase", "IDLE")));
-                            emitter.complete();
+                                    .data(Map.of("phase", "COMPLETED")));
                         } catch (Exception e) {
                             log.warn("Failed to send SSE event", e);
+                        } finally {
+                            sseRegistry.unregister(id);
+                            try { emitter.complete(); } catch (Exception ignored) {}
                         }
                     }
 
@@ -382,8 +390,8 @@ public class SessionController {
                             emitter.send(SseEmitter.event()
                                     .name("error")
                                     .data(Map.of("message", t.getMessage())));
-                            // Transition to FAILED on error
                             try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
+                            sseRegistry.broadcastPhaseChange(id, "FAILED");
                             try {
                                 emitter.send(SseEmitter.event()
                                         .name("session_status")
@@ -392,6 +400,8 @@ public class SessionController {
                             emitter.completeWithError(t);
                         } catch (Exception e) {
                             log.warn("Failed to send SSE error event", e);
+                        } finally {
+                            sseRegistry.unregister(id);
                         }
                     }
                 }, cancelFlag);
@@ -404,11 +414,13 @@ public class SessionController {
                             .data(Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常")));
                 } catch (Exception ignored) {}
                 try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
+                sseRegistry.broadcastPhaseChange(id, "FAILED");
                 try {
                     emitter.send(SseEmitter.event()
                             .name("session_status")
                             .data(Map.of("phase", "FAILED")));
                 } catch (Exception ignored) {}
+                sseRegistry.unregister(id);
                 emitter.completeWithError(e);
             }
         });
@@ -421,21 +433,27 @@ public class SessionController {
                         .data(Map.of("message", "任务执行超时")));
             } catch (Exception ignored) {}
             try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
+            sseRegistry.broadcastPhaseChange(id, "FAILED");
             try {
                 emitter.send(SseEmitter.event()
                         .name("session_status")
                         .data(Map.of("phase", "FAILED")));
             } catch (Exception ignored) {}
+            sseRegistry.unregister(id);
             emitter.complete();
         });
 
         emitter.onError(e -> {
             log.warn("SSE connection error for session: {}", id, e);
-            // Signal AgentLoop to cancel
             cancelFlag.set(true);
-            // Transition phase to FAILED
-            try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
-            // Cleanup cancel flag from AgentLoop
+            try {
+                var current = sessionService.getSession(id);
+                if (current != null && "RUNNING".equals(current.getPhase())) {
+                    sessionService.updatePhase(id, "FAILED");
+                    sseRegistry.broadcastPhaseChange(id, "FAILED");
+                }
+            } catch (Exception ignored) {}
+            sseRegistry.unregister(id);
             agentLoop.removeCancelFlag(id);
         });
 

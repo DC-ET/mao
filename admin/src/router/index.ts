@@ -45,23 +45,11 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Skills 管理' }
       },
       {
-        path: 'api-keys',
-        name: 'ApiKeys',
-        component: () => import('../views/apikey/ApiKeyView.vue'),
-        meta: { title: 'API Key 管理' }
-      },
-      {
         path: 'audit',
         name: 'Audit',
         component: () => import('../views/audit/AuditLogView.vue'),
         meta: { title: '审计日志' }
       },
-      {
-        path: 'system',
-        name: 'System',
-        component: () => import('../views/system/SystemConfigView.vue'),
-        meta: { title: '系统配置' }
-      }
     ]
   }
 ]

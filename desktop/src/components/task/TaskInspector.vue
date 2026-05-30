@@ -1,5 +1,6 @@
 <template>
-  <div class="task-inspector">
+  <div class="task-inspector" :style="panelStyle">
+    <div class="resize-handle" @mousedown="onResizeStart"></div>
     <div class="inspector-section">
       <h4 class="section-title">进度</h4>
       <TodoChecklist :todos="todos" />
@@ -19,6 +20,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed } from 'vue'
 import TodoChecklist from './TodoChecklist.vue'
 import type { TodoItem } from '../../types/chat'
 import BashApprovalBar from '../chat/BashApprovalBar.vue'
@@ -33,10 +35,47 @@ defineEmits<{
   bashConfirm: [requestId: string, approved: boolean]
 }>()
 
+// Panel resize
+const panelWidth = ref<number | null>(null)
+const MIN_WIDTH = 200
+const MAX_WIDTH = 500
+
+const panelStyle = computed(() => {
+  if (panelWidth.value !== null) {
+    return { width: `${panelWidth.value}px` }
+  }
+  return {}
+})
+
+function onResizeStart(e: MouseEvent) {
+  e.preventDefault()
+  const startX = e.clientX
+  const startWidth = panelWidth.value ?? 260
+
+  function onMouseMove(ev: MouseEvent) {
+    // Drag left → wider, drag right → narrower
+    const newWidth = startWidth - (ev.clientX - startX)
+    panelWidth.value = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newWidth))
+  }
+
+  function onMouseUp() {
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
 </script>
 
 <style scoped>
 .task-inspector {
+  position: relative;
   width: var(--aw-inspector-width, 260px);
   flex-shrink: 0;
   border-left: 1px solid var(--aw-divider-soft);
@@ -57,6 +96,23 @@ defineEmits<{
   letter-spacing: -0.224px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+/* Resize handle */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--aw-primary);
+  opacity: 0.3;
 }
 
 /* Approval */

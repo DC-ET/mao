@@ -135,6 +135,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
           sessionStore.updateSessionPhase(sessionId.value, data.phase as TaskPhase)
         }
       },
+      onSessionListUpdate(data: { sessionId: string; phase: string }) {
+        // Update other sessions' phase in the sidebar list in real-time
+        if (data.sessionId !== sessionId.value) {
+          sessionStore.updateSessionPhase(data.sessionId, data.phase as TaskPhase)
+        }
+      },
       onMessageEnd() {
         sending.value = false
         // Set duration for the last assistant message

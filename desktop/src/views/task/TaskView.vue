@@ -1,6 +1,6 @@
 <template>
   <div class="task-layout">
-    <TaskIndexPanel :collapsed="panelCollapsed" @toggle="panelCollapsed = !panelCollapsed" />
+    <TaskIndexPanel :collapsed="panelCollapsed" @toggle="panelCollapsed = !panelCollapsed" @new-task="handleNewTask" @new-task-from-group="handleNewTaskFromGroup" />
 
     <div class="task-container">
       <TaskHeader
@@ -58,6 +58,7 @@
         :loading="sending"
         :workspace="workspace"
         :execution-mode="executionMode"
+        :model-name="agentStore.activeAgent?.modelName || ''"
         @send="handleSend"
       />
     </div>
@@ -70,6 +71,9 @@
 
     <NewTaskDialog
       v-model="showNewTaskDialog"
+      :default-agent-id="defaultAgentId"
+      :default-mode="defaultMode"
+      :default-workspace="defaultWorkspace"
       @created="onSessionCreated"
     />
   </div>
@@ -100,6 +104,9 @@ const agentId = ref('')
 const executionMode = ref('CLOUD')
 const panelCollapsed = ref(false)
 const showNewTaskDialog = ref(false)
+const defaultAgentId = ref<string | undefined>()
+const defaultMode = ref<'CLOUD' | 'LOCAL' | undefined>()
+const defaultWorkspace = ref<string | undefined>()
 
 // Task state
 const currentPhase = ref<TaskPhase>('IDLE')
@@ -218,6 +225,20 @@ function handleNewTask() {
   if (sessionStore.activeSessionId && currentPhase.value === 'RUNNING') {
     sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
   }
+  defaultAgentId.value = undefined
+  defaultMode.value = undefined
+  defaultWorkspace.value = undefined
+  newSession()
+  showNewTaskDialog.value = true
+}
+
+function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string }) {
+  if (sessionStore.activeSessionId && currentPhase.value === 'RUNNING') {
+    sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
+  }
+  defaultAgentId.value = payload.agentId
+  defaultMode.value = payload.executionMode as 'CLOUD' | 'LOCAL'
+  defaultWorkspace.value = payload.workspace
   newSession()
   showNewTaskDialog.value = true
 }
@@ -236,6 +257,8 @@ async function loadSession(sid: string) {
   try {
     const { data } = await (await import('../../api')).api.get(`/sessions/${sid}`)
     if (data) {
+      // Sync server data to store so title/summary are up-to-date
+      sessionStore.updateSession(sid, data)
       agentId.value = data.agentId
       executionMode.value = data.executionMode || 'CLOUD'
       currentPhase.value = data.phase || 'IDLE'
