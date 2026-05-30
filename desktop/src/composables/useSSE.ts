@@ -1,5 +1,6 @@
 import { ref, onUnmounted } from 'vue'
 import type { TodoItem, ContextWindowInfo } from '../types/chat'
+import { showReloginDialog, doRefreshToken } from '../api'
 
 export interface ToolCallStartData {
   tool_name: string
@@ -129,28 +130,12 @@ export function useSSE(options: SSEOptions) {
 
     eventSource.onerror = async () => {
       isConnected.value = false
-      // Check if this is an auth failure by testing the token
-      const currentToken = localStorage.getItem('token')
-      if (!currentToken) {
-        options.onError('登录已过期，请重新登录')
-      } else {
-        // Quick token validity check via a lightweight API call
-        try {
-          const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api'
-          const resp = await fetch(`${baseUrl}/v1/users/me`, {
-            headers: { Authorization: `Bearer ${currentToken}` }
-          })
-          if (resp.status === 401 || resp.status === 403) {
-            options.onError('登录已过期，请重新登录')
-            localStorage.removeItem('token')
-            localStorage.removeItem('refreshToken')
-            window.location.href = '/login'
-          } else {
-            options.onError('连接中断，请检查网络或稍后重试')
-          }
-        } catch {
-          options.onError('连接中断，请检查网络或稍后重试')
-        }
+      try {
+        await doRefreshToken()
+        // Token refreshed — caller can reconnect with the new token
+        options.onError('连接已断开，请重新发送消息')
+      } catch {
+        showReloginDialog()
       }
       stop()
     }

@@ -322,6 +322,9 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
               case 'bash':
                 result = await handleBashFromWebSocket(parsedArgs)
                 break
+              case 'shell':
+                result = await handleShellFromWebSocket(parsedArgs)
+                break
               case 'read_file':
                 result = await handleLocalReadFile(parsedArgs)
                 break
@@ -397,6 +400,49 @@ async function handleBashFromWebSocket(args) {
       } else {
         resolve({
           exit_code: error ? error.code || 1 : 0,
+          output: (stdout || '') + (stderr ? '\n' + stderr : '')
+        })
+      }
+    })
+  })
+}
+
+async function handleShellFromWebSocket(args) {
+  const { action, command, session_id, workdir } = args
+
+  if (action === 'close' || action === 'list') {
+    return { session_id, status: action === 'close' ? 'closed' : 'listed', sessions: [] }
+  }
+
+  if (action === 'write_stdin') {
+    return { error: 'write_stdin is not supported in local mode without session persistence' }
+  }
+
+  if (action !== 'exec') {
+    return { error: `Unknown action: ${action}` }
+  }
+
+  const approved = await requestBashApproval(command)
+  if (!approved) {
+    return { exit_code: -1, output: 'User denied command execution.' }
+  }
+
+  return new Promise((resolve) => {
+    const options = {
+      timeout: (args.timeout || 30) * 1000,
+      maxBuffer: 1024 * 1024 * 5
+    }
+    const resolvedWorkdir = workdir || currentWorkspace
+    if (resolvedWorkdir) options.cwd = resolvedWorkdir
+
+    exec(command, options, (error, stdout, stderr) => {
+      if (error && error.killed) {
+        resolve({ exit_code: -1, output: `Command timed out after ${args.timeout || 30}s` })
+      } else {
+        resolve({
+          exit_code: error ? error.code || 1 : 0,
+          session_id: session_id || 'local',
+          current_workdir: resolvedWorkdir || '',
           output: (stdout || '') + (stderr ? '\n' + stderr : '')
         })
       }
