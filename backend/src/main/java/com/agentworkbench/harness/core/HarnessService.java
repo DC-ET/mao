@@ -277,11 +277,9 @@ public class HarnessService {
             merged.setRecentTurns(compactionConfig.getRecentTurns());
             merged.setMinCompactMessageCount(compactionConfig.getMinCompactMessageCount());
             merged.setMinNewMessageCount(compactionConfig.getMinNewMessageCount());
-            merged.setMinNewTokenCount(compactionConfig.getMinNewTokenCount());
             merged.setMaxCompactionBatchMessages(compactionConfig.getMaxCompactionBatchMessages());
             merged.setMaxRoundsPerRequest(compactionConfig.getMaxRoundsPerRequest());
             merged.setLoopEnabled(compactionConfig.isLoopEnabled());
-            merged.setLoopTriggerToolRounds(compactionConfig.getLoopTriggerToolRounds());
             merged.setLoopTriggerTokens(compactionConfig.getLoopTriggerTokens());
             merged.setLoopRecentToolRounds(compactionConfig.getLoopRecentToolRounds());
             // Apply agent overrides
@@ -291,11 +289,9 @@ public class HarnessService {
             if (compactionNode.has("recentTurns")) merged.setRecentTurns(compactionNode.get("recentTurns").asInt());
             if (compactionNode.has("minCompactMessageCount")) merged.setMinCompactMessageCount(compactionNode.get("minCompactMessageCount").asInt());
             if (compactionNode.has("minNewMessageCount")) merged.setMinNewMessageCount(compactionNode.get("minNewMessageCount").asInt());
-            if (compactionNode.has("minNewTokenCount")) merged.setMinNewTokenCount(compactionNode.get("minNewTokenCount").asInt());
             if (compactionNode.has("maxCompactionBatchMessages")) merged.setMaxCompactionBatchMessages(compactionNode.get("maxCompactionBatchMessages").asInt());
             if (compactionNode.has("maxRoundsPerRequest")) merged.setMaxRoundsPerRequest(compactionNode.get("maxRoundsPerRequest").asInt());
             if (compactionNode.has("loopEnabled")) merged.setLoopEnabled(compactionNode.get("loopEnabled").asBoolean());
-            if (compactionNode.has("loopTriggerToolRounds")) merged.setLoopTriggerToolRounds(compactionNode.get("loopTriggerToolRounds").asInt());
             if (compactionNode.has("loopTriggerTokens")) merged.setLoopTriggerTokens(compactionNode.get("loopTriggerTokens").asInt());
             if (compactionNode.has("loopRecentToolRounds")) merged.setLoopRecentToolRounds(compactionNode.get("loopRecentToolRounds").asInt());
             return merged;

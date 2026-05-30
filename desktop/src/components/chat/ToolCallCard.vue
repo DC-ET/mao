@@ -110,9 +110,7 @@ function toggleExpand() {
 
 <style scoped>
 .tool-call-card {
-  border: 1px solid var(--aw-hairline);
   border-radius: var(--aw-radius-lg);
-  margin: 2px 0;
   overflow: hidden;
   background: var(--aw-canvas);
   transition: border-color 0.2s;
@@ -130,7 +128,7 @@ function toggleExpand() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 2px 0px;
   cursor: pointer;
   user-select: none;
   transition: background 0.15s;
@@ -144,6 +142,7 @@ function toggleExpand() {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-right: 5px;
   min-width: 0;
   flex: 1;
 }

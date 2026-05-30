@@ -22,11 +22,6 @@ const routes: RouteRecordRaw[] = [
         path: 'tasks/:sessionId',
         name: 'Task',
         component: () => import('../views/task/TaskView.vue')
-      },
-      {
-        path: 'settings',
-        name: 'Settings',
-        component: () => import('../views/settings/SettingsView.vue')
       }
     ]
   }

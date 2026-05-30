@@ -42,12 +42,12 @@
             <WarningFilled v-if="!workspace" />
             <FolderOpened v-else />
           </el-icon>
+          <span v-if="executionMode === 'LOCAL'" class="mode-label-inline">本地</span>
           <span>{{ dirName || 'No workspace' }}</span>
         </div>
       </div>
       <div class="toolbar-right">
-        <span class="mode-label">{{ executionMode === 'LOCAL' ? '本地' : '云端' }}</span>
-        <span class="model-name">{{ modelName }}</span>
+        <span v-if="modelName" class="model-name">{{ modelName }}</span>
         <button
           class="send-btn"
           :class="{ active: canSend, loading }"
@@ -81,7 +81,7 @@ const props = withDefaults(defineProps<{
   loading: false,
   workspace: '',
   executionMode: 'CLOUD',
-  modelName: 'gpt-5.4',
+  modelName: '',
   placeholder: '描述你希望 Agent 完成的任务',
 })
 
@@ -165,7 +165,7 @@ onMounted(autoResize)
   resize: none;
   background: transparent;
   font-family: var(--aw-font-text);
-  font-size: var(--aw-text-body);
+  font-size: var(--aw-text-caption);
   line-height: 1.5;
   color: var(--aw-body);
   padding: 0;
@@ -290,10 +290,14 @@ onMounted(autoResize)
 }
 
 /* Mode & model labels */
-.mode-label {
+.mode-label-inline {
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
   user-select: none;
+  padding: 1px 5px;
+  background: var(--aw-canvas-parchment);
+  border-radius: var(--aw-radius-xs);
+  margin-right: 2px;
 }
 
 .model-name {

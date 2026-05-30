@@ -68,18 +68,19 @@ public class CompactionService {
         List<ChatRequest.Message> toCompact = new ArrayList<>(messages.subList(compactStart, compactEnd));
         List<ChatRequest.Message> recentMessages = new ArrayList<>(messages.subList(compactEnd, messages.size()));
 
-        // 3. 判断是否需要压缩
+        // 3. 判断是否需要压缩：整体上下文接近窗口阈值
         int newTokenCount = tokenEstimator.estimateMessages(toCompact);
         int totalTokenEstimate = tokenEstimator.estimateMessages(messages);
 
-        boolean shouldCompact = false;
-        if (newTokenCount >= config.getMinNewTokenCount()) {
-            shouldCompact = true;
-        } else if (toCompact.size() >= config.getMinNewMessageCount()
-                && toCompact.size() >= config.getMinCompactMessageCount()
-                && totalTokenEstimate >= config.getContextWindowTokens() * config.getTriggerRatio()) {
-            shouldCompact = true;
+        // 确定实际使用的上下文窗口值：优先使用模型配置值
+        int effectiveContextWindow = config.getContextWindowTokens();
+        if (modelConfig != null && modelConfig.getContextWindowTokens() != null && modelConfig.getContextWindowTokens() > 0) {
+            effectiveContextWindow = modelConfig.getContextWindowTokens();
         }
+
+        boolean shouldCompact = toCompact.size() >= config.getMinNewMessageCount()
+                && toCompact.size() >= config.getMinCompactMessageCount()
+                && totalTokenEstimate >= effectiveContextWindow * config.getTriggerRatio();
 
         if (!shouldCompact) return null;
 
@@ -190,10 +191,9 @@ public class CompactionService {
             }
         }
 
-        // 4. 判断是否触发
+        // 4. 判断是否触发：仅基于工作区 token 阈值
         int workspaceTokens = tokenEstimator.estimateMessages(workspace);
-        boolean shouldCompact = toolRounds >= config.getLoopTriggerToolRounds()
-                || workspaceTokens >= config.getLoopTriggerTokens();
+        boolean shouldCompact = workspaceTokens >= config.getLoopTriggerTokens();
 
         if (!shouldCompact) return null;
 

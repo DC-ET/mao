@@ -132,12 +132,15 @@ public class SessionService {
         }
 
         // Auto-generate title from first user message
-        if ("USER".equals(role) && session != null && session.getTitle() != null
-                && session.getTitle().equals(agentMapper.selectById(session.getAgentId()).getName())) {
-            String autoTitle = TitleGenerator.generate(content);
-            if (autoTitle != null) {
-                session.setTitle(autoTitle);
-                sessionMapper.updateById(session);
+        if ("USER".equals(role) && session != null) {
+            Agent agent = agentMapper.selectById(session.getAgentId());
+            String agentName = agent != null ? agent.getName() : null;
+            if (session.getTitle() != null && (session.getTitle().equals(agentName) || session.getTitle().isBlank())) {
+                String autoTitle = TitleGenerator.generate(content);
+                if (autoTitle != null) {
+                    session.setTitle(autoTitle);
+                    sessionMapper.updateById(session);
+                }
             }
         }
 

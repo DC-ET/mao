@@ -112,16 +112,14 @@ app:
     # Context Compaction
     compaction:
       enabled: true
-      context-window-tokens: 96000
+      context-window-tokens: 256000
       trigger-ratio: 0.72
       recent-turns: 6
       min-compact-message-count: 10
       min-new-message-count: 8
-      min-new-token-count: 20000
       max-compaction-batch-messages: 200
       max-rounds-per-request: 30
       loop-enabled: true
-      loop-trigger-tool-rounds: 5
       loop-trigger-tokens: 96000
       loop-recent-tool-rounds: 5
 
@@ -135,11 +133,6 @@ app:
         max-preview-lines: 100
         max-preview-chars: 10000
         default-yield-time-ms: 10000
-
-  # Rate limiting
-  rate-limit:
-    user-qps: 10
-    model-qpm: 60
 
 # SpringDoc
 springdoc:

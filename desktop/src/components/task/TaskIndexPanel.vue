@@ -1,11 +1,16 @@
 <template>
-  <div class="task-index-panel" :class="{ collapsed }">
+  <div class="task-index-panel" :class="{ collapsed }" :style="panelStyle">
     <template v-if="!collapsed">
       <div class="panel-header">
         <span class="panel-title">任务</span>
-        <button class="refresh-btn" @click="refreshSessions" :disabled="loading">
-          <el-icon :size="14" :class="{ 'is-loading': loading }"><Refresh /></el-icon>
-        </button>
+        <div class="header-actions">
+          <button class="refresh-btn" @click="refreshSessions" :disabled="loading">
+            <el-icon :size="14" :class="{ 'is-loading': loading }"><Refresh /></el-icon>
+          </button>
+          <button class="refresh-btn" @click="$emit('newTask')" title="新任务">
+            <el-icon :size="14"><Plus /></el-icon>
+          </button>
+        </div>
       </div>
       <div class="panel-content">
         <div v-if="loading" class="panel-loading">
@@ -16,13 +21,25 @@
         </div>
         <template v-else>
           <div v-for="group in groupedSessions" :key="group.key" class="session-group">
-            <div class="group-header">{{ group.label }}</div>
+            <div class="group-header" @click="toggleGroup(group.key)">
+              <div class="group-header-left">
+                <el-icon :size="13" class="group-icon" :class="group.key === 'CLOUD' ? 'icon-cloud' : 'icon-folder'">
+                  <Cloudy v-if="group.key === 'CLOUD'" />
+                  <Folder v-else />
+                </el-icon>
+                {{ group.label }}
+              </div>
+              <button class="group-add-btn" @click.stop="onGroupNewTask(group)" title="在该分组新建任务">
+                <el-icon :size="12"><Plus /></el-icon>
+              </button>
+            </div>
+            <template v-if="!isGroupCollapsed(group.key)">
             <div
               v-for="session in group.sessions.slice(0, getVisibleCount(group.key))"
               :key="session.id"
               class="session-item"
               :class="{
-                active: session.id === activeSessionId,
+                active: String(session.id) === String(activeSessionId),
                 'confirming-delete': confirmingDeleteId === session.id
               }"
               @click="selectSession(session)"
@@ -65,6 +82,7 @@
             >
               Show less
             </div>
+            </template>
           </div>
         </template>
       </div>
@@ -72,12 +90,17 @@
     <button v-else class="collapsed-toggle" @click="$emit('toggle')">
       <el-icon :size="16"><ChatDotRound /></el-icon>
     </button>
+    <div
+      v-if="!collapsed"
+      class="resize-handle"
+      @mousedown="onResizeStart"
+    ></div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { Refresh, Loading, ChatDotRound, Delete, Check, Close } from '@element-plus/icons-vue'
+import { computed, ref, onUnmounted } from 'vue'
+import { Refresh, Loading, ChatDotRound, Plus, Delete, Check, Close, Cloudy, Folder } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 
@@ -85,8 +108,10 @@ defineProps<{
   collapsed: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   toggle: []
+  newTask: []
+  newTaskFromGroup: [payload: { agentId: string; executionMode: string; workspace?: string }]
 }>()
 
 const router = useRouter()
@@ -99,6 +124,57 @@ const loading = computed(() => sessionStore.loading)
 const activeSessionId = computed(() => sessionStore.activeSessionId)
 const confirmingDeleteId = ref<string | null>(null)
 const expandedCounts = ref<Map<string, number>>(new Map())
+const collapsedGroups = ref<Set<string>>(new Set())
+
+// Panel resize
+const panelWidth = ref<number | null>(null)
+const MIN_WIDTH = 200
+const MAX_WIDTH = 500
+
+const panelStyle = computed(() => {
+  if (panelWidth.value !== null) {
+    return { width: `${panelWidth.value}px` }
+  }
+  return {}
+})
+
+function onResizeStart(e: MouseEvent) {
+  e.preventDefault()
+  const startX = e.clientX
+  const startWidth = panelWidth.value ?? 280 // fallback to default
+
+  function onMouseMove(ev: MouseEvent) {
+    const newWidth = startWidth + (ev.clientX - startX)
+    panelWidth.value = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newWidth))
+  }
+
+  function onMouseUp() {
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
+onUnmounted(() => {
+  // cleanup not strictly needed since listeners are removed on mouseup,
+  // but guard against edge case where component unmounts mid-drag
+})
+
+function onGroupNewTask(group: { sessions: Session[] }) {
+  const last = group.sessions[0] // already sorted by updatedAt desc
+  if (!last) return
+  emit('newTaskFromGroup', {
+    agentId: last.agentId,
+    executionMode: last.executionMode,
+    workspace: last.workspace
+  })
+}
 
 const groupedSessions = computed(() => {
   const sessions = sessionStore.sessions
@@ -213,10 +289,23 @@ function showMore(key: string, total: number) {
 function showLess(key: string) {
   expandedCounts.value.set(key, DEFAULT_VISIBLE)
 }
+
+function isGroupCollapsed(key: string): boolean {
+  return collapsedGroups.value.has(key)
+}
+
+function toggleGroup(key: string) {
+  if (collapsedGroups.value.has(key)) {
+    collapsedGroups.value.delete(key)
+  } else {
+    collapsedGroups.value.add(key)
+  }
+}
 </script>
 
 <style scoped>
 .task-index-panel {
+  position: relative;
   width: var(--aw-session-panel-width);
   flex-shrink: 0;
   background: var(--aw-canvas-parchment);
@@ -225,7 +314,6 @@ function showLess(key: string) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: width 0.2s ease;
 }
 
 .task-index-panel.collapsed {
@@ -240,6 +328,12 @@ function showLess(key: string) {
   justify-content: space-between;
   padding: 12px 16px;
   flex-shrink: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .panel-title {
@@ -300,6 +394,58 @@ function showLess(key: string) {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: 8px 8px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s;
+}
+
+.group-header:hover {
+  color: var(--aw-ink);
+}
+
+.group-header-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.group-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  border-radius: var(--aw-radius-xs);
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.group-header:hover .group-add-btn {
+  opacity: 1;
+}
+
+.group-add-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--aw-primary);
+}
+
+.group-icon {
+  flex-shrink: 0;
+}
+
+.group-icon.icon-cloud {
+  color: #60a5fa;
+}
+
+.group-icon.icon-folder {
+  color: #f59e0b;
 }
 
 .group-toggle {
@@ -461,6 +607,23 @@ function showLess(key: string) {
   color: var(--aw-primary);
 }
 
+/* Resize handle */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--aw-primary);
+  opacity: 0.3;
+}
+
 /* Scrollbar */
 .panel-content::-webkit-scrollbar {
   width: 4px;
@@ -510,5 +673,13 @@ function showLess(key: string) {
 
 [data-theme="dark"] .session-item.confirming-delete {
   background: rgba(248, 81, 73, 0.06);
+}
+
+[data-theme="dark"] .group-icon.icon-cloud {
+  color: #93c5fd;
+}
+
+[data-theme="dark"] .group-icon.icon-folder {
+  color: #fbbf24;
 }
 </style>

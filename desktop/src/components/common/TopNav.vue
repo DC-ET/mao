@@ -19,6 +19,12 @@
       </div>
     </div>
     <div class="nav-right">
+      <div class="theme-toggle" @click="toggleTheme">
+        <el-icon :size="16">
+          <Moon v-if="!isDark" />
+          <Sunny v-else />
+        </el-icon>
+      </div>
       <el-dropdown @command="handleCommand" trigger="click">
         <div class="nav-user">
           <el-avatar :size="24" icon="User" />
@@ -26,8 +32,7 @@
         </div>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item command="settings">设置</el-dropdown-item>
-            <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+            <el-dropdown-item command="logout">退出登录</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -38,8 +43,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Monitor, ArrowDown } from '@element-plus/icons-vue'
+import { Monitor, ArrowDown, Moon, Sunny } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
+import { useTheme } from '../../utils/theme'
+
+const { isDark, toggleTheme } = useTheme()
 
 const router = useRouter()
 const route = useRoute()
@@ -61,8 +69,6 @@ async function handleCommand(command: string) {
   if (command === 'logout') {
     await authStore.logout()
     router.push('/login')
-  } else if (command === 'settings') {
-    router.push('/settings')
   }
 }
 </script>
@@ -167,5 +173,22 @@ async function handleCommand(command: string) {
 .nav-user :deep(.el-avatar) {
   background: var(--aw-surface-chip);
   color: var(--aw-ink);
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  color: var(--aw-body-muted);
+  transition: color 0.15s, background 0.15s;
+}
+
+.theme-toggle:hover {
+  color: var(--aw-body-on-dark);
+  background: rgba(255, 255, 255, 0.08);
 }
 </style>
