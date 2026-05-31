@@ -123,6 +123,10 @@ app:
       loop-trigger-tokens: 96000
       loop-recent-tool-rounds: 5
 
+    # Skills directory (external filesystem path, each subfolder is a skill)
+    skills-dir: ${SKILLS_DIR:./skills}
+    skills-cache-seconds: 300
+
     # Shell Session
     shell:
       enabled: true

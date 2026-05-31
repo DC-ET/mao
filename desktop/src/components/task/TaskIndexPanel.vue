@@ -40,13 +40,22 @@
               class="session-item"
               :class="{
                 active: String(session.id) === String(activeSessionId),
-                'confirming-delete': confirmingDeleteId === session.id
+                'confirming-delete': confirmingDeleteId === session.id,
+                editing: editingSessionId === session.id
               }"
               @click="selectSession(session)"
             >
               <div class="session-item-main">
                 <span class="session-phase-dot" :class="phaseClass(session.phase)"></span>
-                <span class="session-title">{{ session.summary || session.title || '新任务' }}</span>
+                <input
+                  v-if="editingSessionId === session.id"
+                  v-model="editingTitle"
+                  class="session-title-input"
+                  @keydown="onEditKeydown"
+                  @click.stop
+                  @blur="confirmEdit()"
+                />
+                <span v-else class="session-title">{{ session.summary || session.title || '新任务' }}</span>
               </div>
               <div class="session-item-meta">
                 <span v-if="session.running" class="session-spinner"></span>
@@ -61,7 +70,18 @@
                     <el-icon :size="13"><Close /></el-icon>
                   </button>
                 </template>
+                <template v-else-if="editingSessionId === session.id">
+                  <button class="action-btn action-confirm" @click="confirmEdit($event)" title="确认">
+                    <el-icon :size="13"><Check /></el-icon>
+                  </button>
+                  <button class="action-btn action-cancel" @click="cancelEdit($event)" title="取消">
+                    <el-icon :size="13"><Close /></el-icon>
+                  </button>
+                </template>
                 <template v-else>
+                  <button class="action-btn action-edit" @click="startEdit($event, session)" title="重命名">
+                    <el-icon :size="13"><EditPen /></el-icon>
+                  </button>
                   <button class="action-btn action-delete" @click="startDelete($event, session.id)" title="删除任务">
                     <el-icon :size="13"><Delete /></el-icon>
                   </button>
@@ -99,8 +119,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onUnmounted } from 'vue'
-import { Refresh, Loading, ChatDotRound, Plus, Delete, Check, Close, Cloudy, Folder } from '@element-plus/icons-vue'
+import { computed, ref, nextTick, onUnmounted } from 'vue'
+import { Refresh, Loading, ChatDotRound, Plus, Delete, Check, Close, Cloudy, Folder, EditPen } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 
@@ -123,6 +143,8 @@ const EXPAND_STEP = 20
 const loading = computed(() => sessionStore.loading)
 const activeSessionId = computed(() => sessionStore.activeSessionId)
 const confirmingDeleteId = ref<string | null>(null)
+const editingSessionId = ref<string | null>(null)
+const editingTitle = ref('')
 const expandedCounts = ref<Map<string, number>>(new Map())
 const collapsedGroups = ref<Set<string>>(new Set())
 
@@ -247,7 +269,9 @@ async function refreshSessions() {
 }
 
 function selectSession(session: Session) {
+  if (editingSessionId.value === session.id) return
   confirmingDeleteId.value = null
+  editingSessionId.value = null
   sessionStore.setActiveSession(session.id)
   router.push(`/tasks/${session.id}`)
 }
@@ -273,6 +297,48 @@ async function confirmDelete(e: MouseEvent, sessionId: string) {
     router.push(`/tasks/${next.id}`)
   } else if (wasActive) {
     router.push('/tasks')
+  }
+}
+
+function startEdit(e: MouseEvent, session: Session) {
+  e.stopPropagation()
+  editingSessionId.value = session.id
+  editingTitle.value = session.summary || session.title || ''
+  nextTick(() => {
+    const input = document.querySelector('.session-title-input') as HTMLInputElement
+    if (input) {
+      input.focus()
+      input.select()
+    }
+  })
+}
+
+async function confirmEdit(e?: MouseEvent) {
+  e?.stopPropagation()
+  const id = editingSessionId.value
+  const title = editingTitle.value.trim()
+  if (!id || !title) {
+    cancelEdit()
+    return
+  }
+  await sessionStore.renameSession(id, title)
+  editingSessionId.value = null
+  editingTitle.value = ''
+}
+
+function cancelEdit(e?: MouseEvent) {
+  e?.stopPropagation()
+  editingSessionId.value = null
+  editingTitle.value = ''
+}
+
+function onEditKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    confirmEdit()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelEdit()
   }
 }
 
@@ -462,6 +528,7 @@ function toggleGroup(key: string) {
 }
 
 .session-item {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -515,6 +582,13 @@ function toggleGroup(key: string) {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+
+.session-item:hover .session-item-meta,
+.session-item.confirming-delete .session-item-meta,
+.session-item.editing .session-item-meta {
+  opacity: 0;
 }
 
 .session-spinner {
@@ -538,16 +612,23 @@ function toggleGroup(key: string) {
 }
 
 .session-item-actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   gap: 2px;
-  flex-shrink: 0;
+  padding: 2px 4px;
+  border-radius: var(--aw-radius-xs);
+  background: inherit;
   opacity: 0;
   transition: opacity 0.15s;
 }
 
 .session-item:hover .session-item-actions,
-.session-item.confirming-delete .session-item-actions {
+.session-item.confirming-delete .session-item-actions,
+.session-item.editing .session-item-actions {
   opacity: 1;
 }
 
@@ -568,6 +649,28 @@ function toggleGroup(key: string) {
 .action-delete:hover {
   background: rgba(220, 53, 69, 0.1);
   color: var(--aw-danger);
+}
+
+.action-edit:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--aw-primary);
+}
+
+.session-title-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink);
+  letter-spacing: -0.224px;
+  background: var(--aw-surface-pearl);
+  border: 1px solid var(--aw-primary);
+  border-radius: var(--aw-radius-xs);
+  padding: 1px 6px;
+  outline: none;
+}
+
+.session-item.editing {
+  background: var(--aw-surface-pearl);
 }
 
 .action-confirm {
@@ -655,6 +758,20 @@ function toggleGroup(key: string) {
 [data-theme="dark"] .action-delete:hover {
   background: rgba(248, 81, 73, 0.15);
   color: #f85149;
+}
+
+[data-theme="dark"] .action-edit:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--aw-primary);
+}
+
+[data-theme="dark"] .session-title-input {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--aw-primary);
+}
+
+[data-theme="dark"] .session-item.editing {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 [data-theme="dark"] .action-confirm {
