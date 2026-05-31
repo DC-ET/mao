@@ -1,13 +1,9 @@
-import { ref, type Ref } from 'vue'
+import { ref, computed, watch, type Ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
-import { useSSE, type ToolCallStartData, type ToolCallResultData, type ActivityData } from './useSSE'
-import { useSessionStore, type TaskPhase } from '../stores/session'
-import {
-  appendTextDelta,
-  appendToolCallStart,
-  mapApiMessagesToChat
-} from '../utils/chatMessage'
+import { useSessionStore } from '../stores/session'
+import { useStreamWS } from './useStreamWS'
+import { mapApiMessagesToChat } from '../utils/chatMessage'
 
 export type {
   ChatMessage,
@@ -18,42 +14,23 @@ export type {
 } from '../types/chat'
 export { normalizeMessageRole } from '../types/chat'
 
-import type { ChatMessage, FileAttachment, ToolCall, TodoItem, ContextWindowInfo } from '../types/chat'
+import type { FileAttachment } from '../types/chat'
 
 export interface BashApprovalItem {
   requestId: string
   command: string
 }
-import { normalizeMessageRole } from '../types/chat'
-
-function inferResultStatus(result: string): ToolCall['status'] {
-  const text = result || ''
-  // Try JSON-based detection: {"error": ...} or {"exit_code": non-zero}
-  try {
-    const obj = JSON.parse(text)
-    if (obj && typeof obj === 'object') {
-      if (obj.error) return 'error'
-      if (typeof obj.exit_code === 'number' && obj.exit_code !== 0) return 'error'
-    }
-  } catch {
-    // Not JSON — fall back to plain text heuristic
-  }
-  if (text.startsWith('Tool execution failed')) return 'error'
-  return 'success'
-}
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const sessionStore = useSessionStore()
+  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, cancel: wsCancel, pendingCallbacks } = useStreamWS()
 
-  const messages = ref<ChatMessage[]>([])
   const sending = ref(false)
+  const cancelling = ref(false)
   const sessionId = ref<string | null>(null)
   const wsConnected = ref(false)
   const workspace = ref('')
   const agentName = ref('Agent')
-  const activities = ref<ActivityData[]>([])
-  const todos = ref<TodoItem[]>([])
-  const contextWindow = ref<ContextWindowInfo | null>(null)
   const startedAt = ref<string | null>(null)
 
   // Bash approval queue — supports multiple concurrent approvals
@@ -62,12 +39,17 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
 
+  // Computed refs from store — reactive to active session
+  const messages = computed(() => sessionStore.activeMessages)
+  const todos = computed(() => sessionStore.activeTodos)
+  const activities = computed(() => sessionStore.activeActivities)
+  const contextWindow = computed(() => sessionStore.activeContextWindow)
+
   function setupBashApprovalListener() {
     if (!isElectron || bashApprovalListenerSetup) return
     bashApprovalListenerSetup = true
 
     ;(window as any).electronAPI.onBashApprovalRequest((data: { requestId: string; command: string }) => {
-      // Avoid duplicates from re-delivery
       if (!pendingBashApprovals.value.some(a => a.requestId === data.requestId)) {
         pendingBashApprovals.value.push({ requestId: data.requestId, command: data.command })
       }
@@ -78,105 +60,21 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     })
   }
 
-  // SSE composable — created lazily
-  let sse: ReturnType<typeof useSSE> | null = null
-
-  function createSSE() {
-    if (!sessionId.value) return
-    sse = useSSE({
-      sessionId: sessionId.value,
-      onContentDelta(delta) {
-        const lastMsg = messages.value[messages.value.length - 1]
-        if (lastMsg && normalizeMessageRole(lastMsg.role) === 'assistant') {
-          appendTextDelta(lastMsg, delta)
-        }
-      },
-      onToolCallStart(data: ToolCallStartData) {
-        // Skip todo tool calls — they are displayed in the sidebar progress panel
-        if (data.tool_name === 'todo') return
-        const lastMsg = messages.value[messages.value.length - 1]
-        if (lastMsg && normalizeMessageRole(lastMsg.role) === 'assistant') {
-          appendToolCallStart(lastMsg, {
-            id: data.call_id,
-            name: data.tool_name,
-            input: data.tool_input,
-            status: 'running',
-            isExpanded: false
-          })
-        }
-      },
-      onToolCallResult(data: ToolCallResultData) {
-        const lastMsg = messages.value[messages.value.length - 1]
-        if (lastMsg?.toolCalls) {
-          const call = lastMsg.toolCalls.find(c => c.id === data.call_id)
-          if (call) {
-            call.result = data.result
-            call.status = data.status || inferResultStatus(data.result)
-            call.isExpanded = false
-            if (data.summary) call.summary = data.summary
-          }
-        }
-      },
-      onActivity(data: ActivityData) {
-        activities.value.push(data)
-        // Keep only last 100 activities
-        if (activities.value.length > 100) {
-          activities.value = activities.value.slice(-100)
-        }
-      },
-      onTodoUpdated(data: { todos: TodoItem[] }) {
-        todos.value = data.todos || []
-      },
-      onContextWindow(data: ContextWindowInfo) {
-        contextWindow.value = data
-      },
-      onSessionStatus(data: { phase: string }) {
-        if (sessionId.value) {
-          sessionStore.updateSessionPhase(sessionId.value, data.phase as TaskPhase)
-        }
-      },
-      onSessionListUpdate(data: { sessionId: string; phase: string }) {
-        // Update other sessions' phase in the sidebar list in real-time
-        if (data.sessionId !== sessionId.value) {
-          sessionStore.updateSessionPhase(data.sessionId, data.phase as TaskPhase)
-        }
-      },
-      onMessageEnd() {
-        sending.value = false
-        // Set duration for the last assistant message
-        if (startedAt.value) {
-          const lastMsg = messages.value[messages.value.length - 1]
-          if (lastMsg && normalizeMessageRole(lastMsg.role) === 'assistant') {
-            lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
-          }
-          startedAt.value = null
-        }
-        // Refresh session to pick up server-generated title/summary
-        if (sessionId.value) {
-          sessionStore.fetchSession(sessionId.value)
-        }
-      },
-      onError(message: string) {
-        sending.value = false
-        // Remove empty assistant bubble left by the failed stream
-        const lastMsg = messages.value[messages.value.length - 1]
-        if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
-          messages.value.pop()
-        }
-        ElMessage.error(message || 'Agent 执行中断')
-        // Refresh session to pick up FAILED phase from server
-        if (sessionId.value) {
-          sessionStore.fetchSession(sessionId.value)
-        }
-      }
-    })
-  }
-
   async function fetchMessages() {
     if (!sessionId.value) return
     try {
       const { data } = await api.get(`/sessions/${sessionId.value}/messages`)
-      messages.value = mapApiMessagesToChat(data || [])
+      sessionStore.setMessages(sessionId.value, mapApiMessagesToChat(data || []))
+    } catch {
+      // session might not exist yet
+    }
+  }
+
+  async function fetchTodos() {
+    if (!sessionId.value) return
+    try {
+      const { data } = await api.get(`/sessions/${sessionId.value}/todos`)
+      sessionStore.setTodos(sessionId.value, data || [])
     } catch {
       // session might not exist yet
     }
@@ -211,7 +109,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api'
     const wsBase = apiBase.replace(/^http/, 'ws').replace(/\/api$/, '') + '/api'
 
-    // Remove previous listener to avoid accumulation
     ;(window as any).electronAPI.removeWsConnectionChangeListener()
 
     return new Promise((resolve, reject) => {
@@ -246,7 +143,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if ((!text && (!files || files.length === 0)) || sending.value) return
 
     sending.value = true
-    activities.value = []
     startedAt.value = new Date().toISOString()
     const uploadedFiles = await uploadFiles(files || [])
 
@@ -257,25 +153,17 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       displayContent = displayContent ? `${displayContent}\n${fileLinks}` : fileLinks
     }
 
-    // Add user message
-    messages.value.push({
-      id: `msg_${Date.now()}_user`,
-      role: 'user',
-      content: displayContent,
-      createdAt: new Date().toLocaleString(),
-      files: uploadedFiles
-    })
+    // Ensure WS connection is established
+    await connect()
 
     try {
-      // Create session if needed (e.g. "new task" from within TaskView)
+      // Create session if needed
       if (!sessionId.value) {
-        // Ensure workspace is set for LOCAL mode before creating session
         if (executionMode.value === 'LOCAL' && isElectron && !workspace.value) {
           const dir = await (window as any).electronAPI.selectDirectory()
           if (dir) workspace.value = dir
           else {
             sending.value = false
-            messages.value.pop()
             return
           }
         }
@@ -287,7 +175,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         )
         sessionId.value = sessionData.id
 
-        // Optimistic title: show user's first message in sidebar immediately
         if (text) {
           sessionStore.updateSession(sessionData.id, {
             title: text.length > 50 ? text.substring(0, 50) : text
@@ -307,8 +194,18 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         }
       }
 
+      const sid = sessionId.value!
+      // Add user message to store
+      sessionStore.addUserMessage(sid, {
+        id: `msg_${Date.now()}_user`,
+        role: 'user',
+        content: displayContent,
+        createdAt: new Date().toLocaleString(),
+        files: uploadedFiles
+      })
+
       // Add empty assistant message
-      messages.value.push({
+      sessionStore.addAssistantMessage(sid, {
         id: `msg_${Date.now()}_assistant`,
         role: 'assistant',
         content: '',
@@ -317,61 +214,96 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         segments: []
       })
 
-      // Build payload
-      const payload: any = { content: text || '(文件附件)' }
-      if (uploadedFiles.length > 0) {
-        payload.fileIds = uploadedFiles.map(f => f.id)
+      // Subscribe to this session's events
+      subscribe(sid)
+
+      // Send message via WS
+      const eventId = crypto.randomUUID()
+      wsSendMessage(sid, text || '(文件附件)', eventId)
+
+      // Wait for completion (session_status reaches COMPLETED/FAILED)
+      await new Promise<void>((resolve, reject) => {
+        pendingCallbacks.set(sessionId.value!, { resolve, reject })
+      })
+
+      sending.value = false
+      if (startedAt.value) {
+        const lastMsg = messages.value[messages.value.length - 1]
+        if (lastMsg && lastMsg.role === 'assistant') {
+          lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
+        }
+        startedAt.value = null
       }
-
-      // Send message
-      const response = await api.post(`/sessions/${sessionId.value}/messages`, payload)
-
-      // Start SSE stream
-      createSSE()
-      sse!.start(response.data.eventId)
+      // Refresh session to pick up server-generated title/summary
+      if (sessionId.value) {
+        sessionStore.fetchSession(sessionId.value)
+      }
     } catch (error: any) {
       sending.value = false
       // Remove empty assistant message if it was added
       const lastMsg = messages.value[messages.value.length - 1]
-      if (lastMsg?.role === 'assistant' && !lastMsg.content) {
+      if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
         messages.value.pop()
       }
-      if (error?.response?.data?.message) {
-        ElMessage.error(error.response.data.message)
+      ElMessage.error(error?.message || 'Agent 执行中断')
+      if (sessionId.value) {
+        sessionStore.fetchSession(sessionId.value)
       }
     }
   }
 
+  function stopExecution() {
+    if (!sessionId.value) return
+    cancelling.value = true
+    wsCancel(sessionId.value)
+    // Don't resolve callback or set sending=false here.
+    // The server will send a CANCELLING session_status event,
+    // which resolves the pending callback via routeEvent,
+    // causing sendMessage to return and sending to become false naturally.
+    // cancelling stays true until the server confirms CANCELLED phase.
+  }
+
+  // Watch for CANCELLED phase to clear cancelling flag
+  watch(() => sessionStore.activeSession?.phase, (phase) => {
+    if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED' || phase === 'IDLE') {
+      cancelling.value = false
+    }
+  })
+
   function newSession() {
-    // Stop SSE stream and disconnect WebSocket
-    cleanup()
-    // Reset execution state
+    if (sessionId.value) {
+      unsubscribe(sessionId.value)
+    }
+    if (executionMode.value === 'LOCAL' && isElectron) {
+      explicitDisconnect = true
+      ;(window as any).electronAPI.disconnectLocalSession()
+      ;(window as any).electronAPI.removeWsConnectionChangeListener()
+      ;(window as any).electronAPI.removeBashApprovalRequestListener?.()
+      ;(window as any).electronAPI.removeBashApprovalDismissListener?.()
+      bashApprovalListenerSetup = false
+    }
+    pendingBashApprovals.value = []
     sending.value = false
     sessionId.value = null
     workspace.value = ''
-    messages.value = []
-    activities.value = []
-    todos.value = []
-    contextWindow.value = null
     agentName.value = 'Agent'
     sessionStore.setActiveSession(null)
   }
 
-  async function fetchTodos() {
-    if (!sessionId.value) return
-    try {
-      const { data } = await api.get(`/sessions/${sessionId.value}/todos`)
-      todos.value = data || []
-    } catch {
-      // session might not exist yet
-    }
-  }
-
   function restoreSession(sessionIdVal: string, mode: string, initialWorkspace?: string) {
+    // Unsubscribe from previous session
+    if (sessionId.value && sessionId.value !== sessionIdVal) {
+      unsubscribe(sessionId.value)
+    }
+
     sessionId.value = sessionIdVal
     executionMode.value = mode
     if (initialWorkspace) workspace.value = initialWorkspace
     sessionStore.setActiveSession(sessionIdVal)
+
+    // Subscribe to new session's events
+    subscribe(sessionIdVal)
+
     fetchMessages()
     fetchTodos()
 
@@ -393,7 +325,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   }
 
   function cleanup() {
-    sse?.stop()
+    if (sessionId.value) {
+      unsubscribe(sessionId.value)
+    }
     if (executionMode.value === 'LOCAL' && isElectron) {
       explicitDisconnect = true
       ;(window as any).electronAPI.disconnectLocalSession()
@@ -408,6 +342,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   return {
     messages,
     sending,
+    cancelling,
     sessionId,
     wsConnected,
     workspace,
@@ -418,6 +353,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     contextWindow,
     startedAt,
     sendMessage,
+    stopExecution,
     fetchMessages,
     newSession,
     restoreSession,

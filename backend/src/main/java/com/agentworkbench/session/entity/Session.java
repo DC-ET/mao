@@ -28,7 +28,7 @@ public class Session {
 
     private String workspace;
 
-    /** Task phase: IDLE|RUNNING|WAITING_USER|WAITING_APPROVAL|COMPLETED|FAILED */
+    /** Task phase: IDLE|RUNNING|WAITING_USER|WAITING_APPROVAL|COMPLETED|FAILED|CANCELLED */
     private String phase;
 
     /** One-line task summary */

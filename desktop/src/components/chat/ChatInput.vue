@@ -9,8 +9,8 @@
         :placeholder="placeholder"
         rows="1"
         @input="autoResize"
-        @keydown.enter.ctrl.prevent="handleSend"
-        @keydown.enter.meta.prevent="handleSend"
+        @keydown.enter.ctrl.prevent="cancelling ? undefined : loading ? handleStop() : handleSend()"
+        @keydown.enter.meta.prevent="cancelling ? undefined : loading ? handleStop() : handleSend()"
       />
       <div class="resize-handle" title="拖拽调整大小">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -50,12 +50,14 @@
         <span v-if="modelName" class="model-name">{{ modelName }}</span>
         <button
           class="send-btn"
-          :class="{ active: canSend, loading }"
-          :disabled="!canSend"
-          title="发送 (Ctrl/⌘+Enter)"
-          @click="handleSend"
+          :class="{ active: loading || canSend, loading, stop: loading, cancelling }"
+          :disabled="cancelling || (!loading && !canSend)"
+          :title="cancelling ? '正在停止...' : loading ? '停止 (Ctrl/⌘+Enter)' : '发送 (Ctrl/⌘+Enter)'"
+          @click="cancelling ? undefined : loading ? handleStop() : handleSend()"
         >
-          <el-icon v-if="loading" :size="18" class="spinner"><Loading /></el-icon>
+          <svg v-if="loading || cancelling" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="2" y="2" width="12" height="12" rx="2"/>
+          </svg>
           <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none">
             <path d="M12 19V5M12 5L5 12M12 5L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -67,11 +69,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { Document, Close, Plus, WarningFilled, FolderOpened, Loading } from '@element-plus/icons-vue'
+import { Document, Close, Plus, WarningFilled, FolderOpened } from '@element-plus/icons-vue'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
   loading?: boolean
+  cancelling?: boolean
   workspace?: string
   executionMode?: string
   modelName?: string
@@ -79,6 +82,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   disabled: false,
   loading: false,
+  cancelling: false,
   workspace: '',
   executionMode: 'CLOUD',
   modelName: '',
@@ -87,6 +91,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   send: [text: string, files: File[]]
+  stop: []
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement>()
@@ -130,6 +135,10 @@ function handleSend() {
   inputText.value = ''
   pendingFiles.value = []
   nextTick(autoResize)
+}
+
+function handleStop() {
+  emit('stop')
 }
 
 onMounted(autoResize)
@@ -334,6 +343,27 @@ onMounted(autoResize)
   transform: scale(1.05);
 }
 
+.send-btn.stop {
+  background: var(--aw-danger);
+  color: #fff;
+}
+
+.send-btn.stop:hover {
+  background: color-mix(in srgb, var(--aw-danger) 85%, black);
+  transform: scale(1.05);
+}
+
+.send-btn.cancelling {
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-48);
+  opacity: 0.6;
+  cursor: default;
+}
+
+.send-btn.cancelling:hover {
+  transform: none;
+}
+
 .send-btn.active:active {
   transform: scale(0.95);
 }
@@ -342,12 +372,4 @@ onMounted(autoResize)
   cursor: default;
 }
 
-.spinner {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
 </style>

@@ -163,7 +163,7 @@ public class SessionService {
 
         if ("RUNNING".equals(phase)) {
             session.setStartedAt(LocalDateTime.now());
-        } else if ("IDLE".equals(phase) || "COMPLETED".equals(phase) || "FAILED".equals(phase)) {
+        } else if ("IDLE".equals(phase) || "COMPLETED".equals(phase) || "FAILED".equals(phase) || "CANCELLED".equals(phase)) {
             // Accumulate elapsed time
             if (session.getStartedAt() != null) {
                 long elapsed = java.time.Duration.between(session.getStartedAt(), LocalDateTime.now()).toMillis();

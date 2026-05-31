@@ -1,8 +1,10 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api'
+import type { ChatMessage, TodoItem, ContextWindowInfo } from '../types/chat'
+import { appendTextDelta, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
 
-export type TaskPhase = 'IDLE' | 'RUNNING' | 'WAITING_USER' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED'
+export type TaskPhase = 'IDLE' | 'RUNNING' | 'WAITING_USER' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING'
 
 export interface TaskStep {
   id: string
@@ -38,8 +40,35 @@ export const useSessionStore = defineStore('session', () => {
   const activeSessionId = ref<string | null>(null)
   const loading = ref(false)
 
+  // Multi-session message cache — keyed by sessionId
+  const sessionMessages = ref<Map<string, ChatMessage[]>>(new Map())
+  const sessionTodos = ref<Map<string, TodoItem[]>>(new Map())
+  const sessionActivities = ref<Map<string, any[]>>(new Map())
+  const sessionContextWindow = ref<Map<string, ContextWindowInfo>>(new Map())
+  const sessionCompacting = ref<Map<string, boolean>>(new Map())
+
   const activeSession = computed(() =>
     sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
+  )
+
+  const activeMessages = computed(() =>
+    sessionMessages.value.get(activeSessionId.value ?? '') ?? []
+  )
+
+  const activeTodos = computed(() =>
+    sessionTodos.value.get(activeSessionId.value ?? '') ?? []
+  )
+
+  const activeActivities = computed(() =>
+    sessionActivities.value.get(activeSessionId.value ?? '') ?? []
+  )
+
+  const activeContextWindow = computed(() =>
+    sessionContextWindow.value.get(activeSessionId.value ?? '') ?? null
+  )
+
+  const activeCompacting = computed(() =>
+    sessionCompacting.value.get(activeSessionId.value ?? '') ?? false
   )
 
   function sessionsByAgent(agentId: string) {
@@ -122,9 +151,123 @@ export const useSessionStore = defineStore('session', () => {
       if (activeSessionId.value === String(id)) {
         activeSessionId.value = null
       }
+      // Clean up cached data
+      const sid = String(id)
+      sessionMessages.value.delete(sid)
+      sessionTodos.value.delete(sid)
+      sessionActivities.value.delete(sid)
+      sessionContextWindow.value.delete(sid)
     } catch {
       // ignore
     }
+  }
+
+  // --- Message cache actions ---
+
+  function setMessages(sessionId: string, messages: ChatMessage[]) {
+    sessionMessages.value.set(String(sessionId), messages)
+  }
+
+  function addUserMessage(sessionId: string, msg: ChatMessage) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid) ?? []
+    sessionMessages.value.set(sid, [...list, msg])
+  }
+
+  function addAssistantMessage(sessionId: string, msg: ChatMessage) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid) ?? []
+    sessionMessages.value.set(sid, [...list, msg])
+  }
+
+  function getMessages(sessionId: string): ChatMessage[] {
+    return sessionMessages.value.get(String(sessionId)) ?? []
+  }
+
+  function appendDelta(sessionId: string, delta: string) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid)
+    if (!list || list.length === 0) return
+    const lastMsg = list[list.length - 1]
+    if (lastMsg.role === 'assistant') {
+      appendTextDelta(lastMsg, delta)
+      // Trigger reactivity
+      sessionMessages.value.set(sid, [...list])
+    }
+  }
+
+  function appendToolCallStart(sessionId: string, data: { tool_call_id: string; tool_name: string; arguments?: string }) {
+    if (data.tool_name === 'todo') return
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid)
+    if (!list || list.length === 0) return
+    const lastMsg = list[list.length - 1]
+    if (lastMsg.role === 'assistant') {
+      let input: Record<string, unknown> | undefined
+      if (data.arguments) {
+        try { input = JSON.parse(data.arguments) } catch { /* ignore */ }
+      }
+      appendToolCallStartUtil(lastMsg, {
+        id: data.tool_call_id,
+        name: data.tool_name,
+        input,
+        status: 'running',
+        isExpanded: false
+      })
+      sessionMessages.value.set(sid, [...list])
+    }
+  }
+
+  function updateToolCallResult(sessionId: string, data: { tool_call_id: string; result: string; status?: string; summary?: string }) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid)
+    if (!list || list.length === 0) return
+    const lastMsg = list[list.length - 1]
+    if (lastMsg.toolCalls) {
+      const call = lastMsg.toolCalls.find(c => c.id === data.tool_call_id)
+      if (call) {
+        call.result = data.result
+        call.status = (data.status as any) || 'success'
+        call.isExpanded = false
+        if (data.summary) call.summary = data.summary
+      }
+      sessionMessages.value.set(sid, [...list])
+    }
+  }
+
+  function markMessageComplete(_sessionId: string, _data: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }) {
+    // Message end — the full assistant message is now persisted server-side
+    // Refresh will pick it up via fetchMessages
+  }
+
+  function clearMessages(sessionId: string) {
+    sessionMessages.value.delete(String(sessionId))
+  }
+
+  // --- Todo cache actions ---
+
+  function setTodos(sessionId: string, todos: TodoItem[]) {
+    sessionTodos.value.set(String(sessionId), todos)
+  }
+
+  // --- Activity cache actions ---
+
+  function addActivity(sessionId: string, activity: any) {
+    const sid = String(sessionId)
+    const list = sessionActivities.value.get(sid) ?? []
+    list.push(activity)
+    if (list.length > 100) list.splice(0, list.length - 100)
+    sessionActivities.value.set(sid, list)
+  }
+
+  // --- Context window actions ---
+
+  function setContextWindow(sessionId: string, info: ContextWindowInfo) {
+    sessionContextWindow.value.set(String(sessionId), info)
+  }
+
+  function setCompacting(sessionId: string, compacting: boolean) {
+    sessionCompacting.value.set(String(sessionId), compacting)
   }
 
   return {
@@ -132,6 +275,10 @@ export const useSessionStore = defineStore('session', () => {
     activeSessionId,
     loading,
     activeSession,
+    activeMessages,
+    activeTodos,
+    activeActivities,
+    activeContextWindow,
     sessionsByAgent,
     fetchSessions,
     fetchSession,
@@ -139,6 +286,25 @@ export const useSessionStore = defineStore('session', () => {
     setActiveSession,
     updateSession,
     updateSessionPhase,
-    deleteSession
+    deleteSession,
+    // Message cache
+    setMessages,
+    addUserMessage,
+    addAssistantMessage,
+    getMessages,
+    appendDelta,
+    appendToolCallStart,
+    updateToolCallResult,
+    markMessageComplete,
+    clearMessages,
+    // Todo cache
+    setTodos,
+    // Activity cache
+    addActivity,
+    // Context window
+    setContextWindow,
+    // Compaction
+    activeCompacting,
+    setCompacting
   }
 })

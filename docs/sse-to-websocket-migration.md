@@ -158,9 +158,10 @@ URL:  ws(s)://{host}/ws/stream?token={jwt}
 
 | 文件 | 说明 |
 |------|------|
+| `session/ws/WsEvent.java` | WS 事件 DTO，包含 type、sessionId、data 字段 |
 | `session/ws/StreamingWsHandler.java` | WebSocket 主处理器，替代 SSE 流式推送 |
 | `session/ws/StreamingWsRegistry.java` | 连接注册表，管理 userId → WebSocket 映射 |
-| `session/ws/StreamingWsEventRouter.java` | 事件路由器，将 AgentEventListener 回调转为 WS 消息 |
+| `session/ws/WsStreamingEventListener.java` | 事件监听器，实现 AgentEventListener 接口，将回调转为 WS 消息 |
 
 ### 4.2 改造文件
 

@@ -63,29 +63,18 @@ public class PromptEngine {
                 : pathSandbox.getWorkspaceRoot().toString();
         sb.append("## Working Directory\n\n");
         sb.append("Your current working directory is: `").append(effectiveWorkspace).append("`\n");
-        sb.append("All relative file paths are resolved against this directory. Use `ls` or `read_file` to explore the project.\n\n");
+        sb.append("All relative file paths are resolved against this directory.\n\n");
 
-        // Skill content — inject full skill knowledge into system prompt
+        // Skill catalog — inject only name/description/path so the agent can read on demand
         List<String> skillNames = context.getAvailableSkillNames();
         if (skillNames != null && !skillNames.isEmpty()) {
-            for (String name : skillNames) {
-                String content = skillLoader.getContent(name);
-                if (content != null && !content.isEmpty()) {
-                    sb.append("## Skill: ").append(name).append("\n\n");
-                    sb.append(content);
-                    sb.append("\n\n");
-                }
-            }
-        }
-
-        // 自动注入 shell-guide 技能（如果 Agent 配置了 shell 工具）
-        boolean hasShellTool = context.getTools().stream()
-                .anyMatch(tool -> "shell".equals(tool.getName()));
-        if (hasShellTool && !skillNames.contains("shell-guide")) {
-            String shellGuide = skillLoader.getContent("shell-guide");
-            if (shellGuide != null && !shellGuide.isEmpty()) {
-                sb.append("## Skill: shell-guide\n\n");
-                sb.append(shellGuide);
+            String catalog = skillLoader.getCatalogWithPaths(skillNames);
+            if (catalog != null && !catalog.isEmpty()) {
+                sb.append("## Available Skills\n\n");
+                sb.append("The following skills are available. Each skill is a knowledge document that provides ");
+                sb.append("guidance on how to use tools effectively in specific scenarios.\n");
+                sb.append("To read a skill's full content, use the `read_file` tool with the file path listed below.\n\n");
+                sb.append(catalog);
                 sb.append("\n\n");
             }
         }

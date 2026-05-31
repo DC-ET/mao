@@ -3,19 +3,6 @@
     <TaskIndexPanel :collapsed="panelCollapsed" @toggle="panelCollapsed = !panelCollapsed" @new-task="handleNewTask" @new-task-from-group="handleNewTaskFromGroup" />
 
     <div class="task-container">
-      <TaskHeader
-        :title="sessionTitle"
-        :agent-name="agentName"
-        :workspace="executionMode === 'LOCAL' ? workspace : ''"
-        :phase="currentPhase"
-        :elapsed-ms="elapsedMs"
-        :started-at="startedAt"
-        :panel-collapsed="panelCollapsed"
-        :context-window="contextWindow"
-        @new-task="handleNewTask"
-        @toggle-panel="panelCollapsed = !panelCollapsed"
-      />
-
       <WorkspaceBar
         v-if="executionMode === 'LOCAL'"
         :workspace="workspace"
@@ -55,18 +42,29 @@
 
       <ChatInput
         :disabled="sending"
-        :loading="sending"
+        :loading="sending && !cancelling"
+        :cancelling="cancelling"
         :workspace="workspace"
         :execution-mode="executionMode"
         :model-name="agentStore.activeAgent?.modelName || ''"
         @send="handleSend"
+        @stop="handleStop"
       />
     </div>
 
     <TaskInspector
       :todos="todos"
       :pending-bash-approvals="pendingBashApprovals"
+      :title="sessionTitle"
+      :agent-name="agentName"
+      :workspace="executionMode === 'LOCAL' ? workspace : ''"
+      :phase="currentPhase"
+      :elapsed-ms="elapsedMs"
+      :started-at="startedAt"
+      :panel-collapsed="panelCollapsed"
+      :context-window="contextWindow"
       @bash-confirm="confirmBash"
+      @toggle-panel="panelCollapsed = !panelCollapsed"
     />
 
     <NewTaskDialog
@@ -87,7 +85,6 @@ import { useChat, normalizeMessageRole } from '../../composables/useChat'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
-import TaskHeader from '../../components/task/TaskHeader.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
 import WorkspaceBar from '../../components/chat/WorkspaceBar.vue'
 import MessageBubble from '../../components/chat/MessageBubble.vue'
@@ -117,6 +114,7 @@ const projectKey = ref('')
 const {
   messages,
   sending,
+  cancelling,
   sessionId,
   workspace,
   agentName,
@@ -124,6 +122,7 @@ const {
   todos,
   contextWindow,
   sendMessage,
+  stopExecution,
   newSession,
   restoreSession,
   confirmBash,
@@ -146,7 +145,7 @@ const showTypingIndicator = computed(() => {
   return !hasText && !hasTools
 })
 
-// Track local timing state; phase is driven by server SSE session_status events
+// Track local timing state; phase is driven by server WS session_status events
 watch(() => sending.value, (isSending) => {
   if (!sessionStore.activeSessionId) return
 
@@ -154,8 +153,8 @@ watch(() => sending.value, (isSending) => {
     currentPhase.value = 'RUNNING'
     startedAt.value = new Date().toISOString()
   } else {
-    // Only reset to IDLE if server hasn't set a terminal phase (FAILED/COMPLETED)
-    if (currentPhase.value === 'RUNNING') {
+    // Only reset to IDLE if server hasn't set a terminal or cancelling phase
+    if (currentPhase.value === 'RUNNING' && !cancelling.value) {
       currentPhase.value = 'IDLE'
     }
     if (startedAt.value) {
@@ -165,7 +164,7 @@ watch(() => sending.value, (isSending) => {
   }
 })
 
-// Sync phase from store (updated by SSE session_status events from server)
+// Sync phase from store (updated by WS session_status events from server)
 watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
   if (serverPhase && serverPhase !== currentPhase.value) {
     currentPhase.value = serverPhase
@@ -221,6 +220,10 @@ function handleSend(text: string, files: File[]) {
   sendMessage(text, files)
 }
 
+function handleStop() {
+  stopExecution()
+}
+
 function handleNewTask() {
   if (sessionStore.activeSessionId && currentPhase.value === 'RUNNING') {
     sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
@@ -250,7 +253,7 @@ function onSessionCreated(session: any) {
 }
 
 async function loadSession(sid: string) {
-  cleanup()
+  // No need to cleanup — WS is global, just switch subscriptions
   sessionStore.setActiveSession(sid)
 
   // Load session details to get agentId and mode
@@ -303,8 +306,6 @@ watch(sessionIdParam, (newSid, oldSid) => {
   }
 })
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
-
 onMounted(async () => {
   await sessionStore.fetchSessions()
 
@@ -314,19 +315,10 @@ onMounted(async () => {
   } else {
     navigateToLatestSession()
   }
-
-  // Periodically sync session list to pick up server-side phase changes (e.g. sweep)
-  pollTimer = setInterval(() => {
-    sessionStore.fetchSessions(true)
-  }, 30_000)
 })
 
 onUnmounted(() => {
   cleanup()
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
 })
 </script>
 
