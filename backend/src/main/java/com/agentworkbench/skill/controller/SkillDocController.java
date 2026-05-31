@@ -41,6 +41,7 @@ public class SkillDocController {
         vo.setName(doc.getName());
         vo.setDescription(doc.getDescription());
         vo.setBody(doc.getBody());
+        vo.setFolderPath(doc.getFolderPath());
         vo.setFilePath(doc.getFilePath());
         return Result.ok(vo);
     }
@@ -49,6 +50,7 @@ public class SkillDocController {
         SkillDocVO vo = new SkillDocVO();
         vo.setName(doc.getName());
         vo.setDescription(doc.getDescription());
+        vo.setFolderPath(doc.getFolderPath());
         vo.setFilePath(doc.getFilePath());
         return vo;
     }
@@ -57,6 +59,7 @@ public class SkillDocController {
     public static class SkillDocVO {
         private String name;
         private String description;
+        private String folderPath;
         private String filePath;
     }
 
@@ -65,6 +68,7 @@ public class SkillDocController {
         private String name;
         private String description;
         private String body;
+        private String folderPath;
         private String filePath;
     }
 }

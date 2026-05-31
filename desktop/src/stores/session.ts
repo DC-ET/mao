@@ -144,6 +144,13 @@ export const useSessionStore = defineStore('session', () => {
     })
   }
 
+  async function renameSession(id: string, title: string) {
+    const { data } = await api.patch(`/sessions/${id}`, { title })
+    if (data) {
+      updateSession(id, { title: data.title, summary: data.summary })
+    }
+  }
+
   async function deleteSession(id: string) {
     try {
       await api.delete(`/sessions/${id}`)
@@ -286,6 +293,7 @@ export const useSessionStore = defineStore('session', () => {
     setActiveSession,
     updateSession,
     updateSessionPhase,
+    renameSession,
     deleteSession,
     // Message cache
     setMessages,

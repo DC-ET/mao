@@ -4,6 +4,7 @@ import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
+import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.mapper.MessageMapper;
@@ -34,6 +35,7 @@ public class SessionService {
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
     private final AgentMapper agentMapper;
+    private final PathSandbox pathSandbox;
 
     public Session createSession(Long userId, Long agentId, String title) {
         return createSession(userId, agentId, title, "CLOUD");
@@ -62,6 +64,19 @@ public class SessionService {
         session.setElapsedMs(0L);
         session.setProjectKey(deriveProjectKey(workspace));
         sessionMapper.insert(session);
+
+        // CLOUD 模式且客户端未指定 workspace 时，自动生成隔离工作区
+        if ("CLOUD".equals(session.getExecutionMode()) && (workspace == null || workspace.isBlank())) {
+            String autoPath = pathSandbox.getWorkspaceRoot()
+                    .resolve(String.valueOf(userId))
+                    .resolve(String.valueOf(session.getId()))
+                    .toString();
+            new java.io.File(autoPath).mkdirs();
+            session.setWorkspace(autoPath);
+            session.setProjectKey(deriveProjectKey(autoPath));
+            sessionMapper.updateById(session);
+        }
+
         return session;
     }
 
