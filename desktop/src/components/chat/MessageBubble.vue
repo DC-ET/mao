@@ -169,22 +169,21 @@ async function copyMessage() {
 .message-text {
   padding: 10px 14px;
   border-radius: var(--aw-radius-lg);
-  line-height: 1.47;
+  line-height: 2;
   letter-spacing: -0.374px;
   word-break: break-word;
   font-size: var(--aw-text-caption);
 }
 
 .user-text {
-  background: var(--aw-primary);
-  color: var(--aw-on-primary);
+  color: var(--aw-ink);
   border-top-right-radius: var(--aw-radius-xs);
 }
 
 .assistant-text {
   color: var(--aw-body);
   font-size: var(--aw-text-caption);
-  line-height: 1.47;
+  line-height: 2;
   letter-spacing: -0.374px;
   word-break: break-word;
 }
@@ -197,7 +196,7 @@ async function copyMessage() {
 .markdown-body :deep(p) {
   margin: 0;
   font-size: var(--aw-text-caption);
-  line-height: 1.47;
+  line-height: 2;
   letter-spacing: -0.374px;
 }
 
@@ -265,7 +264,7 @@ async function copyMessage() {
 
 .markdown-body :deep(li) {
   font-size: var(--aw-text-caption);
-  line-height: 1.47;
+  line-height: 2;
   letter-spacing: -0.374px;
 }
 

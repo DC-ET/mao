@@ -1,6 +1,7 @@
 package com.agentworkbench.config;
 
 import com.agentworkbench.harness.local.LocalToolWebSocketHandler;
+import com.agentworkbench.session.ws.StreamingWsHandler;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,10 +16,13 @@ import org.springframework.web.socket.server.standard.ServletServerContainerFact
 public class WebSocketConfig implements WebSocketConfigurer {
 
     private final LocalToolWebSocketHandler localToolWebSocketHandler;
+    private final StreamingWsHandler streamingWsHandler;
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(localToolWebSocketHandler, "/ws/local-tool")
+                .setAllowedOrigins("*");
+        registry.addHandler(streamingWsHandler, "/ws/stream")
                 .setAllowedOrigins("*");
     }
 

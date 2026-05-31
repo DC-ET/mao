@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Path sandbox - prevents directory escape attacks
@@ -16,6 +18,7 @@ import java.nio.file.Paths;
 public class PathSandbox {
 
     private final Path workspaceRoot;
+    private final Set<Path> allowedRoots = ConcurrentHashMap.newKeySet();
 
     public PathSandbox(@Value("${app.harness.workspace-root:./workspace}") String workspaceRoot) {
         this.workspaceRoot = Paths.get(workspaceRoot).toAbsolutePath().normalize();
@@ -36,6 +39,14 @@ public class PathSandbox {
     }
 
     /**
+     * Register an additional allowed root directory (e.g. skills classpath dir).
+     * Paths under these roots can be read even if outside the workspace.
+     */
+    public void addAllowedRoot(Path root) {
+        allowedRoots.add(root.toAbsolutePath().normalize());
+    }
+
+    /**
      * Resolve and validate a user-provided path against a session workspace (or fall back to default root).
      * Throws SecurityException if the path escapes the sandbox.
      */
@@ -49,11 +60,19 @@ public class PathSandbox {
                 : workspaceRoot;
 
         Path resolved = root.resolve(userPath).normalize();
-        if (!resolved.startsWith(root)) {
-            log.warn("Path escape attempt blocked: {} (resolved to {})", userPath, resolved);
-            throw new SecurityException("Path escape attempt: " + userPath);
+        if (resolved.startsWith(root)) {
+            return resolved;
         }
-        return resolved;
+
+        // Check against additional allowed roots (e.g. skill files outside workspace)
+        for (Path allowed : allowedRoots) {
+            if (resolved.startsWith(allowed)) {
+                return resolved;
+            }
+        }
+
+        log.warn("Path escape attempt blocked: {} (resolved to {})", userPath, resolved);
+        throw new SecurityException("Path escape attempt: " + userPath);
     }
 
     /**

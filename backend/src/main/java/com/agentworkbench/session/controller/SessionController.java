@@ -3,19 +3,11 @@ package com.agentworkbench.session.controller;
 import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.common.result.Result;
-import com.agentworkbench.harness.core.AgentEventListener;
-import com.agentworkbench.harness.core.HarnessService;
-import com.agentworkbench.harness.local.LocalToolSessionRegistry;
-import com.agentworkbench.harness.llm.ChatRequest;
-import com.agentworkbench.harness.llm.ChatUsage;
-import com.agentworkbench.session.SseEmitterRegistry;
 import com.agentworkbench.session.activity.ActivityService;
-import com.agentworkbench.session.activity.ActivityTypeMapper;
 import com.agentworkbench.session.activity.SessionActivity;
 import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.service.SessionService;
-import com.agentworkbench.session.util.ToolResultSummarizer;
 import com.agentworkbench.harness.todo.entity.SessionTodo;
 import com.agentworkbench.harness.todo.mapper.SessionTodoMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -23,19 +15,11 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -44,38 +28,17 @@ import java.util.stream.Collectors;
 public class SessionController {
 
     private final SessionService sessionService;
-    private final HarnessService harnessService;
     private final AgentMapper agentMapper;
-    private final LocalToolSessionRegistry localToolSessionRegistry;
     private final ActivityService activityService;
     private final SessionTodoMapper sessionTodoMapper;
-    private final com.agentworkbench.harness.core.AgentLoop agentLoop;
-    private final SseEmitterRegistry sseRegistry;
-    private final ExecutorService agentExecutor;
 
-    public SessionController(SessionService sessionService, HarnessService harnessService,
-                             AgentMapper agentMapper, LocalToolSessionRegistry localToolSessionRegistry,
-                             ActivityService activityService, SessionTodoMapper sessionTodoMapper,
-                             com.agentworkbench.harness.core.AgentLoop agentLoop,
-                             SseEmitterRegistry sseRegistry,
-                             @Value("${app.harness.agent-thread-pool-size:20}") int poolSize,
-                             @Value("${app.harness.agent-thread-pool-max:100}") int maxPoolSize,
-                             @Value("${app.harness.agent-thread-pool-queue:200}") int queueCapacity) {
+    public SessionController(SessionService sessionService,
+                             AgentMapper agentMapper,
+                             ActivityService activityService, SessionTodoMapper sessionTodoMapper) {
         this.sessionService = sessionService;
-        this.harnessService = harnessService;
         this.agentMapper = agentMapper;
-        this.localToolSessionRegistry = localToolSessionRegistry;
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
-        this.agentLoop = agentLoop;
-        this.sseRegistry = sseRegistry;
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(poolSize);
-        executor.setMaxPoolSize(maxPoolSize);
-        executor.setQueueCapacity(queueCapacity);
-        executor.setThreadNamePrefix("agent-");
-        executor.initialize();
-        this.agentExecutor = executor.getThreadPoolExecutor();
     }
 
     @PostMapping
@@ -165,301 +128,6 @@ public class SessionController {
         return Result.ok(result);
     }
 
-    @PostMapping("/{id}/messages")
-    public Result<SendMessageVO> sendMessage(
-            @AuthenticationPrincipal Long userId,
-            @PathVariable Long id,
-            @RequestBody SendMessageRequest request) {
-        // Validate session exists
-        Session session = sessionService.getSession(id);
-
-        // For LOCAL mode, verify desktop client is connected
-        if ("LOCAL".equals(session.getExecutionMode()) && !localToolSessionRegistry.isConnected(id)) {
-            return Result.fail(4002, "Local client is not connected. Please start the desktop app and connect to this session.");
-        }
-
-        // Save user message to DB immediately
-        sessionService.saveMessage(id, "USER", request.getContent(), null, null, 0, null);
-
-        // Prepare event: store content in Redis for stream to pick up
-        String eventId = harnessService.prepareMessage(id, request.getContent());
-
-        SendMessageVO vo = new SendMessageVO();
-        vo.setEventId(eventId);
-        return Result.ok(vo);
-    }
-
-    @GetMapping(value = "/{id}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter stream(
-            @AuthenticationPrincipal Long userId,
-            @PathVariable Long id,
-            @RequestParam String eventId) {
-
-        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
-        sseRegistry.register(id, emitter);
-
-        // Register cancel flag so AgentLoop can be stopped when SSE disconnects
-        AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(id);
-
-        agentExecutor.submit(() -> {
-            try {
-                // Track tool call metadata for summary generation
-                Map<String, String[]> toolCallInfo = new ConcurrentHashMap<>();
-
-                // Set phase to RUNNING at execution start
-                sessionService.updatePhase(id, "RUNNING");
-                sseRegistry.broadcastPhaseChange(id, "RUNNING");
-                try {
-                    emitter.send(SseEmitter.event()
-                            .name("session_status")
-                            .data(Map.of("phase", "RUNNING")));
-                } catch (Exception ignored) {}
-
-                harnessService.executeFromEvent(id, eventId, new AgentEventListener() {
-                    @Override
-                    public void onContentDelta(String delta) {
-                        try {
-                            emitter.send(SseEmitter.event()
-                                    .name("content_delta")
-                                    .data(Map.of("delta", delta)));
-                        } catch (Exception e) {
-                            log.warn("Failed to send SSE event", e);
-                        }
-                    }
-
-                    @Override
-                    public void onToolCallStart(ChatRequest.ToolCall toolCall) {
-                        try {
-                            toolCallInfo.put(toolCall.getId(), new String[]{
-                                    toolCall.getFunction().getName(),
-                                    toolCall.getFunction().getArguments()
-                            });
-                            emitter.send(SseEmitter.event()
-                                    .name("tool_call_start")
-                                    .data(Map.of(
-                                            "tool_call_id", toolCall.getId(),
-                                            "tool_name", toolCall.getFunction().getName(),
-                                            "arguments", toolCall.getFunction().getArguments()
-                                    )));
-                        } catch (Exception e) {
-                            log.warn("Failed to send SSE event", e);
-                        }
-                    }
-
-                    @Override
-                    public void onToolCallResult(String toolCallId, String result) {
-                        try {
-                            String[] info = toolCallInfo.remove(toolCallId);
-                            String toolName = info != null ? info[0] : null;
-                            String arguments = info != null ? info[1] : null;
-                            String summary = ToolResultSummarizer.summarize(toolName, arguments, result);
-
-                            boolean isError = isErrorResult(result);
-
-                            Map<String, Object> data = new java.util.LinkedHashMap<>();
-                            data.put("tool_call_id", toolCallId);
-                            data.put("result", result);
-                            data.put("status", isError ? "error" : "success");
-                            if (summary != null) {
-                                data.put("summary", summary);
-                            }
-
-                            emitter.send(SseEmitter.event()
-                                    .name("tool_call_result")
-                                    .data(data));
-
-                            // Record activity
-                            try {
-                                String activityType = ActivityTypeMapper.mapToolToType(toolName);
-                                String target = extractActivityTarget(toolName, arguments);
-                                String activitySummary = summary != null ? summary : toolName;
-                                String status = isError ? "ERROR" : "SUCCESS";
-
-                                SessionActivity activity = activityService.record(
-                                        id, activityType, target, activitySummary, null, status, null);
-
-                                // Send activity SSE event
-                                Map<String, Object> activityData = new java.util.LinkedHashMap<>();
-                                activityData.put("id", activity.getId());
-                                activityData.put("type", activityType);
-                                activityData.put("target", target);
-                                activityData.put("summary", activitySummary);
-                                activityData.put("status", status);
-
-                                emitter.send(SseEmitter.event()
-                                        .name("activity")
-                                        .data(activityData));
-                            } catch (Exception activityEx) {
-                                log.warn("Failed to record activity", activityEx);
-                            }
-
-                            // Push todo_updated SSE event when todo tool is called
-                            if ("todo".equals(toolName)) {
-                                try {
-                                    List<SessionTodo> todos = sessionTodoMapper.selectList(
-                                            new LambdaQueryWrapper<SessionTodo>()
-                                                    .eq(SessionTodo::getSessionId, id)
-                                                    .orderByAsc(SessionTodo::getId));
-                                    List<TodoVO> todoVOs = todos.stream()
-                                            .map(SessionController.this::toTodoVO)
-                                            .collect(Collectors.toList());
-                                    emitter.send(SseEmitter.event()
-                                            .name("todo_updated")
-                                            .data(Map.of("todos", todoVOs)));
-                                } catch (Exception todoEx) {
-                                    log.warn("Failed to send SSE todo_updated event", todoEx);
-                                }
-                            }
-                        } catch (Exception e) {
-                            log.warn("Failed to send SSE event", e);
-                        }
-                    }
-
-                    @Override
-                    public void onMessageEnd(ChatUsage usage) {
-                        try {
-                            sessionService.updatePhase(id, "COMPLETED");
-                            sseRegistry.broadcastPhaseChange(id, "COMPLETED");
-                            emitter.send(SseEmitter.event()
-                                    .name("message_end")
-                                    .data(Map.of(
-                                            "prompt_tokens", usage.getPromptTokens(),
-                                            "completion_tokens", usage.getCompletionTokens(),
-                                            "total_tokens", usage.getTotalTokens()
-                                    )));
-                            emitter.send(SseEmitter.event()
-                                    .name("session_status")
-                                    .data(Map.of("phase", "COMPLETED")));
-                        } catch (Exception e) {
-                            log.warn("Failed to send SSE event", e);
-                        } finally {
-                            sseRegistry.unregister(id);
-                            try { emitter.complete(); } catch (Exception ignored) {}
-                        }
-                    }
-
-                    @Override
-                    public void onContextWindow(int estimatedTokens, int actualTokens, int maxTokens) {
-                        try {
-                            emitter.send(SseEmitter.event()
-                                    .name("context_window")
-                                    .data(Map.of(
-                                            "estimated", estimatedTokens,
-                                            "actual", actualTokens,
-                                            "maxTokens", maxTokens
-                                    )));
-                        } catch (Exception e) {
-                            log.warn("Failed to send SSE context_window event", e);
-                        }
-                    }
-
-                    @Override
-                    public void onCompactionStart(String type, int messageCount, int estimatedTokens) {
-                        try {
-                            emitter.send(SseEmitter.event()
-                                    .name("compaction_start")
-                                    .data(Map.of(
-                                            "type", type,
-                                            "messageCount", messageCount,
-                                            "estimatedTokens", estimatedTokens
-                                    )));
-                        } catch (Exception e) {
-                            log.warn("Failed to send SSE compaction_start event", e);
-                        }
-                    }
-
-                    @Override
-                    public void onCompactionEnd(String type, int summaryTokens, int savedTokens, long durationMs) {
-                        try {
-                            emitter.send(SseEmitter.event()
-                                    .name("compaction_end")
-                                    .data(Map.of(
-                                            "type", type,
-                                            "summaryTokens", summaryTokens,
-                                            "savedTokens", savedTokens,
-                                            "durationMs", durationMs
-                                    )));
-                        } catch (Exception e) {
-                            log.warn("Failed to send SSE compaction_end event", e);
-                        }
-                    }
-
-                    @Override
-                    public void onError(Throwable t) {
-                        try {
-                            emitter.send(SseEmitter.event()
-                                    .name("error")
-                                    .data(Map.of("message", t.getMessage())));
-                            try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
-                            sseRegistry.broadcastPhaseChange(id, "FAILED");
-                            try {
-                                emitter.send(SseEmitter.event()
-                                        .name("session_status")
-                                        .data(Map.of("phase", "FAILED")));
-                            } catch (Exception ignored) {}
-                            emitter.completeWithError(t);
-                        } catch (Exception e) {
-                            log.warn("Failed to send SSE error event", e);
-                        } finally {
-                            sseRegistry.unregister(id);
-                        }
-                    }
-                }, cancelFlag);
-
-            } catch (Exception e) {
-                log.error("Agent execution failed", e);
-                try {
-                    emitter.send(SseEmitter.event()
-                            .name("error")
-                            .data(Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常")));
-                } catch (Exception ignored) {}
-                try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
-                sseRegistry.broadcastPhaseChange(id, "FAILED");
-                try {
-                    emitter.send(SseEmitter.event()
-                            .name("session_status")
-                            .data(Map.of("phase", "FAILED")));
-                } catch (Exception ignored) {}
-                sseRegistry.unregister(id);
-                emitter.completeWithError(e);
-            }
-        });
-
-        emitter.onTimeout(() -> {
-            log.warn("SSE connection timed out for session: {}", id);
-            try {
-                emitter.send(SseEmitter.event()
-                        .name("error")
-                        .data(Map.of("message", "任务执行超时")));
-            } catch (Exception ignored) {}
-            try { sessionService.updatePhase(id, "FAILED"); } catch (Exception ignored) {}
-            sseRegistry.broadcastPhaseChange(id, "FAILED");
-            try {
-                emitter.send(SseEmitter.event()
-                        .name("session_status")
-                        .data(Map.of("phase", "FAILED")));
-            } catch (Exception ignored) {}
-            sseRegistry.unregister(id);
-            emitter.complete();
-        });
-
-        emitter.onError(e -> {
-            log.warn("SSE connection error for session: {}", id, e);
-            cancelFlag.set(true);
-            try {
-                var current = sessionService.getSession(id);
-                if (current != null && "RUNNING".equals(current.getPhase())) {
-                    sessionService.updatePhase(id, "FAILED");
-                    sseRegistry.broadcastPhaseChange(id, "FAILED");
-                }
-            } catch (Exception ignored) {}
-            sseRegistry.unregister(id);
-            agentLoop.removeCancelFlag(id);
-        });
-
-        return emitter;
-    }
-
     @GetMapping("/{id}/messages")
     public Result<List<MessageVO>> getMessages(
             @AuthenticationPrincipal Long userId,
@@ -511,32 +179,6 @@ public class SessionController {
         vo.setDurationMs(activity.getDurationMs());
         vo.setCreatedAt(activity.getCreatedAt() != null ? activity.getCreatedAt().toString() : null);
         return vo;
-    }
-
-    private String extractActivityTarget(String toolName, String arguments) {
-        if (toolName == null || arguments == null) return null;
-        try {
-            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(arguments);
-            return switch (toolName.toLowerCase()) {
-                case "read_file", "write_file", "edit_file" ->
-                        node.has("path") ? node.get("path").asText(null) : null;
-                case "bash" -> node.has("command") ? node.get("command").asText(null) : null;
-                case "glob", "list" -> node.has("pattern") ? node.get("pattern").asText(null) : null;
-                default -> null;
-            };
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private boolean isErrorResult(String result) {
-        if (result == null) return false;
-        try {
-            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(result);
-            if (node.has("error")) return true;
-            if (node.has("exit_code") && node.get("exit_code").asInt(-1) != 0) return true;
-        } catch (Exception ignored) {}
-        return false;
     }
 
     private SessionVO toSessionVO(Session session) {
@@ -601,20 +243,10 @@ public class SessionController {
     }
 
     @Data
-    public static class SendMessageRequest {
-        private String content;
-    }
-
-    @Data
     public static class UpdateSessionRequest {
         private String title;
         private String summary;
         private String projectKey;
-    }
-
-    @Data
-    public static class SendMessageVO {
-        private String eventId;
     }
 
     @Data

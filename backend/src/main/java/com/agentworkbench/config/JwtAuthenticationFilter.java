@@ -25,7 +25,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilterAsyncDispatch() {
-        // Must run during async dispatch (SseEmitter) to re-populate SecurityContext
+        // Must run during async dispatch (WebSocket) to re-populate SecurityContext
         return false;
     }
 
@@ -71,7 +71,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         // 2. Fallback: extract token from query string manually
-        //    (SSE/EventSource cannot set headers)
+        //    (WebSocket cannot set custom headers)
         String queryString = request.getQueryString();
         if (queryString != null) {
             return extractQueryParam(queryString, "token");

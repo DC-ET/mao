@@ -65,7 +65,7 @@ public class SecurityConfig {
      * Prevent Spring Boot from auto-registering JwtAuthenticationFilter as a
      * standalone servlet filter. It is already managed inside SecurityFilterChain
      * via addFilterBefore(). Without this, the filter runs twice and the standalone
-     * copy at Integer.MAX_VALUE order breaks SSE async dispatch.
+     * copy at Integer.MAX_VALUE order breaks async dispatch.
      */
     @Bean
     public FilterRegistrationBean<JwtAuthenticationFilter> jwtFilterRegistration(JwtAuthenticationFilter filter) {

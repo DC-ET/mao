@@ -1,5 +1,7 @@
 package com.agentworkbench.harness.skill;
 
+import com.agentworkbench.harness.safety.PathSandbox;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -11,16 +13,22 @@ import jakarta.annotation.PostConstruct;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
  * Loads Skill knowledge documents from SKILL.md files.
- * Full skill content is injected into the system prompt at request time.
+ * Only name/description/paths are injected into the system prompt as a catalog;
+ * the agent reads full skill content on demand via read_file.
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class SkillLoader {
+
+    private final PathSandbox pathSandbox;
 
     private final Map<String, SkillDocument> skills = new LinkedHashMap<>();
 
@@ -45,6 +53,9 @@ public class SkillLoader {
                 }
             }
 
+            // Register skills directories as allowed roots so read_file can access them
+            registerAllowedRoots(resources);
+
             log.info("SkillLoader initialized with {} skills: {}", skills.size(), skills.keySet());
         } catch (Exception e) {
             log.info("No skill files found at {}, starting with empty skill set", skillsDir);
@@ -52,17 +63,10 @@ public class SkillLoader {
     }
 
     /**
-     * Layer 1: Get all skill descriptions for system prompt injection.
-     * Returns formatted markdown list: "- name: description"
+     * Get skill catalog with file paths for system prompt injection.
+     * Only name/description/path are included — the agent reads full content on demand via read_file.
      */
-    public String getDescriptions() {
-        return getDescriptions(null);
-    }
-
-    /**
-     * Layer 1 (filtered): Get descriptions for specified skill names only.
-     */
-    public String getDescriptions(List<String> filterNames) {
+    public String getCatalogWithPaths(List<String> filterNames) {
         if (skills.isEmpty()) {
             return null;
         }
@@ -74,17 +78,10 @@ public class SkillLoader {
             }
             sb.append("- **").append(doc.getName()).append("**: ");
             sb.append(doc.getDescription() != null ? doc.getDescription() : "");
+            sb.append("\n  File: `").append(doc.getFilePath()).append("`");
             sb.append("\n");
         }
         return sb.toString().trim();
-    }
-
-    /**
-     * Get full skill content for system prompt injection.
-     */
-    public String getContent(String name) {
-        SkillDocument doc = skills.get(name);
-        return doc != null ? doc.getBody() : null;
     }
 
     /**
@@ -143,5 +140,23 @@ public class SkillLoader {
         doc.setFilePath(resource.getURL().getPath());
 
         return doc;
+    }
+
+    private void registerAllowedRoots(Resource[] resources) {
+        Set<Path> roots = new LinkedHashSet<>();
+        for (Resource resource : resources) {
+            try {
+                // e.g. /.../target/classes/skills/bigdata-cli/SKILL.md → /.../target/classes/skills/bigdata-cli
+                Path skillDir = Paths.get(resource.getURL().getPath()).getParent();
+                if (skillDir != null) {
+                    roots.add(skillDir);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        for (Path root : roots) {
+            pathSandbox.addAllowedRoot(root);
+            log.info("Registered skill allowed root: {}", root);
+        }
     }
 }
