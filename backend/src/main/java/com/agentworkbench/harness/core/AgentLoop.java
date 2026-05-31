@@ -34,7 +34,6 @@ public class AgentLoop {
     /** Per-session cancel flags: set to true to request cancellation */
     private final ConcurrentHashMap<Long, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
 
-    private static final int TODO_REMINDER_INTERVAL = 10;
 
     /**
      * Register a cancel flag for a session. Call before execute().
@@ -63,7 +62,6 @@ public class AgentLoop {
     public void execute(AgentExecutionContext context, AgentEventListener listener,
                         MessagePersistenceCallback persistenceCallback) {
         int round = 0;
-        int roundsSinceTodoUpdate = 0;
 
         try {
         while (true) {
@@ -89,12 +87,6 @@ public class AgentLoop {
                 sb.append("</background-task-results>");
                 context.addSystemMessage(sb.toString());
                 log.info("Injected {} background task results", bgResults.size());
-            }
-
-            // 0.6. Todo nag reminder
-            if (roundsSinceTodoUpdate >= TODO_REMINDER_INTERVAL) {
-                context.addSystemMessage("<reminder>Please update your task plan using the todo tool.</reminder>");
-                roundsSinceTodoUpdate = 0;
             }
 
             // 1. Build Prompt
@@ -180,14 +172,7 @@ public class AgentLoop {
             }
 
             // 4. Execute tool calls in parallel
-            boolean calledTodo = executeToolCalls(pendingCalls, context, listener, persistenceCallback);
-
-            // Track todo usage for nag reminder
-            if (calledTodo) {
-                roundsSinceTodoUpdate = 0;
-            } else {
-                roundsSinceTodoUpdate++;
-            }
+            executeToolCalls(pendingCalls, context, listener, persistenceCallback);
 
             // 5. Clear pending calls for next round
             context.clearPendingToolCalls();
@@ -227,42 +212,32 @@ public class AgentLoop {
      * Execute tool calls in parallel using CompletableFuture.
      * Returns true if any tool call was to the "todo" skill.
      */
-    private boolean executeToolCalls(List<ChatRequest.ToolCall> pendingCalls,
-                                     AgentExecutionContext context,
-                                     AgentEventListener listener,
-                                     MessagePersistenceCallback persistenceCallback) {
-        boolean calledTodo = false;
-
+    private void executeToolCalls(List<ChatRequest.ToolCall> pendingCalls,
+                                  AgentExecutionContext context,
+                                  AgentEventListener listener,
+                                  MessagePersistenceCallback persistenceCallback) {
         if (pendingCalls.size() == 1) {
-            // Single tool call - execute directly without async overhead
             ChatRequest.ToolCall tc = pendingCalls.get(0);
-            String toolName = tc.getFunction().getName();
-            if ("todo".equals(toolName)) calledTodo = true;
-            String result = dispatchTool(toolName, tc.getFunction().getArguments(), context);
+            String result = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
             context.addToolResult(tc.getId(), result);
             listener.onToolCallResult(tc.getId(), result);
             if (persistenceCallback != null) {
                 persistenceCallback.onSaveToolMessage(tc.getId(), result);
             }
         } else {
-            // Multiple tool calls - execute in parallel
             List<CompletableFuture<Void>> futures = new ArrayList<>();
             String[] results = new String[pendingCalls.size()];
 
             for (int i = 0; i < pendingCalls.size(); i++) {
                 final int index = i;
                 ChatRequest.ToolCall tc = pendingCalls.get(i);
-                String toolName = tc.getFunction().getName();
-                if ("todo".equals(toolName)) calledTodo = true;
-
                 futures.add(CompletableFuture.runAsync(() -> {
-                    results[index] = dispatchTool(toolName, tc.getFunction().getArguments(), context);
+                    results[index] = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
                 }, toolExecutor));
             }
 
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
-            // Collect results in order
             for (int i = 0; i < pendingCalls.size(); i++) {
                 ChatRequest.ToolCall tc = pendingCalls.get(i);
                 context.addToolResult(tc.getId(), results[i]);
@@ -272,8 +247,6 @@ public class AgentLoop {
                 }
             }
         }
-
-        return calledTodo;
     }
 
     private String dispatchTool(String toolName, String arguments, AgentExecutionContext context) {
