@@ -110,7 +110,7 @@ function toggleExpand() {
 
 <style scoped>
 .tool-call-card {
-  border-radius: var(--aw-radius-lg);
+  padding: 2px 5px;
   overflow: hidden;
   background: var(--aw-canvas);
   transition: border-color 0.2s;
@@ -154,7 +154,7 @@ function toggleExpand() {
 
 .tool-summary {
   font-size: var(--aw-text-caption);
-  color: var(--aw-ink-muted-80);
+  color: var(--aw-ink-muted-48);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -210,7 +210,7 @@ function toggleExpand() {
 .tool-command code {
   font-family: var(--aw-font-mono);
   font-size: var(--aw-text-caption);
-  color: #d4d4d4;
+  color: var(--aw-text-code);
   background: none;
   padding: 0;
 }
@@ -246,7 +246,7 @@ function toggleExpand() {
 .result-content code {
   font-family: var(--aw-font-mono);
   font-size: var(--aw-text-caption);
-  color: #d4d4d4;
+  color: var(--aw-text-code);
   background: none;
   padding: 0;
   white-space: pre-wrap;

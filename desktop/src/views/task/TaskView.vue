@@ -17,12 +17,64 @@
           </template>
         </div>
 
-        <MessageBubble
-          v-for="(msg, idx) in messages"
-          :key="msg.id"
-          :message="msg"
-          :show-time="shouldShowTime(msg, idx)"
-        />
+        <!-- 按轮次渲染：每轮独立折叠 -->
+        <template v-if="messageRounds.length > 0">
+          <template v-for="round in messageRounds" :key="round.userMessage.id">
+            <!-- 用户消息 -->
+            <MessageBubble
+              :message="round.userMessage"
+              :show-time="true"
+            />
+
+            <!-- 有执行步骤时：显示折叠块 -->
+            <template v-if="round.collapsedSteps.length > 0">
+              <!-- 最终回复时间（折叠块上方） -->
+              <div v-if="round.finalReply" class="final-reply-time">
+                {{ round.finalReply.createdAt }}
+              </div>
+
+              <!-- 折叠块 -->
+              <div class="execution-steps-collapse">
+                <div class="steps-summary" @click="toggleRound(round.userMessage.id)">
+                  <el-icon class="steps-expand-icon" :class="{ expanded: roundsExpanded[round.userMessage.id] }"><ArrowDown /></el-icon>
+                  <span>已执行 {{ round.stepCount }} 个步骤，任务耗时 {{ round.durationText }}</span>
+                </div>
+                <div v-if="roundsExpanded[round.userMessage.id]" class="steps-detail">
+                  <MessageBubble
+                    v-for="step in round.collapsedSteps"
+                    :key="step.id"
+                    :message="step"
+                    :show-time="false"
+                    :show-copy="false"
+                  />
+                </div>
+              </div>
+
+              <!-- 最终回复内容 -->
+              <MessageBubble
+                v-if="round.finalReply"
+                :message="round.finalReply"
+              />
+            </template>
+
+            <!-- 无执行步骤时：直接显示最终回复 -->
+            <MessageBubble
+              v-else-if="round.finalReply"
+              :message="round.finalReply"
+              :show-time="true"
+            />
+          </template>
+        </template>
+
+        <!-- 流式中 / 无轮次时：直接渲染所有消息 -->
+        <template v-else>
+          <MessageBubble
+            v-for="msg in messages"
+            :key="msg.id"
+            :message="msg"
+            :show-time="true"
+          />
+        </template>
 
         <div v-if="showTypingIndicator" class="typing-indicator">
           <div class="message-bubble assistant">
@@ -75,8 +127,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChatDotRound, Plus } from '@element-plus/icons-vue'
-import { useChat, normalizeMessageRole } from '../../composables/useChat'
+import { ChatDotRound, Plus, ArrowDown } from '@element-plus/icons-vue'
+import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
@@ -140,6 +192,70 @@ const showTypingIndicator = computed(() => {
   return !hasText && !hasTools
 })
 
+// 执行步骤折叠逻辑：按轮次分组，每轮独立折叠
+interface MessageRound {
+  userMessage: ChatMessage
+  collapsedSteps: ChatMessage[]
+  finalReply: ChatMessage | null
+  stepCount: number
+  durationText: string
+}
+
+const roundsExpanded = ref<Record<string, boolean>>({})
+
+const messageRounds = computed((): MessageRound[] => {
+  const msgs = messages.value
+  // 执行中不折叠
+  if (sending.value) return []
+  if (msgs.length <= 1) return []
+
+  // 第一趟：按用户消息分组
+  const groups: { user: ChatMessage; assistantMsgs: ChatMessage[] }[] = []
+  let cur = -1
+  for (const m of msgs) {
+    if (normalizeMessageRole(m.role) === 'user') {
+      groups.push({ user: m, assistantMsgs: [] })
+      cur++
+    } else if (cur >= 0) {
+      groups[cur].assistantMsgs.push(m)
+    }
+  }
+
+  // 第二趟：每轮识别最终回复（最后一个无工具的 assistant；若全有工具则取最后一条）
+  const rounds: MessageRound[] = []
+  for (const g of groups) {
+    const lastIdx = g.assistantMsgs.length - 1
+    let replyIdx = g.assistantMsgs.findIndex(m => (m.toolCalls?.length ?? 0) === 0)
+    if (replyIdx < 0 && lastIdx >= 0) replyIdx = lastIdx
+    const steps = g.assistantMsgs.filter((_, i) => i !== replyIdx)
+    const reply = replyIdx >= 0 ? g.assistantMsgs[replyIdx] : null
+    rounds.push(buildRound(g.user, steps, reply))
+  }
+
+  return rounds
+})
+
+function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage | null): MessageRound {
+  const stepCount = steps.length
+  let durationText = ''
+  if (stepCount > 0) {
+    const first = steps[0].createdAt
+    const last = (reply || steps[steps.length - 1]).createdAt
+    if (first && last) {
+      const diff = new Date(last).getTime() - new Date(first).getTime()
+      if (diff > 0) {
+        const s = Math.floor(diff / 1000)
+        durationText = s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分${s % 60}秒`
+      }
+    }
+  }
+  return { userMessage: user, collapsedSteps: steps, finalReply: reply, stepCount, durationText }
+}
+
+function toggleRound(roundId: string) {
+  roundsExpanded.value[roundId] = !roundsExpanded.value[roundId]
+}
+
 // Track local timing state; phase is driven by server WS session_status events
 watch(() => sending.value, (isSending) => {
   if (!sessionStore.activeSessionId) return
@@ -197,19 +313,6 @@ watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
 //     })
 //   }
 // )
-
-function shouldShowTime(msg: any, idx: number): boolean {
-  // 用户消息总是显示时间戳
-  if (normalizeMessageRole(msg.role) === 'user') return true
-
-  // assistant消息：有durationMs时显示（当前任务的最后一轮）
-  if (msg.durationMs) return true
-
-  // assistant消息：如果是最后一个assistant消息则显示
-  const isLastAssistant = idx === messages.value.length - 1 ||
-    messages.value.slice(idx + 1).every(m => normalizeMessageRole(m.role) !== 'assistant')
-  return isLastAssistant
-}
 
 function handleSend(text: string, files: File[]) {
   sendMessage(text, files)
@@ -291,7 +394,6 @@ watch(sessionIdParam, (newSid, oldSid) => {
     // Navigated back to home — reset and go to latest session
     cleanup()
     sessionStore.setActiveSession(null)
-    messages.value = []
     agentId.value = ''
     executionMode.value = 'CLOUD'
     currentPhase.value = 'IDLE'
@@ -398,22 +500,60 @@ onUnmounted(() => {
   40% { transform: scale(1); opacity: 1; }
 }
 
-/* Scrollbar */
+/* 最终回复时间 */
+.final-reply-time {
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
+  letter-spacing: -0.12px;
+  margin-bottom: 4px;
+}
+
+/* 执行步骤折叠 */
+.execution-steps-collapse {
+  margin-bottom: 5px;
+}
+
+.execution-steps-collapse .steps-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.execution-steps-collapse .steps-summary:hover {
+  background: var(--aw-divider-soft);
+  color: var(--aw-ink);
+}
+
+.execution-steps-collapse .steps-expand-icon {
+  font-size: 12px;
+  transition: transform 0.2s;
+}
+
+.execution-steps-collapse .steps-expand-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.execution-steps-collapse .steps-detail {
+  margin-top: 8px;
+  padding-left: 4px;
+  border-left: 2px solid var(--aw-hairline);
+}
+
+/* Scrollbar hidden */
+.messages {
+  scrollbar-width: none;
+}
+
 .messages::-webkit-scrollbar {
-  width: 6px;
-}
-
-.messages::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.messages::-webkit-scrollbar-thumb {
-  background: var(--aw-hairline);
-  border-radius: 3px;
-}
-
-.messages::-webkit-scrollbar-thumb:hover {
-  background: var(--aw-ink-muted-48);
+  display: none;
 }
 
 </style>

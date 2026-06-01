@@ -580,6 +580,7 @@ function toggleGroup(key: string) {
   gap: 8px;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .session-phase-dot {
@@ -662,7 +663,7 @@ function toggleGroup(key: string) {
   gap: 2px;
   padding: 2px 4px;
   border-radius: var(--aw-radius-xs);
-  background: inherit;
+  background: var(--aw-canvas-parchment);
   opacity: 0;
   transition: opacity 0.15s;
 }
@@ -680,7 +681,7 @@ function toggleGroup(key: string) {
   width: 22px;
   height: 22px;
   border: none;
-  background: transparent;
+  background: var(--aw-canvas-parchment);
   border-radius: var(--aw-radius-xs);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
@@ -688,12 +689,12 @@ function toggleGroup(key: string) {
 }
 
 .action-delete:hover {
-  background: rgba(220, 53, 69, 0.1);
+  background: #fee2e2;
   color: var(--aw-danger);
 }
 
 .action-edit:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: #f3f4f6;
   color: var(--aw-primary);
 }
 
@@ -715,16 +716,16 @@ function toggleGroup(key: string) {
 }
 
 .action-confirm {
-  background: rgba(220, 53, 69, 0.1);
+  background: #fee2e2;
   color: var(--aw-danger);
 }
 
 .action-confirm:hover {
-  background: rgba(220, 53, 69, 0.2);
+  background: #fecaca;
 }
 
 .action-cancel:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: #f3f4f6;
   color: var(--aw-ink);
 }
 
@@ -796,13 +797,21 @@ function toggleGroup(key: string) {
   background: rgba(255, 255, 255, 0.06);
 }
 
+[data-theme="dark"] .action-btn {
+  background: #1a1a2e;
+}
+
+[data-theme="dark"] .session-item-actions {
+  background: #0f0f17;
+}
+
 [data-theme="dark"] .action-delete:hover {
-  background: rgba(248, 81, 73, 0.15);
+  background: #3b1520;
   color: #f85149;
 }
 
 [data-theme="dark"] .action-edit:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: #27272a;
   color: var(--aw-primary);
 }
 
@@ -816,16 +825,16 @@ function toggleGroup(key: string) {
 }
 
 [data-theme="dark"] .action-confirm {
-  background: rgba(248, 81, 73, 0.15);
+  background: #3b1520;
   color: #f85149;
 }
 
 [data-theme="dark"] .action-confirm:hover {
-  background: rgba(248, 81, 73, 0.25);
+  background: #5c1d2e;
 }
 
 [data-theme="dark"] .action-cancel:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: #27272a;
   color: var(--aw-ink);
 }
 
