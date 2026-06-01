@@ -14,7 +14,6 @@ let wsExplicitDisconnect = false
 let currentWorkspace = ''
 const WS_MAX_RECONNECT_DELAY = 30000
 const WS_PING_INTERVAL_MS = 10000
-const BASH_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 /** @type {Map<string, (approved: boolean) => void>} */
 const pendingBashApprovals = new Map()
 
@@ -28,15 +27,7 @@ function requestBashApproval(command) {
   return new Promise((resolve) => {
     const requestId = `bash_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 
-    const timer = setTimeout(() => {
-      if (!pendingBashApprovals.has(requestId)) return
-      pendingBashApprovals.delete(requestId)
-      resolve(false)
-      sendToRenderer('bash-approval-dismiss', { requestId })
-    }, BASH_APPROVAL_TIMEOUT_MS)
-
     pendingBashApprovals.set(requestId, (approved) => {
-      clearTimeout(timer)
       pendingBashApprovals.delete(requestId)
       resolve(approved)
     })
@@ -50,6 +41,43 @@ ipcMain.handle('bash-approval-response', (event, { requestId, approved }) => {
   if (resolve) {
     pendingBashApprovals.delete(requestId)
     resolve(!!approved)
+  }
+})
+
+function getApiBaseUrl() {
+  // Derive API base URL from the WebSocket URL or default to localhost
+  return 'http://localhost:9080/api'
+}
+
+// ========== Skill sync IPC handler ==========
+
+ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token }) => {
+  console.log('[skill-sync] IPC handler called:', { sessionId, syncUrl })
+  try {
+    const AdmZip = require('adm-zip')
+    const skillsDir = path.join(currentWorkspace, '.workbench', 'skills')
+
+    // Download zip from REST endpoint
+    const baseUrl = getApiBaseUrl()
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {}
+    const response = await fetch(`${baseUrl}${syncUrl}`, { method: 'POST', headers })
+    if (!response.ok) {
+      throw new Error(`Skill sync download failed: ${response.status}`)
+    }
+
+    // Extract zip to .workbench/skills/
+    const zipBuffer = Buffer.from(await response.arrayBuffer())
+    fs.mkdirSync(skillsDir, { recursive: true })
+    const zip = new AdmZip(zipBuffer)
+    zip.extractAllTo(skillsDir, true)
+
+    console.log('Skills synced to', skillsDir)
+    sendToRenderer('skill-sync-complete', { sessionId, success: true })
+    return { success: true }
+  } catch (e) {
+    console.error('Skill sync failed:', e)
+    sendToRenderer('skill-sync-complete', { sessionId, success: false, error: e.message })
+    return { success: false, error: e.message }
   }
 })
 
@@ -150,6 +178,10 @@ ipcMain.handle('select-directory', async () => {
     return null
   }
   return result.filePaths[0]
+})
+
+ipcMain.handle('open-folder', (event, folderPath) => {
+  if (folderPath) shell.openPath(folderPath)
 })
 
 // ========== Local tool execution IPC handlers ==========
@@ -278,7 +310,7 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
     wsReconnectDelay = 1000 // Reset backoff
     sendToRenderer('ws-connection-change', { connected: true, sessionId })
 
-    // Start heartbeat: send ping every 30s
+    // Start heartbeat: send ping every 10s (server idle timeout is 90s)
     clearInterval(wsPingInterval)
     wsPingInterval = setInterval(() => {
       if (wsClient && wsClient.readyState === WebSocket.OPEN) {
@@ -287,76 +319,40 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
     }, WS_PING_INTERVAL_MS)
   })
 
-  wsClient.on('message', async (data) => {
+  wsClient.on('message', (data) => {
+    let msg
     try {
-      const msg = JSON.parse(data.toString())
-
-      if (msg.type === 'connected') {
-        currentWorkspace = msg.workspace || ''
-        console.log('WebSocket connected for session', msg.sessionId, 'workspace:', currentWorkspace)
-        sendToRenderer('ws-connection-change', { connected: true, sessionId: msg.sessionId, workspace: currentWorkspace })
-        return
-      }
-
-      if (msg.type === 'pong') {
-        // Heartbeat acknowledged, connection is alive
-        return
-      }
-
-      if (msg.type === 'tool_execute') {
-        const { requestId, toolName, arguments: args, workspace: ws } = msg
-        if (ws) currentWorkspace = ws
-        let parsedArgs
-        try {
-          parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
-        } catch {
-          parsedArgs = {}
-        }
-
-        // Fire-and-forget: each tool executes independently so a slow bash
-        // approval does not block other tools (e.g. write_file) from completing.
-        ;(async () => {
-          try {
-            let result
-            switch (toolName) {
-              case 'bash':
-                result = await handleBashFromWebSocket(parsedArgs)
-                break
-              case 'shell':
-                result = await handleShellFromWebSocket(parsedArgs)
-                break
-              case 'read_file':
-                result = await handleLocalReadFile(parsedArgs)
-                break
-              case 'write_file':
-                result = await handleLocalWriteFile(parsedArgs)
-                break
-              case 'edit_file':
-                result = await handleLocalEditFile(parsedArgs)
-                break
-              case 'http_request':
-                result = await handleLocalHttpRequest(parsedArgs)
-                break
-              default:
-                result = { error: `Unknown tool: ${toolName}` }
-            }
-
-            wsClient.send(JSON.stringify({
-              type: 'tool_result',
-              requestId,
-              result: JSON.stringify(result)
-            }))
-          } catch (e) {
-            wsClient.send(JSON.stringify({
-              type: 'tool_error',
-              requestId,
-              error: e.message
-            }))
-          }
-        })()
-      }
+      msg = JSON.parse(data.toString())
     } catch (e) {
-      console.error('Failed to handle WebSocket message:', e)
+      console.error('Failed to parse WS message:', e)
+      return
+    }
+
+    if (msg.type === 'connected') {
+      currentWorkspace = msg.workspace || ''
+      console.log('WebSocket connected for session', msg.sessionId, 'workspace:', currentWorkspace)
+      sendToRenderer('ws-connection-change', { connected: true, sessionId: msg.sessionId, workspace: currentWorkspace })
+      return
+    }
+
+    if (msg.type === 'pong') {
+      return
+    }
+
+    if (msg.type === 'tool_execute') {
+      const { requestId, toolName, arguments: args, workspace: ws } = msg
+      if (ws) currentWorkspace = ws
+      let parsedArgs
+      try {
+        parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
+      } catch {
+        parsedArgs = {}
+      }
+
+      // Fire-and-forget: run tool in independent async context so the message
+      // handler returns immediately and can process the next incoming message.
+      // Without this, a pending bash approval blocks all subsequent tool calls.
+      handleToolExecute(toolName, parsedArgs, requestId)
     }
   })
 
@@ -378,6 +374,51 @@ function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
     console.error('WebSocket error:', err.message)
     sendToRenderer('ws-connection-change', { connected: false, error: err.message })
   })
+}
+
+async function handleToolExecute(toolName, parsedArgs, requestId) {
+  try {
+    let result
+    switch (toolName) {
+      case 'bash':
+        result = await handleBashFromWebSocket(parsedArgs)
+        break
+      case 'shell':
+        result = await handleShellFromWebSocket(parsedArgs)
+        break
+      case 'read_file':
+        result = await handleLocalReadFile(parsedArgs)
+        break
+      case 'write_file':
+        result = await handleLocalWriteFile(parsedArgs)
+        break
+      case 'edit_file':
+        result = await handleLocalEditFile(parsedArgs)
+        break
+      case 'http_request':
+        result = await handleLocalHttpRequest(parsedArgs)
+        break
+      default:
+        result = { error: `Unknown tool: ${toolName}` }
+    }
+
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      wsClient.send(JSON.stringify({
+        type: 'tool_result',
+        requestId,
+        result: JSON.stringify(result)
+      }))
+    }
+  } catch (e) {
+    console.error(`Tool ${toolName} execution failed:`, e)
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+      wsClient.send(JSON.stringify({
+        type: 'tool_error',
+        requestId,
+        error: e.message
+      }))
+    }
+  }
 }
 
 async function handleBashFromWebSocket(args) {

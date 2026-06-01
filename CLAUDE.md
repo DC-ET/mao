@@ -26,6 +26,16 @@ cd desktop && npm install && npm run dev
 cd desktop && npm run dev:electron
 ```
 
+## 本地日志文件路径
+> 可用于排查bug
+```
+# 桌面端日志文件路径
+/data/logs/agent-workbench-mimo/desktop.out
+
+# 后端日志文件路径
+/data/logs/agent-workbench-mimo/backend.out
+```
+
 ## 后端模块 (backend/src/main/java/com/agentworkbench/)
 
 | 模块 | 说明 |

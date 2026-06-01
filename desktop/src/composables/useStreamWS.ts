@@ -31,6 +31,24 @@ const pendingCallbacks = new Map<string, {
 export function useStreamWS() {
   const sessionStore = useSessionStore()
 
+  // Listen for skill sync completion from main process
+  if (typeof window !== 'undefined' && (window as any).electronAPI) {
+    ;(window as any).electronAPI.onSkillSyncComplete?.((data: { sessionId: number; success: boolean; error?: string }) => {
+      console.log('[skill-sync] complete:', data)
+      if (ws?.readyState === WebSocket.OPEN) {
+        console.log('[skill-sync] sending skill_sync_done')
+        ws.send(JSON.stringify({
+          type: 'skill_sync_done',
+          sessionId: data.sessionId,
+          success: data.success,
+          error: data.error
+        }))
+      } else {
+        console.warn('[skill-sync] WS not open, cannot send skill_sync_done, readyState=' + ws?.readyState)
+      }
+    })
+  }
+
   function connect(): Promise<void> {
     if (ws && ws.readyState === WebSocket.OPEN) {
       return Promise.resolve()
@@ -134,6 +152,8 @@ export function useStreamWS() {
   function send(msg: any) {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg))
+    } else {
+      console.warn('[ws] send dropped (not open):', msg.type, 'readyState=' + ws?.readyState)
     }
   }
 
@@ -230,6 +250,19 @@ export function useStreamWS() {
         // Session was already running when we subscribed — the snapshot tells us the current phase
         // Client should fetchMessages() to get the full history
         break
+
+      case 'skill_sync_required': {
+        // Server requests skill sync — trigger main process to download & extract zip
+        const syncUrl = data?.syncUrl
+        console.log('[skill-sync] received skill_sync_required:', { sessionId, syncUrl })
+        if (sessionId && syncUrl && typeof window !== 'undefined' && (window as any).electronAPI) {
+          const token = localStorage.getItem('token') || ''
+          ;(window as any).electronAPI.skillSync?.(Number(sessionId), syncUrl, token)
+        } else {
+          console.warn('[skill-sync] cannot sync:', { sessionId, syncUrl, hasElectronAPI: !!(window as any).electronAPI })
+        }
+        break
+      }
 
       case 'error': {
         if (sessionId) {

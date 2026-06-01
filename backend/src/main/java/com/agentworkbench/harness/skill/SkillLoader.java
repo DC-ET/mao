@@ -86,6 +86,33 @@ public class SkillLoader {
         return loadSkills().containsKey(name);
     }
 
+    /**
+     * Get the folder path for a specific skill.
+     * Returns null if the skill does not exist.
+     */
+    public Path getSkillFolder(String name) {
+        SkillDocument doc = loadSkills().get(name);
+        if (doc == null || doc.getFolderPath() == null) {
+            return null;
+        }
+        return Paths.get(doc.getFolderPath());
+    }
+
+    /**
+     * Get the absolute path of the skills root directory.
+     */
+    public Path getSkillsDir() {
+        return Paths.get(skillsDir).toAbsolutePath().normalize();
+    }
+
+    /**
+     * Invalidate cache so next request triggers a rescan.
+     */
+    public void invalidateCache() {
+        cache.clear();
+        cacheTimestamp = 0;
+    }
+
     private Map<String, SkillDocument> loadSkills() {
         if (!isCacheExpired() && !cache.isEmpty()) {
             return cache;

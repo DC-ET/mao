@@ -1,5 +1,6 @@
 package com.agentworkbench.harness.local;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
@@ -18,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class LocalToolSessionRegistry {
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private final ConcurrentHashMap<Long, LocalToolConnection> connections = new ConcurrentHashMap<>();
 
     public void register(Long sessionId, Long userId, WebSocketSession wsSession) {
@@ -55,12 +57,18 @@ public class LocalToolSessionRegistry {
         CompletableFuture<String> future = new CompletableFuture<>();
         conn.pendingRequests.put(requestId, future);
 
-        String escapedWorkspace = workspace != null ? workspace.replace("\\", "\\\\").replace("\"", "\\\"") : "";
-        String message = String.format(
-                "{\"type\":\"tool_execute\",\"requestId\":\"%s\",\"toolName\":\"%s\",\"arguments\":\"%s\",\"sessionId\":%d,\"workspace\":\"%s\"}",
-                requestId, toolName, arguments.replace("\"", "\\\""), sessionId, escapedWorkspace);
-
+        // Use ObjectMapper for proper JSON serialization — manual string escaping
+        // breaks when arguments contain backslashes, newlines, or other special chars
         try {
+            String message = objectMapper.writeValueAsString(Map.of(
+                    "type", "tool_execute",
+                    "requestId", requestId,
+                    "toolName", toolName,
+                    "arguments", arguments != null ? arguments : "{}",
+                    "sessionId", sessionId,
+                    "workspace", workspace != null ? workspace : ""
+            ));
+
             synchronized (conn.wsSession) {
                 conn.wsSession.sendMessage(new org.springframework.web.socket.TextMessage(message));
             }
