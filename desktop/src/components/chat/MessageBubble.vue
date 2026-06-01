@@ -1,9 +1,8 @@
 <template>
   <div :class="['message-bubble', role, { 'tool-only': isToolOnly }]">
     <div class="message-content">
-      <!-- Agent消息顶部耗时显示 -->
-      <div v-if="role === 'assistant' && message.durationMs" class="message-duration">
-        {{ formatDuration(message.durationMs) }}
+      <div v-if="showTime" class="message-time-top">
+        <span class="message-time">{{ message.createdAt }}</span>
       </div>
 
       <div v-if="role === 'user'" class="message-text user-text">
@@ -47,9 +46,8 @@
           {{ file.originalName || file.name }}
         </el-tag>
       </div>
-      <div v-if="showTime" class="message-footer">
-        <span class="message-time">{{ message.createdAt }}</span>
-        <button v-if="message.content" class="copy-btn" :class="{ copied }" @click="copyMessage">
+      <div v-if="message.content && showCopy" class="message-footer">
+        <button class="copy-btn" :class="{ copied }" @click="copyMessage">
           <el-icon :size="12"><CopyDocument /></el-icon>
           <span v-if="copied">已复制</span>
         </button>
@@ -71,7 +69,9 @@ import {
 } from '../../composables/useChat'
 import { buildSegmentsFromContentAndTools } from '../../utils/chatMessage'
 
-const props = defineProps<{ message: ChatMessage; showTime?: boolean }>()
+const props = withDefaults(defineProps<{ message: ChatMessage; showTime?: boolean; showCopy?: boolean }>(), {
+  showCopy: true
+})
 
 const role = computed(() => normalizeMessageRole(props.message.role))
 
@@ -114,17 +114,6 @@ function getToolCall(callId: string): ToolCall | undefined {
 const copied = ref(false)
 let copyTimer: ReturnType<typeof setTimeout> | null = null
 
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return ''
-  const seconds = Math.floor(ms / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainSeconds = seconds % 60
-  if (minutes < 60) return `${minutes}m ${remainSeconds}s`
-  const hours = Math.floor(minutes / 60)
-  return `${hours}h ${minutes % 60}m`
-}
-
 async function copyMessage() {
   const text = props.message.content?.trim()
   if (!text) return
@@ -141,20 +130,10 @@ async function copyMessage() {
 .message-bubble {
   display: flex;
   gap: 12px;
-  margin-bottom: 20px;
 }
 
 .message-bubble.user {
   flex-direction: row-reverse;
-}
-
-/* Reduce margin between consecutive tool-only assistant messages */
-.message-bubble:has(+ .message-bubble.tool-only) {
-  margin-bottom: 2px;
-}
-
-.message-bubble.tool-only:has(+ .message-bubble.tool-only) {
-  margin-bottom: 2px;
 }
 
 .message-content {
@@ -166,8 +145,17 @@ async function copyMessage() {
   text-align: right;
 }
 
+.message-time-top {
+  margin-bottom: 4px;
+}
+
+.message-time {
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
+  letter-spacing: -0.12px;
+}
+
 .message-text {
-  padding: 10px 14px;
   border-radius: var(--aw-radius-lg);
   line-height: 2;
   letter-spacing: -0.374px;
@@ -252,7 +240,7 @@ async function copyMessage() {
 .markdown-body :deep(.hljs) {
   padding: 12px;
   background: var(--aw-surface-code);
-  color: #d4d4d4;
+  color: var(--aw-text-code);
   overflow-x: auto;
 }
 
@@ -322,16 +310,6 @@ async function copyMessage() {
   margin-top: 0;
 }
 
-.message-duration {
-  font-size: var(--aw-text-fine);
-  color: var(--aw-ink-muted-48);
-  background: var(--aw-canvas-parchment);
-  padding: 4px 8px;
-  border-radius: var(--aw-radius-xs);
-  margin-bottom: 6px;
-  display: inline-block;
-}
-
 .file-attachments {
   display: flex;
   flex-wrap: wrap;
@@ -351,18 +329,11 @@ async function copyMessage() {
 .message-footer {
   display: flex;
   align-items: center;
-  gap: 8px;
   margin-top: 4px;
 }
 
 .message-bubble.user .message-footer {
-  flex-direction: row-reverse;
-}
-
-.message-time {
-  font-size: var(--aw-text-fine);
-  color: var(--aw-ink-muted-48);
-  letter-spacing: -0.12px;
+  justify-content: flex-end;
 }
 
 .copy-btn {

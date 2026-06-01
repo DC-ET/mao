@@ -37,12 +37,12 @@
           <input type="file" multiple @change="handleFileSelect" style="display: none" />
           <el-icon :size="16"><Plus /></el-icon>
         </label>
-        <div class="workspace-indicator" :class="{ 'has-workspace': !!workspace }">
+        <div class="workspace-indicator" :class="{ 'has-workspace': !!workspace }" @click="openWorkspace">
+          <span v-if="executionMode === 'LOCAL'" class="mode-label-inline">本地</span>
           <el-icon :size="14">
             <WarningFilled v-if="!workspace" />
             <FolderOpened v-else />
           </el-icon>
-          <span v-if="executionMode === 'LOCAL'" class="mode-label-inline">本地</span>
           <span>{{ dirName || 'No workspace' }}</span>
         </div>
       </div>
@@ -135,6 +135,16 @@ function handleSend() {
   inputText.value = ''
   pendingFiles.value = []
   nextTick(autoResize)
+}
+
+function openWorkspace() {
+  if (!props.workspace) return
+  const api = (window as any).electronAPI
+  if (api?.openFolder) {
+    api.openFolder(props.workspace)
+  } else {
+    window.open(`file://${props.workspace}`, '_blank')
+  }
 }
 
 function handleStop() {
@@ -286,6 +296,7 @@ onMounted(autoResize)
   cursor: pointer;
   transition: color 0.15s;
 }
+
 
 .workspace-indicator.has-workspace {
   color: var(--aw-ink-muted-80);

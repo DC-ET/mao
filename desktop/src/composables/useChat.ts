@@ -145,9 +145,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         sessionId.value = sessionData.id
 
         if (text) {
-          sessionStore.updateSession(sessionData.id, {
-            title: text.length > 50 ? text.substring(0, 50) : text
-          })
+          const title = text.length > 50 ? text.substring(0, 50) : text
+          sessionStore.updateSession(sessionData.id, { title })
+          api.patch(`/sessions/${sessionData.id}`, { title }).catch(() => {})
         }
       }
 
@@ -227,11 +227,18 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     }
   })
 
+  function clearPendingApprovals() {
+    for (const item of pendingBashApprovals.value) {
+      if (item.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
+    }
+    pendingBashApprovals.value = []
+  }
+
   function newSession() {
     if (sessionId.value) {
       unsubscribe(sessionId.value)
     }
-    pendingBashApprovals.value = []
+    clearPendingApprovals()
     sending.value = false
     sessionId.value = null
     workspace.value = ''
@@ -270,7 +277,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if (sessionId.value) {
       unsubscribe(sessionId.value)
     }
-    pendingBashApprovals.value = []
+    clearPendingApprovals()
   }
 
   return {

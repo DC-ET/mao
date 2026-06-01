@@ -80,7 +80,8 @@ async function handleCommand(command: string) {
   justify-content: space-between;
   height: var(--aw-nav-height);
   padding: 0 16px;
-  background: var(--aw-surface-black);
+  background: var(--aw-nav-bg);
+  border-bottom: 1px solid var(--aw-divider-soft);
   flex-shrink: 0;
   -webkit-app-region: drag;
 }
@@ -116,7 +117,7 @@ async function handleCommand(command: string) {
   font-family: var(--aw-font-display);
   font-size: var(--aw-text-fine);
   font-weight: 400;
-  color: var(--aw-body-on-dark);
+  color: var(--aw-nav-text);
   letter-spacing: -0.12px;
 }
 
@@ -129,7 +130,7 @@ async function handleCommand(command: string) {
 .nav-link {
   font-size: var(--aw-text-fine);
   font-weight: 400;
-  color: var(--aw-body-muted);
+  color: var(--aw-nav-text-muted);
   letter-spacing: -0.12px;
   padding: 4px 10px;
   border-radius: var(--aw-radius-xs);
@@ -139,13 +140,17 @@ async function handleCommand(command: string) {
 }
 
 .nav-link:hover {
-  color: var(--aw-body-on-dark);
+  color: var(--aw-nav-text);
   text-decoration: none;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] .nav-link:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
 .nav-link.active {
-  color: var(--aw-body-on-dark);
+  color: var(--aw-nav-text);
 }
 
 .nav-right {
@@ -163,10 +168,14 @@ async function handleCommand(command: string) {
   padding: 4px 6px;
   border-radius: var(--aw-radius-xs);
   transition: background 0.15s;
-  color: var(--aw-body-muted);
+  color: var(--aw-nav-text-muted);
 }
 
 .nav-user:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] .nav-user:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
@@ -183,12 +192,16 @@ async function handleCommand(command: string) {
   height: 28px;
   border-radius: var(--aw-radius-xs);
   cursor: pointer;
-  color: var(--aw-body-muted);
+  color: var(--aw-nav-text-muted);
   transition: color 0.15s, background 0.15s;
 }
 
 .theme-toggle:hover {
-  color: var(--aw-body-on-dark);
+  color: var(--aw-nav-text);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] .theme-toggle:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 </style>

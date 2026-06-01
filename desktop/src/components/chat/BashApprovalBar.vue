@@ -87,7 +87,7 @@ defineEmits<{
 .command-preview code {
   font-family: var(--aw-font-mono);
   font-size: var(--aw-text-caption);
-  color: #d4d4d4;
+  color: var(--aw-text-code);
   background: none;
   padding: 0;
   white-space: pre-wrap;
