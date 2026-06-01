@@ -114,6 +114,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             case "send_message" -> handleSendMessage(userId, root);
             case "cancel" -> handleCancel(userId, root);
             case "skill_sync_done" -> handleSkillSyncDone(userId, root);
+            case "tool_result" -> handleToolResult(userId, root);
+            case "tool_error" -> handleToolError(userId, root);
             case "ping" -> registry.send(userId, WsEvent.of("pong", null, Map.of()));
             default -> log.debug("Unknown WS message type '{}' from userId={}", type, userId);
         }
@@ -121,13 +123,21 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        Long userId = registry.getUserId(session);
         registry.unregister(session);
+        if (userId != null) {
+            localToolSessionRegistry.failAllForUser(userId);
+        }
     }
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         log.warn("WS transport error for session={}: {}", session.getId(), exception.getMessage());
+        Long userId = registry.getUserId(session);
         registry.unregister(session);
+        if (userId != null) {
+            localToolSessionRegistry.failAllForUser(userId);
+        }
     }
 
     private void handleSubscribe(Long userId, JsonNode root) {
@@ -179,11 +189,14 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             return;
         }
 
-        // For LOCAL mode, verify desktop client is connected
-        if ("LOCAL".equals(session.getExecutionMode()) && !localToolSessionRegistry.isConnected(sessionId)) {
-            registry.send(userId, WsEvent.of("error", sessionId,
-                    Map.of("message", "Local client is not connected. Please start the desktop app and connect to this session.")));
-            return;
+        // For LOCAL mode, register userId and verify desktop client is connected
+        if ("LOCAL".equals(session.getExecutionMode())) {
+            localToolSessionRegistry.setUserForSession(sessionId, userId);
+            if (!localToolSessionRegistry.isConnected(sessionId)) {
+                registry.send(userId, WsEvent.of("error", sessionId,
+                        Map.of("message", "Local client is not connected. Please ensure the desktop app is running.")));
+                return;
+            }
         }
 
         // Save user message to DB
@@ -269,6 +282,24 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         });
     }
 
+    private void handleToolResult(Long userId, JsonNode root) {
+        Long sessionId = getLong(root, "sessionId");
+        String requestId = root.has("requestId") ? root.get("requestId").asText() : null;
+        String result = root.has("result") ? root.get("result").toString() : "{}";
+        if (sessionId != null && requestId != null) {
+            localToolSessionRegistry.completeToolRequest(sessionId, requestId, result);
+        }
+    }
+
+    private void handleToolError(Long userId, JsonNode root) {
+        Long sessionId = getLong(root, "sessionId");
+        String requestId = root.has("requestId") ? root.get("requestId").asText() : null;
+        String error = root.has("error") ? root.get("error").asText() : "Unknown error";
+        if (sessionId != null && requestId != null) {
+            localToolSessionRegistry.completeToolRequestError(sessionId, requestId, error);
+        }
+    }
+
     private void handleCancel(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
@@ -305,12 +336,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private boolean syncSkillsToClient(Long userId, Long sessionId, Session session, Agent agent) {
         String syncUrl = "/v1/skills/sync-package?sessionId=" + sessionId;
         List<String> removed = skillSyncService.getRemovedSkillNames(session.getAgentId(), session.getWorkspace());
-        log.info("Syncing skills to client for session={}, userId={}, syncUrl={}, removed={}", sessionId, userId, syncUrl, removed);
+        log.info("Syncing skills to client for session={}, userId={}, syncUrl={}, workspace={}, removed={}", sessionId, userId, syncUrl, session.getWorkspace(), removed);
 
         CompletableFuture<Void> syncFuture = new CompletableFuture<>();
         pendingSkillSyncs.put(sessionId, syncFuture);
         registry.send(userId, WsEvent.of("skill_sync_required", sessionId,
-                Map.of("syncUrl", syncUrl, "removed", removed)));
+                Map.of("syncUrl", syncUrl, "removed", removed, "workspace", session.getWorkspace() != null ? session.getWorkspace() : "")));
         log.info("Sent skill_sync_required to userId={}, sessionId={}", userId, sessionId);
 
         try {

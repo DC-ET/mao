@@ -29,12 +29,14 @@
                 </el-icon>
                 {{ group.label }}
               </div>
-              <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn" @click.stop="openGroupFolder(group)" title="在文件浏览器中打开">
-                <el-icon :size="12"><FolderOpened /></el-icon>
-              </button>
-              <button class="group-add-btn" @click.stop="onGroupNewTask(group)" title="在该分组新建任务">
-                <el-icon :size="12"><Plus /></el-icon>
-              </button>
+              <div class="group-header-actions">
+                <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn" @click.stop="openGroupFolder(group)" title="在文件浏览器中打开">
+                  <el-icon :size="12"><FolderOpened /></el-icon>
+                </button>
+                <button class="group-add-btn" @click.stop="onGroupNewTask(group)" title="在该分组新建任务">
+                  <el-icon :size="12"><Plus /></el-icon>
+                </button>
+              </div>
             </div>
             <template v-if="!isGroupCollapsed(group.key)">
             <div
@@ -50,6 +52,11 @@
             >
               <div class="session-item-main">
                 <span class="session-phase-dot" :class="phaseClass(session.phase)"></span>
+                <span
+                  v-if="hasPendingApproval(session.id)"
+                  class="session-approval-dot"
+                  title="有待审批的命令"
+                ></span>
                 <input
                   v-if="editingSessionId === session.id"
                   v-model="editingTitle"
@@ -370,6 +377,10 @@ function isGroupCollapsed(key: string): boolean {
   return collapsedGroups.value.has(key)
 }
 
+function hasPendingApproval(sessionId: string): boolean {
+  return (sessionStore.sessionPendingApprovals?.get(sessionId) ?? 0) > 0
+}
+
 function toggleGroup(key: string) {
   if (collapsedGroups.value.has(key)) {
     collapsedGroups.value.delete(key)
@@ -488,6 +499,12 @@ function toggleGroup(key: string) {
   gap: 4px;
 }
 
+.group-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .group-add-btn {
   display: flex;
   align-items: center;
@@ -577,6 +594,20 @@ function toggleGroup(key: string) {
 .session-phase-dot.completed { background: var(--aw-success); }
 .session-phase-dot.failed { background: var(--aw-danger); }
 .session-phase-dot.idle { background: var(--aw-hairline); }
+
+.session-approval-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  flex-shrink: 0;
+  animation: pulse-approval 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-approval {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 
 .session-title {
   font-size: var(--aw-text-caption);

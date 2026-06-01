@@ -83,7 +83,9 @@ public class StreamingWsRegistry {
         for (WebSocketSession session : sessions) {
             if (session.isOpen()) {
                 try {
-                    session.sendMessage(message);
+                    synchronized (session) {
+                        session.sendMessage(message);
+                    }
                 } catch (IOException e) {
                     log.warn("Failed to send WS message to userId={}, wsSessionId={}: {}",
                             userId, session.getId(), e.getMessage());
@@ -103,7 +105,9 @@ public class StreamingWsRegistry {
         for (WebSocketSession session : sessions) {
             if (session.isOpen()) {
                 try {
-                    session.sendMessage(message);
+                    synchronized (session) {
+                        session.sendMessage(message);
+                    }
                 } catch (IOException e) {
                     log.warn("Failed to send raw WS message to userId={}: {}", userId, e.getMessage());
                 }

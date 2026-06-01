@@ -14,16 +14,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath),
 
-  // Local tool execution - WebSocket connection
-  connectLocalSession: (sessionId, token, backendUrl) =>
-    ipcRenderer.invoke('ws-connect', { sessionId, token, backendUrl }),
-  disconnectLocalSession: () => ipcRenderer.invoke('ws-disconnect'),
-  onWsConnectionChange: (callback) => {
-    ipcRenderer.on('ws-connection-change', (event, data) => callback(data))
-  },
-  removeWsConnectionChangeListener: () => {
-    ipcRenderer.removeAllListeners('ws-connection-change')
-  },
+  // Tool execution via Streaming WS (called by renderer when server sends tool_execute)
+  toolExecute: (toolName, args, requestId, workspace, sessionId) =>
+    ipcRenderer.invoke('tool-execute', { toolName, args, requestId, workspace, sessionId }),
 
   // Local tool execution - direct IPC (for renderer-initiated calls)
   localExecuteBash: (args) => ipcRenderer.invoke('local-execute-bash', args),
@@ -49,8 +42,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('bash-approval-response', { requestId, approved }),
 
   // Skill sync — renderer triggers, main process downloads & extracts zip
-  skillSync: (sessionId, syncUrl, token) =>
-    ipcRenderer.invoke('skill-sync', { sessionId, syncUrl, token }),
+  skillSync: (sessionId, syncUrl, token, workspace) =>
+    ipcRenderer.invoke('skill-sync', { sessionId, syncUrl, token, workspace }),
   onSkillSyncComplete: (callback) => {
     ipcRenderer.on('skill-sync-complete', (event, data) => callback(data))
   },

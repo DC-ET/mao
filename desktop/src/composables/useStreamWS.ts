@@ -254,12 +254,62 @@ export function useStreamWS() {
       case 'skill_sync_required': {
         // Server requests skill sync — trigger main process to download & extract zip
         const syncUrl = data?.syncUrl
-        console.log('[skill-sync] received skill_sync_required:', { sessionId, syncUrl })
+        const workspace = data?.workspace
+        console.log('[skill-sync] received skill_sync_required:', { sessionId, syncUrl, workspace })
         if (sessionId && syncUrl && typeof window !== 'undefined' && (window as any).electronAPI) {
           const token = localStorage.getItem('token') || ''
-          ;(window as any).electronAPI.skillSync?.(Number(sessionId), syncUrl, token)
+          ;(window as any).electronAPI.skillSync?.(Number(sessionId), syncUrl, token, workspace || '')
         } else {
           console.warn('[skill-sync] cannot sync:', { sessionId, syncUrl, hasElectronAPI: !!(window as any).electronAPI })
+        }
+        break
+      }
+
+      case 'tool_execute': {
+        if (!sessionId || !data) break
+        const { requestId, toolName, arguments: toolArgs, workspace } = data
+        if (typeof window !== 'undefined' && (window as any).electronAPI?.toolExecute) {
+          ;(window as any).electronAPI
+            .toolExecute(toolName, toolArgs, requestId, workspace, Number(sessionId))
+            .then((response: { requestId: string; result: string | null; error: string | null }) => {
+              if (ws?.readyState === WebSocket.OPEN) {
+                if (response.error) {
+                  ws.send(JSON.stringify({
+                    type: 'tool_error',
+                    sessionId: Number(sessionId),
+                    requestId: response.requestId,
+                    error: response.error
+                  }))
+                } else {
+                  ws.send(JSON.stringify({
+                    type: 'tool_result',
+                    sessionId: Number(sessionId),
+                    requestId: response.requestId,
+                    result: response.result
+                  }))
+                }
+              }
+            })
+            .catch((err: Error) => {
+              if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                  type: 'tool_error',
+                  sessionId: Number(sessionId),
+                  requestId,
+                  error: err.message || 'IPC call failed'
+                }))
+              }
+            })
+        } else {
+          // Not in Electron — send error back
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'tool_error',
+              sessionId: Number(sessionId),
+              requestId,
+              error: 'Local tool execution not available (not running in Electron)'
+            }))
+          }
         }
         break
       }
