@@ -19,6 +19,7 @@ import type { FileAttachment } from '../types/chat'
 export interface BashApprovalItem {
   requestId: string
   command: string
+  sessionId?: string
 }
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
@@ -28,7 +29,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const sending = ref(false)
   const cancelling = ref(false)
   const sessionId = ref<string | null>(null)
-  const wsConnected = ref(false)
   const workspace = ref('')
   const agentName = ref('Agent')
   const startedAt = ref<string | null>(null)
@@ -49,16 +49,23 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if (!isElectron || bashApprovalListenerSetup) return
     bashApprovalListenerSetup = true
 
-    ;(window as any).electronAPI.onBashApprovalRequest((data: { requestId: string; command: string }) => {
+    ;(window as any).electronAPI.onBashApprovalRequest((data: { requestId: string; command: string; sessionId?: number }) => {
+      const sid = data.sessionId != null ? String(data.sessionId) : undefined
       if (!pendingBashApprovals.value.some(a => a.requestId === data.requestId)) {
-        pendingBashApprovals.value.push({ requestId: data.requestId, command: data.command })
+        pendingBashApprovals.value.push({ requestId: data.requestId, command: data.command, sessionId: sid })
+        if (sid) sessionStore.incrementPendingApproval(sid)
       }
     })
 
     ;(window as any).electronAPI.onBashApprovalDismiss((data: { requestId: string }) => {
+      const item = pendingBashApprovals.value.find(a => a.requestId === data.requestId)
+      if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
       pendingBashApprovals.value = pendingBashApprovals.value.filter(a => a.requestId !== data.requestId)
     })
   }
+
+  // Register bash approval listener globally (once per app lifecycle)
+  setupBashApprovalListener()
 
   async function fetchMessages() {
     if (!sessionId.value) return
@@ -101,44 +108,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     return results
   }
 
-  let explicitDisconnect = false
-
-  async function connectLocalWebSocket(sessionIdVal: string, token: string): Promise<void> {
-    if (!isElectron) throw new Error('Not running in Electron')
-
-    const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api'
-    const wsBase = apiBase.replace(/^http/, 'ws').replace(/\/api$/, '') + '/api'
-
-    ;(window as any).electronAPI.removeWsConnectionChangeListener()
-
-    return new Promise((resolve, reject) => {
-      let resolved = false
-      const timeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true
-          reject(new Error('WebSocket connection timeout'))
-        }
-      }, 10000)
-
-      ;(window as any).electronAPI.onWsConnectionChange((data: any) => {
-        wsConnected.value = data.connected
-        if (data.workspace) workspace.value = data.workspace
-        if (data.connected && !resolved) {
-          resolved = true
-          clearTimeout(timeout)
-          resolve()
-        }
-        if (!data.connected && !explicitDisconnect) {
-          ElMessage.warning('本地执行连接已断开，正在重连...')
-        }
-      })
-
-      setupBashApprovalListener()
-      explicitDisconnect = false
-      ;(window as any).electronAPI.connectLocalSession(sessionIdVal, token, wsBase)
-    })
-  }
-
   async function sendMessage(text: string, files?: File[]) {
     if ((!text && (!files || files.length === 0)) || sending.value) return
 
@@ -179,18 +148,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
           sessionStore.updateSession(sessionData.id, {
             title: text.length > 50 ? text.substring(0, 50) : text
           })
-        }
-
-        // Connect WebSocket for LOCAL mode
-        if (executionMode.value === 'LOCAL') {
-          const token = localStorage.getItem('token') || ''
-          try {
-            await connectLocalWebSocket(sessionData.id, token)
-          } catch (e: any) {
-            ElMessage.error('本地客户端连接失败: ' + e.message)
-            sending.value = false
-            return
-          }
         }
       }
 
@@ -274,14 +231,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if (sessionId.value) {
       unsubscribe(sessionId.value)
     }
-    if (executionMode.value === 'LOCAL' && isElectron) {
-      explicitDisconnect = true
-      ;(window as any).electronAPI.disconnectLocalSession()
-      ;(window as any).electronAPI.removeWsConnectionChangeListener()
-      ;(window as any).electronAPI.removeBashApprovalRequestListener?.()
-      ;(window as any).electronAPI.removeBashApprovalDismissListener?.()
-      bashApprovalListenerSetup = false
-    }
     pendingBashApprovals.value = []
     sending.value = false
     sessionId.value = null
@@ -306,18 +255,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
     fetchMessages()
     fetchTodos()
-
-    // Reconnect WebSocket for LOCAL mode
-    if (mode === 'LOCAL' && isElectron) {
-      setupBashApprovalListener()
-      const token = localStorage.getItem('token') || ''
-      connectLocalWebSocket(sessionIdVal, token).catch(() => {
-        ElMessage.warning('本地客户端连接失败，请检查桌面应用')
-      })
-    }
   }
 
   async function confirmBash(requestId: string, approved: boolean) {
+    const item = pendingBashApprovals.value.find(a => a.requestId === requestId)
+    if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
     pendingBashApprovals.value = pendingBashApprovals.value.filter(a => a.requestId !== requestId)
     if (requestId && isElectron) {
       await (window as any).electronAPI.respondBashApproval(requestId, approved)
@@ -328,14 +270,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if (sessionId.value) {
       unsubscribe(sessionId.value)
     }
-    if (executionMode.value === 'LOCAL' && isElectron) {
-      explicitDisconnect = true
-      ;(window as any).electronAPI.disconnectLocalSession()
-      ;(window as any).electronAPI.removeWsConnectionChangeListener()
-      ;(window as any).electronAPI.removeBashApprovalRequestListener?.()
-      ;(window as any).electronAPI.removeBashApprovalDismissListener?.()
-      bashApprovalListenerSetup = false
-    }
     pendingBashApprovals.value = []
   }
 
@@ -344,7 +278,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     sending,
     cancelling,
     sessionId,
-    wsConnected,
     workspace,
     agentName,
     pendingBashApprovals,

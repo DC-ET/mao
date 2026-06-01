@@ -46,6 +46,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessionActivities = ref<Map<string, any[]>>(new Map())
   const sessionContextWindow = ref<Map<string, ContextWindowInfo>>(new Map())
   const sessionCompacting = ref<Map<string, boolean>>(new Map())
+  const sessionPendingApprovals = ref<Map<string, number>>(new Map())
 
   const activeSession = computed(() =>
     sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
@@ -278,6 +279,24 @@ export const useSessionStore = defineStore('session', () => {
     sessionCompacting.value.set(String(sessionId), compacting)
   }
 
+  // --- Pending approval tracking ---
+
+  function incrementPendingApproval(sessionId: string) {
+    const sid = String(sessionId)
+    const current = sessionPendingApprovals.value.get(sid) ?? 0
+    sessionPendingApprovals.value.set(sid, current + 1)
+  }
+
+  function decrementPendingApproval(sessionId: string) {
+    const sid = String(sessionId)
+    const current = sessionPendingApprovals.value.get(sid) ?? 0
+    if (current > 1) {
+      sessionPendingApprovals.value.set(sid, current - 1)
+    } else {
+      sessionPendingApprovals.value.delete(sid)
+    }
+  }
+
   return {
     sessions,
     activeSessionId,
@@ -314,6 +333,10 @@ export const useSessionStore = defineStore('session', () => {
     setContextWindow,
     // Compaction
     activeCompacting,
-    setCompacting
+    setCompacting,
+    // Pending approvals
+    sessionPendingApprovals,
+    incrementPendingApproval,
+    decrementPendingApproval
   }
 })

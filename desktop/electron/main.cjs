@@ -3,17 +3,9 @@ const { join } = require('path')
 const { exec } = require('child_process')
 const fs = require('fs')
 const path = require('path')
-const WebSocket = require('ws')
 
 let mainWindow = null
-let wsClient = null
-let wsReconnectTimer = null
-let wsPingInterval = null
-let wsReconnectDelay = 1000
-let wsExplicitDisconnect = false
 let currentWorkspace = ''
-const WS_MAX_RECONNECT_DELAY = 30000
-const WS_PING_INTERVAL_MS = 10000
 /** @type {Map<string, (approved: boolean) => void>} */
 const pendingBashApprovals = new Map()
 
@@ -23,7 +15,7 @@ function sendToRenderer(channel, data) {
   }
 }
 
-function requestBashApproval(command) {
+function requestBashApproval(command, sessionId) {
   return new Promise((resolve) => {
     const requestId = `bash_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 
@@ -32,7 +24,7 @@ function requestBashApproval(command) {
       resolve(approved)
     })
 
-    sendToRenderer('bash-approval-request', { requestId, command })
+    sendToRenderer('bash-approval-request', { requestId, command, sessionId })
   })
 }
 
@@ -51,27 +43,40 @@ function getApiBaseUrl() {
 
 // ========== Skill sync IPC handler ==========
 
-ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token }) => {
-  console.log('[skill-sync] IPC handler called:', { sessionId, syncUrl })
+ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, workspace }) => {
+  const effectiveWorkspace = workspace || currentWorkspace
+  console.log('[skill-sync] IPC handler called:', { sessionId, syncUrl, workspace, currentWorkspace, effectiveWorkspace })
+  if (!effectiveWorkspace) {
+    const err = 'No workspace configured. Please set a workspace for this session.'
+    console.error('[skill-sync]', err)
+    sendToRenderer('skill-sync-complete', { sessionId, success: false, error: err })
+    return { success: false, error: err }
+  }
   try {
     const AdmZip = require('adm-zip')
-    const skillsDir = path.join(currentWorkspace, '.workbench', 'skills')
+    const skillsDir = path.join(effectiveWorkspace, '.workbench', 'skills')
+    console.log('[skill-sync] resolved skillsDir:', skillsDir, 'isAbsolute:', path.isAbsolute(skillsDir))
 
     // Download zip from REST endpoint
     const baseUrl = getApiBaseUrl()
+    const fullUrl = `${baseUrl}${syncUrl}`
     const headers = token ? { 'Authorization': `Bearer ${token}` } : {}
-    const response = await fetch(`${baseUrl}${syncUrl}`, { method: 'POST', headers })
+    console.log('[skill-sync] downloading from:', fullUrl)
+    const response = await fetch(fullUrl, { method: 'POST', headers })
     if (!response.ok) {
-      throw new Error(`Skill sync download failed: ${response.status}`)
+      const body = await response.text().catch(() => '')
+      throw new Error(`Skill sync download failed: ${response.status} ${response.statusText} - ${body}`)
     }
 
     // Extract zip to .workbench/skills/
     const zipBuffer = Buffer.from(await response.arrayBuffer())
+    console.log('[skill-sync] downloaded zip size:', zipBuffer.length, 'bytes')
     fs.mkdirSync(skillsDir, { recursive: true })
     const zip = new AdmZip(zipBuffer)
+    const entries = zip.getEntries()
+    console.log('[skill-sync] zip entries:', entries.map(e => e.entryName))
     zip.extractAllTo(skillsDir, true)
-
-    console.log('Skills synced to', skillsDir)
+    console.log('[skill-sync] extracted to:', skillsDir, 'abs:', path.resolve(skillsDir))
     sendToRenderer('skill-sync-complete', { sessionId, success: true })
     return { success: true }
   } catch (e) {
@@ -270,159 +275,51 @@ ipcMain.handle('local-http-request', async (event, { url, method = 'GET', header
   }
 })
 
-// ========== WebSocket client for local tool session ==========
+// ========== Tool execution via Streaming WS ==========
 
-ipcMain.handle('ws-connect', (event, { sessionId, token, backendUrl }) => {
-  console.log('ws-connect called:', { sessionId, backendUrl })
-  wsExplicitDisconnect = false
-  if (wsClient) {
-    wsClient.close()
-    wsClient = null
+async function executeToolByName(toolName, parsedArgs, sessionId) {
+  switch (toolName) {
+    case 'bash':
+      return await handleBashFromWebSocket(parsedArgs, sessionId)
+    case 'shell':
+      return await handleShellFromWebSocket(parsedArgs, sessionId)
+    case 'read_file':
+      return await handleLocalReadFile(parsedArgs)
+    case 'write_file':
+      return await handleLocalWriteFile(parsedArgs)
+    case 'edit_file':
+      return await handleLocalEditFile(parsedArgs)
+    case 'http_request':
+      return await handleLocalHttpRequest(parsedArgs)
+    default:
+      return { error: `Unknown tool: ${toolName}` }
   }
-  clearTimeout(wsReconnectTimer)
-  clearInterval(wsPingInterval)
-  wsPingInterval = null
-
-  const wsUrl = `${backendUrl || 'ws://localhost:9080'}/ws/local-tool?sessionId=${sessionId}&token=${token}`
-  console.log('Connecting WebSocket to:', wsUrl)
-  connectWebSocket(wsUrl, sessionId, token, backendUrl)
-})
-
-ipcMain.handle('ws-disconnect', () => {
-  wsExplicitDisconnect = true
-  clearTimeout(wsReconnectTimer)
-  wsReconnectTimer = null
-  clearInterval(wsPingInterval)
-  wsPingInterval = null
-  if (wsClient) {
-    wsClient.close()
-    wsClient = null
-  }
-  sendToRenderer('ws-connection-change', { connected: false })
-})
-
-function connectWebSocket(wsUrl, sessionId, token, backendUrl) {
-  console.log('connectWebSocket: creating connection to', wsUrl)
-  wsClient = new WebSocket(wsUrl)
-
-  wsClient.on('open', () => {
-    console.log('WebSocket open for session', sessionId)
-    wsReconnectDelay = 1000 // Reset backoff
-    sendToRenderer('ws-connection-change', { connected: true, sessionId })
-
-    // Start heartbeat: send ping every 10s (server idle timeout is 90s)
-    clearInterval(wsPingInterval)
-    wsPingInterval = setInterval(() => {
-      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
-        wsClient.send(JSON.stringify({ type: 'ping' }))
-      }
-    }, WS_PING_INTERVAL_MS)
-  })
-
-  wsClient.on('message', (data) => {
-    let msg
-    try {
-      msg = JSON.parse(data.toString())
-    } catch (e) {
-      console.error('Failed to parse WS message:', e)
-      return
-    }
-
-    if (msg.type === 'connected') {
-      currentWorkspace = msg.workspace || ''
-      console.log('WebSocket connected for session', msg.sessionId, 'workspace:', currentWorkspace)
-      sendToRenderer('ws-connection-change', { connected: true, sessionId: msg.sessionId, workspace: currentWorkspace })
-      return
-    }
-
-    if (msg.type === 'pong') {
-      return
-    }
-
-    if (msg.type === 'tool_execute') {
-      const { requestId, toolName, arguments: args, workspace: ws } = msg
-      if (ws) currentWorkspace = ws
-      let parsedArgs
-      try {
-        parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
-      } catch {
-        parsedArgs = {}
-      }
-
-      // Fire-and-forget: run tool in independent async context so the message
-      // handler returns immediately and can process the next incoming message.
-      // Without this, a pending bash approval blocks all subsequent tool calls.
-      handleToolExecute(toolName, parsedArgs, requestId)
-    }
-  })
-
-  wsClient.on('close', () => {
-    clearInterval(wsPingInterval)
-    wsPingInterval = null
-    sendToRenderer('ws-connection-change', { connected: false })
-    wsClient = null
-
-    // Auto-reconnect with exponential backoff
-    if (wsExplicitDisconnect) return
-    wsReconnectTimer = setTimeout(() => {
-      wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_MAX_RECONNECT_DELAY)
-      connectWebSocket(wsUrl, sessionId, token, backendUrl)
-    }, wsReconnectDelay)
-  })
-
-  wsClient.on('error', (err) => {
-    console.error('WebSocket error:', err.message)
-    sendToRenderer('ws-connection-change', { connected: false, error: err.message })
-  })
 }
 
-async function handleToolExecute(toolName, parsedArgs, requestId) {
-  try {
-    let result
-    switch (toolName) {
-      case 'bash':
-        result = await handleBashFromWebSocket(parsedArgs)
-        break
-      case 'shell':
-        result = await handleShellFromWebSocket(parsedArgs)
-        break
-      case 'read_file':
-        result = await handleLocalReadFile(parsedArgs)
-        break
-      case 'write_file':
-        result = await handleLocalWriteFile(parsedArgs)
-        break
-      case 'edit_file':
-        result = await handleLocalEditFile(parsedArgs)
-        break
-      case 'http_request':
-        result = await handleLocalHttpRequest(parsedArgs)
-        break
-      default:
-        result = { error: `Unknown tool: ${toolName}` }
-    }
+ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, workspace, sessionId }) => {
+  if (workspace) {
+    console.log('[tool-execute] setting currentWorkspace:', workspace, '(was:', currentWorkspace, ')')
+    currentWorkspace = workspace
+  }
 
-    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
-      wsClient.send(JSON.stringify({
-        type: 'tool_result',
-        requestId,
-        result: JSON.stringify(result)
-      }))
-    }
+  let parsedArgs
+  try {
+    parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
+  } catch {
+    parsedArgs = {}
+  }
+
+  try {
+    const result = await executeToolByName(toolName, parsedArgs, sessionId)
+    return { requestId, result: JSON.stringify(result), error: null }
   } catch (e) {
     console.error(`Tool ${toolName} execution failed:`, e)
-    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
-      wsClient.send(JSON.stringify({
-        type: 'tool_error',
-        requestId,
-        error: e.message
-      }))
-    }
+    return { requestId, result: null, error: e.message }
   }
-}
+})
 
-async function handleBashFromWebSocket(args) {
-  const approved = await requestBashApproval(args.command)
+async function handleBashFromWebSocket(args, sessionId) {
+  const approved = await requestBashApproval(args.command, sessionId)
   if (!approved) {
     return { exit_code: -1, output: 'User denied command execution.' }
   }
@@ -448,7 +345,7 @@ async function handleBashFromWebSocket(args) {
   })
 }
 
-async function handleShellFromWebSocket(args) {
+async function handleShellFromWebSocket(args, sessionId) {
   const { action, command, session_id, workdir } = args
 
   if (action === 'close' || action === 'list') {
@@ -463,7 +360,7 @@ async function handleShellFromWebSocket(args) {
     return { error: `Unknown action: ${action}` }
   }
 
-  const approved = await requestBashApproval(command)
+  const approved = await requestBashApproval(command, sessionId)
   if (!approved) {
     return { exit_code: -1, output: 'User denied command execution.' }
   }
