@@ -1,8 +1,11 @@
 package com.agentworkbench.session.ws;
 
+import com.agentworkbench.agent.entity.Agent;
+import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.harness.core.AgentLoop;
 import com.agentworkbench.harness.core.HarnessService;
 import com.agentworkbench.harness.local.LocalToolSessionRegistry;
+import com.agentworkbench.harness.skill.SkillSyncService;
 import com.agentworkbench.session.activity.ActivityService;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.service.SessionService;
@@ -18,9 +21,9 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
@@ -35,10 +38,15 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final ActivityService activityService;
     private final SessionTodoMapper sessionTodoMapper;
     private final AgentLoop agentLoop;
+    private final SkillSyncService skillSyncService;
+    private final AgentMapper agentMapper;
     private final ExecutorService agentExecutor;
 
     /** sessionId → cancel flag for running AgentLoops */
     private final ConcurrentHashMap<Long, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
+
+    /** sessionId → pending skill sync future (waiting for client confirmation) */
+    private final ConcurrentHashMap<Long, CompletableFuture<Void>> pendingSkillSyncs = new ConcurrentHashMap<>();
 
     public StreamingWsHandler(StreamingWsRegistry registry,
                                HarnessService harnessService,
@@ -47,6 +55,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                ActivityService activityService,
                                SessionTodoMapper sessionTodoMapper,
                                AgentLoop agentLoop,
+                               SkillSyncService skillSyncService,
+                               AgentMapper agentMapper,
                                @Value("${app.harness.agent-thread-pool-size:20}") int poolSize,
                                @Value("${app.harness.agent-thread-pool-max:100}") int maxPoolSize,
                                @Value("${app.harness.agent-thread-pool-queue:200}") int queueCapacity) {
@@ -57,6 +67,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
         this.agentLoop = agentLoop;
+        this.skillSyncService = skillSyncService;
+        this.agentMapper = agentMapper;
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(poolSize);
         executor.setMaxPoolSize(maxPoolSize);
@@ -101,6 +113,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             case "unsubscribe" -> handleUnsubscribe(userId, root);
             case "send_message" -> handleSendMessage(userId, root);
             case "cancel" -> handleCancel(userId, root);
+            case "skill_sync_done" -> handleSkillSyncDone(userId, root);
             case "ping" -> registry.send(userId, WsEvent.of("pong", null, Map.of()));
             default -> log.debug("Unknown WS message type '{}' from userId={}", type, userId);
         }
@@ -189,11 +202,40 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         cancelFlags.put(sessionId, cancelFlag);
 
         // Submit agent execution to thread pool
+        log.info("Session {} executionMode={}, submitting to agentExecutor", sessionId, session.getExecutionMode());
         agentExecutor.submit(() -> {
             try {
                 sessionService.updatePhase(sessionId, "RUNNING");
                 registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "RUNNING")));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "RUNNING")));
+
+                // LOCAL mode: sync skills to client workspace before agent execution
+                if ("LOCAL".equals(session.getExecutionMode())) {
+                    Agent agent = agentMapper.selectById(session.getAgentId());
+                    if (agent != null) {
+                        boolean synced = syncSkillsToClient(userId, sessionId, session, agent);
+                        if (!synced) {
+                            sessionService.updatePhase(sessionId, "FAILED");
+                            registry.send(userId, WsEvent.of("error", sessionId,
+                                    Map.of("message", "Skill sync failed or timed out")));
+                            registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED")));
+                            registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
+                            return;
+                        }
+                    }
+                }
+
+                // CLOUD mode: sync skills to workspace before agent execution
+                if ("CLOUD".equals(session.getExecutionMode())) {
+                    try {
+                        Agent agent = agentMapper.selectById(session.getAgentId());
+                        if (agent != null) {
+                            skillSyncService.syncToWorkspace(agent, session.getWorkspace());
+                        }
+                    } catch (Exception e) {
+                        log.warn("Skill sync to workspace failed for session {}: {}", sessionId, e.getMessage());
+                    }
+                }
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
                         registry, activityService, sessionTodoMapper, sessionId, userId);
@@ -258,6 +300,41 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             }
         }
         return null;
+    }
+
+    private boolean syncSkillsToClient(Long userId, Long sessionId, Session session, Agent agent) {
+        String syncUrl = "/v1/skills/sync-package?sessionId=" + sessionId;
+        List<String> removed = skillSyncService.getRemovedSkillNames(session.getAgentId(), session.getWorkspace());
+        log.info("Syncing skills to client for session={}, userId={}, syncUrl={}, removed={}", sessionId, userId, syncUrl, removed);
+
+        CompletableFuture<Void> syncFuture = new CompletableFuture<>();
+        pendingSkillSyncs.put(sessionId, syncFuture);
+        registry.send(userId, WsEvent.of("skill_sync_required", sessionId,
+                Map.of("syncUrl", syncUrl, "removed", removed)));
+        log.info("Sent skill_sync_required to userId={}, sessionId={}", userId, sessionId);
+
+        try {
+            syncFuture.get(60, TimeUnit.SECONDS);
+            return true;
+        } catch (Exception e) {
+            log.warn("Skill sync timeout for session {}", sessionId);
+            return false;
+        } finally {
+            pendingSkillSyncs.remove(sessionId);
+        }
+    }
+
+    private void handleSkillSyncDone(Long userId, JsonNode root) {
+        Long sessionId = getLong(root, "sessionId");
+        log.info("Received skill_sync_done from userId={}, sessionId={}", userId, sessionId);
+        if (sessionId == null) return;
+        CompletableFuture<Void> future = pendingSkillSyncs.get(sessionId);
+        if (future != null) {
+            future.complete(null);
+            log.info("Skill sync confirmed for session {}", sessionId);
+        } else {
+            log.warn("No pending skill sync future for session={}", sessionId);
+        }
     }
 
     private Long parseUserIdFromToken(String token) {

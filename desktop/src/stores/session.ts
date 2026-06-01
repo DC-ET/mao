@@ -79,7 +79,7 @@ export const useSessionStore = defineStore('session', () => {
     if (!silent) loading.value = true
     try {
       const { data } = await api.get('/sessions')
-      const incoming: Session[] = (data || []).map((s: any) => ({ ...s, id: normalizeId(s.id) }))
+      const incoming: Session[] = (data || []).map((s: any) => ({ ...s, id: normalizeId(s.id), agentId: normalizeId(s.agentId) }))
       // Merge: preserve local updates (e.g. server-generated title) that
       // arrived after the request was fired but before it resolved.
       const serverMap = new Map(incoming.map(s => [s.id, s]))
@@ -104,7 +104,7 @@ export const useSessionStore = defineStore('session', () => {
     try {
       const { data } = await api.get(`/sessions/${id}`)
       if (data) {
-        updateSession(id, { ...data, id: normalizeId(data.id) })
+        updateSession(id, { ...data, id: normalizeId(data.id), agentId: normalizeId(data.agentId) })
       }
       return data
     } catch {
@@ -120,6 +120,7 @@ export const useSessionStore = defineStore('session', () => {
     })
     if (data) {
       data.id = normalizeId(data.id)
+      data.agentId = normalizeId(data.agentId)
       sessions.value.unshift(data)
     }
     return data

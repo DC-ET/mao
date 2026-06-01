@@ -3,11 +3,6 @@
     <TaskIndexPanel :collapsed="panelCollapsed" @toggle="panelCollapsed = !panelCollapsed" @new-task="handleNewTask" @new-task-from-group="handleNewTaskFromGroup" />
 
     <div class="task-container">
-      <WorkspaceBar
-        v-if="executionMode === 'LOCAL'"
-        :workspace="workspace"
-      />
-
       <div class="messages" ref="messagesContainer">
         <div v-if="messages.length === 0 && !sending" class="empty-state">
           <template v-if="!sessionId">
@@ -86,7 +81,7 @@ import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
-import WorkspaceBar from '../../components/chat/WorkspaceBar.vue'
+
 import MessageBubble from '../../components/chat/MessageBubble.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
 import NewTaskDialog from '../../components/task/NewTaskDialog.vue'

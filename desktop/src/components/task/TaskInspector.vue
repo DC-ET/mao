@@ -30,6 +30,14 @@
       </div>
     </div>
 
+    <div v-if="workspace" class="inspector-section">
+      <h4 class="section-title">工作目录</h4>
+      <div class="task-workspace-row">
+        <el-icon class="workspace-icon"><FolderOpened /></el-icon>
+        <span class="workspace-path">{{ workspace }}</span>
+      </div>
+    </div>
+
     <div class="inspector-section">
       <h4 class="section-title">进度</h4>
       <TodoChecklist :todos="todos" />
@@ -50,7 +58,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { ChatDotRound } from '@element-plus/icons-vue'
+import { ChatDotRound, FolderOpened } from '@element-plus/icons-vue'
 import TodoChecklist from './TodoChecklist.vue'
 import type { TodoItem } from '../../types/chat'
 import BashApprovalBar from '../chat/BashApprovalBar.vue'
@@ -308,6 +316,25 @@ function onResizeStart(e: MouseEvent) {
   gap: 8px;
   margin-bottom: 8px;
   flex-wrap: wrap;
+}
+
+.task-workspace-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.task-workspace-row .workspace-icon {
+  color: var(--aw-primary);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.task-workspace-row .workspace-path {
+  color: var(--aw-ink);
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-caption);
+  word-break: break-all;
 }
 
 .phase-badge {

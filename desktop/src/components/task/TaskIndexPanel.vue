@@ -29,6 +29,9 @@
                 </el-icon>
                 {{ group.label }}
               </div>
+              <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn" @click.stop="openGroupFolder(group)" title="在文件浏览器中打开">
+                <el-icon :size="12"><FolderOpened /></el-icon>
+              </button>
               <button class="group-add-btn" @click.stop="onGroupNewTask(group)" title="在该分组新建任务">
                 <el-icon :size="12"><Plus /></el-icon>
               </button>
@@ -120,7 +123,7 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, onUnmounted } from 'vue'
-import { Refresh, Loading, ChatDotRound, Plus, Delete, Check, Close, Cloudy, Folder, EditPen } from '@element-plus/icons-vue'
+import { Refresh, Loading, ChatDotRound, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpened, EditPen } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 
@@ -196,6 +199,13 @@ function onGroupNewTask(group: { sessions: Session[] }) {
     executionMode: last.executionMode,
     workspace: last.workspace
   })
+}
+
+function openGroupFolder(group: { key: string }) {
+  const workspace = group.key.startsWith('LOCAL:') ? group.key.substring(6) : ''
+  if (workspace && window.electronAPI?.openFolder) {
+    window.electronAPI.openFolder(workspace)
+  }
 }
 
 const groupedSessions = computed(() => {

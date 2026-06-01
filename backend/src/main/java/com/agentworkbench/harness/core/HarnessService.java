@@ -139,6 +139,8 @@ public class HarnessService {
 
         // 4. Build context
         AgentExecutionContext context = new AgentExecutionContext();
+        context.setCurrentTimestamp(java.time.ZonedDateTime.now()
+                .format(java.time.format.DateTimeFormatter.ISO_ZONED_DATE_TIME));
         context.setSessionId(sessionId);
         context.setUserId(session.getUserId());
         context.setAgentId(agent.getId());

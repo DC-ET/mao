@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeWindow: () => ipcRenderer.invoke('window-close'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
+  openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath),
 
   // Local tool execution - WebSocket connection
   connectLocalSession: (sessionId, token, backendUrl) =>
@@ -45,5 +46,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('bash-approval-dismiss')
   },
   respondBashApproval: (requestId, approved) =>
-    ipcRenderer.invoke('bash-approval-response', { requestId, approved })
+    ipcRenderer.invoke('bash-approval-response', { requestId, approved }),
+
+  // Skill sync — renderer triggers, main process downloads & extracts zip
+  skillSync: (sessionId, syncUrl, token) =>
+    ipcRenderer.invoke('skill-sync', { sessionId, syncUrl, token }),
+  onSkillSyncComplete: (callback) => {
+    ipcRenderer.on('skill-sync-complete', (event, data) => callback(data))
+  },
+  removeSkillSyncCompleteListener: () => {
+    ipcRenderer.removeAllListeners('skill-sync-complete')
+  }
 })

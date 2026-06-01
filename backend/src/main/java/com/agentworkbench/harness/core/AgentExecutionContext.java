@@ -35,6 +35,9 @@ public class AgentExecutionContext {
     // 可用 Skill 知识文档名称列表（为空则加载全部）
     private List<String> availableSkillNames = new ArrayList<>();
 
+    // 请求开始时间（单次请求内固定，保证 system prompt 前缀缓存命中）
+    private String currentTimestamp;
+
     // 会话压缩摘要（跨轮次）
     private String sessionSummary;
 

@@ -65,14 +65,21 @@ public class PromptEngine {
         sb.append("Your current working directory is: `").append(effectiveWorkspace).append("`\n");
         sb.append("All relative file paths are resolved against this directory.\n\n");
 
-        // Skill catalog — inject only name/description/path so the agent can read on demand
+        // Current time
+        if (context.getCurrentTimestamp() != null) {
+            sb.append("## Current Time\n\n");
+            sb.append("Current date and time: `").append(context.getCurrentTimestamp()).append("`\n\n");
+        }
+
+        // Skill catalog — inject name/description with workspace-relative paths
         List<String> skillNames = context.getAvailableSkillNames();
         if (skillNames != null && !skillNames.isEmpty()) {
-            String catalog = skillLoader.getCatalogWithPaths(skillNames);
+            String catalog = buildRelativeSkillCatalog(skillNames);
             if (catalog != null && !catalog.isEmpty()) {
                 sb.append("## Available Skills\n\n");
                 sb.append("The following skills are available. Each skill is a knowledge document that provides ");
                 sb.append("guidance on how to use tools effectively in specific scenarios.\n");
+                sb.append("Skills are synced to your workspace under `.workbench/skills/` directory.\n");
                 sb.append("To read a skill's full content, use the `read_file` tool with the file path listed below.\n\n");
                 sb.append(catalog);
                 sb.append("\n\n");
@@ -80,6 +87,33 @@ public class PromptEngine {
         }
 
         return sb.toString();
+    }
+
+    private String buildRelativeSkillCatalog(List<String> filterNames) {
+        List<String> names = filterNames != null && !filterNames.isEmpty()
+                ? filterNames
+                : skillLoader.getAllNames();
+        if (names.isEmpty()) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (String name : names) {
+            if (!skillLoader.hasSkill(name)) continue;
+            String description = "";
+            var doc = skillLoader.getAllDocuments().stream()
+                    .filter(d -> d.getName().equals(name))
+                    .findFirst().orElse(null);
+            if (doc != null && doc.getDescription() != null) {
+                description = doc.getDescription();
+            }
+            sb.append("- **").append(name).append("**: ");
+            sb.append(description);
+            sb.append("\n  Folder: `.workbench/skills/").append(name).append("`");
+            sb.append("\n  File: `.workbench/skills/").append(name).append("/SKILL.md`");
+            sb.append("\n");
+        }
+        return sb.toString().trim();
     }
 
     private List<ChatRequest.ToolDefinition> buildToolDefinitions(AgentExecutionContext context) {

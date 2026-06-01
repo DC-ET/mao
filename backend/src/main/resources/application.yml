@@ -102,6 +102,7 @@ app:
 
   # Agent Harness
   harness:
+    workspace-root: ${WORKSPACE_ROOT:/data/workbench/workspace}
     max-concurrent-agents: 100
     agent-thread-pool-size: 20
     agent-thread-pool-max: 100
@@ -124,7 +125,7 @@ app:
       loop-recent-tool-rounds: 5
 
     # Skills directory (external filesystem path, each subfolder is a skill)
-    skills-dir: ${SKILLS_DIR:./skills}
+    skills-dir: ${SKILLS_DIR:/data/workbench/skills}
     skills-cache-seconds: 300
 
     # Shell Session

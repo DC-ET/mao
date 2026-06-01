@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "@element-plus/icons-vue": "^2.3.2",
     "@vueuse/core": "^14.3.0",
     "axios": "^1.16.1",
