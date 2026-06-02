@@ -101,6 +101,8 @@ public class AgentLoop {
             // 2. Call LLM
             final int currentRound = round;
             final AtomicBoolean llmFailed = new AtomicBoolean(false);
+            final AtomicBoolean thinkingEnded = new AtomicBoolean(false);
+            listener.onThinkingStart();
             llmAdapter.stream(request, context.getModelConfig(), new StreamCallback() {
                 private final StringBuilder contentBuilder = new StringBuilder();
                 private final List<ChatRequest.ToolCall> toolCalls = new ArrayList<>();
@@ -114,6 +116,9 @@ public class AgentLoop {
 
                     if (delta != null) {
                         if (delta.getContent() != null) {
+                            if (thinkingEnded.compareAndSet(false, true)) {
+                                listener.onThinkingEnd();
+                            }
                             contentBuilder.append(delta.getContent());
                             listener.onContentDelta(delta.getContent());
                         }
@@ -128,6 +133,9 @@ public class AgentLoop {
 
                 @Override
                 public void onComplete(ChatUsage usage) {
+                    if (thinkingEnded.compareAndSet(false, true)) {
+                        listener.onThinkingEnd();
+                    }
                     context.addUsage(usage);
                     log.debug("LLM round {} complete: contentLength={}, toolCallCount={}, usage={}",
                             currentRound, contentBuilder.length(), toolCalls.size(), usage);

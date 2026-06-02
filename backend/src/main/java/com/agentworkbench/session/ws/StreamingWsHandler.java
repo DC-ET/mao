@@ -337,7 +337,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private void handleToolResult(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         String requestId = root.has("requestId") ? root.get("requestId").asText() : null;
-        String result = root.has("result") ? root.get("result").toString() : "{}";
+        String result = root.has("result") ? root.get("result").asText() : "{}";
         if (sessionId != null && requestId != null) {
             localToolSessionRegistry.completeToolRequest(sessionId, requestId, result);
         }
