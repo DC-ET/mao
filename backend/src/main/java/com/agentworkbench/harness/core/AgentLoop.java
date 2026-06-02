@@ -94,9 +94,7 @@ public class AgentLoop {
 
             // 1.5. Emit estimated context window before LLM call
             int estimatedTokens = contextManager.estimateRequestTokens(request);
-            int maxContextTokens = context.getModelConfig() != null && context.getModelConfig().getMaxTokens() != null
-                    ? context.getModelConfig().getMaxTokens() : 0;
-            listener.onContextWindow(estimatedTokens, 0, maxContextTokens);
+            listener.onContextWindow(estimatedTokens, 0);
 
             // 2. Call LLM
             final int currentRound = round;
@@ -142,7 +140,7 @@ public class AgentLoop {
 
                     // Emit actual prompt_tokens from LLM response
                     if (usage != null && usage.getPromptTokens() > 0) {
-                        listener.onContextWindow(estimatedTokens, usage.getPromptTokens(), maxContextTokens);
+                        listener.onContextWindow(estimatedTokens, usage.getPromptTokens());
                     }
 
                     if (!toolCalls.isEmpty()) {

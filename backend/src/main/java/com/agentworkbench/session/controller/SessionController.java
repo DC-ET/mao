@@ -242,6 +242,7 @@ public class SessionController {
         vo.setSummary(session.getSummary());
         vo.setElapsedMs(session.getElapsedMs() != null ? session.getElapsedMs() : 0);
         vo.setProjectKey(session.getProjectKey());
+        vo.setContextTokens(session.getContextTokens());
         vo.setRunning("RUNNING".equals(session.getPhase()) || "WAITING_APPROVAL".equals(session.getPhase()));
 
         // Parse steps_json
@@ -344,6 +345,7 @@ public class SessionController {
         private Long elapsedMs;
         private Object steps;
         private String projectKey;
+        private Integer contextTokens;
         private Boolean running;
     }
 

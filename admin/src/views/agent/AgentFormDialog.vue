@@ -31,21 +31,6 @@
           />
         </el-select>
       </el-form-item>
-      <el-form-item label="可见性" prop="visibility">
-        <el-select v-model="form.visibility" placeholder="请选择可见性" style="width: 100%">
-          <el-option label="私有" value="PRIVATE" />
-          <el-option label="公开" value="PUBLIC" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="图标 URL" prop="iconUrl">
-        <el-input v-model="form.iconUrl" placeholder="请输入图标 URL" />
-      </el-form-item>
-      <el-form-item label="Token 上限" prop="tokenLimit">
-        <el-input-number v-model="form.tokenLimit" :min="0" :max="1000000" :step="1000" />
-      </el-form-item>
-      <el-form-item label="最大轮次" prop="maxRounds">
-        <el-input-number v-model="form.maxRounds" :min="1" :max="100" />
-      </el-form-item>
       <el-form-item label="关联 Skills" prop="skillNames">
         <el-select
           v-model="form.skillNames"
@@ -110,10 +95,6 @@ const form = reactive({
   description: '',
   systemPrompt: '',
   modelId: null as number | null,
-  visibility: 'PRIVATE',
-  iconUrl: '',
-  tokenLimit: 4096,
-  maxRounds: 10,
   skillNames: [] as string[],
   tags: [] as string[]
 })
@@ -133,10 +114,6 @@ watch(() => props.visible, async (val) => {
       description: props.agentData.description || '',
       systemPrompt: props.agentData.systemPrompt || '',
       modelId: props.agentData.modelId || null,
-      visibility: props.agentData.visibility || 'PRIVATE',
-      iconUrl: props.agentData.iconUrl || '',
-      tokenLimit: props.agentData.tokenLimit ?? 4096,
-      maxRounds: props.agentData.maxRounds ?? 10,
       skillNames: props.agentData.skillNames || [],
       tags: props.agentData.tags || []
     })
@@ -147,10 +124,6 @@ watch(() => props.visible, async (val) => {
       description: '',
       systemPrompt: '',
       modelId: null,
-      visibility: 'PRIVATE',
-      iconUrl: '',
-      tokenLimit: 4096,
-      maxRounds: 10,
       skillNames: [],
       tags: []
     })

@@ -141,7 +141,7 @@ public class HarnessService {
         context.setAgentId(agent.getId());
         context.setSystemPrompt(agent.getSystemPrompt());
         context.setAgentName(agent.getName());
-        context.setMaxRounds(resolveMaxRounds(agent.getMaxRounds()));
+        context.setMaxRounds(resolveMaxRounds(null));
         context.setExecutionMode(session.getExecutionMode() != null ? session.getExecutionMode() : "CLOUD");
         context.setWorkspace(session.getWorkspace());
         context.setModelConfig(LlmModelConfig.builder()
@@ -151,9 +151,7 @@ public class HarnessService {
                 .baseUrl(llmModel.getBaseUrl())
                 .apiKey(llmModel.getApiKey())
                 .modelId(llmModel.getModelId())
-                .maxTokens(llmModel.getMaxTokens())
                 .contextWindowTokens(llmModel.getContextWindowTokens())
-                .temperatureMax(llmModel.getTemperatureMax() != null ? llmModel.getTemperatureMax().doubleValue() : null)
                 .build());
 
         // 5. Load message history

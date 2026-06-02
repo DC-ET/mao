@@ -13,7 +13,5 @@ public class LlmModelConfig {
     private String baseUrl;
     private String apiKey;
     private String modelId;
-    private Integer maxTokens;
     private Integer contextWindowTokens;
-    private Double temperatureMax;
 }

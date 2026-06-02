@@ -53,6 +53,8 @@ export function normalizeApiToolCall(
   }
 }
 
+const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
+
 export function normalizeToolCallsList(raw: unknown): ToolCall[] {
   if (!raw) return []
   let list: unknown[] = []
@@ -70,6 +72,11 @@ export function normalizeToolCallsList(raw: unknown): ToolCall[] {
   return list
     .filter((item): item is Record<string, unknown> => item != null && typeof item === 'object')
     .map(tc => normalizeApiToolCall(tc))
+}
+
+/** 过滤掉 task_* 工具（仅供内部 todo 管理，不展示） */
+function filterTaskTools(toolCalls: ToolCall[]): ToolCall[] {
+  return toolCalls.filter(tc => !TASK_TOOL_NAMES.has(tc.name))
 }
 
 /** 由正文 + 工具列表构建时间线（历史消息每轮一条 assistant） */
@@ -161,7 +168,11 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
       images = m.images as string[]
     }
 
-    const toolCalls = normalizeToolCallsList(m.toolCalls)
+    const toolCalls = filterTaskTools(normalizeToolCallsList(m.toolCalls))
+
+    // Skip assistant messages that are empty (e.g. task_* tool-only messages)
+    if (role === 'assistant' && !content.trim() && toolCalls.length === 0) continue
+
     const segments = buildSegmentsFromContentAndTools(content, toolCalls)
 
     result.push({

@@ -275,7 +275,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     sessionStore.setActiveSession(null)
   }
 
-  function restoreSession(sessionIdVal: string, mode: string, initialWorkspace?: string) {
+  async function restoreSession(sessionIdVal: string, mode: string, initialWorkspace?: string) {
     // Unsubscribe from previous session
     if (sessionId.value && sessionId.value !== sessionIdVal) {
       unsubscribe(sessionId.value)
@@ -286,7 +286,33 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if (initialWorkspace) workspace.value = initialWorkspace
     sessionStore.setActiveSession(sessionIdVal)
 
-    // Subscribe to new session's events
+    // Sync sending state with the session's actual phase
+    const phase = sessionStore.activeSession?.phase
+    if (phase === 'RUNNING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING') {
+      sending.value = true
+      // Register a pending callback so stopExecution() works and session_status can resolve it
+      if (!pendingCallbacks.has(sessionIdVal)) {
+        new Promise<void>((resolve, reject) => {
+          pendingCallbacks.set(sessionIdVal, { resolve, reject })
+        }).then(() => {
+          sending.value = false
+          startedAt.value = null
+        }).catch(() => {
+          sending.value = false
+          startedAt.value = null
+        })
+      }
+    } else {
+      sending.value = false
+      cancelling.value = false
+    }
+
+    // Ensure WS connection is established before subscribing
+    try {
+      await connect()
+    } catch {
+      // WS connect failed (e.g. no token) — subscribe will be retried on reconnect
+    }
     subscribe(sessionIdVal)
 
     fetchMessages()

@@ -273,6 +273,12 @@ public class SessionService {
         sessionMapper.updateById(session);
     }
 
+    public void updateContextTokens(Long sessionId, int contextTokens) {
+        Session session = getSession(sessionId);
+        session.setContextTokens(contextTokens);
+        sessionMapper.updateById(session);
+    }
+
     public Map<String, List<Session>> listSessionsForDashboard(Long userId) {
         Map<String, List<Session>> result = new java.util.HashMap<>();
 

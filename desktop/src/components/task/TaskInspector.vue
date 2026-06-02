@@ -9,12 +9,16 @@
           <el-icon :size="14"><ChatDotRound /></el-icon>
         </button>
         <div class="task-title-group">
-          <h3 class="task-title">{{ displayTitle }}</h3>
-          <span class="task-meta">
-            <span v-if="agentName" class="meta-agent">{{ agentName }}</span>
-            <span v-if="workspace" class="meta-separator">·</span>
-            <span v-if="workspace" class="meta-project">{{ workspaceDisplayName }}</span>
-          </span>
+          <input
+            v-if="editing"
+            ref="editInput"
+            v-model="editingTitle"
+            class="task-title-input"
+            @keydown.enter="confirmEdit"
+            @keydown.escape="cancelEdit"
+            @blur="confirmEdit"
+          />
+          <h3 v-else class="task-title" @click="startEdit">{{ displayTitle }}</h3>
         </div>
       </div>
       <div class="task-status-row">
@@ -22,19 +26,22 @@
           <span v-if="phase === 'RUNNING'" class="phase-spinner"></span>
           {{ phaseLabel }}
         </span>
-        <span v-if="contextDisplay" class="context-window">
+         <span v-if="contextDisplay" class="context-window">
           <span class="context-label">上下文</span>
           <span class="context-tokens">{{ contextDisplay }}</span>
         </span>
-        <span v-if="elapsedDisplay" class="elapsed">{{ elapsedDisplay }}</span>
       </div>
     </div>
 
-    <div v-if="workspace" class="inspector-section">
-      <h4 class="section-title">工作目录</h4>
-      <div class="task-workspace-row">
+    <div v-if="workspace || agentName" class="inspector-section">
+      <h4 class="section-title">工作区</h4>
+      <div v-if="agentName" class="task-workspace-row">
+        <el-icon class="workspace-icon"><User /></el-icon>
+        <span class="workspace-path">{{ agentName }}</span>
+      </div>
+      <div v-if="workspace || executionMode === 'CLOUD'" class="task-workspace-row">
         <el-icon class="workspace-icon"><FolderOpened /></el-icon>
-        <span class="workspace-path">{{ workspace }}</span>
+        <span class="workspace-path">{{ executionMode === 'CLOUD' ? '云端工作区' : workspace }}</span>
       </div>
     </div>
 
@@ -57,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { ChatDotRound, FolderOpened } from '@element-plus/icons-vue'
 import TodoChecklist from './TodoChecklist.vue'
 import type { TodoItem } from '../../types/chat'
@@ -73,18 +80,45 @@ const props = defineProps<{
   title: string
   agentName?: string
   workspace?: string
+  executionMode?: string
   phase: TaskPhase
-  elapsedMs: number
-  startedAt?: string | null
   panelCollapsed: boolean
   contextWindow?: ContextWindowInfo | null
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   toolConfirm: [requestId: string, approved: boolean]
   togglePanel: []
   todoUpdate: [todoId: number, action: 'start' | 'complete' | 'delete']
+  rename: [title: string]
 }>()
+
+// --- Title editing ---
+const editing = ref(false)
+const editingTitle = ref('')
+const editInput = ref<HTMLInputElement>()
+
+function startEdit() {
+  editingTitle.value = props.title || ''
+  editing.value = true
+  nextTick(() => {
+    editInput.value?.focus()
+    editInput.value?.select()
+  })
+}
+
+function confirmEdit() {
+  if (!editing.value) return
+  const title = editingTitle.value.trim()
+  if (title && title !== props.title) {
+    emit('rename', title)
+  }
+  editing.value = false
+}
+
+function cancelEdit() {
+  editing.value = false
+}
 
 // --- Task info logic (from TaskHeader) ---
 const phaseLabel = computed(() => {
@@ -111,12 +145,6 @@ const phaseClass = computed(() => {
 
 const displayTitle = computed(() => props.title || '新任务')
 
-const workspaceDisplayName = computed(() => {
-  if (!props.workspace) return ''
-  const parts = props.workspace.split('/').filter(Boolean)
-  return parts[parts.length - 1] || props.workspace
-})
-
 function formatTokenCompact(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '--'
   if (value < 1000) return `${Math.round(value)}`
@@ -131,39 +159,6 @@ const contextDisplay = computed(() => {
     : props.contextWindow.estimated
   if (tokens <= 0) return ''
   return formatTokenCompact(tokens)
-})
-
-const liveElapsed = ref(props.elapsedMs)
-let timer: ReturnType<typeof setInterval> | null = null
-
-function updateElapsed() {
-  if (props.phase === 'RUNNING' && props.startedAt) {
-    const started = new Date(props.startedAt).getTime()
-    liveElapsed.value = props.elapsedMs + (Date.now() - started)
-  } else {
-    liveElapsed.value = props.elapsedMs
-  }
-}
-
-const elapsedDisplay = computed(() => {
-  const ms = liveElapsed.value
-  if (!ms || ms <= 0) return ''
-  const seconds = Math.floor(ms / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainSeconds = seconds % 60
-  if (minutes < 60) return `${minutes}m ${remainSeconds}s`
-  const hours = Math.floor(minutes / 60)
-  return `${hours}h ${minutes % 60}m`
-})
-
-onMounted(() => {
-  updateElapsed()
-  timer = setInterval(updateElapsed, 1000)
-})
-
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
 })
 
 // Panel resize
@@ -293,22 +288,24 @@ function onResizeStart(e: MouseEvent) {
   font-weight: 600;
   color: var(--aw-ink);
   letter-spacing: 0.231px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
+  cursor: pointer;
 }
 
-.task-meta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--aw-text-micro);
-  color: var(--aw-ink-muted-48);
-  letter-spacing: -0.1px;
-}
-
-.meta-separator {
-  color: var(--aw-hairline);
+.task-title-input {
+  width: 100%;
+  margin: 0;
+  font-family: var(--aw-font-display);
+  font-size: var(--aw-text-body);
+  font-weight: 600;
+  color: var(--aw-ink);
+  letter-spacing: 0.231px;
+  background: var(--aw-surface-pearl);
+  border: 1px solid var(--aw-primary);
+  border-radius: var(--aw-radius-xs);
+  padding: 2px 6px;
+  outline: none;
+  box-sizing: border-box;
 }
 
 .task-status-row {
@@ -323,10 +320,11 @@ function onResizeStart(e: MouseEvent) {
   display: flex;
   align-items: flex-start;
   gap: 4px;
+  margin-bottom: 8px;
 }
 
 .task-workspace-row .workspace-icon {
-  color: var(--aw-primary);
+  color: var(--aw-ink-muted-48);
   flex-shrink: 0;
   margin-top: 1px;
 }
@@ -385,13 +383,6 @@ function onResizeStart(e: MouseEvent) {
   to { transform: rotate(360deg); }
 }
 
-.elapsed {
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink-muted-48);
-  letter-spacing: -0.224px;
-}
-
 .context-window {
   display: inline-flex;
   align-items: center;
@@ -400,13 +391,9 @@ function onResizeStart(e: MouseEvent) {
   letter-spacing: -0.224px;
 }
 
-.context-label {
-  color: var(--aw-ink-muted-48);
-}
-
 .context-tokens {
   font-family: var(--aw-font-mono);
-  color: var(--aw-ink);
+  color: var(--aw-ink-muted-48);
 }
 
 /* Approval */

@@ -58,6 +58,11 @@
           {{ file.originalName || file.name }}
         </el-tag>
       </div>
+      <div v-if="showStreamIndicator" class="stream-indicator">
+        <span class="stream-dot"></span>
+        <span class="stream-dot"></span>
+        <span class="stream-dot"></span>
+      </div>
       <div v-if="message.content && showCopy && !isAssistantRunning" class="message-footer">
         <button class="copy-btn" :class="{ copied }" @click="copyMessage">
           <el-icon :size="12"><CopyDocument /></el-icon>
@@ -82,8 +87,9 @@ import {
 import { buildSegmentsFromContentAndTools } from '../../utils/chatMessage'
 import { useSessionStore } from '../../stores/session'
 
-const props = withDefaults(defineProps<{ message: ChatMessage; showTime?: boolean; showCopy?: boolean }>(), {
-  showCopy: true
+const props = withDefaults(defineProps<{ message: ChatMessage; showTime?: boolean; showCopy?: boolean; isLast?: boolean }>(), {
+  showCopy: true,
+  isLast: false
 })
 
 const sessionStore = useSessionStore()
@@ -97,9 +103,13 @@ const visibleToolCalls = computed(() =>
 
 const isAssistantRunning = computed(() =>
   role.value === 'assistant' && (
-    sessionStore.activeThinking ||
+    (props.isLast && (sessionStore.activeStreaming || sessionStore.activeThinking)) ||
     (props.message.toolCalls?.some(tc => tc.status === 'pending' || tc.status === 'running') ?? false)
   )
+)
+
+const showStreamIndicator = computed(() =>
+  role.value === 'assistant' && props.isLast && sessionStore.activeStreaming
 )
 
 const isToolOnly = computed(() =>
@@ -405,5 +415,33 @@ async function copyMessage() {
 
 .copy-btn.copied {
   color: var(--aw-success);
+}
+
+.stream-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.stream-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--aw-ink-muted-48);
+  animation: stream-pulse 1.4s ease-in-out infinite;
+}
+
+.stream-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.stream-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes stream-pulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
 }
 </style>

@@ -21,12 +21,6 @@
             @clear="handleSearch"
           />
         </el-form-item>
-        <el-form-item label="类型">
-          <el-select v-model="filterType" placeholder="全部" clearable>
-            <el-option label="系统级" value="SYSTEM" />
-            <el-option label="个人" value="PERSONAL" />
-          </el-select>
-        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
         </el-form-item>
@@ -37,13 +31,6 @@
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="名称" min-width="120" />
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="type" label="类型" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.type === 'SYSTEM' ? 'danger' : 'success'" size="small">
-              {{ row.type === 'SYSTEM' ? '系统级' : '个人' }}
-            </el-tag>
-          </template>
-        </el-table-column>
         <el-table-column prop="modelName" label="模型" width="120" />
         <el-table-column label="标签" min-width="180">
           <template #default="{ row }">
@@ -53,13 +40,6 @@
               size="small"
               class="tag-item"
             >{{ tag }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'ARCHIVED' ? 'info' : 'success'" size="small">
-              {{ statusMap[row.status] || row.status }}
-            </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" />
@@ -99,17 +79,11 @@ import AgentFormDialog from './AgentFormDialog.vue'
 const loading = ref(false)
 const agents = ref<any[]>([])
 const searchQuery = ref('')
-const filterType = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 const dialogVisible = ref(false)
 const currentAgent = ref<any>(null)
-
-const statusMap: Record<string, string> = {
-  DRAFT: '草稿',
-  ARCHIVED: '已归档'
-}
 
 async function fetchAgents() {
   loading.value = true
@@ -118,8 +92,7 @@ async function fetchAgents() {
       params: {
         page: currentPage.value,
         size: pageSize.value,
-        keyword: searchQuery.value,
-        type: filterType.value
+        keyword: searchQuery.value
       }
     })
     agents.value = data || []

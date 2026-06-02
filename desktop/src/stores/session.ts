@@ -28,6 +28,7 @@ export interface Session {
   steps?: TaskStep[]
   projectKey?: string
   workspace?: string
+  contextTokens?: number
   running: boolean
 }
 
@@ -47,6 +48,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessionContextWindow = ref<Map<string, ContextWindowInfo>>(new Map())
   const sessionCompacting = ref<Map<string, boolean>>(new Map())
   const sessionThinking = ref<Map<string, boolean>>(new Map())
+  const sessionStreaming = ref<Map<string, boolean>>(new Map())
   const sessionPendingApprovals = ref<Map<string, number>>(new Map())
 
   const activeSession = computed(() =>
@@ -77,6 +79,10 @@ export const useSessionStore = defineStore('session', () => {
     sessionThinking.value.get(activeSessionId.value ?? '') ?? false
   )
 
+  const activeStreaming = computed(() =>
+    sessionStreaming.value.get(activeSessionId.value ?? '') ?? false
+  )
+
   function sessionsByAgent(agentId: string) {
     return sessions.value.filter(s => s.agentId === agentId)
   }
@@ -101,6 +107,15 @@ export const useSessionStore = defineStore('session', () => {
         }
       }
       sessions.value = merged
+      // Hydrate context window from persisted contextTokens
+      for (const s of merged) {
+        if (s.contextTokens && s.contextTokens > 0) {
+          const sid = String(s.id)
+          if (!sessionContextWindow.value.has(sid)) {
+            sessionContextWindow.value.set(sid, { estimated: s.contextTokens, actual: 0 })
+          }
+        }
+      }
     } finally {
       loading.value = false
     }
@@ -111,6 +126,12 @@ export const useSessionStore = defineStore('session', () => {
       const { data } = await api.get(`/sessions/${id}`)
       if (data) {
         updateSession(id, { ...data, id: normalizeId(data.id), agentId: normalizeId(data.agentId) })
+        if (data.contextTokens && data.contextTokens > 0) {
+          const sid = normalizeId(data.id)
+          if (!sessionContextWindow.value.has(sid)) {
+            sessionContextWindow.value.set(sid, { estimated: data.contextTokens, actual: 0 })
+          }
+        }
       }
       return data
     } catch {
@@ -200,6 +221,7 @@ export const useSessionStore = defineStore('session', () => {
 
   function appendDelta(sessionId: string, delta: string) {
     const sid = String(sessionId)
+    sessionStreaming.value.set(sid, true)
     const list = sessionMessages.value.get(sid)
     if (!list || list.length === 0) return
     const lastMsg = list[list.length - 1]
@@ -276,8 +298,6 @@ export const useSessionStore = defineStore('session', () => {
     sessionActivities.value.set(sid, list)
   }
 
-  // --- Context window actions ---
-
   function setContextWindow(sessionId: string, info: ContextWindowInfo) {
     sessionContextWindow.value.set(String(sessionId), info)
   }
@@ -288,6 +308,10 @@ export const useSessionStore = defineStore('session', () => {
 
   function setThinking(sessionId: string, thinking: boolean) {
     sessionThinking.value.set(String(sessionId), thinking)
+  }
+
+  function setStreaming(sessionId: string, streaming: boolean) {
+    sessionStreaming.value.set(String(sessionId), streaming)
   }
 
   // --- Pending approval tracking ---
@@ -348,6 +372,9 @@ export const useSessionStore = defineStore('session', () => {
     // Thinking
     activeThinking,
     setThinking,
+    // Streaming
+    activeStreaming,
+    setStreaming,
     // Pending approvals
     sessionPendingApprovals,
     incrementPendingApproval,

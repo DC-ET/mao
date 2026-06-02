@@ -22,13 +22,10 @@ public class AgentService {
     private final AgentTagMapper agentTagMapper;
     private final ObjectMapper objectMapper;
 
-    public List<Agent> listAgents(Long userId, String keyword, String type) {
+    public List<Agent> listAgents(Long userId, String keyword) {
         QueryWrapper<Agent> qw = new QueryWrapper<>();
         if (keyword != null && !keyword.isEmpty()) {
             qw.like("name", keyword);
-        }
-        if (type != null && !type.isEmpty()) {
-            qw.eq("type", type);
         }
         qw.orderByDesc("created_at");
         return agentMapper.selectList(qw);
@@ -43,22 +40,16 @@ public class AgentService {
     }
 
     @Transactional
-    public Agent createAgent(Long userId, String name, String description, String iconUrl,
-                              String systemPrompt, Long modelId, String visibility,
+    public Agent createAgent(Long userId, String name, String description,
+                              String systemPrompt, Long modelId,
                               List<String> tags,
                               List<String> skillNames) {
         Agent agent = new Agent();
         agent.setName(name);
         agent.setDescription(description);
-        agent.setIconUrl(iconUrl);
         agent.setSystemPrompt(systemPrompt);
         agent.setModelId(modelId);
         agent.setCreatorId(userId);
-        agent.setType("PERSONAL");
-        agent.setVisibility(visibility != null ? visibility : "PRIVATE");
-        agent.setStatus("DRAFT");
-        agent.setTokenLimit(0);
-        agent.setMaxRounds(10);
         if (skillNames != null && !skillNames.isEmpty()) {
             try {
                 agent.setSkillNames(objectMapper.writeValueAsString(skillNames));
@@ -82,20 +73,15 @@ public class AgentService {
     }
 
     @Transactional
-    public Agent updateAgent(Long id, String name, String description, String iconUrl,
-                              String systemPrompt, Long modelId, String visibility,
-                              Integer tokenLimit, Integer maxRounds,
+    public Agent updateAgent(Long id, String name, String description,
+                              String systemPrompt, Long modelId,
                               List<String> skillNames,
                               List<String> tags) {
         Agent agent = getAgent(id);
         if (name != null) agent.setName(name);
         if (description != null) agent.setDescription(description);
-        if (iconUrl != null) agent.setIconUrl(iconUrl);
         if (systemPrompt != null) agent.setSystemPrompt(systemPrompt);
         if (modelId != null) agent.setModelId(modelId);
-        if (visibility != null) agent.setVisibility(visibility);
-        if (tokenLimit != null) agent.setTokenLimit(tokenLimit);
-        if (maxRounds != null) agent.setMaxRounds(maxRounds);
         if (skillNames != null) {
             try {
                 agent.setSkillNames(skillNames.isEmpty() ? null : objectMapper.writeValueAsString(skillNames));

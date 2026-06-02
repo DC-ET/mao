@@ -19,7 +19,6 @@
         {{ phaseLabel }}
       </span>
       <span v-if="contextDisplay" class="context-window">
-        <span class="context-label">上下文</span>
         <span class="context-tokens">{{ contextDisplay }}</span>
       </span>
       <span v-if="elapsedDisplay" class="elapsed">{{ elapsedDisplay }}</span>
@@ -278,13 +277,9 @@ onUnmounted(() => {
   letter-spacing: -0.224px;
 }
 
-.context-label {
-  color: var(--aw-ink-muted-48);
-}
-
 .context-tokens {
   font-family: var(--aw-font-mono);
-  color: var(--aw-ink);
+  color: var(--aw-ink-muted-48);
 }
 
 .header-right {

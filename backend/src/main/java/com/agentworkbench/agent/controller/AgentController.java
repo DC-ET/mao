@@ -31,9 +31,8 @@ public class AgentController {
     @GetMapping
     public Result<List<AgentVO>> listAgents(
             @AuthenticationPrincipal Long userId,
-            @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) String type) {
-        List<Agent> agents = agentService.listAgents(userId, keyword, type);
+            @RequestParam(required = false) String keyword) {
+        List<Agent> agents = agentService.listAgents(userId, keyword);
         List<AgentVO> voList = agents.stream().map(this::toVO).collect(Collectors.toList());
         return Result.ok(voList);
     }
@@ -51,8 +50,8 @@ public class AgentController {
             @RequestBody CreateAgentRequest request) {
         Agent agent = agentService.createAgent(
                 userId, request.getName(), request.getDescription(),
-                request.getIconUrl(), request.getSystemPrompt(),
-                request.getModelId(), request.getVisibility(),
+                request.getSystemPrompt(),
+                request.getModelId(),
                 request.getTags(),
                 request.getSkillNames());
         return Result.ok(toVO(agent));
@@ -65,9 +64,8 @@ public class AgentController {
             @RequestBody UpdateAgentRequest request) {
         Agent agent = agentService.updateAgent(
                 id, request.getName(), request.getDescription(),
-                request.getIconUrl(), request.getSystemPrompt(),
-                request.getModelId(), request.getVisibility(),
-                request.getTokenLimit(), request.getMaxRounds(),
+                request.getSystemPrompt(),
+                request.getModelId(),
                 request.getSkillNames(), request.getTags());
         return Result.ok(toVO(agent));
     }
@@ -85,15 +83,9 @@ public class AgentController {
         vo.setId(agent.getId());
         vo.setName(agent.getName());
         vo.setDescription(agent.getDescription());
-        vo.setIconUrl(agent.getIconUrl());
         vo.setSystemPrompt(agent.getSystemPrompt());
         vo.setModelId(agent.getModelId());
         vo.setCreatorId(agent.getCreatorId());
-        vo.setType(agent.getType());
-        vo.setVisibility(agent.getVisibility());
-        vo.setStatus(agent.getStatus());
-        vo.setTokenLimit(agent.getTokenLimit());
-        vo.setMaxRounds(agent.getMaxRounds());
         vo.setCreatedAt(agent.getCreatedAt() != null ? agent.getCreatedAt().toString() : null);
 
         // Load model name
@@ -135,11 +127,9 @@ public class AgentController {
         @NotBlank(message = "Agent 名称不能为空")
         private String name;
         private String description;
-        private String iconUrl;
         @NotBlank(message = "系统提示词不能为空")
         private String systemPrompt;
         private Long modelId;
-        private String visibility;
         private List<String> tags;
         private List<String> skillNames;
     }
@@ -148,12 +138,8 @@ public class AgentController {
     public static class UpdateAgentRequest {
         private String name;
         private String description;
-        private String iconUrl;
         private String systemPrompt;
         private Long modelId;
-        private String visibility;
-        private Integer tokenLimit;
-        private Integer maxRounds;
         private List<String> skillNames;
         private List<String> tags;
     }
@@ -163,17 +149,11 @@ public class AgentController {
         private Long id;
         private String name;
         private String description;
-        private String iconUrl;
         private String systemPrompt;
         private Long modelId;
         private String modelName;
         private Long creatorId;
         private String creatorName;
-        private String type;
-        private String visibility;
-        private String status;
-        private Integer tokenLimit;
-        private Integer maxRounds;
         private List<String> tags;
         private List<String> skillNames;
         private String createdAt;

@@ -154,12 +154,18 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         log.debug("userId={} subscribed to session {}", userId, sessionId);
 
         // If session is RUNNING, send a snapshot so the client can catch up
+        // Also re-register local tool session mapping (handles client reconnect)
         try {
             Session s = sessionService.getSession(sessionId);
-            if (s != null && "RUNNING".equals(s.getPhase())) {
-                registry.send(userId, WsEvent.of("session_snapshot", sessionId, Map.of(
-                        "phase", "RUNNING"
-                )));
+            if (s != null) {
+                if ("LOCAL".equals(s.getExecutionMode()) && "RUNNING".equals(s.getPhase())) {
+                    localToolSessionRegistry.setUserForSession(sessionId, userId);
+                }
+                if ("RUNNING".equals(s.getPhase())) {
+                    registry.send(userId, WsEvent.of("session_snapshot", sessionId, Map.of(
+                            "phase", "RUNNING"
+                    )));
+                }
             }
         } catch (Exception e) {
             log.debug("Failed to send session_snapshot for session {}: {}", sessionId, e.getMessage());
@@ -303,7 +309,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 }
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
-                        registry, activityService, sessionTodoMapper, sessionId, userId);
+                        registry, activityService, sessionTodoMapper, sessionService, sessionId, userId);
 
                 harnessService.executeFromEvent(sessionId, resolvedEventId, listener, cancelFlag);
 
