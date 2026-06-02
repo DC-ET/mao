@@ -49,6 +49,9 @@ public class Session {
     /** Last activity timestamp */
     private LocalDateTime lastActivityAt;
 
+    /** Estimated context tokens from the most recent LLM call */
+    private Integer contextTokens;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

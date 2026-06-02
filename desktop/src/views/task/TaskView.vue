@@ -54,6 +54,7 @@
               <MessageBubble
                 v-if="round.finalReply"
                 :message="round.finalReply"
+                :is-last="round.finalReply && round === messageRounds[messageRounds.length - 1]"
               />
             </template>
 
@@ -62,6 +63,7 @@
               v-else-if="round.finalReply"
               :message="round.finalReply"
               :show-time="true"
+              :is-last="round.finalReply && round === messageRounds[messageRounds.length - 1]"
             />
           </template>
         </template>
@@ -69,10 +71,12 @@
         <!-- 流式中 / 无轮次时：直接渲染所有消息 -->
         <template v-else>
           <MessageBubble
-            v-for="msg in messages"
+            v-for="(msg, idx) in messages"
             :key="msg.id"
             :message="msg"
-            :show-time="true"
+            :show-time="msg.role === 'user'"
+            :show-copy="false"
+            :is-last="idx === messages.length - 1"
           />
         </template>
 
@@ -101,18 +105,18 @@
 
     <TaskInspector
       :todos="todos"
-      :pending-approvals="pendingApprovals"
+      :pending-approvals="activePendingApprovals"
       :title="sessionTitle"
       :agent-name="agentName"
-      :workspace="executionMode === 'LOCAL' ? workspace : ''"
+      :workspace="workspace"
+      :execution-mode="executionMode"
       :phase="currentPhase"
-      :elapsed-ms="elapsedMs"
-      :started-at="startedAt"
       :panel-collapsed="panelCollapsed"
       :context-window="contextWindow"
       @tool-confirm="confirmApproval"
       @toggle-panel="panelCollapsed = !panelCollapsed"
       @todo-update="handleTodoUpdate"
+      @rename="handleRename"
     />
 
     <NewTaskDialog
@@ -155,8 +159,6 @@ const defaultWorkspace = ref<string | undefined>()
 
 // Task state
 const currentPhase = ref<TaskPhase>('IDLE')
-const elapsedMs = ref(0)
-const startedAt = ref<string | null>(null)
 const projectKey = ref('')
 
 const {
@@ -182,6 +184,10 @@ const sessionTitle = computed(() => {
   const session = sessionStore.activeSession
   return session?.summary || session?.title || agentName.value || '新任务'
 })
+
+const activePendingApprovals = computed(() =>
+  pendingApprovals.value.filter(a => !a.sessionId || a.sessionId === sessionStore.activeSessionId)
+)
 
 // 仅在尚未收到流式内容时显示打字动画，避免与 MessageBubble 重复
 // 同时在 agent 思考期间（工具执行完毕到下一次 LLM 输出之间）也显示
@@ -225,14 +231,12 @@ const messageRounds = computed((): MessageRound[] => {
     }
   }
 
-  // 第二趟：每轮识别最终回复（最后一个无工具的 assistant；若全有工具则取最后一条）
+  // 第二趟：每轮识别最终回复（最后一条 assistant 消息即为最终回复，其余均为步骤）
   const rounds: MessageRound[] = []
   for (const g of groups) {
     const lastIdx = g.assistantMsgs.length - 1
-    let replyIdx = g.assistantMsgs.findIndex(m => (m.toolCalls?.length ?? 0) === 0)
-    if (replyIdx < 0 && lastIdx >= 0) replyIdx = lastIdx
-    const steps = g.assistantMsgs.filter((_, i) => i !== replyIdx)
-    const reply = replyIdx >= 0 ? g.assistantMsgs[replyIdx] : null
+    const steps = lastIdx >= 0 ? g.assistantMsgs.slice(0, lastIdx) : []
+    const reply = lastIdx >= 0 ? g.assistantMsgs[lastIdx] : null
     rounds.push(buildRound(g.user, steps, reply))
   }
 
@@ -266,15 +270,10 @@ watch(() => sending.value, (isSending) => {
 
   if (isSending) {
     currentPhase.value = 'RUNNING'
-    startedAt.value = new Date().toISOString()
   } else {
     // Only reset to IDLE if server hasn't set a terminal or cancelling phase
     if (currentPhase.value === 'RUNNING' && !cancelling.value) {
       currentPhase.value = 'IDLE'
-    }
-    if (startedAt.value) {
-      elapsedMs.value += Date.now() - new Date(startedAt.value).getTime()
-      startedAt.value = null
     }
   }
 })
@@ -283,11 +282,6 @@ watch(() => sending.value, (isSending) => {
 watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
   if (serverPhase && serverPhase !== currentPhase.value) {
     currentPhase.value = serverPhase
-    // If server says FAILED/IDLE, stop the local timer
-    if (serverPhase !== 'RUNNING' && startedAt.value) {
-      elapsedMs.value += Date.now() - new Date(startedAt.value).getTime()
-      startedAt.value = null
-    }
   }
 })
 
@@ -353,6 +347,12 @@ function handleTodoUpdate(todoId: number, action: 'start' | 'complete' | 'delete
   updateTodoManually(todoId, action)
 }
 
+function handleRename(title: string) {
+  if (sessionStore.activeSessionId) {
+    sessionStore.renameSession(sessionStore.activeSessionId, title)
+  }
+}
+
 function handleNewTask() {
   if (sessionStore.activeSessionId && currentPhase.value === 'RUNNING') {
     sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
@@ -394,7 +394,6 @@ async function loadSession(sid: string) {
       agentId.value = data.agentId
       executionMode.value = data.executionMode || 'CLOUD'
       currentPhase.value = data.phase || 'IDLE'
-      elapsedMs.value = data.elapsedMs || 0
       projectKey.value = data.projectKey || ''
       if (data.agentName) agentName.value = data.agentName
       if (data.workspace) workspace.value = data.workspace
@@ -428,7 +427,6 @@ watch(sessionIdParam, (newSid, oldSid) => {
     agentId.value = ''
     executionMode.value = 'CLOUD'
     currentPhase.value = 'IDLE'
-    elapsedMs.value = 0
     projectKey.value = ''
     navigateToLatestSession()
   }

@@ -7,7 +7,6 @@ SET CHARACTER SET utf8mb4;
 -- ========== 1. 清理Agent相关数据 ==========
 
 -- 清除Agent关联数据（按外键依赖顺序）
-DELETE FROM `agent_permission`;
 DELETE FROM `agent_mcp_config`;
 DELETE FROM `agent_tag`;
 
@@ -41,9 +40,6 @@ INSERT INTO `agent` (
     `system_prompt`,
     `model_id`,
     `creator_id`,
-    `type`,
-    `token_limit`,
-    `max_rounds`,
     `created_at`,
     `updated_at`
 ) VALUES (
@@ -74,9 +70,6 @@ INSERT INTO `agent` (
 - 使用图表辅助说明数据趋势',
     3,  -- Access GPT-5.4 模型
     1,
-    'SYSTEM',
-    0,
-    0,
     NOW(),
     NOW()
 );
@@ -88,9 +81,6 @@ INSERT INTO `agent` (
     `system_prompt`,
     `model_id`,
     `creator_id`,
-    `type`,
-    `token_limit`,
-    `max_rounds`,
     `created_at`,
     `updated_at`
 ) VALUES (
@@ -122,9 +112,6 @@ INSERT INTO `agent` (
 - 标注数据口径和计算逻辑',
     3,  -- Access GPT-5.4 模型
     1,
-    'SYSTEM',
-    0,
-    0,
     NOW(),
     NOW()
 );
@@ -165,11 +152,3 @@ INSERT INTO `agent_tool` (`agent_id`, `tool_id`, `config`) VALUES
 (2, 4, '{"description": "编辑SQL脚本和查询语句"}'),
 (2, 3, '{"description": "管理数据提取任务"}');
 
--- ========== 5. 设置Agent权限 ==========
-
--- 让ADMIN角色可以访问所有Agent
-INSERT INTO `agent_permission` (`agent_id`, `permission_type`, `permission_value`)
-SELECT a.id, 'ROLE', r.id
-FROM `agent` a
-CROSS JOIN `role` r
-WHERE r.code = 'ADMIN';

@@ -27,12 +27,6 @@
       <el-form-item label="API Key" prop="apiKey">
         <el-input v-model="form.apiKey" type="password" show-password placeholder="请输入 API Key" />
       </el-form-item>
-      <el-form-item label="最大 Tokens" prop="maxTokens">
-        <el-input-number v-model="form.maxTokens" :min="1" :max="1000000" :step="1000" />
-      </el-form-item>
-      <el-form-item label="温度上限" prop="temperatureMax">
-        <el-input-number v-model="form.temperatureMax" :min="0" :max="2" :step="0.1" :precision="1" />
-      </el-form-item>
       <el-form-item label="支持视觉">
         <el-switch v-model="form.supportsVision" />
         <span style="margin-left: 8px; color: #909399; font-size: 12px;">开启后可在任务中发送图片</span>
@@ -73,8 +67,6 @@ const form = reactive({
   modelId: '',
   baseUrl: '',
   apiKey: '',
-  maxTokens: 4096,
-  temperatureMax: 1.0,
   supportsVision: false
 })
 
@@ -93,8 +85,6 @@ watch(() => props.visible, (val) => {
       modelId: props.modelData.modelId || '',
       baseUrl: props.modelData.baseUrl || '',
       apiKey: '',
-      maxTokens: props.modelData.maxTokens ?? 4096,
-      temperatureMax: props.modelData.temperatureMax ?? 1.0,
       supportsVision: !!props.modelData.supportsVision
     })
   } else {
@@ -105,8 +95,6 @@ watch(() => props.visible, (val) => {
       modelId: '',
       baseUrl: '',
       apiKey: '',
-      maxTokens: 4096,
-      temperatureMax: 1.0,
       supportsVision: false
     })
   }

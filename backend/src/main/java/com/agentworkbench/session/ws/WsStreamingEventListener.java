@@ -6,6 +6,7 @@ import com.agentworkbench.harness.llm.ChatUsage;
 import com.agentworkbench.session.activity.ActivityService;
 import com.agentworkbench.session.activity.ActivityTypeMapper;
 import com.agentworkbench.session.activity.SessionActivity;
+import com.agentworkbench.session.service.SessionService;
 import com.agentworkbench.session.util.ToolResultSummarizer;
 import com.agentworkbench.harness.todo.entity.SessionTodo;
 import com.agentworkbench.harness.todo.mapper.SessionTodoMapper;
@@ -25,6 +26,7 @@ public class WsStreamingEventListener implements AgentEventListener {
     private final StreamingWsRegistry registry;
     private final ActivityService activityService;
     private final SessionTodoMapper sessionTodoMapper;
+    private final SessionService sessionService;
     private final Long sessionId;
     private final Long userId;
 
@@ -37,10 +39,12 @@ public class WsStreamingEventListener implements AgentEventListener {
     public WsStreamingEventListener(StreamingWsRegistry registry,
                                      ActivityService activityService,
                                      SessionTodoMapper sessionTodoMapper,
+                                     SessionService sessionService,
                                      Long sessionId, Long userId) {
         this.registry = registry;
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
+        this.sessionService = sessionService;
         this.sessionId = sessionId;
         this.userId = userId;
     }
@@ -139,12 +143,17 @@ public class WsStreamingEventListener implements AgentEventListener {
     }
 
     @Override
-    public void onContextWindow(int estimatedTokens, int actualTokens, int maxTokens) {
+    public void onContextWindow(int estimatedTokens, int actualTokens) {
         send("context_window", Map.of(
                 "estimated", estimatedTokens,
-                "actual", actualTokens,
-                "maxTokens", maxTokens
+                "actual", actualTokens
         ));
+        // Persist the latest context token count
+        try {
+            sessionService.updateContextTokens(sessionId, estimatedTokens);
+        } catch (Exception e) {
+            log.warn("Failed to persist context tokens for session {}", sessionId, e);
+        }
     }
 
     @Override

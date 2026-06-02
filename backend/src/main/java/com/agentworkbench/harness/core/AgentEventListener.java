@@ -22,11 +22,8 @@ public interface AgentEventListener {
      * 上下文窗口大小变更通知
      * @param estimatedTokens 估算 token 数（cl100k_base，快速反馈）
      * @param actualTokens LLM 真实返回的 prompt_tokens（0 表示尚未返回）
-     * @param maxTokens 模型上下文窗口大小
      */
-    default void onContextWindow(int estimatedTokens, int actualTokens, int maxTokens) {
-        // optional: notify frontend of context window size
-    }
+    default void onContextWindow(int estimatedTokens, int actualTokens) {}
 
     /**
      * 压缩开始

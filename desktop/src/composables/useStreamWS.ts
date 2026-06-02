@@ -201,7 +201,10 @@ export function useStreamWS() {
         break
 
       case 'tool_call_start':
-        if (sessionId) sessionStore.appendToolCallStart(sessionId, data)
+        if (sessionId) {
+          sessionStore.setStreaming(sessionId, false)
+          sessionStore.appendToolCallStart(sessionId, data)
+        }
         break
 
       case 'tool_call_result':
@@ -220,6 +223,7 @@ export function useStreamWS() {
         if (sessionId) {
           sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
           if (data.phase !== 'RUNNING') {
+            sessionStore.setStreaming(sessionId, false)
             // Agent turn complete — resolve pending callback
             const cb = pendingCallbacks.get(sessionId)
             if (cb) {
@@ -247,11 +251,17 @@ export function useStreamWS() {
         break
 
       case 'thinking_start':
-        if (sessionId) sessionStore.setThinking(sessionId, true)
+        if (sessionId) {
+          sessionStore.setStreaming(sessionId, false)
+          sessionStore.setThinking(sessionId, true)
+        }
         break
 
       case 'thinking_end':
-        if (sessionId) sessionStore.setThinking(sessionId, false)
+        if (sessionId) {
+          sessionStore.setStreaming(sessionId, false)
+          sessionStore.setThinking(sessionId, false)
+        }
         break
 
       case 'message_end':
@@ -259,8 +269,10 @@ export function useStreamWS() {
         break
 
       case 'session_snapshot':
-        // Session was already running when we subscribed — the snapshot tells us the current phase
-        // Client should fetchMessages() to get the full history
+        // Session was already running when we subscribed — sync phase so client can show correct UI
+        if (sessionId && data?.phase) {
+          sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
+        }
         break
 
       case 'skill_sync_required': {

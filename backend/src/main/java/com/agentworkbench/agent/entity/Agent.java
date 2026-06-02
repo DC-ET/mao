@@ -16,23 +16,11 @@ public class Agent {
 
     private String description;
 
-    private String iconUrl;
-
     private String systemPrompt;
 
     private Long modelId;
 
     private Long creatorId;
-
-    private String type;
-
-    private String visibility;
-
-    private String status;
-
-    private Integer tokenLimit;
-
-    private Integer maxRounds;
 
     private String configJson;
 
