@@ -44,4 +44,10 @@ public interface AgentEventListener {
      * @param durationMs 压缩耗时（毫秒）
      */
     default void onCompactionEnd(String type, int summaryTokens, int savedTokens, long durationMs) {}
+
+    /** Agent 正在思考（工具执行完毕，等待下一次 LLM 调用期间） */
+    default void onThinkingStart() {}
+
+    /** Agent 思考结束（下一次 LLM 开始输出） */
+    default void onThinkingEnd() {}
 }

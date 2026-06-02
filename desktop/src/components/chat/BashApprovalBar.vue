@@ -10,21 +10,30 @@
         <span class="approval-title">命令执行待审批</span>
       </div>
       <p class="approval-desc">Agent 请求执行以下命令：</p>
-      <pre class="command-preview"><code>{{ item.command }}</code></pre>
+      <div class="command-wrapper">
+        <pre class="command-preview"><code>{{ item.command }}</code></pre>
+        <button class="copy-btn" title="复制命令" @click="copyCommand(item.command)">
+          <el-icon :size="14"><CopyDocument /></el-icon>
+        </button>
+      </div>
       <div class="approval-actions">
         <el-button class="pill-btn" @click="$emit('confirm', item.requestId, false)">拒绝</el-button>
-        <el-button type="primary" class="pill-btn" @click="$emit('confirm', item.requestId, true)">允许执行</el-button>
+        <el-button type="primary" class="pill-btn" @click="$emit('confirm', item.requestId, true)">执行</el-button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { WarningFilled } from '@element-plus/icons-vue'
+import { WarningFilled, CopyDocument } from '@element-plus/icons-vue'
 
 export interface BashApprovalItem {
   requestId: string
   command: string
+}
+
+function copyCommand(command: string) {
+  navigator.clipboard.writeText(command)
 }
 
 defineProps<{
@@ -76,12 +85,43 @@ defineEmits<{
   font-size: var(--aw-text-caption);
 }
 
+.command-wrapper {
+  position: relative;
+  margin-bottom: var(--aw-space-sm);
+}
+
 .command-preview {
-  margin: 0 0 var(--aw-space-sm);
+  margin: 0;
   padding: 10px 12px;
   background: var(--aw-surface-code);
   border-radius: var(--aw-radius-sm);
   overflow-x: auto;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-surface-glass);
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.command-wrapper:hover .copy-btn {
+  opacity: 1;
+}
+
+.copy-btn:hover {
+  color: var(--aw-ink);
 }
 
 .command-preview code {
@@ -90,8 +130,7 @@ defineEmits<{
   color: var(--aw-text-code);
   background: none;
   padding: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
+  white-space: pre;
 }
 
 .approval-actions {

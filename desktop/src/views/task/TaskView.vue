@@ -126,7 +126,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ChatDotRound, Plus, ArrowDown } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
@@ -184,8 +184,10 @@ const sessionTitle = computed(() => {
 })
 
 // 仅在尚未收到流式内容时显示打字动画，避免与 MessageBubble 重复
+// 同时在 agent 思考期间（工具执行完毕到下一次 LLM 输出之间）也显示
 const showTypingIndicator = computed(() => {
   if (!sending.value) return false
+  if (sessionStore.activeThinking) return true
   const lastMsg = messages.value[messages.value.length - 1]
   if (!lastMsg) return true
   if (normalizeMessageRole(lastMsg.role ?? '') !== 'assistant') return true
@@ -289,35 +291,58 @@ watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
   }
 })
 
-// Auto-scroll disabled for stable reading experience
-// watch(() => messages.value.length, () => {
-//   nextTick(() => {
-//     if (messagesContainer.value) {
-//       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-//     }
-//   })
-// })
+// Auto-scroll: only when user is already at the bottom
+const messagesContainer = ref<HTMLElement>()
+const SCROLL_THRESHOLD = 80 // px from bottom to consider "at bottom"
 
-// watch(
-//   () => {
-//     const last = messages.value[messages.value.length - 1]
-//     return [
-//       last?.content?.length || 0,
-//       last?.toolCalls?.length || 0,
-//       last?.toolCalls?.map(t => t.status).join(',') || ''
-//     ].join('|')
-//   },
-//   () => {
-//     nextTick(() => {
-//       if (messagesContainer.value) {
-//         messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-//       }
-//     })
-//   }
-// )
+function isAtBottom(): boolean {
+  const el = messagesContainer.value
+  if (!el) return false
+  return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD
+}
+
+function scrollToBottom() {
+  const el = messagesContainer.value
+  if (el) {
+    el.scrollTop = el.scrollHeight
+  }
+}
+
+function scrollToBottomSmooth() {
+  requestAnimationFrame(() => {
+    const el = messagesContainer.value
+    if (el) {
+      el.scrollTop = el.scrollHeight
+    }
+  })
+}
+
+// Scroll on new message (if at bottom)
+watch(() => messages.value.length, () => {
+  if (!isAtBottom()) return
+  nextTick(scrollToBottom)
+})
+
+// Scroll on streaming content / tool call changes (if at bottom)
+watch(
+  () => {
+    const last = messages.value[messages.value.length - 1]
+    return [
+      last?.content?.length || 0,
+      last?.toolCalls?.length || 0,
+      last?.toolCalls?.map(t => t.status).join(',') || ''
+    ].join('|')
+  },
+  () => {
+    if (!isAtBottom()) return
+    nextTick(scrollToBottom)
+  }
+)
 
 function handleSend(text: string, files: File[]) {
   sendMessage(text, files)
+  // Always scroll to bottom when user sends a message
+  nextTick(scrollToBottomSmooth)
 }
 
 function handleStop() {
@@ -437,7 +462,7 @@ onUnmounted(() => {
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  padding: 0 24px 16px;
+  padding: 0 24px 0;
   width: 100%;
   box-sizing: border-box;
 }
@@ -445,8 +470,12 @@ onUnmounted(() => {
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 0;
+  padding-top: 16px;
   scroll-behavior: smooth;
+}
+
+.messages > *:last-child {
+  margin-bottom: 16px;
 }
 
 .empty-state {

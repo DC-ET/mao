@@ -19,8 +19,11 @@
       </div>
     </div>
     <div v-if="isExpanded && hasExpandableBody" class="tool-body">
-      <div v-if="commandText" class="tool-command">
-        <pre><code>{{ commandText }}</code></pre>
+      <div v-if="commandText" class="code-block-wrapper">
+        <pre class="tool-command"><code>{{ commandText }}</code></pre>
+        <button class="copy-btn" title="复制" @click="copyText(commandText)">
+          <el-icon :size="14"><CopyDocument /></el-icon>
+        </button>
       </div>
       <div v-if="filePath" class="tool-file-path">
         <el-icon><Document /></el-icon>
@@ -28,7 +31,12 @@
       </div>
       <div v-if="toolCall.result" class="tool-result">
         <div class="result-label">输出</div>
-        <pre class="result-content"><code>{{ truncatedResult }}</code></pre>
+        <div class="code-block-wrapper">
+          <pre class="result-content"><code>{{ truncatedResult }}</code></pre>
+          <button class="copy-btn" title="复制" @click="copyText(truncatedResult)">
+            <el-icon :size="14"><CopyDocument /></el-icon>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -36,7 +44,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { Select, CloseBold, ArrowDown, Document, Monitor, Edit, Search, SetUp } from '@element-plus/icons-vue'
+import { Select, CloseBold, ArrowDown, Document, Monitor, Edit, Search, SetUp, CopyDocument } from '@element-plus/icons-vue'
 import type { ToolCall } from '../../composables/useChat'
 
 const props = defineProps<{ toolCall: ToolCall }>()
@@ -101,6 +109,10 @@ const truncatedResult = computed(() => {
   if (r.length <= max) return r
   return r.slice(0, max) + '\n…（输出已截断）'
 })
+
+function copyText(text: string) {
+  navigator.clipboard.writeText(text)
+}
 
 function toggleExpand() {
   if (!hasExpandableBody.value) return
@@ -205,6 +217,41 @@ function toggleExpand() {
   background: var(--aw-surface-code);
   border-radius: var(--aw-radius-sm);
   overflow-x: auto;
+}
+
+.code-block-wrapper {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.code-block-wrapper:last-child {
+  margin-bottom: 0;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-surface-glass);
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.code-block-wrapper:hover .copy-btn {
+  opacity: 1;
+}
+
+.copy-btn:hover {
+  color: var(--aw-ink);
 }
 
 .tool-command code {

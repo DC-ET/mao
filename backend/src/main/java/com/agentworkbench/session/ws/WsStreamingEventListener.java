@@ -166,6 +166,16 @@ public class WsStreamingEventListener implements AgentEventListener {
         ));
     }
 
+    @Override
+    public void onThinkingStart() {
+        send("thinking_start", Map.of());
+    }
+
+    @Override
+    public void onThinkingEnd() {
+        send("thinking_end", Map.of());
+    }
+
     private void send(String type, Map<String, Object> data) {
         registry.send(userId, WsEvent.of(type, sessionId, data));
     }

@@ -246,6 +246,14 @@ export function useStreamWS() {
         if (sessionId) sessionStore.setCompacting(sessionId, false)
         break
 
+      case 'thinking_start':
+        if (sessionId) sessionStore.setThinking(sessionId, true)
+        break
+
+      case 'thinking_end':
+        if (sessionId) sessionStore.setThinking(sessionId, false)
+        break
+
       case 'message_end':
         if (sessionId) sessionStore.markMessageComplete(sessionId, data)
         break

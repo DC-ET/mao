@@ -58,7 +58,7 @@
           {{ file.originalName || file.name }}
         </el-tag>
       </div>
-      <div v-if="message.content && showCopy" class="message-footer">
+      <div v-if="message.content && showCopy && !isAssistantRunning" class="message-footer">
         <button class="copy-btn" :class="{ copied }" @click="copyMessage">
           <el-icon :size="12"><CopyDocument /></el-icon>
           <span v-if="copied">已复制</span>
@@ -80,15 +80,26 @@ import {
   type ToolCall
 } from '../../composables/useChat'
 import { buildSegmentsFromContentAndTools } from '../../utils/chatMessage'
+import { useSessionStore } from '../../stores/session'
 
 const props = withDefaults(defineProps<{ message: ChatMessage; showTime?: boolean; showCopy?: boolean }>(), {
   showCopy: true
 })
 
+const sessionStore = useSessionStore()
 const role = computed(() => normalizeMessageRole(props.message.role))
 
+const HIDDEN_TOOL_NAMES = new Set(['todo', 'task_list', 'task_create', 'task_update', 'task_delete'])
+
 const visibleToolCalls = computed(() =>
-  props.message.toolCalls?.filter(tc => tc.name !== 'todo') || []
+  props.message.toolCalls?.filter(tc => !HIDDEN_TOOL_NAMES.has(tc.name)) || []
+)
+
+const isAssistantRunning = computed(() =>
+  role.value === 'assistant' && (
+    sessionStore.activeThinking ||
+    (props.message.toolCalls?.some(tc => tc.status === 'pending' || tc.status === 'running') ?? false)
+  )
 )
 
 const isToolOnly = computed(() =>
