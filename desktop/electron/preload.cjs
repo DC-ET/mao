@@ -24,23 +24,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localReadFile: (args) => ipcRenderer.invoke('local-read-file', args),
   localWriteFile: (args) => ipcRenderer.invoke('local-write-file', args),
   localEditFile: (args) => ipcRenderer.invoke('local-edit-file', args),
-  localHttpRequest: (args) => ipcRenderer.invoke('local-http-request', args),
 
-  // Bash approval — renderer UI, main process waits for response
-  onBashApprovalRequest: (callback) => {
-    ipcRenderer.on('bash-approval-request', (event, data) => callback(data))
+  // Tool approval — renderer UI, main process waits for response
+  onToolApprovalRequest: (callback) => {
+    ipcRenderer.on('tool-approval-request', (event, data) => callback(data))
   },
-  removeBashApprovalRequestListener: () => {
-    ipcRenderer.removeAllListeners('bash-approval-request')
+  removeToolApprovalRequestListener: () => {
+    ipcRenderer.removeAllListeners('tool-approval-request')
   },
-  onBashApprovalDismiss: (callback) => {
-    ipcRenderer.on('bash-approval-dismiss', (event, data) => callback(data))
+  onToolApprovalDismiss: (callback) => {
+    ipcRenderer.on('tool-approval-dismiss', (event, data) => callback(data))
   },
-  removeBashApprovalDismissListener: () => {
-    ipcRenderer.removeAllListeners('bash-approval-dismiss')
+  removeToolApprovalDismissListener: () => {
+    ipcRenderer.removeAllListeners('tool-approval-dismiss')
   },
-  respondBashApproval: (requestId, approved) =>
-    ipcRenderer.invoke('bash-approval-response', { requestId, approved }),
+  respondToolApproval: (requestId, approved) =>
+    ipcRenderer.invoke('tool-approval-response', { requestId, approved }),
 
   // Skill sync — renderer triggers, main process downloads & extracts zip
   skillSync: (sessionId, syncUrl, token, workspace) =>

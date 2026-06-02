@@ -1,5 +1,5 @@
 <template>
-  <div v-if="items.length > 0" class="bash-approval-bar">
+  <div v-if="items.length > 0" class="tool-approval-bar">
     <div
       v-for="item in items"
       :key="item.requestId"
@@ -7,12 +7,12 @@
     >
       <div class="approval-header">
         <el-icon class="approval-icon" :size="16"><WarningFilled /></el-icon>
-        <span class="approval-title">命令执行待审批</span>
+        <span class="approval-title">{{ titleMap[item.toolName] || '操作待审批' }}</span>
       </div>
-      <p class="approval-desc">Agent 请求执行以下命令：</p>
+      <p class="approval-desc">{{ descMap[item.toolName] || 'Agent 请求执行以下操作：' }}</p>
       <div class="command-wrapper">
-        <pre class="command-preview"><code>{{ item.command }}</code></pre>
-        <button class="copy-btn" title="复制命令" @click="copyCommand(item.command)">
+        <pre class="command-preview"><code>{{ item.description }}</code></pre>
+        <button class="copy-btn" title="复制" @click="copyText(item.description)">
           <el-icon :size="14"><CopyDocument /></el-icon>
         </button>
       </div>
@@ -27,17 +27,32 @@
 <script setup lang="ts">
 import { WarningFilled, CopyDocument } from '@element-plus/icons-vue'
 
-export interface BashApprovalItem {
+export interface ApprovalItem {
   requestId: string
-  command: string
+  toolName: string
+  description: string
 }
 
-function copyCommand(command: string) {
-  navigator.clipboard.writeText(command)
+const titleMap: Record<string, string> = {
+  bash: '命令执行待审批',
+  shell: '命令执行待审批',
+  write_file: '文件写入待审批',
+  edit_file: '文件编辑待审批'
+}
+
+const descMap: Record<string, string> = {
+  bash: 'Agent 请求执行以下命令：',
+  shell: 'Agent 请求执行以下命令：',
+  write_file: 'Agent 请求写入以下文件：',
+  edit_file: 'Agent 请求编辑以下文件：'
+}
+
+function copyText(text: string) {
+  navigator.clipboard.writeText(text)
 }
 
 defineProps<{
-  items: BashApprovalItem[]
+  items: ApprovalItem[]
 }>()
 
 defineEmits<{
@@ -46,7 +61,7 @@ defineEmits<{
 </script>
 
 <style scoped>
-.bash-approval-bar {
+.tool-approval-bar {
   flex-shrink: 0;
   margin-top: var(--aw-space-sm);
   display: flex;

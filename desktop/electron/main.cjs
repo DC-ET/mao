@@ -7,7 +7,7 @@ const path = require('path')
 let mainWindow = null
 let currentWorkspace = ''
 /** @type {Map<string, (approved: boolean) => void>} */
-const pendingBashApprovals = new Map()
+const pendingApprovals = new Map()
 /** @type {Map<string, {process: import('child_process').ChildProcess, cwd: string}>} */
 const shellSessions = new Map()
 
@@ -17,23 +17,23 @@ function sendToRenderer(channel, data) {
   }
 }
 
-function requestBashApproval(command, sessionId) {
+function requestToolApproval(toolName, description, sessionId) {
   return new Promise((resolve) => {
-    const requestId = `bash_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+    const requestId = `approval_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 
-    pendingBashApprovals.set(requestId, (approved) => {
-      pendingBashApprovals.delete(requestId)
+    pendingApprovals.set(requestId, (approved) => {
+      pendingApprovals.delete(requestId)
       resolve(approved)
     })
 
-    sendToRenderer('bash-approval-request', { requestId, command, sessionId })
+    sendToRenderer('tool-approval-request', { requestId, toolName, description, sessionId })
   })
 }
 
-ipcMain.handle('bash-approval-response', (event, { requestId, approved }) => {
-  const resolve = pendingBashApprovals.get(requestId)
+ipcMain.handle('tool-approval-response', (event, { requestId, approved }) => {
+  const resolve = pendingApprovals.get(requestId)
   if (resolve) {
-    pendingBashApprovals.delete(requestId)
+    pendingApprovals.delete(requestId)
     resolve(!!approved)
   }
 })
@@ -201,7 +201,7 @@ ipcMain.handle('open-terminal', (event, folderPath) => {
 // ========== Local tool execution IPC handlers ==========
 
 ipcMain.handle('local-execute-bash', async (event, { command, timeout = 30, workdir, workspace }) => {
-  const approved = await requestBashApproval(command)
+  const approved = await requestToolApproval('bash', command)
   if (!approved) {
     return { exit_code: -1, output: 'User denied command execution.' }
   }
@@ -246,6 +246,10 @@ ipcMain.handle('local-read-file', async (event, { path: filePath, offset, limit 
 })
 
 ipcMain.handle('local-write-file', async (event, { path: filePath, content }) => {
+  const approved = await requestToolApproval('write_file', filePath)
+  if (!approved) {
+    return { success: false, error: 'User denied file write.' }
+  }
   try {
     const resolvedPath = resolveWorkspacePath(filePath)
     const dir = path.dirname(resolvedPath)
@@ -258,6 +262,10 @@ ipcMain.handle('local-write-file', async (event, { path: filePath, content }) =>
 })
 
 ipcMain.handle('local-edit-file', async (event, { path: filePath, old_string, new_string }) => {
+  const approved = await requestToolApproval('edit_file', filePath)
+  if (!approved) {
+    return { success: false, error: 'User denied file edit.' }
+  }
   try {
     const resolvedPath = resolveWorkspacePath(filePath)
     const content = fs.readFileSync(resolvedPath, 'utf-8')
@@ -268,18 +276,6 @@ ipcMain.handle('local-edit-file', async (event, { path: filePath, old_string, ne
     const updated = content.replaceAll(old_string, new_string)
     fs.writeFileSync(resolvedPath, updated, 'utf-8')
     return { success: true, replacements: count }
-  } catch (e) {
-    return { error: e.message }
-  }
-})
-
-ipcMain.handle('local-http-request', async (event, { url, method = 'GET', headers, body }) => {
-  try {
-    const options = { method, headers: headers || {} }
-    if (body) options.body = body
-    const resp = await fetch(url, options)
-    const text = await resp.text()
-    return { status: resp.status, body: text }
   } catch (e) {
     return { error: e.message }
   }
@@ -296,11 +292,9 @@ async function executeToolByName(toolName, parsedArgs, sessionId, workspace) {
     case 'read_file':
       return await handleLocalReadFile(parsedArgs, workspace)
     case 'write_file':
-      return await handleLocalWriteFile(parsedArgs, workspace)
+      return await handleLocalWriteFile(parsedArgs, workspace, sessionId)
     case 'edit_file':
-      return await handleLocalEditFile(parsedArgs, workspace)
-    case 'http_request':
-      return await handleLocalHttpRequest(parsedArgs)
+      return await handleLocalEditFile(parsedArgs, workspace, sessionId)
     default:
       return { error: `Unknown tool: ${toolName}` }
   }
@@ -333,7 +327,7 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
 
 async function handleBashFromWebSocket(args, sessionId, workspace) {
   console.log('[handleBash] received workspace:', workspace, ', args.workdir:', args.workdir)
-  const approved = await requestBashApproval(args.command, sessionId)
+  const approved = await requestToolApproval('bash', args.command, sessionId)
   if (!approved) {
     return { exit_code: -1, output: 'User denied command execution.' }
   }
@@ -438,7 +432,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace) {
     })
   }
 
-  const approved = await requestBashApproval(command, sessionId)
+  const approved = await requestToolApproval('shell', command, sessionId)
   if (!approved) {
     return { exit_code: -1, output: 'User denied command execution.' }
   }
@@ -507,7 +501,11 @@ async function handleLocalReadFile(args, workspace) {
   }
 }
 
-async function handleLocalWriteFile(args, workspace) {
+async function handleLocalWriteFile(args, workspace, sessionId) {
+  const approved = await requestToolApproval('write_file', args.path, sessionId)
+  if (!approved) {
+    return { success: false, error: 'User denied file write.' }
+  }
   try {
     const resolvedPath = resolveWorkspacePath(args.path, workspace)
     const dir = path.dirname(resolvedPath)
@@ -519,7 +517,11 @@ async function handleLocalWriteFile(args, workspace) {
   }
 }
 
-async function handleLocalEditFile(args, workspace) {
+async function handleLocalEditFile(args, workspace, sessionId) {
+  const approved = await requestToolApproval('edit_file', args.path, sessionId)
+  if (!approved) {
+    return { success: false, error: 'User denied file edit.' }
+  }
   try {
     const resolvedPath = resolveWorkspacePath(args.path, workspace)
     const content = fs.readFileSync(resolvedPath, 'utf-8')
@@ -527,17 +529,6 @@ async function handleLocalEditFile(args, workspace) {
     if (count === 0) return { success: false, error: 'old_string not found in file' }
     fs.writeFileSync(resolvedPath, content.replaceAll(args.old_string, args.new_string), 'utf-8')
     return { success: true, replacements: count }
-  } catch (e) {
-    return { error: e.message }
-  }
-}
-
-async function handleLocalHttpRequest(args) {
-  try {
-    const options = { method: args.method || 'GET', headers: args.headers || {} }
-    if (args.body) options.body = args.body
-    const resp = await fetch(args.url, options)
-    return { status: resp.status, body: await resp.text() }
   } catch (e) {
     return { error: e.message }
   }

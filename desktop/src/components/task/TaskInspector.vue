@@ -45,11 +45,11 @@
 
     <div class="inspector-section">
       <h4 class="section-title">待审批</h4>
-      <BashApprovalBar
-        v-if="pendingBashApprovals && pendingBashApprovals.length > 0"
-        :items="pendingBashApprovals"
+      <ToolApprovalBar
+        v-if="pendingApprovals && pendingApprovals.length > 0"
+        :items="pendingApprovals"
         class="inspector-approval"
-        @confirm="(requestId, approved) => $emit('bashConfirm', requestId, approved)"
+        @confirm="(requestId, approved) => $emit('toolConfirm', requestId, approved)"
       />
       <div v-else class="approval-empty">无待审批事项</div>
     </div>
@@ -61,14 +61,14 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ChatDotRound, FolderOpened } from '@element-plus/icons-vue'
 import TodoChecklist from './TodoChecklist.vue'
 import type { TodoItem } from '../../types/chat'
-import BashApprovalBar from '../chat/BashApprovalBar.vue'
-import type { BashApprovalItem } from '../chat/BashApprovalBar.vue'
+import ToolApprovalBar from '../chat/ToolApprovalBar.vue'
+import type { ApprovalItem } from '../chat/ToolApprovalBar.vue'
 import type { TaskPhase } from '../../stores/session'
 import type { ContextWindowInfo } from '../../types/chat'
 
 const props = defineProps<{
   todos?: TodoItem[]
-  pendingBashApprovals?: BashApprovalItem[]
+  pendingApprovals?: ApprovalItem[]
   // Task info props (moved from TaskHeader)
   title: string
   agentName?: string
@@ -81,7 +81,7 @@ const props = defineProps<{
 }>()
 
 defineEmits<{
-  bashConfirm: [requestId: string, approved: boolean]
+  toolConfirm: [requestId: string, approved: boolean]
   togglePanel: []
   todoUpdate: [todoId: number, action: 'start' | 'complete' | 'delete']
 }>()
