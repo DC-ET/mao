@@ -17,6 +17,13 @@
         <el-table-column prop="provider" label="供应商" width="120" />
         <el-table-column prop="modelId" label="模型标识" width="150" />
         <el-table-column prop="baseUrl" label="API 地址" min-width="200" show-overflow-tooltip />
+        <el-table-column label="视觉" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.supportsVision ? 'success' : 'info'" size="small">
+              {{ row.supportsVision ? '是' : '否' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">

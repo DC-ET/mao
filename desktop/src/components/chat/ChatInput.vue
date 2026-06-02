@@ -11,6 +11,7 @@
         @input="autoResize"
         @keydown.enter.ctrl.prevent="cancelling ? undefined : loading ? handleStop() : handleSend()"
         @keydown.enter.meta.prevent="cancelling ? undefined : loading ? handleStop() : handleSend()"
+        @paste="handlePaste"
       />
       <div class="resize-handle" title="拖拽调整大小">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -122,6 +123,27 @@ function autoResize() {
   if (!el) return
   el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, 240) + 'px'
+}
+
+function handlePaste(event: ClipboardEvent) {
+  const items = event.clipboardData?.items
+  if (!items) return
+  for (const item of Array.from(items)) {
+    if (!item.type.startsWith('image/')) continue
+    if (pendingFiles.value.length >= 10) {
+      ElMessage.warning('最多上传 10 张图片')
+      break
+    }
+    const file = item.getAsFile()
+    if (!file) continue
+    if (file.size > 10 * 1024 * 1024) {
+      ElMessage.warning(`粘贴的图片超过 10MB 限制`)
+      continue
+    }
+    const idx = pendingFiles.value.length
+    pendingFiles.value.push(file)
+    filePreviewUrls.value[idx] = URL.createObjectURL(file)
+  }
 }
 
 function handleFileSelect(event: Event) {
@@ -311,8 +333,8 @@ onMounted(autoResize)
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: var(--aw-surface-black);
-  color: var(--aw-body-on-dark);
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-80);
   cursor: pointer;
   transition: all 0.15s;
   flex-shrink: 0;

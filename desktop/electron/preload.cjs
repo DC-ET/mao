@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath),
+  openTerminal: (folderPath) => ipcRenderer.invoke('open-terminal', folderPath),
 
   // Tool execution via Streaming WS (called by renderer when server sends tool_execute)
   toolExecute: (toolName, args, requestId, workspace, sessionId) =>

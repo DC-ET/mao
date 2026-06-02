@@ -33,6 +33,10 @@
       <el-form-item label="温度上限" prop="temperatureMax">
         <el-input-number v-model="form.temperatureMax" :min="0" :max="2" :step="0.1" :precision="1" />
       </el-form-item>
+      <el-form-item label="支持视觉">
+        <el-switch v-model="form.supportsVision" />
+        <span style="margin-left: 8px; color: #909399; font-size: 12px;">开启后可在任务中发送图片</span>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="$emit('update:visible', false)">取消</el-button>
@@ -70,7 +74,8 @@ const form = reactive({
   baseUrl: '',
   apiKey: '',
   maxTokens: 4096,
-  temperatureMax: 1.0
+  temperatureMax: 1.0,
+  supportsVision: false
 })
 
 const rules: FormRules = {
@@ -89,7 +94,8 @@ watch(() => props.visible, (val) => {
       baseUrl: props.modelData.baseUrl || '',
       apiKey: '',
       maxTokens: props.modelData.maxTokens ?? 4096,
-      temperatureMax: props.modelData.temperatureMax ?? 1.0
+      temperatureMax: props.modelData.temperatureMax ?? 1.0,
+      supportsVision: !!props.modelData.supportsVision
     })
   } else {
     isEdit.value = false
@@ -100,7 +106,8 @@ watch(() => props.visible, (val) => {
       baseUrl: '',
       apiKey: '',
       maxTokens: 4096,
-      temperatureMax: 1.0
+      temperatureMax: 1.0,
+      supportsVision: false
     })
   }
 })
@@ -111,7 +118,7 @@ async function handleSubmit() {
 
   submitting.value = true
   try {
-    const payload = { ...form }
+    const payload: any = { ...form, supportsVision: form.supportsVision ? 1 : 0 }
     if (isEdit.value && !payload.apiKey) {
       delete (payload as any).apiKey
     }
