@@ -210,7 +210,6 @@ public class AgentLoop {
 
     /**
      * Execute tool calls in parallel using CompletableFuture.
-     * Returns true if any tool call was to the "todo" skill.
      */
     private void executeToolCalls(List<ChatRequest.ToolCall> pendingCalls,
                                   AgentExecutionContext context,

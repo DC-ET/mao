@@ -117,7 +117,7 @@ public class LocalToolSessionRegistry {
                 "workspace", workspace != null ? workspace : ""
         )));
 
-        log.debug("Sent tool request {} to session {}: tool={}", requestId, sessionId, toolName);
+        log.debug("Sent tool request {} to session {}: tool={}, workspace={}", requestId, sessionId, toolName, workspace);
         return future;
     }
 

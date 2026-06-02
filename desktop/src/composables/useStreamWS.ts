@@ -28,11 +28,15 @@ const pendingCallbacks = new Map<string, {
   reject?: (err: Error) => void
 }>()
 
+// Module-level flags to ensure IPC listeners are registered only once
+let skillSyncListenerRegistered = false
+
 export function useStreamWS() {
   const sessionStore = useSessionStore()
 
-  // Listen for skill sync completion from main process
-  if (typeof window !== 'undefined' && (window as any).electronAPI) {
+  // Listen for skill sync completion from main process (register once)
+  if (!skillSyncListenerRegistered && typeof window !== 'undefined' && (window as any).electronAPI) {
+    skillSyncListenerRegistered = true
     ;(window as any).electronAPI.onSkillSyncComplete?.((data: { sessionId: number; success: boolean; error?: string }) => {
       console.log('[skill-sync] complete:', data)
       if (ws?.readyState === WebSocket.OPEN) {
@@ -169,11 +173,11 @@ export function useStreamWS() {
     }
   }
 
-  function sendMessage(sessionId: string, content: string, eventId: string) {
+  function sendMessage(sessionId: string, content: string, eventId: string, images?: string[]) {
     send({
       type: 'send_message',
       sessionId: Number(sessionId),
-      data: { content, eventId }
+      data: { content, eventId, images: images || [] }
     })
   }
 

@@ -1,19 +1,14 @@
 package com.agentworkbench.harness.core;
 
 import com.agentworkbench.agent.entity.Agent;
-import com.agentworkbench.agent.entity.AgentTool;
 import com.agentworkbench.agent.mapper.AgentMapper;
-import com.agentworkbench.agent.mapper.AgentToolMapper;
 import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
 import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.llm.ChatUsage;
 import com.agentworkbench.harness.llm.LlmModelConfig;
 import com.agentworkbench.harness.skill.SkillLoader;
-import com.agentworkbench.harness.tool.Tool;
 import com.agentworkbench.harness.tool.ToolRegistry;
-import com.agentworkbench.tool.entity.ToolEntity;
-import com.agentworkbench.tool.mapper.ToolEntityMapper;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.session.entity.Message;
@@ -46,8 +41,6 @@ public class HarnessService {
     private final SkillLoader skillLoader;
     private final SessionMapper sessionMapper;
     private final AgentMapper agentMapper;
-    private final AgentToolMapper agentToolMapper;
-    private final ToolEntityMapper toolEntityMapper;
     private final LlmModelMapper llmModelMapper;
     private final MessageMapper messageMapper;
     private final SessionService sessionService;
@@ -56,12 +49,12 @@ public class HarnessService {
     private final CompactionConfig compactionConfig;
 
     // In-memory event content store with TTL
-    private final Cache<String, String> eventContentStore = Caffeine.newBuilder()
+    private final Cache<String, Object> eventContentStore = Caffeine.newBuilder()
             .expireAfterWrite(10, TimeUnit.MINUTES)
             .maximumSize(1000)
             .build();
 
-    public String prepareMessage(Long sessionId, String userContent) {
+    public String prepareMessage(Long sessionId, Object userContent) {
         String eventId = java.util.UUID.randomUUID().toString();
         eventContentStore.put(eventId, userContent);
         return eventId;
@@ -73,11 +66,13 @@ public class HarnessService {
 
     public void executeFromEvent(Long sessionId, String eventId, AgentEventListener listener,
                                   AtomicBoolean cancelFlag) {
-        String userContent = eventContentStore.getIfPresent(eventId);
+        Object userContent = eventContentStore.getIfPresent(eventId);
         if (userContent != null) {
             eventContentStore.invalidate(eventId);
         }
-        execute(sessionId, userContent, listener, cancelFlag);
+        // userContent is already persisted by the caller (StreamingWsHandler);
+        // pass null to execute() since it loads messages from DB in buildContext().
+        execute(sessionId, null, listener, cancelFlag);
     }
 
     public void execute(Long sessionId, String userContent, AgentEventListener listener) {
@@ -167,9 +162,10 @@ public class HarnessService {
                         .eq("session_id", sessionId)
                         .orderByAsc("created_at"));
         for (Message msg : history) {
+            Object parsedContent = parseContent(msg.getContent());
             var msgBuilder = ChatRequest.Message.builder()
                     .role(msg.getRole().toLowerCase())
-                    .content(msg.getContent());
+                    .content(parsedContent);
             if (msg.getToolCallId() != null) {
                 msgBuilder.toolCallId(msg.getToolCallId());
             }
@@ -193,7 +189,7 @@ public class HarnessService {
             String currentUserQuestion = null;
             for (int i = context.getMessages().size() - 1; i >= 0; i--) {
                 if ("user".equals(context.getMessages().get(i).getRole())) {
-                    currentUserQuestion = context.getMessages().get(i).getContent();
+                    currentUserQuestion = TokenEstimator.contentToString(context.getMessages().get(i).getContent());
                     break;
                 }
             }
@@ -213,18 +209,8 @@ public class HarnessService {
             }
         }
 
-        // 6. Load per-agent tools (fallback: all built-in tools if none configured)
-        List<AgentTool> agentTools = agentToolMapper.selectList(
-                new QueryWrapper<AgentTool>().eq("agent_id", agent.getId()));
-        if (!agentTools.isEmpty()) {
-            List<Long> toolIds = agentTools.stream().map(AgentTool::getToolId).toList();
-            List<ToolEntity> toolEntities = toolEntityMapper.selectBatchIds(toolIds);
-            List<String> toolNames = toolEntities.stream().map(ToolEntity::getName).toList();
-            List<Tool> tools = toolRegistry.getToolsByNames(toolNames);
-            context.setTools(tools);
-        } else {
-            context.setTools(toolRegistry.getAllTools());
-        }
+        // 6. All built-in tools are available to every agent
+        context.setTools(toolRegistry.getAllTools());
 
         // 7. Load available Skill names for this agent
         List<String> agentSkillNames = null;
@@ -253,6 +239,23 @@ public class HarnessService {
             return 100;
         }
         return Math.max(maxRounds, 2);
+    }
+
+    /**
+     * Parse content from DB: JSON array → List<ContentPart>, otherwise plain String.
+     */
+    private Object parseContent(String raw) {
+        if (raw == null) return null;
+        String trimmed = raw.trim();
+        if (trimmed.startsWith("[")) {
+            try {
+                return objectMapper.readValue(trimmed,
+                        new com.fasterxml.jackson.core.type.TypeReference<List<ChatRequest.ContentPart>>() {});
+            } catch (Exception e) {
+                return raw;  // fallback to plain text
+            }
+        }
+        return raw;
     }
 
     /**

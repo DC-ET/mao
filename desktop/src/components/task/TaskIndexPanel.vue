@@ -769,7 +769,17 @@ function toggleGroup(key: string) {
   opacity: 0.3;
 }
 
-/* Scrollbar */
+/* Scrollbar — hidden by default, visible on hover */
+.panel-content {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s;
+}
+
+.panel-content:hover {
+  scrollbar-color: var(--aw-hairline) transparent;
+}
+
 .panel-content::-webkit-scrollbar {
   width: 4px;
 }
@@ -779,8 +789,13 @@ function toggleGroup(key: string) {
 }
 
 .panel-content::-webkit-scrollbar-thumb {
-  background: var(--aw-hairline);
+  background: transparent;
   border-radius: 2px;
+  transition: background 0.3s;
+}
+
+.panel-content:hover::-webkit-scrollbar-thumb {
+  background: var(--aw-hairline);
 }
 
 /* Dark mode */

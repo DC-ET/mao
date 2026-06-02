@@ -24,7 +24,8 @@
     <!-- Pending files -->
     <div v-if="pendingFiles.length > 0" class="pending-files">
       <div v-for="(file, idx) in pendingFiles" :key="idx" class="pending-file">
-        <el-icon><Document /></el-icon>
+        <img v-if="filePreviewUrls[idx]" :src="filePreviewUrls[idx]" class="file-preview-img" />
+        <el-icon v-else><Document /></el-icon>
         <span class="file-name">{{ file.name }}</span>
         <el-icon class="remove-file" @click="removeFile(idx)"><Close /></el-icon>
       </div>
@@ -33,17 +34,23 @@
     <!-- Bottom toolbar -->
     <div class="toolbar">
       <div class="toolbar-left">
-        <label class="add-btn" title="上传文件">
-          <input type="file" multiple @change="handleFileSelect" style="display: none" />
+        <label class="add-btn" title="上传图片">
+          <input type="file" multiple accept="image/*" @change="handleFileSelect" style="display: none" />
           <el-icon :size="16"><Plus /></el-icon>
         </label>
-        <div class="workspace-indicator" :class="{ 'has-workspace': !!workspace }" @click="openWorkspace">
-          <span v-if="executionMode === 'LOCAL'" class="mode-label-inline">本地</span>
-          <el-icon :size="14">
-            <WarningFilled v-if="!workspace" />
-            <FolderOpened v-else />
-          </el-icon>
-          <span>{{ dirName || 'No workspace' }}</span>
+        <div class="workspace-indicator" :class="{ 'has-workspace': !!workspace, 'cloud-mode': executionMode === 'CLOUD' }" @click="executionMode !== 'CLOUD' && openWorkspace()">
+          <template v-if="executionMode === 'CLOUD'">
+            <el-icon :size="14"><Cloudy /></el-icon>
+            <span>云端工作区</span>
+          </template>
+          <template v-else>
+            <span class="mode-label-inline">本地</span>
+            <el-icon :size="14">
+              <WarningFilled v-if="!workspace" />
+              <FolderOpened v-else />
+            </el-icon>
+            <span>{{ dirName || 'No workspace' }}</span>
+          </template>
         </div>
       </div>
       <div class="toolbar-right">
@@ -69,7 +76,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { Document, Close, Plus, WarningFilled, FolderOpened } from '@element-plus/icons-vue'
+import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -97,6 +105,7 @@ const emit = defineEmits<{
 const textareaRef = ref<HTMLTextAreaElement>()
 const inputText = ref('')
 const pendingFiles = ref<File[]>([])
+const filePreviewUrls = ref<string[]>([])
 
 const canSend = computed(() =>
   (inputText.value.trim().length > 0 || pendingFiles.value.length > 0)
@@ -119,21 +128,41 @@ function handleFileSelect(event: Event) {
   const input = event.target as HTMLInputElement
   if (input.files) {
     for (const file of Array.from(input.files)) {
+      if (pendingFiles.value.length >= 10) {
+        ElMessage.warning('最多上传 10 张图片')
+        break
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        ElMessage.warning(`图片 ${file.name} 超过 10MB 限制`)
+        continue
+      }
+      const idx = pendingFiles.value.length
       pendingFiles.value.push(file)
+      if (file.type.startsWith('image/')) {
+        filePreviewUrls.value[idx] = URL.createObjectURL(file)
+      } else {
+        filePreviewUrls.value[idx] = ''
+      }
     }
   }
   input.value = ''
 }
 
 function removeFile(index: number) {
+  if (filePreviewUrls.value[index]) {
+    URL.revokeObjectURL(filePreviewUrls.value[index])
+  }
   pendingFiles.value.splice(index, 1)
+  filePreviewUrls.value.splice(index, 1)
 }
 
 function handleSend() {
   if (!canSend.value) return
   emit('send', inputText.value.trim(), [...pendingFiles.value])
   inputText.value = ''
+  filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
   pendingFiles.value = []
+  filePreviewUrls.value = []
   nextTick(autoResize)
 }
 
@@ -245,6 +274,14 @@ onMounted(autoResize)
   color: var(--aw-danger);
 }
 
+.file-preview-img {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: var(--aw-radius-xs);
+  flex-shrink: 0;
+}
+
 /* Bottom toolbar */
 .toolbar {
   display: flex;
@@ -300,6 +337,11 @@ onMounted(autoResize)
 
 .workspace-indicator.has-workspace {
   color: var(--aw-ink-muted-80);
+}
+
+.workspace-indicator.cloud-mode {
+  color: var(--aw-primary);
+  cursor: default;
 }
 
 .workspace-indicator span {

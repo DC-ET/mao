@@ -4,8 +4,11 @@ import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.harness.core.AgentLoop;
 import com.agentworkbench.harness.core.HarnessService;
+import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.local.LocalToolSessionRegistry;
 import com.agentworkbench.harness.skill.SkillSyncService;
+import com.agentworkbench.model.entity.LlmModel;
+import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.session.activity.ActivityService;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.service.SessionService;
@@ -21,6 +24,7 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -40,6 +44,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final AgentLoop agentLoop;
     private final SkillSyncService skillSyncService;
     private final AgentMapper agentMapper;
+    private final LlmModelMapper llmModelMapper;
     private final ExecutorService agentExecutor;
 
     /** sessionId → cancel flag for running AgentLoops */
@@ -57,6 +62,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                AgentLoop agentLoop,
                                SkillSyncService skillSyncService,
                                AgentMapper agentMapper,
+                               LlmModelMapper llmModelMapper,
                                @Value("${app.harness.agent-thread-pool-size:20}") int poolSize,
                                @Value("${app.harness.agent-thread-pool-max:100}") int maxPoolSize,
                                @Value("${app.harness.agent-thread-pool-queue:200}") int queueCapacity) {
@@ -69,6 +75,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.agentLoop = agentLoop;
         this.skillSyncService = skillSyncService;
         this.agentMapper = agentMapper;
+        this.llmModelMapper = llmModelMapper;
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(poolSize);
         executor.setMaxPoolSize(maxPoolSize);
@@ -174,6 +181,14 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         String content = data.get("content").asText();
         String eventId = data.has("eventId") ? data.get("eventId").asText() : null;
 
+        // Parse images from WS message
+        List<String> images = new ArrayList<>();
+        if (data.has("images") && data.get("images").isArray()) {
+            for (JsonNode img : data.get("images")) {
+                images.add(img.asText());
+            }
+        }
+
         // Validate session exists
         Session session;
         try {
@@ -189,6 +204,25 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             return;
         }
 
+        // Vision model check: if images are attached, verify model supports vision
+        if (!images.isEmpty()) {
+            Agent agent = agentMapper.selectById(session.getAgentId());
+            if (agent != null) {
+                LlmModel model = llmModelMapper.selectById(agent.getModelId());
+                if (model == null || model.getSupportsVision() == null || model.getSupportsVision() != 1) {
+                    registry.send(userId, WsEvent.of("error", sessionId,
+                            Map.of("message", "当前模型不支持图片输入，请切换支持视觉的模型")));
+                    return;
+                }
+            }
+            // Limit max 10 images per message
+            if (images.size() > 10) {
+                registry.send(userId, WsEvent.of("error", sessionId,
+                        Map.of("message", "单条消息最多支持 10 张图片")));
+                return;
+            }
+        }
+
         // For LOCAL mode, register userId and verify desktop client is connected
         if ("LOCAL".equals(session.getExecutionMode())) {
             localToolSessionRegistry.setUserForSession(sessionId, userId);
@@ -199,13 +233,31 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             }
         }
 
+        // Build multimodal content
+        Object messageContent;
+        if (images.isEmpty()) {
+            messageContent = content;
+        } else {
+            List<ChatRequest.ContentPart> parts = new ArrayList<>();
+            if (content != null && !content.isBlank()) {
+                parts.add(ChatRequest.ContentPart.builder().type("text").text(content).build());
+            }
+            for (String imageUrl : images) {
+                parts.add(ChatRequest.ContentPart.builder()
+                        .type("image_url")
+                        .imageUrl(ChatRequest.ImageUrl.builder().url(imageUrl).build())
+                        .build());
+            }
+            messageContent = parts;
+        }
+
         // Save user message to DB
-        sessionService.saveMessage(sessionId, "USER", content, null, null, 0, null);
+        sessionService.saveMessage(sessionId, "USER", messageContent, null, null, 0, null);
 
         // Prepare event content in cache
         String resolvedEventId = (eventId != null && !eventId.isBlank())
                 ? eventId
-                : harnessService.prepareMessage(sessionId, content);
+                : harnessService.prepareMessage(sessionId, messageContent);
 
         // Auto-subscribe so the client receives its own events
         registry.subscribe(userId, sessionId);

@@ -259,13 +259,14 @@ public class CompactionService {
     private String formatMessagesForCompaction(List<ChatRequest.Message> messages) {
         StringBuilder sb = new StringBuilder();
         for (ChatRequest.Message msg : messages) {
+            String textContent = TokenEstimator.contentToString(msg.getContent());
             switch (msg.getRole()) {
                 case "user" -> {
-                    sb.append("用户: ").append(truncate(msg.getContent(), MAX_SINGLE_MESSAGE_CHARS)).append("\n\n");
+                    sb.append("用户: ").append(truncate(textContent, MAX_SINGLE_MESSAGE_CHARS)).append("\n\n");
                 }
                 case "assistant" -> {
-                    if (msg.getContent() != null && !msg.getContent().isEmpty()) {
-                        sb.append("助手: ").append(truncate(msg.getContent(), MAX_SINGLE_MESSAGE_CHARS)).append("\n");
+                    if (textContent != null && !textContent.isEmpty()) {
+                        sb.append("助手: ").append(truncate(textContent, MAX_SINGLE_MESSAGE_CHARS)).append("\n");
                     }
                     if (msg.getToolCalls() != null) {
                         for (ChatRequest.ToolCall tc : msg.getToolCalls()) {
@@ -283,10 +284,10 @@ public class CompactionService {
                 case "tool" -> {
                     String toolName = msg.getToolCallId() != null ? msg.getToolCallId() : "unknown";
                     sb.append("工具结果[").append(toolName).append("]: ")
-                            .append(truncate(msg.getContent(), MAX_TOOL_RESULT_CHARS)).append("\n\n");
+                            .append(truncate(textContent, MAX_TOOL_RESULT_CHARS)).append("\n\n");
                 }
                 case "system" -> {
-                    sb.append("[系统] ").append(truncate(msg.getContent(), MAX_SINGLE_MESSAGE_CHARS)).append("\n\n");
+                    sb.append("[系统] ").append(truncate(textContent, MAX_SINGLE_MESSAGE_CHARS)).append("\n\n");
                 }
             }
         }
@@ -377,7 +378,7 @@ public class CompactionService {
                 return null;
             }
 
-            String content = response.getChoices().get(0).getMessage().getContent();
+            String content = TokenEstimator.contentToString(response.getChoices().get(0).getMessage().getContent());
             if (content == null || content.isBlank()) return null;
 
             // 提取 <summary> 标签内容

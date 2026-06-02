@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron')
 const { join } = require('path')
-const { exec } = require('child_process')
+const { exec, spawn } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 
@@ -8,6 +8,8 @@ let mainWindow = null
 let currentWorkspace = ''
 /** @type {Map<string, (approved: boolean) => void>} */
 const pendingBashApprovals = new Map()
+/** @type {Map<string, {process: import('child_process').ChildProcess, cwd: string}>} */
+const shellSessions = new Map()
 
 function sendToRenderer(channel, data) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -44,6 +46,7 @@ function getApiBaseUrl() {
 // ========== Skill sync IPC handler ==========
 
 ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, workspace }) => {
+  // Use workspace parameter if provided, otherwise fall back to currentWorkspace
   const effectiveWorkspace = workspace || currentWorkspace
   console.log('[skill-sync] IPC handler called:', { sessionId, syncUrl, workspace, currentWorkspace, effectiveWorkspace })
   if (!effectiveWorkspace) {
@@ -86,10 +89,11 @@ ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, workspac
   }
 })
 
-function resolveWorkspacePath(filePath) {
-  if (!filePath || !currentWorkspace) return filePath
+function resolveWorkspacePath(filePath, workspace) {
+  const effectiveWorkspace = workspace || currentWorkspace
+  if (!filePath || !effectiveWorkspace) return filePath
   if (path.isAbsolute(filePath)) return filePath
-  return path.join(currentWorkspace, filePath)
+  return path.join(effectiveWorkspace, filePath)
 }
 
 function createWindow() {
@@ -191,7 +195,7 @@ ipcMain.handle('open-folder', (event, folderPath) => {
 
 // ========== Local tool execution IPC handlers ==========
 
-ipcMain.handle('local-execute-bash', async (event, { command, timeout = 30, workdir }) => {
+ipcMain.handle('local-execute-bash', async (event, { command, timeout = 30, workdir, workspace }) => {
   const approved = await requestBashApproval(command)
   if (!approved) {
     return { exit_code: -1, output: 'User denied command execution.' }
@@ -202,7 +206,8 @@ ipcMain.handle('local-execute-bash', async (event, { command, timeout = 30, work
       timeout: timeout * 1000,
       maxBuffer: 1024 * 1024 * 5 // 5MB
     }
-    const resolvedWorkdir = workdir || currentWorkspace
+    // Use workspace parameter if provided, otherwise fall back to currentWorkspace
+    const resolvedWorkdir = workdir || workspace || currentWorkspace
     if (resolvedWorkdir) {
       options.cwd = resolvedWorkdir
     }
@@ -277,18 +282,18 @@ ipcMain.handle('local-http-request', async (event, { url, method = 'GET', header
 
 // ========== Tool execution via Streaming WS ==========
 
-async function executeToolByName(toolName, parsedArgs, sessionId) {
+async function executeToolByName(toolName, parsedArgs, sessionId, workspace) {
   switch (toolName) {
     case 'bash':
-      return await handleBashFromWebSocket(parsedArgs, sessionId)
+      return await handleBashFromWebSocket(parsedArgs, sessionId, workspace)
     case 'shell':
-      return await handleShellFromWebSocket(parsedArgs, sessionId)
+      return await handleShellFromWebSocket(parsedArgs, sessionId, workspace)
     case 'read_file':
-      return await handleLocalReadFile(parsedArgs)
+      return await handleLocalReadFile(parsedArgs, workspace)
     case 'write_file':
-      return await handleLocalWriteFile(parsedArgs)
+      return await handleLocalWriteFile(parsedArgs, workspace)
     case 'edit_file':
-      return await handleLocalEditFile(parsedArgs)
+      return await handleLocalEditFile(parsedArgs, workspace)
     case 'http_request':
       return await handleLocalHttpRequest(parsedArgs)
     default:
@@ -297,6 +302,9 @@ async function executeToolByName(toolName, parsedArgs, sessionId) {
 }
 
 ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, workspace, sessionId }) => {
+  // Use the workspace from this specific tool call, falling back to currentWorkspace
+  const effectiveWorkspace = workspace || currentWorkspace
+  console.log('[tool-execute] received workspace:', workspace, ', effectiveWorkspace:', effectiveWorkspace, ', currentWorkspace before:', currentWorkspace)
   if (workspace) {
     console.log('[tool-execute] setting currentWorkspace:', workspace, '(was:', currentWorkspace, ')')
     currentWorkspace = workspace
@@ -310,7 +318,7 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
   }
 
   try {
-    const result = await executeToolByName(toolName, parsedArgs, sessionId)
+    const result = await executeToolByName(toolName, parsedArgs, sessionId, effectiveWorkspace)
     return { requestId, result: JSON.stringify(result), error: null }
   } catch (e) {
     console.error(`Tool ${toolName} execution failed:`, e)
@@ -318,7 +326,8 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
   }
 })
 
-async function handleBashFromWebSocket(args, sessionId) {
+async function handleBashFromWebSocket(args, sessionId, workspace) {
+  console.log('[handleBash] received workspace:', workspace, ', args.workdir:', args.workdir)
   const approved = await requestBashApproval(args.command, sessionId)
   if (!approved) {
     return { exit_code: -1, output: 'User denied command execution.' }
@@ -329,7 +338,13 @@ async function handleBashFromWebSocket(args, sessionId) {
       timeout: (args.timeout || 30) * 1000,
       maxBuffer: 1024 * 1024 * 5
     }
-    const resolvedWorkdir = args.workdir || currentWorkspace
+    // Resolve working directory: use workspace as base, apply workdir if provided
+    let resolvedWorkdir = workspace
+    if (args.workdir && args.workdir !== '.') {
+      // If workdir is absolute, use it directly; otherwise resolve relative to workspace
+      resolvedWorkdir = path.isAbsolute(args.workdir) ? args.workdir : path.join(workspace || process.cwd(), args.workdir)
+    }
+    console.log('[handleBash] resolvedWorkdir:', resolvedWorkdir)
     if (resolvedWorkdir) options.cwd = resolvedWorkdir
 
     exec(args.command, options, (error, stdout, stderr) => {
@@ -345,19 +360,77 @@ async function handleBashFromWebSocket(args, sessionId) {
   })
 }
 
-async function handleShellFromWebSocket(args, sessionId) {
-  const { action, command, session_id, workdir } = args
+async function handleShellFromWebSocket(args, sessionId, workspace) {
+  const { action, command, session_id, workdir, input } = args
+  // Resolve working directory: use workspace as base, apply workdir if provided
+  let resolvedWorkdir = workspace
+  if (workdir && workdir !== '.') {
+    resolvedWorkdir = path.isAbsolute(workdir) ? workdir : path.join(workspace || process.cwd(), workdir)
+  }
 
-  if (action === 'close' || action === 'list') {
-    return { session_id, status: action === 'close' ? 'closed' : 'listed', sessions: [] }
+  if (action === 'close') {
+    const session = shellSessions.get(session_id)
+    if (session) {
+      session.process.kill()
+      shellSessions.delete(session_id)
+    }
+    return { session_id, status: 'closed' }
+  }
+
+  if (action === 'list') {
+    const sessions = Array.from(shellSessions.entries()).map(([id, s]) => ({
+      session_id: id,
+      current_workdir: s.cwd,
+      command_count: 0
+    }))
+    return { sessions, count: sessions.length }
   }
 
   if (action === 'write_stdin') {
-    return { error: 'write_stdin is not supported in local mode without session persistence' }
+    const session = shellSessions.get(session_id)
+    if (!session) {
+      return { error: `Session not found: ${session_id}` }
+    }
+    return new Promise((resolve) => {
+      let output = ''
+      const onData = (data) => { output += data.toString() }
+      session.process.stdout.on('data', onData)
+      session.process.stdin.write(input)
+      setTimeout(() => {
+        session.process.stdout.removeListener('data', onData)
+        resolve({
+          session_id,
+          current_workdir: session.cwd,
+          output: output.trim(),
+          truncated: false
+        })
+      }, args.yield_time_ms || 5000)
+    })
   }
 
   if (action !== 'exec') {
     return { error: `Unknown action: ${action}` }
+  }
+
+  // 复用已有会话
+  if (session_id && shellSessions.has(session_id)) {
+    const session = shellSessions.get(session_id)
+    return new Promise((resolve) => {
+      let output = ''
+      const onData = (data) => { output += data.toString() }
+      session.process.stdout.on('data', onData)
+      session.process.stdin.write(command + '\n')
+      setTimeout(() => {
+        session.process.stdout.removeListener('data', onData)
+        resolve({
+          exit_code: 0,
+          session_id,
+          current_workdir: session.cwd,
+          output: output.trim(),
+          truncated: false
+        })
+      }, args.yield_time_ms || 10000)
+    })
   }
 
   const approved = await requestBashApproval(command, sessionId)
@@ -365,12 +438,40 @@ async function handleShellFromWebSocket(args, sessionId) {
     return { exit_code: -1, output: 'User denied command execution.' }
   }
 
+  // 创建持久化会话
+  if (session_id) {
+    const bashProcess = spawn('bash', ['--norc', '--noprofile'], {
+      cwd: resolvedWorkdir || undefined,
+      env: { ...process.env, TERM: 'dumb', PS1: '' }
+    })
+    shellSessions.set(session_id, { process: bashProcess, cwd: resolvedWorkdir || '' })
+
+    return new Promise((resolve) => {
+      let output = ''
+      const onData = (data) => { output += data.toString() }
+      bashProcess.stdout.on('data', onData)
+      bashProcess.stderr.on('data', onData)
+      bashProcess.stdin.write(command + '\n')
+      setTimeout(() => {
+        bashProcess.stdout.removeListener('data', onData)
+        bashProcess.stderr.removeListener('data', onData)
+        resolve({
+          exit_code: 0,
+          session_id,
+          current_workdir: resolvedWorkdir || '',
+          output: output.trim(),
+          truncated: false
+        })
+      }, args.yield_time_ms || 10000)
+    })
+  }
+
+  // 无 session_id，一次性执行
   return new Promise((resolve) => {
     const options = {
       timeout: (args.timeout || 30) * 1000,
       maxBuffer: 1024 * 1024 * 5
     }
-    const resolvedWorkdir = workdir || currentWorkspace
     if (resolvedWorkdir) options.cwd = resolvedWorkdir
 
     exec(command, options, (error, stdout, stderr) => {
@@ -379,7 +480,7 @@ async function handleShellFromWebSocket(args, sessionId) {
       } else {
         resolve({
           exit_code: error ? error.code || 1 : 0,
-          session_id: session_id || 'local',
+          session_id: 'local',
           current_workdir: resolvedWorkdir || '',
           output: (stdout || '') + (stderr ? '\n' + stderr : '')
         })
@@ -388,9 +489,9 @@ async function handleShellFromWebSocket(args, sessionId) {
   })
 }
 
-async function handleLocalReadFile(args) {
+async function handleLocalReadFile(args, workspace) {
   try {
-    const resolvedPath = resolveWorkspacePath(args.path)
+    const resolvedPath = resolveWorkspacePath(args.path, workspace)
     const content = fs.readFileSync(resolvedPath, 'utf-8')
     const lines = content.split('\n')
     const start = args.offset || 0
@@ -401,9 +502,9 @@ async function handleLocalReadFile(args) {
   }
 }
 
-async function handleLocalWriteFile(args) {
+async function handleLocalWriteFile(args, workspace) {
   try {
-    const resolvedPath = resolveWorkspacePath(args.path)
+    const resolvedPath = resolveWorkspacePath(args.path, workspace)
     const dir = path.dirname(resolvedPath)
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(resolvedPath, args.content, 'utf-8')
@@ -413,9 +514,9 @@ async function handleLocalWriteFile(args) {
   }
 }
 
-async function handleLocalEditFile(args) {
+async function handleLocalEditFile(args, workspace) {
   try {
-    const resolvedPath = resolveWorkspacePath(args.path)
+    const resolvedPath = resolveWorkspacePath(args.path, workspace)
     const content = fs.readFileSync(resolvedPath, 'utf-8')
     const count = content.split(args.old_string).length - 1
     if (count === 0) return { success: false, error: 'old_string not found in file' }

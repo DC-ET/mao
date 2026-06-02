@@ -205,8 +205,10 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
+
   function appendToolCallStart(sessionId: string, data: { tool_call_id: string; tool_name: string; arguments?: string }) {
-    if (data.tool_name === 'todo') return
+    if (TASK_TOOL_NAMES.has(data.tool_name)) return
     const sid = String(sessionId)
     const list = sessionMessages.value.get(sid)
     if (!list || list.length === 0) return

@@ -9,6 +9,8 @@ import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.mapper.MessageMapper;
 import com.agentworkbench.session.mapper.SessionMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +38,7 @@ public class SessionService {
     private final MessageMapper messageMapper;
     private final AgentMapper agentMapper;
     private final PathSandbox pathSandbox;
+    private final ObjectMapper objectMapper;
 
     public Session createSession(Long userId, Long agentId, String title) {
         return createSession(userId, agentId, title, "CLOUD");
@@ -160,6 +163,68 @@ public class SessionService {
         }
 
         return message;
+    }
+
+    public Message saveMessage(Long sessionId, String role, Object content,
+                                String toolCallId, String toolCalls,
+                                Integer tokenCount, Long modelId) {
+        Message message = new Message();
+        message.setSessionId(sessionId);
+        message.setRole(role);
+        if (content instanceof String str) {
+            message.setContent(str);
+        } else if (content != null) {
+            try {
+                message.setContent(objectMapper.writeValueAsString(content));
+            } catch (JsonProcessingException e) {
+                log.warn("Failed to serialize content to JSON, storing as string", e);
+                message.setContent(content.toString());
+            }
+        }
+        message.setToolCallId(toolCallId);
+        message.setToolCalls(toolCalls);
+        message.setTokenCount(tokenCount != null ? tokenCount : 0);
+        message.setModelId(modelId);
+        messageMapper.insert(message);
+
+        // Update session's updated_at
+        Session session = sessionMapper.selectById(sessionId);
+        if (session != null) {
+            sessionMapper.updateById(session);
+        }
+
+        // Auto-generate title from first user message (extract text for title)
+        if ("USER".equals(role) && session != null) {
+            Agent agent = agentMapper.selectById(session.getAgentId());
+            String agentName = agent != null ? agent.getName() : null;
+            if (session.getTitle() != null && (session.getTitle().equals(agentName) || session.getTitle().isBlank())) {
+                String textForTitle = content instanceof String s ? s : extractTextFromContent(content);
+                String autoTitle = TitleGenerator.generate(textForTitle);
+                if (autoTitle != null) {
+                    session.setTitle(autoTitle);
+                    sessionMapper.updateById(session);
+                }
+            }
+        }
+
+        return message;
+    }
+
+    private String extractTextFromContent(Object content) {
+        if (content instanceof String s) return s;
+        if (content instanceof List<?> list) {
+            StringBuilder sb = new StringBuilder();
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> map) {
+                    if ("text".equals(map.get("type"))) {
+                        Object text = map.get("text");
+                        if (text != null) sb.append(text);
+                    }
+                }
+            }
+            return sb.toString();
+        }
+        return content != null ? content.toString() : "";
     }
 
     public List<Message> getMessages(Long sessionId) {

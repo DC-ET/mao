@@ -28,6 +28,13 @@ public interface Tool {
     Map<String, Object> getOutputSchema();
 
     /**
+     * 工具行为指南（Markdown 格式）
+     * 包含触发条件、状态机、few-shot 示例等，注入到 system prompt 中
+     * 默认返回 null 表示无额外行为指南
+     */
+    default String getToolPrompt() { return null; }
+
+    /**
      * 执行 Tool
      *
      * @param arguments JSON 格式的参数

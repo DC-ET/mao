@@ -1,10 +1,8 @@
 package com.agentworkbench.agent.service;
 
 import com.agentworkbench.agent.entity.Agent;
-import com.agentworkbench.agent.entity.AgentTool;
 import com.agentworkbench.agent.entity.AgentTag;
 import com.agentworkbench.agent.mapper.AgentMapper;
-import com.agentworkbench.agent.mapper.AgentToolMapper;
 import com.agentworkbench.agent.mapper.AgentTagMapper;
 import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
@@ -22,7 +20,6 @@ public class AgentService {
 
     private final AgentMapper agentMapper;
     private final AgentTagMapper agentTagMapper;
-    private final AgentToolMapper agentToolMapper;
     private final ObjectMapper objectMapper;
 
     public List<Agent> listAgents(Long userId, String keyword, String type) {
@@ -48,7 +45,7 @@ public class AgentService {
     @Transactional
     public Agent createAgent(Long userId, String name, String description, String iconUrl,
                               String systemPrompt, Long modelId, String visibility,
-                              List<String> tags, List<Long> toolIds,
+                              List<String> tags,
                               List<String> skillNames) {
         Agent agent = new Agent();
         agent.setName(name);
@@ -81,16 +78,6 @@ public class AgentService {
             }
         }
 
-        // Save tools
-        if (toolIds != null) {
-            for (Long toolId : toolIds) {
-                AgentTool agentTool = new AgentTool();
-                agentTool.setAgentId(agent.getId());
-                agentTool.setToolId(toolId);
-                agentToolMapper.insert(agentTool);
-            }
-        }
-
         return agent;
     }
 
@@ -98,7 +85,8 @@ public class AgentService {
     public Agent updateAgent(Long id, String name, String description, String iconUrl,
                               String systemPrompt, Long modelId, String visibility,
                               Integer tokenLimit, Integer maxRounds,
-                              List<Long> toolIds, List<String> skillNames) {
+                              List<String> skillNames,
+                              List<String> tags) {
         Agent agent = getAgent(id);
         if (name != null) agent.setName(name);
         if (description != null) agent.setDescription(description);
@@ -117,30 +105,23 @@ public class AgentService {
         }
         agentMapper.updateById(agent);
 
-        // Update tools (delete old + insert new)
-        if (toolIds != null) {
-            agentToolMapper.delete(new QueryWrapper<AgentTool>().eq("agent_id", id));
-            for (Long toolId : toolIds) {
-                AgentTool agentTool = new AgentTool();
-                agentTool.setAgentId(id);
-                agentTool.setToolId(toolId);
-                agentToolMapper.insert(agentTool);
+        // Update tags (delete old + insert new)
+        if (tags != null) {
+            agentTagMapper.delete(new QueryWrapper<AgentTag>().eq("agent_id", id));
+            for (String tag : tags) {
+                AgentTag agentTag = new AgentTag();
+                agentTag.setAgentId(id);
+                agentTag.setTag(tag);
+                agentTagMapper.insert(agentTag);
             }
         }
 
         return agent;
     }
 
-    public List<Long> getAgentToolIds(Long agentId) {
-        return agentToolMapper.selectList(
-                new QueryWrapper<AgentTool>().eq("agent_id", agentId))
-                .stream().map(AgentTool::getToolId).toList();
-    }
-
     @Transactional
     public void deleteAgent(Long id) {
         agentTagMapper.delete(new QueryWrapper<AgentTag>().eq("agent_id", id));
-        agentToolMapper.delete(new QueryWrapper<AgentTool>().eq("agent_id", id));
         agentMapper.deleteById(id);
     }
 

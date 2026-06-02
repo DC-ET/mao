@@ -24,6 +24,7 @@ export interface ChatMessage {
   content: string
   createdAt: string
   files?: FileAttachment[]
+  images?: string[]
   toolCalls?: ToolCall[]
   segments?: MessageSegment[]
   durationMs?: number

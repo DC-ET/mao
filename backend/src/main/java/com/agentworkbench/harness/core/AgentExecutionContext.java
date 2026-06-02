@@ -6,7 +6,8 @@ import com.agentworkbench.harness.llm.LlmModelConfig;
 import com.agentworkbench.harness.tool.Tool;
 import lombok.Data;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Agent 执行上下文，包含一次对话的全部状态
@@ -67,6 +68,13 @@ public class AgentExecutionContext {
         messages.add(ChatRequest.Message.builder()
                 .role("user")
                 .content(content)
+                .build());
+    }
+
+    public void addUserMessage(List<ChatRequest.ContentPart> parts) {
+        messages.add(ChatRequest.Message.builder()
+                .role("user")
+                .content(parts)
                 .build());
     }
 

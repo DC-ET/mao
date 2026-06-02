@@ -32,6 +32,9 @@ public class LlmModel {
 
     private Integer status;
 
+    /** 是否支持视觉/图片输入 */
+    private Integer supportsVision;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

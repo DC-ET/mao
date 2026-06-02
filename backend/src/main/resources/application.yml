@@ -139,6 +139,23 @@ app:
         max-preview-chars: 10000
         default-yield-time-ms: 10000
 
+# Aliyun OSS
+oss:
+  region: ${OSS_REGION:oss-cn-hangzhou}
+  access-key-id: ${OSS_ACCESS_KEY_ID:REDACTED_OSS_KEY}
+  access-key-secret: ${OSS_ACCESS_KEY_SECRET:REDACTED_OSS_SECRET}
+  bucket: ${OSS_BUCKET:etfs}
+  max-keys: 100
+  sts:
+    region-id: ${OSS_STS_REGION_ID:cn-hangzhou}
+    endpoint: ${OSS_STS_ENDPOINT:sts.cn-hangzhou.aliyuncs.com}
+    access-key-id: ${OSS_STS_ACCESS_KEY_ID:REDACTED_STS_KEY}
+    access-key-secret: ${OSS_STS_ACCESS_KEY_SECRET:REDACTED_STS_SECRET}
+    role-arn: ${OSS_STS_ROLE_ARN:acs:ram::REDACTED_RAM_ACCOUNT:role/ramosstest}
+    role-session-name: ${OSS_STS_ROLE_SESSION_NAME:OssSession}
+    expire: 3600
+    max-size-mb: 20
+
 # SpringDoc
 springdoc:
   api-docs:

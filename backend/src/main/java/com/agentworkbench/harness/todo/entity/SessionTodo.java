@@ -16,7 +16,19 @@ public class SessionTodo {
 
     private String content;
 
+    private String description;
+
+    private String activeForm;
+
     private String status;
+
+    private Integer sortOrder;
+
+    private String owner;
+
+    private LocalDateTime claimedAt;
+
+    private String blockedBy;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

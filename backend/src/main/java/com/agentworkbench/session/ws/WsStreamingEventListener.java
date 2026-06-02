@@ -15,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -26,6 +27,9 @@ public class WsStreamingEventListener implements AgentEventListener {
     private final SessionTodoMapper sessionTodoMapper;
     private final Long sessionId;
     private final Long userId;
+
+    private static final Set<String> TASK_TOOLS = Set.of(
+            "task_create", "task_update", "task_delete", "task_list");
 
     /** Track tool call metadata for summary generation */
     private final Map<String, String[]> toolCallInfo = new ConcurrentHashMap<>();
@@ -97,8 +101,8 @@ public class WsStreamingEventListener implements AgentEventListener {
             log.warn("Failed to record activity", e);
         }
 
-        // Push todo_updated when todo tool is called
-        if ("todo".equals(toolName)) {
+        // Push todo_updated when any task tool is called
+        if (TASK_TOOLS.contains(toolName)) {
             try {
                 List<SessionTodo> todos = sessionTodoMapper.selectList(
                         new LambdaQueryWrapper<SessionTodo>()
