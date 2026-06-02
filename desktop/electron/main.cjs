@@ -193,6 +193,11 @@ ipcMain.handle('open-folder', (event, folderPath) => {
   if (folderPath) shell.openPath(folderPath)
 })
 
+ipcMain.handle('open-terminal', (event, folderPath) => {
+  if (!folderPath) return
+  spawn('open', ['-a', 'Terminal', folderPath], { detached: true, stdio: 'ignore' }).unref()
+})
+
 // ========== Local tool execution IPC handlers ==========
 
 ipcMain.handle('local-execute-bash', async (event, { command, timeout = 30, workdir, workspace }) => {

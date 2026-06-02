@@ -13,7 +13,7 @@ public class OssProperties {
     private String region = "oss-cn-hangzhou";
     private String accessKeyId = "REDACTED_OSS_KEY";
     private String accessKeySecret = "REDACTED_OSS_SECRET";
-    private String bucket = "etfs";
+    private String bucket = "etarch";
     private int maxKeys = 100;
 
     private Sts sts = new Sts();

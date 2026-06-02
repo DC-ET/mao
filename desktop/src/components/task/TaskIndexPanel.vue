@@ -33,6 +33,9 @@
                 <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn" @click.stop="openGroupFolder(group)" title="在文件浏览器中打开">
                   <el-icon :size="12"><FolderOpened /></el-icon>
                 </button>
+                <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn" @click.stop="openTerminal(group)" title="在终端中打开">
+                  <el-icon :size="12"><Monitor /></el-icon>
+                </button>
                 <button class="group-add-btn" @click.stop="onGroupNewTask(group)" title="在该分组新建任务">
                   <el-icon :size="12"><Plus /></el-icon>
                 </button>
@@ -130,7 +133,7 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, onUnmounted } from 'vue'
-import { Refresh, Loading, ChatDotRound, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpened, EditPen } from '@element-plus/icons-vue'
+import { Refresh, Loading, ChatDotRound, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpened, EditPen, Monitor } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 
@@ -215,6 +218,13 @@ function openGroupFolder(group: { key: string }) {
   }
 }
 
+function openTerminal(group: { key: string }) {
+  const workspace = group.key.startsWith('LOCAL:') ? group.key.substring(6) : ''
+  if (workspace && window.electronAPI?.openTerminal) {
+    window.electronAPI.openTerminal(workspace)
+  }
+}
+
 const groupedSessions = computed(() => {
   const sessions = sessionStore.sessions
   const groups = new Map<string, Session[]>()
@@ -249,12 +259,12 @@ const groupedSessions = computed(() => {
 })
 
 function formatGroupLabel(key: string): string {
-  if (key === 'CLOUD') return '云端模式'
+  if (key === 'CLOUD') return '云端工作区'
   if (key.startsWith('LOCAL:')) {
     const ws = key.substring(6)
-    if (ws === '未设置') return '本地 - 未设置'
+    if (ws === '未设置') return '未设置'
     const parts = ws.split('/').filter(Boolean)
-    return `本地 - ${parts[parts.length - 1] || ws}`
+    return parts[parts.length - 1] || ws
   }
   return key
 }

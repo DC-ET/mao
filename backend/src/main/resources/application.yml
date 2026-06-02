@@ -144,7 +144,7 @@ oss:
   region: ${OSS_REGION:oss-cn-hangzhou}
   access-key-id: ${OSS_ACCESS_KEY_ID:REDACTED_OSS_KEY}
   access-key-secret: ${OSS_ACCESS_KEY_SECRET:REDACTED_OSS_SECRET}
-  bucket: ${OSS_BUCKET:etfs}
+  bucket: ${OSS_BUCKET:etarch}
   max-keys: 100
   sts:
     region-id: ${OSS_STS_REGION_ID:cn-hangzhou}

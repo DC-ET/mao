@@ -5,11 +5,20 @@
         <span class="message-time">{{ message.createdAt }}</span>
       </div>
 
+      <div v-if="message.images && message.images.length > 0" class="message-images">
+        <el-image
+          v-for="(url, idx) in message.images"
+          :key="idx"
+          :src="url"
+          :preview-src-list="message.images"
+          :initial-index="idx"
+          fit="cover"
+          class="message-image"
+          :preview-teleported="true"
+        />
+      </div>
       <div v-if="role === 'user'" class="message-text user-text">
         {{ message.content }}
-      </div>
-      <div v-if="message.images && message.images.length > 0" class="message-images">
-        <img v-for="(url, idx) in message.images" :key="idx" :src="url" class="message-image" @click="previewImage(url)" />
       </div>
 
       <!-- assistant：按时间线穿插正文与工具 -->
@@ -112,10 +121,6 @@ function renderSegmentMarkdown(content: string) {
 
 function getToolCall(callId: string): ToolCall | undefined {
   return visibleToolCalls.value.find(c => c.id === callId)
-}
-
-function previewImage(url: string) {
-  window.open(url, '_blank')
 }
 
 const copied = ref(false)
@@ -345,8 +350,8 @@ async function copyMessage() {
 }
 
 .message-image {
-  max-width: 200px;
-  max-height: 200px;
+  max-width: 60px;
+  max-height: 60px;
   object-fit: cover;
   border-radius: var(--aw-radius-sm);
   cursor: pointer;
