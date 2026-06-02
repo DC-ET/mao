@@ -101,7 +101,7 @@
 
     <TaskInspector
       :todos="todos"
-      :pending-bash-approvals="pendingBashApprovals"
+      :pending-approvals="pendingApprovals"
       :title="sessionTitle"
       :agent-name="agentName"
       :workspace="executionMode === 'LOCAL' ? workspace : ''"
@@ -110,7 +110,7 @@
       :started-at="startedAt"
       :panel-collapsed="panelCollapsed"
       :context-window="contextWindow"
-      @bash-confirm="confirmBash"
+      @tool-confirm="confirmApproval"
       @toggle-panel="panelCollapsed = !panelCollapsed"
       @todo-update="handleTodoUpdate"
     />
@@ -166,14 +166,14 @@ const {
   sessionId,
   workspace,
   agentName,
-  pendingBashApprovals,
+  pendingApprovals,
   todos,
   contextWindow,
   sendMessage,
   stopExecution,
   newSession,
   restoreSession,
-  confirmBash,
+  confirmApproval,
   updateTodoManually,
   cleanup
 } = useChat(agentId, executionMode)

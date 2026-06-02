@@ -16,14 +16,15 @@ export { normalizeMessageRole } from '../types/chat'
 
 import { uploadToOss, type StsToken } from '../utils/ossUpload'
 
-export interface BashApprovalItem {
+export interface ApprovalItem {
   requestId: string
-  command: string
+  toolName: string
+  description: string
   sessionId?: string
 }
 
 // Module-level flag to ensure IPC listeners are registered only once
-let bashApprovalListenerSetup = false
+let approvalListenerSetup = false
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const sessionStore = useSessionStore()
@@ -36,8 +37,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const agentName = ref('Agent')
   const startedAt = ref<string | null>(null)
 
-  // Bash approval queue — supports multiple concurrent approvals
-  const pendingBashApprovals = ref<BashApprovalItem[]>([])
+  // Tool approval queue — supports multiple concurrent approvals
+  const pendingApprovals = ref<ApprovalItem[]>([])
 
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
 
@@ -47,27 +48,27 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const activities = computed(() => sessionStore.activeActivities)
   const contextWindow = computed(() => sessionStore.activeContextWindow)
 
-  function setupBashApprovalListener() {
-    if (!isElectron || bashApprovalListenerSetup) return
-    bashApprovalListenerSetup = true
+  function setupApprovalListener() {
+    if (!isElectron || approvalListenerSetup) return
+    approvalListenerSetup = true
 
-    ;(window as any).electronAPI.onBashApprovalRequest((data: { requestId: string; command: string; sessionId?: number }) => {
+    ;(window as any).electronAPI.onToolApprovalRequest((data: { requestId: string; toolName: string; description: string; sessionId?: number }) => {
       const sid = data.sessionId != null ? String(data.sessionId) : undefined
-      if (!pendingBashApprovals.value.some(a => a.requestId === data.requestId)) {
-        pendingBashApprovals.value.push({ requestId: data.requestId, command: data.command, sessionId: sid })
+      if (!pendingApprovals.value.some(a => a.requestId === data.requestId)) {
+        pendingApprovals.value.push({ requestId: data.requestId, toolName: data.toolName, description: data.description, sessionId: sid })
         if (sid) sessionStore.incrementPendingApproval(sid)
       }
     })
 
-    ;(window as any).electronAPI.onBashApprovalDismiss((data: { requestId: string }) => {
-      const item = pendingBashApprovals.value.find(a => a.requestId === data.requestId)
+    ;(window as any).electronAPI.onToolApprovalDismiss((data: { requestId: string }) => {
+      const item = pendingApprovals.value.find(a => a.requestId === data.requestId)
       if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
-      pendingBashApprovals.value = pendingBashApprovals.value.filter(a => a.requestId !== data.requestId)
+      pendingApprovals.value = pendingApprovals.value.filter(a => a.requestId !== data.requestId)
     })
   }
 
-  // Register bash approval listener globally (once per app lifecycle)
-  setupBashApprovalListener()
+  // Register approval listener globally (once per app lifecycle)
+  setupApprovalListener()
 
   async function fetchMessages() {
     if (!sessionId.value) return
@@ -256,10 +257,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   })
 
   function clearPendingApprovals() {
-    for (const item of pendingBashApprovals.value) {
+    for (const item of pendingApprovals.value) {
       if (item.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
     }
-    pendingBashApprovals.value = []
+    pendingApprovals.value = []
   }
 
   function newSession() {
@@ -292,12 +293,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     fetchTodos()
   }
 
-  async function confirmBash(requestId: string, approved: boolean) {
-    const item = pendingBashApprovals.value.find(a => a.requestId === requestId)
+  async function confirmApproval(requestId: string, approved: boolean) {
+    const item = pendingApprovals.value.find(a => a.requestId === requestId)
     if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
-    pendingBashApprovals.value = pendingBashApprovals.value.filter(a => a.requestId !== requestId)
+    pendingApprovals.value = pendingApprovals.value.filter(a => a.requestId !== requestId)
     if (requestId && isElectron) {
-      await (window as any).electronAPI.respondBashApproval(requestId, approved)
+      await (window as any).electronAPI.respondToolApproval(requestId, approved)
     }
   }
 
@@ -315,7 +316,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     sessionId,
     workspace,
     agentName,
-    pendingBashApprovals,
+    pendingApprovals,
     activities,
     todos,
     contextWindow,
@@ -325,7 +326,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     fetchMessages,
     newSession,
     restoreSession,
-    confirmBash,
+    confirmApproval,
     updateTodoManually,
     cleanup
   }
