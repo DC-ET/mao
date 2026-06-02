@@ -112,6 +112,7 @@
       :context-window="contextWindow"
       @bash-confirm="confirmBash"
       @toggle-panel="panelCollapsed = !panelCollapsed"
+      @todo-update="handleTodoUpdate"
     />
 
     <NewTaskDialog
@@ -173,6 +174,7 @@ const {
   newSession,
   restoreSession,
   confirmBash,
+  updateTodoManually,
   cleanup
 } = useChat(agentId, executionMode)
 
@@ -320,6 +322,10 @@ function handleSend(text: string, files: File[]) {
 
 function handleStop() {
   stopExecution()
+}
+
+function handleTodoUpdate(todoId: number, action: 'start' | 'complete' | 'delete') {
+  updateTodoManually(todoId, action)
 }
 
 function handleNewTask() {

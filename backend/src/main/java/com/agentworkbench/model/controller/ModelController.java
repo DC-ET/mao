@@ -35,7 +35,8 @@ public class ModelController {
         LlmModel model = modelService.createModel(
                 request.getName(), request.getProvider(), request.getBaseUrl(),
                 request.getApiKey(), request.getModelId(),
-                request.getMaxTokens(), request.getTemperatureMax());
+                request.getMaxTokens(), request.getTemperatureMax(),
+                request.getSupportsVision());
         return Result.ok(toVO(model));
     }
 
@@ -44,7 +45,8 @@ public class ModelController {
         LlmModel model = modelService.updateModel(
                 id, request.getName(), request.getProvider(), request.getBaseUrl(),
                 request.getApiKey(), request.getModelId(),
-                request.getMaxTokens(), request.getTemperatureMax());
+                request.getMaxTokens(), request.getTemperatureMax(),
+                request.getSupportsVision());
         return Result.ok(toVO(model));
     }
 
@@ -69,6 +71,7 @@ public class ModelController {
         vo.setModelId(entity.getModelId());
         vo.setMaxTokens(entity.getMaxTokens());
         vo.setTemperatureMax(entity.getTemperatureMax() != null ? entity.getTemperatureMax().doubleValue() : null);
+        vo.setSupportsVision(entity.getSupportsVision() != null && entity.getSupportsVision() == 1);
         vo.setStatus(entity.getStatus());
         vo.setCreatedAt(entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null);
         return vo;
@@ -83,6 +86,7 @@ public class ModelController {
         private String modelId;
         private Integer maxTokens;
         private Double temperatureMax;
+        private Integer supportsVision;
     }
 
     @Data
@@ -94,6 +98,7 @@ public class ModelController {
         private String modelId;
         private Integer maxTokens;
         private Double temperatureMax;
+        private Boolean supportsVision;
         private Integer status;
         private String createdAt;
     }

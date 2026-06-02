@@ -11,6 +11,7 @@ import com.agentworkbench.session.service.SessionService;
 import com.agentworkbench.harness.todo.entity.SessionTodo;
 import com.agentworkbench.harness.todo.mapper.SessionTodoMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
@@ -18,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -156,9 +158,50 @@ public class SessionController {
         List<SessionTodo> todos = sessionTodoMapper.selectList(
                 new LambdaQueryWrapper<SessionTodo>()
                         .eq(SessionTodo::getSessionId, id)
+                        .orderByAsc(SessionTodo::getSortOrder)
                         .orderByAsc(SessionTodo::getId));
         List<TodoVO> voList = todos.stream().map(this::toTodoVO).collect(Collectors.toList());
         return Result.ok(voList);
+    }
+
+    @PatchMapping("/{sessionId}/todos/{todoId}")
+    public Result<Void> updateTodo(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long sessionId,
+            @PathVariable Long todoId,
+            @RequestBody UpdateTodoRequest request) {
+        LambdaUpdateWrapper<SessionTodo> wrapper = new LambdaUpdateWrapper<SessionTodo>()
+                .eq(SessionTodo::getId, todoId)
+                .eq(SessionTodo::getSessionId, sessionId);
+        if (request.getStatus() != null) {
+            // Enforce single in_progress constraint
+            if ("in_progress".equals(request.getStatus())) {
+                sessionTodoMapper.update(null,
+                        new LambdaUpdateWrapper<SessionTodo>()
+                                .eq(SessionTodo::getSessionId, sessionId)
+                                .eq(SessionTodo::getStatus, "in_progress")
+                                .ne(SessionTodo::getId, todoId)
+                                .set(SessionTodo::getStatus, "pending"));
+            }
+            wrapper.set(SessionTodo::getStatus, request.getStatus());
+        }
+        if (request.getContent() != null) {
+            wrapper.set(SessionTodo::getContent, request.getContent());
+        }
+        sessionTodoMapper.update(null, wrapper);
+        return Result.ok();
+    }
+
+    @DeleteMapping("/{sessionId}/todos/{todoId}")
+    public Result<Void> deleteTodo(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long sessionId,
+            @PathVariable Long todoId) {
+        sessionTodoMapper.delete(
+                new LambdaQueryWrapper<SessionTodo>()
+                        .eq(SessionTodo::getId, todoId)
+                        .eq(SessionTodo::getSessionId, sessionId));
+        return Result.ok();
     }
 
     private TodoVO toTodoVO(SessionTodo todo) {
@@ -224,11 +267,44 @@ public class SessionController {
         MessageVO vo = new MessageVO();
         vo.setId(message.getId());
         vo.setRole(message.getRole());
-        vo.setContent(message.getContent());
         vo.setToolCallId(message.getToolCallId());
         vo.setToolCalls(message.getToolCalls());
         vo.setTokenCount(message.getTokenCount());
         vo.setCreatedAt(message.getCreatedAt() != null ? message.getCreatedAt().toString() : null);
+
+        // Parse multimodal content: JSON array → extract text + images
+        String raw = message.getContent();
+        if (raw != null && raw.trim().startsWith("[")) {
+            try {
+                List<?> parts = objectMapper.readValue(raw, new TypeReference<List<?>>() {});
+                StringBuilder textSb = new StringBuilder();
+                List<String> images = new ArrayList<>();
+                for (Object part : parts) {
+                    if (part instanceof java.util.Map<?, ?> map) {
+                        Object type = map.get("type");
+                        if ("text".equals(type)) {
+                            Object text = map.get("text");
+                            if (text != null) textSb.append(text);
+                        } else if ("image_url".equals(type)) {
+                            Object imageUrlObj = map.get("image_url");
+                            if (imageUrlObj instanceof java.util.Map<?, ?> imgMap) {
+                                Object url = imgMap.get("url");
+                                if (url != null) images.add(url.toString());
+                            }
+                        }
+                    }
+                }
+                vo.setContent(textSb.toString());
+                if (!images.isEmpty()) {
+                    vo.setImages(images);
+                }
+            } catch (Exception e) {
+                vo.setContent(raw);
+            }
+        } else {
+            vo.setContent(raw);
+        }
+
         return vo;
     }
 
@@ -276,6 +352,7 @@ public class SessionController {
         private Long id;
         private String role;
         private String content;
+        private List<String> images;
         private String toolCallId;
         private Object toolCalls;
         private Integer tokenCount;
@@ -298,5 +375,11 @@ public class SessionController {
         private Long id;
         private String content;
         private String status;
+    }
+
+    @Data
+    public static class UpdateTodoRequest {
+        private String status;
+        private String content;
     }
 }

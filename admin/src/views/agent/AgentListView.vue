@@ -45,6 +45,16 @@
           </template>
         </el-table-column>
         <el-table-column prop="modelName" label="模型" width="120" />
+        <el-table-column label="标签" min-width="180">
+          <template #default="{ row }">
+            <el-tag
+              v-for="tag in row.tags"
+              :key="tag"
+              size="small"
+              class="tag-item"
+            >{{ tag }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="row.status === 'ARCHIVED' ? 'info' : 'success'" size="small">
@@ -169,5 +179,10 @@ onMounted(fetchAgents)
 .pagination {
   margin-top: 20px;
   justify-content: flex-end;
+}
+
+.tag-item {
+  margin-right: 4px;
+  margin-bottom: 2px;
 }
 </style>

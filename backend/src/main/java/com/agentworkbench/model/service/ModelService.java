@@ -33,6 +33,12 @@ public class ModelService {
 
     public LlmModel createModel(String name, String provider, String baseUrl, String apiKey,
                                  String modelId, Integer maxTokens, Double temperatureMax) {
+        return createModel(name, provider, baseUrl, apiKey, modelId, maxTokens, temperatureMax, null);
+    }
+
+    public LlmModel createModel(String name, String provider, String baseUrl, String apiKey,
+                                 String modelId, Integer maxTokens, Double temperatureMax,
+                                 Integer supportsVision) {
         LlmModel model = new LlmModel();
         model.setName(name);
         model.setProvider(provider);
@@ -41,6 +47,7 @@ public class ModelService {
         model.setModelId(modelId);
         model.setMaxTokens(maxTokens != null ? maxTokens : 4096);
         model.setTemperatureMax(temperatureMax != null ? BigDecimal.valueOf(temperatureMax) : BigDecimal.valueOf(2.00));
+        model.setSupportsVision(supportsVision != null ? supportsVision : 0);
         model.setStatus(1);
         llmModelMapper.insert(model);
         return model;
@@ -48,6 +55,12 @@ public class ModelService {
 
     public LlmModel updateModel(Long id, String name, String provider, String baseUrl, String apiKey,
                                  String modelId, Integer maxTokens, Double temperatureMax) {
+        return updateModel(id, name, provider, baseUrl, apiKey, modelId, maxTokens, temperatureMax, null);
+    }
+
+    public LlmModel updateModel(Long id, String name, String provider, String baseUrl, String apiKey,
+                                 String modelId, Integer maxTokens, Double temperatureMax,
+                                 Integer supportsVision) {
         LlmModel model = getModel(id);
         if (name != null) model.setName(name);
         if (provider != null) model.setProvider(provider);
@@ -56,6 +69,7 @@ public class ModelService {
         if (modelId != null) model.setModelId(modelId);
         if (maxTokens != null) model.setMaxTokens(maxTokens);
         if (temperatureMax != null) model.setTemperatureMax(BigDecimal.valueOf(temperatureMax));
+        if (supportsVision != null) model.setSupportsVision(supportsVision);
         llmModelMapper.updateById(model);
         return model;
     }

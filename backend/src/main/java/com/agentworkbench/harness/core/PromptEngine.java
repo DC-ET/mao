@@ -19,6 +19,9 @@ import java.util.*;
 @RequiredArgsConstructor
 public class PromptEngine {
 
+    private static final Set<String> TASK_TOOL_NAMES = Set.of(
+            "task_create", "task_update", "task_list", "task_delete");
+
     private final SkillLoader skillLoader;
     private final PathSandbox pathSandbox;
 
@@ -86,6 +89,9 @@ public class PromptEngine {
             }
         }
 
+        // Task management behavior hints
+        appendToolBehaviorHints(sb, context);
+
         return sb.toString();
     }
 
@@ -133,4 +139,20 @@ public class PromptEngine {
 
         return tools;
     }
+
+    /**
+     * 向 system prompt 注入任务管理行为指令
+     */
+    private void appendToolBehaviorHints(StringBuilder sb, AgentExecutionContext context) {
+        boolean hasTaskTool = context.getTools().stream()
+                .anyMatch(t -> TASK_TOOL_NAMES.contains(t.getName()));
+        if (!hasTaskTool) return;
+
+        sb.append("## Task Management\n\n");
+        sb.append("Use the task tools to break down and manage your work.\n");
+        sb.append("These tools are helpful for planning your work and helping the user track your progress.\n");
+        sb.append("Mark each task as completed as soon as you are done with the task.\n");
+        sb.append("Do not batch up multiple tasks before marking them as completed.\n\n");
+    }
+
 }

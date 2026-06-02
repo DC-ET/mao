@@ -140,7 +140,27 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
     if (role !== 'user' && role !== 'assistant' && role !== 'system') {
       continue
     }
-    const content = String(m.content ?? '')
+
+    // Parse content: may be string or ContentPart[] (multimodal)
+    const rawContent = m.content
+    let content = ''
+    let images: string[] = []
+    if (typeof rawContent === 'string') {
+      content = rawContent
+    } else if (Array.isArray(rawContent)) {
+      for (const part of rawContent) {
+        if (part.type === 'text') content += part.text || ''
+        if (part.type === 'image_url' && part.image_url?.url) images.push(part.image_url.url)
+      }
+    } else {
+      content = String(rawContent ?? '')
+    }
+
+    // Also pick up images from the API response if present
+    if (m.images && Array.isArray(m.images)) {
+      images = m.images as string[]
+    }
+
     const toolCalls = normalizeToolCallsList(m.toolCalls)
     const segments = buildSegmentsFromContentAndTools(content, toolCalls)
 
@@ -149,6 +169,7 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
       role,
       content,
       createdAt: String(m.createdAt ?? ''),
+      images: images.length > 0 ? images : undefined,
       toolCalls,
       segments
     })

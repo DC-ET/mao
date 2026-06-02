@@ -75,7 +75,7 @@ public class TokenEstimator {
 
         // Content tokens
         if (message.getContent() != null) {
-            tokens += countTokens(message.getContent());
+            tokens += countTokens(contentToString(message.getContent()));
         }
 
         // Tool call id tokens
@@ -146,6 +146,32 @@ public class TokenEstimator {
             }
         }
         return tokens;
+    }
+
+    /**
+     * Extract text from content (String or List<ContentPart>)
+     */
+    public static String contentToString(Object content) {
+        if (content == null) return "";
+        if (content instanceof String s) return s;
+        if (content instanceof List<?> list) {
+            StringBuilder sb = new StringBuilder();
+            for (Object item : list) {
+                if (item instanceof ChatRequest.ContentPart part) {
+                    if ("text".equals(part.getType()) && part.getText() != null) {
+                        sb.append(part.getText());
+                    }
+                } else if (item instanceof java.util.Map<?, ?> map) {
+                    Object type = map.get("type");
+                    if ("text".equals(type)) {
+                        Object text = map.get("text");
+                        if (text != null) sb.append(text);
+                    }
+                }
+            }
+            return sb.toString();
+        }
+        return content.toString();
     }
 
     /**

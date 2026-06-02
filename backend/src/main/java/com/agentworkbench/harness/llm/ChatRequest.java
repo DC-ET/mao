@@ -24,12 +24,29 @@ public class ChatRequest {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Message {
         private String role;      // system, user, assistant, tool
-        private String content;
+        private Object content;   // String (plain text) or List<ContentPart> (multimodal)
         private String name;
         @JsonProperty("tool_call_id")
         private String toolCallId;
         @JsonProperty("tool_calls")
         private List<ToolCall> toolCalls;
+    }
+
+    @Data
+    @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ContentPart {
+        private String type;              // "text" or "image_url"
+        private String text;              // type=text
+        @JsonProperty("image_url")
+        private ImageUrl imageUrl;        // type=image_url
+    }
+
+    @Data
+    @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ImageUrl {
+        private String url;
     }
 
     @Data

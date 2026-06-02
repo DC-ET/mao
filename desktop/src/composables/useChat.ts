@@ -14,13 +14,16 @@ export type {
 } from '../types/chat'
 export { normalizeMessageRole } from '../types/chat'
 
-import type { FileAttachment } from '../types/chat'
+import { uploadToOss, type StsToken } from '../utils/ossUpload'
 
 export interface BashApprovalItem {
   requestId: string
   command: string
   sessionId?: string
 }
+
+// Module-level flag to ensure IPC listeners are registered only once
+let bashApprovalListenerSetup = false
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const sessionStore = useSessionStore()
@@ -35,7 +38,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
   // Bash approval queue — supports multiple concurrent approvals
   const pendingBashApprovals = ref<BashApprovalItem[]>([])
-  let bashApprovalListenerSetup = false
 
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
 
@@ -87,25 +89,51 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     }
   }
 
-  async function uploadFiles(files: File[]): Promise<FileAttachment[]> {
-    if (files.length === 0) return []
-    const results: FileAttachment[] = []
-    for (const file of files) {
-      const formData = new FormData()
-      formData.append('file', file)
-      if (sessionId.value) {
-        formData.append('sessionId', sessionId.value)
+  async function updateTodoManually(todoId: number, action: 'start' | 'complete' | 'delete') {
+    if (!sessionId.value) return
+    const statusMap: Record<string, string> = {
+      start: 'in_progress',
+      complete: 'completed'
+    }
+    try {
+      if (action === 'delete') {
+        await api.delete(`/sessions/${sessionId.value}/todos/${todoId}`)
+      } else {
+        await api.patch(`/sessions/${sessionId.value}/todos/${todoId}`, { status: statusMap[action] })
       }
+      // Refresh todos after update
+      await fetchTodos()
+    } catch {
+      // ignore
+    }
+  }
+
+  async function uploadImages(files: File[]): Promise<string[]> {
+    if (files.length === 0) return []
+
+    // Get STS token from backend
+    let stsToken: StsToken
+    try {
+      const { data } = await api.post('/oss/sts-token', {
+        sessionId: sessionId.value ? Number(sessionId.value) : null
+      })
+      stsToken = data
+    } catch {
+      ElMessage.error('获取上传凭证失败')
+      return []
+    }
+
+    // Upload each file to OSS
+    const urls: string[] = []
+    for (const file of files) {
       try {
-        const { data } = await api.post('/files/upload', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
-        results.push(data)
+        const url = await uploadToOss(file, stsToken)
+        urls.push(url)
       } catch {
-        ElMessage.error(`文件 ${file.name} 上传失败`)
+        ElMessage.error(`图片 ${file.name} 上传失败`)
       }
     }
-    return results
+    return urls
   }
 
   async function sendMessage(text: string, files?: File[]) {
@@ -113,14 +141,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
     sending.value = true
     startedAt.value = new Date().toISOString()
-    const uploadedFiles = await uploadFiles(files || [])
 
-    // Build display content
-    let displayContent = text
-    if (uploadedFiles.length > 0) {
-      const fileLinks = uploadedFiles.map(f => `[附件: ${f.originalName || f.name}]`).join(' ')
-      displayContent = displayContent ? `${displayContent}\n${fileLinks}` : fileLinks
-    }
+    // Upload images to OSS
+    const imageUrls = await uploadImages(files || [])
 
     // Ensure WS connection is established
     await connect()
@@ -143,22 +166,27 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
           workspace.value || undefined
         )
         sessionId.value = sessionData.id
+      }
 
-        if (text) {
+      // Update session title from first user message (when title is still the default agent name)
+      const sid = sessionId.value!
+      if (text) {
+        const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
+        const defaultTitle = agentName.value || 'Agent'
+        if (currentSession && (!currentSession.title || currentSession.title === defaultTitle)) {
           const title = text.length > 50 ? text.substring(0, 50) : text
-          sessionStore.updateSession(sessionData.id, { title })
-          api.patch(`/sessions/${sessionData.id}`, { title }).catch(() => {})
+          sessionStore.updateSession(sid, { title })
+          api.patch(`/sessions/${sid}`, { title }).catch(() => {})
         }
       }
 
-      const sid = sessionId.value!
       // Add user message to store
       sessionStore.addUserMessage(sid, {
         id: `msg_${Date.now()}_user`,
         role: 'user',
-        content: displayContent,
+        content: text,
         createdAt: new Date().toLocaleString(),
-        files: uploadedFiles
+        images: imageUrls.length > 0 ? imageUrls : undefined
       })
 
       // Add empty assistant message
@@ -176,7 +204,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
       // Send message via WS
       const eventId = crypto.randomUUID()
-      wsSendMessage(sid, text || '(文件附件)', eventId)
+      wsSendMessage(sid, text || '', eventId, imageUrls)
 
       // Wait for completion (session_status reaches COMPLETED/FAILED)
       await new Promise<void>((resolve, reject) => {
@@ -298,6 +326,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     newSession,
     restoreSession,
     confirmBash,
+    updateTodoManually,
     cleanup
   }
 }

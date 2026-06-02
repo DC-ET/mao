@@ -46,22 +46,6 @@
       <el-form-item label="最大轮次" prop="maxRounds">
         <el-input-number v-model="form.maxRounds" :min="1" :max="100" />
       </el-form-item>
-      <el-form-item label="关联 Tools" prop="toolIds">
-        <el-select
-          v-model="form.toolIds"
-          multiple
-          filterable
-          placeholder="请选择关联的 Tools"
-          style="width: 100%"
-        >
-          <el-option
-            v-for="t in tools"
-            :key="t.id"
-            :label="t.name"
-            :value="t.id"
-          />
-        </el-select>
-      </el-form-item>
       <el-form-item label="关联 Skills" prop="skillNames">
         <el-select
           v-model="form.skillNames"
@@ -77,6 +61,17 @@
             :value="s.name"
           />
         </el-select>
+      </el-form-item>
+      <el-form-item label="标签" prop="tags">
+        <el-select
+          v-model="form.tags"
+          multiple
+          filterable
+          allow-create
+          default-first-option
+          placeholder="输入标签后回车确认"
+          style="width: 100%"
+        />
       </el-form-item>
     </el-form>
     <template #footer>
@@ -108,7 +103,6 @@ const isEdit = ref(false)
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const models = ref<any[]>([])
-const tools = ref<any[]>([])
 const skillDocs = ref<any[]>([])
 
 const form = reactive({
@@ -120,8 +114,8 @@ const form = reactive({
   iconUrl: '',
   tokenLimit: 4096,
   maxRounds: 10,
-  toolIds: [] as number[],
-  skillNames: [] as string[]
+  skillNames: [] as string[],
+  tags: [] as string[]
 })
 
 const rules: FormRules = {
@@ -143,8 +137,8 @@ watch(() => props.visible, async (val) => {
       iconUrl: props.agentData.iconUrl || '',
       tokenLimit: props.agentData.tokenLimit ?? 4096,
       maxRounds: props.agentData.maxRounds ?? 10,
-      toolIds: props.agentData.toolIds || [],
-      skillNames: props.agentData.skillNames || []
+      skillNames: props.agentData.skillNames || [],
+      tags: props.agentData.tags || []
     })
   } else {
     isEdit.value = false
@@ -157,20 +151,18 @@ watch(() => props.visible, async (val) => {
       iconUrl: '',
       tokenLimit: 4096,
       maxRounds: 10,
-      toolIds: [],
-      skillNames: []
+      skillNames: [],
+      tags: []
     })
   }
 })
 
 async function loadOptions() {
-  const [modelsRes, toolsRes, skillDocsRes] = await Promise.all([
+  const [modelsRes, skillDocsRes] = await Promise.all([
     api.get('/models'),
-    api.get('/tools'),
     api.get('/skill-docs')
   ])
   models.value = (modelsRes as any).data || []
-  tools.value = (toolsRes as any).data || []
   skillDocs.value = (skillDocsRes as any).data || []
 }
 

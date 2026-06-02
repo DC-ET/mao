@@ -15,7 +15,10 @@ public class ToolResultSummarizer {
             case "write_file" -> summarizeWriteFile(arguments, result);
             case "edit_file" -> summarizeEditFile(arguments, result);
             case "glob", "list" -> summarizeGlob(result);
-            case "todo" -> summarizeTodo(result);
+            case "task_create" -> summarizeTaskCreate(result);
+            case "task_update" -> summarizeTaskUpdate(result);
+            case "task_list" -> summarizeTaskList(result);
+            case "task_delete" -> summarizeTaskDelete(result);
             case "subagent" -> summarizeSubagent(result);
             default -> summarizeGeneric(toolName, result);
         };
@@ -107,19 +110,58 @@ public class ToolResultSummarizer {
         return "搜索文件";
     }
 
-    private static String summarizeTodo(String result) {
-        if (result == null) return "更新任务列表";
+    private static String summarizeTaskCreate(String result) {
+        if (result == null) return "创建任务";
 
         JsonNode node = parseJson(result);
-        if (node == null) return "更新任务列表";
+        if (node == null) return "创建任务";
 
         if (node.has("message")) {
-            return node.get("message").asText("更新任务列表");
+            return node.get("message").asText("创建任务");
+        }
+        return "创建任务";
+    }
+
+    private static String summarizeTaskUpdate(String result) {
+        if (result == null) return "更新任务";
+
+        JsonNode node = parseJson(result);
+        if (node == null) return "更新任务";
+
+        if (node.has("summary")) {
+            return node.get("summary").asText("更新任务");
+        }
+        if (node.has("todos") && node.get("todos").isArray()) {
+            return "更新任务 (" + node.get("todos").size() + " 项)";
+        }
+        return "更新任务";
+    }
+
+    private static String summarizeTaskList(String result) {
+        if (result == null) return "查看任务列表";
+
+        JsonNode node = parseJson(result);
+        if (node == null) return "查看任务列表";
+
+        if (node.has("progress")) {
+            return "任务列表: " + node.get("progress").asText();
         }
         if (node.has("todos") && node.get("todos").isArray()) {
             return "任务列表 (" + node.get("todos").size() + " 项)";
         }
-        return "更新任务列表";
+        return "查看任务列表";
+    }
+
+    private static String summarizeTaskDelete(String result) {
+        if (result == null) return "删除任务";
+
+        JsonNode node = parseJson(result);
+        if (node == null) return "删除任务";
+
+        if (node.has("message")) {
+            return node.get("message").asText("删除任务");
+        }
+        return "删除任务";
     }
 
     private static String summarizeSubagent(String result) {

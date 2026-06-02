@@ -8,6 +8,9 @@
       <div v-if="role === 'user'" class="message-text user-text">
         {{ message.content }}
       </div>
+      <div v-if="message.images && message.images.length > 0" class="message-images">
+        <img v-for="(url, idx) in message.images" :key="idx" :src="url" class="message-image" @click="previewImage(url)" />
+      </div>
 
       <!-- assistant：按时间线穿插正文与工具 -->
       <template v-else-if="timelineSegments.length > 0">
@@ -109,6 +112,10 @@ function renderSegmentMarkdown(content: string) {
 
 function getToolCall(callId: string): ToolCall | undefined {
   return visibleToolCalls.value.find(c => c.id === callId)
+}
+
+function previewImage(url: string) {
+  window.open(url, '_blank')
 }
 
 const copied = ref(false)
@@ -324,6 +331,30 @@ async function copyMessage() {
 .file-tag {
   font-size: var(--aw-text-fine);
   border-radius: var(--aw-radius-pill);
+}
+
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.message-bubble.user .message-images {
+  justify-content: flex-end;
+}
+
+.message-image {
+  max-width: 200px;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: var(--aw-radius-sm);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.message-image:hover {
+  opacity: 0.85;
 }
 
 .message-footer {

@@ -53,7 +53,7 @@ public class AgentController {
                 userId, request.getName(), request.getDescription(),
                 request.getIconUrl(), request.getSystemPrompt(),
                 request.getModelId(), request.getVisibility(),
-                request.getTags(), request.getToolIds(),
+                request.getTags(),
                 request.getSkillNames());
         return Result.ok(toVO(agent));
     }
@@ -68,7 +68,7 @@ public class AgentController {
                 request.getIconUrl(), request.getSystemPrompt(),
                 request.getModelId(), request.getVisibility(),
                 request.getTokenLimit(), request.getMaxRounds(),
-                request.getToolIds(), request.getSkillNames());
+                request.getSkillNames(), request.getTags());
         return Result.ok(toVO(agent));
     }
 
@@ -116,9 +116,6 @@ public class AgentController {
         List<AgentTag> tags = agentService.getAgentTags(agent.getId());
         vo.setTags(tags.stream().map(AgentTag::getTag).collect(Collectors.toList()));
 
-        // Load tool IDs
-        vo.setToolIds(agentService.getAgentToolIds(agent.getId()));
-
         // Load skill names
         if (agent.getSkillNames() != null) {
             try {
@@ -144,7 +141,6 @@ public class AgentController {
         private Long modelId;
         private String visibility;
         private List<String> tags;
-        private List<Long> toolIds;
         private List<String> skillNames;
     }
 
@@ -158,8 +154,8 @@ public class AgentController {
         private String visibility;
         private Integer tokenLimit;
         private Integer maxRounds;
-        private List<Long> toolIds;
         private List<String> skillNames;
+        private List<String> tags;
     }
 
     @Data
@@ -179,7 +175,6 @@ public class AgentController {
         private Integer tokenLimit;
         private Integer maxRounds;
         private List<String> tags;
-        private List<Long> toolIds;
         private List<String> skillNames;
         private String createdAt;
     }
