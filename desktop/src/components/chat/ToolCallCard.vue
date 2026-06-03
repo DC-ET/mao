@@ -19,15 +19,14 @@
       </div>
     </div>
     <div v-if="isExpanded && hasExpandableBody" class="tool-body">
-      <div v-if="commandText" class="code-block-wrapper">
-        <pre class="tool-command"><code>{{ commandText }}</code></pre>
-        <button class="copy-btn" title="复制" @click="copyText(commandText)">
-          <el-icon :size="14"><CopyDocument /></el-icon>
-        </button>
-      </div>
-      <div v-if="filePath" class="tool-file-path">
-        <el-icon><Document /></el-icon>
-        <span>{{ filePath }}</span>
+      <div v-if="formattedInput" class="tool-result">
+        <div class="result-label">输入</div>
+        <div class="code-block-wrapper">
+          <pre class="result-content"><code>{{ formattedInput }}</code></pre>
+          <button class="copy-btn" title="复制" @click="copyText(formattedInput)">
+            <el-icon :size="14"><CopyDocument /></el-icon>
+          </button>
+        </div>
       </div>
       <div v-if="toolCall.result" class="tool-result">
         <div class="result-label">输出</div>
@@ -83,6 +82,13 @@ const inputPreview = computed(() => {
   if (typeof cmd === 'string') {
     return cmd.slice(0, 60) + (cmd.length > 60 ? '...' : '')
   }
+  const pattern = input.pattern
+  if (typeof pattern === 'string') {
+    const searchPath = input.path
+    const suffix = (typeof searchPath === 'string' && searchPath) ? ` in ${searchPath}` : ''
+    const text = `${pattern}${suffix}`
+    return text.length > 60 ? text.slice(0, 60) + '...' : text
+  }
   const path = input.path ?? input.file_path
   if (typeof path === 'string') return path
   const query = input.query
@@ -90,20 +96,18 @@ const inputPreview = computed(() => {
   return ''
 })
 
-const commandText = computed(() => {
-  const cmd = props.toolCall.input?.command
-  return typeof cmd === 'string' ? cmd : ''
-})
-
-const filePath = computed(() => {
+const formattedInput = computed(() => {
   const input = props.toolCall.input
   if (!input) return ''
-  const path = input.path ?? input.file_path
-  return typeof path === 'string' ? path : ''
+  try {
+    return JSON.stringify(input, null, 2)
+  } catch {
+    return ''
+  }
 })
 
 const hasExpandableBody = computed(
-  () => !!(commandText.value || filePath.value || props.toolCall.result)
+  () => !!(formattedInput.value || props.toolCall.result)
 )
 
 const truncatedResult = computed(() => {
@@ -214,14 +218,6 @@ function toggleExpand() {
   padding: 10px 14px;
 }
 
-.tool-command pre {
-  margin: 0;
-  padding: 8px 12px;
-  background: var(--aw-surface-code);
-  border-radius: var(--aw-radius-sm);
-  overflow-x: auto;
-}
-
 .code-block-wrapper {
   position: relative;
   margin-bottom: 8px;
@@ -265,16 +261,6 @@ function toggleExpand() {
   padding: 0;
 }
 
-.tool-file-path {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink-muted-80);
-  padding: 4px 0;
-}
-
 .result-label {
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
@@ -299,7 +285,6 @@ function toggleExpand() {
   color: var(--aw-text-code);
   background: none;
   padding: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
+  white-space: pre;
 }
 </style>

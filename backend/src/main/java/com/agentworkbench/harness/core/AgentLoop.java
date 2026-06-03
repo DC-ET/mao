@@ -3,6 +3,7 @@ package com.agentworkbench.harness.core;
 import com.agentworkbench.harness.llm.*;
 import com.agentworkbench.harness.shell.ShellSessionManager;
 import com.agentworkbench.harness.tool.ToolDispatcher;
+import com.agentworkbench.session.util.ToolResultSummarizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -66,6 +67,11 @@ public class AgentLoop {
         int round = 0;
 
         try {
+        // 用于延迟保存：有工具调用时，在 executeToolCalls 之后再保存（summary 已附加）
+        final String[] pendingSave = {null}; // [0]=content
+        final ChatUsage[] pendingSaveUsage = {null};
+        final List<ChatRequest.ToolCall>[] pendingSaveToolCalls = new List[1];
+
         while (true) {
             round++;
             log.debug("Agent loop round {}", round);
@@ -163,8 +169,12 @@ public class AgentLoop {
                     String content = contentBuilder.toString();
                     if (!content.isEmpty() || !toolCalls.isEmpty()) {
                         context.addAssistantMessage(content, toolCalls);
-                        if (persistenceCallback != null) {
+                        if (toolCalls.isEmpty() && persistenceCallback != null) {
                             persistenceCallback.onSaveAssistantMessage(content, toolCalls, usage);
+                        } else {
+                            pendingSave[0] = content;
+                            pendingSaveUsage[0] = usage;
+                            pendingSaveToolCalls[0] = toolCalls;
                         }
                     }
                 }
@@ -182,8 +192,16 @@ public class AgentLoop {
                 break;
             }
 
-            // 4. Execute tool calls in parallel
+            // 4. Execute tool calls in parallel (summary 已附加到 ToolCall)
             executeToolCalls(pendingCalls, context, listener, persistenceCallback);
+
+            // 4.1 延迟保存带 summary 的 assistant 消息
+            if (pendingSaveToolCalls[0] != null && persistenceCallback != null) {
+                persistenceCallback.onSaveAssistantMessage(pendingSave[0], pendingSaveToolCalls[0], pendingSaveUsage[0]);
+                pendingSave[0] = null;
+                pendingSaveUsage[0] = null;
+                pendingSaveToolCalls[0] = null;
+            }
 
             // 5. Clear pending calls for next round
             context.clearPendingToolCalls();
@@ -229,6 +247,8 @@ public class AgentLoop {
         if (pendingCalls.size() == 1) {
             ChatRequest.ToolCall tc = pendingCalls.get(0);
             String result = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
+            tc.setSummary(ToolResultSummarizer.summarize(
+                    tc.getFunction().getName(), tc.getFunction().getArguments(), result));
             context.addToolResult(tc.getId(), result);
             listener.onToolCallResult(tc.getId(), result);
             if (persistenceCallback != null) {
@@ -250,6 +270,8 @@ public class AgentLoop {
 
             for (int i = 0; i < pendingCalls.size(); i++) {
                 ChatRequest.ToolCall tc = pendingCalls.get(i);
+                tc.setSummary(ToolResultSummarizer.summarize(
+                        tc.getFunction().getName(), tc.getFunction().getArguments(), results[i]));
                 context.addToolResult(tc.getId(), results[i]);
                 listener.onToolCallResult(tc.getId(), results[i]);
                 if (persistenceCallback != null) {

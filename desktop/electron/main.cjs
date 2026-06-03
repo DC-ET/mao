@@ -263,6 +263,10 @@ async function executeToolByName(toolName, parsedArgs, sessionId, workspace) {
       return await handleLocalWriteFile(parsedArgs, workspace, sessionId)
     case 'edit_file':
       return await handleLocalEditFile(parsedArgs, workspace, sessionId)
+    case 'glob_search':
+      return await handleLocalGlobSearch(parsedArgs, workspace)
+    case 'grep_search':
+      return await handleLocalGrepSearch(parsedArgs, workspace)
     default:
       return { error: `Unknown tool: ${toolName}` }
   }
@@ -553,4 +557,241 @@ async function handleLocalEditFile(args, workspace, sessionId) {
   } catch (e) {
     return { error: e.message }
   }
+}
+
+// --- glob_search / grep_search ---
+
+let rgAvailable = null
+async function isRgAvailable() {
+  if (rgAvailable !== null) return rgAvailable
+  try {
+    const { execFile } = require('child_process')
+    await new Promise((resolve, reject) => {
+      execFile('rg', ['--version'], (err) => err ? reject(err) : resolve())
+    })
+    rgAvailable = true
+  } catch {
+    rgAvailable = false
+  }
+  return rgAvailable
+}
+
+async function handleLocalGlobSearch(args, workspace) {
+  const pattern = args.pattern
+  if (!pattern) return { files: [], error: 'pattern is required' }
+
+  const headLimit = args.head_limit || 100
+  const searchRoot = args.path ? resolveWorkspacePath(args.path, workspace) : (workspace || currentWorkspace || '.')
+
+  try {
+    let files = []
+    if (await isRgAvailable()) {
+      files = await globWithRg(pattern, searchRoot, headLimit)
+    } else {
+      files = globWithNode(pattern, searchRoot, headLimit)
+    }
+
+    const truncated = files.length >= headLimit
+    return {
+      files,
+      search_root: searchRoot,
+      truncated,
+      total_matched: files.length
+    }
+  } catch (e) {
+    return { files: [], error: e.message }
+  }
+}
+
+function globWithRg(pattern, searchRoot, headLimit) {
+  return new Promise((resolve, reject) => {
+    const { execFile } = require('child_process')
+    execFile('rg', ['--files', '--glob', pattern, searchRoot], { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+      if (err && !stdout) return reject(err)
+      const lines = (stdout || '').split('\n').filter(Boolean).slice(0, headLimit)
+      resolve(lines.map(l => {
+        const abs = path.resolve(l)
+        return abs.startsWith(searchRoot) ? path.relative(searchRoot, abs) : abs
+      }))
+    })
+  })
+}
+
+function globWithNode(pattern, searchRoot, headLimit) {
+  const minimatch = require('minimatch')
+  const files = []
+
+  function walk(dir) {
+    if (files.length >= headLimit) return
+    let entries
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (files.length >= headLimit) return
+      const fullPath = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git') continue
+        walk(fullPath)
+      } else if (entry.isFile()) {
+        const relative = path.relative(searchRoot, fullPath)
+        if (minimatch(relative, pattern) || minimatch(entry.name, pattern)) {
+          files.push(relative)
+        }
+      }
+    }
+  }
+
+  walk(searchRoot)
+  return files
+}
+
+async function handleLocalGrepSearch(args, workspace) {
+  const pattern = args.pattern
+  if (!pattern) return { matches: [], error: 'pattern is required' }
+
+  const glob = args.glob || null
+  const ignoreCase = args.ignore_case || false
+  const contextLines = args.context_lines || 0
+  const maxOutputChars = args.max_output_chars || 10000
+  const searchRoot = args.path ? resolveWorkspacePath(args.path, workspace) : (workspace || currentWorkspace || '.')
+
+  try {
+    if (await isRgAvailable()) {
+      return await grepWithRg(pattern, searchRoot, glob, ignoreCase, contextLines, maxOutputChars)
+    } else {
+      return grepWithNode(pattern, searchRoot, glob, ignoreCase, contextLines, maxOutputChars)
+    }
+  } catch (e) {
+    return { matches: [], error: e.message }
+  }
+}
+
+function grepWithRg(pattern, searchRoot, glob, ignoreCase, contextLines, maxOutputChars) {
+  return new Promise((resolve, reject) => {
+    const { execFile } = require('child_process')
+    const cmd = ['--line-number', '--no-heading']
+    if (ignoreCase) cmd.push('--ignore-case')
+    if (contextLines > 0) { cmd.push('--context'); cmd.push(String(contextLines)) }
+    if (glob) { cmd.push('--glob'); cmd.push(glob) }
+    cmd.push(pattern)
+    cmd.push(searchRoot)
+
+    execFile('rg', cmd, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+      if (err && !stdout) return resolve({ matches: [], truncated: false, total_matches: 0 })
+
+      const lines = (stdout || '').split('\n').filter(Boolean)
+      const matches = []
+      let totalMatches = 0
+      let charsUsed = 0
+      let truncated = false
+
+      for (const line of lines) {
+        if (charsUsed + line.length + 1 > maxOutputChars) {
+          truncated = true
+          break
+        }
+        const parsed = parseRgLine(line, searchRoot)
+        if (parsed) {
+          matches.push(parsed)
+          totalMatches++
+          charsUsed += line.length + 1
+        }
+      }
+
+      resolve({ matches, truncated, total_matches: totalMatches })
+    })
+  })
+}
+
+function parseRgLine(line, searchRoot) {
+  const firstColon = line.indexOf(':')
+  if (firstColon < 0) return null
+  const secondColon = line.indexOf(':', firstColon + 1)
+  if (secondColon < 0) return null
+
+  const filePath = line.substring(0, firstColon)
+  const lineNumStr = line.substring(firstColon + 1, secondColon)
+  const content = line.substring(secondColon + 1)
+
+  const lineNum = parseInt(lineNumStr, 10)
+  if (isNaN(lineNum)) {
+    const firstDash = line.indexOf('-')
+    if (firstDash < 0) return null
+    const secondDash = line.indexOf('-', firstDash + 1)
+    if (secondDash < 0) return null
+    const dashLineNum = parseInt(line.substring(firstDash + 1, secondDash), 10)
+    if (isNaN(dashLineNum)) return null
+    const abs = path.resolve(line.substring(0, firstDash))
+    const rel = abs.startsWith(searchRoot) ? path.relative(searchRoot, abs) : abs
+    return { file: rel, line: dashLineNum, content: line.substring(secondDash + 1) }
+  }
+
+  const abs = path.resolve(filePath)
+  const rel = abs.startsWith(searchRoot) ? path.relative(searchRoot, abs) : abs
+  return { file: rel, line: lineNum, content }
+}
+
+function grepWithNode(pattern, searchRoot, glob, ignoreCase, contextLines, maxOutputChars) {
+  const minimatch = require('minimatch')
+  const flags = ignoreCase ? 'i' : ''
+  let regex
+  try {
+    regex = new RegExp(pattern, flags)
+  } catch {
+    return { matches: [], error: 'Invalid regex pattern: ' + pattern }
+  }
+
+  const matches = []
+  let totalMatches = 0
+  let charsUsed = 0
+  let truncated = false
+
+  function walk(dir) {
+    if (truncated) return
+    let entries
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+
+    for (const entry of entries) {
+      if (truncated) return
+      const fullPath = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git') continue
+        walk(fullPath)
+      } else if (entry.isFile()) {
+        if (glob && !minimatch(entry.name, glob)) continue
+
+        let lines
+        try { lines = fs.readFileSync(fullPath, 'utf-8').split('\n') } catch { continue }
+
+        const relative = path.relative(searchRoot, fullPath)
+
+        for (let i = 0; i < lines.length; i++) {
+          if (regex.test(lines[i])) {
+            const match = { file: relative, line: i + 1, content: lines[i] }
+
+            if (contextLines > 0) {
+              const before = []
+              for (let c = Math.max(0, i - contextLines); c < i; c++) before.push(lines[c])
+              const after = []
+              for (let c = i + 1; c <= Math.min(lines.length - 1, i + contextLines); c++) after.push(lines[c])
+              if (before.length > 0) match.context_before = before
+              if (after.length > 0) match.context_after = after
+            }
+
+            const entrySize = JSON.stringify(match).length
+            if (charsUsed + entrySize > maxOutputChars) {
+              truncated = true
+              break
+            }
+
+            matches.push(match)
+            totalMatches++
+            charsUsed += entrySize
+          }
+        }
+      }
+    }
+  }
+
+  walk(searchRoot)
+  return { matches, truncated, total_matches: totalMatches }
 }
