@@ -47,4 +47,7 @@ public interface AgentEventListener {
 
     /** Agent 思考结束（下一次 LLM 开始输出） */
     default void onThinkingEnd() {}
+
+    /** 工具调用参数增量更新（LLM 流式输出 arguments 碎片时，推送当前完整的 arguments） */
+    default void onToolCallArgsDelta(String toolCallId, String arguments) {}
 }

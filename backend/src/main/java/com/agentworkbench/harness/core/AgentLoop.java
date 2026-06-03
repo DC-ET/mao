@@ -8,8 +8,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -98,8 +100,8 @@ public class AgentLoop {
 
             // 2. Call LLM
             final int currentRound = round;
-            final AtomicBoolean llmFailed = new AtomicBoolean(false);
             final AtomicBoolean thinkingEnded = new AtomicBoolean(false);
+            final Set<String> emittedEarlyStarts = new HashSet<>();
             listener.onThinkingStart();
             llmAdapter.stream(request, context.getModelConfig(), new StreamCallback() {
                 private final StringBuilder contentBuilder = new StringBuilder();
@@ -123,7 +125,13 @@ public class AgentLoop {
 
                         if (delta.getToolCalls() != null) {
                             for (ChatRequest.ToolCall tc : delta.getToolCalls()) {
-                                mergeToolCall(toolCalls, tc);
+                                ChatRequest.ToolCall merged = mergeToolCall(toolCalls, tc, listener, emittedEarlyStarts);
+                                // 推送当前已累积的完整 arguments
+                                if (merged != null && merged.getId() != null && merged.getFunction() != null) {
+                                    String currentArgs = merged.getFunction().getArguments() != null
+                                            ? merged.getFunction().getArguments() : "";
+                                    listener.onToolCallArgsDelta(merged.getId(), currentArgs);
+                                }
                             }
                         }
                     }
@@ -145,7 +153,9 @@ public class AgentLoop {
 
                     if (!toolCalls.isEmpty()) {
                         for (ChatRequest.ToolCall tc : toolCalls) {
-                            listener.onToolCallStart(tc);
+                            if (!emittedEarlyStarts.contains(tc.getId())) {
+                                listener.onToolCallStart(tc);
+                            }
                         }
                         context.setPendingToolCalls(toolCalls);
                     }
@@ -161,15 +171,10 @@ public class AgentLoop {
 
                 @Override
                 public void onError(Throwable t) {
-                    llmFailed.set(true);
                     log.error("LLM call failed", t);
-                    listener.onError(t);
+                    throw new RuntimeException("LLM call failed: " + t.getMessage(), t);
                 }
             });
-
-            if (llmFailed.get()) {
-                return;
-            }
 
             // 3. Check if we have tool calls to execute
             List<ChatRequest.ToolCall> pendingCalls = context.getPendingToolCalls();
@@ -262,7 +267,12 @@ public class AgentLoop {
         }
     }
 
-    private void mergeToolCall(List<ChatRequest.ToolCall> existing, ChatRequest.ToolCall delta) {
+    /**
+     * 合并工具调用增量，并在 id+name 首次可识别时立即回调 onToolCallStart。
+     * @return 合并后的 ToolCall（用于推送 args delta）
+     */
+    private ChatRequest.ToolCall mergeToolCall(List<ChatRequest.ToolCall> existing, ChatRequest.ToolCall delta,
+                                                AgentEventListener listener, Set<String> emittedEarlyStarts) {
         if (delta.getId() != null) {
             existing.add(delta);
         } else if (!existing.isEmpty()) {
@@ -284,5 +294,16 @@ public class AgentLoop {
                 }
             }
         }
+
+        // 检测：合并后 id + name 首次同时具备，立即推送 tool_call_start
+        ChatRequest.ToolCall merged = !existing.isEmpty() ? existing.get(existing.size() - 1) : null;
+        if (merged != null && merged.getId() != null && !merged.getId().isEmpty()
+                && merged.getFunction() != null && merged.getFunction().getName() != null
+                && !merged.getFunction().getName().isEmpty()
+                && emittedEarlyStarts.add(merged.getId())) {
+            listener.onToolCallStart(merged);
+        }
+
+        return merged;
     }
 }
