@@ -159,9 +159,8 @@ public class AgentLoop {
 
                     if (!toolCalls.isEmpty()) {
                         for (ChatRequest.ToolCall tc : toolCalls) {
-                            if (!emittedEarlyStarts.contains(tc.getId())) {
-                                listener.onToolCallStart(tc);
-                            }
+                            // 更新 toolCallInfo 中的完整 arguments（mergeToolCall 阶段可能只有部分 args）
+                            listener.onToolCallStart(tc);
                         }
                         context.setPendingToolCalls(toolCalls);
                     }

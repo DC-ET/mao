@@ -56,14 +56,19 @@ public class WsStreamingEventListener implements AgentEventListener {
 
     @Override
     public void onToolCallStart(ChatRequest.ToolCall toolCall) {
+        String args = toolCall.getFunction().getArguments();
+        log.debug("[WS] onToolCallStart id={} name={} args={}", toolCall.getId(),
+                toolCall.getFunction().getName(),
+                args != null ? args.substring(0, Math.min(200, args.length())) : "null");
         toolCallInfo.put(toolCall.getId(), new String[]{
                 toolCall.getFunction().getName(),
-                toolCall.getFunction().getArguments()
+                args
         });
         send("tool_call_start", Map.of(
                 "tool_call_id", toolCall.getId(),
                 "tool_name", toolCall.getFunction().getName(),
-                "arguments", toolCall.getFunction().getArguments()
+                "arguments", toolCall.getFunction().getArguments() != null
+                        ? toolCall.getFunction().getArguments() : ""
         ));
     }
 
@@ -73,6 +78,7 @@ public class WsStreamingEventListener implements AgentEventListener {
         String toolName = info != null ? info[0] : null;
         String arguments = info != null ? info[1] : null;
         String summary = ToolResultSummarizer.summarize(toolName, arguments, result);
+        log.debug("[WS] onToolCallResult id={} summary={}", toolCallId, summary);
         boolean isError = isErrorResult(result);
 
         Map<String, Object> data = new LinkedHashMap<>();

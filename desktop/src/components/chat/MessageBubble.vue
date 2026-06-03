@@ -120,18 +120,30 @@ const isToolOnly = computed(() =>
 
 const timelineSegments = computed((): MessageSegment[] => {
   if (role.value !== 'assistant') return []
+  let raw: MessageSegment[]
   if (props.message.segments?.length) {
-    return props.message.segments.filter(seg =>
+    raw = props.message.segments.filter(seg =>
       seg.type === 'text' || !!visibleToolCalls.value.find(tc => tc.id === seg.callId)
     )
-  }
-  if (visibleToolCalls.value.length || props.message.content?.trim()) {
-    return buildSegmentsFromContentAndTools(
+  } else if (visibleToolCalls.value.length || props.message.content?.trim()) {
+    raw = buildSegmentsFromContentAndTools(
       props.message.content || '',
       visibleToolCalls.value
     )
+  } else {
+    return []
   }
-  return []
+  // 合并相邻的 text 段，避免过滤隐藏工具后文本之间缺少换行
+  const merged: MessageSegment[] = []
+  for (const seg of raw) {
+    const last = merged[merged.length - 1]
+    if (seg.type === 'text' && last?.type === 'text') {
+      last.content += '\n\n' + seg.content
+    } else {
+      merged.push(seg)
+    }
+  }
+  return merged
 })
 
 const renderedContent = computed(() => renderMarkdown(props.message.content))
