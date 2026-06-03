@@ -185,6 +185,14 @@ public class WsStreamingEventListener implements AgentEventListener {
         send("thinking_end", Map.of());
     }
 
+    @Override
+    public void onToolCallArgsDelta(String toolCallId, String arguments) {
+        send("tool_call_args_delta", Map.of(
+                "tool_call_id", toolCallId,
+                "arguments", arguments
+        ));
+    }
+
     private void send(String type, Map<String, Object> data) {
         registry.send(userId, WsEvent.of(type, sessionId, data));
     }

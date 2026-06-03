@@ -69,6 +69,9 @@ const toolIcon = computed(() => {
 
 const displaySummary = computed(() => {
   if (props.toolCall.summary) return props.toolCall.summary
+  if (props.toolCall.argsStreaming && !inputPreview.value) {
+    return `${props.toolCall.name} · 参数加载中...`
+  }
   const preview = inputPreview.value
   return preview ? `${props.toolCall.name} · ${preview}` : props.toolCall.name
 })

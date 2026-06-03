@@ -38,7 +38,8 @@ export function normalizeApiToolCall(
       result: overrides?.result,
       summary: overrides?.summary,
       status: overrides?.status ?? 'success',
-      isExpanded: false
+      isExpanded: false,
+      argsStreaming: false
     }
   }
 
@@ -49,7 +50,8 @@ export function normalizeApiToolCall(
     result: (tc.result as string | undefined) ?? overrides?.result,
     summary: (tc.summary as string | undefined) ?? overrides?.summary,
     status: (tc.status as ToolCall['status']) ?? overrides?.status ?? 'success',
-    isExpanded: false
+    isExpanded: false,
+    argsStreaming: false
   }
 }
 

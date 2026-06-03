@@ -207,6 +207,10 @@ export function useStreamWS() {
         }
         break
 
+      case 'tool_call_args_delta':
+        if (sessionId) sessionStore.updateToolCallArgs(sessionId, data)
+        break
+
       case 'tool_call_result':
         if (sessionId) sessionStore.updateToolCallResult(sessionId, data)
         break

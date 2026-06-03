@@ -6,6 +6,7 @@ export interface ToolCall {
   summary?: string
   status: 'pending' | 'running' | 'success' | 'error'
   isExpanded: boolean
+  argsStreaming: boolean
 }
 
 export type MessageSegment =

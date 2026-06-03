@@ -81,12 +81,10 @@
         </template>
 
         <div v-if="showTypingIndicator" class="typing-indicator">
-          <div class="message-bubble assistant">
-            <div class="typing-dots">
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
+          <div class="typing-dots">
+            <span></span>
+            <span></span>
+            <span></span>
           </div>
         </div>
       </div>
@@ -193,6 +191,7 @@ const activePendingApprovals = computed(() =>
 // 同时在 agent 思考期间（工具执行完毕到下一次 LLM 输出之间）也显示
 const showTypingIndicator = computed(() => {
   if (!sending.value) return false
+  if (sessionStore.activeStreaming) return false
   if (sessionStore.activeThinking) return true
   const lastMsg = messages.value[messages.value.length - 1]
   if (!lastMsg) return true
@@ -502,24 +501,15 @@ onUnmounted(() => {
 }
 
 /* Typing indicator */
-.typing-indicator .message-bubble {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-
 .typing-dots {
   display: flex;
   gap: 4px;
-  padding: 12px 16px;
-  background: var(--aw-canvas-parchment);
-  border-radius: var(--aw-radius-lg);
-  border-top-left-radius: var(--aw-radius-xs);
+  padding: 4px 0;
 }
 
 .typing-dots span {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   background: var(--aw-ink-muted-48);
   border-radius: 50%;
   animation: typing 1.4s infinite ease-in-out;
@@ -529,7 +519,7 @@ onUnmounted(() => {
 .typing-dots span:nth-child(2) { animation-delay: -0.16s; }
 
 @keyframes typing {
-  0%, 80%, 100% { transform: scale(0); opacity: 0.4; }
+  0%, 80%, 100% { transform: scale(0.8); opacity: 0.3; }
   40% { transform: scale(1); opacity: 1; }
 }
 

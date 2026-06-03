@@ -250,7 +250,8 @@ export const useSessionStore = defineStore('session', () => {
         name: data.tool_name,
         input,
         status: 'running',
-        isExpanded: false
+        isExpanded: false,
+        argsStreaming: true
       })
       sessionMessages.value.set(sid, [...list])
     }
@@ -267,9 +268,24 @@ export const useSessionStore = defineStore('session', () => {
         call.result = data.result
         call.status = (data.status as any) || 'success'
         call.isExpanded = false
+        call.argsStreaming = false
         if (data.summary) call.summary = data.summary
       }
       sessionMessages.value.set(sid, [...list])
+    }
+  }
+
+  function updateToolCallArgs(sessionId: string, data: { tool_call_id: string; arguments: string }) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid)
+    if (!list || list.length === 0) return
+    const lastMsg = list[list.length - 1]
+    if (lastMsg.toolCalls) {
+      const call = lastMsg.toolCalls.find(c => c.id === data.tool_call_id)
+      if (call) {
+        try { call.input = JSON.parse(data.arguments) } catch { call.input = {} }
+        sessionMessages.value.set(sid, [...list])
+      }
     }
   }
 
@@ -357,6 +373,7 @@ export const useSessionStore = defineStore('session', () => {
     getMessages,
     appendDelta,
     appendToolCallStart,
+    updateToolCallArgs,
     updateToolCallResult,
     markMessageComplete,
     clearMessages,
