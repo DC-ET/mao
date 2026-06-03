@@ -296,9 +296,43 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
 const crypto = require('crypto')
 const MARKER_PREFIX = '__CMD_DONE_'
 const MARKER_SUFFIX = '__'
+const MAX_PREVIEW_LINES = 100
+const MAX_PREVIEW_CHARS = 10000
+const SHELL_OUTPUT_DIR = '.workbench/shellOutput'
 
 function generateMarker() {
   return crypto.randomBytes(4).toString('hex')
+}
+
+/**
+ * 截断输出并落盘，返回预览 + 截断标记 + 文件路径
+ */
+function truncateAndSave(fullOutput, workspace, sessionId) {
+  const lines = fullOutput.split('\n')
+  const truncated = lines.length > MAX_PREVIEW_LINES || fullOutput.length > MAX_PREVIEW_CHARS
+
+  // 生成预览：取尾部 MAX_PREVIEW_LINES 行
+  const startIdx = Math.max(0, lines.length - MAX_PREVIEW_LINES)
+  let preview = lines.slice(startIdx).join('\n')
+  if (preview.length > MAX_PREVIEW_CHARS) {
+    preview = preview.substring(preview.length - MAX_PREVIEW_CHARS)
+  }
+
+  // 落盘完整输出
+  let outputFile = null
+  if (workspace && sessionId && truncated) {
+    try {
+      const outputDir = path.join(workspace, SHELL_OUTPUT_DIR)
+      fs.mkdirSync(outputDir, { recursive: true })
+      const seq = Date.now()
+      outputFile = path.join(outputDir, `${sessionId}_${seq}.out`)
+      fs.writeFileSync(outputFile, fullOutput, 'utf-8')
+    } catch (e) {
+      console.error('[shell] Failed to write output file:', e.message)
+    }
+  }
+
+  return { preview: preview.trim(), truncated, output_file: outputFile }
 }
 
 /**
@@ -376,11 +410,13 @@ async function handleShellFromWebSocket(args, sessionId, workspace) {
     session.process.stdin.write('echo ' + MARKER_PREFIX + marker + MARKER_SUFFIX + '\n')
     const result = await readUntilMarker(session.process, marker, args.yield_time_ms || 5000)
     session.lastActiveAt = Date.now()
+    const saved = truncateAndSave(result.output, workspace, session_id)
     return {
       session_id,
       current_workdir: session.cwd,
-      output: result.output,
-      truncated: result.truncated
+      output: saved.preview,
+      truncated: saved.truncated || result.truncated,
+      ...(saved.output_file ? { output_file: saved.output_file } : {})
     }
   }
 
@@ -397,12 +433,14 @@ async function handleShellFromWebSocket(args, sessionId, workspace) {
     const result = await readUntilMarker(session.process, marker, args.yield_time_ms || 10000)
     session.lastActiveAt = Date.now()
     session.commandCount = (session.commandCount || 0) + 1
+    const saved = truncateAndSave(result.output, workspace, session_id)
     return {
       exit_code: 0,
       session_id,
       current_workdir: session.cwd,
-      output: result.output,
-      truncated: result.truncated
+      output: saved.preview,
+      truncated: saved.truncated || result.truncated,
+      ...(saved.output_file ? { output_file: saved.output_file } : {})
     }
   }
 
@@ -433,12 +471,14 @@ async function handleShellFromWebSocket(args, sessionId, workspace) {
     const session = shellSessions.get(session_id)
     session.lastActiveAt = Date.now()
     session.commandCount = 1
+    const saved = truncateAndSave(result.output, workspace, session_id)
     return {
       exit_code: 0,
       session_id,
       current_workdir: resolvedWorkdir || '',
-      output: result.output,
-      truncated: result.truncated
+      output: saved.preview,
+      truncated: saved.truncated || result.truncated,
+      ...(saved.output_file ? { output_file: saved.output_file } : {})
     }
   }
 
@@ -454,11 +494,15 @@ async function handleShellFromWebSocket(args, sessionId, workspace) {
       if (error && error.killed) {
         resolve({ exit_code: -1, output: `Command timed out after ${args.timeout || 30}s` })
       } else {
+        const fullOutput = (stdout || '') + (stderr ? '\n' + stderr : '')
+        const saved = truncateAndSave(fullOutput, workspace, 'local')
         resolve({
           exit_code: error ? error.code || 1 : 0,
           session_id: 'local',
           current_workdir: resolvedWorkdir || '',
-          output: (stdout || '') + (stderr ? '\n' + stderr : '')
+          output: saved.preview,
+          truncated: saved.truncated,
+          ...(saved.output_file ? { output_file: saved.output_file } : {})
         })
       }
     })
