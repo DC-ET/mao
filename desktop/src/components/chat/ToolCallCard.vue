@@ -2,9 +2,6 @@
   <div class="tool-call-card" :class="[`status-${toolCall.status}`]">
     <div class="tool-header" @click="toggleExpand">
       <div class="tool-info">
-        <el-icon class="tool-icon" :size="14">
-          <component :is="toolIcon" />
-        </el-icon>
         <span class="tool-summary">{{ displaySummary }}</span>
       </div>
       <div class="tool-status">
@@ -43,7 +40,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { Select, CloseBold, ArrowDown, Document, Monitor, Edit, Search, SetUp, CopyDocument } from '@element-plus/icons-vue'
+import { Select, CloseBold, ArrowDown, CopyDocument } from '@element-plus/icons-vue'
 import type { ToolCall } from '../../composables/useChat'
 
 const props = defineProps<{ toolCall: ToolCall }>()
@@ -56,15 +53,6 @@ watch(
     if (val !== undefined) isExpanded.value = val
   }
 )
-
-const toolIcon = computed(() => {
-  const name = props.toolCall.name.toLowerCase()
-  if (name.includes('shell') || name.includes('execute') || name.includes('terminal')) return SetUp
-  if (name.includes('read') || name.includes('file')) return Document
-  if (name.includes('write') || name.includes('edit')) return Edit
-  if (name.includes('search')) return Search
-  return Monitor
-})
 
 const displaySummary = computed(() => {
   if (props.toolCall.summary) return props.toolCall.summary
@@ -164,11 +152,6 @@ function toggleExpand() {
   margin-right: 5px;
   min-width: 0;
   flex: 1;
-}
-
-.tool-icon {
-  color: var(--aw-ink-muted-48);
-  flex-shrink: 0;
 }
 
 .tool-summary {

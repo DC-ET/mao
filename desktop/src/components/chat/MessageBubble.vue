@@ -22,16 +22,16 @@
       </div>
 
       <!-- assistant：按时间线穿插正文与工具 -->
-      <template v-else-if="timelineSegments.length > 0">
-        <template v-for="(seg, idx) in timelineSegments" :key="`${message.id}-seg-${idx}`">
+      <template v-else-if="renderSegments.length > 0">
+        <template v-for="(seg, idx) in renderSegments" :key="`${message.id}-seg-${idx}`">
           <div
             v-if="seg.type === 'text'"
             class="assistant-text markdown-body"
             v-html="renderSegmentMarkdown(seg.content)"
           />
-          <ToolCallCard
-            v-else-if="getToolCall(seg.callId)"
-            :tool-call="getToolCall(seg.callId)!"
+          <ToolCallGroup
+            v-else-if="seg.type === 'tool-group' && seg.toolCalls"
+            :tool-calls="seg.toolCalls"
           />
         </template>
       </template>
@@ -44,11 +44,7 @@
           v-html="renderedContent"
         />
         <div v-if="visibleToolCalls.length > 0" class="tool-calls">
-          <ToolCallCard
-            v-for="tc in visibleToolCalls"
-            :key="tc.id"
-            :tool-call="tc"
-          />
+          <ToolCallGroup :tool-calls="visibleToolCalls" />
         </div>
       </template>
 
@@ -77,7 +73,7 @@
 import { computed, ref } from 'vue'
 import { Document, CopyDocument } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../composables/useMarkdown'
-import ToolCallCard from './ToolCallCard.vue'
+import ToolCallGroup from './ToolCallGroup.vue'
 import {
   normalizeMessageRole,
   type ChatMessage,
@@ -134,6 +130,40 @@ const timelineSegments = computed((): MessageSegment[] => {
   return []
 })
 
+type RenderSegment =
+  | { type: 'text'; content: string }
+  | { type: 'tool-group'; toolCalls: ToolCall[] }
+
+const renderSegments = computed((): RenderSegment[] => {
+  const segments = timelineSegments.value
+  if (segments.length === 0) return []
+
+  const result: RenderSegment[] = []
+  let toolBuffer: ToolCall[] = []
+
+  const flushToolBuffer = () => {
+    if (toolBuffer.length > 0) {
+      result.push({ type: 'tool-group', toolCalls: [...toolBuffer] })
+      toolBuffer = []
+    }
+  }
+
+  for (const seg of segments) {
+    if (seg.type === 'text') {
+      flushToolBuffer()
+      result.push({ type: 'text', content: seg.content || '' })
+    } else {
+      const tc = getToolCall(seg.callId)
+      if (tc) {
+        toolBuffer.push(tc)
+      }
+    }
+  }
+
+  flushToolBuffer()
+  return result
+})
+
 const renderedContent = computed(() => renderMarkdown(props.message.content))
 
 function renderSegmentMarkdown(content: string) {
@@ -170,8 +200,7 @@ async function copyMessage() {
 }
 
 .message-content {
-  max-width: 75%;
-  min-width: 0;
+  width: 75%;
 }
 
 .message-bubble.user .message-content {
