@@ -207,7 +207,9 @@ function onGroupNewTask(group: { sessions: Session[] }) {
   emit('newTaskFromGroup', {
     agentId: last.agentId,
     executionMode: last.executionMode,
-    workspace: last.workspace
+    // CLOUD 模式：不传 workspace，让后端自动生成隔离目录
+    // LOCAL 模式：继承本地工作目录
+    workspace: last.executionMode === 'LOCAL' ? last.workspace : undefined
   })
 }
 

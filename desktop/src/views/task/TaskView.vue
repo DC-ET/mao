@@ -8,7 +8,7 @@
           <template v-if="!sessionId">
             <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
             <p>选择一个 Agent 开始新任务</p>
-            <el-button type="primary" class="pill-btn" @click="showNewTaskDialog = true">
+            <el-button type="primary" class="pill-btn" @click="handleNewTask">
               <el-icon><Plus /></el-icon> 新任务
             </el-button>
           </template>
@@ -411,7 +411,7 @@ function navigateToLatestSession() {
   if (latest) {
     router.replace(`/tasks/${latest.id}`)
   } else {
-    showNewTaskDialog.value = true
+    handleNewTask()
   }
 }
 
