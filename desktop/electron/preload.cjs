@@ -20,7 +20,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('tool-execute', { toolName, args, requestId, workspace, sessionId }),
 
   // Local tool execution - direct IPC (for renderer-initiated calls)
-  localExecuteBash: (args) => ipcRenderer.invoke('local-execute-bash', args),
   localReadFile: (args) => ipcRenderer.invoke('local-read-file', args),
   localWriteFile: (args) => ipcRenderer.invoke('local-write-file', args),
   localEditFile: (args) => ipcRenderer.invoke('local-edit-file', args),

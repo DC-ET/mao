@@ -60,7 +60,7 @@ watch(
 
 const toolIcon = computed(() => {
   const name = props.toolCall.name.toLowerCase()
-  if (name.includes('bash') || name.includes('execute') || name.includes('terminal')) return SetUp
+  if (name.includes('shell') || name.includes('execute') || name.includes('terminal')) return SetUp
   if (name.includes('read') || name.includes('file')) return Document
   if (name.includes('write') || name.includes('edit')) return Edit
   if (name.includes('search')) return Search

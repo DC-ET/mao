@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.concurrent.*;
 
 /**
- * Manages background tasks for async tool execution (e.g., long-running bash commands).
+ * Manages background tasks for async tool execution (e.g., long-running shell commands).
  */
 @Slf4j
 @Component

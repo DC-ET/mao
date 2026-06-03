@@ -9,13 +9,6 @@ BEGIN
     IF EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'skill') THEN
         -- Insert built-in skills (idempotent via name check)
         INSERT INTO `skill` (`name`, `description`, `type`, `input_schema`, `output_schema`, `impl_class`, `creator_id`, `status`, `created_at`, `updated_at`)
-        SELECT 'bash', 'Execute a shell command and return its output. Parameters: command (required), timeout (optional, default 30s), workdir (optional), async (optional, default false).', 'BUILTIN',
-         '{"type":"object","properties":{"command":{"type":"string","description":"The shell command to execute"},"timeout":{"type":"integer","description":"Timeout in seconds (default 30)"},"workdir":{"type":"string","description":"Working directory (relative to workspace root)"},"async":{"type":"boolean","description":"Run in background (default false)"}},"required":["command"]}',
-         '{"type":"object","properties":{"exit_code":{"type":"integer"},"output":{"type":"string"}}}',
-         'com.agentworkbench.harness.skill.impl.BashSkill', 1, 'ACTIVE', NOW(), NOW()
-        FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `skill` WHERE `name` = 'bash');
-
-        INSERT INTO `skill` (`name`, `description`, `type`, `input_schema`, `output_schema`, `impl_class`, `creator_id`, `status`, `created_at`, `updated_at`)
         SELECT 'read_file', 'Read the contents of a file. Parameters: path (required), offset (optional, line number to start from), limit (optional, max lines to read).', 'BUILTIN',
          '{"type":"object","properties":{"path":{"type":"string","description":"File path relative to workspace root"},"offset":{"type":"integer","description":"Line number to start reading from (0-based)"},"limit":{"type":"integer","description":"Maximum number of lines to read"}},"required":["path"]}',
          '{"type":"object","properties":{"content":{"type":"string"},"total_lines":{"type":"integer"}}}',

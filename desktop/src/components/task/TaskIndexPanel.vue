@@ -673,7 +673,6 @@ function toggleGroup(key: string) {
   gap: 2px;
   padding: 2px 4px;
   border-radius: var(--aw-radius-xs);
-  background: var(--aw-canvas-parchment);
   opacity: 0;
   transition: opacity 0.15s;
 }
@@ -824,10 +823,6 @@ function toggleGroup(key: string) {
 
 [data-theme="dark"] .action-btn {
   background: #1a1a2e;
-}
-
-[data-theme="dark"] .session-item-actions {
-  background: #0f0f17;
 }
 
 [data-theme="dark"] .action-delete:hover {

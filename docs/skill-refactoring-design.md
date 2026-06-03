@@ -1,5 +1,7 @@
 # Agent Skills 重构技术方案
 
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+
 > 将当前系统的可执行 Skill 重命名为 Tool，引入符合 Anthropic 规范的 Skill 知识文档系统。
 
 ## 背景

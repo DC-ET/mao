@@ -52,7 +52,7 @@ cd desktop && npm run dist
 - `PromptEngine` — 从上下文构建 ChatRequest
 - `ContextManager` — 消息历史与上下文压缩（token 感知）
 - `CompactionService` — 上下文窗口管理，可配置触发比例与保留轮次
-- `ToolDispatcher` → `ToolRegistry` — 工具路由，9 个内置工具（Bash/ReadFile/WriteFile/EditFile/ShellSession/Subagent/TaskCRUD）。工具纯内存注册，无 DB 持久化
+- `ToolDispatcher` → `ToolRegistry` — 工具路由，8 个内置工具（Shell/ReadFile/WriteFile/EditFile/Subagent/TaskCRUD）。工具纯内存注册，无 DB 持久化
 - `LlmAdapter` / `OpenAiLlmAdapter` — LLM 通信抽象层，兼容 OpenAI 协议，OkHttp SSE 流式
 - `LocalToolExecutor` — 将工具请求通过 WebSocket 发送给 Electron 客户端执行
 
@@ -72,9 +72,9 @@ cd desktop && npm run dist
 
 **桌面端 (desktop/)**：Electron 28 桌面客户端，核心组件：
 - `useStreamWS` — 单例 WebSocket 连接，自动重连 + 心跳 + 事件路由 + Electron IPC 桥接
-- `useChat` — 聊天编排：会话创建、消息发送、图片上传（Aliyun OSS）、bash 审批队列
+- `useChat` — 聊天编排：会话创建、消息发送、图片上传（Aliyun OSS）、工具审批队列
 - Pinia stores：`auth`、`agent`（代理列表/选择）、`session`（多会话消息缓存，按 sessionId 的 Map）
-- Electron main (`main.cjs`)：本地工具执行、bash 审批流、shell 会话管理、技能同步
+- Electron main (`main.cjs`)：本地工具执行、工具审批流、shell 会话管理、技能同步
 - Preload bridge (`preload.cjs`)：通过 contextBridge 暴露 `electronAPI`
 
 ### 数据库

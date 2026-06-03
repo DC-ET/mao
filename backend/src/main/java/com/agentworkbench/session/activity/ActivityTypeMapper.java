@@ -7,7 +7,7 @@ public class ActivityTypeMapper {
         return switch (toolName.toLowerCase()) {
             case "read_file" -> "READ";
             case "write_file", "edit_file" -> "EDIT";
-            case "bash" -> "RUN";
+            case "shell" -> "RUN";
             case "glob", "list" -> "EXPLORE";
             case "task_create", "task_update", "task_delete", "task_list" -> "TASK";
             case "subagent" -> "TOOL";

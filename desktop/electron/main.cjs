@@ -200,36 +200,6 @@ ipcMain.handle('open-terminal', (event, folderPath) => {
 
 // ========== Local tool execution IPC handlers ==========
 
-ipcMain.handle('local-execute-bash', async (event, { command, timeout = 30, workdir, workspace }) => {
-  const approved = await requestToolApproval('bash', command)
-  if (!approved) {
-    return { exit_code: -1, output: 'User denied command execution.' }
-  }
-
-  return new Promise((resolve) => {
-    const options = {
-      timeout: timeout * 1000,
-      maxBuffer: 1024 * 1024 * 5 // 5MB
-    }
-    // Use workspace parameter if provided, otherwise fall back to currentWorkspace
-    const resolvedWorkdir = workdir || workspace || currentWorkspace
-    if (resolvedWorkdir) {
-      options.cwd = resolvedWorkdir
-    }
-
-    exec(command, options, (error, stdout, stderr) => {
-      if (error && error.killed) {
-        resolve({ exit_code: -1, output: `Command timed out after ${timeout}s` })
-      } else {
-        resolve({
-          exit_code: error ? error.code || 1 : 0,
-          output: (stdout || '') + (stderr ? '\n' + stderr : '')
-        })
-      }
-    })
-  })
-})
-
 ipcMain.handle('local-read-file', async (event, { path: filePath, offset, limit }) => {
   try {
     const resolvedPath = resolveWorkspacePath(filePath)
@@ -285,8 +255,6 @@ ipcMain.handle('local-edit-file', async (event, { path: filePath, old_string, ne
 
 async function executeToolByName(toolName, parsedArgs, sessionId, workspace) {
   switch (toolName) {
-    case 'bash':
-      return await handleBashFromWebSocket(parsedArgs, sessionId, workspace)
     case 'shell':
       return await handleShellFromWebSocket(parsedArgs, sessionId, workspace)
     case 'read_file':
@@ -325,43 +293,56 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
   }
 })
 
-async function handleBashFromWebSocket(args, sessionId, workspace) {
-  console.log('[handleBash] received workspace:', workspace, ', args.workdir:', args.workdir)
-  const approved = await requestToolApproval('bash', args.command, sessionId)
-  if (!approved) {
-    return { exit_code: -1, output: 'User denied command execution.' }
-  }
+const crypto = require('crypto')
+const MARKER_PREFIX = '__CMD_DONE_'
+const MARKER_SUFFIX = '__'
 
+function generateMarker() {
+  return crypto.randomBytes(4).toString('hex')
+}
+
+/**
+ * 用 marker 机制读取 shell 进程输出，直到看到 marker 或超时
+ */
+function readUntilMarker(process, marker, timeoutMs) {
   return new Promise((resolve) => {
-    const options = {
-      timeout: (args.timeout || 30) * 1000,
-      maxBuffer: 1024 * 1024 * 5
-    }
-    // Resolve working directory: use workspace as base, apply workdir if provided
-    let resolvedWorkdir = workspace
-    if (args.workdir && args.workdir !== '.') {
-      // If workdir is absolute, use it directly; otherwise resolve relative to workspace
-      resolvedWorkdir = path.isAbsolute(args.workdir) ? args.workdir : path.join(workspace || process.cwd(), args.workdir)
-    }
-    console.log('[handleBash] resolvedWorkdir:', resolvedWorkdir)
-    if (resolvedWorkdir) options.cwd = resolvedWorkdir
+    let output = ''
+    let resolved = false
+    const fullMarker = MARKER_PREFIX + marker + MARKER_SUFFIX
 
-    exec(args.command, options, (error, stdout, stderr) => {
-      if (error && error.killed) {
-        resolve({ exit_code: -1, output: `Command timed out after ${args.timeout || 30}s` })
-      } else {
-        resolve({
-          exit_code: error ? error.code || 1 : 0,
-          output: (stdout || '') + (stderr ? '\n' + stderr : '')
-        })
+    const onData = (data) => {
+      output += data.toString()
+      if (output.includes(fullMarker)) {
+        finish(false)
       }
-    })
+    }
+
+    const timer = setTimeout(() => {
+      finish(true)
+    }, timeoutMs)
+
+    function finish(timedOut) {
+      if (resolved) return
+      resolved = true
+      clearTimeout(timer)
+      process.stdout.removeListener('data', onData)
+
+      // 移除 marker 行及之后的内容
+      const markerIdx = output.indexOf(fullMarker)
+      const cleanOutput = markerIdx >= 0 ? output.substring(0, markerIdx) : output
+
+      resolve({
+        output: cleanOutput.trim(),
+        truncated: timedOut
+      })
+    }
+
+    process.stdout.on('data', onData)
   })
 }
 
 async function handleShellFromWebSocket(args, sessionId, workspace) {
   const { action, command, session_id, workdir, input } = args
-  // Resolve working directory: use workspace as base, apply workdir if provided
   let resolvedWorkdir = workspace
   if (workdir && workdir !== '.') {
     resolvedWorkdir = path.isAbsolute(workdir) ? workdir : path.join(workspace || process.cwd(), workdir)
@@ -380,7 +361,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace) {
     const sessions = Array.from(shellSessions.entries()).map(([id, s]) => ({
       session_id: id,
       current_workdir: s.cwd,
-      command_count: 0
+      command_count: s.commandCount || 0
     }))
     return { sessions, count: sessions.length }
   }
@@ -390,21 +371,17 @@ async function handleShellFromWebSocket(args, sessionId, workspace) {
     if (!session) {
       return { error: `Session not found: ${session_id}` }
     }
-    return new Promise((resolve) => {
-      let output = ''
-      const onData = (data) => { output += data.toString() }
-      session.process.stdout.on('data', onData)
-      session.process.stdin.write(input)
-      setTimeout(() => {
-        session.process.stdout.removeListener('data', onData)
-        resolve({
-          session_id,
-          current_workdir: session.cwd,
-          output: output.trim(),
-          truncated: false
-        })
-      }, args.yield_time_ms || 5000)
-    })
+    const marker = generateMarker()
+    session.process.stdin.write(input + '\n')
+    session.process.stdin.write('echo ' + MARKER_PREFIX + marker + MARKER_SUFFIX + '\n')
+    const result = await readUntilMarker(session.process, marker, args.yield_time_ms || 5000)
+    session.lastActiveAt = Date.now()
+    return {
+      session_id,
+      current_workdir: session.cwd,
+      output: result.output,
+      truncated: result.truncated
+    }
   }
 
   if (action !== 'exec') {
@@ -414,24 +391,22 @@ async function handleShellFromWebSocket(args, sessionId, workspace) {
   // 复用已有会话
   if (session_id && shellSessions.has(session_id)) {
     const session = shellSessions.get(session_id)
-    return new Promise((resolve) => {
-      let output = ''
-      const onData = (data) => { output += data.toString() }
-      session.process.stdout.on('data', onData)
-      session.process.stdin.write(command + '\n')
-      setTimeout(() => {
-        session.process.stdout.removeListener('data', onData)
-        resolve({
-          exit_code: 0,
-          session_id,
-          current_workdir: session.cwd,
-          output: output.trim(),
-          truncated: false
-        })
-      }, args.yield_time_ms || 10000)
-    })
+    const marker = generateMarker()
+    session.process.stdin.write(command + '\n')
+    session.process.stdin.write('echo ' + MARKER_PREFIX + marker + MARKER_SUFFIX + '\n')
+    const result = await readUntilMarker(session.process, marker, args.yield_time_ms || 10000)
+    session.lastActiveAt = Date.now()
+    session.commandCount = (session.commandCount || 0) + 1
+    return {
+      exit_code: 0,
+      session_id,
+      current_workdir: session.cwd,
+      output: result.output,
+      truncated: result.truncated
+    }
   }
 
+  // 新会话或一次性执行需要审批
   const approved = await requestToolApproval('shell', command, sessionId)
   if (!approved) {
     return { exit_code: -1, output: 'User denied command execution.' }
@@ -443,26 +418,28 @@ async function handleShellFromWebSocket(args, sessionId, workspace) {
       cwd: resolvedWorkdir || undefined,
       env: { ...process.env, TERM: 'dumb', PS1: '' }
     })
-    shellSessions.set(session_id, { process: bashProcess, cwd: resolvedWorkdir || '' })
-
-    return new Promise((resolve) => {
-      let output = ''
-      const onData = (data) => { output += data.toString() }
-      bashProcess.stdout.on('data', onData)
-      bashProcess.stderr.on('data', onData)
-      bashProcess.stdin.write(command + '\n')
-      setTimeout(() => {
-        bashProcess.stdout.removeListener('data', onData)
-        bashProcess.stderr.removeListener('data', onData)
-        resolve({
-          exit_code: 0,
-          session_id,
-          current_workdir: resolvedWorkdir || '',
-          output: output.trim(),
-          truncated: false
-        })
-      }, args.yield_time_ms || 10000)
+    shellSessions.set(session_id, {
+      process: bashProcess,
+      cwd: resolvedWorkdir || '',
+      commandCount: 0,
+      createdAt: Date.now(),
+      lastActiveAt: Date.now()
     })
+
+    const marker = generateMarker()
+    bashProcess.stdin.write(command + '\n')
+    bashProcess.stdin.write('echo ' + MARKER_PREFIX + marker + MARKER_SUFFIX + '\n')
+    const result = await readUntilMarker(bashProcess, marker, args.yield_time_ms || 10000)
+    const session = shellSessions.get(session_id)
+    session.lastActiveAt = Date.now()
+    session.commandCount = 1
+    return {
+      exit_code: 0,
+      session_id,
+      current_workdir: resolvedWorkdir || '',
+      output: result.output,
+      truncated: result.truncated
+    }
   }
 
   // 无 session_id，一次性执行

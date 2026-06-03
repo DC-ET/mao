@@ -1,5 +1,6 @@
 package com.agentworkbench.harness.tool.impl;
 
+import com.agentworkbench.harness.core.BackgroundTaskManager;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.harness.shell.OutputManager;
 import com.agentworkbench.harness.shell.OutputManager.OutputResult;
@@ -11,33 +12,38 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
- * 有状态的 Shell 会话工具，支持多轮操作
+ * 唯一的命令执行工具：支持一次性执行和有状态持久会话
  */
 @Slf4j
 @Component
 public class ShellSessionTool implements Tool {
 
     private static final int MAX_COMMAND_LENGTH = 10000;
+    private static final String MARKER_PREFIX = "__CMD_DONE_";
+    private static final String MARKER_SUFFIX = "__";
 
     private final ObjectMapper objectMapper;
     private final PathSandbox pathSandbox;
     private final ShellSessionManager sessionManager;
     private final OutputManager outputManager;
+    private final BackgroundTaskManager backgroundTaskManager;
 
     public ShellSessionTool(ObjectMapper objectMapper, PathSandbox pathSandbox,
-                            ShellSessionManager sessionManager, OutputManager outputManager) {
+                            ShellSessionManager sessionManager, OutputManager outputManager,
+                            BackgroundTaskManager backgroundTaskManager) {
         this.objectMapper = objectMapper;
         this.pathSandbox = pathSandbox;
         this.sessionManager = sessionManager;
         this.outputManager = outputManager;
+        this.backgroundTaskManager = backgroundTaskManager;
     }
 
     @Override
@@ -47,12 +53,12 @@ public class ShellSessionTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Shell tool with session persistence. Supports multi-step operations with state preservation.\n" +
+        return "Execute shell commands. Supports one-shot execution and persistent sessions.\n" +
                 "Actions:\n" +
-                "- exec: Execute a command in a shell session\n" +
+                "- exec: Execute a command (creates session if session_id omitted)\n" +
                 "- write_stdin: Write input to a running session's stdin\n" +
                 "- close: Close a shell session\n" +
-                "- list: List active sessions for current conversation";
+                "- list: List active sessions";
     }
 
     @Override
@@ -68,15 +74,15 @@ public class ShellSessionTool implements Tool {
         action.put("description", "Action to perform");
         properties.put("action", action);
 
-        Map<String, Object> sessionId = new HashMap<>();
-        sessionId.put("type", "string");
-        sessionId.put("description", "Session ID. Omit to create new session, or provide to reuse existing.");
-        properties.put("session_id", sessionId);
-
         Map<String, Object> command = new HashMap<>();
         command.put("type", "string");
-        command.put("description", "Shell command to execute (for exec action)");
+        command.put("description", "Command to execute (for exec action)");
         properties.put("command", command);
+
+        Map<String, Object> sessionId = new HashMap<>();
+        sessionId.put("type", "string");
+        sessionId.put("description", "Session ID. Omit for one-shot execution, provide to reuse existing session.");
+        properties.put("session_id", sessionId);
 
         Map<String, Object> input = new HashMap<>();
         input.put("type", "string");
@@ -90,8 +96,13 @@ public class ShellSessionTool implements Tool {
 
         Map<String, Object> yieldTimeMs = new HashMap<>();
         yieldTimeMs.put("type", "integer");
-        yieldTimeMs.put("description", "Initial wait time for output in milliseconds (default 10000)");
+        yieldTimeMs.put("description", "Max wait time for output in milliseconds (default 10000)");
         properties.put("yield_time_ms", yieldTimeMs);
+
+        Map<String, Object> async = new HashMap<>();
+        async.put("type", "boolean");
+        async.put("description", "Run in background and return task_id immediately (default false, exec action only)");
+        properties.put("async", async);
 
         schema.put("properties", properties);
         schema.put("required", new String[]{"action"});
@@ -109,6 +120,8 @@ public class ShellSessionTool implements Tool {
         properties.put("output", Map.of("type", "string"));
         properties.put("current_workdir", Map.of("type", "string"));
         properties.put("truncated", Map.of("type", "boolean"));
+        properties.put("async", Map.of("type", "boolean"));
+        properties.put("task_id", Map.of("type", "string"));
         schema.put("properties", properties);
         return schema;
     }
@@ -142,11 +155,7 @@ public class ShellSessionTool implements Tool {
         }
     }
 
-    /**
-     * 执行命令
-     */
     private String handleExec(JsonNode args, Long conversationId, String workspace) throws Exception {
-        // 解析参数
         String command = args.has("command") ? args.get("command").asText() : null;
         if (command == null || command.isBlank()) {
             return errorJson("command is required for exec action");
@@ -158,7 +167,29 @@ public class ShellSessionTool implements Tool {
         String sessionId = args.has("session_id") ? args.get("session_id").asText() : null;
         int yieldTimeMs = args.has("yield_time_ms") ? args.get("yield_time_ms").asInt() : 10000;
         String workdir = args.has("workdir") ? args.get("workdir").asText() : null;
+        boolean isAsync = args.has("async") && args.get("async").asBoolean();
 
+        // async 模式：提交后台任务，立即返回
+        if (isAsync) {
+            String taskId = backgroundTaskManager.submit(() -> {
+                try {
+                    return doExec(command, sessionId, conversationId, workspace, workdir, yieldTimeMs);
+                } catch (Exception e) {
+                    return errorJson("Async execution failed: " + e.getMessage());
+                }
+            });
+            return objectMapper.writeValueAsString(Map.of(
+                    "async", true,
+                    "task_id", taskId,
+                    "message", "Command submitted for background execution."
+            ));
+        }
+
+        return doExec(command, sessionId, conversationId, workspace, workdir, yieldTimeMs);
+    }
+
+    private String doExec(String command, String sessionId, Long conversationId,
+                          String workspace, String workdir, int yieldTimeMs) throws Exception {
         // 获取或创建会话
         ShellSession session = sessionManager.getOrCreate(conversationId, sessionId, workspace);
         sessionId = session.getSessionId();
@@ -166,20 +197,18 @@ public class ShellSessionTool implements Tool {
         // 如果指定了工作目录，先执行 cd
         if (workdir != null) {
             Path resolvedWorkdir = pathSandbox.resolve(workdir, workspace);
-            executeInSession(session, "cd " + resolvedWorkdir, Duration.ofSeconds(5));
+            executeWithMarker(session, "cd " + resolvedWorkdir, Duration.ofSeconds(5));
         }
 
         // 执行命令
         long startTime = System.currentTimeMillis();
-        OutputResult output = executeInSession(session, command, Duration.ofMillis(yieldTimeMs));
+        OutputResult output = executeWithMarker(session, command, Duration.ofMillis(yieldTimeMs));
         long elapsedMs = System.currentTimeMillis() - startTime;
 
-        // 获取当前工作目录
-        String currentWorkdir = getCurrentWorkdir(session);
+        String currentWorkdir = pwdWithMarker(session);
 
-        // 格式化返回
         String result = outputManager.formatToolResult(
-                0,  // exit_code 通过命令本身获取
+                output.markerFound() ? 0 : -1,
                 sessionId,
                 elapsedMs,
                 output,
@@ -190,9 +219,6 @@ public class ShellSessionTool implements Tool {
         return result;
     }
 
-    /**
-     * 写入 stdin
-     */
     private String handleWriteStdin(JsonNode args, Long conversationId) throws Exception {
         String sessionId = args.has("session_id") ? args.get("session_id").asText() : null;
         if (sessionId == null) {
@@ -206,20 +232,28 @@ public class ShellSessionTool implements Tool {
 
         int yieldTimeMs = args.has("yield_time_ms") ? args.get("yield_time_ms").asInt() : 5000;
 
-        // 获取会话
         ShellSession session = sessionManager.getSession(sessionId);
         if (session == null) {
             return errorJson("Session not found: " + sessionId);
         }
 
-        // 写入输入并读取输出
+        // 写入输入，用 marker 检测输出结束
+        String marker = generateMarker();
         session.getStdin().write(input);
+        session.getStdin().newLine();
+        session.getStdin().flush();
+        // 写入 marker 以便检测输出结束
+        session.getStdin().write("echo " + MARKER_PREFIX + marker + MARKER_SUFFIX);
+        session.getStdin().newLine();
         session.getStdin().flush();
 
         Path outputFile = session.nextOutputFile();
-        OutputResult output = outputManager.readOutput(session.getStdout(), outputFile, Duration.ofMillis(yieldTimeMs));
-        String currentWorkdir = getCurrentWorkdir(session);
+        String fullMarker = MARKER_PREFIX + marker + MARKER_SUFFIX;
+        OutputResult output = outputManager.readUntilMarker(session.getStdout(), fullMarker,
+                Duration.ofMillis(yieldTimeMs), outputFile);
+        String currentWorkdir = pwdWithMarker(session);
 
+        session.touch();
         return objectMapper.writeValueAsString(Map.of(
                 "session_id", sessionId,
                 "current_workdir", currentWorkdir != null ? currentWorkdir : "",
@@ -228,9 +262,6 @@ public class ShellSessionTool implements Tool {
         ));
     }
 
-    /**
-     * 关闭会话
-     */
     private String handleClose(JsonNode args, Long conversationId) throws Exception {
         String sessionId = args.has("session_id") ? args.get("session_id").asText() : null;
         if (sessionId == null) {
@@ -244,9 +275,6 @@ public class ShellSessionTool implements Tool {
         ));
     }
 
-    /**
-     * 列出会话
-     */
     private String handleList(Long conversationId) throws Exception {
         List<ShellSession> sessions = sessionManager.listByConversation(conversationId);
 
@@ -268,49 +296,56 @@ public class ShellSessionTool implements Tool {
     }
 
     /**
-     * 在会话中执行命令并读取输出
+     * 用 marker 机制执行命令并读取输出
      */
-    private OutputResult executeInSession(ShellSession session, String command, Duration yieldTime)
-            throws IOException, InterruptedException {
-        // 写入命令
-        session.getStdin().write(command);
-        session.getStdin().newLine();
-        session.getStdin().flush();
+    private OutputResult executeWithMarker(ShellSession session, String command, Duration timeout) {
+        String marker = generateMarker();
+        String fullMarker = MARKER_PREFIX + marker + MARKER_SUFFIX;
 
-        // 读取输出
-        Path outputFile = session.nextOutputFile();
-        return outputManager.readOutput(session.getStdout(), outputFile, yieldTime);
-    }
-
-    /**
-     * 获取当前工作目录
-     */
-    private String getCurrentWorkdir(ShellSession session) {
         try {
-            // 执行 pwd 命令获取当前目录
-            session.getStdin().write("pwd");
+            // 写入命令 + marker echo
+            session.getStdin().write(command);
+            session.getStdin().newLine();
+            session.getStdin().write("echo " + fullMarker);
             session.getStdin().newLine();
             session.getStdin().flush();
 
-            // 短暂等待
-            Thread.sleep(100);
+            Path outputFile = session.nextOutputFile();
+            return outputManager.readUntilMarker(session.getStdout(), fullMarker, timeout, outputFile);
+        } catch (Exception e) {
+            log.error("Failed to execute command in session {}: {}", session.getSessionId(), e.getMessage());
+            return new OutputResult("Error: " + e.getMessage(), 0, 0, false, false, null);
+        }
+    }
 
-            // 读取输出
-            StringBuilder sb = new StringBuilder();
-            char[] buffer = new char[1024];
-            while (session.getStdout().ready()) {
-                int charsRead = session.getStdout().read(buffer);
-                if (charsRead == -1) break;
-                sb.append(buffer, 0, charsRead);
-            }
+    /**
+     * 用 marker 机制获取当前工作目录
+     */
+    private String pwdWithMarker(ShellSession session) {
+        String marker = generateMarker();
+        String fullMarker = MARKER_PREFIX + marker + MARKER_SUFFIX;
 
-            // 提取最后一行作为工作目录
-            String output = sb.toString().trim();
-            String[] lines = output.split("\n");
-            if (lines.length > 0) {
-                String workdir = lines[lines.length - 1].trim();
-                session.setCurrentWorkdir(workdir);
-                return workdir;
+        try {
+            session.getStdin().write("pwd");
+            session.getStdin().newLine();
+            session.getStdin().write("echo " + fullMarker);
+            session.getStdin().newLine();
+            session.getStdin().flush();
+
+            OutputResult result = outputManager.readUntilMarker(
+                    session.getStdout(), fullMarker, Duration.ofSeconds(5), null);
+
+            String output = result.preview();
+            if (output != null && !output.isEmpty()) {
+                String[] lines = output.split("\n");
+                // pwd 输出在 marker 之前最后一行
+                for (int i = lines.length - 1; i >= 0; i--) {
+                    String line = lines[i].trim();
+                    if (!line.isEmpty() && !line.contains(MARKER_PREFIX)) {
+                        session.setCurrentWorkdir(line);
+                        return line;
+                    }
+                }
             }
         } catch (Exception e) {
             log.debug("Failed to get current workdir: {}", e.getMessage());
@@ -318,9 +353,10 @@ public class ShellSessionTool implements Tool {
         return session.getCurrentWorkdir();
     }
 
-    /**
-     * 生成错误 JSON
-     */
+    private String generateMarker() {
+        return UUID.randomUUID().toString().substring(0, 8);
+    }
+
     private String errorJson(String message) {
         try {
             return objectMapper.writeValueAsString(Map.of(
