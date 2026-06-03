@@ -52,7 +52,7 @@ cd desktop && npm run dist
 - `PromptEngine` — 从上下文构建 ChatRequest
 - `ContextManager` — 消息历史与上下文压缩（token 感知）
 - `CompactionService` — 上下文窗口管理，可配置触发比例与保留轮次
-- `ToolDispatcher` → `ToolRegistry` — 工具路由，8 个内置工具（Shell/ReadFile/WriteFile/EditFile/Subagent/TaskCRUD）。工具纯内存注册，无 DB 持久化
+- `ToolDispatcher` → `ToolRegistry` — 工具路由，7 个内置工具（Shell/ReadFile/WriteFile/EditFile/GlobSearch/GrepSearch/TaskCRUD）。工具纯内存注册，无 DB 持久化
 - `LlmAdapter` / `OpenAiLlmAdapter` — LLM 通信抽象层，兼容 OpenAI 协议，OkHttp SSE 流式
 - `LocalToolExecutor` — 将工具请求通过 WebSocket 发送给 Electron 客户端执行
 

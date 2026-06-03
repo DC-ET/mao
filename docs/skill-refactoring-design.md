@@ -78,7 +78,7 @@ public interface Tool {
 | `EditFileSkill.java` | `EditFileTool.java` |
 | `HttpRequestSkill.java` | `HttpRequestTool.java` |
 | `TodoSkill.java` | `TodoTool.java` |
-| `SubagentSkill.java` | `SubagentTool.java` |
+
 
 每个文件内部：类名重命名，`implements Skill` → `implements Tool`，其余逻辑不变。
 
@@ -169,7 +169,7 @@ UPDATE `tool` SET `impl_class` = REPLACE(`impl_class`, 'WriteFileSkill', 'WriteF
 UPDATE `tool` SET `impl_class` = REPLACE(`impl_class`, 'EditFileSkill', 'EditFileTool');
 UPDATE `tool` SET `impl_class` = REPLACE(`impl_class`, 'HttpRequestSkill', 'HttpRequestTool');
 UPDATE `tool` SET `impl_class` = REPLACE(`impl_class`, 'TodoSkill', 'TodoTool');
-UPDATE `tool` SET `impl_class` = REPLACE(`impl_class`, 'SubagentSkill', 'SubagentTool');
+
 
 -- 6. Agent 表新增 skill_names 字段
 ALTER TABLE `agent` ADD COLUMN `skill_names` JSON DEFAULT NULL COMMENT '可用的 Skill 知识文档名称列表';
@@ -508,7 +508,7 @@ DELETE /v1/tools/{id}      — 删除 Tool
 | `harness/skill/impl/EditFileSkill.java` | `harness/tool/impl/EditFileTool.java` |
 | `harness/skill/impl/HttpRequestSkill.java` | `harness/tool/impl/HttpRequestTool.java` |
 | `harness/skill/impl/TodoSkill.java` | `harness/tool/impl/TodoTool.java` |
-| `harness/skill/impl/SubagentSkill.java` | `harness/tool/impl/SubagentTool.java` |
+
 | `harness/init/SkillDataInitializer.java` | `harness/init/ToolDataInitializer.java` |
 
 ### 需要修改的文件

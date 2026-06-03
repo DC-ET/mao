@@ -8,7 +8,7 @@
 
 ## 问题
 
-Subagent (s04) 是一次性的: 生成、干活、返回摘要、消亡。没有身份, 没有跨调用的记忆。Background Tasks (s08) 能跑 shell 命令, 但做不了 LLM 引导的决策。
+Background Tasks (s08) 能跑 shell 命令, 但做不了 LLM 引导的决策。
 
 真正的团队协作需要三样东西: (1) 能跨多轮对话存活的持久 Agent, (2) 身份和生命周期管理, (3) Agent 之间的通信通道。
 

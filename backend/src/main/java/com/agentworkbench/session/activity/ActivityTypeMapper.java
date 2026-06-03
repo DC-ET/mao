@@ -10,7 +10,7 @@ public class ActivityTypeMapper {
             case "shell" -> "RUN";
             case "glob", "list" -> "EXPLORE";
             case "task_create", "task_update", "task_delete", "task_list" -> "TASK";
-            case "subagent" -> "TOOL";
+
             default -> "TOOL";
         };
     }

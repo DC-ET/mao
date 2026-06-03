@@ -157,7 +157,7 @@ npm run dist          # 构建并打包成 dmg 安装包
 | EditFileSkill | 编辑文件 |
 | HttpRequestSkill | 发起 HTTP 请求 |
 | TodoSkill | 任务管理 |
-| SubagentSkill | 委托子 Agent |
+
 
 ## 开发阶段
 

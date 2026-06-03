@@ -35,7 +35,7 @@ Skill（内置）      MCP Tool（外部）
 | s01 Agent Loop | while 循环 + stop_reason 驱动 | ✅ 已实现，基本正确 | — |
 | s02 Tool Use | bash + 文件工具 + 路径沙箱 | ⚠️ 派发框架有，基础工具缺失，沙箱缺失 | P1 |
 | s03 TodoWrite | 结构化计划 + nag reminder | ❌ 完全缺失 | P2 |
-| s04 Subagent | 上下文隔离的任务委派 | ❌ 完全缺失 | P2 |
+
 | s05 Skill Loading | 两层按需加载 | ⚠️ 框架有，动态加载未实现 | P1 |
 | s06 Context Compact | 三层压缩策略 | ❌ 压缩代码存在但从未调用 | **P0** |
 | s07 Task System | 磁盘持久化 DAG | ❌ 完全缺失 | P3 |
@@ -166,21 +166,7 @@ int id = rpcId.incrementAndGet();
   ```
 - 这是最低成本高收益的改进，实现简单但显著提升多步任务完成率
 
-### 6. 缺少 Subagent 机制
-
-**现状：** 每个会话绑定一个 Agent，无法将子任务委派给独立上下文执行。
-
-**最佳实践（s04）：** Subagent 用独立 messages 运行，只返回摘要，防止父上下文被污染。
-
-**改进建议：**
-
-- 新增 `SubagentSkill`，接受 prompt 参数
-- 内部创建新的 `AgentExecutionContext`（空 messages），复用同一个 `AgentLoop`
-- 限制最大 30 轮，只返回最终文本内容
-- Subagent 不能再调用 `SubagentSkill`（防止递归）
-- 典型用途：探索性任务（"这个项目用了什么测试框架？"）不需要污染主对话
-
-### 7. 缺少后台任务执行
+### 6. 缺少后台任务执行
 
 **现状：** 所有工具调用都是同步阻塞的。长时间运行的命令（如 `npm install`、`docker build`）会阻塞整个 SSE 流，前端只能等待。
 
@@ -193,7 +179,7 @@ int id = rpcId.incrementAndGet();
 - 在 `AgentLoop` 每轮开始前，检查后台任务完成队列，将结果作为 `<background-results>` 注入
 - 设置 300 秒超时和 500 字符结果截断
 
-### 8. 内存泄漏：EVENT_CONTENT_STORE
+### 7. 内存泄漏：EVENT_CONTENT_STORE
 
 **现状：** `HarnessService` 中的 `EVENT_CONTENT_STORE`（ConcurrentHashMap）无 TTL、无驱逐。客户端发消息但不开 SSE 连接时，内容永远留在内存中。
 
@@ -212,7 +198,7 @@ int id = rpcId.incrementAndGet();
 
 ## P3 — 长期架构演进
 
-### 9. 缺少任务系统（Task System）
+### 8. 缺少任务系统（Task System）
 
 **最佳实践（s07）：** 磁盘持久化的任务 DAG，支持依赖关系、状态流转、Owner 认领。是多 Agent 协调的基础设施。
 
@@ -224,7 +210,7 @@ int id = rpcId.incrementAndGet();
 - 任务完成时自动解锁依赖它的其他任务
 - 与 TodoWrite 互补：TodoWrite 用于会话内快速检查列表，Task System 用于跨会话持久化工作
 
-### 10. 缺少多 Agent 团队能力
+### 9. 缺少多 Agent 团队能力
 
 **最佳实践（s09-s11）：** 持久化队友 + JSONL 信箱通信 + 自组织任务认领。
 
@@ -247,7 +233,7 @@ int id = rpcId.incrementAndGet();
 - 身份重注入：上下文压缩后重新插入 agent 身份信息
 - 60 秒空闲超时自动关闭
 
-### 11. 缺少 Worktree 隔离
+### 10. 缺少 Worktree 隔离
 
 **最佳实践（s12）：** 每个任务绑定独立的 git worktree，多 Agent 可同时操作同一仓库而不冲突。
 
@@ -261,13 +247,13 @@ int id = rpcId.incrementAndGet();
 
 ## 其他工程质量问题
 
-### 12. 线程池硬编码
+### 11. 线程池硬编码
 
 **现状：** `SessionController` 中 `Executors.newFixedThreadPool(20)` 硬编码，未使用 `application.yml` 中已定义的 `app.harness.agent-thread-pool-size` 配置。
 
 **改进：** 通过 `@Value` 注入配置值，或使用 `ThreadPoolTaskExecutor` 替换。
 
-### 13. 硬编码密钥
+### 12. 硬编码密钥
 
 **现状：** `application.yml` 包含明文数据库密码和默认 JWT secret。`LlmModelConfig.apiKey` 明文存储在数据库。
 
@@ -275,7 +261,7 @@ int id = rpcId.incrementAndGet();
 - 数据库密码和 JWT secret 迁移到环境变量或 Vault
 - LLM API Key 加密存储，运行时解密
 
-### 14. 无重试和熔断
+### 13. 无重试和熔断
 
 **现状：** LLM 调用失败直接报错给客户端，无重试。
 
@@ -283,13 +269,13 @@ int id = rpcId.incrementAndGet();
 - 引入 Resilience4j 或 Spring Retry，对 LLM 调用增加指数退避重试（最多 3 次）
 - 对熔断状态降级为排队等待
 
-### 15. 工具调用串行执行
+### 14. 工具调用串行执行
 
 **现状：** `AgentLoop` 中多个 tool call 顺序执行（第 107-125 行的 for 循环）。当模型一次返回多个独立工具调用时，浪费时间。
 
 **改进：** 使用 `CompletableFuture.allOf()` 并行执行无依赖的工具调用，结果按原始顺序收集。
 
-### 16. 无测试覆盖
+### 15. 无测试覆盖
 
 **现状：** `src/test` 目录为空。
 
@@ -318,7 +304,7 @@ Phase 2 (2-4 周) — 核心能力补齐
 └── [P2] 后台任务执行
 
 Phase 3 (4-8 周) — 架构升级
-├── [P2] Subagent 机制
+
 ├── [P3] 磁盘持久化 Task System
 ├── [P3] 多 Agent 团队基础能力
 └── 工程质量：重试熔断、测试覆盖
