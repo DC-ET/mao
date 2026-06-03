@@ -1,0 +1,158 @@
+<template>
+  <div class="tool-call-group">
+    <div class="group-header" @click="toggleExpand">
+      <div class="group-info">
+        <el-icon class="group-icon" :size="14"><Search /></el-icon>
+        <span class="group-summary">{{ groupSummary }}</span>
+      </div>
+      <div class="group-status">
+        <span v-if="hasRunning" class="status-spinner"></span>
+        <el-icon
+          class="expand-icon"
+          :class="{ expanded: isExpanded }"
+        ><ArrowDown /></el-icon>
+      </div>
+    </div>
+    <div v-if="isExpanded" class="group-body">
+      <ToolCallCard
+        v-for="tc in toolCalls"
+        :key="tc.id"
+        :tool-call="tc"
+      />
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import { Search, ArrowDown } from '@element-plus/icons-vue'
+import type { ToolCall } from '../../composables/useChat'
+import ToolCallCard from './ToolCallCard.vue'
+
+const props = defineProps<{ toolCalls: ToolCall[] }>()
+
+const isExpanded = ref(false)
+
+const hasRunning = computed(() =>
+  props.toolCalls.some(tc => tc.status === 'running' || tc.status === 'pending')
+)
+
+const groupSummary = computed(() => {
+  const tools = props.toolCalls
+  if (tools.length === 0) return ''
+
+  const toolCounts = new Map<string, number>()
+  for (const tc of tools) {
+    const name = tc.name
+    toolCounts.set(name, (toolCounts.get(name) || 0) + 1)
+  }
+
+  const parts: string[] = []
+  for (const [name, count] of toolCounts) {
+    const displayName = getToolDisplayName(name)
+    parts.push(count > 1 ? `${count}次${displayName}` : displayName)
+  }
+
+  return `已执行 ${parts.join('、')}`
+})
+
+function getToolDisplayName(name: string): string {
+  const nameMap: Record<string, string> = {
+    'glob_search': '搜索文件',
+    'grep_search': '搜索内容',
+    'read_file': '读取文件',
+    'write_file': '写入文件',
+    'edit_file': '编辑文件',
+    'shell': '执行命令',
+    'task_create': '创建任务',
+    'task_update': '更新任务',
+    'task_list': '查询任务',
+    'task_delete': '删除任务'
+  }
+  return nameMap[name] || name
+}
+
+function toggleExpand() {
+  isExpanded.value = !isExpanded.value
+}
+</script>
+
+<style scoped>
+.tool-call-group {
+  margin: 0;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 8px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--aw-radius-sm);
+  transition: background 0.15s;
+}
+
+.group-header:hover {
+  background: var(--aw-canvas-parchment);
+}
+
+.group-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.group-icon {
+  color: var(--aw-ink-muted-48);
+  flex-shrink: 0;
+}
+
+.group-summary {
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink-muted-48);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.12px;
+}
+
+.group-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.status-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--aw-hairline);
+  border-top-color: var(--aw-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.expand-icon {
+  color: var(--aw-ink-muted-48);
+  transition: transform 0.2s;
+  font-size: 12px;
+}
+
+.expand-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.group-body {
+  border-top: 1px solid var(--aw-divider-soft);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+</style>
