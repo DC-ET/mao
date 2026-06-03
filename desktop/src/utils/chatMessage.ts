@@ -36,7 +36,7 @@ export function normalizeApiToolCall(
       name: String(fn.name ?? ''),
       input: parseToolArguments(fn.arguments),
       result: overrides?.result,
-      summary: overrides?.summary,
+      summary: (tc.summary as string | undefined) ?? overrides?.summary,
       status: overrides?.status ?? 'success',
       isExpanded: false,
       argsStreaming: false
@@ -125,6 +125,8 @@ export function appendToolCallStart(msg: ChatMessage, call: ToolCall) {
 /** 将 API 原始消息列表转为聊天 UI 消息（合并 TOOL 结果、过滤 tool 气泡） */
 export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatMessage[] {
   const result: ChatMessage[] = []
+  /** 第一轮未匹配的 TOOL 消息，留到第二轮处理 */
+  const pendingToolResults: Array<{ toolCallId: string; content: string }> = []
 
   for (const m of raw) {
     const roleRaw = String(m.role ?? 'assistant').toLowerCase()
@@ -132,6 +134,7 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
     if (roleRaw === 'tool' || roleRaw === 'function') {
       const toolCallId = m.toolCallId != null ? String(m.toolCallId) : ''
       const content = String(m.content ?? '')
+      let matched = false
       for (let j = result.length - 1; j >= 0; j--) {
         const prev = result[j]
         if (prev.role !== 'assistant' || !prev.toolCalls?.length) continue
@@ -139,8 +142,12 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
         if (call) {
           call.result = content
           call.status = inferToolStatus(content)
+          matched = true
           break
         }
+      }
+      if (!matched) {
+        pendingToolResults.push({ toolCallId, content })
       }
       continue
     }
@@ -186,6 +193,21 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
       toolCalls,
       segments
     })
+  }
+
+  // 第二轮：匹配第一轮因顺序问题未关联的 TOOL 消息
+  if (pendingToolResults.length > 0) {
+    for (const { toolCallId, content } of pendingToolResults) {
+      for (const msg of result) {
+        if (msg.role !== 'assistant' || !msg.toolCalls?.length) continue
+        const call = msg.toolCalls.find(c => c.id === toolCallId)
+        if (call) {
+          call.result = content
+          call.status = inferToolStatus(content)
+          break
+        }
+      }
+    }
   }
 
   return result

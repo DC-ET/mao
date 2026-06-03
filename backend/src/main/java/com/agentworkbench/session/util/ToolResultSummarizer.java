@@ -14,7 +14,8 @@ public class ToolResultSummarizer {
             case "read_file" -> summarizeReadFile(arguments, result);
             case "write_file" -> summarizeWriteFile(arguments, result);
             case "edit_file" -> summarizeEditFile(arguments, result);
-            case "glob", "list" -> summarizeGlob(result);
+            case "glob_search" -> summarizeGlobSearch(arguments, result);
+            case "grep_search" -> summarizeGrepSearch(arguments, result);
             case "task_create" -> summarizeTaskCreate(result);
             case "task_update" -> summarizeTaskUpdate(result);
             case "task_list" -> summarizeTaskList(result);
@@ -108,19 +109,26 @@ public class ToolResultSummarizer {
         return "编辑 " + displayPath;
     }
 
-    private static String summarizeGlob(String result) {
+    private static String summarizeGlobSearch(String arguments, String result) {
         if (result == null) return "搜索文件";
 
         JsonNode node = parseJson(result);
         if (node == null) return "搜索文件";
 
-        if (node.isArray()) {
-            return "找到 " + node.size() + " 个文件";
-        }
-        if (node.has("files") && node.get("files").isArray()) {
-            return "找到 " + node.get("files").size() + " 个文件";
-        }
-        return "搜索文件";
+        int count = node.has("files") && node.get("files").isArray() ? node.get("files").size() : 0;
+        boolean truncated = node.has("truncated") && node.get("truncated").asBoolean();
+        return "搜索文件 (" + count + " 个文件" + (truncated ? ", 已截断" : "") + ")";
+    }
+
+    private static String summarizeGrepSearch(String arguments, String result) {
+        if (result == null) return "搜索内容";
+
+        JsonNode node = parseJson(result);
+        if (node == null) return "搜索内容";
+
+        int count = node.has("total_matches") ? node.get("total_matches").asInt() : 0;
+        boolean truncated = node.has("truncated") && node.get("truncated").asBoolean();
+        return "搜索内容 (" + count + " 处匹配" + (truncated ? ", 已截断" : "") + ")";
     }
 
     private static String summarizeTaskCreate(String result) {

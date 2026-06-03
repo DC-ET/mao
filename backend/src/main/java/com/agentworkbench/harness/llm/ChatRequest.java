@@ -71,6 +71,7 @@ public class ChatRequest {
         private String id;
         private String type;      // "function"
         private FunctionCall function;
+        private String summary;
     }
 
     @Data
