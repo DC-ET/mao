@@ -1,8 +1,10 @@
 # s01: The Agent Loop (Agent 循环)
 
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+
 `[ s01 ] s02 > s03 > s04 > s05 > s06 | s07 > s08 > s09 > s10 > s11 > s12`
 
-> *"One loop & Bash is all you need"* -- 一个工具 + 一个循环 = 一个 Agent。
+> *"One loop & Shell is all you need"* -- 一个工具 + 一个循环 = 一个 Agent。
 >
 > **Harness 层**: 循环 -- 模型与真实世界的第一道连接。
 
@@ -56,7 +58,7 @@ if response.stop_reason != "tool_use":
 results = []
 for block in response.content:
     if block.type == "tool_use":
-        output = run_bash(block.input["command"])
+        output = run_shell(block.input["command"])
         results.append({
             "type": "tool_result",
             "tool_use_id": block.id,
@@ -83,7 +85,7 @@ def agent_loop(query):
         results = []
         for block in response.content:
             if block.type == "tool_use":
-                output = run_bash(block.input["command"])
+                output = run_shell(block.input["command"])
                 results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
@@ -99,7 +101,7 @@ def agent_loop(query):
 | 组件          | 之前       | 之后                           |
 |---------------|------------|--------------------------------|
 | Agent loop    | (无)       | `while True` + stop_reason     |
-| Tools         | (无)       | `bash` (单一工具)              |
+| Tools         | (无)       | `shell` (单一工具)              |
 | Messages      | (无)       | 累积式消息列表                 |
 | Control flow  | (无)       | `stop_reason != "tool_use"`    |
 

@@ -216,7 +216,7 @@ public class WsStreamingEventListener implements AgentEventListener {
             return switch (toolName.toLowerCase()) {
                 case "read_file", "write_file", "edit_file" ->
                         node.has("path") ? node.get("path").asText(null) : null;
-                case "bash" -> node.has("command") ? node.get("command").asText(null) : null;
+                case "shell" -> node.has("command") ? node.get("command").asText(null) : null;
                 case "glob", "list" -> node.has("pattern") ? node.get("pattern").asText(null) : null;
                 default -> null;
             };

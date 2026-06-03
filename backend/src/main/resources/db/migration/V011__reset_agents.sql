@@ -134,21 +134,5 @@ INSERT INTO `agent_tag` (`agent_id`, `tag`) VALUES
 
 -- ========== 4. 为Agent配置工具 ==========
 
--- tool表实际ID映射：
--- 1,2: http_request, 3: todo, 4: edit_file, 5: write_file, 6: subagent, 7: bash, 8: read_file, 9: load_skill
-
--- 运营智能体工具
-INSERT INTO `agent_tool` (`agent_id`, `tool_id`, `config`) VALUES
-(1, 7, '{"description": "执行数据查询和处理命令"}'),
-(1, 8, '{"description": "读取数据文件和报表模板"}'),
-(1, 5, '{"description": "生成数据报表和分析结果"}'),
-(1, 3, '{"description": "管理分析任务进度"}');
-
--- 数分智能体工具
-INSERT INTO `agent_tool` (`agent_id`, `tool_id`, `config`) VALUES
-(2, 7, '{"description": "执行SQL查询和数据处理"}'),
-(2, 8, '{"description": "读取SQL脚本和数据文件"}'),
-(2, 5, '{"description": "保存查询结果和数据文档"}'),
-(2, 4, '{"description": "编辑SQL脚本和查询语句"}'),
-(2, 3, '{"description": "管理数据提取任务"}');
+-- tool表已废弃（V024），工具通过 ToolRegistry 自动发现，无需 agent_tool 关联
 

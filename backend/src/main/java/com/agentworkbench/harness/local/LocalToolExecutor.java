@@ -22,7 +22,7 @@ public class LocalToolExecutor {
      * Execute a tool call on the local client.
      *
      * @param sessionId the session ID (used to find the connected WebSocket)
-     * @param toolName  the tool to execute (bash, read_file, write_file, etc.)
+     * @param toolName  the tool to execute (shell, read_file, write_file, etc.)
      * @param arguments JSON arguments string
      * @return JSON result string, or JSON error if client is not connected
      */

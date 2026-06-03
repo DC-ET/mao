@@ -1,5 +1,7 @@
 # 任务对话体验对比：Agent Workbench vs Codex 客户端
 
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+
 > 基于两张实际界面截图与 Codex 产品设计要点（见 `docs/best-agent-spec/codex-design.md`），对比**任务对话**层面的体验差距，并给出可落地的反思结论。  
 > 与 `desktop-layout-reflection.md`（普通用户布局）互补：本文侧重**开发者/知识工作者**委托任务时的心智模型。
 

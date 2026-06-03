@@ -1,5 +1,7 @@
 # Agent Workbench 改进建议文档
 
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+
 基于 `docs/best-agent-spec/` 中 12 篇最佳实践与当前项目代码的逐项对照分析。
 
 ---

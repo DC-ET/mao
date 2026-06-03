@@ -1,5 +1,7 @@
 # 工具调用提前展示 & 参数流式推送 技术方案
 
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+
 ## 问题
 
 LLM 流式输出工具调用时，`tool_call_start` 事件仅在 `onComplete` 回调中触发（即 id、name、arguments 全部输出完毕后）。对于大文件写入等场景，arguments 可能需要数秒甚至更久才能输出完成，期间前端无任何反馈。

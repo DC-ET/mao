@@ -1,10 +1,12 @@
 # Shell 会话系统技术方案
 
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+
 ## 一、背景与目标
 
 ### 1.1 当前实现的局限
 
-现有 `BashTool` 采用无状态设计，每次调用都创建新进程：
+原有 `BashTool`（已移除）采用无状态设计，每次调用都创建新进程：
 
 ```java
 ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
@@ -23,7 +25,7 @@ ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
 1. **会话持久化**：每个 Agent 对话拥有独立 Shell 会话，状态持续存在
 2. **双模式支持**：普通命令（同步）+ 交互式程序（PTY）
 3. **输出管理**：截断预览 + 完整落盘，不丢失信息
-4. **向后兼容**：现有 BashTool 调用方式保持不变
+4. **向后兼容**：原有 BashTool 调用方式已迁移至 ShellSessionTool
 
 ---
 
@@ -39,8 +41,8 @@ ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
 │                         │                                    │
 │         ┌───────────────┴───────────────┐                   │
 │         │                               │                   │
-│    BashTool (原有)              ShellSessionTool (新增)      │
-│    (保持兼容)                         │                     │
+│    BashTool (已移除)              ShellSessionTool (当前)      │
+│                                   │                     │
 │                              ShellSessionManager            │
 │                                     │                       │
 │                    ┌────────────────┼────────────────┐      │
@@ -290,9 +292,9 @@ ShellSession:
 
 ### 4.3 命令执行流程对比
 
-| 步骤 | 当前 BashTool | 新 ShellSessionTool |
+| 步骤 | BashTool (已移除) | ShellSessionTool (当前) |
 |------|--------------|---------------------|
-| 1. 接收命令 | `execute(command)` | `exec(command, session_id)` |
+| 1. 接收命令 | `execute(command)` (已移除) | `exec(command, session_id)` |
 | 2. 创建进程 | 每次新建 | 复用已有会话 |
 | 3. 执行命令 | `bash -c command` | `stdin.write(command)` |
 | 4. 读取输出 | `process.getInputStream()` | `stdout.readWithTimeout()` |
@@ -671,13 +673,12 @@ app:
 
 ### 12.2 向后兼容
 
-- 保留原有 `BashTool`，作为快速执行的轻量选项
-- `shell` 工具为新增工具，不影响现有 Agent 配置
-- 现有 Agent 可逐步迁移到 `shell` 工具
+- `BashTool` 已移除，`shell` 工具是唯一的命令执行工具
+- 现有 Agent 已迁移到 `shell` 工具
 
 ### 12.3 性能考量
 
-- 普通模式：与现有 BashTool 性能相当
+- 普通模式：与原有 BashTool 性能相当
 - PTY 模式：每个会话占用一个 PTY 文件描述符
 - 输出落盘：异步写入，不阻塞返回
 

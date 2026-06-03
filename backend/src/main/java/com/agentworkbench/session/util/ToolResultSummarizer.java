@@ -10,7 +10,7 @@ public class ToolResultSummarizer {
     public static String summarize(String toolName, String arguments, String result) {
         if (toolName == null) return null;
         return switch (toolName.toLowerCase()) {
-            case "bash" -> summarizeBash(arguments, result);
+            case "shell" -> summarizeShell(arguments, result);
             case "read_file" -> summarizeReadFile(arguments, result);
             case "write_file" -> summarizeWriteFile(arguments, result);
             case "edit_file" -> summarizeEditFile(arguments, result);
@@ -24,27 +24,40 @@ public class ToolResultSummarizer {
         };
     }
 
-    private static String summarizeBash(String arguments, String result) {
+    private static String summarizeShell(String arguments, String result) {
         String command = extractJsonString(arguments, "command");
-        String cmdShort = command != null ? truncate(command, 50) : "命令";
+        String action = extractJsonString(arguments, "action");
+        String cmdShort = command != null ? truncate(command, 50) : null;
 
-        if (result == null) return "执行 " + cmdShort;
+        if ("write_stdin".equals(action)) {
+            String input = extractJsonString(arguments, "input");
+            return "写入 stdin" + (input != null ? ": " + truncate(input, 30) : "");
+        }
+        if ("close".equals(action)) return "关闭 Shell 会话";
+        if ("list".equals(action)) return "列出 Shell 会话";
+
+        String label = cmdShort != null ? "执行 " + cmdShort : "Shell 命令";
+        if (result == null) return label;
 
         JsonNode node = parseJson(result);
-        if (node == null) return "执行 " + cmdShort;
+        if (node == null) return label;
+
+        if (node.has("async") && node.get("async").asBoolean()) {
+            return label + " (后台)";
+        }
 
         int exitCode = node.has("exit_code") ? node.get("exit_code").asInt(-1) : -1;
         String output = node.has("output") ? node.get("output").asText("") : "";
 
         if (exitCode != 0) {
-            return "执行 " + cmdShort + " (exit " + exitCode + ")";
+            return label + " (exit " + exitCode + ")";
         }
 
         int lineCount = output.isEmpty() ? 0 : output.split("\n").length;
         if (lineCount > 1) {
-            return "执行 " + cmdShort + " (" + lineCount + " 行输出)";
+            return label + " (" + lineCount + " 行输出)";
         }
-        return "执行 " + cmdShort;
+        return label;
     }
 
     private static String summarizeReadFile(String arguments, String result) {

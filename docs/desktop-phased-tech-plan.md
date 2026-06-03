@@ -1,5 +1,7 @@
 # 桌面客户端分阶段技术改造方案
 
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+
 > 综合 `desktop-layout-reflection.md`（普通用户 / 布局）、`desktop-codex-ux-comparison.md`（任务对话 / Codex 对齐）与 `desktop-ux-refactor-plan.md`（组件与能力清单），输出可执行的分阶段技术方案。  
 > 初版阶段**不考虑存量数据兼容**（见 `CLAUDE.md`），允许 Session 语义升级、表结构扩展与 API 破坏性调整。
 

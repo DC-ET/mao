@@ -1,5 +1,7 @@
 # 桌面客户端 UX 重构方案
 
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+
 > 参考 Codex 产品设计思路，对当前 Agent 工作台桌面客户端进行深度重构。
 
 ---

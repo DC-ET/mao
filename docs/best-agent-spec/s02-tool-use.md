@@ -1,5 +1,7 @@
 # s02: Tool Use (工具使用)
 
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+
 `s01 > [ s02 ] s03 > s04 > s05 > s06 | s07 > s08 > s09 > s10 > s11 > s12`
 
 > *"加一个工具, 只加一个 handler"* -- 循环不用动, 新工具注册进 dispatch map 就行。
@@ -8,7 +10,7 @@
 
 ## 问题
 
-只有 `bash` 时, 所有操作都走 shell。`cat` 截断不可预测, `sed` 遇到特殊字符就崩, 每次 bash 调用都是不受约束的安全面。专用工具 (`read_file`, `write_file`) 可以在工具层面做路径沙箱。
+只有 `shell` 时, 所有操作都走 shell。`cat` 截断不可预测, `sed` 遇到特殊字符就崩, 每次 shell 调用都是不受约束的安全面。专用工具 (`read_file`, `write_file`) 可以在工具层面做路径沙箱。
 
 关键洞察: 加工具不需要改循环。
 
@@ -18,7 +20,7 @@
 +--------+      +-------+      +------------------+
 |  User  | ---> |  LLM  | ---> | Tool Dispatch    |
 | prompt |      |       |      | {                |
-+--------+      +---+---+      |   bash: run_bash |
++--------+      +---+---+      |   shell: run_shell|
                     ^           |   read: run_read |
                     |           |   write: run_wr  |
                     +-----------+   edit: run_edit |
@@ -52,7 +54,7 @@ def run_read(path: str, limit: int = None) -> str:
 
 ```python
 TOOL_HANDLERS = {
-    "bash":       lambda **kw: run_bash(kw["command"]),
+    "shell":      lambda **kw: run_shell(kw["command"]),
     "read_file":  lambda **kw: run_read(kw["path"], kw.get("limit")),
     "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
     "edit_file":  lambda **kw: run_edit(kw["path"], kw["old_text"],
@@ -81,8 +83,8 @@ for block in response.content:
 
 | 组件           | 之前 (s01)         | 之后 (s02)                     |
 |----------------|--------------------|--------------------------------|
-| Tools          | 1 (仅 bash)        | 4 (bash, read, write, edit)    |
-| Dispatch       | 硬编码 bash 调用   | `TOOL_HANDLERS` 字典           |
+| Tools          | 1 (仅 shell)       | 4 (shell, read, write, edit)   |
+| Dispatch       | 硬编码 shell 调用  | `TOOL_HANDLERS` 字典           |
 | 路径安全       | 无                 | `safe_path()` 沙箱             |
 | Agent loop     | 不变               | 不变                           |
 
