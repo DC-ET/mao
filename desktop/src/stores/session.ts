@@ -235,7 +235,21 @@ export const useSessionStore = defineStore('session', () => {
   const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
 
   function appendToolCallStart(sessionId: string, data: { tool_call_id: string; tool_name: string; arguments?: string }) {
-    if (TASK_TOOL_NAMES.has(data.tool_name)) return
+    if (TASK_TOOL_NAMES.has(data.tool_name)) {
+      // 跳过 task 工具，但在末尾 text 段追加换行，保证后续文本不与前文粘连
+      const sid = String(sessionId)
+      const list = sessionMessages.value.get(sid)
+      if (list && list.length > 0) {
+        const lastMsg = list[list.length - 1]
+        if (lastMsg.role === 'assistant' && lastMsg.segments?.length) {
+          const lastSeg = lastMsg.segments[lastMsg.segments.length - 1]
+          if (lastSeg.type === 'text') {
+            lastSeg.content += '\n\n'
+          }
+        }
+      }
+      return
+    }
     const sid = String(sessionId)
     const list = sessionMessages.value.get(sid)
     if (!list || list.length === 0) return
