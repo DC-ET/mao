@@ -20,7 +20,7 @@ public class ToolResultSummarizer {
             case "task_update" -> summarizeTaskUpdate(result);
             case "task_list" -> summarizeTaskList(result);
             case "task_delete" -> summarizeTaskDelete(result);
-            case "subagent" -> summarizeSubagent(result);
+
             default -> summarizeGeneric(toolName, result);
         };
     }
@@ -185,18 +185,6 @@ public class ToolResultSummarizer {
         return "删除任务";
     }
 
-    private static String summarizeSubagent(String result) {
-        if (result == null) return "运行子任务";
-
-        JsonNode node = parseJson(result);
-        if (node == null) return "运行子任务";
-
-        int rounds = node.has("rounds_used") ? node.get("rounds_used").asInt(0) : 0;
-        if (rounds > 0) {
-            return "子任务完成 (" + rounds + " 轮)";
-        }
-        return "子任务完成";
-    }
 
     private static String summarizeGeneric(String toolName, String result) {
         if (result == null) return toolName;
