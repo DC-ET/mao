@@ -270,6 +270,7 @@ export const useSessionStore = defineStore('session', () => {
         call.isExpanded = false
         call.argsStreaming = false
         if (data.summary) call.summary = data.summary
+        console.log('[tool-result]', call.name, 'ws_summary=', data.summary, 'final_summary=', call.summary)
       }
       sessionMessages.value.set(sid, [...list])
     }

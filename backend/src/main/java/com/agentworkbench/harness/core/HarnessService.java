@@ -92,6 +92,8 @@ public class HarnessService {
                 if (toolCalls != null && !toolCalls.isEmpty()) {
                     try {
                         toolCallsJson = objectMapper.writeValueAsString(toolCalls);
+                        log.debug("Persisting toolCalls JSON (first 500 chars): {}",
+                                toolCallsJson.substring(0, Math.min(500, toolCallsJson.length())));
                     } catch (JsonProcessingException e) {
                         log.warn("Failed to serialize tool calls", e);
                     }
