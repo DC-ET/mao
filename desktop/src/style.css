@@ -53,8 +53,8 @@
   --aw-radius-pill: 9999px;
 
   /* Typography — Font Families */
-  --aw-font-display: 'SF Pro Display', system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  --aw-font-text: 'SF Pro Text', system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --aw-font-display: 'SF Pro Display', system-ui, -apple-system, 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  --aw-font-text: 'SF Pro Text', system-ui, -apple-system, 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
   --aw-font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, 'SF Mono', Menlo, Monaco, monospace;
 
   /* Typography — Sizes */

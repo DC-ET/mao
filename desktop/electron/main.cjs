@@ -253,16 +253,16 @@ ipcMain.handle('local-edit-file', async (event, { path: filePath, old_string, ne
 
 // ========== Tool execution via Streaming WS ==========
 
-async function executeToolByName(toolName, parsedArgs, sessionId, workspace) {
+async function executeToolByName(toolName, parsedArgs, sessionId, workspace, needApproval) {
   switch (toolName) {
     case 'shell':
-      return await handleShellFromWebSocket(parsedArgs, sessionId, workspace)
+      return await handleShellFromWebSocket(parsedArgs, sessionId, workspace, needApproval)
     case 'read_file':
       return await handleLocalReadFile(parsedArgs, workspace)
     case 'write_file':
-      return await handleLocalWriteFile(parsedArgs, workspace, sessionId)
+      return await handleLocalWriteFile(parsedArgs, workspace, sessionId, needApproval)
     case 'edit_file':
-      return await handleLocalEditFile(parsedArgs, workspace, sessionId)
+      return await handleLocalEditFile(parsedArgs, workspace, sessionId, needApproval)
     case 'glob_search':
       return await handleLocalGlobSearch(parsedArgs, workspace)
     case 'grep_search':
@@ -272,10 +272,10 @@ async function executeToolByName(toolName, parsedArgs, sessionId, workspace) {
   }
 }
 
-ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, workspace, sessionId }) => {
+ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, workspace, sessionId, needApproval }) => {
   // Use the workspace from this specific tool call, falling back to currentWorkspace
   const effectiveWorkspace = workspace || currentWorkspace
-  console.log('[tool-execute] received workspace:', workspace, ', effectiveWorkspace:', effectiveWorkspace, ', currentWorkspace before:', currentWorkspace)
+  console.log('[tool-execute] received workspace:', workspace, ', effectiveWorkspace:', effectiveWorkspace, ', currentWorkspace before:', currentWorkspace, ', needApproval:', needApproval)
   if (workspace) {
     console.log('[tool-execute] setting currentWorkspace:', workspace, '(was:', currentWorkspace, ')')
     currentWorkspace = workspace
@@ -289,7 +289,7 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
   }
 
   try {
-    const result = await executeToolByName(toolName, parsedArgs, sessionId, effectiveWorkspace)
+    const result = await executeToolByName(toolName, parsedArgs, sessionId, effectiveWorkspace, !!needApproval)
     return { requestId, result: JSON.stringify(result), error: null }
   } catch (e) {
     console.error(`Tool ${toolName} execution failed:`, e)
@@ -379,7 +379,7 @@ function readUntilMarker(process, marker, timeoutMs) {
   })
 }
 
-async function handleShellFromWebSocket(args, sessionId, workspace) {
+async function handleShellFromWebSocket(args, sessionId, workspace, needApproval) {
   const { action, command, session_id, workdir, input } = args
   let resolvedWorkdir = workspace
   if (workdir && workdir !== '.') {
@@ -448,10 +448,12 @@ async function handleShellFromWebSocket(args, sessionId, workspace) {
     }
   }
 
-  // 新会话或一次性执行需要审批
-  const approved = await requestToolApproval('shell', command, sessionId)
-  if (!approved) {
-    return { exit_code: -1, output: 'User denied command execution.' }
+  // 新会话或一次性执行 — 根据后端下发的 needApproval 决定是否需要审批
+  if (needApproval) {
+    const approved = await requestToolApproval('shell', command, sessionId)
+    if (!approved) {
+      return { exit_code: -1, output: 'User denied command execution.' }
+    }
   }
 
   // 创建持久化会话
@@ -526,10 +528,12 @@ async function handleLocalReadFile(args, workspace) {
   }
 }
 
-async function handleLocalWriteFile(args, workspace, sessionId) {
-  const approved = await requestToolApproval('write_file', args.path, sessionId)
-  if (!approved) {
-    return { success: false, error: 'User denied file write.' }
+async function handleLocalWriteFile(args, workspace, sessionId, needApproval) {
+  if (needApproval) {
+    const approved = await requestToolApproval('write_file', args.path, sessionId)
+    if (!approved) {
+      return { success: false, error: 'User denied file write.' }
+    }
   }
   try {
     const resolvedPath = resolveWorkspacePath(args.path, workspace)
@@ -542,10 +546,12 @@ async function handleLocalWriteFile(args, workspace, sessionId) {
   }
 }
 
-async function handleLocalEditFile(args, workspace, sessionId) {
-  const approved = await requestToolApproval('edit_file', args.path, sessionId)
-  if (!approved) {
-    return { success: false, error: 'User denied file edit.' }
+async function handleLocalEditFile(args, workspace, sessionId, needApproval) {
+  if (needApproval) {
+    const approved = await requestToolApproval('edit_file', args.path, sessionId)
+    if (!approved) {
+      return { success: false, error: 'User denied file edit.' }
+    }
   }
   try {
     const resolvedPath = resolveWorkspacePath(args.path, workspace)

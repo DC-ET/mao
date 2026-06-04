@@ -28,6 +28,9 @@ public class Session {
 
     private String workspace;
 
+    /** LOCAL mode tool permission: READ_ONLY|READ_WRITE|SMART|FULL */
+    private String permissionLevel;
+
     /** Task phase: IDLE|RUNNING|WAITING_USER|WAITING_APPROVAL|COMPLETED|FAILED|CANCELLED */
     private String phase;
 

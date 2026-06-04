@@ -97,8 +97,11 @@ public class LocalToolSessionRegistry {
     /**
      * Send a tool execution request to the connected desktop client via Streaming WS.
      * Returns a CompletableFuture that completes when the client responds.
+     *
+     * @param needApproval whether the client should request user approval before executing
      */
-    public CompletableFuture<String> sendToolRequest(Long sessionId, String toolName, String arguments, String workspace) {
+    public CompletableFuture<String> sendToolRequest(Long sessionId, String toolName, String arguments,
+                                                     String workspace, boolean needApproval) {
         Long userId = sessionToUser.get(sessionId);
         if (userId == null || !streamingWsRegistry.hasConnection(userId)) {
             CompletableFuture<String> f = new CompletableFuture<>();
@@ -114,10 +117,12 @@ public class LocalToolSessionRegistry {
                 "requestId", requestId,
                 "toolName", toolName,
                 "arguments", arguments != null ? arguments : "{}",
-                "workspace", workspace != null ? workspace : ""
+                "workspace", workspace != null ? workspace : "",
+                "needApproval", needApproval
         )));
 
-        log.debug("Sent tool request {} to session {}: tool={}, workspace={}", requestId, sessionId, toolName, workspace);
+        log.debug("Sent tool request {} to session {}: tool={}, workspace={}, needApproval={}",
+                requestId, sessionId, toolName, workspace, needApproval);
         return future;
     }
 
