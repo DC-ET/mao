@@ -40,7 +40,7 @@ public class TaskCreateTool implements Tool {
 
                 WHEN TO USE:
                 - Complex multi-step tasks (3+ distinct steps)
-                - After receiving new instructions — immediately capture requirements as tasks
+                - After receiving new complex instructions — immediately capture requirements as tasks
                 - When planning a feature — break it down into concrete, actionable items
 
                 WHEN NOT TO USE:

@@ -320,6 +320,10 @@ export const useSessionStore = defineStore('session', () => {
     sessionTodos.value.set(String(sessionId), todos)
   }
 
+  function clearTodos(sessionId: string) {
+    sessionTodos.value.set(String(sessionId), [])
+  }
+
   // --- Activity cache actions ---
 
   function addActivity(sessionId: string, activity: any) {
@@ -395,6 +399,7 @@ export const useSessionStore = defineStore('session', () => {
     clearMessages,
     // Todo cache
     setTodos,
+    clearTodos,
     // Activity cache
     addActivity,
     // Context window
