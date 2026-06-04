@@ -3,6 +3,8 @@ package com.agentworkbench.harness.tool.impl;
 import com.agentworkbench.harness.todo.entity.SessionTodo;
 import com.agentworkbench.harness.todo.mapper.SessionTodoMapper;
 import com.agentworkbench.harness.tool.Tool;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -67,7 +69,8 @@ public class TaskCreateTool implements Tool {
                         "properties", Map.of(
                                 "content", Map.of("type", "string", "description", "Task title in imperative mood"),
                                 "description", Map.of("type", "string", "description", "Detailed task description"),
-                                "active_form", Map.of("type", "string", "description", "Present participle form, e.g. 'Fixing auth bug'")
+                                "active_form", Map.of("type", "string", "description", "Present participle form, e.g. 'Fixing auth bug'"),
+                                "status", Map.of("type", "string", "enum", new String[]{"pending", "in_progress"}, "description", "Initial status (default: pending). Only one task can be in_progress.")
                         ),
                         "required", new String[]{"content"}
                 )
@@ -99,12 +102,23 @@ public class TaskCreateTool implements Tool {
 
             if (items != null && items.isArray()) {
                 for (JsonNode item : items) {
+                    String status = item.has("status") ? item.get("status").asText() : "pending";
+
+                    // Enforce single in_progress constraint
+                    if ("in_progress".equals(status)) {
+                        sessionTodoMapper.update(null,
+                                new LambdaUpdateWrapper<SessionTodo>()
+                                        .eq(SessionTodo::getSessionId, sessionId)
+                                        .eq(SessionTodo::getStatus, "in_progress")
+                                        .set(SessionTodo::getStatus, "pending"));
+                    }
+
                     SessionTodo todo = new SessionTodo();
                     todo.setSessionId(sessionId);
                     todo.setContent(item.has("content") ? item.get("content").asText() : "");
                     todo.setDescription(item.has("description") ? item.get("description").asText() : "");
                     todo.setActiveForm(item.has("active_form") ? item.get("active_form").asText() : "");
-                    todo.setStatus("pending");
+                    todo.setStatus(status);
                     todo.setSortOrder(count);
                     sessionTodoMapper.insert(todo);
                     count++;
@@ -112,7 +126,7 @@ public class TaskCreateTool implements Tool {
             }
 
             List<SessionTodo> todos = sessionTodoMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<SessionTodo>()
+                    new LambdaQueryWrapper<SessionTodo>()
                             .eq(SessionTodo::getSessionId, sessionId)
                             .orderByAsc(SessionTodo::getSortOrder)
                             .orderByAsc(SessionTodo::getId));
