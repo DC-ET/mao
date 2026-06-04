@@ -149,9 +149,10 @@ public class PromptEngine {
         if (!hasTaskTool) return;
 
         sb.append("## Task Management\n\n");
-        sb.append("Use the task tools to break down and manage your work.\n");
         sb.append("These tools are helpful for planning your work and helping the user track your progress.\n");
-        sb.append("Mark each task as completed as soon as you are done with the task.\n");
+        sb.append("Only use task tools when the request involves 3 or more distinct steps.\n");
+        sb.append("Do NOT create tasks for simple, single-step, or straightforward requests.\n");
+        sb.append("When you do use tasks: mark each one as completed as soon as you are done.\n");
         sb.append("Do not batch up multiple tasks before marking them as completed.\n\n");
     }
 

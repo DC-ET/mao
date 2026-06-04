@@ -170,8 +170,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         sessionId.value = sessionData.id
       }
 
-      // Update session title from first user message (when title is still the default agent name)
       const sid = sessionId.value!
+
+      // Clear previous turn's todos
+      sessionStore.clearTodos(sid)
+
+      // Update session title from first user message (when title is still the default agent name)
       if (text) {
         const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
         const defaultTitle = agentName.value || 'Agent'
