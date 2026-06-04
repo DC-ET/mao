@@ -44,12 +44,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/skill/SkillListView.vue'),
         meta: { title: 'Skills 管理' }
       },
-      {
-        path: 'audit',
-        name: 'Audit',
-        component: () => import('../views/audit/AuditLogView.vue'),
-        meta: { title: '审计日志' }
-      },
     ]
   }
 ]
