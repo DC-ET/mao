@@ -70,6 +70,7 @@ public class AgentLoop {
         // 用于延迟保存：有工具调用时，在 executeToolCalls 之后再保存（summary 已附加）
         final String[] pendingSave = {null}; // [0]=content
         final ChatUsage[] pendingSaveUsage = {null};
+        @SuppressWarnings("unchecked")
         final List<ChatRequest.ToolCall>[] pendingSaveToolCalls = new List[1];
 
         while (true) {
