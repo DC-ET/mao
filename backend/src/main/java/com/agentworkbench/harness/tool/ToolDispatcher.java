@@ -3,6 +3,8 @@ package com.agentworkbench.harness.tool;
 import com.agentworkbench.harness.llm.LlmModelConfig;
 import com.agentworkbench.harness.local.LocalToolExecutor;
 import com.agentworkbench.session.entity.PermissionLevel;
+import com.agentworkbench.session.entity.Session;
+import com.agentworkbench.session.mapper.SessionMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -26,6 +28,7 @@ public class ToolDispatcher {
     private final ToolRegistry toolRegistry;
     private final LocalToolExecutor localToolExecutor;
     private final DangerAssessor dangerAssessor;
+    private final SessionMapper sessionMapper;
 
     private record ApprovalDecision(boolean needApproval, String dangerReason) {}
 
@@ -73,7 +76,15 @@ public class ToolDispatcher {
         }
 
         if ("LOCAL".equals(executionMode)) {
-            PermissionLevel level = PermissionLevel.fromString(permissionLevel);
+            // Always read the latest permissionLevel from DB so mid-execution changes take effect immediately
+            String latestPermissionLevel = permissionLevel;
+            if (sessionId != null) {
+                Session session = sessionMapper.selectById(sessionId);
+                if (session != null && session.getPermissionLevel() != null) {
+                    latestPermissionLevel = session.getPermissionLevel();
+                }
+            }
+            PermissionLevel level = PermissionLevel.fromString(latestPermissionLevel);
             ApprovalDecision decision = shouldRequireApproval(toolName, level, arguments, modelConfig);
             log.debug("Routing tool call to local executor: {} (session={}, level={}, needApproval={}, reason={})",
                     toolName, sessionId, level, decision.needApproval, decision.dangerReason);
