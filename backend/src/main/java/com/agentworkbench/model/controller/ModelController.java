@@ -3,11 +3,13 @@ package com.agentworkbench.model.controller;
 import com.agentworkbench.common.result.Result;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.service.ModelService;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -18,11 +20,19 @@ public class ModelController {
     private final ModelService modelService;
 
     @GetMapping
-    public Result<List<ModelVO>> listModels() {
-        List<ModelVO> list = modelService.listModels().stream()
+    public Result<Map<String, Object>> listModels(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        Page<LlmModel> pageResult = modelService.listModels(page, size);
+        List<ModelVO> list = pageResult.getRecords().stream()
                 .map(this::toVO)
                 .collect(Collectors.toList());
-        return Result.ok(list);
+        return Result.ok(Map.of(
+                "records", list,
+                "total", pageResult.getTotal(),
+                "page", pageResult.getCurrent(),
+                "size", pageResult.getSize()
+        ));
     }
 
     @GetMapping("/{id}")
@@ -66,6 +76,7 @@ public class ModelController {
         vo.setName(entity.getName());
         vo.setProvider(entity.getProvider());
         vo.setBaseUrl(entity.getBaseUrl());
+        vo.setApiKey(entity.getApiKey());
         vo.setModelId(entity.getModelId());
         vo.setSupportsVision(entity.getSupportsVision() != null && entity.getSupportsVision() == 1);
         vo.setStatus(entity.getStatus());
@@ -89,6 +100,7 @@ public class ModelController {
         private String name;
         private String provider;
         private String baseUrl;
+        private String apiKey;
         private String modelId;
         private Boolean supportsVision;
         private Integer status;

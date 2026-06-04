@@ -12,7 +12,9 @@ import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.session.activity.ActivityService;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.service.SessionService;
+import com.agentworkbench.harness.todo.entity.SessionTodo;
 import com.agentworkbench.harness.todo.mapper.SessionTodoMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -307,6 +309,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                         log.warn("Skill sync to workspace failed for session {}: {}", sessionId, e.getMessage());
                     }
                 }
+
+                // Clear previous turn's todos before starting new agent execution
+                sessionTodoMapper.delete(
+                        new LambdaQueryWrapper<SessionTodo>()
+                                .eq(SessionTodo::getSessionId, sessionId));
+                registry.send(userId, WsEvent.of("todo_updated", sessionId, Map.of("todos", List.of())));
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
                         registry, activityService, sessionTodoMapper, sessionService, sessionId, userId);

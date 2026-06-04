@@ -6,6 +6,7 @@ import com.agentworkbench.harness.llm.*;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -18,8 +19,11 @@ public class ModelService {
     private final LlmModelMapper llmModelMapper;
     private final OpenAiLlmAdapter llmAdapter;
 
-    public List<LlmModel> listModels() {
-        return llmModelMapper.selectList(new QueryWrapper<LlmModel>().orderByDesc("created_at"));
+    public Page<LlmModel> listModels(int page, int size) {
+        return llmModelMapper.selectPage(
+                Page.of(page, size),
+                new QueryWrapper<LlmModel>().orderByDesc("created_at")
+        );
     }
 
     public LlmModel getModel(Long id) {
