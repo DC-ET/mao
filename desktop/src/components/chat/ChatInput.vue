@@ -216,6 +216,7 @@ onMounted(autoResize)
 
 <style scoped>
 .chat-input-card {
+  margin-bottom: 10px;
   background: var(--aw-canvas);
   border: 1px solid var(--aw-hairline);
   border-radius: 16px;

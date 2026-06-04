@@ -142,7 +142,7 @@ public class LdapAuthService {
         controls.setReturningAttributes(new String[]{"dn", "cn", "mail"});
 
         NamingEnumeration<SearchResult> results = ctx.search(
-                searchBase, "(uid={0})", new Object[]{username}, controls);
+                searchBase, "(sAMAccountName={0})", new Object[]{username}, controls);
 
         if (results.hasMore()) {
             SearchResult result = results.next();
