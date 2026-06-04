@@ -1,6 +1,5 @@
 import { ref } from 'vue'
 import { useSessionStore, type TaskPhase } from '../stores/session'
-import { showReloginDialog, doRefreshToken } from '../api'
 
 /// <reference types="vite/client" />
 
@@ -18,8 +17,11 @@ const connected = ref(false)
 const reconnectDelay = ref(1000)
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+let lastPongAt = 0
+const PONG_TIMEOUT_MS = 15_000
 let intentionalClose = false
 let connectPromise: Promise<void> | null = null
+let isReconnecting = false
 
 // Pending sendMessage callbacks — keyed by eventId
 const pendingCallbacks = new Map<string, {
@@ -75,16 +77,22 @@ export function useStreamWS() {
         connected.value = true
         reconnectDelay.value = 1000
         connectPromise = null
+        initialConnect = false
+        isReconnecting = false
         // Re-subscribe to active session
         if (sessionStore.activeSessionId) {
           send({ type: 'subscribe', sessionId: Number(sessionStore.activeSessionId) })
         }
-        // Start heartbeat
+        // Start heartbeat with pong timeout detection
+        lastPongAt = Date.now()
         heartbeatTimer = setInterval(() => {
-          if (ws?.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ping' }))
+          if (ws?.readyState !== WebSocket.OPEN) return
+          if (Date.now() - lastPongAt > PONG_TIMEOUT_MS) {
+            ws.close()
+            return
           }
-        }, 30_000)
+          ws.send(JSON.stringify({ type: 'ping' }))
+        }, 5_000)
         resolve()
       }
 
@@ -101,22 +109,23 @@ export function useStreamWS() {
       ws!.onclose = () => {
         connected.value = false
         stopHeartbeat()
-        if (initialConnect) {
+        if (initialConnect && !isReconnecting) {
+          // First-ever connection attempt failed — reject the promise
           initialConnect = false
           connectPromise = null
           reject(new Error('WebSocket connection failed'))
         } else if (!intentionalClose) {
+          // Either a reconnect attempt failed, or an established connection dropped
+          // In both cases, schedule the next reconnect
+          initialConnect = false
+          connectPromise = null
+          isReconnecting = false
           scheduleReconnect()
         }
       }
 
-      ws!.onerror = async () => {
+      ws!.onerror = () => {
         // onclose will fire after onerror, which handles the reject/reconnect
-        try {
-          await doRefreshToken()
-        } catch {
-          showReloginDialog()
-        }
       }
     })
 
@@ -125,6 +134,7 @@ export function useStreamWS() {
 
   function disconnect() {
     intentionalClose = true
+    isReconnecting = false
     stopHeartbeat()
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
@@ -139,6 +149,7 @@ export function useStreamWS() {
 
   function scheduleReconnect() {
     if (reconnectTimer) return
+    isReconnecting = true
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
       connect()
@@ -194,6 +205,7 @@ export function useStreamWS() {
         break
 
       case 'pong':
+        lastPongAt = Date.now()
         break
 
       case 'content_delta':
@@ -226,7 +238,9 @@ export function useStreamWS() {
       case 'session_status':
         if (sessionId) {
           sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
-          if (data.phase !== 'RUNNING') {
+          // Only resolve pending callback on true terminal phases
+          const terminalPhases = ['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE']
+          if (terminalPhases.includes(data.phase)) {
             sessionStore.setStreaming(sessionId, false)
             // Agent turn complete — resolve pending callback
             const cb = pendingCallbacks.get(sessionId)

@@ -22,10 +22,9 @@ import org.springframework.transaction.annotation.Transactional;
 import com.agentworkbench.session.util.TitleGenerator;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -240,6 +239,104 @@ public class SessionService {
                         .orderByAsc("created_at"));
     }
 
+    /**
+     * Clean up incomplete tail messages after a crash.
+     * When an assistant message has tool_calls but is missing corresponding tool results,
+     * the entire incomplete round (assistant + any partial tool results) is removed.
+     *
+     * Also removes orphaned tool results that appear before the cut point but reference
+     * tool_calls from the deleted assistant. This handles the case where a crash occurs
+     * during tool execution — tool results are persisted before the assistant message
+     * in parallel tool execution, so they can appear earlier in the message sequence.
+     *
+     * @return number of deleted messages
+     */
+    public int cleanupIncompleteTail(Long sessionId) {
+        List<Message> messages = getMessages(sessionId);
+        if (messages.isEmpty()) return 0;
+
+        // Phase 1: Scan from tail to find the first incomplete assistant+tool_calls
+        int cutIndex = -1;
+        Set<String> missingToolCallIds = Set.of();
+
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            Message msg = messages.get(i);
+            if ("ASSISTANT".equals(msg.getRole()) && msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
+                Set<String> expectedIds = extractToolCallIds(msg.getToolCalls());
+                Set<String> foundIds = new HashSet<>();
+
+                for (int j = i + 1; j < messages.size(); j++) {
+                    Message subsequent = messages.get(j);
+                    if ("TOOL".equals(subsequent.getRole()) && subsequent.getToolCallId() != null) {
+                        foundIds.add(subsequent.getToolCallId());
+                    } else if ("ASSISTANT".equals(subsequent.getRole())) {
+                        break;
+                    }
+                }
+
+                if (!foundIds.containsAll(expectedIds)) {
+                    cutIndex = i;
+                    Set<String> missing = new HashSet<>(expectedIds);
+                    missing.removeAll(foundIds);
+                    missingToolCallIds = missing;
+                    break;
+                }
+            }
+        }
+
+        if (cutIndex < 0) return 0;
+
+        int totalCount = 0;
+
+        // Phase 2: Remove orphaned tool results BEFORE the cut point.
+        // During parallel tool execution, tool results are persisted before the assistant
+        // message (the assistant is saved after CompletableFuture.allOf().join()).
+        // If the crash happens between tool result persistence and assistant persistence,
+        // these tool results end up before the assistant in the message sequence.
+        // After deleting the assistant, these orphaned tool results would appear as
+        // tool messages without a preceding assistant+tool_calls, causing LLM API 400 errors.
+        if (!missingToolCallIds.isEmpty()) {
+            for (int i = 0; i < cutIndex; i++) {
+                Message msg = messages.get(i);
+                if ("TOOL".equals(msg.getRole()) && msg.getToolCallId() != null
+                        && missingToolCallIds.contains(msg.getToolCallId())) {
+                    messageMapper.deleteById(msg.getId());
+                    totalCount++;
+                }
+            }
+        }
+
+        // Phase 3: Delete all messages from cutIndex to end
+        for (int i = cutIndex; i < messages.size(); i++) {
+            messageMapper.deleteById(messages.get(i).getId());
+            totalCount++;
+        }
+
+        log.info("Session {}: cleaned up {} incomplete messages (cut at index {}, removed {} orphaned tool results before cut)",
+                sessionId, totalCount, cutIndex, totalCount - (messages.size() - cutIndex));
+        return totalCount;
+    }
+
+    /**
+     * Extract tool call IDs from a JSON string of tool_calls.
+     */
+    private Set<String> extractToolCallIds(String toolCallsJson) {
+        Set<String> ids = new HashSet<>();
+        try {
+            com.fasterxml.jackson.databind.JsonNode array = objectMapper.readTree(toolCallsJson);
+            if (array.isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode tc : array) {
+                    if (tc.has("id") && !tc.get("id").isNull()) {
+                        ids.add(tc.get("id").asText());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse tool_calls JSON for tail cleanup: {}", e.getMessage());
+        }
+        return ids;
+    }
+
     // --- Phase management ---
 
     public void updatePhase(Long sessionId, String phase) {
@@ -248,11 +345,14 @@ public class SessionService {
         session.setLastActivityAt(LocalDateTime.now());
 
         if ("RUNNING".equals(phase)) {
-            session.setStartedAt(LocalDateTime.now());
+            // Only set startedAt if not already set (preserves original start time across recovery)
+            if (session.getStartedAt() == null) {
+                session.setStartedAt(LocalDateTime.now());
+            }
         } else if ("IDLE".equals(phase) || "COMPLETED".equals(phase) || "FAILED".equals(phase) || "CANCELLED".equals(phase)) {
             // Accumulate elapsed time
             if (session.getStartedAt() != null) {
-                long elapsed = java.time.Duration.between(session.getStartedAt(), LocalDateTime.now()).toMillis();
+                long elapsed = Duration.between(session.getStartedAt(), LocalDateTime.now()).toMillis();
                 session.setElapsedMs((session.getElapsedMs() != null ? session.getElapsedMs() : 0) + elapsed);
                 session.setStartedAt(null);
             }
@@ -299,7 +399,7 @@ public class SessionService {
         QueryWrapper<Session> runningQw = new QueryWrapper<>();
         runningQw.eq("user_id", userId)
                 .eq("status", "ACTIVE")
-                .in("phase", Arrays.asList("RUNNING", "WAITING_USER", "WAITING_APPROVAL"))
+                .in("phase", Arrays.asList("RUNNING", "RESUMING", "WAITING_USER", "WAITING_APPROVAL"))
                 .orderByDesc("last_activity_at");
         result.put("running", sessionMapper.selectList(runningQw));
 
@@ -307,7 +407,7 @@ public class SessionService {
         QueryWrapper<Session> recentQw = new QueryWrapper<>();
         recentQw.eq("user_id", userId)
                 .eq("status", "ACTIVE")
-                .notIn("phase", Arrays.asList("RUNNING", "WAITING_USER", "WAITING_APPROVAL"))
+                .notIn("phase", Arrays.asList("RUNNING", "RESUMING", "WAITING_USER", "WAITING_APPROVAL"))
                 .orderByDesc("updated_at")
                 .last("LIMIT 20");
         result.put("recent", sessionMapper.selectList(recentQw));
@@ -316,15 +416,15 @@ public class SessionService {
     }
 
     /**
-     * Sweep sessions stuck in RUNNING phase beyond the stale threshold.
+     * Sweep sessions stuck in RUNNING or RESUMING phase beyond the stale threshold.
      * Runs every 60 seconds to catch orphaned sessions from crashes, network drops, etc.
      */
     @Scheduled(fixedRate = 60_000)
     public void sweepStaleRunningSessions() {
         LocalDateTime threshold = LocalDateTime.now().minusMinutes(STALE_MINUTES);
-        log.debug("Sweeping stale RUNNING sessions older than {}", threshold);
+        log.debug("Sweeping stale RUNNING/RESUMING sessions older than {}", threshold);
         UpdateWrapper<Session> uw = new UpdateWrapper<>();
-        uw.eq("phase", "RUNNING")
+        uw.in("phase", "RUNNING", "RESUMING")
           .and(w -> w.lt("last_activity_at", threshold)
                      .or()
                      .isNull("last_activity_at"));
@@ -332,7 +432,7 @@ public class SessionService {
         update.setPhase("FAILED");
         int affected = sessionMapper.update(update, uw);
         if (affected > 0) {
-            log.warn("Swept {} stale RUNNING sessions to FAILED (no activity for {}min)", affected, STALE_MINUTES);
+            log.warn("Swept {} stale sessions to FAILED (no activity for {}min)", affected, STALE_MINUTES);
         }
     }
 
