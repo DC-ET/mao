@@ -81,11 +81,11 @@ minio:
 
 # LDAP
 ldap:
-  url: ${LDAP_URL:}
-  base-dn: ${LDAP_BASE_DN:}
-  user-dn: ${LDAP_USER_DN:}
-  password: ${LDAP_PASSWORD:}
-  user-search-base: ${LDAP_USER_SEARCH_BASE:ou=users}
+  url: ${LDAP_URL:ldap://172.20.230.237:389}
+  base-dn: ${LDAP_BASE_DN:dc=accesscorporate,dc=com,dc=cn}
+  user-dn: ${LDAP_USER_DN:apollo@accesscorporate.com.cn}
+  password: ${LDAP_PASSWORD:REDACTED_LDAP_PASSWORD}
+  user-search-base: ${LDAP_USER_SEARCH_BASE:ou=ACCESS}
 
 # Feishu
 feishu:

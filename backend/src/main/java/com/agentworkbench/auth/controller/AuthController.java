@@ -2,6 +2,7 @@ package com.agentworkbench.auth.controller;
 
 import com.agentworkbench.auth.service.AuthService;
 import com.agentworkbench.auth.service.FeishuAuthService;
+import com.agentworkbench.auth.service.LdapAuthService;
 import com.agentworkbench.common.result.Result;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
@@ -14,11 +15,17 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+    private final LdapAuthService ldapAuthService;
     private final FeishuAuthService feishuAuthService;
 
     @PostMapping("/login")
     public Result<LoginVO> login(@RequestBody LoginRequest request) {
-        LoginVO loginVO = authService.login(request.getUsername(), request.getPassword());
+        LoginVO loginVO;
+        if ("LDAP".equalsIgnoreCase(request.getAuthType())) {
+            loginVO = ldapAuthService.login(request.getUsername(), request.getPassword());
+        } else {
+            loginVO = authService.login(request.getUsername(), request.getPassword());
+        }
         return Result.ok(loginVO);
     }
 
@@ -57,6 +64,7 @@ public class AuthController {
         private String username;
         @NotBlank(message = "密码不能为空")
         private String password;
+        private String authType;
     }
 
     @Data

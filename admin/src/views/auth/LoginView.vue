@@ -7,6 +7,12 @@
 
       <el-form :model="form" @submit.prevent="handleLogin">
         <el-form-item>
+          <el-radio-group v-model="form.authType" style="width: 100%; display: flex;">
+            <el-radio-button value="LDAP" style="flex: 1;">LDAP 账号</el-radio-button>
+            <el-radio-button value="LOCAL" style="flex: 1;">本地账号</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item>
           <el-input
             v-model="form.username"
             placeholder="用户名"
@@ -48,7 +54,8 @@ const authStore = useAuthStore()
 const loading = ref(false)
 const form = ref({
   username: '',
-  password: ''
+  password: '',
+  authType: 'LDAP'
 })
 
 async function handleLogin() {
@@ -58,7 +65,7 @@ async function handleLogin() {
 
   loading.value = true
   try {
-    await authStore.login(form.value.username, form.value.password)
+    await authStore.login(form.value.username, form.value.password, form.value.authType)
     router.push('/')
   } finally {
     loading.value = false
