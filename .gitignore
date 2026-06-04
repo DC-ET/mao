@@ -42,4 +42,4 @@ desktop/release/
 *.pid
 
 .bash_profile
-
+.workbench
