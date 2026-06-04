@@ -10,6 +10,10 @@
         <span class="approval-title">{{ titleMap[item.toolName] || '操作待审批' }}</span>
       </div>
       <p class="approval-desc">{{ descMap[item.toolName] || 'Agent 请求执行以下操作：' }}</p>
+      <div v-if="item.dangerReason" class="danger-reason">
+        <el-icon :size="14"><WarningFilled /></el-icon>
+        <span>{{ item.dangerReason }}</span>
+      </div>
       <div class="command-wrapper">
         <pre class="command-preview"><code>{{ item.description }}</code></pre>
         <button class="copy-btn" title="复制" @click="copyText(item.description)">
@@ -17,20 +21,25 @@
         </button>
       </div>
       <div class="approval-actions">
-        <el-button class="pill-btn" @click="$emit('confirm', item.requestId, false)">拒绝</el-button>
-        <el-button type="primary" class="pill-btn" @click="$emit('confirm', item.requestId, true)">执行</el-button>
+        <button class="action-btn reject" title="拒绝" @click="$emit('confirm', item.requestId, false)">
+          <el-icon :size="16"><CloseBold /></el-icon>
+        </button>
+        <button class="action-btn approve" title="执行" @click="$emit('confirm', item.requestId, true)">
+          <el-icon :size="16"><Check /></el-icon>
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { WarningFilled, CopyDocument } from '@element-plus/icons-vue'
+import { WarningFilled, CopyDocument, CloseBold, Check } from '@element-plus/icons-vue'
 
 export interface ApprovalItem {
   requestId: string
   toolName: string
   description: string
+  dangerReason?: string
 }
 
 const titleMap: Record<string, string> = {
@@ -98,6 +107,24 @@ defineEmits<{
   font-size: var(--aw-text-caption);
 }
 
+.danger-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 12px;
+  margin-bottom: var(--aw-space-xs);
+  background: color-mix(in srgb, var(--aw-warning) 8%, transparent);
+  border-radius: var(--aw-radius-sm);
+  font-size: var(--aw-text-fine);
+  color: var(--aw-warning);
+  line-height: 1.5;
+}
+
+.danger-reason .el-icon {
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
 .command-wrapper {
   position: relative;
   margin-bottom: var(--aw-space-sm);
@@ -148,11 +175,47 @@ defineEmits<{
 
 .approval-actions {
   display: flex;
-  justify-content: flex-end;
   gap: 8px;
 }
 
-.pill-btn {
-  border-radius: var(--aw-radius-pill) !important;
+.action-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  border-radius: var(--aw-radius-pill);
+  border: 1px solid var(--aw-hairline);
+  background: var(--aw-canvas);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.action-btn:hover {
+  transform: scale(1.08);
+}
+
+.action-btn:active {
+  transform: scale(0.95);
+}
+
+.action-btn.reject {
+  color: var(--aw-ink-muted-80);
+}
+
+.action-btn.reject:hover {
+  border-color: var(--aw-danger);
+  color: var(--aw-danger);
+  background: color-mix(in srgb, var(--aw-danger) 6%, transparent);
+}
+
+.action-btn.approve {
+  border-color: var(--aw-primary);
+  color: var(--aw-primary);
+  background: color-mix(in srgb, var(--aw-primary) 6%, transparent);
+}
+
+.action-btn.approve:hover {
+  background: color-mix(in srgb, var(--aw-primary) 12%, transparent);
 }
 </style>

@@ -53,7 +53,7 @@ const groupSummary = computed(() => {
     parts.push(count > 1 ? `${count}次${displayName}` : displayName)
   }
 
-  return `已执行 ${parts.join('、')}`
+  return `${parts.join('、')}`
 })
 
 function getToolDisplayName(name: string): string {

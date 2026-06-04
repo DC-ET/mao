@@ -295,10 +295,10 @@ export function useStreamWS() {
 
       case 'tool_execute': {
         if (!sessionId || !data) break
-        const { requestId, toolName, arguments: toolArgs, workspace, needApproval } = data
+        const { requestId, toolName, arguments: toolArgs, workspace, needApproval, dangerReason } = data
         if (typeof window !== 'undefined' && (window as any).electronAPI?.toolExecute) {
           ;(window as any).electronAPI
-            .toolExecute(toolName, toolArgs, requestId, workspace, Number(sessionId), !!needApproval)
+            .toolExecute(toolName, toolArgs, requestId, workspace, Number(sessionId), !!needApproval, dangerReason || null)
             .then((response: { requestId: string; result: string | null; error: string | null }) => {
               if (ws?.readyState === WebSocket.OPEN) {
                 if (response.error) {

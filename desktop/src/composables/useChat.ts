@@ -21,6 +21,7 @@ export interface ApprovalItem {
   toolName: string
   description: string
   sessionId?: string
+  dangerReason?: string
 }
 
 // Module-level flag to ensure IPC listeners are registered only once
@@ -52,10 +53,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if (!isElectron || approvalListenerSetup) return
     approvalListenerSetup = true
 
-    ;(window as any).electronAPI.onToolApprovalRequest((data: { requestId: string; toolName: string; description: string; sessionId?: number }) => {
+    ;(window as any).electronAPI.onToolApprovalRequest((data: { requestId: string; toolName: string; description: string; sessionId?: number; dangerReason?: string }) => {
       const sid = data.sessionId != null ? String(data.sessionId) : undefined
       if (!pendingApprovals.value.some(a => a.requestId === data.requestId)) {
-        pendingApprovals.value.push({ requestId: data.requestId, toolName: data.toolName, description: data.description, sessionId: sid })
+        pendingApprovals.value.push({ requestId: data.requestId, toolName: data.toolName, description: data.description, sessionId: sid, dangerReason: data.dangerReason })
         if (sid) sessionStore.incrementPendingApproval(sid)
       }
     })

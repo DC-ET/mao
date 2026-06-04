@@ -17,7 +17,7 @@ function sendToRenderer(channel, data) {
   }
 }
 
-function requestToolApproval(toolName, description, sessionId) {
+function requestToolApproval(toolName, description, sessionId, dangerReason) {
   return new Promise((resolve) => {
     const requestId = `approval_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 
@@ -26,7 +26,9 @@ function requestToolApproval(toolName, description, sessionId) {
       resolve(approved)
     })
 
-    sendToRenderer('tool-approval-request', { requestId, toolName, description, sessionId })
+    const payload = { requestId, toolName, description, sessionId }
+    if (dangerReason) payload.dangerReason = dangerReason
+    sendToRenderer('tool-approval-request', payload)
   })
 }
 
@@ -253,10 +255,10 @@ ipcMain.handle('local-edit-file', async (event, { path: filePath, old_string, ne
 
 // ========== Tool execution via Streaming WS ==========
 
-async function executeToolByName(toolName, parsedArgs, sessionId, workspace, needApproval) {
+async function executeToolByName(toolName, parsedArgs, sessionId, workspace, needApproval, dangerReason) {
   switch (toolName) {
     case 'shell':
-      return await handleShellFromWebSocket(parsedArgs, sessionId, workspace, needApproval)
+      return await handleShellFromWebSocket(parsedArgs, sessionId, workspace, needApproval, dangerReason)
     case 'read_file':
       return await handleLocalReadFile(parsedArgs, workspace)
     case 'write_file':
@@ -272,10 +274,10 @@ async function executeToolByName(toolName, parsedArgs, sessionId, workspace, nee
   }
 }
 
-ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, workspace, sessionId, needApproval }) => {
+ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, workspace, sessionId, needApproval, dangerReason }) => {
   // Use the workspace from this specific tool call, falling back to currentWorkspace
   const effectiveWorkspace = workspace || currentWorkspace
-  console.log('[tool-execute] received workspace:', workspace, ', effectiveWorkspace:', effectiveWorkspace, ', currentWorkspace before:', currentWorkspace, ', needApproval:', needApproval)
+  console.log('[tool-execute] received workspace:', workspace, ', effectiveWorkspace:', effectiveWorkspace, ', currentWorkspace before:', currentWorkspace, ', needApproval:', needApproval, ', dangerReason:', dangerReason)
   if (workspace) {
     console.log('[tool-execute] setting currentWorkspace:', workspace, '(was:', currentWorkspace, ')')
     currentWorkspace = workspace
@@ -289,7 +291,7 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
   }
 
   try {
-    const result = await executeToolByName(toolName, parsedArgs, sessionId, effectiveWorkspace, !!needApproval)
+    const result = await executeToolByName(toolName, parsedArgs, sessionId, effectiveWorkspace, !!needApproval, dangerReason)
     return { requestId, result: JSON.stringify(result), error: null }
   } catch (e) {
     console.error(`Tool ${toolName} execution failed:`, e)
@@ -379,7 +381,7 @@ function readUntilMarker(process, marker, timeoutMs) {
   })
 }
 
-async function handleShellFromWebSocket(args, sessionId, workspace, needApproval) {
+async function handleShellFromWebSocket(args, sessionId, workspace, needApproval, dangerReason) {
   const { action, command, session_id, workdir, input } = args
   let resolvedWorkdir = workspace
   if (workdir && workdir !== '.') {
@@ -450,7 +452,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
 
   // 新会话或一次性执行 — 根据后端下发的 needApproval 决定是否需要审批
   if (needApproval) {
-    const approved = await requestToolApproval('shell', command, sessionId)
+    const approved = await requestToolApproval('shell', command, sessionId, dangerReason)
     if (!approved) {
       return { exit_code: -1, output: 'User denied command execution.' }
     }
