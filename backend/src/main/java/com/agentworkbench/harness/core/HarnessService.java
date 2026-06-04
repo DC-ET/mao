@@ -24,11 +24,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
-
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
@@ -48,16 +44,8 @@ public class HarnessService {
     private final ContextManager contextManager;
     private final CompactionConfig compactionConfig;
 
-    // In-memory event content store with TTL
-    private final Cache<String, Object> eventContentStore = Caffeine.newBuilder()
-            .expireAfterWrite(10, TimeUnit.MINUTES)
-            .maximumSize(1000)
-            .build();
-
     public String prepareMessage(Long sessionId, Object userContent) {
-        String eventId = java.util.UUID.randomUUID().toString();
-        eventContentStore.put(eventId, userContent);
-        return eventId;
+        return java.util.UUID.randomUUID().toString();
     }
 
     public void executeFromEvent(Long sessionId, String eventId, AgentEventListener listener) {
@@ -66,10 +54,6 @@ public class HarnessService {
 
     public void executeFromEvent(Long sessionId, String eventId, AgentEventListener listener,
                                   AtomicBoolean cancelFlag) {
-        Object userContent = eventContentStore.getIfPresent(eventId);
-        if (userContent != null) {
-            eventContentStore.invalidate(eventId);
-        }
         // userContent is already persisted by the caller (StreamingWsHandler);
         // pass null to execute() since it loads messages from DB in buildContext().
         execute(sessionId, null, listener, cancelFlag);
