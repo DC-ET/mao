@@ -293,7 +293,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
     // Sync sending state with the session's actual phase
     const phase = sessionStore.activeSession?.phase
-    if (phase === 'RUNNING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING') {
+    if (phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING') {
       sending.value = true
       // Register a pending callback so stopExecution() works and session_status can resolve it
       if (!pendingCallbacks.has(sessionIdVal)) {

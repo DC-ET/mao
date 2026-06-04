@@ -205,7 +205,7 @@ function onGroupNewTask(group: { sessions: Session[] }) {
   const last = group.sessions[0] // already sorted by updatedAt desc
   if (!last) return
   emit('newTaskFromGroup', {
-    agentId: last.agentId,
+    agentId: String(last.agentId),
     executionMode: last.executionMode,
     // CLOUD 模式：不传 workspace，让后端自动生成隔离目录
     // LOCAL 模式：继承本地工作目录

@@ -42,6 +42,12 @@ public class OutputManager {
         StringBuilder fullOutput = new StringBuilder();
         boolean markerFound = false;
         long deadline = System.currentTimeMillis() + timeout.toMillis();
+        long startTime = System.currentTimeMillis();
+        int idleCount = 0;
+        int totalReadChars = 0;
+        int readCalls = 0;
+
+        log.debug("readUntilMarker start: marker={}, timeoutMs={}", marker, timeout.toMillis());
 
         try {
             char[] buffer = new char[8192];
@@ -50,13 +56,33 @@ public class OutputManager {
             while (System.currentTimeMillis() < deadline) {
                 // 检查是否有数据可读
                 if (!reader.ready()) {
+                    idleCount++;
+                    if (idleCount % 100 == 0) {
+                        long elapsed = System.currentTimeMillis() - startTime;
+                        log.warn("readUntilMarker idle loop: idleCount={}, elapsedMs={}, linesCollected={}, charsCollected={}, lineBufferLen={}",
+                                idleCount, elapsed, allLines.size(), fullOutput.length(), lineBuffer.length());
+                    }
                     // 没有数据，短暂等待后重试
                     Thread.sleep(50);
                     continue;
                 }
 
                 int charsRead = reader.read(buffer);
-                if (charsRead == -1) break;
+                readCalls++;
+                if (charsRead == -1) {
+                    log.warn("readUntilMarker EOF: readCalls={}, totalReadChars={}, linesCollected={}, elapsedMs={}",
+                            readCalls, totalReadChars, allLines.size(), System.currentTimeMillis() - startTime);
+                    break;
+                }
+
+                totalReadChars += charsRead;
+                if (readCalls <= 3 || readCalls % 100 == 0) {
+                    log.debug("readUntilMarker read: readCalls={}, charsRead={}, totalReadChars={}, elapsedMs={}",
+                            readCalls, charsRead, totalReadChars, System.currentTimeMillis() - startTime);
+                }
+
+                // 重置 idle 计数，因为有新数据到达
+                idleCount = 0;
 
                 for (int i = 0; i < charsRead; i++) {
                     char c = buffer[i];
@@ -66,6 +92,8 @@ public class OutputManager {
 
                         if (line.contains(marker)) {
                             markerFound = true;
+                            log.info("readUntilMarker marker found: readCalls={}, totalReadChars={}, linesCollected={}, elapsedMs={}",
+                                    readCalls, totalReadChars, allLines.size(), System.currentTimeMillis() - startTime);
                             break;
                         }
 
@@ -96,6 +124,12 @@ public class OutputManager {
             String preview = generatePreview(allLines);
             boolean truncated = !markerFound || allLines.size() > maxPreviewLines
                     || fullOutput.length() > maxPreviewChars;
+
+            if (!markerFound) {
+                log.warn("readUntilMarker completed WITHOUT marker: reason={}, readCalls={}, totalReadChars={}, linesCollected={}, elapsedMs={}, idleCount={}",
+                        System.currentTimeMillis() >= deadline ? "TIMEOUT" : "EOF",
+                        readCalls, totalReadChars, allLines.size(), System.currentTimeMillis() - startTime, idleCount);
+            }
 
             return new OutputResult(
                     preview,

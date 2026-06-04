@@ -18,8 +18,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -65,9 +64,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                SkillSyncService skillSyncService,
                                AgentMapper agentMapper,
                                LlmModelMapper llmModelMapper,
-                               @Value("${app.harness.agent-thread-pool-size:20}") int poolSize,
-                               @Value("${app.harness.agent-thread-pool-max:100}") int maxPoolSize,
-                               @Value("${app.harness.agent-thread-pool-queue:200}") int queueCapacity) {
+                               @Qualifier("agentExecutor") ExecutorService agentExecutor) {
         this.registry = registry;
         this.harnessService = harnessService;
         this.sessionService = sessionService;
@@ -78,13 +75,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.skillSyncService = skillSyncService;
         this.agentMapper = agentMapper;
         this.llmModelMapper = llmModelMapper;
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(poolSize);
-        executor.setMaxPoolSize(maxPoolSize);
-        executor.setQueueCapacity(queueCapacity);
-        executor.setThreadNamePrefix("ws-agent-");
-        executor.initialize();
-        this.agentExecutor = executor.getThreadPoolExecutor();
+        this.agentExecutor = agentExecutor;
     }
 
     @Override
@@ -155,17 +146,18 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         registry.subscribe(userId, sessionId);
         log.debug("userId={} subscribed to session {}", userId, sessionId);
 
-        // If session is RUNNING, send a snapshot so the client can catch up
+        // If session is RUNNING or RESUMING, send a snapshot so the client can catch up
         // Also re-register local tool session mapping (handles client reconnect)
         try {
             Session s = sessionService.getSession(sessionId);
             if (s != null) {
-                if ("LOCAL".equals(s.getExecutionMode()) && "RUNNING".equals(s.getPhase())) {
+                boolean active = "RUNNING".equals(s.getPhase()) || "RESUMING".equals(s.getPhase());
+                if ("LOCAL".equals(s.getExecutionMode()) && active) {
                     localToolSessionRegistry.setUserForSession(sessionId, userId);
                 }
-                if ("RUNNING".equals(s.getPhase())) {
+                if (active) {
                     registry.send(userId, WsEvent.of("session_snapshot", sessionId, Map.of(
-                            "phase", "RUNNING"
+                            "phase", s.getPhase()
                     )));
                 }
             }
@@ -206,8 +198,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             return;
         }
 
-        // Check session not already running
-        if ("RUNNING".equals(session.getPhase())) {
+        // Check session not already running or resuming
+        if ("RUNNING".equals(session.getPhase()) || "RESUMING".equals(session.getPhase())) {
             registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "Session is already running")));
             return;
         }

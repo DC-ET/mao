@@ -4,7 +4,7 @@ import { api } from '../api'
 import type { ChatMessage, TodoItem, ContextWindowInfo } from '../types/chat'
 import { appendTextDelta, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
 
-export type TaskPhase = 'IDLE' | 'RUNNING' | 'WAITING_USER' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING'
+export type TaskPhase = 'IDLE' | 'RUNNING' | 'RESUMING' | 'WAITING_USER' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING'
 
 export interface TaskStep {
   id: string

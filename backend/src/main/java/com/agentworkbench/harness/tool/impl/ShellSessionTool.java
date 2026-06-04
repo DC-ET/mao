@@ -302,6 +302,9 @@ public class ShellSessionTool implements Tool {
         String marker = generateMarker();
         String fullMarker = MARKER_PREFIX + marker + MARKER_SUFFIX;
 
+        log.info("executeWithMarker: session={}, command={}, timeoutMs={}, marker={}",
+                session.getSessionId(), command, timeout.toMillis(), fullMarker);
+
         try {
             // 写入命令 + marker echo
             session.getStdin().write(command);
