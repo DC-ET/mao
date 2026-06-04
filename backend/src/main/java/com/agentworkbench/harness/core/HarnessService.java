@@ -145,6 +145,7 @@ public class HarnessService {
         context.setAgentName(agent.getName());
         context.setMaxRounds(resolveMaxRounds(null));
         context.setExecutionMode(session.getExecutionMode() != null ? session.getExecutionMode() : "CLOUD");
+        context.setPermissionLevel(session.getPermissionLevel());
         context.setWorkspace(session.getWorkspace());
         context.setModelConfig(LlmModelConfig.builder()
                 .id(llmModel.getId())

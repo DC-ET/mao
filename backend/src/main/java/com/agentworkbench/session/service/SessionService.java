@@ -6,6 +6,7 @@ import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.session.entity.Message;
+import com.agentworkbench.session.entity.PermissionLevel;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.mapper.MessageMapper;
 import com.agentworkbench.session.mapper.SessionMapper;
@@ -49,6 +50,10 @@ public class SessionService {
     }
 
     public Session createSession(Long userId, Long agentId, String title, String executionMode, String workspace) {
+        return createSession(userId, agentId, title, executionMode, workspace, null);
+    }
+
+    public Session createSession(Long userId, Long agentId, String title, String executionMode, String workspace, String permissionLevel) {
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
             throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
@@ -61,6 +66,7 @@ public class SessionService {
         session.setStatus("ACTIVE");
         session.setExecutionMode(executionMode != null ? executionMode : "CLOUD");
         session.setWorkspace(workspace);
+        session.setPermissionLevel(permissionLevel != null ? permissionLevel : "READ_ONLY");
         session.setIsPinned(0);
         session.setIsFavorite(0);
         session.setPhase("IDLE");
@@ -270,6 +276,13 @@ public class SessionService {
     public void updateTitle(Long sessionId, String title) {
         Session session = getSession(sessionId);
         session.setTitle(title);
+        sessionMapper.updateById(session);
+    }
+
+    public void updatePermissionLevel(Long sessionId, String permissionLevel) {
+        PermissionLevel.fromString(permissionLevel); // validate, throws on invalid
+        Session session = getSession(sessionId);
+        session.setPermissionLevel(permissionLevel);
         sessionMapper.updateById(session);
     }
 

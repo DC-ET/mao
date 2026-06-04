@@ -96,8 +96,10 @@
         :workspace="workspace"
         :execution-mode="executionMode"
         :model-name="agentStore.activeAgent?.modelName || ''"
+        :permission-level="permissionLevel"
         @send="handleSend"
         @stop="handleStop"
+        @update:permission-level="handlePermissionLevelChange"
       />
     </div>
 
@@ -134,6 +136,7 @@ import { ChatDotRound, Plus, ArrowDown } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
+import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
 
@@ -158,6 +161,7 @@ const defaultWorkspace = ref<string | undefined>()
 // Task state
 const currentPhase = ref<TaskPhase>('IDLE')
 const projectKey = ref('')
+const permissionLevel = ref('READ_ONLY')
 
 const {
   messages,
@@ -352,6 +356,17 @@ function handleRename(title: string) {
   }
 }
 
+async function handlePermissionLevelChange(level: string) {
+  if (!sessionStore.activeSessionId) return
+  permissionLevel.value = level
+  sessionStore.updateSession(sessionStore.activeSessionId, { permissionLevel: level })
+  try {
+    await api.patch(`/sessions/${sessionStore.activeSessionId}`, { permissionLevel: level })
+  } catch (e) {
+    console.error('Failed to update permission level:', e)
+  }
+}
+
 function handleNewTask() {
   if (sessionStore.activeSessionId && currentPhase.value === 'RUNNING') {
     sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
@@ -394,6 +409,7 @@ async function loadSession(sid: string) {
       executionMode.value = data.executionMode || 'CLOUD'
       currentPhase.value = data.phase || 'IDLE'
       projectKey.value = data.projectKey || ''
+      permissionLevel.value = data.permissionLevel || 'READ_ONLY'
       if (data.agentName) agentName.value = data.agentName
       if (data.workspace) workspace.value = data.workspace
       await agentStore.fetchAgent(data.agentId)
@@ -427,6 +443,7 @@ watch(sessionIdParam, (newSid, oldSid) => {
     executionMode.value = 'CLOUD'
     currentPhase.value = 'IDLE'
     projectKey.value = ''
+    permissionLevel.value = 'READ_ONLY'
     navigateToLatestSession()
   }
 })

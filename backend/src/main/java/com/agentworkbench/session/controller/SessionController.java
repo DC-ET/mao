@@ -48,7 +48,7 @@ public class SessionController {
             @AuthenticationPrincipal Long userId,
             @RequestBody CreateSessionRequest request) {
         Session session = sessionService.createSession(userId, request.getAgentId(), request.getTitle(),
-                request.getExecutionMode(), request.getWorkspace());
+                request.getExecutionMode(), request.getWorkspace(), request.getPermissionLevel());
         return Result.ok(toSessionVO(session));
     }
 
@@ -114,6 +114,9 @@ public class SessionController {
         }
         if (request.getProjectKey() != null) {
             sessionService.updateProjectKey(id, request.getProjectKey());
+        }
+        if (request.getPermissionLevel() != null) {
+            sessionService.updatePermissionLevel(id, request.getPermissionLevel());
         }
         return Result.ok(toSessionVO(sessionService.getSession(id)));
     }
@@ -243,6 +246,7 @@ public class SessionController {
         vo.setElapsedMs(session.getElapsedMs() != null ? session.getElapsedMs() : 0);
         vo.setProjectKey(session.getProjectKey());
         vo.setContextTokens(session.getContextTokens());
+        vo.setPermissionLevel(session.getPermissionLevel());
         vo.setRunning("RUNNING".equals(session.getPhase()) || "WAITING_APPROVAL".equals(session.getPhase()));
 
         // Parse steps_json
@@ -317,6 +321,7 @@ public class SessionController {
         private String title;
         private String executionMode;
         private String workspace;
+        private String permissionLevel;
     }
 
     @Data
@@ -324,6 +329,7 @@ public class SessionController {
         private String title;
         private String summary;
         private String projectKey;
+        private String permissionLevel;
     }
 
     @Data
@@ -347,6 +353,7 @@ public class SessionController {
         private String projectKey;
         private Integer contextTokens;
         private Boolean running;
+        private String permissionLevel;
     }
 
     @Data

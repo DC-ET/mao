@@ -1,6 +1,8 @@
 package com.agentworkbench.harness.tool;
 
+import com.agentworkbench.harness.llm.LlmModelConfig;
 import com.agentworkbench.harness.local.LocalToolExecutor;
+import com.agentworkbench.session.entity.PermissionLevel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -18,8 +20,12 @@ public class ToolDispatcher {
     private static final Set<String> SERVER_ONLY_TOOLS = Set.of(
             "task_create", "task_update", "task_list", "task_delete");
 
+    /** Tools that modify files */
+    private static final Set<String> WRITE_TOOLS = Set.of("write_file", "edit_file");
+
     private final ToolRegistry toolRegistry;
     private final LocalToolExecutor localToolExecutor;
+    private final DangerAssessor dangerAssessor;
 
     /**
      * Execute a tool call - routes to built-in tool (cloud mode)
@@ -44,11 +50,16 @@ public class ToolDispatcher {
     }
 
     /**
-     * Execute a tool call with execution mode routing.
+     * Execute a tool call with execution mode routing and permission level control.
      * LOCAL mode: delegates to LocalToolExecutor which sends via WebSocket to desktop client.
      * CLOUD mode: executes on server (default behavior).
+     *
+     * @param permissionLevel permission level for LOCAL mode approval decisions (nullable, defaults to READ_ONLY)
+     * @param modelConfig      LLM model config for SMART mode danger assessment (nullable)
      */
-    public String dispatch(String toolName, String arguments, String executionMode, Long sessionId, String workspace) {
+    public String dispatch(String toolName, String arguments, String executionMode,
+                           Long sessionId, String workspace,
+                           String permissionLevel, LlmModelConfig modelConfig) {
         // 纯服务端工具始终在服务端执行，不受 executionMode 影响
         if (SERVER_ONLY_TOOLS.contains(toolName)) {
             Tool tool = toolRegistry.getTool(toolName);
@@ -60,8 +71,11 @@ public class ToolDispatcher {
         }
 
         if ("LOCAL".equals(executionMode)) {
-            log.debug("Routing tool call to local executor: {} (session={})", toolName, sessionId);
-            return localToolExecutor.execute(sessionId, toolName, arguments, workspace);
+            PermissionLevel level = PermissionLevel.fromString(permissionLevel);
+            boolean needApproval = shouldRequireApproval(toolName, level, arguments, modelConfig);
+            log.debug("Routing tool call to local executor: {} (session={}, level={}, needApproval={})",
+                    toolName, sessionId, level, needApproval);
+            return localToolExecutor.execute(sessionId, toolName, arguments, workspace, needApproval);
         }
 
         // CLOUD mode — route to built-in tool
@@ -71,5 +85,37 @@ public class ToolDispatcher {
             return tool.execute(arguments, sessionId, workspace);
         }
         throw new IllegalArgumentException("Unknown tool: " + toolName);
+    }
+
+    /**
+     * Legacy 5-param dispatch (backward compat for non-context callers).
+     * Treats as READ_ONLY permission level.
+     */
+    public String dispatch(String toolName, String arguments, String executionMode, Long sessionId, String workspace) {
+        return dispatch(toolName, arguments, executionMode, sessionId, workspace, null, null);
+    }
+
+    /**
+     * Determine whether a tool call requires user approval based on permission level.
+     */
+    private boolean shouldRequireApproval(String toolName, PermissionLevel level,
+                                          String arguments, LlmModelConfig modelConfig) {
+        return switch (level) {
+            case READ_ONLY -> isWriteOrShellTool(toolName);
+            case READ_WRITE -> "shell".equals(toolName);
+            case SMART -> {
+                if (!"shell".equals(toolName)) yield false;
+                if (modelConfig == null) {
+                    log.warn("SMART mode: no modelConfig available, defaulting to approval required");
+                    yield true;
+                }
+                yield dangerAssessor.isDangerous(arguments, modelConfig);
+            }
+            case FULL -> false;
+        };
+    }
+
+    private boolean isWriteOrShellTool(String toolName) {
+        return "shell".equals(toolName) || WRITE_TOOLS.contains(toolName);
     }
 }

@@ -53,6 +53,11 @@
             <span>{{ dirName || 'No workspace' }}</span>
           </template>
         </div>
+        <PermissionLevelSwitcher
+          v-if="executionMode === 'LOCAL'"
+          :current-level="permissionLevel"
+          @update:permission-level="$event => emit('update:permissionLevel', $event)"
+        />
       </div>
       <div class="toolbar-right">
         <span v-if="modelName" class="model-name">{{ modelName }}</span>
@@ -79,6 +84,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -88,6 +94,7 @@ const props = withDefaults(defineProps<{
   executionMode?: string
   modelName?: string
   placeholder?: string
+  permissionLevel?: string
 }>(), {
   disabled: false,
   loading: false,
@@ -96,11 +103,13 @@ const props = withDefaults(defineProps<{
   executionMode: 'CLOUD',
   modelName: '',
   placeholder: '描述你希望 Agent 完成的任务',
+  permissionLevel: 'READ_ONLY',
 })
 
 const emit = defineEmits<{
   send: [text: string, files: File[]]
   stop: []
+  'update:permissionLevel': [level: string]
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement>()

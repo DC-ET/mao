@@ -114,10 +114,15 @@ export function appendTextDelta(msg: ChatMessage, delta: string) {
   }
 }
 
-/** 流式工具开始：追加 tool 段 */
+/** 流式工具开始：追加 tool 段（已存在则更新 input） */
 export function appendToolCallStart(msg: ChatMessage, call: ToolCall) {
   if (!msg.toolCalls) msg.toolCalls = []
   if (!msg.segments) msg.segments = []
+  const existing = msg.toolCalls.find(c => c.id === call.id)
+  if (existing) {
+    if (call.input) existing.input = call.input
+    return
+  }
   msg.toolCalls.push(call)
   msg.segments.push({ type: 'tool', callId: call.id })
 }

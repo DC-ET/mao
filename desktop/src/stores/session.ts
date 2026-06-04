@@ -30,6 +30,7 @@ export interface Session {
   workspace?: string
   contextTokens?: number
   running: boolean
+  permissionLevel?: string
 }
 
 function normalizeId(id: any): string {

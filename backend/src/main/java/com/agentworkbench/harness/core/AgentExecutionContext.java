@@ -25,6 +25,7 @@ public class AgentExecutionContext {
     private LlmModelConfig modelConfig;
     private int maxRounds;
     private String executionMode;
+    private String permissionLevel;
     private String workspace;
 
     // 对话消息历史
