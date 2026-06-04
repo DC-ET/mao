@@ -72,13 +72,6 @@ jwt:
   expiration: 86400000  # 24 hours in milliseconds
   refresh-expiration: 604800000  # 7 days
 
-# MinIO
-minio:
-  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
-  access-key: ${MINIO_ACCESS_KEY:minioadmin}
-  secret-key: ${MINIO_SECRET_KEY:minioadmin}
-  bucket: ${MINIO_BUCKET:workbench}
-
 # LDAP
 ldap:
   url: ${LDAP_URL:ldap://172.20.230.237:389}
