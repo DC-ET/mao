@@ -27,6 +27,8 @@ public class ToolDispatcher {
     private final LocalToolExecutor localToolExecutor;
     private final DangerAssessor dangerAssessor;
 
+    private record ApprovalDecision(boolean needApproval, String dangerReason) {}
+
     /**
      * Execute a tool call - routes to built-in tool (cloud mode)
      */
@@ -72,10 +74,10 @@ public class ToolDispatcher {
 
         if ("LOCAL".equals(executionMode)) {
             PermissionLevel level = PermissionLevel.fromString(permissionLevel);
-            boolean needApproval = shouldRequireApproval(toolName, level, arguments, modelConfig);
-            log.debug("Routing tool call to local executor: {} (session={}, level={}, needApproval={})",
-                    toolName, sessionId, level, needApproval);
-            return localToolExecutor.execute(sessionId, toolName, arguments, workspace, needApproval);
+            ApprovalDecision decision = shouldRequireApproval(toolName, level, arguments, modelConfig);
+            log.debug("Routing tool call to local executor: {} (session={}, level={}, needApproval={}, reason={})",
+                    toolName, sessionId, level, decision.needApproval, decision.dangerReason);
+            return localToolExecutor.execute(sessionId, toolName, arguments, workspace, decision.needApproval, decision.dangerReason);
         }
 
         // CLOUD mode — route to built-in tool
@@ -98,20 +100,21 @@ public class ToolDispatcher {
     /**
      * Determine whether a tool call requires user approval based on permission level.
      */
-    private boolean shouldRequireApproval(String toolName, PermissionLevel level,
-                                          String arguments, LlmModelConfig modelConfig) {
+    private ApprovalDecision shouldRequireApproval(String toolName, PermissionLevel level,
+                                                   String arguments, LlmModelConfig modelConfig) {
         return switch (level) {
-            case READ_ONLY -> isWriteOrShellTool(toolName);
-            case READ_WRITE -> "shell".equals(toolName);
+            case READ_ONLY -> new ApprovalDecision(isWriteOrShellTool(toolName), null);
+            case READ_WRITE -> new ApprovalDecision("shell".equals(toolName), null);
             case SMART -> {
-                if (!"shell".equals(toolName)) yield false;
+                if (!"shell".equals(toolName)) yield new ApprovalDecision(false, null);
                 if (modelConfig == null) {
                     log.warn("SMART mode: no modelConfig available, defaulting to approval required");
-                    yield true;
+                    yield new ApprovalDecision(true, "无法进行安全评估，默认需要审批");
                 }
-                yield dangerAssessor.isDangerous(arguments, modelConfig);
+                DangerAssessor.DangerResult result = dangerAssessor.assess(arguments, modelConfig);
+                yield new ApprovalDecision(result.dangerous(), result.reason());
             }
-            case FULL -> false;
+            case FULL -> new ApprovalDecision(false, null);
         };
     }
 

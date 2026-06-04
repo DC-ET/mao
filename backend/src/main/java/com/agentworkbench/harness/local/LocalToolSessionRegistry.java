@@ -99,9 +99,11 @@ public class LocalToolSessionRegistry {
      * Returns a CompletableFuture that completes when the client responds.
      *
      * @param needApproval whether the client should request user approval before executing
+     * @param dangerReason why the tool was flagged as dangerous (nullable)
      */
     public CompletableFuture<String> sendToolRequest(Long sessionId, String toolName, String arguments,
-                                                     String workspace, boolean needApproval) {
+                                                     String workspace, boolean needApproval,
+                                                     String dangerReason) {
         Long userId = sessionToUser.get(sessionId);
         if (userId == null || !streamingWsRegistry.hasConnection(userId)) {
             CompletableFuture<String> f = new CompletableFuture<>();
@@ -113,16 +115,20 @@ public class LocalToolSessionRegistry {
         CompletableFuture<String> future = new CompletableFuture<>();
         pendingRequests.computeIfAbsent(sessionId, k -> new ConcurrentHashMap<>()).put(requestId, future);
 
-        streamingWsRegistry.send(userId, WsEvent.of("tool_execute", sessionId, Map.of(
-                "requestId", requestId,
-                "toolName", toolName,
-                "arguments", arguments != null ? arguments : "{}",
-                "workspace", workspace != null ? workspace : "",
-                "needApproval", needApproval
-        )));
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("requestId", requestId);
+        payload.put("toolName", toolName);
+        payload.put("arguments", arguments != null ? arguments : "{}");
+        payload.put("workspace", workspace != null ? workspace : "");
+        payload.put("needApproval", needApproval);
+        if (dangerReason != null) {
+            payload.put("dangerReason", dangerReason);
+        }
 
-        log.debug("Sent tool request {} to session {}: tool={}, workspace={}, needApproval={}",
-                requestId, sessionId, toolName, workspace, needApproval);
+        streamingWsRegistry.send(userId, WsEvent.of("tool_execute", sessionId, payload));
+
+        log.debug("Sent tool request {} to session {}: tool={}, workspace={}, needApproval={}, dangerReason={}",
+                requestId, sessionId, toolName, workspace, needApproval, dangerReason);
         return future;
     }
 

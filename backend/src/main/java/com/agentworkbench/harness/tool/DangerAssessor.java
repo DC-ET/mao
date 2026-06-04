@@ -39,20 +39,25 @@ public class DangerAssessor {
             - Package info queries (npm list, pip list, mvn dependency:tree)
             - Standard development workflows
 
-            Reply with ONLY "DANGEROUS" or "SAFE". No explanation.
+            Reply in this exact format, nothing else:
+            DANGEROUS: <one-line reason in Chinese explaining what the command does and why it's risky>
+            or
+            SAFE
             """;
 
     private final LlmAdapter llmAdapter;
     private final ObjectMapper objectMapper;
+
+    public record DangerResult(boolean dangerous, String reason) {}
 
     /**
      * Assess whether a shell command is dangerous using LLM.
      *
      * @param arguments  JSON arguments from the tool call (contains "command" field)
      * @param modelConfig the LLM model config to use for the assessment
-     * @return true if the command is assessed as dangerous, false otherwise
+     * @return DangerResult with dangerous flag and reason (reason is non-empty when dangerous)
      */
-    public boolean isDangerous(String arguments, LlmModelConfig modelConfig) {
+    public DangerResult assess(String arguments, LlmModelConfig modelConfig) {
         String command = extractCommand(arguments);
 
         ChatRequest request = ChatRequest.builder()
@@ -66,19 +71,26 @@ public class DangerAssessor {
                                 .content(command)
                                 .build()
                 ))
-                .maxTokens(10)
+                .maxTokens(128)
                 .temperature(0.0)
                 .build();
 
         try {
             ChatResponse response = llmAdapter.chat(request, modelConfig);
-            String verdict = response.getChoices().get(0).getMessage().getContent().toString().trim().toUpperCase();
-            boolean dangerous = verdict.contains("DANGEROUS");
-            log.info("Danger assessment for command [{}]: {} -> {}", command, verdict, dangerous ? "DANGEROUS" : "SAFE");
-            return dangerous;
+            String verdict = response.getChoices().get(0).getMessage().getContent().toString().trim();
+            String upper = verdict.toUpperCase();
+            if (upper.startsWith("DANGEROUS")) {
+                String reason = verdict.length() > "DANGEROUS:".length()
+                        ? verdict.substring("DANGEROUS:".length()).trim()
+                        : "该命令被安全分类器判定为高危操作";
+                log.info("Danger assessment for command [{}]: DANGEROUS — {}", command, reason);
+                return new DangerResult(true, reason);
+            }
+            log.info("Danger assessment for command [{}]: SAFE", command);
+            return new DangerResult(false, null);
         } catch (Exception e) {
             log.error("Danger assessment failed, defaulting to DANGEROUS: {}", e.getMessage());
-            return true;
+            return new DangerResult(true, "安全评估服务异常，默认需要审批");
         }
     }
 

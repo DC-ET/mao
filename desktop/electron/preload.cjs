@@ -16,8 +16,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openTerminal: (folderPath) => ipcRenderer.invoke('open-terminal', folderPath),
 
   // Tool execution via Streaming WS (called by renderer when server sends tool_execute)
-  toolExecute: (toolName, args, requestId, workspace, sessionId, needApproval) =>
-    ipcRenderer.invoke('tool-execute', { toolName, args, requestId, workspace, sessionId, needApproval }),
+  toolExecute: (toolName, args, requestId, workspace, sessionId, needApproval, dangerReason) =>
+    ipcRenderer.invoke('tool-execute', { toolName, args, requestId, workspace, sessionId, needApproval, dangerReason }),
 
   // Local tool execution - direct IPC (for renderer-initiated calls)
   localReadFile: (args) => ipcRenderer.invoke('local-read-file', args),
