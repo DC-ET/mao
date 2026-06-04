@@ -200,11 +200,13 @@ async function copyMessage() {
 }
 
 .message-content {
-  width: 75%;
+  min-width: 75%;
+  max-width: 75%;
 }
 
 .message-bubble.user .message-content {
-  text-align: right;
+  text-align: left;
+  min-width: 20%;
 }
 
 .message-time-top {
@@ -228,6 +230,7 @@ async function copyMessage() {
 .user-text {
   color: var(--aw-ink);
   border-top-right-radius: var(--aw-radius-xs);
+  white-space: pre-line;
 }
 
 .assistant-text {

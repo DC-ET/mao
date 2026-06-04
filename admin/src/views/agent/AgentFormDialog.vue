@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     :model-value="visible"
-    :title="isEdit ? '编辑 Agent' : '创建 Agent'"
+    :title="dialogTitle"
     width="680px"
     @close="$emit('update:visible', false)"
   >
@@ -62,29 +62,39 @@
     <template #footer>
       <el-button @click="$emit('update:visible', false)">取消</el-button>
       <el-button type="primary" :loading="submitting" @click="handleSubmit">
-        {{ isEdit ? '保存' : '创建' }}
+        {{ submitButtonText }}
       </el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, reactive } from 'vue'
+import { computed, ref, watch, reactive } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   visible: boolean
   agentData?: any | null
-}>()
+  mode?: 'create' | 'edit' | 'copy'
+}>(), {
+  agentData: null,
+  mode: 'create'
+})
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   saved: []
 }>()
 
-const isEdit = ref(false)
+const isEdit = computed(() => props.mode === 'edit')
+const dialogTitle = computed(() => {
+  if (props.mode === 'edit') return '编辑 Agent'
+  if (props.mode === 'copy') return '复制 Agent'
+  return '创建 Agent'
+})
+const submitButtonText = computed(() => (isEdit.value ? '保存' : '创建'))
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const models = ref<any[]>([])
@@ -104,13 +114,23 @@ const rules: FormRules = {
   systemPrompt: [{ required: true, message: '请输入系统提示词', trigger: 'blur' }]
 }
 
+function resetForm() {
+  Object.assign(form, {
+    name: '',
+    description: '',
+    systemPrompt: '',
+    modelId: null,
+    skillNames: [],
+    tags: []
+  })
+}
+
 watch(() => props.visible, async (val) => {
   if (!val) return
   await loadOptions()
   if (props.agentData) {
-    isEdit.value = true
     Object.assign(form, {
-      name: props.agentData.name || '',
+      name: props.mode === 'copy' ? `${props.agentData.name || ''} - 副本` : props.agentData.name || '',
       description: props.agentData.description || '',
       systemPrompt: props.agentData.systemPrompt || '',
       modelId: props.agentData.modelId || null,
@@ -118,24 +138,23 @@ watch(() => props.visible, async (val) => {
       tags: props.agentData.tags || []
     })
   } else {
-    isEdit.value = false
-    Object.assign(form, {
-      name: '',
-      description: '',
-      systemPrompt: '',
-      modelId: null,
-      skillNames: [],
-      tags: []
-    })
+    resetForm()
   }
+
+  formRef.value?.clearValidate()
 })
 
 async function loadOptions() {
   const [modelsRes, skillDocsRes] = await Promise.all([
-    api.get('/models'),
+    api.get('/models', {
+      params: {
+        page: 1,
+        size: 1000
+      }
+    }),
     api.get('/skill-docs')
   ])
-  models.value = (modelsRes as any).data || []
+  models.value = (modelsRes as any).data?.records || []
   skillDocs.value = (skillDocsRes as any).data || []
 }
 
@@ -150,7 +169,7 @@ async function handleSubmit() {
       ElMessage.success('Agent 更新成功')
     } else {
       await api.post('/agents', form)
-      ElMessage.success('Agent 创建成功')
+      ElMessage.success(props.mode === 'copy' ? 'Agent 复制成功' : 'Agent 创建成功')
     }
     emit('update:visible', false)
     emit('saved')

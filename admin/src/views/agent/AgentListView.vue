@@ -43,8 +43,9 @@
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" />
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
             <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -65,6 +66,7 @@
     <AgentFormDialog
       v-model:visible="dialogVisible"
       :agent-data="currentAgent"
+      :mode="dialogMode"
       @saved="fetchAgents"
     />
   </div>
@@ -84,6 +86,7 @@ const pageSize = ref(20)
 const total = ref(0)
 const dialogVisible = ref(false)
 const currentAgent = ref<any>(null)
+const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 
 async function fetchAgents() {
   loading.value = true
@@ -113,18 +116,33 @@ function handlePageChange(page: number) {
 }
 
 function handleCreate() {
+  dialogMode.value = 'create'
   currentAgent.value = null
   dialogVisible.value = true
 }
 
-function handleEdit(row: any) {
-  currentAgent.value = row
+async function loadAgentDetail(id: number) {
+  const { data } = await api.get(`/agents/${id}`)
+  return data
+}
+
+async function handleCopy(row: any) {
+  const detail = await loadAgentDetail(row.id)
+  dialogMode.value = 'copy'
+  currentAgent.value = detail
+  dialogVisible.value = true
+}
+
+async function handleEdit(row: any) {
+  const detail = await loadAgentDetail(row.id)
+  dialogMode.value = 'edit'
+  currentAgent.value = detail
   dialogVisible.value = true
 }
 
 async function handleDelete(row: any) {
   try {
-    await ElMessageBox.confirm(`确定要删除 Agent "${row.name}" 吗？`, '确认', {
+    await ElMessageBox.confirm(`确定要删除 Agent \"${row.name}\" 吗？`, '确认', {
       type: 'warning'
     })
     await api.delete(`/agents/${row.id}`)

@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     :model-value="visible"
-    :title="isEdit ? '编辑模型' : '添加模型'"
+    :title="dialogTitle"
     width="580px"
     @close="$emit('update:visible', false)"
   >
@@ -35,29 +35,39 @@
     <template #footer>
       <el-button @click="$emit('update:visible', false)">取消</el-button>
       <el-button type="primary" :loading="submitting" @click="handleSubmit">
-        {{ isEdit ? '保存' : '添加' }}
+        {{ submitButtonText }}
       </el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, reactive } from 'vue'
+import { computed, ref, watch, reactive } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   visible: boolean
   modelData?: any | null
-}>()
+  mode?: 'create' | 'edit' | 'copy'
+}>(), {
+  modelData: null,
+  mode: 'create'
+})
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   saved: []
 }>()
 
-const isEdit = ref(false)
+const isEdit = computed(() => props.mode === 'edit')
+const dialogTitle = computed(() => {
+  if (props.mode === 'edit') return '编辑模型'
+  if (props.mode === 'copy') return '复制模型'
+  return '添加模型'
+})
+const submitButtonText = computed(() => (isEdit.value ? '保存' : '添加'))
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 
@@ -72,32 +82,37 @@ const form = reactive({
 
 const rules: FormRules = {
   name: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
-  modelId: [{ required: true, message: '请输入模型标识', trigger: 'blur' }]
+  modelId: [{ required: true, message: '请输入模型标识', trigger: 'blur' }],
+  apiKey: [{ required: true, message: '请输入 API Key', trigger: 'blur' }]
+}
+
+function resetForm() {
+  Object.assign(form, {
+    name: '',
+    provider: '',
+    modelId: '',
+    baseUrl: '',
+    apiKey: '',
+    supportsVision: false
+  })
 }
 
 watch(() => props.visible, (val) => {
   if (!val) return
   if (props.modelData) {
-    isEdit.value = true
     Object.assign(form, {
-      name: props.modelData.name || '',
+      name: props.mode === 'copy' ? `${props.modelData.name || ''} - 副本` : props.modelData.name || '',
       provider: props.modelData.provider || '',
       modelId: props.modelData.modelId || '',
       baseUrl: props.modelData.baseUrl || '',
-      apiKey: '',
+      apiKey: props.modelData.apiKey || '',
       supportsVision: !!props.modelData.supportsVision
     })
   } else {
-    isEdit.value = false
-    Object.assign(form, {
-      name: '',
-      provider: '',
-      modelId: '',
-      baseUrl: '',
-      apiKey: '',
-      supportsVision: false
-    })
+    resetForm()
   }
+
+  formRef.value?.clearValidate()
 })
 
 async function handleSubmit() {
@@ -107,15 +122,12 @@ async function handleSubmit() {
   submitting.value = true
   try {
     const payload: any = { ...form, supportsVision: form.supportsVision ? 1 : 0 }
-    if (isEdit.value && !payload.apiKey) {
-      delete (payload as any).apiKey
-    }
     if (isEdit.value && props.modelData?.id) {
       await api.put(`/models/${props.modelData.id}`, payload)
       ElMessage.success('模型更新成功')
     } else {
       await api.post('/models', payload)
-      ElMessage.success('模型添加成功')
+      ElMessage.success(props.mode === 'copy' ? '模型复制成功' : '模型添加成功')
     }
     emit('update:visible', false)
     emit('saved')
