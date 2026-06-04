@@ -36,11 +36,6 @@
           <span>用户管理</span>
         </el-menu-item>
 
-        <el-menu-item index="/audit">
-          <el-icon><Document /></el-icon>
-          <span>审计日志</span>
-        </el-menu-item>
-
       </el-menu>
     </el-aside>
 

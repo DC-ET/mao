@@ -184,42 +184,6 @@ CREATE TABLE IF NOT EXISTS `hub_installation` (
     UNIQUE KEY `uk_user_agent` (`user_id`, `agent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- ========== 审计日志 ==========
-
-CREATE TABLE IF NOT EXISTS `audit_log` (
-    `id`            BIGINT PRIMARY KEY AUTO_INCREMENT,
-    `user_id`       BIGINT,
-    `username`      VARCHAR(64),
-    `action`        VARCHAR(64) NOT NULL COMMENT '操作类型',
-    `resource_type` VARCHAR(64) COMMENT '资源类型',
-    `resource_id`   VARCHAR(64) COMMENT '资源 ID',
-    `detail`        JSON COMMENT '操作详情',
-    `ip`            VARCHAR(45),
-    `user_agent`    VARCHAR(512),
-    `created_at`    DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX `idx_user` (`user_id`),
-    INDEX `idx_action` (`action`),
-    INDEX `idx_created` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS `api_call_log` (
-    `id`             BIGINT PRIMARY KEY AUTO_INCREMENT,
-    `user_id`        BIGINT,
-    `session_id`     BIGINT,
-    `agent_id`       BIGINT,
-    `endpoint`       VARCHAR(256) NOT NULL,
-    `method`         VARCHAR(10),
-    `request_body`   MEDIUMTEXT,
-    `response_code`  INT,
-    `latency_ms`     INT,
-    `llm_model`      VARCHAR(128),
-    `llm_tokens_in`  INT DEFAULT 0,
-    `llm_tokens_out` INT DEFAULT 0,
-    `created_at`     DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX `idx_session` (`session_id`),
-    INDEX `idx_created` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 -- ========== 初始数据 ==========
 
 -- 默认角色
@@ -235,8 +199,7 @@ INSERT IGNORE INTO `permission` (`id`, `name`, `code`, `description`) VALUES
 (4, '管理用户', 'user:write', '创建、编辑、禁用用户'),
 (5, '查看模型', 'model:read', '查看模型配置'),
 (6, '管理模型', 'model:write', '创建、编辑、删除模型配置'),
-(7, '查看审计日志', 'audit:read', '查看审计日志'),
-(8, '管理Hub', 'hub:write', '审核和管理 Hub 中的 Agent');
+(7, '管理Hub', 'hub:write', '审核和管理 Hub 中的 Agent');
 
 -- 管理员拥有所有权限
 INSERT IGNORE INTO `role_permission` (`role_id`, `permission_id`)
