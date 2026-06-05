@@ -47,7 +47,7 @@
 
     <div class="inspector-section">
       <h4 class="section-title">进度</h4>
-      <TodoChecklist :todos="todos" editable @update="(todoId, action) => $emit('todoUpdate', todoId, action)" />
+      <TodoChecklist :todos="todos" />
     </div>
 
     <div class="inspector-section">
@@ -89,7 +89,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   toolConfirm: [requestId: string, approved: boolean]
   togglePanel: []
-  todoUpdate: [todoId: number, action: 'start' | 'complete' | 'delete']
   rename: [title: string]
 }>()
 

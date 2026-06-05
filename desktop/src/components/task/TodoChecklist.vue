@@ -22,25 +22,7 @@
             <span v-else-if="item.status === 'in_progress'" class="icon-active"></span>
             <span v-else class="icon-pending"></span>
           </span>
-          <span class="todo-content">{{ item.content }}</span>
-          <span class="todo-actions" v-if="editable">
-            <el-dropdown trigger="click" @command="(cmd: string) => handleAction(cmd, item)">
-              <el-icon class="action-trigger"><MoreFilled /></el-icon>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item v-if="item.status !== 'in_progress'" command="start">
-                    标记为进行中
-                  </el-dropdown-item>
-                  <el-dropdown-item v-if="item.status !== 'completed'" command="complete">
-                    标记为已完成
-                  </el-dropdown-item>
-                  <el-dropdown-item command="delete" divided>
-                    删除
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </span>
+          <span class="todo-content" :title="item.content">{{ item.content }}</span>
         </div>
       </div>
     </template>
@@ -49,16 +31,11 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Select, MoreFilled } from '@element-plus/icons-vue'
+import { Select } from '@element-plus/icons-vue'
 import type { TodoItem } from '../../types/chat'
 
 const props = defineProps<{
   todos?: TodoItem[]
-  editable?: boolean
-}>()
-
-const emit = defineEmits<{
-  (e: 'update', todoId: number, action: 'start' | 'complete' | 'delete'): void
 }>()
 
 const completedCount = computed(() =>
@@ -68,10 +45,6 @@ const completedCount = computed(() =>
 const progressPercent = computed(() =>
   props.todos?.length ? Math.round((completedCount.value / props.todos.length) * 100) : 0
 )
-
-function handleAction(cmd: string, item: TodoItem) {
-  emit('update', item.id, cmd as 'start' | 'complete' | 'delete')
-}
 </script>
 
 <style scoped>
@@ -169,24 +142,6 @@ function handleAction(cmd: string, item: TodoItem) {
   white-space: nowrap;
   min-width: 0;
   flex: 1;
-}
-
-.todo-actions {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-}
-
-.action-trigger {
-  cursor: pointer;
-  color: var(--aw-ink-muted-48);
-  font-size: 14px;
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.todo-item:hover .action-trigger {
-  opacity: 1;
 }
 
 /* in_progress: bold highlight + left accent */
