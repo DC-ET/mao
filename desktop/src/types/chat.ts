@@ -24,6 +24,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   createdAt: string
+  updatedAt?: string
   files?: FileAttachment[]
   images?: string[]
   toolCalls?: ToolCall[]

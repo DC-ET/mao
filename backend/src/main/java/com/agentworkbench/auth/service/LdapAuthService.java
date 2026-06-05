@@ -45,8 +45,12 @@ public class LdapAuthService {
     @Value("${ldap.user-search-base:ou=users}")
     private String userSearchBase;
 
-    public LoginVO login(String username, String password) {
-        if (ldapUrl == null || ldapUrl.isEmpty()) {
+    public boolean isConfigured() {
+        return ldapUrl != null && !ldapUrl.isEmpty();
+    }
+
+    public LoginVO authenticate(String username, String password) {
+        if (!isConfigured()) {
             throw new BusinessException(5003, "LDAP 未配置");
         }
 
@@ -70,16 +74,15 @@ public class LdapAuthService {
             String displayName = getAttr(attrs, "cn", username);
             String email = getAttr(attrs, "mail", null);
 
-            // Step 4: Find or create local user
+            // Step 4: Find or create local user (by username only)
             User user = userMapper.selectOne(
-                    new QueryWrapper<User>().eq("username", username).eq("auth_type", "LDAP"));
+                    new QueryWrapper<User>().eq("username", username));
 
             if (user == null) {
                 user = new User();
                 user.setUsername(username);
                 user.setDisplayName(displayName);
                 user.setEmail(email);
-                user.setAuthType("LDAP");
                 user.setStatus(1);
                 userMapper.insert(user);
 

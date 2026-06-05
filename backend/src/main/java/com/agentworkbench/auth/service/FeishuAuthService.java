@@ -93,7 +93,6 @@ public class FeishuAuthService {
                 user.setDisplayName(name);
                 user.setEmail(email);
                 user.setAvatarUrl(avatarUrl);
-                user.setAuthType("FEISHU");
                 user.setFeishuUserId(feishuUserId);
                 user.setStatus(1);
                 userMapper.insert(user);

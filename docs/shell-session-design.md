@@ -616,7 +616,7 @@ app:
   harness:
     shell:
       enabled: true
-      max-sessions-per-conversation: 5
+      max-sessions-per-conversation: 30
       session-idle-timeout-minutes: 30
       session-max-lifetime-hours: 2
       default-yield-time-ms: 10000

@@ -24,6 +24,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
     private final StringRedisTemplate redisTemplate;
+    private final LdapAuthService ldapAuthService;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
 
@@ -31,34 +32,38 @@ public class AuthService {
         User user = userMapper.selectOne(
                 new QueryWrapper<User>().eq("username", username));
 
-        if (user == null) {
-            throw new BusinessException(ErrorCode.LOGIN_FAILED);
+        // 本地密码验证
+        if (user != null && user.getPasswordHash() != null
+                && passwordEncoder.matches(password, user.getPasswordHash())) {
+            return buildLoginResult(user);
         }
 
-        if (!"LOCAL".equals(user.getAuthType())) {
-            throw new BusinessException(ErrorCode.LOGIN_FAILED.getCode(), "请使用对应的认证方式登录");
+        // LDAP 回退验证
+        if (ldapAuthService != null && ldapAuthService.isConfigured()) {
+            try {
+                return ldapAuthService.authenticate(username, password);
+            } catch (Exception ignored) {
+            }
         }
 
-        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
-            throw new BusinessException(ErrorCode.LOGIN_FAILED);
-        }
+        throw new BusinessException(ErrorCode.LOGIN_FAILED);
+    }
 
+    private LoginVO buildLoginResult(User user) {
         if (user.getStatus() != null && user.getStatus() == 0) {
             throw new BusinessException(ErrorCode.ACCOUNT_DISABLED);
         }
 
-        // Update last login time
         user.setLastLoginAt(LocalDateTime.now());
         userMapper.updateById(user);
 
-        // Generate tokens
         String accessToken = jwtService.generateToken(user.getId(), user.getUsername());
         String refreshToken = jwtService.generateRefreshToken(user.getId(), user.getUsername());
 
         LoginVO vo = new LoginVO();
         vo.setAccessToken(accessToken);
         vo.setRefreshToken(refreshToken);
-        vo.setExpiresIn(86400L); // 24 hours in seconds
+        vo.setExpiresIn(86400L);
 
         UserInfoVO userInfo = new UserInfoVO();
         userInfo.setId(user.getId());

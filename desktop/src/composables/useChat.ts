@@ -4,6 +4,7 @@ import { api } from '../api'
 import { useSessionStore } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
 import { mapApiMessagesToChat } from '../utils/chatMessage'
+import type { ChatMessage } from '../types/chat'
 
 export type {
   ChatMessage,
@@ -29,7 +30,7 @@ let approvalListenerSetup = false
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const sessionStore = useSessionStore()
-  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, cancel: wsCancel, pendingCallbacks } = useStreamWS()
+  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, pendingCallbacks } = useStreamWS()
 
   const sending = ref(false)
   const cancelling = ref(false)
@@ -254,6 +255,85 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     // cancelling stays true until the server confirms CANCELLED phase.
   }
 
+  /**
+   * 编辑最后一条用户消息并重新发送
+   */
+  async function editAndResend(messageId: string, newContent: string, images: string[] = []) {
+    if (!sessionId.value) return
+
+    // 校验状态
+    if (sending.value) {
+      ElMessage.warning('会话正在执行中，无法编辑')
+      return
+    }
+
+    // 校验是否是最后一条用户消息
+    const msgs = sessionStore.getMessages(sessionId.value)
+    const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user')
+    if (!lastUserMsg || String(lastUserMsg.id) !== String(messageId)) {
+      ElMessage.warning('只能编辑最后一条用户消息')
+      return
+    }
+
+    // 乐观更新：截断后续消息，更新编辑内容
+    sessionStore.truncateMessagesAfter(sessionId.value, messageId)
+    sessionStore.updateMessageContent(sessionId.value, messageId, newContent, images.length > 0 ? images : undefined)
+
+    // 添加空 assistant 占位消息
+    const placeholderMsg: ChatMessage = {
+      id: `msg_${Date.now()}_assistant`,
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toLocaleString(),
+      toolCalls: [],
+      segments: []
+    }
+    sessionStore.appendMessage(sessionId.value, placeholderMsg)
+
+    sending.value = true
+    startedAt.value = new Date().toISOString()
+
+    try {
+      // Ensure WS connection is established
+      await connect()
+
+      // Subscribe to this session's events
+      subscribe(sessionId.value)
+
+      // 通过 WS 发送编辑请求
+      sendEditMessage(sessionId.value, newContent, messageId, images)
+
+      // Wait for completion
+      await new Promise<void>((resolve, reject) => {
+        pendingCallbacks.set(sessionId.value!, { resolve, reject })
+      })
+
+      sending.value = false
+      if (startedAt.value) {
+        const lastMsg = messages.value[messages.value.length - 1]
+        if (lastMsg && lastMsg.role === 'assistant') {
+          lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
+        }
+        startedAt.value = null
+      }
+      // Refresh session
+      if (sessionId.value) {
+        sessionStore.fetchSession(sessionId.value)
+      }
+    } catch (error: any) {
+      sending.value = false
+      // Remove empty assistant message if it was added
+      const lastMsg = messages.value[messages.value.length - 1]
+      if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
+        messages.value.pop()
+      }
+      ElMessage.error(error?.message || '编辑重新发送失败')
+      if (sessionId.value) {
+        sessionStore.fetchSession(sessionId.value)
+      }
+    }
+  }
+
   // Watch for CANCELLED phase to clear cancelling flag
   watch(() => sessionStore.activeSession?.phase, (phase) => {
     if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED' || phase === 'IDLE') {
@@ -353,6 +433,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     contextWindow,
     startedAt,
     sendMessage,
+    editAndResend,
     stopExecution,
     fetchMessages,
     newSession,

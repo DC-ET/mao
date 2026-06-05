@@ -12,11 +12,6 @@
         <el-table-column prop="username" label="用户名" width="120" />
         <el-table-column prop="displayName" label="显示名称" width="120" />
         <el-table-column prop="email" label="邮箱" min-width="180" />
-        <el-table-column prop="authType" label="认证方式" width="100">
-          <template #default="{ row }">
-            <el-tag size="small">{{ row.authType }}</el-tag>
-          </template>
-        </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
