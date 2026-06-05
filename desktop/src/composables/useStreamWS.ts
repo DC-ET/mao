@@ -192,6 +192,16 @@ export function useStreamWS() {
     })
   }
 
+  function sendEditMessage(sessionId: string, content: string, messageId: string, images?: string[]) {
+    send({
+      type: 'edit_and_resend',
+      sessionId: Number(sessionId),
+      messageId: Number(messageId),
+      content,
+      images: images || []
+    })
+  }
+
   function cancel(sessionId: string) {
     send({ type: 'cancel', sessionId: Number(sessionId) })
   }
@@ -284,6 +294,13 @@ export function useStreamWS() {
 
       case 'message_end':
         if (sessionId) sessionStore.markMessageComplete(sessionId, data)
+        break
+
+      case 'user_message_saved':
+        // Server returned the real DB ID for a user message — update the optimistic temp ID
+        if (sessionId && data?.messageId) {
+          sessionStore.updateLastMessageId(sessionId, 'user', String(data.messageId))
+        }
         break
 
       case 'session_snapshot':
@@ -379,6 +396,7 @@ export function useStreamWS() {
     subscribe,
     unsubscribe,
     sendMessage,
+    sendEditMessage,
     cancel,
     pendingCallbacks
   }

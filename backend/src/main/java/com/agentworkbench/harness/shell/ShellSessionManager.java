@@ -24,7 +24,7 @@ public class ShellSessionManager {
 
     private final PathSandbox pathSandbox;
 
-    @Value("${app.harness.shell.max-sessions-per-conversation:5}")
+    @Value("${app.harness.shell.max-sessions-per-conversation:30}")
     private int maxSessionsPerConversation;
 
     @Value("${app.harness.shell.session-idle-timeout-minutes:30}")

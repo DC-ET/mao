@@ -24,6 +24,11 @@
             <MessageBubble
               :message="round.userMessage"
               :show-time="true"
+              :can-edit="canEditMessage(round.userMessage)"
+              :is-editing="editingMessageId === round.userMessage.id"
+              @edit="startEdit(round.userMessage)"
+              @cancel-edit="cancelEdit"
+              @confirm-edit="confirmEdit(round.userMessage.id, $event)"
             />
 
             <!-- 有执行步骤时：显示折叠块 -->
@@ -77,6 +82,11 @@
             :show-time="msg.role === 'user'"
             :show-copy="false"
             :is-last="idx === messages.length - 1"
+            :can-edit="canEditMessage(msg)"
+            :is-editing="editingMessageId === msg.id"
+            @edit="startEdit(msg)"
+            @cancel-edit="cancelEdit"
+            @confirm-edit="confirmEdit(msg.id, $event)"
           />
         </template>
 
@@ -174,6 +184,7 @@ const {
   todos,
   contextWindow,
   sendMessage,
+  editAndResend,
   stopExecution,
   newSession,
   restoreSession,
@@ -181,6 +192,9 @@ const {
   updateTodoManually,
   cleanup
 } = useChat(agentId, executionMode)
+
+// Edit message state
+const editingMessageId = ref<string | null>(null)
 
 const sessionTitle = computed(() => {
   const session = sessionStore.activeSession
@@ -265,6 +279,30 @@ function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage 
 
 function toggleRound(roundId: string) {
   roundsExpanded.value[roundId] = !roundsExpanded.value[roundId]
+}
+
+// Edit message functions
+function canEditMessage(msg: ChatMessage): boolean {
+  if (sending.value) return false
+  if (normalizeMessageRole(msg.role) !== 'user') return false
+  // 只允许编辑最后一条用户消息
+  const msgs = messages.value
+  const lastUserMsg = [...msgs].reverse().find(m => normalizeMessageRole(m.role) === 'user')
+  return lastUserMsg?.id === msg.id
+}
+
+function startEdit(msg: ChatMessage) {
+  editingMessageId.value = msg.id
+}
+
+function cancelEdit() {
+  editingMessageId.value = null
+}
+
+async function confirmEdit(messageId: string, newContent: string) {
+  editingMessageId.value = null
+  await editAndResend(messageId, newContent)
+  nextTick(scrollToBottomSmooth)
 }
 
 // Track local timing state; phase is driven by server WS session_status events

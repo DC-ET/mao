@@ -142,6 +142,16 @@ public class SessionController {
         return Result.ok(voList);
     }
 
+    @PatchMapping("/{sessionId}/messages/{messageId}")
+    public Result<MessageVO> editMessage(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long sessionId,
+            @PathVariable Long messageId,
+            @RequestBody EditMessageRequest request) {
+        Message edited = sessionService.editMessageAndTruncate(messageId, request.getContent(), request.getImages());
+        return Result.ok(toMessageVO(edited));
+    }
+
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @GetMapping("/{id}/activities")
@@ -276,6 +286,7 @@ public class SessionController {
         vo.setToolCalls(message.getToolCalls());
         vo.setTokenCount(message.getTokenCount());
         vo.setCreatedAt(message.getCreatedAt() != null ? message.getCreatedAt().toString() : null);
+        vo.setUpdatedAt(message.getUpdatedAt() != null ? message.getUpdatedAt().toString() : null);
 
         // Parse multimodal content: JSON array → extract text + images
         String raw = message.getContent();
@@ -366,6 +377,7 @@ public class SessionController {
         private Object toolCalls;
         private Integer tokenCount;
         private String createdAt;
+        private String updatedAt;
     }
 
     @Data
@@ -390,5 +402,11 @@ public class SessionController {
     public static class UpdateTodoRequest {
         private String status;
         private String content;
+    }
+
+    @Data
+    public static class EditMessageRequest {
+        private String content;
+        private List<String> images;
     }
 }

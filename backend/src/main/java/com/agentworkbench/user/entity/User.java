@@ -20,8 +20,6 @@ public class User {
 
     private String avatarUrl;
 
-    private String authType;
-
     private String passwordHash;
 
     private String feishuUserId;

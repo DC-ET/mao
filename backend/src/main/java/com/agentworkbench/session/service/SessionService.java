@@ -12,6 +12,7 @@ import com.agentworkbench.session.mapper.MessageMapper;
 import com.agentworkbench.session.mapper.SessionMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import lombok.RequiredArgsConstructor;
@@ -335,6 +336,61 @@ public class SessionService {
             log.warn("Failed to parse tool_calls JSON for tail cleanup: {}", e.getMessage());
         }
         return ids;
+    }
+
+    // --- Message edit ---
+
+    /**
+     * 编辑用户消息并截断后续消息
+     *
+     * @param messageId  待编辑的消息ID
+     * @param newContent 新的消息内容
+     * @param images     新的图片列表（可为空）
+     * @return 更新后的消息对象
+     * @throws IllegalArgumentException 如果消息不存在或非用户消息
+     */
+    @Transactional
+    public Message editMessageAndTruncate(Long messageId, String newContent, List<String> images) {
+        // 1. 查询目标消息，校验 role=USER
+        Message message = messageMapper.selectById(messageId);
+        if (message == null || !"USER".equals(message.getRole())) {
+            throw new IllegalArgumentException("只能编辑用户消息");
+        }
+
+        // 2. 更新消息内容
+        message.setContent(buildEditContent(newContent, images));
+        message.setUpdatedAt(LocalDateTime.now());
+        messageMapper.updateById(message);
+
+        // 3. 删除该消息之后的所有消息（按 created_at 降序删除）
+        LambdaQueryWrapper<Message> deleteWrapper = new LambdaQueryWrapper<Message>()
+                .eq(Message::getSessionId, message.getSessionId())
+                .gt(Message::getCreatedAt, message.getCreatedAt());
+        messageMapper.delete(deleteWrapper);
+
+        log.info("Edited message {} in session {}, truncated subsequent messages", messageId, message.getSessionId());
+        return message;
+    }
+
+    /**
+     * 构建编辑后的消息内容（支持纯文本和多模态）
+     */
+    private String buildEditContent(String text, List<String> images) {
+        if (images == null || images.isEmpty()) {
+            return text;
+        }
+        // 多模态内容使用 JSON 数组格式
+        List<Map<String, String>> parts = new ArrayList<>();
+        parts.add(Map.of("type", "text", "text", text != null ? text : ""));
+        for (String imageUrl : images) {
+            parts.add(Map.of("type", "image_url", "image_url", imageUrl));
+        }
+        try {
+            return objectMapper.writeValueAsString(parts);
+        } catch (JsonProcessingException e) {
+            log.warn("Failed to serialize edit content to JSON", e);
+            return text;
+        }
     }
 
     // --- Phase management ---

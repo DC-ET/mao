@@ -313,6 +313,71 @@ export const useSessionStore = defineStore('session', () => {
     sessionMessages.value.delete(String(sessionId))
   }
 
+  /**
+   * 截断指定消息之后的所有消息
+   */
+  function truncateMessagesAfter(sessionId: string, messageId: string) {
+    const messages = sessionMessages.value.get(String(sessionId))
+    if (!messages) return
+
+    const targetIndex = messages.findIndex(m => String(m.id) === String(messageId))
+    if (targetIndex === -1) return
+
+    // 保留目标消息及其之前的消息
+    sessionMessages.value.set(String(sessionId), messages.slice(0, targetIndex + 1))
+  }
+
+  /**
+   * 更新指定消息的内容
+   */
+  function updateMessageContent(
+    sessionId: string,
+    messageId: string,
+    newContent: string,
+    images?: string[]
+  ) {
+    const messages = sessionMessages.value.get(String(sessionId))
+    if (!messages) return
+
+    const message = messages.find(m => String(m.id) === String(messageId))
+    if (message) {
+      message.content = newContent
+      if (images !== undefined) {
+        message.images = images
+      }
+      message.updatedAt = new Date().toISOString()
+      // 触发响应式更新
+      sessionMessages.value.set(String(sessionId), [...messages])
+    }
+  }
+
+  /**
+   * 追加消息到会话
+   */
+  function appendMessage(sessionId: string, msg: ChatMessage) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid) ?? []
+    sessionMessages.value.set(sid, [...list, msg])
+  }
+
+  /**
+   * 更新最后一条指定角色消息的 ID（用于将临时 ID 替换为数据库真实 ID）
+   */
+  function updateLastMessageId(sessionId: string, role: 'user' | 'assistant', realId: string) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid)
+    if (!list) return
+
+    // 从后往前找最后一条指定角色的消息
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].role === role && String(list[i].id).startsWith('msg_')) {
+        list[i].id = realId
+        sessionMessages.value.set(sid, [...list])
+        return
+      }
+    }
+  }
+
   // --- Todo cache actions ---
 
   function setTodos(sessionId: string, todos: TodoItem[]) {
@@ -367,6 +432,20 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  function reset() {
+    sessions.value = []
+    activeSessionId.value = null
+    loading.value = false
+    sessionMessages.value = new Map()
+    sessionTodos.value = new Map()
+    sessionActivities.value = new Map()
+    sessionContextWindow.value = new Map()
+    sessionCompacting.value = new Map()
+    sessionThinking.value = new Map()
+    sessionStreaming.value = new Map()
+    sessionPendingApprovals.value = new Map()
+  }
+
   return {
     sessions,
     activeSessionId,
@@ -396,6 +475,10 @@ export const useSessionStore = defineStore('session', () => {
     updateToolCallResult,
     markMessageComplete,
     clearMessages,
+    truncateMessagesAfter,
+    updateMessageContent,
+    appendMessage,
+    updateLastMessageId,
     // Todo cache
     setTodos,
     clearTodos,
@@ -415,6 +498,7 @@ export const useSessionStore = defineStore('session', () => {
     // Pending approvals
     sessionPendingApprovals,
     incrementPendingApproval,
-    decrementPendingApproval
+    decrementPendingApproval,
+    reset
   }
 })

@@ -194,6 +194,7 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
       role,
       content,
       createdAt: String(m.createdAt ?? ''),
+      updatedAt: m.updatedAt ? String(m.updatedAt) : undefined,
       images: images.length > 0 ? images : undefined,
       toolCalls,
       segments

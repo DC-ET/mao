@@ -28,10 +28,11 @@
       <el-dropdown @command="handleCommand" trigger="click">
         <div class="nav-user">
           <el-avatar :size="24" icon="User" />
+          <span class="nav-username">{{ authStore.user?.username }}</span>
           <el-icon :size="10"><ArrowDown /></el-icon>
         </div>
         <template #dropdown>
-          <el-dropdown-menu>
+          <el-dropdown-menu class="nav-dropdown">
             <el-dropdown-item command="logout">退出登录</el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -182,6 +183,21 @@ async function handleCommand(command: string) {
 .nav-user :deep(.el-avatar) {
   background: var(--aw-surface-chip);
   color: var(--aw-ink);
+}
+
+.nav-username {
+  font-size: var(--aw-text-caption);
+  color: var(--aw-nav-text-muted);
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.nav-dropdown :deep(.el-dropdown-menu__item) {
+  font-size: var(--aw-text-caption);
+  padding: 4px 12px;
 }
 
 .theme-toggle {

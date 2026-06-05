@@ -112,6 +112,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             case "subscribe" -> handleSubscribe(userId, root);
             case "unsubscribe" -> handleUnsubscribe(userId, root);
             case "send_message" -> handleSendMessage(userId, root);
+            case "edit_and_resend" -> handleEditAndResend(userId, root);
             case "cancel" -> handleCancel(userId, root);
             case "skill_sync_done" -> handleSkillSyncDone(userId, root);
             case "tool_result" -> handleToolResult(userId, root);
@@ -252,7 +253,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         }
 
         // Save user message to DB
-        sessionService.saveMessage(sessionId, "USER", messageContent, null, null, 0, null);
+        com.agentworkbench.session.entity.Message savedMessage = sessionService.saveMessage(sessionId, "USER", messageContent, null, null, 0, null);
+
+        // Send real message ID back to client so it can update the optimistic temp ID
+        registry.send(userId, WsEvent.of("user_message_saved", sessionId,
+                Map.of("tempEventId", eventId != null ? eventId : "", "messageId", savedMessage.getId())));
 
         // Prepare event content in cache
         String resolvedEventId = (eventId != null && !eventId.isBlank())
@@ -268,6 +273,186 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
         // Submit agent execution to thread pool
         log.info("Session {} executionMode={}, submitting to agentExecutor", sessionId, session.getExecutionMode());
+        agentExecutor.submit(() -> {
+            try {
+                sessionService.updatePhase(sessionId, "RUNNING");
+                registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "RUNNING")));
+                registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "RUNNING")));
+
+                // LOCAL mode: sync skills to client workspace before agent execution
+                if ("LOCAL".equals(session.getExecutionMode())) {
+                    Agent agent = agentMapper.selectById(session.getAgentId());
+                    if (agent != null) {
+                        boolean synced = syncSkillsToClient(userId, sessionId, session, agent);
+                        if (!synced) {
+                            sessionService.updatePhase(sessionId, "FAILED");
+                            registry.send(userId, WsEvent.of("error", sessionId,
+                                    Map.of("message", "Skill sync failed or timed out")));
+                            registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED")));
+                            registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
+                            return;
+                        }
+                    }
+                }
+
+                // CLOUD mode: sync skills to workspace before agent execution
+                if ("CLOUD".equals(session.getExecutionMode())) {
+                    try {
+                        Agent agent = agentMapper.selectById(session.getAgentId());
+                        if (agent != null) {
+                            skillSyncService.syncToWorkspace(agent, session.getWorkspace());
+                        }
+                    } catch (Exception e) {
+                        log.warn("Skill sync to workspace failed for session {}: {}", sessionId, e.getMessage());
+                    }
+                }
+
+                // Clear previous turn's todos before starting new agent execution
+                sessionTodoMapper.delete(
+                        new LambdaQueryWrapper<SessionTodo>()
+                                .eq(SessionTodo::getSessionId, sessionId));
+                registry.send(userId, WsEvent.of("todo_updated", sessionId, Map.of("todos", List.of())));
+
+                WsStreamingEventListener listener = new WsStreamingEventListener(
+                        registry, activityService, sessionTodoMapper, sessionService, sessionId, userId);
+
+                harnessService.executeFromEvent(sessionId, resolvedEventId, listener, cancelFlag);
+
+                if (cancelFlag.get()) {
+                    sessionService.updatePhase(sessionId, "CANCELLED");
+                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLED")));
+                    registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "CANCELLED")));
+                } else {
+                    sessionService.updatePhase(sessionId, "COMPLETED");
+                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "COMPLETED")));
+                    registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "COMPLETED")));
+                }
+            } catch (Exception e) {
+                log.error("Agent execution failed for session {}", sessionId, e);
+                try {
+                    registry.send(userId, WsEvent.of("error", sessionId,
+                            Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常")));
+                } catch (Exception ignored) {}
+                try {
+                    sessionService.updatePhase(sessionId, "FAILED");
+                } catch (Exception ignored) {}
+                registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED")));
+                registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
+            } finally {
+                cancelFlags.remove(sessionId);
+                agentLoop.removeCancelFlag(sessionId);
+            }
+        });
+    }
+
+    private void handleEditAndResend(Long userId, JsonNode root) {
+        Long sessionId = getLong(root, "sessionId");
+        Long messageId = getLong(root, "messageId");
+        if (sessionId == null || messageId == null) return;
+
+        String content = root.has("content") ? root.get("content").asText() : "";
+
+        // Parse images from WS message
+        List<String> images = new ArrayList<>();
+        if (root.has("images") && root.get("images").isArray()) {
+            for (JsonNode img : root.get("images")) {
+                images.add(img.asText());
+            }
+        }
+
+        // Validate session exists
+        Session session;
+        try {
+            session = sessionService.getSession(sessionId);
+        } catch (Exception e) {
+            registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "会话不存在")));
+            return;
+        }
+
+        // Check session not already running or resuming
+        if ("RUNNING".equals(session.getPhase()) || "RESUMING".equals(session.getPhase())) {
+            registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "会话正在执行中，无法编辑")));
+            return;
+        }
+
+        // Validate message is the last user message
+        List<com.agentworkbench.session.entity.Message> messages = sessionService.getMessages(sessionId);
+        com.agentworkbench.session.entity.Message lastUserMsg = messages.stream()
+                .filter(m -> "USER".equals(m.getRole()))
+                .reduce((a, b) -> b)
+                .orElse(null);
+        if (lastUserMsg == null || !lastUserMsg.getId().equals(messageId)) {
+            registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "只能编辑最后一条用户消息")));
+            return;
+        }
+
+        // Edit message and truncate subsequent messages
+        com.agentworkbench.session.entity.Message editedMessage;
+        try {
+            editedMessage = sessionService.editMessageAndTruncate(messageId, content, images);
+        } catch (Exception e) {
+            registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "编辑消息失败: " + e.getMessage())));
+            return;
+        }
+
+        // Vision model check: if images are attached, verify model supports vision
+        if (!images.isEmpty()) {
+            Agent agent = agentMapper.selectById(session.getAgentId());
+            if (agent != null) {
+                LlmModel model = llmModelMapper.selectById(agent.getModelId());
+                if (model == null || model.getSupportsVision() == null || model.getSupportsVision() != 1) {
+                    registry.send(userId, WsEvent.of("error", sessionId,
+                            Map.of("message", "当前模型不支持图片输入，请切换支持视觉的模型")));
+                    return;
+                }
+            }
+            if (images.size() > 10) {
+                registry.send(userId, WsEvent.of("error", sessionId,
+                        Map.of("message", "单条消息最多支持 10 张图片")));
+                return;
+            }
+        }
+
+        // For LOCAL mode, verify desktop client is connected
+        if ("LOCAL".equals(session.getExecutionMode())) {
+            localToolSessionRegistry.setUserForSession(sessionId, userId);
+            if (!localToolSessionRegistry.isConnected(sessionId)) {
+                registry.send(userId, WsEvent.of("error", sessionId,
+                        Map.of("message", "Local client is not connected. Please ensure the desktop app is running.")));
+                return;
+            }
+        }
+
+        // Build multimodal content
+        Object messageContent;
+        if (images.isEmpty()) {
+            messageContent = content;
+        } else {
+            List<ChatRequest.ContentPart> parts = new ArrayList<>();
+            if (content != null && !content.isBlank()) {
+                parts.add(ChatRequest.ContentPart.builder().type("text").text(content).build());
+            }
+            for (String imageUrl : images) {
+                parts.add(ChatRequest.ContentPart.builder()
+                        .type("image_url")
+                        .imageUrl(ChatRequest.ImageUrl.builder().url(imageUrl).build())
+                        .build());
+            }
+            messageContent = parts;
+        }
+
+        // Prepare event content in cache
+        String resolvedEventId = harnessService.prepareMessage(sessionId, messageContent);
+
+        // Auto-subscribe so the client receives its own events
+        registry.subscribe(userId, sessionId);
+
+        // Register cancel flag
+        AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(sessionId);
+        cancelFlags.put(sessionId, cancelFlag);
+
+        // Submit agent execution to thread pool
+        log.info("Session {} edit_and_resend, executionMode={}, submitting to agentExecutor", sessionId, session.getExecutionMode());
         agentExecutor.submit(() -> {
             try {
                 sessionService.updatePhase(sessionId, "RUNNING");

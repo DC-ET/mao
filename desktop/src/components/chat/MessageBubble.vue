@@ -5,7 +5,7 @@
         <span class="message-time">{{ message.createdAt }}</span>
       </div>
 
-      <div v-if="message.images && message.images.length > 0" class="message-images">
+      <div v-if="message.images && message.images.length > 0 && !isEditing" class="message-images">
         <el-image
           v-for="(url, idx) in message.images"
           :key="idx"
@@ -17,8 +17,31 @@
           :preview-teleported="true"
         />
       </div>
-      <div v-if="role === 'user'" class="message-text user-text">
+
+      <!-- 用户消息：正常态 -->
+      <div v-if="role === 'user' && !isEditing" class="message-text user-text">
         {{ message.content }}
+      </div>
+
+      <!-- 用户消息：编辑态 -->
+      <div v-else-if="role === 'user' && isEditing" class="message-edit">
+        <textarea
+          ref="editInput"
+          v-model="editContent"
+          class="edit-textarea"
+          @keydown.escape="$emit('cancelEdit')"
+          @keydown.enter.ctrl="handleConfirm"
+          @keydown.enter.meta="handleConfirm"
+          rows="3"
+        />
+        <div class="edit-actions">
+          <button class="edit-confirm-btn" @click="handleConfirm" :disabled="!editContent.trim()">
+            <el-icon><Check /></el-icon> 确认
+          </button>
+          <button class="edit-cancel-btn" @click="$emit('cancelEdit')">
+            <el-icon><Close /></el-icon> 取消
+          </button>
+        </div>
       </div>
 
       <!-- assistant：按时间线穿插正文与工具 -->
@@ -59,7 +82,10 @@
         <span class="stream-dot"></span>
         <span class="stream-dot"></span>
       </div>
-      <div v-if="message.content && showCopy && !isAssistantRunning" class="message-footer">
+      <div v-if="message.content && showCopy && !isAssistantRunning && !isEditing" class="message-footer">
+        <button v-if="canEdit" class="edit-btn" @click="$emit('edit')" title="编辑消息">
+          <el-icon :size="12"><Edit /></el-icon>
+        </button>
         <button class="copy-btn" :class="{ copied }" @click="copyMessage">
           <el-icon :size="12"><CopyDocument /></el-icon>
           <span v-if="copied">已复制</span>
@@ -70,8 +96,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { Document, CopyDocument } from '@element-plus/icons-vue'
+import { computed, ref, watch, nextTick } from 'vue'
+import { Document, CopyDocument, Edit, Check, Close } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../composables/useMarkdown'
 import ToolCallGroup from './ToolCallGroup.vue'
 import {
@@ -83,10 +109,44 @@ import {
 import { buildSegmentsFromContentAndTools } from '../../utils/chatMessage'
 import { useSessionStore } from '../../stores/session'
 
-const props = withDefaults(defineProps<{ message: ChatMessage; showTime?: boolean; showCopy?: boolean; isLast?: boolean }>(), {
+const props = withDefaults(defineProps<{
+  message: ChatMessage
+  showTime?: boolean
+  showCopy?: boolean
+  isLast?: boolean
+  canEdit?: boolean
+  isEditing?: boolean
+}>(), {
   showCopy: true,
-  isLast: false
+  isLast: false,
+  canEdit: false,
+  isEditing: false
 })
+
+const emit = defineEmits<{
+  edit: []
+  cancelEdit: []
+  confirmEdit: [content: string]
+}>()
+
+// Edit mode state
+const editContent = ref(props.message.content || '')
+const editInput = ref<HTMLTextAreaElement>()
+
+watch(() => props.isEditing, async (editing) => {
+  if (editing) {
+    editContent.value = props.message.content || ''
+    await nextTick()
+    editInput.value?.focus()
+    editInput.value?.select()
+  }
+})
+
+function handleConfirm() {
+  if (editContent.value.trim()) {
+    emit('confirmEdit', editContent.value)
+  }
+}
 
 const sessionStore = useSessionStore()
 const role = computed(() => normalizeMessageRole(props.message.role))
@@ -476,5 +536,94 @@ async function copyMessage() {
 @keyframes stream-pulse {
   0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
   40% { opacity: 1; transform: scale(1); }
+}
+
+/* Edit mode styles */
+.message-edit {
+  width: 100%;
+}
+
+.edit-textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 12px;
+  border: 1px solid var(--aw-primary);
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-surface);
+  color: var(--aw-ink);
+  font-size: var(--aw-text-caption);
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+.edit-textarea:focus {
+  border-color: var(--aw-primary-hover);
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.edit-confirm-btn,
+.edit-cancel-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border: none;
+  border-radius: var(--aw-radius-xs);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.edit-confirm-btn {
+  background: var(--aw-primary);
+  color: white;
+}
+
+.edit-confirm-btn:hover:not(:disabled) {
+  background: var(--aw-primary-hover);
+}
+
+.edit-confirm-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.edit-cancel-btn {
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  border: 1px solid var(--aw-hairline);
+}
+
+.edit-cancel-btn:hover {
+  color: var(--aw-ink);
+  border-color: var(--aw-ink-muted-48);
+}
+
+.edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  border-radius: var(--aw-radius-xs);
+  transition: color 0.15s, background 0.15s;
+}
+
+.edit-btn:hover {
+  color: var(--aw-primary);
+  background: rgba(0, 0, 0, 0.04);
 }
 </style>

@@ -62,7 +62,6 @@ public class UserController {
         vo.setDisplayName(user.getDisplayName());
         vo.setEmail(user.getEmail());
         vo.setAvatarUrl(user.getAvatarUrl());
-        vo.setAuthType(user.getAuthType());
         vo.setStatus(user.getStatus());
         vo.setLastLoginAt(user.getLastLoginAt() != null ? user.getLastLoginAt().toString() : null);
         return vo;
@@ -80,7 +79,6 @@ public class UserController {
         private String displayName;
         private String email;
         private String avatarUrl;
-        private String authType;
         private Integer status;
         private String lastLoginAt;
     }
