@@ -6,11 +6,11 @@
         ref="textareaRef"
         v-model="inputText"
         class="chat-textarea"
-        :placeholder="placeholder"
+        :placeholder="loading ? 'Agent 执行中，发送的消息将进入队列...' : placeholder"
         rows="1"
         @input="autoResize"
-        @keydown.enter.ctrl.prevent="cancelling ? undefined : loading ? handleStop() : handleSend()"
-        @keydown.enter.meta.prevent="cancelling ? undefined : loading ? handleStop() : handleSend()"
+        @keydown.enter.ctrl.prevent="handleSendKey"
+        @keydown.enter.meta.prevent="handleSendKey"
         @paste="handlePaste"
       />
       <div class="resize-handle" title="拖拽调整大小">
@@ -62,16 +62,25 @@
       <div class="toolbar-right">
         <span v-if="modelName" class="model-name">{{ modelName }}</span>
         <button
-          class="send-btn"
-          :class="{ active: loading || canSend, loading, stop: loading, cancelling }"
-          :disabled="cancelling || (!loading && !canSend)"
-          :title="cancelling ? '正在停止...' : loading ? '停止 (Ctrl/⌘+Enter)' : '发送 (Ctrl/⌘+Enter)'"
-          @click="cancelling ? undefined : loading ? handleStop() : handleSend()"
+          v-if="loading && !canSend"
+          class="send-btn stop"
+          :disabled="cancelling"
+          :title="cancelling ? '正在停止...' : '停止'"
+          @click="!cancelling && handleStop()"
         >
-          <svg v-if="loading || cancelling" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <rect x="2" y="2" width="12" height="12" rx="2"/>
           </svg>
-          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none">
+        </button>
+        <button
+          v-else
+          class="send-btn"
+          :class="{ active: canSend }"
+          :disabled="!canSend"
+          :title="loading ? '加入队列 (Ctrl/⌘+Enter)' : '发送 (Ctrl/⌘+Enter)'"
+          @click="handleSend()"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
             <path d="M12 19V5M12 5L5 12M12 5L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
@@ -195,6 +204,10 @@ function handleSend() {
   pendingFiles.value = []
   filePreviewUrls.value = []
   nextTick(autoResize)
+}
+
+function handleSendKey() {
+  handleSend()
 }
 
 function openWorkspace() {

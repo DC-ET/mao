@@ -100,8 +100,13 @@
         </div>
       </div>
 
+      <QueuePanel
+        @insert="insertQueueMessage"
+        @delete="deleteQueueMessage"
+        @reorder="(id, dir) => reorderQueueMessage(id, dir)"
+      />
+
       <ChatInput
-        :disabled="sending"
         :loading="sending && !cancelling"
         :cancelling="cancelling"
         :workspace="workspace"
@@ -153,6 +158,7 @@ import TaskInspector from '../../components/task/TaskInspector.vue'
 
 import MessageBubble from '../../components/chat/MessageBubble.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
+import QueuePanel from '../../components/chat/QueuePanel.vue'
 import NewTaskDialog from '../../components/task/NewTaskDialog.vue'
 
 const route = useRoute()
@@ -184,14 +190,17 @@ const {
   pendingApprovals,
   todos,
   contextWindow,
-  sendMessage,
+  sendMessageWithQueue,
   editAndResend,
   stopExecution,
   newSession,
   restoreSession,
   confirmApproval,
   updateTodoManually,
-  cleanup
+  cleanup,
+  insertQueueMessage,
+  deleteQueueMessage,
+  reorderQueueMessage
 } = useChat(agentId, executionMode)
 
 // Edit message state
@@ -376,7 +385,7 @@ watch(
 )
 
 function handleSend(text: string, files: File[]) {
-  sendMessage(text, files)
+  sendMessageWithQueue(text, files)
   // Always scroll to bottom when user sends a message
   nextTick(scrollToBottomSmooth)
 }

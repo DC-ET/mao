@@ -45,6 +45,15 @@ export interface ContextWindowInfo {
   actual: number
 }
 
+export interface QueueMessage {
+  id: string
+  sessionId: string
+  content: string
+  images?: string[]
+  sortOrder: number
+  createdAt?: string
+}
+
 export function normalizeMessageRole(role: string): ChatMessage['role'] {
   const r = (role || '').toLowerCase()
   if (r === 'user' || r === 'assistant' || r === 'system') return r

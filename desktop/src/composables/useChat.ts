@@ -30,7 +30,7 @@ let approvalListenerSetup = false
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const sessionStore = useSessionStore()
-  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, pendingCallbacks } = useStreamWS()
+  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks } = useStreamWS()
 
   const sending = ref(false)
   const cancelling = ref(false)
@@ -334,12 +334,90 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     }
   }
 
-  // Watch for CANCELLED phase to clear cancelling flag
+  // Watch phase changes for state sync
   watch(() => sessionStore.activeSession?.phase, (phase) => {
     if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED' || phase === 'IDLE') {
       cancelling.value = false
+      sending.value = false
+      // Resolve pending callback if any
+      if (sessionId.value && pendingCallbacks.has(sessionId.value)) {
+        const cb = pendingCallbacks.get(sessionId.value)
+        pendingCallbacks.delete(sessionId.value)
+        cb?.resolve?.()
+      }
+      if (sessionId.value) {
+        sessionStore.fetchSession(sessionId.value)
+      }
+    } else if (phase === 'RUNNING' || phase === 'WAITING_APPROVAL') {
+      // Auto-sync sending state (covers queue auto-consume case)
+      if (!sending.value) {
+        sending.value = true
+        startedAt.value = new Date().toISOString()
+        // Register pending callback for completion tracking
+        if (sessionId.value && !pendingCallbacks.has(sessionId.value)) {
+          new Promise<void>((resolve, reject) => {
+            pendingCallbacks.set(sessionId.value!, { resolve, reject })
+          }).then(() => {
+            sending.value = false
+            startedAt.value = null
+          }).catch(() => {
+            sending.value = false
+            startedAt.value = null
+          })
+        }
+      }
     }
   })
+
+  // --- Message Queue ---
+
+  const isActive = computed(() => {
+    const phase = sessionStore.activeSession?.phase
+    return phase === 'RUNNING' || phase === 'WAITING_APPROVAL'
+  })
+
+  async function sendMessageWithQueue(text: string, files: File[]) {
+    if (isActive.value) {
+      await enqueueMessage(text, files)
+    } else {
+      await sendMessage(text, files)
+    }
+  }
+
+  async function enqueueMessage(text: string, files: File[]) {
+    const imageUrls = files.length > 0 ? await uploadImages(files) : []
+    await connect()
+    const eventId = crypto.randomUUID()
+    wsEnqueueMessage(sessionId.value || '', text, eventId, imageUrls)
+  }
+
+  async function insertQueueMessage(queueId: string) {
+    if (!sessionId.value) return
+    await connect()
+    wsInsertMessage(sessionId.value, queueId)
+  }
+
+  async function deleteQueueMessage(queueId: string) {
+    if (!sessionId.value) return
+    await connect()
+    wsDeleteQueueMessage(sessionId.value, queueId)
+  }
+
+  async function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
+    if (!sessionId.value) return
+    await connect()
+    wsReorderQueueMessage(sessionId.value, queueId, direction)
+  }
+
+  async function fetchQueue() {
+    if (!sessionId.value) return
+    try {
+      const { data } = await api.get(`/sessions/${sessionId.value}/queue`)
+      sessionStore.setQueueMessages(sessionId.value, data || [])
+    } catch {
+      // ignore
+    }
+  }
 
   function clearPendingApprovals() {
     for (const item of pendingApprovals.value) {
@@ -351,6 +429,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   function newSession() {
     if (sessionId.value) {
       unsubscribe(sessionId.value)
+      sessionStore.clearQueueMessages(sessionId.value)
     }
     clearPendingApprovals()
     sending.value = false
@@ -402,6 +481,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
     fetchMessages()
     fetchTodos()
+    fetchQueue()
   }
 
   async function confirmApproval(requestId: string, approved: boolean) {
@@ -433,6 +513,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     contextWindow,
     startedAt,
     sendMessage,
+    sendMessageWithQueue,
     editAndResend,
     stopExecution,
     fetchMessages,
@@ -440,6 +521,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     restoreSession,
     confirmApproval,
     updateTodoManually,
-    cleanup
+    cleanup,
+    // Queue
+    isActive,
+    insertQueueMessage,
+    deleteQueueMessage,
+    reorderQueueMessage,
+    fetchQueue
   }
 }
