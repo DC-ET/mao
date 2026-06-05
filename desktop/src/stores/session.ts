@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api'
-import type { ChatMessage, TodoItem, ContextWindowInfo } from '../types/chat'
+import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage } from '../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
 
 export type TaskPhase = 'IDLE' | 'RUNNING' | 'RESUMING' | 'WAITING_USER' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING'
@@ -51,6 +51,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessionThinking = ref<Map<string, boolean>>(new Map())
   const sessionStreaming = ref<Map<string, boolean>>(new Map())
   const sessionPendingApprovals = ref<Map<string, number>>(new Map())
+  const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
 
   const activeSession = computed(() =>
     sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
@@ -82,6 +83,10 @@ export const useSessionStore = defineStore('session', () => {
 
   const activeStreaming = computed(() =>
     sessionStreaming.value.get(activeSessionId.value ?? '') ?? false
+  )
+
+  const activeQueueMessages = computed(() =>
+    sessionQueueMessages.value.get(activeSessionId.value ?? '') ?? []
   )
 
   function sessionsByAgent(agentId: string) {
@@ -193,6 +198,7 @@ export const useSessionStore = defineStore('session', () => {
       sessionTodos.value.delete(sid)
       sessionActivities.value.delete(sid)
       sessionContextWindow.value.delete(sid)
+      sessionQueueMessages.value.delete(sid)
     } catch {
       // ignore
     }
@@ -443,6 +449,16 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  // --- Queue message actions ---
+
+  function setQueueMessages(sessionId: string, queue: QueueMessage[]) {
+    sessionQueueMessages.value.set(String(sessionId), queue)
+  }
+
+  function clearQueueMessages(sessionId: string) {
+    sessionQueueMessages.value.delete(String(sessionId))
+  }
+
   function reset() {
     sessions.value = []
     activeSessionId.value = null
@@ -455,6 +471,7 @@ export const useSessionStore = defineStore('session', () => {
     sessionThinking.value = new Map()
     sessionStreaming.value = new Map()
     sessionPendingApprovals.value = new Map()
+    sessionQueueMessages.value = new Map()
   }
 
   return {
@@ -511,6 +528,10 @@ export const useSessionStore = defineStore('session', () => {
     sessionPendingApprovals,
     incrementPendingApproval,
     decrementPendingApproval,
+    // Queue messages
+    activeQueueMessages,
+    setQueueMessages,
+    clearQueueMessages,
     reset
   }
 })

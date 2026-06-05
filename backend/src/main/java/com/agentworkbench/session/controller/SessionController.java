@@ -6,7 +6,9 @@ import com.agentworkbench.common.result.Result;
 import com.agentworkbench.session.activity.ActivityService;
 import com.agentworkbench.session.activity.SessionActivity;
 import com.agentworkbench.session.entity.Message;
+import com.agentworkbench.session.entity.MessageQueue;
 import com.agentworkbench.session.entity.Session;
+import com.agentworkbench.session.service.MessageQueueService;
 import com.agentworkbench.session.service.SessionService;
 import com.agentworkbench.harness.todo.entity.SessionTodo;
 import com.agentworkbench.harness.todo.mapper.SessionTodoMapper;
@@ -33,14 +35,18 @@ public class SessionController {
     private final AgentMapper agentMapper;
     private final ActivityService activityService;
     private final SessionTodoMapper sessionTodoMapper;
+    private final MessageQueueService messageQueueService;
 
     public SessionController(SessionService sessionService,
                              AgentMapper agentMapper,
-                             ActivityService activityService, SessionTodoMapper sessionTodoMapper) {
+                             ActivityService activityService,
+                             SessionTodoMapper sessionTodoMapper,
+                             MessageQueueService messageQueueService) {
         this.sessionService = sessionService;
         this.agentMapper = agentMapper;
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
+        this.messageQueueService = messageQueueService;
     }
 
     @PostMapping
@@ -217,11 +223,38 @@ public class SessionController {
         return Result.ok();
     }
 
+    @GetMapping("/{id}/queue")
+    public Result<List<QueueMessageVO>> getQueue(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id) {
+        List<MessageQueue> queue = messageQueueService.listPending(id);
+        List<QueueMessageVO> voList = queue.stream().map(this::toQueueMessageVO).toList();
+        return Result.ok(voList);
+    }
+
     private TodoVO toTodoVO(SessionTodo todo) {
         TodoVO vo = new TodoVO();
         vo.setId(todo.getId());
         vo.setContent(todo.getContent());
         vo.setStatus(todo.getStatus());
+        return vo;
+    }
+
+    private QueueMessageVO toQueueMessageVO(MessageQueue item) {
+        QueueMessageVO vo = new QueueMessageVO();
+        vo.setId(item.getId());
+        vo.setSessionId(item.getSessionId());
+        vo.setContent(item.getContent());
+        vo.setSortOrder(item.getSortOrder());
+        vo.setCreatedAt(item.getCreatedAt() != null ? item.getCreatedAt().toString() : null);
+        // Parse images JSON
+        if (item.getImages() != null && !item.getImages().isBlank()) {
+            try {
+                vo.setImages(objectMapper.readValue(item.getImages(), new TypeReference<List<String>>() {}));
+            } catch (Exception e) {
+                log.warn("Failed to parse images JSON for queue item {}", item.getId(), e);
+            }
+        }
         return vo;
     }
 
@@ -410,5 +443,15 @@ public class SessionController {
     public static class EditMessageRequest {
         private String content;
         private List<String> images;
+    }
+
+    @Data
+    public static class QueueMessageVO {
+        private Long id;
+        private Long sessionId;
+        private String content;
+        private List<String> images;
+        private Integer sortOrder;
+        private String createdAt;
     }
 }

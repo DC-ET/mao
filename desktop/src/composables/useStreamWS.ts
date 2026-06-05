@@ -206,6 +206,22 @@ export function useStreamWS() {
     send({ type: 'cancel', sessionId: Number(sessionId) })
   }
 
+  function enqueueMessage(sessionId: string, content: string, eventId: string, images: string[]) {
+    send({ type: 'enqueue_message', sessionId: Number(sessionId), data: { content, eventId, images } })
+  }
+
+  function insertMessage(sessionId: string, queueId: string) {
+    send({ type: 'insert_message', sessionId: Number(sessionId), data: { queueId } })
+  }
+
+  function deleteQueueMessage(sessionId: string, queueId: string) {
+    send({ type: 'delete_queue_message', sessionId: Number(sessionId), data: { queueId } })
+  }
+
+  function reorderQueueMessage(sessionId: string, queueId: string, direction: string) {
+    send({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, direction } })
+  }
+
   function routeEvent(msg: any) {
     const { type, sessionId: rawSid, data } = msg
     const sessionId = rawSid != null ? String(rawSid) : null
@@ -388,6 +404,36 @@ export function useStreamWS() {
         }
         break
       }
+
+      case 'queue_updated': {
+        if (sessionId && data?.queue) {
+          sessionStore.setQueueMessages(sessionId, data.queue)
+        }
+        break
+      }
+
+      case 'queue_message_consumed': {
+        if (sessionId && data) {
+          // Add user message with real ID
+          sessionStore.addUserMessage(sessionId, {
+            id: String(data.messageId),
+            role: 'user',
+            content: data.content || '',
+            createdAt: new Date().toLocaleString(),
+            images: data.images && data.images.length > 0 ? data.images : undefined
+          })
+          // Add empty assistant placeholder
+          sessionStore.addAssistantMessage(sessionId, {
+            id: `msg_${Date.now()}_assistant`,
+            role: 'assistant',
+            content: '',
+            createdAt: new Date().toLocaleString(),
+            toolCalls: [],
+            segments: []
+          })
+        }
+        break
+      }
     }
   }
 
@@ -402,6 +448,10 @@ export function useStreamWS() {
     sendMessage,
     sendEditMessage,
     cancel,
+    enqueueMessage,
+    insertMessage,
+    deleteQueueMessage,
+    reorderQueueMessage,
     pendingCallbacks
   }
 }
