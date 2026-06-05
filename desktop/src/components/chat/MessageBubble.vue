@@ -200,13 +200,14 @@ async function copyMessage() {
 }
 
 .message-content {
-  min-width: 75%;
-  max-width: 75%;
+  min-width: 100%;
+  max-width: 100%;
 }
 
 .message-bubble.user .message-content {
   text-align: left;
   min-width: 20%;
+  max-width: 75%;
 }
 
 .message-time-top {
