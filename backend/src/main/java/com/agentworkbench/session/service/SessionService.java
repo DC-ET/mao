@@ -136,13 +136,14 @@ public class SessionService {
         sessionMapper.updateById(session);
     }
 
-    public Message saveMessage(Long sessionId, String role, String content,
+    public Message saveMessage(Long sessionId, String role, String content, String thinkingContent,
                                 String toolCallId, String toolCalls,
                                 Integer tokenCount, Long modelId) {
         Message message = new Message();
         message.setSessionId(sessionId);
         message.setRole(role);
         message.setContent(content);
+        message.setThinkingContent(thinkingContent);
         message.setToolCallId(toolCallId);
         message.setToolCalls(toolCalls);
         message.setTokenCount(tokenCount != null ? tokenCount : 0);
@@ -171,7 +172,7 @@ public class SessionService {
         return message;
     }
 
-    public Message saveMessage(Long sessionId, String role, Object content,
+    public Message saveMessage(Long sessionId, String role, Object content, String thinkingContent,
                                 String toolCallId, String toolCalls,
                                 Integer tokenCount, Long modelId) {
         Message message = new Message();

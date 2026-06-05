@@ -59,6 +59,7 @@
               <MessageBubble
                 v-if="round.finalReply"
                 :message="round.finalReply"
+                :hide-thinking="true"
                 :is-last="round.finalReply && round === messageRounds[messageRounds.length - 1]"
               />
             </template>

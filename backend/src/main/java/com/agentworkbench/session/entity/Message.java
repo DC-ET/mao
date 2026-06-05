@@ -18,6 +18,8 @@ public class Message {
 
     private String content;
 
+    private String thinkingContent;
+
     private String toolCallId;
 
     private String toolCalls;

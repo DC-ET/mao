@@ -114,6 +114,20 @@ export function appendTextDelta(msg: ChatMessage, delta: string) {
   }
 }
 
+/** 流式思考内容增量：合并到尾部 thinking segment 或新建 */
+export function appendThinkingDelta(msg: ChatMessage, delta: string) {
+  if (!delta) return
+  if (!msg.segments) msg.segments = []
+  msg.thinkingContent = (msg.thinkingContent || '') + delta
+
+  const last = msg.segments[msg.segments.length - 1]
+  if (last?.type === 'thinking') {
+    last.content += delta
+  } else {
+    msg.segments.push({ type: 'thinking', content: delta })
+  }
+}
+
 /** 流式工具开始：追加 tool 段（已存在则更新 input） */
 export function appendToolCallStart(msg: ChatMessage, call: ToolCall) {
   if (!msg.toolCalls) msg.toolCalls = []
@@ -187,12 +201,17 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
     // Skip assistant messages that are empty (e.g. task_* tool-only messages)
     if (role === 'assistant' && !content.trim() && toolCalls.length === 0) continue
 
+    const thinkingContent = m.thinkingContent ? String(m.thinkingContent) : undefined
     const segments = buildSegmentsFromContentAndTools(content, toolCalls)
+    if (thinkingContent) {
+      segments.unshift({ type: 'thinking', content: thinkingContent })
+    }
 
     result.push({
       id: String(m.id ?? `msg_${Date.now()}_${Math.random()}`),
       role,
       content,
+      thinkingContent: thinkingContent || undefined,
       createdAt: String(m.createdAt ?? ''),
       updatedAt: m.updatedAt ? String(m.updatedAt) : undefined,
       images: images.length > 0 ? images : undefined,

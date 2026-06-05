@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api'
 import type { ChatMessage, TodoItem, ContextWindowInfo } from '../types/chat'
-import { appendTextDelta, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
+import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
 
 export type TaskPhase = 'IDLE' | 'RUNNING' | 'RESUMING' | 'WAITING_USER' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING'
 
@@ -229,6 +229,17 @@ export const useSessionStore = defineStore('session', () => {
     if (lastMsg.role === 'assistant') {
       appendTextDelta(lastMsg, delta)
       // Trigger reactivity
+      sessionMessages.value.set(sid, [...list])
+    }
+  }
+
+  function appendThinkingDelta(sessionId: string, delta: string) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid)
+    if (!list || list.length === 0) return
+    const lastMsg = list[list.length - 1]
+    if (lastMsg.role === 'assistant') {
+      appendThinkingDeltaUtil(lastMsg, delta)
       sessionMessages.value.set(sid, [...list])
     }
   }
@@ -470,6 +481,7 @@ export const useSessionStore = defineStore('session', () => {
     addAssistantMessage,
     getMessages,
     appendDelta,
+    appendThinkingDelta,
     appendToolCallStart,
     updateToolCallArgs,
     updateToolCallResult,

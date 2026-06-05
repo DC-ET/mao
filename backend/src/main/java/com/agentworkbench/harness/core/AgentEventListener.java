@@ -50,4 +50,7 @@ public interface AgentEventListener {
 
     /** 工具调用参数增量更新（LLM 流式输出 arguments 碎片时，推送当前完整的 arguments） */
     default void onToolCallArgsDelta(String toolCallId, String arguments) {}
+
+    /** 模型思考内容增量（在 content delta 之前到达） */
+    default void onThinkingDelta(String delta) {}
 }

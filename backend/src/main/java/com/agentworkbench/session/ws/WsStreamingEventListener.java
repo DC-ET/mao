@@ -192,6 +192,11 @@ public class WsStreamingEventListener implements AgentEventListener {
     }
 
     @Override
+    public void onThinkingDelta(String delta) {
+        send("thinking_delta", Map.of("delta", delta));
+    }
+
+    @Override
     public void onToolCallArgsDelta(String toolCallId, String arguments) {
         send("tool_call_args_delta", Map.of(
                 "tool_call_id", toolCallId,

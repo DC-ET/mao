@@ -47,8 +47,13 @@
       <!-- assistant：按时间线穿插正文与工具 -->
       <template v-else-if="renderSegments.length > 0">
         <template v-for="(seg, idx) in renderSegments" :key="`${message.id}-seg-${idx}`">
+          <ThinkingBlock
+            v-if="seg.type === 'thinking' && seg.content"
+            :thinking="seg.content"
+            :streaming="isAssistantRunning && idx === lastThinkingIdx"
+          />
           <div
-            v-if="seg.type === 'text'"
+            v-else-if="seg.type === 'text'"
             class="assistant-text markdown-body"
             v-html="renderSegmentMarkdown(seg.content)"
           />
@@ -100,6 +105,7 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { Document, CopyDocument, Edit, Check, Close } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../composables/useMarkdown'
 import ToolCallGroup from './ToolCallGroup.vue'
+import ThinkingBlock from './ThinkingBlock.vue'
 import {
   normalizeMessageRole,
   type ChatMessage,
@@ -116,11 +122,13 @@ const props = withDefaults(defineProps<{
   isLast?: boolean
   canEdit?: boolean
   isEditing?: boolean
+  hideThinking?: boolean
 }>(), {
   showCopy: true,
   isLast: false,
   canEdit: false,
-  isEditing: false
+  isEditing: false,
+  hideThinking: false
 })
 
 const emit = defineEmits<{
@@ -178,7 +186,7 @@ const timelineSegments = computed((): MessageSegment[] => {
   if (role.value !== 'assistant') return []
   if (props.message.segments?.length) {
     return props.message.segments.filter(seg =>
-      seg.type === 'text' || !!visibleToolCalls.value.find(tc => tc.id === seg.callId)
+      seg.type === 'text' || (!props.hideThinking && seg.type === 'thinking') || (seg.type === 'tool' && !!visibleToolCalls.value.find(tc => tc.id === seg.callId))
     )
   }
   if (visibleToolCalls.value.length || props.message.content?.trim()) {
@@ -193,6 +201,7 @@ const timelineSegments = computed((): MessageSegment[] => {
 type RenderSegment =
   | { type: 'text'; content: string }
   | { type: 'tool-group'; toolCalls: ToolCall[] }
+  | { type: 'thinking'; content: string }
 
 const renderSegments = computed((): RenderSegment[] => {
   const segments = timelineSegments.value
@@ -209,7 +218,10 @@ const renderSegments = computed((): RenderSegment[] => {
   }
 
   for (const seg of segments) {
-    if (seg.type === 'text') {
+    if (seg.type === 'thinking') {
+      flushToolBuffer()
+      result.push({ type: 'thinking', content: seg.content || '' })
+    } else if (seg.type === 'text') {
       flushToolBuffer()
       result.push({ type: 'text', content: seg.content || '' })
     } else {
@@ -222,6 +234,13 @@ const renderSegments = computed((): RenderSegment[] => {
 
   flushToolBuffer()
   return result
+})
+
+const lastThinkingIdx = computed(() => {
+  for (let i = renderSegments.value.length - 1; i >= 0; i--) {
+    if (renderSegments.value[i].type === 'thinking') return i
+  }
+  return -1
 })
 
 const renderedContent = computed(() => renderMarkdown(props.message.content))

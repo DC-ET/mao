@@ -12,6 +12,7 @@ export interface ToolCall {
 export type MessageSegment =
   | { type: 'text'; content: string }
   | { type: 'tool'; callId: string }
+  | { type: 'thinking'; content: string }
 
 export interface FileAttachment {
   id: string
@@ -23,6 +24,7 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  thinkingContent?: string
   createdAt: string
   updatedAt?: string
   files?: FileAttachment[]
