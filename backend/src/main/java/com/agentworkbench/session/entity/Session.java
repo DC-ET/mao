@@ -55,6 +55,9 @@ public class Session {
     /** Estimated context tokens from the most recent LLM call */
     private Integer contextTokens;
 
+    /** Unread mark: 0=read, 1=unread (background completion) */
+    private Integer unread;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

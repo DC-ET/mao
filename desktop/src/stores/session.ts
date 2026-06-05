@@ -19,6 +19,7 @@ export interface Session {
   title: string
   executionMode: 'CLOUD' | 'LOCAL'
   status: 'active' | 'completed' | 'error'
+  createdAt: string
   updatedAt: string
   messageCount: number
   // Task fields
@@ -31,6 +32,7 @@ export interface Session {
   contextTokens?: number
   running: boolean
   permissionLevel?: string
+  unread?: boolean
 }
 
 function normalizeId(id: any): string {
@@ -103,8 +105,13 @@ export const useSessionStore = defineStore('session', () => {
       const serverMap = new Map(incoming.map(s => [s.id, s]))
       const merged = incoming.map(s => {
         const local = sessions.value.find(ls => String(ls.id) === String(s.id))
+        if (!local) return s
         // Server data is authoritative; only preserve client-only optimistic fields
-        return local ? { ...local, ...s } : s
+        const m = { ...local, ...s }
+        // Never let fetchSessions overwrite local unread state
+        // (managed by session_status events and markAsRead)
+        m.unread = local.unread
+        return m
       })
       // Keep local-only sessions (created client-side, not yet in server list)
       for (const local of sessions.value) {
@@ -131,7 +138,8 @@ export const useSessionStore = defineStore('session', () => {
     try {
       const { data } = await api.get(`/sessions/${id}`)
       if (data) {
-        updateSession(id, { ...data, id: normalizeId(data.id), agentId: normalizeId(data.agentId) })
+        const local = sessions.value.find(s => String(s.id) === String(id))
+        updateSession(id, { ...data, id: normalizeId(data.id), agentId: normalizeId(data.agentId), unread: local?.unread })
         if (data.contextTokens && data.contextTokens > 0) {
           const sid = normalizeId(data.id)
           if (!sessionContextWindow.value.has(sid)) {
@@ -201,6 +209,18 @@ export const useSessionStore = defineStore('session', () => {
       sessionQueueMessages.value.delete(sid)
     } catch {
       // ignore
+    }
+  }
+
+  async function markAsRead(sessionId: string) {
+    const session = sessions.value.find(s => String(s.id) === String(sessionId))
+    if (session) {
+      session.unread = false
+    }
+    try {
+      await api.put(`/sessions/${sessionId}/read`)
+    } catch {
+      // Silent fail — next fetchSessions will sync
     }
   }
 
@@ -492,6 +512,7 @@ export const useSessionStore = defineStore('session', () => {
     updateSessionPhase,
     renameSession,
     deleteSession,
+    markAsRead,
     // Message cache
     setMessages,
     addUserMessage,

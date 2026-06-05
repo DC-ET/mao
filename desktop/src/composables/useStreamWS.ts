@@ -40,9 +40,7 @@ export function useStreamWS() {
   if (!skillSyncListenerRegistered && typeof window !== 'undefined' && (window as any).electronAPI) {
     skillSyncListenerRegistered = true
     ;(window as any).electronAPI.onSkillSyncComplete?.((data: { sessionId: number; success: boolean; error?: string }) => {
-      console.log('[skill-sync] complete:', data)
       if (ws?.readyState === WebSocket.OPEN) {
-        console.log('[skill-sync] sending skill_sync_done')
         ws.send(JSON.stringify({
           type: 'skill_sync_done',
           sessionId: data.sessionId,
@@ -264,6 +262,14 @@ export function useStreamWS() {
       case 'session_status':
         if (sessionId) {
           sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
+          // Sync unread state — skip for active session (user is already viewing)
+          if (data.unread !== undefined) {
+            if (sessionId === sessionStore.activeSessionId) {
+              sessionStore.markAsRead(sessionId)
+            } else {
+              sessionStore.updateSession(sessionId, { unread: data.unread })
+            }
+          }
           // Only resolve pending callback on true terminal phases
           const terminalPhases = ['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE']
           if (terminalPhases.includes(data.phase)) {
@@ -334,7 +340,6 @@ export function useStreamWS() {
         // Server requests skill sync — trigger main process to download & extract zip
         const syncUrl = data?.syncUrl
         const workspace = data?.workspace
-        console.log('[skill-sync] received skill_sync_required:', { sessionId, syncUrl, workspace })
         if (sessionId && syncUrl && typeof window !== 'undefined' && (window as any).electronAPI) {
           const token = localStorage.getItem('token') || ''
           ;(window as any).electronAPI.skillSync?.(Number(sessionId), syncUrl, token, workspace || '')

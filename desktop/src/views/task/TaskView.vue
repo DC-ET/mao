@@ -416,9 +416,6 @@ async function handlePermissionLevelChange(level: string) {
 }
 
 function handleNewTask() {
-  if (sessionStore.activeSessionId && currentPhase.value === 'RUNNING') {
-    sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
-  }
   defaultAgentId.value = undefined
   defaultMode.value = undefined
   defaultWorkspace.value = undefined
@@ -427,9 +424,6 @@ function handleNewTask() {
 }
 
 function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string }) {
-  if (sessionStore.activeSessionId && currentPhase.value === 'RUNNING') {
-    sessionStore.updateSessionPhase(sessionStore.activeSessionId, 'IDLE')
-  }
   defaultAgentId.value = payload.agentId
   defaultMode.value = payload.executionMode as 'CLOUD' | 'LOCAL'
   defaultWorkspace.value = payload.workspace

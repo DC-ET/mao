@@ -103,7 +103,11 @@ public class CrashRecoveryRunner implements ApplicationRunner {
     private void notifyClient(Long userId, Long sessionId, String phase) {
         if (userId == null) return;
         try {
-            registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", phase)));
+            boolean isTerminal = "COMPLETED".equals(phase) || "FAILED".equals(phase) || "CANCELLED".equals(phase);
+            Map<String, Object> statusData = isTerminal
+                    ? Map.of("phase", phase, "unread", true)
+                    : Map.of("phase", phase);
+            registry.send(userId, WsEvent.of("session_status", sessionId, statusData));
             registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", phase)));
         } catch (Exception ignored) {
             // Client may not be connected yet — that's fine

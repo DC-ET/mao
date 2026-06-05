@@ -50,23 +50,19 @@ function getApiBaseUrl() {
 ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, workspace }) => {
   // Use workspace parameter if provided, otherwise fall back to currentWorkspace
   const effectiveWorkspace = workspace || currentWorkspace
-  console.log('[skill-sync] IPC handler called:', { sessionId, syncUrl, workspace, currentWorkspace, effectiveWorkspace })
   if (!effectiveWorkspace) {
     const err = 'No workspace configured. Please set a workspace for this session.'
-    console.error('[skill-sync]', err)
     sendToRenderer('skill-sync-complete', { sessionId, success: false, error: err })
     return { success: false, error: err }
   }
   try {
     const AdmZip = require('adm-zip')
     const skillsDir = path.join(effectiveWorkspace, '.workbench', 'skills')
-    console.log('[skill-sync] resolved skillsDir:', skillsDir, 'isAbsolute:', path.isAbsolute(skillsDir))
 
     // Download zip from REST endpoint
     const baseUrl = getApiBaseUrl()
     const fullUrl = `${baseUrl}${syncUrl}`
     const headers = token ? { 'Authorization': `Bearer ${token}` } : {}
-    console.log('[skill-sync] downloading from:', fullUrl)
     const response = await fetch(fullUrl, { method: 'POST', headers })
     if (!response.ok) {
       const body = await response.text().catch(() => '')
@@ -75,13 +71,10 @@ ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, workspac
 
     // Extract zip to .workbench/skills/
     const zipBuffer = Buffer.from(await response.arrayBuffer())
-    console.log('[skill-sync] downloaded zip size:', zipBuffer.length, 'bytes')
     fs.mkdirSync(skillsDir, { recursive: true })
     const zip = new AdmZip(zipBuffer)
     const entries = zip.getEntries()
-    console.log('[skill-sync] zip entries:', entries.map(e => e.entryName))
     zip.extractAllTo(skillsDir, true)
-    console.log('[skill-sync] extracted to:', skillsDir, 'abs:', path.resolve(skillsDir))
     sendToRenderer('skill-sync-complete', { sessionId, success: true })
     return { success: true }
   } catch (e) {
