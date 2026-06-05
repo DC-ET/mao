@@ -71,7 +71,7 @@ public class ShellSessionTool implements Tool {
         Map<String, Object> action = new HashMap<>();
         action.put("type", "string");
         action.put("enum", List.of("exec", "write_stdin", "close", "list"));
-        action.put("description", "Action to perform");
+        action.put("description", "Action to perform (default: exec)");
         properties.put("action", action);
 
         Map<String, Object> command = new HashMap<>();
@@ -105,7 +105,6 @@ public class ShellSessionTool implements Tool {
         properties.put("async", async);
 
         schema.put("properties", properties);
-        schema.put("required", new String[]{"action"});
 
         return schema;
     }
@@ -140,7 +139,10 @@ public class ShellSessionTool implements Tool {
     public String execute(String arguments, Long sessionId, String workspace) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
-            String action = args.get("action").asText();
+            String action = args.path("action").asText("exec");
+            if (action.isBlank()) {
+                action = "exec";
+            }
 
             return switch (action) {
                 case "exec" -> handleExec(args, sessionId, workspace);
