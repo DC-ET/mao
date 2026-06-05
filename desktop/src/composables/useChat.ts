@@ -428,7 +428,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
   function newSession() {
     if (sessionId.value) {
-      unsubscribe(sessionId.value)
       sessionStore.clearQueueMessages(sessionId.value)
     }
     clearPendingApprovals()

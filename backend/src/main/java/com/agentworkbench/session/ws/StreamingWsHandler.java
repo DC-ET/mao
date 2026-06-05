@@ -335,11 +335,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
                 if (cancelFlag.get()) {
                     sessionService.updatePhase(sessionId, "CANCELLED");
-                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLED")));
+                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLED", "unread", true)));
                     registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "CANCELLED")));
                 } else {
                     sessionService.updatePhase(sessionId, "COMPLETED");
-                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "COMPLETED")));
+                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "COMPLETED", "unread", true)));
                     registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "COMPLETED")));
                 }
             } catch (Exception e) {
@@ -351,7 +351,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 try {
                     sessionService.updatePhase(sessionId, "FAILED");
                 } catch (Exception ignored) {}
-                registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED")));
+                registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED", "unread", true)));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
             } finally {
                 cancelFlags.remove(sessionId);
@@ -618,11 +618,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
                 if (cancelFlag.get()) {
                     sessionService.updatePhase(sessionId, "CANCELLED");
-                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLED")));
+                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLED", "unread", true)));
                     registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "CANCELLED")));
                 } else {
                     sessionService.updatePhase(sessionId, "COMPLETED");
-                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "COMPLETED")));
+                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "COMPLETED", "unread", true)));
                     registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "COMPLETED")));
                 }
             } catch (Exception e) {
@@ -634,7 +634,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 try {
                     sessionService.updatePhase(sessionId, "FAILED");
                 } catch (Exception ignored) {}
-                registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED")));
+                registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED", "unread", true)));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
             } finally {
                 cancelFlags.remove(sessionId);

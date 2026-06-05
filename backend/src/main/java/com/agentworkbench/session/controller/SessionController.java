@@ -107,6 +107,18 @@ public class SessionController {
         return Result.ok();
     }
 
+    @PutMapping("/{id}/read")
+    public Result<Void> markAsRead(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id) {
+        Session session = sessionService.getSession(id);
+        if (!session.getUserId().equals(userId)) {
+            return Result.fail(403, "无权操作");
+        }
+        sessionService.markAsRead(id);
+        return Result.ok();
+    }
+
     @PatchMapping("/{id}")
     public Result<SessionVO> updateSession(
             @AuthenticationPrincipal Long userId,
@@ -291,6 +303,7 @@ public class SessionController {
         vo.setContextTokens(session.getContextTokens());
         vo.setPermissionLevel(session.getPermissionLevel());
         vo.setRunning("RUNNING".equals(session.getPhase()) || "WAITING_APPROVAL".equals(session.getPhase()));
+        vo.setUnread(Integer.valueOf(1).equals(session.getUnread()));
 
         // Parse steps_json
         if (session.getStepsJson() != null && !session.getStepsJson().isBlank()) {
@@ -398,6 +411,7 @@ public class SessionController {
         private String projectKey;
         private Integer contextTokens;
         private Boolean running;
+        private Boolean unread;
         private String permissionLevel;
     }
 

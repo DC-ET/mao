@@ -72,6 +72,7 @@
               </div>
               <div class="session-item-meta">
                 <span v-if="session.running" class="session-spinner"></span>
+                <span v-if="session.unread && String(session.id) !== String(activeSessionId)" class="session-unread-dot"></span>
                 <span class="session-elapsed">{{ formatElapsed(session) }}</span>
               </div>
               <div class="session-item-actions">
@@ -283,25 +284,38 @@ function phaseClass(phase: TaskPhase) {
 }
 
 function formatElapsed(session: Session) {
-  const ms = session.elapsedMs
-  if (!ms || ms <= 0) return ''
-  const seconds = Math.floor(ms / 1000)
-  if (seconds < 60) return `${seconds}s`
+  if (!session.createdAt) return ''
+  const now = Date.now()
+  const created = new Date(session.createdAt).getTime()
+  const diffMs = now - created
+  if (diffMs < 0) return ''
+
+  const seconds = Math.floor(diffMs / 1000)
+  if (seconds < 60) return '刚刚'
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m`
+  if (minutes < 60) return `${minutes}分`
   const hours = Math.floor(minutes / 60)
-  return `${hours}h ${minutes % 60}m`
+  if (hours < 24) return `${hours}小时`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}天`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months}月`
+  const years = Math.floor(months / 12)
+  return `${years}年`
 }
 
 async function refreshSessions() {
   await sessionStore.fetchSessions()
 }
 
-function selectSession(session: Session) {
+async function selectSession(session: Session) {
   if (editingSessionId.value === session.id) return
   confirmingDeleteId.value = null
   editingSessionId.value = null
   sessionStore.setActiveSession(session.id)
+  if (session.unread) {
+    await sessionStore.markAsRead(session.id)
+  }
   router.push(`/tasks/${session.id}`)
 }
 
@@ -607,6 +621,15 @@ function toggleGroup(key: string) {
 .session-phase-dot.completed { background: var(--aw-success); }
 .session-phase-dot.failed { background: var(--aw-danger); }
 .session-phase-dot.idle { background: var(--aw-hairline); }
+
+.session-unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #00d4aa;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
 
 .session-approval-dot {
   width: 6px;

@@ -41,7 +41,22 @@
       </div>
       <div v-if="workspace || executionMode === 'CLOUD'" class="task-workspace-row">
         <el-icon class="workspace-icon"><FolderOpened /></el-icon>
-        <span class="workspace-path">{{ executionMode === 'CLOUD' ? '云端工作区' : workspace }}</span>
+        <span
+          class="workspace-path-wrap"
+          @mouseenter="workspaceHovered = true"
+          @mouseleave="workspaceHovered = false"
+        >
+          <span class="workspace-path">{{ executionMode === 'CLOUD' ? '云端工作区' : workspace }}</span>
+          <button
+            v-if="executionMode !== 'CLOUD' && workspace"
+            class="workspace-copy-btn"
+            :class="{ visible: workspaceHovered }"
+            @click="copyWorkspace"
+            title="复制路径"
+          >
+            <el-icon :size="12"><DocumentCopy /></el-icon>
+          </button>
+        </span>
       </div>
     </div>
 
@@ -65,7 +80,7 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick } from 'vue'
-import { ChatDotRound, FolderOpened } from '@element-plus/icons-vue'
+import { ChatDotRound, FolderOpened, DocumentCopy } from '@element-plus/icons-vue'
 import TodoChecklist from './TodoChecklist.vue'
 import type { TodoItem } from '../../types/chat'
 import ToolApprovalBar from '../chat/ToolApprovalBar.vue'
@@ -143,6 +158,15 @@ const phaseClass = computed(() => {
 })
 
 const displayTitle = computed(() => props.title || '新任务')
+
+// Workspace copy
+const workspaceHovered = ref(false)
+
+function copyWorkspace() {
+  if (props.workspace) {
+    navigator.clipboard.writeText(props.workspace)
+  }
+}
 
 function formatTokenCompact(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '--'
@@ -325,7 +349,12 @@ function onResizeStart(e: MouseEvent) {
 .task-workspace-row .workspace-icon {
   color: var(--aw-ink-muted-48);
   flex-shrink: 0;
-  margin-top: 1px;
+  transform: translateY(1px);
+}
+
+.workspace-path-wrap {
+  position: relative;
+  display: inline;
 }
 
 .task-workspace-row .workspace-path {
@@ -333,6 +362,32 @@ function onResizeStart(e: MouseEvent) {
   font-family: var(--aw-font-mono);
   font-size: var(--aw-text-caption);
   word-break: break-all;
+}
+
+.workspace-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: var(--aw-radius-xs);
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.workspace-copy-btn.visible {
+  opacity: 1;
+}
+
+.workspace-copy-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--aw-primary);
 }
 
 .phase-badge {
@@ -432,6 +487,11 @@ function onResizeStart(e: MouseEvent) {
 
 [data-theme="dark"] .toggle-panel-btn:hover {
   background: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .workspace-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--aw-primary);
 }
 
 </style>

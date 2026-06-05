@@ -398,6 +398,7 @@ public class SessionService {
 
     public void updatePhase(Long sessionId, String phase) {
         Session session = getSession(sessionId);
+        String oldPhase = session.getPhase();
         session.setPhase(phase);
         session.setLastActivityAt(LocalDateTime.now());
 
@@ -413,9 +414,26 @@ public class SessionService {
                 session.setElapsedMs((session.getElapsedMs() != null ? session.getElapsedMs() : 0) + elapsed);
                 session.setStartedAt(null);
             }
+            // Mark unread when transitioning from non-terminal to terminal phase
+            if (!isTerminalPhase(oldPhase) && isTerminalPhase(phase)) {
+                session.setUnread(1);
+            }
         }
 
         sessionMapper.updateById(session);
+    }
+
+    private boolean isTerminalPhase(String phase) {
+        return "IDLE".equals(phase) || "COMPLETED".equals(phase)
+            || "FAILED".equals(phase) || "CANCELLED".equals(phase);
+    }
+
+    public void markAsRead(Long sessionId) {
+        Session session = getSession(sessionId);
+        if (Integer.valueOf(1).equals(session.getUnread())) {
+            session.setUnread(0);
+            sessionMapper.updateById(session);
+        }
     }
 
     public void updateSummary(Long sessionId, String summary) {
