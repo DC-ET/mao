@@ -292,6 +292,10 @@ export function useStreamWS() {
         }
         break
 
+      case 'thinking_delta':
+        if (sessionId) sessionStore.appendThinkingDelta(sessionId, data.delta)
+        break
+
       case 'message_end':
         if (sessionId) sessionStore.markMessageComplete(sessionId, data)
         break

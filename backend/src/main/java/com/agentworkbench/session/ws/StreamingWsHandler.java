@@ -253,7 +253,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         }
 
         // Save user message to DB
-        com.agentworkbench.session.entity.Message savedMessage = sessionService.saveMessage(sessionId, "USER", messageContent, null, null, 0, null);
+        com.agentworkbench.session.entity.Message savedMessage = sessionService.saveMessage(sessionId, "USER", messageContent, null, null, null, 0, null);
 
         // Send real message ID back to client so it can update the optimistic temp ID
         registry.send(userId, WsEvent.of("user_message_saved", sessionId,

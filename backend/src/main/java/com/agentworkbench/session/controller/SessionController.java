@@ -282,6 +282,7 @@ public class SessionController {
         MessageVO vo = new MessageVO();
         vo.setId(message.getId());
         vo.setRole(message.getRole());
+        vo.setThinkingContent(message.getThinkingContent());
         vo.setToolCallId(message.getToolCallId());
         vo.setToolCalls(message.getToolCalls());
         vo.setTokenCount(message.getTokenCount());
@@ -372,6 +373,7 @@ public class SessionController {
         private Long id;
         private String role;
         private String content;
+        private String thinkingContent;
         private List<String> images;
         private String toolCallId;
         private Object toolCalls;

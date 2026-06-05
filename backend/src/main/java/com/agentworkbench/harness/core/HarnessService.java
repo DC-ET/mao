@@ -71,7 +71,7 @@ public class HarnessService {
 
         AgentLoop.MessagePersistenceCallback persistenceCallback = new AgentLoop.MessagePersistenceCallback() {
             @Override
-            public void onSaveAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage) {
+            public void onSaveAssistantMessage(String content, String thinkingContent, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage) {
                 String toolCallsJson = null;
                 if (toolCalls != null && !toolCalls.isEmpty()) {
                     try {
@@ -84,12 +84,12 @@ public class HarnessService {
                 }
                 int tokenCount = usage != null ? usage.getTotalTokens() : 0;
                 Long modelId = context.getModelConfig() != null ? context.getModelConfig().getId() : null;
-                sessionService.saveMessage(sessionId, "ASSISTANT", content, null, toolCallsJson, tokenCount, modelId);
+                sessionService.saveMessage(sessionId, "ASSISTANT", content, thinkingContent, null, toolCallsJson, tokenCount, modelId);
             }
 
             @Override
             public void onSaveToolMessage(String toolCallId, String content) {
-                sessionService.saveMessage(sessionId, "TOOL", content, toolCallId, null, 0, null);
+                sessionService.saveMessage(sessionId, "TOOL", content, null, toolCallId, null, 0, null);
             }
         };
 

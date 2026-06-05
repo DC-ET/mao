@@ -54,7 +54,7 @@ public class AgentLoop {
     }
 
     public interface MessagePersistenceCallback {
-        void onSaveAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage);
+        void onSaveAssistantMessage(String content, String thinkingContent, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage);
         void onSaveToolMessage(String toolCallId, String content);
     }
 
@@ -69,6 +69,7 @@ public class AgentLoop {
         try {
         // 用于延迟保存：有工具调用时，在 executeToolCalls 之后再保存（summary 已附加）
         final String[] pendingSave = {null}; // [0]=content
+        final String[] pendingThinking = {null}; // [0]=thinkingContent
         final ChatUsage[] pendingSaveUsage = {null};
         @SuppressWarnings("unchecked")
         final List<ChatRequest.ToolCall>[] pendingSaveToolCalls = new List[1];
@@ -112,6 +113,7 @@ public class AgentLoop {
             listener.onThinkingStart();
             llmAdapter.stream(request, context.getModelConfig(), new StreamCallback() {
                 private final StringBuilder contentBuilder = new StringBuilder();
+                private final StringBuilder thinkingBuilder = new StringBuilder();
                 private final List<ChatRequest.ToolCall> toolCalls = new ArrayList<>();
 
                 @Override
@@ -122,6 +124,11 @@ public class AgentLoop {
                     StreamChunk.Delta delta = choice.getDelta();
 
                     if (delta != null) {
+                        if (delta.getReasoningContent() != null) {
+                            thinkingBuilder.append(delta.getReasoningContent());
+                            listener.onThinkingDelta(delta.getReasoningContent());
+                        }
+
                         if (delta.getContent() != null) {
                             if (thinkingEnded.compareAndSet(false, true)) {
                                 listener.onThinkingEnd();
@@ -167,12 +174,14 @@ public class AgentLoop {
                     }
 
                     String content = contentBuilder.toString();
+                    String thinkingContent = thinkingBuilder.length() > 0 ? thinkingBuilder.toString() : null;
                     if (!content.isEmpty() || !toolCalls.isEmpty()) {
                         context.addAssistantMessage(content, toolCalls);
                         if (toolCalls.isEmpty() && persistenceCallback != null) {
-                            persistenceCallback.onSaveAssistantMessage(content, toolCalls, usage);
+                            persistenceCallback.onSaveAssistantMessage(content, thinkingContent, toolCalls, usage);
                         } else {
                             pendingSave[0] = content;
+                            pendingThinking[0] = thinkingContent;
                             pendingSaveUsage[0] = usage;
                             pendingSaveToolCalls[0] = toolCalls;
                         }
@@ -197,8 +206,9 @@ public class AgentLoop {
 
             // 4.1 延迟保存带 summary 的 assistant 消息
             if (pendingSaveToolCalls[0] != null && persistenceCallback != null) {
-                persistenceCallback.onSaveAssistantMessage(pendingSave[0], pendingSaveToolCalls[0], pendingSaveUsage[0]);
+                persistenceCallback.onSaveAssistantMessage(pendingSave[0], pendingThinking[0], pendingSaveToolCalls[0], pendingSaveUsage[0]);
                 pendingSave[0] = null;
+                pendingThinking[0] = null;
                 pendingSaveUsage[0] = null;
                 pendingSaveToolCalls[0] = null;
             }
