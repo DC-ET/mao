@@ -504,6 +504,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         }
 
         // Edit message and truncate subsequent messages
+        @SuppressWarnings("unused")
         com.agentworkbench.session.entity.Message editedMessage;
         try {
             editedMessage = sessionService.editMessageAndTruncate(messageId, content, images);

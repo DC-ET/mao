@@ -19,8 +19,11 @@
       </div>
 
       <!-- 用户消息：正常态 -->
-      <div v-if="role === 'user' && !isEditing" class="message-text user-text">
-        {{ message.content }}
+      <div v-if="role === 'user' && !isEditing" class="message-text user-text" :class="{ collapsed: isUserLong && userCollapsed }">
+        <div class="user-text-content">{{ message.content }}</div>
+        <button v-if="isUserLong" class="user-collapse-toggle" @click="userCollapsed = !userCollapsed">
+          {{ userCollapsed ? '展开全部' : '收起' }}
+        </button>
       </div>
 
       <!-- 用户消息：编辑态 -->
@@ -140,6 +143,7 @@ const emit = defineEmits<{
 // Edit mode state
 const editContent = ref(props.message.content || '')
 const editInput = ref<HTMLTextAreaElement>()
+const userCollapsed = ref(true)
 
 watch(() => props.isEditing, async (editing) => {
   if (editing) {
@@ -245,6 +249,9 @@ const lastThinkingIdx = computed(() => {
 
 const renderedContent = computed(() => renderMarkdown(props.message.content))
 
+const userLineCount = computed(() => (props.message.content || '').split('\n').length)
+const isUserLong = computed(() => role.value === 'user' && userLineCount.value > 10)
+
 function renderSegmentMarkdown(content: string) {
   return renderMarkdown(content)
 }
@@ -309,8 +316,41 @@ async function copyMessage() {
 
 .user-text {
   color: var(--aw-ink);
+  background: rgba(0, 102, 204, 0.08);
   border-top-right-radius: var(--aw-radius-xs);
   white-space: pre-line;
+  padding: 8px 14px;
+}
+
+:root[data-theme="dark"] .user-text {
+  background: rgba(41, 151, 255, 0.12);
+}
+
+.user-text.collapsed .user-text-content {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 10;
+  overflow: hidden;
+}
+
+.user-collapse-toggle {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--aw-primary);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.user-collapse-toggle:hover {
+  opacity: 0.7;
+}
+
+:root[data-theme="dark"] .user-collapse-toggle {
+  color: var(--aw-primary-on-dark);
 }
 
 .assistant-text {
