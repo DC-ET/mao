@@ -4,13 +4,10 @@
 
     <div class="task-container">
       <div class="messages" ref="messagesContainer">
-        <div v-if="messages.length === 0 && !sending" class="empty-state">
+        <div v-if="messages.length === 0 && !sending && !initialLoading" class="empty-state">
           <template v-if="!sessionId">
             <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
-            <p>选择一个 Agent 开始新任务</p>
-            <el-button type="primary" class="pill-btn" @click="handleNewTask">
-              <el-icon><Plus /></el-icon> 新任务
-            </el-button>
+            <p>选个智能体，告诉它你想做什么</p>
           </template>
           <template v-else>
             <p class="guidance-text">在下方输入框描述你的任务，我会帮你完成</p>
@@ -109,13 +106,19 @@
       <ChatInput
         :loading="sending && !cancelling"
         :cancelling="cancelling"
-        :workspace="workspace"
-        :execution-mode="executionMode"
+        :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
+        :execution-mode="isNewTaskMode ? newTaskMode : executionMode"
         :model-name="agentStore.activeAgent?.modelName || ''"
         :permission-level="permissionLevel"
+        :is-new-task="isNewTaskMode"
+        :selected-agent-id="newTaskAgentId"
+        :agents="agentStore.agents"
         @send="handleSend"
         @stop="handleStop"
         @update:permission-level="handlePermissionLevelChange"
+        @update:execution-mode="handleNewTaskModeChange"
+        @update:workspace="handleNewTaskWorkspaceChange"
+        @update:selected-agent-id="handleNewTaskAgentChange"
       />
     </div>
 
@@ -134,21 +137,13 @@
       @todo-update="handleTodoUpdate"
       @rename="handleRename"
     />
-
-    <NewTaskDialog
-      v-model="showNewTaskDialog"
-      :default-agent-id="defaultAgentId"
-      :default-mode="defaultMode"
-      :default-workspace="defaultWorkspace"
-      @created="onSessionCreated"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChatDotRound, Plus, ArrowDown } from '@element-plus/icons-vue'
+import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
@@ -159,7 +154,6 @@ import TaskInspector from '../../components/task/TaskInspector.vue'
 import MessageBubble from '../../components/chat/MessageBubble.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
 import QueuePanel from '../../components/chat/QueuePanel.vue'
-import NewTaskDialog from '../../components/task/NewTaskDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -170,15 +164,19 @@ const sessionIdParam = computed(() => route.params.sessionId as string)
 const agentId = ref('')
 const executionMode = ref('CLOUD')
 const panelCollapsed = ref(false)
-const showNewTaskDialog = ref(false)
-const defaultAgentId = ref<string | undefined>()
-const defaultMode = ref<'CLOUD' | 'LOCAL' | undefined>()
-const defaultWorkspace = ref<string | undefined>()
+const creatingNewTask = ref(false)
+const initialLoading = ref(true)
 
 // Task state
 const currentPhase = ref<TaskPhase>('IDLE')
 const projectKey = ref('')
 const permissionLevel = ref('READ_ONLY')
+
+// New task config state (only used when no sessionId)
+const newTaskAgentId = ref<string | null>(null)
+const newTaskMode = ref<'CLOUD' | 'LOCAL'>('CLOUD')
+const newTaskWorkspace = ref('')
+const isNewTaskMode = computed(() => !sessionId.value && !initialLoading.value)
 
 const {
   messages,
@@ -385,8 +383,13 @@ watch(
 )
 
 function handleSend(text: string, files: File[]) {
+  if (isNewTaskMode.value) {
+    if (!newTaskAgentId.value) return
+    agentId.value = newTaskAgentId.value
+    executionMode.value = newTaskMode.value
+    workspace.value = newTaskWorkspace.value
+  }
   sendMessageWithQueue(text, files)
-  // Always scroll to bottom when user sends a message
   nextTick(scrollToBottomSmooth)
 }
 
@@ -415,26 +418,42 @@ async function handlePermissionLevelChange(level: string) {
   }
 }
 
-function handleNewTask() {
-  defaultAgentId.value = undefined
-  defaultMode.value = undefined
-  defaultWorkspace.value = undefined
+async function handleNewTask() {
+  creatingNewTask.value = true
   newSession()
-  showNewTaskDialog.value = true
+  newTaskAgentId.value = null
+  newTaskMode.value = 'CLOUD'
+  newTaskWorkspace.value = ''
+  await router.push('/')
+  initialLoading.value = false
 }
 
-function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string }) {
-  defaultAgentId.value = payload.agentId
-  defaultMode.value = payload.executionMode as 'CLOUD' | 'LOCAL'
-  defaultWorkspace.value = payload.workspace
+async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string }) {
+  creatingNewTask.value = true
   newSession()
-  showNewTaskDialog.value = true
+  newTaskAgentId.value = payload.agentId
+  newTaskMode.value = payload.executionMode as 'CLOUD' | 'LOCAL'
+  newTaskWorkspace.value = payload.workspace || ''
+  await router.push('/')
+  initialLoading.value = false
 }
 
-function onSessionCreated(session: any) {
-  showNewTaskDialog.value = false
-  sessionStore.setActiveSession(session.id)
-  router.push(`/tasks/${session.id}`)
+function handleNewTaskModeChange(mode: string) {
+  newTaskMode.value = mode as 'CLOUD' | 'LOCAL'
+  if (mode === 'CLOUD') {
+    newTaskWorkspace.value = ''
+  }
+}
+
+function handleNewTaskWorkspaceChange(ws: string) {
+  newTaskWorkspace.value = ws
+}
+
+function handleNewTaskAgentChange(id: string | null) {
+  newTaskAgentId.value = id
+  if (id) {
+    agentStore.fetchAgent(id)
+  }
 }
 
 async function loadSession(sid: string) {
@@ -461,24 +480,37 @@ async function loadSession(sid: string) {
   }
 
   restoreSession(sid, executionMode.value, workspace.value || undefined)
+  // sessionId.value is set synchronously in restoreSession,
+  // so isNewTaskMode is already false — safe to end loading
+  initialLoading.value = false
 }
 
-// Navigate to the most recent session, or show new-task dialog if none exist
-function navigateToLatestSession() {
+// Navigate to the most recent session, or stay on empty state for new task
+async function navigateToLatestSession() {
   const latest = sessionStore.sessions[0]
   if (latest) {
-    router.replace(`/tasks/${latest.id}`)
-  } else {
-    handleNewTask()
+    await router.replace(`/tasks/${latest.id}`)
   }
+  // No sessions: stay on current route (/), new task UI is shown inline
 }
 
 // Handle session switch from sidebar (component reuse prevents onMounted re-fire)
 watch(sessionIdParam, (newSid, oldSid) => {
   if (newSid && newSid !== oldSid) {
-    loadSession(newSid)
+    // Skip loadSession if sendMessage already set up this session
+    // (loadSession would overwrite optimistic messages via fetchMessages)
+    if (!sending.value) {
+      loadSession(newSid)
+    } else {
+      // Still need to mark the session as active so the UI renders correctly
+      sessionStore.setActiveSession(newSid)
+      // Sync agent name and phase from the session created by sendMessage
+      const session = sessionStore.sessions.find(s => String(s.id) === String(newSid))
+      if (session?.agentName) agentName.value = session.agentName
+      if (session?.phase) currentPhase.value = session.phase
+    }
   } else if (!newSid && oldSid) {
-    // Navigated back to home — reset and go to latest session
+    // Navigated back to home — reset state
     cleanup()
     sessionStore.setActiveSession(null)
     agentId.value = ''
@@ -486,7 +518,21 @@ watch(sessionIdParam, (newSid, oldSid) => {
     currentPhase.value = 'IDLE'
     projectKey.value = ''
     permissionLevel.value = 'READ_ONLY'
-    navigateToLatestSession()
+    if (creatingNewTask.value) {
+      creatingNewTask.value = false
+    } else {
+      newTaskAgentId.value = null
+      newTaskMode.value = 'CLOUD'
+      newTaskWorkspace.value = ''
+      navigateToLatestSession()
+    }
+  }
+})
+
+// Navigate to new task after session is created from inline flow
+watch(sessionId, (newSid) => {
+  if (newSid && !sessionIdParam.value) {
+    router.push(`/tasks/${newSid}`)
   }
 })
 
@@ -495,9 +541,15 @@ onMounted(async () => {
 
   const sid = sessionIdParam.value
   if (sid) {
+    // loadSession sets initialLoading=false after sessionId is set
     await loadSession(sid)
   } else {
-    navigateToLatestSession()
+    await navigateToLatestSession()
+    // If redirected to a session, loadSession (via watcher) handles initialLoading
+    // If no sessions exist, show new task UI now
+    if (!sessionIdParam.value) {
+      initialLoading.value = false
+    }
   }
 })
 
