@@ -130,10 +130,10 @@
       :workspace="workspace"
       :execution-mode="executionMode"
       :phase="currentPhase"
-      :panel-collapsed="panelCollapsed"
+      :panel-collapsed="rightCollapsed"
       :context-window="contextWindow"
       @tool-confirm="confirmApproval"
-      @toggle-panel="panelCollapsed = !panelCollapsed"
+      @toggle-panel="toggleRight"
       @todo-update="handleTodoUpdate"
       @rename="handleRename"
     />
@@ -155,16 +155,17 @@ import MessageBubble from '../../components/chat/MessageBubble.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
 import QueuePanel from '../../components/chat/QueuePanel.vue'
 import { useTerminal } from '../../composables/useTerminal'
+import { usePanelLayout } from '../../composables/usePanelLayout'
 
 const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
+const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight, consumeNewTask } = usePanelLayout()
 
 const sessionIdParam = computed(() => route.params.sessionId as string)
 const agentId = ref('')
 const executionMode = ref('CLOUD')
-const panelCollapsed = ref(false)
 const creatingNewTask = ref(false)
 const initialLoading = ref(true)
 
@@ -525,6 +526,10 @@ watch(sessionIdParam, (newSid, oldSid) => {
       if (session?.phase) currentPhase.value = session.phase
     }
   } else if (!newSid && oldSid) {
+    // Capture current session config before reset
+    const prevAgentId = agentId.value
+    const prevMode = executionMode.value
+    const prevWorkspace = workspace.value
     // Navigated back to home — reset state
     cleanup()
     sessionStore.setActiveSession(null)
@@ -533,8 +538,12 @@ watch(sessionIdParam, (newSid, oldSid) => {
     currentPhase.value = 'IDLE'
     projectKey.value = ''
     permissionLevel.value = 'READ_ONLY'
-    if (creatingNewTask.value) {
+    if (creatingNewTask.value || consumeNewTask()) {
       creatingNewTask.value = false
+      newTaskAgentId.value = prevAgentId || null
+      newTaskMode.value = prevMode as 'CLOUD' | 'LOCAL'
+      newTaskWorkspace.value = prevWorkspace || ''
+      newSession()
     } else {
       newTaskAgentId.value = null
       newTaskMode.value = 'CLOUD'

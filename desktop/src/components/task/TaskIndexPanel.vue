@@ -123,9 +123,6 @@
         </template>
       </div>
     </template>
-    <button v-else class="collapsed-toggle" @click="$emit('toggle')">
-      <el-icon :size="16"><ChatDotRound /></el-icon>
-    </button>
     <div
       v-if="!collapsed"
       class="resize-handle"
@@ -136,7 +133,7 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, onUnmounted } from 'vue'
-import { Refresh, Loading, ChatDotRound, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpened, EditPen } from '@element-plus/icons-vue'
+import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpened, EditPen } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
@@ -435,9 +432,7 @@ function toggleGroup(key: string) {
 }
 
 .task-index-panel.collapsed {
-  width: 44px;
-  align-items: center;
-  padding-top: 8px;
+  display: none;
 }
 
 .panel-header {
@@ -775,25 +770,6 @@ function toggleGroup(key: string) {
 
 .session-item.confirming-delete {
   background: rgba(220, 53, 69, 0.04);
-}
-
-.collapsed-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: transparent;
-  border-radius: var(--aw-radius-xs);
-  color: var(--aw-ink-muted-48);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.collapsed-toggle:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: var(--aw-primary);
 }
 
 /* Resize handle */

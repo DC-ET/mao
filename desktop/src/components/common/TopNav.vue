@@ -7,6 +7,16 @@
         </div>
         <span class="logo-text">Agent Workbench</span>
       </div>
+      <div class="nav-left-actions">
+        <div class="theme-toggle" :class="{ active: !leftCollapsed }" @click="toggleLeft" title="左侧面板">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
+          </svg>
+        </div>
+        <div class="theme-toggle" @click="requestNewTask(); router.push('/')" title="新任务">
+          <el-icon :size="16"><Plus /></el-icon>
+        </div>
+      </div>
       <div v-if="showNavLinks" class="nav-links">
         <router-link
           v-for="link in navLinks"
@@ -19,6 +29,11 @@
       </div>
     </div>
     <div class="nav-right">
+      <div class="theme-toggle" :class="{ active: !rightCollapsed }" @click="toggleRight" title="右侧面板">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
+        </svg>
+      </div>
       <div class="theme-toggle" :class="{ active: terminalOpen }" @click="toggleTerminal" title="终端 (Ctrl+`)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
@@ -49,15 +64,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Monitor, ArrowDown, Moon, Sunny } from '@element-plus/icons-vue'
+import { Monitor, ArrowDown, Moon, Sunny, Plus } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
 import { useTerminal } from '../../composables/useTerminal'
+import { usePanelLayout } from '../../composables/usePanelLayout'
 
 const { isDark, toggleTheme } = useTheme()
 const sessionStore = useSessionStore()
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
+const { leftCollapsed, rightCollapsed, toggleLeft, toggleRight, requestNewTask } = usePanelLayout()
 
 function toggleTerminal() {
   const session = sessionStore.activeSession
@@ -140,6 +157,13 @@ async function handleCommand(command: string) {
   letter-spacing: -0.12px;
 }
 
+.nav-left-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  -webkit-app-region: no-drag;
+}
+
 .nav-links {
   display: flex;
   align-items: center;
@@ -175,7 +199,7 @@ async function handleCommand(command: string) {
 .nav-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 5px;
   -webkit-app-region: no-drag;
 }
 
