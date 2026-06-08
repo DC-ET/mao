@@ -154,6 +154,7 @@ import TaskInspector from '../../components/task/TaskInspector.vue'
 import MessageBubble from '../../components/chat/MessageBubble.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
 import QueuePanel from '../../components/chat/QueuePanel.vue'
+import { useTerminal } from '../../composables/useTerminal'
 
 const route = useRoute()
 const router = useRouter()
@@ -200,6 +201,20 @@ const {
   deleteQueueMessage,
   reorderQueueMessage
 } = useChat(agentId, executionMode)
+
+// Terminal
+const { togglePanel } = useTerminal()
+
+function handleTerminalShortcut(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+    e.preventDefault()
+    togglePanel()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', handleTerminalShortcut)
+})
 
 // Edit message state
 const editingMessageId = ref<string | null>(null)
@@ -554,6 +569,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('keydown', handleTerminalShortcut)
   cleanup()
 })
 </script>

@@ -19,6 +19,11 @@
       </div>
     </div>
     <div class="nav-right">
+      <div class="theme-toggle" :class="{ active: terminalOpen }" @click="toggleTerminal" title="终端 (Ctrl+`)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+        </svg>
+      </div>
       <div class="theme-toggle" @click="toggleTheme">
         <el-icon :size="16">
           <Moon v-if="!isDark" />
@@ -46,9 +51,22 @@ import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Monitor, ArrowDown, Moon, Sunny } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
+import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
+import { useTerminal } from '../../composables/useTerminal'
 
 const { isDark, toggleTheme } = useTheme()
+const sessionStore = useSessionStore()
+const { isOpen: terminalOpen, togglePanel } = useTerminal()
+
+function toggleTerminal() {
+  const session = sessionStore.activeSession
+  let cwd: string | undefined
+  if (session?.executionMode === 'LOCAL' && session.workspace) {
+    cwd = session.workspace
+  }
+  togglePanel(cwd)
+}
 
 const router = useRouter()
 const route = useRoute()
@@ -215,6 +233,11 @@ async function handleCommand(command: string) {
 .theme-toggle:hover {
   color: var(--aw-nav-text);
   background: rgba(0, 0, 0, 0.06);
+}
+
+.theme-toggle.active {
+  color: var(--aw-primary);
+  background: rgba(0, 102, 204, 0.1);
 }
 
 [data-theme="dark"] .theme-toggle:hover {

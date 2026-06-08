@@ -7,6 +7,7 @@
   --aw-primary: #0066cc;
   --aw-primary-focus: #0071e3;
   --aw-primary-on-dark: #2997ff;
+  --aw-primary-lighter: rgba(0, 102, 204, 0.10);
   --aw-on-primary: #ffffff;
 
   /* Colors — Surface */
@@ -84,6 +85,11 @@
   --aw-subnav-height: 52px;
   --aw-session-panel-width: 280px;
   --aw-inspector-width: 260px;
+
+  /* Terminal */
+  --aw-terminal-bg: #f5f5f7;
+  --aw-terminal-header-bg: #f5f5f7;
+  --aw-terminal-header-height: 36px;
 }
 
 /* ============================================
@@ -110,10 +116,15 @@
   --aw-hairline: #38383a;
 
   --aw-primary-on-dark: #2997ff;
+  --aw-primary-lighter: rgba(41, 151, 255, 0.18);
 
   --aw-nav-bg: #000000;
   --aw-nav-text: #f5f5f7;
   --aw-nav-text-muted: #a1a1a6;
+
+  /* Terminal */
+  --aw-terminal-bg: #1a1a22;
+  --aw-terminal-header-bg: #1a1a22;
 }
 
 /* ============================================

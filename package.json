@@ -1,5 +1,8 @@
 {
   "devDependencies": {
     "mysql2": "^3.22.3"
+  },
+  "dependencies": {
+    "@xterm/addon-webgl": "^0.19.0"
   }
 }

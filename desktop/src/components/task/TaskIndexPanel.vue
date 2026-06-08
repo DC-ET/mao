@@ -33,8 +33,10 @@
                 <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn" @click.stop="openGroupFolder(group)" title="在文件浏览器中打开">
                   <el-icon :size="12"><FolderOpened /></el-icon>
                 </button>
-                <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn" @click.stop="openTerminal(group)" title="在终端中打开">
-                  <el-icon :size="12"><Monitor /></el-icon>
+                <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn group-add-btn--terminal" @click.stop="openTerminal(group)" title="在终端中打开">
+                  <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+                  </svg>
                 </button>
                 <button class="group-add-btn" @click.stop="onGroupNewTask(group)" title="在该分组新建任务">
                   <el-icon :size="12"><Plus /></el-icon>
@@ -134,9 +136,10 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, onUnmounted } from 'vue'
-import { Refresh, Loading, ChatDotRound, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpened, EditPen, Monitor } from '@element-plus/icons-vue'
+import { Refresh, Loading, ChatDotRound, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpened, EditPen } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
+import { useTerminal } from '../../composables/useTerminal'
 
 defineProps<{
   collapsed: boolean
@@ -150,6 +153,7 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const sessionStore = useSessionStore()
+const { createTerminal, isOpen: terminalOpen } = useTerminal()
 
 const DEFAULT_VISIBLE = 5
 const EXPAND_STEP = 20
@@ -223,9 +227,10 @@ function openGroupFolder(group: { key: string }) {
 
 function openTerminal(group: { key: string }) {
   const workspace = group.key.startsWith('LOCAL:') ? group.key.substring(6) : ''
-  if (workspace && window.electronAPI?.openTerminal) {
-    window.electronAPI.openTerminal(workspace)
+  if (!terminalOpen.value) {
+    terminalOpen.value = true
   }
+  createTerminal(workspace || undefined)
 }
 
 const groupedSessions = computed(() => {
@@ -546,6 +551,11 @@ function toggleGroup(key: string) {
   transition: opacity 0.15s, background 0.15s, color 0.15s;
 }
 
+.group-add-btn--terminal {
+  width: 24px;
+  height: 24px;
+}
+
 .group-header:hover .group-add-btn {
   opacity: 1;
 }
@@ -597,7 +607,7 @@ function toggleGroup(key: string) {
 }
 
 .session-item.active {
-  background: var(--aw-surface-pearl);
+  background: var(--aw-primary-lighter);
 }
 
 .session-item-main {
@@ -843,7 +853,7 @@ function toggleGroup(key: string) {
 }
 
 [data-theme="dark"] .session-item.active {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--aw-primary-lighter);
 }
 
 [data-theme="dark"] .action-btn {
