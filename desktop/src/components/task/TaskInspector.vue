@@ -69,7 +69,7 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick } from 'vue'
-import { ChatDotRound, FolderOpened, DocumentCopy } from '@element-plus/icons-vue'
+import { FolderOpened, DocumentCopy } from '@element-plus/icons-vue'
 import TodoChecklist from './TodoChecklist.vue'
 import type { TodoItem } from '../../types/chat'
 import type { TaskPhase } from '../../stores/session'

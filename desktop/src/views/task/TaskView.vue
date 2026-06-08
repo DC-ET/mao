@@ -134,7 +134,7 @@
       :agent-name="agentName"
       :workspace="workspace"
       :execution-mode="executionMode"
-      :phase="currentPhase"
+      :phase="effectivePhase"
       :panel-collapsed="rightCollapsed"
       :context-window="contextWindow"
       @toggle-panel="toggleRight"
@@ -149,9 +149,8 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
-import { useStreamWS } from '../../composables/useStreamWS'
 import { useAgentStore } from '../../stores/agent'
-import { useSessionStore, type TaskPhase } from '../../stores/session'
+import { useSessionStore } from '../../stores/session'
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
@@ -162,12 +161,12 @@ import QueuePanel from '../../components/chat/QueuePanel.vue'
 import ApprovalStack from '../../components/chat/ApprovalStack.vue'
 import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout } from '../../composables/usePanelLayout'
+import { buildMessageRounds } from '../../domain/session/messageRounds'
 
 const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
-const { subscribe } = useStreamWS()
 const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight, consumeNewTask } = usePanelLayout()
 
 const sessionIdParam = computed(() => route.params.sessionId as string)
@@ -176,8 +175,6 @@ const executionMode = ref('CLOUD')
 const creatingNewTask = ref(false)
 const initialLoading = ref(true)
 
-// Task state
-const currentPhase = ref<TaskPhase>('IDLE')
 const projectKey = ref('')
 const permissionLevel = ref('READ_ONLY')
 
@@ -194,9 +191,10 @@ const {
   sessionId,
   workspace,
   agentName,
-  pendingApprovals,
   todos,
   contextWindow,
+  effectivePhase,
+  refreshingMessages,
   sendMessageWithQueue,
   editAndResend,
   stopExecution,
@@ -207,8 +205,7 @@ const {
   cleanup,
   insertQueueMessage,
   deleteQueueMessage,
-  reorderQueueMessage,
-  sendingSessionId
+  reorderQueueMessage
 } = useChat(agentId, executionMode)
 
 // Terminal
@@ -234,7 +231,7 @@ const sessionTitle = computed(() => {
 })
 
 const activePendingApprovals = computed(() =>
-  pendingApprovals.value.filter(a => !a.sessionId || a.sessionId === sessionStore.activeSessionId)
+  sessionStore.activeApprovalItems
 )
 
 // 仅在尚未收到流式内容时显示打字动画，避免与 MessageBubble 重复
@@ -251,63 +248,11 @@ const showTypingIndicator = computed(() => {
   return !hasText && !hasTools
 })
 
-// 执行步骤折叠逻辑：按轮次分组，每轮独立折叠
-interface MessageRound {
-  userMessage: ChatMessage
-  collapsedSteps: ChatMessage[]
-  finalReply: ChatMessage | null
-  stepCount: number
-  durationText: string
-}
-
 const roundsExpanded = ref<Record<string, boolean>>({})
 
-const messageRounds = computed((): MessageRound[] => {
-  const msgs = messages.value
-  // 执行中不折叠
-  if (sending.value) return []
-  if (msgs.length <= 1) return []
-
-  // 第一趟：按用户消息分组
-  const groups: { user: ChatMessage; assistantMsgs: ChatMessage[] }[] = []
-  let cur = -1
-  for (const m of msgs) {
-    if (normalizeMessageRole(m.role) === 'user') {
-      groups.push({ user: m, assistantMsgs: [] })
-      cur++
-    } else if (cur >= 0) {
-      groups[cur].assistantMsgs.push(m)
-    }
-  }
-
-  // 第二趟：每轮识别最终回复（最后一条 assistant 消息即为最终回复，其余均为步骤）
-  const rounds: MessageRound[] = []
-  for (const g of groups) {
-    const lastIdx = g.assistantMsgs.length - 1
-    const steps = lastIdx >= 0 ? g.assistantMsgs.slice(0, lastIdx) : []
-    const reply = lastIdx >= 0 ? g.assistantMsgs[lastIdx] : null
-    rounds.push(buildRound(g.user, steps, reply))
-  }
-
-  return rounds
-})
-
-function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage | null): MessageRound {
-  const stepCount = steps.length
-  let durationText = ''
-  if (stepCount > 0) {
-    const first = steps[0].createdAt
-    const last = (reply || steps[steps.length - 1]).createdAt
-    if (first && last) {
-      const diff = new Date(last).getTime() - new Date(first).getTime()
-      if (diff > 0) {
-        const s = Math.floor(diff / 1000)
-        durationText = s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分${s % 60}秒`
-      }
-    }
-  }
-  return { userMessage: user, collapsedSteps: steps, finalReply: reply, stepCount, durationText }
-}
+const messageRounds = computed(() =>
+  buildMessageRounds(messages.value, effectivePhase.value, refreshingMessages.value)
+)
 
 function toggleRound(roundId: string) {
   roundsExpanded.value[roundId] = !roundsExpanded.value[roundId]
@@ -336,27 +281,6 @@ async function confirmEdit(messageId: string, newContent: string) {
   await editAndResend(messageId, newContent)
   nextTick(scrollToBottomSmooth)
 }
-
-// Track local timing state; phase is driven by server WS session_status events
-watch(() => sending.value, (isSending) => {
-  if (!sessionStore.activeSessionId) return
-
-  if (isSending) {
-    currentPhase.value = 'RUNNING'
-  } else {
-    // Only reset to IDLE if server hasn't set a terminal or cancelling phase
-    if (currentPhase.value === 'RUNNING' && !cancelling.value) {
-      currentPhase.value = 'IDLE'
-    }
-  }
-})
-
-// Sync phase from store (updated by WS session_status events from server)
-watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
-  if (serverPhase && serverPhase !== currentPhase.value) {
-    currentPhase.value = serverPhase
-  }
-})
 
 // Auto-scroll: only when user is already at the bottom
 const messagesContainer = ref<HTMLElement>()
@@ -489,10 +413,15 @@ async function loadSession(sid: string) {
     const { data } = await (await import('../../api')).api.get(`/sessions/${sid}`)
     if (data) {
       // Sync server data to store so title/summary are up-to-date
-      sessionStore.updateSession(sid, data)
+      sessionStore.updateSession(sid, {
+        ...data,
+        id: String(data.id),
+        agentId: String(data.agentId),
+        phase: data.phase || 'IDLE',
+        running: ['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'].includes(data.phase || 'IDLE')
+      })
       agentId.value = data.agentId
       executionMode.value = data.executionMode || 'CLOUD'
-      currentPhase.value = data.phase || 'IDLE'
       projectKey.value = data.projectKey || ''
       permissionLevel.value = data.permissionLevel || 'READ_ONLY'
       if (data.agentName) agentName.value = data.agentName
@@ -521,24 +450,7 @@ async function navigateToLatestSession() {
 // Handle session switch from sidebar (component reuse prevents onMounted re-fire)
 watch(sessionIdParam, (newSid, oldSid) => {
   if (newSid && newSid !== oldSid) {
-    // Skip loadSession if sendMessage already set up this session
-    // (loadSession would overwrite optimistic messages via fetchMessages)
-    if (!sending.value || sendingSessionId.value !== newSid) {
-      loadSession(newSid)
-    } else {
-      // Switching back to the session that is currently sending.
-      // Do NOT fetch messages — they're being streamed via WS and
-      // haven't been persisted yet. fetchMessages would overwrite
-      // the optimistic messages added by sendMessage.
-      sessionId.value = newSid
-      sessionStore.setActiveSession(newSid)
-      subscribe(newSid)
-      const session = sessionStore.sessions.find(s => String(s.id) === String(newSid))
-      if (session?.agentName) agentName.value = session.agentName
-      if (session?.phase) currentPhase.value = session.phase
-      if (session?.executionMode) executionMode.value = session.executionMode
-      if (session?.workspace) workspace.value = session.workspace
-    }
+    loadSession(newSid)
   } else if (!newSid && oldSid) {
     // Capture current session config before reset
     const prevAgentId = agentId.value
@@ -549,7 +461,6 @@ watch(sessionIdParam, (newSid, oldSid) => {
     sessionStore.setActiveSession(null)
     agentId.value = ''
     executionMode.value = 'CLOUD'
-    currentPhase.value = 'IDLE'
     projectKey.value = ''
     permissionLevel.value = 'READ_ONLY'
     if (creatingNewTask.value || consumeNewTask()) {

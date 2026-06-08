@@ -4,7 +4,8 @@
     <div v-if="isNewTask" class="new-task-config-bar">
       <AgentSelector
         :selected-agent-id="selectedAgentId"
-        @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
+        @update:selectedAgentId="handleSelectedAgentUpdate"
+        @update:selected-agent-id="handleSelectedAgentUpdate"
       />
       <div class="config-row">
         <el-radio-group :model-value="executionMode" size="small" @change="handleModeChange">
@@ -161,6 +162,7 @@ const emit = defineEmits<{
   'update:executionMode': [mode: string]
   'update:workspace': [workspace: string]
   'update:selectedAgentId': [id: string | null]
+  'update:selected-agent-id': [id: string | null]
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement>()
@@ -248,6 +250,11 @@ function handleSend() {
   pendingFiles.value = []
   filePreviewUrls.value = []
   nextTick(autoResize)
+}
+
+function handleSelectedAgentUpdate(id: string | null) {
+  emit('update:selectedAgentId', id)
+  emit('update:selected-agent-id', id)
 }
 
 function handleSendKey() {

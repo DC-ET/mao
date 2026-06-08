@@ -406,7 +406,7 @@ function isGroupCollapsed(key: string): boolean {
 }
 
 function hasPendingApproval(sessionId: string): boolean {
-  return (sessionStore.sessionPendingApprovals?.get(sessionId) ?? 0) > 0
+  return sessionStore.pendingApprovalCount(sessionId) > 0
 }
 
 function toggleGroup(key: string) {

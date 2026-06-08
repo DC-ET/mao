@@ -3,6 +3,8 @@ import { defineStore } from 'pinia'
 import { api } from '../api'
 import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage } from '../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
+import { TASK_TOOL_NAMES } from '../domain/session/constants'
+import { isActivePhase } from '../domain/session/phase'
 
 export type TaskPhase = 'IDLE' | 'RUNNING' | 'RESUMING' | 'WAITING_USER' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING'
 
@@ -35,8 +37,27 @@ export interface Session {
   unread?: boolean
 }
 
+export interface ApprovalItem {
+  requestId: string
+  toolName: string
+  description: string
+  sessionId?: string
+  dangerReason?: string
+}
+
 function normalizeId(id: any): string {
   return id != null ? String(id) : ''
+}
+
+function normalizeSession(raw: any): Session {
+  const phase = (raw.phase || 'IDLE') as TaskPhase
+  return {
+    ...raw,
+    id: normalizeId(raw.id),
+    agentId: normalizeId(raw.agentId),
+    phase,
+    running: isActivePhase(phase)
+  }
 }
 
 export const useSessionStore = defineStore('session', () => {
@@ -52,7 +73,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessionCompacting = ref<Map<string, boolean>>(new Map())
   const sessionThinking = ref<Map<string, boolean>>(new Map())
   const sessionStreaming = ref<Map<string, boolean>>(new Map())
-  const sessionPendingApprovals = ref<Map<string, number>>(new Map())
+  const approvalItems = ref<Map<string, ApprovalItem[]>>(new Map())
   const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
 
   const activeSession = computed(() =>
@@ -91,6 +112,14 @@ export const useSessionStore = defineStore('session', () => {
     sessionQueueMessages.value.get(activeSessionId.value ?? '') ?? []
   )
 
+  const activeApprovalItems = computed(() => [
+    ...(approvalItems.value.get('__global__') ?? []),
+    ...(approvalItems.value.get(activeSessionId.value ?? '') ?? [])
+  ])
+
+  const activePhase = computed(() => activeSession.value?.phase ?? 'IDLE')
+  const activeIsRunning = computed(() => isActivePhase(activePhase.value))
+
   function sessionsByAgent(agentId: string) {
     return sessions.value.filter(s => s.agentId === agentId)
   }
@@ -99,7 +128,7 @@ export const useSessionStore = defineStore('session', () => {
     if (!silent) loading.value = true
     try {
       const { data } = await api.get('/sessions')
-      const incoming: Session[] = (data || []).map((s: any) => ({ ...s, id: normalizeId(s.id), agentId: normalizeId(s.agentId) }))
+      const incoming: Session[] = (data || []).map(normalizeSession)
       // Merge: preserve local updates (e.g. server-generated title) that
       // arrived after the request was fired but before it resolved.
       const serverMap = new Map(incoming.map(s => [s.id, s]))
@@ -107,7 +136,7 @@ export const useSessionStore = defineStore('session', () => {
         const local = sessions.value.find(ls => String(ls.id) === String(s.id))
         if (!local) return s
         // Server data is authoritative; only preserve client-only optimistic fields
-        const m = { ...local, ...s }
+        const m = normalizeSession({ ...local, ...s })
         // Never let fetchSessions overwrite local unread state
         // (managed by session_status events and markAsRead)
         m.unread = local.unread
@@ -139,7 +168,7 @@ export const useSessionStore = defineStore('session', () => {
       const { data } = await api.get(`/sessions/${id}`)
       if (data) {
         const local = sessions.value.find(s => String(s.id) === String(id))
-        updateSession(id, { ...data, id: normalizeId(data.id), agentId: normalizeId(data.agentId), unread: local?.unread })
+        updateSession(id, { ...normalizeSession(data), unread: local?.unread })
         if (data.contextTokens && data.contextTokens > 0) {
           const sid = normalizeId(data.id)
           if (!sessionContextWindow.value.has(sid)) {
@@ -162,6 +191,8 @@ export const useSessionStore = defineStore('session', () => {
     if (data) {
       data.id = normalizeId(data.id)
       data.agentId = normalizeId(data.agentId)
+      data.phase = data.phase || 'IDLE'
+      data.running = isActivePhase(data.phase)
       sessions.value.unshift(data)
     }
     return data
@@ -182,7 +213,7 @@ export const useSessionStore = defineStore('session', () => {
   function updateSessionPhase(id: string, phase: TaskPhase) {
     updateSession(id, {
       phase,
-      running: phase === 'RUNNING' || phase === 'WAITING_APPROVAL'
+      running: isActivePhase(phase)
     })
   }
 
@@ -206,6 +237,10 @@ export const useSessionStore = defineStore('session', () => {
       sessionTodos.value.delete(sid)
       sessionActivities.value.delete(sid)
       sessionContextWindow.value.delete(sid)
+      sessionCompacting.value.delete(sid)
+      sessionThinking.value.delete(sid)
+      sessionStreaming.value.delete(sid)
+      approvalItems.value.delete(sid)
       sessionQueueMessages.value.delete(sid)
     } catch {
       // ignore
@@ -269,8 +304,6 @@ export const useSessionStore = defineStore('session', () => {
       sessionMessages.value.set(sid, [...list])
     }
   }
-
-  const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
 
   function appendToolCallStart(sessionId: string, data: { tool_call_id: string; tool_name: string; arguments?: string }) {
     if (TASK_TOOL_NAMES.has(data.tool_name)) {
@@ -453,20 +486,39 @@ export const useSessionStore = defineStore('session', () => {
 
   // --- Pending approval tracking ---
 
-  function incrementPendingApproval(sessionId: string) {
-    const sid = String(sessionId)
-    const current = sessionPendingApprovals.value.get(sid) ?? 0
-    sessionPendingApprovals.value.set(sid, current + 1)
+  function addApproval(item: ApprovalItem) {
+    const sid = item.sessionId || '__global__'
+    const list = approvalItems.value.get(sid) ?? []
+    if (!list.some(approval => approval.requestId === item.requestId)) {
+      approvalItems.value.set(sid, [...list, item])
+    }
   }
 
-  function decrementPendingApproval(sessionId: string) {
-    const sid = String(sessionId)
-    const current = sessionPendingApprovals.value.get(sid) ?? 0
-    if (current > 1) {
-      sessionPendingApprovals.value.set(sid, current - 1)
-    } else {
-      sessionPendingApprovals.value.delete(sid)
+  function removeApproval(requestId: string): ApprovalItem | undefined {
+    for (const [sid, list] of approvalItems.value.entries()) {
+      const item = list.find(approval => approval.requestId === requestId)
+      if (!item) continue
+      const next = list.filter(approval => approval.requestId !== requestId)
+      if (next.length > 0) {
+        approvalItems.value.set(sid, next)
+      } else {
+        approvalItems.value.delete(sid)
+      }
+      return item
     }
+    return undefined
+  }
+
+  function getApproval(requestId: string): ApprovalItem | undefined {
+    for (const list of approvalItems.value.values()) {
+      const item = list.find(approval => approval.requestId === requestId)
+      if (item) return item
+    }
+    return undefined
+  }
+
+  function pendingApprovalCount(sessionId: string): number {
+    return approvalItems.value.get(String(sessionId))?.length ?? 0
   }
 
   // --- Queue message actions ---
@@ -490,7 +542,7 @@ export const useSessionStore = defineStore('session', () => {
     sessionCompacting.value = new Map()
     sessionThinking.value = new Map()
     sessionStreaming.value = new Map()
-    sessionPendingApprovals.value = new Map()
+    approvalItems.value = new Map()
     sessionQueueMessages.value = new Map()
   }
 
@@ -499,6 +551,8 @@ export const useSessionStore = defineStore('session', () => {
     activeSessionId,
     loading,
     activeSession,
+    activePhase,
+    activeIsRunning,
     activeMessages,
     activeTodos,
     activeActivities,
@@ -546,9 +600,12 @@ export const useSessionStore = defineStore('session', () => {
     activeStreaming,
     setStreaming,
     // Pending approvals
-    sessionPendingApprovals,
-    incrementPendingApproval,
-    decrementPendingApproval,
+    approvalItems,
+    activeApprovalItems,
+    addApproval,
+    removeApproval,
+    getApproval,
+    pendingApprovalCount,
     // Queue messages
     activeQueueMessages,
     setQueueMessages,

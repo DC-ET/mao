@@ -4,6 +4,7 @@ import {
   type MessageSegment,
   type ToolCall
 } from '../types/chat'
+import { TASK_TOOL_NAMES } from '../domain/session/constants'
 
 /** 解析工具参数（后端 arguments 为 JSON 字符串） */
 export function parseToolArguments(raw: unknown): Record<string, unknown> | undefined {
@@ -54,8 +55,6 @@ export function normalizeApiToolCall(
     argsStreaming: false
   }
 }
-
-const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
 
 export function normalizeToolCallsList(raw: unknown): ToolCall[] {
   if (!raw) return []
