@@ -48,5 +48,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   removeSkillSyncCompleteListener: () => {
     ipcRenderer.removeAllListeners('skill-sync-complete')
+  },
+
+  // Terminal (node-pty) — embedded terminal panel
+  terminal: {
+    create: (options) => ipcRenderer.invoke('terminal:create', options),
+    write: (id, data) => ipcRenderer.send('terminal:data', { id, data }),
+    resize: (id, cols, rows) => ipcRenderer.send('terminal:resize', { id, cols, rows }),
+    kill: (id) => ipcRenderer.invoke('terminal:kill', { id }),
+    list: () => ipcRenderer.invoke('terminal:list'),
+    onData: (callback) => {
+      const handler = (_event, payload) => callback(payload)
+      ipcRenderer.on('terminal:data', handler)
+      return () => ipcRenderer.removeListener('terminal:data', handler)
+    },
+    onExit: (callback) => {
+      const handler = (_event, payload) => callback(payload)
+      ipcRenderer.on('terminal:exit', handler)
+      return () => ipcRenderer.removeListener('terminal:exit', handler)
+    },
   }
 })

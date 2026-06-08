@@ -3,6 +3,7 @@ const { join } = require('path')
 const { exec, spawn } = require('child_process')
 const fs = require('fs')
 const path = require('path')
+const { TerminalManager } = require('./terminalManager.cjs')
 
 let mainWindow = null
 let currentWorkspace = ''
@@ -10,6 +11,7 @@ let currentWorkspace = ''
 const pendingApprovals = new Map()
 /** @type {Map<string, {process: import('child_process').ChildProcess, cwd: string}>} */
 const shellSessions = new Map()
+const terminalManager = new TerminalManager()
 
 function sendToRenderer(channel, data) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -139,6 +141,10 @@ app.on('activate', () => {
   }
 })
 
+app.on('before-quit', () => {
+  terminalManager.killAll()
+})
+
 // ========== Window control IPC handlers ==========
 
 ipcMain.handle('window-minimize', () => {
@@ -191,6 +197,44 @@ ipcMain.handle('open-folder', (event, folderPath) => {
 ipcMain.handle('open-terminal', (event, folderPath) => {
   if (!folderPath) return
   spawn('open', ['-a', 'Terminal', folderPath], { detached: true, stdio: 'ignore' }).unref()
+})
+
+// ========== Terminal IPC handlers (node-pty) ==========
+
+ipcMain.handle('terminal:create', (event, options) => {
+  const result = terminalManager.create(options)
+  const session = terminalManager.sessions.get(result.id)
+
+  session.pty.onData((data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal:data', { id: result.id, data })
+    }
+  })
+
+  session.pty.onExit(({ exitCode }) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal:exit', { id: result.id, exitCode })
+    }
+    terminalManager.sessions.delete(result.id)
+  })
+
+  return result
+})
+
+ipcMain.on('terminal:data', (event, { id, data }) => {
+  terminalManager.write(id, data)
+})
+
+ipcMain.on('terminal:resize', (event, { id, cols, rows }) => {
+  terminalManager.resize(id, cols, rows)
+})
+
+ipcMain.handle('terminal:kill', (event, { id }) => {
+  terminalManager.kill(id)
+})
+
+ipcMain.handle('terminal:list', () => {
+  return terminalManager.list()
 })
 
 // ========== Local tool execution IPC handlers ==========

@@ -4,11 +4,13 @@
     <main class="layout-main">
       <router-view />
     </main>
+    <TerminalPanel />
   </div>
 </template>
 
 <script setup lang="ts">
 import TopNav from './TopNav.vue'
+import TerminalPanel from '../terminal/TerminalPanel.vue'
 </script>
 
 <style scoped>
