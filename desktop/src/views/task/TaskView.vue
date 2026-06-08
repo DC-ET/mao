@@ -149,6 +149,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
+import { useStreamWS } from '../../composables/useStreamWS'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { api } from '../../api'
@@ -166,6 +167,7 @@ const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
+const { subscribe } = useStreamWS()
 const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight, consumeNewTask } = usePanelLayout()
 
 const sessionIdParam = computed(() => route.params.sessionId as string)
@@ -205,7 +207,8 @@ const {
   cleanup,
   insertQueueMessage,
   deleteQueueMessage,
-  reorderQueueMessage
+  reorderQueueMessage,
+  sendingSessionId
 } = useChat(agentId, executionMode)
 
 // Terminal
@@ -520,15 +523,21 @@ watch(sessionIdParam, (newSid, oldSid) => {
   if (newSid && newSid !== oldSid) {
     // Skip loadSession if sendMessage already set up this session
     // (loadSession would overwrite optimistic messages via fetchMessages)
-    if (!sending.value) {
+    if (!sending.value || sendingSessionId.value !== newSid) {
       loadSession(newSid)
     } else {
-      // Still need to mark the session as active so the UI renders correctly
+      // Switching back to the session that is currently sending.
+      // Do NOT fetch messages — they're being streamed via WS and
+      // haven't been persisted yet. fetchMessages would overwrite
+      // the optimistic messages added by sendMessage.
+      sessionId.value = newSid
       sessionStore.setActiveSession(newSid)
-      // Sync agent name and phase from the session created by sendMessage
+      subscribe(newSid)
       const session = sessionStore.sessions.find(s => String(s.id) === String(newSid))
       if (session?.agentName) agentName.value = session.agentName
       if (session?.phase) currentPhase.value = session.phase
+      if (session?.executionMode) executionMode.value = session.executionMode
+      if (session?.workspace) workspace.value = session.workspace
     }
   } else if (!newSid && oldSid) {
     // Capture current session config before reset

@@ -34,6 +34,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
   const sending = ref(false)
   const cancelling = ref(false)
+  const switchingSession = ref(false)
+  const sendingSessionId = ref<string | null>(null)
   const sessionId = ref<string | null>(null)
   const workspace = ref('')
   const agentName = ref('Agent')
@@ -172,6 +174,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       }
 
       const sid = sessionId.value!
+      // Track which session is sending (set AFTER session creation so ID is correct)
+      sendingSessionId.value = sid
 
       // Clear previous turn's todos
       sessionStore.clearTodos(sid)
@@ -229,6 +233,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       // Refresh session to pick up server-generated title/summary
       if (sessionId.value) {
         sessionStore.fetchSession(sessionId.value)
+        // Re-fetch messages so that the API-structured messages replace the
+        // live-streamed single-message, enabling round-based collapse in UI
+        fetchMessages()
       }
     } catch (error: any) {
       sending.value = false
@@ -319,6 +326,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       // Refresh session
       if (sessionId.value) {
         sessionStore.fetchSession(sessionId.value)
+        fetchMessages()
       }
     } catch (error: any) {
       sending.value = false
@@ -334,12 +342,24 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     }
   }
 
-  // Watch phase changes for state sync
-  watch(() => sessionStore.activeSession?.phase, (phase) => {
+  // Watch phase changes for state sync.
+  // This watcher fires both on actual phase transitions AND when activeSession
+  // changes (e.g. null → session). The latter triggers with whatever phase the
+  // session currently has (often IDLE), which would incorrectly reset sending.
+  // Guard: only handle transitions where oldPhase is defined (real phase change).
+  watch(() => sessionStore.activeSession?.phase, (phase, oldPhase) => {
+    // Skip during session switches — restoreSession handles state sync
+    if (switchingSession.value) return
+    // Skip if this is a session switch, not a phase change (oldPhase is undefined)
+    if (oldPhase === undefined) return
+
+    // Skip if phase didn't actually change
+    if (phase === oldPhase) return
+
     if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED' || phase === 'IDLE') {
       cancelling.value = false
       sending.value = false
-      // Resolve pending callback if any
+      sendingSessionId.value = null
       if (sessionId.value && pendingCallbacks.has(sessionId.value)) {
         const cb = pendingCallbacks.get(sessionId.value)
         pendingCallbacks.delete(sessionId.value)
@@ -347,13 +367,15 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       }
       if (sessionId.value) {
         sessionStore.fetchSession(sessionId.value)
+        // Re-fetch messages to replace streamed single-message with API-structured
+        // messages, enabling round-based collapse in UI
+        fetchMessages()
       }
     } else if (phase === 'RUNNING' || phase === 'WAITING_APPROVAL') {
       // Auto-sync sending state (covers queue auto-consume case)
       if (!sending.value) {
         sending.value = true
         startedAt.value = new Date().toISOString()
-        // Register pending callback for completion tracking
         if (sessionId.value && !pendingCallbacks.has(sessionId.value)) {
           new Promise<void>((resolve, reject) => {
             pendingCallbacks.set(sessionId.value!, { resolve, reject })
@@ -439,6 +461,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   }
 
   async function restoreSession(sessionIdVal: string, mode: string, initialWorkspace?: string) {
+    // Suppress phase watcher during session switch to prevent stale phase
+    // from resetting sending/cancelling state
+    switchingSession.value = true
+
     // Unsubscribe from previous session
     if (sessionId.value && sessionId.value !== sessionIdVal) {
       unsubscribe(sessionId.value)
@@ -481,6 +507,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     fetchMessages()
     fetchTodos()
     fetchQueue()
+
+    // Resume phase watcher after session switch is complete
+    switchingSession.value = false
   }
 
   async function confirmApproval(requestId: string, approved: boolean) {
@@ -520,12 +549,15 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     restoreSession,
     confirmApproval,
     updateTodoManually,
+    fetchTodos,
     cleanup,
     // Queue
     isActive,
     insertQueueMessage,
     deleteQueueMessage,
     reorderQueueMessage,
-    fetchQueue
+    fetchQueue,
+    switchingSession,
+    sendingSessionId
   }
 }

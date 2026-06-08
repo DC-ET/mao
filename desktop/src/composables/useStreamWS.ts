@@ -280,6 +280,16 @@ export function useStreamWS() {
               pendingCallbacks.delete(sessionId)
               cb.resolve?.()
             }
+          } else if (data.phase === 'RUNNING' || data.phase === 'WAITING_APPROVAL') {
+            // Ensure a pending callback exists for running sessions.
+            // Covers the case where the user switches away and back — the original
+            // callback from sendMessage is lost, but we still need completion tracking.
+            if (!pendingCallbacks.has(sessionId)) {
+              pendingCallbacks.set(sessionId, {
+                resolve: () => {},
+                reject: () => {}
+              })
+            }
           }
         }
         break
