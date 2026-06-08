@@ -1,7 +1,38 @@
 <template>
   <div class="chat-input-card">
+    <!-- New task config bar -->
+    <div v-if="isNewTask" class="new-task-config-bar">
+      <AgentSelector
+        :selected-agent-id="selectedAgentId"
+        @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
+      />
+      <div class="config-row">
+        <el-radio-group :model-value="executionMode" size="small" @change="handleModeChange">
+          <el-radio-button value="CLOUD">
+            <el-icon :size="12"><Cloudy /></el-icon> 云端模式
+          </el-radio-button>
+          <el-radio-button value="LOCAL">
+            <el-icon :size="12"><Monitor /></el-icon> 本地模式
+          </el-radio-button>
+        </el-radio-group>
+        <div
+          v-if="executionMode === 'LOCAL'"
+          class="workspace-selector"
+          :class="{ 'has-workspace': !!workspace }"
+          @click="selectWorkspace"
+        >
+          <el-icon :size="13">
+            <WarningFilled v-if="!workspace" />
+            <FolderOpened v-else />
+          </el-icon>
+          <span>{{ workspace ? dirName : '选择工作目录' }}</span>
+        </div>
+      </div>
+      <div class="config-divider"></div>
+    </div>
+
     <!-- Textarea area -->
-    <div class="textarea-area">
+    <div class="textarea-area" :class="{ 'new-task-textarea': isNewTask }">
       <textarea
         ref="textareaRef"
         v-model="inputText"
@@ -91,9 +122,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy } from '@element-plus/icons-vue'
+import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
+import AgentSelector from '../task/AgentSelector.vue'
+import type { Agent } from '../../stores/agent'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -104,6 +137,9 @@ const props = withDefaults(defineProps<{
   modelName?: string
   placeholder?: string
   permissionLevel?: string
+  isNewTask?: boolean
+  selectedAgentId?: string | null
+  agents?: Agent[]
 }>(), {
   disabled: false,
   loading: false,
@@ -111,14 +147,20 @@ const props = withDefaults(defineProps<{
   workspace: '',
   executionMode: 'CLOUD',
   modelName: '',
-  placeholder: '描述你希望 Agent 完成的任务',
+  placeholder: '告诉 Agent 你想做什么...',
   permissionLevel: 'READ_ONLY',
+  isNewTask: false,
+  selectedAgentId: null,
+  agents: () => [],
 })
 
 const emit = defineEmits<{
   send: [text: string, files: File[]]
   stop: []
   'update:permissionLevel': [level: string]
+  'update:executionMode': [mode: string]
+  'update:workspace': [workspace: string]
+  'update:selectedAgentId': [id: string | null]
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement>()
@@ -126,9 +168,11 @@ const inputText = ref('')
 const pendingFiles = ref<File[]>([])
 const filePreviewUrls = ref<string[]>([])
 
-const canSend = computed(() =>
-  (inputText.value.trim().length > 0 || pendingFiles.value.length > 0)
-)
+const canSend = computed(() => {
+  if (!(inputText.value.trim().length > 0 || pendingFiles.value.length > 0)) return false
+  if (props.isNewTask && !props.selectedAgentId) return false
+  return true
+})
 
 const dirName = computed(() => {
   if (!props.workspace) return ''
@@ -224,6 +268,18 @@ function handleStop() {
   emit('stop')
 }
 
+function handleModeChange(mode: string) {
+  emit('update:executionMode', mode)
+}
+
+async function selectWorkspace() {
+  const api = (window as any).electronAPI
+  if (api?.selectDirectory) {
+    const dir = await api.selectDirectory()
+    if (dir) emit('update:workspace', dir)
+  }
+}
+
 onMounted(autoResize)
 </script>
 
@@ -247,6 +303,13 @@ onMounted(autoResize)
 .textarea-area {
   position: relative;
   padding: 16px 16px 4px;
+}
+
+.textarea-area.new-task-textarea {
+  margin: 0 12px;
+  padding: 14px 14px 4px;
+  background: var(--aw-canvas-parchment);
+  border-radius: 12px;
 }
 
 .chat-textarea {
@@ -470,4 +533,72 @@ onMounted(autoResize)
   cursor: default;
 }
 
+/* New task config bar */
+.new-task-config-bar {
+  padding: 8px 16px 4px;
+}
+
+.config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.config-divider {
+  border-top: 1px solid var(--aw-hairline);
+}
+
+:deep(.config-row .el-radio-group) {
+  --el-radio-button-checked-bg-color: var(--aw-primary);
+  --el-radio-button-checked-border-color: var(--aw-primary);
+  --el-radio-button-checked-text-color: var(--aw-on-primary);
+}
+
+:deep(.config-row .el-radio-button__inner) {
+  padding: 5px 12px;
+  font-size: var(--aw-text-fine);
+  border-color: var(--aw-hairline);
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-80);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s;
+}
+
+:deep(.config-row .el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background-color: var(--aw-primary);
+  border-color: var(--aw-primary);
+  color: var(--aw-on-primary);
+}
+
+.workspace-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--aw-canvas-parchment);
+  border: 1px solid var(--aw-hairline);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-warning);
+  transition: border-color 0.15s;
+}
+
+.workspace-selector:hover {
+  border-color: var(--aw-primary);
+}
+
+.workspace-selector.has-workspace {
+  color: var(--aw-ink-muted-80);
+}
+
+.workspace-selector span {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 </style>
