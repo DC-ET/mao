@@ -1,13 +1,11 @@
 <template>
-  <div class="task-inspector" :style="panelStyle">
+  <div class="task-inspector" :class="{ collapsed: panelCollapsed }" :style="panelStyle">
+    <template v-if="!panelCollapsed">
     <div class="resize-handle" @mousedown="onResizeStart"></div>
 
     <!-- Task info -->
     <div class="inspector-section task-info-section">
       <div class="task-info-top">
-        <button v-if="panelCollapsed" class="toggle-panel-btn" @click="$emit('togglePanel')">
-          <el-icon :size="14"><ChatDotRound /></el-icon>
-        </button>
         <div class="task-title-group">
           <input
             v-if="editing"
@@ -75,6 +73,7 @@
       />
       <div v-else class="approval-empty">无待审批事项</div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -233,6 +232,10 @@ function onResizeStart(e: MouseEvent) {
   background: var(--aw-canvas);
 }
 
+.task-inspector.collapsed {
+  display: none;
+}
+
 .inspector-section {
   margin-bottom: 20px;
 }
@@ -276,27 +279,6 @@ function onResizeStart(e: MouseEvent) {
   align-items: flex-start;
   gap: 8px;
   margin-bottom: 8px;
-}
-
-.toggle-panel-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  border-radius: var(--aw-radius-xs);
-  color: var(--aw-ink-muted-48);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.toggle-panel-btn:hover {
-  background: rgba(0, 0, 0, 0.04);
-  color: var(--aw-primary);
 }
 
 .task-title-group {
@@ -483,10 +465,6 @@ function onResizeStart(e: MouseEvent) {
 
 [data-theme="dark"] .task-info-section {
   border-bottom-color: var(--aw-hairline);
-}
-
-[data-theme="dark"] .toggle-panel-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 [data-theme="dark"] .workspace-copy-btn:hover {
