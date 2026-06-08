@@ -103,6 +103,12 @@
         @reorder="(id, dir) => reorderQueueMessage(id, dir)"
       />
 
+      <ApprovalStack
+        v-if="activePendingApprovals.length > 0"
+        :items="activePendingApprovals"
+        @confirm="confirmApproval"
+      />
+
       <ChatInput
         :loading="sending && !cancelling"
         :cancelling="cancelling"
@@ -124,7 +130,6 @@
 
     <TaskInspector
       :todos="todos"
-      :pending-approvals="activePendingApprovals"
       :title="sessionTitle"
       :agent-name="agentName"
       :workspace="workspace"
@@ -132,7 +137,6 @@
       :phase="currentPhase"
       :panel-collapsed="rightCollapsed"
       :context-window="contextWindow"
-      @tool-confirm="confirmApproval"
       @toggle-panel="toggleRight"
       @todo-update="handleTodoUpdate"
       @rename="handleRename"
@@ -154,6 +158,7 @@ import TaskInspector from '../../components/task/TaskInspector.vue'
 import MessageBubble from '../../components/chat/MessageBubble.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
 import QueuePanel from '../../components/chat/QueuePanel.vue'
+import ApprovalStack from '../../components/chat/ApprovalStack.vue'
 import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 
@@ -540,9 +545,12 @@ watch(sessionIdParam, (newSid, oldSid) => {
     permissionLevel.value = 'READ_ONLY'
     if (creatingNewTask.value || consumeNewTask()) {
       creatingNewTask.value = false
-      newTaskAgentId.value = prevAgentId || null
-      newTaskMode.value = prevMode as 'CLOUD' | 'LOCAL'
-      newTaskWorkspace.value = prevWorkspace || ''
+      // handleNewTaskFromGroup already set newTask* values — only reset for plain handleNewTask
+      if (!newTaskAgentId.value) {
+        newTaskAgentId.value = prevAgentId || null
+        newTaskMode.value = prevMode as 'CLOUD' | 'LOCAL'
+        newTaskWorkspace.value = prevWorkspace || ''
+      }
       newSession()
     } else {
       newTaskAgentId.value = null

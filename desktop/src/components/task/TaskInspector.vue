@@ -63,16 +63,6 @@
       <TodoChecklist :todos="todos" />
     </div>
 
-    <div class="inspector-section">
-      <h4 class="section-title">待审批</h4>
-      <ToolApprovalBar
-        v-if="pendingApprovals && pendingApprovals.length > 0"
-        :items="pendingApprovals"
-        class="inspector-approval"
-        @confirm="(requestId, approved) => $emit('toolConfirm', requestId, approved)"
-      />
-      <div v-else class="approval-empty">无待审批事项</div>
-    </div>
     </template>
   </div>
 </template>
@@ -82,14 +72,11 @@ import { ref, computed, nextTick } from 'vue'
 import { ChatDotRound, FolderOpened, DocumentCopy } from '@element-plus/icons-vue'
 import TodoChecklist from './TodoChecklist.vue'
 import type { TodoItem } from '../../types/chat'
-import ToolApprovalBar from '../chat/ToolApprovalBar.vue'
-import type { ApprovalItem } from '../chat/ToolApprovalBar.vue'
 import type { TaskPhase } from '../../stores/session'
 import type { ContextWindowInfo } from '../../types/chat'
 
 const props = defineProps<{
   todos?: TodoItem[]
-  pendingApprovals?: ApprovalItem[]
   // Task info props (moved from TaskHeader)
   title: string
   agentName?: string
@@ -101,7 +88,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  toolConfirm: [requestId: string, approved: boolean]
   togglePanel: []
   rename: [title: string]
 }>()
@@ -267,7 +253,6 @@ function onResizeStart(e: MouseEvent) {
   opacity: 0.3;
 }
 
-/* Approval */
 /* Task info */
 .task-info-section {
   border-bottom: 1px solid var(--aw-divider-soft);
@@ -430,17 +415,6 @@ function onResizeStart(e: MouseEvent) {
 .context-tokens {
   font-family: var(--aw-font-mono);
   color: var(--aw-ink-muted-48);
-}
-
-/* Approval */
-.inspector-approval {
-  margin-top: 0;
-}
-
-.approval-empty {
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink-muted-48);
-  padding: 4px 0;
 }
 
 /* Scrollbar */
