@@ -8,12 +8,16 @@
       />
       <div class="config-row">
         <el-radio-group :model-value="executionMode" size="small" @change="handleModeChange">
-          <el-radio-button value="CLOUD">
-            <el-icon :size="12"><Cloudy /></el-icon> 云端模式
-          </el-radio-button>
-          <el-radio-button value="LOCAL">
-            <el-icon :size="12"><Monitor /></el-icon> 本地模式
-          </el-radio-button>
+          <el-tooltip content="工具在云端服务器上执行，无需本地环境，随时随地可用" placement="top" :show-after="400">
+            <el-radio-button value="CLOUD">
+              <el-icon :size="12"><Cloudy /></el-icon> 云端模式
+            </el-radio-button>
+          </el-tooltip>
+          <el-tooltip content="工具在你本地电脑上执行，可直接访问本地文件和开发环境，需要桌面应用保持连接" placement="top" :show-after="400">
+            <el-radio-button value="LOCAL">
+              <el-icon :size="12"><Monitor /></el-icon> 本地模式
+            </el-radio-button>
+          </el-tooltip>
         </el-radio-group>
         <div
           v-if="executionMode === 'LOCAL'"
@@ -126,7 +130,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
@@ -289,6 +293,16 @@ async function selectWorkspace() {
     if (dir) emit('update:workspace', dir)
   }
 }
+
+watch(() => props.isNewTask, (val) => {
+  if (val) nextTick(() => textareaRef.value?.focus())
+})
+
+function focusInput() {
+  nextTick(() => textareaRef.value?.focus())
+}
+
+defineExpose({ focusInput })
 
 onMounted(autoResize)
 </script>

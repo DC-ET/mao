@@ -110,6 +110,7 @@
       />
 
       <ChatInput
+        ref="chatInputRef"
         :loading="sending && !cancelling"
         :cancelling="cancelling"
         :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
@@ -179,6 +180,7 @@ const agentId = ref('')
 const executionMode = ref('CLOUD')
 const creatingNewTask = ref(false)
 const initialLoading = ref(true)
+const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 
 // Task state
 const currentPhase = ref<TaskPhase>('IDLE')
@@ -551,6 +553,7 @@ async function loadSession(sid: string) {
   // sessionId.value is set synchronously in restoreSession,
   // so isNewTaskMode is already false — safe to end loading
   initialLoading.value = false
+  nextTick(() => chatInputRef.value?.focusInput())
 }
 
 // Navigate to the most recent session, or stay on empty state for new task
@@ -583,6 +586,7 @@ watch(sessionIdParam, (newSid, oldSid) => {
       if (session?.executionMode) executionMode.value = session.executionMode
       if (session?.workspace) workspace.value = session.workspace
     }
+    nextTick(() => chatInputRef.value?.focusInput())
   } else if (!newSid && oldSid) {
     // Capture current session config before reset
     const prevAgentId = agentId.value
