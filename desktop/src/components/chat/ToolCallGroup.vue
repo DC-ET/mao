@@ -87,7 +87,7 @@ function toggleExpand() {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 6px 8px;
+  padding: 5px 5px;
   cursor: pointer;
   user-select: none;
   border-radius: var(--aw-radius-sm);

@@ -501,7 +501,7 @@ function toggleGroup(key: string) {
   color: var(--aw-ink-muted-48);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 8px 8px 4px;
+  padding: 4px 4px;
   display: flex;
   align-items: center;
   justify-content: space-between;
