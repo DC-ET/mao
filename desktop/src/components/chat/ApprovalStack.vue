@@ -47,7 +47,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { WarningFilled } from '@element-plus/icons-vue'
-import type { ApprovalItem } from './ToolApprovalBar.vue'
+import type { ApprovalItem } from '../../types/chat'
 
 const threshold = 120
 

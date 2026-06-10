@@ -1,5 +1,6 @@
 import {
   normalizeMessageRole,
+  TASK_TOOL_NAMES,
   type ChatMessage,
   type MessageSegment,
   type ToolCall
@@ -54,8 +55,6 @@ export function normalizeApiToolCall(
     argsStreaming: false
   }
 }
-
-const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
 
 export function normalizeToolCallsList(raw: unknown): ToolCall[] {
   if (!raw) return []

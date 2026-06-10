@@ -1,5 +1,7 @@
 import { ref } from 'vue'
 import { useSessionStore, type TaskPhase } from '../stores/session'
+import { resolveSessionTurn, rejectSessionTurn } from '../domain/session/turnTracker'
+import { isTerminalPhase } from '../domain/session/phase'
 
 /// <reference types="vite/client" />
 
@@ -22,13 +24,6 @@ const PONG_TIMEOUT_MS = 15_000
 let intentionalClose = false
 let connectPromise: Promise<void> | null = null
 let isReconnecting = false
-
-// Pending sendMessage callbacks — keyed by eventId
-const pendingCallbacks = new Map<string, {
-  onSending?: () => void
-  resolve?: () => void
-  reject?: (err: Error) => void
-}>()
 
 // Module-level flags to ensure IPC listeners are registered only once
 let skillSyncListenerRegistered = false
@@ -59,19 +54,28 @@ export function useStreamWS() {
     }
     if (connectPromise) return connectPromise
 
+    // Cancel any pending reconnect timer — we're creating a fresh connection now
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+
     const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api'
     const wsBase = baseUrl.replace(/^http/, 'ws').replace(/\/api\/v1$/, '/api')
     const token = localStorage.getItem('token')
     if (!token) return Promise.reject(new Error('No token'))
 
     const url = `${wsBase}/ws/stream?token=${token}`
-    ws = new WebSocket(url)
+    const thisWs = new WebSocket(url)
+    ws = thisWs
     intentionalClose = false
 
     let initialConnect = true
 
     connectPromise = new Promise<void>((resolve, reject) => {
-      ws!.onopen = () => {
+      thisWs.onopen = () => {
+        // Guard: if a newer WebSocket was created, ignore this open
+        if (ws !== thisWs) { thisWs.close(); return }
         connected.value = true
         reconnectDelay.value = 1000
         connectPromise = null
@@ -94,7 +98,9 @@ export function useStreamWS() {
         resolve()
       }
 
-      ws!.onmessage = (event) => {
+      thisWs.onmessage = (event) => {
+        // Guard: only process messages from the current WebSocket
+        if (ws !== thisWs) return
         let msg: any
         try {
           msg = JSON.parse(event.data)
@@ -104,7 +110,10 @@ export function useStreamWS() {
         routeEvent(msg)
       }
 
-      ws!.onclose = () => {
+      thisWs.onclose = () => {
+        // Guard: if a newer WebSocket was created, this close is stale — ignore it
+        // to prevent corrupting the new connection's state (connectPromise, heartbeat, etc.)
+        if (ws !== thisWs) return
         connected.value = false
         stopHeartbeat()
         if (initialConnect && !isReconnecting) {
@@ -122,7 +131,7 @@ export function useStreamWS() {
         }
       }
 
-      ws!.onerror = () => {
+      thisWs.onerror = () => {
         // onclose will fire after onerror, which handles the reject/reconnect
       }
     })
@@ -270,25 +279,12 @@ export function useStreamWS() {
               sessionStore.updateSession(sessionId, { unread: data.unread })
             }
           }
-          // Only resolve pending callback on true terminal phases
-          const terminalPhases = ['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE']
-          if (terminalPhases.includes(data.phase)) {
+          if (isTerminalPhase(data.phase)) {
             sessionStore.setStreaming(sessionId, false)
-            // Agent turn complete — resolve pending callback
-            const cb = pendingCallbacks.get(sessionId)
-            if (cb) {
-              pendingCallbacks.delete(sessionId)
-              cb.resolve?.()
-            }
-          } else if (data.phase === 'RUNNING' || data.phase === 'WAITING_APPROVAL') {
-            // Ensure a pending callback exists for running sessions.
-            // Covers the case where the user switches away and back — the original
-            // callback from sendMessage is lost, but we still need completion tracking.
-            if (!pendingCallbacks.has(sessionId)) {
-              pendingCallbacks.set(sessionId, {
-                resolve: () => {},
-                reject: () => {}
-              })
+            resolveSessionTurn(sessionId)
+            // Only fetchSession for active session to avoid unnecessary API calls
+            if (sessionId === sessionStore.activeSessionId) {
+              sessionStore.fetchSession(sessionId)
             }
           }
         }
@@ -411,11 +407,7 @@ export function useStreamWS() {
       case 'error': {
         if (sessionId) {
           sessionStore.updateSessionPhase(sessionId, 'FAILED' as TaskPhase)
-          const cb = pendingCallbacks.get(sessionId)
-          if (cb) {
-            pendingCallbacks.delete(sessionId)
-            cb.reject?.(new Error(data.message || 'Agent 执行异常'))
-          }
+          rejectSessionTurn(sessionId, new Error(data.message || 'Agent 执行异常'))
         }
         break
       }
@@ -466,7 +458,6 @@ export function useStreamWS() {
     enqueueMessage,
     insertMessage,
     deleteQueueMessage,
-    reorderQueueMessage,
-    pendingCallbacks
+    reorderQueueMessage
   }
 }

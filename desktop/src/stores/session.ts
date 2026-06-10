@@ -1,7 +1,8 @@
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api'
 import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage } from '../types/chat'
+import { TASK_TOOL_NAMES } from '../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
 
 export type TaskPhase = 'IDLE' | 'RUNNING' | 'RESUMING' | 'WAITING_USER' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING'
@@ -45,50 +46,50 @@ export const useSessionStore = defineStore('session', () => {
   const loading = ref(false)
 
   // Multi-session message cache — keyed by sessionId
-  const sessionMessages = ref<Map<string, ChatMessage[]>>(new Map())
-  const sessionTodos = ref<Map<string, TodoItem[]>>(new Map())
-  const sessionActivities = ref<Map<string, any[]>>(new Map())
-  const sessionContextWindow = ref<Map<string, ContextWindowInfo>>(new Map())
-  const sessionCompacting = ref<Map<string, boolean>>(new Map())
-  const sessionThinking = ref<Map<string, boolean>>(new Map())
-  const sessionStreaming = ref<Map<string, boolean>>(new Map())
-  const sessionPendingApprovals = ref<Map<string, number>>(new Map())
-  const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
+  const sessionMessages = reactive(new Map<string, ChatMessage[]>())
+  const sessionTodos = reactive(new Map<string, TodoItem[]>())
+  const sessionActivities = reactive(new Map<string, any[]>())
+  const sessionContextWindow = reactive(new Map<string, ContextWindowInfo>())
+  const sessionCompacting = reactive(new Map<string, boolean>())
+  const sessionThinking = reactive(new Map<string, boolean>())
+  const sessionStreaming = reactive(new Map<string, boolean>())
+  const sessionPendingApprovals = reactive(new Map<string, number>())
+  const sessionQueueMessages = reactive(new Map<string, QueueMessage[]>())
 
   const activeSession = computed(() =>
     sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
   )
 
   const activeMessages = computed(() =>
-    sessionMessages.value.get(activeSessionId.value ?? '') ?? []
+    sessionMessages.get(activeSessionId.value ?? '') ?? []
   )
 
   const activeTodos = computed(() =>
-    sessionTodos.value.get(activeSessionId.value ?? '') ?? []
+    sessionTodos.get(activeSessionId.value ?? '') ?? []
   )
 
   const activeActivities = computed(() =>
-    sessionActivities.value.get(activeSessionId.value ?? '') ?? []
+    sessionActivities.get(activeSessionId.value ?? '') ?? []
   )
 
   const activeContextWindow = computed(() =>
-    sessionContextWindow.value.get(activeSessionId.value ?? '') ?? null
+    sessionContextWindow.get(activeSessionId.value ?? '') ?? null
   )
 
   const activeCompacting = computed(() =>
-    sessionCompacting.value.get(activeSessionId.value ?? '') ?? false
+    sessionCompacting.get(activeSessionId.value ?? '') ?? false
   )
 
   const activeThinking = computed(() =>
-    sessionThinking.value.get(activeSessionId.value ?? '') ?? false
+    sessionThinking.get(activeSessionId.value ?? '') ?? false
   )
 
   const activeStreaming = computed(() =>
-    sessionStreaming.value.get(activeSessionId.value ?? '') ?? false
+    sessionStreaming.get(activeSessionId.value ?? '') ?? false
   )
 
   const activeQueueMessages = computed(() =>
-    sessionQueueMessages.value.get(activeSessionId.value ?? '') ?? []
+    sessionQueueMessages.get(activeSessionId.value ?? '') ?? []
   )
 
   function sessionsByAgent(agentId: string) {
@@ -124,8 +125,8 @@ export const useSessionStore = defineStore('session', () => {
       for (const s of merged) {
         if (s.contextTokens && s.contextTokens > 0) {
           const sid = String(s.id)
-          if (!sessionContextWindow.value.has(sid)) {
-            sessionContextWindow.value.set(sid, { estimated: s.contextTokens, actual: 0 })
+          if (!sessionContextWindow.has(sid)) {
+            sessionContextWindow.set(sid, { estimated: s.contextTokens, actual: 0 })
           }
         }
       }
@@ -142,8 +143,8 @@ export const useSessionStore = defineStore('session', () => {
         updateSession(id, { ...data, id: normalizeId(data.id), agentId: normalizeId(data.agentId), unread: local?.unread })
         if (data.contextTokens && data.contextTokens > 0) {
           const sid = normalizeId(data.id)
-          if (!sessionContextWindow.value.has(sid)) {
-            sessionContextWindow.value.set(sid, { estimated: data.contextTokens, actual: 0 })
+          if (!sessionContextWindow.has(sid)) {
+            sessionContextWindow.set(sid, { estimated: data.contextTokens, actual: 0 })
           }
         }
       }
@@ -171,11 +172,23 @@ export const useSessionStore = defineStore('session', () => {
     activeSessionId.value = id
   }
 
+  const TERMINAL_PHASES = new Set<TaskPhase>(['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE'])
+
   function updateSession(id: string, updates: Partial<Session>) {
     const sid = String(id)
     const idx = sessions.value.findIndex(s => String(s.id) === sid)
     if (idx !== -1) {
-      sessions.value[idx] = { ...sessions.value[idx], ...updates, id: normalizeId(updates.id ?? sessions.value[idx].id) }
+      const current = sessions.value[idx]
+      const merged = { ...current, ...updates, id: normalizeId(updates.id ?? current.id) }
+      // Guard: prevent stale fetchSession data from overwriting a terminal phase.
+      // Terminal phases are set by session_status WS events and should not be
+      // regressed by fetchSession returning stale API data.
+      if (current.phase && TERMINAL_PHASES.has(current.phase) &&
+          merged.phase && !TERMINAL_PHASES.has(merged.phase)) {
+        merged.phase = current.phase
+        merged.running = current.running
+      }
+      sessions.value[idx] = merged
     }
   }
 
@@ -202,11 +215,11 @@ export const useSessionStore = defineStore('session', () => {
       }
       // Clean up cached data
       const sid = String(id)
-      sessionMessages.value.delete(sid)
-      sessionTodos.value.delete(sid)
-      sessionActivities.value.delete(sid)
-      sessionContextWindow.value.delete(sid)
-      sessionQueueMessages.value.delete(sid)
+      sessionMessages.delete(sid)
+      sessionTodos.delete(sid)
+      sessionActivities.delete(sid)
+      sessionContextWindow.delete(sid)
+      sessionQueueMessages.delete(sid)
     } catch {
       // ignore
     }
@@ -227,56 +240,54 @@ export const useSessionStore = defineStore('session', () => {
   // --- Message cache actions ---
 
   function setMessages(sessionId: string, messages: ChatMessage[]) {
-    sessionMessages.value.set(String(sessionId), messages)
+    sessionMessages.set(String(sessionId), messages)
   }
 
   function addUserMessage(sessionId: string, msg: ChatMessage) {
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid) ?? []
-    sessionMessages.value.set(sid, [...list, msg])
+    const list = sessionMessages.get(sid) ?? []
+    sessionMessages.set(sid, [...list, msg])
   }
 
   function addAssistantMessage(sessionId: string, msg: ChatMessage) {
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid) ?? []
-    sessionMessages.value.set(sid, [...list, msg])
+    const list = sessionMessages.get(sid) ?? []
+    sessionMessages.set(sid, [...list, msg])
   }
 
   function getMessages(sessionId: string): ChatMessage[] {
-    return sessionMessages.value.get(String(sessionId)) ?? []
+    return sessionMessages.get(String(sessionId)) ?? []
   }
 
   function appendDelta(sessionId: string, delta: string) {
     const sid = String(sessionId)
-    sessionStreaming.value.set(sid, true)
-    const list = sessionMessages.value.get(sid)
+    sessionStreaming.set(sid, true)
+    const list = sessionMessages.get(sid)
     if (!list || list.length === 0) return
     const lastMsg = list[list.length - 1]
     if (lastMsg.role === 'assistant') {
       appendTextDelta(lastMsg, delta)
       // Trigger reactivity
-      sessionMessages.value.set(sid, [...list])
+      sessionMessages.set(sid, [...list])
     }
   }
 
   function appendThinkingDelta(sessionId: string, delta: string) {
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid)
+    const list = sessionMessages.get(sid)
     if (!list || list.length === 0) return
     const lastMsg = list[list.length - 1]
     if (lastMsg.role === 'assistant') {
       appendThinkingDeltaUtil(lastMsg, delta)
-      sessionMessages.value.set(sid, [...list])
+      sessionMessages.set(sid, [...list])
     }
   }
-
-  const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
 
   function appendToolCallStart(sessionId: string, data: { tool_call_id: string; tool_name: string; arguments?: string }) {
     if (TASK_TOOL_NAMES.has(data.tool_name)) {
       // 跳过 task 工具，但在末尾 text 段追加换行，保证后续文本不与前文粘连
       const sid = String(sessionId)
-      const list = sessionMessages.value.get(sid)
+      const list = sessionMessages.get(sid)
       if (list && list.length > 0) {
         const lastMsg = list[list.length - 1]
         if (lastMsg.role === 'assistant' && lastMsg.segments?.length) {
@@ -289,7 +300,7 @@ export const useSessionStore = defineStore('session', () => {
       return
     }
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid)
+    const list = sessionMessages.get(sid)
     if (!list || list.length === 0) return
     const lastMsg = list[list.length - 1]
     if (lastMsg.role === 'assistant') {
@@ -305,13 +316,13 @@ export const useSessionStore = defineStore('session', () => {
         isExpanded: false,
         argsStreaming: true
       })
-      sessionMessages.value.set(sid, [...list])
+      sessionMessages.set(sid, [...list])
     }
   }
 
   function updateToolCallResult(sessionId: string, data: { tool_call_id: string; result: string; status?: string; summary?: string }) {
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid)
+    const list = sessionMessages.get(sid)
     if (!list || list.length === 0) return
     const lastMsg = list[list.length - 1]
     if (lastMsg.toolCalls) {
@@ -323,20 +334,20 @@ export const useSessionStore = defineStore('session', () => {
         call.argsStreaming = false
         if (data.summary) call.summary = data.summary
       }
-      sessionMessages.value.set(sid, [...list])
+      sessionMessages.set(sid, [...list])
     }
   }
 
   function updateToolCallArgs(sessionId: string, data: { tool_call_id: string; arguments: string }) {
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid)
+    const list = sessionMessages.get(sid)
     if (!list || list.length === 0) return
     const lastMsg = list[list.length - 1]
     if (lastMsg.toolCalls) {
       const call = lastMsg.toolCalls.find(c => c.id === data.tool_call_id)
       if (call) {
         try { call.input = JSON.parse(data.arguments) } catch { call.input = {} }
-        sessionMessages.value.set(sid, [...list])
+        sessionMessages.set(sid, [...list])
       }
     }
   }
@@ -347,21 +358,21 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function clearMessages(sessionId: string) {
-    sessionMessages.value.delete(String(sessionId))
+    sessionMessages.delete(String(sessionId))
   }
 
   /**
    * 截断指定消息之后的所有消息
    */
   function truncateMessagesAfter(sessionId: string, messageId: string) {
-    const messages = sessionMessages.value.get(String(sessionId))
+    const messages = sessionMessages.get(String(sessionId))
     if (!messages) return
 
     const targetIndex = messages.findIndex(m => String(m.id) === String(messageId))
     if (targetIndex === -1) return
 
     // 保留目标消息及其之前的消息
-    sessionMessages.value.set(String(sessionId), messages.slice(0, targetIndex + 1))
+    sessionMessages.set(String(sessionId), messages.slice(0, targetIndex + 1))
   }
 
   /**
@@ -373,7 +384,7 @@ export const useSessionStore = defineStore('session', () => {
     newContent: string,
     images?: string[]
   ) {
-    const messages = sessionMessages.value.get(String(sessionId))
+    const messages = sessionMessages.get(String(sessionId))
     if (!messages) return
 
     const message = messages.find(m => String(m.id) === String(messageId))
@@ -384,7 +395,7 @@ export const useSessionStore = defineStore('session', () => {
       }
       message.updatedAt = new Date().toISOString()
       // 触发响应式更新
-      sessionMessages.value.set(String(sessionId), [...messages])
+      sessionMessages.set(String(sessionId), [...messages])
     }
   }
 
@@ -393,8 +404,8 @@ export const useSessionStore = defineStore('session', () => {
    */
   function appendMessage(sessionId: string, msg: ChatMessage) {
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid) ?? []
-    sessionMessages.value.set(sid, [...list, msg])
+    const list = sessionMessages.get(sid) ?? []
+    sessionMessages.set(sid, [...list, msg])
   }
 
   /**
@@ -402,14 +413,14 @@ export const useSessionStore = defineStore('session', () => {
    */
   function updateLastMessageId(sessionId: string, role: 'user' | 'assistant', realId: string) {
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid)
+    const list = sessionMessages.get(sid)
     if (!list) return
 
     // 从后往前找最后一条指定角色的消息
     for (let i = list.length - 1; i >= 0; i--) {
       if (list[i].role === role && String(list[i].id).startsWith('msg_')) {
         list[i].id = realId
-        sessionMessages.value.set(sid, [...list])
+        sessionMessages.set(sid, [...list])
         return
       }
     }
@@ -418,80 +429,90 @@ export const useSessionStore = defineStore('session', () => {
   // --- Todo cache actions ---
 
   function setTodos(sessionId: string, todos: TodoItem[]) {
-    sessionTodos.value.set(String(sessionId), todos)
+    sessionTodos.set(String(sessionId), todos)
   }
 
   function clearTodos(sessionId: string) {
-    sessionTodos.value.set(String(sessionId), [])
+    sessionTodos.set(String(sessionId), [])
   }
 
   // --- Activity cache actions ---
 
   function addActivity(sessionId: string, activity: any) {
     const sid = String(sessionId)
-    const list = sessionActivities.value.get(sid) ?? []
+    const list = sessionActivities.get(sid) ?? []
     list.push(activity)
     if (list.length > 100) list.splice(0, list.length - 100)
-    sessionActivities.value.set(sid, list)
+    sessionActivities.set(sid, list)
   }
 
   function setContextWindow(sessionId: string, info: ContextWindowInfo) {
-    sessionContextWindow.value.set(String(sessionId), info)
+    sessionContextWindow.set(String(sessionId), info)
   }
 
   function setCompacting(sessionId: string, compacting: boolean) {
-    sessionCompacting.value.set(String(sessionId), compacting)
+    sessionCompacting.set(String(sessionId), compacting)
   }
 
   function setThinking(sessionId: string, thinking: boolean) {
-    sessionThinking.value.set(String(sessionId), thinking)
+    sessionThinking.set(String(sessionId), thinking)
   }
 
   function setStreaming(sessionId: string, streaming: boolean) {
-    sessionStreaming.value.set(String(sessionId), streaming)
+    sessionStreaming.set(String(sessionId), streaming)
   }
 
   // --- Pending approval tracking ---
 
   function incrementPendingApproval(sessionId: string) {
     const sid = String(sessionId)
-    const current = sessionPendingApprovals.value.get(sid) ?? 0
-    sessionPendingApprovals.value.set(sid, current + 1)
+    const current = sessionPendingApprovals.get(sid) ?? 0
+    sessionPendingApprovals.set(sid, current + 1)
   }
 
   function decrementPendingApproval(sessionId: string) {
     const sid = String(sessionId)
-    const current = sessionPendingApprovals.value.get(sid) ?? 0
+    const current = sessionPendingApprovals.get(sid) ?? 0
     if (current > 1) {
-      sessionPendingApprovals.value.set(sid, current - 1)
+      sessionPendingApprovals.set(sid, current - 1)
     } else {
-      sessionPendingApprovals.value.delete(sid)
+      sessionPendingApprovals.delete(sid)
     }
   }
 
   // --- Queue message actions ---
 
   function setQueueMessages(sessionId: string, queue: QueueMessage[]) {
-    sessionQueueMessages.value.set(String(sessionId), queue)
+    sessionQueueMessages.set(String(sessionId), queue)
   }
 
   function clearQueueMessages(sessionId: string) {
-    sessionQueueMessages.value.delete(String(sessionId))
+    sessionQueueMessages.delete(String(sessionId))
   }
 
   function reset() {
     sessions.value = []
     activeSessionId.value = null
     loading.value = false
-    sessionMessages.value = new Map()
-    sessionTodos.value = new Map()
-    sessionActivities.value = new Map()
-    sessionContextWindow.value = new Map()
-    sessionCompacting.value = new Map()
-    sessionThinking.value = new Map()
-    sessionStreaming.value = new Map()
-    sessionPendingApprovals.value = new Map()
-    sessionQueueMessages.value = new Map()
+    sessionMessages.clear()
+    sessionTodos.clear()
+    sessionActivities.clear()
+    sessionContextWindow.clear()
+    sessionCompacting.clear()
+    sessionThinking.clear()
+    sessionStreaming.clear()
+    sessionPendingApprovals.clear()
+    sessionQueueMessages.clear()
+  }
+
+  // --- Per-session getters ---
+
+  function isSessionStreaming(sessionId: string): boolean {
+    return sessionStreaming.get(String(sessionId)) ?? false
+  }
+
+  function isSessionThinking(sessionId: string): boolean {
+    return sessionThinking.get(String(sessionId)) ?? false
   }
 
   return {
@@ -545,6 +566,8 @@ export const useSessionStore = defineStore('session', () => {
     // Streaming
     activeStreaming,
     setStreaming,
+    isSessionStreaming,
+    isSessionThinking,
     // Pending approvals
     sessionPendingApprovals,
     incrementPendingApproval,

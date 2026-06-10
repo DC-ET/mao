@@ -4,7 +4,9 @@ import { api } from '../api'
 import { useSessionStore } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
 import { mapApiMessagesToChat } from '../utils/chatMessage'
-import type { ChatMessage } from '../types/chat'
+import type { ChatMessage, ApprovalItem } from '../types/chat'
+import { waitForSessionTurn, hasPendingTurn, onTurnSettled } from '../domain/session/turnTracker'
+import { isExecutingPhase, isActivePhase } from '../domain/session/phase'
 
 export type {
   ChatMessage,
@@ -17,25 +19,15 @@ export { normalizeMessageRole } from '../types/chat'
 
 import { uploadToOss, type StsToken } from '../utils/ossUpload'
 
-export interface ApprovalItem {
-  requestId: string
-  toolName: string
-  description: string
-  sessionId?: string
-  dangerReason?: string
-}
-
 // Module-level flag to ensure IPC listeners are registered only once
 let approvalListenerSetup = false
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const sessionStore = useSessionStore()
-  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks } = useStreamWS()
+  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage } = useStreamWS()
 
-  const sending = ref(false)
-  const cancelling = ref(false)
-  const switchingSession = ref(false)
-  const sendingSessionId = ref<string | null>(null)
+  const localPendingSessionId = ref<string | null>(null)
+  const localCancellingSessionId = ref<string | null>(null)
   const sessionId = ref<string | null>(null)
   const workspace = ref('')
   const agentName = ref('Agent')
@@ -45,6 +37,24 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   const pendingApprovals = ref<ApprovalItem[]>([])
 
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
+
+  // Derived state — phase is the single source of truth from the server.
+  // localPendingSessionId covers the window between "user clicked send" and "server returned RUNNING".
+  const activePhase = computed(() => sessionStore.activeSession?.phase ?? 'IDLE')
+
+  const sending = computed(() => {
+    const activeId = sessionStore.activeSessionId
+    return isExecutingPhase(activePhase.value) ||
+      (!!activeId && localPendingSessionId.value === String(activeId))
+  })
+
+  const cancelling = computed(() => {
+    const activeId = sessionStore.activeSessionId
+    return activePhase.value === 'CANCELLING' ||
+      (!!activeId && localCancellingSessionId.value === String(activeId))
+  })
+
+  const isActive = computed(() => isActivePhase(activePhase.value))
 
   // Computed refs from store — reactive to active session
   const messages = computed(() => sessionStore.activeMessages)
@@ -141,26 +151,68 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     return urls
   }
 
+  /**
+   * Shared helper: connect, subscribe, await turn completion, handle duration + error.
+   * Callers handle session creation, message setup, and localPendingSessionId.
+   */
+  async function executeWithCompletion(
+    action: (eventId: string) => void,
+    options?: { errorMessage?: string }
+  ) {
+    const sid = sessionId.value
+    if (!sid) return
+
+    startedAt.value = new Date().toISOString()
+    await connect()
+    subscribe(sid)
+    const eventId = crypto.randomUUID()
+
+    try {
+      action(eventId)
+      await waitForSessionTurn(sid, eventId)
+
+      // localPendingSessionId is cleared by onTurnSettled callback
+      if (startedAt.value) {
+        const lastMsg = messages.value[messages.value.length - 1]
+        if (lastMsg && lastMsg.role === 'assistant') {
+          lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
+        }
+        startedAt.value = null
+      }
+    } catch (error: any) {
+      // Fallback cleanup — onTurnSettled handles the normal case
+      if (localPendingSessionId.value === sid || localPendingSessionId.value === '__creating__') {
+        localPendingSessionId.value = null
+      }
+      // Remove empty assistant message if it was added
+      const lastMsg = messages.value[messages.value.length - 1]
+      if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
+        messages.value.pop()
+      }
+      ElMessage.error(options?.errorMessage || error?.message || '执行中断')
+    }
+  }
+
   async function sendMessage(text: string, files?: File[]) {
     if ((!text && (!files || files.length === 0)) || sending.value) return
 
-    sending.value = true
-    startedAt.value = new Date().toISOString()
-
-    // Upload images to OSS
-    const imageUrls = await uploadImages(files || [])
-
-    // Ensure WS connection is established
-    await connect()
+    // Set local pending before any async work to prevent duplicate submissions
+    localPendingSessionId.value = sessionId.value || '__creating__'
 
     try {
+      // Upload images to OSS
+      const imageUrls = await uploadImages(files || [])
+
+      // Ensure WS connection is established
+      await connect()
+
       // Create session if needed
       if (!sessionId.value) {
         if (executionMode.value === 'LOCAL' && isElectron && !workspace.value) {
           const dir = await (window as any).electronAPI.selectDirectory()
           if (dir) workspace.value = dir
           else {
-            sending.value = false
+            localPendingSessionId.value = null
             return
           }
         }
@@ -174,13 +226,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       }
 
       const sid = sessionId.value!
-      // Track which session is sending (set AFTER session creation so ID is correct)
-      sendingSessionId.value = sid
+      localPendingSessionId.value = sid
 
       // Clear previous turn's todos
       sessionStore.clearTodos(sid)
 
-      // Update session title from first user message (when title is still the default agent name)
+      // Update session title from first user message
       if (text) {
         const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
         const defaultTitle = agentName.value || 'Agent'
@@ -191,7 +242,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         }
       }
 
-      // Add user message to store
+      // Add optimistic messages
       sessionStore.addUserMessage(sid, {
         id: `msg_${Date.now()}_user`,
         role: 'user',
@@ -199,8 +250,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         createdAt: new Date().toLocaleString(),
         images: imageUrls.length > 0 ? imageUrls : undefined
       })
-
-      // Add empty assistant message
       sessionStore.addAssistantMessage(sid, {
         id: `msg_${Date.now()}_assistant`,
         role: 'assistant',
@@ -210,56 +259,42 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
         segments: []
       })
 
-      // Subscribe to this session's events
       subscribe(sid)
 
-      // Send message via WS
-      const eventId = crypto.randomUUID()
-      wsSendMessage(sid, text || '', eventId, imageUrls)
-
-      // Wait for completion (session_status reaches COMPLETED/FAILED)
-      await new Promise<void>((resolve, reject) => {
-        pendingCallbacks.set(sessionId.value!, { resolve, reject })
+      await executeWithCompletion((eventId) => {
+        wsSendMessage(sid, text || '', eventId, imageUrls)
       })
 
-      sending.value = false
-      if (startedAt.value) {
-        const lastMsg = messages.value[messages.value.length - 1]
-        if (lastMsg && lastMsg.role === 'assistant') {
-          lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
-        }
-        startedAt.value = null
-      }
       // Refresh session to pick up server-generated title/summary
       if (sessionId.value) {
         sessionStore.fetchSession(sessionId.value)
-        // Re-fetch messages so that the API-structured messages replace the
-        // live-streamed single-message, enabling round-based collapse in UI
         fetchMessages()
       }
     } catch (error: any) {
-      sending.value = false
-      // Remove empty assistant message if it was added
+      // Safety net: ensure localPendingSessionId is always cleared on failure.
+      // executeWithCompletion has its own catch, but errors before it (connect,
+      // uploadImages, createSession) would leave localPendingSessionId set,
+      // making `sending` permanently true and blocking all subsequent messages.
+      if (localPendingSessionId.value) {
+        localPendingSessionId.value = null
+      }
+      // Remove empty assistant placeholder if it was added
       const lastMsg = messages.value[messages.value.length - 1]
       if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
         messages.value.pop()
       }
-      ElMessage.error(error?.message || 'Agent 执行中断')
-      if (sessionId.value) {
-        sessionStore.fetchSession(sessionId.value)
-      }
+      ElMessage.error(error?.message || '消息发送失败')
     }
   }
 
   function stopExecution() {
-    if (!sessionId.value) return
-    cancelling.value = true
+    if (!sessionId.value) {
+      // Session still being created (__creating__) — just clear pending so UI unlocks
+      localPendingSessionId.value = null
+      return
+    }
+    localCancellingSessionId.value = sessionId.value
     wsCancel(sessionId.value)
-    // Don't resolve callback or set sending=false here.
-    // The server will send a CANCELLING session_status event,
-    // which resolves the pending callback via routeEvent,
-    // causing sendMessage to return and sending to become false naturally.
-    // cancelling stays true until the server confirms CANCELLED phase.
   }
 
   /**
@@ -297,48 +332,18 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     }
     sessionStore.appendMessage(sessionId.value, placeholderMsg)
 
-    sending.value = true
-    startedAt.value = new Date().toISOString()
+    localPendingSessionId.value = sessionId.value
 
-    try {
-      // Ensure WS connection is established
-      await connect()
+    await executeWithCompletion(() => {
+      sendEditMessage(sessionId.value!, newContent, messageId, images)
+    }, {
+      errorMessage: '编辑重新发送失败'
+    })
 
-      // Subscribe to this session's events
-      subscribe(sessionId.value)
-
-      // 通过 WS 发送编辑请求
-      sendEditMessage(sessionId.value, newContent, messageId, images)
-
-      // Wait for completion
-      await new Promise<void>((resolve, reject) => {
-        pendingCallbacks.set(sessionId.value!, { resolve, reject })
-      })
-
-      sending.value = false
-      if (startedAt.value) {
-        const lastMsg = messages.value[messages.value.length - 1]
-        if (lastMsg && lastMsg.role === 'assistant') {
-          lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
-        }
-        startedAt.value = null
-      }
-      // Refresh session
-      if (sessionId.value) {
-        sessionStore.fetchSession(sessionId.value)
-        fetchMessages()
-      }
-    } catch (error: any) {
-      sending.value = false
-      // Remove empty assistant message if it was added
-      const lastMsg = messages.value[messages.value.length - 1]
-      if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
-        messages.value.pop()
-      }
-      ElMessage.error(error?.message || '编辑重新发送失败')
-      if (sessionId.value) {
-        sessionStore.fetchSession(sessionId.value)
-      }
+    // Refresh session
+    if (sessionId.value) {
+      sessionStore.fetchSession(sessionId.value)
+      fetchMessages()
     }
   }
 
@@ -347,56 +352,34 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
   // changes (e.g. null → session). The latter triggers with whatever phase the
   // session currently has (often IDLE), which would incorrectly reset sending.
   // Guard: only handle transitions where oldPhase is defined (real phase change).
+  // Lightweight phase watcher — only handles queue auto-consume.
+  // Terminal handling is done by turnTracker (routeEvent calls resolveSessionTurn).
+  // sending/cancelling are computed from phase + localPendingSessionId.
   watch(() => sessionStore.activeSession?.phase, (phase, oldPhase) => {
-    // Skip during session switches — restoreSession handles state sync
-    if (switchingSession.value) return
-    // Skip if this is a session switch, not a phase change (oldPhase is undefined)
-    if (oldPhase === undefined) return
+    if (oldPhase === undefined) return  // session switch, not a phase change
+    if (phase === oldPhase) return      // no change
 
-    // Skip if phase didn't actually change
-    if (phase === oldPhase) return
+    // Queue auto-consume: phase jumps COMPLETED→RUNNING when backend starts
+    // the next queued message. Register a new pending turn so the completion
+    // is properly tracked.
+    if ((phase === 'RUNNING' || phase === 'WAITING_APPROVAL') &&
+        sessionId.value && !hasPendingTurn(sessionId.value)) {
+      waitForSessionTurn(sessionId.value)
+    }
+  })
 
-    if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED' || phase === 'IDLE') {
-      cancelling.value = false
-      sending.value = false
-      sendingSessionId.value = null
-      if (sessionId.value && pendingCallbacks.has(sessionId.value)) {
-        const cb = pendingCallbacks.get(sessionId.value)
-        pendingCallbacks.delete(sessionId.value)
-        cb?.resolve?.()
-      }
-      if (sessionId.value) {
-        sessionStore.fetchSession(sessionId.value)
-        // Re-fetch messages to replace streamed single-message with API-structured
-        // messages, enabling round-based collapse in UI
-        fetchMessages()
-      }
-    } else if (phase === 'RUNNING' || phase === 'WAITING_APPROVAL') {
-      // Auto-sync sending state (covers queue auto-consume case)
-      if (!sending.value) {
-        sending.value = true
-        startedAt.value = new Date().toISOString()
-        if (sessionId.value && !pendingCallbacks.has(sessionId.value)) {
-          new Promise<void>((resolve, reject) => {
-            pendingCallbacks.set(sessionId.value!, { resolve, reject })
-          }).then(() => {
-            sending.value = false
-            startedAt.value = null
-          }).catch(() => {
-            sending.value = false
-            startedAt.value = null
-          })
-        }
-      }
+  // Clean up local pending/cancelling state when a turn settles
+  const disposeTurnSettled = onTurnSettled((sid) => {
+    if (localPendingSessionId.value === sid) localPendingSessionId.value = null
+    if (localCancellingSessionId.value === sid) localCancellingSessionId.value = null
+    // Refresh active session messages after turn completes
+    if (sid === sessionStore.activeSessionId) {
+      sessionStore.fetchSession(sid)
+      fetchMessages()
     }
   })
 
   // --- Message Queue ---
-
-  const isActive = computed(() => {
-    const phase = sessionStore.activeSession?.phase
-    return phase === 'RUNNING' || phase === 'WAITING_APPROVAL'
-  })
 
   async function sendMessageWithQueue(text: string, files: File[]) {
     if (isActive.value) {
@@ -453,18 +436,15 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       sessionStore.clearQueueMessages(sessionId.value)
     }
     clearPendingApprovals()
-    sending.value = false
+    localPendingSessionId.value = null
+    localCancellingSessionId.value = null
     sessionId.value = null
     workspace.value = ''
     agentName.value = 'Agent'
     sessionStore.setActiveSession(null)
   }
 
-  async function restoreSession(sessionIdVal: string, mode: string, initialWorkspace?: string) {
-    // Suppress phase watcher during session switch to prevent stale phase
-    // from resetting sending/cancelling state
-    switchingSession.value = true
-
+  async function restoreSession(sessionIdVal: string, mode: string, initialWorkspace?: string, preserveLiveMessages = false) {
     // Unsubscribe from previous session
     if (sessionId.value && sessionId.value !== sessionIdVal) {
       unsubscribe(sessionId.value)
@@ -475,26 +455,16 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     if (initialWorkspace) workspace.value = initialWorkspace
     sessionStore.setActiveSession(sessionIdVal)
 
-    // Sync sending state with the session's actual phase
+    // Restore pending turn tracking for active sessions.
+    // Covers queue auto-consume: when one turn completes and the backend
+    // automatically starts the next queued message, phase goes COMPLETED→RUNNING.
     const phase = sessionStore.activeSession?.phase
-    if (phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING') {
-      sending.value = true
-      // Register a pending callback so stopExecution() works and session_status can resolve it
-      if (!pendingCallbacks.has(sessionIdVal)) {
-        new Promise<void>((resolve, reject) => {
-          pendingCallbacks.set(sessionIdVal, { resolve, reject })
-        }).then(() => {
-          sending.value = false
-          startedAt.value = null
-        }).catch(() => {
-          sending.value = false
-          startedAt.value = null
-        })
-      }
-    } else {
-      sending.value = false
-      cancelling.value = false
+    if (isActivePhase(phase) && !hasPendingTurn(sessionIdVal)) {
+      waitForSessionTurn(sessionIdVal)
     }
+
+    // sending/cancelling are computed from activePhase + localPending/CancellingSessionId.
+    // No manual sync needed — computed properties derive automatically.
 
     // Ensure WS connection is established before subscribing
     try {
@@ -504,12 +474,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     }
     subscribe(sessionIdVal)
 
-    fetchMessages()
+    if (!preserveLiveMessages) {
+      fetchMessages()
+    }
     fetchTodos()
     fetchQueue()
-
-    // Resume phase watcher after session switch is complete
-    switchingSession.value = false
   }
 
   async function confirmApproval(requestId: string, approved: boolean) {
@@ -526,6 +495,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       unsubscribe(sessionId.value)
     }
     clearPendingApprovals()
+    disposeTurnSettled()
   }
 
   return {
@@ -557,7 +527,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     deleteQueueMessage,
     reorderQueueMessage,
     fetchQueue,
-    switchingSession,
-    sendingSessionId
+    localPendingSessionId
   }
 }

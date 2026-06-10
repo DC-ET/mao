@@ -167,7 +167,7 @@ const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
-const { subscribe } = useStreamWS()
+useStreamWS()
 const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight, consumeNewTask } = usePanelLayout()
 
 const sessionIdParam = computed(() => route.params.sessionId as string)
@@ -176,8 +176,8 @@ const executionMode = ref('CLOUD')
 const creatingNewTask = ref(false)
 const initialLoading = ref(true)
 
-// Task state
-const currentPhase = ref<TaskPhase>('IDLE')
+// Task state — derived from store, no local ref needed
+const currentPhase = computed<TaskPhase>(() => sessionStore.activeSession?.phase ?? 'IDLE')
 const projectKey = ref('')
 const permissionLevel = ref('READ_ONLY')
 
@@ -207,8 +207,7 @@ const {
   cleanup,
   insertQueueMessage,
   deleteQueueMessage,
-  reorderQueueMessage,
-  sendingSessionId
+  reorderQueueMessage
 } = useChat(agentId, executionMode)
 
 // Terminal
@@ -337,27 +336,6 @@ async function confirmEdit(messageId: string, newContent: string) {
   nextTick(scrollToBottomSmooth)
 }
 
-// Track local timing state; phase is driven by server WS session_status events
-watch(() => sending.value, (isSending) => {
-  if (!sessionStore.activeSessionId) return
-
-  if (isSending) {
-    currentPhase.value = 'RUNNING'
-  } else {
-    // Only reset to IDLE if server hasn't set a terminal or cancelling phase
-    if (currentPhase.value === 'RUNNING' && !cancelling.value) {
-      currentPhase.value = 'IDLE'
-    }
-  }
-})
-
-// Sync phase from store (updated by WS session_status events from server)
-watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
-  if (serverPhase && serverPhase !== currentPhase.value) {
-    currentPhase.value = serverPhase
-  }
-})
-
 // Auto-scroll: only when user is already at the bottom
 const messagesContainer = ref<HTMLElement>()
 const SCROLL_THRESHOLD = 80 // px from bottom to consider "at bottom"
@@ -480,7 +458,21 @@ function handleNewTaskAgentChange(id: string | null) {
   }
 }
 
-async function loadSession(sid: string) {
+function hasLiveAssistantMessage(sid: string): boolean {
+  const list = sessionStore.getMessages(sid)
+  const last = list[list.length - 1]
+  return !!last &&
+    last.role === 'assistant' &&
+    (
+      String(last.id).startsWith('msg_') ||
+      !last.content?.trim() ||
+      sessionStore.isSessionStreaming(sid) ||
+      sessionStore.isSessionThinking(sid) ||
+      (last.toolCalls?.some(tc => tc.status === 'pending' || tc.status === 'running') ?? false)
+    )
+}
+
+async function loadSession(sid: string, preserveLiveMessages = false) {
   // No need to cleanup — WS is global, just switch subscriptions
   sessionStore.setActiveSession(sid)
 
@@ -492,7 +484,6 @@ async function loadSession(sid: string) {
       sessionStore.updateSession(sid, data)
       agentId.value = data.agentId
       executionMode.value = data.executionMode || 'CLOUD'
-      currentPhase.value = data.phase || 'IDLE'
       projectKey.value = data.projectKey || ''
       permissionLevel.value = data.permissionLevel || 'READ_ONLY'
       if (data.agentName) agentName.value = data.agentName
@@ -503,7 +494,7 @@ async function loadSession(sid: string) {
     // ignore
   }
 
-  restoreSession(sid, executionMode.value, workspace.value || undefined)
+  restoreSession(sid, executionMode.value, workspace.value || undefined, preserveLiveMessages)
   // sessionId.value is set synchronously in restoreSession,
   // so isNewTaskMode is already false — safe to end loading
   initialLoading.value = false
@@ -521,24 +512,8 @@ async function navigateToLatestSession() {
 // Handle session switch from sidebar (component reuse prevents onMounted re-fire)
 watch(sessionIdParam, (newSid, oldSid) => {
   if (newSid && newSid !== oldSid) {
-    // Skip loadSession if sendMessage already set up this session
-    // (loadSession would overwrite optimistic messages via fetchMessages)
-    if (!sending.value || sendingSessionId.value !== newSid) {
-      loadSession(newSid)
-    } else {
-      // Switching back to the session that is currently sending.
-      // Do NOT fetch messages — they're being streamed via WS and
-      // haven't been persisted yet. fetchMessages would overwrite
-      // the optimistic messages added by sendMessage.
-      sessionId.value = newSid
-      sessionStore.setActiveSession(newSid)
-      subscribe(newSid)
-      const session = sessionStore.sessions.find(s => String(s.id) === String(newSid))
-      if (session?.agentName) agentName.value = session.agentName
-      if (session?.phase) currentPhase.value = session.phase
-      if (session?.executionMode) executionMode.value = session.executionMode
-      if (session?.workspace) workspace.value = session.workspace
-    }
+    const preserveLiveMessages = hasLiveAssistantMessage(newSid)
+    loadSession(newSid, preserveLiveMessages)
   } else if (!newSid && oldSid) {
     // Capture current session config before reset
     const prevAgentId = agentId.value
@@ -549,7 +524,6 @@ watch(sessionIdParam, (newSid, oldSid) => {
     sessionStore.setActiveSession(null)
     agentId.value = ''
     executionMode.value = 'CLOUD'
-    currentPhase.value = 'IDLE'
     projectKey.value = ''
     permissionLevel.value = 'READ_ONLY'
     if (creatingNewTask.value || consumeNewTask()) {
