@@ -31,6 +31,18 @@ public class Session {
     /** LOCAL mode tool permission: READ_ONLY|READ_WRITE|SMART|FULL */
     private String permissionLevel;
 
+    /** Whether the execution workspace is inside a git repository */
+    private Boolean isGit;
+
+    /** Execution platform: darwin|linux|win32 */
+    private String platform;
+
+    /** Shell path/name for the execution environment */
+    private String shellPath;
+
+    /** OS version, similar to uname -sr */
+    private String osVersion;
+
     /** Task phase: IDLE|RUNNING|RESUMING|WAITING_APPROVAL|COMPLETED|FAILED|CANCELLED */
     private String phase;
 

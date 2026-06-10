@@ -53,12 +53,12 @@ public class ShellSessionTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Execute shell commands. Supports one-shot execution and persistent sessions.\n" +
-                "Actions:\n" +
-                "- exec: Execute a command (creates session if session_id omitted)\n" +
-                "- write_stdin: Write input to a running session's stdin\n" +
-                "- close: Close a shell session\n" +
-                "- list: List active sessions";
+        return "执行 shell 命令，支持一次性执行和持久会话。\n" +
+                "动作：\n" +
+                "- exec：执行命令（如果省略 session_id，则创建新会话）\n" +
+                "- write_stdin：向正在运行的会话 stdin 写入输入\n" +
+                "- close：关闭 shell 会话\n" +
+                "- list：列出活跃会话";
     }
 
     @Override
@@ -71,37 +71,37 @@ public class ShellSessionTool implements Tool {
         Map<String, Object> action = new HashMap<>();
         action.put("type", "string");
         action.put("enum", List.of("exec", "write_stdin", "close", "list"));
-        action.put("description", "Action to perform (default: exec)");
+        action.put("description", "要执行的动作（默认：exec）");
         properties.put("action", action);
 
         Map<String, Object> command = new HashMap<>();
         command.put("type", "string");
-        command.put("description", "Command to execute (for exec action)");
+        command.put("description", "要执行的命令（用于 exec 动作）");
         properties.put("command", command);
 
         Map<String, Object> sessionId = new HashMap<>();
         sessionId.put("type", "string");
-        sessionId.put("description", "Session ID. Omit for one-shot execution, provide to reuse existing session.");
+        sessionId.put("description", "会话 ID。省略时执行一次性命令；提供时复用已有会话。");
         properties.put("session_id", sessionId);
 
         Map<String, Object> input = new HashMap<>();
         input.put("type", "string");
-        input.put("description", "Input to write to stdin (for write_stdin action)");
+        input.put("description", "要写入 stdin 的输入（用于 write_stdin 动作）");
         properties.put("input", input);
 
         Map<String, Object> workdir = new HashMap<>();
         workdir.put("type", "string");
-        workdir.put("description", "Working directory (relative to workspace)");
+        workdir.put("description", "工作目录（相对于工作区）");
         properties.put("workdir", workdir);
 
         Map<String, Object> yieldTimeMs = new HashMap<>();
         yieldTimeMs.put("type", "integer");
-        yieldTimeMs.put("description", "Max wait time for output in milliseconds (default 10000)");
+        yieldTimeMs.put("description", "等待输出的最长时间，单位毫秒（默认 10000）");
         properties.put("yield_time_ms", yieldTimeMs);
 
         Map<String, Object> async = new HashMap<>();
         async.put("type", "boolean");
-        async.put("description", "Run in background and return task_id immediately (default false, exec action only)");
+        async.put("description", "是否在后台运行并立即返回 task_id（默认 false，仅用于 exec 动作）");
         properties.put("async", async);
 
         schema.put("properties", properties);
@@ -149,21 +149,21 @@ public class ShellSessionTool implements Tool {
                 case "write_stdin" -> handleWriteStdin(args, sessionId);
                 case "close" -> handleClose(args, sessionId);
                 case "list" -> handleList(sessionId);
-                default -> errorJson("Unknown action: " + action);
+                default -> errorJson("未知动作：" + action);
             };
         } catch (Exception e) {
             log.error("ShellSessionTool execution failed", e);
-            return errorJson("Error: " + e.getMessage());
+            return errorJson("错误：" + e.getMessage());
         }
     }
 
     private String handleExec(JsonNode args, Long conversationId, String workspace) throws Exception {
         String command = args.has("command") ? args.get("command").asText() : null;
         if (command == null || command.isBlank()) {
-            return errorJson("command is required for exec action");
+            return errorJson("exec 动作必须提供 command");
         }
         if (command.length() > MAX_COMMAND_LENGTH) {
-            return errorJson("Command too long (max " + MAX_COMMAND_LENGTH + " chars)");
+            return errorJson("命令过长（最多 " + MAX_COMMAND_LENGTH + " 个字符）");
         }
 
         String sessionId = args.has("session_id") ? args.get("session_id").asText() : null;
@@ -177,13 +177,13 @@ public class ShellSessionTool implements Tool {
                 try {
                     return doExec(command, sessionId, conversationId, workspace, workdir, yieldTimeMs);
                 } catch (Exception e) {
-                    return errorJson("Async execution failed: " + e.getMessage());
+                    return errorJson("异步执行失败：" + e.getMessage());
                 }
             });
             return objectMapper.writeValueAsString(Map.of(
                     "async", true,
                     "task_id", taskId,
-                    "message", "Command submitted for background execution."
+                    "message", "命令已提交到后台执行。"
             ));
         }
 
@@ -224,19 +224,19 @@ public class ShellSessionTool implements Tool {
     private String handleWriteStdin(JsonNode args, Long conversationId) throws Exception {
         String sessionId = args.has("session_id") ? args.get("session_id").asText() : null;
         if (sessionId == null) {
-            return errorJson("session_id is required for write_stdin action");
+            return errorJson("write_stdin 动作必须提供 session_id");
         }
 
         String input = args.has("input") ? args.get("input").asText() : null;
         if (input == null) {
-            return errorJson("input is required for write_stdin action");
+            return errorJson("write_stdin 动作必须提供 input");
         }
 
         int yieldTimeMs = args.has("yield_time_ms") ? args.get("yield_time_ms").asInt() : 5000;
 
         ShellSession session = sessionManager.getSession(sessionId);
         if (session == null) {
-            return errorJson("Session not found: " + sessionId);
+            return errorJson("会话不存在：" + sessionId);
         }
 
         // 写入输入，用 marker 检测输出结束
@@ -267,13 +267,13 @@ public class ShellSessionTool implements Tool {
     private String handleClose(JsonNode args, Long conversationId) throws Exception {
         String sessionId = args.has("session_id") ? args.get("session_id").asText() : null;
         if (sessionId == null) {
-            return errorJson("session_id is required for close action");
+            return errorJson("close 动作必须提供 session_id");
         }
 
         sessionManager.close(sessionId);
         return objectMapper.writeValueAsString(Map.of(
                 "session_id", sessionId,
-                "status", "closed"
+                "status", "已关闭"
         ));
     }
 
@@ -319,7 +319,7 @@ public class ShellSessionTool implements Tool {
             return outputManager.readUntilMarker(session.getStdout(), fullMarker, timeout, outputFile);
         } catch (Exception e) {
             log.error("Failed to execute command in session {}: {}", session.getSessionId(), e.getMessage());
-            return new OutputResult("Error: " + e.getMessage(), 0, 0, false, false, null);
+            return new OutputResult("错误：" + e.getMessage(), 0, 0, false, false, null);
         }
     }
 

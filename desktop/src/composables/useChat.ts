@@ -1,7 +1,7 @@
 import { ref, computed, watch, type Ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
-import { useSessionStore } from '../stores/session'
+import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
 import { mapApiMessagesToChat } from '../utils/chatMessage'
 import type { ChatMessage } from '../types/chat'
@@ -169,10 +169,16 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
           }
         }
 
+        let environmentInfo: SessionEnvironmentInfo | undefined
+        if (executionMode.value === 'LOCAL' && isElectron && (window as any).electronAPI?.getEnvironmentInfo) {
+          environmentInfo = await (window as any).electronAPI.getEnvironmentInfo(workspace.value || undefined)
+        }
+
         const sessionData = await sessionStore.createSession(
           agentId.value,
           executionMode.value,
-          workspace.value || undefined
+          workspace.value || undefined,
+          environmentInfo
         )
         sessionId.value = sessionData.id
       }

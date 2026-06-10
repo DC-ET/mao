@@ -43,6 +43,7 @@ public class HarnessService {
     private final ObjectMapper objectMapper;
     private final ContextManager contextManager;
     private final CompactionConfig compactionConfig;
+    private final EnvironmentInfoProvider environmentInfoProvider;
 
     public String prepareMessage(Long sessionId, Object userContent) {
         return java.util.UUID.randomUUID().toString();
@@ -131,6 +132,11 @@ public class HarnessService {
         context.setExecutionMode(session.getExecutionMode() != null ? session.getExecutionMode() : "CLOUD");
         context.setPermissionLevel(session.getPermissionLevel());
         context.setWorkspace(session.getWorkspace());
+        var environmentInfo = environmentInfoProvider.fromSessionOrDetect(session);
+        context.setIsGit(environmentInfo.isGit());
+        context.setPlatform(environmentInfo.platform());
+        context.setShellPath(environmentInfo.shell());
+        context.setOsVersion(environmentInfo.osVersion());
         context.setModelConfig(LlmModelConfig.builder()
                 .id(llmModel.getId())
                 .name(llmModel.getName())

@@ -32,7 +32,7 @@ public class EditFileTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Edit a file by replacing an exact string match with new content. Parameters: path (required), old_string (required), new_string (required).";
+        return "通过精确匹配字符串并替换为新内容来编辑文件。参数：path（必填）、old_string（必填）、new_string（必填）。";
     }
 
     @Override
@@ -40,9 +40,9 @@ public class EditFileTool implements Tool {
         Map<String, Object> schema = new HashMap<>();
         schema.put("type", "object");
         Map<String, Object> properties = new HashMap<>();
-        properties.put("path", Map.of("type", "string", "description", "File path relative to workspace root"));
-        properties.put("old_string", Map.of("type", "string", "description", "Exact string to find and replace"));
-        properties.put("new_string", Map.of("type", "string", "description", "Replacement string"));
+        properties.put("path", Map.of("type", "string", "description", "相对于工作区根目录的文件路径"));
+        properties.put("old_string", Map.of("type", "string", "description", "需要查找并替换的精确字符串"));
+        properties.put("new_string", Map.of("type", "string", "description", "替换后的字符串"));
         schema.put("properties", properties);
         schema.put("required", new String[]{"path", "old_string", "new_string"});
         return schema;
@@ -78,7 +78,7 @@ public class EditFileTool implements Tool {
                 return objectMapper.writeValueAsString(Map.of(
                         "success", false,
                         "replacements", 0,
-                        "error", "File not found: " + path
+                        "error", "文件不存在：" + path
                 ));
             }
 
@@ -88,7 +88,7 @@ public class EditFileTool implements Tool {
                 return objectMapper.writeValueAsString(Map.of(
                         "success", false,
                         "replacements", 0,
-                        "error", "old_string not found in file"
+                        "error", "文件中未找到 old_string"
                 ));
             }
 

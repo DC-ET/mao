@@ -27,6 +27,10 @@ public class AgentExecutionContext {
     private String executionMode;
     private String permissionLevel;
     private String workspace;
+    private Boolean isGit;
+    private String platform;
+    private String shellPath;
+    private String osVersion;
 
     // 对话消息历史
     private List<ChatRequest.Message> messages = new ArrayList<>();

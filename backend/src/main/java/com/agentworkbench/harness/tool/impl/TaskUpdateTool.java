@@ -38,18 +38,18 @@ public class TaskUpdateTool implements Tool {
     @Override
     public String getDescription() {
         return """
-                Update the status or content of existing todo items.
+                更新已有待办事项的状态或内容。
 
-                STATUS TRANSITIONS:
-                - pending → in_progress: Start working on a task. Only ONE task can be in_progress.
-                  Setting a task to in_progress automatically resets all other in_progress tasks to pending.
-                - in_progress → completed: Mark a task as done. Do this IMMEDIATELY after finishing.
-                  Do NOT batch multiple completions — mark each one as soon as it's done.
+                状态流转：
+                - pending → in_progress：开始处理一个任务。同一时间只能有一个任务处于 in_progress。
+                  将某个任务设为 in_progress 时，会自动把其他 in_progress 任务重置为 pending。
+                - in_progress → completed：将任务标记为完成。请在完成后立即标记。
+                  不要批量完成多个任务；每完成一个就立即标记一个。
 
-                IMPORTANT: Always mark tasks as completed one at a time, right after finishing each one.
-                After completing a task, use task_list to find your next available task.
+                重要：始终在每个任务完成后立即逐个标记为 completed。
+                完成一个任务后，使用 task_list 查找下一个可执行任务。
 
-                Each item must have: id (required). Optional: status, content, description, active_form.
+                每个事项必须包含：id（必填）。可选字段：status、content、description、active_form。
                 """;
     }
 
@@ -60,15 +60,15 @@ public class TaskUpdateTool implements Tool {
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("items", Map.of(
                 "type", "array",
-                "description", "Todo items to update",
+                "description", "要更新的待办事项",
                 "items", Map.of(
                         "type", "object",
                         "properties", Map.of(
-                                "id", Map.of("type", "integer", "description", "Todo item ID"),
+                                "id", Map.of("type", "integer", "description", "待办事项 ID"),
                                 "status", Map.of("type", "string", "enum", new String[]{"pending", "in_progress", "completed"}),
-                                "content", Map.of("type", "string", "description", "Updated task title"),
-                                "description", Map.of("type", "string", "description", "Updated description"),
-                                "active_form", Map.of("type", "string", "description", "Updated active form")
+                                "content", Map.of("type", "string", "description", "更新后的任务标题"),
+                                "description", Map.of("type", "string", "description", "更新后的任务描述"),
+                                "active_form", Map.of("type", "string", "description", "更新后的进行中表述")
                         ),
                         "required", new String[]{"id"}
                 )
@@ -137,9 +137,9 @@ public class TaskUpdateTool implements Tool {
 
                     if ("completed".equals(newStatus)) {
                         transitionedToCompleted = true;
-                        updatedSummaries.add("Updated task #" + id + " to completed");
+                        updatedSummaries.add("已将任务 #" + id + " 更新为 completed");
                     } else if (newStatus != null) {
-                        updatedSummaries.add("Updated task #" + id + " to " + newStatus);
+                        updatedSummaries.add("已将任务 #" + id + " 更新为 " + newStatus);
                     }
                 }
             }
@@ -168,17 +168,17 @@ public class TaskUpdateTool implements Tool {
                             });
                     if (!hasVerificationTask) {
                         result.put("hint", """
-                                All tasks completed. None of them was a verification step.
-                                Before writing your final summary, verify the work:
-                                - Run relevant tests
-                                - Check that the implementation matches requirements
-                                - Create a verification task if needed
+                                所有任务都已完成，但其中没有验证步骤。
+                                在撰写最终总结前，请先验证工作结果：
+                                - 运行相关测试
+                                - 检查实现是否符合需求
+                                - 如有需要，创建一个验证任务
                                 """);
                     } else {
-                        result.put("hint", "All tasks completed. Review the todo list and write your final summary.");
+                        result.put("hint", "所有任务都已完成。请检查待办列表并撰写最终总结。");
                     }
                 } else {
-                    result.put("hint", "Task completed. Call task_list now to find your next available task.");
+                    result.put("hint", "任务已完成。请立即调用 task_list 查找下一个可执行任务。");
                 }
             }
 

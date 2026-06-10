@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Original APIs
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getPlatform: () => ipcRenderer.invoke('get-platform'),
+  getEnvironmentInfo: (workspace) => ipcRenderer.invoke('get-environment-info', { workspace }),
   onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (event, data) => callback(data)),
   onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (event, data) => callback(data)),
   onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (event, data) => callback(data)),

@@ -37,7 +37,7 @@ public class ReadFileTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Read the contents of a file. Parameters: path (required), offset (optional, line number to start from), limit (optional, max lines to read).";
+        return "读取文件内容。参数：path（必填）、offset（可选，起始行号）、limit（可选，最多读取行数）。";
     }
 
     @Override
@@ -45,9 +45,9 @@ public class ReadFileTool implements Tool {
         Map<String, Object> schema = new HashMap<>();
         schema.put("type", "object");
         Map<String, Object> properties = new HashMap<>();
-        properties.put("path", Map.of("type", "string", "description", "File path relative to workspace root"));
-        properties.put("offset", Map.of("type", "integer", "description", "Line number to start reading from (0-based)"));
-        properties.put("limit", Map.of("type", "integer", "description", "Maximum number of lines to read"));
+        properties.put("path", Map.of("type", "string", "description", "相对于工作区根目录的文件路径"));
+        properties.put("offset", Map.of("type", "integer", "description", "开始读取的行号（从 0 开始）"));
+        properties.put("limit", Map.of("type", "integer", "description", "最多读取的行数"));
         schema.put("properties", properties);
         schema.put("required", new String[]{"path"});
         return schema;
@@ -81,14 +81,14 @@ public class ReadFileTool implements Tool {
 
             if (!Files.exists(filePath)) {
                 return objectMapper.writeValueAsString(Map.of(
-                        "content", "Error: file not found: " + path,
+                        "content", "错误：文件不存在：" + path,
                         "total_lines", 0
                 ));
             }
 
             if (!Files.isRegularFile(filePath)) {
                 return objectMapper.writeValueAsString(Map.of(
-                        "content", "Error: not a regular file: " + path,
+                        "content", "错误：不是普通文件：" + path,
                         "total_lines", 0
                 ));
             }
@@ -115,11 +115,11 @@ public class ReadFileTool implements Tool {
             log.error("ReadFileTool execution failed", e);
             try {
                 return objectMapper.writeValueAsString(Map.of(
-                        "content", "Error: " + e.getMessage(),
+                        "content", "错误：" + e.getMessage(),
                         "total_lines", 0
                 ));
             } catch (Exception ex) {
-                return "{\"content\":\"Error: " + e.getMessage().replace("\"", "'") + "\",\"total_lines\":0}";
+                return "{\"content\":\"错误：" + e.getMessage().replace("\"", "'") + "\",\"total_lines\":0}";
             }
         }
     }

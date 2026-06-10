@@ -4,6 +4,7 @@ import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
+import com.agentworkbench.harness.core.EnvironmentInfoProvider;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.PermissionLevel;
@@ -40,6 +41,7 @@ public class SessionService {
     private final AgentMapper agentMapper;
     private final PathSandbox pathSandbox;
     private final ObjectMapper objectMapper;
+    private final EnvironmentInfoProvider environmentInfoProvider;
 
     public Session createSession(Long userId, Long agentId, String title) {
         return createSession(userId, agentId, title, "CLOUD");
@@ -54,6 +56,12 @@ public class SessionService {
     }
 
     public Session createSession(Long userId, Long agentId, String title, String executionMode, String workspace, String permissionLevel) {
+        return createSession(userId, agentId, title, executionMode, workspace, permissionLevel, null, null, null, null);
+    }
+
+    public Session createSession(Long userId, Long agentId, String title, String executionMode, String workspace,
+                                 String permissionLevel, Boolean isGit, String platform, String shellPath,
+                                 String osVersion) {
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
             throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
@@ -67,6 +75,10 @@ public class SessionService {
         session.setExecutionMode(executionMode != null ? executionMode : "CLOUD");
         session.setWorkspace(workspace);
         session.setPermissionLevel(permissionLevel != null ? permissionLevel : "READ_ONLY");
+        session.setIsGit(isGit);
+        session.setPlatform(platform);
+        session.setShellPath(shellPath);
+        session.setOsVersion(osVersion);
         session.setIsPinned(0);
         session.setIsFavorite(0);
         session.setPhase("IDLE");
@@ -83,6 +95,15 @@ public class SessionService {
             new java.io.File(autoPath).mkdirs();
             session.setWorkspace(autoPath);
             session.setProjectKey(deriveProjectKey(autoPath));
+            sessionMapper.updateById(session);
+        }
+
+        if ("CLOUD".equals(session.getExecutionMode())) {
+            var env = environmentInfoProvider.detect(session.getWorkspace());
+            session.setIsGit(env.isGit());
+            session.setPlatform(env.platform());
+            session.setShellPath(env.shell());
+            session.setOsVersion(env.osVersion());
             sessionMapper.updateById(session);
         }
 

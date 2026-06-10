@@ -54,7 +54,8 @@ public class SessionController {
             @AuthenticationPrincipal Long userId,
             @RequestBody CreateSessionRequest request) {
         Session session = sessionService.createSession(userId, request.getAgentId(), request.getTitle(),
-                request.getExecutionMode(), request.getWorkspace(), request.getPermissionLevel());
+                request.getExecutionMode(), request.getWorkspace(), request.getPermissionLevel(),
+                request.getIsGit(), request.getPlatform(), request.getShell(), request.getOsVersion());
         return Result.ok(toSessionVO(session));
     }
 
@@ -292,6 +293,10 @@ public class SessionController {
         vo.setIsFavorite(session.getIsFavorite() != null && session.getIsFavorite() == 1);
         vo.setExecutionMode(session.getExecutionMode());
         vo.setWorkspace(session.getWorkspace());
+        vo.setIsGit(session.getIsGit());
+        vo.setPlatform(session.getPlatform());
+        vo.setShell(session.getShellPath());
+        vo.setOsVersion(session.getOsVersion());
         vo.setCreatedAt(session.getCreatedAt() != null ? session.getCreatedAt().toString() : null);
         vo.setUpdatedAt(session.getUpdatedAt() != null ? session.getUpdatedAt().toString() : null);
 
@@ -380,6 +385,10 @@ public class SessionController {
         private String executionMode;
         private String workspace;
         private String permissionLevel;
+        private Boolean isGit;
+        private String platform;
+        private String shell;
+        private String osVersion;
     }
 
     @Data
@@ -401,6 +410,10 @@ public class SessionController {
         private Boolean isFavorite;
         private String executionMode;
         private String workspace;
+        private Boolean isGit;
+        private String platform;
+        private String shell;
+        private String osVersion;
         private String createdAt;
         private String updatedAt;
         // Task fields

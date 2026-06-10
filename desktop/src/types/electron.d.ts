@@ -24,6 +24,12 @@ interface TerminalExitPayload {
 interface ElectronAPI {
   getAppVersion(): Promise<string>
   getPlatform(): Promise<string>
+  getEnvironmentInfo(workspace?: string): Promise<{
+    isGit: boolean
+    platform: string
+    shell: string
+    osVersion: string
+  }>
   minimizeWindow(): Promise<void>
   maximizeWindow(): Promise<void>
   closeWindow(): Promise<void>

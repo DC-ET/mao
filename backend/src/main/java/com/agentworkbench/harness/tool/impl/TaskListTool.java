@@ -36,14 +36,14 @@ public class TaskListTool implements Tool {
     @Override
     public String getDescription() {
         return """
-                List all todo items for the current session and check progress.
+                列出当前会话的所有待办事项并查看进展。
 
-                WHEN TO USE:
-                - After completing a task — to find the next available task
-                - At the start of work — to see the current task plan
-                - When uncertain — to check what tasks remain
+                何时使用：
+                - 完成一个任务后，用于查找下一个可执行任务
+                - 开始工作时，用于查看当前任务计划
+                - 不确定下一步时，用于检查剩余任务
 
-                Returns all tasks with their status (pending/in_progress/completed) and a progress summary.
+                返回所有任务及其状态（pending/in_progress/completed）和进度摘要。
                 """;
     }
 
@@ -82,10 +82,10 @@ public class TaskListTool implements Tool {
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("todos", todos);
-            result.put("progress", completedCount + "/" + todos.size() + " completed, " + inProgressCount + " in progress");
+            result.put("progress", "已完成 " + completedCount + "/" + todos.size() + "，进行中 " + inProgressCount);
 
             if (inProgressCount > 0) {
-                result.put("hint", "You have a task in progress. Continue working on it before starting another.");
+                result.put("hint", "当前已有任务处于 in_progress。请先继续处理它，再开始其他任务。");
             }
 
             return objectMapper.writeValueAsString(result);

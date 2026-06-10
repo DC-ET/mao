@@ -64,14 +64,19 @@ public class PromptEngine {
         String effectiveWorkspace = (context.getWorkspace() != null && !context.getWorkspace().isEmpty())
                 ? context.getWorkspace()
                 : pathSandbox.getWorkspaceRoot().toString();
-        sb.append("## Working Directory\n\n");
-        sb.append("Your current working directory is: `").append(effectiveWorkspace).append("`\n");
-        sb.append("All relative file paths are resolved against this directory.\n\n");
+        sb.append("## 工作环境\n\n");
+        sb.append("你当前的工作目录是：`").append(effectiveWorkspace).append("`\n");
+        sb.append("所有相对文件路径都会基于该目录解析。\n");
+        sb.append("- 是否为 git 仓库：").append(formatBoolean(context.getIsGit())).append("\n");
+        sb.append("- 平台：").append(formatValue(context.getPlatform())).append("\n");
+        sb.append("- Shell：").append(formatValue(context.getShellPath())).append("\n");
+        sb.append("- 操作系统版本：").append(formatValue(context.getOsVersion())).append("\n");
+        appendExecutionEnvironmentHint(sb, context, effectiveWorkspace);
 
         // Current time
         if (context.getCurrentTimestamp() != null) {
-            sb.append("## Current Time\n\n");
-            sb.append("Current date and time: `").append(context.getCurrentTimestamp()).append("`\n\n");
+            sb.append("## 当前时间\n\n");
+            sb.append("当前日期和时间：`").append(context.getCurrentTimestamp()).append("`\n\n");
         }
 
         // Skill catalog — inject name/description with workspace-relative paths
@@ -79,11 +84,10 @@ public class PromptEngine {
         if (skillNames != null && !skillNames.isEmpty()) {
             String catalog = buildRelativeSkillCatalog(skillNames);
             if (catalog != null && !catalog.isEmpty()) {
-                sb.append("## Available Skills\n\n");
-                sb.append("The following skills are available. Each skill is a knowledge document that provides ");
-                sb.append("guidance on how to use tools effectively in specific scenarios.\n");
-                sb.append("Skills are synced to your workspace under `.workbench/skills/` directory.\n");
-                sb.append("To read a skill's full content, use the `read_file` tool with the file path listed below.\n\n");
+                sb.append("## 可用技能\n\n");
+                sb.append("以下技能可用。每个技能都是一份知识文档，用于指导你在特定场景下高效使用工具。\n");
+                sb.append("技能会同步到工作区的 `.workbench/skills/` 目录下。\n");
+                sb.append("如需阅读某个技能的完整内容，请使用 `read_file` 工具读取下方列出的文件路径。\n\n");
                 sb.append(catalog);
                 sb.append("\n\n");
             }
@@ -113,13 +117,39 @@ public class PromptEngine {
             if (doc != null && doc.getDescription() != null) {
                 description = doc.getDescription();
             }
-            sb.append("- **").append(name).append("**: ");
+            sb.append("- **").append(name).append("**：");
             sb.append(description);
-            sb.append("\n  Folder: `.workbench/skills/").append(name).append("`");
-            sb.append("\n  File: `.workbench/skills/").append(name).append("/SKILL.md`");
+            sb.append("\n  目录：`.workbench/skills/").append(name).append("`");
+            sb.append("\n  文件：`.workbench/skills/").append(name).append("/SKILL.md`");
             sb.append("\n");
         }
         return sb.toString().trim();
+    }
+
+    private void appendExecutionEnvironmentHint(StringBuilder sb, AgentExecutionContext context, String effectiveWorkspace) {
+        String executionMode = context.getExecutionMode();
+        if ("LOCAL".equalsIgnoreCase(executionMode)) {
+            sb.append("当前会话处于 LOCAL 本地模式。你调用的 shell、文件读取、文件写入和文件搜索等工具会委托给用户桌面客户端执行，");
+            sb.append("工作目录位于用户本地机器：`").append(effectiveWorkspace).append("`。\n");
+            sb.append("因此，工具看到的文件系统、命令、依赖和环境变量属于用户本地环境。");
+            sb.append("当描述执行过程或诊断异常时，请明确这是用户本地工作区中的情况。\n\n");
+            return;
+        }
+
+        sb.append("当前会话处于 CLOUD 云端模式。你调用的 shell、文件读取、文件写入和文件搜索等工具都在云端服务器执行，");
+        sb.append("工作目录是服务器上的临时/隔离目录，而不是用户电脑上的目录。\n");
+        sb.append("因此，工具看到的文件系统、命令、依赖和环境变量都属于云端执行环境。");
+        sb.append("当命令失败、文件不存在、依赖缺失或权限受限时，请先将其理解为云端工作区的问题，");
+        sb.append("不要默认归因于用户本地电脑，也不要要求用户在本地手动执行命令来规避异常，除非用户明确要求或任务确实需要本地操作。\n\n");
+    }
+
+    private String formatBoolean(Boolean value) {
+        if (value == null) return "未知";
+        return value ? "是" : "否";
+    }
+
+    private String formatValue(String value) {
+        return value != null && !value.isBlank() ? value : "未知";
     }
 
     private List<ChatRequest.ToolDefinition> buildToolDefinitions(AgentExecutionContext context) {
@@ -148,12 +178,12 @@ public class PromptEngine {
                 .anyMatch(t -> TASK_TOOL_NAMES.contains(t.getName()));
         if (!hasTaskTool) return;
 
-        sb.append("## Task Management\n\n");
-        sb.append("These tools are helpful for planning your work and helping the user track your progress.\n");
-        sb.append("Only use task tools when the request involves 3 or more distinct steps.\n");
-        sb.append("Do NOT create tasks for simple, single-step, or straightforward requests.\n");
-        sb.append("When you do use tasks: mark each one as completed as soon as you are done.\n");
-        sb.append("Do not batch up multiple tasks before marking them as completed.\n\n");
+        sb.append("## 任务管理\n\n");
+        sb.append("这些工具有助于规划你的工作，并帮助用户跟踪进展。\n");
+        sb.append("只有当请求包含 3 个或更多明确步骤时，才使用任务工具。\n");
+        sb.append("不要为简单、单步或直接明了的请求创建任务。\n");
+        sb.append("使用任务时：每完成一个任务，就立即将其标记为已完成。\n");
+        sb.append("不要等多个任务都做完后再批量标记完成。\n\n");
     }
 
 }

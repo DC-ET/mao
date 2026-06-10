@@ -32,7 +32,7 @@ public class WriteFileTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Write content to a file (creates or overwrites). Creates parent directories if needed. Parameters: path (required), content (required).";
+        return "将内容写入文件（创建或覆盖）。如有需要会创建父目录。参数：path（必填）、content（必填）。";
     }
 
     @Override
@@ -40,8 +40,8 @@ public class WriteFileTool implements Tool {
         Map<String, Object> schema = new HashMap<>();
         schema.put("type", "object");
         Map<String, Object> properties = new HashMap<>();
-        properties.put("path", Map.of("type", "string", "description", "File path relative to workspace root"));
-        properties.put("content", Map.of("type", "string", "description", "Content to write to the file"));
+        properties.put("path", Map.of("type", "string", "description", "相对于工作区根目录的文件路径"));
+        properties.put("content", Map.of("type", "string", "description", "要写入文件的内容"));
         schema.put("properties", properties);
         schema.put("required", new String[]{"path", "content"});
         return schema;

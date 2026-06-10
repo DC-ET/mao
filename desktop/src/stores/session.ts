@@ -16,6 +16,13 @@ export interface TaskStep {
   done: boolean
 }
 
+export interface SessionEnvironmentInfo {
+  isGit?: boolean
+  platform?: string
+  shell?: string
+  osVersion?: string
+}
+
 export interface Session {
   id: string
   agentId: string
@@ -33,6 +40,10 @@ export interface Session {
   steps?: TaskStep[]
   projectKey?: string
   workspace?: string
+  isGit?: boolean
+  platform?: string
+  shell?: string
+  osVersion?: string
   contextTokens?: number
   running: boolean
   permissionLevel?: string
@@ -157,11 +168,15 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  async function createSession(agentId: string, executionMode: string, workspace?: string) {
+  async function createSession(agentId: string, executionMode: string, workspace?: string, environmentInfo?: SessionEnvironmentInfo) {
     const { data } = await api.post('/sessions', {
       agentId,
       executionMode,
-      workspace: workspace || undefined
+      workspace: workspace || undefined,
+      isGit: environmentInfo?.isGit,
+      platform: environmentInfo?.platform,
+      shell: environmentInfo?.shell,
+      osVersion: environmentInfo?.osVersion
     })
     if (data) {
       data.id = normalizeId(data.id)

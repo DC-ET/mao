@@ -3,6 +3,7 @@ const { join } = require('path')
 const { exec, spawn } = require('child_process')
 const fs = require('fs')
 const path = require('path')
+const os = require('os')
 const { TerminalManager } = require('./terminalManager.cjs')
 
 let mainWindow = null
@@ -93,6 +94,29 @@ function resolveWorkspacePath(filePath, workspace) {
   return path.join(effectiveWorkspace, filePath)
 }
 
+function detectShell() {
+  return process.env.SHELL || process.env.ComSpec || process.env.COMSPEC || (process.platform === 'win32' ? 'cmd.exe' : '/bin/sh')
+}
+
+function buildOsVersion() {
+  if (process.platform === 'win32') {
+    return `${os.version()} ${os.release()}`
+  }
+  return `${os.type()} ${os.release()}`
+}
+
+function isGitWorkspace(workspace) {
+  if (!workspace) return false
+  let current = path.resolve(workspace)
+  while (current && current !== path.dirname(current)) {
+    if (fs.existsSync(path.join(current, '.git'))) {
+      return true
+    }
+    current = path.dirname(current)
+  }
+  return false
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -177,6 +201,15 @@ ipcMain.handle('get-app-version', () => {
 
 ipcMain.handle('get-platform', () => {
   return process.platform
+})
+
+ipcMain.handle('get-environment-info', (event, { workspace } = {}) => {
+  return {
+    isGit: isGitWorkspace(workspace || currentWorkspace),
+    platform: process.platform,
+    shell: detectShell(),
+    osVersion: buildOsVersion()
+  }
 })
 
 ipcMain.handle('select-directory', async () => {

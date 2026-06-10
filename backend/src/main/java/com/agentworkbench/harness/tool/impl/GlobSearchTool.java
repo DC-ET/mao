@@ -41,7 +41,7 @@ public class GlobSearchTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Search files by glob pattern. Returns matching file paths, search root, and whether results are truncated.";
+        return "按 glob 模式搜索文件。返回匹配的文件路径、搜索根目录以及结果是否被截断。";
     }
 
     @Override
@@ -49,9 +49,9 @@ public class GlobSearchTool implements Tool {
         Map<String, Object> schema = new HashMap<>();
         schema.put("type", "object");
         Map<String, Object> properties = new HashMap<>();
-        properties.put("pattern", Map.of("type", "string", "description", "Glob pattern, e.g. *.java, src/**/*.xml"));
-        properties.put("path", Map.of("type", "string", "description", "Search root directory, optional; defaults to session workspace root"));
-        properties.put("head_limit", Map.of("type", "integer", "description", "Max files to return, default 100"));
+        properties.put("pattern", Map.of("type", "string", "description", "Glob 匹配模式，例如 *.java、src/**/*.xml"));
+        properties.put("path", Map.of("type", "string", "description", "搜索根目录，可选；默认使用当前会话的工作区根目录"));
+        properties.put("head_limit", Map.of("type", "integer", "description", "最多返回的文件数，默认 100"));
         schema.put("properties", properties);
         schema.put("required", new String[]{"pattern"});
         return schema;

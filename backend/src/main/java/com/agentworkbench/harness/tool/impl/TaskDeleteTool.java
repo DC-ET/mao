@@ -37,18 +37,18 @@ public class TaskDeleteTool implements Tool {
     @Override
     public String getDescription() {
         return """
-                Delete todo items that are no longer relevant.
+                删除不再相关的待办事项。
 
-                WHEN TO USE:
-                - A task is no longer relevant or has been superseded
-                - User explicitly cancels a task or changes requirements
-                - Duplicate tasks were created by mistake
+                何时使用：
+                - 某个任务不再相关，或已被其他任务取代
+                - 用户明确取消任务或变更需求
+                - 误创建了重复任务
 
-                WHEN NOT TO USE:
-                - Do not delete completed tasks (mark as completed instead)
-                - Do not delete tasks to avoid working on them
+                何时不要使用：
+                - 不要删除已完成任务（应标记为 completed）
+                - 不要为了逃避执行而删除任务
 
-                Each item must have: id (required).
+                每个事项必须包含：id（必填）。
                 """;
     }
 
@@ -59,11 +59,11 @@ public class TaskDeleteTool implements Tool {
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("items", Map.of(
                 "type", "array",
-                "description", "Todo items to delete",
+                "description", "要删除的待办事项",
                 "items", Map.of(
                         "type", "object",
                         "properties", Map.of(
-                                "id", Map.of("type", "integer", "description", "Todo item ID to delete")
+                                "id", Map.of("type", "integer", "description", "要删除的待办事项 ID")
                         ),
                         "required", new String[]{"id"}
                 )
@@ -112,7 +112,7 @@ public class TaskDeleteTool implements Tool {
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("todos", todos);
-            result.put("message", "Deleted " + count + " items");
+            result.put("message", "已删除 " + count + " 个事项");
             return objectMapper.writeValueAsString(result);
         } catch (Exception e) {
             log.error("TaskDeleteTool execution failed", e);

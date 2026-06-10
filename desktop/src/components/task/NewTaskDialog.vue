@@ -82,7 +82,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Cloudy, Monitor } from '@element-plus/icons-vue'
-import { useSessionStore } from '../../stores/session'
+import { useSessionStore, type SessionEnvironmentInfo } from '../../stores/session'
 import { useAgentStore, type Agent } from '../../stores/agent'
 
 const props = defineProps<{
@@ -131,10 +131,16 @@ async function selectWorkspace() {
 
 async function confirm() {
   if (!selectedAgent.value) return
+  const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
+  let environmentInfo: SessionEnvironmentInfo | undefined
+  if (selectedMode.value === 'LOCAL' && isElectron && (window as any).electronAPI?.getEnvironmentInfo) {
+    environmentInfo = await (window as any).electronAPI.getEnvironmentInfo(workspace.value || undefined)
+  }
   const session = await sessionStore.createSession(
     selectedAgent.value.id,
     selectedMode.value,
-    workspace.value || undefined
+    workspace.value || undefined,
+    environmentInfo
   )
   if (session) {
     emit('created', session)

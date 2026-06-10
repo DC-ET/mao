@@ -91,10 +91,10 @@ public class AgentLoop {
             // 0.5. Inject completed background task results
             Map<String, String> bgResults = backgroundTaskManager.consumeCompletedResults();
             if (!bgResults.isEmpty()) {
-                StringBuilder sb = new StringBuilder("<background-task-results>\n");
+                StringBuilder sb = new StringBuilder("<后台任务结果>\n");
                 bgResults.forEach((taskId, result) ->
-                        sb.append("Task ").append(taskId).append(": ").append(result).append("\n"));
-                sb.append("</background-task-results>");
+                        sb.append("任务 ").append(taskId).append("：").append(result).append("\n"));
+                sb.append("</后台任务结果>");
                 context.addSystemMessage(sb.toString());
                 log.info("Injected {} background task results", bgResults.size());
             }

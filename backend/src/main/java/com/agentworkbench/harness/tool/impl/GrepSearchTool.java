@@ -42,7 +42,7 @@ public class GrepSearchTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Search file contents by text or regex pattern. Returns matching lines with file paths and line numbers.";
+        return "按文本或正则表达式搜索文件内容。返回匹配行及其文件路径和行号。";
     }
 
     @Override
@@ -50,12 +50,12 @@ public class GrepSearchTool implements Tool {
         Map<String, Object> schema = new HashMap<>();
         schema.put("type", "object");
         Map<String, Object> properties = new HashMap<>();
-        properties.put("pattern", Map.of("type", "string", "description", "Text or regex pattern to search"));
-        properties.put("path", Map.of("type", "string", "description", "Search directory or file, optional; defaults to session workspace root"));
-        properties.put("glob", Map.of("type", "string", "description", "File filter glob, e.g. *.java, *.md"));
-        properties.put("ignore_case", Map.of("type", "boolean", "description", "Case insensitive search, default false"));
-        properties.put("context_lines", Map.of("type", "integer", "description", "Number of context lines, default 0"));
-        properties.put("max_output_chars", Map.of("type", "integer", "description", "Max output characters, default 10000"));
+        properties.put("pattern", Map.of("type", "string", "description", "要搜索的文本或正则表达式"));
+        properties.put("path", Map.of("type", "string", "description", "搜索目录或文件，可选；默认使用当前会话的工作区根目录"));
+        properties.put("glob", Map.of("type", "string", "description", "文件过滤 glob，例如 *.java、*.md"));
+        properties.put("ignore_case", Map.of("type", "boolean", "description", "是否忽略大小写，默认 false"));
+        properties.put("context_lines", Map.of("type", "integer", "description", "上下文行数，默认 0"));
+        properties.put("max_output_chars", Map.of("type", "integer", "description", "最多输出字符数，默认 10000"));
         schema.put("properties", properties);
         schema.put("required", new String[]{"pattern"});
         return schema;
