@@ -22,7 +22,7 @@
             <span class="card-label">{{ titleMap[item.toolName] || '操作待审批' }}</span>
             <span v-if="items.length > 1" class="card-badge">{{ items.length }}</span>
           </div>
-          <div class="command-line">
+          <div class="command-line" :class="{ expanded: expandedSet.has(item.requestId) }">
             <code class="command-code">{{ displayText(item) }}</code>
           </div>
           <div class="card-actions">
@@ -178,6 +178,11 @@ function copyText(text: string) {
 .command-line {
   margin-bottom: 8px;
   overflow: hidden;
+}
+
+.command-line.expanded {
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .command-code {

@@ -7,6 +7,7 @@ import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.session.activity.ActivityService;
 import com.agentworkbench.session.activity.SessionActivity;
+import com.agentworkbench.session.entity.FileChange;
 import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.MessageQueue;
 import com.agentworkbench.session.entity.Session;
@@ -166,7 +167,15 @@ public class SessionController {
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
         List<Message> messages = sessionService.getMessages(id);
-        List<MessageVO> voList = messages.stream().map(this::toMessageVO).collect(Collectors.toList());
+        Map<Long, List<FileChange>> changesByMsg = sessionService.getFileChangesBySession(id);
+        List<MessageVO> voList = messages.stream().map(msg -> {
+            MessageVO vo = toMessageVO(msg);
+            List<FileChange> changes = changesByMsg.get(msg.getId());
+            if (changes != null && !changes.isEmpty()) {
+                vo.setFileChanges(changes.stream().map(this::toFileChangeVO).collect(Collectors.toList()));
+            }
+            return vo;
+        }).collect(Collectors.toList());
         return Result.ok(voList);
     }
 
@@ -401,6 +410,15 @@ public class SessionController {
         return vo;
     }
 
+    private FileChangeVO toFileChangeVO(FileChange fc) {
+        FileChangeVO vo = new FileChangeVO();
+        vo.setPath(fc.getFilePath());
+        vo.setType(fc.getChangeType());
+        vo.setLinesAdded(fc.getLinesAdded());
+        vo.setLinesDeleted(fc.getLinesDeleted());
+        return vo;
+    }
+
     // DTOs
 
     @Data
@@ -471,6 +489,15 @@ public class SessionController {
         private Integer tokenCount;
         private String createdAt;
         private String updatedAt;
+        private List<FileChangeVO> fileChanges;
+    }
+
+    @Data
+    public static class FileChangeVO {
+        private String path;
+        private String type;
+        private int linesAdded;
+        private int linesDeleted;
     }
 
     @Data

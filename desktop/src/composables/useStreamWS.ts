@@ -259,6 +259,18 @@ export function useStreamWS() {
         if (sessionId) sessionStore.setTodos(sessionId, data.todos || [])
         break
 
+      case 'file_change':
+        if (sessionId) {
+          sessionStore.appendFileChange(sessionId, {
+            path: data.path,
+            type: data.type,
+            linesAdded: data.lines_added,
+            linesDeleted: data.lines_deleted,
+            toolCallId: data.tool_call_id
+          })
+        }
+        break
+
       case 'session_status':
         if (sessionId) {
           sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)

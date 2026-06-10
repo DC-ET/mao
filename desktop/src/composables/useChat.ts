@@ -4,7 +4,7 @@ import { api } from '../api'
 import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
 import { mapApiMessagesToChat } from '../utils/chatMessage'
-import type { ChatMessage } from '../types/chat'
+import type { ChatMessage, FileChange } from '../types/chat'
 
 export type {
   ChatMessage,
@@ -28,7 +28,7 @@ export interface ApprovalItem {
 // Module-level flag to ensure IPC listeners are registered only once
 let approvalListenerSetup = false
 
-export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>) {
+export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
   const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks } = useStreamWS()
 
@@ -82,7 +82,31 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     if (!sessionId.value) return
     try {
       const { data } = await api.get(`/sessions/${sessionId.value}/messages`)
-      sessionStore.setMessages(sessionId.value, mapApiMessagesToChat(data || []))
+      const raw: Array<Record<string, unknown>> = data || []
+      const messages = mapApiMessagesToChat(raw)
+
+      // Attach fileChanges from API response to mapped messages
+      const rawById = new Map(raw.map(m => [String(m.id), m]))
+      const allChanges: FileChange[] = []
+      for (const msg of messages) {
+        const rawMsg = rawById.get(msg.id)
+        if (rawMsg?.fileChanges && Array.isArray(rawMsg.fileChanges)) {
+          const changes = (rawMsg.fileChanges as Array<Record<string, unknown>>).map(fc => ({
+            path: String(fc.path),
+            type: fc.type as FileChange['type'],
+            linesAdded: Number(fc.linesAdded) || 0,
+            linesDeleted: Number(fc.linesDeleted) || 0
+          }))
+          msg.fileChanges = changes
+          allChanges.push(...changes)
+        }
+      }
+
+      console.log('[FileChange] fetchMessages: raw count=', raw.length, 'messages count=', messages.length, 'allChanges count=', allChanges.length)
+      console.log('[FileChange] fetchMessages: raw fileChanges=', raw.map(m => ({ id: m.id, fileChanges: m.fileChanges })))
+
+      sessionStore.setMessages(sessionId.value, messages)
+      sessionStore.setFileChanges(sessionId.value, allChanges)
     } catch {
       // session might not exist yet
     }
@@ -179,7 +203,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
           executionMode.value,
           workspace.value || undefined,
           environmentInfo,
-          selectedModelId?.value
+          selectedModelId?.value,
+          permissionLevel?.value
         )
         sessionId.value = sessionData.id
       }

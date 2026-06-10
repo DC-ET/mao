@@ -56,12 +56,12 @@
               @click="selectSession(session)"
             >
               <div class="session-item-main">
-                <span class="session-phase-dot" :class="phaseClass(session.phase)"></span>
                 <span
                   v-if="hasPendingApproval(session.id)"
                   class="session-approval-dot"
                   title="有待审批的命令"
                 ></span>
+                <span v-else class="session-phase-dot" :class="phaseClass(session.phase)"></span>
                 <input
                   v-if="editingSessionId === session.id"
                   v-model="editingTitle"

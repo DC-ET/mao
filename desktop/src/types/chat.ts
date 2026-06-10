@@ -9,6 +9,14 @@ export interface ToolCall {
   argsStreaming: boolean
 }
 
+export interface FileChange {
+  path: string
+  type: 'CREATED' | 'MODIFIED'
+  linesAdded: number
+  linesDeleted: number
+  toolCallId?: string
+}
+
 export type MessageSegment =
   | { type: 'text'; content: string }
   | { type: 'tool'; callId: string }
@@ -32,6 +40,7 @@ export interface ChatMessage {
   toolCalls?: ToolCall[]
   segments?: MessageSegment[]
   durationMs?: number
+  fileChanges?: FileChange[]
 }
 
 export interface TodoItem {

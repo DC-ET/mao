@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,6 +57,12 @@ public class AgentLoop {
     public interface MessagePersistenceCallback {
         void onSaveAssistantMessage(String content, String thinkingContent, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage);
         void onSaveToolMessage(String toolCallId, String content);
+
+        default void onSaveAssistantMessage(String content, String thinkingContent,
+                                             List<ChatRequest.ToolCall> toolCalls,
+                                             Map<String, String> toolResults, ChatUsage usage) {
+            onSaveAssistantMessage(content, thinkingContent, toolCalls, usage);
+        }
     }
 
     public void execute(AgentExecutionContext context, AgentEventListener listener) {
@@ -73,6 +80,7 @@ public class AgentLoop {
         final ChatUsage[] pendingSaveUsage = {null};
         @SuppressWarnings("unchecked")
         final List<ChatRequest.ToolCall>[] pendingSaveToolCalls = new List[1];
+
 
         while (true) {
             round++;
@@ -202,11 +210,13 @@ public class AgentLoop {
             }
 
             // 4. Execute tool calls in parallel (summary 已附加到 ToolCall)
-            executeToolCalls(pendingCalls, context, listener, persistenceCallback);
+            Map<String, String> toolResults = new LinkedHashMap<>();
+            executeToolCalls(pendingCalls, context, listener, persistenceCallback, toolResults);
 
             // 4.1 延迟保存带 summary 的 assistant 消息
             if (pendingSaveToolCalls[0] != null && persistenceCallback != null) {
-                persistenceCallback.onSaveAssistantMessage(pendingSave[0], pendingThinking[0], pendingSaveToolCalls[0], pendingSaveUsage[0]);
+                persistenceCallback.onSaveAssistantMessage(pendingSave[0], pendingThinking[0],
+                        pendingSaveToolCalls[0], toolResults, pendingSaveUsage[0]);
                 pendingSave[0] = null;
                 pendingThinking[0] = null;
                 pendingSaveUsage[0] = null;
@@ -253,12 +263,14 @@ public class AgentLoop {
     private void executeToolCalls(List<ChatRequest.ToolCall> pendingCalls,
                                   AgentExecutionContext context,
                                   AgentEventListener listener,
-                                  MessagePersistenceCallback persistenceCallback) {
+                                  MessagePersistenceCallback persistenceCallback,
+                                  Map<String, String> toolResults) {
         if (pendingCalls.size() == 1) {
             ChatRequest.ToolCall tc = pendingCalls.get(0);
             String result = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
             tc.setSummary(ToolResultSummarizer.summarize(
                     tc.getFunction().getName(), tc.getFunction().getArguments(), result));
+            toolResults.put(tc.getId(), result);
             context.addToolResult(tc.getId(), result);
             listener.onToolCallResult(tc.getId(), result);
             if (persistenceCallback != null) {
@@ -282,6 +294,7 @@ public class AgentLoop {
                 ChatRequest.ToolCall tc = pendingCalls.get(i);
                 tc.setSummary(ToolResultSummarizer.summarize(
                         tc.getFunction().getName(), tc.getFunction().getArguments(), results[i]));
+                toolResults.put(tc.getId(), results[i]);
                 context.addToolResult(tc.getId(), results[i]);
                 listener.onToolCallResult(tc.getId(), results[i]);
                 if (persistenceCallback != null) {

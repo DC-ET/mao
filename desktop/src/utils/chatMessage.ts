@@ -87,15 +87,14 @@ export function buildSegmentsFromContentAndTools(
   toolCalls: ToolCall[]
 ): MessageSegment[] {
   const segments: MessageSegment[] = []
-  // 添加工具调用段（先工具后文本，与实际流式时序一致）
+  // 文本在前，与实际流式时序一致（LLM 先输出文本，再输出工具调用）
+  if (content?.trim()) {
+    segments.push({ type: 'text', content })
+  }
   for (const tc of toolCalls) {
     if (tc.id) {
       segments.push({ type: 'tool', callId: tc.id })
     }
-  }
-  // 文本内容放在最后
-  if (content?.trim()) {
-    segments.push({ type: 'text', content })
   }
   return segments
 }

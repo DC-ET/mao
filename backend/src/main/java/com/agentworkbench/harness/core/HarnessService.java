@@ -11,20 +11,25 @@ import com.agentworkbench.harness.skill.SkillLoader;
 import com.agentworkbench.harness.tool.ToolRegistry;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
+import com.agentworkbench.session.entity.FileChange;
 import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.Session;
+import com.agentworkbench.session.mapper.FileChangeMapper;
 import com.agentworkbench.session.mapper.MessageMapper;
 import com.agentworkbench.session.mapper.SessionMapper;
 import com.agentworkbench.session.service.SessionService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
@@ -39,6 +44,7 @@ public class HarnessService {
     private final AgentMapper agentMapper;
     private final LlmModelMapper llmModelMapper;
     private final MessageMapper messageMapper;
+    private final FileChangeMapper fileChangeMapper;
     private final SessionService sessionService;
     private final ObjectMapper objectMapper;
     private final ContextManager contextManager;
@@ -73,6 +79,13 @@ public class HarnessService {
         AgentLoop.MessagePersistenceCallback persistenceCallback = new AgentLoop.MessagePersistenceCallback() {
             @Override
             public void onSaveAssistantMessage(String content, String thinkingContent, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage) {
+                onSaveAssistantMessage(content, thinkingContent, toolCalls, java.util.Map.of(), usage);
+            }
+
+            @Override
+            public void onSaveAssistantMessage(String content, String thinkingContent,
+                                                List<ChatRequest.ToolCall> toolCalls,
+                                                Map<String, String> toolResults, ChatUsage usage) {
                 String toolCallsJson = null;
                 if (toolCalls != null && !toolCalls.isEmpty()) {
                     try {
@@ -85,7 +98,12 @@ public class HarnessService {
                 }
                 int tokenCount = usage != null ? usage.getTotalTokens() : 0;
                 Long modelId = context.getModelConfig() != null ? context.getModelConfig().getId() : null;
-                sessionService.saveMessage(sessionId, "ASSISTANT", content, thinkingContent, null, toolCallsJson, tokenCount, modelId);
+                Message savedMsg = sessionService.saveMessage(sessionId, "ASSISTANT", content, thinkingContent, null, toolCallsJson, tokenCount, modelId);
+
+                // Save file change records
+                if (toolCalls != null && !toolCalls.isEmpty() && !toolResults.isEmpty()) {
+                    saveFileChanges(savedMsg.getId(), sessionId, toolCalls, toolResults);
+                }
             }
 
             @Override
@@ -293,6 +311,66 @@ public class HarnessService {
         } catch (Exception e) {
             log.warn("Failed to parse agent compaction config, using defaults", e);
             return compactionConfig;
+        }
+    }
+
+    /**
+     * Save file change records from tool results.
+     * Merges changes for the same file path within one assistant message.
+     */
+    private void saveFileChanges(Long messageId, Long sessionId,
+                                  List<ChatRequest.ToolCall> toolCalls,
+                                  Map<String, String> toolResults) {
+        Map<String, FileChange> merged = new LinkedHashMap<>();
+        log.info("[FileChange] saveFileChanges called: messageId={}, sessionId={}, toolCallCount={}, toolResultKeys={}",
+                messageId, sessionId, toolCalls.size(), toolResults.keySet());
+
+        for (ChatRequest.ToolCall tc : toolCalls) {
+            String toolName = tc.getFunction().getName();
+            if (!"write_file".equals(toolName) && !"edit_file".equals(toolName)) continue;
+
+            String result = toolResults.get(tc.getId());
+            log.info("[FileChange] Processing tool={}, tcId={}, resultPresent={}, resultPreview={}",
+                    toolName, tc.getId(), result != null, result != null ? result.substring(0, Math.min(200, result.length())) : "null");
+            if (result == null) continue;
+
+            try {
+                JsonNode resultNode = objectMapper.readTree(result);
+                boolean hasFileChange = resultNode.has("file_change");
+                boolean success = resultNode.path("success").asBoolean();
+                log.info("[FileChange] Parsed result: hasFileChange={}, success={}", hasFileChange, success);
+                if (!hasFileChange || !success) continue;
+                JsonNode fc = resultNode.get("file_change");
+                String path = fc.get("path").asText();
+
+                FileChange existing = merged.get(path);
+                if (existing != null) {
+                    existing.setLinesAdded(existing.getLinesAdded() + fc.get("lines_added").asInt());
+                    existing.setLinesDeleted(existing.getLinesDeleted() + fc.get("lines_deleted").asInt());
+                    if ("CREATED".equals(fc.get("type").asText())) {
+                        existing.setChangeType("CREATED");
+                    }
+                } else {
+                    FileChange change = new FileChange();
+                    change.setMessageId(messageId);
+                    change.setSessionId(sessionId);
+                    change.setFilePath(path);
+                    change.setChangeType(fc.get("type").asText());
+                    change.setLinesAdded(fc.get("lines_added").asInt());
+                    change.setLinesDeleted(fc.get("lines_deleted").asInt());
+                    merged.put(path, change);
+                }
+            } catch (Exception e) {
+                log.debug("Failed to parse file_change from tool result for tool {}", toolName, e);
+            }
+        }
+
+        for (FileChange fc : merged.values()) {
+            try {
+                fileChangeMapper.insert(fc);
+            } catch (Exception e) {
+                log.warn("Failed to save file change record for {}", fc.getFilePath(), e);
+            }
         }
     }
 

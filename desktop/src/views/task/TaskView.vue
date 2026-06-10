@@ -14,65 +14,97 @@
           </template>
         </div>
 
-        <!-- 按轮次渲染：每轮独立折叠 -->
-        <template v-if="messageRounds.length > 0">
-          <template v-for="round in messageRounds" :key="round.userMessage.id">
-            <!-- 用户消息 -->
+        <!-- 历史轮次：始终折叠 -->
+        <template v-for="round in historyRounds" :key="round.userMessage.id">
+          <!-- 用户消息 -->
+          <MessageBubble
+            :message="round.userMessage"
+            :show-time="true"
+            :can-edit="canEditMessage(round.userMessage)"
+            :is-editing="editingMessageId === round.userMessage.id"
+            @edit="startEdit(round.userMessage)"
+            @cancel-edit="cancelEdit"
+            @confirm-edit="confirmEdit(round.userMessage.id, $event)"
+          />
+
+          <!-- 有执行步骤时：显示折叠块 -->
+          <template v-if="round.collapsedSteps.length > 0">
+            <div v-if="round.finalReply" class="final-reply-time">
+              {{ round.finalReply.createdAt }}
+            </div>
+
+            <div class="execution-steps-collapse">
+              <div class="steps-summary" @click="toggleRound(round.userMessage.id)">
+                <el-icon class="steps-expand-icon" :class="{ expanded: roundsExpanded[round.userMessage.id] }"><ArrowDown /></el-icon>
+                <span>已执行 {{ round.stepCount }} 个步骤，任务耗时 {{ round.durationText }}</span>
+              </div>
+              <div v-if="roundsExpanded[round.userMessage.id]" class="steps-detail">
+                <MessageBubble
+                  v-for="step in round.collapsedSteps"
+                  :key="step.id"
+                  :message="step"
+                  :show-time="false"
+                  :show-copy="false"
+                  :hide-file-changes="true"
+                />
+              </div>
+            </div>
+
             <MessageBubble
-              :message="round.userMessage"
-              :show-time="true"
-              :can-edit="canEditMessage(round.userMessage)"
-              :is-editing="editingMessageId === round.userMessage.id"
-              @edit="startEdit(round.userMessage)"
-              @cancel-edit="cancelEdit"
-              @confirm-edit="confirmEdit(round.userMessage.id, $event)"
+              v-if="round.finalReply"
+              :message="round.finalReply"
+              :hide-thinking="true"
+              :hide-file-changes="true"
             />
 
-            <!-- 有执行步骤时：显示折叠块 -->
-            <template v-if="round.collapsedSteps.length > 0">
-              <!-- 最终回复时间（折叠块上方） -->
-              <div v-if="round.finalReply" class="final-reply-time">
-                {{ round.finalReply.createdAt }}
-              </div>
-
-              <!-- 折叠块 -->
-              <div class="execution-steps-collapse">
-                <div class="steps-summary" @click="toggleRound(round.userMessage.id)">
-                  <el-icon class="steps-expand-icon" :class="{ expanded: roundsExpanded[round.userMessage.id] }"><ArrowDown /></el-icon>
-                  <span>已执行 {{ round.stepCount }} 个步骤，任务耗时 {{ round.durationText }}</span>
-                </div>
-                <div v-if="roundsExpanded[round.userMessage.id]" class="steps-detail">
-                  <MessageBubble
-                    v-for="step in round.collapsedSteps"
-                    :key="step.id"
-                    :message="step"
-                    :show-time="false"
-                    :show-copy="false"
-                  />
-                </div>
-              </div>
-
-              <!-- 最终回复内容 -->
-              <MessageBubble
-                v-if="round.finalReply"
-                :message="round.finalReply"
-                :hide-thinking="true"
-                :is-last="round.finalReply && round === messageRounds[messageRounds.length - 1]"
-              />
-            </template>
-
-            <!-- 无执行步骤时：直接显示最终回复 -->
-            <MessageBubble
-              v-else-if="round.finalReply"
-              :message="round.finalReply"
-              :show-time="true"
-              :is-last="round.finalReply && round === messageRounds[messageRounds.length - 1]"
+            <FileChangePanel
+              v-if="round.fileChanges.length > 0"
+              :changes="round.fileChanges"
+              mode="history"
             />
           </template>
+
+          <MessageBubble
+            v-else-if="round.finalReply"
+            :message="round.finalReply"
+            :show-time="true"
+            :hide-file-changes="true"
+          />
+          <FileChangePanel
+            v-if="!round.collapsedSteps.length && round.fileChanges.length > 0"
+            :changes="round.fileChanges"
+            mode="history"
+          />
         </template>
 
-        <!-- 流式中 / 无轮次时：直接渲染所有消息 -->
-        <template v-else>
+        <!-- 当前轮次：执行中平铺展示 -->
+        <template v-if="activeRound">
+          <MessageBubble
+            :message="activeRound.userMessage"
+            :show-time="true"
+            :can-edit="canEditMessage(activeRound.userMessage)"
+            :is-editing="editingMessageId === activeRound.userMessage.id"
+            @edit="startEdit(activeRound.userMessage)"
+            @cancel-edit="cancelEdit"
+            @confirm-edit="confirmEdit(activeRound.userMessage.id, $event)"
+          />
+          <MessageBubble
+            v-for="msg in activeRoundMsgs"
+            :key="msg.id"
+            :message="msg"
+            :show-time="false"
+            :show-copy="false"
+            :is-last="msg === activeRoundMsgs[activeRoundMsgs.length - 1]"
+          />
+          <FileChangePanel
+            v-if="activeRound.fileChanges.length > 0"
+            :changes="activeRound.fileChanges"
+            mode="history"
+          />
+        </template>
+
+        <!-- 无轮次时：直接渲染所有消息 -->
+        <template v-if="historyRounds.length === 0 && !activeRound">
           <MessageBubble
             v-for="(msg, idx) in messages"
             :key="msg.id"
@@ -162,6 +194,7 @@ import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
 
 import MessageBubble from '../../components/chat/MessageBubble.vue'
+import FileChangePanel from '../../components/chat/FileChangePanel.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
 import QueuePanel from '../../components/chat/QueuePanel.vue'
 import ApprovalStack from '../../components/chat/ApprovalStack.vue'
@@ -217,7 +250,7 @@ const {
   deleteQueueMessage,
   reorderQueueMessage,
   sendingSessionId
-} = useChat(agentId, executionMode, newTaskModelId)
+} = useChat(agentId, executionMode, newTaskModelId, permissionLevel)
 
 // Terminal
 const { togglePanel } = useTerminal()
@@ -262,20 +295,21 @@ const showTypingIndicator = computed(() => {
 })
 
 // 执行步骤折叠逻辑：按轮次分组，每轮独立折叠
+import type { FileChange } from '../../types/chat'
+
 interface MessageRound {
   userMessage: ChatMessage
   collapsedSteps: ChatMessage[]
   finalReply: ChatMessage | null
   stepCount: number
   durationText: string
+  fileChanges: FileChange[]
 }
 
 const roundsExpanded = ref<Record<string, boolean>>({})
 
 const messageRounds = computed((): MessageRound[] => {
   const msgs = messages.value
-  // 执行中不折叠
-  if (sending.value) return []
   if (msgs.length <= 1) return []
 
   // 第一趟：按用户消息分组
@@ -302,6 +336,30 @@ const messageRounds = computed((): MessageRound[] => {
   return rounds
 })
 
+// 历史轮次：执行中排除最后一轮（当前正在执行的），否则包含全部
+const historyRounds = computed(() => {
+  if (!sending.value) return messageRounds.value
+  const rounds = messageRounds.value
+  return rounds.length > 1 ? rounds.slice(0, -1) : []
+})
+
+// 当前执行中的轮次（仅 sending 时有值）
+const activeRound = computed(() => {
+  if (!sending.value) return null
+  const rounds = messageRounds.value
+  return rounds.length > 0 ? rounds[rounds.length - 1] : null
+})
+
+// 当前轮次的 assistant 消息（用于流式平铺展示）
+const activeRoundMsgs = computed(() => {
+  if (!activeRound.value) return [] as ChatMessage[]
+  const round = activeRound.value
+  const msgs: ChatMessage[] = []
+  if (round.collapsedSteps.length > 0) msgs.push(...round.collapsedSteps)
+  if (round.finalReply) msgs.push(round.finalReply)
+  return msgs
+})
+
 function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage | null): MessageRound {
   const stepCount = steps.length
   let durationText = ''
@@ -316,7 +374,9 @@ function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage 
       }
     }
   }
-  return { userMessage: user, collapsedSteps: steps, finalReply: reply, stepCount, durationText }
+  const fileChanges: FileChange[] = [...steps, ...(reply ? [reply] : [])]
+    .flatMap(m => m.fileChanges || [])
+  return { userMessage: user, collapsedSteps: steps, finalReply: reply, stepCount, durationText, fileChanges }
 }
 
 function toggleRound(roundId: string) {
@@ -457,8 +517,8 @@ function handleModelSelect(modelId: number, modelName: string) {
 }
 
 async function handlePermissionLevelChange(level: string) {
-  if (!sessionStore.activeSessionId) return
   permissionLevel.value = level
+  if (!sessionStore.activeSessionId) return
   sessionStore.updateSession(sessionStore.activeSessionId, { permissionLevel: level })
   try {
     await api.patch(`/sessions/${sessionStore.activeSessionId}`, { permissionLevel: level })

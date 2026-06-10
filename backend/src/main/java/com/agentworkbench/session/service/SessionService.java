@@ -6,9 +6,11 @@ import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
 import com.agentworkbench.harness.core.EnvironmentInfoProvider;
 import com.agentworkbench.harness.safety.PathSandbox;
+import com.agentworkbench.session.entity.FileChange;
 import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.PermissionLevel;
 import com.agentworkbench.session.entity.Session;
+import com.agentworkbench.session.mapper.FileChangeMapper;
 import com.agentworkbench.session.mapper.MessageMapper;
 import com.agentworkbench.session.mapper.SessionMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -38,6 +40,7 @@ public class SessionService {
 
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
+    private final FileChangeMapper fileChangeMapper;
     private final AgentMapper agentMapper;
     private final PathSandbox pathSandbox;
     private final ObjectMapper objectMapper;
@@ -263,6 +266,18 @@ public class SessionService {
                 new QueryWrapper<Message>()
                         .eq("session_id", sessionId)
                         .orderByAsc("created_at"));
+    }
+
+    public Map<Long, List<FileChange>> getFileChangesBySession(Long sessionId) {
+        List<FileChange> changes = fileChangeMapper.selectList(
+                new LambdaQueryWrapper<FileChange>()
+                        .eq(FileChange::getSessionId, sessionId)
+                        .orderByAsc(FileChange::getId));
+        Map<Long, List<FileChange>> grouped = new LinkedHashMap<>();
+        for (FileChange fc : changes) {
+            grouped.computeIfAbsent(fc.getMessageId(), k -> new ArrayList<>()).add(fc);
+        }
+        return grouped;
     }
 
     /**

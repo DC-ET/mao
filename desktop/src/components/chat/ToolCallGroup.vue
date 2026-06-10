@@ -79,7 +79,7 @@ function toggleExpand() {
 
 <style scoped>
 .tool-call-group {
-  margin: 0;
+  margin-top: 2px;
 }
 
 .group-header {
@@ -150,9 +150,4 @@ function toggleExpand() {
   transform: rotate(180deg);
 }
 
-.group-body {
-  border-top: 1px solid var(--aw-divider-soft);
-  margin-top: 4px;
-  padding-top: 4px;
-}
 </style>

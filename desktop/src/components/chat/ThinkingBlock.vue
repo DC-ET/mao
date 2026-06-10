@@ -58,6 +58,7 @@ watch(() => props.thinking, async () => {
   justify-content: space-between;
   width: 100%;
   padding: 6px 8px;
+  margin-bottom: 2px;
   cursor: pointer;
   user-select: none;
   border-radius: var(--aw-radius-sm);
@@ -116,9 +117,6 @@ watch(() => props.thinking, async () => {
 }
 
 .thinking-body {
-  border-top: 1px solid var(--aw-divider-soft);
-  margin-top: 4px;
-  padding-top: 4px;
   max-height: 400px;
   overflow-y: auto;
 }

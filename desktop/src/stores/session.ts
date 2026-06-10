@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api'
-import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage } from '../types/chat'
+import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage, FileChange } from '../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
 
 export type SessionStatus = 'ACTIVE' | 'ARCHIVED'
@@ -73,6 +73,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessionStreaming = ref<Map<string, boolean>>(new Map())
   const sessionPendingApprovals = ref<Map<string, number>>(new Map())
   const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
+  const sessionFileChanges = ref<Map<string, FileChange[]>>(new Map())
 
   const activeSession = computed(() =>
     sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
@@ -108,6 +109,10 @@ export const useSessionStore = defineStore('session', () => {
 
   const activeQueueMessages = computed(() =>
     sessionQueueMessages.value.get(activeSessionId.value ?? '') ?? []
+  )
+
+  const activeFileChanges = computed(() =>
+    sessionFileChanges.value.get(activeSessionId.value ?? '') ?? []
   )
 
   function sessionsByAgent(agentId: string) {
@@ -172,12 +177,13 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  async function createSession(agentId: string, executionMode: string, workspace?: string, environmentInfo?: SessionEnvironmentInfo, modelId?: number) {
+  async function createSession(agentId: string, executionMode: string, workspace?: string, environmentInfo?: SessionEnvironmentInfo, modelId?: number, permissionLevel?: string) {
     const { data } = await api.post('/sessions', {
       agentId,
       executionMode,
       workspace: workspace || undefined,
       modelId: modelId || undefined,
+      permissionLevel: permissionLevel || undefined,
       isGit: environmentInfo?.isGit,
       platform: environmentInfo?.platform,
       shell: environmentInfo?.shell,
@@ -531,6 +537,28 @@ export const useSessionStore = defineStore('session', () => {
     sessionQueueMessages.value.delete(String(sessionId))
   }
 
+  function appendFileChange(sessionId: string, change: FileChange) {
+    const key = String(sessionId)
+    const changes = sessionFileChanges.value.get(key) || []
+    const existing = changes.find(c => c.path === change.path)
+    if (existing) {
+      existing.linesAdded += change.linesAdded
+      existing.linesDeleted += change.linesDeleted
+      if (change.type === 'CREATED') existing.type = 'CREATED'
+    } else {
+      changes.push({ ...change })
+    }
+    sessionFileChanges.value.set(key, [...changes])
+  }
+
+  function setFileChanges(sessionId: string, changes: FileChange[]) {
+    sessionFileChanges.value.set(String(sessionId), changes)
+  }
+
+  function clearFileChanges(sessionId: string) {
+    sessionFileChanges.value.delete(String(sessionId))
+  }
+
   function reset() {
     sessions.value = []
     activeSessionId.value = null
@@ -543,6 +571,7 @@ export const useSessionStore = defineStore('session', () => {
     sessionThinking.value = new Map()
     sessionStreaming.value = new Map()
     sessionPendingApprovals.value = new Map()
+    sessionFileChanges.value = new Map()
     sessionQueueMessages.value = new Map()
   }
 
@@ -607,6 +636,11 @@ export const useSessionStore = defineStore('session', () => {
     activeQueueMessages,
     setQueueMessages,
     clearQueueMessages,
+    // File changes
+    activeFileChanges,
+    appendFileChange,
+    setFileChanges,
+    clearFileChanges,
     reset
   }
 })

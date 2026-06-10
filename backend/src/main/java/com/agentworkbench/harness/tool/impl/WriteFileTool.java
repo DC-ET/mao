@@ -72,6 +72,13 @@ public class WriteFileTool implements Tool {
 
             Path filePath = pathSandbox.resolve(path, workspace);
 
+            // Snapshot before write for change tracking
+            boolean fileExisted = Files.exists(filePath);
+            int oldLineCount = 0;
+            if (fileExisted) {
+                oldLineCount = (int) Files.lines(filePath).count();
+            }
+
             Path parent = filePath.getParent();
             if (parent != null && !Files.exists(parent)) {
                 Files.createDirectories(parent);
@@ -79,10 +86,22 @@ public class WriteFileTool implements Tool {
 
             Files.writeString(filePath, content);
 
-            return objectMapper.writeValueAsString(Map.of(
-                    "success", true,
-                    "bytes_written", content.length()
+            // Compute file change stats
+            int newLineCount = content.isEmpty() ? 0 : content.split("\n", -1).length;
+            int linesAdded = newLineCount;
+            int linesDeleted = fileExisted ? oldLineCount : 0;
+            String changeType = fileExisted ? "MODIFIED" : "CREATED";
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("bytes_written", content.length());
+            result.put("file_change", Map.of(
+                    "path", path,
+                    "type", changeType,
+                    "lines_added", linesAdded,
+                    "lines_deleted", linesDeleted
             ));
+            return objectMapper.writeValueAsString(result);
         } catch (IOException e) {
             log.error("WriteFileTool execution failed", e);
             try {

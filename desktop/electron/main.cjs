@@ -496,10 +496,6 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
     }
   }
 
-  if (action !== 'exec') {
-    return { error: `Unknown action: ${action}` }
-  }
-
   // 复用已有会话
   if (session_id && shellSessions.has(session_id)) {
     const session = shellSessions.get(session_id)
@@ -609,10 +605,29 @@ async function handleLocalWriteFile(args, workspace, sessionId, needApproval) {
   }
   try {
     const resolvedPath = resolveWorkspacePath(args.path, workspace)
+    // Snapshot before write for change tracking
+    const fileExisted = fs.existsSync(resolvedPath)
+    let oldLineCount = 0
+    if (fileExisted) {
+      oldLineCount = fs.readFileSync(resolvedPath, 'utf-8').split('\n').length
+    }
     const dir = path.dirname(resolvedPath)
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(resolvedPath, args.content, 'utf-8')
-    return { success: true, bytes_written: Buffer.byteLength(args.content, 'utf-8') }
+    // Compute file change stats
+    const newLineCount = args.content.length === 0 ? 0 : args.content.split('\n').length
+    const linesAdded = newLineCount
+    const linesDeleted = fileExisted ? oldLineCount : 0
+    return {
+      success: true,
+      bytes_written: Buffer.byteLength(args.content, 'utf-8'),
+      file_change: {
+        path: args.path,
+        type: fileExisted ? 'MODIFIED' : 'CREATED',
+        lines_added: linesAdded,
+        lines_deleted: linesDeleted
+      }
+    }
   } catch (e) {
     return { error: e.message }
   }
@@ -631,7 +646,21 @@ async function handleLocalEditFile(args, workspace, sessionId, needApproval) {
     const count = content.split(args.old_string).length - 1
     if (count === 0) return { success: false, error: 'old_string not found in file' }
     fs.writeFileSync(resolvedPath, content.replaceAll(args.old_string, args.new_string), 'utf-8')
-    return { success: true, replacements: count }
+    // Compute file change stats
+    const oldLines = args.old_string.split('\n').length
+    const newLines = args.new_string.split('\n').length
+    const linesAdded = newLines * count
+    const linesDeleted = oldLines * count
+    return {
+      success: true,
+      replacements: count,
+      file_change: {
+        path: args.path,
+        type: 'MODIFIED',
+        lines_added: linesAdded,
+        lines_deleted: linesDeleted
+      }
+    }
   } catch (e) {
     return { error: e.message }
   }

@@ -11,6 +11,8 @@ import com.agentworkbench.session.util.ToolResultSummarizer;
 import com.agentworkbench.harness.todo.entity.SessionTodo;
 import com.agentworkbench.harness.todo.mapper.SessionTodoMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.LinkedHashMap;
@@ -32,6 +34,10 @@ public class WsStreamingEventListener implements AgentEventListener {
 
     private static final Set<String> TASK_TOOLS = Set.of(
             "task_create", "task_update", "task_delete", "task_list");
+
+    private static final Set<String> FILE_TOOLS = Set.of("write_file", "edit_file");
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** Track tool call metadata for summary generation */
     private final Map<String, String[]> toolCallInfo = new ConcurrentHashMap<>();
@@ -132,6 +138,28 @@ public class WsStreamingEventListener implements AgentEventListener {
                 log.warn("Failed to send todo_updated event", e);
             }
         }
+
+        // Push file_change when write_file or edit_file succeeds
+        if (FILE_TOOLS.contains(toolName) && !isError) {
+            try {
+                JsonNode resultNode = objectMapper.readTree(result);
+                boolean hasFileChange = resultNode.has("file_change");
+                log.info("[FileChange] WS onToolCallResult: toolName={}, hasFileChange={}, resultPreview={}",
+                        toolName, hasFileChange, result != null ? result.substring(0, Math.min(200, result.length())) : "null");
+                if (hasFileChange && resultNode.path("success").asBoolean()) {
+                    JsonNode fc = resultNode.get("file_change");
+                    Map<String, Object> changeData = new LinkedHashMap<>();
+                    changeData.put("path", fc.get("path").asText());
+                    changeData.put("type", fc.get("type").asText());
+                    changeData.put("lines_added", fc.get("lines_added").asInt());
+                    changeData.put("lines_deleted", fc.get("lines_deleted").asInt());
+                    changeData.put("tool_call_id", toolCallId);
+                    send("file_change", changeData);
+                }
+            } catch (Exception e) {
+                log.debug("Failed to parse file_change from tool result", e);
+            }
+        }
     }
 
     @Override
@@ -211,8 +239,7 @@ public class WsStreamingEventListener implements AgentEventListener {
     private boolean isErrorResult(String result) {
         if (result == null) return false;
         try {
-            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            com.fasterxml.jackson.databind.JsonNode node = mapper.readTree(result);
+            JsonNode node = objectMapper.readTree(result);
             if (node.has("error")) return true;
             if (node.has("exit_code") && node.get("exit_code").asInt(-1) != 0) return true;
         } catch (Exception ignored) {}
@@ -222,8 +249,7 @@ public class WsStreamingEventListener implements AgentEventListener {
     private String extractActivityTarget(String toolName, String arguments) {
         if (toolName == null || arguments == null) return null;
         try {
-            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            com.fasterxml.jackson.databind.JsonNode node = mapper.readTree(arguments);
+            JsonNode node = objectMapper.readTree(arguments);
             return switch (toolName.toLowerCase()) {
                 case "read_file", "write_file", "edit_file" ->
                         node.has("path") ? node.get("path").asText(null) : null;

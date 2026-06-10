@@ -65,6 +65,11 @@
             :tool-calls="seg.toolCalls"
           />
         </template>
+        <FileChangePanel
+          v-if="!hideFileChanges && message.fileChanges && message.fileChanges.length > 0"
+          :changes="message.fileChanges"
+          mode="history"
+        />
       </template>
 
       <!-- assistant 回退：无 segments 时 -->
@@ -77,6 +82,11 @@
         <div v-if="visibleToolCalls.length > 0" class="tool-calls">
           <ToolCallGroup :tool-calls="visibleToolCalls" />
         </div>
+        <FileChangePanel
+          v-if="!hideFileChanges && message.fileChanges && message.fileChanges.length > 0"
+          :changes="message.fileChanges"
+          mode="history"
+        />
       </template>
 
       <div v-if="message.files && message.files.length > 0" class="file-attachments">
@@ -109,6 +119,7 @@ import { Document, CopyDocument, Edit, Check, Close } from '@element-plus/icons-
 import { renderMarkdown } from '../../composables/useMarkdown'
 import ToolCallGroup from './ToolCallGroup.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
+import FileChangePanel from './FileChangePanel.vue'
 import {
   normalizeMessageRole,
   type ChatMessage,
@@ -126,12 +137,14 @@ const props = withDefaults(defineProps<{
   canEdit?: boolean
   isEditing?: boolean
   hideThinking?: boolean
+  hideFileChanges?: boolean
 }>(), {
   showCopy: true,
   isLast: false,
   canEdit: false,
   isEditing: false,
-  hideThinking: false
+  hideThinking: false,
+  hideFileChanges: false
 })
 
 const emit = defineEmits<{

@@ -96,10 +96,22 @@ public class EditFileTool implements Tool {
             int replacements = countOccurrences(content, oldString);
             Files.writeString(filePath, updated);
 
-            return objectMapper.writeValueAsString(Map.of(
-                    "success", true,
-                    "replacements", replacements
+            // Compute file change stats
+            int oldLines = oldString.split("\n", -1).length;
+            int newLines = newString.split("\n", -1).length;
+            int linesAdded = newLines * replacements;
+            int linesDeleted = oldLines * replacements;
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("replacements", replacements);
+            result.put("file_change", Map.of(
+                    "path", path,
+                    "type", "MODIFIED",
+                    "lines_added", linesAdded,
+                    "lines_deleted", linesDeleted
             ));
+            return objectMapper.writeValueAsString(result);
         } catch (IOException e) {
             log.error("EditFileTool execution failed", e);
             try {
