@@ -47,7 +47,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { WarningFilled } from '@element-plus/icons-vue'
-import type { ApprovalItem } from './ToolApprovalBar.vue'
+
+export interface ApprovalItem {
+  requestId: string
+  toolName: string
+  description: string
+  dangerReason?: string
+}
 
 const threshold = 120
 
