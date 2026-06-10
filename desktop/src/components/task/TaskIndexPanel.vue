@@ -495,10 +495,6 @@ function toggleGroup(key: string) {
   font-size: var(--aw-text-caption);
 }
 
-.session-group {
-  margin-bottom: 8px;
-}
-
 .group-header {
   font-size: var(--aw-text-micro);
   font-weight: 500;
