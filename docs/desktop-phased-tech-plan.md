@@ -142,7 +142,7 @@ backend/.../session/util/ToolResultSummarizer.java
 ```sql
 ALTER TABLE `session`
   ADD COLUMN `phase` VARCHAR(32) DEFAULT 'IDLE'
-    COMMENT 'IDLE|RUNNING|WAITING_USER|WAITING_APPROVAL|COMPLETED|FAILED',
+    COMMENT 'IDLE|RUNNING|RESUMING|WAITING_APPROVAL|COMPLETED|FAILED|CANCELLED',
   ADD COLUMN `summary` VARCHAR(512) NULL COMMENT '任务一句话摘要',
   ADD COLUMN `started_at` DATETIME NULL COMMENT '本轮执行开始时间',
   ADD COLUMN `elapsed_ms` BIGINT DEFAULT 0 COMMENT '累计执行毫秒',
@@ -184,7 +184,7 @@ SSE message_end → phase=IDLE（或 COMPLETED 若 Agent 显式结束）
 
 ```java
 // SessionService.listSessionsForDashboard(userId)
-// - running: phase in (RUNNING, WAITING_APPROVAL, WAITING_USER)
+// - running: phase in (RUNNING, RESUMING, WAITING_APPROVAL)
 // - recent: updated_at desc limit 20
 ```
 

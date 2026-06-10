@@ -4,7 +4,11 @@ import { api } from '../api'
 import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage } from '../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
 
-export type TaskPhase = 'IDLE' | 'RUNNING' | 'RESUMING' | 'WAITING_USER' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING'
+export type SessionStatus = 'ACTIVE' | 'ARCHIVED'
+
+export type TaskPhase = 'IDLE' | 'RUNNING' | 'RESUMING' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING'
+
+const ACTIVE_PHASES = new Set<TaskPhase>(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
 
 export interface TaskStep {
   id: string
@@ -18,7 +22,7 @@ export interface Session {
   agentName: string
   title: string
   executionMode: 'CLOUD' | 'LOCAL'
-  status: 'active' | 'completed' | 'error'
+  status: SessionStatus
   createdAt: string
   updatedAt: string
   messageCount: number
@@ -182,7 +186,7 @@ export const useSessionStore = defineStore('session', () => {
   function updateSessionPhase(id: string, phase: TaskPhase) {
     updateSession(id, {
       phase,
-      running: phase === 'RUNNING' || phase === 'WAITING_APPROVAL'
+      running: ACTIVE_PHASES.has(phase)
     })
   }
 
@@ -242,6 +246,28 @@ export const useSessionStore = defineStore('session', () => {
     sessionMessages.value.set(sid, [...list, msg])
   }
 
+  function ensureStreamingAssistantMessage(sessionId: string): ChatMessage {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid) ?? []
+    const lastMsg = list[list.length - 1]
+    if (lastMsg?.role === 'assistant') {
+      if (!lastMsg.toolCalls) lastMsg.toolCalls = []
+      if (!lastMsg.segments) lastMsg.segments = []
+      return lastMsg
+    }
+
+    const msg: ChatMessage = {
+      id: `msg_${Date.now()}_assistant`,
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toLocaleString(),
+      toolCalls: [],
+      segments: []
+    }
+    sessionMessages.value.set(sid, [...list, msg])
+    return msg
+  }
+
   function getMessages(sessionId: string): ChatMessage[] {
     return sessionMessages.value.get(String(sessionId)) ?? []
   }
@@ -249,25 +275,18 @@ export const useSessionStore = defineStore('session', () => {
   function appendDelta(sessionId: string, delta: string) {
     const sid = String(sessionId)
     sessionStreaming.value.set(sid, true)
-    const list = sessionMessages.value.get(sid)
-    if (!list || list.length === 0) return
-    const lastMsg = list[list.length - 1]
-    if (lastMsg.role === 'assistant') {
-      appendTextDelta(lastMsg, delta)
-      // Trigger reactivity
-      sessionMessages.value.set(sid, [...list])
-    }
+    const lastMsg = ensureStreamingAssistantMessage(sid)
+    appendTextDelta(lastMsg, delta)
+    const list = sessionMessages.value.get(sid) ?? []
+    sessionMessages.value.set(sid, [...list])
   }
 
   function appendThinkingDelta(sessionId: string, delta: string) {
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid)
-    if (!list || list.length === 0) return
-    const lastMsg = list[list.length - 1]
-    if (lastMsg.role === 'assistant') {
-      appendThinkingDeltaUtil(lastMsg, delta)
-      sessionMessages.value.set(sid, [...list])
-    }
+    const lastMsg = ensureStreamingAssistantMessage(sid)
+    appendThinkingDeltaUtil(lastMsg, delta)
+    const list = sessionMessages.value.get(sid) ?? []
+    sessionMessages.value.set(sid, [...list])
   }
 
   const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
@@ -276,68 +295,70 @@ export const useSessionStore = defineStore('session', () => {
     if (TASK_TOOL_NAMES.has(data.tool_name)) {
       // 跳过 task 工具，但在末尾 text 段追加换行，保证后续文本不与前文粘连
       const sid = String(sessionId)
-      const list = sessionMessages.value.get(sid)
-      if (list && list.length > 0) {
-        const lastMsg = list[list.length - 1]
-        if (lastMsg.role === 'assistant' && lastMsg.segments?.length) {
-          const lastSeg = lastMsg.segments[lastMsg.segments.length - 1]
-          if (lastSeg.type === 'text') {
-            lastSeg.content += '\n\n'
-          }
+      const lastMsg = ensureStreamingAssistantMessage(sid)
+      const list = sessionMessages.value.get(sid) ?? []
+      if (lastMsg.segments?.length) {
+        const lastSeg = lastMsg.segments[lastMsg.segments.length - 1]
+        if (lastSeg.type === 'text') {
+          lastSeg.content += '\n\n'
+          sessionMessages.value.set(sid, [...list])
         }
       }
       return
     }
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid)
-    if (!list || list.length === 0) return
-    const lastMsg = list[list.length - 1]
-    if (lastMsg.role === 'assistant') {
-      let input: Record<string, unknown> | undefined
-      if (data.arguments) {
-        try { input = JSON.parse(data.arguments) } catch { /* ignore */ }
-      }
-      appendToolCallStartUtil(lastMsg, {
-        id: data.tool_call_id,
-        name: data.tool_name,
-        input,
-        status: 'running',
-        isExpanded: false,
-        argsStreaming: true
-      })
-      sessionMessages.value.set(sid, [...list])
+    const lastMsg = ensureStreamingAssistantMessage(sid)
+    let input: Record<string, unknown> | undefined
+    if (data.arguments) {
+      try { input = JSON.parse(data.arguments) } catch { /* ignore */ }
     }
+    appendToolCallStartUtil(lastMsg, {
+      id: data.tool_call_id,
+      name: data.tool_name,
+      input,
+      status: 'running',
+      isExpanded: false,
+      argsStreaming: true
+    })
+    const list = sessionMessages.value.get(sid) ?? []
+    sessionMessages.value.set(sid, [...list])
   }
 
   function updateToolCallResult(sessionId: string, data: { tool_call_id: string; result: string; status?: string; summary?: string }) {
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid)
-    if (!list || list.length === 0) return
-    const lastMsg = list[list.length - 1]
-    if (lastMsg.toolCalls) {
-      const call = lastMsg.toolCalls.find(c => c.id === data.tool_call_id)
-      if (call) {
-        call.result = data.result
-        call.status = (data.status as any) || 'success'
-        call.isExpanded = false
-        call.argsStreaming = false
-        if (data.summary) call.summary = data.summary
+    const lastMsg = ensureStreamingAssistantMessage(sid)
+    if (!lastMsg.toolCalls) lastMsg.toolCalls = []
+    let call = lastMsg.toolCalls.find(c => c.id === data.tool_call_id)
+    if (!call) {
+      call = {
+        id: data.tool_call_id,
+        name: 'tool',
+        status: 'running',
+        isExpanded: false,
+        argsStreaming: false
       }
-      sessionMessages.value.set(sid, [...list])
+      lastMsg.toolCalls.push(call)
+      if (!lastMsg.segments) lastMsg.segments = []
+      lastMsg.segments.push({ type: 'tool', callId: data.tool_call_id })
     }
+    call.result = data.result
+    call.status = (data.status as any) || 'success'
+    call.isExpanded = false
+    call.argsStreaming = false
+    if (data.summary) call.summary = data.summary
+    const list = sessionMessages.value.get(sid) ?? []
+    sessionMessages.value.set(sid, [...list])
   }
 
   function updateToolCallArgs(sessionId: string, data: { tool_call_id: string; arguments: string }) {
     const sid = String(sessionId)
-    const list = sessionMessages.value.get(sid)
-    if (!list || list.length === 0) return
-    const lastMsg = list[list.length - 1]
-    if (lastMsg.toolCalls) {
-      const call = lastMsg.toolCalls.find(c => c.id === data.tool_call_id)
-      if (call) {
-        try { call.input = JSON.parse(data.arguments) } catch { call.input = {} }
-        sessionMessages.value.set(sid, [...list])
-      }
+    const lastMsg = ensureStreamingAssistantMessage(sid)
+    if (!lastMsg.toolCalls) lastMsg.toolCalls = []
+    const call = lastMsg.toolCalls.find(c => c.id === data.tool_call_id)
+    if (call) {
+      try { call.input = JSON.parse(data.arguments) } catch { call.input = {} }
+      const list = sessionMessages.value.get(sid) ?? []
+      sessionMessages.value.set(sid, [...list])
     }
   }
 
@@ -517,6 +538,7 @@ export const useSessionStore = defineStore('session', () => {
     setMessages,
     addUserMessage,
     addAssistantMessage,
+    ensureStreamingAssistantMessage,
     getMessages,
     appendDelta,
     appendThinkingDelta,

@@ -46,6 +46,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
 
+  function isActivePhase(phase?: string | null) {
+    return phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING'
+  }
+
   // Computed refs from store — reactive to active session
   const messages = computed(() => sessionStore.activeMessages)
   const todos = computed(() => sessionStore.activeTodos)
@@ -477,8 +481,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
 
     // Sync sending state with the session's actual phase
     const phase = sessionStore.activeSession?.phase
-    if (phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING') {
+    const active = isActivePhase(phase)
+    const hasCachedMessages = sessionStore.getMessages(sessionIdVal).length > 0
+    if (active) {
       sending.value = true
+      if (hasCachedMessages) {
+        sessionStore.ensureStreamingAssistantMessage(sessionIdVal)
+      }
       // Register a pending callback so stopExecution() works and session_status can resolve it
       if (!pendingCallbacks.has(sessionIdVal)) {
         new Promise<void>((resolve, reject) => {
@@ -504,7 +513,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
     }
     subscribe(sessionIdVal)
 
-    fetchMessages()
+    if (!active || !hasCachedMessages) {
+      fetchMessages().then(() => {
+        if (isActivePhase(sessionStore.activeSession?.phase)) {
+          sessionStore.ensureStreamingAssistantMessage(sessionIdVal)
+        }
+      })
+    }
     fetchTodos()
     fetchQueue()
 

@@ -474,7 +474,7 @@ public class SessionService {
         QueryWrapper<Session> runningQw = new QueryWrapper<>();
         runningQw.eq("user_id", userId)
                 .eq("status", "ACTIVE")
-                .in("phase", Arrays.asList("RUNNING", "RESUMING", "WAITING_USER", "WAITING_APPROVAL"))
+                .in("phase", Arrays.asList("RUNNING", "RESUMING", "WAITING_APPROVAL"))
                 .orderByDesc("last_activity_at");
         result.put("running", sessionMapper.selectList(runningQw));
 
@@ -482,7 +482,7 @@ public class SessionService {
         QueryWrapper<Session> recentQw = new QueryWrapper<>();
         recentQw.eq("user_id", userId)
                 .eq("status", "ACTIVE")
-                .notIn("phase", Arrays.asList("RUNNING", "RESUMING", "WAITING_USER", "WAITING_APPROVAL"))
+                .notIn("phase", Arrays.asList("RUNNING", "RESUMING", "WAITING_APPROVAL"))
                 .orderByDesc("updated_at")
                 .last("LIMIT 20");
         result.put("recent", sessionMapper.selectList(recentQw));

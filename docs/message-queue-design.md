@@ -55,7 +55,6 @@
 | `IDLE` | 空闲 |
 | `RUNNING` | 执行中 |
 | `RESUMING` | 恢复中（崩溃恢复） |
-| `WAITING_USER` | 等待用户输入 |
 | `WAITING_APPROVAL` | 等待工具审批 |
 | `COMPLETED` | 完成 |
 | `FAILED` | 失败 |

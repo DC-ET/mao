@@ -57,7 +57,6 @@ defineEmits<{
 const phaseLabel = computed(() => {
   switch (props.phase) {
     case 'RUNNING': return '执行中'
-    case 'WAITING_USER': return '等待输入'
     case 'WAITING_APPROVAL': return '待审批'
     case 'COMPLETED': return '已完成'
     case 'FAILED': return '失败'
@@ -68,7 +67,6 @@ const phaseLabel = computed(() => {
 const phaseClass = computed(() => {
   switch (props.phase) {
     case 'RUNNING': return 'running'
-    case 'WAITING_USER': return 'waiting'
     case 'WAITING_APPROVAL': return 'waiting'
     case 'COMPLETED': return 'completed'
     case 'FAILED': return 'failed'

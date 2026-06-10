@@ -31,7 +31,7 @@ public class Session {
     /** LOCAL mode tool permission: READ_ONLY|READ_WRITE|SMART|FULL */
     private String permissionLevel;
 
-    /** Task phase: IDLE|RUNNING|RESUMING|WAITING_USER|WAITING_APPROVAL|COMPLETED|FAILED|CANCELLED */
+    /** Task phase: IDLE|RUNNING|RESUMING|WAITING_APPROVAL|COMPLETED|FAILED|CANCELLED */
     private String phase;
 
     /** One-line task summary */

@@ -115,7 +115,7 @@ private boolean isTerminalPhase(String phase) {
 }
 ```
 
-**关键判定逻辑**：只有从非终态（RUNNING/RESUMING/WAITING_USER/WAITING_APPROVAL）变为终态（COMPLETED/FAILED/CANCELLED）时才设置 `unread=1`。从 IDLE 变为其他状态不触发（IDLE 是初始状态，不代表任务执行过）。
+**关键判定逻辑**：只有从非终态（RUNNING/RESUMING/WAITING_APPROVAL）变为终态（COMPLETED/FAILED/CANCELLED）时才设置 `unread=1`。从 IDLE 变为其他状态不触发（IDLE 是初始状态，不代表任务执行过）。
 
 ### 4.2 未读标记清除
 

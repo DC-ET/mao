@@ -277,7 +277,6 @@ function formatGroupLabel(key: string): string {
 function phaseClass(phase: TaskPhase) {
   switch (phase) {
     case 'RUNNING': return 'running'
-    case 'WAITING_USER':
     case 'WAITING_APPROVAL': return 'waiting'
     case 'COMPLETED': return 'completed'
     case 'FAILED': return 'failed'
