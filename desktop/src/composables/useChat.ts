@@ -28,7 +28,7 @@ export interface ApprovalItem {
 // Module-level flag to ensure IPC listeners are registered only once
 let approvalListenerSetup = false
 
-export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
+export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>) {
   const sessionStore = useSessionStore()
   const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks } = useStreamWS()
 
@@ -178,7 +178,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
           agentId.value,
           executionMode.value,
           workspace.value || undefined,
-          environmentInfo
+          environmentInfo,
+          selectedModelId?.value
         )
         sessionId.value = sessionData.id
       }
@@ -190,11 +191,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>) {
       // Clear previous turn's todos
       sessionStore.clearTodos(sid)
 
-      // Update session title from first user message (when title is still the default agent name)
+      // Update session title from first user message (when title is still the default)
       if (text) {
         const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
-        const defaultTitle = agentName.value || 'Agent'
-        if (currentSession && (!currentSession.title || currentSession.title === defaultTitle)) {
+        if (currentSession && (!currentSession.title || currentSession.title === '未命名会话')) {
           const title = text.length > 50 ? text.substring(0, 50) : text
           sessionStore.updateSession(sid, { title })
           api.patch(`/sessions/${sid}`, { title }).catch(() => {})

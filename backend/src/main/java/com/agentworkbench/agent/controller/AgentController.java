@@ -4,8 +4,6 @@ import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.entity.AgentTag;
 import com.agentworkbench.agent.service.AgentService;
 import com.agentworkbench.common.result.Result;
-import com.agentworkbench.model.entity.LlmModel;
-import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.user.entity.User;
 import com.agentworkbench.user.mapper.UserMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,7 +22,6 @@ import java.util.stream.Collectors;
 public class AgentController {
 
     private final AgentService agentService;
-    private final LlmModelMapper llmModelMapper;
     private final UserMapper userMapper;
     private final ObjectMapper objectMapper;
 
@@ -51,7 +48,6 @@ public class AgentController {
         Agent agent = agentService.createAgent(
                 userId, request.getName(), request.getDescription(),
                 request.getSystemPrompt(),
-                request.getModelId(),
                 request.getTags(),
                 request.getSkillNames());
         return Result.ok(toVO(agent));
@@ -65,7 +61,6 @@ public class AgentController {
         Agent agent = agentService.updateAgent(
                 id, request.getName(), request.getDescription(),
                 request.getSystemPrompt(),
-                request.getModelId(),
                 request.getSkillNames(), request.getTags());
         return Result.ok(toVO(agent));
     }
@@ -84,17 +79,8 @@ public class AgentController {
         vo.setName(agent.getName());
         vo.setDescription(agent.getDescription());
         vo.setSystemPrompt(agent.getSystemPrompt());
-        vo.setModelId(agent.getModelId());
         vo.setCreatorId(agent.getCreatorId());
         vo.setCreatedAt(agent.getCreatedAt() != null ? agent.getCreatedAt().toString() : null);
-
-        // Load model name
-        if (agent.getModelId() != null) {
-            LlmModel model = llmModelMapper.selectById(agent.getModelId());
-            if (model != null) {
-                vo.setModelName(model.getName());
-            }
-        }
 
         // Load creator name
         if (agent.getCreatorId() != null) {
@@ -129,7 +115,6 @@ public class AgentController {
         private String description;
         @NotBlank(message = "系统提示词不能为空")
         private String systemPrompt;
-        private Long modelId;
         private List<String> tags;
         private List<String> skillNames;
     }
@@ -139,7 +124,6 @@ public class AgentController {
         private String name;
         private String description;
         private String systemPrompt;
-        private Long modelId;
         private List<String> skillNames;
         private List<String> tags;
     }
@@ -150,8 +134,6 @@ public class AgentController {
         private String name;
         private String description;
         private String systemPrompt;
-        private Long modelId;
-        private String modelName;
         private Long creatorId;
         private String creatorName;
         private List<String> tags;

@@ -48,6 +48,10 @@ export interface Session {
   running: boolean
   permissionLevel?: string
   unread?: boolean
+  // Model fields
+  modelId?: number
+  modelName?: string
+  modelSupportsVision?: boolean
 }
 
 function normalizeId(id: any): string {
@@ -168,11 +172,12 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  async function createSession(agentId: string, executionMode: string, workspace?: string, environmentInfo?: SessionEnvironmentInfo) {
+  async function createSession(agentId: string, executionMode: string, workspace?: string, environmentInfo?: SessionEnvironmentInfo, modelId?: number) {
     const { data } = await api.post('/sessions', {
       agentId,
       executionMode,
       workspace: workspace || undefined,
+      modelId: modelId || undefined,
       isGit: environmentInfo?.isGit,
       platform: environmentInfo?.platform,
       shell: environmentInfo?.shell,
@@ -209,6 +214,17 @@ export const useSessionStore = defineStore('session', () => {
     const { data } = await api.patch(`/sessions/${id}`, { title })
     if (data) {
       updateSession(id, { title: data.title, summary: data.summary })
+    }
+  }
+
+  async function updateSessionModel(id: string, modelId: number) {
+    const { data } = await api.patch(`/sessions/${id}`, { modelId })
+    if (data) {
+      updateSession(id, {
+        modelId: data.modelId,
+        modelName: data.modelName,
+        modelSupportsVision: data.modelSupportsVision
+      })
     }
   }
 
@@ -547,6 +563,7 @@ export const useSessionStore = defineStore('session', () => {
     updateSession,
     updateSessionPhase,
     renameSession,
+    updateSessionModel,
     deleteSession,
     markAsRead,
     // Message cache

@@ -35,6 +35,20 @@ public class ModelController {
         ));
     }
 
+    @GetMapping("/active")
+    public Result<List<ModelVO>> listActiveModels() {
+        List<ModelVO> list = modelService.listActiveModels().stream()
+                .map(this::toVO)
+                .collect(Collectors.toList());
+        return Result.ok(list);
+    }
+
+    @GetMapping("/default")
+    public Result<ModelVO> getDefaultModel() {
+        LlmModel model = modelService.getDefaultModel();
+        return Result.ok(model != null ? toVO(model) : null);
+    }
+
     @GetMapping("/{id}")
     public Result<ModelVO> getModel(@PathVariable Long id) {
         return Result.ok(toVO(modelService.getModel(id)));
@@ -45,7 +59,7 @@ public class ModelController {
         LlmModel model = modelService.createModel(
                 request.getName(), request.getProvider(), request.getBaseUrl(),
                 request.getApiKey(), request.getModelId(),
-                request.getSupportsVision());
+                request.getSupportsVision(), request.getIsDefault());
         return Result.ok(toVO(model));
     }
 
@@ -54,7 +68,7 @@ public class ModelController {
         LlmModel model = modelService.updateModel(
                 id, request.getName(), request.getProvider(), request.getBaseUrl(),
                 request.getApiKey(), request.getModelId(),
-                request.getSupportsVision());
+                request.getSupportsVision(), request.getIsDefault());
         return Result.ok(toVO(model));
     }
 
@@ -79,6 +93,7 @@ public class ModelController {
         vo.setApiKey(entity.getApiKey());
         vo.setModelId(entity.getModelId());
         vo.setSupportsVision(entity.getSupportsVision() != null && entity.getSupportsVision() == 1);
+        vo.setIsDefault(entity.getIsDefault() != null && entity.getIsDefault() == 1);
         vo.setStatus(entity.getStatus());
         vo.setCreatedAt(entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null);
         return vo;
@@ -92,6 +107,7 @@ public class ModelController {
         private String apiKey;
         private String modelId;
         private Integer supportsVision;
+        private Integer isDefault;
     }
 
     @Data
@@ -103,6 +119,7 @@ public class ModelController {
         private String apiKey;
         private String modelId;
         private Boolean supportsVision;
+        private Boolean isDefault;
         private Integer status;
         private String createdAt;
     }

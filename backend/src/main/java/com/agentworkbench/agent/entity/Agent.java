@@ -18,8 +18,6 @@ public class Agent {
 
     private String systemPrompt;
 
-    private Long modelId;
-
     private Long creatorId;
 
     private String configJson;

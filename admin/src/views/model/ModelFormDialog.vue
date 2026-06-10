@@ -31,6 +31,10 @@
         <el-switch v-model="form.supportsVision" />
         <span style="margin-left: 8px; color: #909399; font-size: 12px;">开启后可在任务中发送图片</span>
       </el-form-item>
+      <el-form-item label="默认模型">
+        <el-switch v-model="form.isDefault" />
+        <span style="margin-left: 8px; color: #909399; font-size: 12px;">新会话默认使用此模型</span>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="$emit('update:visible', false)">取消</el-button>
@@ -77,7 +81,8 @@ const form = reactive({
   modelId: '',
   baseUrl: '',
   apiKey: '',
-  supportsVision: false
+  supportsVision: false,
+  isDefault: false
 })
 
 const rules: FormRules = {
@@ -93,7 +98,8 @@ function resetForm() {
     modelId: '',
     baseUrl: '',
     apiKey: '',
-    supportsVision: false
+    supportsVision: false,
+    isDefault: false
   })
 }
 
@@ -106,7 +112,8 @@ watch(() => props.visible, (val) => {
       modelId: props.modelData.modelId || '',
       baseUrl: props.modelData.baseUrl || '',
       apiKey: props.modelData.apiKey || '',
-      supportsVision: !!props.modelData.supportsVision
+      supportsVision: !!props.modelData.supportsVision,
+      isDefault: !!props.modelData.isDefault
     })
   } else {
     resetForm()
@@ -121,7 +128,7 @@ async function handleSubmit() {
 
   submitting.value = true
   try {
-    const payload: any = { ...form, supportsVision: form.supportsVision ? 1 : 0 }
+    const payload: any = { ...form, supportsVision: form.supportsVision ? 1 : 0, isDefault: form.isDefault ? 1 : 0 }
     if (isEdit.value && props.modelData?.id) {
       await api.put(`/models/${props.modelData.id}`, payload)
       ElMessage.success('模型更新成功')

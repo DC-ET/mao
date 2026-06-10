@@ -3,6 +3,8 @@ package com.agentworkbench.session.controller;
 import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.common.result.Result;
+import com.agentworkbench.model.entity.LlmModel;
+import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.session.activity.ActivityService;
 import com.agentworkbench.session.activity.SessionActivity;
 import com.agentworkbench.session.entity.Message;
@@ -33,17 +35,20 @@ public class SessionController {
 
     private final SessionService sessionService;
     private final AgentMapper agentMapper;
+    private final LlmModelMapper llmModelMapper;
     private final ActivityService activityService;
     private final SessionTodoMapper sessionTodoMapper;
     private final MessageQueueService messageQueueService;
 
     public SessionController(SessionService sessionService,
                              AgentMapper agentMapper,
+                             LlmModelMapper llmModelMapper,
                              ActivityService activityService,
                              SessionTodoMapper sessionTodoMapper,
                              MessageQueueService messageQueueService) {
         this.sessionService = sessionService;
         this.agentMapper = agentMapper;
+        this.llmModelMapper = llmModelMapper;
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
         this.messageQueueService = messageQueueService;
@@ -55,7 +60,8 @@ public class SessionController {
             @RequestBody CreateSessionRequest request) {
         Session session = sessionService.createSession(userId, request.getAgentId(), request.getTitle(),
                 request.getExecutionMode(), request.getWorkspace(), request.getPermissionLevel(),
-                request.getIsGit(), request.getPlatform(), request.getShell(), request.getOsVersion());
+                request.getIsGit(), request.getPlatform(), request.getShell(), request.getOsVersion(),
+                request.getModelId());
         return Result.ok(toSessionVO(session));
     }
 
@@ -136,6 +142,9 @@ public class SessionController {
         }
         if (request.getPermissionLevel() != null) {
             sessionService.updatePermissionLevel(id, request.getPermissionLevel());
+        }
+        if (request.getModelId() != null) {
+            sessionService.updateModelId(id, request.getModelId());
         }
         return Result.ok(toSessionVO(sessionService.getSession(id)));
     }
@@ -326,6 +335,22 @@ public class SessionController {
                 vo.setAgentName(agent.getName());
             }
         }
+
+        // Load model info — prefer session-level, fallback to default
+        LlmModel model = null;
+        if (session.getModelId() != null) {
+            model = llmModelMapper.selectById(session.getModelId());
+        } else {
+            model = llmModelMapper.selectOne(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<LlmModel>()
+                            .eq("is_default", 1).eq("status", 1));
+        }
+        if (model != null) {
+            vo.setModelId(model.getId());
+            vo.setModelName(model.getName());
+            vo.setModelSupportsVision(model.getSupportsVision() != null && model.getSupportsVision() == 1);
+        }
+
         return vo;
     }
 
@@ -385,6 +410,7 @@ public class SessionController {
         private String executionMode;
         private String workspace;
         private String permissionLevel;
+        private Long modelId;
         private Boolean isGit;
         private String platform;
         private String shell;
@@ -397,6 +423,7 @@ public class SessionController {
         private String summary;
         private String projectKey;
         private String permissionLevel;
+        private Long modelId;
     }
 
     @Data
@@ -426,6 +453,10 @@ public class SessionController {
         private Boolean running;
         private Boolean unread;
         private String permissionLevel;
+        // Model fields
+        private Long modelId;
+        private String modelName;
+        private Boolean modelSupportsVision;
     }
 
     @Data

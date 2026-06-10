@@ -197,7 +197,7 @@ public class ShellSessionTool implements Tool {
         sessionId = session.getSessionId();
 
         // 如果指定了工作目录，先执行 cd
-        if (workdir != null) {
+        if (workdir != null && !workdir.isBlank()) {
             Path resolvedWorkdir = pathSandbox.resolve(workdir, workspace);
             executeWithMarker(session, "cd " + resolvedWorkdir, Duration.ofSeconds(5));
         }

@@ -30,6 +30,9 @@ public class LlmModel {
     /** 是否支持视觉/图片输入 */
     private Integer supportsVision;
 
+    /** 是否默认模型：0=否 1=是 */
+    private Integer isDefault;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

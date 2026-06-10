@@ -24,6 +24,11 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="默认" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">

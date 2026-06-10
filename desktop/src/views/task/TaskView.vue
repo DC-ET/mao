@@ -77,7 +77,7 @@
             v-for="(msg, idx) in messages"
             :key="msg.id"
             :message="msg"
-            :show-time="msg.role === 'user'"
+            :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
             :show-copy="false"
             :is-last="idx === messages.length - 1"
             :can-edit="canEditMessage(msg)"
@@ -114,7 +114,9 @@
         :cancelling="cancelling"
         :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
         :execution-mode="isNewTaskMode ? newTaskMode : executionMode"
-        :model-name="agentStore.activeAgent?.modelName || ''"
+        :model-id="isNewTaskMode ? newTaskModelId : currentSession?.modelId"
+        :model-name="isNewTaskMode ? newTaskModelName : currentSession?.modelName || ''"
+        :model-supports-vision="currentSession?.modelSupportsVision"
         :permission-level="permissionLevel"
         :is-new-task="isNewTaskMode"
         :selected-agent-id="newTaskAgentId"
@@ -125,6 +127,8 @@
         @update:execution-mode="handleNewTaskModeChange"
         @update:workspace="handleNewTaskWorkspaceChange"
         @update:selected-agent-id="handleNewTaskAgentChange"
+        @update:model-id="handleModelSwitch"
+        @select:model="handleModelSelect"
       />
     </div>
 
@@ -185,6 +189,8 @@ const permissionLevel = ref('READ_ONLY')
 const newTaskAgentId = ref<string | null>(null)
 const newTaskMode = ref<'CLOUD' | 'LOCAL'>('CLOUD')
 const newTaskWorkspace = ref('')
+const newTaskModelId = ref<number | undefined>()
+const newTaskModelName = ref('')
 const isNewTaskMode = computed(() => !sessionId.value && !initialLoading.value)
 
 const {
@@ -209,7 +215,7 @@ const {
   deleteQueueMessage,
   reorderQueueMessage,
   sendingSessionId
-} = useChat(agentId, executionMode)
+} = useChat(agentId, executionMode, newTaskModelId)
 
 // Terminal
 const { togglePanel } = useTerminal()
@@ -227,6 +233,8 @@ onMounted(() => {
 
 // Edit message state
 const editingMessageId = ref<string | null>(null)
+
+const currentSession = computed(() => sessionStore.activeSession)
 
 const sessionTitle = computed(() => {
   const session = sessionStore.activeSession
@@ -431,6 +439,21 @@ function handleRename(title: string) {
   }
 }
 
+async function handleModelSwitch(modelId: number) {
+  if (isNewTaskMode.value) {
+    newTaskModelId.value = modelId
+  } else if (sessionStore.activeSessionId) {
+    await sessionStore.updateSessionModel(sessionStore.activeSessionId, modelId)
+  }
+}
+
+function handleModelSelect(modelId: number, modelName: string) {
+  if (isNewTaskMode.value) {
+    newTaskModelId.value = modelId
+    newTaskModelName.value = modelName
+  }
+}
+
 async function handlePermissionLevelChange(level: string) {
   if (!sessionStore.activeSessionId) return
   permissionLevel.value = level
@@ -442,6 +465,18 @@ async function handlePermissionLevelChange(level: string) {
   }
 }
 
+async function loadDefaultModel() {
+  try {
+    const { data } = await api.get('/models/default')
+    if (data) {
+      newTaskModelId.value = data.id
+      newTaskModelName.value = data.name || ''
+    }
+  } catch {
+    // ignore
+  }
+}
+
 async function handleNewTask() {
   creatingNewTask.value = true
   newSession()
@@ -450,6 +485,7 @@ async function handleNewTask() {
   newTaskWorkspace.value = ''
   await router.push('/')
   initialLoading.value = false
+  await loadDefaultModel()
 }
 
 async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string }) {
@@ -460,6 +496,14 @@ async function handleNewTaskFromGroup(payload: { agentId: string; executionMode:
   newTaskWorkspace.value = payload.workspace || ''
   await router.push('/')
   initialLoading.value = false
+  // Inherit model from last session with the same agent
+  const lastSession = sessionStore.sessions.find(s => s.agentId === payload.agentId)
+  if (lastSession?.modelId) {
+    newTaskModelId.value = lastSession.modelId
+    newTaskModelName.value = lastSession.modelName || ''
+  } else {
+    await loadDefaultModel()
+  }
 }
 
 function handleNewTaskModeChange(mode: string) {

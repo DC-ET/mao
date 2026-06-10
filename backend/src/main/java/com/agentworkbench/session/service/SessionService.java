@@ -56,12 +56,18 @@ public class SessionService {
     }
 
     public Session createSession(Long userId, Long agentId, String title, String executionMode, String workspace, String permissionLevel) {
-        return createSession(userId, agentId, title, executionMode, workspace, permissionLevel, null, null, null, null);
+        return createSession(userId, agentId, title, executionMode, workspace, permissionLevel, null, null, null, null, null);
     }
 
     public Session createSession(Long userId, Long agentId, String title, String executionMode, String workspace,
                                  String permissionLevel, Boolean isGit, String platform, String shellPath,
                                  String osVersion) {
+        return createSession(userId, agentId, title, executionMode, workspace, permissionLevel, isGit, platform, shellPath, osVersion, null);
+    }
+
+    public Session createSession(Long userId, Long agentId, String title, String executionMode, String workspace,
+                                 String permissionLevel, Boolean isGit, String platform, String shellPath,
+                                 String osVersion, Long modelId) {
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
             throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
@@ -70,7 +76,7 @@ public class SessionService {
         Session session = new Session();
         session.setUserId(userId);
         session.setAgentId(agentId);
-        session.setTitle(title != null ? title : agent.getName());
+        session.setTitle(title != null ? title : "未命名会话");
         session.setStatus("ACTIVE");
         session.setExecutionMode(executionMode != null ? executionMode : "CLOUD");
         session.setWorkspace(workspace);
@@ -79,6 +85,7 @@ public class SessionService {
         session.setPlatform(platform);
         session.setShellPath(shellPath);
         session.setOsVersion(osVersion);
+        session.setModelId(modelId);
         session.setIsPinned(0);
         session.setIsFavorite(0);
         session.setPhase("IDLE");
@@ -179,9 +186,7 @@ public class SessionService {
 
         // Auto-generate title from first user message
         if ("USER".equals(role) && session != null) {
-            Agent agent = agentMapper.selectById(session.getAgentId());
-            String agentName = agent != null ? agent.getName() : null;
-            if (session.getTitle() != null && (session.getTitle().equals(agentName) || session.getTitle().isBlank())) {
+            if (session.getTitle() != null && (session.getTitle().equals("未命名会话") || session.getTitle().isBlank())) {
                 String autoTitle = TitleGenerator.generate(content);
                 if (autoTitle != null) {
                     session.setTitle(autoTitle);
@@ -223,9 +228,7 @@ public class SessionService {
 
         // Auto-generate title from first user message (extract text for title)
         if ("USER".equals(role) && session != null) {
-            Agent agent = agentMapper.selectById(session.getAgentId());
-            String agentName = agent != null ? agent.getName() : null;
-            if (session.getTitle() != null && (session.getTitle().equals(agentName) || session.getTitle().isBlank())) {
+            if (session.getTitle() != null && (session.getTitle().equals("未命名会话") || session.getTitle().isBlank())) {
                 String textForTitle = content instanceof String s ? s : extractTextFromContent(content);
                 String autoTitle = TitleGenerator.generate(textForTitle);
                 if (autoTitle != null) {
@@ -479,6 +482,12 @@ public class SessionService {
         PermissionLevel.fromString(permissionLevel); // validate, throws on invalid
         Session session = getSession(sessionId);
         session.setPermissionLevel(permissionLevel);
+        sessionMapper.updateById(session);
+    }
+
+    public void updateModelId(Long sessionId, Long modelId) {
+        Session session = getSession(sessionId);
+        session.setModelId(modelId);
         sessionMapper.updateById(session);
     }
 

@@ -41,14 +41,13 @@ public class AgentService {
 
     @Transactional
     public Agent createAgent(Long userId, String name, String description,
-                              String systemPrompt, Long modelId,
+                              String systemPrompt,
                               List<String> tags,
                               List<String> skillNames) {
         Agent agent = new Agent();
         agent.setName(name);
         agent.setDescription(description);
         agent.setSystemPrompt(systemPrompt);
-        agent.setModelId(modelId);
         agent.setCreatorId(userId);
         if (skillNames != null && !skillNames.isEmpty()) {
             try {
@@ -74,14 +73,13 @@ public class AgentService {
 
     @Transactional
     public Agent updateAgent(Long id, String name, String description,
-                              String systemPrompt, Long modelId,
+                              String systemPrompt,
                               List<String> skillNames,
                               List<String> tags) {
         Agent agent = getAgent(id);
         if (name != null) agent.setName(name);
         if (description != null) agent.setDescription(description);
         if (systemPrompt != null) agent.setSystemPrompt(systemPrompt);
-        if (modelId != null) agent.setModelId(modelId);
         if (skillNames != null) {
             try {
                 agent.setSkillNames(skillNames.isEmpty() ? null : objectMapper.writeValueAsString(skillNames));

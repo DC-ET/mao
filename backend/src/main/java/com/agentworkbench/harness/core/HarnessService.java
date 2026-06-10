@@ -113,8 +113,8 @@ public class HarnessService {
             throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
         }
 
-        // 3. Load model config
-        LlmModel llmModel = llmModelMapper.selectById(agent.getModelId());
+        // 3. Load model config — prefer session-level modelId, fallback to default
+        LlmModel llmModel = resolveModel(session.getModelId());
         if (llmModel == null) {
             throw new BusinessException(ErrorCode.MODEL_NOT_FOUND);
         }
@@ -294,5 +294,16 @@ public class HarnessService {
             log.warn("Failed to parse agent compaction config, using defaults", e);
             return compactionConfig;
         }
+    }
+
+    /**
+     * Resolve model: prefer explicit modelId, fallback to default model.
+     */
+    private LlmModel resolveModel(Long modelId) {
+        if (modelId != null) {
+            return llmModelMapper.selectById(modelId);
+        }
+        return llmModelMapper.selectOne(
+                new QueryWrapper<LlmModel>().eq("is_default", 1).eq("status", 1));
     }
 }

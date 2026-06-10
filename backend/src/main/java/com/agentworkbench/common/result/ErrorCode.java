@@ -23,6 +23,7 @@ public enum ErrorCode {
     AGENT_NOT_FOUND(3001, "Agent 不存在"),
     SESSION_NOT_FOUND(3002, "会话不存在"),
     MODEL_NOT_FOUND(3003, "模型配置不存在"),
+    MODEL_IS_DEFAULT(3006, "不能删除默认模型，请先修改默认模型"),
     SKILL_NOT_FOUND(3004, "Skill 不存在"),
     AGENT_ACCESS_DENIED(3005, "无权访问该 Agent"),
     LLM_CALL_FAILED(3007, "LLM 调用失败"),

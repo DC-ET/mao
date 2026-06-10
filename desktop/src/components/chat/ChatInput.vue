@@ -91,7 +91,12 @@
         />
       </div>
       <div class="toolbar-right">
-        <span v-if="modelName" class="model-name">{{ modelName }}</span>
+        <ModelSelector
+          :model-id="modelId"
+          :model-name="modelName"
+          @update:model-id="id => emit('update:modelId', id)"
+          @select="(id, name) => emit('select:model', id, name)"
+        />
         <button
           v-if="loading && !canSend"
           class="send-btn stop"
@@ -126,6 +131,7 @@ import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy, Monitor } f
 import { ElMessage } from 'element-plus'
 import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
 import AgentSelector from '../task/AgentSelector.vue'
+import ModelSelector from './ModelSelector.vue'
 import type { Agent } from '../../stores/agent'
 
 const props = withDefaults(defineProps<{
@@ -134,7 +140,9 @@ const props = withDefaults(defineProps<{
   cancelling?: boolean
   workspace?: string
   executionMode?: string
+  modelId?: number
   modelName?: string
+  modelSupportsVision?: boolean
   placeholder?: string
   permissionLevel?: string
   isNewTask?: boolean
@@ -161,6 +169,8 @@ const emit = defineEmits<{
   'update:executionMode': [mode: string]
   'update:workspace': [workspace: string]
   'update:selectedAgentId': [id: string | null]
+  'update:modelId': [modelId: number]
+  'select:model': [modelId: number, modelName: string]
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement>()

@@ -31,6 +31,9 @@ public class Session {
     /** LOCAL mode tool permission: READ_ONLY|READ_WRITE|SMART|FULL */
     private String permissionLevel;
 
+    /** Current model for this session, NULL means use default model */
+    private Long modelId;
+
     /** Whether the execution workspace is inside a git repository */
     private Boolean isGit;
 

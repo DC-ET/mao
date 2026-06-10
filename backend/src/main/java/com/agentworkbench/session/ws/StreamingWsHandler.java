@@ -220,14 +220,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
         // Vision model check: if images are attached, verify model supports vision
         if (!images.isEmpty()) {
-            Agent agent = agentMapper.selectById(session.getAgentId());
-            if (agent != null) {
-                LlmModel model = llmModelMapper.selectById(agent.getModelId());
-                if (model == null || model.getSupportsVision() == null || model.getSupportsVision() != 1) {
-                    registry.send(userId, WsEvent.of("error", sessionId,
-                            Map.of("message", "当前模型不支持图片输入，请切换支持视觉的模型")));
-                    return;
-                }
+            LlmModel model = resolveSessionModel(session);
+            if (model == null || model.getSupportsVision() == null || model.getSupportsVision() != 1) {
+                registry.send(userId, WsEvent.of("error", sessionId,
+                        Map.of("message", "当前模型不支持图片输入，请切换支持视觉的模型")));
+                return;
             }
             // Limit max 10 images per message
             if (images.size() > 10) {
@@ -515,14 +512,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
         // Vision model check: if images are attached, verify model supports vision
         if (!images.isEmpty()) {
-            Agent agent = agentMapper.selectById(session.getAgentId());
-            if (agent != null) {
-                LlmModel model = llmModelMapper.selectById(agent.getModelId());
-                if (model == null || model.getSupportsVision() == null || model.getSupportsVision() != 1) {
-                    registry.send(userId, WsEvent.of("error", sessionId,
-                            Map.of("message", "当前模型不支持图片输入，请切换支持视觉的模型")));
-                    return;
-                }
+            LlmModel model = resolveSessionModel(session);
+            if (model == null || model.getSupportsVision() == null || model.getSupportsVision() != 1) {
+                registry.send(userId, WsEvent.of("error", sessionId,
+                        Map.of("message", "当前模型不支持图片输入，请切换支持视觉的模型")));
+                return;
             }
             if (images.size() > 10) {
                 registry.send(userId, WsEvent.of("error", sessionId,
@@ -839,6 +833,16 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             queueData.add(map);
         }
         registry.send(userId, WsEvent.of("queue_updated", sessionId, Map.of("queue", queueData)));
+    }
+
+    private LlmModel resolveSessionModel(Session session) {
+        Long modelId = session.getModelId();
+        if (modelId != null) {
+            return llmModelMapper.selectById(modelId);
+        }
+        return llmModelMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<LlmModel>()
+                        .eq("is_default", 1).eq("status", 1));
     }
 
     private Long getLong(JsonNode root, String field) {
