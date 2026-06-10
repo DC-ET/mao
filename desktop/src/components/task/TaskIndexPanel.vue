@@ -815,7 +815,7 @@ function toggleGroup(key: string) {
 
 /* Dark mode */
 [data-theme="dark"] .task-index-panel {
-  background: rgba(15, 15, 23, 0.8);
+  background: var(--aw-canvas-parchment);
   border-right-color: var(--aw-hairline);
 }
 
