@@ -131,12 +131,10 @@ const isExpanded = ref(true)
 }
 
 .file-type-badge.created {
-  background: #e6f7e6;
   color: #2d8a2d;
 }
 
 .file-type-badge.modified {
-  background: #fff7e6;
   color: #b87a00;
 }
 
