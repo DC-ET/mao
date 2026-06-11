@@ -8,6 +8,7 @@ import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.llm.ChatUsage;
 import com.agentworkbench.harness.llm.LlmModelConfig;
 import com.agentworkbench.harness.skill.SkillLoader;
+import com.agentworkbench.harness.skill.SkillSyncService;
 import com.agentworkbench.harness.tool.ToolRegistry;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
@@ -40,6 +41,7 @@ public class HarnessService {
     private final AgentLoop agentLoop;
     private final ToolRegistry toolRegistry;
     private final SkillLoader skillLoader;
+    private final SkillSyncService skillSyncService;
     private final SessionMapper sessionMapper;
     private final AgentMapper agentMapper;
     private final LlmModelMapper llmModelMapper;
@@ -231,8 +233,27 @@ public class HarnessService {
                 log.warn("Failed to parse skillNames for agent {}: {}", agent.getId(), e.getMessage());
             }
         }
-        context.setAvailableSkillNames(
-                agentSkillNames != null ? agentSkillNames : skillLoader.getAllNames());
+        // Merge system skills + user skills (user skills take priority on name conflict)
+        List<String> baseSkillNames = agentSkillNames != null ? agentSkillNames : skillLoader.getAllNames();
+        List<String> userSkillNames = skillSyncService.getUserSkillNames(session.getUserId());
+        List<String> mergedSkillNames = new java.util.ArrayList<>(baseSkillNames);
+        for (String userSkill : userSkillNames) {
+            if (!mergedSkillNames.contains(userSkill)) {
+                mergedSkillNames.add(userSkill);
+            }
+        }
+        context.setAvailableSkillNames(mergedSkillNames);
+
+        // Build merged skill document lookup (name → doc) for PromptEngine
+        java.util.Map<String, com.agentworkbench.harness.skill.SkillDocument> skillDocMap = new java.util.LinkedHashMap<>();
+        for (var doc : skillLoader.getAllDocuments()) {
+            skillDocMap.put(doc.getName(), doc);
+        }
+        // User skills override system skills on name conflict
+        for (var doc : skillSyncService.getUserSkillDocuments(session.getUserId())) {
+            skillDocMap.put(doc.getName(), doc);
+        }
+        context.setAvailableSkillDocs(skillDocMap);
 
         return context;
     }

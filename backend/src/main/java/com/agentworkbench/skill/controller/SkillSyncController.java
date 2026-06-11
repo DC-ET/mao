@@ -37,7 +37,7 @@ public class SkillSyncController {
         response.setContentType("application/zip");
         response.setHeader("Content-Disposition", "attachment; filename=\"skills.zip\"");
 
-        skillSyncService.writeSyncZip(agent, response.getOutputStream());
+        skillSyncService.writeSyncZip(agent, response.getOutputStream(), session.getUserId());
         response.getOutputStream().flush();
     }
 }

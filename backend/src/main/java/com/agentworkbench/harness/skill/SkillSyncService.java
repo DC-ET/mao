@@ -1,13 +1,17 @@
 package com.agentworkbench.harness.skill;
 
 import com.agentworkbench.agent.entity.Agent;
+import com.agentworkbench.harness.safety.PathSandbox;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
@@ -28,7 +32,11 @@ import java.util.zip.ZipOutputStream;
 public class SkillSyncService {
 
     private final SkillLoader skillLoader;
+    private final PathSandbox pathSandbox;
     private final ObjectMapper objectMapper;
+
+    @Value("${app.harness.user-skills-dir:./userskills}")
+    private String userSkillsDir;
 
     private static final String SKILLS_DIR_NAME = ".workbench/skills";
 
@@ -37,16 +45,30 @@ public class SkillSyncService {
 
     /**
      * CLOUD 模式：同步 Skills 到工作区 .skills/ 目录。
+     * 合并系统 Skills + 用户个人 Skills，同名时用户 Skills 优先。
      */
-    public void syncToWorkspace(Agent agent, String workspace) {
+    public void syncToWorkspace(Agent agent, String workspace, Long userId) {
         if (workspace == null || workspace.isBlank()) {
             log.warn("Cannot sync skills: workspace is empty");
             return;
         }
 
-        List<String> targetNames = resolveSkillNames(agent);
-        if (targetNames.isEmpty()) {
-            log.debug("No skills to sync for agent {}", agent.getId());
+        List<String> systemNames = resolveSkillNames(agent);
+        Map<String, Path> userSkillFolders = new LinkedHashMap<>();
+        loadUserSkillDocs(userId).forEach((name, doc) -> userSkillFolders.put(name, Paths.get(doc.getFolderPath())));
+
+        // Merge: system skills first, then user skills override on conflict
+        Map<String, Path> merged = new LinkedHashMap<>();
+        for (String name : systemNames) {
+            Path folder = skillLoader.getSkillFolder(name);
+            if (folder != null) {
+                merged.put(name, folder);
+            }
+        }
+        merged.putAll(userSkillFolders);
+
+        if (merged.isEmpty()) {
+            log.debug("No skills to sync for agent {}, userId={}", agent.getId(), userId);
             return;
         }
 
@@ -54,13 +76,10 @@ public class SkillSyncService {
         Map<String, Long> state = getSyncState(agent.getId(), workspace);
         Set<String> toRemove = new HashSet<>(state.keySet());
 
-        for (String skillName : targetNames) {
+        for (Map.Entry<String, Path> entry : merged.entrySet()) {
+            String skillName = entry.getKey();
+            Path sourceFolder = entry.getValue();
             toRemove.remove(skillName);
-            Path sourceFolder = skillLoader.getSkillFolder(skillName);
-            if (sourceFolder == null) {
-                log.warn("Skill folder not found: {}", skillName);
-                continue;
-            }
 
             long sourceModified = getLastModified(sourceFolder);
             Long lastSynced = state.get(skillName);
@@ -80,7 +99,7 @@ public class SkillSyncService {
             }
         }
 
-        // Remove skills no longer in agent's list
+        // Remove skills no longer in merged list
         for (String removed : toRemove) {
             try {
                 Path removedDir = skillsDir.resolve(removed);
@@ -100,18 +119,29 @@ public class SkillSyncService {
 
     /**
      * LOCAL 模式：将需要同步的 Skills 打包为 zip 流写入输出流。
+     * 合并系统 Skills + 用户个人 Skills，同名时用户 Skills 优先。
      */
-    public void writeSyncZip(Agent agent, OutputStream out) throws IOException {
-        List<String> targetNames = resolveSkillNames(agent);
+    public void writeSyncZip(Agent agent, OutputStream out, Long userId) throws IOException {
+        List<String> systemNames = resolveSkillNames(agent);
+        Map<String, Path> userSkillFolders = new LinkedHashMap<>();
+        loadUserSkillDocs(userId).forEach((name, doc) -> userSkillFolders.put(name, Paths.get(doc.getFolderPath())));
+
+        // Merge: system skills first, then user skills override on conflict
+        Map<String, Path> merged = new LinkedHashMap<>();
+        for (String name : systemNames) {
+            Path folder = skillLoader.getSkillFolder(name);
+            if (folder != null) {
+                merged.put(name, folder);
+            }
+        }
+        merged.putAll(userSkillFolders);
+
         Map<String, Long> state = getSyncState(agent.getId(), "zip");
 
         try (ZipOutputStream zos = new ZipOutputStream(out)) {
-            for (String skillName : targetNames) {
-                Path sourceFolder = skillLoader.getSkillFolder(skillName);
-                if (sourceFolder == null) {
-                    log.warn("Skill folder not found for zip: {}", skillName);
-                    continue;
-                }
+            for (Map.Entry<String, Path> entry : merged.entrySet()) {
+                String skillName = entry.getKey();
+                Path sourceFolder = entry.getValue();
 
                 long sourceModified = getLastModified(sourceFolder);
                 state.put(skillName, sourceModified);
@@ -146,7 +176,7 @@ public class SkillSyncService {
             manifest.put("syncedAt", Instant.now().toString());
             manifest.put("agentId", agent.getId());
             List<Map<String, String>> skillList = new ArrayList<>();
-            for (String name : targetNames) {
+            for (String name : merged.keySet()) {
                 skillList.add(Map.of("name", name, "version", String.valueOf(state.getOrDefault(name, 0L))));
             }
             manifest.put("skills", skillList);
@@ -202,6 +232,71 @@ public class SkillSyncService {
 
         // Clean sync state entries for this workspace
         syncState.entrySet().removeIf(entry -> entry.getKey().endsWith(":" + workspace));
+    }
+
+    /**
+     * 获取用户个人 Skills 的名称列表。
+     */
+    public List<String> getUserSkillNames(Long userId) {
+        return new ArrayList<>(loadUserSkillDocs(userId).keySet());
+    }
+
+    /**
+     * 获取用户个人 Skills 的文档列表。
+     */
+    public List<SkillDocument> getUserSkillDocuments(Long userId) {
+        return List.copyOf(loadUserSkillDocs(userId).values());
+    }
+
+    /**
+     * 加载用户个人 Skills，返回 name → SkillDocument 的映射。
+     * 用户 Skills 目录结构：/data/workbench/userskills/{userId}/{skillName}/SKILL.md
+     */
+    private Map<String, SkillDocument> loadUserSkillDocs(Long userId) {
+        Map<String, SkillDocument> result = new LinkedHashMap<>();
+        if (userId == null) return result;
+
+        Path userDir = Paths.get(userSkillsDir).toAbsolutePath().normalize().resolve(String.valueOf(userId));
+        if (!Files.isDirectory(userDir)) return result;
+
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(userDir)) {
+            for (Path entry : stream) {
+                if (!Files.isDirectory(entry)) continue;
+                Path skillMd = entry.resolve("SKILL.md");
+                if (!Files.isRegularFile(skillMd)) continue;
+                try {
+                    String content = Files.readString(skillMd, StandardCharsets.UTF_8);
+                    if (!content.startsWith("---")) continue;
+                    int secondDelimiter = content.indexOf("---", 3);
+                    if (secondDelimiter == -1) continue;
+                    String frontmatter = content.substring(3, secondDelimiter).trim();
+                    String body = content.substring(secondDelimiter + 3).trim();
+                    Yaml yaml = new Yaml();
+                    Map<String, Object> metadata = yaml.load(frontmatter);
+                    if (metadata != null && metadata.get("name") != null) {
+                        String name = String.valueOf(metadata.get("name"));
+                        SkillDocument doc = new SkillDocument();
+                        doc.setName(name);
+                        doc.setDescription(metadata.get("description") != null ? String.valueOf(metadata.get("description")) : "");
+                        doc.setBody(body);
+                        doc.setFilePath(skillMd.toAbsolutePath().normalize().toString());
+                        doc.setFolderPath(entry.toAbsolutePath().normalize().toString());
+                        result.put(name, doc);
+                        // Register to PathSandbox so read_file can access
+                        pathSandbox.addAllowedRoot(entry.toAbsolutePath().normalize());
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to parse user skill at {}: {}", entry, e.getMessage());
+                }
+            }
+        } catch (IOException e) {
+            log.debug("Failed to scan user skills directory {}: {}", userDir, e.getMessage());
+        }
+
+        if (!result.isEmpty()) {
+            log.info("Loaded {} user skills for userId={}", result.size(), userId);
+        }
+        return result;
     }
 
     private List<String> resolveSkillNames(Agent agent) {

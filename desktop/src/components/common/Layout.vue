@@ -5,12 +5,14 @@
       <router-view />
     </main>
     <TerminalPanel />
+    <SkillDrawer />
   </div>
 </template>
 
 <script setup lang="ts">
 import TopNav from './TopNav.vue'
 import TerminalPanel from '../terminal/TerminalPanel.vue'
+import SkillDrawer from '../skill/SkillDrawer.vue'
 </script>
 
 <style scoped>

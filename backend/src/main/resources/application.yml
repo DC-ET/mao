@@ -119,6 +119,7 @@ app:
 
     # Skills directory (external filesystem path, each subfolder is a skill)
     skills-dir: ${SKILLS_DIR:/data/workbench/skills}
+    user-skills-dir: ${USER_SKILLS_DIR:/data/workbench/userskills}
     skills-cache-seconds: 300
 
     # Shell Session

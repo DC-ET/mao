@@ -312,7 +312,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     try {
                         Agent agent = agentMapper.selectById(session.getAgentId());
                         if (agent != null) {
-                            skillSyncService.syncToWorkspace(agent, session.getWorkspace());
+                            skillSyncService.syncToWorkspace(agent, session.getWorkspace(), userId);
                         }
                     } catch (Exception e) {
                         log.warn("Skill sync to workspace failed for session {}: {}", sessionId, e.getMessage());
@@ -592,7 +592,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     try {
                         Agent agent = agentMapper.selectById(session.getAgentId());
                         if (agent != null) {
-                            skillSyncService.syncToWorkspace(agent, session.getWorkspace());
+                            skillSyncService.syncToWorkspace(agent, session.getWorkspace(), userId);
                         }
                     } catch (Exception e) {
                         log.warn("Skill sync to workspace failed for session {}: {}", sessionId, e.getMessage());

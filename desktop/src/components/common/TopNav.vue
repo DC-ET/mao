@@ -8,43 +8,50 @@
         <span class="logo-text">Agent Workbench</span>
       </div>
       <div class="nav-left-actions">
-        <div class="theme-toggle" :class="{ active: !leftCollapsed }" @click="toggleLeft" title="左侧面板">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
-          </svg>
-        </div>
-        <div class="theme-toggle" @click="router.push('/')" title="新任务">
-          <el-icon :size="16"><Plus /></el-icon>
-        </div>
-      </div>
-      <div v-if="showNavLinks" class="nav-links">
-        <router-link
-          v-for="link in navLinks"
-          :key="link.path"
-          :to="link.path"
-          :class="['nav-link', { active: isActive(link.path) }]"
-        >
-          {{ link.label }}
-        </router-link>
+        <el-tooltip content="左侧面板" :show-after="100" placement="bottom">
+          <div class="theme-toggle" :class="{ active: !leftCollapsed }" @click="toggleLeft">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
+            </svg>
+          </div>
+        </el-tooltip>
+        <el-tooltip content="新任务" :show-after="100" placement="bottom">
+          <div class="theme-toggle" @click="router.push('/')">
+            <el-icon :size="16"><Plus /></el-icon>
+          </div>
+        </el-tooltip>
       </div>
     </div>
     <div class="nav-right">
-      <div class="theme-toggle" :class="{ active: !rightCollapsed }" @click="toggleRight" title="右侧面板">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
-        </svg>
-      </div>
-      <div class="theme-toggle" :class="{ active: terminalOpen }" @click="toggleTerminal" title="终端 (Ctrl+`)">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
-        </svg>
-      </div>
-      <div class="theme-toggle" @click="toggleTheme">
-        <el-icon :size="16">
-          <Moon v-if="!isDark" />
-          <Sunny v-else />
-        </el-icon>
-      </div>
+      <el-tooltip content="右侧面板" :show-after="100" placement="bottom">
+        <div class="theme-toggle" :class="{ active: !rightCollapsed }" @click="toggleRight">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
+          </svg>
+        </div>
+      </el-tooltip>
+      <el-tooltip content="终端 (Ctrl+`)" :show-after="100" placement="bottom">
+        <div class="theme-toggle" :class="{ active: terminalOpen }" @click="toggleTerminal">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+          </svg>
+        </div>
+      </el-tooltip>
+      <el-tooltip content="技能" :show-after="100" placement="bottom">
+        <div class="theme-toggle" @click="toggleSkillDrawer()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+          </svg>
+        </div>
+      </el-tooltip>
+      <el-tooltip :content="isDark ? '切换为浅色' : '切换为深色'" :show-after="100" placement="bottom">
+        <div class="theme-toggle" @click="toggleTheme">
+          <el-icon :size="16">
+            <Moon v-if="!isDark" />
+            <Sunny v-else />
+          </el-icon>
+        </div>
+      </el-tooltip>
       <el-dropdown @command="handleCommand" trigger="click">
         <div class="nav-user">
           <el-avatar :size="24" icon="User" />
@@ -62,19 +69,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { Monitor, ArrowDown, Moon, Sunny, Plus } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
 import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout } from '../../composables/usePanelLayout'
+import { useSkillDrawer } from '../../composables/useSkillDrawer'
 
 const { isDark, toggleTheme } = useTheme()
 const sessionStore = useSessionStore()
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
 const { leftCollapsed, rightCollapsed, toggleLeft, toggleRight } = usePanelLayout()
+const { toggle: toggleSkillDrawer } = useSkillDrawer()
 
 function toggleTerminal() {
   const session = sessionStore.activeSession
@@ -86,20 +94,7 @@ function toggleTerminal() {
 }
 
 const router = useRouter()
-const route = useRoute()
 const authStore = useAuthStore()
-
-const navLinks: { path: string; label: string }[] = []
-
-const showNavLinks = computed(() => {
-  if (navLinks.length === 0) return false
-  if (route.path === '/') return true
-  return !route.path.startsWith('/tasks/')
-})
-
-function isActive(path: string) {
-  return route.path === path || route.path.startsWith(path + '/')
-}
 
 async function handleCommand(command: string) {
   if (command === 'logout') {

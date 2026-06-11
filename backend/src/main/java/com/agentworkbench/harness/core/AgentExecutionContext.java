@@ -3,11 +3,14 @@ package com.agentworkbench.harness.core;
 import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.llm.ChatUsage;
 import com.agentworkbench.harness.llm.LlmModelConfig;
+import com.agentworkbench.harness.skill.SkillDocument;
 import com.agentworkbench.harness.tool.Tool;
 import lombok.Data;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Agent 执行上下文，包含一次对话的全部状态
@@ -40,6 +43,9 @@ public class AgentExecutionContext {
 
     // 可用 Skill 知识文档名称列表（为空则加载全部）
     private List<String> availableSkillNames = new ArrayList<>();
+
+    // 合并后的 Skill 文档映射（name → SkillDocument），用于 PromptEngine 获取描述
+    private Map<String, SkillDocument> availableSkillDocs = new LinkedHashMap<>();
 
     // 请求开始时间（单次请求内固定，保证 system prompt 前缀缓存命中）
     private String currentTimestamp;

@@ -82,7 +82,7 @@ public class PromptEngine {
         // Skill catalog — inject name/description with workspace-relative paths
         List<String> skillNames = context.getAvailableSkillNames();
         if (skillNames != null && !skillNames.isEmpty()) {
-            String catalog = buildRelativeSkillCatalog(skillNames);
+            String catalog = buildRelativeSkillCatalog(context);
             if (catalog != null && !catalog.isEmpty()) {
                 sb.append("## 可用技能\n\n");
                 sb.append("以下技能可用。每个技能都是一份知识文档，用于指导你在特定场景下高效使用工具。\n");
@@ -99,21 +99,25 @@ public class PromptEngine {
         return sb.toString();
     }
 
-    private String buildRelativeSkillCatalog(List<String> filterNames) {
-        List<String> names = filterNames != null && !filterNames.isEmpty()
-                ? filterNames
-                : skillLoader.getAllNames();
+    private String buildRelativeSkillCatalog(AgentExecutionContext context) {
+        List<String> names = context.getAvailableSkillNames();
+        if (names == null || names.isEmpty()) {
+            names = skillLoader.getAllNames();
+        }
         if (names.isEmpty()) {
             return null;
         }
 
+        var skillDocs = context.getAvailableSkillDocs();
         StringBuilder sb = new StringBuilder();
         for (String name : names) {
-            if (!skillLoader.hasSkill(name)) continue;
             String description = "";
-            var doc = skillLoader.getAllDocuments().stream()
-                    .filter(d -> d.getName().equals(name))
-                    .findFirst().orElse(null);
+            var doc = skillDocs != null ? skillDocs.get(name) : null;
+            if (doc == null) {
+                doc = skillLoader.getAllDocuments().stream()
+                        .filter(d -> d.getName().equals(name))
+                        .findFirst().orElse(null);
+            }
             if (doc != null && doc.getDescription() != null) {
                 description = doc.getDescription();
             }
