@@ -13,7 +13,7 @@
             <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
           </svg>
         </div>
-        <div class="theme-toggle" @click="requestNewTask(); router.push('/')" title="新任务">
+        <div class="theme-toggle" @click="router.push('/')" title="新任务">
           <el-icon :size="16"><Plus /></el-icon>
         </div>
       </div>
@@ -74,7 +74,7 @@ import { usePanelLayout } from '../../composables/usePanelLayout'
 const { isDark, toggleTheme } = useTheme()
 const sessionStore = useSessionStore()
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
-const { leftCollapsed, rightCollapsed, toggleLeft, toggleRight, requestNewTask } = usePanelLayout()
+const { leftCollapsed, rightCollapsed, toggleLeft, toggleRight } = usePanelLayout()
 
 function toggleTerminal() {
   const session = sessionStore.activeSession

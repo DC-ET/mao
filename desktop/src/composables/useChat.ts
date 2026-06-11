@@ -102,9 +102,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         }
       }
 
-      console.log('[FileChange] fetchMessages: raw count=', raw.length, 'messages count=', messages.length, 'allChanges count=', allChanges.length)
-      console.log('[FileChange] fetchMessages: raw fileChanges=', raw.map(m => ({ id: m.id, fileChanges: m.fileChanges })))
-
       sessionStore.setMessages(sessionId.value, messages)
       sessionStore.setFileChanges(sessionId.value, allChanges)
     } catch {

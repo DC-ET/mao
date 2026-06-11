@@ -206,12 +206,11 @@ const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const { subscribe } = useStreamWS()
-const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight, consumeNewTask } = usePanelLayout()
+const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight } = usePanelLayout()
 
 const sessionIdParam = computed(() => route.params.sessionId as string)
 const agentId = ref('')
 const executionMode = ref('CLOUD')
-const creatingNewTask = ref(false)
 const initialLoading = ref(true)
 const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 
@@ -227,6 +226,9 @@ const newTaskWorkspace = ref('')
 const newTaskModelId = ref<number | undefined>()
 const newTaskModelIdStr = ref('')
 const currentModelIdStr = ref('')
+
+// Track last viewed session for inheritance when creating new tasks
+const lastViewedSession = ref<{ agentId: string; executionMode: string; workspace?: string; permissionLevel?: string; modelId?: number; modelIdStr?: string } | null>(null)
 const isNewTaskMode = computed(() => !sessionId.value && !initialLoading.value)
 
 const {
@@ -548,36 +550,28 @@ async function loadDefaultModel() {
 }
 
 async function handleNewTask() {
-  creatingNewTask.value = true
   newSession()
-  newTaskAgentId.value = null
-  newTaskMode.value = 'CLOUD'
-  newTaskWorkspace.value = ''
   await router.push('/')
   initialLoading.value = false
-  await loadDefaultModel()
+  // Model fallback if lastViewedSession has no modelId
+  if (!newTaskModelId.value) {
+    await loadDefaultModel()
+  }
 }
 
-async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string; permissionLevel?: string }) {
-  creatingNewTask.value = true
+async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string; permissionLevel?: string; modelId?: number; modelIdStr?: string }) {
   newSession()
   newTaskAgentId.value = payload.agentId
   newTaskMode.value = payload.executionMode as 'CLOUD' | 'LOCAL'
   newTaskWorkspace.value = payload.workspace || ''
   permissionLevel.value = payload.permissionLevel || 'READ_ONLY'
+  if (payload.modelId) {
+    newTaskModelId.value = payload.modelId
+    newTaskModelIdStr.value = payload.modelIdStr || ''
+  }
   await router.push('/')
   initialLoading.value = false
-  // Inherit model from last session with the same agent
-  const lastSession = sessionStore.sessions.find(s => s.agentId === payload.agentId)
-  if (lastSession?.modelId) {
-    newTaskModelId.value = lastSession.modelId
-    try {
-      const { data } = await api.get(`/models/${lastSession.modelId}`)
-      newTaskModelIdStr.value = data?.modelId || ''
-    } catch {
-      newTaskModelIdStr.value = ''
-    }
-  } else {
+  if (!newTaskModelId.value) {
     await loadDefaultModel()
   }
 }
@@ -602,6 +596,7 @@ function handleNewTaskAgentChange(id: string | null) {
 
 async function loadSession(sid: string) {
   // No need to cleanup — WS is global, just switch subscriptions
+  newTaskAgentId.value = null
   sessionStore.setActiveSession(sid)
 
   // Load session details to get agentId and mode
@@ -619,15 +614,25 @@ async function loadSession(sid: string) {
       if (data.workspace) workspace.value = data.workspace
       await agentStore.fetchAgent(data.agentId)
       // Fetch modelId string for display
+      let modelIdStr = ''
       if (data.modelId) {
         try {
           const { data: modelData } = await api.get(`/models/${data.modelId}`)
-          currentModelIdStr.value = modelData?.modelId || ''
+          modelIdStr = modelData?.modelId || ''
+          currentModelIdStr.value = modelIdStr
         } catch {
           currentModelIdStr.value = ''
         }
       } else {
         currentModelIdStr.value = ''
+      }
+      lastViewedSession.value = {
+        agentId: data.agentId,
+        executionMode: data.executionMode || 'CLOUD',
+        workspace: data.workspace,
+        permissionLevel: data.permissionLevel,
+        modelId: data.modelId,
+        modelIdStr
       }
     }
   } catch {
@@ -670,13 +675,19 @@ watch(sessionIdParam, (newSid, oldSid) => {
       if (session?.phase) currentPhase.value = session.phase
       if (session?.executionMode) executionMode.value = session.executionMode
       if (session?.workspace) workspace.value = session.workspace
+      if (session) {
+        lastViewedSession.value = {
+          agentId: session.agentId,
+          executionMode: session.executionMode,
+          workspace: session.workspace,
+          permissionLevel: session.permissionLevel,
+          modelId: session.modelId,
+          modelIdStr: currentModelIdStr.value || ''
+        }
+      }
     }
     nextTick(() => chatInputRef.value?.focusInput())
   } else if (!newSid && oldSid) {
-    // Capture current session config before reset
-    const prevAgentId = agentId.value
-    const prevMode = executionMode.value
-    const prevWorkspace = workspace.value
     // Navigated back to home — reset state
     cleanup()
     sessionStore.setActiveSession(null)
@@ -684,22 +695,33 @@ watch(sessionIdParam, (newSid, oldSid) => {
     executionMode.value = 'CLOUD'
     currentPhase.value = 'IDLE'
     projectKey.value = ''
-    if (creatingNewTask.value || consumeNewTask()) {
-      creatingNewTask.value = false
-      // handleNewTaskFromGroup already set newTask* values — only reset for plain handleNewTask
-      if (!newTaskAgentId.value) {
+    // handleNewTaskFromGroup sets newTaskAgentId before this watcher fires;
+    // if it's still set, preserve it (group new task); otherwise inherit from lastViewedSession
+    const isNewTaskFromGroup = !!newTaskAgentId.value
+    if (!isNewTaskFromGroup) {
+      // Inherit from lastViewedSession
+      const prev = lastViewedSession.value
+      if (prev) {
+        newTaskAgentId.value = prev.agentId || null
+        newTaskMode.value = (prev.executionMode as 'CLOUD' | 'LOCAL') || 'CLOUD'
+        newTaskWorkspace.value = prev.executionMode === 'LOCAL' ? (prev.workspace || '') : ''
+        permissionLevel.value = prev.permissionLevel || 'READ_ONLY'
+        if (prev.modelId) {
+          newTaskModelId.value = prev.modelId
+          newTaskModelIdStr.value = prev.modelIdStr || ''
+        } else {
+          loadDefaultModel()
+        }
+        newSession()
+      } else {
+        newTaskAgentId.value = null
+        newTaskMode.value = 'CLOUD'
+        newTaskWorkspace.value = ''
         permissionLevel.value = 'READ_ONLY'
-        newTaskAgentId.value = prevAgentId || null
-        newTaskMode.value = prevMode as 'CLOUD' | 'LOCAL'
-        newTaskWorkspace.value = prevWorkspace || ''
+        navigateToLatestSession()
       }
-      newSession()
     } else {
-      newTaskAgentId.value = null
-      newTaskMode.value = 'CLOUD'
-      newTaskWorkspace.value = ''
-      permissionLevel.value = 'READ_ONLY'
-      navigateToLatestSession()
+      newSession()
     }
   }
 })

@@ -137,6 +137,7 @@ import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpe
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
+import { api } from '../../api'
 
 defineProps<{
   collapsed: boolean
@@ -145,7 +146,7 @@ defineProps<{
 const emit = defineEmits<{
   toggle: []
   newTask: []
-  newTaskFromGroup: [payload: { agentId: string; executionMode: string; workspace?: string }]
+  newTaskFromGroup: [payload: { agentId: string; executionMode: string; workspace?: string; permissionLevel?: string; modelId?: number; modelIdStr?: string }]
 }>()
 
 const router = useRouter()
@@ -203,16 +204,27 @@ onUnmounted(() => {
   // but guard against edge case where component unmounts mid-drag
 })
 
-function onGroupNewTask(group: { sessions: Session[] }) {
+async function onGroupNewTask(group: { sessions: Session[] }) {
   const last = group.sessions[0] // already sorted by updatedAt desc
   if (!last) return
+  let modelIdStr = ''
+  if (last.modelId) {
+    try {
+      const { data } = await api.get(`/models/${last.modelId}`)
+      modelIdStr = data?.modelId || ''
+    } catch {
+      // ignore
+    }
+  }
   emit('newTaskFromGroup', {
     agentId: String(last.agentId),
     executionMode: last.executionMode,
     // CLOUD 模式：不传 workspace，让后端自动生成隔离目录
     // LOCAL 模式：继承本地工作目录
     workspace: last.executionMode === 'LOCAL' ? last.workspace : undefined,
-    permissionLevel: last.permissionLevel
+    permissionLevel: last.permissionLevel,
+    modelId: last.modelId,
+    modelIdStr
   })
 }
 
