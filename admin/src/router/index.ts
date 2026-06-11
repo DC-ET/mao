@@ -18,43 +18,43 @@ const routes: RouteRecordRaw[] = [
         path: 'dashboard',
         name: 'Dashboard',
         component: () => import('../views/dashboard/DashboardView.vue'),
-        meta: { title: '数据概览' }
+        meta: { title: '数据概览', keepAlive: true }
       },
       {
         path: 'agents',
         name: 'Agents',
         component: () => import('../views/agent/AgentListView.vue'),
-        meta: { title: 'Agent 管理' }
+        meta: { title: 'Agent 管理', keepAlive: true }
       },
       {
         path: 'models',
         name: 'Models',
         component: () => import('../views/model/ModelListView.vue'),
-        meta: { title: '模型管理' }
+        meta: { title: '模型管理', keepAlive: true }
       },
       {
         path: 'users',
         name: 'Users',
         component: () => import('../views/user/UserListView.vue'),
-        meta: { title: '用户管理' }
+        meta: { title: '用户管理', keepAlive: true }
       },
       {
         path: 'skills',
         name: 'Skills',
         component: () => import('../views/skill/SkillListView.vue'),
-        meta: { title: 'Skills 管理' }
+        meta: { title: 'Skills 管理', keepAlive: true }
       },
       {
         path: 'sessions',
         name: 'Sessions',
         component: () => import('../views/session/SessionListView.vue'),
-        meta: { title: '会话管理' }
+        meta: { title: '会话管理', keepAlive: true }
       },
       {
         path: 'sessions/:id',
         name: 'SessionDetail',
         component: () => import('../views/session/SessionDetailView.vue'),
-        meta: { title: '会话详情' }
+        meta: { title: '会话详情', keepAlive: true }
       },
     ]
   }

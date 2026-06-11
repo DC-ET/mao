@@ -69,24 +69,39 @@
         </div>
       </el-header>
 
+      <TabBar />
+
       <el-main class="layout-main">
-        <router-view />
+        <div class="layout-content">
+          <router-view v-slot="{ Component, route: viewRoute }">
+            <keep-alive>
+              <component :is="Component" :key="viewRoute.fullPath" />
+            </keep-alive>
+          </router-view>
+        </div>
       </el-main>
     </el-container>
   </el-container>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useTabStore } from '../stores/tabs'
+import TabBar from './TabBar.vue'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const tabStore = useTabStore()
 
 const activeMenu = computed(() => route.path)
 const currentTitle = computed(() => (route.meta?.title as string) || '')
+
+watch(route, (newRoute) => {
+  tabStore.addTab(newRoute)
+}, { immediate: true })
 
 async function handleCommand(command: string) {
   if (command === 'logout') {
@@ -161,6 +176,13 @@ async function handleCommand(command: string) {
 
 .layout-main {
   background: #f5f7fa;
+  padding: 0;
+  overflow: hidden;
+}
+
+.layout-content {
+  height: 100%;
   padding: 20px;
+  overflow-y: auto;
 }
 </style>

@@ -65,31 +65,23 @@ public class AnalyticsService {
      */
     public Map<String, Object> getTokenAnalysis() {
         Map<String, Object> result = new HashMap<>();
+
+        List<Map<String, Object>> stats = messageMapper.selectTokenStatsGroupByAgent();
+
+        Map<Long, String> agentNames = agentMapper.selectList(null).stream()
+                .collect(java.util.stream.Collectors.toMap(Agent::getId, Agent::getName));
+
         List<Map<String, Object>> agentTokens = new ArrayList<>();
-
-        List<Agent> agents = agentMapper.selectList(null);
-        for (Agent agent : agents) {
-            List<Session> sessions = sessionMapper.selectList(
-                    new QueryWrapper<Session>().eq("agent_id", agent.getId()));
-            if (sessions.isEmpty()) continue;
-
-            List<Long> sessionIds = sessions.stream().map(Session::getId).toList();
-            List<Message> messages = messageMapper.selectList(
-                    new QueryWrapper<Message>().in("session_id", sessionIds));
-
-            int totalTokens = messages.stream()
-                    .mapToInt(m -> m.getTokenCount() != null ? m.getTokenCount() : 0)
-                    .sum();
-
+        for (Map<String, Object> row : stats) {
+            Long agentId = ((Number) row.get("agentId")).longValue();
             Map<String, Object> agentData = new HashMap<>();
-            agentData.put("agentId", agent.getId());
-            agentData.put("agentName", agent.getName());
-            agentData.put("totalTokens", totalTokens);
-            agentData.put("messageCount", messages.size());
+            agentData.put("agentId", agentId);
+            agentData.put("agentName", agentNames.getOrDefault(agentId, "未知"));
+            agentData.put("totalTokens", ((Number) row.get("totalTokens")).intValue());
+            agentData.put("messageCount", ((Number) row.get("messageCount")).intValue());
             agentTokens.add(agentData);
         }
 
-        // Sort by total tokens descending
         agentTokens.sort((a, b) -> Integer.compare(
                 (int) b.get("totalTokens"), (int) a.get("totalTokens")));
 
