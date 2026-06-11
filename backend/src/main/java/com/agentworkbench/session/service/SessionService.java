@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -133,6 +134,29 @@ public class SessionService {
         }
         qw.orderByDesc("is_pinned").orderByDesc("updated_at");
         return sessionMapper.selectList(qw);
+    }
+
+    public Page<Session> listSessionsForAdmin(int page, int size, Long userId, Long agentId,
+            String executionMode, String phase, String keyword, String status) {
+        LambdaQueryWrapper<Session> qw = new LambdaQueryWrapper<>();
+        if (userId != null) {
+            qw.eq(Session::getUserId, userId);
+        }
+        if (agentId != null) {
+            qw.eq(Session::getAgentId, agentId);
+        }
+        if (executionMode != null && !executionMode.isEmpty()) {
+            qw.eq(Session::getExecutionMode, executionMode);
+        }
+        if (phase != null && !phase.isEmpty()) {
+            qw.eq(Session::getPhase, phase);
+        }
+        if (keyword != null && !keyword.isEmpty()) {
+            qw.and(w -> w.like(Session::getTitle, keyword).or().like(Session::getSummary, keyword));
+        }
+        qw.eq(Session::getStatus, status != null && !status.isEmpty() ? status : "ACTIVE");
+        qw.orderByDesc(Session::getCreatedAt);
+        return sessionMapper.selectPage(Page.of(page, size), qw);
     }
 
     public Session getSession(Long id) {

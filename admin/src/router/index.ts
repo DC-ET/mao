@@ -44,6 +44,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/skill/SkillListView.vue'),
         meta: { title: 'Skills 管理' }
       },
+      {
+        path: 'sessions',
+        name: 'Sessions',
+        component: () => import('../views/session/SessionListView.vue'),
+        meta: { title: '会话管理' }
+      },
+      {
+        path: 'sessions/:id',
+        name: 'SessionDetail',
+        component: () => import('../views/session/SessionDetailView.vue'),
+        meta: { title: '会话详情' }
+      },
     ]
   }
 ]

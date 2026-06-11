@@ -36,11 +36,13 @@
 
       <el-pagination
         class="pagination"
-        :current-page="currentPage"
-        :page-size="pageSize"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50, 100]"
         :total="total"
-        layout="total, prev, pager, next"
-        @current-change="handlePageChange"
+        layout="total, sizes, prev, pager, next, jumper"
+        @current-change="fetchUsers"
+        @size-change="handleSizeChange"
       />
     </el-card>
   </div>
@@ -54,7 +56,7 @@ import { api } from '../../api'
 const loading = ref(false)
 const users = ref<any[]>([])
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const total = ref(0)
 
 async function fetchUsers() {
@@ -70,8 +72,8 @@ async function fetchUsers() {
   }
 }
 
-function handlePageChange(page: number) {
-  currentPage.value = page
+function handleSizeChange() {
+  currentPage.value = 1
   fetchUsers()
 }
 

@@ -55,11 +55,13 @@
       <!-- Pagination -->
       <el-pagination
         class="pagination"
-        :current-page="currentPage"
-        :page-size="pageSize"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50, 100]"
         :total="total"
-        layout="total, prev, pager, next"
-        @current-change="handlePageChange"
+        layout="total, sizes, prev, pager, next, jumper"
+        @current-change="fetchAgents"
+        @size-change="handleSizeChange"
       />
     </el-card>
 
@@ -82,7 +84,7 @@ const loading = ref(false)
 const agents = ref<any[]>([])
 const searchQuery = ref('')
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const total = ref(0)
 const dialogVisible = ref(false)
 const currentAgent = ref<any>(null)
@@ -110,8 +112,8 @@ function handleSearch() {
   fetchAgents()
 }
 
-function handlePageChange(page: number) {
-  currentPage.value = page
+function handleSizeChange() {
+  currentPage.value = 1
   fetchAgents()
 }
 
