@@ -97,9 +97,9 @@
       <div class="toolbar-right">
         <ModelSelector
           :model-id="modelId"
-          :model-name="modelName"
+          :model-id-str="modelIdStr"
           @update:model-id="id => emit('update:modelId', id)"
-          @select="(id, name) => emit('select:model', id, name)"
+          @select="(id, modelIdStr) => emit('select:model', id, modelIdStr)"
         />
         <button
           v-if="loading && !canSend"
@@ -145,7 +145,7 @@ const props = withDefaults(defineProps<{
   workspace?: string
   executionMode?: string
   modelId?: number
-  modelName?: string
+  modelIdStr?: string
   modelSupportsVision?: boolean
   placeholder?: string
   permissionLevel?: string
@@ -158,7 +158,7 @@ const props = withDefaults(defineProps<{
   cancelling: false,
   workspace: '',
   executionMode: 'CLOUD',
-  modelName: '',
+  modelIdStr: '',
   placeholder: '告诉 Agent 你想做什么...',
   permissionLevel: 'READ_ONLY',
   isNewTask: false,
@@ -174,7 +174,7 @@ const emit = defineEmits<{
   'update:workspace': [workspace: string]
   'update:selectedAgentId': [id: string | null]
   'update:modelId': [modelId: number]
-  'select:model': [modelId: number, modelName: string]
+  'select:model': [modelId: number, modelIdStr: string]
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement>()

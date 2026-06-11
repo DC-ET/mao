@@ -148,7 +148,7 @@
         :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
         :execution-mode="isNewTaskMode ? newTaskMode : executionMode"
         :model-id="isNewTaskMode ? newTaskModelId : currentSession?.modelId"
-        :model-name="isNewTaskMode ? newTaskModelName : currentSession?.modelName || ''"
+        :model-id-str="isNewTaskMode ? newTaskModelIdStr : currentModelIdStr"
         :model-supports-vision="currentSession?.modelSupportsVision"
         :permission-level="permissionLevel"
         :is-new-task="isNewTaskMode"
@@ -225,7 +225,8 @@ const newTaskAgentId = ref<string | null>(null)
 const newTaskMode = ref<'CLOUD' | 'LOCAL'>('CLOUD')
 const newTaskWorkspace = ref('')
 const newTaskModelId = ref<number | undefined>()
-const newTaskModelName = ref('')
+const newTaskModelIdStr = ref('')
+const currentModelIdStr = ref('')
 const isNewTaskMode = computed(() => !sessionId.value && !initialLoading.value)
 
 const {
@@ -506,13 +507,20 @@ async function handleModelSwitch(modelId: number) {
     newTaskModelId.value = modelId
   } else if (sessionStore.activeSessionId) {
     await sessionStore.updateSessionModel(sessionStore.activeSessionId, modelId)
+    // Update currentModelIdStr for trigger display
+    try {
+      const { data } = await api.get(`/models/${modelId}`)
+      currentModelIdStr.value = data?.modelId || ''
+    } catch {
+      currentModelIdStr.value = ''
+    }
   }
 }
 
-function handleModelSelect(modelId: number, modelName: string) {
+function handleModelSelect(modelId: number, modelIdStr: string) {
   if (isNewTaskMode.value) {
     newTaskModelId.value = modelId
-    newTaskModelName.value = modelName
+    newTaskModelIdStr.value = modelIdStr
   }
 }
 
@@ -532,7 +540,7 @@ async function loadDefaultModel() {
     const { data } = await api.get('/models/default')
     if (data) {
       newTaskModelId.value = data.id
-      newTaskModelName.value = data.name || ''
+      newTaskModelIdStr.value = data.modelId || ''
     }
   } catch {
     // ignore
@@ -550,19 +558,25 @@ async function handleNewTask() {
   await loadDefaultModel()
 }
 
-async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string }) {
+async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string; permissionLevel?: string }) {
   creatingNewTask.value = true
   newSession()
   newTaskAgentId.value = payload.agentId
   newTaskMode.value = payload.executionMode as 'CLOUD' | 'LOCAL'
   newTaskWorkspace.value = payload.workspace || ''
+  permissionLevel.value = payload.permissionLevel || 'READ_ONLY'
   await router.push('/')
   initialLoading.value = false
   // Inherit model from last session with the same agent
   const lastSession = sessionStore.sessions.find(s => s.agentId === payload.agentId)
   if (lastSession?.modelId) {
     newTaskModelId.value = lastSession.modelId
-    newTaskModelName.value = lastSession.modelName || ''
+    try {
+      const { data } = await api.get(`/models/${lastSession.modelId}`)
+      newTaskModelIdStr.value = data?.modelId || ''
+    } catch {
+      newTaskModelIdStr.value = ''
+    }
   } else {
     await loadDefaultModel()
   }
@@ -604,6 +618,17 @@ async function loadSession(sid: string) {
       if (data.agentName) agentName.value = data.agentName
       if (data.workspace) workspace.value = data.workspace
       await agentStore.fetchAgent(data.agentId)
+      // Fetch modelId string for display
+      if (data.modelId) {
+        try {
+          const { data: modelData } = await api.get(`/models/${data.modelId}`)
+          currentModelIdStr.value = modelData?.modelId || ''
+        } catch {
+          currentModelIdStr.value = ''
+        }
+      } else {
+        currentModelIdStr.value = ''
+      }
     }
   } catch {
     // ignore
@@ -659,11 +684,11 @@ watch(sessionIdParam, (newSid, oldSid) => {
     executionMode.value = 'CLOUD'
     currentPhase.value = 'IDLE'
     projectKey.value = ''
-    permissionLevel.value = 'READ_ONLY'
     if (creatingNewTask.value || consumeNewTask()) {
       creatingNewTask.value = false
       // handleNewTaskFromGroup already set newTask* values — only reset for plain handleNewTask
       if (!newTaskAgentId.value) {
+        permissionLevel.value = 'READ_ONLY'
         newTaskAgentId.value = prevAgentId || null
         newTaskMode.value = prevMode as 'CLOUD' | 'LOCAL'
         newTaskWorkspace.value = prevWorkspace || ''
@@ -673,6 +698,7 @@ watch(sessionIdParam, (newSid, oldSid) => {
       newTaskAgentId.value = null
       newTaskMode.value = 'CLOUD'
       newTaskWorkspace.value = ''
+      permissionLevel.value = 'READ_ONLY'
       navigateToLatestSession()
     }
   }

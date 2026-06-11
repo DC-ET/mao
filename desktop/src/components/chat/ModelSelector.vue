@@ -1,7 +1,7 @@
 <template>
   <el-popover ref="popoverRef" trigger="click" :width="280" placement="top-end" @before-enter="loadModels">
     <template #reference>
-      <span class="model-name clickable">{{ modelName || '选择模型' }}</span>
+      <span class="model-name clickable">{{ modelIdStr || '选择模型' }}</span>
     </template>
     <div class="model-selector">
       <div v-if="loadingModels" class="model-loading">加载中...</div>
@@ -14,8 +14,7 @@
           @click.stop="handleSelect(m.id)"
         >
           <div class="model-option-info">
-            <span class="model-option-name">{{ m.name }}</span>
-            <el-tag v-if="m.isDefault" size="small" type="warning">默认</el-tag>
+            <span class="model-option-name">{{ m.modelId }}</span>
           </div>
           <el-tag v-if="m.supportsVision" size="small" type="success">视觉</el-tag>
         </div>
@@ -32,18 +31,19 @@ import { api } from '../../api'
 interface ModelItem {
   id: number
   name: string
+  modelId: string
   supportsVision: boolean
   isDefault: boolean
 }
 
 defineProps<{
   modelId?: number
-  modelName?: string
+  modelIdStr?: string
 }>()
 
 const emit = defineEmits<{
   'update:modelId': [modelId: number]
-  select: [modelId: number, modelName: string]
+  select: [modelId: number, modelIdStr: string]
 }>()
 
 const popoverRef = ref()
@@ -66,7 +66,7 @@ async function loadModels() {
 function handleSelect(id: number) {
   emit('update:modelId', id)
   const model = models.value.find(m => m.id === id)
-  if (model) emit('select', id, model.name)
+  if (model) emit('select', id, model.modelId)
   popoverRef.value?.hide()
 }
 </script>
