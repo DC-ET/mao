@@ -37,18 +37,14 @@
           </svg>
         </div>
       </el-tooltip>
-      <el-tooltip content="技能" :show-after="100" placement="bottom">
+      <el-tooltip content="我的技能/Skills" :show-after="100" placement="bottom">
         <div class="theme-toggle" @click="toggleSkillDrawer()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-          </svg>
+          <el-icon><MagicStick /></el-icon>
         </div>
       </el-tooltip>
-      <el-tooltip content="指令" :show-after="100" placement="bottom">
+      <el-tooltip content="我的指令/Commands" :show-after="100" placement="bottom">
         <div class="theme-toggle" @click="toggleCommandDrawer()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
-          </svg>
+          <el-icon><Flag /></el-icon>
         </div>
       </el-tooltip>
       <el-tooltip :content="isDark ? '切换为浅色' : '切换为深色'" :show-after="100" placement="bottom">

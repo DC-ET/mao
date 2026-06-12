@@ -31,6 +31,7 @@ public enum ErrorCode {
     SKILL_NAME_DUPLICATE(3010, "Skill 名称已存在"),
     COMMAND_NOT_FOUND(3011, "指令不存在"),
     COMMAND_NAME_DUPLICATE(3012, "指令名称已存在"),
+    COMMAND_NAME_INVALID(3013, "指令名称只能包含字母、数字、中文、下划线和连字符"),
 
     // 服务端内部错误 5001-5999
     INTERNAL_ERROR(5001, "服务内部错误"),

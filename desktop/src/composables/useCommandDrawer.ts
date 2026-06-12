@@ -1,9 +1,15 @@
 import { ref } from 'vue'
 
 const visible = ref(false)
+const prefillContent = ref('')
 
 export function useCommandDrawer() {
   function open() {
+    visible.value = true
+  }
+
+  function openWithContent(content: string) {
+    prefillContent.value = content
     visible.value = true
   }
 
@@ -15,5 +21,9 @@ export function useCommandDrawer() {
     visible.value = !visible.value
   }
 
-  return { visible, open, close, toggle }
+  function clearPrefill() {
+    prefillContent.value = ''
+  }
+
+  return { visible, prefillContent, open, openWithContent, close, toggle, clearPrefill }
 }

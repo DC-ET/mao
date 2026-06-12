@@ -19,7 +19,7 @@
         <div v-if="loading" class="command-empty">加载中...</div>
         <div v-else-if="commands.length === 0" class="command-empty">暂无个人指令</div>
         <div v-else class="command-cards">
-          <div v-for="cmd in commands" :key="cmd.name" class="command-card">
+          <div v-for="cmd in commands" :key="cmd.id" class="command-card">
             <div class="command-card-header">
               <div class="command-name">{{ cmd.name }}</div>
               <div class="command-actions">
@@ -39,7 +39,9 @@
                 </el-tooltip>
               </div>
             </div>
-            <div class="command-preview">{{ cmd.content.slice(0, 100) }}{{ cmd.content.length > 100 ? '...' : '' }}</div>
+            <el-tooltip :content="cmd.content" placement="bottom" :show-after="300" popper-class="command-preview-tip">
+              <div class="command-preview">{{ cmd.content }}</div>
+            </el-tooltip>
           </div>
         </div>
       </div>
@@ -50,16 +52,17 @@
       v-model="dialogVisible"
       :title="isEditing ? '编辑指令' : '新建指令'"
       width="480px"
+      class="command-dialog"
       append-to-body
       @closed="resetForm"
     >
       <el-form :model="form" label-position="top">
-        <el-form-item label="指令名称">
+        <el-form-item label="指令名称" :error="nameError">
           <el-input
             v-model="form.name"
-            :disabled="isEditing"
-            placeholder="请输入指令名称"
+            placeholder="仅支持字母、数字、中文、下划线和连字符"
             maxlength="100"
+            @input="validateName"
           />
         </el-form-item>
         <el-form-item label="指令内容">
@@ -89,20 +92,51 @@ import { api } from '../../api'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 
 interface CommandItem {
+  id: number
   name: string
   content: string
 }
 
-const { visible } = useCommandDrawer()
+const { visible, prefillContent, clearPrefill } = useCommandDrawer()
+
+// When opened with prefill content (from chat message "add to command"), auto-open create dialog
+watch(prefillContent, (content) => {
+  if (content) {
+    isEditing.value = false
+    editingId.value = null
+    form.value = { name: '', content }
+    nameError.value = ''
+    dialogVisible.value = true
+    clearPrefill()
+  }
+})
 
 const loading = ref(false)
 const commands = ref<CommandItem[]>([])
 const dialogVisible = ref(false)
 const isEditing = ref(false)
-const editingName = ref('')
+const editingId = ref<number | null>(null)
 const form = ref({ name: '', content: '' })
+const nameError = ref('')
 
-const canSubmit = computed(() => form.value.name.trim().length > 0 && form.value.content.trim().length > 0)
+const namePattern = /^[a-zA-Z0-9一-龥_-]+$/
+
+const canSubmit = computed(() =>
+  form.value.name.trim().length > 0 &&
+  form.value.content.trim().length > 0 &&
+  namePattern.test(form.value.name)
+)
+
+function validateName() {
+  const name = form.value.name
+  if (name.length === 0) {
+    nameError.value = ''
+  } else if (!namePattern.test(name)) {
+    nameError.value = '名称只能包含字母、数字、中文、下划线和连字符'
+  } else {
+    nameError.value = ''
+  }
+}
 
 watch(visible, (val) => {
   if (val) fetchCommands()
@@ -120,22 +154,25 @@ async function fetchCommands() {
 
 function openCreateDialog() {
   isEditing.value = false
-  editingName.value = ''
+  editingId.value = null
   form.value = { name: '', content: '' }
+  nameError.value = ''
   dialogVisible.value = true
 }
 
 function openEditDialog(cmd: CommandItem) {
   isEditing.value = true
-  editingName.value = cmd.name
+  editingId.value = cmd.id
   form.value = { name: cmd.name, content: cmd.content }
+  nameError.value = ''
   dialogVisible.value = true
 }
 
 function resetForm() {
   form.value = { name: '', content: '' }
   isEditing.value = false
-  editingName.value = ''
+  editingId.value = null
+  nameError.value = ''
 }
 
 async function handleSubmit() {
@@ -143,7 +180,8 @@ async function handleSubmit() {
 
   try {
     if (isEditing.value) {
-      await api.put(`/user-commands/${encodeURIComponent(editingName.value)}`, {
+      await api.put(`/user-commands/${editingId.value}`, {
+        name: form.value.name.trim(),
         content: form.value.content
       })
       ElMessage.success('指令已更新')
@@ -168,7 +206,7 @@ async function handleDelete(cmd: CommandItem) {
       '确认',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
-    await api.delete(`/user-commands/${encodeURIComponent(cmd.name)}`)
+    await api.delete(`/user-commands/${cmd.id}`)
     ElMessage.success(`指令「${cmd.name}」已删除`)
     await fetchCommands()
   } catch {
@@ -282,12 +320,9 @@ function handleClose(done: () => void) {
   font-size: 12px;
   color: var(--aw-ink-muted);
   line-height: 1.4;
-  white-space: pre-line;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
 }
 
 .dialog-btn {
@@ -324,5 +359,18 @@ function handleClose(done: () => void) {
 .dialog-btn-confirm:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+</style>
+
+<style>
+.command-dialog {
+  --el-font-size-base: 14px;
+  --el-font-size-small: 13px;
+  --el-font-size-extra-small: 12px;
+}
+
+.command-preview-tip {
+  max-width: 360px;
+  word-break: break-word;
 }
 </style>

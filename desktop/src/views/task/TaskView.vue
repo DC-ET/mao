@@ -25,6 +25,7 @@
             @edit="startEdit(round.userMessage)"
             @cancel-edit="cancelEdit"
             @confirm-edit="confirmEdit(round.userMessage.id, $event)"
+            @add-to-command="openWithContent"
           />
 
           <!-- 有执行步骤时：显示折叠块 -->
@@ -87,6 +88,7 @@
             @edit="startEdit(activeRound.userMessage)"
             @cancel-edit="cancelEdit"
             @confirm-edit="confirmEdit(activeRound.userMessage.id, $event)"
+            @add-to-command="openWithContent"
           />
           <MessageBubble
             v-for="msg in activeRoundMsgs"
@@ -117,6 +119,7 @@
             @edit="startEdit(msg)"
             @cancel-edit="cancelEdit"
             @confirm-edit="confirmEdit(msg.id, $event)"
+            @add-to-command="openWithContent"
           />
         </template>
 
@@ -200,6 +203,7 @@ import QueuePanel from '../../components/chat/QueuePanel.vue'
 import ApprovalStack from '../../components/chat/ApprovalStack.vue'
 import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout } from '../../composables/usePanelLayout'
+import { useCommandDrawer } from '../../composables/useCommandDrawer'
 
 const route = useRoute()
 const router = useRouter()
@@ -207,6 +211,7 @@ const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const { subscribe } = useStreamWS()
 const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight } = usePanelLayout()
+const { openWithContent } = useCommandDrawer()
 
 const sessionIdParam = computed(() => route.params.sessionId as string)
 const agentId = ref('')

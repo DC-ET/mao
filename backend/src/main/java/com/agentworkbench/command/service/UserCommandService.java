@@ -9,10 +9,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
 public class UserCommandService {
+
+    private static final Pattern NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9\\u4e00-\\u9fa5_-]+$");
 
     private final UserCommandMapper userCommandMapper;
 
@@ -23,6 +26,13 @@ public class UserCommandService {
                         .orderByDesc("created_at"));
     }
 
+    public UserCommand getByIdAndUserId(Long id, Long userId) {
+        return userCommandMapper.selectOne(
+                new QueryWrapper<UserCommand>()
+                        .eq("id", id)
+                        .eq("user_id", userId));
+    }
+
     public UserCommand getByUserIdAndName(Long userId, String name) {
         return userCommandMapper.selectOne(
                 new QueryWrapper<UserCommand>()
@@ -31,7 +41,7 @@ public class UserCommandService {
     }
 
     public UserCommand create(Long userId, String name, String content) {
-        // Check duplicate name
+        validateName(name);
         UserCommand existing = getByUserIdAndName(userId, name);
         if (existing != null) {
             throw new BusinessException(ErrorCode.COMMAND_NAME_DUPLICATE);
@@ -45,21 +55,35 @@ public class UserCommandService {
         return command;
     }
 
-    public UserCommand update(Long userId, String name, String content) {
-        UserCommand command = getByUserIdAndName(userId, name);
+    public UserCommand update(Long userId, Long id, String name, String content) {
+        UserCommand command = getByIdAndUserId(id, userId);
         if (command == null) {
             throw new BusinessException(ErrorCode.COMMAND_NOT_FOUND);
+        }
+        if (name != null && !name.equals(command.getName())) {
+            validateName(name);
+            UserCommand existing = getByUserIdAndName(userId, name);
+            if (existing != null) {
+                throw new BusinessException(ErrorCode.COMMAND_NAME_DUPLICATE);
+            }
+            command.setName(name);
         }
         command.setContent(content);
         userCommandMapper.updateById(command);
         return command;
     }
 
-    public void delete(Long userId, String name) {
-        UserCommand command = getByUserIdAndName(userId, name);
+    private void validateName(String name) {
+        if (name == null || !NAME_PATTERN.matcher(name).matches()) {
+            throw new BusinessException(ErrorCode.COMMAND_NAME_INVALID);
+        }
+    }
+
+    public void delete(Long userId, Long id) {
+        UserCommand command = getByIdAndUserId(id, userId);
         if (command == null) {
             throw new BusinessException(ErrorCode.COMMAND_NOT_FOUND);
         }
-        userCommandMapper.deleteById(command.getId());
+        userCommandMapper.deleteById(id);
     }
 }

@@ -25,11 +25,11 @@ public class UserCommandController {
         return Result.ok(voList);
     }
 
-    @GetMapping("/{name}")
-    public Result<UserCommandVO> get(@AuthenticationPrincipal Long userId, @PathVariable String name) {
-        UserCommand command = userCommandService.getByUserIdAndName(userId, name);
+    @GetMapping("/{id}")
+    public Result<UserCommandVO> get(@AuthenticationPrincipal Long userId, @PathVariable Long id) {
+        UserCommand command = userCommandService.getByIdAndUserId(id, userId);
         if (command == null) {
-            return Result.fail(404, "指令不存在: " + name);
+            return Result.fail(404, "指令不存在");
         }
         return Result.ok(toVO(command));
     }
@@ -41,22 +41,23 @@ public class UserCommandController {
         return Result.ok(toVO(command));
     }
 
-    @PutMapping("/{name}")
+    @PutMapping("/{id}")
     public Result<UserCommandVO> update(@AuthenticationPrincipal Long userId,
-                                        @PathVariable String name,
+                                        @PathVariable Long id,
                                         @RequestBody UpdateCommandRequest request) {
-        UserCommand command = userCommandService.update(userId, name, request.getContent());
+        UserCommand command = userCommandService.update(userId, id, request.getName(), request.getContent());
         return Result.ok(toVO(command));
     }
 
-    @DeleteMapping("/{name}")
-    public Result<Void> delete(@AuthenticationPrincipal Long userId, @PathVariable String name) {
-        userCommandService.delete(userId, name);
+    @DeleteMapping("/{id}")
+    public Result<Void> delete(@AuthenticationPrincipal Long userId, @PathVariable Long id) {
+        userCommandService.delete(userId, id);
         return Result.ok(null);
     }
 
     private UserCommandVO toVO(UserCommand command) {
         UserCommandVO vo = new UserCommandVO();
+        vo.setId(command.getId());
         vo.setName(command.getName());
         vo.setContent(command.getContent());
         return vo;
@@ -64,6 +65,7 @@ public class UserCommandController {
 
     @Data
     public static class UserCommandVO {
+        private Long id;
         private String name;
         private String content;
     }
@@ -78,6 +80,7 @@ public class UserCommandController {
 
     @Data
     public static class UpdateCommandRequest {
+        private String name;
         @NotBlank(message = "指令内容不能为空")
         private String content;
     }

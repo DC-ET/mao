@@ -109,6 +109,9 @@
         <button v-if="canEdit" class="edit-btn" @click="$emit('edit')" title="编辑消息">
           <el-icon :size="12"><Edit /></el-icon>
         </button>
+        <button v-if="role === 'user'" class="add-command-btn" @click="$emit('addToCommand', message.content)" title="添加到我的指令">
+          <el-icon :size="12"><Plus /></el-icon>
+        </button>
         <button class="copy-btn" :class="{ copied }" @click="copyMessage">
           <el-icon :size="12"><CopyDocument /></el-icon>
           <span v-if="copied">已复制</span>
@@ -120,7 +123,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
-import { Document, CopyDocument, Edit, Check, Close } from '@element-plus/icons-vue'
+import { Document, CopyDocument, Edit, Check, Close, Plus } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../composables/useMarkdown'
 import ToolCallGroup from './ToolCallGroup.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
@@ -158,6 +161,7 @@ const emit = defineEmits<{
   edit: []
   cancelEdit: []
   confirmEdit: [content: string]
+  addToCommand: [content: string]
 }>()
 
 // Edit mode state
@@ -707,6 +711,25 @@ async function copyMessage() {
 }
 
 .edit-btn:hover {
+  color: var(--aw-primary);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.add-command-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  border-radius: var(--aw-radius-xs);
+  transition: color 0.15s, background 0.15s;
+}
+
+.add-command-btn:hover {
   color: var(--aw-primary);
   background: rgba(0, 0, 0, 0.04);
 }
