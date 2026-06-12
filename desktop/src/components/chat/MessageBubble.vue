@@ -22,7 +22,7 @@
       <div v-if="role === 'user' && !isEditing" class="message-text user-text" :class="{ collapsed: isUserLong && userCollapsed }">
         <div class="user-text-content">
           <template v-for="(seg, idx) in userParsedSegments" :key="idx">
-            <QuickCommandTag v-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" />
+            <QuickCommandTag v-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" :content="seg.type === 'command' ? getCommandContent(seg.name) : undefined" />
             <span v-else>{{ seg.content }}</span>
           </template>
         </div>
@@ -120,6 +120,29 @@
     </div>
   </div>
 </template>
+
+<script lang="ts">
+import { shallowRef } from 'vue'
+import { api } from '../../api'
+
+// Module-level shared cache for user command content
+const commandContentMap = shallowRef<Record<string, string>>({})
+let commandsFetched = false
+async function ensureCommandContent() {
+  if (commandsFetched) return
+  commandsFetched = true
+  try {
+    const { data } = await api.get('/user-commands')
+    const map: Record<string, string> = {}
+    for (const cmd of data || []) {
+      map[cmd.name] = cmd.content
+    }
+    commandContentMap.value = map
+  } catch {
+    // ignore fetch errors
+  }
+}
+</script>
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
@@ -280,6 +303,16 @@ const userParsedSegments = computed(() => {
   if (role.value !== 'user') return []
   return parseQuickCommandSegments(props.message.content || '')
 })
+
+// Fetch commands when user messages with command tags are rendered
+const hasCommandSegments = computed(() =>
+  role.value === 'user' && userParsedSegments.value.some(s => s.type === 'command')
+)
+watch(hasCommandSegments, (val) => { if (val) ensureCommandContent() }, { immediate: true })
+
+function getCommandContent(name: string): string | undefined {
+  return commandContentMap.value[name]
+}
 
 function renderSegmentMarkdown(content: string) {
   return renderMarkdown(content)

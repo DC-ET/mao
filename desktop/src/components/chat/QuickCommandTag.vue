@@ -1,5 +1,17 @@
 <template>
-  <span class="quick-command-tag" :class="`tag-${type}`">
+  <el-tooltip
+    v-if="content"
+    :content="content"
+    placement="top"
+    :show-after="300"
+    :popper-options="{ strategy: 'fixed' }"
+    popper-class="quick-command-tag-tip"
+  >
+    <span class="quick-command-tag" :class="`tag-${type}`">
+      {{ name }}
+    </span>
+  </el-tooltip>
+  <span v-else class="quick-command-tag" :class="`tag-${type}`">
     {{ name }}
   </span>
 </template>
@@ -8,8 +20,16 @@
 defineProps<{
   type: 'skill' | 'command'
   name: string
+  content?: string
 }>()
 </script>
+
+<style>
+.quick-command-tag-tip {
+  max-width: 400px;
+  word-break: break-word;
+}
+</style>
 
 <style scoped>
 .quick-command-tag {
