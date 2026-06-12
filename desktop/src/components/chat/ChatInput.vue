@@ -129,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
@@ -281,7 +281,7 @@ const editor = useEditor({
     QuickCommandNode,
   ],
   editorProps: {
-    handlePaste: (view, event) => {
+    handlePaste: (_view, event) => {
       const items = event.clipboardData?.items
       if (items) {
         for (const item of Array.from(items)) {
@@ -469,12 +469,6 @@ watch(() => props.isNewTask, (val) => {
   if (val) nextTick(() => editor.value?.commands.focus())
 })
 
-// Update placeholder when loading state changes
-watch(() => props.loading, (loading) => {
-  if (!editor.value) return
-  // Reconfigure placeholder — TipTap doesn't support dynamic placeholder easily,
-  // so we update the data-placeholder on the ProseMirror element via extension options
-})
 
 defineExpose({ focusInput })
 
