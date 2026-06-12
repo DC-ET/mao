@@ -234,7 +234,7 @@ function handleCommandSelect(item: QuickCommand) {
   if (!nodeType) return
 
   let tr = state.tr
-  // Delete from '/' to cursor
+  // Delete from trigger character to cursor
   tr = tr.delete(from, to)
   // Insert quick command node
   const node = nodeType.create({ commandType: item.type, commandName: item.name })
@@ -354,29 +354,32 @@ function detectSlashTrigger() {
   const { from } = state.selection
   const textBefore = state.doc.textBetween(Math.max(0, from - 50), from, '\n', '\n')
 
-  const lastSlashIdx = textBefore.lastIndexOf('/')
-  if (lastSlashIdx === -1) {
+  // Find the last trigger character ('/' or '、')
+  const slashIdx = textBefore.lastIndexOf('/')
+  const commaIdx = textBefore.lastIndexOf('、')
+  const lastTriggerIdx = Math.max(slashIdx, commaIdx)
+  if (lastTriggerIdx === -1) {
     if (panelVisible.value) closePanel()
     return
   }
 
-  // '/' must be at start or preceded by whitespace
-  if (lastSlashIdx > 0 && !/\s/.test(textBefore[lastSlashIdx - 1])) {
+  // Trigger must be at start or preceded by whitespace
+  if (lastTriggerIdx > 0 && !/\s/.test(textBefore[lastTriggerIdx - 1])) {
     if (panelVisible.value) closePanel()
     return
   }
 
-  // No space between '/' and cursor
-  const afterSlash = textBefore.substring(lastSlashIdx + 1)
-  if (/\s/.test(afterSlash)) {
+  // No space between trigger and cursor
+  const afterTrigger = textBefore.substring(lastTriggerIdx + 1)
+  if (/\s/.test(afterTrigger)) {
     if (panelVisible.value) closePanel()
     return
   }
 
-  // Store the absolute document range: from '/' to current cursor
-  const slashDocPos = from - (textBefore.length - lastSlashIdx)
-  slashRange.value = { from: slashDocPos, to: from }
-  panelFilter.value = afterSlash
+  // Store the absolute document range: from trigger to current cursor
+  const triggerDocPos = from - (textBefore.length - lastTriggerIdx)
+  slashRange.value = { from: triggerDocPos, to: from }
+  panelFilter.value = afterTrigger
   if (!panelVisible.value) {
     ensureCommandsLoaded()
     panelVisible.value = true

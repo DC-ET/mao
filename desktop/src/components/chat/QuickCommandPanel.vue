@@ -5,31 +5,50 @@
     </div>
     <template v-else>
       <div v-if="filteredSkills.length > 0" class="panel-group">
-        <div class="group-label">Skills</div>
-        <div
+        <div class="group-label">技能</div>
+        <el-tooltip
           v-for="(item, idx) in filteredSkills"
           :key="'skill-' + item.name"
-          class="panel-item"
-          :class="{ active: selectedIndex === getGlobalIndex('skill', idx) }"
-          @mouseenter="selectedIndex = getGlobalIndex('skill', idx)"
-          @click="selectItem(item)"
+          :content="item.description || item.name"
+          placement="top-start"
+          :fallback-placements="['top', 'top-end', 'right-start', 'right']"
+          :show-after="300"
+          :disabled="!item.description"
+          popper-class="quick-command-tip"
         >
-          <span class="item-name">{{ item.name }}</span>
-          <span v-if="item.description" class="item-desc">{{ item.description }}</span>
-        </div>
+          <div
+            class="panel-item"
+            :class="{ active: selectedIndex === getGlobalIndex('skill', idx) }"
+            @mouseenter="selectedIndex = getGlobalIndex('skill', idx)"
+            @click="selectItem(item)"
+          >
+            <span class="item-name">{{ item.name }}</span>
+            <span v-if="item.description" class="item-desc">{{ item.description }}</span>
+          </div>
+        </el-tooltip>
       </div>
       <div v-if="filteredCommands.length > 0" class="panel-group">
-        <div class="group-label">Commands</div>
-        <div
+        <div class="group-label">我的指令</div>
+        <el-tooltip
           v-for="(item, idx) in filteredCommands"
           :key="'command-' + item.name"
-          class="panel-item"
-          :class="{ active: selectedIndex === getGlobalIndex('command', idx) }"
-          @mouseenter="selectedIndex = getGlobalIndex('command', idx)"
-          @click="selectItem(item)"
+          :content="item.description || item.name"
+          placement="top-start"
+          :fallback-placements="['top', 'top-end', 'right-start', 'right']"
+          :show-after="300"
+          :disabled="!item.description"
+          popper-class="quick-command-tip"
         >
-          <span class="item-name">{{ item.name }}</span>
-        </div>
+          <div
+            class="panel-item"
+            :class="{ active: selectedIndex === getGlobalIndex('command', idx) }"
+            @mouseenter="selectedIndex = getGlobalIndex('command', idx)"
+            @click="selectItem(item)"
+          >
+            <span class="item-name">{{ item.name }}</span>
+            <span v-if="item.description" class="item-desc">{{ item.description }}</span>
+          </div>
+        </el-tooltip>
       </div>
     </template>
   </div>
@@ -56,13 +75,13 @@ const selectedIndex = ref(0)
 const filteredSkills = computed(() => {
   if (!props.filter) return props.skills
   const q = props.filter.toLowerCase()
-  return props.skills.filter(s => s.name.toLowerCase().startsWith(q))
+  return props.skills.filter(s => s.name.toLowerCase().includes(q))
 })
 
 const filteredCommands = computed(() => {
   if (!props.filter) return props.commands
   const q = props.filter.toLowerCase()
-  return props.commands.filter(c => c.name.toLowerCase().startsWith(q))
+  return props.commands.filter(c => c.name.toLowerCase().includes(q))
 })
 
 const filteredItems = computed(() => [...filteredSkills.value, ...filteredCommands.value])
@@ -194,5 +213,10 @@ defineExpose({ moveUp, moveDown, confirmSelection })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.quick-command-tip {
+  max-width: 360px;
+  word-break: break-word;
 }
 </style>

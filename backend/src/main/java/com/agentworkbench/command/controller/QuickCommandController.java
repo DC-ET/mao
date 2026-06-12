@@ -69,7 +69,12 @@ public class QuickCommandController {
         // 2. Collect user commands
         List<UserCommand> commands = userCommandService.listByUserId(userId);
         List<QuickCommandItem> commandItems = commands.stream()
-                .map(c -> new QuickCommandItem("command", c.getName(), ""))
+                .map(c -> {
+                    String content = c.getContent();
+                    String desc = content != null && content.length() > 100
+                            ? content.substring(0, 100) : (content != null ? content : "");
+                    return new QuickCommandItem("command", c.getName(), desc);
+                })
                 .collect(Collectors.toList());
 
         // 3. Build response

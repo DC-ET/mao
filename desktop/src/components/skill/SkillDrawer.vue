@@ -53,20 +53,30 @@
             <div class="skill-card-header">
               <div class="skill-name">{{ skill.name }}</div>
               <div class="skill-actions">
-                <el-tooltip content="查看内容" :show-after="300" placement="top">
-                  <button class="skill-btn" @click="handleView(skill)">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-                    </svg>
+                <template v-if="deletingName === skill.name">
+                  <button class="skill-btn skill-btn-confirm-delete" @click="confirmDelete(skill)">
+                    <el-icon :size="14"><Check /></el-icon>
                   </button>
-                </el-tooltip>
-                <el-tooltip content="删除" :show-after="300" placement="top">
-                  <button class="skill-btn skill-btn-danger" @click="handleDelete(skill)">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
+                  <button class="skill-btn" @click="deletingName = null">
+                    <el-icon :size="14"><Close /></el-icon>
                   </button>
-                </el-tooltip>
+                </template>
+                <template v-else>
+                  <el-tooltip content="查看内容" :show-after="300" placement="top">
+                    <button class="skill-btn" @click="handleView(skill)">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                      </svg>
+                    </button>
+                  </el-tooltip>
+                  <el-tooltip content="删除" :show-after="300" placement="top">
+                    <button class="skill-btn skill-btn-danger" @click="deletingName = skill.name">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    </button>
+                  </el-tooltip>
+                </template>
               </div>
             </div>
             <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
@@ -94,7 +104,8 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import { Check, Close } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useSkillDrawer } from '../../composables/useSkillDrawer'
 
@@ -121,6 +132,7 @@ const currentDoc = ref<SkillDetail | null>(null)
 const isDragover = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
+const deletingName = ref<string | null>(null)
 
 watch(visible, (val) => {
   if (val) fetchSkills()
@@ -146,18 +158,14 @@ async function handleView(skill: SkillDoc) {
   }
 }
 
-async function handleDelete(skill: SkillDoc) {
+async function confirmDelete(skill: SkillDoc) {
   try {
-    await ElMessageBox.confirm(
-      `确认删除技能「${skill.name}」？`,
-      '确认',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
-    )
     await api.delete(`/user-skills/${skill.name}`)
     ElMessage.success(`技能「${skill.name}」已删除`)
+    deletingName.value = null
     await fetchSkills()
   } catch {
-    // Cancelled or error
+    // Error handled by interceptor
   }
 }
 
@@ -370,6 +378,10 @@ async function uploadFiles(files: File[]) {
 }
 
 .skill-btn-danger:hover {
+  color: var(--aw-danger);
+}
+
+.skill-btn-confirm-delete {
   color: var(--aw-danger);
 }
 
