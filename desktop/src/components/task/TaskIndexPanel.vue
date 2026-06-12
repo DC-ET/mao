@@ -109,14 +109,14 @@
               class="group-toggle"
               @click="showMore(group.key, group.sessions.length)"
             >
-              Show more
+              展开更多
             </div>
             <div
               v-else-if="group.sessions.length > DEFAULT_VISIBLE"
               class="group-toggle"
               @click="showLess(group.key)"
             >
-              Show less
+              收起
             </div>
             </template>
           </div>
