@@ -1,14 +1,19 @@
 package com.agentworkbench.harness.core;
 
+import com.agentworkbench.command.entity.UserCommand;
+import com.agentworkbench.command.service.UserCommandService;
 import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.harness.skill.SkillLoader;
+import com.agentworkbench.harness.skill.SkillSyncService;
 import com.agentworkbench.harness.tool.Tool;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Prompt 构建引擎
@@ -22,8 +27,13 @@ public class PromptEngine {
     private static final Set<String> TASK_TOOL_NAMES = Set.of(
             "task_create", "task_update", "task_list", "task_delete");
 
+    private static final Pattern SKILL_PATTERN = Pattern.compile("\\$\\{([^}]+)\\}\\$");
+    private static final Pattern COMMAND_PATTERN = Pattern.compile("#\\{([^}]+\\})#");
+
     private final SkillLoader skillLoader;
     private final PathSandbox pathSandbox;
+    private final UserCommandService userCommandService;
+    private final SkillSyncService skillSyncService;
 
     /**
      * 构建 LLM 请求
@@ -39,9 +49,13 @@ public class PromptEngine {
                 .build());
 
         // 2. Conversation history (may include compaction summaries injected as system messages)
-        messages.addAll(context.getMessages());
+        List<ChatRequest.Message> history = context.getMessages();
 
-        // 3. Build tool definitions
+        // 3. Parse quick command markers and replace in user messages
+        replaceQuickCommandMarkers(history, context);
+        messages.addAll(history);
+
+        // 4. Build tool definitions
         List<ChatRequest.ToolDefinition> tools = buildToolDefinitions(context);
 
         return ChatRequest.builder()
@@ -49,6 +63,69 @@ public class PromptEngine {
                 .tools(tools.isEmpty() ? null : tools)
                 .stream(true)
                 .build();
+    }
+
+    /**
+     * 解析用户消息中的快捷指令标记，原地替换：
+     * - Skill: ${skill_name}$ → /skill_name
+     * - Command: #{command_name}# → command content
+     */
+    private void replaceQuickCommandMarkers(List<ChatRequest.Message> messages, AgentExecutionContext context) {
+        Long userId = context.getUserId();
+
+        for (int i = 0; i < messages.size(); i++) {
+            ChatRequest.Message msg = messages.get(i);
+            if (!"user".equals(msg.getRole()) || !(msg.getContent() instanceof String)) {
+                continue;
+            }
+
+            String content = (String) msg.getContent();
+            String replaced = content;
+
+            // Replace Skill markers: ${skill_name}$ → /skill_name
+            Matcher skillMatcher = SKILL_PATTERN.matcher(replaced);
+            StringBuffer sb = new StringBuffer();
+            while (skillMatcher.find()) {
+                String skillName = skillMatcher.group(1);
+                if (skillLoader.hasSkill(skillName) || hasUserSkill(skillName, userId)) {
+                    skillMatcher.appendReplacement(sb, "/" + Matcher.quoteReplacement(skillName));
+                } else {
+                    log.warn("Skill not found for marker: ${{}}$", skillName);
+                }
+            }
+            skillMatcher.appendTail(sb);
+            replaced = sb.toString();
+
+            // Replace Command markers: #{command_name}# → command content
+            Matcher commandMatcher = COMMAND_PATTERN.matcher(replaced);
+            sb = new StringBuffer();
+            while (commandMatcher.find()) {
+                String commandName = commandMatcher.group(1);
+                UserCommand command = userId != null
+                        ? userCommandService.getByUserIdAndName(userId, commandName)
+                        : null;
+                if (command != null) {
+                    commandMatcher.appendReplacement(sb, Matcher.quoteReplacement(command.getContent()));
+                } else {
+                    log.warn("Command not found for marker: #{{}}#", commandName);
+                }
+            }
+            commandMatcher.appendTail(sb);
+            replaced = sb.toString();
+
+            if (!replaced.equals(content)) {
+                messages.set(i, ChatRequest.Message.builder()
+                        .role("user")
+                        .content(replaced)
+                        .build());
+            }
+        }
+    }
+
+    private boolean hasUserSkill(String skillName, Long userId) {
+        if (userId == null) return false;
+        return skillSyncService.getUserSkillDocuments(userId).stream()
+                .anyMatch(d -> d.getName().equals(skillName));
     }
 
     private String buildSystemPrompt(AgentExecutionContext context) {

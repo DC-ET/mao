@@ -20,7 +20,12 @@
 
       <!-- 用户消息：正常态 -->
       <div v-if="role === 'user' && !isEditing" class="message-text user-text" :class="{ collapsed: isUserLong && userCollapsed }">
-        <div class="user-text-content">{{ message.content }}</div>
+        <div class="user-text-content">
+          <template v-for="(seg, idx) in userParsedSegments" :key="idx">
+            <QuickCommandTag v-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" />
+            <span v-else>{{ seg.content }}</span>
+          </template>
+        </div>
         <button v-if="isUserLong" class="user-collapse-toggle" @click="userCollapsed = !userCollapsed">
           {{ userCollapsed ? '展开全部' : '收起' }}
         </button>
@@ -120,6 +125,8 @@ import { renderMarkdown } from '../../composables/useMarkdown'
 import ToolCallGroup from './ToolCallGroup.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
 import FileChangePanel from './FileChangePanel.vue'
+import QuickCommandTag from './QuickCommandTag.vue'
+import { parseQuickCommandSegments } from '../../utils/quick-command-parser'
 import {
   normalizeMessageRole,
   type ChatMessage,
@@ -264,6 +271,11 @@ const renderedContent = computed(() => renderMarkdown(props.message.content))
 
 const userLineCount = computed(() => (props.message.content || '').split('\n').length)
 const isUserLong = computed(() => role.value === 'user' && userLineCount.value > 10)
+
+const userParsedSegments = computed(() => {
+  if (role.value !== 'user') return []
+  return parseQuickCommandSegments(props.message.content || '')
+})
 
 function renderSegmentMarkdown(content: string) {
   return renderMarkdown(content)

@@ -44,6 +44,13 @@
           </svg>
         </div>
       </el-tooltip>
+      <el-tooltip content="指令" :show-after="100" placement="bottom">
+        <div class="theme-toggle" @click="toggleCommandDrawer()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+          </svg>
+        </div>
+      </el-tooltip>
       <el-tooltip :content="isDark ? '切换为浅色' : '切换为深色'" :show-after="100" placement="bottom">
         <div class="theme-toggle" @click="toggleTheme">
           <el-icon :size="16">
@@ -77,12 +84,14 @@ import { useTheme } from '../../utils/theme'
 import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useSkillDrawer } from '../../composables/useSkillDrawer'
+import { useCommandDrawer } from '../../composables/useCommandDrawer'
 
 const { isDark, toggleTheme } = useTheme()
 const sessionStore = useSessionStore()
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
 const { leftCollapsed, rightCollapsed, toggleLeft, toggleRight } = usePanelLayout()
 const { toggle: toggleSkillDrawer } = useSkillDrawer()
+const { toggle: toggleCommandDrawer } = useCommandDrawer()
 
 function toggleTerminal() {
   const session = sessionStore.activeSession

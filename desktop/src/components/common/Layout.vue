@@ -6,6 +6,7 @@
     </main>
     <TerminalPanel />
     <SkillDrawer />
+    <CommandDrawer />
   </div>
 </template>
 
@@ -13,6 +14,7 @@
 import TopNav from './TopNav.vue'
 import TerminalPanel from '../terminal/TerminalPanel.vue'
 import SkillDrawer from '../skill/SkillDrawer.vue'
+import CommandDrawer from '../command/CommandDrawer.vue'
 </script>
 
 <style scoped>

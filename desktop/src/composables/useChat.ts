@@ -28,6 +28,39 @@ export interface ApprovalItem {
 // Module-level flag to ensure IPC listeners are registered only once
 let approvalListenerSetup = false
 
+const SKILL_ONLY = /^\$\{([^}]+)\}\$$/
+const SKILL_PATTERN = /\$\{[^}]+\}\$/g
+const COMMAND_PATTERN = /#\{([^}]+)\}#/g
+
+async function deriveTitle(text: string): Promise<string> {
+  const trimmed = text.trim()
+
+  // Skill-only: "/skill_name"
+  const soleSkill = trimmed.match(SKILL_ONLY)
+  if (soleSkill) return `/${soleSkill[1]}`
+
+  // Strip skill markers from mixed content
+  let result = trimmed.replace(SKILL_PATTERN, '')
+
+  // Expand command markers to their content
+  const cmdNames = [...result.matchAll(COMMAND_PATTERN)].map(m => m[1])
+  if (cmdNames.length > 0) {
+    try {
+      const { data } = await api.get('/user-commands')
+      const cmdMap: Record<string, string> = {}
+      for (const cmd of data || []) {
+        cmdMap[cmd.name] = cmd.content
+      }
+      result = result.replace(COMMAND_PATTERN, (_, name) => cmdMap[name] || _)
+    } catch {
+      // If fetch fails, leave markers as-is
+    }
+  }
+
+  result = result.trim()
+  return result.length > 50 ? result.substring(0, 50) : result
+}
+
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
   const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks } = useStreamWS()
@@ -217,9 +250,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       if (text) {
         const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
         if (currentSession && (!currentSession.title || currentSession.title === '未命名会话')) {
-          const title = text.length > 50 ? text.substring(0, 50) : text
-          sessionStore.updateSession(sid, { title })
-          api.patch(`/sessions/${sid}`, { title }).catch(() => {})
+          const derivedTitle = await deriveTitle(text)
+          sessionStore.updateSession(sid, { title: derivedTitle })
+          api.patch(`/sessions/${sid}`, { title: derivedTitle }).catch(() => {})
         }
       }
 

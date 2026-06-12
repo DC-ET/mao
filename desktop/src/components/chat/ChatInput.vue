@@ -35,19 +35,18 @@
       <div class="config-divider"></div>
     </div>
 
-    <!-- Textarea area -->
+    <!-- Editor area -->
     <div class="textarea-area" :class="{ 'new-task-textarea': isNewTask }">
-      <textarea
-        ref="textareaRef"
-        v-model="inputText"
-        class="chat-textarea"
-        :placeholder="loading ? 'Agent 执行中，发送的消息将进入队列...' : placeholder"
-        rows="1"
-        @input="autoResize"
-        @keydown.enter.ctrl.prevent="handleSendKey"
-        @keydown.enter.meta.prevent="handleSendKey"
-        @paste="handlePaste"
+      <QuickCommandPanel
+        ref="quickCommandPanelRef"
+        :visible="panelVisible"
+        :skills="quickCommands.skills"
+        :commands="quickCommands.commands"
+        :filter="panelFilter"
+        @select="handleCommandSelect"
+        @close="closePanel"
       />
+      <EditorContent :editor="editor" class="rich-editor" />
       <div class="resize-handle" title="拖拽调整大小">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
           <path d="M13 1L1 13" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
@@ -130,13 +129,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { useEditor, EditorContent } from '@tiptap/vue-3'
+import StarterKit from '@tiptap/starter-kit'
+import Placeholder from '@tiptap/extension-placeholder'
+import { TextSelection } from '@tiptap/pm/state'
 import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
 import AgentSelector from '../task/AgentSelector.vue'
 import ModelSelector from './ModelSelector.vue'
+import QuickCommandPanel from './QuickCommandPanel.vue'
+import { QuickCommandNode } from './tiptap/QuickCommandNode'
 import type { Agent } from '../../stores/agent'
+import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
+import { api } from '../../api'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -177,13 +184,21 @@ const emit = defineEmits<{
   'select:model': [modelId: number, modelIdStr: string]
 }>()
 
-const textareaRef = ref<HTMLTextAreaElement>()
-const inputText = ref('')
+// ===== State =====
 const pendingFiles = ref<File[]>([])
 const filePreviewUrls = ref<string[]>([])
+const editorContent = ref('')
 
+// Quick command state
+const quickCommandPanelRef = ref<InstanceType<typeof QuickCommandPanel>>()
+const quickCommands = ref<QuickCommandsData>({ skills: [], commands: [] })
+const panelVisible = ref(false)
+const panelFilter = ref('')
+const slashRange = ref<{ from: number; to: number } | null>(null)
+
+// ===== Computed =====
 const canSend = computed(() => {
-  if (!(inputText.value.trim().length > 0 || pendingFiles.value.length > 0)) return false
+  if (!(editorContent.value.trim().length > 0 || pendingFiles.value.length > 0)) return false
   if (props.isNewTask && !props.selectedAgentId) return false
   return true
 })
@@ -194,33 +209,181 @@ const dirName = computed(() => {
   return parts[parts.length - 1] || props.workspace
 })
 
-function autoResize() {
-  const el = textareaRef.value
-  if (!el) return
-  el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 240) + 'px'
-}
+// ===== Quick commands: load =====
 
-function handlePaste(event: ClipboardEvent) {
-  const items = event.clipboardData?.items
-  if (!items) return
-  for (const item of Array.from(items)) {
-    if (!item.type.startsWith('image/')) continue
-    if (pendingFiles.value.length >= 10) {
-      ElMessage.warning('最多上传 10 张图片')
-      break
-    }
-    const file = item.getAsFile()
-    if (!file) continue
-    if (file.size > 10 * 1024 * 1024) {
-      ElMessage.warning(`粘贴的图片超过 10MB 限制`)
-      continue
-    }
-    const idx = pendingFiles.value.length
-    pendingFiles.value.push(file)
-    filePreviewUrls.value[idx] = URL.createObjectURL(file)
+async function ensureCommandsLoaded() {
+  try {
+    const { data } = await api.get('/quick-commands')
+    quickCommands.value = data || { skills: [], commands: [] }
+  } catch {
+    // Error handled by interceptor
   }
 }
+
+// ===== Quick commands: select =====
+
+function handleCommandSelect(item: QuickCommand) {
+  if (!editor.value || !slashRange.value) return
+
+  const ed = editor.value
+  const { from, to } = slashRange.value
+
+  // Build a ProseMirror transaction directly
+  const { state, dispatch } = ed.view
+  const nodeType = state.schema.nodes.quickCommand
+  if (!nodeType) return
+
+  let tr = state.tr
+  // Delete from '/' to cursor
+  tr = tr.delete(from, to)
+  // Insert quick command node
+  const node = nodeType.create({ commandType: item.type, commandName: item.name })
+  tr = tr.insert(from, node)
+  // Insert trailing space
+  const space = state.schema.text(' ')
+  tr = tr.insert(from + node.nodeSize, space)
+  // Set cursor after the space
+  tr = tr.setSelection(TextSelection.near(tr.doc.resolve(from + node.nodeSize + 1)))
+  dispatch(tr)
+
+  ed.commands.focus()
+  closePanel()
+}
+
+function closePanel() {
+  panelVisible.value = false
+  panelFilter.value = ''
+  slashRange.value = null
+}
+
+// ===== Editor =====
+
+const editor = useEditor({
+  extensions: [
+    StarterKit.configure({
+      heading: false,
+      codeBlock: false,
+      blockquote: false,
+      horizontalRule: false,
+      bulletList: false,
+      orderedList: false,
+      listItem: false,
+      code: false,
+      bold: false,
+      italic: false,
+      strike: false,
+    }),
+    Placeholder.configure({
+      placeholder: props.loading
+        ? 'Agent 执行中，发送的消息将进入队列...'
+        : props.placeholder,
+    }),
+    QuickCommandNode,
+  ],
+  editorProps: {
+    handlePaste: (view, event) => {
+      const items = event.clipboardData?.items
+      if (items) {
+        for (const item of Array.from(items)) {
+          if (item.type.startsWith('image/')) {
+            if (pendingFiles.value.length >= 10) {
+              ElMessage.warning('最多上传 10 张图片')
+              break
+            }
+            const file = item.getAsFile()
+            if (!file) continue
+            if (file.size > 10 * 1024 * 1024) {
+              ElMessage.warning('粘贴的图片超过 10MB 限制')
+              continue
+            }
+            const idx = pendingFiles.value.length
+            pendingFiles.value.push(file)
+            filePreviewUrls.value[idx] = URL.createObjectURL(file)
+            return true
+          }
+        }
+      }
+      // Let TipTap handle text paste (strips formatting by default)
+      return false
+    },
+    handleKeyDown: (_view, event) => {
+      // Panel navigation
+      if (panelVisible.value) {
+        if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          quickCommandPanelRef.value?.moveUp()
+          return true
+        }
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          quickCommandPanelRef.value?.moveDown()
+          return true
+        }
+        if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
+          event.preventDefault()
+          quickCommandPanelRef.value?.confirmSelection()
+          return true
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          closePanel()
+          return true
+        }
+      }
+
+      // Ctrl/Cmd+Enter to send
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault()
+        handleSend()
+        return true
+      }
+      return false
+    },
+  },
+  onUpdate: ({ editor: ed }) => {
+    editorContent.value = ed.getText()
+    detectSlashTrigger()
+  },
+})
+
+// ===== Slash trigger detection =====
+
+function detectSlashTrigger() {
+  if (!editor.value) return
+  const { state } = editor.value.view
+  const { from } = state.selection
+  const textBefore = state.doc.textBetween(Math.max(0, from - 50), from, '\n', '\n')
+
+  const lastSlashIdx = textBefore.lastIndexOf('/')
+  if (lastSlashIdx === -1) {
+    if (panelVisible.value) closePanel()
+    return
+  }
+
+  // '/' must be at start or preceded by whitespace
+  if (lastSlashIdx > 0 && !/\s/.test(textBefore[lastSlashIdx - 1])) {
+    if (panelVisible.value) closePanel()
+    return
+  }
+
+  // No space between '/' and cursor
+  const afterSlash = textBefore.substring(lastSlashIdx + 1)
+  if (/\s/.test(afterSlash)) {
+    if (panelVisible.value) closePanel()
+    return
+  }
+
+  // Store the absolute document range: from '/' to current cursor
+  const slashDocPos = from - (textBefore.length - lastSlashIdx)
+  slashRange.value = { from: slashDocPos, to: from }
+  panelFilter.value = afterSlash
+  if (!panelVisible.value) {
+    ensureCommandsLoaded()
+    panelVisible.value = true
+  }
+}
+
+// ===== File handling =====
 
 function handleFileSelect(event: Event) {
   const input = event.target as HTMLInputElement
@@ -254,19 +417,23 @@ function removeFile(index: number) {
   filePreviewUrls.value.splice(index, 1)
 }
 
+// ===== Send =====
+
 function handleSend() {
-  if (!canSend.value) return
-  emit('send', inputText.value.trim(), [...pendingFiles.value])
-  inputText.value = ''
+  if (!canSend.value || !editor.value) return
+  const text = editor.value.getText().trim()
+  if (!text && pendingFiles.value.length === 0) return
+
+  emit('send', text, [...pendingFiles.value])
+
+  editor.value.commands.clearContent()
+  editorContent.value = ''
   filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
   pendingFiles.value = []
   filePreviewUrls.value = []
-  nextTick(autoResize)
 }
 
-function handleSendKey() {
-  handleSend()
-}
+// ===== Other =====
 
 function openWorkspace() {
   if (!props.workspace) return
@@ -294,17 +461,26 @@ async function selectWorkspace() {
   }
 }
 
+function focusInput() {
+  nextTick(() => editor.value?.commands.focus())
+}
+
 watch(() => props.isNewTask, (val) => {
-  if (val) nextTick(() => textareaRef.value?.focus())
+  if (val) nextTick(() => editor.value?.commands.focus())
 })
 
-function focusInput() {
-  nextTick(() => textareaRef.value?.focus())
-}
+// Update placeholder when loading state changes
+watch(() => props.loading, (loading) => {
+  if (!editor.value) return
+  // Reconfigure placeholder — TipTap doesn't support dynamic placeholder easily,
+  // so we update the data-placeholder on the ProseMirror element via extension options
+})
 
 defineExpose({ focusInput })
 
-onMounted(autoResize)
+onBeforeUnmount(() => {
+  editor.value?.destroy()
+})
 </script>
 
 <style scoped>
@@ -323,26 +499,32 @@ onMounted(autoResize)
   box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.08);
 }
 
-/* Textarea area */
+/* Editor area */
 .textarea-area {
   position: relative;
-  padding: 16px 16px 4px;
+  padding: 0px 16px;
 }
 
 .textarea-area.new-task-textarea {
   margin: 0 12px;
-  padding: 14px 14px 4px;
+  padding: 0px 14px;
   background: var(--aw-canvas-parchment);
   border-radius: 12px;
 }
 
-.chat-textarea {
+/* TipTap editor container */
+.rich-editor {
+  width: 100%;
+  min-height: 24px;
+  max-height: 240px;
+}
+
+:deep(.rich-editor .ProseMirror) {
   width: 100%;
   min-height: 24px;
   max-height: 240px;
   border: none;
   outline: none;
-  resize: none;
   background: transparent;
   font-family: var(--aw-font-text);
   font-size: var(--aw-text-caption);
@@ -350,10 +532,47 @@ onMounted(autoResize)
   color: var(--aw-body);
   padding: 0;
   overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.chat-textarea::placeholder {
+:deep(.rich-editor .ProseMirror p.is-editor-empty:first-child::before) {
+  content: attr(data-placeholder);
   color: var(--aw-ink-muted-48);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+/* Tag chips in editor */
+:deep(.editor-tag) {
+  display: inline;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+  vertical-align: baseline;
+  letter-spacing: -0.1px;
+  cursor: default;
+}
+
+:deep(.editor-tag-skill) {
+  background: rgba(0, 102, 204, 0.12);
+  color: #0066cc;
+}
+
+:deep(.editor-tag-command) {
+  background: rgba(124, 58, 237, 0.12);
+  color: #7c3aed;
+}
+
+:deep([data-theme="dark"] .editor-tag-skill) {
+  background: rgba(41, 151, 255, 0.18);
+  color: #5b9bd5;
+}
+
+:deep([data-theme="dark"] .editor-tag-command) {
+  background: rgba(167, 139, 250, 0.18);
+  color: #a78bfa;
 }
 
 .resize-handle {
@@ -465,7 +684,6 @@ onMounted(autoResize)
   cursor: pointer;
   transition: color 0.15s;
 }
-
 
 .workspace-indicator.has-workspace {
   color: var(--aw-ink-muted-80);

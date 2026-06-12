@@ -25,11 +25,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.agentworkbench.session.util.TitleGenerator;
+import com.agentworkbench.command.entity.UserCommand;
+import com.agentworkbench.command.service.UserCommandService;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -46,6 +49,7 @@ public class SessionService {
     private final PathSandbox pathSandbox;
     private final ObjectMapper objectMapper;
     private final EnvironmentInfoProvider environmentInfoProvider;
+    private final UserCommandService userCommandService;
 
     public Session createSession(Long userId, Long agentId, String title) {
         return createSession(userId, agentId, title, "CLOUD");
@@ -214,7 +218,8 @@ public class SessionService {
         // Auto-generate title from first user message
         if ("USER".equals(role) && session != null) {
             if (session.getTitle() != null && (session.getTitle().equals("未命名会话") || session.getTitle().isBlank())) {
-                String autoTitle = TitleGenerator.generate(content);
+                String textForTitle = preprocessForTitle(content, session.getUserId());
+                String autoTitle = TitleGenerator.generate(textForTitle);
                 if (autoTitle != null) {
                     session.setTitle(autoTitle);
                     sessionMapper.updateById(session);
@@ -256,7 +261,8 @@ public class SessionService {
         // Auto-generate title from first user message (extract text for title)
         if ("USER".equals(role) && session != null) {
             if (session.getTitle() != null && (session.getTitle().equals("未命名会话") || session.getTitle().isBlank())) {
-                String textForTitle = content instanceof String s ? s : extractTextFromContent(content);
+                String rawText = content instanceof String s ? s : extractTextFromContent(content);
+                String textForTitle = preprocessForTitle(rawText, session.getUserId());
                 String autoTitle = TitleGenerator.generate(textForTitle);
                 if (autoTitle != null) {
                     session.setTitle(autoTitle);
@@ -266,6 +272,19 @@ public class SessionService {
         }
 
         return message;
+    }
+
+    /**
+     * Strip skill markers and expand command markers for title generation.
+     */
+    private String preprocessForTitle(String text, Long userId) {
+        if (text == null) return null;
+        Map<String, String> cmdContentMap = Collections.emptyMap();
+        if (text.contains("#{") && userId != null) {
+            cmdContentMap = userCommandService.listByUserId(userId).stream()
+                    .collect(Collectors.toMap(UserCommand::getName, UserCommand::getContent, (a, b) -> a));
+        }
+        return TitleGenerator.preprocessForTitle(text, cmdContentMap);
     }
 
     private String extractTextFromContent(Object content) {
