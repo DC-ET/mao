@@ -15,8 +15,8 @@ defineProps<{
 .quick-command-tag {
   display: inline-flex;
   align-items: center;
-  padding: 1px 8px;
-  border-radius: 999px;
+  padding: 2px 8px;
+  border-radius: 10px;
   font-weight: 500;
   line-height: 1.4;
   vertical-align: baseline;
@@ -24,22 +24,22 @@ defineProps<{
 }
 
 .tag-skill {
-  background: rgba(0, 102, 204, 0.12);
-  color: var(--aw-primary);
+  background: #0066cc;
+  color: white;
 }
 
 .tag-command {
-  background: rgba(128, 0, 255, 0.12);
-  color: #7c3aed;
+  background: #7c3aed;
+  color: white;
 }
 
 :root[data-theme="dark"] .tag-skill {
-  background: rgba(0, 102, 204, 0.2);
-  color: #5b9bd5;
+  background: #5b9bd5;
+  color: white;
 }
 
 :root[data-theme="dark"] .tag-command {
-  background: rgba(128, 0, 255, 0.2);
-  color: #a78bfa;
+  background: #a78bfa;
+  color: white;
 }
 </style>

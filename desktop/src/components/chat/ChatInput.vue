@@ -541,8 +541,8 @@ onBeforeUnmount(() => {
 /* Tag chips in editor */
 :deep(.editor-tag) {
   display: inline;
-  padding: 4px 8px;
-  border-radius: 999px;
+  padding: 2px 8px;
+  border-radius: 10px;
   font-weight: 500;
   vertical-align: baseline;
   letter-spacing: -0.1px;
@@ -550,23 +550,23 @@ onBeforeUnmount(() => {
 }
 
 :deep(.editor-tag-skill) {
-  background: rgba(0, 102, 204, 0.12);
-  color: #0066cc;
+  background: #0066cc;
+  color: white;
 }
 
 :deep(.editor-tag-command) {
-  background: rgba(124, 58, 237, 0.12);
-  color: #7c3aed;
+  background: #7c3aed;
+  color: white;
 }
 
-:deep([data-theme="dark"] .editor-tag-skill) {
-  background: rgba(41, 151, 255, 0.18);
-  color: #5b9bd5;
+:global([data-theme="dark"] .editor-tag-skill) {
+  background: #5b9bd5;
+  color: white;
 }
 
-:deep([data-theme="dark"] .editor-tag-command) {
-  background: rgba(167, 139, 250, 0.18);
-  color: #a78bfa;
+:global([data-theme="dark"] .editor-tag-command) {
+  background: #a78bfa;
+  color: white;
 }
 
 .resize-handle {
