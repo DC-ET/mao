@@ -3,7 +3,7 @@
     <div class="file-change-header" @click="isExpanded = !isExpanded">
       <div class="file-change-info">
         <el-icon class="file-change-icon" :size="14"><Document /></el-icon>
-        <span class="file-change-label">文件变更 ({{ changes.length }})</span>
+        <span class="file-change-label">文件变更 ({{ mergedChanges.length }})</span>
       </div>
       <el-icon
         class="expand-icon"
@@ -12,7 +12,7 @@
     </div>
     <div v-if="isExpanded" class="file-change-body">
       <div
-        v-for="change in changes"
+        v-for="change in mergedChanges"
         :key="change.path"
         class="file-change-item"
       >
@@ -32,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { Document, ArrowDown } from '@element-plus/icons-vue'
 import type { FileChange } from '../../types/chat'
 
@@ -42,6 +42,20 @@ const props = defineProps<{
 }>()
 
 const isExpanded = ref(true)
+
+const mergedChanges = computed(() => {
+  const map = new Map<string, { path: string; type: FileChange['type']; linesAdded: number; linesDeleted: number }>()
+  for (const c of props.changes) {
+    const existing = map.get(c.path)
+    if (existing) {
+      existing.linesAdded += c.linesAdded
+      existing.linesDeleted += c.linesDeleted
+    } else {
+      map.set(c.path, { path: c.path, type: c.type, linesAdded: c.linesAdded, linesDeleted: c.linesDeleted })
+    }
+  }
+  return Array.from(map.values())
+})
 </script>
 
 <style scoped>

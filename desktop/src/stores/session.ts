@@ -327,9 +327,11 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
+  const filteredToolCallIds = new Set<string>()
 
   function appendToolCallStart(sessionId: string, data: { tool_call_id: string; tool_name: string; arguments?: string }) {
     if (TASK_TOOL_NAMES.has(data.tool_name)) {
+      filteredToolCallIds.add(data.tool_call_id)
       // 跳过 task 工具，但在末尾 text 段追加换行，保证后续文本不与前文粘连
       const sid = String(sessionId)
       const lastMsg = ensureStreamingAssistantMessage(sid)
@@ -367,6 +369,11 @@ export const useSessionStore = defineStore('session', () => {
     if (!lastMsg.toolCalls) lastMsg.toolCalls = []
     let call = lastMsg.toolCalls.find(c => c.id === data.tool_call_id)
     if (!call) {
+      // tool_call_start 被跳过（如 task 工具），不创建新的 tool call
+      if (filteredToolCallIds.has(data.tool_call_id)) {
+        filteredToolCallIds.delete(data.tool_call_id)
+        return
+      }
       call = {
         id: data.tool_call_id,
         name: 'tool',

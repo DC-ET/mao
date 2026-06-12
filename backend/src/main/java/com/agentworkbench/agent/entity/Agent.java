@@ -23,6 +23,7 @@ public class Agent {
     private String configJson;
 
     /** 该 Agent 可用的 Skill 知识文档名称列表（JSON 数组），为空则加载全部 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String skillNames;
 
     @TableField(fill = FieldFill.INSERT)
