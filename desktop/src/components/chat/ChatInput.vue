@@ -116,7 +116,7 @@
           class="send-btn"
           :class="{ active: canSend }"
           :disabled="!canSend"
-          :title="loading ? '加入队列 (Ctrl/⌘+Enter)' : '发送 (Ctrl/⌘+Enter)'"
+          :title="loading ? '加入队列 (Enter)' : '发送 (Enter)'"
           @click="handleSend()"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -331,8 +331,8 @@ const editor = useEditor({
         }
       }
 
-      // Ctrl/Cmd+Enter to send
-      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      // Enter to send (Shift/Ctrl/Cmd+Enter inserts newline)
+      if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault()
         handleSend()
         return true

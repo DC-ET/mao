@@ -7,7 +7,7 @@
         <div v-if="messages.length === 0 && !sending && !initialLoading" class="empty-state">
           <template v-if="!sessionId">
             <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
-            <p>选个智能体，告诉它你想做什么</p>
+            <p>我可以帮你做点什么？</p>
           </template>
           <template v-else>
             <p class="guidance-text">在下方输入框描述你的任务，我会帮你完成</p>
