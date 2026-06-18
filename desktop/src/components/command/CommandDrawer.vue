@@ -267,14 +267,14 @@ function handleClose(done: () => void) {
 .command-cards {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
 }
 
 .command-card {
   background: var(--aw-surface);
   border: 1px solid var(--aw-divider-soft);
   border-radius: 8px;
-  padding: 10px 14px;
+  padding: 5px 10px;
   transition: border-color 0.15s;
 }
 
