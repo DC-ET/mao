@@ -28,7 +28,8 @@ public class PromptEngine {
             "task_create", "task_update", "task_list", "task_delete");
 
     private static final Pattern SKILL_PATTERN = Pattern.compile("\\$\\{([^}]+)\\}\\$");
-    private static final Pattern COMMAND_PATTERN = Pattern.compile("#\\{([^}]+\\})#");
+    private static final Pattern COMMAND_PATTERN = Pattern.compile("#\\{([^}]+)\\}#");
+    private static final Pattern FILE_REF_PATTERN = Pattern.compile("@\\{([^}]+)\\}@");
 
     private final SkillLoader skillLoader;
     private final PathSandbox pathSandbox;
@@ -111,6 +112,16 @@ public class PromptEngine {
                 }
             }
             commandMatcher.appendTail(sb);
+            replaced = sb.toString();
+
+            // Replace File reference markers: @{path}@ → path (strip markers, keep absolute path)
+            Matcher fileRefMatcher = FILE_REF_PATTERN.matcher(replaced);
+            sb = new StringBuffer();
+            while (fileRefMatcher.find()) {
+                String filePath = fileRefMatcher.group(1);
+                fileRefMatcher.appendReplacement(sb, Matcher.quoteReplacement(filePath));
+            }
+            fileRefMatcher.appendTail(sb);
             replaced = sb.toString();
 
             if (!replaced.equals(content)) {

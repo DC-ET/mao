@@ -14,8 +14,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -107,5 +111,62 @@ public class FileService {
             throw new BusinessException(4040, "文件不存在");
         }
         return Paths.get(file.getFilePath());
+    }
+
+    private static final Set<String> IGNORED_DIRS = Set.of(
+            "node_modules", "__pycache__", ".git", "target", "dist", "build",
+            ".next", ".nuxt", ".venv", "venv", ".idea", ".vscode");
+
+    public List<WorkspaceFileDTO> listWorkspaceFiles(String workspace, String filter, int limit) {
+        Path root = Paths.get(workspace);
+        if (!Files.exists(root) || !Files.isDirectory(root)) {
+            return List.of();
+        }
+        String lowerFilter = filter != null ? filter.toLowerCase() : null;
+        try (Stream<Path> walk = Files.walk(root)) {
+            return walk
+                    .filter(Files::isRegularFile)
+                    .filter(p -> {
+                        // Exclude hidden files and ignored directories
+                        Path rel = root.relativize(p);
+                        for (Path part : rel) {
+                            String name = part.toString();
+                            if (name.startsWith(".")) return false;
+                            if (IGNORED_DIRS.contains(name)) return false;
+                        }
+                        return true;
+                    })
+                    .filter(p -> {
+                        if (lowerFilter == null || lowerFilter.isEmpty()) return true;
+                        Path rel = root.relativize(p);
+                        return rel.toString().toLowerCase().contains(lowerFilter)
+                                || p.getFileName().toString().toLowerCase().contains(lowerFilter);
+                    })
+                    .sorted(Comparator.comparingLong((Path p) -> {
+                        try { return Files.getLastModifiedTime(p).toMillis(); }
+                        catch (IOException e) { return 0L; }
+                    }).reversed())
+                    .limit(limit)
+                    .map(p -> {
+                        Path rel = root.relativize(p);
+                        WorkspaceFileDTO dto = new WorkspaceFileDTO();
+                        dto.setPath(rel.toString().replace('\\', '/'));
+                        dto.setName(p.getFileName().toString());
+                        try { dto.setSize(Files.size(p)); }
+                        catch (IOException e) { dto.setSize(0L); }
+                        return dto;
+                    })
+                    .collect(Collectors.toList());
+        } catch (IOException e) {
+            log.warn("Failed to walk workspace directory: {}", workspace, e);
+            return List.of();
+        }
+    }
+
+    @lombok.Data
+    public static class WorkspaceFileDTO {
+        private String path;
+        private String name;
+        private Long size;
     }
 }

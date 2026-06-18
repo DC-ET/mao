@@ -46,6 +46,15 @@
         @select="handleCommandSelect"
         @close="closePanel"
       />
+      <FileReferencePanel
+        ref="fileReferencePanelRef"
+        :visible="filePanelVisible"
+        :files="workspaceFiles"
+        :filter="filePanelFilter"
+        :loading="filePanelLoading"
+        @select="handleFileReferenceSelect"
+        @close="closeFilePanel"
+      />
       <EditorContent :editor="editor" class="rich-editor" />
       <div class="resize-handle" title="拖拽调整大小">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -136,13 +145,18 @@ import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import { TextSelection } from '@tiptap/pm/state'
+import { Fragment, Slice } from '@tiptap/pm/model'
 import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
 import AgentSelector from '../task/AgentSelector.vue'
 import ModelSelector from './ModelSelector.vue'
 import QuickCommandPanel from './QuickCommandPanel.vue'
+import FileReferencePanel from './FileReferencePanel.vue'
+import type { WorkspaceFile } from './FileReferencePanel.vue'
 import { QuickCommandNode } from './tiptap/QuickCommandNode'
+import { FileReferenceNode } from './tiptap/FileReferenceNode'
 import type { Agent } from '../../stores/agent'
 import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
+import { useSessionStore } from '../../stores/session'
 import { api } from '../../api'
 
 const props = withDefaults(defineProps<{
@@ -184,6 +198,8 @@ const emit = defineEmits<{
   'select:model': [modelId: number, modelIdStr: string]
 }>()
 
+const sessionStore = useSessionStore()
+
 // ===== State =====
 const pendingFiles = ref<File[]>([])
 const filePreviewUrls = ref<string[]>([])
@@ -195,6 +211,15 @@ const quickCommands = ref<QuickCommandsData>({ skills: [], commands: [] })
 const panelVisible = ref(false)
 const panelFilter = ref('')
 const slashRange = ref<{ from: number; to: number } | null>(null)
+
+// File reference state
+const fileReferencePanelRef = ref<InstanceType<typeof FileReferencePanel>>()
+const filePanelVisible = ref(false)
+const filePanelFilter = ref('')
+const filePanelLoading = ref(false)
+const atRange = ref<{ from: number; to: number } | null>(null)
+const workspaceFiles = ref<WorkspaceFile[]>([])
+let fileSearchDebounce: ReturnType<typeof setTimeout> | null = null
 
 // ===== Computed =====
 const canSend = computed(() => {
@@ -256,6 +281,70 @@ function closePanel() {
   slashRange.value = null
 }
 
+// ===== File reference: select =====
+
+function handleFileReferenceSelect(file: WorkspaceFile) {
+  if (!editor.value || !atRange.value) return
+
+  const ed = editor.value
+  const { from, to } = atRange.value
+
+  const { state, dispatch } = ed.view
+  const nodeType = state.schema.nodes.fileReference
+  if (!nodeType) return
+
+  let tr = state.tr
+  tr = tr.delete(from, to)
+  const node = nodeType.create({ filePath: file.path })
+  tr = tr.insert(from, node)
+  const space = state.schema.text(' ')
+  tr = tr.insert(from + node.nodeSize, space)
+  tr = tr.setSelection(TextSelection.near(tr.doc.resolve(from + node.nodeSize + 1)))
+  dispatch(tr)
+
+  ed.commands.focus()
+  closeFilePanel()
+}
+
+function closeFilePanel() {
+  filePanelVisible.value = false
+  filePanelFilter.value = ''
+  atRange.value = null
+  workspaceFiles.value = []
+  if (fileSearchDebounce) {
+    clearTimeout(fileSearchDebounce)
+    fileSearchDebounce = null
+  }
+}
+
+// ===== File reference: fetch files =====
+
+async function fetchWorkspaceFiles(filter: string) {
+  filePanelLoading.value = true
+  try {
+    const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
+    if (props.executionMode === 'LOCAL' && isElectron && props.workspace) {
+      const result = await (window as any).electronAPI.listWorkspaceFiles(props.workspace, filter || undefined, 20)
+      workspaceFiles.value = result || []
+    } else {
+      // CLOUD mode — call backend API
+      const sessionId = sessionStore.activeSessionId
+      if (sessionId) {
+        const { data } = await api.get('/files/workspace-list', {
+          params: { sessionId, filter: filter || undefined, limit: 20 },
+        })
+        workspaceFiles.value = data?.files || []
+      } else {
+        workspaceFiles.value = []
+      }
+    }
+  } catch {
+    workspaceFiles.value = []
+  } finally {
+    filePanelLoading.value = false
+  }
+}
+
 // ===== Editor =====
 
 const editor = useEditor({
@@ -279,6 +368,7 @@ const editor = useEditor({
         : props.placeholder,
     }),
     QuickCommandNode,
+    FileReferenceNode,
   ],
   editorProps: {
     handlePaste: (_view, event) => {
@@ -303,11 +393,77 @@ const editor = useEditor({
           }
         }
       }
+      // Handle text paste — convert @{...}@, ${...}$, #{...}# patterns to editor nodes
+      const text = event.clipboardData?.getData('text/plain')
+      if (text && /(?:@\{[^}]+\}@|\$\{[^}]+\}\$|#\{[^}]+\}#)/.test(text)) {
+        event.preventDefault()
+        const view = editor.value?.view
+        if (!view) return true
+        const { state } = view
+        const fileRefNodeType = state.schema.nodes.fileReference
+        const quickCommandNodeType = state.schema.nodes.quickCommand
+        if (!fileRefNodeType || !quickCommandNodeType) return true
+
+        const workspace = props.workspace?.replace(/\/$/, '') || ''
+        const parts = text.split(/(@\{[^}]+\}@|\$\{[^}]+\}\$|#\{[^}]+\}#)/)
+        const contentNodes: any[] = []
+        for (const part of parts) {
+          if (!part) continue
+          const fileMatch = part.match(/^@\{(.+)\}@$/)
+          const skillMatch = part.match(/^\$\{(.+)\}\$$/)
+          const commandMatch = part.match(/^#\{(.+)\}#$/)
+          if (fileMatch) {
+            let filePath = fileMatch[1]
+            if (workspace && filePath.startsWith(workspace + '/')) {
+              filePath = filePath.substring(workspace.length + 1)
+            }
+            contentNodes.push(fileRefNodeType.create({ filePath }))
+          } else if (skillMatch) {
+            contentNodes.push(quickCommandNodeType.create({ commandType: 'skill', commandName: skillMatch[1] }))
+          } else if (commandMatch) {
+            contentNodes.push(quickCommandNodeType.create({ commandType: 'command', commandName: commandMatch[1] }))
+          } else {
+            contentNodes.push(state.schema.text(part))
+          }
+        }
+
+        if (contentNodes.length > 0) {
+          const fragment = Fragment.fromArray(contentNodes)
+          const slice = new Slice(fragment, 0, 0)
+          const tr = state.tr.replaceSelection(slice)
+          view.dispatch(tr.scrollIntoView())
+        }
+        return true
+      }
       // Let TipTap handle text paste (strips formatting by default)
       return false
     },
     handleKeyDown: (_view, event) => {
-      // Panel navigation
+      // File reference panel navigation
+      if (filePanelVisible.value) {
+        if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          fileReferencePanelRef.value?.moveUp()
+          return true
+        }
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          fileReferencePanelRef.value?.moveDown()
+          return true
+        }
+        if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
+          event.preventDefault()
+          fileReferencePanelRef.value?.confirmSelection()
+          return true
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          closeFilePanel()
+          return true
+        }
+      }
+
+      // Quick command panel navigation
       if (panelVisible.value) {
         if (event.key === 'ArrowUp') {
           event.preventDefault()
@@ -343,6 +499,7 @@ const editor = useEditor({
   onUpdate: ({ editor: ed }) => {
     editorContent.value = ed.getText()
     detectSlashTrigger()
+    detectAtTrigger()
   },
 })
 
@@ -383,6 +540,49 @@ function detectSlashTrigger() {
   if (!panelVisible.value) {
     ensureCommandsLoaded()
     panelVisible.value = true
+  }
+}
+
+// ===== At trigger detection (file reference) =====
+
+function detectAtTrigger() {
+  if (!editor.value) return
+  const { state } = editor.value.view
+  const { from } = state.selection
+  const textBefore = state.doc.textBetween(Math.max(0, from - 50), from, '\n', '\n')
+
+  const lastAtIndex = textBefore.lastIndexOf('@')
+  if (lastAtIndex === -1) {
+    if (filePanelVisible.value) closeFilePanel()
+    return
+  }
+
+  // @ must be at start or preceded by whitespace
+  if (lastAtIndex > 0 && !/\s/.test(textBefore[lastAtIndex - 1])) {
+    if (filePanelVisible.value) closeFilePanel()
+    return
+  }
+
+  // No space between @ and cursor
+  const afterAt = textBefore.substring(lastAtIndex + 1)
+  if (/\s/.test(afterAt)) {
+    if (filePanelVisible.value) closeFilePanel()
+    return
+  }
+
+  const triggerDocPos = from - (textBefore.length - lastAtIndex)
+  atRange.value = { from: triggerDocPos, to: from }
+  filePanelFilter.value = afterAt
+
+  if (!filePanelVisible.value) {
+    filePanelVisible.value = true
+    fetchWorkspaceFiles(afterAt)
+  } else {
+    // Debounce filter changes
+    if (fileSearchDebounce) clearTimeout(fileSearchDebounce)
+    fileSearchDebounce = setTimeout(() => {
+      fetchWorkspaceFiles(afterAt)
+    }, 300)
   }
 }
 
@@ -562,6 +762,11 @@ onBeforeUnmount(() => {
   color: white;
 }
 
+:deep(.editor-tag-file) {
+  background: #0d9488;
+  color: white;
+}
+
 :global([data-theme="dark"] .editor-tag-skill) {
   background: #5b9bd5;
   color: white;
@@ -570,6 +775,11 @@ onBeforeUnmount(() => {
 :global([data-theme="dark"] .editor-tag-command) {
   background: #a78bfa;
   color: white;
+}
+
+:global([data-theme="dark"] .editor-tag-file) {
+  background: #2dd4bf;
+  color: #134e4a;
 }
 
 .resize-handle {

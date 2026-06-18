@@ -2,9 +2,11 @@ export type ParsedSegment =
   | { type: 'text'; content: string }
   | { type: 'skill'; name: string }
   | { type: 'command'; name: string }
+  | { type: 'file'; filePath: string }
 
 const SKILL_PATTERN = /\$\{([^}]+)\}\$/g
 const COMMAND_PATTERN = /#\{([^}]+)\}#/g
+const FILE_PATTERN = /@\{([^}]+)\}@/g
 
 /**
  * Parse message content into segments, detecting skill and command markers.
@@ -16,18 +18,23 @@ export function parseQuickCommandSegments(content: string): ParsedSegment[] {
   let lastIndex = 0
 
   // Collect all matches with their positions
-  const matches: Array<{ start: number; end: number; type: 'skill' | 'command'; name: string }> = []
+  const matches: Array<{ start: number; end: number; type: string; value: string }> = []
 
   let match: RegExpExecArray | null
 
   SKILL_PATTERN.lastIndex = 0
   while ((match = SKILL_PATTERN.exec(content)) !== null) {
-    matches.push({ start: match.index, end: match.index + match[0].length, type: 'skill', name: match[1] })
+    matches.push({ start: match.index, end: match.index + match[0].length, type: 'skill', value: match[1] })
   }
 
   COMMAND_PATTERN.lastIndex = 0
   while ((match = COMMAND_PATTERN.exec(content)) !== null) {
-    matches.push({ start: match.index, end: match.index + match[0].length, type: 'command', name: match[1] })
+    matches.push({ start: match.index, end: match.index + match[0].length, type: 'command', value: match[1] })
+  }
+
+  FILE_PATTERN.lastIndex = 0
+  while ((match = FILE_PATTERN.exec(content)) !== null) {
+    matches.push({ start: match.index, end: match.index + match[0].length, type: 'file', value: match[1] })
   }
 
   // Sort by position
@@ -37,7 +44,11 @@ export function parseQuickCommandSegments(content: string): ParsedSegment[] {
     if (m.start > lastIndex) {
       segments.push({ type: 'text', content: content.slice(lastIndex, m.start) })
     }
-    segments.push({ type: m.type, name: m.name })
+    if (m.type === 'file') {
+      segments.push({ type: 'file', filePath: m.value })
+    } else {
+      segments.push({ type: m.type as 'skill' | 'command', name: m.value })
+    }
     lastIndex = m.end
   }
 

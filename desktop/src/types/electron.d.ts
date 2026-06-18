@@ -21,6 +21,12 @@ interface TerminalExitPayload {
   exitCode: number
 }
 
+interface WorkspaceFile {
+  path: string
+  name: string
+  size: number
+}
+
 interface ElectronAPI {
   getAppVersion(): Promise<string>
   getPlatform(): Promise<string>
@@ -42,6 +48,7 @@ interface ElectronAPI {
   localReadFile(args: any): Promise<any>
   localWriteFile(args: any): Promise<any>
   localEditFile(args: any): Promise<any>
+  listWorkspaceFiles(workspace: string, filter?: string, limit?: number): Promise<WorkspaceFile[]>
 
   onToolApprovalRequest(callback: (data: any) => void): void
   removeToolApprovalRequestListener(): void

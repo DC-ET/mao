@@ -323,6 +323,58 @@ ipcMain.handle('local-edit-file', async (event, { path: filePath, old_string, ne
   }
 })
 
+const IGNORED_DIRS = new Set(['node_modules', '__pycache__', '.git', 'target', 'dist', 'build', '.next', '.nuxt', '.venv', 'venv', '.idea', '.vscode'])
+
+ipcMain.handle('list-workspace-files', async (event, { workspace, filter, limit }) => {
+  try {
+    if (!workspace || !fs.existsSync(workspace)) return []
+    const maxResults = limit || 20
+    const results = []
+
+    function walkDir(dir, relativeBase) {
+      if (results.length >= maxResults) return
+      let entries
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      // Sort entries: files first, then dirs, alphabetically
+      entries.sort((a, b) => {
+        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? 1 : -1
+        return a.name.localeCompare(b.name)
+      })
+      for (const entry of entries) {
+        if (results.length >= maxResults) return
+        if (entry.name.startsWith('.')) continue
+        if (entry.isDirectory() && IGNORED_DIRS.has(entry.name)) continue
+        const fullPath = path.join(dir, entry.name)
+        const relPath = relativeBase ? relativeBase + '/' + entry.name : entry.name
+        if (entry.isDirectory()) {
+          walkDir(fullPath, relPath)
+        } else {
+          try {
+            const stat = fs.statSync(fullPath)
+            if (!filter || entry.name.toLowerCase().includes(filter.toLowerCase()) || relPath.toLowerCase().includes(filter.toLowerCase())) {
+              results.push({ path: relPath, name: entry.name, size: stat.size, mtime: stat.mtimeMs })
+            }
+          } catch {
+            // skip files we can't stat
+          }
+        }
+      }
+    }
+
+    walkDir(workspace, '')
+    // Sort by modification time descending
+    results.sort((a, b) => b.mtime - a.mtime)
+    // Remove mtime from response
+    return results.map(({ mtime, ...rest }) => rest)
+  } catch (e) {
+    return []
+  }
+})
+
 // ========== Tool execution via Streaming WS ==========
 
 async function executeToolByName(toolName, parsedArgs, sessionId, workspace, needApproval, dangerReason) {

@@ -3,6 +3,8 @@ package com.agentworkbench.file.controller;
 import com.agentworkbench.common.result.Result;
 import com.agentworkbench.file.entity.FileEntity;
 import com.agentworkbench.file.service.FileService;
+import com.agentworkbench.session.entity.Session;
+import com.agentworkbench.session.service.SessionService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.FileSystemResource;
@@ -16,6 +18,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -24,6 +27,7 @@ import java.util.stream.Collectors;
 public class FileController {
 
     private final FileService fileService;
+    private final SessionService sessionService;
 
     @PostMapping("/upload")
     public Result<FileVO> uploadFile(
@@ -70,6 +74,20 @@ public class FileController {
             @RequestParam(required = false) Long sessionId) {
         List<FileEntity> files = fileService.listFiles(userId, sessionId);
         return Result.ok(files.stream().map(this::toVO).collect(Collectors.toList()));
+    }
+
+    @GetMapping("/workspace-list")
+    public Result<Map<String, Object>> listWorkspaceFiles(
+            @RequestParam Long sessionId,
+            @RequestParam(required = false) String filter,
+            @RequestParam(required = false, defaultValue = "20") Integer limit) {
+        Session session = sessionService.getSession(sessionId);
+        if (session == null || session.getWorkspace() == null || session.getWorkspace().isBlank()) {
+            return Result.ok(Map.of("files", List.of()));
+        }
+        List<FileService.WorkspaceFileDTO> files = fileService.listWorkspaceFiles(
+                session.getWorkspace(), filter, limit != null ? limit : 20);
+        return Result.ok(Map.of("files", files));
     }
 
     @DeleteMapping("/{id}")

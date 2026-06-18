@@ -31,6 +31,7 @@ let approvalListenerSetup = false
 const SKILL_ONLY = /^\$\{([^}]+)\}\$$/
 const SKILL_PATTERN = /\$\{[^}]+\}\$/g
 const COMMAND_PATTERN = /#\{([^}]+)\}#/g
+const FILE_REF_PATTERN = /@\{([^}]+)\}@/g
 
 async function deriveTitle(text: string): Promise<string> {
   const trimmed = text.trim()
@@ -41,6 +42,9 @@ async function deriveTitle(text: string): Promise<string> {
 
   // Strip skill markers from mixed content
   let result = trimmed.replace(SKILL_PATTERN, '')
+
+  // Strip file reference markers
+  result = result.replace(/@\{[^}]+\}@/g, '')
 
   // Expand command markers to their content
   const cmdNames = [...result.matchAll(COMMAND_PATTERN)].map(m => m[1])
@@ -278,9 +282,19 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Subscribe to this session's events
       subscribe(sid)
 
+      // Resolve file reference relative paths to absolute paths
+      let resolvedText = text || ''
+      if (resolvedText.includes('@{') && workspace.value) {
+        FILE_REF_PATTERN.lastIndex = 0
+        resolvedText = resolvedText.replace(FILE_REF_PATTERN, (_, relPath) => {
+          const absPath = workspace.value.replace(/\/$/, '') + '/' + relPath.replace(/^\//, '')
+          return `@{${absPath}}@`
+        })
+      }
+
       // Send message via WS
       const eventId = crypto.randomUUID()
-      wsSendMessage(sid, text || '', eventId, imageUrls)
+      wsSendMessage(sid, resolvedText, eventId, imageUrls)
 
       // Wait for completion (session_status reaches COMPLETED/FAILED)
       await new Promise<void>((resolve, reject) => {

@@ -22,7 +22,8 @@
       <div v-if="role === 'user' && !isEditing" class="message-text user-text" :class="{ collapsed: isUserLong && userCollapsed }">
         <div class="user-text-content">
           <template v-for="(seg, idx) in userParsedSegments" :key="idx">
-            <QuickCommandTag v-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" :content="seg.type === 'command' ? getCommandContent(seg.name) : undefined" />
+            <FileReferenceTag v-if="seg.type === 'file'" :file-path="seg.filePath" />
+            <QuickCommandTag v-else-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" :content="seg.type === 'command' ? getCommandContent(seg.name) : undefined" />
             <span v-else>{{ seg.content }}</span>
           </template>
         </div>
@@ -152,6 +153,7 @@ import ToolCallGroup from './ToolCallGroup.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
 import FileChangePanel from './FileChangePanel.vue'
 import QuickCommandTag from './QuickCommandTag.vue'
+import FileReferenceTag from './FileReferenceTag.vue'
 import { parseQuickCommandSegments } from '../../utils/quick-command-parser'
 import {
   normalizeMessageRole,

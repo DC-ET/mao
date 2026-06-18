@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localWriteFile: (args) => ipcRenderer.invoke('local-write-file', args),
   localEditFile: (args) => ipcRenderer.invoke('local-edit-file', args),
 
+  // Workspace file listing for file references
+  listWorkspaceFiles: (workspace, filter, limit) =>
+    ipcRenderer.invoke('list-workspace-files', { workspace, filter, limit }),
+
   // Tool approval — renderer UI, main process waits for response
   onToolApprovalRequest: (callback) => {
     ipcRenderer.on('tool-approval-request', (event, data) => callback(data))
