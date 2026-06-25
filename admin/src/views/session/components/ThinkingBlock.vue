@@ -83,11 +83,10 @@ const isExpanded = ref(false)
 
 .thinking-content {
   margin: 0;
-  padding: 8px 10px;
+  padding: 0px 10px;
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary);
-  background: var(--el-fill-color-light);
   border-radius: 4px;
   white-space: pre-wrap;
   word-break: break-word;

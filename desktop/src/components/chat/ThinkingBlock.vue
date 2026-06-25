@@ -123,11 +123,10 @@ watch(() => props.thinking, async () => {
 
 .thinking-content {
   margin: 0;
-  padding: 8px 10px;
+  padding: 0px 10px;
   font-size: 12px;
   line-height: 1.6;
   color: var(--aw-ink-muted-48);
-  background: var(--aw-canvas-parchment);
   border-radius: var(--aw-radius-sm);
   white-space: pre-wrap;
   word-break: break-word;
