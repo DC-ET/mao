@@ -24,9 +24,8 @@
           <span v-if="phase === 'RUNNING'" class="phase-spinner"></span>
           {{ phaseLabel }}
         </span>
-         <span v-if="contextDisplay" class="context-window">
-          <span class="context-label">上下文</span>
-          <span class="context-tokens">{{ contextDisplay }}</span>
+        <span v-if="contextDisplay" class="context-badge">
+          上下文 {{ contextDisplay }}
         </span>
       </div>
     </div>
@@ -320,6 +319,7 @@ function onResizeStart(e: MouseEvent) {
 .workspace-path-wrap {
   position: relative;
   display: inline;
+  line-height: 18px;
 }
 
 .task-workspace-row .workspace-path {
@@ -402,17 +402,16 @@ function onResizeStart(e: MouseEvent) {
   to { transform: rotate(360deg); }
 }
 
-.context-window {
+.context-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   font-size: var(--aw-text-caption);
-  letter-spacing: -0.224px;
-}
-
-.context-tokens {
   font-family: var(--aw-font-mono);
+  letter-spacing: -0.224px;
+  padding: 3px 10px;
+  border-radius: var(--aw-radius-md);
   color: var(--aw-ink-muted-48);
+  background: rgba(0, 0, 0, 0.04);
 }
 
 /* Scrollbar */
@@ -442,6 +441,11 @@ function onResizeStart(e: MouseEvent) {
 [data-theme="dark"] .workspace-copy-btn:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--aw-primary);
+}
+
+[data-theme="dark"] .context-badge {
+  color: var(--aw-ink-muted-48);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 </style>
