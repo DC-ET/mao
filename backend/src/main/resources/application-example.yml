@@ -1,0 +1,52 @@
+spring:
+  # MySQL
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/agentworkbench?useSSL=false&serverTimezone=Asia/Shanghai&allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&useUnicode=true&characterEncoding=utf-8
+    username: example
+    password: 123456
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 600000
+  # Redis
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      password: 123456
+      database: 1
+      timeout: 5000ms
+
+# LDAP
+ldap:
+  url: ${LDAP_URL:ldap://127.0.0.1:389}
+  base-dn: ${LDAP_BASE_DN:dc=example,dc=com}
+  user-dn: ${LDAP_USER_DN:admin@example.com}
+  password: ${LDAP_PASSWORD:123456}
+  user-search-base: ${LDAP_USER_SEARCH_BASE:ou=Example}
+
+# Feishu
+feishu:
+  app-id: ${FEISHU_APP_ID:1234567890}
+  app-secret: ${FEISHU_APP_SECRET:1234567890}
+  redirect-uri: ${FEISHU_REDIRECT_URI:http://example.com/auth/feishu/callback}
+
+# Aliyun OSS
+oss:
+  region: ${OSS_REGION:oss-cn-hangzhou}
+  access-key-id: ${OSS_ACCESS_KEY_ID:1234567890}
+  access-key-secret: ${OSS_ACCESS_KEY_SECRET:1234567890}
+  bucket: ${OSS_BUCKET:example}
+  max-keys: 100
+  sts:
+    region-id: ${OSS_STS_REGION_ID:cn-hangzhou}
+    endpoint: ${OSS_STS_ENDPOINT:sts.cn-hangzhou.aliyuncs.com}
+    access-key-id: ${OSS_STS_ACCESS_KEY_ID:1234567890}
+    access-key-secret: ${OSS_STS_ACCESS_KEY_SECRET:1234567890}
+    role-arn: ${OSS_STS_ROLE_ARN:acs:ram::1234567890:role/example}
+    role-session-name: ${OSS_STS_ROLE_SESSION_NAME:ExampleSession}
+    expire: 3600
+    max-size-mb: 20

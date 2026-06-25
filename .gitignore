@@ -43,3 +43,7 @@ desktop/release/
 
 .bash_profile
 .workbench
+
+.claude/
+.cursor/
+application-prod.yml

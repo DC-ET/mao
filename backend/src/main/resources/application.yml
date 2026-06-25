@@ -3,33 +3,22 @@ server:
   servlet:
     context-path: /api
 
+logging:
+  level:
+    com.agentworkbench: DEBUG
+    org.springframework.security: INFO
+    org.springframework.web: INFO
+    org.apache.ibatis: INFO
+    org.mybatis.spring: INFO
+    com.zaxxer.hikari: INFO
+    org.springframework.jdbc: INFO
+    org.springframework.transaction: INFO
+
 spring:
   application:
     name: workbench-backend
   profiles:
-    active: dev
-
-  # MySQL
-  datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://120.26.109.221:3306/agentworkbench2?useSSL=false&serverTimezone=Asia/Shanghai&allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&useUnicode=true&characterEncoding=utf-8
-    username: root
-    password: REDACTED_MYSQL_PASSWORD
-    hikari:
-      maximum-pool-size: 20
-      minimum-idle: 5
-      connection-timeout: 10000
-      idle-timeout: 300000
-      max-lifetime: 600000
-
-  # Redis
-  data:
-    redis:
-      host: 120.26.109.221
-      port: 6379
-      password: REDACTED_MYSQL_PASSWORD
-      database: 1
-      timeout: 5000ms
+    active: prod # copy from application-example.yml to application-prod.yml
 
   # Flyway
   flyway:
@@ -71,20 +60,6 @@ jwt:
   secret: ${JWT_SECRET:workbench-default-secret-change-in-production}
   expiration: 86400000  # 24 hours in milliseconds
   refresh-expiration: 604800000  # 7 days
-
-# LDAP
-ldap:
-  url: ${LDAP_URL:ldap://172.20.230.237:389}
-  base-dn: ${LDAP_BASE_DN:dc=accesscorporate,dc=com,dc=cn}
-  user-dn: ${LDAP_USER_DN:apollo@accesscorporate.com.cn}
-  password: ${LDAP_PASSWORD:REDACTED_LDAP_PASSWORD}
-  user-search-base: ${LDAP_USER_SEARCH_BASE:ou=ACCESS}
-
-# Feishu
-feishu:
-  app-id: ${FEISHU_APP_ID:}
-  app-secret: ${FEISHU_APP_SECRET:}
-  redirect-uri: ${FEISHU_REDIRECT_URI:http://localhost:5200/auth/feishu/callback}
 
 # App config
 app:
@@ -132,23 +107,6 @@ app:
         max-preview-lines: 100
         max-preview-chars: 10000
         default-yield-time-ms: 10000
-
-# Aliyun OSS
-oss:
-  region: ${OSS_REGION:oss-cn-hangzhou}
-  access-key-id: ${OSS_ACCESS_KEY_ID:REDACTED_OSS_KEY}
-  access-key-secret: ${OSS_ACCESS_KEY_SECRET:REDACTED_OSS_SECRET}
-  bucket: ${OSS_BUCKET:etarch}
-  max-keys: 100
-  sts:
-    region-id: ${OSS_STS_REGION_ID:cn-hangzhou}
-    endpoint: ${OSS_STS_ENDPOINT:sts.cn-hangzhou.aliyuncs.com}
-    access-key-id: ${OSS_STS_ACCESS_KEY_ID:REDACTED_STS_KEY}
-    access-key-secret: ${OSS_STS_ACCESS_KEY_SECRET:REDACTED_STS_SECRET}
-    role-arn: ${OSS_STS_ROLE_ARN:acs:ram::REDACTED_RAM_ACCOUNT:role/ramosstest}
-    role-session-name: ${OSS_STS_ROLE_SESSION_NAME:OssSession}
-    expire: 3600
-    max-size-mb: 20
 
 # SpringDoc
 springdoc:
