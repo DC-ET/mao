@@ -4,7 +4,7 @@ import { api } from '../api'
 import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
 import { mapApiMessagesToChat } from '../utils/chatMessage'
-import type { ChatMessage, FileChange } from '../types/chat'
+import type { ChatMessage, FileChange, QuestionAnswer } from '../types/chat'
 
 export type {
   ChatMessage,
@@ -67,7 +67,7 @@ async function deriveTitle(text: string): Promise<string> {
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
-  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks } = useStreamWS()
+  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks } = useStreamWS()
 
   const sending = ref(false)
   const cancelling = ref(false)
@@ -611,6 +611,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
   }
 
+  function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
+    if (!sessionId.value) return
+    sendAskUserQuestionsResult(sessionId.value, requestId, answers)
+    sessionStore.removeAskQuestion(sessionId.value, requestId)
+  }
+
   function cleanup() {
     if (sessionId.value) {
       unsubscribe(sessionId.value)
@@ -638,6 +644,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     newSession,
     restoreSession,
     confirmApproval,
+    submitQuestionAnswer,
     updateTodoManually,
     fetchTodos,
     cleanup,

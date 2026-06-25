@@ -144,6 +144,12 @@
         @confirm="confirmApproval"
       />
 
+      <QuestionPanel
+        v-if="activePendingQuestions.length > 0"
+        :items="activePendingQuestions"
+        @submit="submitQuestionAnswer"
+      />
+
       <ChatInput
         ref="chatInputRef"
         :loading="sending && !cancelling"
@@ -201,6 +207,7 @@ import FileChangePanel from '../../components/chat/FileChangePanel.vue'
 import ChatInput from '../../components/chat/ChatInput.vue'
 import QueuePanel from '../../components/chat/QueuePanel.vue'
 import ApprovalStack from '../../components/chat/ApprovalStack.vue'
+import QuestionPanel from '../../components/chat/QuestionPanel.vue'
 import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
@@ -252,6 +259,7 @@ const {
   newSession,
   restoreSession,
   confirmApproval,
+  submitQuestionAnswer,
   updateTodoManually,
   cleanup,
   insertQueueMessage,
@@ -287,6 +295,8 @@ const sessionTitle = computed(() => {
 const activePendingApprovals = computed(() =>
   pendingApprovals.value.filter(a => !a.sessionId || a.sessionId === sessionStore.activeSessionId)
 )
+
+const activePendingQuestions = computed(() => sessionStore.activePendingQuestions)
 
 // 仅在尚未收到流式内容时显示打字动画，避免与 MessageBubble 重复
 // 同时在 agent 思考期间（工具执行完毕到下一次 LLM 输出之间）也显示

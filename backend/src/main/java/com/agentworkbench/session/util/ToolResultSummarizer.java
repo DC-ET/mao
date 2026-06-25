@@ -20,6 +20,7 @@ public class ToolResultSummarizer {
             case "task_update" -> summarizeTaskUpdate(result);
             case "task_list" -> summarizeTaskList(result);
             case "task_delete" -> summarizeTaskDelete(result);
+            case "ask_user_questions" -> summarizeAskUserQuestions(arguments, result);
 
             default -> summarizeGeneric(toolName, result);
         };
@@ -185,6 +186,22 @@ public class ToolResultSummarizer {
         return "删除任务";
     }
 
+
+    private static String summarizeAskUserQuestions(String arguments, String result) {
+        if (result == null) return "向用户提问";
+
+        JsonNode node = parseJson(result);
+        if (node == null) return "向用户提问";
+
+        if (node.has("error")) {
+            return "向用户提问 (超时或取消)";
+        }
+        if (node.has("answers") && node.get("answers").isArray()) {
+            int count = node.get("answers").size();
+            return "向用户提问 (" + count + " 个问题已回答)";
+        }
+        return "向用户提问";
+    }
 
     private static String summarizeGeneric(String toolName, String result) {
         if (result == null) return toolName;

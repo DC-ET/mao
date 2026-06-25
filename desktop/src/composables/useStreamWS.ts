@@ -204,6 +204,14 @@ export function useStreamWS() {
     send({ type: 'cancel', sessionId: Number(sessionId) })
   }
 
+  function sendAskUserQuestionsResult(sessionId: string, requestId: string, answers: any[]) {
+    send({
+      type: 'ask_user_questions_result',
+      sessionId: Number(sessionId),
+      data: { requestId, answers }
+    })
+  }
+
   function enqueueMessage(sessionId: string, content: string, eventId: string, images: string[]) {
     send({ type: 'enqueue_message', sessionId: Number(sessionId), data: { content, eventId, images } })
   }
@@ -286,6 +294,7 @@ export function useStreamWS() {
           const terminalPhases = ['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE']
           if (terminalPhases.includes(data.phase)) {
             sessionStore.setStreaming(sessionId, false)
+            sessionStore.clearAskQuestions(sessionId)
             // Agent turn complete — resolve pending callback
             const cb = pendingCallbacks.get(sessionId)
             if (cb) {
@@ -420,6 +429,26 @@ export function useStreamWS() {
         break
       }
 
+      case 'ask_user_questions': {
+        if (sessionId && data) {
+          // Clear stale questions — the agent has moved on to a new question
+          sessionStore.clearAskQuestions(sessionId)
+          sessionStore.appendAskQuestion(sessionId, {
+            requestId: data.requestId,
+            questions: data.questions || [],
+            metadata: data.metadata
+          })
+        }
+        break
+      }
+
+      case 'ask_user_questions_cancelled': {
+        if (sessionId && data?.requestId) {
+          sessionStore.removeAskQuestion(sessionId, data.requestId)
+        }
+        break
+      }
+
       case 'error': {
         if (sessionId) {
           sessionStore.updateSessionPhase(sessionId, 'FAILED' as TaskPhase)
@@ -475,6 +504,7 @@ export function useStreamWS() {
     sendMessage,
     sendEditMessage,
     cancel,
+    sendAskUserQuestionsResult,
     enqueueMessage,
     insertMessage,
     deleteQueueMessage,

@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api'
-import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage, FileChange } from '../types/chat'
+import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage, FileChange, PendingQuestion } from '../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
 
 export type SessionStatus = 'ACTIVE' | 'ARCHIVED'
@@ -74,6 +74,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessionPendingApprovals = ref<Map<string, number>>(new Map())
   const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
   const sessionFileChanges = ref<Map<string, FileChange[]>>(new Map())
+  const sessionPendingQuestions = ref<Map<string, PendingQuestion[]>>(new Map())
 
   const activeSession = computed(() =>
     sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
@@ -113,6 +114,10 @@ export const useSessionStore = defineStore('session', () => {
 
   const activeFileChanges = computed(() =>
     sessionFileChanges.value.get(activeSessionId.value ?? '') ?? []
+  )
+
+  const activePendingQuestions = computed(() =>
+    sessionPendingQuestions.value.get(activeSessionId.value ?? '') ?? []
   )
 
   function sessionsByAgent(agentId: string) {
@@ -566,6 +571,30 @@ export const useSessionStore = defineStore('session', () => {
     sessionFileChanges.value.delete(String(sessionId))
   }
 
+  // --- Pending questions actions ---
+
+  function appendAskQuestion(sessionId: string, question: PendingQuestion) {
+    const sid = String(sessionId)
+    const list = sessionPendingQuestions.value.get(sid) ?? []
+    // Avoid duplicates
+    if (!list.some(q => q.requestId === question.requestId)) {
+      list.push(question)
+      sessionPendingQuestions.value.set(sid, [...list])
+    }
+  }
+
+  function removeAskQuestion(sessionId: string, requestId: string) {
+    const sid = String(sessionId)
+    const list = sessionPendingQuestions.value.get(sid)
+    if (list) {
+      sessionPendingQuestions.value.set(sid, list.filter(q => q.requestId !== requestId))
+    }
+  }
+
+  function clearAskQuestions(sessionId: string) {
+    sessionPendingQuestions.value.delete(String(sessionId))
+  }
+
   function reset() {
     sessions.value = []
     activeSessionId.value = null
@@ -580,6 +609,7 @@ export const useSessionStore = defineStore('session', () => {
     sessionPendingApprovals.value = new Map()
     sessionFileChanges.value = new Map()
     sessionQueueMessages.value = new Map()
+    sessionPendingQuestions.value = new Map()
   }
 
   return {
@@ -648,6 +678,12 @@ export const useSessionStore = defineStore('session', () => {
     appendFileChange,
     setFileChanges,
     clearFileChanges,
+    // Pending questions
+    sessionPendingQuestions,
+    activePendingQuestions,
+    appendAskQuestion,
+    removeAskQuestion,
+    clearAskQuestions,
     reset
   }
 })

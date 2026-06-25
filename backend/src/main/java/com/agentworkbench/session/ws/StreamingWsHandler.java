@@ -6,6 +6,7 @@ import com.agentworkbench.harness.core.AgentLoop;
 import com.agentworkbench.harness.core.HarnessService;
 import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.local.LocalToolSessionRegistry;
+import com.agentworkbench.harness.tool.AskUserQuestionsRegistry;
 import com.agentworkbench.harness.skill.SkillSyncService;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
@@ -44,6 +45,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final SessionService sessionService;
     private final MessageQueueService messageQueueService;
     private final LocalToolSessionRegistry localToolSessionRegistry;
+    private final AskUserQuestionsRegistry askUserQuestionsRegistry;
     private final ActivityService activityService;
     private final SessionTodoMapper sessionTodoMapper;
     private final AgentLoop agentLoop;
@@ -66,6 +68,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                SessionService sessionService,
                                MessageQueueService messageQueueService,
                                LocalToolSessionRegistry localToolSessionRegistry,
+                               AskUserQuestionsRegistry askUserQuestionsRegistry,
                                ActivityService activityService,
                                SessionTodoMapper sessionTodoMapper,
                                AgentLoop agentLoop,
@@ -78,6 +81,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.sessionService = sessionService;
         this.messageQueueService = messageQueueService;
         this.localToolSessionRegistry = localToolSessionRegistry;
+        this.askUserQuestionsRegistry = askUserQuestionsRegistry;
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
         this.agentLoop = agentLoop;
@@ -130,6 +134,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             case "skill_sync_done" -> handleSkillSyncDone(userId, root);
             case "tool_result" -> handleToolResult(userId, root);
             case "tool_error" -> handleToolError(userId, root);
+            case "ask_user_questions_result" -> handleAskUserQuestionsResult(userId, root);
             case "ping" -> registry.send(userId, WsEvent.of("pong", null, Map.of()));
             default -> log.debug("Unknown WS message type '{}' from userId={}", type, userId);
         }
@@ -141,6 +146,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         registry.unregister(session);
         if (userId != null) {
             localToolSessionRegistry.failAllForUser(userId);
+            // Fail all pending questions for sessions belonging to this user
+            // The timeout mechanism in AskUserQuestionsRegistry also serves as a fallback
         }
     }
 
@@ -655,12 +662,28 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         }
     }
 
+    private void handleAskUserQuestionsResult(Long userId, JsonNode root) {
+        Long sessionId = getLong(root, "sessionId");
+        JsonNode data = root.get("data");
+        if (sessionId == null || data == null) return;
+
+        String requestId = data.has("requestId") ? data.get("requestId").asText() : null;
+        if (requestId == null) return;
+
+        // Pass the answers JSON as-is to the registry
+        String answersJson = data.has("answers") ? data.get("answers").toString() : "[]";
+        String resultJson = "{\"answers\": " + answersJson + "}";
+        askUserQuestionsRegistry.complete(sessionId, requestId, resultJson);
+        log.info("Received ask_user_questions_result for session={}, requestId={}", sessionId, requestId);
+    }
+
     private void handleCancel(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
         AtomicBoolean flag = cancelFlags.get(sessionId);
         if (flag != null) {
             flag.set(true);
+            askUserQuestionsRegistry.failAllForSession(sessionId);
             registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLING")));
             log.info("Cancel requested for session {} by userId={}", sessionId, userId);
         }

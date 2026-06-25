@@ -61,6 +61,11 @@
                   class="session-approval-dot"
                   title="有待审批的命令"
                 ></span>
+                <span
+                  v-else-if="hasPendingQuestion(session.id)"
+                  class="session-question-dot"
+                  title="有待回答的问题"
+                ></span>
                 <span v-else class="session-phase-dot" :class="phaseClass(session.phase)"></span>
                 <input
                   v-if="editingSessionId === session.id"
@@ -421,6 +426,10 @@ function hasPendingApproval(sessionId: string): boolean {
   return (sessionStore.sessionPendingApprovals?.get(sessionId) ?? 0) > 0
 }
 
+function hasPendingQuestion(sessionId: string): boolean {
+  return (sessionStore.sessionPendingQuestions?.get(String(sessionId))?.length ?? 0) > 0
+}
+
 function toggleGroup(key: string) {
   if (collapsedGroups.value.has(key)) {
     collapsedGroups.value.delete(key)
@@ -654,6 +663,20 @@ function toggleGroup(key: string) {
 }
 
 @keyframes pulse-approval {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.session-question-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  flex-shrink: 0;
+  animation: pulse-question 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-question {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }

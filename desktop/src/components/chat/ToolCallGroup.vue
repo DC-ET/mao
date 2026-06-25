@@ -64,6 +64,7 @@ function getToolDisplayName(name: string): string {
     'write_file': '写入文件',
     'edit_file': '编辑文件',
     'shell': '执行命令',
+    'ask_user_questions': '询问用户',
     'task_create': '创建任务',
     'task_update': '更新任务',
     'task_list': '查询任务',

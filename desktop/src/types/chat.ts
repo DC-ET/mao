@@ -63,6 +63,33 @@ export interface QueueMessage {
   createdAt?: string
 }
 
+// --- Ask User Questions types ---
+
+export interface QuestionOption {
+  label: string
+  description: string
+  preview?: string
+}
+
+export interface Question {
+  question: string
+  header: string
+  options: QuestionOption[]
+  multiSelect: boolean
+}
+
+export interface QuestionAnswer {
+  question: string
+  selectedLabels: string[]
+  customInput: string | null
+}
+
+export interface PendingQuestion {
+  requestId: string
+  questions: Question[]
+  metadata?: Record<string, unknown>
+}
+
 export function normalizeMessageRole(role: string): ChatMessage['role'] {
   const r = (role || '').toLowerCase()
   if (r === 'user' || r === 'assistant' || r === 'system') return r

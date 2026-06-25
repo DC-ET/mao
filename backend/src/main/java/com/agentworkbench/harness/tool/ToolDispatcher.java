@@ -5,16 +5,21 @@ import com.agentworkbench.harness.local.LocalToolExecutor;
 import com.agentworkbench.session.entity.PermissionLevel;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.mapper.SessionMapper;
-import lombok.RequiredArgsConstructor;
+import com.agentworkbench.session.ws.StreamingWsRegistry;
+import com.agentworkbench.session.ws.WsEvent;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ToolDispatcher {
+
+    private static final String ASK_USER_QUESTIONS = "ask_user_questions";
 
     /**
      * 纯服务端工具 —— LOCAL 模式下也由服务端执行，不发给客户端
@@ -29,6 +34,25 @@ public class ToolDispatcher {
     private final LocalToolExecutor localToolExecutor;
     private final DangerAssessor dangerAssessor;
     private final SessionMapper sessionMapper;
+    private final StreamingWsRegistry streamingWsRegistry;
+    private final AskUserQuestionsRegistry askUserQuestionsRegistry;
+    private final ObjectMapper objectMapper;
+
+    public ToolDispatcher(ToolRegistry toolRegistry,
+                          LocalToolExecutor localToolExecutor,
+                          DangerAssessor dangerAssessor,
+                          SessionMapper sessionMapper,
+                          StreamingWsRegistry streamingWsRegistry,
+                          AskUserQuestionsRegistry askUserQuestionsRegistry,
+                          ObjectMapper objectMapper) {
+        this.toolRegistry = toolRegistry;
+        this.localToolExecutor = localToolExecutor;
+        this.dangerAssessor = dangerAssessor;
+        this.sessionMapper = sessionMapper;
+        this.streamingWsRegistry = streamingWsRegistry;
+        this.askUserQuestionsRegistry = askUserQuestionsRegistry;
+        this.objectMapper = objectMapper;
+    }
 
     private record ApprovalDecision(boolean needApproval, String dangerReason) {}
 
@@ -65,6 +89,11 @@ public class ToolDispatcher {
     public String dispatch(String toolName, String arguments, String executionMode,
                            Long sessionId, String workspace,
                            String permissionLevel, LlmModelConfig modelConfig) {
+        // ask_user_questions 始终路由到客户端，不受 executionMode 和权限影响
+        if (ASK_USER_QUESTIONS.equals(toolName)) {
+            return dispatchAskUserQuestions(arguments, sessionId);
+        }
+
         // 纯服务端工具始终在服务端执行，不受 executionMode 影响
         if (SERVER_ONLY_TOOLS.contains(toolName)) {
             Tool tool = toolRegistry.getTool(toolName);
@@ -106,6 +135,57 @@ public class ToolDispatcher {
      */
     public String dispatch(String toolName, String arguments, String executionMode, Long sessionId, String workspace) {
         return dispatch(toolName, arguments, executionMode, sessionId, workspace, null, null);
+    }
+
+    /**
+     * Dispatch ask_user_questions: send question to client via WebSocket and block until answer.
+     */
+    private String dispatchAskUserQuestions(String arguments, Long sessionId) {
+        // Look up userId from session
+        Session session = sessionMapper.selectById(sessionId);
+        if (session == null) {
+            return "{\"error\": \"Session not found: " + sessionId + "\"}";
+        }
+        Long userId = session.getUserId();
+        if (userId == null || !streamingWsRegistry.hasConnection(userId)) {
+            return "{\"error\": \"No connected client to receive questions\"}";
+        }
+
+        // Register pending question
+        String requestId = askUserQuestionsRegistry.register(sessionId);
+
+        // Parse arguments to extract questions for the WS payload
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("requestId", requestId);
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = objectMapper.readValue(arguments, Map.class);
+            if (parsed.containsKey("questions")) {
+                data.put("questions", parsed.get("questions"));
+            }
+            if (parsed.containsKey("metadata")) {
+                data.put("metadata", parsed.get("metadata"));
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse ask_user_questions arguments: {}", e.getMessage());
+            data.put("questions", List.of());
+        }
+
+        // Send to client
+        streamingWsRegistry.send(userId, WsEvent.of("ask_user_questions", sessionId, data));
+        log.info("Sent ask_user_questions to userId={}, session={}, requestId={}", userId, sessionId, requestId);
+
+        // Block until user responds (with timeout)
+        String result = askUserQuestionsRegistry.waitForAnswer(sessionId, requestId);
+
+        // If timed out or errored, notify client to dismiss the question panel
+        if (result != null && result.contains("\"error\"")) {
+            Map<String, Object> cancelData = new java.util.LinkedHashMap<>();
+            cancelData.put("requestId", requestId);
+            streamingWsRegistry.send(userId, WsEvent.of("ask_user_questions_cancelled", sessionId, cancelData));
+        }
+
+        return result;
     }
 
     /**
