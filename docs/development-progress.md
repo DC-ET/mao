@@ -36,8 +36,8 @@ Agent Workbench 是一个企业级 AI Agent 管理平台，包含三个子系统
 | 审计拦截器 | `audit/interceptor/AuditInterceptor.java` | 已完成 (持久化到 api_call_log) |
 
 ### 1.3 数据库
-- MySQL: `120.26.109.221:3306/agentworkbench2`
-- Redis: `120.26.109.221:6379` (database 1)
+- MySQL: `127.0.0.1:3306/agentworkbench`
+- Redis: `127.0.0.1:6379` (database 1)
 - 建表脚本: `V001__init_schema.sql`, `V002__file_and_system_config.sql`, `V003__phase4_hub_analytics_apikey_notification.sql` - **24 张表已创建**
 - HikariCP: maximum-pool-size=20, connection-timeout=10s
 
@@ -414,6 +414,6 @@ Agent Workbench 是一个企业级 AI Agent 管理平台，包含三个子系统
 | Backend | 9080 |
 | Admin | 5200 |
 | Desktop | 5201 |
-| MySQL | 120.26.109.221:3306 |
-| Redis | 120.26.109.221:6379 |
+| MySQL | 127.0.0.1:3306 |
+| Redis | 127.0.0.1:6379 |
 | Swagger UI | http://localhost:9080/api/swagger-ui.html |

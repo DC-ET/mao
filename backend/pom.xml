@@ -182,26 +182,6 @@
                 </configuration>
             </plugin>
             <plugin>
-                <groupId>org.flywaydb</groupId>
-                <artifactId>flyway-maven-plugin</artifactId>
-                <version>11.7.2</version>
-                <configuration>
-                    <url>jdbc:mysql://120.26.109.221:3306/agentworkbench2?useSSL=false&amp;serverTimezone=Asia/Shanghai</url>
-                    <user>root</user>
-                    <password>REDACTED_MYSQL_PASSWORD</password>
-                    <locations>
-                        <location>filesystem:src/main/resources/db/migration</location>
-                    </locations>
-                </configuration>
-                <dependencies>
-                    <dependency>
-                        <groupId>com.mysql</groupId>
-                        <artifactId>mysql-connector-j</artifactId>
-                        <version>${mysql.version}</version>
-                    </dependency>
-                </dependencies>
-            </plugin>
-            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>

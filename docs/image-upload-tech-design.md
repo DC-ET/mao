@@ -114,8 +114,8 @@
 @ConfigurationProperties(prefix = "oss")
 public class OssProperties {
     private String region = "oss-cn-hangzhou";
-    private String accessKeyId = "REDACTED_OSS_KEY";
-    private String accessKeySecret = "REDACTED_OSS_SECRET";
+    private String accessKeyId = "xxxxxxx";
+    private String accessKeySecret = "xxxxxxx";
     private String bucket = "etfs";
     private int maxKeys = 100;
 
@@ -126,9 +126,9 @@ public class OssProperties {
     public static class Sts {
         private String regionId = "cn-hangzhou";
         private String endpoint = "sts.cn-hangzhou.aliyuncs.com";
-        private String accessKeyId = "REDACTED_STS_KEY";
-        private String accessKeySecret = "REDACTED_STS_SECRET";
-        private String roleArn = "acs:ram::REDACTED_RAM_ACCOUNT:role/ramosstest";
+        private String accessKeyId = "xxxxxxx";
+        private String accessKeySecret = "xxxxxxx";
+        private String roleArn = "acs:ram::xxxxxxx:role/ramosstest";
         private String roleSessionName = "OssSession";  // 运行时覆盖为 "User_{userId}"
         private long expire = 3600;
         private DataSize maxSize = DataSize.ofMegabytes(20);  // STS policy 单文件上限 20MB
