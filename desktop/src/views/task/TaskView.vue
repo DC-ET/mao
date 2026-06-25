@@ -861,8 +861,6 @@ onUnmounted(() => {
 
 .execution-steps-collapse .steps-detail {
   margin-top: 8px;
-  padding-left: 4px;
-  border-left: 2px solid var(--aw-hairline);
 }
 
 /* Scrollbar hidden */

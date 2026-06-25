@@ -4,7 +4,7 @@
       <div class="thinking-info">
         <span v-if="streaming" class="thinking-spinner"></span>
         <el-icon v-else class="thinking-icon" :size="14"><ChatDotRound /></el-icon>
-        <span class="thinking-label">{{ streaming ? '思考中...' : '思考过程' }}</span>
+        <span class="thinking-label">{{ streaming ? '思考中...' : '思考完成' }}</span>
       </div>
       <el-icon
         class="expand-icon"
@@ -57,7 +57,7 @@ watch(() => props.thinking, async () => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 6px 8px;
+  padding: 5px 5px;
   margin-bottom: 2px;
   cursor: pointer;
   user-select: none;
@@ -123,7 +123,7 @@ watch(() => props.thinking, async () => {
 
 .thinking-content {
   margin: 0;
-  padding: 0px 10px;
+  padding: 0px 5px;
   font-size: 12px;
   line-height: 1.6;
   color: var(--aw-ink-muted-48);

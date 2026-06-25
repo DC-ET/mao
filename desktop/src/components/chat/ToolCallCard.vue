@@ -117,7 +117,7 @@ function toggleExpand() {
 
 <style scoped>
 .tool-call-card {
-  padding: 2px 5px;
+  padding: 0px 5px;
   overflow: hidden;
   background: var(--aw-canvas);
   transition: border-color 0.2s;
@@ -141,10 +141,6 @@ function toggleExpand() {
   transition: background 0.15s;
 }
 
-.tool-header:hover {
-  background: var(--aw-canvas-parchment);
-}
-
 .tool-info {
   display: flex;
   align-items: center;
@@ -155,7 +151,7 @@ function toggleExpand() {
 }
 
 .tool-summary {
-  font-size: var(--aw-text-caption);
+  font-size: 12px;
   color: var(--aw-ink-muted-48);
   overflow: hidden;
   text-overflow: ellipsis;

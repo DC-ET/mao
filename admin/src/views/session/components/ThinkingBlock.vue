@@ -3,7 +3,7 @@
     <div class="thinking-header" @click="isExpanded = !isExpanded">
       <div class="thinking-info">
         <el-icon class="thinking-icon" :size="14"><ChatDotRound /></el-icon>
-        <span class="thinking-label">思考过程</span>
+        <span class="thinking-label">思考完成</span>
       </div>
       <el-icon class="expand-icon" :class="{ expanded: isExpanded }"><ArrowDown /></el-icon>
     </div>
@@ -32,7 +32,7 @@ const isExpanded = ref(false)
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 6px 8px;
+  padding: 5px 5px;
   margin-bottom: 2px;
   cursor: pointer;
   user-select: none;
@@ -83,7 +83,7 @@ const isExpanded = ref(false)
 
 .thinking-content {
   margin: 0;
-  padding: 0px 10px;
+  padding: 0px 5px;
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary);
