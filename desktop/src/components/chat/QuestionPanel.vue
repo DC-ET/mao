@@ -141,7 +141,7 @@ const currentQuestions = computed<Question[]>(() => {
   return last?.questions ?? []
 })
 
-watch(currentRequestId, (newId, oldId) => {
+watch(currentRequestId, (_newId, oldId) => {
   if (oldId === undefined) return
   activeTab.value = 0
   answeredTabs.value = {}

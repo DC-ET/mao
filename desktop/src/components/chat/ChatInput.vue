@@ -105,7 +105,6 @@
       <div class="toolbar-right">
         <ModelSelector
           :model-id="modelId"
-          :model-id-str="modelIdStr"
           @update:model-id="id => emit('update:modelId', id)"
           @select="(id, modelIdStr) => emit('select:model', id, modelIdStr)"
         />
@@ -166,7 +165,6 @@ const props = withDefaults(defineProps<{
   workspace?: string
   executionMode?: string
   modelId?: number
-  modelIdStr?: string
   modelSupportsVision?: boolean
   placeholder?: string
   permissionLevel?: string
@@ -179,7 +177,6 @@ const props = withDefaults(defineProps<{
   cancelling: false,
   workspace: '',
   executionMode: 'CLOUD',
-  modelIdStr: '',
   placeholder: '告诉 Agent 你想做什么...',
   permissionLevel: 'READ_ONLY',
   isNewTask: false,

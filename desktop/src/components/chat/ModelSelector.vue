@@ -1,7 +1,7 @@
 <template>
   <el-popover ref="popoverRef" trigger="click" :width="280" placement="top-end" @before-enter="loadModels">
     <template #reference>
-      <span class="model-name clickable">{{ modelIdStr || '选择模型' }}</span>
+      <span class="model-name clickable">{{ displayName || '选择模型' }}</span>
     </template>
     <div class="model-selector">
       <div v-if="loadingModels" class="model-loading">加载中...</div>
@@ -25,8 +25,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, toRef } from 'vue'
 import { api } from '../../api'
+import { useModelName } from '../../composables/useModelName'
 
 interface ModelItem {
   id: number
@@ -36,9 +37,8 @@ interface ModelItem {
   isDefault: boolean
 }
 
-defineProps<{
+const props = defineProps<{
   modelId?: number
-  modelIdStr?: string
 }>()
 
 const emit = defineEmits<{
@@ -49,6 +49,10 @@ const emit = defineEmits<{
 const popoverRef = ref()
 const models = ref<ModelItem[]>([])
 const loadingModels = ref(false)
+
+// Use composable to resolve model name from ID
+const modelIdRef = toRef(props, 'modelId')
+const { modelName: displayName } = useModelName(modelIdRef)
 
 async function loadModels() {
   if (models.value.length > 0) return
