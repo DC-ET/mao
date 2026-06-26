@@ -27,6 +27,21 @@ interface WorkspaceFile {
   size: number
 }
 
+interface DirectoryEntry {
+  name: string
+  path: string
+  isDirectory: boolean
+  size: number
+  mtime: number
+  isSymlink: boolean
+}
+
+interface DirectoryResult {
+  entries?: DirectoryEntry[]
+  error?: string
+  truncated?: boolean
+}
+
 interface ElectronAPI {
   getAppVersion(): Promise<string>
   getPlatform(): Promise<string>
@@ -49,6 +64,7 @@ interface ElectronAPI {
   localWriteFile(args: any): Promise<any>
   localEditFile(args: any): Promise<any>
   listWorkspaceFiles(workspace: string, filter?: string, limit?: number): Promise<WorkspaceFile[]>
+  listDirectory(dirPath: string, workspace: string): Promise<DirectoryResult>
 
   onToolApprovalRequest(callback: (data: any) => void): void
   removeToolApprovalRequestListener(): void

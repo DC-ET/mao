@@ -29,6 +29,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listWorkspaceFiles: (workspace, filter, limit) =>
     ipcRenderer.invoke('list-workspace-files', { workspace, filter, limit }),
 
+  // Directory listing for file browser (non-recursive, single level)
+  listDirectory: (dirPath, workspace) =>
+    ipcRenderer.invoke('list-directory', { dirPath, workspace }),
+
   // Tool approval — renderer UI, main process waits for response
   onToolApprovalRequest: (callback) => {
     ipcRenderer.on('tool-approval-request', (event, data) => callback(data))

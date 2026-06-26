@@ -375,6 +375,63 @@ ipcMain.handle('list-workspace-files', async (event, { workspace, filter, limit 
   }
 })
 
+ipcMain.handle('list-directory', async (event, { dirPath, workspace }) => {
+  try {
+    if (!dirPath || !workspace) return { error: 'Missing dirPath or workspace' }
+    const resolvedDir = path.resolve(dirPath)
+    const resolvedWorkspace = path.resolve(workspace)
+    if (!resolvedDir.startsWith(resolvedWorkspace + path.sep) && resolvedDir !== resolvedWorkspace) {
+      return { error: 'Access denied: path outside workspace' }
+    }
+    if (!fs.existsSync(resolvedDir)) return { error: 'Directory does not exist' }
+
+    const entries = fs.readdirSync(resolvedDir, { withFileTypes: true })
+    const results = []
+    const MAX_ENTRIES = 500
+
+    for (const entry of entries) {
+      if (results.length >= MAX_ENTRIES) break
+      if (entry.name.startsWith('.')) continue
+      if (entry.isDirectory() && IGNORED_DIRS.has(entry.name)) continue
+
+      const fullPath = path.join(resolvedDir, entry.name)
+      const relPath = path.relative(resolvedWorkspace, fullPath)
+      let isSymlink = false
+      let size = 0
+      let mtime = 0
+
+      try {
+        const lstat = fs.lstatSync(fullPath)
+        isSymlink = lstat.isSymbolicLink()
+        size = lstat.size
+        mtime = lstat.mtimeMs
+      } catch {
+        // skip entries we can't stat
+        continue
+      }
+
+      results.push({
+        name: entry.name,
+        path: relPath,
+        isDirectory: entry.isDirectory() && !isSymlink,
+        size,
+        mtime,
+        isSymlink
+      })
+    }
+
+    // Sort: folders first alphabetically, then files alphabetically
+    results.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+
+    return { entries: results, truncated: entries.length > MAX_ENTRIES }
+  } catch (e) {
+    return { error: e.message }
+  }
+})
+
 // ========== Tool execution via Streaming WS ==========
 
 async function executeToolByName(toolName, parsedArgs, sessionId, workspace, needApproval, dangerReason) {

@@ -3,63 +3,89 @@
     <template v-if="!panelCollapsed">
     <div class="resize-handle" @mousedown="onResizeStart"></div>
 
-    <!-- Task info -->
-    <div class="inspector-section task-info-section">
-      <div class="task-info-top">
-        <div class="task-title-group">
-          <input
-            v-if="editing"
-            ref="editInput"
-            v-model="editingTitle"
-            class="task-title-input"
-            @keydown.enter="confirmEdit"
-            @keydown.escape="cancelEdit"
-            @blur="confirmEdit"
-          />
-          <h3 v-else class="task-title" @click="startEdit">{{ displayTitle }}</h3>
+    <!-- Tab bar — only when there are 2 tabs -->
+    <div v-if="showFileTreeTab" class="inspector-tabs">
+      <button
+        class="inspector-tab"
+        :class="{ active: inspectorActiveTab === 'workspace' }"
+        @click="inspectorActiveTab = 'workspace'"
+      >
+        任务进度
+      </button>
+      <button
+        class="inspector-tab"
+        :class="{ active: inspectorActiveTab === 'filetree' }"
+        @click="inspectorActiveTab = 'filetree'"
+      >
+        项目文件
+      </button>
+    </div>
+
+    <!-- Tab: 工作区+进度 -->
+    <div v-show="inspectorActiveTab === 'workspace'" class="inspector-tab-content">
+      <!-- Task info -->
+      <div class="inspector-section task-info-section">
+        <div class="task-info-top">
+          <div class="task-title-group">
+            <input
+              v-if="editing"
+              ref="editInput"
+              v-model="editingTitle"
+              class="task-title-input"
+              @keydown.enter="confirmEdit"
+              @keydown.escape="cancelEdit"
+              @blur="confirmEdit"
+            />
+            <h3 v-else class="task-title" @click="startEdit">{{ displayTitle }}</h3>
+          </div>
+        </div>
+        <div class="task-status-row">
+          <span class="phase-badge" :class="phaseClass">
+            <span v-if="phase === 'RUNNING'" class="phase-spinner"></span>
+            {{ phaseLabel }}
+          </span>
+          <span v-if="contextDisplay" class="context-badge">
+            上下文 {{ contextDisplay }}
+          </span>
         </div>
       </div>
-      <div class="task-status-row">
-        <span class="phase-badge" :class="phaseClass">
-          <span v-if="phase === 'RUNNING'" class="phase-spinner"></span>
-          {{ phaseLabel }}
-        </span>
-        <span v-if="contextDisplay" class="context-badge">
-          上下文 {{ contextDisplay }}
-        </span>
-      </div>
-    </div>
 
-    <div v-if="workspace || agentName" class="inspector-section">
-      <h4 class="section-title">工作区</h4>
-      <div v-if="agentName" class="task-workspace-row">
-        <el-icon class="workspace-icon"><User /></el-icon>
-        <span class="workspace-path">{{ agentName }}</span>
-      </div>
-      <div v-if="workspace || executionMode === 'CLOUD'" class="task-workspace-row">
-        <el-icon class="workspace-icon"><FolderOpened /></el-icon>
-        <span
-          class="workspace-path-wrap"
-          @mouseenter="workspaceHovered = true"
-          @mouseleave="workspaceHovered = false"
-        >
-          <span class="workspace-path">{{ executionMode === 'CLOUD' ? '云端工作区' : workspace }}</span>
-          <button
-            v-if="executionMode !== 'CLOUD' && workspace"
-            class="workspace-copy-btn"
-            :class="{ visible: workspaceHovered }"
-            @click="copyWorkspace"
-            title="复制路径"
+      <div v-if="workspace || agentName" class="inspector-section">
+        <h4 class="section-title">工作区</h4>
+        <div v-if="agentName" class="task-workspace-row">
+          <el-icon class="workspace-icon"><User /></el-icon>
+          <span class="workspace-path">{{ agentName }}</span>
+        </div>
+        <div v-if="workspace || executionMode === 'CLOUD'" class="task-workspace-row">
+          <el-icon class="workspace-icon"><FolderOpened /></el-icon>
+          <span
+            class="workspace-path-wrap"
+            @mouseenter="workspaceHovered = true"
+            @mouseleave="workspaceHovered = false"
           >
-            <el-icon :size="12"><DocumentCopy /></el-icon>
-          </button>
-        </span>
+            <span class="workspace-path">{{ executionMode === 'CLOUD' ? '云端工作区' : workspace }}</span>
+            <button
+              v-if="executionMode !== 'CLOUD' && workspace"
+              class="workspace-copy-btn"
+              :class="{ visible: workspaceHovered }"
+              @click="copyWorkspace"
+              title="复制路径"
+            >
+              <el-icon :size="12"><DocumentCopy /></el-icon>
+            </button>
+          </span>
+        </div>
+      </div>
+
+      <div class="inspector-section">
+        <h4 class="section-title">进度</h4>
+        <TodoChecklist :todos="todos" />
       </div>
     </div>
 
-    <div class="inspector-section">
-      <h4 class="section-title">进度</h4>
-      <TodoChecklist :todos="todos" />
+    <!-- Tab: 文件树 -->
+    <div v-if="showFileTreeTab && inspectorActiveTab === 'filetree'" class="inspector-tab-content file-tree-tab">
+      <FileTree :workspace="workspace || ''" @open-file="handleOpenFile" />
     </div>
 
     </template>
@@ -67,16 +93,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
-import { FolderOpened, DocumentCopy } from '@element-plus/icons-vue'
+import { ref, computed, watch, nextTick } from 'vue'
+import { FolderOpened, DocumentCopy, User } from '@element-plus/icons-vue'
 import TodoChecklist from './TodoChecklist.vue'
+import FileTree from '../file-browser/FileTree.vue'
 import type { TodoItem } from '../../types/chat'
 import type { TaskPhase } from '../../stores/session'
 import type { ContextWindowInfo } from '../../types/chat'
 
 const props = defineProps<{
   todos?: TodoItem[]
-  // Task info props (moved from TaskHeader)
   title: string
   agentName?: string
   workspace?: string
@@ -89,7 +115,22 @@ const props = defineProps<{
 const emit = defineEmits<{
   togglePanel: []
   rename: [title: string]
+  'open-file': [payload: { absolutePath: string; title: string }]
 }>()
+
+// Tab state
+const inspectorActiveTab = ref<'workspace' | 'filetree'>('workspace')
+const showFileTreeTab = computed(() => !!props.workspace && props.executionMode !== 'CLOUD')
+
+watch(showFileTreeTab, (visible) => {
+  if (!visible && inspectorActiveTab.value === 'filetree') {
+    inspectorActiveTab.value = 'workspace'
+  }
+})
+
+function handleOpenFile(payload: { absolutePath: string; title: string }) {
+  emit('open-file', payload)
+}
 
 // --- Title editing ---
 const editing = ref(false)
@@ -118,7 +159,7 @@ function cancelEdit() {
   editing.value = false
 }
 
-// --- Task info logic (from TaskHeader) ---
+// --- Task info logic ---
 const phaseLabel = computed(() => {
   switch (props.phase) {
     case 'RUNNING': return '执行中'
@@ -168,8 +209,8 @@ const contextDisplay = computed(() => {
 
 // Panel resize
 const panelWidth = ref<number | null>(null)
-const MIN_WIDTH = 200
-const MAX_WIDTH = 500
+const MIN_WIDTH = 240
+const MAX_WIDTH = 480
 
 const panelStyle = computed(() => {
   if (panelWidth.value !== null) {
@@ -181,10 +222,9 @@ const panelStyle = computed(() => {
 function onResizeStart(e: MouseEvent) {
   e.preventDefault()
   const startX = e.clientX
-  const startWidth = panelWidth.value ?? 260
+  const startWidth = panelWidth.value ?? 280
 
   function onMouseMove(ev: MouseEvent) {
-    // Drag left → wider, drag right → narrower
     const newWidth = startWidth - (ev.clientX - startX)
     panelWidth.value = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newWidth))
   }
@@ -207,16 +247,58 @@ function onResizeStart(e: MouseEvent) {
 <style scoped>
 .task-inspector {
   position: relative;
-  width: var(--aw-inspector-width, 260px);
+  width: var(--aw-inspector-width, 280px);
   flex-shrink: 0;
   border-left: 1px solid var(--aw-divider-soft);
-  padding: 16px;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--aw-canvas);
+  display: flex;
+  flex-direction: column;
 }
 
 .task-inspector.collapsed {
   display: none;
+}
+
+/* Tab bar */
+.inspector-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--aw-divider-soft);
+  flex-shrink: 0;
+}
+
+.inspector-tab {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: var(--aw-text-caption);
+  font-weight: 500;
+  color: var(--aw-ink-muted-48);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.inspector-tab:hover {
+  color: var(--aw-ink);
+}
+
+.inspector-tab.active {
+  color: var(--aw-primary);
+  border-bottom-color: var(--aw-primary);
+}
+
+/* Tab content */
+.inspector-tab-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.inspector-tab-content.file-tree-tab {
+  padding: 0;
 }
 
 .inspector-section {
@@ -415,15 +497,15 @@ function onResizeStart(e: MouseEvent) {
 }
 
 /* Scrollbar */
-.task-inspector::-webkit-scrollbar {
+.inspector-tab-content::-webkit-scrollbar {
   width: 4px;
 }
 
-.task-inspector::-webkit-scrollbar-track {
+.inspector-tab-content::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.task-inspector::-webkit-scrollbar-thumb {
+.inspector-tab-content::-webkit-scrollbar-thumb {
   background: var(--aw-hairline);
   border-radius: 2px;
 }
@@ -432,6 +514,10 @@ function onResizeStart(e: MouseEvent) {
 [data-theme="dark"] .task-inspector {
   background: var(--aw-canvas);
   border-left-color: var(--aw-hairline);
+}
+
+[data-theme="dark"] .inspector-tabs {
+  border-bottom-color: var(--aw-hairline);
 }
 
 [data-theme="dark"] .task-info-section {
