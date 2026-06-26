@@ -1,12 +1,12 @@
 <template>
   <nav class="top-nav">
     <div class="nav-left">
-      <div class="nav-logo" @click="router.push('/')">
+      <!-- <div class="nav-logo" @click="router.push('/')">
         <div class="logo-icon">
           <el-icon :size="16"><Monitor /></el-icon>
         </div>
-        <span class="logo-text">Agent Workbench</span>
-      </div>
+        <span class="logo-text">工作台</span>
+      </div> -->
       <div class="nav-left-actions">
         <el-tooltip content="左侧面板" :show-after="100" placement="bottom">
           <div class="theme-toggle" :class="{ active: !leftCollapsed }" @click="toggleLeft">

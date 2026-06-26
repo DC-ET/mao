@@ -75,6 +75,9 @@ export const useSessionStore = defineStore('session', () => {
   const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
   const sessionFileChanges = ref<Map<string, FileChange[]>>(new Map())
   const sessionPendingQuestions = ref<Map<string, PendingQuestion[]>>(new Map())
+  const sessionMessageHasMore = ref<Map<string, boolean>>(new Map())
+  const sessionMessageLoadingOlder = ref<Map<string, boolean>>(new Map())
+  const sessionMessageNextBeforeId = ref<Map<string, string | null>>(new Map())
 
   const activeSession = computed(() =>
     sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
@@ -118,6 +121,18 @@ export const useSessionStore = defineStore('session', () => {
 
   const activePendingQuestions = computed(() =>
     sessionPendingQuestions.value.get(activeSessionId.value ?? '') ?? []
+  )
+
+  const activeMessageHasMore = computed(() =>
+    sessionMessageHasMore.value.get(activeSessionId.value ?? '') ?? false
+  )
+
+  const activeMessageLoadingOlder = computed(() =>
+    sessionMessageLoadingOlder.value.get(activeSessionId.value ?? '') ?? false
+  )
+
+  const activeMessageNextBeforeId = computed(() =>
+    sessionMessageNextBeforeId.value.get(activeSessionId.value ?? '') ?? null
   )
 
   function sessionsByAgent(agentId: string) {
@@ -253,6 +268,8 @@ export const useSessionStore = defineStore('session', () => {
       sessionActivities.value.delete(sid)
       sessionContextWindow.value.delete(sid)
       sessionQueueMessages.value.delete(sid)
+      sessionFileChanges.value.delete(sid)
+      clearMessagePageState(sid)
     } catch {
       // ignore
     }
@@ -274,6 +291,31 @@ export const useSessionStore = defineStore('session', () => {
 
   function setMessages(sessionId: string, messages: ChatMessage[]) {
     sessionMessages.value.set(String(sessionId), messages)
+  }
+
+  function prependMessages(sessionId: string, messages: ChatMessage[]) {
+    const sid = String(sessionId)
+    const existing = sessionMessages.value.get(sid) ?? []
+    const existingIds = new Set(existing.map(m => String(m.id)))
+    const older = messages.filter(m => !existingIds.has(String(m.id)))
+    sessionMessages.value.set(sid, [...older, ...existing])
+  }
+
+  function setMessagePageState(sessionId: string, hasMore: boolean, nextBeforeId: string | null) {
+    const sid = String(sessionId)
+    sessionMessageHasMore.value.set(sid, hasMore)
+    sessionMessageNextBeforeId.value.set(sid, nextBeforeId)
+  }
+
+  function setLoadingOlderMessages(sessionId: string, loading: boolean) {
+    sessionMessageLoadingOlder.value.set(String(sessionId), loading)
+  }
+
+  function clearMessagePageState(sessionId: string) {
+    const sid = String(sessionId)
+    sessionMessageHasMore.value.delete(sid)
+    sessionMessageLoadingOlder.value.delete(sid)
+    sessionMessageNextBeforeId.value.delete(sid)
   }
 
   function addUserMessage(sessionId: string, msg: ChatMessage) {
@@ -610,6 +652,9 @@ export const useSessionStore = defineStore('session', () => {
     sessionFileChanges.value = new Map()
     sessionQueueMessages.value = new Map()
     sessionPendingQuestions.value = new Map()
+    sessionMessageHasMore.value = new Map()
+    sessionMessageLoadingOlder.value = new Map()
+    sessionMessageNextBeforeId.value = new Map()
   }
 
   return {
@@ -621,6 +666,9 @@ export const useSessionStore = defineStore('session', () => {
     activeTodos,
     activeActivities,
     activeContextWindow,
+    activeMessageHasMore,
+    activeMessageLoadingOlder,
+    activeMessageNextBeforeId,
     sessionsByAgent,
     fetchSessions,
     fetchSession,
@@ -634,6 +682,10 @@ export const useSessionStore = defineStore('session', () => {
     markAsRead,
     // Message cache
     setMessages,
+    prependMessages,
+    setMessagePageState,
+    setLoadingOlderMessages,
+    clearMessagePageState,
     addUserMessage,
     addAssistantMessage,
     ensureStreamingAssistantMessage,

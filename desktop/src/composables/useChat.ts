@@ -115,34 +115,71 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   // Register approval listener globally (once per app lifecycle)
   setupApprovalListener()
 
+  function mapMessagesWithFileChanges(raw: Array<Record<string, unknown>>) {
+    const messages = mapApiMessagesToChat(raw)
+    const rawById = new Map(raw.map(m => [String(m.id), m]))
+    const allChanges: FileChange[] = []
+    for (const msg of messages) {
+      const rawMsg = rawById.get(msg.id)
+      if (rawMsg?.fileChanges && Array.isArray(rawMsg.fileChanges)) {
+        const changes = (rawMsg.fileChanges as Array<Record<string, unknown>>).map(fc => ({
+          path: String(fc.path),
+          type: fc.type as FileChange['type'],
+          linesAdded: Number(fc.linesAdded) || 0,
+          linesDeleted: Number(fc.linesDeleted) || 0
+        }))
+        msg.fileChanges = changes
+        allChanges.push(...changes)
+      }
+    }
+    return { messages, allChanges }
+  }
+
   async function fetchMessages() {
     if (!sessionId.value) return
+    sessionStore.clearMessagePageState(sessionId.value)
     try {
-      const { data } = await api.get(`/sessions/${sessionId.value}/messages`)
-      const raw: Array<Record<string, unknown>> = data || []
-      const messages = mapApiMessagesToChat(raw)
-
-      // Attach fileChanges from API response to mapped messages
-      const rawById = new Map(raw.map(m => [String(m.id), m]))
-      const allChanges: FileChange[] = []
-      for (const msg of messages) {
-        const rawMsg = rawById.get(msg.id)
-        if (rawMsg?.fileChanges && Array.isArray(rawMsg.fileChanges)) {
-          const changes = (rawMsg.fileChanges as Array<Record<string, unknown>>).map(fc => ({
-            path: String(fc.path),
-            type: fc.type as FileChange['type'],
-            linesAdded: Number(fc.linesAdded) || 0,
-            linesDeleted: Number(fc.linesDeleted) || 0
-          }))
-          msg.fileChanges = changes
-          allChanges.push(...changes)
-        }
-      }
-
+      const { data } = await api.get(`/sessions/${sessionId.value}/messages`, { params: { roundLimit: 5 } })
+      const raw: Array<Record<string, unknown>> = data?.messages || []
+      const { messages, allChanges } = mapMessagesWithFileChanges(raw)
       sessionStore.setMessages(sessionId.value, messages)
       sessionStore.setFileChanges(sessionId.value, allChanges)
+      sessionStore.setMessagePageState(
+        sessionId.value,
+        Boolean(data?.hasMore),
+        data?.nextBeforeMessageId != null ? String(data.nextBeforeMessageId) : null
+      )
     } catch {
       // session might not exist yet
+    }
+  }
+
+  async function loadOlderMessages() {
+    if (!sessionId.value) return false
+    const sid = sessionId.value
+    if (sessionStore.activeMessageLoadingOlder || !sessionStore.activeMessageHasMore || !sessionStore.activeMessageNextBeforeId) {
+      return false
+    }
+    sessionStore.setLoadingOlderMessages(sid, true)
+    try {
+      const { data } = await api.get(`/sessions/${sid}/messages`, {
+        params: { roundLimit: 5, beforeMessageId: sessionStore.activeMessageNextBeforeId }
+      })
+      const raw: Array<Record<string, unknown>> = data?.messages || []
+      const { messages: olderMessages, allChanges } = mapMessagesWithFileChanges(raw)
+      sessionStore.prependMessages(sid, olderMessages)
+      const existingChanges = sessionStore.activeFileChanges
+      sessionStore.setFileChanges(sid, [...allChanges, ...existingChanges])
+      sessionStore.setMessagePageState(
+        sid,
+        Boolean(data?.hasMore),
+        data?.nextBeforeMessageId != null ? String(data.nextBeforeMessageId) : null
+      )
+      return olderMessages.length > 0
+    } catch {
+      return false
+    } finally {
+      sessionStore.setLoadingOlderMessages(sid, false)
     }
   }
 
@@ -641,6 +678,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     editAndResend,
     stopExecution,
     fetchMessages,
+    loadOlderMessages,
     newSession,
     restoreSession,
     confirmApproval,

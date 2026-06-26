@@ -83,18 +83,17 @@ public class AdminSessionController {
     }
 
     @GetMapping("/{id}/messages")
-    public Result<List<MessageVO>> getMessages(@PathVariable Long id) {
-        List<Message> messages = sessionService.getMessages(id);
-        Map<Long, List<FileChange>> changesByMsg = sessionService.getFileChangesBySession(id);
-        List<MessageVO> voList = messages.stream().map(msg -> {
-            MessageVO vo = toMessageVO(msg);
-            List<FileChange> changes = changesByMsg.get(msg.getId());
-            if (changes != null && !changes.isEmpty()) {
-                vo.setFileChanges(changes.stream().map(this::toFileChangeVO).collect(Collectors.toList()));
-            }
-            return vo;
-        }).collect(Collectors.toList());
-        return Result.ok(voList);
+    public Result<MessagePageVO> getMessages(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "5") int roundLimit,
+            @RequestParam(required = false) Long beforeMessageId) {
+        SessionService.MessagePage page = sessionService.getMessagesByRounds(id, roundLimit, beforeMessageId);
+        List<MessageVO> voList = toMessageVOList(id, page.messages());
+        MessagePageVO vo = new MessagePageVO();
+        vo.setMessages(voList);
+        vo.setHasMore(page.hasMore());
+        vo.setNextBeforeMessageId(page.nextBeforeMessageId());
+        return Result.ok(vo);
     }
 
     @GetMapping("/options/users")
@@ -186,6 +185,19 @@ public class AdminSessionController {
         return vo;
     }
 
+    private List<MessageVO> toMessageVOList(Long sessionId, List<Message> messages) {
+        List<Long> messageIds = messages.stream().map(Message::getId).collect(Collectors.toList());
+        Map<Long, List<FileChange>> changesByMsg = sessionService.getFileChangesByMessageIds(sessionId, messageIds);
+        return messages.stream().map(msg -> {
+            MessageVO vo = toMessageVO(msg);
+            List<FileChange> changes = changesByMsg.get(msg.getId());
+            if (changes != null && !changes.isEmpty()) {
+                vo.setFileChanges(changes.stream().map(this::toFileChangeVO).collect(Collectors.toList()));
+            }
+            return vo;
+        }).collect(Collectors.toList());
+    }
+
     private MessageVO toMessageVO(Message message) {
         MessageVO vo = new MessageVO();
         vo.setId(message.getId());
@@ -263,6 +275,13 @@ public class AdminSessionController {
         private String createdAt;
         private String updatedAt;
         private String lastActivityAt;
+    }
+
+    @Data
+    public static class MessagePageVO {
+        private List<MessageVO> messages;
+        private boolean hasMore;
+        private Long nextBeforeMessageId;
     }
 
     @Data

@@ -170,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, inject, watch, nextTick, onActivated, type Ref } from 'vue'
+import { ref, computed, inject, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
@@ -226,6 +226,7 @@ const {
   sendMessageWithQueue,
   editAndResend,
   stopExecution,
+  loadOlderMessages,
   newSession,
   restoreSession,
   confirmApproval,
@@ -304,6 +305,26 @@ const showTypingIndicator = computed(() => {
   const hasText = !!(lastMsg.content?.trim() || lastMsg.segments?.some(s => s.type === 'text' && s.content.trim()))
   const hasTools = (lastMsg.toolCalls?.length ?? 0) > 0
   return !hasText && !hasTools
+})
+
+async function handleMessagesScroll() {
+  const el = messagesContainer.value
+  if (!el || el.scrollTop > 120) return
+  if (!sessionStore.activeMessageHasMore || sessionStore.activeMessageLoadingOlder) return
+  const oldScrollHeight = el.scrollHeight
+  const oldScrollTop = el.scrollTop
+  const loaded = await loadOlderMessages()
+  if (!loaded) return
+  await nextTick()
+  el.scrollTop = el.scrollHeight - oldScrollHeight + oldScrollTop
+}
+
+onMounted(() => {
+  messagesContainer.value?.addEventListener('scroll', handleMessagesScroll)
+})
+
+onUnmounted(() => {
+  messagesContainer.value?.removeEventListener('scroll', handleMessagesScroll)
 })
 
 // Round grouping logic

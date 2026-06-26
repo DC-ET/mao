@@ -308,7 +308,48 @@ public class SessionService {
         return messageMapper.selectList(
                 new QueryWrapper<Message>()
                         .eq("session_id", sessionId)
-                        .orderByAsc("created_at"));
+                        .orderByAsc("created_at")
+                        .orderByAsc("id"));
+    }
+
+    public MessagePage getMessagesByRounds(Long sessionId, int roundLimit, Long beforeMessageId) {
+        int limit = Math.max(1, Math.min(roundLimit, 50));
+        Message beforeMessage = null;
+        if (beforeMessageId != null) {
+            beforeMessage = messageMapper.selectById(beforeMessageId);
+            if (beforeMessage == null || !Objects.equals(beforeMessage.getSessionId(), sessionId)) {
+                throw new BusinessException(ErrorCode.PARAM_INVALID);
+            }
+        }
+
+        LambdaQueryWrapper<Message> userWrapper = new LambdaQueryWrapper<Message>()
+                .eq(Message::getSessionId, sessionId)
+                .eq(Message::getRole, "USER")
+                .orderByDesc(Message::getId)
+                .last("LIMIT " + (limit + 1));
+        if (beforeMessage != null) {
+            userWrapper.lt(Message::getId, beforeMessage.getId());
+        }
+        List<Message> userStarts = messageMapper.selectList(userWrapper);
+        if (userStarts.isEmpty()) {
+            return new MessagePage(List.of(), false, null);
+        }
+
+        boolean hasMore = userStarts.size() > limit;
+        List<Message> pageStarts = hasMore ? userStarts.subList(0, limit) : userStarts;
+        Long startId = pageStarts.get(pageStarts.size() - 1).getId();
+
+        LambdaQueryWrapper<Message> messageWrapper = new LambdaQueryWrapper<Message>()
+                .eq(Message::getSessionId, sessionId)
+                .ge(Message::getId, startId)
+                .orderByAsc(Message::getCreatedAt)
+                .orderByAsc(Message::getId);
+        if (beforeMessage != null) {
+            messageWrapper.lt(Message::getId, beforeMessage.getId());
+        }
+        List<Message> messages = messageMapper.selectList(messageWrapper);
+        Long nextBeforeMessageId = messages.isEmpty() ? null : messages.get(0).getId();
+        return new MessagePage(messages, hasMore, nextBeforeMessageId);
     }
 
     public Map<Long, List<FileChange>> getFileChangesBySession(Long sessionId) {
@@ -316,12 +357,30 @@ public class SessionService {
                 new LambdaQueryWrapper<FileChange>()
                         .eq(FileChange::getSessionId, sessionId)
                         .orderByAsc(FileChange::getId));
+        return groupFileChanges(changes);
+    }
+
+    public Map<Long, List<FileChange>> getFileChangesByMessageIds(Long sessionId, List<Long> messageIds) {
+        if (messageIds == null || messageIds.isEmpty()) {
+            return Map.of();
+        }
+        List<FileChange> changes = fileChangeMapper.selectList(
+                new LambdaQueryWrapper<FileChange>()
+                        .eq(FileChange::getSessionId, sessionId)
+                        .in(FileChange::getMessageId, messageIds)
+                        .orderByAsc(FileChange::getId));
+        return groupFileChanges(changes);
+    }
+
+    private Map<Long, List<FileChange>> groupFileChanges(List<FileChange> changes) {
         Map<Long, List<FileChange>> grouped = new LinkedHashMap<>();
         for (FileChange fc : changes) {
             grouped.computeIfAbsent(fc.getMessageId(), k -> new ArrayList<>()).add(fc);
         }
         return grouped;
     }
+
+    public record MessagePage(List<Message> messages, boolean hasMore, Long nextBeforeMessageId) {}
 
     /**
      * Clean up incomplete tail messages after a crash.

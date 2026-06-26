@@ -106,7 +106,7 @@ async function fetchDetail() {
       api.get(`/admin/sessions/${id}/messages`)
     ])
     sessionInfo.value = sessionRes.data
-    const rawMessages = messagesRes.data || []
+    const rawMessages = messagesRes.data?.messages || []
     messages.value = mapApiMessagesToChat(rawMessages)
   } finally {
     loading.value = false
