@@ -5,6 +5,7 @@
       :class="{ 'is-directory': node.isDirectory, 'is-symlink': node.isSymlink, 'is-expanded': node.expanded }"
       :style="{ paddingLeft: depth * 16 + 'px' }"
       @click="handleClick"
+      @contextmenu.prevent.stop="$emit('node-contextmenu', { node, x: $event.clientX, y: $event.clientY })"
     >
       <el-icon v-if="node.isDirectory" class="node-expand-icon">
         <ArrowDown v-if="node.expanded && !node.isSymlink" />
@@ -39,6 +40,7 @@
         @open-file="$emit('open-file', $event)"
         @toggle-dir="$emit('toggle-dir', $event)"
         @retry="$emit('retry', $event)"
+        @node-contextmenu="$emit('node-contextmenu', $event)"
       />
     </template>
   </div>
@@ -59,6 +61,7 @@ const emit = defineEmits<{
   'open-file': [payload: { absolutePath: string; title: string }]
   'toggle-dir': [node: FileNode]
   'retry': [node: FileNode]
+  'node-contextmenu': [payload: { node: FileNode; x: number; y: number }]
 }>()
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp', '.ico'])

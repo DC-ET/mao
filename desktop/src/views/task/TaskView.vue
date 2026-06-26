@@ -32,6 +32,7 @@
       @todo-update="handleTodoUpdate"
       @rename="handleRename"
       @open-file="handleOpenFile"
+      @add-file-to-chat="handleAddFileToChat"
     />
   </div>
 </template>
@@ -118,6 +119,21 @@ function syncChatState(state: {
 
 provide('syncChatState', syncChatState)
 provide('chatFocusInput', chatFocusInput)
+
+// Chat input registration for file tree context menu
+interface ChatInputHandle {
+  insertFileReference: (filePath: string) => void
+}
+const chatInputHandle = ref<ChatInputHandle | null>(null)
+function registerChatInput(handle: ChatInputHandle) {
+  chatInputHandle.value = handle
+}
+provide('registerChatInput', registerChatInput)
+
+function handleAddFileToChat(filePath: string) {
+  activateTab('chat')
+  nextTick(() => chatInputHandle.value?.insertFileReference(filePath))
+}
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')

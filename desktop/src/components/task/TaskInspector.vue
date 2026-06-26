@@ -85,7 +85,7 @@
 
     <!-- Tab: 文件树 -->
     <div v-if="showFileTreeTab && inspectorActiveTab === 'filetree'" class="inspector-tab-content file-tree-tab">
-      <FileTree :workspace="workspace || ''" @open-file="handleOpenFile" />
+      <FileTree :workspace="workspace || ''" @open-file="handleOpenFile" @add-file-to-chat="$emit('add-file-to-chat', $event)" />
     </div>
 
     </template>
@@ -116,6 +116,7 @@ const emit = defineEmits<{
   togglePanel: []
   rename: [title: string]
   'open-file': [payload: { absolutePath: string; title: string }]
+  'add-file-to-chat': [filePath: string]
 }>()
 
 // Tab state

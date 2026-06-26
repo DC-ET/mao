@@ -137,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
 import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
@@ -196,6 +196,9 @@ const emit = defineEmits<{
 }>()
 
 const sessionStore = useSessionStore()
+
+// Register with parent for file tree context menu "add to chat"
+const registerChatInput = inject<(handle: { insertFileReference: (filePath: string) => void }) => void>('registerChatInput', () => {})
 
 // ===== State =====
 const pendingFiles = ref<File[]>([])
@@ -670,7 +673,28 @@ watch(() => props.isNewTask, (val) => {
 })
 
 
-defineExpose({ focusInput })
+function insertFileReference(filePath: string) {
+  if (!editor.value) return
+  const ed = editor.value
+  const { state, dispatch } = ed.view
+  const nodeType = state.schema.nodes.fileReference
+  if (!nodeType) return
+
+  const pos = state.selection.from
+  const node = nodeType.create({ filePath })
+  let tr = state.tr.insert(pos, node)
+  const space = state.schema.text(' ')
+  tr = tr.insert(pos + node.nodeSize, space)
+  tr = tr.setSelection(TextSelection.near(tr.doc.resolve(pos + node.nodeSize + 1)))
+  dispatch(tr)
+  ed.commands.focus()
+}
+
+onMounted(() => {
+  registerChatInput({ insertFileReference })
+})
+
+defineExpose({ focusInput, insertFileReference })
 
 onBeforeUnmount(() => {
   editor.value?.destroy()

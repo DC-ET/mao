@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath),
   openTerminal: (folderPath) => ipcRenderer.invoke('open-terminal', folderPath),
+  showItemInFolder: (fullPath) => ipcRenderer.invoke('show-item-in-folder', fullPath),
 
   // Tool execution via Streaming WS (called by renderer when server sends tool_execute)
   toolExecute: (toolName, args, requestId, workspace, sessionId, needApproval, dangerReason) =>

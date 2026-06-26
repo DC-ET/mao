@@ -58,6 +58,7 @@ interface ElectronAPI {
   selectDirectory(): Promise<string | null>
   openFolder(folderPath: string): Promise<void>
   openTerminal(folderPath: string): Promise<void>
+  showItemInFolder(fullPath: string): Promise<void>
 
   toolExecute(toolName: string, args: any, requestId: string, workspace: string, sessionId: string, needApproval: boolean, dangerReason?: string): Promise<any>
   localReadFile(args: any): Promise<any>

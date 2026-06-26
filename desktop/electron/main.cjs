@@ -227,6 +227,10 @@ ipcMain.handle('open-folder', (event, folderPath) => {
   if (folderPath) shell.openPath(folderPath)
 })
 
+ipcMain.handle('show-item-in-folder', (event, fullPath) => {
+  if (fullPath) shell.showItemInFolder(fullPath)
+})
+
 ipcMain.handle('open-terminal', (event, folderPath) => {
   if (!folderPath) return
   spawn('open', ['-a', 'Terminal', folderPath], { detached: true, stdio: 'ignore' }).unref()

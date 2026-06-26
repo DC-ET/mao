@@ -126,6 +126,29 @@ export function useFileBrowser(workspace: Ref<string>) {
     loadRoot()
   }, { immediate: true })
 
+  async function loadAllDirectories(nodes: FileNode[], depth: number, maxDepth: number): Promise<void> {
+    if (depth >= maxDepth) return
+    const tasks: Promise<void>[] = []
+    for (const node of nodes) {
+      if (node.isDirectory && !node.isSymlink && !node.children) {
+        // Save original expanded state to restore later
+        const wasExpanded = !!node.expanded
+        tasks.push(expandDir(node).then(async () => {
+          if (!wasExpanded) {
+            // Restore collapsed state — we only loaded to check for matches
+            node.expanded = false
+          }
+          if (node.children) {
+            await loadAllDirectories(node.children, depth + 1, maxDepth)
+          }
+        }))
+      } else if (node.isDirectory && node.children) {
+        tasks.push(loadAllDirectories(node.children, depth + 1, maxDepth))
+      }
+    }
+    await Promise.all(tasks)
+  }
+
   return {
     treeData,
     loading,
@@ -134,5 +157,6 @@ export function useFileBrowser(workspace: Ref<string>) {
     collapseDir,
     refresh,
     getAbsolutePath,
+    loadAllDirectories,
   }
 }
