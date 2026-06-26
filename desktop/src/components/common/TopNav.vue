@@ -1,12 +1,6 @@
 <template>
   <nav class="top-nav">
     <div class="nav-left">
-      <!-- <div class="nav-logo" @click="router.push('/')">
-        <div class="logo-icon">
-          <el-icon :size="16"><Monitor /></el-icon>
-        </div>
-        <span class="logo-text">工作台</span>
-      </div> -->
       <div class="nav-left-actions">
         <el-tooltip content="左侧面板" :show-after="100" placement="bottom">
           <div class="theme-toggle" :class="{ active: !leftCollapsed }" @click="toggleLeft">
@@ -73,7 +67,7 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { Monitor, ArrowDown, Moon, Sunny, Plus } from '@element-plus/icons-vue'
+import { ArrowDown, Moon, Sunny, Plus } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
