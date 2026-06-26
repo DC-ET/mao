@@ -1,4 +1,4 @@
-# Agent Workbench 改进建议文档
+# Mao 改进建议文档
 
 > Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
 

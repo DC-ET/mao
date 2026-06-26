@@ -3,7 +3,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "===== 启动 Agent Workbench ====="
+echo "===== 启动 Mao ====="
 echo ""
 
 bash "$SCRIPT_DIR/start-backend.sh"

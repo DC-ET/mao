@@ -2,7 +2,7 @@
 
 > Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
 
-> 基于当前 Agent Workbench 桌面端（Electron + Vue）的界面现状，从**普通用户**视角反思布局问题，并提出适合大众使用者的信息架构方向。  
+> 基于当前 Mao 桌面端（Electron + Vue）的界面现状，从**普通用户**视角反思布局问题，并提出适合大众使用者的信息架构方向。  
 > 本文是**设计反思**，不替代 `desktop-ux-refactor-plan.md` 中的技术实施清单。
 
 ---
@@ -265,7 +265,7 @@
 
 ## 八、结论：什么样的布局才「适合普通用户」？
 
-一句话：**把 Agent Workbench 从「开发环境里的聊天插件」改成「以对话为主、以任务为记忆、以结论为默认展示」的助手产品。**
+一句话：**把 Mao 从「开发环境里的聊天插件」改成「以对话为主、以任务为记忆、以结论为默认展示」的助手产品。**
 
 具体意味着：
 

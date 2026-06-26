@@ -1,4 +1,4 @@
-# Agent Workbench
+# Mao
 
 企业级 AI Agent 管理与协作平台，为企业提供统一的 AI Agent 管理环境，支持细粒度权限控制、完整审计追踪和灵活的 Agent 配置。
 
@@ -138,8 +138,8 @@ npm run dist          # 构建并打包成 dmg 安装包
 ```
 
 打包产物位于 `desktop/release/` 目录：
-- `mac-arm64/Agent Workbench.app` - macOS 应用
-- `Agent Workbench-0.0.0-arm64.dmg` - macOS 安装镜像
+- `mac-arm64/Mao.app` - macOS 应用
+- `Mao-0.0.0-arm64.dmg` - macOS 安装镜像
 
 ### 默认账号
 

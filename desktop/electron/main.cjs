@@ -6,6 +6,7 @@ const path = require('path')
 const os = require('os')
 const { TerminalManager } = require('./terminalManager.cjs')
 
+
 let mainWindow = null
 let currentWorkspace = ''
 /** @type {Map<string, (approved: boolean) => void>} */
@@ -13,6 +14,61 @@ const pendingApprovals = new Map()
 /** @type {Map<string, {process: import('child_process').ChildProcess, cwd: string}>} */
 const shellSessions = new Map()
 const terminalManager = new TerminalManager()
+terminalManager.setEnvProvider(buildShellEnv)
+
+/**
+ * Get the full user PATH by executing a login shell.
+ * macOS GUI apps don't load shell configs, so we need to manually resolve the PATH
+ * that includes all user-configured tools (nvm, brew, cargo, etc.)
+ */
+let cachedUserPath = null
+async function resolveUserPath() {
+  if (cachedUserPath) return cachedUserPath
+
+  const shell = process.env.SHELL || '/bin/zsh'
+  console.log('[env] Resolving user PATH, SHELL:', process.env.SHELL, 'Using shell:', shell)
+  console.log('[env] Current PATH:', process.env.PATH)
+
+  return new Promise((resolve) => {
+    // Use login shell to get full user environment
+    const cmd = `${shell} -l -c 'echo $PATH'`
+    console.log('[env] Executing:', cmd)
+
+    exec(cmd, {
+      timeout: 10000,
+      env: { ...process.env, TERM: 'dumb' } // Ensure basic env
+    }, (error, stdout, stderr) => {
+      if (error) {
+        console.error('[env] Failed to resolve user PATH via login shell:', error.message)
+        if (stderr) console.error('[env] stderr:', stderr)
+        resolve(process.env.PATH)
+      } else {
+        const userPath = stdout.trim()
+        if (userPath && userPath !== process.env.PATH) {
+          cachedUserPath = userPath
+          console.log('[env] Resolved user PATH via login shell:', userPath.substring(0, 100) + '...')
+          resolve(userPath)
+        } else {
+          console.log('[env] Login shell PATH same as current, using current PATH')
+          resolve(process.env.PATH)
+        }
+      }
+    })
+  })
+}
+
+/**
+ * Build environment with user's full PATH
+ */
+async function buildShellEnv() {
+  const userPath = await resolveUserPath()
+  return {
+    ...process.env,
+    PATH: userPath,
+    TERM: 'dumb',
+    PS1: ''
+  }
+}
 
 function sendToRenderer(channel, data) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -123,7 +179,7 @@ function createWindow() {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    title: 'Agent Workbench',
+    title: 'Mao',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 12 },
     webPreferences: {
@@ -238,8 +294,8 @@ ipcMain.handle('open-terminal', (event, folderPath) => {
 
 // ========== Terminal IPC handlers (node-pty) ==========
 
-ipcMain.handle('terminal:create', (event, options) => {
-  const result = terminalManager.create(options)
+ipcMain.handle('terminal:create', async (event, options) => {
+  const result = await terminalManager.create(options)
   const session = terminalManager.sessions.get(result.id)
 
   session.pty.onData((data) => {
@@ -641,7 +697,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
   if (session_id) {
     const bashProcess = spawn('bash', ['--norc', '--noprofile'], {
       cwd: resolvedWorkdir || undefined,
-      env: { ...process.env, TERM: 'dumb', PS1: '' }
+      env: await buildShellEnv()
     })
     shellSessions.set(session_id, {
       process: bashProcess,
@@ -670,10 +726,12 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
   }
 
   // 无 session_id，一次性执行
+  const execEnv = await buildShellEnv()
   return new Promise((resolve) => {
     const options = {
       timeout: (args.timeout || 60) * 1000,
-      maxBuffer: 1024 * 1024 * 5
+      maxBuffer: 1024 * 1024 * 5,
+      env: execEnv
     }
     if (resolvedWorkdir) options.cwd = resolvedWorkdir
 

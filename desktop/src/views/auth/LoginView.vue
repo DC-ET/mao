@@ -5,7 +5,7 @@
         <div class="login-logo">
           <el-icon :size="24"><Monitor /></el-icon>
         </div>
-        <h2 class="login-title">Agent Workbench</h2>
+        <h2 class="login-title">Mao</h2>
       </div>
 
       <el-form :model="form" @submit.prevent="handleLogin" class="login-form">

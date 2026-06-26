@@ -50,7 +50,7 @@
   },
   "build": {
     "appId": "com.agentworkbench.desktop",
-    "productName": "Agent Workbench",
+    "productName": "Mao",
     "files": [
       "electron/**/*",
       "dist/**/*",

@@ -14,8 +14,8 @@
     <groupId>com.agentworkbench</groupId>
     <artifactId>workbench-backend</artifactId>
     <version>0.1.0-SNAPSHOT</version>
-    <name>Agent Workbench Backend</name>
-    <description>Agent Workbench Server</description>
+    <name>Mao Backend</name>
+    <description>Mao Server</description>
 
     <properties>
         <java.version>17</java.version>

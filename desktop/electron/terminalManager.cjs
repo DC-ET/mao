@@ -6,6 +6,16 @@ class TerminalManager {
     /** @type {Map<string, {pty: import('node-pty').IPty, shell: string, cwd: string, createdAt: number}>} */
     this.sessions = new Map()
     this.nextId = 1
+    /** @type {(() => Promise<object>)|null} */
+    this.envProvider = null
+  }
+
+  /**
+   * Set environment provider function
+   * @param {() => Promise<object>} provider
+   */
+  setEnvProvider(provider) {
+    this.envProvider = provider
   }
 
   /**
@@ -15,20 +25,21 @@ class TerminalManager {
    * @param {number} [options.cols] - 列数
    * @param {number} [options.rows] - 行数
    * @param {string} [options.shell] - 指定 shell 路径
-   * @returns {{ id: string, shell: string, cwd: string }}
+   * @returns {Promise<{ id: string, shell: string, cwd: string }>}
    */
-  create(options = {}) {
+  async create(options = {}) {
     const id = `term_${this.nextId++}`
     const shell = options.shell || this._detectShell()
     const cwd = options.cwd || os.homedir()
 
+    const baseEnv = this.envProvider ? await this.envProvider() : process.env
     const ptyProcess = pty.spawn(shell, [], {
       name: 'xterm-256color',
       cols: options.cols || 80,
       rows: options.rows || 24,
       cwd,
       env: {
-        ...process.env,
+        ...baseEnv,
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
       },

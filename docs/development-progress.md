@@ -1,10 +1,10 @@
-# Agent Workbench - 开发进度文档
+# Mao - 开发进度文档
 
 > 最后更新: 2026-05-20 (Phase 4 已完成)
 
 ## 项目概述
 
-Agent Workbench 是一个企业级 AI Agent 管理平台，包含三个子系统：
+Mao 是一个企业级 AI Agent 管理平台，包含三个子系统：
 - **Backend** - Java Spring Boot 后端服务 (端口 9080)
 - **Admin** - Vue 3 管理后台 (端口 5200)
 - **Desktop** - Electron 桌面客户端 (端口 5201)
