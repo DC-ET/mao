@@ -6,9 +6,9 @@
       :style="{ paddingLeft: depth * 16 + 'px' }"
       @click="handleClick"
     >
-      <el-icon v-if="node.isDirectory" class="node-expand-icon" :class="{ expanded: node.expanded && !node.isSymlink }">
-        <ArrowRight v-if="!node.expanded || node.isSymlink" />
-        <ArrowDown v-else />
+      <el-icon v-if="node.isDirectory" class="node-expand-icon">
+        <ArrowDown v-if="node.expanded && !node.isSymlink" />
+        <ArrowRight v-else />
       </el-icon>
       <span v-else class="node-expand-icon-placeholder"></span>
 
@@ -115,13 +115,8 @@ function handleClick() {
   font-size: 12px;
   color: var(--aw-ink-muted-48);
   flex-shrink: 0;
-  transition: transform 0.15s;
   width: 14px;
   text-align: center;
-}
-
-.node-expand-icon.expanded {
-  transform: rotate(90deg);
 }
 
 .node-expand-icon-placeholder {

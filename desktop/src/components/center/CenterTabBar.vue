@@ -32,13 +32,13 @@
         @click="contextMenu.visible = false"
       >
         <div class="context-menu-item" @click="$emit('close', contextMenu.tabId!)">
-          关闭当前 Tab
+          关闭当前
         </div>
         <div class="context-menu-item" @click="$emit('close-all')">
-          关闭所有文件 Tab
+          关闭所有文件
         </div>
         <div class="context-menu-item" @click="$emit('close-others', contextMenu.tabId!)">
-          关闭其他文件 Tab
+          关闭其他文件
         </div>
       </div>
     </Teleport>
