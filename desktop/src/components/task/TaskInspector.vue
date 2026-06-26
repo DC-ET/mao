@@ -10,14 +10,14 @@
         :class="{ active: inspectorActiveTab === 'workspace' }"
         @click="inspectorActiveTab = 'workspace'"
       >
-        任务信息
+        任务
       </button>
       <button
         class="inspector-tab"
         :class="{ active: inspectorActiveTab === 'filetree' }"
         @click="inspectorActiveTab = 'filetree'"
       >
-        项目文件
+        文件
       </button>
     </div>
 

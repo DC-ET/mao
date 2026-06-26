@@ -17,15 +17,22 @@
     </div>
 
     <!-- Content -->
-    <div v-else-if="state === 'ready'" class="file-content" @keydown="handleKeydown">
-      <div class="code-container">
-        <div class="line-numbers">
-          <div v-for="i in lineCount" :key="i" class="line-number">{{ i }}</div>
-        </div>
-        <pre ref="codeEl" class="code-text" tabindex="0"><code class="hljs" v-html="highlightedContent"></code></pre>
+    <div v-else-if="state === 'ready'" class="file-content">
+      <div v-if="isMarkdown" class="view-mode-toggle">
+        <button :class="['mode-btn', { active: viewMode === 'rendered' }]" @click="viewMode = 'rendered'">预览</button>
+        <button :class="['mode-btn', { active: viewMode === 'source' }]" @click="viewMode = 'source'">源码</button>
       </div>
-      <div v-if="truncated" class="truncation-notice">
-        仅显示前 5000 行
+      <div class="file-scroll" @keydown="handleKeydown">
+        <div v-if="!isMarkdown || viewMode === 'source'" class="code-container">
+          <div class="line-numbers">
+            <div v-for="i in lineCount" :key="i" class="line-number">{{ i }}</div>
+          </div>
+          <pre ref="codeEl" class="code-text" tabindex="0"><code class="hljs" v-html="highlightedContent"></code></pre>
+        </div>
+        <div v-else class="markdown-body" v-html="renderedContent"></div>
+        <div v-if="truncated" class="truncation-notice">
+          仅显示前 5000 行
+        </div>
       </div>
     </div>
   </div>
@@ -34,6 +41,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import hljs from 'highlight.js'
+import { renderMarkdown } from '../../composables/useMarkdown'
 
 const props = defineProps<{
   filePath: string
@@ -70,6 +78,17 @@ function langFromExtension(filePath: string): string {
 const state = ref<LoadState>('loading')
 const content = ref('')
 const codeEl = ref<HTMLElement>()
+const viewMode = ref<'source' | 'rendered'>('source')
+
+const isMarkdown = computed(() => {
+  const ext = props.filePath.split('.').pop()?.toLowerCase()
+  return ext === 'md' || ext === 'markdown'
+})
+
+const renderedContent = computed(() => {
+  if (!content.value) return ''
+  return renderMarkdown(content.value)
+})
 
 function handleKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
@@ -164,6 +183,7 @@ async function loadFile() {
 onMounted(loadFile)
 
 watch(() => props.filePath, () => {
+  viewMode.value = 'source'
   loadFile()
 })
 </script>
@@ -211,6 +231,12 @@ watch(() => props.filePath, () => {
 
 .file-content {
   flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.file-scroll {
+  height: 100%;
   overflow: auto;
 }
 
@@ -303,6 +329,177 @@ watch(() => props.filePath, () => {
 [data-theme="light"] .code-text :deep(.hljs-addition) { color: #116329; background: rgba(46, 160, 67, 0.1); }
 [data-theme="light"] .code-text :deep(.hljs-deletion) { color: #82071e; background: rgba(248, 81, 73, 0.1); }
 
+.view-mode-toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+  z-index: 10;
+}
+
+.mode-btn {
+  padding: 3px 10px;
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink-muted-48);
+  background: var(--aw-surface);
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  transition: all 0.15s;
+  backdrop-filter: blur(8px);
+}
+
+.mode-btn:hover {
+  color: var(--aw-ink);
+}
+
+.mode-btn.active {
+  color: var(--aw-primary);
+  border-color: var(--aw-primary);
+  background: rgba(0, 102, 204, 0.06);
+}
+
+.markdown-body {
+  flex: 1;
+  padding: 16px 24px;
+  overflow: auto;
+  color: var(--aw-ink);
+  font-size: var(--aw-text-caption);
+}
+
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3),
+.markdown-body :deep(h4) {
+  font-family: var(--aw-font-display);
+  font-weight: 600;
+  color: var(--aw-ink);
+  margin: 4px 0 2px;
+  letter-spacing: 0;
+}
+
+.markdown-body :deep(h1) { font-size: var(--aw-text-lead); }
+.markdown-body :deep(h2) { font-size: var(--aw-text-tagline); }
+.markdown-body :deep(h3) { font-size: var(--aw-text-body); }
+.markdown-body :deep(h4) { font-size: var(--aw-text-caption); }
+
+.markdown-body :deep(p) {
+  margin: 0;
+  font-size: var(--aw-text-caption);
+  line-height: 2;
+  letter-spacing: -0.374px;
+}
+
+.markdown-body :deep(a) {
+  color: var(--aw-primary);
+  text-decoration: none;
+}
+
+.markdown-body :deep(a:hover) { text-decoration: underline; }
+
+.markdown-body :deep(code) {
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-caption);
+}
+
+.markdown-body :deep(pre) {
+  margin: 2px 0;
+  border-radius: var(--aw-radius-sm);
+  overflow: hidden;
+}
+
+.markdown-body :deep(.code-block) {
+  margin: 2px 0;
+  border-radius: var(--aw-radius-sm);
+  overflow: hidden;
+}
+
+.markdown-body :deep(.code-block-header) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--aw-surface-code-header);
+  font-size: var(--aw-text-fine);
+}
+
+.markdown-body :deep(.code-lang) {
+  color: var(--aw-ink-muted-48);
+  font-family: var(--aw-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.markdown-body :deep(.code-copy-btn) {
+  background: none;
+  border: 1px solid var(--aw-hairline);
+  color: var(--aw-ink-muted-48);
+  padding: 2px 8px;
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  font-size: var(--aw-text-fine);
+  transition: all 0.15s;
+}
+
+.markdown-body :deep(.code-copy-btn:hover) {
+  color: var(--aw-ink);
+  border-color: var(--aw-ink-muted-48);
+}
+
+.markdown-body :deep(.hljs) {
+  padding: 12px;
+  background: var(--aw-surface-code);
+  color: var(--aw-text-code);
+  overflow-x: auto;
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  margin: 2px 0;
+  padding-left: 20px;
+}
+
+.markdown-body :deep(li) {
+  font-size: var(--aw-text-caption);
+  line-height: 2;
+  letter-spacing: -0.374px;
+}
+
+.markdown-body :deep(blockquote) {
+  margin: 2px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--aw-primary);
+  color: var(--aw-ink-muted-80);
+  background: var(--aw-canvas-parchment);
+  border-radius: 0 var(--aw-radius-xs) var(--aw-radius-xs) 0;
+}
+
+.markdown-body :deep(table) {
+  border-collapse: collapse;
+  margin: 2px 0;
+  width: 100%;
+}
+
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  border: 1px solid var(--aw-hairline);
+  padding: 6px 10px;
+  text-align: left;
+  font-size: var(--aw-text-caption);
+}
+
+.markdown-body :deep(th) {
+  background: var(--aw-canvas-parchment);
+  font-weight: 600;
+}
+
+.markdown-body :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--aw-divider-soft);
+  margin: 2px 0;
+}
+
 .truncation-notice {
   padding: 8px 16px;
   text-align: center;
@@ -313,16 +510,16 @@ watch(() => props.filePath, () => {
 }
 
 /* Scrollbar */
-.file-content::-webkit-scrollbar {
+.file-scroll::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-.file-content::-webkit-scrollbar-track {
+.file-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.file-content::-webkit-scrollbar-thumb {
+.file-scroll::-webkit-scrollbar-thumb {
   background: var(--aw-hairline);
   border-radius: 3px;
 }
