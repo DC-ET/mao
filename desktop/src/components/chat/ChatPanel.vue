@@ -170,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, inject, watch, nextTick, type Ref } from 'vue'
+import { ref, computed, inject, watch, nextTick, onActivated, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
@@ -473,6 +473,14 @@ watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
   }
 })
 
+// Scroll to bottom when switching back to chat tab (KeepAlive restore)
+onActivated(() => {
+  nextTick(() => {
+    const el = messagesContainer.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+})
+
 // Send/stop handlers
 const pendingNewTaskNav = ref(false)
 
@@ -558,7 +566,6 @@ function handleNewTaskAgentChange(id: string | null) {
   flex: 1;
   overflow-y: auto;
   padding-top: 16px;
-  scroll-behavior: smooth;
   margin-bottom: 10px;
 }
 
