@@ -20,9 +20,24 @@
           暂无任务
         </div>
         <template v-else>
-          <div v-for="group in groupedSessions" :key="group.key" class="session-group">
+          <div 
+            v-for="(group, index) in groupedSessions" 
+            :key="group.key" 
+            class="session-group"
+            :class="{ 
+              'drag-over': dragOverIndex === index && dragIndex !== index,
+              'dragging': dragIndex === index 
+            }"
+            draggable="true"
+            @dragstart="onGroupDragStart($event, index)"
+            @dragover="onGroupDragOver($event, index)"
+            @dragleave="onGroupDragLeave"
+            @drop="onGroupDrop($event, index)"
+            @dragend="onGroupDragEnd"
+          >
             <div class="group-header" @click="toggleGroup(group.key)">
               <div class="group-header-left">
+                <span class="drag-handle" title="拖拽排序">⠿</span>
                 <el-icon :size="13" class="group-icon" :class="group.key === 'CLOUD' ? 'icon-cloud' : 'icon-folder'">
                   <Cloudy v-if="group.key === 'CLOUD'" />
                   <Folder v-else />
@@ -142,6 +157,7 @@ import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpe
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
+import { useGroupOrder } from '../../composables/useGroupOrder'
 
 defineProps<{
   collapsed: boolean
@@ -156,6 +172,7 @@ const emit = defineEmits<{
 const router = useRouter()
 const sessionStore = useSessionStore()
 const { createTerminal, isOpen: terminalOpen } = useTerminal()
+const { sortGroups, onDragEnd } = useGroupOrder()
 
 const DEFAULT_VISIBLE = 5
 const EXPAND_STEP = 20
@@ -167,6 +184,10 @@ const editingSessionId = ref<string | null>(null)
 const editingTitle = ref('')
 const expandedCounts = ref<Map<string, number>>(new Map())
 const collapsedGroups = ref<Set<string>>(new Set())
+
+// Drag state
+const dragIndex = ref<number | null>(null)
+const dragOverIndex = ref<number | null>(null)
 
 // Panel resize
 const panelWidth = ref<number | null>(null)
@@ -253,13 +274,15 @@ const groupedSessions = computed(() => {
   }
 
   const entries = Array.from(groups.entries())
+  
+  // 默认排序：CLOUD 优先，然后字母序
   entries.sort(([a], [b]) => {
     if (a === 'CLOUD') return -1
     if (b === 'CLOUD') return 1
     return a.localeCompare(b)
   })
 
-  return entries.map(([key, sessions]) => ({
+  const result = entries.map(([key, sessions]) => ({
     key,
     label: formatGroupLabel(key),
     sessions: sessions.sort((a, b) => {
@@ -268,6 +291,9 @@ const groupedSessions = computed(() => {
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     })
   }))
+
+  // 应用自定义排序
+  return sortGroups(result)
 })
 
 function formatGroupLabel(key: string): string {
@@ -426,6 +452,42 @@ function toggleGroup(key: string) {
     collapsedGroups.value.add(key)
   }
 }
+
+// Drag handlers
+function onGroupDragStart(e: DragEvent, index: number) {
+  dragIndex.value = index
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', String(index))
+  // 添加拖拽时的半透明效果
+  const target = e.target as HTMLElement
+  target.classList.add('dragging')
+}
+
+function onGroupDragOver(e: DragEvent, index: number) {
+  e.preventDefault()
+  e.dataTransfer!.dropEffect = 'move'
+  dragOverIndex.value = index
+}
+
+function onGroupDragLeave() {
+  dragOverIndex.value = null
+}
+
+function onGroupDrop(e: DragEvent, toIndex: number) {
+  e.preventDefault()
+  const fromIndex = dragIndex.value
+  if (fromIndex !== null && fromIndex !== toIndex) {
+    const keys = groupedSessions.value.map(g => g.key)
+    onDragEnd(fromIndex, toIndex, keys)
+  }
+  dragIndex.value = null
+  dragOverIndex.value = null
+}
+
+function onGroupDragEnd() {
+  dragIndex.value = null
+  dragOverIndex.value = null
+}
 </script>
 
 <style scoped>
@@ -529,6 +591,50 @@ function toggleGroup(key: string) {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.drag-handle {
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.15s;
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 1px;
+  color: var(--aw-ink-muted-48);
+}
+
+.group-header:hover .drag-handle {
+  opacity: 0.6;
+}
+
+.drag-handle:hover {
+  opacity: 1 !important;
+  color: var(--aw-primary);
+}
+
+.session-group {
+  transition: transform 0.15s, opacity 0.15s;
+}
+
+.session-group.dragging {
+  opacity: 0.5;
+  transform: scale(0.98);
+}
+
+.session-group.drag-over {
+  border-top: 2px solid var(--aw-primary);
+  margin-top: -2px;
+}
+
+.session-group.drag-over::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--aw-primary);
+  z-index: 1;
 }
 
 .group-header-actions {
@@ -899,5 +1005,13 @@ function toggleGroup(key: string) {
 
 [data-theme="dark"] .group-icon.icon-folder {
   color: #fbbf24;
+}
+
+[data-theme="dark"] .drag-handle {
+  color: var(--aw-ink-muted-48);
+}
+
+[data-theme="dark"] .session-group.drag-over::before {
+  background: var(--aw-primary);
 }
 </style>
