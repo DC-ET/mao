@@ -672,14 +672,14 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
   // 无 session_id，一次性执行
   return new Promise((resolve) => {
     const options = {
-      timeout: (args.timeout || 30) * 1000,
+      timeout: (args.timeout || 60) * 1000,
       maxBuffer: 1024 * 1024 * 5
     }
     if (resolvedWorkdir) options.cwd = resolvedWorkdir
 
     exec(command, options, (error, stdout, stderr) => {
       if (error && error.killed) {
-        resolve({ exit_code: -1, output: `Command timed out after ${args.timeout || 30}s` })
+        resolve({ exit_code: -1, output: `Command timed out after ${args.timeout || 60}s` })
       } else {
         const fullOutput = (stdout || '') + (stderr ? '\n' + stderr : '')
         const saved = truncateAndSave(fullOutput, workspace, 'local')
