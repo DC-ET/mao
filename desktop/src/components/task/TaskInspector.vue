@@ -10,7 +10,7 @@
         :class="{ active: inspectorActiveTab === 'workspace' }"
         @click="inspectorActiveTab = 'workspace'"
       >
-        任务进度
+        任务信息
       </button>
       <button
         class="inspector-tab"

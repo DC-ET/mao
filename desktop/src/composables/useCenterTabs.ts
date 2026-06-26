@@ -5,7 +5,7 @@ import type { Tab, SessionTabState } from '../types/file-browser'
 const sessionTabsMap = ref<Map<string, SessionTabState>>(new Map())
 const currentSessionId = ref('')
 
-const CHAT_TAB: Tab = { id: 'chat', type: 'chat', title: '对话' }
+const CHAT_TAB: Tab = { id: 'chat', type: 'chat', title: '任务对话' }
 
 export function useCenterTabs(activeSessionId: Ref<string | null>) {
   // Sync currentSessionId with the provided ref
