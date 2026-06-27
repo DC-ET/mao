@@ -63,6 +63,16 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     /** sessionIds currently in auto-consume flow (skip user_message_saved) */
     private final Set<Long> autoConsumingSessionIds = ConcurrentHashMap.newKeySet();
 
+    /** sessionIds where auto-consume send should be suppressed (insert in progress) */
+    private final Set<Long> suppressAutoConsumeSend = ConcurrentHashMap.newKeySet();
+
+    /** per-session lock to serialize concurrent insert_message operations */
+    private final ConcurrentHashMap<Long, Object> insertLocks = new ConcurrentHashMap<>();
+
+    private Object getInsertLock(Long sessionId) {
+        return insertLocks.computeIfAbsent(sessionId, k -> new Object());
+    }
+
     public StreamingWsHandler(StreamingWsRegistry registry,
                                HarnessService harnessService,
                                SessionService sessionService,
@@ -376,6 +386,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             // Check if there are pending messages
             List<MessageQueue> queue = messageQueueService.listPending(sessionId);
             if (queue.isEmpty()) return;
+
+            // Skip if an insert_message is in progress for this session
+            if (suppressAutoConsumeSend.contains(sessionId)) {
+                log.info("Skipping auto-consume for session {} — insert in progress", sessionId);
+                return;
+            }
 
             // Dequeue the head message
             MessageQueue head = messageQueueService.dequeue(sessionId);
@@ -714,98 +730,120 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         JsonNode data = root.get("data");
         if (data == null || !data.has("queueId")) return;
         Long queueId = data.get("queueId").asLong();
+        log.info("handleInsertMessage: session={}, queueId={}", sessionId, queueId);
 
-        // 1. Set cancel flag to stop current Agent
+        // 1. Mark insert in progress — blocks autoConsumeQueue from racing
+        suppressAutoConsumeSend.add(sessionId);
+
+        // 2. Set cancel flag to stop current Agent
         AtomicBoolean cancelFlag = cancelFlags.get(sessionId);
         if (cancelFlag != null) {
             cancelFlag.set(true);
         }
 
-        // 2. Wait for Agent to stop (max 10s)
+        // 3. Wait for Agent to stop (max 10s), serialized per session
         agentExecutor.submit(() -> {
-            try {
-                long deadline = System.currentTimeMillis() + 10_000;
-                Session session = sessionService.getSession(sessionId);
-                while (System.currentTimeMillis() < deadline) {
-                    if (!"RUNNING".equals(session.getPhase()) && !"RESUMING".equals(session.getPhase())) {
-                        break;
+            synchronized (getInsertLock(sessionId)) {
+                try {
+                    long deadline = System.currentTimeMillis() + 60_000;
+                    Session session = sessionService.getSession(sessionId);
+                    while (System.currentTimeMillis() < deadline) {
+                        if (!"RUNNING".equals(session.getPhase()) && !"RESUMING".equals(session.getPhase())) {
+                            break;
+                        }
+                        Thread.sleep(200);
+                        session = sessionService.getSession(sessionId);
                     }
-                    Thread.sleep(200);
-                    session = sessionService.getSession(sessionId);
-                }
+                    log.info("Insert wait done for session {}, phase={}", sessionId, session.getPhase());
 
-                // 3. Remove from queue
-                MessageQueue item = messageQueueService.getById(queueId);
-                if (item == null) {
-                    log.warn("Queue item {} not found for insert", queueId);
+                    // If agent is still running after timeout, abort the insert
+                    // The message stays in queue and will be auto-consumed when the agent finishes
+                    if ("RUNNING".equals(session.getPhase()) || "RESUMING".equals(session.getPhase())) {
+                        log.warn("Insert timed out for session {} — agent still running (phase={}). Message stays in queue.", sessionId, session.getPhase());
+                        registry.send(userId, WsEvent.of("error", sessionId,
+                                Map.of("message", "当前任务仍在执行中，请稍后再试")));
+                        sendQueueUpdated(sessionId, userId);
+                        return;
+                    }
+
+                    // 3. Remove from queue
+                    MessageQueue item = messageQueueService.getById(queueId);
+                    if (item == null) {
+                        log.warn("Queue item {} not found for insert (may have been consumed)", queueId);
+                        sendQueueUpdated(sessionId, userId);
+                        return;
+                    }
+                    messageQueueService.delete(queueId);
                     sendQueueUpdated(sessionId, userId);
-                    return;
-                }
-                messageQueueService.delete(queueId);
-                sendQueueUpdated(sessionId, userId);
 
-                // 4. Build send data and trigger handleSendMessage
-                String content = item.getContent();
-                List<String> imageList = new ArrayList<>();
-                if (item.getImages() != null && !item.getImages().isBlank()) {
-                    try {
-                        imageList = objectMapper.readValue(item.getImages(),
-                                objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
-                    } catch (Exception e) {
-                        log.warn("Failed to parse images for queue item {}: {}", queueId, e.getMessage());
+                    // 4. Build send data and trigger handleSendMessage
+                    String content = item.getContent();
+                    List<String> imageList = new ArrayList<>();
+                    if (item.getImages() != null && !item.getImages().isBlank()) {
+                        try {
+                            imageList = objectMapper.readValue(item.getImages(),
+                                    objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+                        } catch (Exception e) {
+                            log.warn("Failed to parse images for queue item {}: {}", queueId, e.getMessage());
+                        }
                     }
-                }
 
-                // Build multimodal content for saving
-                Object messageContent;
-                if (imageList.isEmpty()) {
-                    messageContent = content;
-                } else {
-                    List<ChatRequest.ContentPart> parts = new ArrayList<>();
-                    if (content != null && !content.isBlank()) {
-                        parts.add(ChatRequest.ContentPart.builder().type("text").text(content).build());
+                    // Build multimodal content for saving
+                    Object messageContent;
+                    if (imageList.isEmpty()) {
+                        messageContent = content;
+                    } else {
+                        List<ChatRequest.ContentPart> parts = new ArrayList<>();
+                        if (content != null && !content.isBlank()) {
+                            parts.add(ChatRequest.ContentPart.builder().type("text").text(content).build());
+                        }
+                        for (String imageUrl : imageList) {
+                            parts.add(ChatRequest.ContentPart.builder()
+                                    .type("image_url")
+                                    .imageUrl(ChatRequest.ImageUrl.builder().url(imageUrl).build())
+                                    .build());
+                        }
+                        messageContent = parts;
                     }
-                    for (String imageUrl : imageList) {
-                        parts.add(ChatRequest.ContentPart.builder()
-                                .type("image_url")
-                                .imageUrl(ChatRequest.ImageUrl.builder().url(imageUrl).build())
-                                .build());
+
+                    // Save user message to DB
+                    com.agentworkbench.session.entity.Message savedMessage = sessionService.saveMessage(sessionId, "USER", messageContent, null, null, null, 0, null);
+
+                    // Notify frontend: add user message + empty assistant placeholder
+                    Map<String, Object> consumedData = new java.util.LinkedHashMap<>();
+                    consumedData.put("messageId", String.valueOf(savedMessage.getId()));
+                    consumedData.put("content", content);
+                    if (!imageList.isEmpty()) {
+                        consumedData.put("images", imageList);
                     }
-                    messageContent = parts;
+                    registry.send(userId, WsEvent.of("queue_message_consumed", sessionId, consumedData));
+
+                    // Build a synthetic JsonNode for handleSendMessage
+                    String eventId = java.util.UUID.randomUUID().toString();
+                    com.fasterxml.jackson.databind.node.ObjectNode syntheticRoot = objectMapper.createObjectNode();
+                    syntheticRoot.put("sessionId", sessionId);
+                    com.fasterxml.jackson.databind.node.ObjectNode syntheticData = objectMapper.createObjectNode();
+                    syntheticData.put("content", content);
+                    syntheticData.put("eventId", eventId);
+                    com.fasterxml.jackson.databind.node.ArrayNode imagesArray = objectMapper.createArrayNode();
+                    for (String img : imageList) {
+                        imagesArray.add(img);
+                    }
+                    syntheticData.set("images", imagesArray);
+                    syntheticRoot.set("data", syntheticData);
+
+                    // Mark as auto-consuming so handleSendMessage skips duplicate save
+                    autoConsumingSessionIds.add(sessionId);
+
+                    // Clear suppress flag BEFORE calling handleSendMessage so it is not blocked
+                    suppressAutoConsumeSend.remove(sessionId);
+                    log.info("Insert message for session {} — calling handleSendMessage", sessionId);
+                    handleSendMessage(userId, syntheticRoot);
+                } catch (Exception e) {
+                    log.error("Failed to insert message for session {}", sessionId, e);
+                } finally {
+                    suppressAutoConsumeSend.remove(sessionId);
                 }
-
-                // Save user message to DB
-                com.agentworkbench.session.entity.Message savedMessage = sessionService.saveMessage(sessionId, "USER", messageContent, null, null, null, 0, null);
-
-                // Notify frontend: add user message + empty assistant placeholder
-                Map<String, Object> consumedData = new java.util.LinkedHashMap<>();
-                consumedData.put("messageId", String.valueOf(savedMessage.getId()));
-                consumedData.put("content", content);
-                if (!imageList.isEmpty()) {
-                    consumedData.put("images", imageList);
-                }
-                registry.send(userId, WsEvent.of("queue_message_consumed", sessionId, consumedData));
-
-                // Build a synthetic JsonNode for handleSendMessage
-                String eventId = java.util.UUID.randomUUID().toString();
-                com.fasterxml.jackson.databind.node.ObjectNode syntheticRoot = objectMapper.createObjectNode();
-                syntheticRoot.put("sessionId", sessionId);
-                com.fasterxml.jackson.databind.node.ObjectNode syntheticData = objectMapper.createObjectNode();
-                syntheticData.put("content", content);
-                syntheticData.put("eventId", eventId);
-                com.fasterxml.jackson.databind.node.ArrayNode imagesArray = objectMapper.createArrayNode();
-                for (String img : imageList) {
-                    imagesArray.add(img);
-                }
-                syntheticData.set("images", imagesArray);
-                syntheticRoot.set("data", syntheticData);
-
-                // Mark as auto-consuming so handleSendMessage skips duplicate save
-                autoConsumingSessionIds.add(sessionId);
-
-                handleSendMessage(userId, syntheticRoot);
-            } catch (Exception e) {
-                log.error("Failed to insert message for session {}", sessionId, e);
             }
         });
     }

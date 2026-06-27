@@ -22,16 +22,16 @@
         </div>
         <div class="queue-item-actions">
           <button
+            v-if="index > 0"
             class="action-btn"
-            :disabled="index === 0"
             title="上移"
             @click="emit('reorder', msg.id, 'up')"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
           </button>
           <button
+            v-if="index < queueMessages.length - 1"
             class="action-btn"
-            :disabled="index === queueMessages.length - 1"
             title="下移"
             @click="emit('reorder', msg.id, 'down')"
           >
@@ -39,11 +39,11 @@
           </button>
           <button
             class="action-btn insert-btn"
-            :disabled="inserting"
+            :disabled="insertingQueueId === msg.id"
             title="立即发送"
             @click="handleInsert(msg.id)"
           >
-            立即发送
+            {{ insertingQueueId === msg.id ? '处理中...' : '立即发送' }}
           </button>
           <button
             class="action-btn delete-btn"
@@ -65,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useSessionStore } from '../../stores/session'
 
 const emit = defineEmits<{
@@ -78,21 +78,34 @@ const sessionStore = useSessionStore()
 const queueMessages = computed(() => sessionStore.activeQueueMessages)
 
 const expanded = ref(false)
-const inserting = ref(false)
+const insertingQueueId = ref<string | null>(null)
+
+// Reset inserting state when the target message leaves the queue
+// (consumed by backend, or deleted by user/error)
+watch(queueMessages, (newMessages) => {
+  if (insertingQueueId.value && !newMessages.some(m => m.id === insertingQueueId.value)) {
+    insertingQueueId.value = null
+  }
+})
+
+// Also reset on session phase change (handles insert timeout/error case
+// where the message stays in queue but the insert was rejected)
+const activePhase = computed(() => sessionStore.activeSession?.phase)
+watch(activePhase, (phase) => {
+  if (insertingQueueId.value && phase && ['CANCELLED', 'COMPLETED', 'FAILED', 'IDLE'].includes(phase)) {
+    insertingQueueId.value = null
+  }
+})
 
 function truncate(text: string, max: number): string {
   if (!text) return ''
   return text.length > max ? text.substring(0, max) + '...' : text
 }
 
-async function handleInsert(queueId: string) {
-  if (inserting.value) return
-  inserting.value = true
-  try {
-    emit('insert', queueId)
-  } finally {
-    setTimeout(() => { inserting.value = false }, 500)
-  }
+function handleInsert(queueId: string) {
+  if (insertingQueueId.value) return
+  insertingQueueId.value = queueId
+  emit('insert', queueId)
 }
 </script>
 
