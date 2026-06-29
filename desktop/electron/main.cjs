@@ -100,8 +100,11 @@ ipcMain.handle('tool-approval-response', (event, { requestId, approved }) => {
 })
 
 function getApiBaseUrl() {
-  // Derive API base URL from the WebSocket URL or default to localhost
-  return 'http://localhost:9080/api'
+  // 生产环境加载远程 URL，API 地址从页面 URL 推导
+  if (process.env.NODE_ENV === 'development') {
+    return 'http://localhost:9080/api'
+  }
+  return 'https://mao.etarch.cn/api'
 }
 
 // ========== Skill sync IPC handler ==========
@@ -194,7 +197,7 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5201')
     mainWindow.webContents.openDevTools()
   } else {
-    mainWindow.loadFile(join(__dirname, '../dist/index.html'))
+    mainWindow.loadURL('https://mao.etarch.cn')
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

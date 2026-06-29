@@ -167,6 +167,7 @@
     </dependencies>
 
     <build>
+        <finalName>mao-server</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

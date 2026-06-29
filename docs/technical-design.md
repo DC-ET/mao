@@ -67,7 +67,7 @@
 ### 2.1 Monorepo 目录规划
 
 ```
-agent-workbench-mimo/
+mao/
 ├── backend/                        # 后端 Java 服务
 │   ├── pom.xml
 │   └── src/

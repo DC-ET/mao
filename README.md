@@ -11,6 +11,7 @@
 - **可扩展技能系统** -- 7 个内置技能 + 外部 MCP 工具服务器支持
 - **Agent Hub** -- Agent 发现、安装、评分与评论的内部市场
 - **SSE 流式对话** -- 实时流式 Agent 响应，支持消息持久化与 Token 用量追踪
+- **双端架构** -- 管理后台 + Electron 桌面客户端，满足不同使用场景
 
 ## 技术栈
 
@@ -24,8 +25,9 @@
 | 数据库 | MySQL 8.x |
 | 缓存 | Redis 7.x |
 | 认证 | Spring Security + JWT |
+| 认证方式 | 本地密码 / LDAP / 飞书 SSO |
 | HTTP 客户端 | OkHttp 4.12.0 (SSE 流式) |
-| 对象存储 | MinIO (S3 兼容) |
+| 对象存储 | Aliyun OSS |
 | API 文档 | SpringDoc OpenAPI 2.8.6 |
 | 构建工具 | Maven |
 
@@ -42,7 +44,7 @@
 ## 项目结构
 
 ```
-agent-workbench-mimo/
+mao/
 ├── backend/                    # Java Spring Boot 后端服务
 │   ├── src/main/java/com/agentworkbench/
 │   │   ├── agent/              # Agent 管理
@@ -147,27 +149,68 @@ npm run dist          # 构建并打包成 dmg 安装包
 |--------|------|------|
 | admin | admin123 | 系统管理员 |
 
-## 内置技能
+## 环境配置
 
-| 技能 | 说明 |
-|------|------|
-| BashSkill | 执行 Shell 命令 |
-| ReadFileSkill | 读取文件 |
-| WriteFileSkill | 写入文件 |
-| EditFileSkill | 编辑文件 |
-| HttpRequestSkill | 发起 HTTP 请求 |
-| TodoSkill | 任务管理 |
+前端项目支持通过环境变量配置 API 地址，区分开发和生产环境。
 
+### 管理后台 (admin/)
 
-## 开发阶段
+| 文件 | 用途 | API 地址 |
+|------|------|----------|
+| `.env.development` | 本地开发 | `/api/v1` (vite proxy) |
+| `.env.production` | 生产环境 | `/api/v1` (Nginx 代理) |
 
-| 阶段 | 内容 | 状态 |
-|------|------|------|
-| Phase 1 - MVP | 核心对话、Agent 管理、用户认证 | 已完成 |
-| Phase 2 - Agent 能力 | 技能系统、MCP 协议、上下文管理 | 已完成 |
-| Phase 3 - 企业特性 | RBAC 权限、审计日志、LDAP 集成 | 已完成 |
-| Phase 4 - 平台特性 | Agent Hub、仪表盘、API Key、通知系统 | 已完成 |
+### 桌面端 (desktop/)
 
-## 许可证
+| 文件 | 用途 | API 地址 |
+|------|------|----------|
+| `.env.development` | 本地开发 | `http://localhost:9080/api/v1` |
+| `.env.production` | 生产环境 | `https://mao.etarch.cn/api/v1` |
 
-MIT
+环境变量：
+- `VITE_API_BASE_URL` - API 基础地址
+- `VITE_WS_BASE_URL` - WebSocket 地址（可选，不设置时从 API 地址自动转换）
+
+本地覆盖：创建 `.env.local` 文件（已被 gitignore）。
+
+## 生产部署
+
+详细部署指南请参考 [DEPLOY.md](DEPLOY.md)。
+
+### 部署架构
+
+| 组件 | 部署方式 | 域名 |
+|------|---------|------|
+| Java 后端 | jar + systemd | - |
+| 管理后台 | Nginx 静态文件 | maoadmin.etarch.cn |
+| 桌面端 web | Nginx 静态文件 | mao.etarch.cn |
+
+### 快速部署
+
+```bash
+# 1. 后端打包
+cd backend && mvn clean package -DskipTests
+
+# 2. 前端打包
+cd admin && npm run build
+cd desktop && npm run build
+
+# 3. 上传到服务器并启动
+# 详见 DEPLOY.md
+```
+
+## API 文档
+
+后端启动后访问 Swagger UI：`http://localhost:9080/swagger-ui.html`
+
+主要 API 前缀：`/api/v1/`
+
+| 模块 | 路径前缀 | 说明 |
+|------|---------|------|
+| 认证 | `/api/v1/auth` | 登录、注册、Token 刷新 |
+| 用户 | `/api/v1/users` | 用户管理 |
+| Agent | `/api/v1/agents` | Agent 配置管理 |
+| 会话 | `/api/v1/sessions` | 对话会话管理 |
+| 模型 | `/api/v1/models` | LLM 模型配置 |
+| 技能 | `/api/v1/skills` | 技能管理 |
+| Hub | `/api/v1/hub` | Agent Hub |

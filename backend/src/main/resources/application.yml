@@ -18,7 +18,7 @@ spring:
   application:
     name: workbench-backend
   profiles:
-    active: prod # copy from application-example.yml to application-prod.yml
+    active: local # copy from application-example.yml to application-local.yml
 
   # Flyway
   flyway:

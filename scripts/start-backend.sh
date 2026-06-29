@@ -4,7 +4,7 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 PID_FILE="$PROJECT_DIR/.backend.pid"
-LOG_DIR="/data/logs/agent-workbench-mimo"
+LOG_DIR="/data/logs/mao"
 
 mkdir -p "$LOG_DIR"
 

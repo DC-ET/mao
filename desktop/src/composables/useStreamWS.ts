@@ -59,8 +59,7 @@ export function useStreamWS() {
     }
     if (connectPromise) return connectPromise
 
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api'
-    const wsBase = baseUrl.replace(/^http/, 'ws').replace(/\/api\/v1$/, '/api')
+    const wsBase = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_API_BASE_URL?.replace(/^http/, 'ws').replace(/\/api\/v1$/, '/api') || 'ws://localhost:9080/api'
     const token = localStorage.getItem('token')
     if (!token) return Promise.reject(new Error('No token'))
 

@@ -47,3 +47,4 @@ desktop/release/
 .claude/
 .cursor/
 application-prod.yml
+application-local.yml
