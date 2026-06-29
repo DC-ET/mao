@@ -41,6 +41,7 @@
 import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useStreamWS } from '../../composables/useStreamWS'
+import { useLoginDialog } from '../../composables/useLoginDialog'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { usePanelLayout } from '../../composables/usePanelLayout'
@@ -57,6 +58,7 @@ const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 useStreamWS()
+const { loginVersion } = useLoginDialog()
 const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight } = usePanelLayout()
 
 const sessionIdParam = computed(() => route.params.sessionId as string)
@@ -287,6 +289,17 @@ watch(sessionIdParam, (newSid, oldSid) => {
         navigateToLatestSession()
       }
     }
+  }
+})
+
+// Re-load data after login success
+watch(loginVersion, async () => {
+  await sessionStore.fetchSessions()
+  const sid = sessionIdParam.value
+  if (sid) {
+    await loadSession(sid)
+  } else {
+    await navigateToLatestSession()
   }
 })
 

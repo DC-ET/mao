@@ -49,18 +49,25 @@
           </el-icon>
         </div>
       </el-tooltip>
-      <el-dropdown @command="handleCommand" trigger="click">
-        <div class="nav-user">
-          <el-avatar :size="24" icon="User" />
-          <span class="nav-username">{{ authStore.user?.username }}</span>
-          <el-icon :size="10"><ArrowDown /></el-icon>
+      <template v-if="authStore.user">
+        <el-dropdown @command="handleCommand" trigger="click">
+          <div class="nav-user">
+            <el-avatar :size="24" icon="User" />
+            <span class="nav-username">{{ authStore.user?.username }}</span>
+            <el-icon :size="10"><ArrowDown /></el-icon>
+          </div>
+          <template #dropdown>
+            <el-dropdown-menu class="nav-dropdown">
+              <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </template>
+      <template v-else>
+        <div class="theme-toggle login-btn" @click="loginDialog.open()">
+          <span>登录</span>
         </div>
-        <template #dropdown>
-          <el-dropdown-menu class="nav-dropdown">
-            <el-dropdown-item command="logout">退出登录</el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+      </template>
     </div>
   </nav>
 </template>
@@ -75,7 +82,9 @@ import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useSkillDrawer } from '../../composables/useSkillDrawer'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
+import { useLoginDialog } from '../../composables/useLoginDialog'
 
+const router = useRouter()
 const { isDark, toggleTheme } = useTheme()
 const sessionStore = useSessionStore()
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
@@ -92,13 +101,12 @@ function toggleTerminal() {
   togglePanel(cwd)
 }
 
-const router = useRouter()
 const authStore = useAuthStore()
+const loginDialog = useLoginDialog()
 
 async function handleCommand(command: string) {
   if (command === 'logout') {
     await authStore.logout()
-    router.push('/login')
   }
 }
 </script>
@@ -260,5 +268,11 @@ async function handleCommand(command: string) {
 
 [data-theme="dark"] .theme-toggle:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.login-btn {
+  width: auto;
+  padding: 0 12px;
+  font-size: var(--aw-text-caption);
 }
 </style>

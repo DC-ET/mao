@@ -1,5 +1,6 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import { useLoginDialog } from '../composables/useLoginDialog'
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1',
@@ -13,23 +14,13 @@ let isReloginShowing = false
 let isRefreshing = false
 let pendingRequests: Array<(token: string) => void> = []
 
-function redirectToLogin() {
-  localStorage.removeItem('token')
-  localStorage.removeItem('refreshToken')
-  window.location.href = '/login'
-}
-
-export function showReloginDialog() {
+function showReloginDialog() {
   if (isReloginShowing) return
   isReloginShowing = true
-  ElMessageBox.confirm('登录已过期，请重新登录', '提示', {
-    confirmButtonText: '重新登录',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    redirectToLogin()
-  }).catch(() => {
-    isReloginShowing = false
+  const { open } = useLoginDialog()
+  open({
+    onSuccess: () => { isReloginShowing = false },
+    onDismiss: () => { isReloginShowing = false }
   })
 }
 

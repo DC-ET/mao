@@ -27,6 +27,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -63,7 +65,7 @@ public class SessionController {
                 request.getExecutionMode(), request.getWorkspace(), request.getPermissionLevel(),
                 request.getIsGit(), request.getPlatform(), request.getShell(), request.getOsVersion(),
                 request.getModelId());
-        return Result.ok(toSessionVO(session));
+        return Result.ok(toSessionVO(session, batchLoadAgents(List.of(session)), batchLoadModels(List.of(session))));
     }
 
     @GetMapping
@@ -72,7 +74,14 @@ public class SessionController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String status) {
         List<Session> sessions = sessionService.listSessions(userId, keyword, status);
-        List<SessionVO> voList = sessions.stream().map(this::toSessionVO).collect(Collectors.toList());
+
+        // Batch-load related entities to avoid N+1 queries
+        Map<Long, Agent> agentMap = batchLoadAgents(sessions);
+        Map<Long, LlmModel> modelMap = batchLoadModels(sessions);
+
+        List<SessionVO> voList = sessions.stream()
+                .map(s -> toSessionVO(s, agentMap, modelMap))
+                .collect(Collectors.toList());
         return Result.ok(voList);
     }
 
@@ -80,7 +89,11 @@ public class SessionController {
     public Result<SessionVO> getSession(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
-        return Result.ok(toSessionVO(sessionService.getSession(id)));
+        Session session = sessionService.getSession(id);
+        List<Session> single = List.of(session);
+        Map<Long, Agent> agentMap = batchLoadAgents(single);
+        Map<Long, LlmModel> modelMap = batchLoadModels(single);
+        return Result.ok(toSessionVO(session, agentMap, modelMap));
     }
 
     @DeleteMapping("/{id}")
@@ -147,18 +160,29 @@ public class SessionController {
         if (request.getModelId() != null) {
             sessionService.updateModelId(id, request.getModelId());
         }
-        return Result.ok(toSessionVO(sessionService.getSession(id)));
+        Session updated = sessionService.getSession(id);
+        Map<Long, Agent> agentMap = batchLoadAgents(List.of(updated));
+        Map<Long, LlmModel> modelMap = batchLoadModels(List.of(updated));
+        return Result.ok(toSessionVO(updated, agentMap, modelMap));
     }
 
     @GetMapping("/dashboard")
     public Result<Map<String, List<SessionVO>>> dashboard(
             @AuthenticationPrincipal Long userId) {
         Map<String, List<Session>> grouped = sessionService.listSessionsForDashboard(userId);
+
+        // Batch-load across all sessions
+        List<Session> allSessions = new java.util.ArrayList<>();
+        allSessions.addAll(grouped.getOrDefault("running", List.of()));
+        allSessions.addAll(grouped.getOrDefault("recent", List.of()));
+        Map<Long, Agent> agentMap = batchLoadAgents(allSessions);
+        Map<Long, LlmModel> modelMap = batchLoadModels(allSessions);
+
         Map<String, List<SessionVO>> result = new java.util.HashMap<>();
         result.put("running", grouped.getOrDefault("running", List.of()).stream()
-                .map(this::toSessionVO).collect(Collectors.toList()));
+                .map(s -> toSessionVO(s, agentMap, modelMap)).collect(Collectors.toList()));
         result.put("recent", grouped.getOrDefault("recent", List.of()).stream()
-                .map(this::toSessionVO).collect(Collectors.toList()));
+                .map(s -> toSessionVO(s, agentMap, modelMap)).collect(Collectors.toList()));
         return Result.ok(result);
     }
 
@@ -299,7 +323,29 @@ public class SessionController {
         return vo;
     }
 
-    private SessionVO toSessionVO(Session session) {
+    private Map<Long, Agent> batchLoadAgents(List<Session> sessions) {
+        Set<Long> ids = sessions.stream().map(Session::getAgentId).filter(Objects::nonNull).collect(Collectors.toSet());
+        if (ids.isEmpty()) return Map.of();
+        return agentMapper.selectBatchIds(ids).stream().collect(Collectors.toMap(Agent::getId, a -> a));
+    }
+
+    private Map<Long, LlmModel> batchLoadModels(List<Session> sessions) {
+        Map<Long, LlmModel> map = new java.util.HashMap<>();
+        Set<Long> ids = sessions.stream().map(Session::getModelId).filter(Objects::nonNull).collect(Collectors.toSet());
+        if (!ids.isEmpty()) {
+            llmModelMapper.selectBatchIds(ids).forEach(m -> map.put(m.getId(), m));
+        }
+        // Also fetch default model for sessions with no modelId (stored under key 0)
+        LlmModel defaultModel = llmModelMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<LlmModel>()
+                        .eq("is_default", 1).eq("status", 1));
+        if (defaultModel != null) {
+            map.put(0L, defaultModel);
+        }
+        return map;
+    }
+
+    private SessionVO toSessionVO(Session session, Map<Long, Agent> agentMap, Map<Long, LlmModel> modelMap) {
         SessionVO vo = new SessionVO();
         vo.setId(session.getId());
         vo.setAgentId(session.getAgentId());
@@ -335,22 +381,16 @@ public class SessionController {
             }
         }
 
-        // Load agent name
-        if (session.getAgentId() != null) {
-            Agent agent = agentMapper.selectById(session.getAgentId());
-            if (agent != null) {
-                vo.setAgentName(agent.getName());
-            }
+        // Load agent name from pre-fetched map
+        Agent agent = session.getAgentId() != null ? agentMap.get(session.getAgentId()) : null;
+        if (agent != null) {
+            vo.setAgentName(agent.getName());
         }
 
         // Load model info — prefer session-level, fallback to default
-        LlmModel model = null;
-        if (session.getModelId() != null) {
-            model = llmModelMapper.selectById(session.getModelId());
-        } else {
-            model = llmModelMapper.selectOne(
-                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<LlmModel>()
-                            .eq("is_default", 1).eq("status", 1));
+        LlmModel model = session.getModelId() != null ? modelMap.get(session.getModelId()) : null;
+        if (model == null) {
+            model = modelMap.get(0L); // default model stored under key 0
         }
         if (model != null) {
             vo.setModelId(model.getId());

@@ -4,12 +4,6 @@ import { useAuthStore } from '../stores/auth'
 
 const routes: RouteRecordRaw[] = [
   {
-    path: '/login',
-    name: 'Login',
-    component: () => import('../views/auth/LoginView.vue'),
-    meta: { requiresAuth: false }
-  },
-  {
     path: '/',
     name: 'Layout',
     component: () => import('../components/common/Layout.vue'),
@@ -33,20 +27,20 @@ const router = createRouter({
   routes
 })
 
-// Navigation guard
-router.beforeEach(async (to, _from, next) => {
+// Navigation guard — hydrate user info if token exists
+router.beforeEach(async (_to, _from, next) => {
   const token = localStorage.getItem('token')
-  if (to.meta.requiresAuth !== false && !token) {
-    next('/login')
-  } else {
-    if (token) {
-      const authStore = useAuthStore()
-      if (!authStore.user) {
+  if (token) {
+    const authStore = useAuthStore()
+    if (!authStore.user) {
+      try {
         await authStore.fetchUserInfo()
+      } catch {
+        // Token expired — the API interceptor will show the login dialog
       }
     }
-    next()
   }
+  next()
 })
 
 export default router
