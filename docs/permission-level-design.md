@@ -8,7 +8,7 @@
 |------|------|------|
 | `READ_ONLY` | 只读（默认） | 与现状一致：read_file/glob_search/grep_search 自动执行，shell/write_file/edit_file 需审批 |
 | `READ_WRITE` | 读写 | 在只读基础上，write_file/edit_file 自动执行，shell 仍需审批 |
-| `SMART` | 智能执行 | 在读写基础上，shell 调用前先经 LLM 判断危险性，高危需审批，低危自动执行 |
+| `SMART` | 智能审批 | 在读写基础上，shell 调用前先经 LLM 判断危险性，高危需审批，低危自动执行 |
 | `FULL` | 完全权限 | 所有工具调用自动执行，无需审批 |
 
 CLOUD 模式不受影响，无需显示权限切换器。
@@ -193,7 +193,7 @@ streamingWsRegistry.send(userId, WsEvent.of("tool_execute", sessionId, Map.of(
 )));
 ```
 
-### 4.5 DangerAssessor — 智能执行模式的 LLM 危险判断
+### 4.5 DangerAssessor — 智能审批模式的 LLM 危险判断
 
 新建 `com.agentworkbench.harness.tool.DangerAssessor`：
 
@@ -510,7 +510,7 @@ const levels = ['READ_ONLY', 'READ_WRITE', 'SMART', 'FULL'] as const
 const levelLabels: Record<string, string> = {
   READ_ONLY: '只读',
   READ_WRITE: '读写',
-  SMART: '智能执行',
+  SMART: '智能审批',
   FULL: '完全权限'
 }
 

@@ -39,7 +39,7 @@ const levels = ['READ_ONLY', 'READ_WRITE', 'SMART', 'FULL'] as const
 const levelLabels: Record<string, string> = {
   READ_ONLY: '只读',
   READ_WRITE: '读写',
-  SMART: '智能执行',
+  SMART: '智能审批',
   FULL: '完全权限'
 }
 

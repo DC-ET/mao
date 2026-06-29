@@ -88,7 +88,6 @@
             <span>云端工作区</span>
           </template>
           <template v-else>
-            <span class="mode-label-inline">本地</span>
             <el-icon :size="14">
               <WarningFilled v-if="!workspace" />
               <FolderOpened v-else />
@@ -927,17 +926,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Mode & model labels */
-.mode-label-inline {
-  font-size: var(--aw-text-fine);
-  color: var(--aw-ink-muted-48);
-  user-select: none;
-  padding: 1px 5px;
-  background: var(--aw-canvas-parchment);
-  border-radius: var(--aw-radius-xs);
-  margin-right: 2px;
 }
 
 .model-name {
