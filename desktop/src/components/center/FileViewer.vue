@@ -29,7 +29,7 @@
           </div>
           <pre ref="codeEl" class="code-text" tabindex="0"><code class="hljs" v-html="highlightedContent"></code></pre>
         </div>
-        <div v-else class="markdown-body" v-html="renderedContent"></div>
+        <div v-else class="markdown-body" v-html="renderedContent" @click="handleMarkdownClick"></div>
         <div v-if="truncated" class="truncation-notice">
           仅显示前 5000 行
         </div>
@@ -42,10 +42,17 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import hljs from 'highlight.js'
 import { renderMarkdown } from '../../composables/useMarkdown'
+import { useCenterTabs } from '../../composables/useCenterTabs'
+import { useSessionStore } from '../../stores/session'
+import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdown-link'
 
 const props = defineProps<{
   filePath: string
 }>()
+
+const sessionStore = useSessionStore()
+const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
+const { openFileTab } = useCenterTabs(activeSessionIdRef)
 
 type LoadState = 'loading' | 'ready' | 'error' | 'binary' | 'empty'
 
@@ -89,6 +96,27 @@ const renderedContent = computed(() => {
   if (!content.value) return ''
   return renderMarkdown(content.value)
 })
+
+async function handleMarkdownClick(e: MouseEvent) {
+  const anchor = (e.target as HTMLElement).closest('a')
+  if (!anchor) return
+
+  const href = anchor.getAttribute('href')
+  if (!href) return
+
+  e.preventDefault()
+
+  if (isExternalMarkdownLink(href)) {
+    await window.electronAPI?.openExternal(href)
+    return
+  }
+
+  const resolvedPath = resolveMarkdownLink(props.filePath, href)
+  if (!resolvedPath) return
+
+  const title = resolvedPath.split(/[/\\]/).pop() || resolvedPath
+  openFileTab(resolvedPath, title)
+}
 
 function handleKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'a') {

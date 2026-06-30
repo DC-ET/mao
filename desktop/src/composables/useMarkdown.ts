@@ -1,6 +1,7 @@
 import { Marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
+import { isExternalMarkdownLink } from '../utils/markdown-link'
 
 const marked = new Marked({
   breaks: false,
@@ -11,7 +12,10 @@ const marked = new Marked({
       return `<pre class="code-block"><div class="code-block-header"><span class="code-lang">${language}</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block').querySelector('code').textContent)">复制</button></div><code class="hljs language-${language}">${highlighted}</code></pre>`
     },
     link({ href, text }: { href: string; text: string }) {
-      return `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`
+      if (isExternalMarkdownLink(href)) {
+        return `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`
+      }
+      return `<a href="${href}">${text}</a>`
     }
   }
 })
