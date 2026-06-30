@@ -278,6 +278,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
           permissionLevel?.value
         )
         sessionId.value = sessionData.id
+        // Sync agent name from created session
+        if (sessionData.agentName) {
+          agentName.value = sessionData.agentName
+        }
       }
 
       const sid = sessionId.value!
@@ -590,6 +594,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     executionMode.value = mode
     if (initialWorkspace) workspace.value = initialWorkspace
     sessionStore.setActiveSession(sessionIdVal)
+
+    // Sync agent name from session data
+    const session = sessionStore.activeSession
+    if (session?.agentName) {
+      agentName.value = session.agentName
+    }
 
     // Sync sending state with the session's actual phase
     const phase = sessionStore.activeSession?.phase

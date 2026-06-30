@@ -15,6 +15,7 @@
         v-for="change in mergedChanges"
         :key="change.path"
         class="file-change-item"
+        @click="handleFileClick(change.path)"
       >
         <div class="file-path-row">
           <span class="file-type-badge" :class="change.type.toLowerCase()">
@@ -35,11 +36,17 @@
 import { ref, computed } from 'vue'
 import { Document, ArrowDown } from '@element-plus/icons-vue'
 import type { FileChange } from '../../types/chat'
+import { useSessionStore } from '../../stores/session'
+import { useCenterTabs } from '../../composables/useCenterTabs'
 
 const props = defineProps<{
   changes: FileChange[]
   mode?: 'realtime' | 'history'
 }>()
+
+const sessionStore = useSessionStore()
+const activeSessionIdRef = computed(() => sessionStore.activeSessionId)
+const { openFileTab } = useCenterTabs(activeSessionIdRef)
 
 const isExpanded = ref(true)
 
@@ -56,6 +63,16 @@ const mergedChanges = computed(() => {
   }
   return Array.from(map.values())
 })
+
+function handleFileClick(changePath: string) {
+  const workspace = sessionStore.activeSession?.workspace
+  const executionMode = sessionStore.activeSession?.executionMode
+  if (!workspace || executionMode === 'CLOUD') return
+
+  const absolutePath = workspace + '/' + changePath
+  const title = changePath.split(/[/\\]/).pop() || changePath
+  openFileTab(absolutePath, title)
+}
 </script>
 
 <style scoped>
@@ -121,6 +138,12 @@ const mergedChanges = computed(() => {
   justify-content: space-between;
   padding: 6px 10px;
   gap: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.file-change-item:hover {
+  background: var(--aw-canvas-parchment);
 }
 
 .file-change-item:not(:last-child) {

@@ -307,24 +307,12 @@ const showTypingIndicator = computed(() => {
   return !hasText && !hasTools
 })
 
-async function handleMessagesScroll() {
-  const el = messagesContainer.value
-  if (!el || el.scrollTop > 120) return
-  if (!sessionStore.activeMessageHasMore || sessionStore.activeMessageLoadingOlder) return
-  const oldScrollHeight = el.scrollHeight
-  const oldScrollTop = el.scrollTop
-  const loaded = await loadOlderMessages()
-  if (!loaded) return
-  await nextTick()
-  el.scrollTop = el.scrollHeight - oldScrollHeight + oldScrollTop
-}
-
 onMounted(() => {
-  messagesContainer.value?.addEventListener('scroll', handleMessagesScroll)
+  messagesContainer.value?.addEventListener('scroll', handleScroll)
 })
 
 onUnmounted(() => {
-  messagesContainer.value?.removeEventListener('scroll', handleMessagesScroll)
+  messagesContainer.value?.removeEventListener('scroll', handleScroll)
 })
 
 // Round grouping logic
@@ -430,23 +418,32 @@ function cancelEdit() {
 
 async function confirmEdit(messageId: string, newContent: string) {
   editingMessageId.value = null
+  userScrolledUp.value = false
   await editAndResend(messageId, newContent)
   nextTick(scrollToBottomSmooth)
 }
 
 // Auto-scroll
 const messagesContainer = ref<HTMLElement>()
-const SCROLL_THRESHOLD = 80
+const userScrolledUp = ref(false)
+const NEAR_BOTTOM = 80
+const LOAD_MORE_THRESHOLD = 120
 
-function isAtBottom(): boolean {
+function isNearBottom(): boolean {
   const el = messagesContainer.value
   if (!el) return false
-  return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD
+  return el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM
 }
 
 function scrollToBottom() {
   const el = messagesContainer.value
-  if (el) el.scrollTop = el.scrollHeight
+  if (!el) return
+  // Use rAF to ensure DOM layout is complete before scrolling
+  requestAnimationFrame(() => {
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    }
+  })
 }
 
 function scrollToBottomSmooth() {
@@ -456,9 +453,33 @@ function scrollToBottomSmooth() {
   })
 }
 
+function handleScroll() {
+  const el = messagesContainer.value
+  if (!el) return
+
+  // Load older messages when scrolling near top
+  if (el.scrollTop <= LOAD_MORE_THRESHOLD
+    && sessionStore.activeMessageHasMore
+    && !sessionStore.activeMessageLoadingOlder) {
+    const oldScrollHeight = el.scrollHeight
+    loadOlderMessages().then(() => {
+      nextTick(() => {
+        const el2 = messagesContainer.value
+        if (el2) el2.scrollTop = el2.scrollHeight - oldScrollHeight
+      })
+    })
+  }
+
+  // Track user scroll intent: when user scrolls away from bottom,
+  // pause auto-scroll. When they scroll back near bottom, resume it.
+  userScrolledUp.value = !isNearBottom()
+}
+
+// Auto-scroll watchers: only scroll if user hasn't manually scrolled up.
+// Uses rAF for proper DOM layout timing.
 watch(() => messages.value.length, () => {
-  if (!isAtBottom()) return
-  nextTick(scrollToBottom)
+  if (userScrolledUp.value) return
+  scrollToBottom()
 })
 
 watch(
@@ -471,8 +492,8 @@ watch(
     ].join('|')
   },
   () => {
-    if (!isAtBottom()) return
-    nextTick(scrollToBottom)
+    if (userScrolledUp.value) return
+    scrollToBottom()
   }
 )
 
@@ -496,6 +517,7 @@ watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
 
 // Scroll to bottom when switching back to chat tab (KeepAlive restore)
 onActivated(() => {
+  userScrolledUp.value = false
   nextTick(() => {
     const el = messagesContainer.value
     if (el) el.scrollTop = el.scrollHeight
@@ -521,6 +543,7 @@ function handleSend(text: string, files: File[]) {
     workspace.value = newTaskWorkspace.value
     pendingNewTaskNav.value = true
   }
+  userScrolledUp.value = false
   sendMessageWithQueue(text, files)
   nextTick(scrollToBottomSmooth)
 }
