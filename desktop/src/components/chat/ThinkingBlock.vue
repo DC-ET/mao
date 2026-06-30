@@ -26,21 +26,16 @@ const props = defineProps<{
   streaming?: boolean
 }>()
 
-const isExpanded = ref(props.streaming ?? false)
+const isExpanded = ref(false)
 const bodyRef = ref<HTMLElement>()
 
 function toggleExpand() {
   isExpanded.value = !isExpanded.value
 }
 
-// Auto-expand when streaming starts
-watch(() => props.streaming, (val) => {
-  if (val) isExpanded.value = true
-})
-
-// Auto-scroll during streaming
+// Auto-scroll during streaming when expanded
 watch(() => props.thinking, async () => {
-  if (props.streaming && bodyRef.value) {
+  if (props.streaming && isExpanded.value && bodyRef.value) {
     await nextTick()
     bodyRef.value.scrollTop = bodyRef.value.scrollHeight
   }
