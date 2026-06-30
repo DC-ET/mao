@@ -55,7 +55,6 @@ const modelIdRef = toRef(props, 'modelId')
 const { modelName: displayName } = useModelName(modelIdRef)
 
 async function loadModels() {
-  if (models.value.length > 0) return
   loadingModels.value = true
   try {
     const { data } = await api.get('/models/active')
