@@ -2,6 +2,7 @@ package com.agentworkbench.harness.tool;
 
 import com.agentworkbench.harness.llm.LlmModelConfig;
 import com.agentworkbench.harness.local.LocalToolExecutor;
+import com.agentworkbench.harness.local.LocalToolSessionRegistry;
 import com.agentworkbench.session.entity.PermissionLevel;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.mapper.SessionMapper;
@@ -36,6 +37,7 @@ public class ToolDispatcher {
     private final SessionMapper sessionMapper;
     private final StreamingWsRegistry streamingWsRegistry;
     private final AskUserQuestionsRegistry askUserQuestionsRegistry;
+    private final LocalToolSessionRegistry localToolSessionRegistry;
     private final ObjectMapper objectMapper;
 
     public ToolDispatcher(ToolRegistry toolRegistry,
@@ -44,6 +46,7 @@ public class ToolDispatcher {
                           SessionMapper sessionMapper,
                           StreamingWsRegistry streamingWsRegistry,
                           AskUserQuestionsRegistry askUserQuestionsRegistry,
+                          LocalToolSessionRegistry localToolSessionRegistry,
                           ObjectMapper objectMapper) {
         this.toolRegistry = toolRegistry;
         this.localToolExecutor = localToolExecutor;
@@ -51,6 +54,7 @@ public class ToolDispatcher {
         this.sessionMapper = sessionMapper;
         this.streamingWsRegistry = streamingWsRegistry;
         this.askUserQuestionsRegistry = askUserQuestionsRegistry;
+        this.localToolSessionRegistry = localToolSessionRegistry;
         this.objectMapper = objectMapper;
     }
 
@@ -139,14 +143,21 @@ public class ToolDispatcher {
 
     /**
      * Dispatch ask_user_questions: send question to client via WebSocket and block until answer.
+     * Uses LocalToolSessionRegistry for robust userId resolution with sub-agent fallback support.
      */
     private String dispatchAskUserQuestions(String arguments, Long sessionId) {
-        // Look up userId from session
-        Session session = sessionMapper.selectById(sessionId);
-        if (session == null) {
-            return "{\"error\": \"Session not found: " + sessionId + "\"}";
+        // Resolve userId with sub-agent fallback support (consistent with LocalToolSessionRegistry)
+        Long userId = localToolSessionRegistry.getUserIdForSession(sessionId);
+
+        // Fallback: if registry doesn't have the session, try direct DB lookup
+        if (userId == null) {
+            Session session = sessionMapper.selectById(sessionId);
+            if (session == null) {
+                return "{\"error\": \"Session not found: " + sessionId + "\"}";
+            }
+            userId = session.getUserId();
         }
-        Long userId = session.getUserId();
+
         if (userId == null || !streamingWsRegistry.hasConnection(userId)) {
             return "{\"error\": \"No connected client to receive questions\"}";
         }

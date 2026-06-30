@@ -57,7 +57,7 @@ const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
-useStreamWS()
+const { connect } = useStreamWS()
 const { loginVersion } = useLoginDialog()
 const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight } = usePanelLayout()
 
@@ -294,6 +294,11 @@ watch(sessionIdParam, (newSid, oldSid) => {
 
 // Re-load data after login success
 watch(loginVersion, async () => {
+  try {
+    await connect()
+  } catch {
+    // WS connect failed — data load can still proceed; subscribe retried on reconnect
+  }
   await sessionStore.fetchSessions()
   const sid = sessionIdParam.value
   if (sid) {

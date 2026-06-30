@@ -153,11 +153,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         Long userId = registry.getUserId(session);
+        // Collect subscribed session IDs before unregistering (which clears subscriptions)
+        Set<Long> subscribedSessionIds = userId != null ? registry.getSubscribedSessionIds(userId) : Set.of();
         registry.unregister(session);
         if (userId != null) {
             localToolSessionRegistry.failAllForUser(userId);
-            // Fail all pending questions for sessions belonging to this user
-            // The timeout mechanism in AskUserQuestionsRegistry also serves as a fallback
+            askUserQuestionsRegistry.failAllForSessions(subscribedSessionIds);
         }
     }
 
@@ -165,9 +166,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         log.warn("WS transport error for session={}: {}", session.getId(), exception.getMessage());
         Long userId = registry.getUserId(session);
+        Set<Long> subscribedSessionIds = userId != null ? registry.getSubscribedSessionIds(userId) : Set.of();
         registry.unregister(session);
         if (userId != null) {
             localToolSessionRegistry.failAllForUser(userId);
+            askUserQuestionsRegistry.failAllForSessions(subscribedSessionIds);
         }
     }
 

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api } from '../api'
 import { useSessionStore } from './session'
+import { useStreamWS } from '../composables/useStreamWS'
 
 interface User {
   id: number
@@ -31,6 +32,7 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = null
       localStorage.removeItem('token')
       localStorage.removeItem('refreshToken')
+      useStreamWS().disconnect()
       useSessionStore().reset()
     }
   }

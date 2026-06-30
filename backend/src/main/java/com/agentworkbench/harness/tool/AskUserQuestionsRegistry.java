@@ -77,6 +77,15 @@ public class AskUserQuestionsRegistry {
         });
     }
 
+    /**
+     * Fail all pending questions for all given sessions (e.g. on user disconnect).
+     */
+    public void failAllForSessions(java.util.Collection<Long> sessionIds) {
+        for (Long sessionId : sessionIds) {
+            failAllForSession(sessionId);
+        }
+    }
+
     private String key(Long sessionId, String requestId) {
         return sessionId + ":" + requestId;
     }

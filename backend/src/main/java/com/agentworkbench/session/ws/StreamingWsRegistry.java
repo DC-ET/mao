@@ -120,6 +120,14 @@ public class StreamingWsRegistry {
         return sessions != null && sessions.stream().anyMatch(WebSocketSession::isOpen);
     }
 
+    /**
+     * Get all subscribed session IDs for a user.
+     */
+    public Set<Long> getSubscribedSessionIds(Long userId) {
+        Set<Long> subs = userSubscriptions.get(userId);
+        return subs != null ? Set.copyOf(subs) : Set.of();
+    }
+
     public Long getUserId(WebSocketSession session) {
         return sessionToUser.get(session.getId());
     }
