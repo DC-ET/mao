@@ -202,7 +202,7 @@ public class AgentLoop {
                     log.error("LLM call failed", t);
                     throw new RuntimeException("LLM call failed: " + t.getMessage(), t);
                 }
-            });
+            }, cancelFlag);
             } catch (RuntimeException e) {
                 if (e.getMessage() != null && e.getMessage().contains("Cancelled by user")) {
                     log.info("Agent loop round {} cancelled by user for session {}", currentRound, sessionId);
