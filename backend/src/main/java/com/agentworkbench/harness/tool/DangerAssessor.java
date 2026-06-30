@@ -71,7 +71,6 @@ public class DangerAssessor {
                                 .content(command)
                                 .build()
                 ))
-                .maxTokens(128)
                 .temperature(0.0)
                 .build();
 

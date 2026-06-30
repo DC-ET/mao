@@ -16,7 +16,6 @@ public class ChatRequest {
     private List<Message> messages;
     private List<ToolDefinition> tools;
     private Double temperature;
-    private Integer maxTokens;
     private Boolean stream;
 
     @Data

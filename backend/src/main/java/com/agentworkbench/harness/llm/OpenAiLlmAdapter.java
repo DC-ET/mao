@@ -133,9 +133,6 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             if (request.getTemperature() != null) {
                 body.put("temperature", request.getTemperature());
             }
-            if (request.getMaxTokens() != null) {
-                body.put("max_tokens", request.getMaxTokens());
-            }
             if (request.getTools() != null && !request.getTools().isEmpty()) {
                 body.put("tools", request.getTools());
             }

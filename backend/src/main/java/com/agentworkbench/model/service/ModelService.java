@@ -120,7 +120,6 @@ public class ModelService {
                                 .content("Hi")
                                 .build()
                 ))
-                .maxTokens(10)
                 .build();
 
         try {
