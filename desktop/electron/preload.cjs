@@ -60,6 +60,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('skill-sync-complete')
   },
 
+  // Local skills in ~/.agents/skills
+  listLocalSkills: () => ipcRenderer.invoke('list-local-skills'),
+  getLocalSkillDetail: (folderName) => ipcRenderer.invoke('get-local-skill-detail', { folderName }),
+  readLocalSkillFiles: (folderName) => ipcRenderer.invoke('read-local-skill-files', { folderName }),
+
   // Terminal (node-pty) — embedded terminal panel
   terminal: {
     create: (options) => ipcRenderer.invoke('terminal:create', options),

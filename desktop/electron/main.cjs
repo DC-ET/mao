@@ -146,6 +146,151 @@ ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, workspac
   }
 })
 
+// ========== Local skills (~/.agents/skills) ==========
+
+const LOCAL_SKILLS_DIR = path.join(os.homedir(), '.agents', 'skills')
+
+function parseSkillMd(content) {
+  if (!content || !content.startsWith('---')) return null
+  const secondDelimiter = content.indexOf('---', 3)
+  if (secondDelimiter === -1) return null
+
+  const frontmatter = content.substring(3, secondDelimiter).trim()
+  const body = content.substring(secondDelimiter + 3).trim()
+
+  let name = null
+  let description = null
+  for (const line of frontmatter.split('\n')) {
+    const nameMatch = line.match(/^name:\s*(.+)$/)
+    if (nameMatch) {
+      name = nameMatch[1].trim().replace(/^["']|["']$/g, '')
+    }
+    const descMatch = line.match(/^description:\s*(.+)$/)
+    if (descMatch) {
+      description = descMatch[1].trim().replace(/^["']|["']$/g, '')
+    }
+  }
+
+  if (!name) return null
+  return { name, description: description || '', body }
+}
+
+function resolveLocalSkillFolder(folderName) {
+  if (!folderName || typeof folderName !== 'string') return null
+  if (folderName.includes('/') || folderName.includes('\\') || folderName.startsWith('.')) {
+    return null
+  }
+  const skillFolder = path.resolve(LOCAL_SKILLS_DIR, folderName)
+  const normalizedRoot = path.resolve(LOCAL_SKILLS_DIR)
+  if (skillFolder !== normalizedRoot && !skillFolder.startsWith(normalizedRoot + path.sep)) {
+    return null
+  }
+  if (!fs.existsSync(skillFolder) || !fs.statSync(skillFolder).isDirectory()) {
+    return null
+  }
+  return skillFolder
+}
+
+function collectSkillFiles(dir, baseDir, files = []) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const fullPath = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      collectSkillFiles(fullPath, baseDir, files)
+    } else if (entry.isFile()) {
+      const relativePath = path.relative(baseDir, fullPath).replace(/\\/g, '/')
+      if (!relativePath || relativePath.includes('/.')) continue
+      files.push({ relativePath, fullPath })
+    }
+  }
+  return files
+}
+
+ipcMain.handle('list-local-skills', async () => {
+  try {
+    if (!fs.existsSync(LOCAL_SKILLS_DIR)) {
+      return { skills: [], skillsDir: LOCAL_SKILLS_DIR }
+    }
+
+    const skills = []
+    const entries = fs.readdirSync(LOCAL_SKILLS_DIR, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+
+      const folderPath = path.join(LOCAL_SKILLS_DIR, entry.name)
+      const skillMdPath = path.join(folderPath, 'SKILL.md')
+      if (!fs.existsSync(skillMdPath)) continue
+
+      try {
+        const content = fs.readFileSync(skillMdPath, 'utf-8')
+        const parsed = parseSkillMd(content)
+        if (!parsed) continue
+        skills.push({
+          folderName: entry.name,
+          name: parsed.name,
+          description: parsed.description,
+          folderPath,
+        })
+      } catch (e) {
+        console.warn('[local-skills] Failed to parse:', entry.name, e.message)
+      }
+    }
+
+    skills.sort((a, b) => a.name.localeCompare(b.name))
+    return { skills, skillsDir: LOCAL_SKILLS_DIR }
+  } catch (e) {
+    console.error('[local-skills] list failed:', e)
+    return { error: e.message, skills: [], skillsDir: LOCAL_SKILLS_DIR }
+  }
+})
+
+ipcMain.handle('get-local-skill-detail', async (event, { folderName }) => {
+  try {
+    const skillFolder = resolveLocalSkillFolder(folderName)
+    if (!skillFolder) {
+      return { error: 'Skill not found: ' + folderName }
+    }
+
+    const skillMdPath = path.join(skillFolder, 'SKILL.md')
+    const content = fs.readFileSync(skillMdPath, 'utf-8')
+    const parsed = parseSkillMd(content)
+    if (!parsed) {
+      return { error: 'Invalid SKILL.md in skill: ' + folderName }
+    }
+
+    return {
+      name: parsed.name,
+      description: parsed.description,
+      body: parsed.body,
+      folderPath: skillFolder,
+      filePath: skillMdPath,
+      folderName,
+    }
+  } catch (e) {
+    return { error: e.message }
+  }
+})
+
+ipcMain.handle('read-local-skill-files', async (event, { folderName }) => {
+  try {
+    const skillFolder = resolveLocalSkillFolder(folderName)
+    if (!skillFolder) {
+      return { error: 'Skill not found: ' + folderName }
+    }
+
+    const fileEntries = collectSkillFiles(skillFolder, skillFolder)
+    const files = fileEntries.map(({ relativePath, fullPath }) => ({
+      relativePath,
+      base64: fs.readFileSync(fullPath).toString('base64'),
+    }))
+
+    return { folderName, files }
+  } catch (e) {
+    return { error: e.message }
+  }
+})
+
 function resolveWorkspacePath(filePath, workspace) {
   const effectiveWorkspace = workspace || currentWorkspace
   if (!filePath || !effectiveWorkspace) return filePath

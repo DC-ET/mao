@@ -42,6 +42,39 @@ interface DirectoryResult {
   truncated?: boolean
 }
 
+interface LocalSkillDoc {
+  folderName: string
+  name: string
+  description: string
+  folderPath: string
+}
+
+interface LocalSkillListResult {
+  skills?: LocalSkillDoc[]
+  skillsDir?: string
+  error?: string
+}
+
+interface LocalSkillFileEntry {
+  relativePath: string
+  base64: string
+}
+
+interface LocalSkillFilesResult {
+  folderName?: string
+  files?: LocalSkillFileEntry[]
+  error?: string
+}
+
+interface LocalSkillDetail {
+  folderName: string
+  name: string
+  description: string
+  body: string
+  folderPath: string
+  filePath: string
+}
+
 interface ElectronAPI {
   getAppVersion(): Promise<string>
   getPlatform(): Promise<string>
@@ -76,6 +109,10 @@ interface ElectronAPI {
   skillSync(sessionId: number, syncUrl: string, token: string, workspace: string): Promise<any>
   onSkillSyncComplete(callback: (data: any) => void): void
   removeSkillSyncCompleteListener(): void
+
+  listLocalSkills(): Promise<LocalSkillListResult>
+  getLocalSkillDetail(folderName: string): Promise<LocalSkillDetail | { error: string }>
+  readLocalSkillFiles(folderName: string): Promise<LocalSkillFilesResult>
 
   terminal: {
     create(options: TerminalCreateOptions): Promise<TerminalCreateResult>

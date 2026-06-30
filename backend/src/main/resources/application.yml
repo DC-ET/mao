@@ -2,6 +2,9 @@ server:
   port: 9080
   servlet:
     context-path: /api
+  tomcat:
+    # Skill 上传单次可包含多个文件，需高于 Tomcat 10.1 默认的 10
+    max-part-count: 500
 
 logging:
   level:
