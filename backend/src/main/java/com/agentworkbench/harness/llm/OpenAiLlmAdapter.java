@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * OpenAI 兼容协议的 LLM 适配器实现
@@ -58,11 +59,12 @@ public class OpenAiLlmAdapter implements LlmAdapter {
     }
 
     @Override
-    public void stream(ChatRequest request, LlmModelConfig config, StreamCallback callback) {
+    public void stream(ChatRequest request, LlmModelConfig config, StreamCallback callback, AtomicBoolean cancelFlag) {
         log.debug("stream: starting, model={}", config.getModelId());
         Request httpRequest = buildRequest(request, config, true);
+        Call httpCall = httpClient.newCall(httpRequest);
 
-        try (Response response = httpClient.newCall(httpRequest).execute()) {
+        try (Response response = httpCall.execute()) {
             log.debug("stream: response code={}", response.code());
             if (!response.isSuccessful()) {
                 String errorBody = "";
@@ -85,6 +87,14 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             BufferedSource source = body.source();
 
             while (!source.exhausted()) {
+                // ✅ 每次读取前检查取消标志 — 让停止按钮即刻生效
+                if (cancelFlag != null && cancelFlag.get()) {
+                    log.info("Stream cancelled by user for model={}", config.getModelId());
+                    httpCall.cancel();
+                    callback.onError(new RuntimeException("Cancelled by user"));
+                    return;
+                }
+
                 String line = source.readUtf8Line();
                 if (line == null) break;
 
@@ -118,7 +128,13 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             callback.onComplete(usageBuilder.build());
 
         } catch (IOException e) {
-            callback.onError(e);
+            // 区分用户取消 vs 真实错误
+            if (cancelFlag != null && cancelFlag.get()) {
+                log.info("Stream cancelled by user (IO interrupted) for model={}", config.getModelId());
+                callback.onError(new RuntimeException("Cancelled by user"));
+            } else {
+                callback.onError(e);
+            }
         }
     }
 

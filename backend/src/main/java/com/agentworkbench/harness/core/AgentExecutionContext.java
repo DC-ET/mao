@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Agent 执行上下文，包含一次对话的全部状态
@@ -66,6 +67,9 @@ public class AgentExecutionContext {
 
     // Loop 压缩计数
     private int loopToolRounds = 0;
+
+    // 取消标志 — 用户点击停止后立即设为 true
+    private AtomicBoolean cancelFlag;
 
     public AgentExecutionContext() {
         this.totalUsage = ChatUsage.builder()

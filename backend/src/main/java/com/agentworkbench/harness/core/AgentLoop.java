@@ -18,6 +18,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -89,12 +90,10 @@ public class AgentLoop {
 
             // Check cancellation
             Long sessionId = context.getSessionId();
-            if (sessionId != null) {
-                AtomicBoolean cancelFlag = cancelFlags.get(sessionId);
-                if (cancelFlag != null && cancelFlag.get()) {
-                    log.info("Agent loop cancelled for session {}", sessionId);
-                    return;
-                }
+            AtomicBoolean cancelFlag = sessionId != null ? cancelFlags.get(sessionId) : null;
+            if (cancelFlag != null && cancelFlag.get()) {
+                log.info("Agent loop cancelled for session {}", sessionId);
+                return;
             }
 
             // 0.5. Inject completed background task results
@@ -120,6 +119,7 @@ public class AgentLoop {
             final AtomicBoolean thinkingEnded = new AtomicBoolean(false);
             final Set<String> emittedEarlyStarts = new HashSet<>();
             listener.onThinkingStart();
+            try {
             llmAdapter.stream(request, context.getModelConfig(), new StreamCallback() {
                 private final StringBuilder contentBuilder = new StringBuilder();
                 private final StringBuilder thinkingBuilder = new StringBuilder();
@@ -203,6 +203,13 @@ public class AgentLoop {
                     throw new RuntimeException("LLM call failed: " + t.getMessage(), t);
                 }
             });
+            } catch (RuntimeException e) {
+                if (e.getMessage() != null && e.getMessage().contains("Cancelled by user")) {
+                    log.info("Agent loop round {} cancelled by user for session {}", currentRound, sessionId);
+                    break;
+                }
+                throw e;
+            }
 
             // 3. Check if we have tool calls to execute
             List<ChatRequest.ToolCall> pendingCalls = context.getPendingToolCalls();
@@ -213,7 +220,7 @@ public class AgentLoop {
             // 4. Execute tool calls in parallel (summary 已附加到 ToolCall)
             Map<String, String> toolResults = new LinkedHashMap<>();
             List<ToolMessageSave> pendingToolSaves = new ArrayList<>();
-            executeToolCalls(pendingCalls, context, listener, pendingToolSaves, toolResults);
+            executeToolCalls(pendingCalls, context, listener, pendingToolSaves, toolResults, cancelFlag);
 
             // 4.1 先保存 assistant，再保存 tool 结果，保证 DB 顺序满足 LLM API 要求
             if (pendingSaveToolCalls[0] != null && persistenceCallback != null) {
@@ -270,15 +277,20 @@ public class AgentLoop {
 
     /**
      * Execute tool calls in parallel using CompletableFuture.
+     * 期间检查 cancelFlag，支持用户中断。
      */
     private void executeToolCalls(List<ChatRequest.ToolCall> pendingCalls,
                                   AgentExecutionContext context,
                                   AgentEventListener listener,
                                   List<ToolMessageSave> pendingToolSaves,
-                                  Map<String, String> toolResults) {
+                                  Map<String, String> toolResults,
+                                  AtomicBoolean cancelFlag) {
         if (pendingCalls.size() == 1) {
+            // 检查取消标志
+            if (cancelFlag != null && cancelFlag.get()) return;
             ChatRequest.ToolCall tc = pendingCalls.get(0);
             String result = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
+            if (cancelFlag != null && cancelFlag.get()) return;
             tc.setSummary(ToolResultSummarizer.summarize(
                     tc.getFunction().getName(), tc.getFunction().getArguments(), result));
             toolResults.put(tc.getId(), result);
@@ -297,7 +309,22 @@ public class AgentLoop {
                 }, toolExecutor));
             }
 
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            // 轮询等待所有工具完成，期间检查取消标志
+            CompletableFuture<?> all = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+            while (!all.isDone()) {
+                if (cancelFlag != null && cancelFlag.get()) {
+                    futures.forEach(f -> f.cancel(true));
+                    log.info("Tool execution cancelled for session {}", context.getSessionId());
+                    return;
+                }
+                try {
+                    all.get(500, TimeUnit.MILLISECONDS);
+                } catch (java.util.concurrent.TimeoutException e) {
+                    // 超时 == 仍在执行，继续轮询
+                } catch (Exception e) {
+                    break;
+                }
+            }
 
             for (int i = 0; i < pendingCalls.size(); i++) {
                 ChatRequest.ToolCall tc = pendingCalls.get(i);
