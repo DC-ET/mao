@@ -4,28 +4,95 @@
       <template #header>
         <div class="card-header">
           <span>用户管理</span>
+          <el-button type="primary" @click="handleCreate">
+            <el-icon><Plus /></el-icon>
+            新建用户
+          </el-button>
         </div>
       </template>
+
+      <el-form :inline="true" class="search-form">
+        <el-form-item label="关键词">
+          <el-input
+            v-model="filters.keyword"
+            placeholder="用户名 / 显示名 / 邮箱"
+            clearable
+            style="width: 220px"
+            @clear="handleSearch"
+            @keyup.enter="handleSearch"
+          />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
+            <el-option label="启用" :value="1" />
+            <el-option label="禁用" :value="0" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="handleSearch">查询</el-button>
+          <el-button @click="handleReset">重置</el-button>
+        </el-form-item>
+      </el-form>
 
       <el-table :data="users" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="username" label="用户名" width="120" />
         <el-table-column prop="displayName" label="显示名称" width="120" />
-        <el-table-column prop="email" label="邮箱" min-width="180" />
-        <el-table-column prop="status" label="状态" width="100">
+        <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
+        <el-table-column label="角色" min-width="140">
+          <template #default="{ row }">
+            <el-tag
+              v-for="name in row.roleNames || []"
+              :key="name"
+              size="small"
+              class="role-tag"
+            >
+              {{ name }}
+            </el-tag>
+            <span v-if="!row.roleNames?.length" class="text-muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="账号类型" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.authSource === 'LOCAL' ? 'primary' : 'info'" size="small">
+              {{ row.authSource === 'LOCAL' ? '本地' : 'LDAP' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
               {{ row.status === 1 ? '启用' : '禁用' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="lastLoginAt" label="最后登录" width="180" />
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column prop="lastLoginAt" label="最后登录" width="170" />
+        <el-table-column prop="createdAt" label="创建时间" width="170" />
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
+            <el-tooltip
+              :disabled="row.authSource === 'LOCAL'"
+              content="LDAP 用户密码由目录服务管理"
+              placement="top"
+            >
+              <span>
+                <el-button
+                  type="primary"
+                  link
+                  size="small"
+                  :disabled="row.authSource !== 'LOCAL'"
+                  @click="handleResetPassword(row)"
+                >
+                  重置密码
+                </el-button>
+              </span>
+            </el-tooltip>
             <el-button
               :type="row.status === 1 ? 'danger' : 'success'"
               link
               size="small"
+              :disabled="isCurrentUser(row) && row.status === 1"
               @click="handleToggleStatus(row)"
             >
               {{ row.status === 1 ? '禁用' : '启用' }}
@@ -45,36 +112,110 @@
         @size-change="handleSizeChange"
       />
     </el-card>
+
+    <UserFormDialog
+      v-model:visible="formDialogVisible"
+      :user-data="currentUser"
+      :mode="formMode"
+      @saved="fetchUsers"
+    />
+
+    <ResetPasswordDialog
+      v-model:visible="resetDialogVisible"
+      :user-id="resetUserId"
+      :username="resetUsername"
+      @saved="fetchUsers"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
+import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { useAuthStore } from '../../stores/auth'
+import UserFormDialog from './UserFormDialog.vue'
+import ResetPasswordDialog from './ResetPasswordDialog.vue'
 
+const authStore = useAuthStore()
 const loading = ref(false)
 const users = ref<any[]>([])
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 
+const filters = reactive({
+  keyword: '',
+  status: undefined as number | undefined
+})
+
+const formDialogVisible = ref(false)
+const formMode = ref<'create' | 'edit'>('create')
+const currentUser = ref<any | null>(null)
+
+const resetDialogVisible = ref(false)
+const resetUserId = ref<number | null>(null)
+const resetUsername = ref('')
+
+function isCurrentUser(row: any) {
+  return row.id === authStore.user?.id
+}
+
 async function fetchUsers() {
   loading.value = true
   try {
-    const { data } = await api.get('/users', {
-      params: { page: currentPage.value, size: pageSize.value }
-    })
-    users.value = data || []
-    total.value = data?.length || 0
+    const params: Record<string, unknown> = {
+      page: currentPage.value,
+      size: pageSize.value
+    }
+    if (filters.keyword) params.keyword = filters.keyword
+    if (filters.status !== undefined && filters.status !== null) {
+      params.status = filters.status
+    }
+
+    const { data } = await api.get('/users', { params })
+    users.value = data?.records || []
+    total.value = data?.total || 0
   } finally {
     loading.value = false
   }
 }
 
+function handleSearch() {
+  currentPage.value = 1
+  fetchUsers()
+}
+
+function handleReset() {
+  filters.keyword = ''
+  filters.status = undefined
+  currentPage.value = 1
+  fetchUsers()
+}
+
 function handleSizeChange() {
   currentPage.value = 1
   fetchUsers()
+}
+
+function handleCreate() {
+  formMode.value = 'create'
+  currentUser.value = null
+  formDialogVisible.value = true
+}
+
+async function handleEdit(row: any) {
+  const { data } = await api.get(`/users/${row.id}`)
+  formMode.value = 'edit'
+  currentUser.value = data
+  formDialogVisible.value = true
+}
+
+function handleResetPassword(row: any) {
+  resetUserId.value = row.id
+  resetUsername.value = row.username
+  resetDialogVisible.value = true
 }
 
 async function handleToggleStatus(row: any) {
@@ -85,11 +226,16 @@ async function handleToggleStatus(row: any) {
     ElMessage.success(`${action}成功`)
     fetchUsers()
   } catch {
-    // Cancelled
+    // Cancelled or error handled by interceptor
   }
 }
 
-onMounted(fetchUsers)
+onMounted(async () => {
+  if (!authStore.user) {
+    await authStore.fetchUserInfo()
+  }
+  fetchUsers()
+})
 </script>
 
 <style scoped>
@@ -97,6 +243,18 @@ onMounted(fetchUsers)
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.search-form {
+  margin-bottom: 16px;
+}
+
+.role-tag {
+  margin-right: 4px;
+}
+
+.text-muted {
+  color: #909399;
 }
 
 .pagination {

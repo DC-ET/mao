@@ -32,6 +32,12 @@ public enum ErrorCode {
     COMMAND_NOT_FOUND(3011, "指令不存在"),
     COMMAND_NAME_DUPLICATE(3012, "指令名称已存在"),
     COMMAND_NAME_INVALID(3013, "指令名称只能包含字母、数字、中文、下划线和连字符"),
+    USER_NOT_FOUND(3014, "用户不存在"),
+    USERNAME_DUPLICATE(3015, "用户名已存在"),
+    CANNOT_DISABLE_SELF(3016, "不能禁用当前登录用户"),
+    CANNOT_REMOVE_LAST_ADMIN(3017, "不能移除最后一个管理员"),
+    USER_PASSWORD_MANAGED_BY_LDAP(3018, "LDAP 用户密码由目录服务管理"),
+    PASSWORD_INVALID(3019, "密码格式不符合要求"),
 
     // 服务端内部错误 5001-5999
     INTERNAL_ERROR(5001, "服务内部错误"),
