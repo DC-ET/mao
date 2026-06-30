@@ -10,7 +10,6 @@ import com.agentworkbench.permission.mapper.RolePermissionMapper;
 import com.agentworkbench.permission.mapper.UserRoleMapper;
 import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
-import com.agentworkbench.user.entity.User;
 import com.agentworkbench.user.mapper.UserMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;

@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class ShellSessionManager {
 
-    private static final String OUTPUT_DIR = ".workbench/shellOutput";
+    private static final String OUTPUT_DIR = ".mao/shellOutput";
 
     private final PathSandbox pathSandbox;
 

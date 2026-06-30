@@ -42,7 +42,7 @@ desktop/release/
 *.pid
 
 .bash_profile
-.workbench
+.mao
 
 .claude/
 .cursor/

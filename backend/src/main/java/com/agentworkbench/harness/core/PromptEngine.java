@@ -174,7 +174,7 @@ public class PromptEngine {
             if (catalog != null && !catalog.isEmpty()) {
                 sb.append("## 可用技能\n\n");
                 sb.append("以下技能可用。每个技能都是一份知识文档，用于指导你在特定场景下高效使用工具。\n");
-                sb.append("技能会同步到工作区的 `.workbench/skills/` 目录下。\n");
+                sb.append("技能会同步到工作区的 `.mao/skills/` 目录下。\n");
                 sb.append("如需阅读某个技能的完整内容，请使用 `read_file` 工具读取下方列出的文件路径。\n\n");
                 sb.append(catalog);
                 sb.append("\n\n");
@@ -214,8 +214,8 @@ public class PromptEngine {
             }
             sb.append("- **").append(name).append("**：");
             sb.append(description);
-            sb.append("\n  目录：`.workbench/skills/").append(name).append("`");
-            sb.append("\n  文件：`.workbench/skills/").append(name).append("/SKILL.md`");
+            sb.append("\n  目录：`.mao/skills/").append(name).append("`");
+            sb.append("\n  文件：`.mao/skills/").append(name).append("/SKILL.md`");
             sb.append("\n");
         }
         return sb.toString().trim();

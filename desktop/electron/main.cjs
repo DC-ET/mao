@@ -119,7 +119,7 @@ ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, workspac
   }
   try {
     const AdmZip = require('adm-zip')
-    const skillsDir = path.join(effectiveWorkspace, '.workbench', 'skills')
+    const skillsDir = path.join(effectiveWorkspace, '.mao', 'skills')
 
     // Download zip from REST endpoint
     const baseUrl = getApiBaseUrl()
@@ -131,7 +131,7 @@ ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, workspac
       throw new Error(`Skill sync download failed: ${response.status} ${response.statusText} - ${body}`)
     }
 
-    // Extract zip to .workbench/skills/
+    // Extract zip to .mao/skills/
     const zipBuffer = Buffer.from(await response.arrayBuffer())
     fs.mkdirSync(skillsDir, { recursive: true })
     const zip = new AdmZip(zipBuffer)
@@ -690,7 +690,7 @@ const MARKER_PREFIX = '__CMD_DONE_'
 const MARKER_SUFFIX = '__'
 const MAX_PREVIEW_LINES = 100
 const MAX_PREVIEW_CHARS = 10000
-const SHELL_OUTPUT_DIR = '.workbench/shellOutput'
+const SHELL_OUTPUT_DIR = '.mao/shellOutput'
 
 function generateMarker() {
   return crypto.randomBytes(4).toString('hex')

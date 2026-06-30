@@ -38,7 +38,7 @@ public class SkillSyncService {
     @Value("${app.harness.user-skills-dir:./userskills}")
     private String userSkillsDir;
 
-    private static final String SKILLS_DIR_NAME = ".workbench/skills";
+    private static final String SKILLS_DIR_NAME = ".mao/skills";
 
     // "agentId:workspace" → (skillName → lastSyncEpochMilli)
     private final Map<String, Map<String, Long>> syncState = new ConcurrentHashMap<>();
