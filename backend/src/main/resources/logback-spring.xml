@@ -24,7 +24,7 @@
         </encoder>
     </appender>
 
-    <springProfile name="dev">
+    <springProfile name="local">
         <root level="DEBUG">
             <appender-ref ref="CONSOLE"/>
             <appender-ref ref="APP_FILE"/>
