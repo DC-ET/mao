@@ -40,9 +40,14 @@
                 <span class="drag-handle" title="拖拽排序">⠿</span>
                 <el-icon :size="13" class="group-icon" :class="group.key === 'CLOUD' ? 'icon-cloud' : 'icon-folder'">
                   <Cloudy v-if="group.key === 'CLOUD'" />
+                  <FolderOpened v-else-if="!isGroupCollapsed(group.key)" />
                   <Folder v-else />
                 </el-icon>
-                {{ group.label }}
+                <span class="group-label">{{ group.label }}</span>
+                <el-icon :size="11" class="group-expand-arrow">
+                  <ArrowDown v-if="!isGroupCollapsed(group.key)" />
+                  <ArrowRight v-else />
+                </el-icon>
               </div>
               <div class="group-header-actions">
                 <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn" @click.stop="openGroupFolder(group)" title="在文件浏览器中打开">
@@ -153,7 +158,7 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, onUnmounted } from 'vue'
-import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpened, EditPen } from '@element-plus/icons-vue'
+import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
@@ -591,6 +596,24 @@ function onGroupDragEnd() {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+}
+
+.group-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-expand-arrow {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+  color: var(--aw-ink-muted-48);
+}
+
+.group-header:hover .group-expand-arrow {
+  opacity: 0.7;
 }
 
 .drag-handle {
