@@ -184,6 +184,9 @@ public class PromptEngine {
         // Task management behavior hints
         appendToolBehaviorHints(sb, context);
 
+        // Delegate tool behavior hints
+        appendDelegateToolHints(sb, context);
+
         return sb.toString();
     }
 
@@ -276,6 +279,24 @@ public class PromptEngine {
         sb.append("不要为简单、单步或直接明了的请求创建任务。\n");
         sb.append("使用任务时：每完成一个任务，就立即将其标记为已完成。\n");
         sb.append("不要等多个任务都做完后再批量标记完成。\n\n");
+    }
+
+    /**
+     * 向 system prompt 注入子智能体委派行为指令
+     */
+    private void appendDelegateToolHints(StringBuilder sb, AgentExecutionContext context) {
+        boolean hasDelegateTool = context.getTools().stream()
+                .anyMatch(t -> "delegate".equals(t.getName()));
+        if (!hasDelegateTool) return;
+
+        sb.append("## 子代理委派\n\n");
+        sb.append("你可以使用 `delegate` 工具将子任务委派给专用子代理。子代理拥有独立会话，完成后将结果返回给你。\n\n");
+        sb.append("**使用原则：**\n");
+        sb.append("1. 只有当子任务足够独立、复杂度适中时才委派\n");
+        sb.append("2. 任务描述要具体，包含明确目标、输入数据和期望输出格式\n");
+        sb.append("3. 子代理无法与用户交互，不要委派需要用户确认的任务\n");
+        sb.append("4. 收到子代理结果后，请分析并整合到你的回答中\n");
+        sb.append("5. 对于有依赖关系的子任务，请串行委派\n\n");
     }
 
 }

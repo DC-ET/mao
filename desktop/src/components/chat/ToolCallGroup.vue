@@ -68,7 +68,8 @@ function getToolDisplayName(name: string): string {
     'task_create': '创建任务',
     'task_update': '更新任务',
     'task_list': '查询任务',
-    'task_delete': '删除任务'
+    'task_delete': '删除任务',
+    'delegate': '委派子代理'
   }
   return nameMap[name] || name
 }

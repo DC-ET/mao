@@ -1,5 +1,7 @@
 package com.agentworkbench.harness.local;
 
+import com.agentworkbench.session.entity.Session;
+import com.agentworkbench.session.mapper.SessionMapper;
 import com.agentworkbench.session.ws.StreamingWsRegistry;
 import com.agentworkbench.session.ws.WsEvent;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class LocalToolSessionRegistry {
 
     private final StreamingWsRegistry streamingWsRegistry;
+    private final SessionMapper sessionMapper;
 
     /** sessionId → userId */
     private final ConcurrentHashMap<Long, Long> sessionToUser = new ConcurrentHashMap<>();
@@ -28,8 +31,10 @@ public class LocalToolSessionRegistry {
     /** sessionId → requestId → CompletableFuture */
     private final ConcurrentHashMap<Long, ConcurrentHashMap<String, CompletableFuture<String>>> pendingRequests = new ConcurrentHashMap<>();
 
-    public LocalToolSessionRegistry(StreamingWsRegistry streamingWsRegistry) {
+    public LocalToolSessionRegistry(StreamingWsRegistry streamingWsRegistry,
+                                    SessionMapper sessionMapper) {
         this.streamingWsRegistry = streamingWsRegistry;
+        this.sessionMapper = sessionMapper;
     }
 
     /**
@@ -83,7 +88,7 @@ public class LocalToolSessionRegistry {
      * Check if a session has a registered user with an active streaming WS connection.
      */
     public boolean isConnected(Long sessionId) {
-        Long userId = sessionToUser.get(sessionId);
+        Long userId = resolveUserId(sessionId);
         return userId != null && streamingWsRegistry.hasConnection(userId);
     }
 
@@ -91,7 +96,35 @@ public class LocalToolSessionRegistry {
      * Get the userId associated with a session, or null if not registered.
      */
     public Long getUserIdForSession(Long sessionId) {
-        return sessionToUser.get(sessionId);
+        return resolveUserId(sessionId);
+    }
+
+    /**
+     * Resolve userId for routing local tool requests.
+     * Prefer in-memory registration (set when streaming starts), fall back to session record.
+     * Sub-agent sessions inherit the parent user's desktop connection via session.userId.
+     */
+    private Long resolveUserId(Long sessionId) {
+        if (sessionId == null) {
+            return null;
+        }
+        Long userId = sessionToUser.get(sessionId);
+        if (userId != null) {
+            return userId;
+        }
+
+        Session session = sessionMapper.selectById(sessionId);
+        if (session == null) {
+            return null;
+        }
+        if (session.getUserId() != null) {
+            return session.getUserId();
+        }
+
+        if ("SUBAGENT".equals(session.getSessionType()) && session.getParentSessionId() != null) {
+            return sessionToUser.get(session.getParentSessionId());
+        }
+        return null;
     }
 
     /**
@@ -104,7 +137,7 @@ public class LocalToolSessionRegistry {
     public CompletableFuture<String> sendToolRequest(Long sessionId, String toolName, String arguments,
                                                      String workspace, boolean needApproval,
                                                      String dangerReason) {
-        Long userId = sessionToUser.get(sessionId);
+        Long userId = resolveUserId(sessionId);
         if (userId == null || !streamingWsRegistry.hasConnection(userId)) {
             CompletableFuture<String> f = new CompletableFuture<>();
             f.complete("{\"error\":\"Local client is not connected\"}");

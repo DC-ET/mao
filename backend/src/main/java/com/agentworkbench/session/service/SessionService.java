@@ -6,6 +6,7 @@ import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
 import com.agentworkbench.harness.core.EnvironmentInfoProvider;
 import com.agentworkbench.harness.safety.PathSandbox;
+import com.agentworkbench.harness.core.MessageHistoryNormalizer;
 import com.agentworkbench.session.entity.FileChange;
 import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.PermissionLevel;
@@ -128,6 +129,7 @@ public class SessionService {
     public List<Session> listSessions(Long userId, String keyword, String status) {
         QueryWrapper<Session> qw = new QueryWrapper<>();
         qw.eq("user_id", userId);
+        qw.ne("session_type", "SUBAGENT");
         if (keyword != null && !keyword.isEmpty()) {
             qw.and(w -> w.like("title", keyword));
         }
@@ -215,8 +217,8 @@ public class SessionService {
             sessionMapper.updateById(session);
         }
 
-        // Auto-generate title from first user message
-        if ("USER".equals(role) && session != null) {
+        // Auto-generate title from first user message (skip for sub-agent sessions)
+        if ("USER".equals(role) && session != null && !"SUBAGENT".equals(session.getSessionType())) {
             if (session.getTitle() != null && (session.getTitle().equals("未命名会话") || session.getTitle().isBlank())) {
                 String textForTitle = preprocessForTitle(content, session.getUserId());
                 String autoTitle = TitleGenerator.generate(textForTitle);
@@ -258,8 +260,8 @@ public class SessionService {
             sessionMapper.updateById(session);
         }
 
-        // Auto-generate title from first user message (extract text for title)
-        if ("USER".equals(role) && session != null) {
+        // Auto-generate title from first user message (extract text for title, skip for sub-agent sessions)
+        if ("USER".equals(role) && session != null && !"SUBAGENT".equals(session.getSessionType())) {
             if (session.getTitle() != null && (session.getTitle().equals("未命名会话") || session.getTitle().isBlank())) {
                 String rawText = content instanceof String s ? s : extractTextFromContent(content);
                 String textForTitle = preprocessForTitle(rawText, session.getUserId());
@@ -305,11 +307,12 @@ public class SessionService {
     }
 
     public List<Message> getMessages(Long sessionId) {
-        return messageMapper.selectList(
+        List<Message> messages = messageMapper.selectList(
                 new QueryWrapper<Message>()
                         .eq("session_id", sessionId)
                         .orderByAsc("created_at")
                         .orderByAsc("id"));
+        return MessageHistoryNormalizer.normalizeEntities(messages, objectMapper);
     }
 
     public MessagePage getMessagesByRounds(Long sessionId, int roundLimit, Long beforeMessageId) {
@@ -347,7 +350,8 @@ public class SessionService {
         if (beforeMessage != null) {
             messageWrapper.lt(Message::getId, beforeMessage.getId());
         }
-        List<Message> messages = messageMapper.selectList(messageWrapper);
+        List<Message> messages = MessageHistoryNormalizer.normalizeEntities(
+                messageMapper.selectList(messageWrapper), objectMapper);
         Long nextBeforeMessageId = messages.isEmpty() ? null : messages.get(0).getId();
         return new MessagePage(messages, hasMore, nextBeforeMessageId);
     }

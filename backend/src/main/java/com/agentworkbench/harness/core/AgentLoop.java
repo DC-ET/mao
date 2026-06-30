@@ -84,6 +84,7 @@ public class AgentLoop {
 
         while (true) {
             round++;
+            context.setCurrentRound(round);
             log.debug("Agent loop round {}", round);
 
             // Check cancellation
@@ -211,16 +212,24 @@ public class AgentLoop {
 
             // 4. Execute tool calls in parallel (summary 已附加到 ToolCall)
             Map<String, String> toolResults = new LinkedHashMap<>();
-            executeToolCalls(pendingCalls, context, listener, persistenceCallback, toolResults);
+            List<ToolMessageSave> pendingToolSaves = new ArrayList<>();
+            executeToolCalls(pendingCalls, context, listener, pendingToolSaves, toolResults);
 
-            // 4.1 延迟保存带 summary 的 assistant 消息
+            // 4.1 先保存 assistant，再保存 tool 结果，保证 DB 顺序满足 LLM API 要求
             if (pendingSaveToolCalls[0] != null && persistenceCallback != null) {
                 persistenceCallback.onSaveAssistantMessage(pendingSave[0], pendingThinking[0],
                         pendingSaveToolCalls[0], toolResults, pendingSaveUsage[0]);
+                for (ToolMessageSave toolSave : pendingToolSaves) {
+                    persistenceCallback.onSaveToolMessage(toolSave.toolCallId(), toolSave.content());
+                }
                 pendingSave[0] = null;
                 pendingThinking[0] = null;
                 pendingSaveUsage[0] = null;
                 pendingSaveToolCalls[0] = null;
+            } else if (!pendingToolSaves.isEmpty() && persistenceCallback != null) {
+                for (ToolMessageSave toolSave : pendingToolSaves) {
+                    persistenceCallback.onSaveToolMessage(toolSave.toolCallId(), toolSave.content());
+                }
             }
 
             // 5. Clear pending calls for next round
@@ -257,13 +266,15 @@ public class AgentLoop {
         }
     }
 
+    private record ToolMessageSave(String toolCallId, String content) {}
+
     /**
      * Execute tool calls in parallel using CompletableFuture.
      */
     private void executeToolCalls(List<ChatRequest.ToolCall> pendingCalls,
                                   AgentExecutionContext context,
                                   AgentEventListener listener,
-                                  MessagePersistenceCallback persistenceCallback,
+                                  List<ToolMessageSave> pendingToolSaves,
                                   Map<String, String> toolResults) {
         if (pendingCalls.size() == 1) {
             ChatRequest.ToolCall tc = pendingCalls.get(0);
@@ -273,9 +284,7 @@ public class AgentLoop {
             toolResults.put(tc.getId(), result);
             context.addToolResult(tc.getId(), result);
             listener.onToolCallResult(tc.getId(), result);
-            if (persistenceCallback != null) {
-                persistenceCallback.onSaveToolMessage(tc.getId(), result);
-            }
+            pendingToolSaves.add(new ToolMessageSave(tc.getId(), result));
         } else {
             List<CompletableFuture<Void>> futures = new ArrayList<>();
             String[] results = new String[pendingCalls.size()];
@@ -297,9 +306,7 @@ public class AgentLoop {
                 toolResults.put(tc.getId(), results[i]);
                 context.addToolResult(tc.getId(), results[i]);
                 listener.onToolCallResult(tc.getId(), results[i]);
-                if (persistenceCallback != null) {
-                    persistenceCallback.onSaveToolMessage(tc.getId(), results[i]);
-                }
+                pendingToolSaves.add(new ToolMessageSave(tc.getId(), results[i]));
             }
         }
     }

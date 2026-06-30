@@ -30,6 +30,9 @@ public class Message {
 
     private String metadata;
 
+    /** Source session ID for messages produced by sub-agent delegation */
+    private Long sourceSessionId;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

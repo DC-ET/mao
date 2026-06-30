@@ -16,7 +16,6 @@ import com.agentworkbench.session.entity.FileChange;
 import com.agentworkbench.session.entity.Message;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.mapper.FileChangeMapper;
-import com.agentworkbench.session.mapper.MessageMapper;
 import com.agentworkbench.session.mapper.SessionMapper;
 import com.agentworkbench.session.service.SessionService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -45,7 +44,6 @@ public class HarnessService {
     private final SessionMapper sessionMapper;
     private final AgentMapper agentMapper;
     private final LlmModelMapper llmModelMapper;
-    private final MessageMapper messageMapper;
     private final FileChangeMapper fileChangeMapper;
     private final SessionService sessionService;
     private final ObjectMapper objectMapper;
@@ -120,7 +118,7 @@ public class HarnessService {
         }
     }
 
-    private AgentExecutionContext buildContext(Long sessionId) {
+    public AgentExecutionContext buildContext(Long sessionId) {
         // 1. Load session
         Session session = sessionMapper.selectById(sessionId);
         if (session == null) {
@@ -167,11 +165,9 @@ public class HarnessService {
                 .contextWindowTokens(llmModel.getContextWindowTokens())
                 .build());
 
-        // 5. Load message history
-        List<Message> history = messageMapper.selectList(
-                new QueryWrapper<Message>()
-                        .eq("session_id", sessionId)
-                        .orderByAsc("created_at"));
+        // 5. Load message history (normalize tool/assistant ordering for legacy rows)
+        List<Message> history = MessageHistoryNormalizer.normalizeEntities(
+                sessionService.getMessages(sessionId), objectMapper);
         for (Message msg : history) {
             Object parsedContent = parseContent(msg.getContent());
             var msgBuilder = ChatRequest.Message.builder()
@@ -398,7 +394,7 @@ public class HarnessService {
     /**
      * Resolve model: prefer explicit modelId, fallback to default model.
      */
-    private LlmModel resolveModel(Long modelId) {
+    public LlmModel resolveModel(Long modelId) {
         if (modelId != null) {
             return llmModelMapper.selectById(modelId);
         }

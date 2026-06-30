@@ -73,6 +73,12 @@ public class Session {
     /** Unread mark: 0=read, 1=unread (background completion) */
     private Integer unread;
 
+    /** Parent session ID for sub-agent sessions; null for top-level sessions */
+    private Long parentSessionId;
+
+    /** Session type: NORMAL or SUBAGENT */
+    private String sessionType;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

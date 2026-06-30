@@ -52,6 +52,9 @@ export interface Session {
   modelId?: number
   modelName?: string
   modelSupportsVision?: boolean
+  // Sub-agent fields
+  parentSessionId?: string
+  sessionType?: 'NORMAL' | 'SUBAGENT'
 }
 
 function normalizeId(id: any): string {
