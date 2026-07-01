@@ -20,6 +20,7 @@
     "@tiptap/vue-3": "^3.26.1",
     "@vueuse/core": "^14.3.0",
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "adm-zip": "^0.5.16",
     "ali-oss": "^6.23.0",

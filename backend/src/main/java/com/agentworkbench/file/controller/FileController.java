@@ -1,8 +1,11 @@
 package com.agentworkbench.file.controller;
 
+import com.agentworkbench.common.exception.BusinessException;
+import com.agentworkbench.common.result.ErrorCode;
 import com.agentworkbench.common.result.Result;
 import com.agentworkbench.file.entity.FileEntity;
 import com.agentworkbench.file.service.FileService;
+import com.agentworkbench.file.service.WorkspaceBrowseService;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.service.SessionService;
 import lombok.Data;
@@ -19,6 +22,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @RestController
@@ -28,6 +32,7 @@ public class FileController {
 
     private final FileService fileService;
     private final SessionService sessionService;
+    private final WorkspaceBrowseService workspaceBrowseService;
 
     @PostMapping("/upload")
     public Result<FileVO> uploadFile(
@@ -78,16 +83,46 @@ public class FileController {
 
     @GetMapping("/workspace-list")
     public Result<Map<String, Object>> listWorkspaceFiles(
+            @AuthenticationPrincipal Long userId,
             @RequestParam Long sessionId,
             @RequestParam(required = false) String filter,
             @RequestParam(required = false, defaultValue = "20") Integer limit) {
-        Session session = sessionService.getSession(sessionId);
-        if (session == null || session.getWorkspace() == null || session.getWorkspace().isBlank()) {
-            return Result.ok(Map.of("files", List.of()));
-        }
+        Session session = requireOwnedSession(userId, sessionId);
         List<FileService.WorkspaceFileDTO> files = fileService.listWorkspaceFiles(
                 session.getWorkspace(), filter, limit != null ? limit : 20);
         return Result.ok(Map.of("files", files));
+    }
+
+    @GetMapping("/workspace-directory")
+    public Result<WorkspaceBrowseService.DirectoryListingDTO> listWorkspaceDirectory(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam Long sessionId,
+            @RequestParam(required = false) String dir) {
+        Session session = requireOwnedSession(userId, sessionId);
+        return Result.ok(workspaceBrowseService.listDirectory(session.getWorkspace(), dir));
+    }
+
+    @GetMapping("/workspace-read")
+    public Result<WorkspaceBrowseService.FileContentDTO> readWorkspaceFile(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam Long sessionId,
+            @RequestParam String path,
+            @RequestParam(required = false, defaultValue = "0") Integer offset,
+            @RequestParam(required = false, defaultValue = "5000") Integer limit) {
+        Session session = requireOwnedSession(userId, sessionId);
+        return Result.ok(workspaceBrowseService.readFile(
+                session.getWorkspace(), path, offset != null ? offset : 0, limit != null ? limit : 5000));
+    }
+
+    private Session requireOwnedSession(Long userId, Long sessionId) {
+        Session session = sessionService.getSession(sessionId);
+        if (!Objects.equals(session.getUserId(), userId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该会话");
+        }
+        if (session.getWorkspace() == null || session.getWorkspace().isBlank()) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "会话未配置工作区");
+        }
+        return session;
     }
 
     @DeleteMapping("/{id}")

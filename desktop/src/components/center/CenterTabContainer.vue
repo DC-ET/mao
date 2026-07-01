@@ -6,6 +6,7 @@
         v-else-if="activeFileTab"
         :key="activeTabId"
         :file-path="activeFileTab.filePath || ''"
+        :provider="fileProvider"
       />
     </KeepAlive>
   </div>
@@ -16,11 +17,13 @@ import { computed } from 'vue'
 import ChatPanel from '../chat/ChatPanel.vue'
 import FileViewer from './FileViewer.vue'
 import type { Tab } from '../../types/file-browser'
+import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 
 const props = defineProps<{
   tabs: Tab[]
   activeTabId: string
   sessionId: string
+  fileProvider: WorkspaceFileProvider | null
 }>()
 
 const activeFileTab = computed(() => {

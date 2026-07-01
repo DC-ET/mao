@@ -45,9 +45,11 @@ import { renderMarkdown } from '../../composables/useMarkdown'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useSessionStore } from '../../stores/session'
 import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdown-link'
+import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 
 const props = defineProps<{
   filePath: string
+  provider: WorkspaceFileProvider | null
 }>()
 
 const sessionStore = useSessionStore()
@@ -168,17 +170,14 @@ function isBinaryContent(text: string): boolean {
 }
 
 async function loadFile() {
-  if (!props.filePath) return
+  if (!props.filePath || !props.provider) return
   state.value = 'loading'
   content.value = ''
   errorMsg.value = ''
   truncated.value = false
 
   try {
-    const result = await window.electronAPI.localReadFile({
-      path: props.filePath,
-      limit: 5000
-    })
+    const result = await props.provider.readFile(props.filePath, { limit: 5000 })
 
     if (result.error) {
       state.value = 'error'
@@ -210,7 +209,7 @@ async function loadFile() {
 
 onMounted(loadFile)
 
-watch(() => props.filePath, () => {
+watch(() => [props.filePath, props.provider] as const, () => {
   viewMode.value = 'source'
   loadFile()
 })

@@ -85,7 +85,13 @@
 
     <!-- Tab: 文件树 -->
     <div v-if="showFileTreeTab && inspectorActiveTab === 'filetree'" class="inspector-tab-content file-tree-tab">
-      <FileTree :workspace="workspace || ''" @open-file="handleOpenFile" @add-file-to-chat="$emit('add-file-to-chat', $event)" />
+      <FileTree
+        :workspace="workspace || ''"
+        :execution-mode="executionMode"
+        :provider="fileProvider"
+        @open-file="handleOpenFile"
+        @add-file-to-chat="$emit('add-file-to-chat', $event)"
+      />
     </div>
 
     </template>
@@ -100,6 +106,7 @@ import FileTree from '../file-browser/FileTree.vue'
 import type { TodoItem } from '../../types/chat'
 import type { TaskPhase } from '../../stores/session'
 import type { ContextWindowInfo } from '../../types/chat'
+import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 
 const props = defineProps<{
   todos?: TodoItem[]
@@ -107,6 +114,8 @@ const props = defineProps<{
   agentName?: string
   workspace?: string
   executionMode?: string
+  sessionId?: string
+  fileProvider: WorkspaceFileProvider | null
   phase: TaskPhase
   panelCollapsed: boolean
   contextWindow?: ContextWindowInfo | null
@@ -115,13 +124,17 @@ const props = defineProps<{
 const emit = defineEmits<{
   togglePanel: []
   rename: [title: string]
-  'open-file': [payload: { absolutePath: string; title: string }]
+  'open-file': [payload: { path: string; title: string }]
   'add-file-to-chat': [filePath: string]
 }>()
 
-// Tab state
 const inspectorActiveTab = ref<'workspace' | 'filetree'>('workspace')
-const showFileTreeTab = computed(() => !!props.workspace && props.executionMode !== 'CLOUD')
+const showFileTreeTab = computed(() => {
+  if (props.executionMode === 'CLOUD') {
+    return !!props.sessionId
+  }
+  return !!props.workspace
+})
 
 watch(showFileTreeTab, (visible) => {
   if (!visible && inspectorActiveTab.value === 'filetree') {
@@ -129,7 +142,7 @@ watch(showFileTreeTab, (visible) => {
   }
 })
 
-function handleOpenFile(payload: { absolutePath: string; title: string }) {
+function handleOpenFile(payload: { path: string; title: string }) {
   emit('open-file', payload)
 }
 

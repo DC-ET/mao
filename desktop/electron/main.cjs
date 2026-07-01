@@ -599,7 +599,6 @@ ipcMain.handle('list-directory', async (event, { dirPath, workspace }) => {
 
     for (const entry of entries) {
       if (results.length >= MAX_ENTRIES) break
-      if (entry.isDirectory() && IGNORED_DIRS.has(entry.name)) continue
 
       const fullPath = path.join(resolvedDir, entry.name)
       const relPath = path.relative(resolvedWorkspace, fullPath)

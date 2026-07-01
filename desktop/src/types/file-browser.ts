@@ -13,7 +13,7 @@ export interface Tab {
   id: string            // 'chat' for chat tab, relative path for file tabs
   type: 'chat' | 'file'
   title: string
-  filePath?: string     // absolute path for file tabs
+  filePath?: string     // relative path within workspace
 }
 
 export interface SessionTabState {

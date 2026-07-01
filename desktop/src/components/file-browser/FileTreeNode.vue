@@ -36,7 +36,6 @@
         :key="child.path"
         :node="child"
         :depth="depth + 1"
-        :workspace="workspace"
         @open-file="$emit('open-file', $event)"
         @toggle-dir="$emit('toggle-dir', $event)"
         @retry="$emit('retry', $event)"
@@ -54,11 +53,10 @@ import type { FileNode } from '../../types/file-browser'
 const props = defineProps<{
   node: FileNode
   depth: number
-  workspace: string
 }>()
 
 const emit = defineEmits<{
-  'open-file': [payload: { absolutePath: string; title: string }]
+  'open-file': [payload: { path: string; title: string }]
   'toggle-dir': [node: FileNode]
   'retry': [node: FileNode]
   'node-contextmenu': [payload: { node: FileNode; x: number; y: number }]
@@ -85,9 +83,7 @@ function handleClick() {
   if (props.node.isDirectory) {
     emit('toggle-dir', props.node)
   } else {
-    const sep = props.workspace.includes('\\') ? '\\' : '/'
-    const absolutePath = props.workspace.replace(/[\\/]+$/, '') + sep + props.node.path
-    emit('open-file', { absolutePath, title: props.node.name })
+    emit('open-file', { path: props.node.path, title: props.node.name })
   }
 }
 </script>

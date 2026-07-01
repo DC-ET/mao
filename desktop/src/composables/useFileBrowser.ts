@@ -1,19 +1,20 @@
 import { ref, watch, type Ref } from 'vue'
 import type { FileNode } from '../types/file-browser'
+import type { WorkspaceFileProvider } from './workspace-file-provider'
 
-export function useFileBrowser(workspace: Ref<string>) {
+export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
   const treeData = ref<FileNode[]>([])
   const loading = ref(false)
   const expandedPaths = ref<Set<string>>(new Set())
 
   async function loadRoot() {
-    if (!workspace.value) {
+    if (!provider.value) {
       treeData.value = []
       return
     }
     loading.value = true
     try {
-      const result = await window.electronAPI.listDirectory(workspace.value, workspace.value)
+      const result = await provider.value.listDirectory('')
       if (result.error) {
         treeData.value = [{ name: '', path: '', isDirectory: false, error: result.error }]
       } else {
@@ -27,27 +28,25 @@ export function useFileBrowser(workspace: Ref<string>) {
   }
 
   async function expandDir(node: FileNode) {
-    if (!node.isDirectory || node.isSymlink) return
+    if (!provider.value || !node.isDirectory || node.isSymlink) return
     if (node.expanded) {
       node.expanded = false
       expandedPaths.value.delete(node.path)
       return
     }
 
-    // If already loaded, just expand
     if (node.children) {
       node.expanded = true
       expandedPaths.value.add(node.path)
       return
     }
 
-    const absolutePath = getAbsolutePath(node.path)
-    node.children = [] // show empty while loading
+    node.children = []
     node.expanded = true
     expandedPaths.value.add(node.path)
 
     try {
-      const result = await window.electronAPI.listDirectory(absolutePath, workspace.value)
+      const result = await provider.value.listDirectory(node.path)
       if (result.error) {
         node.children = [{ name: '', path: node.path, isDirectory: false, error: result.error }]
       } else {
@@ -64,13 +63,12 @@ export function useFileBrowser(workspace: Ref<string>) {
   }
 
   async function refresh() {
-    if (!workspace.value) return
+    if (!provider.value) return
     const pathsToRefresh = Array.from(expandedPaths.value)
 
-    // Reload root
     loading.value = true
     try {
-      const result = await window.electronAPI.listDirectory(workspace.value, workspace.value)
+      const result = await provider.value.listDirectory('')
       if (result.error) {
         treeData.value = [{ name: '', path: '', isDirectory: false, error: result.error }]
         return
@@ -83,20 +81,13 @@ export function useFileBrowser(workspace: Ref<string>) {
       loading.value = false
     }
 
-    // Re-expand previously expanded directories
     for (const relPath of pathsToRefresh) {
       const node = findNodeByPath(treeData.value, relPath)
       if (node && node.isDirectory) {
+        node.children = undefined
         await expandDir(node)
       }
     }
-  }
-
-  function getAbsolutePath(relPath: string): string {
-    if (!workspace.value) return relPath
-    // Normalize: workspace + '/' + relPath
-    const sep = workspace.value.includes('\\') ? '\\' : '/'
-    return workspace.value.replace(/[\\/]+$/, '') + sep + relPath
   }
 
   function entryToNode(entry: { name: string; path: string; isDirectory: boolean; size: number; isSymlink: boolean }): FileNode {
@@ -120,8 +111,7 @@ export function useFileBrowser(workspace: Ref<string>) {
     return null
   }
 
-  // Reload when workspace changes
-  watch(workspace, () => {
+  watch(provider, () => {
     expandedPaths.value.clear()
     loadRoot()
   }, { immediate: true })
@@ -131,11 +121,9 @@ export function useFileBrowser(workspace: Ref<string>) {
     const tasks: Promise<void>[] = []
     for (const node of nodes) {
       if (node.isDirectory && !node.isSymlink && !node.children) {
-        // Save original expanded state to restore later
         const wasExpanded = !!node.expanded
         tasks.push(expandDir(node).then(async () => {
           if (!wasExpanded) {
-            // Restore collapsed state — we only loaded to check for matches
             node.expanded = false
           }
           if (node.children) {
@@ -156,7 +144,6 @@ export function useFileBrowser(workspace: Ref<string>) {
     expandDir,
     collapseDir,
     refresh,
-    getAbsolutePath,
     loadAllDirectories,
   }
 }

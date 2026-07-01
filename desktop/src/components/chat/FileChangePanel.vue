@@ -50,28 +50,37 @@ const { openFileTab } = useCenterTabs(activeSessionIdRef)
 
 const isExpanded = ref(true)
 
+type MergedChange = { path: string; type: FileChange['type']; linesAdded: number; linesDeleted: number }
+
 const mergedChanges = computed(() => {
-  const map = new Map<string, { path: string; type: FileChange['type']; linesAdded: number; linesDeleted: number }>()
+  const byPath: Record<string, MergedChange> = {}
   for (const c of props.changes) {
-    const existing = map.get(c.path)
+    const existing = byPath[c.path]
     if (existing) {
       existing.linesAdded += c.linesAdded
       existing.linesDeleted += c.linesDeleted
     } else {
-      map.set(c.path, { path: c.path, type: c.type, linesAdded: c.linesAdded, linesDeleted: c.linesDeleted })
+      byPath[c.path] = { path: c.path, type: c.type, linesAdded: c.linesAdded, linesDeleted: c.linesDeleted }
     }
   }
-  return Array.from(map.values())
+  const result: MergedChange[] = []
+  for (const path in byPath) {
+    result.push(byPath[path])
+  }
+  return result
 })
 
 function handleFileClick(changePath: string) {
-  const workspace = sessionStore.activeSession?.workspace
-  const executionMode = sessionStore.activeSession?.executionMode
-  if (!workspace || executionMode === 'CLOUD') return
+  const session = sessionStore.activeSession
+  if (!session) return
 
-  const absolutePath = workspace + '/' + changePath
+  const canOpen = session.executionMode === 'CLOUD'
+    ? !!sessionStore.activeSessionId
+    : !!session.workspace
+  if (!canOpen) return
+
   const title = changePath.split(/[/\\]/).pop() || changePath
-  openFileTab(absolutePath, title)
+  openFileTab(changePath, title)
 }
 </script>
 

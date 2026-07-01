@@ -1,7 +1,7 @@
 <template>
   <div class="file-tree">
-    <div v-if="!workspace" class="file-tree-empty">
-      <p>请先选择工作区目录</p>
+    <div v-if="!isReady" class="file-tree-empty">
+      <p>{{ emptyMessage }}</p>
     </div>
     <template v-else>
       <div class="file-tree-toolbar">
@@ -22,7 +22,6 @@
           :key="node.path"
           :node="node"
           :depth="0"
-          :workspace="workspace"
           @open-file="handleOpenFile"
           @toggle-dir="handleToggleDir"
           @retry="handleRetry"
@@ -35,6 +34,7 @@
       :visible="ctxMenu.visible"
       :x="ctxMenu.x"
       :y="ctxMenu.y"
+      :show-local-actions="executionMode !== 'CLOUD'"
       @hide="ctxMenu.visible = false"
       @copy-absolute="handleCopyAbsolute"
       @copy-relative="handleCopyRelative"
@@ -48,25 +48,41 @@
 import { ref, reactive, computed, toRef, watch } from 'vue'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { useFileBrowser } from '../../composables/useFileBrowser'
+import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import FileTreeNode from './FileTreeNode.vue'
 import FileTreeContextMenu from './FileTreeContextMenu.vue'
 import type { FileNode } from '../../types/file-browser'
 
 const props = defineProps<{
-  workspace: string
+  workspace?: string
+  executionMode?: string
+  provider: WorkspaceFileProvider | null
 }>()
 
 const emit = defineEmits<{
-  'open-file': [payload: { absolutePath: string; title: string }]
+  'open-file': [payload: { path: string; title: string }]
   'add-file-to-chat': [filePath: string]
 }>()
 
-const workspaceRef = toRef(props, 'workspace')
-const { treeData, loading, expandDir, refresh, loadAllDirectories } = useFileBrowser(workspaceRef)
+const providerRef = toRef(props, 'provider')
+const { treeData, loading, expandDir, refresh, loadAllDirectories } = useFileBrowser(providerRef)
+
+const isReady = computed(() => {
+  if (props.executionMode === 'CLOUD') {
+    return !!props.provider
+  }
+  return !!props.workspace
+})
+
+const emptyMessage = computed(() => {
+  if (props.executionMode === 'CLOUD') {
+    return '请先开始对话'
+  }
+  return '请先选择工作区目录'
+})
 
 const filterText = ref('')
 
-// Context menu state
 const ctxMenu = reactive({
   visible: false,
   x: 0,
@@ -82,6 +98,9 @@ function handleNodeContextmenu(payload: { node: FileNode; x: number; y: number }
 }
 
 function getAbsolutePath(nodePath: string): string {
+  if (props.provider?.getAbsolutePath) {
+    return props.provider.getAbsolutePath(nodePath)
+  }
   if (!props.workspace) return nodePath
   const sep = props.workspace.includes('\\') ? '\\' : '/'
   return props.workspace.replace(/[\\/]+$/, '') + sep + nodePath
@@ -105,8 +124,7 @@ function handleOpenInFinder() {
 
 function handleAddToChat() {
   if (!ctxMenu.node) return
-  const absPath = getAbsolutePath(ctxMenu.node.path)
-  emit('add-file-to-chat', absPath)
+  emit('add-file-to-chat', ctxMenu.node.path)
 }
 
 let filterSeq = 0
@@ -140,14 +158,13 @@ function filterNodes(nodes: FileNode[], keyword: string): FileNode[] {
 }
 
 const filteredTreeData = computed(() => {
-  // Depend on filterVersion to re-evaluate after async load
   void filterVersion.value
   const keyword = filterText.value.trim()
   if (!keyword) return treeData.value
   return filterNodes(treeData.value, keyword)
 })
 
-function handleOpenFile(payload: { absolutePath: string; title: string }) {
+function handleOpenFile(payload: { path: string; title: string }) {
   emit('open-file', payload)
 }
 
@@ -226,7 +243,6 @@ function handleRefresh() {
   margin: 0;
 }
 
-/* Scrollbar */
 .file-tree-content::-webkit-scrollbar {
   width: 4px;
 }
@@ -240,7 +256,6 @@ function handleRefresh() {
   border-radius: 2px;
 }
 
-/* Dark mode */
 [data-theme="dark"] .toolbar-refresh:hover:not(.is-disabled) {
   background: rgba(255, 255, 255, 0.06);
 }

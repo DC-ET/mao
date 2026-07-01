@@ -7,7 +7,7 @@
       :style="{ left: adjustedX + 'px', top: adjustedY + 'px' }"
       @click="hide"
     >
-      <div class="context-menu-item" @click="$emit('copy-absolute')">
+      <div v-if="showLocalActions" class="context-menu-item" @click="$emit('copy-absolute')">
         <el-icon><DocumentCopy /></el-icon>
         <span>复制绝对路径</span>
       </div>
@@ -15,8 +15,8 @@
         <el-icon><DocumentCopy /></el-icon>
         <span>复制相对路径</span>
       </div>
-      <div class="context-menu-divider"></div>
-      <div class="context-menu-item" @click="$emit('open-in-finder')">
+      <div v-if="showLocalActions" class="context-menu-divider"></div>
+      <div v-if="showLocalActions" class="context-menu-item" @click="$emit('open-in-finder')">
         <el-icon><FolderOpened /></el-icon>
         <span>在 Finder 中打开</span>
       </div>
@@ -37,6 +37,7 @@ const props = defineProps<{
   visible: boolean
   x: number
   y: number
+  showLocalActions?: boolean
 }>()
 
 const emit = defineEmits<{

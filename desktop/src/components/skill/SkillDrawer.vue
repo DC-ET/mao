@@ -174,7 +174,7 @@
       <div v-if="currentDoc" class="skill-detail">
         <p><strong>描述：</strong>{{ currentDoc.description }}</p>
         <el-divider />
-        <pre class="skill-body">{{ currentDoc.body }}</pre>
+        <div class="skill-body markdown-body" v-html="renderedSkillBody"></div>
       </div>
     </el-dialog>
   </el-drawer>
@@ -186,6 +186,7 @@ import { ElMessage } from 'element-plus'
 import { Check, Close } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useSkillDrawer } from '../../composables/useSkillDrawer'
+import { renderMarkdown } from '../../composables/useMarkdown'
 
 interface SkillDoc {
   name: string
@@ -221,6 +222,7 @@ const localSkillsDir = ref('')
 const localError = ref('')
 const detailVisible = ref(false)
 const currentDoc = ref<SkillDetail | null>(null)
+const renderedSkillBody = computed(() => renderMarkdown(currentDoc.value?.body ?? ''))
 const isDragover = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
@@ -766,15 +768,135 @@ async function uploadFiles(files: File[], options?: { refreshLocal?: boolean; si
 }
 
 .skill-body {
-  background: var(--aw-surface-code);
   padding: 16px;
   border-radius: 8px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  background: var(--aw-surface-code);
   max-height: 400px;
   overflow-y: auto;
   font-size: 12px;
   line-height: 1.6;
   color: var(--aw-ink);
+}
+
+.skill-body :deep(h1),
+.skill-body :deep(h2),
+.skill-body :deep(h3),
+.skill-body :deep(h4) {
+  font-weight: 600;
+  color: var(--aw-ink);
+  margin: 12px 0 6px;
+}
+
+.skill-body :deep(h1) { font-size: 16px; }
+.skill-body :deep(h2) { font-size: 14px; }
+.skill-body :deep(h3),
+.skill-body :deep(h4) { font-size: 13px; }
+
+.skill-body :deep(p) {
+  margin: 0 0 8px;
+}
+
+.skill-body :deep(a) {
+  color: var(--aw-primary);
+  text-decoration: none;
+}
+
+.skill-body :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.skill-body :deep(code) {
+  font-family: var(--aw-font-mono);
+}
+
+.skill-body :deep(pre) {
+  margin: 8px 0;
+  border-radius: var(--aw-radius-sm);
+  overflow: hidden;
+}
+
+.skill-body :deep(.code-block) {
+  margin: 8px 0;
+  border-radius: var(--aw-radius-sm);
+  overflow: hidden;
+}
+
+.skill-body :deep(.code-block-header) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--aw-surface-code-header);
+  font-size: 11px;
+}
+
+.skill-body :deep(.code-lang) {
+  color: var(--aw-ink-muted-48);
+  font-family: var(--aw-font-mono);
+  text-transform: uppercase;
+}
+
+.skill-body :deep(.code-copy-btn) {
+  border: none;
+  background: transparent;
+  color: var(--aw-ink-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--aw-radius-xs);
+}
+
+.skill-body :deep(.code-copy-btn:hover) {
+  color: var(--aw-ink);
+  background: var(--aw-surface-hover);
+}
+
+.skill-body :deep(.hljs) {
+  padding: 12px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.skill-body :deep(ul),
+.skill-body :deep(ol) {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.skill-body :deep(li) {
+  margin: 2px 0;
+}
+
+.skill-body :deep(blockquote) {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--aw-border);
+  color: var(--aw-ink-muted);
+}
+
+.skill-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.skill-body :deep(th),
+.skill-body :deep(td) {
+  border: 1px solid var(--aw-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.skill-body :deep(th) {
+  background: var(--aw-surface-hover);
+  font-weight: 600;
+}
+
+.skill-body :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--aw-border);
+  margin: 12px 0;
 }
 </style>

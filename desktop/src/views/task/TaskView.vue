@@ -16,6 +16,7 @@
         :tabs="tabs"
         :active-tab-id="activeTabId"
         :session-id="sessionIdForTabs"
+        :file-provider="fileProvider"
       />
     </div>
 
@@ -25,6 +26,8 @@
       :agent-name="agentName"
       :workspace="workspace"
       :execution-mode="executionMode"
+      :session-id="sessionIdForTabs"
+      :file-provider="fileProvider"
       :phase="currentPhase"
       :panel-collapsed="rightCollapsed"
       :context-window="contextWindow"
@@ -47,6 +50,7 @@ import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useTerminal } from '../../composables/useTerminal'
 import { useCenterTabs } from '../../composables/useCenterTabs'
+import { useWorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
@@ -152,6 +156,8 @@ const contextWindow = computed(() => chatContextWindow.value)
 
 const sessionIdForTabs = computed(() => sessionId.value || sessionIdParam.value || '')
 
+const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef)
+
 const sessionTitle = computed(() => {
   const session = sessionStore.activeSession
   return session?.summary || session?.title || agentName.value || '新任务'
@@ -172,8 +178,8 @@ onMounted(() => {
 })
 
 // Open file from TaskInspector's file tree
-function handleOpenFile(payload: { absolutePath: string; title: string }) {
-  openFileTab(payload.absolutePath, payload.title)
+function handleOpenFile(payload: { path: string; title: string }) {
+  openFileTab(payload.path, payload.title)
 }
 
 function handleTodoUpdate() {
