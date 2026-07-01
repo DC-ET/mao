@@ -31,6 +31,20 @@
           </el-icon>
           <span>{{ workspace ? dirName : '选择工作目录' }}</span>
         </div>
+        <div v-else class="cloud-project-selector">
+          <el-autocomplete
+            :model-value="cloudProjectKey"
+            :fetch-suggestions="fetchCloudProjectSuggestions"
+            placeholder="项目（可选，留空=独立工作区）"
+            clearable
+            size="small"
+            :teleported="true"
+            popper-class="cloud-project-popper"
+            class="cloud-project-input"
+            @update:model-value="onCloudProjectKeyChange"
+            @select="onCloudProjectSelect"
+          />
+        </div>
       </div>
       <div class="config-divider"></div>
     </div>
@@ -82,10 +96,10 @@
           <input type="file" multiple accept="image/*" @change="handleFileSelect" style="display: none" />
           <el-icon :size="16"><Plus /></el-icon>
         </label>
-        <div class="workspace-indicator" :class="{ 'has-workspace': !!workspace, 'cloud-mode': executionMode === 'CLOUD' }" @click="executionMode !== 'CLOUD' && openWorkspace()">
+        <div class="workspace-indicator" :class="{ 'has-workspace': !!workspace || executionMode === 'CLOUD', 'cloud-mode': executionMode === 'CLOUD' }" @click="executionMode !== 'CLOUD' && openWorkspace()">
           <template v-if="executionMode === 'CLOUD'">
             <el-icon :size="14"><Cloudy /></el-icon>
-            <span>云端工作区</span>
+            <span>{{ cloudIndicatorLabel }}</span>
           </template>
           <template v-else>
             <el-icon :size="14">
@@ -156,12 +170,15 @@ import type { Agent } from '../../stores/agent'
 import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
 import { useSessionStore } from '../../stores/session'
 import { api } from '../../api'
+import { collectCloudProjectKeys, cloudWorkspaceIndicator } from '../../utils/cloud-project'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
   loading?: boolean
   cancelling?: boolean
   workspace?: string
+  cloudProjectKey?: string
+  projectKey?: string
   executionMode?: string
   modelId?: number
   modelSupportsVision?: boolean
@@ -175,6 +192,7 @@ const props = withDefaults(defineProps<{
   loading: false,
   cancelling: false,
   workspace: '',
+  cloudProjectKey: '',
   executionMode: 'CLOUD',
   placeholder: '告诉 Agent 你想做什么...',
   permissionLevel: 'READ_ONLY',
@@ -189,6 +207,7 @@ const emit = defineEmits<{
   'update:permissionLevel': [level: string]
   'update:executionMode': [mode: string]
   'update:workspace': [workspace: string]
+  'update:cloudProjectKey': [key: string]
   'update:selectedAgentId': [id: string | null]
   'update:modelId': [modelId: number]
   'select:model': [modelId: number, modelIdStr: string]
@@ -232,6 +251,30 @@ const dirName = computed(() => {
   const parts = props.workspace.replace(/\\/g, '/').split('/').filter(Boolean)
   return parts[parts.length - 1] || props.workspace
 })
+
+const cloudIndicatorLabel = computed(() =>
+  cloudWorkspaceIndicator(
+    props.executionMode,
+    props.workspace,
+    props.projectKey,
+    props.isNewTask ? props.cloudProjectKey : undefined
+  )
+)
+
+function fetchCloudProjectSuggestions(query: string, cb: (results: Array<{ value: string }>) => void) {
+  const all = collectCloudProjectKeys(sessionStore.sessions)
+  const q = query.trim().toLowerCase()
+  const filtered = q ? all.filter(k => k.toLowerCase().includes(q)) : all
+  cb(filtered.map(value => ({ value })))
+}
+
+function onCloudProjectKeyChange(value: string) {
+  emit('update:cloudProjectKey', value || '')
+}
+
+function onCloudProjectSelect(item: { value: string }) {
+  emit('update:cloudProjectKey', item.value)
+}
 
 // ===== Quick commands: load =====
 
@@ -1058,5 +1101,67 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cloud-project-selector {
+  flex: 1;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.cloud-project-input {
+  width: 100%;
+}
+
+:deep(.cloud-project-input .el-input__wrapper) {
+  border-radius: 999px;
+  background: var(--aw-canvas-parchment);
+  box-shadow: 0 0 0 1px var(--aw-hairline) inset;
+  padding: 2px 8px 2px 10px;
+  min-height: 26px;
+}
+
+:deep(.cloud-project-input .el-input__inner) {
+  font-size: var(--aw-text-fine);
+  height: 22px;
+  line-height: 22px;
+}
+
+:deep(.cloud-project-input .el-input__suffix) {
+  transform: scale(0.85);
+}
+</style>
+
+<style>
+.cloud-project-popper.el-popper {
+  border-radius: var(--aw-radius-sm);
+  border: 1px solid var(--aw-hairline);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 2px 0;
+}
+
+[data-theme="dark"] .cloud-project-popper.el-popper {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.cloud-project-popper .el-autocomplete-suggestion__wrap {
+  max-height: 160px;
+}
+
+.cloud-project-popper .el-autocomplete-suggestion__list li {
+  padding: 4px 10px;
+  font-size: var(--aw-text-fine);
+  line-height: 1.35;
+  min-height: unset;
+  color: var(--aw-ink-muted-80);
+}
+
+.cloud-project-popper .el-autocomplete-suggestion__list li.highlighted {
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink);
+}
+
+[data-theme="dark"] .cloud-project-popper .el-autocomplete-suggestion__list li.highlighted {
+  background: rgba(255, 255, 255, 0.06);
 }
 </style>

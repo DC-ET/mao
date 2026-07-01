@@ -75,6 +75,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const sendingSessionId = ref<string | null>(null)
   const sessionId = ref<string | null>(null)
   const workspace = ref('')
+  const cloudProjectKey = ref('')
   const agentName = ref('Agent')
   const startedAt = ref<string | null>(null)
 
@@ -272,12 +273,16 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         const sessionData = await sessionStore.createSession(
           agentId.value,
           executionMode.value,
-          workspace.value || undefined,
+          executionMode.value === 'LOCAL' ? workspace.value || undefined : undefined,
           environmentInfo,
           selectedModelId?.value,
-          permissionLevel?.value
+          permissionLevel?.value,
+          executionMode.value === 'CLOUD' ? cloudProjectKey.value || undefined : undefined
         )
         sessionId.value = sessionData.id
+        if (sessionData.workspace) {
+          workspace.value = sessionData.workspace
+        }
         // Sync agent name from created session
         if (sessionData.agentName) {
           agentName.value = sessionData.agentName
@@ -576,6 +581,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sending.value = false
     sessionId.value = null
     workspace.value = ''
+    cloudProjectKey.value = ''
     agentName.value = 'Agent'
     sessionStore.setActiveSession(null)
   }
@@ -595,8 +601,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     if (initialWorkspace) workspace.value = initialWorkspace
     sessionStore.setActiveSession(sessionIdVal)
 
-    // Sync agent name from session data
     const session = sessionStore.activeSession
+    cloudProjectKey.value = session?.projectKey && session.workspace?.includes('/projects/')
+      ? session.projectKey
+      : ''
+
+    // Sync agent name from session data
     if (session?.agentName) {
       agentName.value = session.agentName
     }
@@ -677,6 +687,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     cancelling,
     sessionId,
     workspace,
+    cloudProjectKey,
     agentName,
     pendingApprovals,
     activities,

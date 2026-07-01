@@ -64,7 +64,7 @@ public class SessionController {
         Session session = sessionService.createSession(userId, request.getAgentId(), request.getTitle(),
                 request.getExecutionMode(), request.getWorkspace(), request.getPermissionLevel(),
                 request.getIsGit(), request.getPlatform(), request.getShell(), request.getOsVersion(),
-                request.getModelId());
+                request.getModelId(), request.getCloudProjectKey());
         return Result.ok(toSessionVO(session, batchLoadAgents(List.of(session)), batchLoadModels(List.of(session))));
     }
 
@@ -478,6 +478,7 @@ public class SessionController {
         private String title;
         private String executionMode;
         private String workspace;
+        private String cloudProjectKey;
         private String permissionLevel;
         private Long modelId;
         private Boolean isGit;

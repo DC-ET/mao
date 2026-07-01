@@ -5,6 +5,7 @@ import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
 import com.agentworkbench.harness.core.EnvironmentInfoProvider;
+import com.agentworkbench.harness.safety.CloudWorkspaceResolver;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.harness.core.MessageHistoryNormalizer;
 import com.agentworkbench.session.entity.FileChange;
@@ -30,6 +31,9 @@ import com.agentworkbench.command.entity.UserCommand;
 import com.agentworkbench.command.service.UserCommandService;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -71,12 +75,18 @@ public class SessionService {
     public Session createSession(Long userId, Long agentId, String title, String executionMode, String workspace,
                                  String permissionLevel, Boolean isGit, String platform, String shellPath,
                                  String osVersion) {
-        return createSession(userId, agentId, title, executionMode, workspace, permissionLevel, isGit, platform, shellPath, osVersion, null);
+        return createSession(userId, agentId, title, executionMode, workspace, permissionLevel, isGit, platform, shellPath, osVersion, null, null);
     }
 
     public Session createSession(Long userId, Long agentId, String title, String executionMode, String workspace,
                                  String permissionLevel, Boolean isGit, String platform, String shellPath,
                                  String osVersion, Long modelId) {
+        return createSession(userId, agentId, title, executionMode, workspace, permissionLevel, isGit, platform, shellPath, osVersion, modelId, null);
+    }
+
+    public Session createSession(Long userId, Long agentId, String title, String executionMode, String workspace,
+                                 String permissionLevel, Boolean isGit, String platform, String shellPath,
+                                 String osVersion, Long modelId, String cloudProjectKey) {
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
             throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
@@ -88,7 +98,13 @@ public class SessionService {
         session.setTitle(title != null ? title : "未命名会话");
         session.setStatus("ACTIVE");
         session.setExecutionMode(executionMode != null ? executionMode : "CLOUD");
-        session.setWorkspace(workspace);
+        if ("CLOUD".equals(session.getExecutionMode())) {
+            session.setWorkspace(null);
+            session.setProjectKey(null);
+        } else {
+            session.setWorkspace(workspace);
+            session.setProjectKey(deriveProjectKey(workspace));
+        }
         session.setPermissionLevel(permissionLevel != null ? permissionLevel : "READ_ONLY");
         session.setIsGit(isGit);
         session.setPlatform(platform);
@@ -99,19 +115,26 @@ public class SessionService {
         session.setIsFavorite(0);
         session.setPhase("IDLE");
         session.setElapsedMs(0L);
-        session.setProjectKey(deriveProjectKey(workspace));
         sessionMapper.insert(session);
 
-        // CLOUD 模式且客户端未指定 workspace 时，自动生成隔离工作区
-        if ("CLOUD".equals(session.getExecutionMode()) && (workspace == null || workspace.isBlank())) {
-            String autoPath = pathSandbox.getWorkspaceRoot()
-                    .resolve(String.valueOf(userId))
-                    .resolve(String.valueOf(session.getId()))
-                    .toString();
-            new java.io.File(autoPath).mkdirs();
-            session.setWorkspace(autoPath);
-            session.setProjectKey(deriveProjectKey(autoPath));
-            sessionMapper.updateById(session);
+        if ("CLOUD".equals(session.getExecutionMode())) {
+            if (cloudProjectKey != null && !cloudProjectKey.isBlank()) {
+                String slug = CloudWorkspaceResolver.normalizeAndValidate(cloudProjectKey);
+                String projectPath = CloudWorkspaceResolver.resolveProjectWorkspace(pathSandbox, userId, slug);
+                ensureWorkspaceDirectory(projectPath);
+                session.setWorkspace(projectPath);
+                session.setProjectKey(slug);
+                sessionMapper.updateById(session);
+            } else {
+                String autoPath = pathSandbox.getWorkspaceRoot()
+                        .resolve(String.valueOf(userId))
+                        .resolve(String.valueOf(session.getId()))
+                        .toString();
+                ensureWorkspaceDirectory(autoPath);
+                session.setWorkspace(autoPath);
+                session.setProjectKey(deriveProjectKey(autoPath));
+                sessionMapper.updateById(session);
+            }
         }
 
         if ("CLOUD".equals(session.getExecutionMode())) {
@@ -659,6 +682,15 @@ public class SessionService {
         int affected = sessionMapper.update(update, uw);
         if (affected > 0) {
             log.warn("Swept {} stale sessions to FAILED (no activity for {}min)", affected, STALE_MINUTES);
+        }
+    }
+
+    private void ensureWorkspaceDirectory(String path) {
+        try {
+            Files.createDirectories(Paths.get(path));
+        } catch (IOException e) {
+            log.error("Failed to create workspace directory: {}", path, e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "工作区目录创建失败");
         }
     }
 

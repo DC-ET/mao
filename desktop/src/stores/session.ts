@@ -200,18 +200,31 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  async function createSession(agentId: string, executionMode: string, workspace?: string, environmentInfo?: SessionEnvironmentInfo, modelId?: number, permissionLevel?: string) {
-    const { data } = await api.post('/sessions', {
+  async function createSession(
+    agentId: string,
+    executionMode: string,
+    workspace?: string,
+    environmentInfo?: SessionEnvironmentInfo,
+    modelId?: number,
+    permissionLevel?: string,
+    cloudProjectKey?: string
+  ) {
+    const payload: Record<string, unknown> = {
       agentId,
       executionMode,
-      workspace: workspace || undefined,
       modelId: modelId || undefined,
       permissionLevel: permissionLevel || undefined,
       isGit: environmentInfo?.isGit,
       platform: environmentInfo?.platform,
       shell: environmentInfo?.shell,
       osVersion: environmentInfo?.osVersion
-    })
+    }
+    if (executionMode === 'LOCAL') {
+      payload.workspace = workspace || undefined
+    } else if (cloudProjectKey) {
+      payload.cloudProjectKey = cloudProjectKey
+    }
+    const { data } = await api.post('/sessions', payload)
     if (data) {
       data.id = normalizeId(data.id)
       data.agentId = normalizeId(data.agentId)
@@ -228,7 +241,11 @@ export const useSessionStore = defineStore('session', () => {
     const sid = String(id)
     const idx = sessions.value.findIndex(s => String(s.id) === sid)
     if (idx !== -1) {
-      sessions.value[idx] = { ...sessions.value[idx], ...updates, id: normalizeId(updates.id ?? sessions.value[idx].id) }
+      const next = { ...sessions.value[idx], ...updates, id: normalizeId(updates.id ?? sessions.value[idx].id) }
+      if (updates.agentId != null) {
+        next.agentId = normalizeId(updates.agentId)
+      }
+      sessions.value[idx] = next
     }
   }
 

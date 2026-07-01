@@ -38,8 +38,9 @@
             <div class="group-header" @click="toggleGroup(group.key)">
               <div class="group-header-left">
                 <span class="drag-handle" title="拖拽排序">⠿</span>
-                <el-icon :size="13" class="group-icon" :class="group.key === 'CLOUD' ? 'icon-cloud' : 'icon-folder'">
-                  <Cloudy v-if="group.key === 'CLOUD'" />
+                <el-icon :size="13" class="group-icon" :class="group.key.startsWith('CLOUD:') ? 'icon-cloud' : 'icon-folder'">
+                  <PartlyCloudy v-if="group.key.startsWith('CLOUD:') && !isGroupCollapsed(group.key)" />
+                  <Cloudy v-else-if="group.key.startsWith('CLOUD:')" />
                   <FolderOpened v-else-if="!isGroupCollapsed(group.key)" />
                   <Folder v-else />
                 </el-icon>
@@ -157,12 +158,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, onUnmounted } from 'vue'
-import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
+import { computed, ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
-import { useGroupOrder } from '../../composables/useGroupOrder'
+import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
+import { cloudGroupKey, formatCloudGroupLabel, isSharedCloudProject } from '../../utils/cloud-project'
 
 defineProps<{
   collapsed: boolean
@@ -171,13 +173,13 @@ defineProps<{
 const emit = defineEmits<{
   toggle: []
   newTask: []
-  newTaskFromGroup: [payload: { agentId: string; executionMode: string; workspace?: string; permissionLevel?: string; modelId?: number }]
+  newTaskFromGroup: [payload: { agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number }]
 }>()
 
 const router = useRouter()
 const sessionStore = useSessionStore()
 const { createTerminal, isOpen: terminalOpen } = useTerminal()
-const { sortGroups, onDragEnd } = useGroupOrder()
+const { sortGroups, onDragEnd, loadPrefs, isGroupCollapsed, toggleGroupCollapsed } = useTaskPanelPrefs()
 
 const DEFAULT_VISIBLE = 5
 const EXPAND_STEP = 20
@@ -188,7 +190,6 @@ const confirmingDeleteId = ref<string | null>(null)
 const editingSessionId = ref<string | null>(null)
 const editingTitle = ref('')
 const expandedCounts = ref<Map<string, number>>(new Map())
-const collapsedGroups = ref<Set<string>>(new Set())
 
 // Drag state
 const dragIndex = ref<number | null>(null)
@@ -229,6 +230,10 @@ function onResizeStart(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 
+onMounted(() => {
+  void loadPrefs()
+})
+
 onUnmounted(() => {
   // cleanup not strictly needed since listeners are removed on mouseup,
   // but guard against edge case where component unmounts mid-drag
@@ -240,8 +245,9 @@ async function onGroupNewTask(group: { sessions: Session[] }) {
   emit('newTaskFromGroup', {
     agentId: String(last.agentId),
     executionMode: last.executionMode,
-    // CLOUD 模式：不传 workspace，让后端自动生成隔离目录
-    // LOCAL 模式：继承本地工作目录
+    cloudProjectKey: last.executionMode === 'CLOUD' && isSharedCloudProject(last)
+      ? last.projectKey
+      : undefined,
     workspace: last.executionMode === 'LOCAL' ? last.workspace : undefined,
     permissionLevel: last.permissionLevel,
     modelId: last.modelId
@@ -268,22 +274,18 @@ const groupedSessions = computed(() => {
   const groups = new Map<string, Session[]>()
 
   for (const s of sessions) {
-    let key: string
-    if (s.executionMode === 'CLOUD') {
-      key = 'CLOUD'
-    } else {
-      key = s.workspace ? `LOCAL:${s.workspace}` : 'LOCAL:未设置'
-    }
+    const key = cloudGroupKey(s)
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key)!.push(s)
   }
 
   const entries = Array.from(groups.entries())
-  
-  // 默认排序：CLOUD 优先，然后字母序
+
   entries.sort(([a], [b]) => {
-    if (a === 'CLOUD') return -1
-    if (b === 'CLOUD') return 1
+    if (a === 'CLOUD:独立工作区') return -1
+    if (b === 'CLOUD:独立工作区') return 1
+    if (a.startsWith('CLOUD:') && !b.startsWith('CLOUD:')) return -1
+    if (!a.startsWith('CLOUD:') && b.startsWith('CLOUD:')) return 1
     return a.localeCompare(b)
   })
 
@@ -302,7 +304,7 @@ const groupedSessions = computed(() => {
 })
 
 function formatGroupLabel(key: string): string {
-  if (key === 'CLOUD') return '云端工作区'
+  if (key.startsWith('CLOUD:')) return formatCloudGroupLabel(key)
   if (key.startsWith('LOCAL:')) {
     const ws = key.substring(6)
     if (ws === '未设置') return '未设置'
@@ -438,8 +440,8 @@ function showLess(key: string) {
   expandedCounts.value.set(key, DEFAULT_VISIBLE)
 }
 
-function isGroupCollapsed(key: string): boolean {
-  return collapsedGroups.value.has(key)
+function toggleGroup(key: string) {
+  toggleGroupCollapsed(key)
 }
 
 function hasPendingApproval(sessionId: string): boolean {
@@ -448,14 +450,6 @@ function hasPendingApproval(sessionId: string): boolean {
 
 function hasPendingQuestion(sessionId: string): boolean {
   return (sessionStore.sessionPendingQuestions?.get(String(sessionId))?.length ?? 0) > 0
-}
-
-function toggleGroup(key: string) {
-  if (collapsedGroups.value.has(key)) {
-    collapsedGroups.value.delete(key)
-  } else {
-    collapsedGroups.value.add(key)
-  }
 }
 
 // Drag handlers

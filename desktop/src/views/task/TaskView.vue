@@ -47,6 +47,7 @@ import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useTerminal } from '../../composables/useTerminal'
 import { useCenterTabs } from '../../composables/useCenterTabs'
+import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
@@ -59,6 +60,7 @@ const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const { connect } = useStreamWS()
 const { loginVersion } = useLoginDialog()
+const { loadPrefs } = useTaskPanelPrefs()
 const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight } = usePanelLayout()
 
 const sessionIdParam = computed(() => route.params.sessionId as string)
@@ -75,8 +77,9 @@ const permissionLevel = ref('READ_ONLY')
 const newTaskAgentId = ref<string | null>(null)
 const newTaskMode = ref<'CLOUD' | 'LOCAL'>('CLOUD')
 const newTaskWorkspace = ref('')
+const newTaskCloudProjectKey = ref('')
 const newTaskModelId = ref<number | undefined>()
-const lastViewedSession = ref<{ agentId: string; executionMode: string; workspace?: string; permissionLevel?: string; modelId?: number } | null>(null)
+const lastViewedSession = ref<{ agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number } | null>(null)
 const isNewTaskMode = computed(() => !sessionIdParam.value && !initialLoading.value)
 
 // Provide shared refs for ChatPanel
@@ -88,6 +91,7 @@ provide('isNewTaskMode', isNewTaskMode)
 provide('newTaskAgentId', newTaskAgentId)
 provide('newTaskMode', newTaskMode)
 provide('newTaskWorkspace', newTaskWorkspace)
+provide('newTaskCloudProjectKey', newTaskCloudProjectKey)
 provide('initialLoading', initialLoading)
 provide('currentPhase', currentPhase)
 
@@ -195,18 +199,20 @@ async function loadSession(sid: string) {
         data.title = existing.title
       }
       sessionStore.updateSession(sid, data)
+      const normalizedAgentId = String(data.agentId)
       // Set shared refs — ChatPanel reads these for useChat
-      agentId.value = data.agentId
+      agentId.value = normalizedAgentId
       executionMode.value = data.executionMode || 'CLOUD'
       currentPhase.value = data.phase || 'IDLE'
       projectKey.value = data.projectKey || ''
       permissionLevel.value = data.permissionLevel || 'READ_ONLY'
       // workspace and agentName will be synced from ChatPanel's useChat
-      await agentStore.fetchAgent(data.agentId)
+      await agentStore.fetchAgent(normalizedAgentId)
       lastViewedSession.value = {
-        agentId: data.agentId,
+        agentId: normalizedAgentId,
         executionMode: data.executionMode || 'CLOUD',
         workspace: data.workspace,
+        cloudProjectKey: data.workspace?.includes('/projects/') ? data.projectKey : undefined,
         permissionLevel: data.permissionLevel,
         modelId: data.modelId
       }
@@ -234,10 +240,11 @@ async function handleNewTask() {
   }
 }
 
-async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string; permissionLevel?: string; modelId?: number }) {
-  newTaskAgentId.value = payload.agentId
+async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number }) {
+  newTaskAgentId.value = payload.agentId ? String(payload.agentId) : null
   newTaskMode.value = payload.executionMode as 'CLOUD' | 'LOCAL'
   newTaskWorkspace.value = payload.workspace || ''
+  newTaskCloudProjectKey.value = payload.cloudProjectKey || ''
   permissionLevel.value = payload.permissionLevel || 'READ_ONLY'
   if (payload.modelId) {
     newTaskModelId.value = payload.modelId
@@ -272,9 +279,10 @@ watch(sessionIdParam, (newSid, oldSid) => {
     if (!isNewTaskFromGroup) {
       const prev = lastViewedSession.value
       if (prev) {
-        newTaskAgentId.value = prev.agentId || null
+        newTaskAgentId.value = prev.agentId ? String(prev.agentId) : null
         newTaskMode.value = (prev.executionMode as 'CLOUD' | 'LOCAL') || 'CLOUD'
         newTaskWorkspace.value = prev.executionMode === 'LOCAL' ? (prev.workspace || '') : ''
+        newTaskCloudProjectKey.value = prev.cloudProjectKey || ''
         permissionLevel.value = prev.permissionLevel || 'READ_ONLY'
         if (prev.modelId) {
           newTaskModelId.value = prev.modelId
@@ -285,6 +293,7 @@ watch(sessionIdParam, (newSid, oldSid) => {
         newTaskAgentId.value = null
         newTaskMode.value = 'CLOUD'
         newTaskWorkspace.value = ''
+        newTaskCloudProjectKey.value = ''
         permissionLevel.value = 'READ_ONLY'
         navigateToLatestSession()
       }
@@ -300,6 +309,7 @@ watch(loginVersion, async () => {
     // WS connect failed — data load can still proceed; subscribe retried on reconnect
   }
   await sessionStore.fetchSessions()
+  await loadPrefs()
   const sid = sessionIdParam.value
   if (sid) {
     await loadSession(sid)
@@ -310,6 +320,7 @@ watch(loginVersion, async () => {
 
 onMounted(async () => {
   await sessionStore.fetchSessions()
+  await loadPrefs()
   const sid = sessionIdParam.value
   if (sid) {
     await loadSession(sid)

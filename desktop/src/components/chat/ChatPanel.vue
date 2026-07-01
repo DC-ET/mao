@@ -150,6 +150,8 @@
       :loading="sending && !cancelling"
       :cancelling="cancelling"
       :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
+      :cloud-project-key="isNewTaskMode ? newTaskCloudProjectKey : cloudProjectKey"
+      :project-key="currentSession?.projectKey"
       :execution-mode="isNewTaskMode ? newTaskMode : executionMode"
       :model-id="isNewTaskMode ? newTaskModelId : currentSession?.modelId"
       :model-supports-vision="currentSession?.modelSupportsVision"
@@ -162,6 +164,7 @@
       @update:permission-level="handlePermissionLevelChange"
       @update:execution-mode="handleNewTaskModeChange"
       @update:workspace="handleNewTaskWorkspaceChange"
+      @update:cloud-project-key="handleNewTaskCloudProjectKeyChange"
       @update:selected-agent-id="handleNewTaskAgentChange"
       @update:model-id="handleModelSwitch"
       @select:model="handleModelSelect"
@@ -195,6 +198,7 @@ const isNewTaskMode = inject<Ref<boolean>>('isNewTaskMode')!
 const newTaskAgentId = inject<Ref<string | null>>('newTaskAgentId')!
 const newTaskMode = inject<Ref<'CLOUD' | 'LOCAL'>>('newTaskMode')!
 const newTaskWorkspace = inject<Ref<string>>('newTaskWorkspace')!
+const newTaskCloudProjectKey = inject<Ref<string>>('newTaskCloudProjectKey')!
 const initialLoading = inject<Ref<boolean>>('initialLoading')!
 const currentPhase = inject<Ref<TaskPhase>>('currentPhase')!
 
@@ -219,6 +223,7 @@ const {
   cancelling,
   sessionId,
   workspace,
+  cloudProjectKey,
   agentName,
   pendingApprovals,
   todos,
@@ -541,6 +546,7 @@ function handleSend(text: string, files: File[]) {
     agentId.value = newTaskAgentId.value
     executionMode.value = newTaskMode.value
     workspace.value = newTaskWorkspace.value
+    cloudProjectKey.value = newTaskCloudProjectKey.value
     pendingNewTaskNav.value = true
   }
   userScrolledUp.value = false
@@ -581,11 +587,17 @@ function handleNewTaskModeChange(mode: string) {
   newTaskMode.value = mode as 'CLOUD' | 'LOCAL'
   if (mode === 'CLOUD') {
     newTaskWorkspace.value = ''
+  } else {
+    newTaskCloudProjectKey.value = ''
   }
 }
 
 function handleNewTaskWorkspaceChange(ws: string) {
   newTaskWorkspace.value = ws
+}
+
+function handleNewTaskCloudProjectKeyChange(key: string) {
+  newTaskCloudProjectKey.value = key
 }
 
 function handleNewTaskAgentChange(id: string | null) {
