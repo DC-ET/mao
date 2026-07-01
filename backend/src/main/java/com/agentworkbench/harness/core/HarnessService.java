@@ -119,6 +119,9 @@ public class HarnessService {
     }
 
     public AgentExecutionContext buildContext(Long sessionId) {
+        // 清理上次中断遗留的不完整 tool_calls 消息，防止 LLM API 400
+        sessionService.cleanupIncompleteTail(sessionId);
+
         // 1. Load session
         Session session = sessionMapper.selectById(sessionId);
         if (session == null) {

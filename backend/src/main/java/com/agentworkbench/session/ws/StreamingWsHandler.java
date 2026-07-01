@@ -351,9 +351,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 harnessService.executeFromEvent(sessionId, resolvedEventId, listener, cancelFlag);
 
                 if (cancelFlag.get()) {
-                    sessionService.updatePhase(sessionId, "CANCELLED");
-                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLED", "unread", true)));
-                    registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "CANCELLED")));
+                    finishCancelledSession(sessionId, userId);
                 } else {
                     sessionService.updatePhase(sessionId, "COMPLETED");
                     registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "COMPLETED", "unread", true)));
@@ -637,9 +635,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 harnessService.executeFromEvent(sessionId, resolvedEventId, listener, cancelFlag);
 
                 if (cancelFlag.get()) {
-                    sessionService.updatePhase(sessionId, "CANCELLED");
-                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLED", "unread", true)));
-                    registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "CANCELLED")));
+                    finishCancelledSession(sessionId, userId);
                 } else {
                     sessionService.updatePhase(sessionId, "COMPLETED");
                     registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "COMPLETED", "unread", true)));
@@ -694,6 +690,16 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         String resultJson = "{\"answers\": " + answersJson + "}";
         askUserQuestionsRegistry.complete(sessionId, requestId, resultJson);
         log.info("Received ask_user_questions_result for session={}, requestId={}", sessionId, requestId);
+    }
+
+    private void finishCancelledSession(Long sessionId, Long userId) {
+        int deleted = sessionService.cleanupIncompleteTail(sessionId);
+        if (deleted > 0) {
+            log.info("Session {}: cleaned {} incomplete messages after user cancel", sessionId, deleted);
+        }
+        sessionService.updatePhase(sessionId, "CANCELLED");
+        registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLED", "unread", true)));
+        registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "CANCELLED")));
     }
 
     private void handleCancel(Long userId, JsonNode root) {

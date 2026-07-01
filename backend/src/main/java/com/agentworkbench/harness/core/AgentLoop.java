@@ -222,6 +222,17 @@ public class AgentLoop {
             List<ToolMessageSave> pendingToolSaves = new ArrayList<>();
             executeToolCalls(pendingCalls, context, listener, pendingToolSaves, toolResults, cancelFlag);
 
+            // 用户中断工具执行时，不持久化不完整的 assistant+tool_calls 轮次，避免下次 LLM 调用 400
+            if (cancelFlag != null && cancelFlag.get()) {
+                rollbackIncompleteRound(context, pendingSaveToolCalls[0]);
+                pendingSave[0] = null;
+                pendingThinking[0] = null;
+                pendingSaveUsage[0] = null;
+                pendingSaveToolCalls[0] = null;
+                context.clearPendingToolCalls();
+                break;
+            }
+
             // 4.1 先保存 assistant，再保存 tool 结果，保证 DB 顺序满足 LLM API 要求
             if (pendingSaveToolCalls[0] != null && persistenceCallback != null) {
                 persistenceCallback.onSaveAssistantMessage(pendingSave[0], pendingThinking[0],
@@ -274,6 +285,33 @@ public class AgentLoop {
     }
 
     private record ToolMessageSave(String toolCallId, String content) {}
+
+    /**
+     * 回滚当前轮次写入内存的 assistant+tool 消息（用户中断时尚未持久化）。
+     */
+    private void rollbackIncompleteRound(AgentExecutionContext context,
+                                         List<ChatRequest.ToolCall> toolCalls) {
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            return;
+        }
+        Set<String> toolCallIds = new HashSet<>();
+        for (ChatRequest.ToolCall tc : toolCalls) {
+            if (tc.getId() != null) {
+                toolCallIds.add(tc.getId());
+            }
+        }
+        List<ChatRequest.Message> messages = context.getMessages();
+        messages.removeIf(m -> "tool".equals(m.getRole())
+                && m.getToolCallId() != null
+                && toolCallIds.contains(m.getToolCallId()));
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            ChatRequest.Message msg = messages.get(i);
+            if ("assistant".equals(msg.getRole()) && msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
+                messages.remove(i);
+                break;
+            }
+        }
+    }
 
     /**
      * Execute tool calls in parallel using CompletableFuture.
