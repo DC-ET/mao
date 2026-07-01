@@ -9,11 +9,6 @@
             </svg>
           </div>
         </el-tooltip>
-        <el-tooltip content="新任务" :show-after="100" placement="bottom">
-          <div class="theme-toggle" @click="router.push('/')">
-            <el-icon :size="16"><Plus /></el-icon>
-          </div>
-        </el-tooltip>
       </div>
     </div>
     <div class="nav-right">
@@ -73,8 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
-import { ArrowDown, Moon, Sunny, Plus } from '@element-plus/icons-vue'
+import { ArrowDown, Moon, Sunny } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
@@ -84,7 +78,6 @@ import { useSkillDrawer } from '../../composables/useSkillDrawer'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useLoginDialog } from '../../composables/useLoginDialog'
 
-const router = useRouter()
 const { isDark, toggleTheme } = useTheme()
 const sessionStore = useSessionStore()
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
