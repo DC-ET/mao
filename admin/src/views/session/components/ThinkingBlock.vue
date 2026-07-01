@@ -70,10 +70,11 @@ const isExpanded = ref(false)
   transition: transform 0.2s;
   font-size: 12px;
   flex-shrink: 0;
+  transform: rotate(-90deg);
 }
 
 .expand-icon.expanded {
-  transform: rotate(180deg);
+  transform: rotate(0deg);
 }
 
 .thinking-body {

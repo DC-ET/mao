@@ -186,10 +186,11 @@ function toggleExpand() {
   color: var(--aw-ink-muted-48);
   transition: transform 0.2s;
   font-size: 12px;
+  transform: rotate(-90deg);
 }
 
 .expand-icon.expanded {
-  transform: rotate(180deg);
+  transform: rotate(0deg);
 }
 
 .tool-body {

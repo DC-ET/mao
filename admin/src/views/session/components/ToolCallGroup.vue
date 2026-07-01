@@ -105,9 +105,10 @@ function getToolDisplayName(name: string): string {
   color: var(--el-text-color-secondary);
   transition: transform 0.2s;
   font-size: 12px;
+  transform: rotate(-90deg);
 }
 
 .expand-icon.expanded {
-  transform: rotate(180deg);
+  transform: rotate(0deg);
 }
 </style>
