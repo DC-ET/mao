@@ -5,6 +5,7 @@ import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.common.exception.BusinessException;
 import com.agentworkbench.common.result.ErrorCode;
 import com.agentworkbench.harness.core.EnvironmentInfoProvider;
+import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.safety.CloudWorkspaceResolver;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.harness.core.MessageHistoryNormalizer;
@@ -548,11 +549,16 @@ public class SessionService {
         if (images == null || images.isEmpty()) {
             return text;
         }
-        // 多模态内容使用 JSON 数组格式
-        List<Map<String, String>> parts = new ArrayList<>();
-        parts.add(Map.of("type", "text", "text", text != null ? text : ""));
+        List<ChatRequest.ContentPart> parts = new ArrayList<>();
+        parts.add(ChatRequest.ContentPart.builder()
+                .type("text")
+                .text(text != null ? text : "")
+                .build());
         for (String imageUrl : images) {
-            parts.add(Map.of("type", "image_url", "image_url", imageUrl));
+            parts.add(ChatRequest.ContentPart.builder()
+                    .type("image_url")
+                    .imageUrl(ChatRequest.ImageUrl.builder().url(imageUrl).build())
+                    .build());
         }
         try {
             return objectMapper.writeValueAsString(parts);

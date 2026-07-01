@@ -5,21 +5,20 @@
         <span class="message-time">{{ message.createdAt }}</span>
       </div>
 
-      <div v-if="message.images && message.images.length > 0 && !isEditing" class="message-images">
-        <el-image
-          v-for="(url, idx) in message.images"
-          :key="idx"
-          :src="url"
-          :preview-src-list="message.images"
-          :initial-index="idx"
-          fit="cover"
-          class="message-image"
-          :preview-teleported="true"
-        />
-      </div>
-
       <!-- 用户消息：正常态 -->
       <div v-if="role === 'user' && !isEditing" class="message-text user-text" :class="{ collapsed: isUserLong && userCollapsed }">
+        <div v-if="message.images && message.images.length > 0 && !isEditing" class="message-images">
+          <el-image
+            v-for="(url, idx) in message.images"
+            :key="idx"
+            :src="url"
+            :preview-src-list="message.images"
+            :initial-index="idx"
+            fit="cover"
+            class="message-image"
+            :preview-teleported="true"
+          />
+        </div>
         <div class="user-text-content">
           <template v-for="(seg, idx) in userParsedSegments" :key="idx">
             <FileReferenceTag v-if="seg.type === 'file'" :file-path="seg.filePath" />
@@ -394,6 +393,7 @@ async function copyMessage() {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 10;
+  line-clamp: 10;
   overflow: hidden;
 }
 
@@ -683,7 +683,7 @@ async function copyMessage() {
 }
 
 .edit-textarea:focus {
-  border-color: var(--aw-primary-hover);
+  border-color: var(--aw-primary-focus);
 }
 
 .edit-actions {
@@ -712,7 +712,7 @@ async function copyMessage() {
 }
 
 .edit-confirm-btn:hover:not(:disabled) {
-  background: var(--aw-primary-hover);
+  background: var(--aw-primary-focus);
 }
 
 .edit-confirm-btn:disabled {

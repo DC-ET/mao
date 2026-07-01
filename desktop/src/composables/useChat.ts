@@ -407,9 +407,17 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       return
     }
 
+    // 未显式传入图片时保留原消息图片
+    const imagesToSend = images.length > 0 ? images : (lastUserMsg.images ?? [])
+
     // 乐观更新：截断后续消息，更新编辑内容
     sessionStore.truncateMessagesAfter(sessionId.value, messageId)
-    sessionStore.updateMessageContent(sessionId.value, messageId, newContent, images.length > 0 ? images : undefined)
+    sessionStore.updateMessageContent(
+      sessionId.value,
+      messageId,
+      newContent,
+      imagesToSend.length > 0 ? imagesToSend : undefined
+    )
 
     // 添加空 assistant 占位消息
     const placeholderMsg: ChatMessage = {
@@ -433,7 +441,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       subscribe(sessionId.value)
 
       // 通过 WS 发送编辑请求
-      sendEditMessage(sessionId.value, newContent, messageId, images)
+      sendEditMessage(sessionId.value, newContent, messageId, imagesToSend)
 
       // Wait for completion
       await new Promise<void>((resolve, reject) => {
