@@ -313,11 +313,15 @@ const showTypingIndicator = computed(() => {
 })
 
 onMounted(() => {
-  messagesContainer.value?.addEventListener('scroll', handleScroll)
+  const el = messagesContainer.value
+  el?.addEventListener('scroll', handleScroll, { passive: true })
+  el?.addEventListener('wheel', handleWheel, { passive: true })
 })
 
 onUnmounted(() => {
-  messagesContainer.value?.removeEventListener('scroll', handleScroll)
+  const el = messagesContainer.value
+  el?.removeEventListener('scroll', handleScroll)
+  el?.removeEventListener('wheel', handleWheel)
 })
 
 // Round grouping logic
@@ -431,6 +435,7 @@ async function confirmEdit(messageId: string, newContent: string) {
 // Auto-scroll
 const messagesContainer = ref<HTMLElement>()
 const userScrolledUp = ref(false)
+const isProgrammaticScroll = ref(false)
 const NEAR_BOTTOM = 80
 const LOAD_MORE_THRESHOLD = 120
 
@@ -441,21 +446,51 @@ function isNearBottom(): boolean {
 }
 
 function scrollToBottom() {
-  const el = messagesContainer.value
-  if (!el) return
-  // Use rAF to ensure DOM layout is complete before scrolling
-  requestAnimationFrame(() => {
-    if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-    }
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      if (userScrolledUp.value) return
+      const el = messagesContainer.value
+      if (!el) return
+      isProgrammaticScroll.value = true
+      el.scrollTop = el.scrollHeight
+      requestAnimationFrame(() => {
+        isProgrammaticScroll.value = false
+      })
+    })
   })
 }
 
 function scrollToBottomSmooth() {
-  requestAnimationFrame(() => {
-    const el = messagesContainer.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
+  scrollToBottom()
+}
+
+/**
+ * 聚合会影响消息区「可见高度」的状态，用于触发自动滚动。
+ * 不包含 thinking 正文长度等高频但不可见（折叠态）的变化，避免流式阶段反复滚动。
+ */
+function buildScrollAnchor(): string {
+  const last = messages.value[messages.value.length - 1]
+  const segmentStructure = last?.segments?.map(s => {
+    switch (s.type) {
+      case 'thinking': return 't'
+      case 'text': return 'x'
+      case 'tool': return `o:${s.callId}`
+    }
+  }).join(',') || ''
+  return [
+    messages.value.length,
+    last?.content?.length || 0,
+    segmentStructure,
+    last?.toolCalls?.length || 0,
+    last?.toolCalls?.map(t => t.status).join(',') || '',
+    sessionStore.activeThinking,
+    sessionStore.activeStreaming,
+    showTypingIndicator.value,
+  ].join('|')
+}
+
+function handleWheel(e: WheelEvent) {
+  if (e.deltaY < 0) userScrolledUp.value = true
 }
 
 function handleScroll() {
@@ -475,32 +510,19 @@ function handleScroll() {
     })
   }
 
+  if (isProgrammaticScroll.value) return
+
   // Track user scroll intent: when user scrolls away from bottom,
   // pause auto-scroll. When they scroll back near bottom, resume it.
   userScrolledUp.value = !isNearBottom()
 }
 
-// Auto-scroll watchers: only scroll if user hasn't manually scrolled up.
-// Uses rAF for proper DOM layout timing.
-watch(() => messages.value.length, () => {
+// Auto-scroll: scroll when message/thinking/streaming state changes.
+// flush:'post' ensures DOM is updated before measuring scrollHeight.
+watch(buildScrollAnchor, () => {
   if (userScrolledUp.value) return
   scrollToBottom()
-})
-
-watch(
-  () => {
-    const last = messages.value[messages.value.length - 1]
-    return [
-      last?.content?.length || 0,
-      last?.toolCalls?.length || 0,
-      last?.toolCalls?.map(t => t.status).join(',') || ''
-    ].join('|')
-  },
-  () => {
-    if (userScrolledUp.value) return
-    scrollToBottom()
-  }
-)
+}, { flush: 'post' })
 
 // Phase sync
 watch(() => sending.value, (isSending) => {
