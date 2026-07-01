@@ -1,6 +1,7 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import { useLoginDialog } from '../composables/useLoginDialog'
+import { getRefreshToken, getToken, setTokens } from '../utils/auth-storage'
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1',
@@ -25,22 +26,21 @@ function showReloginDialog() {
 }
 
 export async function doRefreshToken(): Promise<string> {
-  const refreshToken = localStorage.getItem('refreshToken')
+  const refreshToken = getRefreshToken()
   if (!refreshToken) throw new Error('No refresh token')
 
   const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
   const resp = await axios.post(`${baseURL}/auth/refresh`, { refreshToken })
   const { data } = resp.data
 
-  localStorage.setItem('token', data.accessToken)
-  localStorage.setItem('refreshToken', data.refreshToken)
+  await setTokens(data.accessToken, data.refreshToken)
   return data.accessToken
 }
 
 // Request interceptor - add token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token')
+    const token = getToken()
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }

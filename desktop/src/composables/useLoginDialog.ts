@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { getToken } from '../utils/auth-storage'
 
 const visible = ref(false)
 const loginVersion = ref(0)
@@ -28,7 +29,7 @@ export function useLoginDialog() {
   }
 
   function autoOpenIfNeeded() {
-    if (!localStorage.getItem('token') && !sessionStorage.getItem('loginPrompted')) {
+    if (!getToken() && !sessionStorage.getItem('loginPrompted')) {
       sessionStorage.setItem('loginPrompted', '1')
       open()
     }

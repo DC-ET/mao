@@ -75,7 +75,16 @@ interface LocalSkillDetail {
   filePath: string
 }
 
+interface AuthTokens {
+  token: string | null
+  refreshToken: string | null
+}
+
 interface ElectronAPI {
+  getAuthTokens(): Promise<AuthTokens>
+  setAuthTokens(tokens: { token: string; refreshToken: string }): Promise<void>
+  clearAuthTokens(): Promise<void>
+
   getAppVersion(): Promise<string>
   getPlatform(): Promise<string>
   getEnvironmentInfo(workspace?: string): Promise<{

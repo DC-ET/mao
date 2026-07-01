@@ -393,6 +393,48 @@ app.on('before-quit', () => {
   terminalManager.killAll()
 })
 
+// ========== Auth token persistence (file:// localStorage is not reliable) ==========
+
+function getAuthStorePath() {
+  return path.join(app.getPath('userData'), 'auth.json')
+}
+
+function readAuthStore() {
+  try {
+    const authPath = getAuthStorePath()
+    if (fs.existsSync(authPath)) {
+      const data = JSON.parse(fs.readFileSync(authPath, 'utf8'))
+      return {
+        token: data.token || null,
+        refreshToken: data.refreshToken || null
+      }
+    }
+  } catch (e) {
+    console.error('[auth] Failed to read auth store:', e.message)
+  }
+  return { token: null, refreshToken: null }
+}
+
+function writeAuthStore(data) {
+  try {
+    const authPath = getAuthStorePath()
+    fs.mkdirSync(path.dirname(authPath), { recursive: true })
+    fs.writeFileSync(authPath, JSON.stringify(data), 'utf8')
+  } catch (e) {
+    console.error('[auth] Failed to write auth store:', e.message)
+  }
+}
+
+ipcMain.handle('auth-get-tokens', () => readAuthStore())
+
+ipcMain.handle('auth-set-tokens', (_event, { token, refreshToken }) => {
+  writeAuthStore({ token: token || null, refreshToken: refreshToken || null })
+})
+
+ipcMain.handle('auth-clear-tokens', () => {
+  writeAuthStore({ token: null, refreshToken: null })
+})
+
 // ========== Window control IPC handlers ==========
 
 ipcMain.handle('window-minimize', () => {

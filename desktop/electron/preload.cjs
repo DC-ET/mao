@@ -1,6 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  // Auth token persistence (file:// localStorage does not survive restarts)
+  getAuthTokens: () => ipcRenderer.invoke('auth-get-tokens'),
+  setAuthTokens: (tokens) => ipcRenderer.invoke('auth-set-tokens', tokens),
+  clearAuthTokens: () => ipcRenderer.invoke('auth-clear-tokens'),
+
   // Original APIs
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getPlatform: () => ipcRenderer.invoke('get-platform'),

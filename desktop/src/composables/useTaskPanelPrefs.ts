@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { api } from '../api'
+import { getToken } from '../utils/auth-storage'
 
 const LEGACY_ORDER_KEY = 'task-group-order'
 
@@ -33,7 +34,7 @@ function scheduleSave() {
 }
 
 async function persistPrefs() {
-  if (!localStorage.getItem('token')) return
+  if (!getToken()) return
 
   if (savePromise) {
     await savePromise
@@ -59,7 +60,7 @@ async function persistPrefs() {
  */
 export function useTaskPanelPrefs() {
   async function loadPrefs() {
-    if (!localStorage.getItem('token')) {
+    if (!getToken()) {
       groupOrder.value = readLegacyOrder()
       loaded.value = true
       return

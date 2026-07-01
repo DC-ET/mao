@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { useSessionStore, type TaskPhase } from '../stores/session'
 import { api } from '../api'
+import { getToken } from '../utils/auth-storage'
 
 /// <reference types="vite/client" />
 
@@ -101,7 +102,7 @@ export function useStreamWS() {
     if (connectPromise) return connectPromise
 
     const wsBase = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_API_BASE_URL?.replace(/^http/, 'ws').replace(/\/api\/v1$/, '/api') || 'ws://localhost:9080/api'
-    const token = localStorage.getItem('token')
+    const token = getToken()
     if (!token) return Promise.reject(new Error('No token'))
 
     const url = `${wsBase}/ws/stream?token=${token}`
@@ -432,7 +433,7 @@ export function useStreamWS() {
         const syncUrl = data?.syncUrl
         const workspace = data?.workspace
         if (sessionId && syncUrl && typeof window !== 'undefined' && (window as any).electronAPI) {
-          const token = localStorage.getItem('token') || ''
+          const token = getToken() || ''
           ;(window as any).electronAPI.skillSync?.(Number(sessionId), syncUrl, token, workspace || '')
         } else {
           console.warn('[skill-sync] cannot sync:', { sessionId, syncUrl, hasElectronAPI: !!(window as any).electronAPI })
