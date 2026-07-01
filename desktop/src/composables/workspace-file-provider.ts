@@ -54,11 +54,23 @@ export function createLocalProvider(workspace: string): WorkspaceFileProvider {
 }
 
 export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
+  const numericSessionId = Number(sessionId)
+  if (!Number.isFinite(numericSessionId) || numericSessionId <= 0) {
+    return {
+      async listDirectory() {
+        return { error: '会话未就绪' }
+      },
+      async readFile() {
+        return { content: '', total_lines: 0, error: '会话未就绪' }
+      },
+    }
+  }
+
   return {
     async listDirectory(relativeDir: string) {
       try {
         const { data } = await api.get('/files/workspace-directory', {
-          params: { sessionId, dir: relativeDir || undefined },
+          params: { sessionId: numericSessionId, dir: relativeDir || undefined },
         })
         return {
           entries: data?.entries ?? [],
@@ -72,7 +84,7 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
       try {
         const { data } = await api.get('/files/workspace-read', {
           params: {
-            sessionId,
+            sessionId: numericSessionId,
             path: relativePath,
             offset: opts?.offset ?? 0,
             limit: opts?.limit ?? 5000,

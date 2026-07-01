@@ -36,6 +36,16 @@
           <el-icon><Flag /></el-icon>
         </div>
       </el-tooltip>
+      <el-tooltip :content="hasUpdate ? '发现新版本，点击更新' : '刷新页面'" :show-after="100" placement="bottom">
+        <div
+          class="theme-toggle refresh-btn"
+          :class="{ 'has-update': hasUpdate }"
+          @click="reloadApp"
+        >
+          <el-icon :size="16"><Refresh /></el-icon>
+          <span v-if="hasUpdate" class="update-dot" />
+        </div>
+      </el-tooltip>
       <el-tooltip :content="isDark ? '切换为浅色' : '切换为深色'" :show-after="100" placement="bottom">
         <div class="theme-toggle" @click="toggleTheme">
           <el-icon :size="16">
@@ -68,7 +78,8 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, Moon, Sunny } from '@element-plus/icons-vue'
+import { ArrowDown, Moon, Refresh, Sunny } from '@element-plus/icons-vue'
+import { onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
@@ -77,6 +88,7 @@ import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useSkillDrawer } from '../../composables/useSkillDrawer'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useLoginDialog } from '../../composables/useLoginDialog'
+import { useVersionCheck } from '../../composables/useVersionCheck'
 
 const { isDark, toggleTheme } = useTheme()
 const sessionStore = useSessionStore()
@@ -96,6 +108,15 @@ function toggleTerminal() {
 
 const authStore = useAuthStore()
 const loginDialog = useLoginDialog()
+const { hasUpdate, reloadApp, startPolling, stopPolling } = useVersionCheck()
+
+onMounted(() => {
+  startPolling()
+})
+
+onUnmounted(() => {
+  stopPolling()
+})
 
 async function handleCommand(command: string) {
   if (command === 'logout') {
@@ -267,5 +288,29 @@ async function handleCommand(command: string) {
   width: auto;
   padding: 0 12px;
   font-size: var(--aw-text-caption);
+}
+
+.refresh-btn {
+  position: relative;
+}
+
+.refresh-btn.has-update {
+  color: var(--aw-warning, #e6a23c);
+  animation: pulse-update 2s ease-in-out infinite;
+}
+
+.update-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--aw-warning, #e6a23c);
+}
+
+@keyframes pulse-update {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 </style>

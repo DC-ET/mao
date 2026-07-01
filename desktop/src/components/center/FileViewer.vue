@@ -170,7 +170,12 @@ function isBinaryContent(text: string): boolean {
 }
 
 async function loadFile() {
-  if (!props.filePath || !props.provider) return
+  if (!props.filePath) return
+  if (!props.provider) {
+    state.value = 'error'
+    errorMsg.value = '工作区未就绪，请稍后再试'
+    return
+  }
   state.value = 'loading'
   content.value = ''
   errorMsg.value = ''
