@@ -52,12 +52,14 @@
   "build": {
     "appId": "com.agentworkbench.desktop",
     "productName": "Mao",
+    "icon": "public/AppIcon.icns",
     "files": [
       "electron/**/*",
       "dist/**/*",
       "package.json"
     ],
     "mac": {
+      "icon": "public/AppIcon.icns",
       "target": "dmg"
     },
     "win": {
