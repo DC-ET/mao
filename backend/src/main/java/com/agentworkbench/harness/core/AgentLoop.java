@@ -205,6 +205,9 @@ public class AgentLoop {
             }, cancelFlag);
             } catch (RuntimeException e) {
                 if (e.getMessage() != null && e.getMessage().contains("Cancelled by user")) {
+                    if (thinkingEnded.compareAndSet(false, true)) {
+                        listener.onThinkingEnd();
+                    }
                     log.info("Agent loop round {} cancelled by user for session {}", currentRound, sessionId);
                     break;
                 }

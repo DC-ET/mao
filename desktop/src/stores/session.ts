@@ -341,6 +341,8 @@ export const useSessionStore = defineStore('session', () => {
   function addUserMessage(sessionId: string, msg: ChatMessage) {
     const sid = String(sessionId)
     const list = sessionMessages.value.get(sid) ?? []
+    const msgId = String(msg.id)
+    if (list.some(m => String(m.id) === msgId)) return
     sessionMessages.value.set(sid, [...list, msg])
   }
 

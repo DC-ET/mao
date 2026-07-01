@@ -71,8 +71,9 @@ public class CrashRecoveryRunner implements ApplicationRunner {
             AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(sessionId);
 
             // 4. Create listener — events are silently dropped if client is not connected
+            String executionId = java.util.UUID.randomUUID().toString();
             WsStreamingEventListener listener = new WsStreamingEventListener(
-                    registry, activityService, sessionTodoMapper, sessionService, sessionId, userId);
+                    registry, activityService, sessionTodoMapper, sessionService, sessionId, userId, executionId);
 
             // 5. Execute — HarnessService.execute() rebuilds context from DB
             log.info("Session {}: starting recovery execution", sessionId);

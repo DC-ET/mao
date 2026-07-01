@@ -147,8 +147,7 @@
 
     <ChatInput
       ref="chatInputRef"
-      :loading="sending && !cancelling"
-      :cancelling="cancelling"
+      :loading="sending"
       :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
       :cloud-project-key="isNewTaskMode ? newTaskCloudProjectKey : cloudProjectKey"
       :project-key="currentSession?.projectKey"
@@ -205,7 +204,7 @@ const currentPhase = inject<Ref<TaskPhase>>('currentPhase')!
 // Non-reactive callback to sync state to TaskView (avoids recursive updates)
 type SyncChatStateFn = (state: {
   workspace?: string; agentName?: string; todos?: any[]; contextWindow?: any
-  sending?: boolean; cancelling?: boolean; pendingApprovals?: any[]
+  sending?: boolean; pendingApprovals?: any[]
 }) => void
 const syncChatState = inject<SyncChatStateFn>('syncChatState')!
 const chatFocusInput = inject<Ref<(() => void) | null>>('chatFocusInput')!
@@ -220,7 +219,6 @@ const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 const {
   messages,
   sending,
-  cancelling,
   sessionId,
   workspace,
   cloudProjectKey,
@@ -253,7 +251,6 @@ function syncToTaskView() {
     todos: todos.value,
     contextWindow: contextWindow.value,
     sending: sending.value,
-    cancelling: cancelling.value,
     pendingApprovals: pendingApprovals.value,
   })
 }
@@ -264,7 +261,6 @@ watch(agentName, () => syncToTaskView())
 watch(todos, () => syncToTaskView(), { deep: true })
 watch(contextWindow, () => syncToTaskView())
 watch(sending, () => syncToTaskView())
-watch(cancelling, () => syncToTaskView())
 watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 
 // Session restore — ChatPanel watches sessionStore.activeSessionId
@@ -530,7 +526,7 @@ watch(() => sending.value, (isSending) => {
   if (isSending) {
     currentPhase.value = 'RUNNING'
   } else {
-    if (currentPhase.value === 'RUNNING' && !cancelling.value) {
+    if (currentPhase.value === 'RUNNING') {
       currentPhase.value = 'IDLE'
     }
   }

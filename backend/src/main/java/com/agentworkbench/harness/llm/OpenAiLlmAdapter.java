@@ -8,7 +8,10 @@ import okio.BufferedSource;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -64,7 +67,57 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         Request httpRequest = buildRequest(request, config, true);
         Call httpCall = httpClient.newCall(httpRequest);
 
-        try (Response response = httpCall.execute()) {
+        CompletableFuture<Response> responseFuture = new CompletableFuture<>();
+        httpCall.enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                if (cancelFlag != null && cancelFlag.get()) {
+                    responseFuture.completeExceptionally(new RuntimeException("Cancelled by user"));
+                } else {
+                    responseFuture.completeExceptionally(e);
+                }
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) {
+                responseFuture.complete(response);
+            }
+        });
+
+        Response response;
+        try {
+            while (true) {
+                if (cancelFlag != null && cancelFlag.get()) {
+                    httpCall.cancel();
+                    callback.onError(new RuntimeException("Cancelled by user"));
+                    return;
+                }
+                try {
+                    response = responseFuture.get(100, TimeUnit.MILLISECONDS);
+                    break;
+                } catch (TimeoutException e) {
+                    // poll cancel flag until response arrives
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    if (cause instanceof RuntimeException re) {
+                        callback.onError(re);
+                    } else {
+                        callback.onError(cause);
+                    }
+                    return;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    httpCall.cancel();
+                    callback.onError(new RuntimeException("Cancelled by user"));
+                    return;
+                }
+            }
+        } catch (RuntimeException e) {
+            callback.onError(e);
+            return;
+        }
+
+        try {
             log.debug("stream: response code={}", response.code());
             if (!response.isSuccessful()) {
                 String errorBody = "";
@@ -87,7 +140,6 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             BufferedSource source = body.source();
 
             while (!source.exhausted()) {
-                // ✅ 每次读取前检查取消标志 — 让停止按钮即刻生效
                 if (cancelFlag != null && cancelFlag.get()) {
                     log.info("Stream cancelled by user for model={}", config.getModelId());
                     httpCall.cancel();
@@ -111,7 +163,6 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                         }
                         callback.onChunk(chunk);
 
-                        // Try to extract usage from the last chunk
                         JsonNode node = objectMapper.readTree(data);
                         if (node.has("usage")) {
                             JsonNode usage = node.get("usage");
@@ -128,13 +179,14 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             callback.onComplete(usageBuilder.build());
 
         } catch (IOException e) {
-            // 区分用户取消 vs 真实错误
             if (cancelFlag != null && cancelFlag.get()) {
                 log.info("Stream cancelled by user (IO interrupted) for model={}", config.getModelId());
                 callback.onError(new RuntimeException("Cancelled by user"));
             } else {
                 callback.onError(e);
             }
+        } finally {
+            response.close();
         }
     }
 

@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { useSessionStore, type TaskPhase } from '../stores/session'
+import { api } from '../api'
 
 /// <reference types="vite/client" />
 
@@ -23,7 +24,47 @@ let intentionalClose = false
 let connectPromise: Promise<void> | null = null
 let isReconnecting = false
 
-// Pending sendMessage callbacks — keyed by eventId
+// Active execution ID per session — used to discard stale stream events after cancel
+const activeExecutionIds = new Map<string, string>()
+// Last cancelled execution ID per session — filters stragglers after clearActiveExecution
+const cancelledExecutionIds = new Map<string, string>()
+
+export function setActiveExecution(sessionId: string, executionId: string) {
+  cancelledExecutionIds.delete(sessionId)
+  activeExecutionIds.set(sessionId, executionId)
+}
+
+export function clearActiveExecution(sessionId: string) {
+  const active = activeExecutionIds.get(sessionId)
+  if (active) {
+    cancelledExecutionIds.set(sessionId, active)
+  }
+  activeExecutionIds.delete(sessionId)
+}
+
+function isStaleExecution(sessionId: string, data: any): boolean {
+  const active = activeExecutionIds.get(sessionId)
+  if (!active) {
+    const cancelled = cancelledExecutionIds.get(sessionId)
+    if (cancelled && data?.executionId === cancelled) return true
+    return false
+  }
+  if (!data?.executionId) return false
+  return data.executionId !== active
+}
+
+const STREAM_EVENT_TYPES = new Set([
+  'content_delta', 'tool_call_start', 'tool_call_args_delta', 'tool_call_result',
+  'thinking_start', 'thinking_end', 'thinking_delta', 'message_end',
+  'file_change', 'activity', 'compaction_start', 'compaction_end', 'context_window', 'error'
+])
+
+function refreshQueue(sessionId: string) {
+  const store = useSessionStore()
+  api.get(`/sessions/${sessionId}/queue`)
+    .then(({ data }) => store.setQueueMessages(sessionId, data || []))
+    .catch(() => {})
+}
 const pendingCallbacks = new Map<string, {
   onSending?: () => void
   resolve?: () => void
@@ -78,7 +119,9 @@ export function useStreamWS() {
         isReconnecting = false
         // Re-subscribe to active session
         if (sessionStore.activeSessionId) {
-          send({ type: 'subscribe', sessionId: Number(sessionStore.activeSessionId) })
+          const sid = sessionStore.activeSessionId
+          send({ type: 'subscribe', sessionId: Number(sid) })
+          refreshQueue(sid)
         }
         // Start heartbeat with pong timeout detection
         lastPongAt = Date.now()
@@ -231,6 +274,10 @@ export function useStreamWS() {
     const { type, sessionId: rawSid, data } = msg
     const sessionId = rawSid != null ? String(rawSid) : null
 
+    if (sessionId && STREAM_EVENT_TYPES.has(type) && isStaleExecution(sessionId, data)) {
+      return
+    }
+
     switch (type) {
       case 'connected':
         break
@@ -280,7 +327,23 @@ export function useStreamWS() {
 
       case 'session_status':
         if (sessionId) {
-          sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
+          const phase = data.phase as TaskPhase
+          const terminalPhases = ['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE']
+
+          if (phase === 'RUNNING' && data.executionId) {
+            setActiveExecution(sessionId, data.executionId)
+          }
+
+          // Ignore stale CANCELLING after local optimistic cancel
+          if (phase === 'CANCELLING' && !activeExecutionIds.has(sessionId)) {
+            break
+          }
+
+          if (terminalPhases.includes(phase) && isStaleExecution(sessionId, data)) {
+            break
+          }
+
+          sessionStore.updateSessionPhase(sessionId, phase)
           // Sync unread state — skip for active session (user is already viewing)
           if (data.unread !== undefined) {
             if (sessionId === sessionStore.activeSessionId) {
@@ -289,21 +352,19 @@ export function useStreamWS() {
               sessionStore.updateSession(sessionId, { unread: data.unread })
             }
           }
-          // Only resolve pending callback on true terminal phases
-          const terminalPhases = ['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE']
-          if (terminalPhases.includes(data.phase)) {
+          if (terminalPhases.includes(phase)) {
             sessionStore.setStreaming(sessionId, false)
+            sessionStore.setThinking(sessionId, false)
             sessionStore.clearAskQuestions(sessionId)
-            // Agent turn complete — resolve pending callback
+            if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED') {
+              clearActiveExecution(sessionId)
+            }
             const cb = pendingCallbacks.get(sessionId)
             if (cb) {
               pendingCallbacks.delete(sessionId)
               cb.resolve?.()
             }
-          } else if (data.phase === 'RUNNING' || data.phase === 'WAITING_APPROVAL') {
-            // Ensure a pending callback exists for running sessions.
-            // Covers the case where the user switches away and back — the original
-            // callback from sendMessage is lost, but we still need completion tracking.
+          } else if (phase === 'RUNNING' || phase === 'WAITING_APPROVAL') {
             if (!pendingCallbacks.has(sessionId)) {
               pendingCallbacks.set(sessionId, {
                 resolve: () => {},
@@ -469,7 +530,6 @@ export function useStreamWS() {
 
       case 'queue_message_consumed': {
         if (sessionId && data) {
-          // Add user message with real ID
           sessionStore.addUserMessage(sessionId, {
             id: String(data.messageId),
             role: 'user',
@@ -477,15 +537,8 @@ export function useStreamWS() {
             createdAt: new Date().toLocaleString(),
             images: data.images && data.images.length > 0 ? data.images : undefined
           })
-          // Add empty assistant placeholder
-          sessionStore.addAssistantMessage(sessionId, {
-            id: `msg_${Date.now()}_assistant`,
-            role: 'assistant',
-            content: '',
-            createdAt: new Date().toLocaleString(),
-            toolCalls: [],
-            segments: []
-          })
+          sessionStore.ensureStreamingAssistantMessage(sessionId)
+          refreshQueue(sessionId)
         }
         break
       }
@@ -508,6 +561,8 @@ export function useStreamWS() {
     insertMessage,
     deleteQueueMessage,
     reorderQueueMessage,
-    pendingCallbacks
+    pendingCallbacks,
+    setActiveExecution,
+    clearActiveExecution
   }
 }

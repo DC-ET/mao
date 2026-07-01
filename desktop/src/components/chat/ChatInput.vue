@@ -124,9 +124,8 @@
         <button
           v-if="loading && !canSend"
           class="send-btn stop"
-          :disabled="cancelling"
-          :title="cancelling ? '正在停止...' : '停止'"
-          @click="!cancelling && handleStop()"
+          title="停止"
+          @click="handleStop()"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <rect x="2" y="2" width="12" height="12" rx="2"/>
@@ -175,7 +174,6 @@ import { collectCloudProjectKeys, cloudWorkspaceIndicator } from '../../utils/cl
 const props = withDefaults(defineProps<{
   disabled?: boolean
   loading?: boolean
-  cancelling?: boolean
   workspace?: string
   cloudProjectKey?: string
   projectKey?: string
@@ -190,7 +188,6 @@ const props = withDefaults(defineProps<{
 }>(), {
   disabled: false,
   loading: false,
-  cancelling: false,
   workspace: '',
   cloudProjectKey: '',
   executionMode: 'CLOUD',

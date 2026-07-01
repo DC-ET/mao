@@ -4,6 +4,7 @@ import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.harness.core.AgentLoop;
 import com.agentworkbench.harness.core.HarnessService;
+import com.agentworkbench.harness.shell.ShellSessionManager;
 import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.local.LocalToolSessionRegistry;
 import com.agentworkbench.harness.tool.AskUserQuestionsRegistry;
@@ -49,6 +50,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final ActivityService activityService;
     private final SessionTodoMapper sessionTodoMapper;
     private final AgentLoop agentLoop;
+    private final ShellSessionManager shellSessionManager;
     private final SkillSyncService skillSyncService;
     private final AgentMapper agentMapper;
     private final LlmModelMapper llmModelMapper;
@@ -56,6 +58,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
     /** sessionId → cancel flag for running AgentLoops */
     private final ConcurrentHashMap<Long, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
+
+    /** sessionId → running agent task future */
+    private final ConcurrentHashMap<Long, Future<?>> runningTasks = new ConcurrentHashMap<>();
+
+    /** per-session lock — only one agent execution at a time */
+    private final ConcurrentHashMap<Long, Object> sessionLocks = new ConcurrentHashMap<>();
 
     /** sessionId → pending skill sync future (waiting for client confirmation) */
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> pendingSkillSyncs = new ConcurrentHashMap<>();
@@ -73,6 +81,29 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         return insertLocks.computeIfAbsent(sessionId, k -> new Object());
     }
 
+    private Object sessionLock(Long sessionId) {
+        return sessionLocks.computeIfAbsent(sessionId, k -> new Object());
+    }
+
+    private boolean isSessionActive(String phase) {
+        return "RUNNING".equals(phase) || "RESUMING".equals(phase) || "WAITING_APPROVAL".equals(phase);
+    }
+
+    private void abortRunningExecution(Long sessionId, Long userId) {
+        AtomicBoolean flag = cancelFlags.get(sessionId);
+        if (flag != null) {
+            flag.set(true);
+        }
+        // Close shell sessions to unblock long-running commands without thread interrupt
+        shellSessionManager.closeByConversation(sessionId);
+        Future<?> future = runningTasks.get(sessionId);
+        if (future != null) {
+            // cancel(false): interrupt during WS send kills the client connection
+            future.cancel(false);
+        }
+        askUserQuestionsRegistry.failAllForSession(sessionId);
+    }
+
     public StreamingWsHandler(StreamingWsRegistry registry,
                                HarnessService harnessService,
                                SessionService sessionService,
@@ -82,6 +113,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                ActivityService activityService,
                                SessionTodoMapper sessionTodoMapper,
                                AgentLoop agentLoop,
+                               ShellSessionManager shellSessionManager,
                                SkillSyncService skillSyncService,
                                AgentMapper agentMapper,
                                LlmModelMapper llmModelMapper,
@@ -95,6 +127,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
         this.agentLoop = agentLoop;
+        this.shellSessionManager = shellSessionManager;
         this.skillSyncService = skillSyncService;
         this.agentMapper = agentMapper;
         this.llmModelMapper = llmModelMapper;
@@ -232,10 +265,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             return;
         }
 
-        // Check session not already running or resuming
-        if ("RUNNING".equals(session.getPhase()) || "RESUMING".equals(session.getPhase())) {
-            registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "Session is already running")));
-            return;
+        // Abort any in-flight execution so the new message can take over
+        if (isSessionActive(session.getPhase())) {
+            abortRunningExecution(sessionId, userId);
         }
 
         // Vision model check: if images are attached, verify model supports vision
@@ -295,6 +327,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         String resolvedEventId = (eventId != null && !eventId.isBlank())
                 ? eventId
                 : harnessService.prepareMessage(sessionId, messageContent);
+        final String executionId = resolvedEventId;
 
         // Auto-subscribe so the client receives its own events
         registry.subscribe(userId, sessionId);
@@ -305,10 +338,13 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
         // Submit agent execution to thread pool
         log.info("Session {} executionMode={}, submitting to agentExecutor", sessionId, session.getExecutionMode());
-        agentExecutor.submit(() -> {
+        Future<?>[] futureRef = new Future<?>[1];
+        futureRef[0] = agentExecutor.submit(() -> {
+            synchronized (sessionLock(sessionId)) {
             try {
                 sessionService.updatePhase(sessionId, "RUNNING");
-                registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "RUNNING")));
+                registry.send(userId, WsEvent.of("session_status", sessionId,
+                        Map.of("phase", "RUNNING", "executionId", executionId)));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "RUNNING")));
 
                 // LOCAL mode: sync skills to client workspace before agent execution
@@ -346,36 +382,42 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 registry.send(userId, WsEvent.of("todo_updated", sessionId, Map.of("todos", List.of())));
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
-                        registry, activityService, sessionTodoMapper, sessionService, sessionId, userId);
+                        registry, activityService, sessionTodoMapper, sessionService, sessionId, userId, executionId);
 
                 harnessService.executeFromEvent(sessionId, resolvedEventId, listener, cancelFlag);
 
                 if (cancelFlag.get()) {
-                    finishCancelledSession(sessionId, userId);
+                    finishCancelledSession(sessionId, userId, executionId);
                 } else {
                     sessionService.updatePhase(sessionId, "COMPLETED");
-                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "COMPLETED", "unread", true)));
+                    registry.send(userId, WsEvent.of("session_status", sessionId,
+                            Map.of("phase", "COMPLETED", "unread", true, "executionId", executionId)));
                     registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "COMPLETED")));
                 }
             } catch (Exception e) {
                 log.error("Agent execution failed for session {}", sessionId, e);
                 try {
                     registry.send(userId, WsEvent.of("error", sessionId,
-                            Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常")));
+                            Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常",
+                                    "executionId", executionId)));
                 } catch (Exception ignored) {}
                 try {
                     sessionService.updatePhase(sessionId, "FAILED");
                 } catch (Exception ignored) {}
-                registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED", "unread", true)));
+                registry.send(userId, WsEvent.of("session_status", sessionId,
+                        Map.of("phase", "FAILED", "unread", true, "executionId", executionId)));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
             } finally {
+                runningTasks.remove(sessionId, futureRef[0]);
                 cancelFlags.remove(sessionId);
                 agentLoop.removeCancelFlag(sessionId);
 
                 // Auto-consume queue: if there are pending messages, send the next one
                 autoConsumeQueue(sessionId, userId);
             }
+            }
         });
+        runningTasks.put(sessionId, futureRef[0]);
     }
 
     /**
@@ -507,10 +549,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             return;
         }
 
-        // Check session not already running or resuming
-        if ("RUNNING".equals(session.getPhase()) || "RESUMING".equals(session.getPhase())) {
-            registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "会话正在执行中，无法编辑")));
-            return;
+        // Abort any in-flight execution
+        if (isSessionActive(session.getPhase())) {
+            abortRunningExecution(sessionId, userId);
         }
 
         // Validate message is the last user message
@@ -579,6 +620,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
         // Prepare event content in cache
         String resolvedEventId = harnessService.prepareMessage(sessionId, messageContent);
+        final String executionId = resolvedEventId;
 
         // Auto-subscribe so the client receives its own events
         registry.subscribe(userId, sessionId);
@@ -589,10 +631,13 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
         // Submit agent execution to thread pool
         log.info("Session {} edit_and_resend, executionMode={}, submitting to agentExecutor", sessionId, session.getExecutionMode());
-        agentExecutor.submit(() -> {
+        Future<?>[] futureRef = new Future<?>[1];
+        futureRef[0] = agentExecutor.submit(() -> {
+            synchronized (sessionLock(sessionId)) {
             try {
                 sessionService.updatePhase(sessionId, "RUNNING");
-                registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "RUNNING")));
+                registry.send(userId, WsEvent.of("session_status", sessionId,
+                        Map.of("phase", "RUNNING", "executionId", executionId)));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "RUNNING")));
 
                 // LOCAL mode: sync skills to client workspace before agent execution
@@ -630,33 +675,39 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 registry.send(userId, WsEvent.of("todo_updated", sessionId, Map.of("todos", List.of())));
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
-                        registry, activityService, sessionTodoMapper, sessionService, sessionId, userId);
+                        registry, activityService, sessionTodoMapper, sessionService, sessionId, userId, executionId);
 
                 harnessService.executeFromEvent(sessionId, resolvedEventId, listener, cancelFlag);
 
                 if (cancelFlag.get()) {
-                    finishCancelledSession(sessionId, userId);
+                    finishCancelledSession(sessionId, userId, executionId);
                 } else {
                     sessionService.updatePhase(sessionId, "COMPLETED");
-                    registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "COMPLETED", "unread", true)));
+                    registry.send(userId, WsEvent.of("session_status", sessionId,
+                            Map.of("phase", "COMPLETED", "unread", true, "executionId", executionId)));
                     registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "COMPLETED")));
                 }
             } catch (Exception e) {
                 log.error("Agent execution failed for session {}", sessionId, e);
                 try {
                     registry.send(userId, WsEvent.of("error", sessionId,
-                            Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常")));
+                            Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常",
+                                    "executionId", executionId)));
                 } catch (Exception ignored) {}
                 try {
                     sessionService.updatePhase(sessionId, "FAILED");
                 } catch (Exception ignored) {}
-                registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED", "unread", true)));
+                registry.send(userId, WsEvent.of("session_status", sessionId,
+                        Map.of("phase", "FAILED", "unread", true, "executionId", executionId)));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
             } finally {
+                runningTasks.remove(sessionId, futureRef[0]);
                 cancelFlags.remove(sessionId);
                 agentLoop.removeCancelFlag(sessionId);
             }
+            }
         });
+        runningTasks.put(sessionId, futureRef[0]);
     }
 
     private void handleToolResult(Long userId, JsonNode root) {
@@ -692,23 +743,27 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         log.info("Received ask_user_questions_result for session={}, requestId={}", sessionId, requestId);
     }
 
-    private void finishCancelledSession(Long sessionId, Long userId) {
+    private void finishCancelledSession(Long sessionId, Long userId, String executionId) {
         int deleted = sessionService.cleanupIncompleteTail(sessionId);
         if (deleted > 0) {
             log.info("Session {}: cleaned {} incomplete messages after user cancel", sessionId, deleted);
         }
         sessionService.updatePhase(sessionId, "CANCELLED");
-        registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLED", "unread", true)));
+        registry.send(userId, WsEvent.of("session_status", sessionId,
+                Map.of("phase", "CANCELLED", "unread", true, "executionId", executionId)));
         registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "CANCELLED")));
     }
 
     private void handleCancel(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
-        AtomicBoolean flag = cancelFlags.get(sessionId);
-        if (flag != null) {
-            flag.set(true);
-            askUserQuestionsRegistry.failAllForSession(sessionId);
+
+        boolean wasRunning = runningTasks.containsKey(sessionId);
+        abortRunningExecution(sessionId, userId);
+
+        if (!wasRunning) {
+            finishCancelledSession(sessionId, userId, "");
+        } else {
             registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLING")));
             log.info("Cancel requested for session {} by userId={}", sessionId, userId);
         }
@@ -744,38 +799,13 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         // 1. Mark insert in progress — blocks autoConsumeQueue from racing
         suppressAutoConsumeSend.add(sessionId);
 
-        // 2. Set cancel flag to stop current Agent
-        AtomicBoolean cancelFlag = cancelFlags.get(sessionId);
-        if (cancelFlag != null) {
-            cancelFlag.set(true);
-        }
+        // 2. Abort current agent — handleSendMessage will wait on session lock
+        abortRunningExecution(sessionId, userId);
 
-        // 3. Wait for Agent to stop (max 10s), serialized per session
         agentExecutor.submit(() -> {
             synchronized (getInsertLock(sessionId)) {
                 try {
-                    long deadline = System.currentTimeMillis() + 60_000;
-                    Session session = sessionService.getSession(sessionId);
-                    while (System.currentTimeMillis() < deadline) {
-                        if (!"RUNNING".equals(session.getPhase()) && !"RESUMING".equals(session.getPhase())) {
-                            break;
-                        }
-                        Thread.sleep(200);
-                        session = sessionService.getSession(sessionId);
-                    }
-                    log.info("Insert wait done for session {}, phase={}", sessionId, session.getPhase());
-
-                    // If agent is still running after timeout, abort the insert
-                    // The message stays in queue and will be auto-consumed when the agent finishes
-                    if ("RUNNING".equals(session.getPhase()) || "RESUMING".equals(session.getPhase())) {
-                        log.warn("Insert timed out for session {} — agent still running (phase={}). Message stays in queue.", sessionId, session.getPhase());
-                        registry.send(userId, WsEvent.of("error", sessionId,
-                                Map.of("message", "当前任务仍在执行中，请稍后再试")));
-                        sendQueueUpdated(sessionId, userId);
-                        return;
-                    }
-
-                    // 3. Remove from queue
+                    // Remove from queue
                     MessageQueue item = messageQueueService.getById(queueId);
                     if (item == null) {
                         log.warn("Queue item {} not found for insert (may have been consumed)", queueId);
@@ -784,8 +814,6 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     }
                     messageQueueService.delete(queueId);
                     sendQueueUpdated(sessionId, userId);
-
-                    // 4. Build send data and trigger handleSendMessage
                     String content = item.getContent();
                     List<String> imageList = new ArrayList<>();
                     if (item.getImages() != null && !item.getImages().isBlank()) {

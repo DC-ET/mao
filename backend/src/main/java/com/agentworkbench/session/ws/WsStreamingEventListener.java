@@ -31,6 +31,7 @@ public class WsStreamingEventListener implements AgentEventListener {
     private final SessionService sessionService;
     private final Long sessionId;
     private final Long userId;
+    private final String executionId;
 
     private static final Set<String> TASK_TOOLS = Set.of(
             "task_create", "task_update", "task_delete", "task_list");
@@ -46,13 +47,14 @@ public class WsStreamingEventListener implements AgentEventListener {
                                      ActivityService activityService,
                                      SessionTodoMapper sessionTodoMapper,
                                      SessionService sessionService,
-                                     Long sessionId, Long userId) {
+                                     Long sessionId, Long userId, String executionId) {
         this.registry = registry;
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
         this.sessionService = sessionService;
         this.sessionId = sessionId;
         this.userId = userId;
+        this.executionId = executionId;
     }
 
     @Override
@@ -233,7 +235,9 @@ public class WsStreamingEventListener implements AgentEventListener {
     }
 
     private void send(String type, Map<String, Object> data) {
-        registry.send(userId, WsEvent.of(type, sessionId, data));
+        Map<String, Object> payload = new LinkedHashMap<>(data);
+        payload.put("executionId", executionId);
+        registry.send(userId, WsEvent.of(type, sessionId, payload));
     }
 
     private boolean isErrorResult(String result) {

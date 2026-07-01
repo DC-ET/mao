@@ -105,7 +105,6 @@ const agentName = ref('')
 const chatTodos = ref<any[]>([])
 const chatContextWindow = ref<any>(null)
 const chatSending = ref(false)
-const chatCancelling = ref(false)
 const chatPendingApprovals = ref<any[]>([])
 const chatFocusInput = ref<(() => void) | null>(null)
 
@@ -115,7 +114,6 @@ function syncChatState(state: {
   todos?: any[]
   contextWindow?: any
   sending?: boolean
-  cancelling?: boolean
   pendingApprovals?: any[]
 }) {
   if (state.workspace !== undefined) workspace.value = state.workspace
@@ -123,7 +121,6 @@ function syncChatState(state: {
   if (state.todos !== undefined) chatTodos.value = state.todos
   if (state.contextWindow !== undefined) chatContextWindow.value = state.contextWindow
   if (state.sending !== undefined) chatSending.value = state.sending
-  if (state.cancelling !== undefined) chatCancelling.value = state.cancelling
   if (state.pendingApprovals !== undefined) chatPendingApprovals.value = state.pendingApprovals
 }
 

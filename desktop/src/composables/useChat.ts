@@ -67,10 +67,9 @@ async function deriveTitle(text: string): Promise<string> {
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
-  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks } = useStreamWS()
+  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks, setActiveExecution, clearActiveExecution } = useStreamWS()
 
   const sending = ref(false)
-  const cancelling = ref(false)
   const switchingSession = ref(false)
   const sendingSessionId = ref<string | null>(null)
   const sessionId = ref<string | null>(null)
@@ -85,7 +84,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
 
   function isActivePhase(phase?: string | null) {
-    return phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING'
+    return phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL'
   }
 
   // Computed refs from store — reactive to active session
@@ -340,6 +339,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
       // Send message via WS
       const eventId = crypto.randomUUID()
+      setActiveExecution(sid, eventId)
       wsSendMessage(sid, resolvedText, eventId, imageUrls)
 
       // Wait for completion (session_status reaches COMPLETED/FAILED)
@@ -378,13 +378,28 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
   function stopExecution() {
     if (!sessionId.value) return
-    cancelling.value = true
-    wsCancel(sessionId.value)
-    // Don't resolve callback or set sending=false here.
-    // The server will send a CANCELLING session_status event,
-    // which resolves the pending callback via routeEvent,
-    // causing sendMessage to return and sending to become false naturally.
-    // cancelling stays true until the server confirms CANCELLED phase.
+    const sid = sessionId.value
+
+    clearActiveExecution(sid)
+    wsCancel(sid)
+
+    sending.value = false
+    sendingSessionId.value = null
+    startedAt.value = null
+
+    sessionStore.setThinking(sid, false)
+    sessionStore.setStreaming(sid, false)
+    sessionStore.setCompacting(sid, false)
+    sessionStore.clearAskQuestions(sid)
+    sessionStore.updateSessionPhase(sid, 'CANCELLED')
+
+    fetchQueue()
+
+    const cb = pendingCallbacks.get(sid)
+    if (cb) {
+      pendingCallbacks.delete(sid)
+      cb.resolve?.()
+    }
   }
 
   /**
@@ -490,7 +505,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     if (phase === oldPhase) return
 
     if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED' || phase === 'IDLE') {
-      cancelling.value = false
       sending.value = false
       sendingSessionId.value = null
       if (sessionId.value && pendingCallbacks.has(sessionId.value)) {
@@ -500,9 +514,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
       if (sessionId.value) {
         sessionStore.fetchSession(sessionId.value)
-        // Re-fetch messages to replace streamed single-message with API-structured
-        // messages, enabling round-based collapse in UI
         fetchMessages()
+        fetchQueue()
       }
     } else if (phase === 'RUNNING' || phase === 'WAITING_APPROVAL') {
       // Auto-sync sending state (covers queue auto-consume case)
@@ -642,7 +655,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
     } else {
       sending.value = false
-      cancelling.value = false
     }
 
     // Ensure WS connection is established before subscribing
@@ -692,7 +704,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   return {
     messages,
     sending,
-    cancelling,
     sessionId,
     workspace,
     cloudProjectKey,
