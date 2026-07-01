@@ -40,6 +40,7 @@ const hasRunning = computed(() =>
 const groupSummary = computed(() => {
   const tools = props.toolCalls
   if (tools.length === 0) return ''
+  if (tools.length === 1 && tools[0].summary) return tools[0].summary
 
   const toolCounts = new Map<string, number>()
   for (const tc of tools) {
