@@ -36,6 +36,16 @@
           <el-icon><Flag /></el-icon>
         </div>
       </el-tooltip>
+      <el-tooltip v-if="isElectron" content="开发者工具" :show-after="100" placement="bottom">
+        <div class="theme-toggle" @click="toggleDevTools">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="3" y1="15" x2="21" y2="15" />
+            <polyline points="7 10 10 13 7 16" />
+            <line x1="12" y1="16" x2="17" y2="16" />
+          </svg>
+        </div>
+      </el-tooltip>
       <el-tooltip :content="hasUpdate ? '发现新版本，点击更新' : '刷新页面'" :show-after="100" placement="bottom">
         <div
           class="theme-toggle refresh-btn"
@@ -109,6 +119,11 @@ function toggleTerminal() {
 const authStore = useAuthStore()
 const loginDialog = useLoginDialog()
 const { hasUpdate, reloadApp, startPolling, stopPolling } = useVersionCheck()
+const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.toggleDevTools
+
+function toggleDevTools() {
+  window.electronAPI?.toggleDevTools()
+}
 
 onMounted(() => {
   startPolling()

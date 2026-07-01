@@ -25,7 +25,8 @@ export default defineConfig({
       }
     }
   ],
-  base: './',
+  // Web 部署用绝对路径，避免 /tasks/:id 刷新时资源 404；Electron 本地打包用相对路径
+  base: process.env.ELECTRON_BUILD ? './' : '/',
   server: {
     port: 5201
   }

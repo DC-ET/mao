@@ -11,7 +11,7 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 async function checkVersion() {
   try {
-    const versionUrl = new URL('version.json', window.location.href)
+    const versionUrl = new URL(`${import.meta.env.BASE_URL}version.json`, window.location.href)
     versionUrl.searchParams.set('_t', String(Date.now()))
     const resp = await fetch(versionUrl)
     if (!resp.ok) return
@@ -45,7 +45,13 @@ export function useVersionCheck() {
   }
 
   function reloadApp() {
-    window.location.href = '/'
+    // file:// 打包环境使用 hash 路由，href='/' 会跳到文件系统根目录导致白屏
+    if (window.location.protocol === 'file:') {
+      const base = window.location.href.split('#')[0]
+      window.location.replace(`${base}#/`)
+      return
+    }
+    window.location.reload()
   }
 
   return {

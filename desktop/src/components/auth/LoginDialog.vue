@@ -62,7 +62,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAuthStore } from '../../stores/auth'
-import appIcon from '../../assets/app-icon.png'
+import appIcon from '../../assets/app-icon-small.png'
 import { useLoginDialog } from '../../composables/useLoginDialog'
 
 const authStore = useAuthStore()

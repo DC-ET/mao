@@ -8,7 +8,7 @@
     "dev": "vite",
     "dev:electron": "concurrently \"vite --port 5201\" \"wait-on http://localhost:5201 && env -u ELECTRON_RUN_AS_NODE NODE_ENV=development electron .\"",
     "build": "vue-tsc -b && vite build",
-    "dist": "vue-tsc -b && vite build && electron-builder",
+    "dist": "vue-tsc -b && ELECTRON_BUILD=1 vite build && electron-builder",
     "preview": "vite preview",
     "postinstall": "electron-rebuild -f -w node-pty"
   },

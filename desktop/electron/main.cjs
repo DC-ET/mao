@@ -417,6 +417,16 @@ ipcMain.handle('window-close', () => {
   }
 })
 
+ipcMain.handle('toggle-devtools', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const { webContents } = mainWindow
+  if (webContents.isDevToolsOpened()) {
+    webContents.closeDevTools()
+  } else {
+    webContents.openDevTools({ mode: 'detach' })
+  }
+})
+
 // ========== Original IPC handlers ==========
 
 ipcMain.handle('get-app-version', () => {
