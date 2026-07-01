@@ -6,8 +6,111 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Mao</title>
+    <script>
+      ;(function () {
+        var mode = localStorage.getItem('aw-theme-mode')
+        var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (mode === 'dark' || (mode !== 'light' && prefersDark)) {
+          document.documentElement.classList.add('dark')
+        }
+      })()
+    </script>
+    <style>
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        background: #f5f5f7;
+        color: #1d1d1f;
+        transition: opacity 0.28s ease, visibility 0.28s ease;
+      }
+
+      html.dark #splash {
+        background: #1d1d1f;
+        color: #f5f5f7;
+      }
+
+      #splash.splash--fade-out {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      #splash img {
+        width: 72px;
+        height: 72px;
+        border-radius: 16px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+      }
+
+      html.dark #splash img {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      }
+
+      #splash .splash-title {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      #splash .splash-dots {
+        display: flex;
+        gap: 6px;
+        margin-top: 4px;
+      }
+
+      #splash .splash-dots span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #0066cc;
+        opacity: 0.35;
+        animation: splash-dot 1.2s ease-in-out infinite;
+      }
+
+      html.dark #splash .splash-dots span {
+        background: #2997ff;
+      }
+
+      #splash .splash-dots span:nth-child(2) {
+        animation-delay: 0.15s;
+      }
+
+      #splash .splash-dots span:nth-child(3) {
+        animation-delay: 0.3s;
+      }
+
+      @keyframes splash-dot {
+        0%,
+        80%,
+        100% {
+          opacity: 0.35;
+          transform: scale(1);
+        }
+        40% {
+          opacity: 1;
+          transform: scale(1.15);
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="splash" aria-hidden="true">
+      <img src="/app-icon.png" alt="" width="72" height="72" />
+      <p class="splash-title">Mao</p>
+      <div class="splash-dots" aria-label="加载中">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

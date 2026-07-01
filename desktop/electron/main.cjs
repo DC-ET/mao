@@ -330,6 +330,7 @@ function createWindow() {
     title: 'Mao',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 12 },
+    backgroundColor: '#f5f5f7',
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,

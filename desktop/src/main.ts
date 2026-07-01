@@ -23,6 +23,16 @@ app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 
 app.mount('#app')
+dismissSplash()
 
 // Initialize theme after mount
 useTheme()
+
+function dismissSplash() {
+  const splash = document.getElementById('splash')
+  if (!splash) return
+
+  splash.classList.add('splash--fade-out')
+  splash.addEventListener('transitionend', () => splash.remove(), { once: true })
+  window.setTimeout(() => splash.remove(), 400)
+}
