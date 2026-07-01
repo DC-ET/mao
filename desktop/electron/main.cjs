@@ -321,12 +321,30 @@ function isGitWorkspace(workspace) {
   return false
 }
 
+function loadMainContent() {
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.loadURL('http://localhost:5201')
+    mainWindow.webContents.openDevTools()
+    return
+  }
+
+  const localIndex = join(__dirname, '../dist/index.html')
+  if (fs.existsSync(localIndex)) {
+    mainWindow.loadFile(localIndex)
+    return
+  }
+
+  // 兜底：本地 dist 不存在时回退远程页面
+  mainWindow.loadURL('https://mao.etarch.cn')
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 800,
     minHeight: 600,
+    show: false,
     title: 'Mao',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 12 },
@@ -339,12 +357,13 @@ function createWindow() {
     }
   })
 
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5201')
-    mainWindow.webContents.openDevTools()
-  } else {
-    mainWindow.loadURL('https://mao.etarch.cn')
-  }
+  mainWindow.once('ready-to-show', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show()
+    }
+  })
+
+  loadMainContent()
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)

@@ -11,7 +11,9 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 async function checkVersion() {
   try {
-    const resp = await fetch(`/version.json?_t=${Date.now()}`)
+    const versionUrl = new URL('version.json', window.location.href)
+    versionUrl.searchParams.set('_t', String(Date.now()))
+    const resp = await fetch(versionUrl)
     if (!resp.ok) return
     const data = await resp.json() as { version: string; buildTime: string }
     const remoteVersion = data.version

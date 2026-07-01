@@ -1,7 +1,10 @@
 <template>
   <div class="chat-panel">
     <div class="messages" ref="messagesContainer">
-      <div v-if="messages.length === 0 && !sending && !initialLoading" class="empty-state">
+      <div v-if="initialLoading && messages.length === 0" class="empty-state">
+        <el-icon :size="32" class="is-loading"><Loading /></el-icon>
+      </div>
+      <div v-else-if="messages.length === 0 && !sending && !initialLoading" class="empty-state">
         <template v-if="!sessionId">
           <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
           <p>我可以帮你做点什么？</p>
@@ -174,7 +177,7 @@
 <script setup lang="ts">
 import { ref, computed, inject, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
+import { ChatDotRound, ArrowDown, Loading } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
