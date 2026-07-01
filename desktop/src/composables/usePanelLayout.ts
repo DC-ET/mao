@@ -1,7 +1,11 @@
 import { ref } from 'vue'
 
+function isMobileDevice(): boolean {
+  return window.innerWidth <= 768
+}
+
 const leftCollapsed = ref(false)
-const rightCollapsed = ref(false)
+const rightCollapsed = ref(isMobileDevice())
 
 export function usePanelLayout() {
   function toggleLeft() {
