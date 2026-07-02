@@ -212,6 +212,7 @@ const emit = defineEmits<{
 
 const sessionStore = useSessionStore()
 const isElectronClient = typeof window !== 'undefined' && !!(window as any).electronAPI
+const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
 
 // Register with parent for file tree context menu "add to chat"
 const registerChatInput = inject<(handle: { insertFileReference: (filePath: string) => void }) => void>('registerChatInput', () => {})
@@ -527,8 +528,10 @@ const editor = useEditor({
         }
       }
 
-      // Enter to send (Shift/Ctrl/Cmd+Enter inserts newline)
+      // Enter to send — only on non-touch devices
+      // On touch devices (mobile), Enter inserts newline; send via button
       if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+        if (isTouchDevice) return false
         event.preventDefault()
         handleSend()
         return true
