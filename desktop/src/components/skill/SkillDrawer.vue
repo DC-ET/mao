@@ -174,7 +174,10 @@
       <div v-if="currentDoc" class="skill-detail">
         <p><strong>描述：</strong>{{ currentDoc.description }}</p>
         <el-divider />
-        <div class="skill-body markdown-body" v-html="renderedSkillBody"></div>
+        <MarkdownContent
+          :content="currentDoc?.body ?? ''"
+          body-class="skill-body markdown-body"
+        />
       </div>
     </el-dialog>
   </el-drawer>
@@ -186,7 +189,7 @@ import { ElMessage } from 'element-plus'
 import { Check, Close } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useSkillDrawer } from '../../composables/useSkillDrawer'
-import { renderMarkdown } from '../../composables/useMarkdown'
+import MarkdownContent from '../common/MarkdownContent.vue'
 
 interface SkillDoc {
   name: string
@@ -222,7 +225,6 @@ const localSkillsDir = ref('')
 const localError = ref('')
 const detailVisible = ref(false)
 const currentDoc = ref<SkillDetail | null>(null)
-const renderedSkillBody = computed(() => renderMarkdown(currentDoc.value?.body ?? ''))
 const isDragover = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
@@ -851,11 +853,13 @@ async function uploadFiles(files: File[], options?: { refreshLocal?: boolean; si
   background: var(--aw-surface-hover);
 }
 
-.skill-body :deep(.hljs) {
+.skill-body :deep(.monaco-code) {
+  display: block;
   padding: 12px;
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
+  overflow-x: auto;
 }
 
 .skill-body :deep(ul),

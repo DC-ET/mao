@@ -26,7 +26,6 @@
     "ali-oss": "^6.23.0",
     "axios": "^1.16.1",
     "element-plus": "^2.14.0",
-    "highlight.js": "^11.11.1",
     "marked": "^18.0.4",
     "monaco-editor": "^0.55.1",
     "node-pty": "^1.1.0",

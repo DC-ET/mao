@@ -1,51 +1,7 @@
 import { watch, onBeforeUnmount, nextTick, type Ref } from 'vue'
 import type { editor as MonacoEditor } from 'monaco-editor'
-import { ensureMonacoEnvironment } from '../utils/monaco-env'
+import { applyMonacoTheme, loadMonaco, themeName } from '../utils/monaco-loader'
 import { monacoLangFromExtension } from '../utils/monaco-lang'
-
-type MonacoModule = typeof import('monaco-editor')
-
-let monacoModule: MonacoModule | null = null
-let themesDefined = false
-
-async function loadMonaco(): Promise<MonacoModule> {
-  if (monacoModule) return monacoModule
-  ensureMonacoEnvironment()
-  monacoModule = await import('monaco-editor')
-  defineThemes(monacoModule)
-  return monacoModule
-}
-
-function defineThemes(monaco: MonacoModule): void {
-  if (themesDefined) return
-  themesDefined = true
-
-  monaco.editor.defineTheme('aw-light', {
-    base: 'vs',
-    inherit: true,
-    rules: [],
-    colors: {
-      'editor.background': '#f5f5f7',
-      'editor.lineHighlightBackground': '#00000000',
-      'editorGutter.background': '#f5f5f7',
-    },
-  })
-
-  monaco.editor.defineTheme('aw-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: [],
-    colors: {
-      'editor.background': '#1e1e28',
-      'editor.lineHighlightBackground': '#00000000',
-      'editorGutter.background': '#1e1e28',
-    },
-  })
-}
-
-function themeName(isDark: boolean): string {
-  return isDark ? 'aw-dark' : 'aw-light'
-}
 
 export function useMonacoViewer(options: {
   container: Ref<HTMLElement | undefined>
@@ -71,7 +27,7 @@ export function useMonacoViewer(options: {
     if (!options.container.value) return
 
     const monaco = await loadMonaco()
-    monaco.editor.setTheme(themeName(options.isDark.value))
+    await applyMonacoTheme(options.isDark.value)
 
     const language = monacoLangFromExtension(options.filePath.value)
     const value = options.content.value
@@ -128,9 +84,13 @@ export function useMonacoViewer(options: {
     { flush: 'post' },
   )
 
-  watch(options.isDark, async (dark) => {
-    const monaco = await loadMonaco()
-    monaco.editor.setTheme(themeName(dark))
+  watch(options.isDark, async () => {
+    await applyMonacoTheme(options.isDark.value)
+    if (editor) {
+      const monaco = await loadMonaco()
+      editor.updateOptions({ theme: themeName(options.isDark.value) })
+      void monaco
+    }
   })
 
   onBeforeUnmount(disposeEditor)

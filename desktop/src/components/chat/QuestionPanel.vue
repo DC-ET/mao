@@ -85,7 +85,11 @@
 
         <!-- Preview panel -->
         <div v-if="hasPreview(currentQuestions[activeTab]) && !currentQuestions[activeTab].multiSelect" class="preview-panel">
-          <div v-if="getSelectedPreview(activeTab)" class="preview-content markdown-body" v-html="renderMarkdown(getSelectedPreview(activeTab)!)"></div>
+          <MarkdownContent
+            v-if="getSelectedPreview(activeTab)"
+            :content="getSelectedPreview(activeTab)!"
+            body-class="preview-content markdown-body"
+          />
           <div v-else class="preview-placeholder">选择一个选项查看预览</div>
         </div>
       </div>
@@ -116,7 +120,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { ChatDotRound, Check } from '@element-plus/icons-vue'
 import type { PendingQuestion, Question, QuestionAnswer } from '../../types/chat'
-import { renderMarkdown } from '../../composables/useMarkdown'
+import MarkdownContent from '../common/MarkdownContent.vue'
 
 const props = defineProps<{
   items: PendingQuestion[]

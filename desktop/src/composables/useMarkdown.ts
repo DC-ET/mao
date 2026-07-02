@@ -1,37 +1,62 @@
 import { Marked } from 'marked'
-import hljs from 'highlight.js'
-import 'highlight.js/styles/github-dark.css'
+import { colorizeCode } from '../utils/monaco-colorize'
+import { monacoLangFromFence } from '../utils/monaco-lang'
 import { isExternalMarkdownLink } from '../utils/markdown-link'
 
-const marked = new Marked({
-  breaks: false,
-  renderer: {
-    code({ text, lang }: { text: string; lang?: string }) {
-      const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
-      const highlighted = hljs.highlight(text, { language }).value
-      return `<pre class="code-block"><div class="code-block-header"><span class="code-lang">${language}</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block').querySelector('code').textContent)">复制</button></div><code class="hljs language-${language}">${highlighted}</code></pre>`
-    },
-    link({ href, text }: { href: string; text: string }) {
-      if (isExternalMarkdownLink(href)) {
-        return `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`
-      }
-      return `<a href="${href}">${text}</a>`
-    }
-  }
-})
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
-export function renderMarkdown(text: string): string {
+function encodeCodeForCopy(text: string): string {
+  return btoa(unescape(encodeURIComponent(text)))
+}
+
+const COPY_CODE_ONCLICK = "navigator.clipboard.writeText(decodeURIComponent(escape(atob(this.closest('.code-block').dataset.code || ''))))"
+
+function createMarked(isDark: boolean): Marked {
+  const marked = new Marked({ breaks: false })
+  marked.use({
+    async: true,
+    async walkTokens(token) {
+      if (token.type !== 'code') return
+      const rawCode = token.text
+      const language = monacoLangFromFence(token.lang)
+      const highlighted = await colorizeCode(rawCode, language, isDark)
+      token.escaped = true
+      token.text = `<pre class="code-block" data-code="${encodeCodeForCopy(rawCode)}"><div class="code-block-header"><span class="code-lang">${escapeHtml(language)}</span><button class="code-copy-btn" onclick="${COPY_CODE_ONCLICK}">复制</button></div>${highlighted}</pre>`
+    },
+    renderer: {
+      code({ text }) {
+        return text
+      },
+      link({ href, text }) {
+        if (isExternalMarkdownLink(href)) {
+          return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${text}</a>`
+        }
+        return `<a href="${escapeHtml(href)}">${text}</a>`
+      },
+    },
+  })
+  return marked
+}
+
+export async function renderMarkdown(
+  text: string,
+  isDark = document.documentElement.getAttribute('data-theme') === 'dark',
+): Promise<string> {
   if (!text) return ''
-  const result = marked.parse(text)
-  // marked.parse returns string | Promise<string>, but with sync config it returns string
+  const result = await createMarked(isDark).parse(text)
   if (typeof result === 'string') return result
   return text
 }
 
 export function renderInlineMarkdown(text: string): string {
   if (!text) return ''
-  // Use marked inline lexer for single-line rendering without block elements
-  const result = marked.parseInline(text)
+  const result = new Marked({ breaks: false }).parseInline(text)
   if (typeof result === 'string') return result
   return text
 }

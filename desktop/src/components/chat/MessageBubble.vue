@@ -60,10 +60,10 @@
             :thinking="seg.content"
             :streaming="isAssistantRunning && idx === lastThinkingIdx"
           />
-          <div
+          <MarkdownContent
             v-else-if="seg.type === 'text'"
-            class="assistant-text markdown-body"
-            v-html="renderSegmentMarkdown(seg.content)"
+            :content="seg.content"
+            body-class="assistant-text markdown-body"
           />
           <ToolCallGroup
             v-else-if="seg.type === 'tool-group' && seg.toolCalls"
@@ -79,10 +79,10 @@
 
       <!-- assistant 回退：无 segments 时 -->
       <template v-else-if="role === 'assistant'">
-        <div
+        <MarkdownContent
           v-if="message.content"
-          class="assistant-text markdown-body"
-          v-html="renderedContent"
+          :content="message.content"
+          body-class="assistant-text markdown-body"
         />
         <div v-if="visibleToolCalls.length > 0" class="tool-calls">
           <ToolCallGroup :tool-calls="visibleToolCalls" />
@@ -147,7 +147,7 @@ async function ensureCommandContent() {
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
 import { Document, CopyDocument, Edit, Check, Close, Plus } from '@element-plus/icons-vue'
-import { renderMarkdown } from '../../composables/useMarkdown'
+import MarkdownContent from '../common/MarkdownContent.vue'
 import ToolCallGroup from './ToolCallGroup.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
 import FileChangePanel from './FileChangePanel.vue'
@@ -295,8 +295,6 @@ const lastThinkingIdx = computed(() => {
   return -1
 })
 
-const renderedContent = computed(() => renderMarkdown(props.message.content))
-
 const userLineCount = computed(() => (props.message.content || '').split('\n').length)
 const isUserLong = computed(() => role.value === 'user' && userLineCount.value > 10)
 
@@ -313,10 +311,6 @@ watch(hasCommandSegments, (val) => { if (val) ensureCommandContent() }, { immedi
 
 function getCommandContent(name: string): string | undefined {
   return commandContentMap.value[name]
-}
-
-function renderSegmentMarkdown(content: string) {
-  return renderMarkdown(content)
 }
 
 function getToolCall(callId: string): ToolCall | undefined {
@@ -486,11 +480,15 @@ async function copyMessage() {
   font-size: var(--aw-text-caption);
 }
 
-.markdown-body :deep(.hljs) {
+.markdown-body :deep(.monaco-code) {
+  display: block;
   padding: 12px;
   background: var(--aw-surface-code);
   color: var(--aw-text-code);
   overflow-x: auto;
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-caption);
+  line-height: 20px;
 }
 
 .markdown-body :deep(ul),

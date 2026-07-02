@@ -23,3 +23,17 @@ export function monacoLangFromExtension(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase() || ''
   return EXT_LANG_MAP[ext] || 'plaintext'
 }
+
+const FENCE_ALIASES: Record<string, string> = {
+  js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+  py: 'python', rb: 'ruby', sh: 'shell', bash: 'shell', zsh: 'shell', fish: 'shell',
+  yml: 'yaml', md: 'markdown', cs: 'csharp', 'c++': 'cpp', cc: 'cpp', h: 'cpp',
+  objc: 'objective-c', objectivec: 'objective-c', gql: 'graphql',
+  vue: 'html', text: 'plaintext', txt: 'plaintext',
+}
+
+export function monacoLangFromFence(lang?: string): string {
+  if (!lang) return 'plaintext'
+  const lower = lang.toLowerCase().trim()
+  return FENCE_ALIASES[lower] ?? EXT_LANG_MAP[lower] ?? lower
+}

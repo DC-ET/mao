@@ -11,6 +11,7 @@ import router from './router'
 import { useTheme } from './utils/theme'
 import { initAuthStorage } from './utils/auth-storage'
 import './style.css'
+import 'monaco-editor/min/vs/editor/editor.main.css'
 
 async function bootstrap() {
   await initAuthStorage()

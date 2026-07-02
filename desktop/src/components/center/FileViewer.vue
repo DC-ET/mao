@@ -28,12 +28,9 @@
           ref="monacoContainer"
           class="monaco-container"
         ></div>
-        <div
-          v-show="!showSource"
-          class="markdown-body file-scroll"
-          v-html="renderedContent"
-          @click="handleMarkdownClick"
-        ></div>
+        <div v-show="!showSource" class="file-scroll" @click="handleMarkdownClick">
+          <MarkdownContent :content="content" body-class="markdown-body" />
+        </div>
       </div>
       <div v-if="truncated" class="truncation-notice">
         仅显示前 5000 行
@@ -44,8 +41,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, toRef } from 'vue'
-import { renderMarkdown } from '../../composables/useMarkdown'
 import { useMonacoViewer } from '../../composables/useMonacoViewer'
+import MarkdownContent from '../common/MarkdownContent.vue'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
@@ -75,11 +72,6 @@ const isMarkdown = computed(() => {
 })
 
 const showSource = computed(() => !isMarkdown.value || viewMode.value === 'source')
-
-const renderedContent = computed(() => {
-  if (!content.value) return ''
-  return renderMarkdown(content.value)
-})
 
 const monacoEnabled = computed(() => state.value === 'ready' && showSource.value)
 
@@ -360,11 +352,15 @@ watch(() => [props.filePath, props.provider] as const, () => {
   border-color: var(--aw-ink-muted-48);
 }
 
-.markdown-body :deep(.hljs) {
+.markdown-body :deep(.monaco-code) {
+  display: block;
   padding: 12px;
   background: var(--aw-surface-code);
   color: var(--aw-text-code);
   overflow-x: auto;
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-caption);
+  line-height: 20px;
 }
 
 .markdown-body :deep(ul),
