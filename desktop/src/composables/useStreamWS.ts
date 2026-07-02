@@ -476,17 +476,8 @@ export function useStreamWS() {
                 }))
               }
             })
-        } else {
-          // Not in Electron — send error back
-          if (ws?.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: 'tool_error',
-              sessionId: Number(sessionId),
-              requestId,
-              error: 'Local tool execution not available (not running in Electron)'
-            }))
-          }
         }
+        // Non-Electron clients (browser tabs) silently ignore — let Electron handle it
         break
       }
 
