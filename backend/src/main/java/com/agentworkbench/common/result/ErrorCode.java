@@ -12,7 +12,7 @@ public enum ErrorCode {
     FORBIDDEN(1002, "无权限访问"),
     TOKEN_EXPIRED(1003, "Token 已过期"),
     TOKEN_INVALID(1004, "Token 无效"),
-    LOGIN_FAILED(1005, "登录失败"),
+    LOGIN_FAILED(1005, "用户名或密码错误"),
     ACCOUNT_DISABLED(1006, "账号已被禁用"),
 
     // 参数校验错误 2001-2999

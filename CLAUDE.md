@@ -37,9 +37,16 @@ cd desktop && npm run dist
 ./scripts/start-all.sh
 ./scripts/stop-all.sh
 ./scripts/restart-all.sh
+
+# Playwright 端到端测试（需先启动 admin 5200 和 desktop 5201）
+npm test                  # 全部 41 个用例
+npm run test:admin        # 仅管理后台 (29 个用例)
+npm run test:desktop      # 仅桌面端 (12 个用例)
+npm run test:debug        # 调试模式（Playwright UI）
 ```
 
-当前无测试套件。后端 `pom.xml` 包含 `spring-boot-starter-test` 但未编写测试。
+当前无后端测试。后端 `pom.xml` 包含 `spring-boot-starter-test` 但未编写测试。
+前端使用 Playwright 进行端到端测试，详见下方「测试」章节。
 
 ## 架构概览
 
@@ -100,6 +107,63 @@ MySQL 8，Flyway 迁移脚本在 `backend/src/main/resources/db/migration/`（24
 /data/logs/mao/app.log    # 后端日志
 /data/logs/mao/desktop.out    # 桌面端日志
 ```
+
+## 测试
+
+使用 Playwright 进行端到端测试（`tests/` 目录），覆盖管理后台和桌面端两个前端项目。
+
+### 测试文件结构
+
+```
+tests/
+├── playwright.config.ts    # 测试配置（admin / desktop 两个 project）
+├── tsconfig.json           # 类型配置
+├── admin.spec.ts           # 管理后台：29 个用例
+└── desktop.spec.ts         # 桌面端：12 个用例
+```
+
+### 运行前提
+
+确保三个服务都在运行：
+- `admin` — 端口 5200（`cd admin && npm run dev`）
+- `desktop` — 端口 5201（`cd desktop && npm run dev`）
+- `backend` — 端口 9080（`cd backend && mvn spring-boot:run`）
+
+### 测试用例清单
+
+**管理后台 (admin.spec.ts) — 29 个用例**
+
+| 模块 | 测试点 |
+|------|--------|
+| Login | 表单渲染、成功登录重定向、错误密码提示、空字段不提交 |
+| Dashboard | 4 个 stat 卡片、数值为数字、趋势图表 + Agent 排行、Token/用户表格 |
+| Agent 管理 | 列表渲染、搜索框 + 表头、数据行、创建对话框打开/关闭 |
+| 模型管理 | 列表渲染、表头 + 数据行、添加对话框 |
+| 用户管理 | 列表渲染、数据行、搜索过滤 + 重置、新建对话框 |
+| Skills 管理 | 上传区域渲染、表格渲染 |
+| 会话管理 | 列表渲染、数据行、过滤表单、详情页导航 |
+| 侧边栏导航 | 遍历 6 个菜单项并验证路由 |
+| Tab 栏 | 多标签切换 |
+| 退出登录 | 退出后重定向到 /login |
+
+**桌面端 (desktop.spec.ts) — 12 个用例**
+
+| 模块 | 测试点 |
+|------|--------|
+| App Shell | 页面加载、导航栏、三栏任务布局 |
+| 文档属性 | 标题、viewport meta |
+| 登录状态 | 未认证时自动弹出登录对话框 |
+| 三栏面板 | 左侧 TaskIndexPanel、中间 task-container、右侧 TaskInspector |
+| 主题切换 | addInitScript 设置 localStorage dark/light 模式 |
+| 默认路由 | `/` 渲染 TaskView |
+
+### 编写测试注意事项
+
+- 管理后台需先通过 `login()` 辅助函数登录（admin / admin123）
+- 桌面端测试无需登录，但登录对话框会自动弹出（未认证时）
+- 桌面端因 Vite dev server 在 `file://` 协议下 `localStorage` 受限，主题测试须使用 `page.addInitScript()` 而非 `page.evaluate()`
+- 断言使用 Playwright 内置 `locator` 方法，优先 `toContainText` / `toBeVisible`，避免硬编码文本
+- 测试服务端分页的接口（如 agents、users、sessions）默认返回第一页数据
 
 ## 注意事项
 

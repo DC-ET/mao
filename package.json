@@ -1,5 +1,12 @@
 {
+  "scripts": {
+    "test": "npx playwright test --config=tests/playwright.config.ts",
+    "test:admin": "npx playwright test --config=tests/playwright.config.ts --project=admin",
+    "test:desktop": "npx playwright test --config=tests/playwright.config.ts --project=desktop",
+    "test:debug": "npx playwright test --config=tests/playwright.config.ts --debug"
+  },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "mysql2": "^3.22.3"
   },
   "dependencies": {

@@ -52,6 +52,7 @@ import { useTerminal } from '../../composables/useTerminal'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useWorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
+import { getToken } from '../../utils/auth-storage'
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
@@ -270,6 +271,23 @@ async function loadDefaultModel() {
   }
 }
 
+async function loadTaskIndex() {
+  if (!getToken()) {
+    await loadPrefs()
+    initialLoading.value = false
+    return false
+  }
+
+  try {
+    await sessionStore.fetchSessions()
+    await loadPrefs()
+    return true
+  } catch {
+    initialLoading.value = false
+    return false
+  }
+}
+
 // Session switching
 watch(sessionIdParam, (newSid, oldSid) => {
   if (newSid && newSid !== oldSid) {
@@ -311,8 +329,7 @@ watch(loginVersion, async () => {
   } catch {
     // WS connect failed — data load can still proceed; subscribe retried on reconnect
   }
-  await sessionStore.fetchSessions()
-  await loadPrefs()
+  if (!await loadTaskIndex()) return
   const sid = sessionIdParam.value
   if (sid) {
     await loadSession(sid)
@@ -322,8 +339,7 @@ watch(loginVersion, async () => {
 })
 
 onMounted(async () => {
-  await sessionStore.fetchSessions()
-  await loadPrefs()
+  if (!await loadTaskIndex()) return
   const sid = sessionIdParam.value
   if (sid) {
     await loadSession(sid)

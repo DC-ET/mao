@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api'
+import { getToken } from '../utils/auth-storage'
 
 export interface Agent {
   id: string
@@ -16,10 +17,17 @@ export const useAgentStore = defineStore('agent', () => {
   const loading = ref(false)
 
   async function fetchAgents() {
+    if (!getToken()) {
+      agents.value = []
+      return
+    }
+
     loading.value = true
     try {
       const { data } = await api.get('/agents')
       agents.value = data || []
+    } catch {
+      agents.value = []
     } finally {
       loading.value = false
     }
