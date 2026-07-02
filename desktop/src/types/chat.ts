@@ -15,6 +15,12 @@ export interface FileChange {
   linesAdded: number
   linesDeleted: number
   toolCallId?: string
+  diffMode?: 'SNAPSHOT' | 'PATCH' | 'UNSUPPORTED'
+  beforeContent?: string
+  afterContent?: string
+  patchContent?: string
+  patchTruncated?: boolean
+  diffUnavailableReason?: string
 }
 
 export type MessageSegment =

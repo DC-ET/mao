@@ -326,7 +326,13 @@ export function useStreamWS() {
             type: data.type,
             linesAdded: data.lines_added,
             linesDeleted: data.lines_deleted,
-            toolCallId: data.tool_call_id
+            toolCallId: data.tool_call_id,
+            diffMode: data.diff_mode,
+            beforeContent: data.before_content,
+            afterContent: data.after_content,
+            patchContent: data.patch_content,
+            patchTruncated: Boolean(data.patch_truncated),
+            diffUnavailableReason: data.diff_unavailable_reason
           })
         }
         break

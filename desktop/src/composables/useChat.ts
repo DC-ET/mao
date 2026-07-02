@@ -126,7 +126,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
           path: String(fc.path),
           type: fc.type as FileChange['type'],
           linesAdded: Number(fc.linesAdded) || 0,
-          linesDeleted: Number(fc.linesDeleted) || 0
+          linesDeleted: Number(fc.linesDeleted) || 0,
+          diffMode: fc.diffMode as FileChange['diffMode'],
+          beforeContent: fc.beforeContent != null ? String(fc.beforeContent) : undefined,
+          afterContent: fc.afterContent != null ? String(fc.afterContent) : undefined,
+          patchContent: fc.patchContent != null ? String(fc.patchContent) : undefined,
+          patchTruncated: Boolean(fc.patchTruncated),
+          diffUnavailableReason: fc.diffUnavailableReason != null ? String(fc.diffUnavailableReason) : undefined,
         }))
         msg.fileChanges = changes
         allChanges.push(...changes)

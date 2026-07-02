@@ -3,10 +3,15 @@
     <KeepAlive :max="20">
       <ChatPanel v-if="activeTabId === 'chat'" />
       <FileViewer
-        v-else-if="activeFileTab"
+        v-else-if="activeTab?.type === 'file'"
         :key="activeTabId"
-        :file-path="activeFileTab.filePath || ''"
+        :file-path="activeTab.filePath || ''"
         :provider="fileProvider"
+      />
+      <FileDiffViewer
+        v-else-if="activeTab?.type === 'diff' && activeTab.fileChange"
+        :key="activeTabId"
+        :change="activeTab.fileChange"
       />
     </KeepAlive>
   </div>
@@ -16,6 +21,7 @@
 import { computed } from 'vue'
 import ChatPanel from '../chat/ChatPanel.vue'
 import FileViewer from './FileViewer.vue'
+import FileDiffViewer from './FileDiffViewer.vue'
 import type { Tab } from '../../types/file-browser'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 
@@ -26,7 +32,7 @@ const props = defineProps<{
   fileProvider: WorkspaceFileProvider | null
 }>()
 
-const activeFileTab = computed(() => {
+const activeTab = computed(() => {
   if (props.activeTabId === 'chat') return null
   return props.tabs.find(t => t.id === props.activeTabId) || null
 })

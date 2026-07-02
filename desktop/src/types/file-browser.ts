@@ -1,3 +1,5 @@
+import type { FileChange } from './chat'
+
 export interface FileNode {
   name: string
   path: string          // relative to workspace
@@ -11,9 +13,10 @@ export interface FileNode {
 
 export interface Tab {
   id: string            // 'chat' for chat tab, relative path for file tabs
-  type: 'chat' | 'file'
+  type: 'chat' | 'file' | 'diff'
   title: string
   filePath?: string     // relative path within workspace
+  fileChange?: FileChange
 }
 
 export interface SessionTabState {

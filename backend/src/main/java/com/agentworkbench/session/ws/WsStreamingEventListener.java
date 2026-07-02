@@ -3,6 +3,7 @@ package com.agentworkbench.session.ws;
 import com.agentworkbench.harness.core.AgentEventListener;
 import com.agentworkbench.harness.llm.ChatRequest;
 import com.agentworkbench.harness.llm.ChatUsage;
+import com.agentworkbench.harness.tool.FileChangeDiffUtil;
 import com.agentworkbench.session.activity.ActivityService;
 import com.agentworkbench.session.activity.ActivityTypeMapper;
 import com.agentworkbench.session.activity.SessionActivity;
@@ -85,13 +86,14 @@ public class WsStreamingEventListener implements AgentEventListener {
         String[] info = toolCallInfo.remove(toolCallId);
         String toolName = info != null ? info[0] : null;
         String arguments = info != null ? info[1] : null;
-        String summary = ToolResultSummarizer.summarize(toolName, arguments, result);
+        String publicResult = FileChangeDiffUtil.stripPrivateDiff(result, objectMapper);
+        String summary = ToolResultSummarizer.summarize(toolName, arguments, publicResult);
         log.debug("[WS] onToolCallResult id={} summary={}", toolCallId, summary);
-        boolean isError = isErrorResult(result);
+        boolean isError = isErrorResult(publicResult);
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("tool_call_id", toolCallId);
-        data.put("result", result);
+        data.put("result", publicResult);
         data.put("status", isError ? "error" : "success");
         if (summary != null) {
             data.put("summary", summary);
@@ -155,6 +157,15 @@ public class WsStreamingEventListener implements AgentEventListener {
                     changeData.put("type", fc.get("type").asText());
                     changeData.put("lines_added", fc.get("lines_added").asInt());
                     changeData.put("lines_deleted", fc.get("lines_deleted").asInt());
+                    JsonNode diff = resultNode.get(FileChangeDiffUtil.PRIVATE_DIFF_FIELD);
+                    if (diff != null && diff.isObject()) {
+                        putIfPresent(changeData, "diff_mode", diff, "diff_mode");
+                        putIfPresent(changeData, "before_content", diff, "before_content");
+                        putIfPresent(changeData, "after_content", diff, "after_content");
+                        putIfPresent(changeData, "patch_content", diff, "patch_content");
+                        putIfPresent(changeData, "patch_truncated", diff, "patch_truncated");
+                        putIfPresent(changeData, "diff_unavailable_reason", diff, "diff_unavailable_reason");
+                    }
                     changeData.put("tool_call_id", toolCallId);
                     send("file_change", changeData);
                 }
@@ -248,6 +259,16 @@ public class WsStreamingEventListener implements AgentEventListener {
             if (node.has("exit_code") && node.get("exit_code").asInt(-1) != 0) return true;
         } catch (Exception ignored) {}
         return false;
+    }
+
+    private void putIfPresent(Map<String, Object> target, String key, JsonNode source, String sourceKey) {
+        JsonNode node = source.get(sourceKey);
+        if (node == null || node.isNull()) return;
+        if (node.isBoolean()) {
+            target.put(key, node.asBoolean());
+        } else {
+            target.put(key, node.asText());
+        }
     }
 
     private String extractActivityTarget(String toolName, String arguments) {

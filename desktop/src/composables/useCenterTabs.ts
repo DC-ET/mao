@@ -1,5 +1,6 @@
 import { ref, computed, watch, type Ref } from 'vue'
 import type { Tab, SessionTabState } from '../types/file-browser'
+import type { FileChange } from '../types/chat'
 
 // Module-level singleton state
 const sessionTabsMap = ref<Map<string, SessionTabState>>(new Map())
@@ -47,7 +48,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   function openFileTab(filePath: string, title: string) {
     const state = getSessionState()
     // Check if tab already exists
-    const existing = state.tabs.find(t => t.filePath === filePath)
+    const existing = state.tabs.find(t => t.type === 'file' && t.filePath === filePath)
     if (existing) {
       state.activeTabId = existing.id
       return
@@ -55,6 +56,23 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     // Use relative path as id (from title which is the filename, but filePath for uniqueness)
     const id = 'file:' + filePath
     const newTab: Tab = { id, type: 'file', title, filePath }
+    state.tabs.push(newTab)
+    state.activeTabId = id
+  }
+
+  function openDiffTab(change: FileChange, title?: string) {
+    const state = getSessionState()
+    const filePath = change.path
+    const existing = state.tabs.find(t => t.type === 'diff' && t.filePath === filePath)
+    if (existing) {
+      existing.fileChange = { ...change }
+      state.activeTabId = existing.id
+      return
+    }
+    const fileName = filePath.split(/[/\\]/).pop() || filePath
+    const tabTitle = title || `${fileName} (变更)`
+    const id = 'diff:' + filePath
+    const newTab: Tab = { id, type: 'diff', title: tabTitle, filePath, fileChange: { ...change } }
     state.tabs.push(newTab)
     state.activeTabId = id
   }
@@ -106,6 +124,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     activeTabId,
     activeTab,
     openFileTab,
+    openDiffTab,
     closeTab,
     closeAllFileTabs,
     closeOtherTabs,

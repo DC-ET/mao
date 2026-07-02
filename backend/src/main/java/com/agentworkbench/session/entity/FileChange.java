@@ -24,6 +24,18 @@ public class FileChange {
 
     private Integer linesDeleted;
 
+    private String diffMode;
+
+    private String beforeContent;
+
+    private String afterContent;
+
+    private String patchContent;
+
+    private Boolean patchTruncated;
+
+    private String diffUnavailableReason;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

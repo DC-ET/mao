@@ -9,6 +9,7 @@ import com.agentworkbench.harness.llm.ChatUsage;
 import com.agentworkbench.harness.llm.LlmModelConfig;
 import com.agentworkbench.harness.skill.SkillLoader;
 import com.agentworkbench.harness.skill.SkillSyncService;
+import com.agentworkbench.harness.tool.FileChangeDiffUtil;
 import com.agentworkbench.harness.tool.ToolRegistry;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
@@ -362,6 +363,7 @@ public class HarnessService {
                 if (!hasFileChange || !success) continue;
                 JsonNode fc = resultNode.get("file_change");
                 String path = fc.get("path").asText();
+                JsonNode diff = resultNode.get(FileChangeDiffUtil.PRIVATE_DIFF_FIELD);
 
                 FileChange existing = merged.get(path);
                 if (existing != null) {
@@ -370,6 +372,7 @@ public class HarnessService {
                     if ("CREATED".equals(fc.get("type").asText())) {
                         existing.setChangeType("CREATED");
                     }
+                    mergeDiffPayload(existing, diff);
                 } else {
                     FileChange change = new FileChange();
                     change.setMessageId(messageId);
@@ -378,6 +381,7 @@ public class HarnessService {
                     change.setChangeType(fc.get("type").asText());
                     change.setLinesAdded(fc.get("lines_added").asInt());
                     change.setLinesDeleted(fc.get("lines_deleted").asInt());
+                    applyDiffPayload(change, diff);
                     merged.put(path, change);
                 }
             } catch (Exception e) {
@@ -392,6 +396,91 @@ public class HarnessService {
                 log.warn("Failed to save file change record for {}", fc.getFilePath(), e);
             }
         }
+    }
+
+    private void applyDiffPayload(FileChange change, JsonNode diff) {
+        if (diff == null || !diff.isObject()) {
+            return;
+        }
+        String mode = textOrNull(diff, "diff_mode");
+        change.setDiffMode(mode);
+        change.setBeforeContent(textOrNull(diff, "before_content"));
+        change.setAfterContent(textOrNull(diff, "after_content"));
+        change.setPatchContent(textOrNull(diff, "patch_content"));
+        change.setPatchTruncated(booleanOrFalse(diff, "patch_truncated"));
+        change.setDiffUnavailableReason(textOrNull(diff, "diff_unavailable_reason"));
+    }
+
+    private void mergeDiffPayload(FileChange existing, JsonNode diff) {
+        if (diff == null || !diff.isObject()) {
+            return;
+        }
+        String mode = textOrNull(diff, "diff_mode");
+        if (mode == null) {
+            return;
+        }
+
+        if (existing.getDiffMode() == null) {
+            applyDiffPayload(existing, diff);
+            return;
+        }
+
+        if ("SNAPSHOT".equals(existing.getDiffMode()) && "SNAPSHOT".equals(mode)) {
+            String after = textOrNull(diff, "after_content");
+            if (after != null) {
+                existing.setAfterContent(after);
+            }
+            existing.setPatchTruncated(Boolean.TRUE.equals(existing.getPatchTruncated())
+                    || booleanOrFalse(diff, "patch_truncated"));
+            return;
+        }
+
+        if ("PATCH".equals(existing.getDiffMode()) || "PATCH".equals(mode)) {
+            existing.setDiffMode("PATCH");
+            String patch = textOrNull(diff, "patch_content");
+            if (patch == null && "SNAPSHOT".equals(mode)) {
+                patch = "[snapshot diff omitted after patch-mode aggregation]\n";
+            }
+            String current = existing.getPatchContent();
+            if (current == null && existing.getBeforeContent() != null && existing.getAfterContent() != null) {
+                current = "[snapshot diff omitted before patch-mode aggregation]\n";
+            }
+            existing.setPatchContent(joinPatch(current, patch));
+            existing.setBeforeContent(null);
+            existing.setAfterContent(null);
+            existing.setPatchTruncated(Boolean.TRUE.equals(existing.getPatchTruncated())
+                    || booleanOrFalse(diff, "patch_truncated"));
+            return;
+        }
+
+        if ("UNSUPPORTED".equals(mode)) {
+            existing.setDiffMode("UNSUPPORTED");
+            existing.setBeforeContent(null);
+            existing.setAfterContent(null);
+            existing.setPatchContent(null);
+            existing.setPatchTruncated(false);
+            existing.setDiffUnavailableReason(textOrNull(diff, "diff_unavailable_reason"));
+        }
+    }
+
+    private String joinPatch(String current, String patch) {
+        if (current == null || current.isBlank()) {
+            return patch;
+        }
+        if (patch == null || patch.isBlank()) {
+            return current;
+        }
+        return current + "\n" + patch;
+    }
+
+    private String textOrNull(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value == null || value.isNull() ? null : value.asText();
+    }
+
+    private boolean booleanOrFalse(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value != null && !value.isNull() && value.asBoolean(false);
     }
 
     /**

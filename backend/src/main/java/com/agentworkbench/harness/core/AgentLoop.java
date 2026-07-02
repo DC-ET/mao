@@ -2,8 +2,10 @@ package com.agentworkbench.harness.core;
 
 import com.agentworkbench.harness.llm.*;
 import com.agentworkbench.harness.shell.ShellSessionManager;
+import com.agentworkbench.harness.tool.FileChangeDiffUtil;
 import com.agentworkbench.harness.tool.ToolDispatcher;
 import com.agentworkbench.session.util.ToolResultSummarizer;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -32,6 +34,7 @@ public class AgentLoop {
     private final PromptEngine promptEngine;
     private final ContextManager contextManager;
     private final ToolDispatcher toolDispatcher;
+    private final ObjectMapper objectMapper;
     private final BackgroundTaskManager backgroundTaskManager;
     private final ShellSessionManager shellSessionManager;
     private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
@@ -330,14 +333,15 @@ public class AgentLoop {
             // 检查取消标志
             if (cancelFlag != null && cancelFlag.get()) return;
             ChatRequest.ToolCall tc = pendingCalls.get(0);
-            String result = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
+            String rawResult = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
+            String sanitizedResult = sanitizeToolResult(rawResult);
             if (cancelFlag != null && cancelFlag.get()) return;
             tc.setSummary(ToolResultSummarizer.summarize(
-                    tc.getFunction().getName(), tc.getFunction().getArguments(), result));
-            toolResults.put(tc.getId(), result);
-            context.addToolResult(tc.getId(), result);
-            listener.onToolCallResult(tc.getId(), result);
-            pendingToolSaves.add(new ToolMessageSave(tc.getId(), result));
+                    tc.getFunction().getName(), tc.getFunction().getArguments(), sanitizedResult));
+            toolResults.put(tc.getId(), rawResult);
+            context.addToolResult(tc.getId(), sanitizedResult);
+            listener.onToolCallResult(tc.getId(), rawResult);
+            pendingToolSaves.add(new ToolMessageSave(tc.getId(), sanitizedResult));
         } else {
             List<CompletableFuture<Void>> futures = new ArrayList<>();
             String[] results = new String[pendingCalls.size()];
@@ -369,14 +373,20 @@ public class AgentLoop {
 
             for (int i = 0; i < pendingCalls.size(); i++) {
                 ChatRequest.ToolCall tc = pendingCalls.get(i);
+                String rawResult = results[i];
+                String sanitizedResult = sanitizeToolResult(rawResult);
                 tc.setSummary(ToolResultSummarizer.summarize(
-                        tc.getFunction().getName(), tc.getFunction().getArguments(), results[i]));
-                toolResults.put(tc.getId(), results[i]);
-                context.addToolResult(tc.getId(), results[i]);
-                listener.onToolCallResult(tc.getId(), results[i]);
-                pendingToolSaves.add(new ToolMessageSave(tc.getId(), results[i]));
+                        tc.getFunction().getName(), tc.getFunction().getArguments(), sanitizedResult));
+                toolResults.put(tc.getId(), rawResult);
+                context.addToolResult(tc.getId(), sanitizedResult);
+                listener.onToolCallResult(tc.getId(), rawResult);
+                pendingToolSaves.add(new ToolMessageSave(tc.getId(), sanitizedResult));
             }
         }
+    }
+
+    private String sanitizeToolResult(String result) {
+        return FileChangeDiffUtil.stripPrivateDiff(result, objectMapper);
     }
 
     private String dispatchTool(String toolName, String arguments, AgentExecutionContext context) {

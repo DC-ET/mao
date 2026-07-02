@@ -1,6 +1,7 @@
 package com.agentworkbench.harness.tool.impl;
 
 import com.agentworkbench.harness.safety.PathSandbox;
+import com.agentworkbench.harness.tool.FileChangeDiffUtil;
 import com.agentworkbench.harness.tool.Tool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -111,6 +112,8 @@ public class EditFileTool implements Tool {
                     "lines_added", linesAdded,
                     "lines_deleted", linesDeleted
             ));
+            result.put(FileChangeDiffUtil.PRIVATE_DIFF_FIELD,
+                    FileChangeDiffUtil.buildDiff(path, content, updated));
             return objectMapper.writeValueAsString(result);
         } catch (IOException e) {
             log.error("EditFileTool execution failed", e);

@@ -9,13 +9,14 @@
       @contextmenu.prevent="onContextMenu($event, tab)"
     >
       <el-icon v-if="tab.type === 'chat'" class="tab-icon"><ChatDotRound /></el-icon>
+      <el-icon v-else-if="tab.type === 'diff'" class="tab-icon"><DocumentCopy /></el-icon>
       <el-icon v-else class="tab-icon"><Document /></el-icon>
       <el-tooltip v-if="tab.filePath" :content="tab.filePath" placement="bottom" :show-after="300">
         <span class="tab-title">{{ tab.title }}</span>
       </el-tooltip>
       <span v-else class="tab-title">{{ tab.title }}</span>
       <button
-        v-if="tab.type === 'file'"
+        v-if="tab.type !== 'chat'"
         class="tab-close"
         @click.stop="$emit('close', tab.id)"
       >
@@ -47,7 +48,7 @@
 
 <script setup lang="ts">
 import { reactive, onMounted, onUnmounted } from 'vue'
-import { ChatDotRound, Document, Close } from '@element-plus/icons-vue'
+import { ChatDotRound, Document, DocumentCopy, Close } from '@element-plus/icons-vue'
 import type { Tab } from '../../types/file-browser'
 
 defineProps<{

@@ -15,7 +15,7 @@
         v-for="change in mergedChanges"
         :key="change.path"
         class="file-change-item"
-        @click="handleFileClick(change.path)"
+        @click="handleFileClick(change)"
       >
         <div class="file-path-row">
           <span class="file-type-badge" :class="change.type.toLowerCase()">
@@ -47,11 +47,11 @@ const props = defineProps<{
 
 const sessionStore = useSessionStore()
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId)
-const { openFileTab } = useCenterTabs(activeSessionIdRef)
+const { openDiffTab } = useCenterTabs(activeSessionIdRef)
 
 const isExpanded = ref(true)
 
-type MergedChange = { path: string; type: FileChange['type']; linesAdded: number; linesDeleted: number }
+type MergedChange = FileChange
 
 const mergedChanges = computed(() => {
   const byPath: Record<string, MergedChange> = {}
@@ -60,8 +60,10 @@ const mergedChanges = computed(() => {
     if (existing) {
       existing.linesAdded += c.linesAdded
       existing.linesDeleted += c.linesDeleted
+      if (c.type === 'CREATED') existing.type = 'CREATED'
+      mergeDiff(existing, c)
     } else {
-      byPath[c.path] = { path: c.path, type: c.type, linesAdded: c.linesAdded, linesDeleted: c.linesDeleted }
+      byPath[c.path] = { ...c }
     }
   }
   const result: MergedChange[] = []
@@ -71,7 +73,40 @@ const mergedChanges = computed(() => {
   return result
 })
 
-function handleFileClick(changePath: string) {
+function mergeDiff(target: FileChange, incoming: FileChange) {
+  if (!incoming.diffMode) return
+  if (!target.diffMode) {
+    target.diffMode = incoming.diffMode
+    target.beforeContent = incoming.beforeContent
+    target.afterContent = incoming.afterContent
+    target.patchContent = incoming.patchContent
+    target.patchTruncated = incoming.patchTruncated
+    target.diffUnavailableReason = incoming.diffUnavailableReason
+    return
+  }
+
+  if (target.diffMode === 'SNAPSHOT' && incoming.diffMode === 'SNAPSHOT') {
+    target.afterContent = incoming.afterContent
+    target.patchTruncated = Boolean(target.patchTruncated || incoming.patchTruncated)
+    return
+  }
+
+  if (target.diffMode === 'PATCH' || incoming.diffMode === 'PATCH') {
+    target.diffMode = 'PATCH'
+    target.patchContent = [target.patchContent, incoming.patchContent].filter(Boolean).join('\n')
+    target.beforeContent = undefined
+    target.afterContent = undefined
+    target.patchTruncated = Boolean(target.patchTruncated || incoming.patchTruncated)
+    return
+  }
+
+  if (incoming.diffMode === 'UNSUPPORTED') {
+    target.diffMode = 'UNSUPPORTED'
+    target.diffUnavailableReason = incoming.diffUnavailableReason
+  }
+}
+
+function handleFileClick(change: MergedChange) {
   const session = sessionStore.activeSession
   if (!session) return
 
@@ -81,10 +116,10 @@ function handleFileClick(changePath: string) {
   if (!canOpen) return
 
   const openPath = session.executionMode === 'CLOUD' || !session.workspace
-    ? changePath
-    : toRelativeWorkspacePath(session.workspace, changePath)
+    ? change.path
+    : toRelativeWorkspacePath(session.workspace, change.path)
   const title = openPath.split(/[/\\]/).pop() || openPath
-  openFileTab(openPath, title)
+  openDiffTab({ ...change, path: openPath }, `${title} (变更)`)
 }
 </script>
 

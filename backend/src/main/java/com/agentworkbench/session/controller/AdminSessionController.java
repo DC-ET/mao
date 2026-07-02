@@ -251,6 +251,12 @@ public class AdminSessionController {
         vo.setType(fc.getChangeType());
         vo.setLinesAdded(fc.getLinesAdded());
         vo.setLinesDeleted(fc.getLinesDeleted());
+        vo.setDiffMode(fc.getDiffMode());
+        vo.setBeforeContent(fc.getBeforeContent());
+        vo.setAfterContent(fc.getAfterContent());
+        vo.setPatchContent(fc.getPatchContent());
+        vo.setPatchTruncated(Boolean.TRUE.equals(fc.getPatchTruncated()));
+        vo.setDiffUnavailableReason(fc.getDiffUnavailableReason());
         return vo;
     }
 
@@ -305,6 +311,12 @@ public class AdminSessionController {
         private String type;
         private int linesAdded;
         private int linesDeleted;
+        private String diffMode;
+        private String beforeContent;
+        private String afterContent;
+        private String patchContent;
+        private boolean patchTruncated;
+        private String diffUnavailableReason;
     }
 
     @Data

@@ -1,6 +1,7 @@
 package com.agentworkbench.harness.tool.impl;
 
 import com.agentworkbench.harness.safety.PathSandbox;
+import com.agentworkbench.harness.tool.FileChangeDiffUtil;
 import com.agentworkbench.harness.tool.Tool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -74,9 +75,9 @@ public class WriteFileTool implements Tool {
 
             // Snapshot before write for change tracking
             boolean fileExisted = Files.exists(filePath);
-            int oldLineCount = 0;
+            String beforeContent = "";
             if (fileExisted) {
-                oldLineCount = (int) Files.lines(filePath).count();
+                beforeContent = Files.readString(filePath);
             }
 
             Path parent = filePath.getParent();
@@ -88,8 +89,11 @@ public class WriteFileTool implements Tool {
 
             // Compute file change stats
             int newLineCount = content.isEmpty() ? 0 : content.split("\n", -1).length;
-            int linesAdded = newLineCount;
-            int linesDeleted = fileExisted ? oldLineCount : 0;
+            FileChangeDiffUtil.LineDelta lineDelta = fileExisted
+                    ? FileChangeDiffUtil.computeLineDelta(beforeContent, content)
+                    : new FileChangeDiffUtil.LineDelta(newLineCount, 0);
+            int linesAdded = lineDelta.linesAdded();
+            int linesDeleted = lineDelta.linesDeleted();
             String changeType = fileExisted ? "MODIFIED" : "CREATED";
 
             Map<String, Object> result = new HashMap<>();
@@ -101,6 +105,8 @@ public class WriteFileTool implements Tool {
                     "lines_added", linesAdded,
                     "lines_deleted", linesDeleted
             ));
+            result.put(FileChangeDiffUtil.PRIVATE_DIFF_FIELD,
+                    FileChangeDiffUtil.buildDiff(path, beforeContent, content));
             return objectMapper.writeValueAsString(result);
         } catch (IOException e) {
             log.error("WriteFileTool execution failed", e);

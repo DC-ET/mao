@@ -16,6 +16,174 @@ const shellSessions = new Map()
 const terminalManager = new TerminalManager()
 terminalManager.setEnvProvider(buildShellEnv)
 
+const PRIVATE_DIFF_FIELD = 'file_change_diff'
+const SNAPSHOT_LIMIT_BYTES = 512 * 1024
+const PATCH_LIMIT_CHARS = 256 * 1024
+const PATCH_CONTEXT_LINES = 3
+const LCS_CELL_LIMIT = 2_000_000
+
+function utf8Bytes(text) {
+  return Buffer.byteLength(text || '', 'utf-8')
+}
+
+function isBinaryContent(text) {
+  const value = text || ''
+  const checkLen = Math.min(value.length, 8192)
+  for (let i = 0; i < checkLen; i++) {
+    if (value.charCodeAt(i) === 0) return true
+  }
+  return false
+}
+
+function splitLines(text) {
+  if (!text) return []
+  return text.split(/\r\n|\r|\n/)
+}
+
+function lcsLength(oldLines, oldStart, oldEnd, newLines, newStart, newEnd) {
+  const newLen = newEnd - newStart + 1
+  let previous = new Array(newLen + 1).fill(0)
+  let current = new Array(newLen + 1).fill(0)
+
+  for (let i = oldStart; i <= oldEnd; i++) {
+    for (let j = 1; j <= newLen; j++) {
+      if (oldLines[i] === newLines[newStart + j - 1]) {
+        current[j] = previous[j - 1] + 1
+      } else {
+        current[j] = Math.max(previous[j], current[j - 1])
+      }
+    }
+    const temp = previous
+    previous = current
+    current = temp
+    current.fill(0)
+  }
+  return previous[newLen]
+}
+
+function computeLineDelta(beforeContent, afterContent) {
+  const oldLines = splitLines(beforeContent)
+  const newLines = splitLines(afterContent)
+  if (oldLines.length === 0) return { linesAdded: newLines.length, linesDeleted: 0 }
+  if (newLines.length === 0) return { linesAdded: 0, linesDeleted: oldLines.length }
+
+  let prefix = 0
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) {
+    prefix++
+  }
+
+  let oldSuffix = oldLines.length - 1
+  let newSuffix = newLines.length - 1
+  while (oldSuffix >= prefix && newSuffix >= prefix && oldLines[oldSuffix] === newLines[newSuffix]) {
+    oldSuffix--
+    newSuffix--
+  }
+
+  const oldChanged = oldSuffix - prefix + 1
+  const newChanged = newSuffix - prefix + 1
+  if (oldChanged <= 0) return { linesAdded: Math.max(0, newChanged), linesDeleted: 0 }
+  if (newChanged <= 0) return { linesAdded: 0, linesDeleted: Math.max(0, oldChanged) }
+
+  if (oldChanged * newChanged > LCS_CELL_LIMIT) {
+    return { linesAdded: newChanged, linesDeleted: oldChanged }
+  }
+
+  const lcs = lcsLength(oldLines, prefix, oldSuffix, newLines, prefix, newSuffix)
+  return { linesAdded: newChanged - lcs, linesDeleted: oldChanged - lcs }
+}
+
+function appendBounded(parts, state, text) {
+  if (state.length >= PATCH_LIMIT_CHARS) {
+    state.truncated = true
+    return
+  }
+  const remaining = PATCH_LIMIT_CHARS - state.length
+  if (text.length <= remaining) {
+    parts.push(text)
+    state.length += text.length
+  } else {
+    parts.push(text.slice(0, remaining))
+    state.length += remaining
+    state.truncated = true
+  }
+}
+
+function buildUnifiedPatch(filePath, before, after) {
+  const oldLines = splitLines(before)
+  const newLines = splitLines(after)
+  let prefix = 0
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) {
+    prefix++
+  }
+
+  let oldSuffix = oldLines.length - 1
+  let newSuffix = newLines.length - 1
+  while (oldSuffix >= prefix && newSuffix >= prefix && oldLines[oldSuffix] === newLines[newSuffix]) {
+    oldSuffix--
+    newSuffix--
+  }
+
+  const contextStart = Math.max(0, prefix - PATCH_CONTEXT_LINES)
+  const oldContextEnd = Math.min(oldLines.length - 1, oldSuffix + PATCH_CONTEXT_LINES)
+  const newContextEnd = Math.min(newLines.length - 1, newSuffix + PATCH_CONTEXT_LINES)
+  const oldStartLine = contextStart + 1
+  const newStartLine = contextStart + 1
+  const oldCount = Math.max(0, oldContextEnd - contextStart + 1)
+  const newCount = Math.max(0, newContextEnd - contextStart + 1)
+
+  const parts = []
+  const state = { length: 0, truncated: false }
+  appendBounded(parts, state, `--- a/${filePath}\n`)
+  appendBounded(parts, state, `+++ b/${filePath}\n`)
+  appendBounded(parts, state, `@@ -${oldStartLine},${oldCount} +${newStartLine},${newCount} @@\n`)
+  for (let i = contextStart; i < prefix && i < oldLines.length; i++) {
+    appendBounded(parts, state, ` ${oldLines[i]}\n`)
+  }
+  for (let i = prefix; i <= oldSuffix && i < oldLines.length; i++) {
+    appendBounded(parts, state, `-${oldLines[i]}\n`)
+  }
+  for (let i = prefix; i <= newSuffix && i < newLines.length; i++) {
+    appendBounded(parts, state, `+${newLines[i]}\n`)
+  }
+  const sharedTailStart = Math.max(prefix, Math.max(oldSuffix + 1, newSuffix + 1))
+  const sharedTailEnd = Math.min(oldContextEnd, oldLines.length - 1)
+  for (let i = sharedTailStart; i <= sharedTailEnd; i++) {
+    appendBounded(parts, state, ` ${oldLines[i]}\n`)
+  }
+  let content = parts.join('')
+  if (state.truncated) {
+    const suffix = '\n...[diff truncated]\n'
+    content = content.slice(0, Math.max(0, PATCH_LIMIT_CHARS - suffix.length)) + suffix
+  }
+  return { content, truncated: state.truncated }
+}
+
+function buildFileChangeDiff(filePath, beforeContent, afterContent) {
+  const before = beforeContent || ''
+  const after = afterContent || ''
+  if (isBinaryContent(before) || isBinaryContent(after)) {
+    return {
+      diff_mode: 'UNSUPPORTED',
+      diff_unavailable_reason: '二进制文件无法生成文本 diff',
+      patch_truncated: false
+    }
+  }
+  if (utf8Bytes(before) <= SNAPSHOT_LIMIT_BYTES && utf8Bytes(after) <= SNAPSHOT_LIMIT_BYTES) {
+    return {
+      diff_mode: 'SNAPSHOT',
+      before_content: before,
+      after_content: after,
+      patch_truncated: false
+    }
+  }
+  const patch = buildUnifiedPatch(filePath, before, after)
+  return {
+    diff_mode: 'PATCH',
+    patch_content: patch.content,
+    patch_truncated: patch.truncated
+  }
+}
+
 /**
  * Get the full user PATH by executing a login shell.
  * macOS GUI apps don't load shell configs, so we need to manually resolve the PATH
@@ -558,10 +726,26 @@ ipcMain.handle('local-write-file', async (event, { path: filePath, content }) =>
   }
   try {
     const resolvedPath = resolveWorkspacePath(filePath)
+    const fileExisted = fs.existsSync(resolvedPath)
+    const beforeContent = fileExisted ? fs.readFileSync(resolvedPath, 'utf-8') : ''
     const dir = path.dirname(resolvedPath)
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(resolvedPath, content, 'utf-8')
-    return { success: true, bytes_written: Buffer.byteLength(content, 'utf-8') }
+    const linesAdded = content.length === 0 ? 0 : content.split('\n').length
+    const lineDelta = fileExisted
+      ? computeLineDelta(beforeContent, content)
+      : { linesAdded, linesDeleted: 0 }
+    return {
+      success: true,
+      bytes_written: Buffer.byteLength(content, 'utf-8'),
+      file_change: {
+        path: filePath,
+        type: fileExisted ? 'MODIFIED' : 'CREATED',
+        lines_added: lineDelta.linesAdded,
+        lines_deleted: lineDelta.linesDeleted
+      },
+      [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(filePath, beforeContent, content)
+    }
   } catch (e) {
     return { error: e.message }
   }
@@ -581,7 +765,19 @@ ipcMain.handle('local-edit-file', async (event, { path: filePath, old_string, ne
     }
     const updated = content.replaceAll(old_string, new_string)
     fs.writeFileSync(resolvedPath, updated, 'utf-8')
-    return { success: true, replacements: count }
+    const oldLines = old_string.split('\n').length
+    const newLines = new_string.split('\n').length
+    return {
+      success: true,
+      replacements: count,
+      file_change: {
+        path: filePath,
+        type: 'MODIFIED',
+        lines_added: newLines * count,
+        lines_deleted: oldLines * count
+      },
+      [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(filePath, content, updated)
+    }
   } catch (e) {
     return { error: e.message }
   }
@@ -980,26 +1176,28 @@ async function handleLocalWriteFile(args, workspace, sessionId, needApproval) {
     const resolvedPath = resolveWorkspacePath(args.path, workspace)
     // Snapshot before write for change tracking
     const fileExisted = fs.existsSync(resolvedPath)
-    let oldLineCount = 0
+    let beforeContent = ''
     if (fileExisted) {
-      oldLineCount = fs.readFileSync(resolvedPath, 'utf-8').split('\n').length
+      beforeContent = fs.readFileSync(resolvedPath, 'utf-8')
     }
     const dir = path.dirname(resolvedPath)
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(resolvedPath, args.content, 'utf-8')
     // Compute file change stats
     const newLineCount = args.content.length === 0 ? 0 : args.content.split('\n').length
-    const linesAdded = newLineCount
-    const linesDeleted = fileExisted ? oldLineCount : 0
+    const lineDelta = fileExisted
+      ? computeLineDelta(beforeContent, args.content)
+      : { linesAdded: newLineCount, linesDeleted: 0 }
     return {
       success: true,
       bytes_written: Buffer.byteLength(args.content, 'utf-8'),
       file_change: {
         path: args.path,
         type: fileExisted ? 'MODIFIED' : 'CREATED',
-        lines_added: linesAdded,
-        lines_deleted: linesDeleted
-      }
+        lines_added: lineDelta.linesAdded,
+        lines_deleted: lineDelta.linesDeleted
+      },
+      [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(args.path, beforeContent, args.content)
     }
   } catch (e) {
     return { error: e.message }
@@ -1018,7 +1216,8 @@ async function handleLocalEditFile(args, workspace, sessionId, needApproval) {
     const content = fs.readFileSync(resolvedPath, 'utf-8')
     const count = content.split(args.old_string).length - 1
     if (count === 0) return { success: false, error: 'old_string not found in file' }
-    fs.writeFileSync(resolvedPath, content.replaceAll(args.old_string, args.new_string), 'utf-8')
+    const updated = content.replaceAll(args.old_string, args.new_string)
+    fs.writeFileSync(resolvedPath, updated, 'utf-8')
     // Compute file change stats
     const oldLines = args.old_string.split('\n').length
     const newLines = args.new_string.split('\n').length
@@ -1032,7 +1231,8 @@ async function handleLocalEditFile(args, workspace, sessionId, needApproval) {
         type: 'MODIFIED',
         lines_added: linesAdded,
         lines_deleted: linesDeleted
-      }
+      },
+      [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(args.path, content, updated)
     }
   } catch (e) {
     return { error: e.message }

@@ -621,10 +621,44 @@ export const useSessionStore = defineStore('session', () => {
       existing.linesAdded += change.linesAdded
       existing.linesDeleted += change.linesDeleted
       if (change.type === 'CREATED') existing.type = 'CREATED'
+      mergeFileChangeDiff(existing, change)
     } else {
       changes.push({ ...change })
     }
     sessionFileChanges.value.set(key, [...changes])
+  }
+
+  function mergeFileChangeDiff(target: FileChange, incoming: FileChange) {
+    if (!incoming.diffMode) return
+    if (!target.diffMode) {
+      target.diffMode = incoming.diffMode
+      target.beforeContent = incoming.beforeContent
+      target.afterContent = incoming.afterContent
+      target.patchContent = incoming.patchContent
+      target.patchTruncated = incoming.patchTruncated
+      target.diffUnavailableReason = incoming.diffUnavailableReason
+      return
+    }
+
+    if (target.diffMode === 'SNAPSHOT' && incoming.diffMode === 'SNAPSHOT') {
+      target.afterContent = incoming.afterContent
+      target.patchTruncated = Boolean(target.patchTruncated || incoming.patchTruncated)
+      return
+    }
+
+    if (target.diffMode === 'PATCH' || incoming.diffMode === 'PATCH') {
+      target.diffMode = 'PATCH'
+      target.patchContent = [target.patchContent, incoming.patchContent].filter(Boolean).join('\n')
+      target.beforeContent = undefined
+      target.afterContent = undefined
+      target.patchTruncated = Boolean(target.patchTruncated || incoming.patchTruncated)
+      return
+    }
+
+    if (incoming.diffMode === 'UNSUPPORTED') {
+      target.diffMode = 'UNSUPPORTED'
+      target.diffUnavailableReason = incoming.diffUnavailableReason
+    }
   }
 
   function setFileChanges(sessionId: string, changes: FileChange[]) {
