@@ -72,6 +72,7 @@ const sessionIdParam = computed(() => route.params.sessionId as string)
 const agentId = ref('')
 const executionMode = ref('CLOUD')
 const initialLoading = ref(true)
+const NEW_TASK_QUERY = 'newTask'
 
 // Task state
 const currentPhase = ref<TaskPhase>('IDLE')
@@ -86,6 +87,7 @@ const newTaskCloudProjectKey = ref('')
 const newTaskModelId = ref<number | undefined>()
 const lastViewedSession = ref<{ agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number } | null>(null)
 const isNewTaskMode = computed(() => !sessionIdParam.value && !initialLoading.value)
+const isExplicitNewTaskRoute = computed(() => !sessionIdParam.value && getQueryString(NEW_TASK_QUERY) === '1')
 
 // Provide shared refs for ChatPanel
 provide('agentId', agentId)
@@ -190,6 +192,126 @@ function handleRename(title: string) {
   }
 }
 
+type NewTaskDefaults = {
+  agentId?: string | null
+  executionMode?: string
+  workspace?: string
+  cloudProjectKey?: string
+  permissionLevel?: string
+  modelId?: number
+}
+
+function getQueryString(key: string): string {
+  const value = route.query[key]
+  if (Array.isArray(value)) return value[0] ?? ''
+  return value ?? ''
+}
+
+function normalizeNewTaskMode(mode?: string): 'CLOUD' | 'LOCAL' {
+  return mode === 'LOCAL' ? 'LOCAL' : 'CLOUD'
+}
+
+function getCurrentNewTaskDefaults(): NewTaskDefaults | null {
+  const active = sessionStore.activeSession
+    || (sessionIdParam.value ? sessionStore.sessions.find(s => String(s.id) === String(sessionIdParam.value)) : null)
+
+  if (active) {
+    return {
+      agentId: active.agentId ? String(active.agentId) : null,
+      executionMode: active.executionMode || 'CLOUD',
+      workspace: active.executionMode === 'LOCAL' ? active.workspace : undefined,
+      cloudProjectKey: active.executionMode === 'CLOUD' && active.workspace?.includes('/projects/') ? active.projectKey : undefined,
+      permissionLevel: active.permissionLevel,
+      modelId: active.modelId
+    }
+  }
+
+  return lastViewedSession.value
+}
+
+function getRouteNewTaskDefaults(): NewTaskDefaults {
+  const modelId = Number(getQueryString('modelId'))
+  return {
+    agentId: getQueryString('agentId') || null,
+    executionMode: getQueryString('mode') || 'CLOUD',
+    workspace: getQueryString('workspace') || '',
+    cloudProjectKey: getQueryString('cloudProjectKey') || '',
+    permissionLevel: getQueryString('permissionLevel') || 'READ_ONLY',
+    modelId: Number.isFinite(modelId) && modelId > 0 ? modelId : undefined
+  }
+}
+
+function buildNewTaskRoute(defaults?: NewTaskDefaults | null) {
+  const query: Record<string, string> = { [NEW_TASK_QUERY]: '1' }
+  if (defaults?.agentId) query.agentId = String(defaults.agentId)
+  if (defaults?.executionMode) query.mode = normalizeNewTaskMode(defaults.executionMode)
+  if (defaults?.workspace) query.workspace = defaults.workspace
+  if (defaults?.cloudProjectKey) query.cloudProjectKey = defaults.cloudProjectKey
+  if (defaults?.permissionLevel) query.permissionLevel = defaults.permissionLevel
+  if (defaults?.modelId) query.modelId = String(defaults.modelId)
+  return { name: 'Home', query }
+}
+
+function isSameNewTaskRoute(target: ReturnType<typeof buildNewTaskRoute>) {
+  if (route.name !== target.name) return false
+  return Object.entries(target.query).every(([key, value]) => getQueryString(key) === value)
+}
+
+let newTaskModeGeneration = 0
+
+async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
+  const generation = ++newTaskModeGeneration
+  const mode = normalizeNewTaskMode(defaults?.executionMode)
+  newTaskAgentId.value = defaults?.agentId ? String(defaults.agentId) : null
+  newTaskMode.value = mode
+  newTaskWorkspace.value = mode === 'LOCAL' ? (defaults?.workspace || '') : ''
+  newTaskCloudProjectKey.value = mode === 'CLOUD' ? (defaults?.cloudProjectKey || '') : ''
+  permissionLevel.value = defaults?.permissionLevel || 'READ_ONLY'
+  newTaskModelId.value = defaults?.modelId
+
+  initialLoading.value = false
+  executionMode.value = mode
+  currentPhase.value = 'IDLE'
+  projectKey.value = defaults?.cloudProjectKey || ''
+  sessionStore.setActiveSession(null)
+  workspace.value = newTaskWorkspace.value
+  agentName.value = ''
+  chatTodos.value = []
+  chatContextWindow.value = null
+  chatSending.value = false
+  chatPendingApprovals.value = []
+
+  if (!newTaskModelId.value) {
+    await loadDefaultModel()
+    if (generation !== newTaskModeGeneration) return
+  }
+  if (generation !== newTaskModeGeneration) return
+  await nextTick()
+  chatFocusInput.value?.()
+}
+
+async function applyExplicitNewTaskRoute() {
+  if (!isExplicitNewTaskRoute.value) return
+  await enterNewTaskMode(getRouteNewTaskDefaults())
+}
+
+async function navigateToNewTask(defaults?: NewTaskDefaults | null) {
+  const target = buildNewTaskRoute(defaults)
+  if (isSameNewTaskRoute(target)) {
+    await enterNewTaskMode(defaults ?? getRouteNewTaskDefaults())
+  } else {
+    await router.push(target)
+  }
+}
+
+function getRouteWatchState() {
+  return {
+    sessionId: sessionIdParam.value || '',
+    explicitNewTask: isExplicitNewTaskRoute.value,
+    newTaskSignature: isExplicitNewTaskRoute.value ? JSON.stringify(getRouteNewTaskDefaults()) : ''
+  }
+}
+
 async function loadSession(sid: string) {
   newTaskAgentId.value = null
   sessionStore.setActiveSession(sid)
@@ -236,28 +358,11 @@ async function navigateToLatestSession() {
 }
 
 async function handleNewTask() {
-  // ChatPanel handles newSession
-  await router.push('/')
-  initialLoading.value = false
-  if (!newTaskModelId.value) {
-    await loadDefaultModel()
-  }
+  await navigateToNewTask(getCurrentNewTaskDefaults())
 }
 
 async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number }) {
-  newTaskAgentId.value = payload.agentId ? String(payload.agentId) : null
-  newTaskMode.value = payload.executionMode as 'CLOUD' | 'LOCAL'
-  newTaskWorkspace.value = payload.workspace || ''
-  newTaskCloudProjectKey.value = payload.cloudProjectKey || ''
-  permissionLevel.value = payload.permissionLevel || 'READ_ONLY'
-  if (payload.modelId) {
-    newTaskModelId.value = payload.modelId
-  }
-  await router.push('/')
-  initialLoading.value = false
-  if (!newTaskModelId.value) {
-    await loadDefaultModel()
-  }
+  await navigateToNewTask(payload)
 }
 
 async function loadDefaultModel() {
@@ -288,25 +393,49 @@ async function loadTaskIndex() {
   }
 }
 
-// Session switching
-watch(sessionIdParam, (newSid, oldSid) => {
-  if (newSid && newSid !== oldSid) {
-    loadSession(newSid)
+async function resolveInitialRoute() {
+  const sid = sessionIdParam.value
+  if (sid) {
+    await loadSession(sid)
+  } else if (isExplicitNewTaskRoute.value) {
+    await enterNewTaskMode(getRouteNewTaskDefaults())
+  } else {
+    await navigateToLatestSession()
+    if (!sessionIdParam.value) {
+      initialLoading.value = false
+    }
+  }
+}
+
+// Session switching — single watcher avoids duplicate enterNewTaskMode on route transitions
+watch(getRouteWatchState, async (state, prev) => {
+  const prevState = prev ?? { sessionId: '', explicitNewTask: false, newTaskSignature: '' }
+
+  if (state.sessionId && state.sessionId !== prevState.sessionId) {
+    await loadSession(state.sessionId)
     nextTick(() => chatFocusInput.value?.())
-  } else if (!newSid && oldSid) {
-    initialLoading.value = false
+    return
+  }
+
+  if (!state.sessionId && prevState.sessionId) {
     sessionStore.setActiveSession(null)
+    if (state.explicitNewTask) {
+      await applyExplicitNewTaskRoute()
+      return
+    }
+
+    initialLoading.value = false
     const isNewTaskFromGroup = !!newTaskAgentId.value
     if (!isNewTaskFromGroup) {
-      const prev = lastViewedSession.value
-      if (prev) {
-        newTaskAgentId.value = prev.agentId ? String(prev.agentId) : null
-        newTaskMode.value = (prev.executionMode as 'CLOUD' | 'LOCAL') || 'CLOUD'
-        newTaskWorkspace.value = prev.executionMode === 'LOCAL' ? (prev.workspace || '') : ''
-        newTaskCloudProjectKey.value = prev.cloudProjectKey || ''
-        permissionLevel.value = prev.permissionLevel || 'READ_ONLY'
-        if (prev.modelId) {
-          newTaskModelId.value = prev.modelId
+      const previous = lastViewedSession.value
+      if (previous) {
+        newTaskAgentId.value = previous.agentId ? String(previous.agentId) : null
+        newTaskMode.value = (previous.executionMode as 'CLOUD' | 'LOCAL') || 'CLOUD'
+        newTaskWorkspace.value = previous.executionMode === 'LOCAL' ? (previous.workspace || '') : ''
+        newTaskCloudProjectKey.value = previous.cloudProjectKey || ''
+        permissionLevel.value = previous.permissionLevel || 'READ_ONLY'
+        if (previous.modelId) {
+          newTaskModelId.value = previous.modelId
         } else {
           loadDefaultModel()
         }
@@ -319,6 +448,11 @@ watch(sessionIdParam, (newSid, oldSid) => {
         navigateToLatestSession()
       }
     }
+    return
+  }
+
+  if (!state.sessionId && state.explicitNewTask && state.newTaskSignature !== prevState.newTaskSignature) {
+    await applyExplicitNewTaskRoute()
   }
 })
 
@@ -330,25 +464,12 @@ watch(loginVersion, async () => {
     // WS connect failed — data load can still proceed; subscribe retried on reconnect
   }
   if (!await loadTaskIndex()) return
-  const sid = sessionIdParam.value
-  if (sid) {
-    await loadSession(sid)
-  } else {
-    await navigateToLatestSession()
-  }
+  await resolveInitialRoute()
 })
 
 onMounted(async () => {
   if (!await loadTaskIndex()) return
-  const sid = sessionIdParam.value
-  if (sid) {
-    await loadSession(sid)
-  } else {
-    await navigateToLatestSession()
-    if (!sessionIdParam.value) {
-      initialLoading.value = false
-    }
-  }
+  await resolveInitialRoute()
 })
 
 onUnmounted(() => {

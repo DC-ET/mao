@@ -291,6 +291,16 @@ watch(() => sessionStore.activeSessionId, (newSid) => {
   })
 })
 
+watch(isNewTaskMode, (enabled) => {
+  if (!enabled) return
+  if (sessionId.value) {
+    cleanup()
+    newSession()
+    syncToTaskView()
+  }
+  nextTick(() => chatInputRef.value?.focusInput())
+})
+
 const currentSession = computed(() => sessionStore.activeSession)
 
 const activePendingApprovals = computed(() =>

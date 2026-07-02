@@ -390,7 +390,7 @@ async function confirmDelete(e: MouseEvent, sessionId: string) {
     sessionStore.setActiveSession(next.id)
     router.push(`/tasks/${next.id}`)
   } else if (wasActive) {
-    router.push('/tasks')
+    router.push({ name: 'Home', query: { newTask: '1' } })
   }
 }
 
