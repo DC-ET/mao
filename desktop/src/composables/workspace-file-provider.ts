@@ -1,5 +1,6 @@
 import { computed, type Ref } from 'vue'
 import { api } from '../api'
+import { resolveWorkspaceFilePath } from '../utils/workspace-path'
 
 export interface DirectoryEntry {
   name: string
@@ -27,28 +28,23 @@ export interface WorkspaceFileProvider {
   getAbsolutePath?(relativePath: string): string
 }
 
-function joinWorkspacePath(workspace: string, relativePath: string): string {
-  const sep = workspace.includes('\\') ? '\\' : '/'
-  return workspace.replace(/[\\/]+$/, '') + sep + relativePath
-}
-
 export function createLocalProvider(workspace: string): WorkspaceFileProvider {
   return {
     async listDirectory(relativeDir: string) {
       const absoluteDir = !relativeDir || relativeDir === '.'
         ? workspace
-        : joinWorkspacePath(workspace, relativeDir)
+        : resolveWorkspaceFilePath(workspace, relativeDir)
       return window.electronAPI.listDirectory(absoluteDir, workspace)
     },
     async readFile(relativePath: string, opts?: { offset?: number; limit?: number }) {
       return window.electronAPI.localReadFile({
-        path: joinWorkspacePath(workspace, relativePath),
+        path: resolveWorkspaceFilePath(workspace, relativePath),
         offset: opts?.offset ?? 0,
         limit: opts?.limit ?? 5000,
       })
     },
     getAbsolutePath(relativePath: string) {
-      return joinWorkspacePath(workspace, relativePath)
+      return resolveWorkspaceFilePath(workspace, relativePath)
     },
   }
 }

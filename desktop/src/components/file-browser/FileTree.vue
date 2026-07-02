@@ -52,6 +52,7 @@ import type { WorkspaceFileProvider } from '../../composables/workspace-file-pro
 import FileTreeNode from './FileTreeNode.vue'
 import FileTreeContextMenu from './FileTreeContextMenu.vue'
 import type { FileNode } from '../../types/file-browser'
+import { resolveWorkspaceFilePath } from '../../utils/workspace-path'
 
 const props = defineProps<{
   workspace?: string
@@ -102,8 +103,7 @@ function getAbsolutePath(nodePath: string): string {
     return props.provider.getAbsolutePath(nodePath)
   }
   if (!props.workspace) return nodePath
-  const sep = props.workspace.includes('\\') ? '\\' : '/'
-  return props.workspace.replace(/[\\/]+$/, '') + sep + nodePath
+  return resolveWorkspaceFilePath(props.workspace, nodePath)
 }
 
 function handleCopyAbsolute() {

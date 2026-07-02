@@ -38,6 +38,7 @@ import { Document, ArrowDown } from '@element-plus/icons-vue'
 import type { FileChange } from '../../types/chat'
 import { useSessionStore } from '../../stores/session'
 import { useCenterTabs } from '../../composables/useCenterTabs'
+import { toRelativeWorkspacePath } from '../../utils/workspace-path'
 
 const props = defineProps<{
   changes: FileChange[]
@@ -79,8 +80,11 @@ function handleFileClick(changePath: string) {
     : !!session.workspace
   if (!canOpen) return
 
-  const title = changePath.split(/[/\\]/).pop() || changePath
-  openFileTab(changePath, title)
+  const openPath = session.executionMode === 'CLOUD' || !session.workspace
+    ? changePath
+    : toRelativeWorkspacePath(session.workspace, changePath)
+  const title = openPath.split(/[/\\]/).pop() || openPath
+  openFileTab(openPath, title)
 }
 </script>
 
