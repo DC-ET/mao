@@ -328,13 +328,7 @@ function loadMainContent() {
     return
   }
 
-  const localIndex = join(__dirname, '../dist/index.html')
-  if (fs.existsSync(localIndex)) {
-    mainWindow.loadFile(localIndex)
-    return
-  }
-
-  // 兜底：本地 dist 不存在时回退远程页面
+  // 生产环境加载远程 SPA（Nginx 托管），Electron 仅提供原生壳与本地工具能力
   mainWindow.loadURL('https://mao.etarch.cn')
 }
 
