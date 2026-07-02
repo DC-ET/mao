@@ -193,6 +193,7 @@ async function handleCommand(command: string) {
   align-items: center;
   gap: 5px;
   -webkit-app-region: no-drag;
+  margin-right: 5px;
 }
 
 .nav-links {
