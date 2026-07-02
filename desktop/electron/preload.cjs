@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  // Auth token persistence (file:// localStorage does not survive restarts)
+  // Auth token persistence (Electron userData/auth.json, all load protocols)
   getAuthTokens: () => ipcRenderer.invoke('auth-get-tokens'),
   setAuthTokens: (tokens) => ipcRenderer.invoke('auth-set-tokens', tokens),
   clearAuthTokens: () => ipcRenderer.invoke('auth-clear-tokens'),

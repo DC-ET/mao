@@ -1,13 +1,13 @@
 /**
  * Auth token storage.
- * Electron 打包后从 file:// 加载，localStorage 重启后不持久化，改由主进程写入 userData。
+ * Electron 环境（含 dev:electron 的 http://localhost）统一由主进程写入 userData/auth.json，
+ * 避免依赖 localStorage（file:// 不持久化，dev 与 prod 加载协议不一致）。
  */
 let tokenCache: string | null = null
 let refreshTokenCache: string | null = null
 
 function useElectronAuthStore(): boolean {
   return typeof window !== 'undefined'
-    && window.location.protocol === 'file:'
     && !!window.electronAPI?.getAuthTokens
 }
 
