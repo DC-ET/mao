@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 
-function isMobileDevice(): boolean {
+export function isMobileDevice(): boolean {
   return window.innerWidth <= 768
 }
 

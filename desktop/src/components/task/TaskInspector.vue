@@ -1,7 +1,7 @@
 <template>
-  <div class="task-inspector" :class="{ collapsed: panelCollapsed }" :style="panelStyle">
+  <div ref="panelEl" class="task-inspector" :class="{ collapsed: panelCollapsed }" :style="panelStyle">
     <template v-if="!panelCollapsed">
-    <div class="resize-handle" @mousedown="onResizeStart"></div>
+    <div class="resize-handle" @mousedown="onResizeStart" @touchstart.prevent="onResizeStart"></div>
 
     <!-- Tab bar — only when there are 2 tabs -->
     <div v-if="showFileTreeTab" class="inspector-tabs">
@@ -222,8 +222,9 @@ const contextDisplay = computed(() => {
 })
 
 // Panel resize
+const panelEl = ref<HTMLElement | null>(null)
 const panelWidth = ref<number | null>(null)
-const MIN_WIDTH = 240
+const MIN_WIDTH = 120
 const MAX_WIDTH = 480
 
 const panelStyle = computed(() => {
@@ -233,25 +234,33 @@ const panelStyle = computed(() => {
   return {}
 })
 
-function onResizeStart(e: MouseEvent) {
-  e.preventDefault()
-  const startX = e.clientX
-  const startWidth = panelWidth.value ?? 280
+function getClientX(e: MouseEvent | TouchEvent): number {
+  return 'touches' in e ? e.touches[0].clientX : e.clientX
+}
 
-  function onMouseMove(ev: MouseEvent) {
-    const newWidth = startWidth - (ev.clientX - startX)
+function onResizeStart(e: MouseEvent | TouchEvent) {
+  e.preventDefault()
+  const startX = getClientX(e)
+  const startWidth = panelWidth.value ?? (panelEl.value?.offsetWidth ?? 280)
+
+  function onMove(ev: MouseEvent | TouchEvent) {
+    const newWidth = startWidth - (getClientX(ev) - startX)
     panelWidth.value = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newWidth))
   }
 
-  function onMouseUp() {
-    document.removeEventListener('mousemove', onMouseMove)
-    document.removeEventListener('mouseup', onMouseUp)
+  function onEnd() {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onEnd)
+    document.removeEventListener('touchmove', onMove)
+    document.removeEventListener('touchend', onEnd)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
   }
 
-  document.addEventListener('mousemove', onMouseMove)
-  document.addEventListener('mouseup', onMouseUp)
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onEnd)
+  document.addEventListener('touchmove', onMove)
+  document.addEventListener('touchend', onEnd)
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
 }
@@ -338,12 +347,47 @@ function onResizeStart(e: MouseEvent) {
   height: 100%;
   cursor: col-resize;
   z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.resize-handle::before {
+  content: '';
+  width: 2px;
+  height: 32px;
+  border-radius: 1px;
+  background: var(--aw-hairline);
+  transition: background 0.15s, height 0.15s;
 }
 
 .resize-handle:hover,
 .resize-handle:active {
+  background: rgba(0, 102, 204, 0.06);
+}
+
+.resize-handle:hover::before,
+.resize-handle:active::before {
   background: var(--aw-primary);
-  opacity: 0.3;
+  height: 48px;
+}
+
+/* Wider touch target on mobile */
+@media (max-width: 768px) {
+  .resize-handle {
+    width: 20px;
+    left: -10px;
+  }
+
+  .resize-handle::before {
+    width: 3px;
+    height: 40px;
+  }
+
+  .resize-handle:hover::before,
+  .resize-handle:active::before {
+    height: 56px;
+  }
 }
 
 /* Task info */

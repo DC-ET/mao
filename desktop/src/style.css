@@ -99,6 +99,7 @@
 @media (max-width: 768px) {
   :root {
     --aw-session-panel-width: 140px;
+    --aw-inspector-width: 140px;
   }
 }
 

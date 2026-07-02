@@ -2,7 +2,7 @@
   <nav class="top-nav">
     <div class="nav-left">
       <div class="nav-left-actions">
-        <el-tooltip content="左侧面板" :show-after="100" placement="bottom">
+        <el-tooltip content="左侧面板" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
           <div class="theme-toggle" :class="{ active: !leftCollapsed }" @click="toggleLeft">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
@@ -12,31 +12,31 @@
       </div>
     </div>
     <div class="nav-right">
-      <el-tooltip content="右侧面板" :show-after="100" placement="bottom">
+      <el-tooltip content="右侧面板" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" :class="{ active: !rightCollapsed }" @click="toggleRight">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
           </svg>
         </div>
       </el-tooltip>
-      <el-tooltip content="终端 (Ctrl+`)" :show-after="100" placement="bottom">
+      <el-tooltip content="终端 (Ctrl+`)" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" :class="{ active: terminalOpen }" @click="toggleTerminal">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
           </svg>
         </div>
       </el-tooltip>
-      <el-tooltip content="我的技能/Skills" :show-after="100" placement="bottom">
+      <el-tooltip content="我的技能/Skills" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" @click="toggleSkillDrawer()">
           <el-icon><MagicStick /></el-icon>
         </div>
       </el-tooltip>
-      <el-tooltip content="我的指令/Commands" :show-after="100" placement="bottom">
+      <el-tooltip content="我的指令/Commands" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" @click="toggleCommandDrawer()">
           <el-icon><Flag /></el-icon>
         </div>
       </el-tooltip>
-      <el-tooltip v-if="isElectron" content="开发者工具" :show-after="100" placement="bottom">
+      <el-tooltip v-if="isElectron" content="开发者工具" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" @click="toggleDevTools">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -46,7 +46,7 @@
           </svg>
         </div>
       </el-tooltip>
-      <el-tooltip :content="hasUpdate ? '发现新版本，点击更新' : '刷新页面'" :show-after="100" placement="bottom">
+      <el-tooltip :content="hasUpdate ? '发现新版本，点击更新' : '刷新页面'" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div
           class="theme-toggle refresh-btn"
           :class="{ 'has-update': hasUpdate }"
@@ -56,7 +56,7 @@
           <span v-if="hasUpdate" class="update-dot" />
         </div>
       </el-tooltip>
-      <el-tooltip :content="isDark ? '切换为浅色' : '切换为深色'" :show-after="100" placement="bottom">
+      <el-tooltip :content="isDark ? '切换为浅色' : '切换为深色'" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" @click="toggleTheme">
           <el-icon :size="16">
             <Moon v-if="!isDark" />
@@ -94,7 +94,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
 import { useTerminal } from '../../composables/useTerminal'
-import { usePanelLayout } from '../../composables/usePanelLayout'
+import { usePanelLayout, isMobileDevice } from '../../composables/usePanelLayout'
 import { useSkillDrawer } from '../../composables/useSkillDrawer'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useLoginDialog } from '../../composables/useLoginDialog'
