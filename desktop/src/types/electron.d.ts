@@ -96,7 +96,6 @@ interface ElectronAPI {
   minimizeWindow(): Promise<void>
   maximizeWindow(): Promise<void>
   closeWindow(): Promise<void>
-  toggleDevTools(): Promise<void>
   openExternal(url: string): Promise<void>
   selectDirectory(): Promise<string | null>
   openFolder(folderPath: string): Promise<void>

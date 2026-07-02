@@ -16,7 +16,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-maximize'),
   closeWindow: () => ipcRenderer.invoke('window-close'),
-  toggleDevTools: () => ipcRenderer.invoke('toggle-devtools'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath),
