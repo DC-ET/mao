@@ -36,11 +36,19 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="240" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleTest(row)">测试</el-button>
             <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
             <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
+            <el-button
+              :type="row.status === 1 ? 'danger' : 'success'"
+              link
+              size="small"
+              @click="handleToggleStatus(row)"
+            >
+              {{ row.status === 1 ? '停用' : '启用' }}
+            </el-button>
             <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -151,6 +159,21 @@ async function handleDelete(row: any) {
     fetchModels()
   } catch {
     // Cancelled
+  }
+}
+
+async function handleToggleStatus(row: any) {
+  const enable = row.status !== 1
+  const actionText = enable ? '启用' : '停用'
+  try {
+    await ElMessageBox.confirm(`确定要${actionText}模型 \"${row.name}\" 吗？`, '确认', {
+      type: enable ? 'success' : 'warning'
+    })
+    await api.patch(`/models/${row.id}/status`, { status: enable ? 1 : 0 })
+    ElMessage.success(`${actionText}成功`)
+    fetchModels()
+  } catch {
+    // Cancelled or error handled by interceptor
   }
 }
 

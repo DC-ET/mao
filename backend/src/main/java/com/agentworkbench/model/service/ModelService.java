@@ -32,7 +32,7 @@ public class ModelService {
 
     public List<LlmModel> listActiveModels() {
         return llmModelMapper.selectList(
-                new QueryWrapper<LlmModel>().eq("status", 1).orderByDesc("is_default").orderByAsc("id"));
+                new QueryWrapper<LlmModel>().eq("status", 1).orderByAsc("model_id"));
     }
 
     public LlmModel getDefaultModel() {
@@ -100,6 +100,32 @@ public class ModelService {
                         .set("model_id", defaultModelId));
 
         llmModelMapper.deleteById(id);
+    }
+
+    public void updateStatus(Long id, Integer status) {
+        if (status == null || (status != 0 && status != 1)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID.getCode(), "状态值只能是 0 或 1");
+        }
+        LlmModel model = getModel(id);
+
+        // 如果要停用默认模型，需要确保还有其他启用的模型可承担默认模型职责
+        if (status == 0 && model.getIsDefault() != null && model.getIsDefault() == 1) {
+            Long currentId = model.getId();
+            Long activeCount = llmModelMapper.selectCount(
+                    new QueryWrapper<LlmModel>()
+                            .eq("status", 1)
+                            .ne("id", currentId));
+            if (activeCount == null || activeCount == 0) {
+                throw new BusinessException(ErrorCode.PARAM_INVALID.getCode(),
+                        "不能停用唯一启用的模型，请先启用其他模型");
+            }
+            // 取消默认标记
+            model.setIsDefault(0);
+            clearDefaultFlag();
+        }
+
+        model.setStatus(status);
+        llmModelMapper.updateById(model);
     }
 
     public void testConnectivity(Long id) {

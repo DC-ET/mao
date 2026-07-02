@@ -78,6 +78,12 @@ public class ModelController {
         return Result.ok();
     }
 
+    @PatchMapping("/{id}/status")
+    public Result<Void> updateStatus(@PathVariable Long id, @RequestBody UpdateStatusRequest request) {
+        modelService.updateStatus(id, request.getStatus());
+        return Result.ok();
+    }
+
     @PostMapping("/{id}/test")
     public Result<Void> testConnectivity(@PathVariable Long id) {
         modelService.testConnectivity(id);
@@ -122,5 +128,10 @@ public class ModelController {
         private Boolean isDefault;
         private Integer status;
         private String createdAt;
+    }
+
+    @Data
+    public static class UpdateStatusRequest {
+        private Integer status;
     }
 }

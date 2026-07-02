@@ -71,7 +71,6 @@ public class DangerAssessor {
                                 .content(command)
                                 .build()
                 ))
-                .temperature(0.0)
                 .build();
 
         try {
