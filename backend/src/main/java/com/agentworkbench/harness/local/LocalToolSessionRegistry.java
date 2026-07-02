@@ -89,7 +89,7 @@ public class LocalToolSessionRegistry {
      */
     public boolean isConnected(Long sessionId) {
         Long userId = resolveUserId(sessionId);
-        return userId != null && streamingWsRegistry.hasConnection(userId);
+        return userId != null && streamingWsRegistry.hasLocalClientConnection(userId);
     }
 
     /**
@@ -138,7 +138,7 @@ public class LocalToolSessionRegistry {
                                                      String workspace, boolean needApproval,
                                                      String dangerReason) {
         Long userId = resolveUserId(sessionId);
-        if (userId == null || !streamingWsRegistry.hasConnection(userId)) {
+        if (userId == null || !streamingWsRegistry.hasLocalClientConnection(userId)) {
             CompletableFuture<String> f = new CompletableFuture<>();
             f.complete("{\"error\":\"Local client is not connected\"}");
             return f;
@@ -158,7 +158,7 @@ public class LocalToolSessionRegistry {
             payload.put("dangerReason", dangerReason);
         }
 
-        streamingWsRegistry.send(userId, WsEvent.of("tool_execute", sessionId, payload));
+        streamingWsRegistry.sendToLocalClients(userId, WsEvent.of("tool_execute", sessionId, payload));
 
         log.debug("Sent tool request {} to session {}: tool={}, workspace={}, needApproval={}, dangerReason={}",
                 requestId, sessionId, toolName, workspace, needApproval, dangerReason);

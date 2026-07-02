@@ -4,6 +4,20 @@ export function isSharedCloudProject(session: Pick<Session, 'executionMode' | 'w
   return session.executionMode === 'CLOUD' && !!session.workspace?.includes('/projects/')
 }
 
+/** Cloud project slug to carry into a new CLOUD task (undefined for independent workspaces). */
+export function cloudProjectKeyForNewTask(
+  session: Pick<Session, 'executionMode' | 'projectKey' | 'id'>
+): string | undefined {
+  if (session.executionMode !== 'CLOUD' || !session.projectKey) {
+    return undefined
+  }
+  // Independent CLOUD sessions derive projectKey from session id — not a shared project slug.
+  if (String(session.projectKey) === String(session.id)) {
+    return undefined
+  }
+  return session.projectKey
+}
+
 export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspace'>): string {
   if (session.executionMode !== 'CLOUD') {
     return session.workspace ? `LOCAL:${session.workspace}` : 'LOCAL:未设置'

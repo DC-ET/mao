@@ -246,6 +246,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sending.value = true
     startedAt.value = new Date().toISOString()
 
+    if (executionMode.value === 'LOCAL' && !isElectron) {
+      ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
+      sending.value = false
+      return
+    }
+
     // Upload images to OSS
     const imageUrls = await uploadImages(files || [])
 

@@ -53,6 +53,7 @@ import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useWorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { getToken } from '../../utils/auth-storage'
+import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
@@ -220,7 +221,7 @@ function getCurrentNewTaskDefaults(): NewTaskDefaults | null {
       agentId: active.agentId ? String(active.agentId) : null,
       executionMode: active.executionMode || 'CLOUD',
       workspace: active.executionMode === 'LOCAL' ? active.workspace : undefined,
-      cloudProjectKey: active.executionMode === 'CLOUD' && active.workspace?.includes('/projects/') ? active.projectKey : undefined,
+      cloudProjectKey: cloudProjectKeyForNewTask(active),
       permissionLevel: active.permissionLevel,
       modelId: active.modelId
     }
@@ -338,7 +339,7 @@ async function loadSession(sid: string) {
         agentId: normalizedAgentId,
         executionMode: data.executionMode || 'CLOUD',
         workspace: data.workspace,
-        cloudProjectKey: data.workspace?.includes('/projects/') ? data.projectKey : undefined,
+        cloudProjectKey: cloudProjectKeyForNewTask(data),
         permissionLevel: data.permissionLevel,
         modelId: data.modelId
       }
@@ -350,11 +351,12 @@ async function loadSession(sid: string) {
   initialLoading.value = false
 }
 
-async function navigateToLatestSession() {
+async function navigateToLatestSession(): Promise<string | null> {
   const latest = sessionStore.sessions[0]
-  if (latest) {
-    await router.replace(`/tasks/${latest.id}`)
-  }
+  if (!latest) return null
+  const sid = String(latest.id)
+  await router.replace(`/tasks/${sid}`)
+  return sid
 }
 
 async function handleNewTask() {
@@ -400,8 +402,10 @@ async function resolveInitialRoute() {
   } else if (isExplicitNewTaskRoute.value) {
     await enterNewTaskMode(getRouteNewTaskDefaults())
   } else {
-    await navigateToLatestSession()
-    if (!sessionIdParam.value) {
+    const latestSid = await navigateToLatestSession()
+    if (latestSid) {
+      await loadSession(latestSid)
+    } else {
       initialLoading.value = false
     }
   }

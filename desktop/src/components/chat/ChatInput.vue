@@ -14,7 +14,7 @@
             </el-radio-button>
           </el-tooltip>
           <el-tooltip content="工具在你本地电脑上执行，可直接访问本地文件和开发环境，需要桌面应用保持连接" placement="top" :show-after="400">
-            <el-radio-button value="LOCAL">
+            <el-radio-button value="LOCAL" :disabled="!isElectronClient">
               <el-icon :size="12"><Monitor /></el-icon> 本地模式
             </el-radio-button>
           </el-tooltip>
@@ -211,6 +211,7 @@ const emit = defineEmits<{
 }>()
 
 const sessionStore = useSessionStore()
+const isElectronClient = typeof window !== 'undefined' && !!(window as any).electronAPI
 
 // Register with parent for file tree context menu "add to chat"
 const registerChatInput = inject<(handle: { insertFileReference: (filePath: string) => void }) => void>('registerChatInput', () => {})
@@ -663,6 +664,10 @@ function removeFile(index: number) {
 
 function handleSend() {
   if (!canSend.value || !editor.value) return
+  if (props.executionMode === 'LOCAL' && !isElectronClient) {
+    ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
+    return
+  }
   const text = editor.value.getText().trim()
   if (!text && pendingFiles.value.length === 0) return
 
@@ -692,6 +697,10 @@ function handleStop() {
 }
 
 function handleModeChange(mode: string) {
+  if (mode === 'LOCAL' && !isElectronClient) {
+    ElMessage.warning('浏览器端不支持本地模式，请使用桌面客户端')
+    return
+  }
   emit('update:executionMode', mode)
 }
 
@@ -700,6 +709,8 @@ async function selectWorkspace() {
   if (api?.selectDirectory) {
     const dir = await api.selectDirectory()
     if (dir) emit('update:workspace', dir)
+  } else {
+    ElMessage.warning('浏览器端不能选择本地目录，请使用桌面客户端')
   }
 }
 

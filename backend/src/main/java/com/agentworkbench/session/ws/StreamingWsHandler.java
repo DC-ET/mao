@@ -142,7 +142,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             session.close(CloseStatus.NOT_ACCEPTABLE.withReason("Missing or invalid token"));
             return;
         }
-        registry.register(session, userId);
+        String clientType = resolveClientType(session);
+        registry.register(session, userId, clientType);
 
         // Send connected confirmation
         registry.send(userId, WsEvent.of("connected", null, Map.of("userId", userId)));
@@ -190,7 +191,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         Set<Long> subscribedSessionIds = userId != null ? registry.getSubscribedSessionIds(userId) : Set.of();
         registry.unregister(session);
         if (userId != null) {
-            localToolSessionRegistry.failAllForUser(userId);
+            if (!registry.hasLocalClientConnection(userId)) {
+                localToolSessionRegistry.failAllForUser(userId);
+            }
             askUserQuestionsRegistry.failAllForSessions(subscribedSessionIds);
         }
     }
@@ -202,7 +205,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         Set<Long> subscribedSessionIds = userId != null ? registry.getSubscribedSessionIds(userId) : Set.of();
         registry.unregister(session);
         if (userId != null) {
-            localToolSessionRegistry.failAllForUser(userId);
+            if (!registry.hasLocalClientConnection(userId)) {
+                localToolSessionRegistry.failAllForUser(userId);
+            }
             askUserQuestionsRegistry.failAllForSessions(subscribedSessionIds);
         }
     }
@@ -953,26 +958,40 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     }
 
     private Long resolveUserId(WebSocketSession session) {
-        // Extract token from query string: /ws/stream?token=xxx
+        String token = getQueryParam(session, "token");
+        return token != null ? parseUserIdFromToken(token) : null;
+    }
+
+    private String resolveClientType(WebSocketSession session) {
+        String client = getQueryParam(session, "client");
+        return "electron".equalsIgnoreCase(client) ? "electron" : "browser";
+    }
+
+    private String getQueryParam(WebSocketSession session, String key) {
         String query = session.getUri() != null ? session.getUri().getQuery() : null;
         if (query == null) return null;
         for (String param : query.split("&")) {
             String[] kv = param.split("=", 2);
-            if (kv.length == 2 && "token".equals(kv[0])) {
-                return parseUserIdFromToken(kv[1]);
+            if (kv.length == 2 && key.equals(kv[0])) {
+                return kv[1];
             }
         }
         return null;
     }
 
     private boolean syncSkillsToClient(Long userId, Long sessionId, Session session, Agent agent) {
+        if (!registry.hasLocalClientConnection(userId)) {
+            log.warn("Skip skill sync for session {}: no Electron client connected", sessionId);
+            return false;
+        }
+
         String syncUrl = "/v1/skills/sync-package?sessionId=" + sessionId;
         List<String> removed = skillSyncService.getRemovedSkillNames(session.getAgentId(), session.getWorkspace());
         log.info("Syncing skills to client for session={}, userId={}, syncUrl={}, workspace={}, removed={}", sessionId, userId, syncUrl, session.getWorkspace(), removed);
 
         CompletableFuture<Void> syncFuture = new CompletableFuture<>();
         pendingSkillSyncs.put(sessionId, syncFuture);
-        registry.send(userId, WsEvent.of("skill_sync_required", sessionId,
+        registry.sendToLocalClients(userId, WsEvent.of("skill_sync_required", sessionId,
                 Map.of("syncUrl", syncUrl, "removed", removed, "workspace", session.getWorkspace() != null ? session.getWorkspace() : "")));
         log.info("Sent skill_sync_required to userId={}, sessionId={}", userId, sessionId);
 

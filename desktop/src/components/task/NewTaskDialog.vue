@@ -50,8 +50,8 @@
         </div>
         <div
           class="mode-card"
-          :class="{ selected: selectedMode === 'LOCAL' }"
-          @click="selectedMode = 'LOCAL'"
+          :class="{ selected: selectedMode === 'LOCAL', disabled: !isElectronClient }"
+          @click="selectMode('LOCAL')"
         >
           <el-icon :size="24"><Monitor /></el-icon>
           <h4>本地模式</h4>
@@ -82,6 +82,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Cloudy, Monitor } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useSessionStore, type SessionEnvironmentInfo } from '../../stores/session'
 import { useAgentStore, type Agent } from '../../stores/agent'
 
@@ -104,6 +105,7 @@ const agents = ref<Agent[]>([])
 const selectedAgent = ref<Agent | null>(null)
 const selectedMode = ref<'CLOUD' | 'LOCAL'>('CLOUD')
 const workspace = ref('')
+const isElectronClient = typeof window !== 'undefined' && !!(window as any).electronAPI
 
 async function onOpen() {
   selectedAgent.value = null
@@ -121,19 +123,31 @@ async function onOpen() {
   }
 }
 
+function selectMode(mode: 'CLOUD' | 'LOCAL') {
+  if (mode === 'LOCAL' && !isElectronClient) {
+    ElMessage.warning('浏览器端不支持本地模式，请使用桌面客户端')
+    return
+  }
+  selectedMode.value = mode
+}
+
 async function selectWorkspace() {
-  const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
-  if (isElectron) {
+  if (isElectronClient) {
     const dir = await (window as any).electronAPI.selectDirectory()
     if (dir) workspace.value = dir
+  } else {
+    ElMessage.warning('浏览器端不能选择本地目录，请使用桌面客户端')
   }
 }
 
 async function confirm() {
   if (!selectedAgent.value) return
-  const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
+  if (selectedMode.value === 'LOCAL' && !isElectronClient) {
+    ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
+    return
+  }
   let environmentInfo: SessionEnvironmentInfo | undefined
-  if (selectedMode.value === 'LOCAL' && isElectron && (window as any).electronAPI?.getEnvironmentInfo) {
+  if (selectedMode.value === 'LOCAL' && isElectronClient && (window as any).electronAPI?.getEnvironmentInfo) {
     environmentInfo = await (window as any).electronAPI.getEnvironmentInfo(workspace.value || undefined)
   }
   const session = await sessionStore.createSession(
@@ -273,6 +287,19 @@ function close() {
 }
 
 .mode-card:hover {
+  border-color: var(--aw-primary);
+}
+
+.mode-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.mode-card.disabled:hover {
+  border-color: var(--aw-hairline);
+}
+
+.mode-card.disabled.selected:hover {
   border-color: var(--aw-primary);
 }
 

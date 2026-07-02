@@ -75,11 +75,15 @@ const pendingCallbacks = new Map<string, {
 // Module-level flags to ensure IPC listeners are registered only once
 let skillSyncListenerRegistered = false
 
+function isElectronClient(): boolean {
+  return typeof window !== 'undefined' && !!(window as any).electronAPI
+}
+
 export function useStreamWS() {
   const sessionStore = useSessionStore()
 
   // Listen for skill sync completion from main process (register once)
-  if (!skillSyncListenerRegistered && typeof window !== 'undefined' && (window as any).electronAPI) {
+  if (!skillSyncListenerRegistered && isElectronClient()) {
     skillSyncListenerRegistered = true
     ;(window as any).electronAPI.onSkillSyncComplete?.((data: { sessionId: number; success: boolean; error?: string }) => {
       if (ws?.readyState === WebSocket.OPEN) {
@@ -105,7 +109,8 @@ export function useStreamWS() {
     const token = getToken()
     if (!token) return Promise.reject(new Error('No token'))
 
-    const url = `${wsBase}/ws/stream?token=${token}`
+    const client = isElectronClient() ? 'electron' : 'browser'
+    const url = `${wsBase}/ws/stream?token=${token}&client=${client}`
     ws = new WebSocket(url)
     intentionalClose = false
 
@@ -432,11 +437,11 @@ export function useStreamWS() {
         // Server requests skill sync — trigger main process to download & extract zip
         const syncUrl = data?.syncUrl
         const workspace = data?.workspace
-        if (sessionId && syncUrl && typeof window !== 'undefined' && (window as any).electronAPI) {
+        if (sessionId && syncUrl && isElectronClient()) {
           const token = getToken() || ''
           ;(window as any).electronAPI.skillSync?.(Number(sessionId), syncUrl, token, workspace || '')
         } else {
-          console.warn('[skill-sync] cannot sync:', { sessionId, syncUrl, hasElectronAPI: !!(window as any).electronAPI })
+          console.warn('[skill-sync] cannot sync:', { sessionId, syncUrl, hasElectronAPI: isElectronClient() })
         }
         break
       }

@@ -22,19 +22,25 @@ public class StreamingWsRegistry {
     /** WebSocket session → userId (reverse lookup) */
     private final ConcurrentHashMap<String, Long> sessionToUser = new ConcurrentHashMap<>();
 
+    /** WebSocket session → client type (electron/browser) */
+    private final ConcurrentHashMap<String, String> sessionToClientType = new ConcurrentHashMap<>();
+
     /** userId → set of subscribed sessionIds */
     private final ConcurrentHashMap<Long, Set<Long>> userSubscriptions = new ConcurrentHashMap<>();
 
-    public void register(WebSocketSession session, Long userId) {
+    public void register(WebSocketSession session, Long userId, String clientType) {
         String sessionId = session.getId();
         sessionToUser.put(sessionId, userId);
+        sessionToClientType.put(sessionId, normalizeClientType(clientType));
         userSessions.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet()).add(session);
-        log.info("WS stream registered: userId={}, wsSessionId={}", userId, sessionId);
+        log.info("WS stream registered: userId={}, wsSessionId={}, clientType={}",
+                userId, sessionId, sessionToClientType.get(sessionId));
     }
 
     public void unregister(WebSocketSession session) {
         String sessionId = session.getId();
         Long userId = sessionToUser.remove(sessionId);
+        sessionToClientType.remove(sessionId);
         if (userId != null) {
             Set<WebSocketSession> sessions = userSessions.get(userId);
             if (sessions != null) {
@@ -69,6 +75,27 @@ public class StreamingWsRegistry {
      */
     public void send(Long userId, WsEvent event) {
         Set<WebSocketSession> sessions = userSessions.get(userId);
+        if (sessions == null || sessions.isEmpty()) return;
+
+        sendToSessions(userId, sessions, event);
+    }
+
+    /**
+     * Send an event only to Electron desktop connections.
+     */
+    public void sendToLocalClients(Long userId, WsEvent event) {
+        Set<WebSocketSession> sessions = userSessions.get(userId);
+        if (sessions == null || sessions.isEmpty()) return;
+
+        Set<WebSocketSession> localSessions = sessions.stream()
+                .filter(session -> "electron".equals(sessionToClientType.get(session.getId())))
+                .collect(java.util.stream.Collectors.toSet());
+        if (localSessions.isEmpty()) return;
+
+        sendToSessions(userId, localSessions, event);
+    }
+
+    private void sendToSessions(Long userId, Set<WebSocketSession> sessions, WsEvent event) {
         if (sessions == null || sessions.isEmpty()) return;
 
         String json;
@@ -120,6 +147,13 @@ public class StreamingWsRegistry {
         return sessions != null && sessions.stream().anyMatch(WebSocketSession::isOpen);
     }
 
+    public boolean hasLocalClientConnection(Long userId) {
+        Set<WebSocketSession> sessions = userSessions.get(userId);
+        return sessions != null && sessions.stream()
+                .anyMatch(session -> session.isOpen()
+                        && "electron".equals(sessionToClientType.get(session.getId())));
+    }
+
     /**
      * Get all subscribed session IDs for a user.
      */
@@ -130,5 +164,9 @@ public class StreamingWsRegistry {
 
     public Long getUserId(WebSocketSession session) {
         return sessionToUser.get(session.getId());
+    }
+
+    private String normalizeClientType(String clientType) {
+        return "electron".equalsIgnoreCase(clientType) ? "electron" : "browser";
     }
 }
