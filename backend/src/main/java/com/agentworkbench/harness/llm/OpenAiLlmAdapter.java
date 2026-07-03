@@ -8,6 +8,9 @@ import okio.BufferedSource;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -192,10 +195,18 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
     private Request buildRequest(ChatRequest request, LlmModelConfig config, boolean stream) {
         try {
+            // Convert image URLs to base64 data URIs for models that don't support URL
+            List<ChatRequest.Message> messages = request.getMessages();
+            if (messages != null) {
+                for (ChatRequest.Message msg : messages) {
+                    convertImageUrlsToBase64(msg);
+                }
+            }
+
             // Build OpenAI-compatible request body
             var body = new java.util.HashMap<String, Object>();
             body.put("model", config.getModelId());
-            body.put("messages", request.getMessages());
+            body.put("messages", messages);
             body.put("stream", stream);
 
             if (request.getTemperature() != null) {
@@ -217,6 +228,80 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
         } catch (Exception e) {
             throw new RuntimeException("Failed to build LLM request", e);
+        }
+    }
+
+    /**
+     * Convert image_url content parts from HTTP URLs to base64 data URIs.
+     * Skips URLs that are already base64 data URIs (starting with "data:").
+     */
+    private void convertImageUrlsToBase64(ChatRequest.Message msg) {
+        if (!(msg.getContent() instanceof List<?> list)) {
+            return;
+        }
+        for (Object part : list) {
+            String url = extractImageUrl(part);
+            if (url == null || url.startsWith("data:")) {
+                continue;
+            }
+            try {
+                String base64Uri = downloadAndEncode(url);
+                setImageUrl(part, base64Uri);
+                log.debug("Converted image URL to base64: {} -> {} chars", url, base64Uri.length());
+            } catch (Exception e) {
+                log.warn("Failed to convert image URL to base64, keeping original URL: {}", url, e);
+            }
+        }
+    }
+
+    private String extractImageUrl(Object part) {
+        if (part instanceof ChatRequest.ContentPart cp) {
+            return "image_url".equals(cp.getType()) && cp.getImageUrl() != null
+                    ? cp.getImageUrl().getUrl() : null;
+        }
+        if (part instanceof Map<?, ?> map) {
+            if (!"image_url".equals(map.get("type"))) return null;
+            Object imageUrlObj = map.get("image_url");
+            if (imageUrlObj instanceof Map<?, ?> imgMap) {
+                Object url = imgMap.get("url");
+                return url instanceof String s ? s : null;
+            }
+        }
+        return null;
+    }
+
+    private void setImageUrl(Object part, String base64Uri) {
+        if (part instanceof ChatRequest.ContentPart cp && cp.getImageUrl() != null) {
+            cp.getImageUrl().setUrl(base64Uri);
+        } else if (part instanceof Map<?, ?> map) {
+            Object imageUrlObj = map.get("image_url");
+            if (imageUrlObj instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> imgMap = (Map<String, Object>) imageUrlObj;
+                imgMap.put("url", base64Uri);
+            }
+        }
+    }
+
+    /**
+     * Download an image from URL and encode it as a base64 data URI.
+     */
+    private String downloadAndEncode(String imageUrl) throws IOException {
+        Request req = new Request.Builder().url(imageUrl).build();
+        try (Response res = httpClient.newCall(req).execute()) {
+            if (!res.isSuccessful()) {
+                throw new IOException("HTTP " + res.code() + " when downloading image: " + imageUrl);
+            }
+            ResponseBody body = res.body();
+            if (body == null) {
+                throw new IOException("Empty body when downloading image: " + imageUrl);
+            }
+            byte[] bytes = body.bytes();
+            String mimeType = body.contentType() != null
+                    ? body.contentType().toString()
+                    : "application/octet-stream";
+            String encoded = Base64.getEncoder().encodeToString(bytes);
+            return "data:" + mimeType + ";base64," + encoded;
         }
     }
 }

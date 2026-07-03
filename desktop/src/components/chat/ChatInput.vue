@@ -6,19 +6,21 @@
         :selected-agent-id="selectedAgentId"
         @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
       />
-      <div class="config-row">
-        <el-radio-group :model-value="executionMode" size="small" @change="handleModeChange">
-          <el-tooltip content="工具在云端服务器上执行，无需本地环境，随时随地可用" placement="top" :show-after="400">
-            <el-radio-button value="CLOUD">
-              <el-icon :size="12"><Cloudy /></el-icon> 云端模式
-            </el-radio-button>
-          </el-tooltip>
-          <el-tooltip content="工具在你本地电脑上执行，可直接访问本地文件和开发环境，需要桌面应用保持连接" placement="top" :show-after="400">
-            <el-radio-button value="LOCAL" :disabled="!isElectronClient">
-              <el-icon :size="12"><Monitor /></el-icon> 本地模式
-            </el-radio-button>
-          </el-tooltip>
-        </el-radio-group>
+      <div class="config-row" :class="{ 'is-mobile': isTouchDevice }">
+        <div class="mode-selector">
+          <el-radio-group :model-value="executionMode" size="small" @change="handleModeChange">
+            <el-tooltip content="工具在云端服务器上执行，无需本地环境，随时随地可用" placement="top" :show-after="400">
+              <el-radio-button value="CLOUD">
+                <el-icon :size="12"><Cloudy /></el-icon> 云端模式
+              </el-radio-button>
+            </el-tooltip>
+            <el-tooltip content="工具在你本地电脑上执行，可直接访问本地文件和开发环境，需要桌面应用保持连接" placement="top" :show-after="400">
+              <el-radio-button value="LOCAL" :disabled="!isElectronClient">
+                <el-icon :size="12"><Monitor /></el-icon> 本地模式
+              </el-radio-button>
+            </el-tooltip>
+          </el-radio-group>
+        </div>
         <div
           v-if="executionMode === 'LOCAL'"
           class="workspace-selector"
@@ -31,19 +33,61 @@
           </el-icon>
           <span>{{ workspace ? dirName : '选择工作目录' }}</span>
         </div>
-        <div v-else class="cloud-project-selector">
-          <el-autocomplete
-            :model-value="cloudProjectKey"
-            :fetch-suggestions="fetchCloudProjectSuggestions"
-            placeholder="项目（可选，留空=独立工作区）"
-            clearable
-            size="small"
-            :teleported="true"
-            popper-class="cloud-project-popper"
-            class="cloud-project-input"
-            @update:model-value="onCloudProjectKeyChange"
-            @select="onCloudProjectSelect"
-          />
+        <div v-else class="cloud-workspace-source">
+          <div class="source-tabs">
+            <span
+              v-if="cloudProjects.length > 0"
+              class="source-tab"
+              :class="{ active: workspaceMode === 'existing' }"
+              @click="onWorkspaceModeChange('existing')"
+            >已有</span>
+            <span
+              class="source-tab"
+              :class="{ active: workspaceMode === 'new' }"
+              @click="onWorkspaceModeChange('new')"
+            >新建</span>
+            <span
+              class="source-tab"
+              :class="{ active: workspaceMode === 'git' }"
+              @click="onWorkspaceModeChange('git')"
+            >Git</span>
+          </div>
+          <template v-if="workspaceMode === 'existing'">
+            <el-select
+              :model-value="cloudProjectKey"
+              placeholder="选择工作区"
+              size="small"
+              class="cloud-project-select"
+              @update:model-value="onCloudProjectKeyChange"
+            >
+              <el-option
+                v-for="p in cloudProjects"
+                :key="p.name"
+                :label="p.name"
+                :value="p.name"
+              />
+            </el-select>
+          </template>
+          <template v-else-if="workspaceMode === 'git'">
+            <el-input
+              :model-value="gitCloneUrl"
+              placeholder="Git 地址"
+              size="small"
+              clearable
+              class="cloud-project-input"
+              @update:model-value="onGitCloneUrlChange"
+            />
+          </template>
+          <template v-else>
+            <el-input
+              :model-value="cloudProjectKey"
+              placeholder="项目（可选，留空=独立）"
+              size="small"
+              clearable
+              class="cloud-project-input"
+              @update:model-value="onCloudProjectKeyChange"
+            />
+          </template>
         </div>
       </div>
       <div class="config-divider"></div>
@@ -167,9 +211,9 @@ import { QuickCommandNode } from './tiptap/QuickCommandNode'
 import { FileReferenceNode } from './tiptap/FileReferenceNode'
 import type { Agent } from '../../stores/agent'
 import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
-import { useSessionStore } from '../../stores/session'
+import { useSessionStore, type CloudProject } from '../../stores/session'
 import { api } from '../../api'
-import { collectCloudProjectKeys, cloudWorkspaceIndicator } from '../../utils/cloud-project'
+import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -185,6 +229,10 @@ const props = withDefaults(defineProps<{
   isNewTask?: boolean
   selectedAgentId?: string | null
   agents?: Agent[]
+  workspaceMode?: string
+  gitCloneUrl?: string
+  gitBranch?: string
+  cloudProjects?: CloudProject[]
 }>(), {
   disabled: false,
   loading: false,
@@ -196,6 +244,10 @@ const props = withDefaults(defineProps<{
   isNewTask: false,
   selectedAgentId: null,
   agents: () => [],
+  workspaceMode: 'new',
+  gitCloneUrl: '',
+  gitBranch: '',
+  cloudProjects: () => [],
 })
 
 const emit = defineEmits<{
@@ -208,6 +260,9 @@ const emit = defineEmits<{
   'update:selectedAgentId': [id: string | null]
   'update:modelId': [modelId: number]
   'select:model': [modelId: number, modelIdStr: string]
+  'update:workspaceMode': [mode: string]
+  'update:gitCloneUrl': [url: string]
+  'update:gitBranch': [branch: string]
 }>()
 
 const sessionStore = useSessionStore()
@@ -260,20 +315,34 @@ const cloudIndicatorLabel = computed(() =>
   )
 )
 
-function fetchCloudProjectSuggestions(query: string, cb: (results: Array<{ value: string }>) => void) {
-  const all = collectCloudProjectKeys(sessionStore.sessions)
-  const q = query.trim().toLowerCase()
-  const filtered = q ? all.filter(k => k.toLowerCase().includes(q)) : all
-  cb(filtered.map(value => ({ value })))
+function onWorkspaceModeChange(mode: string) {
+  emit('update:workspaceMode', mode)
 }
 
 function onCloudProjectKeyChange(value: string) {
   emit('update:cloudProjectKey', value || '')
 }
 
-function onCloudProjectSelect(item: { value: string }) {
-  emit('update:cloudProjectKey', item.value)
+function onGitCloneUrlChange(value: string) {
+  emit('update:gitCloneUrl', value || '')
 }
+
+const dynamicPlaceholder = computed(() => {
+  if (props.loading) return 'Agent 执行中，发送的消息将进入队列...'
+  if (props.isNewTask) {
+    if (props.executionMode === 'LOCAL') {
+      return props.workspace ? `在「${dirName.value}」中开始新任务...` : '先选择本地工作目录，再告诉 Agent 你想做什么...'
+    }
+    if (props.workspaceMode === 'git') {
+      return props.gitCloneUrl ? '从 Git 仓库初始化后，告诉 Agent 你想做什么...' : '输入 Git 地址，开始克隆并创建任务...'
+    }
+    if (props.workspaceMode === 'existing') {
+      return props.cloudProjectKey ? `在「${props.cloudProjectKey}」中开始新任务...` : '选择一个已有云端工作区...'
+    }
+    return props.cloudProjectKey ? `在「${props.cloudProjectKey}」中开始新任务...` : '输入项目名（留空=独立工作区），然后描述任务...'
+  }
+  return props.placeholder
+})
 
 // ===== Quick commands: load =====
 
@@ -404,9 +473,7 @@ const editor = useEditor({
       strike: false,
     }),
     Placeholder.configure({
-      placeholder: props.loading
-        ? 'Agent 执行中，发送的消息将进入队列...'
-        : props.placeholder,
+      placeholder: dynamicPlaceholder.value,
     }),
     QuickCommandNode,
     FileReferenceNode,
@@ -1057,8 +1124,42 @@ onBeforeUnmount(() => {
   padding-bottom: 10px;
 }
 
+.config-row.is-mobile {
+  flex-wrap: wrap;
+}
+
+.config-row.is-mobile .mode-selector {
+  width: 100%;
+}
+
+.config-row.is-mobile .mode-selector :deep(.el-radio-group) {
+  width: 100%;
+  display: flex;
+}
+
+.config-row.is-mobile .mode-selector :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.config-row.is-mobile .mode-selector :deep(.el-radio-button__inner) {
+  width: 100%;
+  justify-content: center;
+}
+
+.config-row.is-mobile .workspace-selector,
+.config-row.is-mobile .cloud-workspace-source {
+  flex: 1;
+  max-width: none;
+  min-width: 0;
+}
+
 .config-divider {
   border-top: 1px solid var(--aw-hairline);
+}
+
+.mode-selector {
+  display: flex;
+  align-items: center;
 }
 
 :deep(.config-row .el-radio-group) {
@@ -1114,17 +1215,57 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.cloud-project-selector {
+.cloud-workspace-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1;
   min-width: 0;
-  max-width: 220px;
+  max-width: 320px;
 }
 
-.cloud-project-input {
-  width: 100%;
+.config-row.is-mobile .cloud-workspace-source {
+  max-width: none;
 }
 
-:deep(.cloud-project-input .el-input__wrapper) {
+.source-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--aw-canvas-parchment);
+  border-radius: 999px;
+  padding: 2px;
+  box-shadow: 0 0 0 1px var(--aw-hairline) inset;
+  flex-shrink: 0;
+}
+
+.source-tab {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
+  color: var(--aw-ink-muted-64);
+  transition: all 0.15s;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.source-tab:hover {
+  color: var(--aw-ink);
+}
+
+.source-tab.active {
+  background: var(--aw-primary);
+  color: #fff;
+}
+
+.cloud-project-input,
+.cloud-project-select {
+  flex: 1;
+  min-width: 0;
+}
+
+:deep(.cloud-project-input .el-input__wrapper),
+:deep(.cloud-project-select .el-input__wrapper) {
   border-radius: 999px;
   background: var(--aw-canvas-parchment);
   box-shadow: 0 0 0 1px var(--aw-hairline) inset;
@@ -1132,47 +1273,15 @@ onBeforeUnmount(() => {
   min-height: 26px;
 }
 
-:deep(.cloud-project-input .el-input__inner) {
+:deep(.cloud-project-input .el-input__inner),
+:deep(.cloud-project-select .el-input__inner) {
   font-size: var(--aw-text-fine);
   height: 22px;
   line-height: 22px;
 }
 
-:deep(.cloud-project-input .el-input__suffix) {
+:deep(.cloud-project-input .el-input__suffix),
+:deep(.cloud-project-select .el-input__suffix) {
   transform: scale(0.85);
-}
-</style>
-
-<style>
-.cloud-project-popper.el-popper {
-  border-radius: var(--aw-radius-sm);
-  border: 1px solid var(--aw-hairline);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  padding: 2px 0;
-}
-
-[data-theme="dark"] .cloud-project-popper.el-popper {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-}
-
-.cloud-project-popper .el-autocomplete-suggestion__wrap {
-  max-height: 160px;
-}
-
-.cloud-project-popper .el-autocomplete-suggestion__list li {
-  padding: 4px 10px;
-  font-size: var(--aw-text-fine);
-  line-height: 1.35;
-  min-height: unset;
-  color: var(--aw-ink-muted-80);
-}
-
-.cloud-project-popper .el-autocomplete-suggestion__list li.highlighted {
-  background: var(--aw-canvas-parchment);
-  color: var(--aw-ink);
-}
-
-[data-theme="dark"] .cloud-project-popper .el-autocomplete-suggestion__list li.highlighted {
-  background: rgba(255, 255, 255, 0.06);
 }
 </style>

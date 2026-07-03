@@ -33,8 +33,8 @@ public class OssStsService {
             request.setRoleSessionName("User_" + userId);
             request.setDurationSeconds(sts.getExpire());
 
-            // Restrict policy: only allow putObject to session path
-            String uploadDir = "session/" + sessionId + "/";
+            // Restrict policy: only allow putObject to uploads path
+            String uploadDir = "uploads/";
             String policy = """
                     {
                       "Version": "1",

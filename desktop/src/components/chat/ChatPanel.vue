@@ -161,6 +161,10 @@
       :is-new-task="isNewTaskMode"
       :selected-agent-id="newTaskAgentId"
       :agents="agentStore.agents"
+      :workspace-mode="isNewTaskMode ? newTaskWorkspaceMode : 'new'"
+      :git-clone-url="isNewTaskMode ? newTaskGitCloneUrl : ''"
+      :git-branch="isNewTaskMode ? newTaskGitBranch : ''"
+      :cloud-projects="isNewTaskMode ? newTaskCloudProjects : []"
       @send="handleSend"
       @stop="handleStop"
       @update:permission-level="handlePermissionLevelChange"
@@ -170,6 +174,9 @@
       @update:selected-agent-id="handleNewTaskAgentChange"
       @update:model-id="handleModelSwitch"
       @select:model="handleModelSelect"
+      @update:workspace-mode="handleNewTaskWorkspaceModeChange"
+      @update:git-clone-url="handleNewTaskGitCloneUrlChange"
+      @update:git-branch="handleNewTaskGitBranchChange"
     />
   </div>
 </template>
@@ -201,6 +208,10 @@ const newTaskAgentId = inject<Ref<string | null>>('newTaskAgentId')!
 const newTaskMode = inject<Ref<'CLOUD' | 'LOCAL'>>('newTaskMode')!
 const newTaskWorkspace = inject<Ref<string>>('newTaskWorkspace')!
 const newTaskCloudProjectKey = inject<Ref<string>>('newTaskCloudProjectKey')!
+const newTaskWorkspaceMode = inject<Ref<string>>('newTaskWorkspaceMode')!
+const newTaskGitCloneUrl = inject<Ref<string>>('newTaskGitCloneUrl')!
+const newTaskGitBranch = inject<Ref<string>>('newTaskGitBranch')!
+const newTaskCloudProjects = inject<Ref<Array<{ name: string; path: string; isGit: boolean }>>>('newTaskCloudProjects')!
 const initialLoading = inject<Ref<boolean>>('initialLoading')!
 const currentPhase = inject<Ref<TaskPhase>>('currentPhase')!
 
@@ -225,6 +236,9 @@ const {
   sessionId,
   workspace,
   cloudProjectKey,
+  workspaceMode,
+  gitCloneUrl,
+  gitBranch,
   agentName,
   pendingApprovals,
   todos,
@@ -242,6 +256,11 @@ const {
   deleteQueueMessage,
   reorderQueueMessage
 } = useChat(agentId, executionMode, newTaskModelId, permissionLevel)
+
+// Sync workspace source state from ChatInput events to useChat
+watch(newTaskWorkspaceMode, (val) => { workspaceMode.value = val })
+watch(newTaskGitCloneUrl, (val) => { gitCloneUrl.value = val })
+watch(newTaskGitBranch, (val) => { gitBranch.value = val })
 
 // Provide focusInput to TaskView
 chatFocusInput.value = () => chatInputRef.value?.focusInput()
@@ -629,6 +648,18 @@ function handleNewTaskWorkspaceChange(ws: string) {
 
 function handleNewTaskCloudProjectKeyChange(key: string) {
   newTaskCloudProjectKey.value = key
+}
+
+function handleNewTaskWorkspaceModeChange(mode: string) {
+  newTaskWorkspaceMode.value = mode
+}
+
+function handleNewTaskGitCloneUrlChange(url: string) {
+  newTaskGitCloneUrl.value = url
+}
+
+function handleNewTaskGitBranchChange(branch: string) {
+  newTaskGitBranch.value = branch
 }
 
 function handleNewTaskAgentChange(id: string | null) {

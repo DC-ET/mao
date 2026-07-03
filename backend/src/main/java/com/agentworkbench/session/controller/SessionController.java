@@ -3,6 +3,7 @@ package com.agentworkbench.session.controller;
 import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.common.result.Result;
+import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.session.activity.ActivityService;
@@ -24,7 +25,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -42,19 +47,22 @@ public class SessionController {
     private final ActivityService activityService;
     private final SessionTodoMapper sessionTodoMapper;
     private final MessageQueueService messageQueueService;
+    private final PathSandbox pathSandbox;
 
     public SessionController(SessionService sessionService,
                              AgentMapper agentMapper,
                              LlmModelMapper llmModelMapper,
                              ActivityService activityService,
                              SessionTodoMapper sessionTodoMapper,
-                             MessageQueueService messageQueueService) {
+                             MessageQueueService messageQueueService,
+                             PathSandbox pathSandbox) {
         this.sessionService = sessionService;
         this.agentMapper = agentMapper;
         this.llmModelMapper = llmModelMapper;
         this.activityService = activityService;
         this.sessionTodoMapper = sessionTodoMapper;
         this.messageQueueService = messageQueueService;
+        this.pathSandbox = pathSandbox;
     }
 
     @PostMapping
@@ -64,8 +72,35 @@ public class SessionController {
         Session session = sessionService.createSession(userId, request.getAgentId(), request.getTitle(),
                 request.getExecutionMode(), request.getWorkspace(), request.getPermissionLevel(),
                 request.getIsGit(), request.getPlatform(), request.getShell(), request.getOsVersion(),
-                request.getModelId(), request.getCloudProjectKey());
+                request.getModelId(), request.getCloudProjectKey(),
+                request.getWorkspaceMode(), request.getGitCloneUrl(), request.getGitBranch());
         return Result.ok(toSessionVO(session, batchLoadAgents(List.of(session)), batchLoadModels(List.of(session))));
+    }
+
+    @GetMapping("/cloud-projects")
+    public Result<List<CloudProjectVO>> listCloudProjects(
+            @AuthenticationPrincipal Long userId) {
+        Path userRoot = pathSandbox.getWorkspaceRoot().resolve(String.valueOf(userId));
+        Path projectsDir = userRoot.resolve("projects");
+        List<CloudProjectVO> projects = new ArrayList<>();
+
+        if (Files.exists(projectsDir)) {
+            try (var stream = Files.list(projectsDir)) {
+                stream.filter(Files::isDirectory)
+                      .map(dir -> {
+                          CloudProjectVO vo = new CloudProjectVO();
+                          vo.setName(dir.getFileName().toString());
+                          vo.setPath(dir.toString());
+                          vo.setGit(Files.exists(dir.resolve(".git")));
+                          return vo;
+                      })
+                      .sorted(Comparator.comparing(CloudProjectVO::getName))
+                      .forEach(projects::add);
+            } catch (IOException e) {
+                log.warn("Failed to list cloud projects for user {}: {}", userId, e.getMessage());
+            }
+        }
+        return Result.ok(projects);
     }
 
     @GetMapping
@@ -485,6 +520,9 @@ public class SessionController {
         private String executionMode;
         private String workspace;
         private String cloudProjectKey;
+        private String workspaceMode;
+        private String gitCloneUrl;
+        private String gitBranch;
         private String permissionLevel;
         private Long modelId;
         private Boolean isGit;
@@ -609,5 +647,12 @@ public class SessionController {
         private List<String> images;
         private Integer sortOrder;
         private String createdAt;
+    }
+
+    @Data
+    public static class CloudProjectVO {
+        private String name;
+        private String path;
+        private boolean isGit;
     }
 }

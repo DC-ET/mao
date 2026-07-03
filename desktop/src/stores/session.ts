@@ -23,6 +23,12 @@ export interface SessionEnvironmentInfo {
   osVersion?: string
 }
 
+export interface CloudProject {
+  name: string
+  path: string
+  isGit: boolean
+}
+
 export interface Session {
   id: string
   agentId: string
@@ -207,7 +213,10 @@ export const useSessionStore = defineStore('session', () => {
     environmentInfo?: SessionEnvironmentInfo,
     modelId?: number,
     permissionLevel?: string,
-    cloudProjectKey?: string
+    cloudProjectKey?: string,
+    workspaceMode?: string,
+    gitCloneUrl?: string,
+    gitBranch?: string
   ) {
     const payload: Record<string, unknown> = {
       agentId,
@@ -221,8 +230,14 @@ export const useSessionStore = defineStore('session', () => {
     }
     if (executionMode === 'LOCAL') {
       payload.workspace = workspace || undefined
-    } else if (cloudProjectKey) {
-      payload.cloudProjectKey = cloudProjectKey
+    } else if (executionMode === 'CLOUD') {
+      payload.workspaceMode = workspaceMode || 'new'
+      if (workspaceMode === 'git' && gitCloneUrl) {
+        payload.gitCloneUrl = gitCloneUrl
+        if (gitBranch) payload.gitBranch = gitBranch
+      } else if (cloudProjectKey) {
+        payload.cloudProjectKey = cloudProjectKey
+      }
     }
     const { data } = await api.post('/sessions', payload)
     if (data) {
@@ -231,6 +246,15 @@ export const useSessionStore = defineStore('session', () => {
       sessions.value.unshift(data)
     }
     return data
+  }
+
+  async function fetchCloudProjects(): Promise<CloudProject[]> {
+    try {
+      const { data } = await api.get('/sessions/cloud-projects')
+      return (data || []) as CloudProject[]
+    } catch {
+      return []
+    }
   }
 
   function setActiveSession(id: string | null) {
@@ -729,6 +753,7 @@ export const useSessionStore = defineStore('session', () => {
     fetchSessions,
     fetchSession,
     createSession,
+    fetchCloudProjects,
     setActiveSession,
     updateSession,
     updateSessionPhase,

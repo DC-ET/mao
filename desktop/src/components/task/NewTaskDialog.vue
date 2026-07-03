@@ -58,32 +58,109 @@
           <p>工具在本地执行，需要桌面应用连接</p>
         </div>
       </div>
+
+      <!-- LOCAL: workspace selection -->
       <div v-if="selectedMode === 'LOCAL'" class="workspace-row">
         <el-button class="pill-btn" @click="selectWorkspace">
-          {{ workspace ? workspace : '选择工作目录' }}
+          {{ localWorkspace || '选择工作目录' }}
         </el-button>
+      </div>
+
+      <!-- CLOUD: workspace source selection -->
+      <div v-if="selectedMode === 'CLOUD'" class="workspace-source-section">
+        <p class="section-label">工作区来源</p>
+        <div class="source-options">
+          <div
+            v-if="cloudProjects.length > 0"
+            class="source-option"
+            :class="{ selected: workspaceMode === 'existing' }"
+            @click="workspaceMode = 'existing'"
+          >
+            选择已有工作区
+          </div>
+          <div
+            class="source-option"
+            :class="{ selected: workspaceMode === 'new' }"
+            @click="workspaceMode = 'new'"
+          >
+            创建新工作区
+          </div>
+          <div
+            class="source-option"
+            :class="{ selected: workspaceMode === 'git' }"
+            @click="workspaceMode = 'git'"
+          >
+            初始化 Git 工作区
+          </div>
+        </div>
+
+        <!-- Existing project selector -->
+        <div v-if="workspaceMode === 'existing'" class="workspace-row">
+          <el-select
+            v-model="selectedProject"
+            placeholder="选择已有工作区"
+            class="project-select"
+          >
+            <el-option
+              v-for="p in cloudProjects"
+              :key="p.name"
+              :label="p.name"
+              :value="p.name"
+            >
+              <span>{{ p.name }}</span>
+              <span v-if="p.isGit" class="git-badge">Git</span>
+            </el-option>
+          </el-select>
+        </div>
+
+        <!-- New project input -->
+        <div v-if="workspaceMode === 'new'" class="workspace-row">
+          <el-input
+            v-model="newProjectName"
+            placeholder="项目名（可留空，留空=独立工作区）"
+            clearable
+            class="project-input"
+          />
+        </div>
+
+        <!-- Git clone input -->
+        <div v-if="workspaceMode === 'git'" class="workspace-row">
+          <el-input
+            v-model="gitCloneUrl"
+            placeholder="Git 仓库地址，如 https://github.com/user/repo.git 或 git@github.com:user/repo.git"
+            clearable
+            class="project-input"
+          />
+          <el-input
+            v-model="gitBranch"
+            placeholder="分支（可选，默认使用默认分支）"
+            clearable
+            class="project-input branch-input"
+          />
+        </div>
       </div>
     </div>
 
     <template #footer>
-      <el-button class="pill-btn" @click="close">取消</el-button>
+      <el-button class="pill-btn" :disabled="isCreating" @click="close">取消</el-button>
       <el-button
         type="primary"
         class="pill-btn"
-        :disabled="!selectedAgent || (selectedMode === 'LOCAL' && !workspace)"
+        :disabled="!canConfirm || isCreating"
+        :loading="isCreating"
         @click="confirm"
       >
-        开始
+        {{ isCreating ? createLoadingText : '开始' }}
       </el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { Cloudy, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { useSessionStore, type SessionEnvironmentInfo } from '../../stores/session'
+import { useSessionStore, type SessionEnvironmentInfo, type CloudProject } from '../../stores/session'
 import { useAgentStore, type Agent } from '../../stores/agent'
 
 const props = defineProps<{
@@ -104,13 +181,38 @@ const agentStore = useAgentStore()
 const agents = ref<Agent[]>([])
 const selectedAgent = ref<Agent | null>(null)
 const selectedMode = ref<'CLOUD' | 'LOCAL'>('CLOUD')
-const workspace = ref('')
+const localWorkspace = ref('')
 const isElectronClient = typeof window !== 'undefined' && !!(window as any).electronAPI
+
+// Cloud workspace mode
+type WorkspaceMode = 'existing' | 'new' | 'git'
+const workspaceMode = ref<WorkspaceMode>('new')
+const cloudProjects = ref<CloudProject[]>([])
+const selectedProject = ref('')
+const newProjectName = ref('')
+const gitCloneUrl = ref('')
+const gitBranch = ref('')
+const isCreating = ref(false)
+const createLoadingText = ref('')
+
+const canConfirm = computed(() => {
+  if (!selectedAgent.value) return false
+  if (selectedMode.value === 'LOCAL') return true
+  if (selectedMode.value === 'CLOUD') {
+    if (workspaceMode.value === 'existing') return !!selectedProject.value
+    if (workspaceMode.value === 'git') return !!gitCloneUrl.value
+    return true
+  }
+  return false
+})
 
 async function onOpen() {
   selectedAgent.value = null
   selectedMode.value = props.defaultMode || 'CLOUD'
-  workspace.value = props.defaultWorkspace || ''
+  localWorkspace.value = props.defaultWorkspace || ''
+  isCreating.value = false
+  createLoadingText.value = ''
+
   if (agentStore.agents.length === 0) {
     await agentStore.fetchAgents()
   }
@@ -121,6 +223,14 @@ async function onOpen() {
     const match = agents.value.find(a => String(a.id) === String(props.defaultAgentId))
     if (match) selectedAgent.value = match
   }
+
+  // Load cloud projects and set default workspace mode
+  cloudProjects.value = await sessionStore.fetchCloudProjects()
+  workspaceMode.value = cloudProjects.value.length > 0 ? 'existing' : 'new'
+  selectedProject.value = ''
+  newProjectName.value = ''
+  gitCloneUrl.value = ''
+  gitBranch.value = ''
 }
 
 function selectMode(mode: 'CLOUD' | 'LOCAL') {
@@ -134,7 +244,7 @@ function selectMode(mode: 'CLOUD' | 'LOCAL') {
 async function selectWorkspace() {
   if (isElectronClient) {
     const dir = await (window as any).electronAPI.selectDirectory()
-    if (dir) workspace.value = dir
+    if (dir) localWorkspace.value = dir
   } else {
     ElMessage.warning('浏览器端不能选择本地目录，请使用桌面客户端')
   }
@@ -146,18 +256,47 @@ async function confirm() {
     ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
     return
   }
-  let environmentInfo: SessionEnvironmentInfo | undefined
-  if (selectedMode.value === 'LOCAL' && isElectronClient && (window as any).electronAPI?.getEnvironmentInfo) {
-    environmentInfo = await (window as any).electronAPI.getEnvironmentInfo(workspace.value || undefined)
+
+  isCreating.value = true
+
+  if (selectedMode.value === 'CLOUD' && workspaceMode.value === 'git') {
+    createLoadingText.value = '正在克隆仓库...（可能需要 1-2 分钟）'
+  } else {
+    createLoadingText.value = '正在初始化...'
   }
-  const session = await sessionStore.createSession(
-    selectedAgent.value.id,
-    selectedMode.value,
-    workspace.value || undefined,
-    environmentInfo
-  )
-  if (session) {
-    emit('created', session)
+
+  try {
+    let environmentInfo: SessionEnvironmentInfo | undefined
+    if (selectedMode.value === 'LOCAL' && isElectronClient && (window as any).electronAPI?.getEnvironmentInfo) {
+      environmentInfo = await (window as any).electronAPI.getEnvironmentInfo(localWorkspace.value || undefined)
+    }
+
+    const cloudProjectKey = workspaceMode.value === 'existing'
+      ? selectedProject.value || undefined
+      : workspaceMode.value === 'new'
+        ? newProjectName.value || undefined
+        : undefined
+
+    const session = await sessionStore.createSession(
+      selectedAgent.value.id,
+      selectedMode.value,
+      selectedMode.value === 'LOCAL' ? localWorkspace.value || undefined : undefined,
+      environmentInfo,
+      undefined,
+      undefined,
+      cloudProjectKey,
+      selectedMode.value === 'CLOUD' ? workspaceMode.value : undefined,
+      selectedMode.value === 'CLOUD' && workspaceMode.value === 'git' ? gitCloneUrl.value : undefined,
+      selectedMode.value === 'CLOUD' && workspaceMode.value === 'git' ? (gitBranch.value || undefined) : undefined
+    )
+    if (session) {
+      emit('created', session)
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '创建失败')
+  } finally {
+    isCreating.value = false
+    createLoadingText.value = ''
   }
 }
 
@@ -172,7 +311,7 @@ function close() {
 }
 
 .section-label {
-  margin: 0 0 12px;
+  margin: 16px 0 10px;
   font-size: var(--aw-text-caption);
   font-weight: 500;
   color: var(--aw-ink-muted-80);
@@ -322,22 +461,66 @@ function close() {
   color: var(--aw-ink-muted-48);
 }
 
-.workspace-row {
-  margin-top: 12px;
-  max-width: 100%;
-  overflow: hidden;
+/* Workspace source options */
+.workspace-source-section {
+  margin-top: 2px;
 }
 
-:deep(.workspace-row .pill-btn) {
-  max-width: 100% !important;
-  width: 100% !important;
-  display: block !important;
-  text-align: left !important;
-  font-size: 12px !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
-  white-space: nowrap !important;
-  box-sizing: border-box !important;
+.source-options {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.source-option {
+  flex: 1;
+  min-width: 100px;
+  padding: 8px 10px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-md);
+  cursor: pointer;
+  text-align: center;
+  font-size: var(--aw-text-fine);
+  font-weight: 500;
+  color: var(--aw-ink-muted-64);
+  transition: all 0.15s;
+}
+
+.source-option:hover {
+  border-color: var(--aw-primary);
+  color: var(--aw-ink);
+}
+
+.source-option.selected {
+  border-color: var(--aw-primary);
+  background: rgba(0, 102, 204, 0.06);
+  color: var(--aw-primary);
+}
+
+.workspace-row {
+  margin-top: 10px;
+  max-width: 100%;
+}
+
+.project-select {
+  width: 100%;
+}
+
+.project-input {
+  width: 100%;
+}
+
+.branch-input {
+  margin-top: 8px;
+}
+
+.git-badge {
+  margin-left: 8px;
+  padding: 0 5px;
+  font-size: 11px;
+  color: var(--aw-primary);
+  border: 1px solid var(--aw-primary);
+  border-radius: 3px;
 }
 
 .pill-btn {
@@ -361,14 +544,6 @@ function close() {
 :deep(.el-dialog__body) {
   padding: 16px 24px;
   overflow: hidden;
-}
-
-:deep(.workspace-row .pill-btn span) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: block;
-  max-width: 100%;
 }
 
 :deep(.el-dialog__footer) {

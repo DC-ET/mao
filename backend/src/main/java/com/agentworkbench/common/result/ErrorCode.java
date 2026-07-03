@@ -43,7 +43,8 @@ public enum ErrorCode {
     INTERNAL_ERROR(5001, "服务内部错误"),
     DATABASE_ERROR(5002, "数据库错误"),
     REDIS_ERROR(5003, "缓存服务错误"),
-    FILE_UPLOAD_ERROR(5004, "文件上传失败");
+    FILE_UPLOAD_ERROR(5004, "文件上传失败"),
+    GIT_CLONE_FAILED(5005, "Git 仓库克隆失败");
 
     private final int code;
     private final String message;

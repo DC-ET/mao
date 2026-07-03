@@ -85,6 +85,10 @@ const newTaskAgentId = ref<string | null>(null)
 const newTaskMode = ref<'CLOUD' | 'LOCAL'>('CLOUD')
 const newTaskWorkspace = ref('')
 const newTaskCloudProjectKey = ref('')
+const newTaskWorkspaceMode = ref<string>('new')
+const newTaskGitCloneUrl = ref('')
+const newTaskGitBranch = ref('')
+const newTaskCloudProjects = ref<Array<{ name: string; path: string; isGit: boolean }>>([])
 const newTaskModelId = ref<number | undefined>()
 const lastViewedSession = ref<{ agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number } | null>(null)
 const isNewTaskMode = computed(() => !sessionIdParam.value && !initialLoading.value)
@@ -100,6 +104,10 @@ provide('newTaskAgentId', newTaskAgentId)
 provide('newTaskMode', newTaskMode)
 provide('newTaskWorkspace', newTaskWorkspace)
 provide('newTaskCloudProjectKey', newTaskCloudProjectKey)
+provide('newTaskWorkspaceMode', newTaskWorkspaceMode)
+provide('newTaskGitCloneUrl', newTaskGitCloneUrl)
+provide('newTaskGitBranch', newTaskGitBranch)
+provide('newTaskCloudProjects', newTaskCloudProjects)
 provide('initialLoading', initialLoading)
 provide('currentPhase', currentPhase)
 
@@ -267,6 +275,18 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   newTaskMode.value = mode
   newTaskWorkspace.value = mode === 'LOCAL' ? (defaults?.workspace || '') : ''
   newTaskCloudProjectKey.value = mode === 'CLOUD' ? (defaults?.cloudProjectKey || '') : ''
+  newTaskWorkspaceMode.value = 'new'
+  newTaskGitCloneUrl.value = ''
+  newTaskGitBranch.value = ''
+  // Load cloud projects for workspace source selection
+  sessionStore.fetchCloudProjects().then(projects => {
+    if (generation === newTaskModeGeneration) {
+      newTaskCloudProjects.value = projects
+      if (projects.length > 0) {
+        newTaskWorkspaceMode.value = 'existing'
+      }
+    }
+  })
   permissionLevel.value = defaults?.permissionLevel || 'READ_ONLY'
   newTaskModelId.value = defaults?.modelId
 

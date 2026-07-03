@@ -75,6 +75,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const sessionId = ref<string | null>(null)
   const workspace = ref('')
   const cloudProjectKey = ref('')
+  const workspaceMode = ref<string>('new')
+  const gitCloneUrl = ref('')
+  const gitBranch = ref('')
+  const cloudProjects = ref<Array<{ name: string; path: string; isGit: boolean }>>([])
   const agentName = ref('Agent')
   const startedAt = ref<string | null>(null)
 
@@ -288,7 +292,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
           environmentInfo,
           selectedModelId?.value,
           permissionLevel?.value,
-          executionMode.value === 'CLOUD' ? cloudProjectKey.value || undefined : undefined
+          executionMode.value === 'CLOUD' ? cloudProjectKey.value || undefined : undefined,
+          executionMode.value === 'CLOUD' ? workspaceMode.value : undefined,
+          executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? gitCloneUrl.value : undefined,
+          executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? (gitBranch.value || undefined) : undefined
         )
         sessionId.value = sessionData.id
         if (sessionData.workspace) {
@@ -615,6 +622,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sessionId.value = null
     workspace.value = ''
     cloudProjectKey.value = ''
+    workspaceMode.value = 'new'
+    gitCloneUrl.value = ''
+    gitBranch.value = ''
     agentName.value = 'Agent'
     sessionStore.setActiveSession(null)
   }
@@ -719,6 +729,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sessionId,
     workspace,
     cloudProjectKey,
+    workspaceMode,
+    gitCloneUrl,
+    gitBranch,
+    cloudProjects,
     agentName,
     pendingApprovals,
     activities,
