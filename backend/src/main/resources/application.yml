@@ -111,6 +111,22 @@ app:
         max-preview-chars: 10000
         default-yield-time-ms: 10000
 
+    # Tavily Search
+    tavily:
+      api-key: ${TAVILY_API_KEY:}
+      base-url: ${TAVILY_BASE_URL:https://api.tavily.com}
+      connect-timeout: 10000
+      read-timeout: 30000
+      max-results: 5
+
+    # Web Page Fetching
+    web-page:
+      connect-timeout: 10000
+      read-timeout: 30000
+      max-raw-bytes: 1048576
+      max-output-length: 500000
+      user-agent: "Mozilla/5.0 (compatible; AgentWorkbench/1.0)"
+
 # SpringDoc
 springdoc:
   api-docs:

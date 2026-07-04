@@ -21,6 +21,8 @@ public class ToolResultSummarizer {
             case "task_list" -> summarizeTaskList(result);
             case "task_delete" -> summarizeTaskDelete(result);
             case "ask_user_questions" -> summarizeAskUserQuestions(arguments, result);
+            case "web_search" -> summarizeWebSearch(arguments, result);
+            case "open_web_page" -> summarizeOpenWebPage(arguments, result);
 
             default -> summarizeGeneric(toolName, result);
         };
@@ -203,6 +205,24 @@ public class ToolResultSummarizer {
         return "向用户提问";
     }
 
+    private static String summarizeWebSearch(String arguments, String result) {
+        String query = extractJsonString(arguments, "query");
+        JsonNode node = parseJson(result);
+        if (node == null) return "搜索 " + (query != null ? truncate(query, 30) : "");
+        int count = node.has("total_results") ? node.get("total_results").asInt() : 0;
+        return "搜索 " + truncate(query, 30) + " (" + count + " 条结果)";
+    }
+
+    private static String summarizeOpenWebPage(String arguments, String result) {
+        String url = extractJsonString(arguments, "url");
+        JsonNode node = parseJson(result);
+        if (node == null) return "打开网页 " + (url != null ? formatUrl(url) : "");
+        String title = node.has("title") ? node.get("title").asText("") : "";
+        boolean truncated = node.has("truncated") && node.get("truncated").asBoolean();
+        return "打开网页" + (!title.isEmpty() ? " " + truncate(title, 30) : "") +
+               (truncated ? " (内容已截断)" : "");
+    }
+
     private static String summarizeGeneric(String toolName, String result) {
         if (result == null) return toolName;
 
@@ -260,5 +280,12 @@ public class ToolResultSummarizer {
         if (bytes < 1024) return bytes + "B";
         if (bytes < 1024 * 1024) return (bytes / 1024) + "KB";
         return String.format("%.1fMB", bytes / (1024.0 * 1024.0));
+    }
+
+    private static String formatUrl(String url) {
+        if (url == null) return "";
+        // Strip protocol and truncate
+        String shortUrl = url.replaceFirst("^https?://", "");
+        return truncate(shortUrl, 40);
     }
 }
