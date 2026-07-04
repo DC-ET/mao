@@ -4,7 +4,7 @@
       <ChatPanel v-if="activeTabId === 'chat'" />
       <FileViewer
         v-else-if="activeTab?.type === 'file'"
-        :key="activeTabId"
+        :key="`${activeTabId}-${activeTab?.version ?? 0}`"
         :file-path="activeTab.filePath || ''"
         :provider="fileProvider"
       />

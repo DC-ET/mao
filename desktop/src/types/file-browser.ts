@@ -17,6 +17,7 @@ export interface Tab {
   title: string
   filePath?: string     // relative path within workspace
   fileChange?: FileChange
+  version?: number      // increment on each re-open to force remount
 }
 
 export interface SessionTabState {

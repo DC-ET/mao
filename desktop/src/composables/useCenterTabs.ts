@@ -50,12 +50,14 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     // Check if tab already exists
     const existing = state.tabs.find(t => t.type === 'file' && t.filePath === filePath)
     if (existing) {
+      // Increment version to force remount, ensuring latest file content is loaded
+      existing.version = (existing.version ?? 0) + 1
       state.activeTabId = existing.id
       return
     }
     // Use relative path as id (from title which is the filename, but filePath for uniqueness)
     const id = 'file:' + filePath
-    const newTab: Tab = { id, type: 'file', title, filePath }
+    const newTab: Tab = { id, type: 'file', title, filePath, version: 0 }
     state.tabs.push(newTab)
     state.activeTabId = id
   }
