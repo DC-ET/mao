@@ -276,6 +276,18 @@ export function useStreamWS() {
     send({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, direction } })
   }
 
+  function createSideSession(parentSessionId: string, content: string, inheritContext: boolean, modelId?: number) {
+    send({
+      type: 'create_side_session',
+      sessionId: Number(parentSessionId),
+      data: {
+        content,
+        inheritContext,
+        ...(modelId != null ? { modelId } : {})
+      }
+    })
+  }
+
   function routeEvent(msg: any) {
     const { type, sessionId: rawSid, data } = msg
     const sessionId = rawSid != null ? String(rawSid) : null
@@ -439,6 +451,21 @@ export function useStreamWS() {
         }
         break
 
+      case 'side_session_created':
+        // Side task session created — dispatch custom event for SideChatPanel to handle
+        if (sessionId && data?.sideSessionId && data?.title) {
+          window.dispatchEvent(new CustomEvent('side_session_created', {
+            detail: {
+              parentSessionId: sessionId,
+              sideSessionId: data.sideSessionId,
+              title: data.title
+            }
+          }))
+          // Subscribe to the new side session for stream events
+          subscribe(String(data.sideSessionId))
+        }
+        break
+
       case 'skill_sync_required': {
         // Server requests skill sync — trigger main process to download & extract zip
         const syncUrl = data?.syncUrl
@@ -564,6 +591,7 @@ export function useStreamWS() {
     insertMessage,
     deleteQueueMessage,
     reorderQueueMessage,
+    createSideSession,
     pendingCallbacks,
     setActiveExecution,
     clearActiveExecution

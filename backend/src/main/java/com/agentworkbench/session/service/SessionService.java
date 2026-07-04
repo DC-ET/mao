@@ -20,6 +20,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -192,7 +193,7 @@ public class SessionService {
     public List<Session> listSessions(Long userId, String keyword, String status) {
         QueryWrapper<Session> qw = new QueryWrapper<>();
         qw.eq("user_id", userId);
-        qw.ne("session_type", "SUBAGENT");
+        qw.notIn("session_type", "SUBAGENT", "SIDE_TASK");
         if (keyword != null && !keyword.isEmpty()) {
             qw.and(w -> w.like("title", keyword));
         }
@@ -202,6 +203,17 @@ public class SessionService {
             qw.eq("status", "ACTIVE");
         }
         qw.orderByDesc("is_pinned").orderByDesc("updated_at");
+        return sessionMapper.selectList(qw);
+    }
+
+    public List<Session> listSideTaskSessions(Long parentSessionId, Long userId) {
+        QueryWrapper<Session> qw = new QueryWrapper<>();
+        qw.eq("parent_session_id", parentSessionId);
+        qw.eq("user_id", userId);
+        qw.eq("session_type", "SIDE_TASK");
+        // 边路任务执行完成后 phase 会变，但 session 本身仍应可见；status 仅用于归档
+        qw.ne("status", "ARCHIVED");
+        qw.orderByDesc("created_at");
         return sessionMapper.selectList(qw);
     }
 
@@ -260,6 +272,28 @@ public class SessionService {
         sessionMapper.updateById(session);
     }
 
+    /**
+     * 保存新会话（用于边路任务等子会话创建）。
+     */
+    public void save(Session session) {
+        sessionMapper.insert(session);
+    }
+
+    /**
+     * 更新 session 单个字段。
+     * 边路任务使用此方法更新 status，避免触发 updatePhase() 中的自动消费等逻辑。
+     */
+    public void updateField(Long sessionId, String field, Object value) {
+        LambdaUpdateWrapper<Session> wrapper = new LambdaUpdateWrapper<Session>()
+                .eq(Session::getId, sessionId);
+        switch (field) {
+            case "status" -> wrapper.set(Session::getStatus, (String) value);
+            case "phase"  -> wrapper.set(Session::getPhase, (String) value);
+            default -> throw new IllegalArgumentException("Unsupported field: " + field);
+        }
+        sessionMapper.update(null, wrapper);
+    }
+
     public Message saveMessage(Long sessionId, String role, String content, String thinkingContent,
                                 String toolCallId, String toolCalls,
                                 Integer tokenCount, Long modelId) {
@@ -280,8 +314,10 @@ public class SessionService {
             sessionMapper.updateById(session);
         }
 
-        // Auto-generate title from first user message (skip for sub-agent sessions)
-        if ("USER".equals(role) && session != null && !"SUBAGENT".equals(session.getSessionType())) {
+        // Auto-generate title from first user message (skip for sub-agent and side-task sessions)
+        if ("USER".equals(role) && session != null
+                && !"SUBAGENT".equals(session.getSessionType())
+                && !"SIDE_TASK".equals(session.getSessionType())) {
             if (session.getTitle() != null && (session.getTitle().equals("未命名会话") || session.getTitle().isBlank())) {
                 String textForTitle = preprocessForTitle(content, session.getUserId());
                 String autoTitle = TitleGenerator.generate(textForTitle);
@@ -323,8 +359,10 @@ public class SessionService {
             sessionMapper.updateById(session);
         }
 
-        // Auto-generate title from first user message (extract text for title, skip for sub-agent sessions)
-        if ("USER".equals(role) && session != null && !"SUBAGENT".equals(session.getSessionType())) {
+        // Auto-generate title from first user message (extract text for title, skip for sub-agent and side-task sessions)
+        if ("USER".equals(role) && session != null
+                && !"SUBAGENT".equals(session.getSessionType())
+                && !"SIDE_TASK".equals(session.getSessionType())) {
             if (session.getTitle() != null && (session.getTitle().equals("未命名会话") || session.getTitle().isBlank())) {
                 String rawText = content instanceof String s ? s : extractTextFromContent(content);
                 String textForTitle = preprocessForTitle(rawText, session.getUserId());

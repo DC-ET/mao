@@ -13,6 +13,12 @@
         :key="activeTabId"
         :change="activeTab.fileChange"
       />
+      <SideChatPanel
+        v-else-if="activeTab?.type === 'side_task' && activeTab.sideSessionId != null"
+        :key="activeTabId"
+        :tab-id="activeTabId"
+        :side-session-id="activeTab.sideSessionId"
+      />
     </KeepAlive>
   </div>
 </template>
@@ -22,6 +28,7 @@ import { computed } from 'vue'
 import ChatPanel from '../chat/ChatPanel.vue'
 import FileViewer from './FileViewer.vue'
 import FileDiffViewer from './FileDiffViewer.vue'
+import SideChatPanel from '../chat/SideChatPanel.vue'
 import type { Tab } from '../../types/file-browser'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 

@@ -60,7 +60,7 @@ export interface Session {
   modelSupportsVision?: boolean
   // Sub-agent fields
   parentSessionId?: string
-  sessionType?: 'NORMAL' | 'SUBAGENT'
+  sessionType?: 'NORMAL' | 'SUBAGENT' | 'SIDE_TASK'
 }
 
 function normalizeId(id: any): string {
@@ -87,6 +87,8 @@ export const useSessionStore = defineStore('session', () => {
   const sessionMessageHasMore = ref<Map<string, boolean>>(new Map())
   const sessionMessageLoadingOlder = ref<Map<string, boolean>>(new Map())
   const sessionMessageNextBeforeId = ref<Map<string, string | null>>(new Map())
+  // Phase cache for sessions not in the main list (e.g. side tasks)
+  const sessionPhases = ref<Map<string, TaskPhase>>(new Map())
 
   const activeSession = computed(() =>
     sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
@@ -274,10 +276,19 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function updateSessionPhase(id: string, phase: TaskPhase) {
+    sessionPhases.value.set(String(id), phase)
     updateSession(id, {
       phase,
       running: ACTIVE_PHASES.has(phase)
     })
+  }
+
+  function getSessionPhase(id: string): TaskPhase | null {
+    const sid = String(id)
+    const cached = sessionPhases.value.get(sid)
+    if (cached) return cached
+    const session = sessions.value.find(s => String(s.id) === sid)
+    return session?.phase ?? null
   }
 
   async function renameSession(id: string, title: string) {
@@ -735,6 +746,7 @@ export const useSessionStore = defineStore('session', () => {
     sessionMessageHasMore.value = new Map()
     sessionMessageLoadingOlder.value = new Map()
     sessionMessageNextBeforeId.value = new Map()
+    sessionPhases.value = new Map()
   }
 
   return {
@@ -757,6 +769,7 @@ export const useSessionStore = defineStore('session', () => {
     setActiveSession,
     updateSession,
     updateSessionPhase,
+    getSessionPhase,
     renameSession,
     updateSessionModel,
     deleteSession,

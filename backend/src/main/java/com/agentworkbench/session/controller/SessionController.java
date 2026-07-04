@@ -221,6 +221,27 @@ public class SessionController {
         return Result.ok(result);
     }
 
+    @GetMapping("/{id}/side-tasks")
+    public Result<List<SideTaskVO>> listSideTasks(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id) {
+        Session parent = sessionService.getSession(id);
+        if (!parent.getUserId().equals(userId)) {
+            return Result.fail(403, "无权操作");
+        }
+        List<Session> sideTasks = sessionService.listSideTaskSessions(id, userId);
+        List<SideTaskVO> voList = sideTasks.stream().map(s -> {
+            SideTaskVO vo = new SideTaskVO();
+            vo.setId(s.getId());
+            vo.setTitle(s.getTitle());
+            vo.setModelId(s.getModelId());
+            vo.setPhase(s.getPhase() != null ? s.getPhase() : "IDLE");
+            vo.setCreatedAt(s.getCreatedAt() != null ? s.getCreatedAt().toString() : null);
+            return vo;
+        }).collect(Collectors.toList());
+        return Result.ok(voList);
+    }
+
     @GetMapping("/{id}/messages")
     public Result<MessagePageVO> getMessages(
             @AuthenticationPrincipal Long userId,
@@ -571,6 +592,15 @@ public class SessionController {
         private Long modelId;
         private String modelName;
         private Boolean modelSupportsVision;
+    }
+
+    @Data
+    public static class SideTaskVO {
+        private Long id;
+        private String title;
+        private Long modelId;
+        private String phase;
+        private String createdAt;
     }
 
     @Data

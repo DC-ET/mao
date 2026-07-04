@@ -3,15 +3,25 @@
     <TaskIndexPanel :collapsed="panelCollapsed" @toggle="panelCollapsed = !panelCollapsed" @new-task="handleNewTask" @new-task-from-group="handleNewTaskFromGroup" />
 
     <div class="task-container">
-      <CenterTabBar
-        v-if="tabs.length > 1"
-        :tabs="tabs"
-        :active-tab-id="activeTabId"
-        @activate="activateTab"
-        @close="closeTab"
-        @close-all="closeAllFileTabs"
-        @close-others="closeOtherTabs"
-      />
+      <div class="tab-bar-row">
+        <CenterTabBar
+          v-if="tabs.length > 1"
+          :tabs="tabs"
+          :active-tab-id="activeTabId"
+          @activate="activateTab"
+          @close="closeTab"
+          @close-all="closeAllFileTabs"
+          @close-others="closeOtherTabs"
+        />
+        <el-button
+          v-if="sessionIdForTabs || sessionStore.activeSessionId"
+          class="side-task-btn"
+          size="small"
+          @click="handleNewSideTask"
+        >
+          + 边路任务
+        </el-button>
+      </div>
       <CenterTabContainer
         :tabs="tabs"
         :active-tab-id="activeTabId"
@@ -94,9 +104,19 @@ const lastViewedSession = ref<{ agentId: string; executionMode: string; workspac
 const isNewTaskMode = computed(() => !sessionIdParam.value && !initialLoading.value)
 const isExplicitNewTaskRoute = computed(() => !sessionIdParam.value && getQueryString(NEW_TASK_QUERY) === '1')
 
+// Shared refs — must be declared before provide()
+const workspace = ref('')
+const agentName = ref('')
+const chatTodos = ref<any[]>([])
+const chatContextWindow = ref<any>(null)
+const chatSending = ref(false)
+const chatPendingApprovals = ref<any[]>([])
+const chatFocusInput = ref<(() => void) | null>(null)
+
 // Provide shared refs for ChatPanel
 provide('agentId', agentId)
 provide('executionMode', executionMode)
+provide('workspace', workspace)
 provide('newTaskModelId', newTaskModelId)
 provide('permissionLevel', permissionLevel)
 provide('isNewTaskMode', isNewTaskMode)
@@ -110,15 +130,6 @@ provide('newTaskGitBranch', newTaskGitBranch)
 provide('newTaskCloudProjects', newTaskCloudProjects)
 provide('initialLoading', initialLoading)
 provide('currentPhase', currentPhase)
-
-// State synced from ChatPanel via non-reactive callback (avoids recursive updates)
-const workspace = ref('')
-const agentName = ref('')
-const chatTodos = ref<any[]>([])
-const chatContextWindow = ref<any>(null)
-const chatSending = ref(false)
-const chatPendingApprovals = ref<any[]>([])
-const chatFocusInput = ref<(() => void) | null>(null)
 
 function syncChatState(state: {
   workspace?: string
@@ -156,7 +167,7 @@ function handleAddFileToChat(filePath: string) {
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTabId, openFileTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTabId, openFileTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, updateSideTaskTab, restoreSideTaskTabs } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
@@ -182,8 +193,23 @@ function handleTerminalShortcut(e: KeyboardEvent) {
   }
 }
 
+// Handle side_session_created window event (from useStreamWS)
+function handleSideSessionCreated(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (!detail || !detail.sideSessionId || !detail.title) return
+  // Find the placeholder tab (side task tab with non-positive sideSessionId)
+  const currentTabs = tabs.value
+  for (const tab of currentTabs) {
+    if (tab.type === 'side_task' && (tab.sideSessionId === undefined || tab.sideSessionId <= 0)) {
+      updateSideTaskTab(tab.id, detail.sideSessionId, detail.title)
+      break
+    }
+  }
+}
+
 onMounted(() => {
   document.addEventListener('keydown', handleTerminalShortcut)
+  window.addEventListener('side_session_created', handleSideSessionCreated)
 })
 
 // Open file from TaskInspector's file tree
@@ -353,6 +379,7 @@ async function loadSession(sid: string) {
       currentPhase.value = data.phase || 'IDLE'
       projectKey.value = data.projectKey || ''
       permissionLevel.value = data.permissionLevel || 'READ_ONLY'
+      workspace.value = data.workspace || ''
       // workspace and agentName will be synced from ChatPanel's useChat
       await agentStore.fetchAgent(normalizedAgentId)
       lastViewedSession.value = {
@@ -366,6 +393,20 @@ async function loadSession(sid: string) {
     }
   } catch {
     // ignore
+  }
+
+  // Restore open side task tabs (excluding user-closed ones)
+  try {
+    const res = await api.get(`/sessions/${sid}/side-tasks`)
+    const sideTasks = res?.data
+    if (Array.isArray(sideTasks) && sideTasks.length > 0) {
+      restoreSideTaskTabs(sid, sideTasks.map((st: { id: number; title: string }) => ({
+        id: st.id,
+        title: st.title || '边路任务'
+      })))
+    }
+  } catch (e) {
+    console.warn('[side-task] Failed to restore side task tabs:', e)
   }
 
   initialLoading.value = false
@@ -385,6 +426,14 @@ async function handleNewTask() {
 
 async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number }) {
   await navigateToNewTask(payload)
+}
+
+function handleNewSideTask() {
+  // Create a placeholder tab with sideSessionId=0
+  // The real sideSessionId will be assigned when the user sends the first message
+  // and the server responds with side_session_created
+  const tempId = -Date.now()
+  openSideTaskTab(tempId, '边路任务')
 }
 
 async function loadDefaultModel() {
@@ -498,6 +547,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleTerminalShortcut)
+  window.removeEventListener('side_session_created', handleSideSessionCreated)
 })
 </script>
 
@@ -515,5 +565,17 @@ onUnmounted(() => {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
+}
+
+.tab-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.tab-bar-row .side-task-btn {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 </style>

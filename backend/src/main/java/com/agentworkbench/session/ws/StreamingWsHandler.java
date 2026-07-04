@@ -165,6 +165,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         String type = root.has("type") ? root.get("type").asText() : null;
         if (type == null) return;
 
+        log.info("WS message type={} from userId={}", type, userId);
         switch (type) {
             case "subscribe" -> handleSubscribe(userId, root);
             case "unsubscribe" -> handleUnsubscribe(userId, root);
@@ -179,6 +180,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             case "tool_result" -> handleToolResult(userId, root);
             case "tool_error" -> handleToolError(userId, root);
             case "ask_user_questions_result" -> handleAskUserQuestionsResult(userId, root);
+            case "create_side_session" -> handleCreateSideSession(userId, root);
+            case "cancel_side_task" -> handleCancelSideTask(userId, root);
             case "ping" -> registry.send(userId, WsEvent.of("pong", null, Map.of()));
             default -> log.debug("Unknown WS message type '{}' from userId={}", type, userId);
         }
@@ -744,6 +747,128 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         String resultJson = "{\"answers\": " + answersJson + "}";
         askUserQuestionsRegistry.complete(sessionId, requestId, resultJson);
         log.info("Received ask_user_questions_result for session={}, requestId={}", sessionId, requestId);
+    }
+
+    /**
+     * 创建边路任务会话并执行首条消息。
+     * 后续消息复用 handleSendMessage() 标准流程（sessionId = sideSessionId）。
+     */
+    private void handleCreateSideSession(Long userId, JsonNode root) {
+        log.info(">>> handleCreateSideSession called, userId={}, sessionId={}", userId, root.has("sessionId") ? root.get("sessionId").asText() : "null");
+        Long parentSessionId = getLong(root, "sessionId");
+        if (parentSessionId == null) return;
+
+        JsonNode data = root.get("data");
+        if (data == null || !data.has("content")) return;
+        String content = data.get("content").asText();
+        boolean inheritContext = data.has("inheritContext") && data.get("inheritContext").asBoolean();
+        Long modelId = data.has("modelId") && !data.get("modelId").isNull()
+                ? data.get("modelId").asLong() : null;
+
+        // 1. 校验主会话存在
+        Session parentSession;
+        try {
+            parentSession = sessionService.getSession(parentSessionId);
+        } catch (Exception e) {
+            registry.send(userId, WsEvent.of("error", parentSessionId,
+                    Map.of("message", "主会话不存在")));
+            return;
+        }
+
+        // 2. 确认用户订阅了主会话
+        registry.subscribe(userId, parentSessionId);
+
+        // 3. 创建边路任务子会话
+        Session sideSession = new Session();
+        sideSession.setUserId(userId);
+        sideSession.setAgentId(parentSession.getAgentId());
+        sideSession.setTitle("[边路] " + (content.length() > 30
+                ? content.substring(0, 30) + "..." : content));
+        sideSession.setExecutionMode(parentSession.getExecutionMode());
+        sideSession.setWorkspace(parentSession.getWorkspace());
+        sideSession.setPermissionLevel(parentSession.getPermissionLevel());
+        sideSession.setModelId(modelId != null ? modelId : parentSession.getModelId());
+        sideSession.setIsGit(parentSession.getIsGit());
+        sideSession.setPlatform(parentSession.getPlatform());
+        sideSession.setShellPath(parentSession.getShellPath());
+        sideSession.setOsVersion(parentSession.getOsVersion());
+        sideSession.setStatus("ACTIVE");
+        sideSession.setParentSessionId(parentSessionId);
+        sideSession.setSessionType("SIDE_TASK");
+        sessionService.save(sideSession);
+        Long sideSessionId = sideSession.getId();
+
+        log.info("Created side task session {} for parent session {}, userId={}, inheritContext={}",
+                sideSessionId, parentSessionId, userId, inheritContext);
+
+        // 4. 保存首条 USER 消息
+        sessionService.saveMessage(sideSessionId, "USER", content,
+                null, null, null, 0, null);
+
+        // 5. 通知前端会话已创建（前端随后订阅该 sideSessionId）
+        registry.send(userId, WsEvent.of("side_session_created", parentSessionId,
+                Map.of("sideSessionId", sideSessionId, "title", sideSession.getTitle())));
+
+        // 6. 注册取消标志
+        AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(sideSessionId);
+
+        // 7. 异步执行首条消息
+        agentExecutor.submit(() -> {
+            try {
+                sessionService.updateField(sideSessionId, "phase", "RUNNING");
+                // 通过标准事件通知执行状态（sessionId = sideSessionId，前端需订阅方可见）
+                registry.send(userId, WsEvent.of("session_status", sideSessionId,
+                        Map.of("phase", "RUNNING")));
+
+                WsStreamingEventListener listener = new WsStreamingEventListener(
+                        registry, activityService, sessionTodoMapper, sessionService,
+                        sideSessionId, userId, null);
+
+                harnessService.executeSideFirstMessage(
+                        parentSessionId, sideSessionId,
+                        inheritContext, listener, cancelFlag);
+
+                if (cancelFlag.get()) {
+                    sessionService.updateField(sideSessionId, "phase", "CANCELLED");
+                    registry.send(userId, WsEvent.of("session_status", sideSessionId,
+                            Map.of("phase", "CANCELLED")));
+                } else {
+                    sessionService.updateField(sideSessionId, "phase", "COMPLETED");
+                    registry.send(userId, WsEvent.of("session_status", sideSessionId,
+                            Map.of("phase", "COMPLETED")));
+                }
+            } catch (Exception e) {
+                log.error("Side task execution failed for sideSession {}", sideSessionId, e);
+                try {
+                    sessionService.updateField(sideSessionId, "phase", "FAILED");
+                } catch (Exception ignored) {}
+                registry.send(userId, WsEvent.of("session_status", sideSessionId,
+                        Map.of("phase", "FAILED")));
+                registry.send(userId, WsEvent.of("error", sideSessionId,
+                        Map.of("message", e.getMessage() != null ? e.getMessage() : "未知错误")));
+            } finally {
+                agentLoop.removeCancelFlag(sideSessionId);
+            }
+        });
+    }
+
+    /**
+     * 取消边路任务。
+     */
+    private void handleCancelSideTask(Long userId, JsonNode root) {
+        Long sideSessionId = getLong(root, "sideSessionId");
+        if (sideSessionId == null) return;
+
+        // 复用现有的 cancel 机制
+        AtomicBoolean flag = cancelFlags.get(sideSessionId);
+        if (flag != null) {
+            flag.set(true);
+        }
+        Future<?> future = runningTasks.get(sideSessionId);
+        if (future != null) {
+            future.cancel(false);
+        }
+        shellSessionManager.closeByConversation(sideSessionId);
     }
 
     private void finishCancelledSession(Long sessionId, Long userId, String executionId) {

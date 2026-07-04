@@ -1,6 +1,7 @@
 import { ref, computed, watch, type Ref } from 'vue'
 import type { Tab, SessionTabState } from '../types/file-browser'
 import type { FileChange } from '../types/chat'
+import { getClosedSideTaskIds, markSideTaskClosed, type SideTaskSummary } from '../utils/side-task-tabs'
 
 // Module-level singleton state
 const sessionTabsMap = ref<Map<string, SessionTabState>>(new Map())
@@ -16,6 +17,11 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       currentSessionId.value = sid
     }
   }, { immediate: true })
+
+  function notifyTabsChanged() {
+    // Map 内部对象变更不会自动触发 computed，需要替换 Map 引用
+    sessionTabsMap.value = new Map(sessionTabsMap.value)
+  }
 
   function getSessionState(): SessionTabState {
     const sid = currentSessionId.value
@@ -79,11 +85,49 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     state.activeTabId = id
   }
 
+  /**
+   * 打开边路任务 Tab。如果已存在则直接激活。
+   * 传入 sideSessionId=0 表示"待创建"状态。
+   */
+  function openSideTaskTab(sideSessionId: number, title: string) {
+    const state = getSessionState()
+    const id = 'side:' + sideSessionId
+    const existing = state.tabs.find(t => t.id === id)
+    if (existing) {
+      state.activeTabId = id
+      return
+    }
+    const newTab: Tab = { id, type: 'side_task', title, sideSessionId }
+    state.tabs.push(newTab)
+    state.activeTabId = id
+    notifyTabsChanged()
+  }
+
+  /**
+   * 更新边路任务 Tab（收到 side_session_created 后更新属性）。
+   * 不改变 tab.id，保持组件不重新挂载。
+   */
+  function updateSideTaskTab(oldId: string, sideSessionId: number, title: string) {
+    const state = getSessionState()
+    const tab = state.tabs.find(t => t.id === oldId)
+    if (tab) {
+      // Don't change tab.id — keep the component mounted
+      tab.sideSessionId = sideSessionId
+      tab.title = title
+      // Don't change activeTabId — it already points to this tab
+    }
+  }
+
   function closeTab(tabId: string) {
     if (tabId === 'chat') return // can't close chat tab
     const state = getSessionState()
     const idx = state.tabs.findIndex(t => t.id === tabId)
     if (idx === -1) return
+
+    const tab = state.tabs[idx]
+    if (tab.type === 'side_task' && tab.sideSessionId && tab.sideSessionId > 0) {
+      markSideTaskClosed(currentSessionId.value, tab.sideSessionId)
+    }
 
     state.tabs.splice(idx, 1)
 
@@ -95,6 +139,37 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       } else {
         state.activeTabId = 'chat'
       }
+    }
+    notifyTabsChanged()
+  }
+
+  /**
+   * 从后端恢复未关闭的边路任务 Tab（页面刷新后调用）。
+   */
+  function restoreSideTaskTabs(parentSessionId: string, sideTasks: SideTaskSummary[]) {
+    if (!parentSessionId || sideTasks.length === 0) return
+    const closed = getClosedSideTaskIds(parentSessionId)
+    const state = sessionTabsMap.value.get(parentSessionId) ?? { tabs: [], activeTabId: 'chat' }
+    let changed = false
+
+    for (const st of sideTasks) {
+      if (closed.has(st.id)) continue
+      const id = 'side:' + st.id
+      const existing = state.tabs.find(t => t.id === id || t.sideSessionId === st.id)
+      if (existing) {
+        existing.sideSessionId = st.id
+        existing.title = st.title
+        changed = true
+        continue
+      }
+      const newTab: Tab = { id, type: 'side_task', title: st.title, sideSessionId: st.id }
+      state.tabs.push(newTab)
+      changed = true
+    }
+
+    if (changed) {
+      sessionTabsMap.value.set(parentSessionId, state)
+      notifyTabsChanged()
     }
   }
 
@@ -127,6 +202,9 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     activeTab,
     openFileTab,
     openDiffTab,
+    openSideTaskTab,
+    updateSideTaskTab,
+    restoreSideTaskTabs,
     closeTab,
     closeAllFileTabs,
     closeOtherTabs,

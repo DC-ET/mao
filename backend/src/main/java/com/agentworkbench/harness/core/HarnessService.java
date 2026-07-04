@@ -484,6 +484,117 @@ public class HarnessService {
     }
 
     /**
+     * 执行边路任务的首条消息。与主任务并行，使用独立的子会话。
+     * 首条消息支持注入主任务上下文摘要（仅一次），后续消息走标准 executeFromEvent() 流程。
+     *
+     * @param parentSessionId 主任务会话 ID
+     * @param sideSessionId   边路任务子会话 ID
+     * @param inheritContext  是否注入主任务上下文摘要
+     * @param listener        边路任务的事件监听器
+     * @param cancelFlag      取消标志
+     */
+    public void executeSideFirstMessage(Long parentSessionId,
+                                         Long sideSessionId,
+                                         boolean inheritContext,
+                                         AgentEventListener listener,
+                                         AtomicBoolean cancelFlag) {
+        // 1. 构建边路任务上下文（复用 buildContext）
+        AgentExecutionContext context = buildContext(sideSessionId);
+
+        // 2. 如果选择继承主任务上下文，注入摘要到 system prompt（仅首条消息）
+        if (inheritContext) {
+            String contextSummary = generateContextSummary(parentSessionId);
+            if (contextSummary != null && !contextSummary.isBlank()) {
+                String enrichedSystemPrompt = context.getSystemPrompt()
+                        + "\n\n<主任务背景摘要>\n"
+                        + contextSummary
+                        + "\n</主任务背景摘要>\n"
+                        + "以上是主任务的最近对话摘要，本次边路任务的结果不需要反馈到主任务。";
+                context.setSystemPrompt(enrichedSystemPrompt);
+            }
+        }
+
+        // 3. 持久化回调：写入边路任务子会话
+        AgentLoop.MessagePersistenceCallback persistenceCallback =
+            new AgentLoop.MessagePersistenceCallback() {
+                @Override
+                public void onSaveAssistantMessage(String content, String thinkingContent,
+                                                    List<ChatRequest.ToolCall> toolCalls,
+                                                    ChatUsage usage) {
+                    onSaveAssistantMessage(content, thinkingContent, toolCalls, java.util.Map.of(), usage);
+                }
+
+                @Override
+                public void onSaveAssistantMessage(String content, String thinkingContent,
+                                                    List<ChatRequest.ToolCall> toolCalls,
+                                                    Map<String, String> toolResults, ChatUsage usage) {
+                    String toolCallsJson = null;
+                    if (toolCalls != null && !toolCalls.isEmpty()) {
+                        try {
+                            toolCallsJson = objectMapper.writeValueAsString(toolCalls);
+                        } catch (JsonProcessingException e) {
+                            log.warn("Failed to serialize tool calls for side task", e);
+                        }
+                    }
+                    int tokenCount = usage != null ? usage.getTotalTokens() : 0;
+                    Long modelId = context.getModelConfig() != null
+                            ? context.getModelConfig().getId() : null;
+                    Message savedMsg = sessionService.saveMessage(sideSessionId, "ASSISTANT",
+                            content, thinkingContent, null, toolCallsJson,
+                            tokenCount, modelId);
+
+                    // Save file change records
+                    if (toolCalls != null && !toolCalls.isEmpty() && !toolResults.isEmpty()) {
+                        saveFileChanges(savedMsg.getId(), sideSessionId, toolCalls, toolResults);
+                    }
+                }
+
+                @Override
+                public void onSaveToolMessage(String toolCallId, String content) {
+                    sessionService.saveMessage(sideSessionId, "TOOL",
+                            content, null, toolCallId, null, 0, null);
+                }
+            };
+
+        // 4. 执行 Agent Loop
+        agentLoop.execute(context, listener, persistenceCallback);
+        if (cancelFlag != null) {
+            agentLoop.removeCancelFlag(sideSessionId);
+        }
+    }
+
+    /**
+     * 生成主任务上下文摘要。
+     * 取最近若干条消息的摘要，帮助边路 Agent 理解主任务背景。
+     */
+    private String generateContextSummary(Long parentSessionId) {
+        try {
+            List<Message> messages = sessionService.getMessages(parentSessionId);
+            if (messages.isEmpty()) return null;
+
+            int fromIndex = Math.max(0, messages.size() - 10);
+            List<Message> recentMessages = messages.subList(fromIndex, messages.size());
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("以下是主任务最近的对话摘要：\n\n");
+            for (Message msg : recentMessages) {
+                String role = msg.getRole();
+                String content = msg.getContent();
+                if (content != null && !content.isBlank()) {
+                    String truncated = content.length() > 300
+                            ? content.substring(0, 300) + "..."
+                            : content;
+                    sb.append("[").append(role).append("]: ").append(truncated).append("\n");
+                }
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("Failed to generate context summary for side task", e);
+            return null;
+        }
+    }
+
+    /**
      * Resolve model: prefer explicit modelId, fallback to default model.
      */
     public LlmModel resolveModel(Long modelId) {
