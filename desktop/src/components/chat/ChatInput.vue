@@ -444,6 +444,12 @@ async function fetchWorkspaceFiles(filter: string) {
           params: { sessionId, filter: filter || undefined, limit: 20 },
         })
         workspaceFiles.value = data?.files || []
+      } else if (props.workspaceMode === 'existing' && props.cloudProjectKey) {
+        // New task with an existing cloud project selected — use project-level API
+        const { data } = await api.get('/files/project-list', {
+          params: { projectKey: props.cloudProjectKey, filter: filter || undefined, limit: 20 },
+        })
+        workspaceFiles.value = data?.files || []
       } else {
         workspaceFiles.value = []
       }

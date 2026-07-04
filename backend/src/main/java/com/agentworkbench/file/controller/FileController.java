@@ -6,6 +6,7 @@ import com.agentworkbench.common.result.Result;
 import com.agentworkbench.file.entity.FileEntity;
 import com.agentworkbench.file.service.FileService;
 import com.agentworkbench.file.service.WorkspaceBrowseService;
+import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.service.SessionService;
 import lombok.Data;
@@ -19,6 +20,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +35,7 @@ public class FileController {
     private final FileService fileService;
     private final SessionService sessionService;
     private final WorkspaceBrowseService workspaceBrowseService;
+    private final PathSandbox pathSandbox;
 
     @PostMapping("/upload")
     public Result<FileVO> uploadFile(
@@ -112,6 +115,28 @@ public class FileController {
         Session session = requireOwnedSession(userId, sessionId);
         return Result.ok(workspaceBrowseService.readFile(
                 session.getWorkspace(), path, offset != null ? offset : 0, limit != null ? limit : 5000));
+    }
+
+    @GetMapping("/project-list")
+    public Result<Map<String, Object>> listProjectFiles(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam String projectKey,
+            @RequestParam(required = false) String filter,
+            @RequestParam(required = false, defaultValue = "20") Integer limit) {
+        Path userRoot = pathSandbox.getWorkspaceRoot().resolve(String.valueOf(userId));
+        Path projectPath = userRoot.resolve("projects").resolve(projectKey).normalize();
+
+        // Security: ensure the resolved path is still under the user's projects directory
+        if (!projectPath.startsWith(userRoot)) {
+            return Result.fail(403, "无权访问该项目");
+        }
+        if (!Files.exists(projectPath) || !Files.isDirectory(projectPath)) {
+            return Result.ok(Map.of("files", List.of()));
+        }
+
+        List<FileService.WorkspaceFileDTO> files = fileService.listWorkspaceFiles(
+                projectPath.toString(), filter, limit != null ? limit : 20);
+        return Result.ok(Map.of("files", files));
     }
 
     private Session requireOwnedSession(Long userId, Long sessionId) {
