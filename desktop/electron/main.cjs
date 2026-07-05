@@ -1152,9 +1152,17 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
   })
 }
 
+function extractFilePath(args) {
+  return args.path || args.file || args.filePath || args.file_path || args.target_file
+}
+
 async function handleLocalReadFile(args, workspace) {
   try {
-    const resolvedPath = resolveWorkspacePath(args.path, workspace)
+    const filePath = extractFilePath(args)
+    if (!filePath) {
+      return { error: 'Missing required parameter: path' }
+    }
+    const resolvedPath = resolveWorkspacePath(filePath, workspace)
     const content = fs.readFileSync(resolvedPath, 'utf-8')
     const lines = content.split('\n')
     const start = args.offset || 0

@@ -7,6 +7,7 @@ import com.agentworkbench.harness.tool.FileChangeDiffUtil;
 import com.agentworkbench.session.activity.ActivityService;
 import com.agentworkbench.session.activity.ActivityTypeMapper;
 import com.agentworkbench.session.activity.SessionActivity;
+import com.agentworkbench.session.activity.SessionActivityHeartbeat;
 import com.agentworkbench.session.service.SessionService;
 import com.agentworkbench.session.util.ToolResultSummarizer;
 import com.agentworkbench.harness.todo.entity.SessionTodo;
@@ -28,6 +29,7 @@ public class WsStreamingEventListener implements AgentEventListener {
 
     private final StreamingWsRegistry registry;
     private final ActivityService activityService;
+    private final SessionActivityHeartbeat activityHeartbeat;
     private final SessionTodoMapper sessionTodoMapper;
     private final SessionService sessionService;
     private final Long sessionId;
@@ -46,11 +48,13 @@ public class WsStreamingEventListener implements AgentEventListener {
 
     public WsStreamingEventListener(StreamingWsRegistry registry,
                                      ActivityService activityService,
+                                     SessionActivityHeartbeat activityHeartbeat,
                                      SessionTodoMapper sessionTodoMapper,
                                      SessionService sessionService,
                                      Long sessionId, Long userId, String executionId) {
         this.registry = registry;
         this.activityService = activityService;
+        this.activityHeartbeat = activityHeartbeat;
         this.sessionTodoMapper = sessionTodoMapper;
         this.sessionService = sessionService;
         this.sessionId = sessionId;
@@ -246,6 +250,7 @@ public class WsStreamingEventListener implements AgentEventListener {
     }
 
     private void send(String type, Map<String, Object> data) {
+        activityHeartbeat.touch(sessionId);
         Map<String, Object> payload = new LinkedHashMap<>(data);
         payload.put("executionId", executionId);
         registry.send(userId, WsEvent.of(type, sessionId, payload));

@@ -37,6 +37,7 @@ mkdir -p /data/logs/mao
 mkdir -p /data/workbench/workspace
 mkdir -p /data/workbench/skills
 mkdir -p /data/workbench/userskills
+mkdir -p /data/workbench/uploads
 ```
 
 ## 三、后端部署
@@ -82,6 +83,12 @@ harness:
 # 禁用 LDAP（如不需要）
 ldap:
   url: ${LDAP_URL:}
+
+# 上传存储（local 模式时生效）
+app:
+  upload:
+    storage-mode: ${UPLOAD_STORAGE_MODE:oss}
+    base-url: ${UPLOAD_BASE_URL:https://mao.etarch.cn}
 ```
 
 ### 3. 启动脚本
@@ -212,6 +219,13 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300s;
     }
+
+    # 本地上传文件访问（local 模式，Nginx 直接响应，不经过后端）
+    location /uploads/ {
+        alias /data/workbench/uploads/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
 }
 ```
 
@@ -245,6 +259,13 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300s;
+    }
+
+    # 本地上传文件访问（local 模式，Nginx 直接响应，不经过后端）
+    location /uploads/ {
+        alias /data/workbench/uploads/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
     }
 
     location /api/ws/ {

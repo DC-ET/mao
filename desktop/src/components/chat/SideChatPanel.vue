@@ -23,6 +23,13 @@
           <span></span>
         </div>
       </div>
+
+      <!-- Agent 提问面板（边路任务） -->
+      <QuestionPanel
+        v-if="sidePendingQuestions.length > 0"
+        :items="sidePendingQuestions"
+        @submit="submitQuestionAnswer"
+      />
     </div>
 
     <!-- 输入区 -->
@@ -59,9 +66,11 @@ import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
 import { mapMessagesWithFileChanges } from '../../utils/chatMessage'
 import { deriveSessionTitle } from '../../utils/sessionTitle'
 import { normalizeMessageRole } from '../../types/chat'
+import type { QuestionAnswer } from '../../types/chat'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
+import QuestionPanel from './QuestionPanel.vue'
 
 const props = defineProps<{
   tabId: string
@@ -69,7 +78,7 @@ const props = defineProps<{
 }>()
 
 const sessionStore = useSessionStore()
-const { createSideSession, sendMessage, cancel, subscribe, unsubscribe } = useStreamWS()
+const { createSideSession, sendMessage, cancel, subscribe, unsubscribe, sendAskUserQuestionsResult } = useStreamWS()
 
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { updateSideTaskTab } = useCenterTabs(activeSessionIdRef)
@@ -123,6 +132,11 @@ const showTypingIndicator = computed(() => {
   const hasText = !!(lastMsg.content?.trim() || lastMsg.segments?.some(s => s.type === 'text' && s.content.trim()))
   const hasTools = (lastMsg.toolCalls?.length ?? 0) > 0
   return !hasText && !hasTools
+})
+
+const sidePendingQuestions = computed(() => {
+  if (!hasRealSession.value) return []
+  return sessionStore.sessionPendingQuestions.get(String(realSessionId.value)) ?? []
 })
 
 const ACTIVE_PHASES = new Set(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
@@ -274,6 +288,12 @@ function handleStop() {
     cancel(String(sid))
   }
   sending.value = false
+}
+
+function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
+  if (!hasRealSession.value) return
+  sendAskUserQuestionsResult(String(realSessionId.value), requestId, answers)
+  sessionStore.removeAskQuestion(String(realSessionId.value), requestId)
 }
 </script>
 

@@ -12,6 +12,7 @@ import com.agentworkbench.harness.skill.SkillSyncService;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
 import com.agentworkbench.session.activity.ActivityService;
+import com.agentworkbench.session.activity.SessionActivityHeartbeat;
 import com.agentworkbench.session.entity.MessageQueue;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.service.MessageQueueService;
@@ -48,6 +49,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final LocalToolSessionRegistry localToolSessionRegistry;
     private final AskUserQuestionsRegistry askUserQuestionsRegistry;
     private final ActivityService activityService;
+    private final SessionActivityHeartbeat activityHeartbeat;
     private final SessionTodoMapper sessionTodoMapper;
     private final AgentLoop agentLoop;
     private final ShellSessionManager shellSessionManager;
@@ -90,18 +92,51 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     }
 
     private void abortRunningExecution(Long sessionId, Long userId) {
+        abortRunningExecution(sessionId, userId, false);
+    }
+
+    private void abortRunningExecution(Long sessionId, Long userId, boolean aggressive) {
         AtomicBoolean flag = cancelFlags.get(sessionId);
         if (flag != null) {
             flag.set(true);
         }
-        // Close shell sessions to unblock long-running commands without thread interrupt
         shellSessionManager.closeByConversation(sessionId);
+        localToolSessionRegistry.failAllForSession(sessionId);
+
+        CompletableFuture<Void> skillSync = pendingSkillSyncs.remove(sessionId);
+        if (skillSync != null && !skillSync.isDone()) {
+            skillSync.completeExceptionally(new CancellationException("Session aborted"));
+        }
+
         Future<?> future = runningTasks.get(sessionId);
         if (future != null) {
-            // cancel(false): interrupt during WS send kills the client connection
-            future.cancel(false);
+            future.cancel(aggressive);
         }
         askUserQuestionsRegistry.failAllForSession(sessionId);
+    }
+
+    /**
+     * Force-terminate a stale session: cancel in-flight work, mark FAILED, and notify the client.
+     */
+    public void terminateStaleSession(Long sessionId, Long userId) {
+        log.warn("Terminating stale session {} for userId={}", sessionId, userId);
+        abortRunningExecution(sessionId, userId, true);
+        try {
+            sessionService.updatePhase(sessionId, "FAILED");
+        } catch (Exception e) {
+            log.warn("Failed to mark stale session {} as FAILED: {}", sessionId, e.getMessage());
+        }
+        if (userId != null) {
+            registry.send(userId, WsEvent.of("session_status", sessionId,
+                    Map.of("phase", "FAILED", "unread", true)));
+            registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
+            registry.send(userId, WsEvent.of("error", sessionId,
+                    Map.of("message", "任务因长时间无响应已自动终止")));
+        }
+        runningTasks.remove(sessionId);
+        cancelFlags.remove(sessionId);
+        agentLoop.removeCancelFlag(sessionId);
+        activityHeartbeat.clear(sessionId);
     }
 
     public StreamingWsHandler(StreamingWsRegistry registry,
@@ -111,6 +146,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                LocalToolSessionRegistry localToolSessionRegistry,
                                AskUserQuestionsRegistry askUserQuestionsRegistry,
                                ActivityService activityService,
+                               SessionActivityHeartbeat activityHeartbeat,
                                SessionTodoMapper sessionTodoMapper,
                                AgentLoop agentLoop,
                                ShellSessionManager shellSessionManager,
@@ -125,6 +161,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.localToolSessionRegistry = localToolSessionRegistry;
         this.askUserQuestionsRegistry = askUserQuestionsRegistry;
         this.activityService = activityService;
+        this.activityHeartbeat = activityHeartbeat;
         this.sessionTodoMapper = sessionTodoMapper;
         this.agentLoop = agentLoop;
         this.shellSessionManager = shellSessionManager;
@@ -389,7 +426,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 registry.send(userId, WsEvent.of("todo_updated", sessionId, Map.of("todos", List.of())));
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
-                        registry, activityService, sessionTodoMapper, sessionService, sessionId, userId, executionId);
+                        registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService, sessionId, userId, executionId);
 
                 harnessService.executeFromEvent(sessionId, resolvedEventId, listener, cancelFlag);
 
@@ -418,6 +455,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 runningTasks.remove(sessionId, futureRef[0]);
                 cancelFlags.remove(sessionId);
                 agentLoop.removeCancelFlag(sessionId);
+                activityHeartbeat.clear(sessionId);
 
                 // Auto-consume queue: if there are pending messages, send the next one
                 autoConsumeQueue(sessionId, userId);
@@ -681,7 +719,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 registry.send(userId, WsEvent.of("todo_updated", sessionId, Map.of("todos", List.of())));
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
-                        registry, activityService, sessionTodoMapper, sessionService, sessionId, userId, executionId);
+                        registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService, sessionId, userId, executionId);
 
                 harnessService.executeFromEvent(sessionId, resolvedEventId, listener, cancelFlag);
 
@@ -710,6 +748,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 runningTasks.remove(sessionId, futureRef[0]);
                 cancelFlags.remove(sessionId);
                 agentLoop.removeCancelFlag(sessionId);
+                activityHeartbeat.clear(sessionId);
             }
             }
         });
@@ -814,9 +853,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
         // 6. 注册取消标志
         AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(sideSessionId);
+        cancelFlags.put(sideSessionId, cancelFlag);
 
         // 7. 异步执行首条消息
-        agentExecutor.submit(() -> {
+        Future<?>[] futureRef = new Future<?>[1];
+        futureRef[0] = agentExecutor.submit(() -> {
+            synchronized (sessionLock(sideSessionId)) {
             try {
                 sessionService.updateField(sideSessionId, "phase", "RUNNING");
                 // 通过标准事件通知执行状态（sessionId = sideSessionId，前端需订阅方可见）
@@ -824,7 +866,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                         Map.of("phase", "RUNNING")));
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
-                        registry, activityService, sessionTodoMapper, sessionService,
+                        registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService,
                         sideSessionId, userId, null);
 
                 harnessService.executeSideFirstMessage(
@@ -850,9 +892,14 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 registry.send(userId, WsEvent.of("error", sideSessionId,
                         Map.of("message", e.getMessage() != null ? e.getMessage() : "未知错误")));
             } finally {
+                runningTasks.remove(sideSessionId, futureRef[0]);
+                cancelFlags.remove(sideSessionId);
                 agentLoop.removeCancelFlag(sideSessionId);
+                activityHeartbeat.clear(sideSessionId);
+            }
             }
         });
+        runningTasks.put(sideSessionId, futureRef[0]);
     }
 
     /**
@@ -862,16 +909,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         Long sideSessionId = getLong(root, "sideSessionId");
         if (sideSessionId == null) return;
 
-        // 复用现有的 cancel 机制
-        AtomicBoolean flag = cancelFlags.get(sideSessionId);
-        if (flag != null) {
-            flag.set(true);
-        }
-        Future<?> future = runningTasks.get(sideSessionId);
-        if (future != null) {
-            future.cancel(false);
-        }
-        shellSessionManager.closeByConversation(sideSessionId);
+        abortRunningExecution(sideSessionId, userId);
     }
 
     private void finishCancelledSession(Long sessionId, Long userId, String executionId) {

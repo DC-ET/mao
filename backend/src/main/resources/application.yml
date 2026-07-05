@@ -66,10 +66,18 @@ jwt:
 
 # App config
 app:
+  # Upload storage
+  upload:
+    storage-mode: ${UPLOAD_STORAGE_MODE:oss}  # oss or local
+    base-url: ${UPLOAD_BASE_URL:http://localhost:9080/api}  # public base for local-mode file access; production: https://mao.etarch.cn
   # File storage
   file:
-    upload-dir: ${FILE_UPLOAD_DIR:./uploads}
+    upload-dir: ${FILE_UPLOAD_DIR:/data/workbench/uploads}
     max-size-mb: 50
+
+  # WebSocket streaming
+  ws:
+    outbound-queue-capacity: 10000
 
   # Agent Harness
   harness:

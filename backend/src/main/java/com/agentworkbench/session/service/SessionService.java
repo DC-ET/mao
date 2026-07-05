@@ -24,7 +24,6 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +49,10 @@ public class SessionService {
 
     /** Stale threshold: sessions RUNNING longer than this are swept to FAILED */
     private static final int STALE_MINUTES = 10;
+
+    public static int getStaleMinutes() {
+        return STALE_MINUTES;
+    }
 
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
@@ -288,7 +291,13 @@ public class SessionService {
                 .eq(Session::getId, sessionId);
         switch (field) {
             case "status" -> wrapper.set(Session::getStatus, (String) value);
-            case "phase"  -> wrapper.set(Session::getPhase, (String) value);
+            case "phase" -> {
+                String phase = (String) value;
+                wrapper.set(Session::getPhase, phase);
+                if ("RUNNING".equals(phase) || "RESUMING".equals(phase)) {
+                    wrapper.set(Session::getLastActivityAt, LocalDateTime.now());
+                }
+            }
             default -> throw new IllegalArgumentException("Unsupported field: " + field);
         }
         sessionMapper.update(null, wrapper);
@@ -756,24 +765,35 @@ public class SessionService {
     }
 
     /**
-     * Sweep sessions stuck in RUNNING or RESUMING phase beyond the stale threshold.
-     * Runs every 60 seconds to catch orphaned sessions from crashes, network drops, etc.
+     * Refresh last_activity_at for sessions actively executing (RUNNING / RESUMING).
      */
-    @Scheduled(fixedRate = 60_000)
-    public void sweepStaleRunningSessions() {
+    public void touchLastActivity(Long sessionId) {
+        Session session = sessionMapper.selectById(sessionId);
+        if (session == null) {
+            return;
+        }
+        String phase = session.getPhase();
+        if (!"RUNNING".equals(phase) && !"RESUMING".equals(phase)) {
+            return;
+        }
+        LambdaUpdateWrapper<Session> uw = new LambdaUpdateWrapper<Session>()
+                .eq(Session::getId, sessionId)
+                .set(Session::getLastActivityAt, LocalDateTime.now());
+        sessionMapper.update(null, uw);
+    }
+
+    /**
+     * Find sessions stuck in RUNNING or RESUMING beyond the stale threshold.
+     */
+    public List<Session> findStaleRunningSessions() {
         LocalDateTime threshold = LocalDateTime.now().minusMinutes(STALE_MINUTES);
-        log.debug("Sweeping stale RUNNING/RESUMING sessions older than {}", threshold);
-        UpdateWrapper<Session> uw = new UpdateWrapper<>();
-        uw.in("phase", "RUNNING", "RESUMING")
+        log.debug("Finding stale RUNNING/RESUMING sessions older than {}", threshold);
+        QueryWrapper<Session> qw = new QueryWrapper<>();
+        qw.in("phase", "RUNNING", "RESUMING")
           .and(w -> w.lt("last_activity_at", threshold)
                      .or()
                      .isNull("last_activity_at"));
-        Session update = new Session();
-        update.setPhase("FAILED");
-        int affected = sessionMapper.update(update, uw);
-        if (affected > 0) {
-            log.warn("Swept {} stale sessions to FAILED (no activity for {}min)", affected, STALE_MINUTES);
-        }
+        return sessionMapper.selectList(qw);
     }
 
     private void ensureWorkspaceDirectory(String path) {

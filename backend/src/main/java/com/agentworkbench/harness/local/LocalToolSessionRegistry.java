@@ -193,6 +193,10 @@ public class LocalToolSessionRegistry {
         }
     }
 
+    public void failAllForSession(Long sessionId) {
+        failAllPending(sessionId, "Session aborted");
+    }
+
     private void failAllPending(Long sessionId, String reason) {
         ConcurrentHashMap<String, CompletableFuture<String>> sessionRequests = pendingRequests.remove(sessionId);
         if (sessionRequests != null) {

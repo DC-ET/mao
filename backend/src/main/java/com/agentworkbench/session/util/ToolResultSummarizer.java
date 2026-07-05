@@ -3,6 +3,8 @@ package com.agentworkbench.session.util;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.util.List;
+
 public class ToolResultSummarizer {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -65,7 +67,7 @@ public class ToolResultSummarizer {
     }
 
     private static String summarizeReadFile(String arguments, String result) {
-        String path = extractJsonString(arguments, "path");
+        String path = extractFilePath(arguments);
         String displayPath = path != null ? truncateFilename(path) : "文件";
 
         if (result == null) return "读取 " + displayPath;
@@ -246,6 +248,23 @@ public class ToolResultSummarizer {
             JsonNode node = OBJECT_MAPPER.readTree(json);
             if (node.has(field)) {
                 return node.get(field).asText(null);
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private static String extractFilePath(String json) {
+        if (json == null) return null;
+        try {
+            JsonNode node = OBJECT_MAPPER.readTree(json);
+            for (String key : List.of("path", "file", "filePath", "file_path", "target_file")) {
+                if (node.has(key)) {
+                    String value = node.get(key).asText(null);
+                    if (value != null && !value.isBlank()) {
+                        return value;
+                    }
+                }
             }
         } catch (Exception ignored) {
         }

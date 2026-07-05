@@ -16,6 +16,7 @@ export type {
 export { normalizeMessageRole } from '../types/chat'
 
 import { uploadToOss, type StsToken } from '../utils/ossUpload'
+import { getUploadConfig, type UploadConfig } from '../utils/storageMode'
 import { deriveSessionTitle } from '../utils/sessionTitle'
 
 export interface ApprovalItem {
@@ -165,7 +166,31 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   async function uploadImages(files: File[]): Promise<string[]> {
     if (files.length === 0) return []
 
-    // Get STS token from backend
+    // Get upload config to determine storage mode
+    const config: UploadConfig = await getUploadConfig()
+
+    if (config.storageMode === 'local') {
+      // Local storage mode: upload via server API, backend returns absolute Nginx URL
+      const urls: string[] = []
+      for (const file of files) {
+        try {
+          const formData = new FormData()
+          formData.append('file', file)
+          if (sessionId.value) {
+            formData.append('sessionId', String(sessionId.value))
+          }
+          const { data } = await api.post('/files/upload', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          })
+          urls.push(data.url)
+        } catch {
+          ElMessage.error(`图片 ${file.name} 上传失败`)
+        }
+      }
+      return urls
+    }
+
+    // OSS mode: get STS token and upload to OSS
     let stsToken: StsToken
     try {
       const { data } = await api.post('/oss/sts-token', {

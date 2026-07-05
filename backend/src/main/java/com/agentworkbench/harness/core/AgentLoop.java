@@ -4,6 +4,7 @@ import com.agentworkbench.harness.llm.*;
 import com.agentworkbench.harness.shell.ShellSessionManager;
 import com.agentworkbench.harness.tool.FileChangeDiffUtil;
 import com.agentworkbench.harness.tool.ToolDispatcher;
+import com.agentworkbench.session.activity.SessionActivityHeartbeat;
 import com.agentworkbench.session.util.ToolResultSummarizer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +38,7 @@ public class AgentLoop {
     private final ObjectMapper objectMapper;
     private final BackgroundTaskManager backgroundTaskManager;
     private final ShellSessionManager shellSessionManager;
+    private final SessionActivityHeartbeat activityHeartbeat;
     private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
 
     /** Per-session cancel flags: set to true to request cancellation */
@@ -93,6 +95,7 @@ public class AgentLoop {
 
             // Check cancellation
             Long sessionId = context.getSessionId();
+            activityHeartbeat.touch(sessionId);
             AtomicBoolean cancelFlag = sessionId != null ? cancelFlags.get(sessionId) : null;
             if (cancelFlag != null && cancelFlag.get()) {
                 log.info("Agent loop cancelled for session {}", sessionId);
@@ -227,6 +230,7 @@ public class AgentLoop {
             Map<String, String> toolResults = new LinkedHashMap<>();
             List<ToolMessageSave> pendingToolSaves = new ArrayList<>();
             executeToolCalls(pendingCalls, context, listener, pendingToolSaves, toolResults, cancelFlag);
+            activityHeartbeat.touch(context.getSessionId());
 
             // 用户中断工具执行时，不持久化不完整的 assistant+tool_calls 轮次，避免下次 LLM 调用 400
             if (cancelFlag != null && cancelFlag.get()) {

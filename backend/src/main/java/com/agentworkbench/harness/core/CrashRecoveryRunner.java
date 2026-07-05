@@ -2,6 +2,7 @@ package com.agentworkbench.harness.core;
 
 import com.agentworkbench.harness.todo.mapper.SessionTodoMapper;
 import com.agentworkbench.session.activity.ActivityService;
+import com.agentworkbench.session.activity.SessionActivityHeartbeat;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.mapper.SessionMapper;
 import com.agentworkbench.session.service.SessionService;
@@ -36,6 +37,7 @@ public class CrashRecoveryRunner implements ApplicationRunner {
     private final AgentLoop agentLoop;
     private final StreamingWsRegistry registry;
     private final ActivityService activityService;
+    private final SessionActivityHeartbeat activityHeartbeat;
     private final SessionTodoMapper sessionTodoMapper;
     @Qualifier("agentExecutor")
     private final ExecutorService agentExecutor;
@@ -73,7 +75,7 @@ public class CrashRecoveryRunner implements ApplicationRunner {
             // 4. Create listener — events are silently dropped if client is not connected
             String executionId = java.util.UUID.randomUUID().toString();
             WsStreamingEventListener listener = new WsStreamingEventListener(
-                    registry, activityService, sessionTodoMapper, sessionService, sessionId, userId, executionId);
+                    registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService, sessionId, userId, executionId);
 
             // 5. Execute — HarnessService.execute() rebuilds context from DB
             log.info("Session {}: starting recovery execution", sessionId);
@@ -98,6 +100,7 @@ public class CrashRecoveryRunner implements ApplicationRunner {
             notifyClient(userId, sessionId, "FAILED");
         } finally {
             agentLoop.removeCancelFlag(sessionId);
+            activityHeartbeat.clear(sessionId);
         }
     }
 

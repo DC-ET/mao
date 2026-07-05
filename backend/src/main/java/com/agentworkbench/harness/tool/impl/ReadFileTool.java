@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -73,7 +72,13 @@ public class ReadFileTool implements Tool {
     public String execute(String arguments, String workspace) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
-            String path = args.get("path").asText();
+            String path = extractPath(args);
+            if (path == null) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "content", "错误：缺少必填参数 path",
+                        "total_lines", 0
+                ));
+            }
             int offset = args.has("offset") ? args.get("offset").asInt() : 0;
             int limit = args.has("limit") ? args.get("limit").asInt() : Integer.MAX_VALUE;
 
@@ -111,7 +116,7 @@ public class ReadFileTool implements Tool {
                     "content", content,
                     "total_lines", totalLines
             ));
-        } catch (IOException e) {
+        } catch (Exception e) {
             log.error("ReadFileTool execution failed", e);
             try {
                 return objectMapper.writeValueAsString(Map.of(
@@ -122,5 +127,21 @@ public class ReadFileTool implements Tool {
                 return "{\"content\":\"错误：" + e.getMessage().replace("\"", "'") + "\",\"total_lines\":0}";
             }
         }
+    }
+
+    private String extractPath(JsonNode args) {
+        if (args == null || !args.isObject()) {
+            return null;
+        }
+        for (String key : List.of("path", "file", "filePath", "file_path", "target_file")) {
+            JsonNode node = args.get(key);
+            if (node != null && !node.isNull()) {
+                String value = node.asText();
+                if (value != null && !value.isBlank()) {
+                    return value;
+                }
+            }
+        }
+        return null;
     }
 }

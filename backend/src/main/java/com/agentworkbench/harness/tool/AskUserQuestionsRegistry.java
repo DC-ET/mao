@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class AskUserQuestionsRegistry {
 
-    private static final long DEFAULT_TIMEOUT_SECONDS = 300; // 5 minutes
+    private static final long DEFAULT_TIMEOUT_SECONDS = 900; // 15 minutes
 
     /** sessionId:requestId → CompletableFuture */
     private final ConcurrentHashMap<String, CompletableFuture<String>> pending = new ConcurrentHashMap<>();

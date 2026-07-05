@@ -9,6 +9,7 @@ import com.agentworkbench.file.service.WorkspaceBrowseService;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.service.SessionService;
+import com.agentworkbench.config.UploadProperties;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.FileSystemResource;
@@ -36,6 +37,7 @@ public class FileController {
     private final SessionService sessionService;
     private final WorkspaceBrowseService workspaceBrowseService;
     private final PathSandbox pathSandbox;
+    private final UploadProperties uploadProperties;
 
     @PostMapping("/upload")
     public Result<FileVO> uploadFile(
@@ -164,6 +166,13 @@ public class FileController {
         vo.setMimeType(file.getMimeType());
         vo.setSessionId(file.getSessionId());
         vo.setCreatedAt(file.getCreatedAt() != null ? file.getCreatedAt().toString() : null);
+        // Nginx serves /data/workbench/uploads/ as virtual path /uploads/
+        String baseUrl = uploadProperties.getBaseUrl();
+        if (baseUrl != null && !baseUrl.isEmpty()) {
+            vo.setUrl(baseUrl + "/uploads/" + file.getStoredName());
+        } else {
+            vo.setUrl("/uploads/" + file.getStoredName());
+        }
         return vo;
     }
 
@@ -175,5 +184,6 @@ public class FileController {
         private String mimeType;
         private Long sessionId;
         private String createdAt;
+        private String url;
     }
 }

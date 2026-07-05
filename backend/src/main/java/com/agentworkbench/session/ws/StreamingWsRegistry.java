@@ -1,20 +1,45 @@
 package com.agentworkbench.session.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
 import java.util.Set;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
 public class StreamingWsRegistry {
 
+    private enum SendTarget {
+        ALL,
+        LOCAL_ONLY
+    }
+
+    private record OutboundItem(Long userId, WsEvent event, String rawJson, SendTarget target) {}
+
+    private static OutboundItem eventItem(Long userId, WsEvent event, SendTarget target) {
+        return new OutboundItem(userId, event, null, target);
+    }
+
+    private static OutboundItem rawItem(Long userId, String rawJson, SendTarget target) {
+        return new OutboundItem(userId, null, rawJson, target);
+    }
+
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final BlockingQueue<OutboundItem> outboundQueue;
+    private final AtomicBoolean running = new AtomicBoolean(true);
+    private final Thread senderThread;
 
     /** userId → set of active WebSocket sessions (multi-device) */
     private final ConcurrentHashMap<Long, Set<WebSocketSession>> userSessions = new ConcurrentHashMap<>();
@@ -27,6 +52,24 @@ public class StreamingWsRegistry {
 
     /** userId → set of subscribed sessionIds */
     private final ConcurrentHashMap<Long, Set<Long>> userSubscriptions = new ConcurrentHashMap<>();
+
+    public StreamingWsRegistry(
+            @Value("${app.ws.outbound-queue-capacity:10000}") int outboundQueueCapacity) {
+        this.outboundQueue = new LinkedBlockingQueue<>(outboundQueueCapacity);
+        this.senderThread = new Thread(this::drainOutboundLoop, "ws-outbound");
+        this.senderThread.setDaemon(true);
+        this.senderThread.start();
+    }
+
+    @PreDestroy
+    void shutdown() {
+        running.set(false);
+        senderThread.interrupt();
+    }
+
+    public int getOutboundQueueSize() {
+        return outboundQueue.size();
+    }
 
     public void register(WebSocketSession session, Long userId, String clientType) {
         String sessionId = session.getId();
@@ -71,43 +114,93 @@ public class StreamingWsRegistry {
     }
 
     /**
-     * Send an event to all connections of a specific user.
+     * Enqueue an event for async delivery — does not block the caller on network I/O.
      */
     public void send(Long userId, WsEvent event) {
-        Set<WebSocketSession> sessions = userSessions.get(userId);
-        if (sessions == null || sessions.isEmpty()) return;
-
-        sendToSessions(userId, sessions, event);
+        enqueue(userId, event, SendTarget.ALL);
     }
 
     /**
-     * Send an event only to Electron desktop connections.
+     * Enqueue an event for Electron desktop connections only.
      */
     public void sendToLocalClients(Long userId, WsEvent event) {
-        Set<WebSocketSession> sessions = userSessions.get(userId);
-        if (sessions == null || sessions.isEmpty()) return;
-
-        Set<WebSocketSession> localSessions = sessions.stream()
-                .filter(session -> "electron".equals(sessionToClientType.get(session.getId())))
-                .collect(java.util.stream.Collectors.toSet());
-        if (localSessions.isEmpty()) return;
-
-        sendToSessions(userId, localSessions, event);
+        enqueue(userId, event, SendTarget.LOCAL_ONLY);
     }
 
-    private void sendToSessions(Long userId, Set<WebSocketSession> sessions, WsEvent event) {
-        if (sessions == null || sessions.isEmpty()) return;
+    /**
+     * Enqueue a raw JSON message for async delivery.
+     */
+    public void sendRaw(Long userId, String json) {
+        enqueueRaw(userId, json, SendTarget.ALL);
+    }
 
-        String json;
-        try {
-            json = objectMapper.writeValueAsString(event);
-        } catch (Exception e) {
-            log.error("Failed to serialize WsEvent", e);
+    private void enqueue(Long userId, WsEvent event, SendTarget target) {
+        if (userId == null || event == null) {
+            return;
+        }
+        if (!outboundQueue.offer(eventItem(userId, event, target))) {
+            log.warn("WS outbound queue full (capacity reached), dropping event type={} for userId={}",
+                    event.getType(), userId);
+        }
+    }
+
+    private void enqueueRaw(Long userId, String json, SendTarget target) {
+        if (userId == null || json == null) {
+            return;
+        }
+        if (!outboundQueue.offer(rawItem(userId, json, target))) {
+            log.warn("WS outbound queue full, dropping raw message for userId={}", userId);
+        }
+    }
+
+    private void drainOutboundLoop() {
+        while (running.get()) {
+            try {
+                OutboundItem item = outboundQueue.poll(1, TimeUnit.SECONDS);
+                if (item != null) {
+                    deliver(item);
+                }
+            } catch (InterruptedException e) {
+                if (!running.get()) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            } catch (Exception e) {
+                log.warn("WS outbound delivery error: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void deliver(OutboundItem item) {
+        Set<WebSocketSession> sessions = userSessions.get(item.userId());
+        if (sessions == null || sessions.isEmpty()) {
             return;
         }
 
+        Set<WebSocketSession> targets = switch (item.target()) {
+            case ALL -> sessions;
+            case LOCAL_ONLY -> sessions.stream()
+                    .filter(session -> "electron".equals(sessionToClientType.get(session.getId())))
+                    .collect(Collectors.toSet());
+        };
+        if (targets.isEmpty()) {
+            return;
+        }
+
+        String json;
+        if (item.rawJson() != null) {
+            json = item.rawJson();
+        } else {
+            try {
+                json = objectMapper.writeValueAsString(item.event());
+            } catch (Exception e) {
+                log.error("Failed to serialize WsEvent", e);
+                return;
+            }
+        }
+
         TextMessage message = new TextMessage(json);
-        for (WebSocketSession session : sessions) {
+        for (WebSocketSession session : targets) {
             if (session.isOpen()) {
                 try {
                     synchronized (session) {
@@ -115,28 +208,7 @@ public class StreamingWsRegistry {
                     }
                 } catch (IOException e) {
                     log.warn("Failed to send WS message to userId={}, wsSessionId={}: {}",
-                            userId, session.getId(), e.getMessage());
-                }
-            }
-        }
-    }
-
-    /**
-     * Send a raw JSON message to all connections of a specific user.
-     */
-    public void sendRaw(Long userId, String json) {
-        Set<WebSocketSession> sessions = userSessions.get(userId);
-        if (sessions == null || sessions.isEmpty()) return;
-
-        TextMessage message = new TextMessage(json);
-        for (WebSocketSession session : sessions) {
-            if (session.isOpen()) {
-                try {
-                    synchronized (session) {
-                        session.sendMessage(message);
-                    }
-                } catch (IOException e) {
-                    log.warn("Failed to send raw WS message to userId={}: {}", userId, e.getMessage());
+                            item.userId(), session.getId(), e.getMessage());
                 }
             }
         }
