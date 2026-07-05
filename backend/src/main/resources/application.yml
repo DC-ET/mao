@@ -81,6 +81,11 @@ app:
     default-max-rounds: 10
     default-context-rounds: 20
 
+    # LLM API
+    llm:
+      rate-limit-max-retries: 10
+      rate-limit-retry-delay-seconds: 5
+
     # Context Compaction
     compaction:
       enabled: true
