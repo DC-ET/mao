@@ -8,12 +8,12 @@
       <el-icon class="expand-icon" :class="{ expanded: isExpanded }"><ArrowDown /></el-icon>
     </div>
     <div v-if="isExpanded" class="file-change-body">
-      <div v-for="change in changes" :key="change.path" class="file-change-item">
+      <div v-for="change in displayChanges" :key="change.path" class="file-change-item">
         <div class="file-path-row">
           <span class="file-type-badge" :class="change.type.toLowerCase()">
             {{ change.type === 'CREATED' ? '新建' : '修改' }}
           </span>
-          <span class="file-path" :title="change.path">{{ change.path }}</span>
+          <span class="file-path" :title="change.path">{{ change.displayPath }}</span>
         </div>
         <div class="file-stats">
           <span v-if="change.linesAdded > 0" class="stat-added">+{{ change.linesAdded }}</span>
@@ -25,13 +25,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { Document, ArrowDown } from '@element-plus/icons-vue'
 import type { FileChange } from '../types/chat'
+import { toRelativeWorkspacePath } from '../../../utils/workspace-path'
 
-defineProps<{ changes: FileChange[] }>()
+const props = defineProps<{ changes: FileChange[]; workspace?: string }>()
 
 const isExpanded = ref(true)
+
+const displayChanges = computed(() => {
+  const ws = props.workspace
+  return props.changes.map(c => ({
+    ...c,
+    displayPath: ws ? toRelativeWorkspacePath(ws, c.path) : c.path
+  }))
+})
 </script>
 
 <style scoped>

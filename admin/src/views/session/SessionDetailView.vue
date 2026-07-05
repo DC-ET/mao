@@ -46,6 +46,7 @@
           :key="turn.user.id"
           :user-message="turn.user"
           :assistant-messages="turn.assistants"
+          :workspace="sessionInfo?.workspace"
         />
       </div>
     </el-card>

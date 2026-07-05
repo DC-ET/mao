@@ -39,7 +39,7 @@
           <ThinkingBlock v-if="item.type === 'thinking'" :thinking="item.content" />
           <div v-else-if="item.type === 'text'" class="process-text markdown-body" v-html="renderMarkdown(item.content)" />
           <ToolCallGroup v-else-if="item.type === 'tools' && item.toolCalls" :tool-calls="item.toolCalls" />
-          <FileChangePanel v-else-if="item.type === 'fileChanges' && item.fileChanges" :changes="item.fileChanges" />
+          <FileChangePanel v-else-if="item.type === 'fileChanges' && item.fileChanges" :changes="item.fileChanges" :workspace="workspace" />
         </template>
       </div>
     </div>
@@ -68,6 +68,7 @@ import FileChangePanel from './FileChangePanel.vue'
 const props = defineProps<{
   userMessage: ChatMessage
   assistantMessages: ChatMessage[]
+  workspace?: string
 }>()
 
 const userCollapsed = ref(true)

@@ -12,7 +12,7 @@
     </div>
     <div v-if="isExpanded" class="file-change-body">
       <div
-        v-for="change in mergedChanges"
+        v-for="change in displayChanges"
         :key="change.path"
         class="file-change-item"
         @click="handleFileClick(change)"
@@ -21,7 +21,7 @@
           <span class="file-type-badge" :class="change.type.toLowerCase()">
             {{ change.type === 'CREATED' ? '新建' : '修改' }}
           </span>
-          <span class="file-path" :title="change.path">{{ change.path }}</span>
+          <span class="file-path" :title="change.path">{{ change.displayPath }}</span>
         </div>
         <div class="file-stats">
           <span v-if="change.linesAdded > 0" class="stat-added">+{{ change.linesAdded }}</span>
@@ -51,10 +51,10 @@ const { openDiffTab } = useCenterTabs(activeSessionIdRef)
 
 const isExpanded = ref(true)
 
-type MergedChange = FileChange
+type MergedChange = FileChange & { displayPath: string }
 
 const mergedChanges = computed(() => {
-  const byPath: Record<string, MergedChange> = {}
+  const byPath: Record<string, FileChange> = {}
   for (const c of props.changes) {
     const existing = byPath[c.path]
     if (existing) {
@@ -66,11 +66,21 @@ const mergedChanges = computed(() => {
       byPath[c.path] = { ...c }
     }
   }
-  const result: MergedChange[] = []
+  const result: FileChange[] = []
   for (const path in byPath) {
     result.push(byPath[path])
   }
   return result
+})
+
+const workspace = computed(() => sessionStore.activeSession?.workspace)
+
+const displayChanges = computed((): MergedChange[] => {
+  const ws = workspace.value
+  return mergedChanges.value.map(c => ({
+    ...c,
+    displayPath: ws ? toRelativeWorkspacePath(ws, c.path) : c.path
+  }))
 })
 
 function mergeDiff(target: FileChange, incoming: FileChange) {
@@ -115,11 +125,8 @@ function handleFileClick(change: MergedChange) {
     : !!session.workspace
   if (!canOpen) return
 
-  const openPath = session.executionMode === 'CLOUD' || !session.workspace
-    ? change.path
-    : toRelativeWorkspacePath(session.workspace, change.path)
-  const title = openPath.split(/[/\\]/).pop() || openPath
-  openDiffTab({ ...change, path: openPath }, `${title} (变更)`)
+  const title = change.displayPath.split(/[/\\]/).pop() || change.displayPath
+  openDiffTab({ ...change, path: change.displayPath }, `${title} (变更)`)
 }
 </script>
 

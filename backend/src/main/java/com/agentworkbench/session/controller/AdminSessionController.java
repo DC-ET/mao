@@ -158,6 +158,7 @@ public class AdminSessionController {
         vo.setPhase(session.getPhase() != null ? session.getPhase() : "IDLE");
         vo.setElapsedMs(session.getElapsedMs() != null ? session.getElapsedMs() : 0);
         vo.setProjectKey(session.getProjectKey());
+        vo.setWorkspace(session.getWorkspace());
         vo.setContextTokens(session.getContextTokens());
         vo.setCreatedAt(session.getCreatedAt() != null ? session.getCreatedAt().toString() : null);
         vo.setUpdatedAt(session.getUpdatedAt() != null ? session.getUpdatedAt().toString() : null);
@@ -276,6 +277,7 @@ public class AdminSessionController {
         private String summary;
         private Long elapsedMs;
         private String projectKey;
+        private String workspace;
         private Integer contextTokens;
         private String modelName;
         private String createdAt;
