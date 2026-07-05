@@ -620,6 +620,14 @@ export const useSessionStore = defineStore('session', () => {
     sessionStreaming.value.set(String(sessionId), streaming)
   }
 
+  function isSessionThinking(sessionId: string): boolean {
+    return sessionThinking.value.get(String(sessionId)) ?? false
+  }
+
+  function isSessionStreaming(sessionId: string): boolean {
+    return sessionStreaming.value.get(String(sessionId)) ?? false
+  }
+
   // --- Pending approval tracking ---
 
   function incrementPendingApproval(sessionId: string) {
@@ -808,9 +816,11 @@ export const useSessionStore = defineStore('session', () => {
     // Thinking
     activeThinking,
     setThinking,
+    isSessionThinking,
     // Streaming
     activeStreaming,
     setStreaming,
+    isSessionStreaming,
     // Pending approvals
     sessionPendingApprovals,
     incrementPendingApproval,

@@ -8,7 +8,7 @@
       @click="$emit('activate', tab.id)"
       @contextmenu.prevent="onContextMenu($event, tab)"
     >
-      <el-icon v-if="tab.type === 'chat'" class="tab-icon"><ChatDotRound /></el-icon>
+      <el-icon v-if="tab.type === 'chat' || tab.type === 'side_task'" class="tab-icon"><ChatDotRound /></el-icon>
       <el-icon v-else-if="tab.type === 'diff'" class="tab-icon"><DocumentCopy /></el-icon>
       <el-icon v-else class="tab-icon"><Document /></el-icon>
       <el-tooltip v-if="tab.filePath" :content="tab.filePath" placement="bottom" :show-after="300">

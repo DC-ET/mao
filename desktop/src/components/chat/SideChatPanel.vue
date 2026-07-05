@@ -6,25 +6,17 @@
       <div v-if="!hasRealSession && displayMessages.length === 0 && !sending" class="side-chat-empty">
         <el-icon :size="48" class="empty-icon"><Opportunity /></el-icon>
         <p>边路任务：独立的对话通道，不影响主任务上下文</p>
-        <div class="inherit-toggle">
-          <el-checkbox v-model="inheritContext">
-            继承主任务上下文（让 Agent 了解主任务背景）
-          </el-checkbox>
-        </div>
       </div>
 
-      <!-- 消息列表 -->
-      <MessageBubble
-        v-for="(msg, idx) in displayMessages"
-        :key="msg.id"
-        :message="msg"
-        :show-time="msg.role === 'user'"
-        :show-copy="false"
-        :is-last="idx === displayMessages.length - 1 && !sending"
+      <!-- 消息列表（轮次折叠，与主聊天一致） -->
+      <ChatRoundList
+        v-if="displayMessages.length > 0"
+        :messages="displayMessages"
+        :sending="sending"
       />
 
       <!-- 流式输出指示器 -->
-      <div v-if="sending" class="typing-indicator">
+      <div v-if="showTypingIndicator" class="typing-indicator">
         <div class="typing-dots">
           <span></span>
           <span></span>
@@ -33,26 +25,27 @@
       </div>
     </div>
 
-    <!-- 继承上下文提示栏（仅首条消息前显示） -->
-    <div v-if="!hasRealSession && displayMessages.length === 0" class="inherit-bar">
-      <el-checkbox v-model="inheritContext" size="small">
-        继承主任务上下文
-      </el-checkbox>
-    </div>
+    <!-- 输入区 -->
+    <div class="input-area">
+      <div v-if="!hasRealSession && displayMessages.length === 0" class="inherit-bar">
+        <el-checkbox v-model="inheritContext" size="small">
+          继承主任务上下文
+        </el-checkbox>
+      </div>
 
-    <!-- 输入区：复用 ChatInput -->
-    <ChatInput
-      :loading="sending"
-      :workspace="parentWorkspace"
-      :cloud-project-key="parentCloudProjectKey"
-      :project-key="parentProjectKey"
-      :execution-mode="parentExecutionMode"
-      :model-id="currentModelId"
-      :is-new-task="false"
-      @send="handleChatSend"
-      @stop="handleStop"
-      @update:model-id="handleModelSwitch"
-    />
+      <ChatInput
+        :loading="sending"
+        :workspace="parentWorkspace"
+        :cloud-project-key="parentCloudProjectKey"
+        :project-key="parentProjectKey"
+        :execution-mode="parentExecutionMode"
+        :model-id="currentModelId"
+        :is-new-task="false"
+        @send="handleChatSend"
+        @stop="handleStop"
+        @update:model-id="handleModelSwitch"
+      />
+    </div>
   </div>
 </template>
 
@@ -63,8 +56,11 @@ import { useSessionStore } from '../../stores/session'
 import { useStreamWS } from '../../composables/useStreamWS'
 import { api } from '../../api'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
-import type { ChatMessage } from '../../types/chat'
-import MessageBubble from './MessageBubble.vue'
+import { mapMessagesWithFileChanges } from '../../utils/chatMessage'
+import { deriveSessionTitle } from '../../utils/sessionTitle'
+import { normalizeMessageRole } from '../../types/chat'
+import { useCenterTabs } from '../../composables/useCenterTabs'
+import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 
 const props = defineProps<{
@@ -74,6 +70,9 @@ const props = defineProps<{
 
 const sessionStore = useSessionStore()
 const { createSideSession, sendMessage, cancel, subscribe, unsubscribe } = useStreamWS()
+
+const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
+const { updateSideTaskTab } = useCenterTabs(activeSessionIdRef)
 
 const parentExecutionMode = inject<Ref<string>>('executionMode', ref('CLOUD'))
 
@@ -105,24 +104,45 @@ const currentModelId = computed(() => {
   return selectedModelId.value ?? parentSession.value?.modelId
 })
 
-const displayMessages = computed<ChatMessage[]>(() => {
+const displayMessages = computed(() => {
   if (hasRealSession.value) {
     return sessionStore.getMessages(String(realSessionId.value))
   }
   return sessionStore.getMessages(placeholderCacheKey.value)
 })
 
-// Watch phase changes to reset sending state (uses sessionPhases cache for side tasks)
+const showTypingIndicator = computed(() => {
+  if (!sending.value) return false
+  const sid = hasRealSession.value ? String(realSessionId.value) : placeholderCacheKey.value
+  if (sessionStore.isSessionStreaming(sid)) return false
+  if (sessionStore.isSessionThinking(sid)) return true
+  const msgs = displayMessages.value
+  const lastMsg = msgs[msgs.length - 1]
+  if (!lastMsg) return true
+  if (normalizeMessageRole(lastMsg.role ?? '') !== 'assistant') return true
+  const hasText = !!(lastMsg.content?.trim() || lastMsg.segments?.some(s => s.type === 'text' && s.content.trim()))
+  const hasTools = (lastMsg.toolCalls?.length ?? 0) > 0
+  return !hasText && !hasTools
+})
+
+const ACTIVE_PHASES = new Set(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
+const TERMINAL_PHASES = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE'])
+
+// Watch phase changes to reset sending state and re-fetch structured messages
 watch(
   () => {
     const sid = realSessionId.value
     if (sid <= 0) return null
     return sessionStore.getSessionPhase(String(sid))
   },
-  (phase) => {
-    if (phase === 'COMPLETED' || phase === 'FAILED' || phase === 'CANCELLED' || phase === 'IDLE') {
+  (phase, prevPhase) => {
+    if (!phase) return
+    if (TERMINAL_PHASES.has(phase)) {
       sending.value = false
-    } else if (phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL') {
+      if (hasRealSession.value && prevPhase && ACTIVE_PHASES.has(prevPhase)) {
+        fetchMessages()
+      }
+    } else if (ACTIVE_PHASES.has(phase)) {
       sending.value = true
     }
   }
@@ -130,7 +150,7 @@ watch(
 
 watch(
   () => props.sideSessionId,
-  (newId) => {
+  async (newId) => {
     if (newId > 0 && realSessionId.value <= 0) {
       const tempMsgs = sessionStore.getMessages(placeholderCacheKey.value)
       if (tempMsgs.length > 0) {
@@ -138,8 +158,13 @@ watch(
         sessionStore.clearMessages(placeholderCacheKey.value)
       }
 
+      if (selectedModelId.value != null) {
+        sideModelId.value = selectedModelId.value
+      }
+
       realSessionId.value = newId
       subscribe(String(newId))
+      await loadSideSessionMeta()
     } else if (newId > 0 && realSessionId.value !== newId) {
       realSessionId.value = newId
     }
@@ -150,13 +175,13 @@ async function loadSideSessionMeta() {
   if (!hasRealSession.value) return
   try {
     const { data } = await api.get(`/sessions/${realSessionId.value}`)
-    if (data?.modelId) {
-      sideModelId.value = data.modelId
+    if (data?.modelId != null) {
+      // 优先保留用户已手动选择的模型，避免被主会话默认模型覆盖
+      sideModelId.value = sideModelId.value ?? data.modelId
     }
     if (data?.phase) {
       sessionStore.updateSessionPhase(String(realSessionId.value), data.phase)
-      const activePhases = new Set(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
-      sending.value = activePhases.has(data.phase)
+      sending.value = ACTIVE_PHASES.has(data.phase)
     }
   } catch {
     // ignore
@@ -169,17 +194,10 @@ async function fetchMessages() {
   try {
     const { data } = await api.get(`/sessions/${sid}/messages`, { params: { roundLimit: 5 } })
     const raw: Array<Record<string, unknown>> = data?.messages || []
-    const messages: ChatMessage[] = raw.map(m => ({
-      id: String(m.id),
-      role: (m.role as string)?.toLowerCase() === 'user' ? 'user' : 'assistant',
-      content: String(m.content || ''),
-      thinkingContent: m.thinkingContent as string | undefined,
-      toolCalls: m.toolCalls as ChatMessage['toolCalls'],
-      createdAt: String(m.createdAt || ''),
-      images: m.images as string[] | undefined,
-    }))
+    const { messages, allChanges } = mapMessagesWithFileChanges(raw)
     if (messages.length > 0) {
       sessionStore.setMessages(sid, messages)
+      sessionStore.setFileChanges(sid, allChanges)
     }
   } catch {
     // session might not exist yet
@@ -204,7 +222,7 @@ onUnmounted(() => {
 function handleModelSwitch(modelId: number) {
   if (hasRealSession.value) {
     sideModelId.value = modelId
-    sessionStore.updateSessionModel(String(realSessionId.value), modelId)
+    void sessionStore.updateSessionModel(String(realSessionId.value), modelId)
   } else {
     selectedModelId.value = modelId
   }
@@ -221,6 +239,10 @@ function handleChatSend(text: string, _files: File[]) {
       createdAt: new Date().toLocaleString(),
     })
     sessionStore.ensureStreamingAssistantMessage(placeholderCacheKey.value)
+
+    void deriveSessionTitle(text.trim()).then(title => {
+      updateSideTaskTab(props.tabId, props.sideSessionId, title)
+    })
 
     const parentSessionId = sessionStore.activeSessionId
     if (!parentSessionId) return
@@ -262,12 +284,19 @@ function handleStop() {
   height: 100%;
   overflow: hidden;
   background: var(--el-bg-color, #fff);
+  padding: 0 20px;
 }
 
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding-top: 16px;
+  margin-bottom: 10px;
+}
+
+.input-area {
+  flex-shrink: 0;
+  margin-bottom: 10px;
 }
 
 .side-chat-empty {
@@ -285,12 +314,8 @@ function handleStop() {
   margin: 0;
 }
 
-.inherit-toggle {
-  margin-top: 8px;
-}
-
 .inherit-bar {
-  padding: 6px 16px;
+  padding: 6px 0 8px;
   border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
   background: var(--el-bg-color, #fff);
 }

@@ -782,8 +782,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         Session sideSession = new Session();
         sideSession.setUserId(userId);
         sideSession.setAgentId(parentSession.getAgentId());
-        sideSession.setTitle("[边路] " + (content.length() > 30
-                ? content.substring(0, 30) + "..." : content));
+        String titleBody = sessionService.generateTitleFromUserMessage(userId, content);
+        if (titleBody == null || titleBody.isBlank()) {
+            titleBody = content.length() > 30 ? content.substring(0, 30) + "..." : content;
+        }
+        sideSession.setTitle(titleBody);
         sideSession.setExecutionMode(parentSession.getExecutionMode());
         sideSession.setWorkspace(parentSession.getWorkspace());
         sideSession.setPermissionLevel(parentSession.getPermissionLevel());

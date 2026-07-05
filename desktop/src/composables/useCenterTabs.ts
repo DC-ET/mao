@@ -1,13 +1,13 @@
 import { ref, computed, watch, type Ref } from 'vue'
 import type { Tab, SessionTabState } from '../types/file-browser'
 import type { FileChange } from '../types/chat'
-import { getClosedSideTaskIds, markSideTaskClosed, type SideTaskSummary } from '../utils/side-task-tabs'
+import { getClosedSideTaskIds, markSideTaskClosed, normalizeSideTaskTitle, type SideTaskSummary } from '../utils/side-task-tabs'
 
 // Module-level singleton state
 const sessionTabsMap = ref<Map<string, SessionTabState>>(new Map())
 const currentSessionId = ref('')
 
-const CHAT_TAB: Tab = { id: 'chat', type: 'chat', title: '聊天' }
+const CHAT_TAB: Tab = { id: 'chat', type: 'chat', title: '主会话' }
 
 export function useCenterTabs(activeSessionId: Ref<string | null>) {
   // Sync currentSessionId with the provided ref
@@ -97,7 +97,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       state.activeTabId = id
       return
     }
-    const newTab: Tab = { id, type: 'side_task', title, sideSessionId }
+    const newTab: Tab = { id, type: 'side_task', title: normalizeSideTaskTitle(title), sideSessionId }
     state.tabs.push(newTab)
     state.activeTabId = id
     notifyTabsChanged()
@@ -112,9 +112,11 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     const tab = state.tabs.find(t => t.id === oldId)
     if (tab) {
       // Don't change tab.id — keep the component mounted
-      tab.sideSessionId = sideSessionId
-      tab.title = title
-      // Don't change activeTabId — it already points to this tab
+      if (sideSessionId > 0) {
+        tab.sideSessionId = sideSessionId
+      }
+      tab.title = normalizeSideTaskTitle(title)
+      notifyTabsChanged()
     }
   }
 
@@ -158,11 +160,11 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       const existing = state.tabs.find(t => t.id === id || t.sideSessionId === st.id)
       if (existing) {
         existing.sideSessionId = st.id
-        existing.title = st.title
+        existing.title = normalizeSideTaskTitle(st.title)
         changed = true
         continue
       }
-      const newTab: Tab = { id, type: 'side_task', title: st.title, sideSessionId: st.id }
+      const newTab: Tab = { id, type: 'side_task', title: normalizeSideTaskTitle(st.title), sideSessionId: st.id }
       state.tabs.push(newTab)
       changed = true
     }

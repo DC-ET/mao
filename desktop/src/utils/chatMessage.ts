@@ -1,6 +1,7 @@
 import {
   normalizeMessageRole,
   type ChatMessage,
+  type FileChange,
   type MessageSegment,
   type ToolCall
 } from '../types/chat'
@@ -138,6 +139,33 @@ export function appendToolCallStart(msg: ChatMessage, call: ToolCall) {
   }
   msg.toolCalls.push(call)
   msg.segments.push({ type: 'tool', callId: call.id })
+}
+
+/** 将 API 消息映射为聊天消息，并附加 fileChanges */
+export function mapMessagesWithFileChanges(raw: Array<Record<string, unknown>>) {
+  const messages = mapApiMessagesToChat(raw)
+  const rawById = new Map(raw.map(m => [String(m.id), m]))
+  const allChanges: FileChange[] = []
+  for (const msg of messages) {
+    const rawMsg = rawById.get(msg.id)
+    if (rawMsg?.fileChanges && Array.isArray(rawMsg.fileChanges)) {
+      const changes = (rawMsg.fileChanges as Array<Record<string, unknown>>).map(fc => ({
+        path: String(fc.path),
+        type: fc.type as FileChange['type'],
+        linesAdded: Number(fc.linesAdded) || 0,
+        linesDeleted: Number(fc.linesDeleted) || 0,
+        diffMode: fc.diffMode as FileChange['diffMode'],
+        beforeContent: fc.beforeContent != null ? String(fc.beforeContent) : undefined,
+        afterContent: fc.afterContent != null ? String(fc.afterContent) : undefined,
+        patchContent: fc.patchContent != null ? String(fc.patchContent) : undefined,
+        patchTruncated: Boolean(fc.patchTruncated),
+        diffUnavailableReason: fc.diffUnavailableReason != null ? String(fc.diffUnavailableReason) : undefined,
+      }))
+      msg.fileChanges = changes
+      allChanges.push(...changes)
+    }
+  }
+  return { messages, allChanges }
 }
 
 /** 将 API 原始消息列表转为聊天 UI 消息（合并 TOOL 结果、过滤 tool 气泡） */

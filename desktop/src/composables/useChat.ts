@@ -3,8 +3,8 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
-import { mapApiMessagesToChat } from '../utils/chatMessage'
-import type { ChatMessage, FileChange, QuestionAnswer } from '../types/chat'
+import { mapMessagesWithFileChanges } from '../utils/chatMessage'
+import type { ChatMessage, QuestionAnswer } from '../types/chat'
 
 export type {
   ChatMessage,
@@ -16,6 +16,7 @@ export type {
 export { normalizeMessageRole } from '../types/chat'
 
 import { uploadToOss, type StsToken } from '../utils/ossUpload'
+import { deriveSessionTitle } from '../utils/sessionTitle'
 
 export interface ApprovalItem {
   requestId: string
@@ -28,42 +29,7 @@ export interface ApprovalItem {
 // Module-level flag to ensure IPC listeners are registered only once
 let approvalListenerSetup = false
 
-const SKILL_ONLY = /^\$\{([^}]+)\}\$$/
-const SKILL_PATTERN = /\$\{[^}]+\}\$/g
-const COMMAND_PATTERN = /#\{([^}]+)\}#/g
 const FILE_REF_PATTERN = /@\{([^}]+)\}@/g
-
-async function deriveTitle(text: string): Promise<string> {
-  const trimmed = text.trim()
-
-  // Skill-only: "/skill_name"
-  const soleSkill = trimmed.match(SKILL_ONLY)
-  if (soleSkill) return `/${soleSkill[1]}`
-
-  // Strip skill markers from mixed content
-  let result = trimmed.replace(SKILL_PATTERN, '')
-
-  // Strip file reference markers
-  result = result.replace(/@\{[^}]+\}@/g, '')
-
-  // Expand command markers to their content
-  const cmdNames = [...result.matchAll(COMMAND_PATTERN)].map(m => m[1])
-  if (cmdNames.length > 0) {
-    try {
-      const { data } = await api.get('/user-commands')
-      const cmdMap: Record<string, string> = {}
-      for (const cmd of data || []) {
-        cmdMap[cmd.name] = cmd.content
-      }
-      result = result.replace(COMMAND_PATTERN, (_, name) => cmdMap[name] || _)
-    } catch {
-      // If fetch fails, leave markers as-is
-    }
-  }
-
-  result = result.trim()
-  return result.length > 50 ? result.substring(0, 50) : result
-}
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
@@ -118,32 +84,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
   // Register approval listener globally (once per app lifecycle)
   setupApprovalListener()
-
-  function mapMessagesWithFileChanges(raw: Array<Record<string, unknown>>) {
-    const messages = mapApiMessagesToChat(raw)
-    const rawById = new Map(raw.map(m => [String(m.id), m]))
-    const allChanges: FileChange[] = []
-    for (const msg of messages) {
-      const rawMsg = rawById.get(msg.id)
-      if (rawMsg?.fileChanges && Array.isArray(rawMsg.fileChanges)) {
-        const changes = (rawMsg.fileChanges as Array<Record<string, unknown>>).map(fc => ({
-          path: String(fc.path),
-          type: fc.type as FileChange['type'],
-          linesAdded: Number(fc.linesAdded) || 0,
-          linesDeleted: Number(fc.linesDeleted) || 0,
-          diffMode: fc.diffMode as FileChange['diffMode'],
-          beforeContent: fc.beforeContent != null ? String(fc.beforeContent) : undefined,
-          afterContent: fc.afterContent != null ? String(fc.afterContent) : undefined,
-          patchContent: fc.patchContent != null ? String(fc.patchContent) : undefined,
-          patchTruncated: Boolean(fc.patchTruncated),
-          diffUnavailableReason: fc.diffUnavailableReason != null ? String(fc.diffUnavailableReason) : undefined,
-        }))
-        msg.fileChanges = changes
-        allChanges.push(...changes)
-      }
-    }
-    return { messages, allChanges }
-  }
 
   async function fetchMessages() {
     if (!sessionId.value) return
@@ -318,7 +258,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       if (text) {
         const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
         if (currentSession && (!currentSession.title || currentSession.title === '未命名会话')) {
-          const derivedTitle = await deriveTitle(text)
+          const derivedTitle = await deriveSessionTitle(text)
           sessionStore.updateSession(sid, { title: derivedTitle })
           api.patch(`/sessions/${sid}`, { title: derivedTitle }).catch(() => {})
         }

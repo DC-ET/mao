@@ -378,6 +378,14 @@ public class SessionService {
     }
 
     /**
+     * 从用户消息生成会话标题（展开快捷指令、处理 skill 标记）。
+     */
+    public String generateTitleFromUserMessage(Long userId, String content) {
+        String textForTitle = preprocessForTitle(content, userId);
+        return TitleGenerator.generate(textForTitle);
+    }
+
+    /**
      * Strip skill markers and expand command markers for title generation.
      */
     private String preprocessForTitle(String text, Long userId) {

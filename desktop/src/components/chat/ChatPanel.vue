@@ -14,112 +14,17 @@
         </template>
       </div>
 
-      <!-- 历史轮次：始终折叠 -->
-      <template v-for="round in historyRounds" :key="round.userMessage.id">
-        <MessageBubble
-          :message="round.userMessage"
-          :show-time="true"
-          :can-edit="canEditMessage(round.userMessage)"
-          :is-editing="editingMessageId === round.userMessage.id"
-          @edit="startEdit(round.userMessage)"
-          @cancel-edit="cancelEdit"
-          @confirm-edit="confirmEdit(round.userMessage.id, $event)"
-          @add-to-command="openWithContent"
-        />
-
-        <template v-if="round.collapsedSteps.length > 0">
-          <div v-if="round.finalReply" class="final-reply-time">
-            {{ round.finalReply.createdAt }}
-          </div>
-
-          <div class="execution-steps-collapse">
-            <div class="steps-summary" @click="toggleRound(round.userMessage.id)">
-              <el-icon class="steps-expand-icon" :class="{ expanded: roundsExpanded[round.userMessage.id] }"><ArrowDown /></el-icon>
-              <span>已执行 {{ round.stepCount }} 个步骤，任务耗时 {{ round.durationText }}</span>
-            </div>
-            <div v-if="roundsExpanded[round.userMessage.id]" class="steps-detail">
-              <MessageBubble
-                v-for="step in round.collapsedSteps"
-                :key="step.id"
-                :message="step"
-                :show-time="false"
-                :show-copy="false"
-                :hide-file-changes="true"
-              />
-            </div>
-          </div>
-
-          <MessageBubble
-            v-if="round.finalReply"
-            :message="round.finalReply"
-            :hide-thinking="true"
-            :hide-file-changes="true"
-          />
-
-          <FileChangePanel
-            v-if="round.fileChanges.length > 0"
-            :changes="round.fileChanges"
-            mode="history"
-          />
-        </template>
-
-        <MessageBubble
-          v-else-if="round.finalReply"
-          :message="round.finalReply"
-          :show-time="true"
-          :hide-file-changes="true"
-        />
-        <FileChangePanel
-          v-if="!round.collapsedSteps.length && round.fileChanges.length > 0"
-          :changes="round.fileChanges"
-          mode="history"
-        />
-      </template>
-
-      <!-- 当前轮次：执行中平铺展示 -->
-      <template v-if="activeRound">
-        <MessageBubble
-          :message="activeRound.userMessage"
-          :show-time="true"
-          :can-edit="canEditMessage(activeRound.userMessage)"
-          :is-editing="editingMessageId === activeRound.userMessage.id"
-          @edit="startEdit(activeRound.userMessage)"
-          @cancel-edit="cancelEdit"
-          @confirm-edit="confirmEdit(activeRound.userMessage.id, $event)"
-          @add-to-command="openWithContent"
-        />
-        <MessageBubble
-          v-for="msg in activeRoundMsgs"
-          :key="msg.id"
-          :message="msg"
-          :show-time="false"
-          :show-copy="false"
-          :is-last="msg === activeRoundMsgs[activeRoundMsgs.length - 1]"
-        />
-        <FileChangePanel
-          v-if="activeRound.fileChanges.length > 0"
-          :changes="activeRound.fileChanges"
-          mode="history"
-        />
-      </template>
-
-      <!-- 无轮次时：直接渲染所有消息 -->
-      <template v-if="historyRounds.length === 0 && !activeRound">
-        <MessageBubble
-          v-for="(msg, idx) in messages"
-          :key="msg.id"
-          :message="msg"
-          :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
-          :show-copy="false"
-          :is-last="idx === messages.length - 1"
-          :can-edit="canEditMessage(msg)"
-          :is-editing="editingMessageId === msg.id"
-          @edit="startEdit(msg)"
-          @cancel-edit="cancelEdit"
-          @confirm-edit="confirmEdit(msg.id, $event)"
-          @add-to-command="openWithContent"
-        />
-      </template>
+      <!-- 历史轮次 + 当前轮次 -->
+      <ChatRoundList
+        :messages="messages"
+        :sending="sending"
+        :editing-message-id="editingMessageId"
+        :can-edit-message="canEditMessage"
+        @edit="startEdit"
+        @cancel-edit="cancelEdit"
+        @confirm-edit="confirmEdit"
+        @add-to-command="openWithContent"
+      />
 
       <div v-if="showTypingIndicator" class="typing-indicator">
         <div class="typing-dots">
@@ -147,6 +52,12 @@
       :items="activePendingQuestions"
       @submit="submitQuestionAnswer"
     />
+
+    <div v-if="sessionId && !isNewTaskMode" class="side-task-entry">
+      <button type="button" class="side-task-btn" @click="openSideTask?.()">
+        + 边路任务
+      </button>
+    </div>
 
     <ChatInput
       ref="chatInputRef"
@@ -184,19 +95,17 @@
 <script setup lang="ts">
 import { ref, computed, inject, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChatDotRound, ArrowDown, Loading } from '@element-plus/icons-vue'
+import { ChatDotRound, Loading } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { api } from '../../api'
-import MessageBubble from './MessageBubble.vue'
-import FileChangePanel from './FileChangePanel.vue'
+import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QueuePanel from './QueuePanel.vue'
 import ApprovalStack from './ApprovalStack.vue'
 import QuestionPanel from './QuestionPanel.vue'
-import type { FileChange } from '../../types/chat'
 
 // Inject shared refs from TaskView
 const agentId = inject<Ref<string>>('agentId')!
@@ -222,6 +131,7 @@ type SyncChatStateFn = (state: {
 }) => void
 const syncChatState = inject<SyncChatStateFn>('syncChatState')!
 const chatFocusInput = inject<Ref<(() => void) | null>>('chatFocusInput')!
+const openSideTask = inject<(() => void) | undefined>('openSideTask', undefined)
 
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
@@ -351,88 +261,6 @@ onUnmounted(() => {
   el?.removeEventListener('scroll', handleScroll)
   el?.removeEventListener('wheel', handleWheel)
 })
-
-// Round grouping logic
-interface MessageRound {
-  userMessage: ChatMessage
-  collapsedSteps: ChatMessage[]
-  finalReply: ChatMessage | null
-  stepCount: number
-  durationText: string
-  fileChanges: FileChange[]
-}
-
-const roundsExpanded = ref<Record<string, boolean>>({})
-
-const messageRounds = computed((): MessageRound[] => {
-  const msgs = messages.value
-  if (msgs.length <= 1) return []
-
-  const groups: { user: ChatMessage; assistantMsgs: ChatMessage[] }[] = []
-  let cur = -1
-  for (const m of msgs) {
-    if (normalizeMessageRole(m.role) === 'user') {
-      groups.push({ user: m, assistantMsgs: [] })
-      cur++
-    } else if (cur >= 0) {
-      groups[cur].assistantMsgs.push(m)
-    }
-  }
-
-  const rounds: MessageRound[] = []
-  for (const g of groups) {
-    const lastIdx = g.assistantMsgs.length - 1
-    const steps = lastIdx >= 0 ? g.assistantMsgs.slice(0, lastIdx) : []
-    const reply = lastIdx >= 0 ? g.assistantMsgs[lastIdx] : null
-    rounds.push(buildRound(g.user, steps, reply))
-  }
-
-  return rounds
-})
-
-const historyRounds = computed(() => {
-  if (!sending.value) return messageRounds.value
-  const rounds = messageRounds.value
-  return rounds.length > 1 ? rounds.slice(0, -1) : []
-})
-
-const activeRound = computed(() => {
-  if (!sending.value) return null
-  const rounds = messageRounds.value
-  return rounds.length > 0 ? rounds[rounds.length - 1] : null
-})
-
-const activeRoundMsgs = computed(() => {
-  if (!activeRound.value) return [] as ChatMessage[]
-  const round = activeRound.value
-  const msgs: ChatMessage[] = []
-  if (round.collapsedSteps.length > 0) msgs.push(...round.collapsedSteps)
-  if (round.finalReply) msgs.push(round.finalReply)
-  return msgs
-})
-
-function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage | null): MessageRound {
-  const stepCount = steps.length
-  let durationText = ''
-  if (stepCount > 0) {
-    const first = steps[0].createdAt
-    const last = (reply || steps[steps.length - 1]).createdAt
-    if (first && last) {
-      const diff = new Date(last).getTime() - new Date(first).getTime()
-      if (diff > 0) {
-        const s = Math.floor(diff / 1000)
-        durationText = s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分${s % 60}秒`
-      }
-    }
-  }
-  const fileChanges: FileChange[] = [...steps, ...(reply ? [reply] : [])]
-    .flatMap(m => m.fileChanges || [])
-  return { userMessage: user, collapsedSteps: steps, finalReply: reply, stepCount, durationText, fileChanges }
-}
-
-function toggleRound(roundId: string) {
-  roundsExpanded.value[roundId] = !roundsExpanded.value[roundId]
-}
 
 // Edit message
 const editingMessageId = ref<string | null>(null)
@@ -738,47 +566,27 @@ function handleNewTaskAgentChange(id: string | null) {
   40% { transform: scale(1); opacity: 1; }
 }
 
-.final-reply-time {
-  font-size: var(--aw-text-fine);
-  color: var(--aw-ink-muted-48);
-  letter-spacing: -0.12px;
-  margin-bottom: 4px;
+.side-task-entry {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
 }
 
-.execution-steps-collapse {
-  margin-bottom: 5px;
-}
-
-.execution-steps-collapse .steps-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: var(--aw-radius-xs);
+.side-task-btn {
+  border: 1px solid var(--aw-divider-soft);
   background: var(--aw-canvas-parchment);
   color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-fine);
+  font-size: var(--aw-text-caption);
+  padding: 4px 12px;
+  border-radius: var(--aw-radius-xs);
   cursor: pointer;
-  user-select: none;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
-.execution-steps-collapse .steps-summary:hover {
+.side-task-btn:hover {
   background: var(--aw-divider-soft);
   color: var(--aw-ink);
-}
-
-.execution-steps-collapse .steps-expand-icon {
-  font-size: 12px;
-  transition: transform 0.2s;
-}
-
-.execution-steps-collapse .steps-expand-icon.expanded {
-  transform: rotate(180deg);
-}
-
-.execution-steps-collapse .steps-detail {
-  margin-top: 8px;
+  border-color: var(--aw-hairline);
 }
 
 .messages {
