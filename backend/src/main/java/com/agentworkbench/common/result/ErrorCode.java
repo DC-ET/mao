@@ -32,6 +32,7 @@ public enum ErrorCode {
     COMMAND_NOT_FOUND(3011, "指令不存在"),
     COMMAND_NAME_DUPLICATE(3012, "指令名称已存在"),
     COMMAND_NAME_INVALID(3013, "指令名称只能包含字母、数字、中文、下划线和连字符"),
+    COMMAND_SYSTEM_READONLY(3020, "系统预置指令不可编辑或删除"),
     USER_NOT_FOUND(3014, "用户不存在"),
     USERNAME_DUPLICATE(3015, "用户名已存在"),
     CANNOT_DISABLE_SELF(3016, "不能禁用当前登录用户"),

@@ -400,7 +400,7 @@ public class SessionService {
         if (text == null) return null;
         Map<String, String> cmdContentMap = Collections.emptyMap();
         if (text.contains("#{") && userId != null) {
-            cmdContentMap = userCommandService.listByUserId(userId).stream()
+            cmdContentMap = userCommandService.listAvailableForUser(userId).stream()
                     .collect(Collectors.toMap(UserCommand::getName, UserCommand::getContent, (a, b) -> a));
         }
         return TitleGenerator.preprocessForTitle(text, cmdContentMap);

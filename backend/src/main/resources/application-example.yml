@@ -2,7 +2,7 @@ spring:
   # MySQL
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://127.0.0.1:3306/agentworkbench?useSSL=false&serverTimezone=Asia/Shanghai&allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&useUnicode=true&characterEncoding=utf-8
+    url: jdbc:mysql://127.0.0.1:3306/mao?useSSL=false&serverTimezone=Asia/Shanghai&allowMultiQueries=true&zeroDateTimeBehavior=convertToNull&useUnicode=true&characterEncoding=utf-8
     username: example
     password: 123456
     hikari:
@@ -34,6 +34,16 @@ feishu:
   app-secret: ${FEISHU_APP_SECRET:1234567890}
   redirect-uri: ${FEISHU_REDIRECT_URI:http://example.com/auth/feishu/callback}
 
+# App config
+app:
+  # Upload storage
+  upload:
+    storage-mode: ${UPLOAD_STORAGE_MODE:local}  # oss or local
+    base-url: ${UPLOAD_BASE_URL:http://localhost:9080/api}  # public base for local-mode file access; production: https://mao.etarch.cn
+  # File storage
+  file:
+    upload-dir: ${FILE_UPLOAD_DIR:/data/workbench/uploads}
+    max-size-mb: 50
 # Aliyun OSS
 oss:
   region: ${OSS_REGION:oss-cn-hangzhou}

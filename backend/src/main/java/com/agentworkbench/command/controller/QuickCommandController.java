@@ -66,8 +66,8 @@ public class QuickCommandController {
             seenNames.add(doc.getName());
         }
 
-        // 2. Collect user commands
-        List<UserCommand> commands = userCommandService.listByUserId(userId);
+        // 2. Collect user commands (system presets + personal)
+        List<UserCommand> commands = userCommandService.listAvailableForUser(userId);
         List<QuickCommandItem> commandItems = commands.stream()
                 .map(c -> {
                     String content = c.getContent();
