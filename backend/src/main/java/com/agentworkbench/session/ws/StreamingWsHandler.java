@@ -1200,22 +1200,4 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         return null;
     }
 
-    /**
-     * Validate image URL — reject URLs that contain known invalid patterns
-     * (e.g. generated when sessionId was null during OSS upload).
-     */
-    private boolean isValidImageUrl(String url) {
-        if (url == null || url.isBlank()) {
-            return false;
-        }
-        // Reject URLs with null in path segments (e.g. session/null/)
-        if (url.contains("/null/") || url.contains("/null.")) {
-            return false;
-        }
-        // Must be a valid http/https URL
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            return false;
-        }
-        return true;
-    }
 }
