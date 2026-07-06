@@ -36,6 +36,8 @@ feishu:
 
 # App config
 app:
+  git-credential:
+    secret-key: ${APP_GIT_CREDENTIAL_SECRET:local-dev-git-credential-secret-change-me}
   # Upload storage
   upload:
     storage-mode: ${UPLOAD_STORAGE_MODE:local}  # oss or local

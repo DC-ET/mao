@@ -241,7 +241,9 @@ export const useSessionStore = defineStore('session', () => {
         payload.cloudProjectKey = cloudProjectKey
       }
     }
-    const { data } = await api.post('/sessions', payload)
+    const { data } = await api.post('/sessions', payload, {
+      timeout: workspaceMode === 'git' ? 150_000 : undefined,
+    })
     if (data) {
       data.id = normalizeId(data.id)
       data.agentId = normalizeId(data.agentId)

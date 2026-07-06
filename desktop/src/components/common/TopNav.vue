@@ -2,6 +2,11 @@
   <nav class="top-nav">
     <div class="nav-left">
       <div class="nav-left-actions">
+        <el-tooltip v-if="isSettingsRoute" content="返回工作台" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+          <div class="theme-toggle" @click="goBackFromSettings">
+            <el-icon :size="16"><ArrowLeft /></el-icon>
+          </div>
+        </el-tooltip>
         <el-tooltip content="左侧面板" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
           <div class="theme-toggle" :class="{ active: !leftCollapsed }" @click="toggleLeft">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -63,6 +68,10 @@
           </div>
           <template #dropdown>
             <el-dropdown-menu class="nav-dropdown">
+              <el-dropdown-item command="settings">
+                <el-icon><Setting /></el-icon>
+                设置
+              </el-dropdown-item>
               <el-dropdown-item command="logout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -78,8 +87,9 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, Moon, Refresh, Sunny } from '@element-plus/icons-vue'
-import { onMounted, onUnmounted } from 'vue'
+import { ArrowDown, ArrowLeft, Moon, Refresh, Setting, Sunny } from '@element-plus/icons-vue'
+import { computed, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
@@ -108,7 +118,25 @@ function toggleTerminal() {
 
 const authStore = useAuthStore()
 const loginDialog = useLoginDialog()
+const router = useRouter()
+const route = useRoute()
 const { hasUpdate, reloadApp, startPolling, stopPolling } = useVersionCheck()
+
+const isSettingsRoute = computed(() => route.path.startsWith('/settings'))
+
+function goBackFromSettings() {
+  const active = sessionStore.activeSession
+  if (active) {
+    router.push(`/tasks/${active.id}`)
+    return
+  }
+  const latest = sessionStore.sessions[0]
+  if (latest) {
+    router.push(`/tasks/${latest.id}`)
+    return
+  }
+  router.push('/')
+}
 
 onMounted(() => {
   startPolling()
@@ -119,7 +147,9 @@ onUnmounted(() => {
 })
 
 async function handleCommand(command: string) {
-  if (command === 'logout') {
+  if (command === 'settings') {
+    router.push('/settings/git-credentials')
+  } else if (command === 'logout') {
     await authStore.logout()
   }
 }

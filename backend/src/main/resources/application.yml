@@ -66,6 +66,8 @@ jwt:
 
 # App config
 app:
+  git-credential:
+    secret-key: ${APP_GIT_CREDENTIAL_SECRET:}
   # Upload storage
   upload:
     storage-mode: ${UPLOAD_STORAGE_MODE:oss}  # oss or local

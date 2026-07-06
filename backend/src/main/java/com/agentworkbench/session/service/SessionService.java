@@ -132,64 +132,78 @@ public class SessionService {
         sessionMapper.insert(session);
 
         if ("CLOUD".equals(session.getExecutionMode())) {
-            String mode = workspaceMode != null ? workspaceMode : "new";
-
-            if ("git".equals(mode) && gitCloneUrl != null && !gitCloneUrl.isBlank()) {
-                // === Git 初始化工作区 ===
-                GitUrlParser.validate(gitCloneUrl);
-                String slug = GitUrlParser.extractSlug(gitCloneUrl);
-                String projectPath = CloudWorkspaceResolver.resolveProjectWorkspace(pathSandbox, userId, slug);
-                ensureWorkspaceDirectory(projectPath);
-
-                var result = gitOperationService.clone(gitCloneUrl, gitBranch, Paths.get(projectPath));
-                if (!result.success()) {
-                    deleteWorkspaceDirectory(projectPath);
-                    throw new BusinessException(ErrorCode.GIT_CLONE_FAILED, result.error());
-                }
-                session.setWorkspace(projectPath);
-                session.setProjectKey(slug);
+            try {
+                initializeCloudWorkspace(session, userId, workspaceMode, cloudProjectKey, gitCloneUrl, gitBranch);
+                var env = environmentInfoProvider.detect(session.getWorkspace());
+                session.setIsGit(env.isGit());
+                session.setPlatform(env.platform());
+                session.setShellPath(env.shell());
+                session.setOsVersion(env.osVersion());
                 sessionMapper.updateById(session);
-            } else if ("existing".equals(mode) && cloudProjectKey != null && !cloudProjectKey.isBlank()) {
-                // === 选择已有工作区 ===
-                String slug = CloudWorkspaceResolver.normalizeAndValidate(cloudProjectKey);
-                String projectPath = CloudWorkspaceResolver.resolveProjectWorkspace(pathSandbox, userId, slug);
-                if (!Files.exists(Paths.get(projectPath))) {
-                    throw new BusinessException(ErrorCode.PARAM_INVALID, "工作区 \"" + slug + "\" 不存在");
-                }
-                session.setWorkspace(projectPath);
-                session.setProjectKey(slug);
-                sessionMapper.updateById(session);
-            } else if (cloudProjectKey != null && !cloudProjectKey.isBlank()) {
-                // === 创建新工作区（指定项目名） ===
-                String slug = CloudWorkspaceResolver.normalizeAndValidate(cloudProjectKey);
-                String projectPath = CloudWorkspaceResolver.resolveProjectWorkspace(pathSandbox, userId, slug);
-                ensureWorkspaceDirectory(projectPath);
-                session.setWorkspace(projectPath);
-                session.setProjectKey(slug);
-                sessionMapper.updateById(session);
-            } else {
-                // === 独立工作区（无项目名） ===
-                String autoPath = pathSandbox.getWorkspaceRoot()
-                        .resolve(String.valueOf(userId))
-                        .resolve(String.valueOf(session.getId()))
-                        .toString();
-                ensureWorkspaceDirectory(autoPath);
-                session.setWorkspace(autoPath);
-                session.setProjectKey(deriveProjectKey(autoPath));
-                sessionMapper.updateById(session);
+            } catch (RuntimeException e) {
+                rollbackCreatedSession(session);
+                throw e;
             }
         }
 
-        if ("CLOUD".equals(session.getExecutionMode())) {
-            var env = environmentInfoProvider.detect(session.getWorkspace());
-            session.setIsGit(env.isGit());
-            session.setPlatform(env.platform());
-            session.setShellPath(env.shell());
-            session.setOsVersion(env.osVersion());
+        return session;
+    }
+
+    private void initializeCloudWorkspace(Session session, Long userId, String workspaceMode,
+                                          String cloudProjectKey, String gitCloneUrl, String gitBranch) {
+        String mode = workspaceMode != null ? workspaceMode : "new";
+
+        if ("git".equals(mode) && gitCloneUrl != null && !gitCloneUrl.isBlank()) {
+            GitUrlParser.validate(gitCloneUrl);
+            String slug = GitUrlParser.extractSlug(gitCloneUrl);
+            String projectPath = CloudWorkspaceResolver.resolveProjectWorkspace(pathSandbox, userId, slug);
+            ensureWorkspaceDirectory(projectPath);
+
+            var result = gitOperationService.clone(gitCloneUrl, gitBranch, Paths.get(projectPath), userId);
+            if (!result.success()) {
+                deleteWorkspaceDirectory(projectPath);
+                throw new BusinessException(ErrorCode.GIT_CLONE_FAILED, result.error());
+            }
+            session.setWorkspace(projectPath);
+            session.setProjectKey(slug);
+            sessionMapper.updateById(session);
+        } else if ("existing".equals(mode) && cloudProjectKey != null && !cloudProjectKey.isBlank()) {
+            String slug = CloudWorkspaceResolver.normalizeAndValidate(cloudProjectKey);
+            String projectPath = CloudWorkspaceResolver.resolveProjectWorkspace(pathSandbox, userId, slug);
+            if (!Files.exists(Paths.get(projectPath))) {
+                throw new BusinessException(ErrorCode.PARAM_INVALID, "工作区 \"" + slug + "\" 不存在");
+            }
+            session.setWorkspace(projectPath);
+            session.setProjectKey(slug);
+            sessionMapper.updateById(session);
+        } else if (cloudProjectKey != null && !cloudProjectKey.isBlank()) {
+            String slug = CloudWorkspaceResolver.normalizeAndValidate(cloudProjectKey);
+            String projectPath = CloudWorkspaceResolver.resolveProjectWorkspace(pathSandbox, userId, slug);
+            ensureWorkspaceDirectory(projectPath);
+            session.setWorkspace(projectPath);
+            session.setProjectKey(slug);
+            sessionMapper.updateById(session);
+        } else {
+            String autoPath = pathSandbox.getWorkspaceRoot()
+                    .resolve(String.valueOf(userId))
+                    .resolve(String.valueOf(session.getId()))
+                    .toString();
+            ensureWorkspaceDirectory(autoPath);
+            session.setWorkspace(autoPath);
+            session.setProjectKey(deriveProjectKey(autoPath));
             sessionMapper.updateById(session);
         }
+    }
 
-        return session;
+    private void rollbackCreatedSession(Session session) {
+        if (session.getId() == null) {
+            return;
+        }
+        String workspace = session.getWorkspace();
+        sessionMapper.deleteById(session.getId());
+        if (workspace != null && !workspace.isBlank()) {
+            deleteWorkspaceDirectory(workspace);
+        }
     }
 
     public List<Session> listSessions(Long userId, String keyword, String status) {

@@ -4,6 +4,10 @@
       <div v-if="initialLoading && messages.length === 0" class="empty-state">
         <el-icon :size="32" class="is-loading"><Loading /></el-icon>
       </div>
+      <div v-else-if="initializingWorkspace && messages.length === 0" class="empty-state workspace-init-state">
+        <el-icon :size="32" class="is-loading"><Loading /></el-icon>
+        <p>{{ initializingWorkspaceLabel }}</p>
+      </div>
       <div v-else-if="messages.length === 0 && !sending && !initialLoading" class="empty-state">
         <template v-if="!sessionId">
           <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
@@ -62,6 +66,8 @@
     <ChatInput
       ref="chatInputRef"
       :loading="sending"
+      :initializing-workspace="initializingWorkspace"
+      :initializing-workspace-label="initializingWorkspaceLabel"
       :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
       :cloud-project-key="isNewTaskMode ? newTaskCloudProjectKey : cloudProjectKey"
       :project-key="currentSession?.projectKey"
@@ -143,6 +149,8 @@ const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 const {
   messages,
   sending,
+  initializingWorkspace,
+  initializingWorkspaceLabel,
   sessionId,
   workspace,
   cloudProjectKey,
@@ -239,6 +247,7 @@ const activePendingApprovals = computed(() =>
 const activePendingQuestions = computed(() => sessionStore.activePendingQuestions)
 
 const showTypingIndicator = computed(() => {
+  if (initializingWorkspace.value) return false
   if (!sending.value) return false
   if (sessionStore.activeStreaming) return false
   if (sessionStore.activeThinking) return true
@@ -480,6 +489,12 @@ function handleNewTaskCloudProjectKeyChange(key: string) {
 
 function handleNewTaskWorkspaceModeChange(mode: string) {
   newTaskWorkspaceMode.value = mode
+  if (mode === 'git') {
+    newTaskCloudProjectKey.value = ''
+  } else {
+    newTaskGitCloneUrl.value = ''
+    newTaskGitBranch.value = ''
+  }
 }
 
 function handleNewTaskGitCloneUrlChange(url: string) {
@@ -531,6 +546,12 @@ function handleNewTaskAgentChange(id: string | null) {
 .empty-icon {
   color: var(--aw-hairline);
   margin-bottom: 12px;
+}
+
+.workspace-init-state p {
+  margin-top: 12px;
+  font-size: var(--aw-text-body);
+  color: var(--aw-ink-muted-64);
 }
 
 .guidance-text {

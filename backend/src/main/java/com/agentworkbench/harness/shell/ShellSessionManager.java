@@ -1,6 +1,7 @@
 package com.agentworkbench.harness.shell;
 
 import com.agentworkbench.harness.safety.PathSandbox;
+import com.agentworkbench.user.service.GitCredentialService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,12 +48,14 @@ public class ShellSessionManager {
     /**
      * 获取或创建会话
      *
-     * @param conversationId 对话 ID
-     * @param sessionId      会话 ID（可选，为空则自动生成）
-     * @param workspace      工作空间路径
+     * @param conversationId   对话 ID
+     * @param sessionId          会话 ID（可选，为空则自动生成）
+     * @param workspace          工作空间路径
+     * @param domainTokenMap     用户 Git 域名→Token 映射（仅新建会话时使用）
      * @return ShellSession
      */
-    public ShellSession getOrCreate(Long conversationId, String sessionId, String workspace) {
+    public ShellSession getOrCreate(Long conversationId, String sessionId, String workspace,
+                                    Map<String, String> domainTokenMap) {
         // 如果 sessionId 已存在且存活，直接返回
         if (sessionId != null && sessions.containsKey(sessionId)) {
             ShellSession session = sessions.get(sessionId);
@@ -76,7 +80,7 @@ public class ShellSessionManager {
         }
 
         // 创建新会话
-        ShellSession session = createSession(sessionId, conversationId, workspace);
+        ShellSession session = createSession(sessionId, conversationId, workspace, domainTokenMap);
 
         // 注册会话
         sessions.put(sessionId, session);
@@ -179,7 +183,8 @@ public class ShellSessionManager {
     /**
      * 创建新的 Shell 会话
      */
-    private ShellSession createSession(String sessionId, Long conversationId, String workspace) {
+    private ShellSession createSession(String sessionId, Long conversationId, String workspace,
+                                       Map<String, String> domainTokenMap) {
         try {
             // 解析工作目录
             Path workDir = pathSandbox.getEffectiveWorkspaceRoot(workspace);
@@ -203,6 +208,10 @@ public class ShellSessionManager {
             env.put("TERM", "dumb");  // 避免 ANSI 转义序列
             env.put("PS1", "");       // 禁用提示符
 
+            if (domainTokenMap != null && !domainTokenMap.isEmpty()) {
+                configureGitCredentials(env, workDir, domainTokenMap);
+            }
+
             Process process = pb.start();
 
             return new ShellSession(sessionId, conversationId, process, workDir, outputFile);
@@ -211,6 +220,48 @@ public class ShellSessionManager {
             throw new RuntimeException("Failed to create shell session: " + e.getMessage(), e);
         }
     }
+
+    private void configureGitCredentials(Map<String, String> env, Path workDir,
+                                         Map<String, String> domainTokenMap) throws IOException {
+        for (Map.Entry<String, String> entry : domainTokenMap.entrySet()) {
+            env.put(GitCredentialService.envVarNameForDomain(entry.getKey()), entry.getValue());
+        }
+
+        Path maoDir = workDir.resolve(".mao");
+        Files.createDirectories(maoDir);
+        Path askPassScript = maoDir.resolve("git-askpass.sh");
+        Files.writeString(askPassScript, GIT_ASKPASS_SCRIPT);
+        try {
+            Files.setPosixFilePermissions(askPassScript,
+                    PosixFilePermissions.fromString("rwx------"));
+        } catch (UnsupportedOperationException e) {
+            askPassScript.toFile().setExecutable(true, false);
+        }
+
+        env.put("GIT_ASKPASS", askPassScript.toAbsolutePath().toString());
+        env.put("GIT_TERMINAL_PROMPT", "0");
+    }
+
+    private static final String GIT_ASKPASS_SCRIPT = """
+            #!/bin/bash
+            PROMPT="$1"
+            if echo "$PROMPT" | grep -qi 'username'; then
+              echo "oauth2"
+              exit 0
+            fi
+            HOST=$(echo "$PROMPT" | sed -n "s/.*'https:\\/\\/\\([^/'\\"]*\\)'.*/\\1/p")
+            if [ -z "$HOST" ]; then
+              HOST=$(echo "$PROMPT" | sed -n "s/.*'http:\\/\\/\\([^/'\\"]*\\)'.*/\\1/p")
+            fi
+            if [ -z "$HOST" ]; then
+              exit 1
+            fi
+            VARNAME="GIT_TOKEN_$(echo "$HOST" | tr '.-' '__')"
+            VALUE="${!VARNAME}"
+            if [ -n "$VALUE" ]; then
+              echo "$VALUE"
+            fi
+            """;
 
     /**
      * 移除并关闭会话

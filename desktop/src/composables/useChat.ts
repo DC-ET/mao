@@ -38,6 +38,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks, setActiveExecution, clearActiveExecution } = useStreamWS()
 
   const sending = ref(false)
+  const initializingWorkspace = ref(false)
+  const initializingWorkspaceLabel = ref('')
   const switchingSession = ref(false)
   const sendingSessionId = ref<string | null>(null)
   const sessionId = ref<string | null>(null)
@@ -216,6 +218,16 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     return urls
   }
 
+  function resolveWorkspaceInitLabel(): string {
+    if (executionMode.value === 'CLOUD' && workspaceMode.value === 'git' && gitCloneUrl.value) {
+      return '正在克隆仓库...（可能需要 1-2 分钟）'
+    }
+    if (executionMode.value === 'CLOUD') {
+      return '正在初始化工作区...'
+    }
+    return '正在创建任务...'
+  }
+
   async function sendMessage(text: string, files?: File[]) {
     if ((!text && (!files || files.length === 0)) || sending.value) return
 
@@ -251,25 +263,31 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
           environmentInfo = await (window as any).electronAPI.getEnvironmentInfo(workspace.value || undefined)
         }
 
-        const sessionData = await sessionStore.createSession(
-          agentId.value,
-          executionMode.value,
-          executionMode.value === 'LOCAL' ? workspace.value || undefined : undefined,
-          environmentInfo,
-          selectedModelId?.value,
-          permissionLevel?.value,
-          executionMode.value === 'CLOUD' ? cloudProjectKey.value || undefined : undefined,
-          executionMode.value === 'CLOUD' ? workspaceMode.value : undefined,
-          executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? gitCloneUrl.value : undefined,
-          executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? (gitBranch.value || undefined) : undefined
-        )
-        sessionId.value = sessionData.id
-        if (sessionData.workspace) {
-          workspace.value = sessionData.workspace
-        }
-        // Sync agent name from created session
-        if (sessionData.agentName) {
-          agentName.value = sessionData.agentName
+        initializingWorkspace.value = true
+        initializingWorkspaceLabel.value = resolveWorkspaceInitLabel()
+        try {
+          const sessionData = await sessionStore.createSession(
+            agentId.value,
+            executionMode.value,
+            executionMode.value === 'LOCAL' ? workspace.value || undefined : undefined,
+            environmentInfo,
+            selectedModelId?.value,
+            permissionLevel?.value,
+            executionMode.value === 'CLOUD' ? cloudProjectKey.value || undefined : undefined,
+            executionMode.value === 'CLOUD' ? workspaceMode.value : undefined,
+            executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? gitCloneUrl.value : undefined,
+            executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? (gitBranch.value || undefined) : undefined
+          )
+          sessionId.value = sessionData.id
+          if (sessionData.workspace) {
+            workspace.value = sessionData.workspace
+          }
+          if (sessionData.agentName) {
+            agentName.value = sessionData.agentName
+          }
+        } finally {
+          initializingWorkspace.value = false
+          initializingWorkspaceLabel.value = ''
         }
       }
 
@@ -349,12 +367,21 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
     } catch (error: any) {
       sending.value = false
+      initializingWorkspace.value = false
+      initializingWorkspaceLabel.value = ''
       // Remove empty assistant message if it was added
       const lastMsg = messages.value[messages.value.length - 1]
       if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
         messages.value.pop()
       }
-      ElMessage.error(error?.message || 'Agent 执行中断')
+      if (!(error as Error & { toastShown?: boolean }).toastShown) {
+        const failedBeforeSession = !sessionId.value
+        ElMessage.error(
+          error?.response?.data?.message
+          || error?.message
+          || (failedBeforeSession ? '任务创建失败' : 'Agent 执行中断')
+        )
+      }
       if (sessionId.value) {
         sessionStore.fetchSession(sessionId.value)
       }
@@ -692,6 +719,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   return {
     messages,
     sending,
+    initializingWorkspace,
+    initializingWorkspaceLabel,
     sessionId,
     workspace,
     cloudProjectKey,

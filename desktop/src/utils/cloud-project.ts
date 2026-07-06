@@ -52,13 +52,50 @@ export function collectCloudProjectKeys(sessions: Session[]): string[] {
   return Array.from(keys).sort()
 }
 
+/**
+ * Best-effort repo slug from a Git URL for UI preview (invalid/partial URLs return undefined).
+ */
+export function extractGitRepoSlug(url: string): string | undefined {
+  const trimmed = url.trim()
+  if (!trimmed) return undefined
+
+  let path: string | undefined
+  if (trimmed.startsWith('https://')) {
+    try {
+      path = new URL(trimmed).pathname
+    } catch {
+      return undefined
+    }
+  } else if (trimmed.startsWith('git@')) {
+    const colonIdx = trimmed.indexOf(':')
+    if (colonIdx < 0) return undefined
+    path = trimmed.substring(colonIdx + 1)
+  } else {
+    return undefined
+  }
+
+  if (!path) return undefined
+  let normalized = path.startsWith('/') ? path.substring(1) : path
+  if (normalized.endsWith('.git')) {
+    normalized = normalized.substring(0, normalized.length - 4)
+  }
+  const lastSlash = normalized.lastIndexOf('/')
+  const name = (lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized).trim()
+  return name || undefined
+}
+
 export function cloudWorkspaceIndicator(
   executionMode: string | undefined,
   workspace: string | undefined,
   projectKey: string | undefined,
-  draftProjectKey?: string
+  draftProjectKey?: string,
+  workspaceMode?: string,
+  gitCloneUrl?: string
 ): string {
   if (executionMode !== 'CLOUD') return ''
+  if (workspaceMode === 'git') {
+    return extractGitRepoSlug(gitCloneUrl || '') || 'Git 仓库'
+  }
   if (draftProjectKey) return draftProjectKey
   if (isSharedCloudProject({ executionMode: 'CLOUD', workspace })) {
     return projectKey || '项目'

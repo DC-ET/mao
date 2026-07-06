@@ -57,7 +57,9 @@ api.interceptors.response.use(
     const { data } = response
     if (data.code !== 0) {
       ElMessage.error(data.message || '请求失败')
-      return Promise.reject(new Error(data.message))
+      const err = new Error(data.message || '请求失败') as Error & { toastShown?: boolean }
+      err.toastShown = true
+      return Promise.reject(err)
     }
     return data
   },
@@ -101,6 +103,9 @@ api.interceptors.response.use(
         showReloginDialog()
       } else if (status !== 401) {
         ElMessage.error(data?.message || '请求失败')
+        if (error && typeof error === 'object') {
+          (error as Error & { toastShown?: boolean }).toastShown = true
+        }
       }
     } else {
       ElMessage.error('网络错误')
@@ -108,3 +113,38 @@ api.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+
+export interface GitCredential {
+  id: number
+  domain: string
+  accessToken: string
+  description?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export async function getGitCredentials(): Promise<GitCredential[]> {
+  const { data } = await api.get('/user/git-credentials')
+  return data
+}
+
+export async function createGitCredential(payload: {
+  domain: string
+  accessToken: string
+  description?: string
+}): Promise<GitCredential> {
+  const { data } = await api.post('/user/git-credentials', payload)
+  return data
+}
+
+export async function updateGitCredential(
+  id: number,
+  payload: { accessToken?: string; description?: string }
+): Promise<GitCredential> {
+  const { data } = await api.put(`/user/git-credentials/${id}`, payload)
+  return data
+}
+
+export async function deleteGitCredential(id: number): Promise<void> {
+  await api.delete(`/user/git-credentials/${id}`)
+}

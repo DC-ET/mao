@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-input-card">
+  <div class="chat-input-card" :class="{ 'is-initializing-workspace': initializingWorkspace }">
     <!-- New task config bar -->
     <div v-if="isNewTask" class="new-task-config-bar">
       <AgentSelector
@@ -58,6 +58,7 @@
               placeholder="选择工作区"
               size="small"
               class="cloud-project-select"
+              popper-class="cloud-project-select-dropdown"
               @update:model-value="onCloudProjectKeyChange"
             >
               <el-option
@@ -166,7 +167,7 @@
           @select="(id, modelIdStr) => emit('select:model', id, modelIdStr)"
         />
         <button
-          v-if="loading && !canSend"
+          v-if="loading && !canSend && !initializingWorkspace"
           class="send-btn stop"
           title="停止"
           @click="handleStop()"
@@ -213,11 +214,13 @@ import type { Agent } from '../../stores/agent'
 import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
 import { useSessionStore, type CloudProject } from '../../stores/session'
 import { api } from '../../api'
-import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
+import { cloudWorkspaceIndicator, extractGitRepoSlug } from '../../utils/cloud-project'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
   loading?: boolean
+  initializingWorkspace?: boolean
+  initializingWorkspaceLabel?: string
   workspace?: string
   cloudProjectKey?: string
   projectKey?: string
@@ -236,6 +239,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   disabled: false,
   loading: false,
+  initializingWorkspace: false,
+  initializingWorkspaceLabel: '',
   workspace: '',
   cloudProjectKey: '',
   executionMode: 'CLOUD',
@@ -310,8 +315,10 @@ const cloudIndicatorLabel = computed(() =>
   cloudWorkspaceIndicator(
     props.executionMode,
     props.workspace,
-    props.projectKey,
-    props.isNewTask ? props.cloudProjectKey : undefined
+    props.isNewTask ? undefined : props.projectKey,
+    props.isNewTask ? props.cloudProjectKey : undefined,
+    props.isNewTask ? props.workspaceMode : undefined,
+    props.isNewTask ? props.gitCloneUrl : undefined
   )
 )
 
@@ -328,12 +335,17 @@ function onGitCloneUrlChange(value: string) {
 }
 
 const dynamicPlaceholder = computed(() => {
+  if (props.initializingWorkspace) {
+    return props.initializingWorkspaceLabel || '正在初始化工作区...'
+  }
   if (props.loading) return 'Agent 执行中，发送的消息将进入队列...'
   if (props.isNewTask) {
     if (props.executionMode === 'LOCAL') {
       return props.workspace ? `在「${dirName.value}」中开始新任务...` : '先选择本地工作目录，再告诉 Agent 你想做什么...'
     }
     if (props.workspaceMode === 'git') {
+      const slug = extractGitRepoSlug(props.gitCloneUrl || '')
+      if (slug) return `在「${slug}」中开始新任务...`
       return props.gitCloneUrl ? '从 Git 仓库初始化后，告诉 Agent 你想做什么...' : '输入 Git 地址，开始克隆并创建任务...'
     }
     if (props.workspaceMode === 'existing') {
@@ -479,7 +491,7 @@ const editor = useEditor({
       strike: false,
     }),
     Placeholder.configure({
-      placeholder: dynamicPlaceholder.value,
+      placeholder: () => dynamicPlaceholder.value,
     }),
     QuickCommandNode,
     FileReferenceNode,
@@ -796,6 +808,12 @@ function focusInput() {
 
 watch(() => props.isNewTask, (val) => {
   if (val) nextTick(() => editor.value?.commands.focus())
+})
+
+watch(dynamicPlaceholder, () => {
+  const ed = editor.value
+  if (!ed?.view || !ed.isEmpty) return
+  ed.view.dispatch(ed.state.tr)
 })
 
 
@@ -1289,5 +1307,23 @@ onBeforeUnmount(() => {
 :deep(.cloud-project-input .el-input__suffix),
 :deep(.cloud-project-select .el-input__suffix) {
   transform: scale(0.85);
+}
+
+.chat-input-card.is-initializing-workspace {
+  pointer-events: none;
+  opacity: 0.92;
+}
+</style>
+
+<style>
+.cloud-project-select-dropdown.el-select-dropdown {
+  border-radius: var(--aw-radius-md);
+}
+
+.cloud-project-select-dropdown .el-select-dropdown__item {
+  font-size: var(--aw-text-fine);
+  height: 28px;
+  line-height: 28px;
+  padding: 0 12px;
 }
 </style>

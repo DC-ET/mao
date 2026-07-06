@@ -18,6 +18,21 @@ const routes: RouteRecordRaw[] = [
         path: 'tasks/:sessionId',
         name: 'Task',
         component: () => import('../views/task/TaskView.vue')
+      },
+      {
+        path: 'settings',
+        component: () => import('../views/settings/SettingsView.vue'),
+        children: [
+          {
+            path: '',
+            redirect: '/settings/git-credentials'
+          },
+          {
+            path: 'git-credentials',
+            name: 'GitCredentials',
+            component: () => import('../views/settings/GitCredentialsView.vue')
+          }
+        ]
       }
     ]
   }

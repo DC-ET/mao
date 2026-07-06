@@ -39,6 +39,8 @@ public enum ErrorCode {
     CANNOT_REMOVE_LAST_ADMIN(3017, "不能移除最后一个管理员"),
     USER_PASSWORD_MANAGED_BY_LDAP(3018, "LDAP 用户密码由目录服务管理"),
     PASSWORD_INVALID(3019, "密码格式不符合要求"),
+    GIT_CREDENTIAL_NOT_FOUND(3021, "Git 凭证不存在"),
+    GIT_CREDENTIAL_DOMAIN_DUPLICATE(3022, "该域名的凭证已存在"),
 
     // 服务端内部错误 5001-5999
     INTERNAL_ERROR(5001, "服务内部错误"),
