@@ -31,12 +31,6 @@ class GitCloneErrorFormatterTest {
     }
 
     @Test
-    void sshKeyscanFailure() {
-        assertTrue(GitCloneErrorFormatter.toUserMessage("ssh-keyscan failed for github.com (exit=1)")
-                .contains("SSH 主机密钥"));
-    }
-
-    @Test
     void branchNotFound() {
         String raw = "fatal: Remote branch nonexistent not found in upstream origin";
         assertTrue(GitCloneErrorFormatter.toUserMessage(raw).contains("分支不存在"));

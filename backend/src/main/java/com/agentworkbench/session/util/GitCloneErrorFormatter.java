@@ -19,12 +19,8 @@ public final class GitCloneErrorFormatter {
         if (lower.startsWith("git clone timeout") || lower.contains("clone timeout")) {
             return "克隆仓库超时，请检查网络连接或稍后重试";
         }
-        if (lower.startsWith("ssh-keyscan")) {
-            return "无法连接 Git 服务器（SSH 主机密钥获取失败），请检查地址是否正确或联系管理员";
-        }
         if (lower.contains("repository not found") || lower.contains("project not found")) {
-            return "仓库不存在或无权访问。请确认 Git 地址正确；私有仓库需在「设置 → Git 凭证」配置 Token（HTTPS），"
-                    + "或使用 SSH 地址并确保服务器已配置密钥。";
+            return "仓库不存在或无权访问。请确认 HTTPS 地址正确；私有仓库需在「设置 → Git 凭证」配置对应域名的 Token。";
         }
         if (lower.contains("authentication failed")
                 || lower.contains("invalid username or password")
@@ -33,14 +29,10 @@ public final class GitCloneErrorFormatter {
                 || lower.contains("permission denied (publickey)")
                 || lower.contains("permission denied (password")
                 || lower.contains("http basic: access denied")) {
-            return "Git 认证失败。HTTPS 仓库请在「设置 → Git 凭证」配置对应域名的 Token；"
-                    + "SSH 仓库请确认服务器已配置可用的 SSH 密钥。";
+            return "Git 认证失败。请在「设置 → Git 凭证」配置对应域名的 Access Token。";
         }
         if (lower.contains("could not resolve host") || lower.contains("name or service not known")) {
             return "无法解析 Git 服务器地址，请检查仓库 URL 是否正确";
-        }
-        if (lower.contains("host key verification failed")) {
-            return "SSH 主机密钥校验失败，请联系管理员检查服务器 SSH 配置";
         }
         if (lower.contains("remote branch") && lower.contains("not found")
                 || lower.contains("could not find remote branch")) {

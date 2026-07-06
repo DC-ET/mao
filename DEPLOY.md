@@ -33,14 +33,11 @@ nginx -v
 git --version
 ```
 
-> **Git 说明**：云端模式（CLOUD）创建会话时，用户可选择通过 Git 仓库地址初始化工作区，后端会执行 `git clone`。因此运行后端的机器必须安装 `git` 命令。若需克隆私有仓库（SSH 协议），还需在**运行 Java 进程的用户**下配置 SSH 密钥，并将公钥添加到 GitLab 等平台的 Deploy Key / SSH Key。
+> **Git 说明**
 >
-> SSH 首次连接某 Git 主机时，交互式终端会提示确认 host fingerprint。后端以非交互方式执行 `git clone`，会在 clone 前自动调用 `ssh-keyscan` 写入运行 Java 进程用户的 `~/.ssh/known_hosts`，无需人工输入 `yes`。也可在部署时预先执行：
+> 云端模式（CLOUD）创建会话时，用户可选择通过 **HTTPS** Git 地址初始化工作区，后端会执行 `git clone`；Agent 在 Shell 中执行 `git push` / `git pull` 等远程操作时同样依赖 Git。因此运行后端的机器必须安装 `git` 命令。
 >
-> ```bash
-> # 以运行后端的同一用户执行（示例用户 root，请按实际替换）
-> ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-> ```
+> **仅支持 HTTPS 地址**（如 `https://git.example.com/xx/xxx.git`），不支持 SSH 格式（`git@host:...`）。私有仓库需在桌面端「设置 → Git 凭证」中按**完整主机名**配置 Personal Access Token（例如 `git.example.com`，不是 `example.com`），系统会自动用于 clone 及 Shell 内的 git 操作。
 
 ## 二、目录结构
 
@@ -88,9 +85,11 @@ spring:
       database: 1
 
 jwt:
-  secret: <运行 openssl rand -base64 32 生成>
+  secret: ${JWT_SECRET}
 
 app:
+  git-credential:
+    secret-key: ${APP_GIT_CREDENTIAL_SECRET}
   harness:
     workspace-root: /data/workbench/workspace
     skills-dir: /data/workbench/skills
@@ -106,7 +105,31 @@ ldap:
   url: ${LDAP_URL:}
 ```
 
+创建 `/opt/mao/backend/.env`（**勿提交到 Git**，权限建议 `chmod 600`）：
+
+```bash
+# 生成随机密钥
+JWT_SECRET=$(openssl rand -base64 32)
+APP_GIT_CREDENTIAL_SECRET=$(openssl rand -base64 32)
+
+cat > /opt/mao/backend/.env <<EOF
+JWT_SECRET=${JWT_SECRET}
+APP_GIT_CREDENTIAL_SECRET=${APP_GIT_CREDENTIAL_SECRET}
+EOF
+chmod 600 /opt/mao/backend/.env
+```
+
+| 变量 | 必需 | 说明 |
+|------|------|------|
+| `JWT_SECRET` | **是** | JWT 签名密钥，生产环境必须设置，禁止使用默认值 |
+| `APP_GIT_CREDENTIAL_SECRET` | **是** | 用户 Git Access Token 的 AES 加密密钥；未配置时后端**拒绝启动** |
+| `UPLOAD_STORAGE_MODE` | 否 | `local`（默认）或 `oss` |
+| `UPLOAD_BASE_URL` | local 模式建议设 | 上传文件的公网访问前缀，如 `https://mao.example.com/api` |
+| `LDAP_URL` | 否 | 留空即禁用 LDAP 登录 |
+
 > 首次启动时 Flyway 自动执行迁移并创建默认管理员 `admin` / `admin123`，**登录后请立即改密**。LLM API Key 在管理后台「模型管理」中配置。
+>
+> **Git 凭证加密密钥轮换**：更换 `APP_GIT_CREDENTIAL_SECRET` 前，需用旧密钥解密、新密钥重新加密所有 `user_git_credential` 表中的 Token，否则已存凭证无法使用。
 
 ### 3. 启动脚本
 
@@ -153,6 +176,17 @@ stop() {
 start() {
     echo "Starting $APP_NAME..."
     rotate_log
+
+    ENV_FILE="/opt/mao/backend/.env"
+    if [ -f "$ENV_FILE" ]; then
+        set -a
+        # shellcheck source=/dev/null
+        source "$ENV_FILE"
+        set +a
+    else
+        echo "Warning: $ENV_FILE not found. JWT_SECRET and APP_GIT_CREDENTIAL_SECRET must be set."
+    fi
+
     nohup java -jar "$APP_JAR" \
         --spring.profiles.active=prod \
         --spring.config.additional-location=file:/opt/mao/backend/application-prod.yml \
@@ -177,7 +211,14 @@ cd /opt/mao/backend
 ./restart.sh
 ```
 
-验证：`curl http://localhost:9080/api/swagger-ui.html`
+验证：
+
+```bash
+# 健康检查（Swagger UI）
+curl -s -o /dev/null -w "%{http_code}" http://localhost:9080/api/swagger-ui.html
+# 期望返回 200；若启动失败，查看日志中是否提示 APP_GIT_CREDENTIAL_SECRET 未配置
+tail -50 /data/logs/mao/app.log
+```
 
 ## 四、前端部署
 
@@ -359,3 +400,11 @@ tail -f /data/logs/mao/app.log
 # Nginx 重载
 sudo systemctl reload nginx
 ```
+
+### 常见问题
+
+| 现象 | 排查 |
+|------|------|
+| 后端启动后立即退出，日志提示 `APP_GIT_CREDENTIAL_SECRET is not configured` | 检查 `/opt/mao/backend/.env` 是否存在且已被 `restart.sh` 加载 |
+| HTTPS 私有仓库 clone / push 认证失败 | 确认用户使用 HTTPS 地址，并在桌面端「设置 → Git 凭证」配置对应**完整主机名**的 Token |
+| 提示不支持 SSH 地址 | 将 `git@host:...` 改为 `https://host/...` 格式 |

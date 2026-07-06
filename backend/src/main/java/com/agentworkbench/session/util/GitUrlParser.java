@@ -9,7 +9,7 @@ import java.net.URISyntaxException;
 
 /**
  * Parses and validates Git repository URLs.
- * Supports both HTTPS (https://host/user/repo.git) and SSH (git@host:user/repo.git) protocols.
+ * Only HTTPS ({@code https://host/user/repo.git}) is supported for workspace initialization.
  */
 public final class GitUrlParser {
 
@@ -17,25 +17,28 @@ public final class GitUrlParser {
     }
 
     /**
-     * Validate git URL format. Accepts HTTPS and SSH only.
+     * Validate git URL format. Accepts HTTPS only.
      */
     public static void validate(String url) {
         if (url == null || url.isBlank()) {
             throw new BusinessException(ErrorCode.PARAM_INVALID, "Git URL 不能为空");
         }
-        if (url.startsWith("https://")) {
-            if (!url.matches("^https://[^\\s/]+(/[^\\s]+)+")) {
-                throw new BusinessException(ErrorCode.PARAM_INVALID,
-                        "Git URL 格式无效，示例: https://github.com/user/repo.git");
-            }
-        } else if (url.startsWith("git@")) {
-            if (!url.matches("^git@[^\\s:]+:[^\\s]+")) {
-                throw new BusinessException(ErrorCode.PARAM_INVALID,
-                        "SSH Git 地址格式无效，示例: git@github.com:user/repo.git");
-            }
-        } else {
+        String trimmed = url.trim();
+        if (trimmed.startsWith("git@")) {
             throw new BusinessException(ErrorCode.PARAM_INVALID,
-                    "不支持的协议，仅支持 HTTPS 和 SSH");
+                    "不支持 SSH 地址，请使用 HTTPS 格式，如 https://git.example.com/xx/xxx.git");
+        }
+        if (trimmed.startsWith("http://")) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "不支持 HTTP 明文地址，请使用 HTTPS");
+        }
+        if (!trimmed.startsWith("https://")) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "不支持的协议，仅支持 HTTPS，示例: https://github.com/user/repo.git");
+        }
+        if (!trimmed.matches("^https://[^\\s/]+(/[^\\s]+)+")) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "Git URL 格式无效，示例: https://github.com/user/repo.git");
         }
     }
 
@@ -43,7 +46,6 @@ public final class GitUrlParser {
      * Extract repository name from a Git URL.
      * <pre>
      * https://github.com/user/my-repo.git → my-repo
-     * git@github.com:user/my-repo.git      → my-repo
      * https://github.com/user/my-repo      → my-repo
      * </pre>
      */
@@ -51,24 +53,17 @@ public final class GitUrlParser {
         validate(url);
 
         String path;
-        if (url.startsWith("https://")) {
-            try {
-                URI uri = new URI(url);
-                path = uri.getPath();
-            } catch (URISyntaxException e) {
-                throw new BusinessException(ErrorCode.PARAM_INVALID, "Git URL 格式无效");
-            }
-        } else {
-            // SSH format: git@host:path → extract path after ':'
-            int colonIdx = url.indexOf(':');
-            path = url.substring(colonIdx + 1);
+        try {
+            URI uri = new URI(url.trim());
+            path = uri.getPath();
+        } catch (URISyntaxException e) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "Git URL 格式无效");
         }
 
         if (path == null || path.isBlank()) {
             throw new BusinessException(ErrorCode.PARAM_INVALID, "无法从 Git URL 提取仓库名");
         }
 
-        // Strip leading / and trailing .git
         if (path.startsWith("/")) {
             path = path.substring(1);
         }
@@ -76,7 +71,6 @@ public final class GitUrlParser {
             path = path.substring(0, path.length() - 4);
         }
 
-        // Take last segment as repo name
         int lastSlash = path.lastIndexOf('/');
         String name = lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
 
@@ -91,27 +85,18 @@ public final class GitUrlParser {
      * Extract host from a Git URL.
      * <pre>
      * https://github.com/user/repo.git → github.com
-     * git@github.com:user/repo.git      → github.com
      * </pre>
      */
     public static String extractHost(String url) {
         validate(url);
-        if (url.startsWith("https://")) {
-            try {
-                String host = new URI(url).getHost();
-                if (host == null || host.isBlank()) {
-                    throw new BusinessException(ErrorCode.PARAM_INVALID, "Git URL 格式无效");
-                }
-                return host;
-            } catch (URISyntaxException e) {
+        try {
+            String host = new URI(url.trim()).getHost();
+            if (host == null || host.isBlank()) {
                 throw new BusinessException(ErrorCode.PARAM_INVALID, "Git URL 格式无效");
             }
+            return host;
+        } catch (URISyntaxException e) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "Git URL 格式无效");
         }
-        int at = url.indexOf('@');
-        int colon = url.indexOf(':');
-        if (at < 0 || colon <= at) {
-            throw new BusinessException(ErrorCode.PARAM_INVALID, "SSH Git 地址格式无效");
-        }
-        return url.substring(at + 1, colon);
     }
 }

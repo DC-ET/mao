@@ -21,6 +21,21 @@
             </el-tooltip>
           </el-radio-group>
         </div>
+        <el-select
+          v-if="executionMode === 'CLOUD'"
+          :model-value="workspaceMode"
+          size="small"
+          class="workspace-mode-select"
+          popper-class="workspace-mode-select-dropdown"
+          @update:model-value="onWorkspaceModeChange"
+        >
+          <el-option
+            v-for="opt in workspaceModeOptions"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
         <div
           v-if="executionMode === 'LOCAL'"
           class="workspace-selector"
@@ -33,25 +48,7 @@
           </el-icon>
           <span>{{ workspace ? dirName : '选择工作目录' }}</span>
         </div>
-        <div v-else class="cloud-workspace-source">
-          <div class="source-tabs">
-            <span
-              v-if="cloudProjects.length > 0"
-              class="source-tab"
-              :class="{ active: workspaceMode === 'existing' }"
-              @click="onWorkspaceModeChange('existing')"
-            >已有</span>
-            <span
-              class="source-tab"
-              :class="{ active: workspaceMode === 'new' }"
-              @click="onWorkspaceModeChange('new')"
-            >新建</span>
-            <span
-              class="source-tab"
-              :class="{ active: workspaceMode === 'git' }"
-              @click="onWorkspaceModeChange('git')"
-            >Git</span>
-          </div>
+        <div v-if="executionMode === 'CLOUD'" class="cloud-workspace-detail">
           <template v-if="workspaceMode === 'existing'">
             <el-select
               :model-value="cloudProjectKey"
@@ -72,7 +69,7 @@
           <template v-else-if="workspaceMode === 'git'">
             <el-input
               :model-value="gitCloneUrl"
-              placeholder="Git 地址"
+              placeholder="Git 地址，如 https://git.example.com/xx/xxx.git"
               size="small"
               clearable
               class="cloud-project-input"
@@ -214,7 +211,7 @@ import type { Agent } from '../../stores/agent'
 import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
 import { useSessionStore, type CloudProject } from '../../stores/session'
 import { api } from '../../api'
-import { cloudWorkspaceIndicator, extractGitRepoSlug } from '../../utils/cloud-project'
+import { cloudWorkspaceIndicator, extractGitRepoSlug, isHttpsGitUrl } from '../../utils/cloud-project'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -302,6 +299,9 @@ let fileSearchDebounce: ReturnType<typeof setTimeout> | null = null
 const canSend = computed(() => {
   if (!(editorContent.value.trim().length > 0 || pendingFiles.value.length > 0)) return false
   if (props.isNewTask && !props.selectedAgentId) return false
+  if (props.isNewTask && props.executionMode === 'CLOUD' && props.workspaceMode === 'git') {
+    if (!isHttpsGitUrl(props.gitCloneUrl || '')) return false
+  }
   return true
 })
 
@@ -321,6 +321,17 @@ const cloudIndicatorLabel = computed(() =>
     props.isNewTask ? props.gitCloneUrl : undefined
   )
 )
+
+const workspaceModeOptions = computed(() => {
+  const options: { label: string; value: string }[] = [
+    { label: '空白工作区', value: 'new' },
+    { label: 'Git工作区', value: 'git' },
+  ]
+  if (props.cloudProjects.length > 0) {
+    options.unshift({ label: '现有工作区', value: 'existing' })
+  }
+  return options
+})
 
 function onWorkspaceModeChange(mode: string) {
   emit('update:workspaceMode', mode)
@@ -346,7 +357,7 @@ const dynamicPlaceholder = computed(() => {
     if (props.workspaceMode === 'git') {
       const slug = extractGitRepoSlug(props.gitCloneUrl || '')
       if (slug) return `在「${slug}」中开始新任务...`
-      return props.gitCloneUrl ? '从 Git 仓库初始化后，告诉 Agent 你想做什么...' : '输入 Git 地址，开始克隆并创建任务...'
+      return props.gitCloneUrl ? '从 Git 仓库初始化后，告诉 Agent 你想做什么...' : '输入 HTTPS Git 地址，开始克隆并创建任务...'
     }
     if (props.workspaceMode === 'existing') {
       return props.cloudProjectKey ? `在「${props.cloudProjectKey}」中开始新任务...` : '选择一个已有云端工作区...'
@@ -1146,9 +1157,6 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding-bottom: 10px;
-}
-
-.config-row.is-mobile {
   flex-wrap: wrap;
 }
 
@@ -1168,13 +1176,6 @@ onBeforeUnmount(() => {
 .config-row.is-mobile .mode-selector :deep(.el-radio-button__inner) {
   width: 100%;
   justify-content: center;
-}
-
-.config-row.is-mobile .workspace-selector,
-.config-row.is-mobile .cloud-workspace-source {
-  flex: 1;
-  max-width: none;
-  min-width: 0;
 }
 
 .config-divider {
@@ -1239,52 +1240,40 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.cloud-workspace-source {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
+.cloud-workspace-detail {
+  width: 100%;
   min-width: 0;
-  max-width: 320px;
 }
 
-.config-row.is-mobile .cloud-workspace-source {
-  max-width: none;
-}
-
-.source-tabs {
-  display: flex;
-  gap: 2px;
-  background: var(--aw-canvas-parchment);
-  border-radius: 999px;
-  padding: 2px;
-  box-shadow: 0 0 0 1px var(--aw-hairline) inset;
+.workspace-mode-select {
+  width: 140px;
   flex-shrink: 0;
 }
 
-.source-tab {
-  padding: 2px 8px;
+:deep(.workspace-mode-select .el-input__wrapper),
+:deep(.workspace-mode-select .el-select__wrapper) {
   border-radius: 999px;
+  background: var(--aw-canvas-parchment);
+  box-shadow: 0 0 0 1px var(--aw-hairline) inset;
+  padding: 2px 8px 2px 10px;
+  min-height: 26px;
+}
+
+:deep(.workspace-mode-select .el-input__inner),
+:deep(.workspace-mode-select .el-select__selected-item) {
   font-size: var(--aw-text-fine);
-  cursor: pointer;
-  color: var(--aw-ink-muted-64);
-  transition: all 0.15s;
-  white-space: nowrap;
-  user-select: none;
+  height: 22px;
+  line-height: 22px;
 }
 
-.source-tab:hover {
-  color: var(--aw-ink);
-}
-
-.source-tab.active {
-  background: var(--aw-primary);
-  color: #fff;
+:deep(.workspace-mode-select .el-input__suffix),
+:deep(.workspace-mode-select .el-select__caret) {
+  transform: scale(0.85);
 }
 
 .cloud-project-input,
 .cloud-project-select {
-  flex: 1;
+  width: 100%;
   min-width: 0;
 }
 
@@ -1316,10 +1305,12 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
+.workspace-mode-select-dropdown.el-select-dropdown,
 .cloud-project-select-dropdown.el-select-dropdown {
   border-radius: var(--aw-radius-md);
 }
 
+.workspace-mode-select-dropdown .el-select-dropdown__item,
 .cloud-project-select-dropdown .el-select-dropdown__item {
   font-size: var(--aw-text-fine);
   height: 28px;

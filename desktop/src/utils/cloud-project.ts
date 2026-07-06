@@ -55,22 +55,36 @@ export function collectCloudProjectKeys(sessions: Session[]): string[] {
 /**
  * Best-effort repo slug from a Git URL for UI preview (invalid/partial URLs return undefined).
  */
+const HTTPS_GIT_URL_RE = /^https:\/\/[^\s/]+(\/[^\s]+)+/
+
+/** Returns an error message when invalid, or null when the URL is a valid HTTPS Git address. */
+export function validateHttpsGitUrl(url: string): string | null {
+  const trimmed = url.trim()
+  if (!trimmed) return 'Git 地址不能为空'
+  if (trimmed.startsWith('git@')) {
+    return '不支持 SSH 地址，请使用 HTTPS 格式，如 https://git.example.com/xx/xxx.git'
+  }
+  if (trimmed.startsWith('http://')) {
+    return '不支持 HTTP 明文地址，请使用 HTTPS'
+  }
+  if (!HTTPS_GIT_URL_RE.test(trimmed)) {
+    return 'Git URL 格式无效，示例: https://github.com/user/repo.git'
+  }
+  return null
+}
+
+export function isHttpsGitUrl(url: string): boolean {
+  return validateHttpsGitUrl(url) === null
+}
+
 export function extractGitRepoSlug(url: string): string | undefined {
   const trimmed = url.trim()
-  if (!trimmed) return undefined
+  if (!trimmed || !isHttpsGitUrl(trimmed)) return undefined
 
   let path: string | undefined
-  if (trimmed.startsWith('https://')) {
-    try {
-      path = new URL(trimmed).pathname
-    } catch {
-      return undefined
-    }
-  } else if (trimmed.startsWith('git@')) {
-    const colonIdx = trimmed.indexOf(':')
-    if (colonIdx < 0) return undefined
-    path = trimmed.substring(colonIdx + 1)
-  } else {
+  try {
+    path = new URL(trimmed).pathname
+  } catch {
     return undefined
   }
 

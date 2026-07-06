@@ -127,7 +127,7 @@
         <div v-if="workspaceMode === 'git'" class="workspace-row">
           <el-input
             v-model="gitCloneUrl"
-            placeholder="Git 仓库地址，如 https://github.com/user/repo.git 或 git@github.com:user/repo.git"
+            placeholder="HTTPS 地址，如 https://github.com/user/repo.git"
             clearable
             class="project-input"
           />
@@ -162,6 +162,7 @@ import { Cloudy, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useSessionStore, type SessionEnvironmentInfo, type CloudProject } from '../../stores/session'
 import { useAgentStore, type Agent } from '../../stores/agent'
+import { isHttpsGitUrl, validateHttpsGitUrl } from '../../utils/cloud-project'
 
 const props = defineProps<{
   modelValue: boolean
@@ -200,7 +201,7 @@ const canConfirm = computed(() => {
   if (selectedMode.value === 'LOCAL') return true
   if (selectedMode.value === 'CLOUD') {
     if (workspaceMode.value === 'existing') return !!selectedProject.value
-    if (workspaceMode.value === 'git') return !!gitCloneUrl.value
+    if (workspaceMode.value === 'git') return isHttpsGitUrl(gitCloneUrl.value)
     return true
   }
   return false
@@ -255,6 +256,14 @@ async function confirm() {
   if (selectedMode.value === 'LOCAL' && !isElectronClient) {
     ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
     return
+  }
+
+  if (selectedMode.value === 'CLOUD' && workspaceMode.value === 'git') {
+    const gitError = validateHttpsGitUrl(gitCloneUrl.value)
+    if (gitError) {
+      ElMessage.error(gitError)
+      return
+    }
   }
 
   isCreating.value = true

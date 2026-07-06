@@ -19,6 +19,7 @@ import { uploadToOss, type StsToken } from '../utils/ossUpload'
 import { getUploadConfig, type UploadConfig } from '../utils/storageMode'
 import { deriveSessionTitle } from '../utils/sessionTitle'
 import { generateUUID } from '../utils/uuid'
+import { validateHttpsGitUrl } from '../utils/cloud-project'
 
 export interface ApprovalItem {
   requestId: string
@@ -261,6 +262,15 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         let environmentInfo: SessionEnvironmentInfo | undefined
         if (executionMode.value === 'LOCAL' && isElectron && (window as any).electronAPI?.getEnvironmentInfo) {
           environmentInfo = await (window as any).electronAPI.getEnvironmentInfo(workspace.value || undefined)
+        }
+
+        if (executionMode.value === 'CLOUD' && workspaceMode.value === 'git') {
+          const gitError = validateHttpsGitUrl(gitCloneUrl.value)
+          if (gitError) {
+            ElMessage.error(gitError)
+            sending.value = false
+            return
+          }
         }
 
         initializingWorkspace.value = true
