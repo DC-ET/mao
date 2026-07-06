@@ -18,6 +18,7 @@ export { normalizeMessageRole } from '../types/chat'
 import { uploadToOss, type StsToken } from '../utils/ossUpload'
 import { getUploadConfig, type UploadConfig } from '../utils/storageMode'
 import { deriveSessionTitle } from '../utils/sessionTitle'
+import { generateUUID } from '../utils/uuid'
 
 export interface ApprovalItem {
   requestId: string
@@ -322,7 +323,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
 
       // Send message via WS
-      const eventId = crypto.randomUUID()
+      const eventId = generateUUID()
       setActiveExecution(sid, eventId)
       wsSendMessage(sid, resolvedText, eventId, imageUrls)
 
@@ -539,7 +540,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   async function enqueueMessage(text: string, files: File[]) {
     const imageUrls = files.length > 0 ? await uploadImages(files) : []
     await connect()
-    const eventId = crypto.randomUUID()
+    const eventId = generateUUID()
     wsEnqueueMessage(sessionId.value || '', text, eventId, imageUrls)
   }
 

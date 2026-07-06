@@ -24,10 +24,23 @@ sudo apt install -y openjdk-17-jdk
 # 安装 Nginx
 sudo apt install -y nginx
 
+# 安装 Git（云端模式通过 Git 地址初始化工作区时需要）
+sudo apt install -y git
+
 # 验证
 java -version
 nginx -v
+git --version
 ```
+
+> **Git 说明**：云端模式（CLOUD）创建会话时，用户可选择通过 Git 仓库地址初始化工作区，后端会执行 `git clone`。因此运行后端的机器必须安装 `git` 命令。若需克隆私有仓库（SSH 协议），还需在**运行 Java 进程的用户**下配置 SSH 密钥，并将公钥添加到 GitLab 等平台的 Deploy Key / SSH Key。
+>
+> SSH 首次连接某 Git 主机时，交互式终端会提示确认 host fingerprint。后端以非交互方式执行 `git clone`，会在 clone 前自动调用 `ssh-keyscan` 写入运行 Java 进程用户的 `~/.ssh/known_hosts`，无需人工输入 `yes`。也可在部署时预先执行：
+>
+> ```bash
+> # 以运行后端的同一用户执行（示例用户 root，请按实际替换）
+> ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+> ```
 
 ## 二、目录结构
 

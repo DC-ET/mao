@@ -65,6 +65,7 @@ import { api } from '../../api'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
 import { mapMessagesWithFileChanges } from '../../utils/chatMessage'
 import { deriveSessionTitle } from '../../utils/sessionTitle'
+import { generateUUID } from '../../utils/uuid'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
 import { useCenterTabs } from '../../composables/useCenterTabs'
@@ -276,7 +277,7 @@ function handleChatSend(text: string, _files: File[]) {
       createdAt: new Date().toLocaleString(),
     })
     sessionStore.ensureStreamingAssistantMessage(sid)
-    sendMessage(sid, text.trim(), crypto.randomUUID())
+    sendMessage(sid, text.trim(), generateUUID())
   }
 
   sending.value = true

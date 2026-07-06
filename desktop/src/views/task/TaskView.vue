@@ -291,13 +291,37 @@ function isSameNewTaskRoute(target: ReturnType<typeof buildNewTaskRoute>) {
 
 let newTaskModeGeneration = 0
 
+async function resolveNewTaskDefaults(defaults?: NewTaskDefaults | null): Promise<NewTaskDefaults> {
+  const resolved: NewTaskDefaults = {
+    agentId: defaults?.agentId || null,
+    executionMode: defaults?.executionMode || 'CLOUD',
+    workspace: defaults?.workspace,
+    cloudProjectKey: defaults?.cloudProjectKey,
+    permissionLevel: defaults?.permissionLevel || 'READ_ONLY',
+    modelId: defaults?.modelId
+  }
+
+  if (!resolved.agentId) {
+    if (agentStore.agents.length === 0) {
+      await agentStore.fetchAgents()
+    }
+    const firstAgent = agentStore.agents[0]
+    if (firstAgent) {
+      resolved.agentId = String(firstAgent.id)
+    }
+  }
+
+  return resolved
+}
+
 async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   const generation = ++newTaskModeGeneration
-  const mode = normalizeNewTaskMode(defaults?.executionMode)
-  newTaskAgentId.value = defaults?.agentId ? String(defaults.agentId) : null
+  const resolved = await resolveNewTaskDefaults(defaults)
+  const mode = normalizeNewTaskMode(resolved.executionMode)
+  newTaskAgentId.value = resolved.agentId ? String(resolved.agentId) : null
   newTaskMode.value = mode
-  newTaskWorkspace.value = mode === 'LOCAL' ? (defaults?.workspace || '') : ''
-  newTaskCloudProjectKey.value = mode === 'CLOUD' ? (defaults?.cloudProjectKey || '') : ''
+  newTaskWorkspace.value = mode === 'LOCAL' ? (resolved.workspace || '') : ''
+  newTaskCloudProjectKey.value = mode === 'CLOUD' ? (resolved.cloudProjectKey || '') : ''
   newTaskWorkspaceMode.value = 'new'
   newTaskGitCloneUrl.value = ''
   newTaskGitBranch.value = ''
@@ -310,13 +334,13 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
       }
     }
   })
-  permissionLevel.value = defaults?.permissionLevel || 'READ_ONLY'
-  newTaskModelId.value = defaults?.modelId
+  permissionLevel.value = resolved.permissionLevel || 'READ_ONLY'
+  newTaskModelId.value = resolved.modelId
 
   initialLoading.value = false
   executionMode.value = mode
   currentPhase.value = 'IDLE'
-  projectKey.value = defaults?.cloudProjectKey || ''
+  projectKey.value = resolved.cloudProjectKey || ''
   sessionStore.setActiveSession(null)
   workspace.value = newTaskWorkspace.value
   agentName.value = ''
@@ -475,7 +499,7 @@ async function resolveInitialRoute() {
     if (latestSid) {
       await loadSession(latestSid)
     } else {
-      initialLoading.value = false
+      await enterNewTaskMode()
     }
   }
 }
@@ -513,12 +537,7 @@ watch(getRouteWatchState, async (state, prev) => {
           loadDefaultModel()
         }
       } else {
-        newTaskAgentId.value = null
-        newTaskMode.value = 'CLOUD'
-        newTaskWorkspace.value = ''
-        newTaskCloudProjectKey.value = ''
-        permissionLevel.value = 'READ_ONLY'
-        navigateToLatestSession()
+        await enterNewTaskMode()
       }
     }
     return

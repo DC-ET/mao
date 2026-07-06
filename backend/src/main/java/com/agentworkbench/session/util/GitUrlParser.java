@@ -86,4 +86,32 @@ public final class GitUrlParser {
 
         return CloudWorkspaceResolver.normalizeAndValidate(name);
     }
+
+    /**
+     * Extract host from a Git URL.
+     * <pre>
+     * https://github.com/user/repo.git → github.com
+     * git@github.com:user/repo.git      → github.com
+     * </pre>
+     */
+    public static String extractHost(String url) {
+        validate(url);
+        if (url.startsWith("https://")) {
+            try {
+                String host = new URI(url).getHost();
+                if (host == null || host.isBlank()) {
+                    throw new BusinessException(ErrorCode.PARAM_INVALID, "Git URL 格式无效");
+                }
+                return host;
+            } catch (URISyntaxException e) {
+                throw new BusinessException(ErrorCode.PARAM_INVALID, "Git URL 格式无效");
+            }
+        }
+        int at = url.indexOf('@');
+        int colon = url.indexOf(':');
+        if (at < 0 || colon <= at) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "SSH Git 地址格式无效");
+        }
+        return url.substring(at + 1, colon);
+    }
 }
