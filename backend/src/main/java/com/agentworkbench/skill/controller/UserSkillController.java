@@ -19,7 +19,7 @@ import java.util.*;
 
 /**
  * REST API for user personal Skills management (CRUD).
- * Each user has their own skills directory at /opt/mao/data/userskills/{userId}/.
+ * Each user has their own skills directory at /path/to/data/userskills/{userId}/.
  */
 @Slf4j
 @RestController
@@ -27,7 +27,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class UserSkillController {
 
-    @Value("${app.harness.user-skills-dir:./userskills}")
+    @Value("${app.harness.user-skills-dir:$HOME/.mao/data/userskills}")
     private String userSkillsDir;
 
     @GetMapping

@@ -4,7 +4,7 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 PID_FILE="$PROJECT_DIR/.desktop.pid"
-LOG_DIR="/opt/mao/logs"
+LOG_DIR="$HOME/.mao/logs"
 
 mkdir -p "$LOG_DIR"
 

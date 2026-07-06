@@ -15,7 +15,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     private final PermissionInterceptor permissionInterceptor;
 
-    @Value("${app.file.upload-dir:/opt/mao/data/uploads}")
+    @Value("${app.file.upload-dir:$HOME/.mao/data/uploads}")
     private String uploadDir;
 
     @Override

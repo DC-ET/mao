@@ -35,7 +35,7 @@ public class SkillSyncService {
     private final PathSandbox pathSandbox;
     private final ObjectMapper objectMapper;
 
-    @Value("${app.harness.user-skills-dir:./userskills}")
+    @Value("${app.harness.user-skills-dir:$HOME/.mao/data/userskills}")
     private String userSkillsDir;
 
     private static final String SKILLS_DIR_NAME = ".mao/skills";
@@ -250,7 +250,7 @@ public class SkillSyncService {
 
     /**
      * 加载用户个人 Skills，返回 name → SkillDocument 的映射。
-     * 用户 Skills 目录结构：/opt/mao/data/userskills/{userId}/{skillName}/SKILL.md
+     * 用户 Skills 目录结构：/path/to/data/userskills/{userId}/{skillName}/SKILL.md
      */
     private Map<String, SkillDocument> loadUserSkillDocs(Long userId) {
         Map<String, SkillDocument> result = new LinkedHashMap<>();

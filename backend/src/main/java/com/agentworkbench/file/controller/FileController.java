@@ -166,7 +166,7 @@ public class FileController {
         vo.setMimeType(file.getMimeType());
         vo.setSessionId(file.getSessionId());
         vo.setCreatedAt(file.getCreatedAt() != null ? file.getCreatedAt().toString() : null);
-        // Nginx serves /opt/mao/data/uploads/ as virtual path /uploads/
+        // Nginx serves /path/to/data/uploads/ as virtual path /uploads/
         String baseUrl = uploadProperties.getBaseUrl();
         if (baseUrl != null && !baseUrl.isEmpty()) {
             vo.setUrl(baseUrl + "/uploads/" + file.getStoredName());

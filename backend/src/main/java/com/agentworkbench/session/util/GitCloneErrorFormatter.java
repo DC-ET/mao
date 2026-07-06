@@ -83,7 +83,6 @@ public final class GitCloneErrorFormatter {
         String cleaned = line
                 .replaceFirst("(?i)^git clone failed:\\s*", "")
                 .replaceFirst("(?i)^Cloning into '[^']*'\\.\\.\\.\\s*", "")
-                .replaceAll("/opt/mao/data/workspace/\\d+/projects/[^\\s']+", "工作区")
                 .replaceAll("https://oauth2:[^@]+@", "https://oauth2:***@");
         if (cleaned.length() > 160) {
             cleaned = cleaned.substring(0, 157) + "...";
