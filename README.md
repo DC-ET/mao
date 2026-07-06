@@ -1,17 +1,21 @@
 # Mao
 
-企业级 AI Agent 管理与协作平台，为企业提供统一的 AI Agent 管理环境，支持细粒度权限控制、完整审计追踪和灵活的 Agent 配置。
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+企业级 AI Agent 管理与协作平台，面向**企业自托管部署**。在一个平台上集中管理 Agent、用户权限、模型配置与会话审计；Agent 运行时支持工具调用、技能扩展与上下文压缩。
+
+> **开源说明**：本项目采用 [MIT 许可证](LICENSE)，仅提供源码与自部署文档，不提供官方托管服务。LLM 需用户在管理后台自行配置 API Key。桌面端仅开源 Electron 源码，需自行构建。当前界面语言为中文。
 
 ## 核心特性
 
-- **统一管理** -- 在一个平台上集中管理企业所有 AI Agent
-- **权限控制** -- 基于 RBAC 的细粒度权限体系，支持按角色、部门、用户控制 Agent 可见性
-- **审计追踪** -- 所有 API 调用经过后端代理，完整记录操作日志
-- **Agent 运行引擎** -- 内置 Think-Act-Observe 循环引擎，支持 LLM 调用、工具调度和上下文管理
-- **可扩展技能系统** -- 7 个内置技能 + 外部 MCP 工具服务器支持
-- **Agent Hub** -- Agent 发现、安装、评分与评论的内部市场
-- **SSE 流式对话** -- 实时流式 Agent 响应，支持消息持久化与 Token 用量追踪
-- **双端架构** -- 管理后台 + Electron 桌面客户端，满足不同使用场景
+- **统一管理** — 集中管理企业内所有 AI Agent 配置与可见性
+- **权限控制** — 基于 RBAC 的细粒度权限体系
+- **审计追踪** — API 调用与操作日志完整记录
+- **Agent 运行引擎** — 内置 Think-Act-Observe 循环，支持 LLM 流式调用、工具调度与上下文压缩
+- **双执行模式** — CLOUD（服务端执行工具）与 LOCAL（委托桌面端 Electron 执行）
+- **可扩展技能** — 内置技能 + 外部 MCP 工具服务器
+- **WebSocket 流式对话** — 实时双向通信，支持消息持久化与 Token 用量追踪
+- **双端架构** — 管理后台 + Electron 桌面客户端
 
 ## 技术栈
 
@@ -25,13 +29,14 @@
 | 数据库 | MySQL 8.x |
 | 缓存 | Redis 7.x |
 | 认证 | Spring Security + JWT |
-| 认证方式 | 本地密码 / LDAP / 飞书 SSO |
-| HTTP 客户端 | OkHttp 4.12.0 (SSE 流式) |
-| 对象存储 | Aliyun OSS |
+| 认证方式 | 本地密码 / LDAP（可选）/ 飞书 SSO（可选） |
+| LLM 通信 | OkHttp + OpenAI 兼容协议（SSE 拉流） |
+| 客户端通信 | WebSocket（`/api/ws/stream`） |
+| 对象存储 | 本地文件系统 / 阿里云 OSS（可选） |
 | API 文档 | SpringDoc OpenAPI 2.8.6 |
 | 构建工具 | Maven |
 
-### 前端 (管理后台 & 桌面端共享)
+### 前端（管理后台 & 桌面端）
 
 | 组件 | 技术 |
 |------|------|
@@ -45,52 +50,41 @@
 
 ```
 mao/
-├── backend/                    # Java Spring Boot 后端服务
+├── backend/                    # Java Spring Boot 后端（端口 9080，上下文 /api）
 │   ├── src/main/java/com/agentworkbench/
 │   │   ├── agent/              # Agent 管理
-│   │   ├── auth/               # 认证 (JWT / LDAP / 飞书)
-│   │   ├── harness/            # Agent 运行引擎核心
+│   │   ├── auth/               # 认证（JWT / LDAP / 飞书）
+│   │   ├── harness/            # Agent 运行引擎
 │   │   │   ├── core/           # AgentLoop, PromptEngine, ContextManager
-│   │   │   ├── llm/            # LLM 适配器 (OpenAI 兼容协议)
+│   │   │   ├── llm/            # LLM 适配器（OpenAI 兼容协议）
 │   │   │   ├── mcp/            # MCP 协议客户端
-│   │   │   └── skill/          # 技能接口 + 7 个内置技能
-│   │   ├── hub/                # Agent Hub
-│   │   ├── permission/         # RBAC 权限体系
-│   │   ├── session/            # 会话与消息管理
+│   │   │   └── skill/          # 技能与内置工具
+│   │   ├── command/            # 快捷指令
+│   │   ├── permission/         # RBAC 权限
+│   │   ├── session/            # 会话、消息、WebSocket
 │   │   ├── audit/              # 审计日志
-│   │   └── ...                 # 其他模块
+│   │   └── ...
 │   └── src/main/resources/
-│       ├── application.yml     # 配置文件
-│       └── db/migration/       # 数据库迁移脚本 (24 张表)
+│       ├── application.yml
+│       ├── application-example.yml   # 配置模板
+│       └── db/migration/           # Flyway 迁移（46 个脚本）
 │
-├── admin/                      # Vue 3 管理后台 (端口 5200)
+├── admin/                      # Vue 3 管理后台（端口 5200，路由前缀 /admin）
 │   └── src/views/
-│       ├── dashboard/          # 仪表盘
+│       ├── dashboard/          # 数据概览
 │       ├── agent/              # Agent 管理
-│       ├── model/              # 模型管理
+│       ├── model/              # 模型管理（配置 LLM API Key）
 │       ├── user/               # 用户管理
-│       ├── skill/              # 技能管理
-│       ├── hub/                # Hub 管理
-│       ├── apikey/             # API Key 管理
-│       ├── audit/              # 审计日志
-│       └── system/             # 系统配置
+│       ├── skill/              # Skills 管理
+│       └── session/            # 会话管理与详情
 │
-├── desktop/                    # Electron 桌面客户端 (端口 5201)
-│   ├── electron/main.cjs       # Electron 主进程
-│   └── src/views/
-│       ├── workbench/          # 工作台 (Agent 列表)
-│       ├── chat/               # 对话界面 (SSE 流式)
-│       ├── hub/                # Agent Hub
-│       ├── agent-create/       # 创建 Agent
-│       └── settings/           # 设置
+├── desktop/                    # Electron 桌面客户端（端口 5201）
+│   ├── electron/main.cjs       # 主进程（本地工具执行、审批流）
+│   └── src/views/task/         # 任务对话界面
 │
-└── docs/                       # 项目文档
-    ├── requirement.md          # 需求文档
-    ├── technical-design.md     # 技术设计文档
-    ├── phase-1-mvp.md          # 第一阶段 MVP
-    ├── phase-2-agent-capability.md
-    ├── phase-3-enterprise.md
-    └── phase-4-platform.md
+├── tests/                      # Playwright 端到端测试
+├── scripts/                    # 本地启停脚本
+└── docs/                       # 设计与需求文档
 ```
 
 ## 快速开始
@@ -103,7 +97,22 @@ mao/
 - MySQL 8.x
 - Redis 7.x
 
-### 后端
+### 1. 初始化数据库与配置
+
+```bash
+# 创建数据库
+mysql -e "CREATE DATABASE mao CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+# 复制配置模板并编辑
+cp backend/src/main/resources/application-example.yml \
+   backend/src/main/resources/application-local.yml
+```
+
+编辑 `application-local.yml`，至少配置 MySQL、Redis。生产环境请设置环境变量 `JWT_SECRET`。
+
+确保 `application.yml` 中 `spring.profiles.active` 指向你的本地 profile（通常为 `local`）。
+
+### 2. 启动后端
 
 ```bash
 cd backend
@@ -111,9 +120,15 @@ mvn clean install
 mvn spring-boot:run
 ```
 
-服务启动后运行在 `http://localhost:9080`，API 文档地址：`http://localhost:9080/swagger-ui.html`
+服务地址：`http://localhost:9080`  
+Swagger UI：`http://localhost:9080/api/swagger-ui.html`  
+Flyway 会在首次启动时自动建表并写入初始数据。
 
-### 管理后台
+### 3. 配置 LLM 模型
+
+使用默认账号登录管理后台，进入「模型管理」，添加或编辑模型并填入你自己的 API Key。迁移脚本会插入占位模型 `deepseek-v4-flash`（`sk-xxxxxxxxxxxx`），**必须替换为真实密钥后才能对话**。
+
+### 4. 启动管理后台
 
 ```bash
 cd admin
@@ -123,25 +138,14 @@ npm run dev
 
 访问 `http://localhost:5200`
 
-### 桌面客户端
+### 5. 启动桌面客户端
 
 ```bash
 cd desktop
 npm install
-npm run dev           # 浏览器预览模式
-npm run dev:electron  # Electron 桌面应用模式
+npm run dev           # 浏览器预览
+npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 ```
-
-### 打包桌面客户端
-
-```bash
-cd desktop
-npm run dist          # 构建并打包成 dmg 安装包
-```
-
-打包产物位于 `desktop/release/` 目录：
-- `mac-arm64/Mao.app` - macOS 应用
-- `Mao-0.0.0-arm64.dmg` - macOS 安装镜像
 
 ### 默认账号
 
@@ -149,68 +153,122 @@ npm run dist          # 构建并打包成 dmg 安装包
 |--------|------|------|
 | admin | admin123 | 系统管理员 |
 
-## 环境配置
+> 生产环境部署后请立即修改默认密码。详见 [SECURITY.md](SECURITY.md)。
 
-前端项目支持通过环境变量配置 API 地址，区分开发和生产环境。
+## 环境变量
 
-### 管理后台 (admin/)
+### 后端（常用）
 
-| 文件 | 用途 | API 地址 |
-|------|------|----------|
-| `.env.development` | 本地开发 | `/api/v1` (vite proxy) |
-| `.env.production` | 生产环境 | `/api/v1` (Nginx 代理) |
+| 变量 | 说明 |
+|------|------|
+| `JWT_SECRET` | JWT 签名密钥（生产必设） |
+| `WORKSPACE_ROOT` | Agent 工作区根目录，默认 `/data/workbench/workspace` |
+| `SKILLS_DIR` | 技能目录，默认 `/data/workbench/skills` |
+| `FILE_UPLOAD_DIR` | 上传文件目录 |
+| `UPLOAD_STORAGE_MODE` | `local` 或 `oss` |
+| `UPLOAD_BASE_URL` | 本地存储模式下的公网访问前缀 |
+| `TAVILY_API_KEY` | Tavily 搜索（可选） |
+| `LDAP_URL` 等 | LDAP 认证（可选，留空即禁用） |
+| `FEISHU_APP_ID` 等 | 飞书 OAuth（可选） |
+| `OSS_*` | 阿里云 OSS（可选） |
 
-### 桌面端 (desktop/)
+完整配置项请参考 [application-example.yml](backend/src/main/resources/application-example.yml)。
 
-| 文件 | 用途 | API 地址 |
-|------|------|----------|
-| `.env.development` | 本地开发 | `http://localhost:9080/api/v1` |
-| `.env.production` | 生产环境 | `https://mao.etarch.cn/api/v1` |
+### 前端
 
-环境变量：
-- `VITE_API_BASE_URL` - API 基础地址
-- `VITE_WS_BASE_URL` - WebSocket 地址（可选，不设置时从 API 地址自动转换）
+| 变量 | 说明 |
+|------|------|
+| `VITE_API_BASE_URL` | API 基础地址 |
+| `VITE_WS_BASE_URL` | WebSocket 地址（可选，默认从 API 地址推导） |
 
-本地覆盖：创建 `.env.local` 文件（已被 gitignore）。
+**管理后台**（`admin/`）
+
+| 文件 | 用途 |
+|------|------|
+| `.env.development` | 本地开发，`/api/v1`（Vite 代理到 9080） |
+| `.env.production` | 生产构建，`/api/v1`（由 Nginx 反代） |
+
+**桌面端**（`desktop/`）
+
+| 文件 | 用途 |
+|------|------|
+| `.env.development` | 本地开发，`http://localhost:9080/api/v1` |
+| `.env.production` | 生产构建，改为你的部署域名，如 `https://mao.example.com/api/v1` |
+
+本地覆盖：创建 `.env.local`（已被 gitignore）。
 
 ## 生产部署
 
-详细部署指南请参考 [DEPLOY.md](DEPLOY.md)。
-
-### 部署架构
-
-| 组件 | 部署方式 | 域名 |
-|------|---------|------|
-| Java 后端 | jar + systemd | - |
-| 管理后台 | Nginx 静态文件 | maoadmin.etarch.cn |
-| 桌面端 web | Nginx 静态文件 | mao.etarch.cn |
-
-### 快速部署
+详细步骤见 [DEPLOY.md](DEPLOY.md)。
 
 ```bash
-# 1. 后端打包
+# 后端打包
 cd backend && mvn clean package -DskipTests
+# 产物：backend/target/mao-server.jar
 
-# 2. 前端打包
+# 前端打包
 cd admin && npm run build
 cd desktop && npm run build
+```
 
-# 3. 上传到服务器并启动
-# 详见 DEPLOY.md
+### 部署架构（示例）
+
+| 组件 | 部署方式 | 说明 |
+|------|---------|------|
+| Java 后端 | jar + systemd | 端口 9080 |
+| 管理后台 | Nginx 静态文件 | 如 `mao-admin.example.com` |
+| 桌面端 Web | Nginx 静态文件 | 如 `mao.example.com` |
+| MySQL / Redis | 自建或云服务 | 内网访问 |
+
+### Electron 桌面端
+
+仓库仅提供 Electron **源码**，不包含官方签名安装包。如需桌面端，请自行：
+
+```bash
+cd desktop
+# 先修改 .env.production 中的 API 地址为你的部署域名
+npm run build
+npm run dist   # 本地打包，需自行处理代码签名与分发
 ```
 
 ## API 文档
 
-后端启动后访问 Swagger UI：`http://localhost:9080/swagger-ui.html`
+后端启动后访问：`http://localhost:9080/api/swagger-ui.html`
 
 主要 API 前缀：`/api/v1/`
 
 | 模块 | 路径前缀 | 说明 |
 |------|---------|------|
-| 认证 | `/api/v1/auth` | 登录、注册、Token 刷新 |
+| 认证 | `/api/v1/auth` | 登录、Token 刷新 |
 | 用户 | `/api/v1/users` | 用户管理 |
-| Agent | `/api/v1/agents` | Agent 配置管理 |
-| 会话 | `/api/v1/sessions` | 对话会话管理 |
+| Agent | `/api/v1/agents` | Agent 配置 |
+| 会话 | `/api/v1/sessions` | 对话会话 |
 | 模型 | `/api/v1/models` | LLM 模型配置 |
 | 技能 | `/api/v1/skills` | 技能管理 |
-| Hub | `/api/v1/hub` | Agent Hub |
+| 快捷指令 | `/api/v1/quick-commands` | 快捷指令列表 |
+
+WebSocket 端点：`/api/ws/stream`
+
+## 测试
+
+```bash
+# 需先启动 backend、admin、desktop
+npm test              # 全部 41 个用例
+npm run test:admin    # 管理后台 29 个
+npm run test:desktop  # 桌面端 12 个
+```
+
+## 文档
+
+| 文档 | 说明 |
+|------|------|
+| [DEPLOY.md](DEPLOY.md) | 生产部署指南 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
+| [SECURITY.md](SECURITY.md) | 安全策略 |
+| [docs/requirement.md](docs/requirement.md) | 需求说明 |
+| [docs/technical-design.md](docs/technical-design.md) | 技术设计 |
+| [CLAUDE.md](CLAUDE.md) | 开发指引（AI 辅助编码用） |
+
+## 许可证
+
+[MIT License](LICENSE) — Copyright (c) 2026 Mao Contributors

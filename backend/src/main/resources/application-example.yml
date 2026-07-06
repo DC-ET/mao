@@ -39,7 +39,7 @@ app:
   # Upload storage
   upload:
     storage-mode: ${UPLOAD_STORAGE_MODE:local}  # oss or local
-    base-url: ${UPLOAD_BASE_URL:http://localhost:9080/api}  # public base for local-mode file access; production: https://mao.etarch.cn
+    base-url: ${UPLOAD_BASE_URL:http://localhost:9080/api}  # local 模式公网访问前缀，生产环境改为实际域名
   # File storage
   file:
     upload-dir: ${FILE_UPLOAD_DIR:/data/workbench/uploads}

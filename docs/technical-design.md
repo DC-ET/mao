@@ -3,6 +3,13 @@
 > 版本: v0.3 | 更新时间: 2026-05-20
 > 关联文档: [requirement.md](./requirement.md)
 
+> **文档状态（2026-07）**：本文档为早期技术方案，部分模块已变更，请以 [README.md](../README.md) 与源码为准。主要差异：
+> - **Hub 模块**已删除（`V017__remove_hub.sql`）
+> - 前端流式通道为 **WebSocket**（`StreamingWsHandler`），LLM 内部仍通过 OkHttp SSE 拉流
+> - 对象存储支持 **本地文件系统** 与 **阿里云 OSS**
+> - Flyway 迁移脚本现为 **46 个**（非文档初稿中的 24 个）
+> - 开源协议：**MIT**，仅提供自部署
+
 ---
 
 ## 1. 技术选型明细

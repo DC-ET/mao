@@ -75,7 +75,7 @@ npm run test:debug        # 调试模式（Playwright UI）
 
 ### 前端 (Vue 3 + TypeScript + Pinia + Element Plus)
 
-**管理后台 (admin/)**：后台管理界面，视图包括 dashboard、agent、model、user、skill、audit、auth。
+**管理后台 (admin/)**：后台管理界面，视图包括 dashboard、agent、model、user、skill、session。
 
 **桌面端 (desktop/)**：Electron 28 桌面客户端，核心组件：
 - `useStreamWS` — 单例 WebSocket 连接，自动重连 + 心跳 + 事件路由 + Electron IPC 桥接
@@ -86,7 +86,7 @@ npm run test:debug        # 调试模式（Playwright UI）
 
 ### 数据库
 
-MySQL 8，Flyway 迁移脚本在 `backend/src/main/resources/db/migration/`（24 个迁移）。
+MySQL 8，Flyway 迁移脚本在 `backend/src/main/resources/db/migration/`（46 个脚本）。
 
 ## 代码规范
 
@@ -173,3 +173,4 @@ tests/
 - 技能目录：`/data/workbench/skills`（外部文件系统）
 - Agent 工作区：`/data/workbench/workspace`
 - 设计文档在 `docs/` 目录，包含需求、技术设计、各阶段规划
+- 开源许可证：MIT（见 `LICENSE`）；企业自托管部署，LLM API Key 由用户自行配置
