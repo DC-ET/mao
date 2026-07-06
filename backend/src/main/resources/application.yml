@@ -19,9 +19,9 @@ logging:
 
 spring:
   application:
-    name: workbench-backend
+    name: mao-server
   profiles:
-    active: local # copy from application-example.yml to application-local.yml
+    active: init # copy from application-example.yml to application-local.yml
 
   # Flyway
   flyway:

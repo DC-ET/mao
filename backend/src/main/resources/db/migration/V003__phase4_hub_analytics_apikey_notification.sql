@@ -26,7 +26,7 @@ DELIMITER //
 CREATE PROCEDURE add_column_if_not_exists()
 BEGIN
     IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'agent' AND COLUMN_NAME = 'category') THEN
-        ALTER TABLE `agent` ADD COLUMN `category` VARCHAR(64) DEFAULT 'general' COMMENT 'Agent 分类' AFTER `visibility`;
+        ALTER TABLE `agent` ADD COLUMN `category` VARCHAR(64) DEFAULT 'general' COMMENT 'Agent 分类' AFTER `creator_id`;
     END IF;
 END //
 DELIMITER ;

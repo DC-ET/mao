@@ -44,8 +44,8 @@ BEGIN
         FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `skill` WHERE `name` = 'subagent');
 
         -- Associate all built-in skills with existing agents that have no skill associations
-        INSERT INTO `agent_skill` (`agent_id`, `skill_id`, `config`, `created_at`, `updated_at`)
-        SELECT a.id, s.id, '{}', NOW(), NOW()
+        INSERT INTO `agent_skill` (`agent_id`, `skill_id`, `config`)
+        SELECT a.id, s.id, '{}'
         FROM `agent` a
         CROSS JOIN `skill` s
         WHERE s.`status` = 'ACTIVE'
