@@ -42,6 +42,7 @@ jwt:
 
 # App config
 app:
+  root-dir: ${MAO_ROOT_DIR:/opt/mao}
   git-credential:
     secret-key: ${APP_GIT_CREDENTIAL_SECRET:local-dev-git-credential-secret-change-me}
   # Upload storage
@@ -50,14 +51,14 @@ app:
     base-url: ${UPLOAD_BASE_URL:http://localhost:9080/api}  # local 模式公网访问前缀，生产环境改为实际域名
   # File storage
   file:
-    upload-dir: ${FILE_UPLOAD_DIR:/opt/mao/data/uploads}
+    upload-dir: ${FILE_UPLOAD_DIR:${MAO_ROOT_DIR}/data/uploads}
     max-size-mb: 50
   # WebSocket streaming
   ws:
     outbound-queue-capacity: 10000
   # Agent Harness
   harness:
-    workspace-root: ${WORKSPACE_ROOT:/opt/mao/data/workspace}
+    workspace-root: ${WORKSPACE_ROOT:${MAO_ROOT_DIR}/data/workspace}
     max-concurrent-agents: 100
     agent-thread-pool-size: 20
     agent-thread-pool-max: 100
@@ -85,8 +86,8 @@ app:
       loop-recent-tool-rounds: 5
 
     # Skills directory (external filesystem path, each subfolder is a skill)
-    skills-dir: ${SKILLS_DIR:/opt/mao/data/skills}
-    user-skills-dir: ${USER_SKILLS_DIR:/opt/mao/data/userskills}
+    skills-dir: ${SKILLS_DIR:${MAO_ROOT_DIR}/data/skills}
+    user-skills-dir: ${USER_SKILLS_DIR:${MAO_ROOT_DIR}/data/userskills}
     skills-cache-seconds: 300
 
     # Shell Session
