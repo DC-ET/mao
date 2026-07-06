@@ -170,7 +170,7 @@ tests/
 - Swagger UI：`/swagger-ui.html`
 - 默认管理员账号：admin / admin123
 - JWT Secret 通过环境变量 `JWT_SECRET` 配置
-- 技能目录：`/data/workbench/skills`（外部文件系统）
-- Agent 工作区：`/data/workbench/workspace`
+- 技能目录：`/opt/mao/data/skills`（外部文件系统）
+- Agent 工作区：`/opt/mao/data/workspace`
 - 设计文档在 `docs/` 目录，包含需求、技术设计、各阶段规划
 - 开源许可证：MIT（见 `LICENSE`）；企业自托管部署，LLM API Key 由用户自行配置

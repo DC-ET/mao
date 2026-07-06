@@ -46,10 +46,10 @@ mkdir -p /opt/mao/backend
 mkdir -p /opt/mao/admin
 mkdir -p /opt/mao/desktop
 mkdir -p /data/logs/mao
-mkdir -p /data/workbench/workspace
-mkdir -p /data/workbench/skills
-mkdir -p /data/workbench/userskills
-mkdir -p /data/workbench/uploads
+mkdir -p /opt/mao/data/workspace
+mkdir -p /opt/mao/data/skills
+mkdir -p /opt/mao/data/userskills
+mkdir -p /opt/mao/data/uploads
 ```
 
 ## 三、后端部署
@@ -91,14 +91,14 @@ app:
   git-credential:
     secret-key: ${APP_GIT_CREDENTIAL_SECRET}
   harness:
-    workspace-root: /data/workbench/workspace
-    skills-dir: /data/workbench/skills
-    user-skills-dir: /data/workbench/userskills
+    workspace-root: /opt/mao/data/workspace
+    skills-dir: /opt/mao/data/skills
+    user-skills-dir: /opt/mao/data/userskills
   upload:
     storage-mode: ${UPLOAD_STORAGE_MODE:local}
     base-url: ${UPLOAD_BASE_URL:https://mao.example.com/api}
   file:
-    upload-dir: /data/workbench/uploads
+    upload-dir: /opt/mao/data/uploads
 
 # 禁用 LDAP（如不需要）
 ldap:
@@ -278,7 +278,7 @@ server {
 
     # 本地上传文件（local 模式）
     location /uploads/ {
-        alias /data/workbench/uploads/;
+        alias /opt/mao/data/uploads/;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
@@ -318,7 +318,7 @@ server {
     }
 
     location /uploads/ {
-        alias /data/workbench/uploads/;
+        alias /opt/mao/data/uploads/;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }

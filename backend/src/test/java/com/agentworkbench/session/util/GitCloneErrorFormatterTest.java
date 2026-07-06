@@ -10,7 +10,7 @@ class GitCloneErrorFormatterTest {
     @Test
     void repositoryNotFound() {
         String raw = """
-                Git clone failed: Cloning into '/data/workbench/workspace/2/projects/sms-unify'... \
+                Git clone failed: Cloning into '/opt/mao/data/workspace/2/projects/sms-unify'... \
                 remote: Repository not found. \
                 fatal: repository 'https://github.com/DC-ET/sms-unify.git/' not found""";
         String message = GitCloneErrorFormatter.toUserMessage(raw);

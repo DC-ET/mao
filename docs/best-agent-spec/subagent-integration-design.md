@@ -1280,7 +1280,7 @@ case 'subagent_background_completed':
 {
   "subagent_type": "general",
   "description": "实现用户头像上传",
-  "prompt": "在 UserController 中添加头像上传接口。要求：1) 接收 multipart 文件 2) 保存到 /data/workbench/avatars/ 3) 更新 user 表的 avatar_url 字段 4) 返回新的头像 URL。参考现有的文件上传实现。"
+  "prompt": "在 UserController 中添加头像上传接口。要求：1) 接收 multipart 文件 2) 保存到 /opt/mao/data/avatars/ 3) 更新 user 表的 avatar_url 字段 4) 返回新的头像 URL。参考现有的文件上传实现。"
 }
 ```
 

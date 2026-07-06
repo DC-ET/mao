@@ -411,7 +411,7 @@ workspace: last.executionMode === 'LOCAL' ? last.workspace : undefined,
 
 ```text
 1. 新建任务 → 云端模式 → 项目填 "agent-workbench-mimo" → 发送首条消息
-2. 后端创建 workspace: /data/workbench/workspace/1/projects/agent-workbench-mimo
+2. 后端创建 workspace: /opt/mao/data/workspace/1/projects/agent-workbench-mimo
 3. Agent 在该目录执行 clone、读写文件、shell 等
 4. Skill 同步到 .../agent-workbench-mimo/.mao/skills/
 ```

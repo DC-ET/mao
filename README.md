@@ -123,8 +123,8 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 | 变量 | 说明 |
 |------|------|
 | `JWT_SECRET` | JWT 签名密钥（生产必设） |
-| `WORKSPACE_ROOT` | Agent 工作区根目录，默认 `/data/workbench/workspace` |
-| `SKILLS_DIR` | 技能目录，默认 `/data/workbench/skills` |
+| `WORKSPACE_ROOT` | Agent 工作区根目录，默认 `/opt/mao/data/workspace` |
+| `SKILLS_DIR` | 技能目录，默认 `/opt/mao/data/skills` |
 | `FILE_UPLOAD_DIR` | 上传文件目录 |
 | `UPLOAD_STORAGE_MODE` | `local` 或 `oss` |
 | `UPLOAD_BASE_URL` | 本地存储模式下的公网访问前缀 |

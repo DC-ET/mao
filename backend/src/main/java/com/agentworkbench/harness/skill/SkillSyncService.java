@@ -250,7 +250,7 @@ public class SkillSyncService {
 
     /**
      * 加载用户个人 Skills，返回 name → SkillDocument 的映射。
-     * 用户 Skills 目录结构：/data/workbench/userskills/{userId}/{skillName}/SKILL.md
+     * 用户 Skills 目录结构：/opt/mao/data/userskills/{userId}/{skillName}/SKILL.md
      */
     private Map<String, SkillDocument> loadUserSkillDocs(Long userId) {
         Map<String, SkillDocument> result = new LinkedHashMap<>();

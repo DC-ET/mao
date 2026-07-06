@@ -22,7 +22,7 @@
 | LOCAL | 用户通过目录选择器指定本地路径 | Electron IPC 访问本地文件系统 |
 | CLOUD | 后端自动生成：`{workspace-root}/{userId}/{sessionId}` | 后端直接访问服务器文件系统 |
 
-- 云端工作区根目录：`/data/workbench/workspace`（配置项 `app.path-sandbox.workspace-root`）
+- 云端工作区根目录：`/opt/mao/data/workspace`（配置项 `app.path-sandbox.workspace-root`）
 - 工作区路径存储在 `Session.workspace` 字段
 
 ### 2.3 消息发送
@@ -127,7 +127,7 @@ TipTap 编辑器中 FileReferenceNode 存储的是相对路径，序列化为 `@
 
 发送给后端的 content 示例：
 ```
-请帮我检查 @{/data/workbench/workspace/1/100/src/config/app.yml}@ 的配置是否正确
+请帮我检查 @{/opt/mao/data/workspace/1/100/src/config/app.yml}@ 的配置是否正确
 ```
 
 ### 3.6 后端处理
@@ -136,12 +136,12 @@ TipTap 编辑器中 FileReferenceNode 存储的是相对路径，序列化为 `@
 
 替换前：
 ```
-请帮我检查 @{/data/workbench/workspace/1/100/src/config/app.yml}@ 的配置是否正确
+请帮我检查 @{/opt/mao/data/workspace/1/100/src/config/app.yml}@ 的配置是否正确
 ```
 
 替换后（传给 LLM 的实际内容）：
 ```
-请帮我检查 /data/workbench/workspace/1/100/src/config/app.yml 的配置是否正确
+请帮我检查 /opt/mao/data/workspace/1/100/src/config/app.yml 的配置是否正确
 ```
 
 Agent 收到的是普通文件路径文本，可直接通过 ReadFile 等工具读取，无需理解特殊标记语法。

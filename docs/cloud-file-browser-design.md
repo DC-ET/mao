@@ -31,7 +31,7 @@ function handleFileClick(changePath: string) {
 }
 ```
 
-文件 I/O 全部走 Electron 主进程本地文件系统，云端工作区在**服务端磁盘**（如 `/data/workbench/workspace/{userId}/...`），客户端无法直接 `fs.readdir`。
+文件 I/O 全部走 Electron 主进程本地文件系统，云端工作区在**服务端磁盘**（如 `/opt/mao/data/workspace/{userId}/...`），客户端无法直接 `fs.readdir`。
 
 ### 1.2 目标
 

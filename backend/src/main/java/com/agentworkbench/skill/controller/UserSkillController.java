@@ -19,7 +19,7 @@ import java.util.*;
 
 /**
  * REST API for user personal Skills management (CRUD).
- * Each user has their own skills directory at /data/workbench/userskills/{userId}/.
+ * Each user has their own skills directory at /opt/mao/data/userskills/{userId}/.
  */
 @Slf4j
 @RestController
