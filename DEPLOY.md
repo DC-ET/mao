@@ -45,7 +45,7 @@ git --version
 mkdir -p /opt/mao/backend
 mkdir -p /opt/mao/admin
 mkdir -p /opt/mao/desktop
-mkdir -p /data/logs/mao
+mkdir -p /opt/mao/logs
 mkdir -p /opt/mao/data/workspace
 mkdir -p /opt/mao/data/skills
 mkdir -p /opt/mao/data/userskills
@@ -141,7 +141,7 @@ chmod 600 /opt/mao/backend/.env
 APP_NAME="mao-server"
 APP_JAR="/opt/mao/backend/mao-server.jar"
 PID_FILE="/opt/mao/backend/mao-server.pid"
-LOG_DIR="/data/logs/mao"
+LOG_DIR="/opt/mao/logs"
 LOG_FILE="$LOG_DIR/app.log"
 
 mkdir -p "$LOG_DIR"
@@ -217,7 +217,7 @@ cd /opt/mao/backend
 # 健康检查（Swagger UI）
 curl -s -o /dev/null -w "%{http_code}" http://localhost:9080/api/swagger-ui.html
 # 期望返回 200；若启动失败，查看日志中是否提示 APP_GIT_CREDENTIAL_SECRET 未配置
-tail -50 /data/logs/mao/app.log
+tail -50 /opt/mao/logs/error.log
 ```
 
 ## 四、前端部署
@@ -395,7 +395,9 @@ npm run dist
 /opt/mao/backend/restart.sh
 
 # 查看后端日志
-tail -f /data/logs/mao/app.log
+tail -f /opt/mao/logs/info.log
+tail -f /opt/mao/logs/warn.log
+tail -f /opt/mao/logs/error.log
 
 # Nginx 重载
 sudo systemctl reload nginx

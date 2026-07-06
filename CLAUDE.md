@@ -104,8 +104,7 @@ MySQL 8，Flyway 迁移脚本在 `backend/src/main/resources/db/migration/`（46
 ## 日志路径
 
 ```
-/data/logs/mao/app.log    # 后端日志
-/data/logs/mao/desktop.out    # 桌面端日志
+/opt/mao/logs
 ```
 
 ## 测试
