@@ -1,5 +1,5 @@
 <template>
-  <div ref="panelEl" class="task-index-panel" :class="{ collapsed }" :style="panelStyle">
+  <div ref="panelEl" class="task-index-panel" :class="{ collapsed, 'actions-hidden': !showItemActions }" :style="panelStyle">
     <template v-if="!collapsed">
       <div class="panel-header">
         <span class="panel-title">任务</span>
@@ -50,7 +50,7 @@
                   <ArrowRight v-else />
                 </el-icon>
               </div>
-              <div class="group-header-actions">
+              <div v-if="showItemActions" class="group-header-actions">
                 <button v-if="group.key.startsWith('LOCAL:')" class="group-add-btn" @click.stop="openGroupFolder(group)" title="在文件浏览器中打开">
                   <el-icon :size="12"><FolderOpened /></el-icon>
                 </button>
@@ -103,7 +103,7 @@
                 <span v-if="session.unread && String(session.id) !== String(activeSessionId)" class="session-unread-dot"></span>
                 <span class="session-elapsed">{{ formatElapsed(session) }}</span>
               </div>
-              <div class="session-item-actions">
+              <div v-if="showItemActions" class="session-item-actions">
                 <template v-if="confirmingDeleteId === session.id">
                   <button class="action-btn action-confirm" @click="confirmDelete($event, session.id)" title="确认删除">
                     <el-icon :size="13"><Check /></el-icon>
@@ -159,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
@@ -199,8 +199,20 @@ const dragOverIndex = ref<number | null>(null)
 // Panel resize
 const panelEl = ref<HTMLElement | null>(null)
 const panelWidth = ref<number | null>(null)
+const effectivePanelWidth = ref(280)
 const MIN_WIDTH = 120
 const MAX_WIDTH = 500
+const ACTION_BUTTONS_MIN_WIDTH = 200
+
+const showItemActions = computed(() => effectivePanelWidth.value >= ACTION_BUTTONS_MIN_WIDTH)
+
+let resizeObserver: ResizeObserver | null = null
+
+function updateEffectivePanelWidth() {
+  if (panelEl.value) {
+    effectivePanelWidth.value = panelEl.value.offsetWidth
+  }
+}
 
 const panelStyle = computed(() => {
   if (panelWidth.value !== null) {
@@ -240,13 +252,25 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   document.body.style.userSelect = 'none'
 }
 
+watch(showItemActions, (show) => {
+  if (!show) {
+    confirmingDeleteId.value = null
+    editingSessionId.value = null
+    editingTitle.value = ''
+  }
+})
+
 onMounted(() => {
   void loadPrefs()
+  updateEffectivePanelWidth()
+  if (panelEl.value) {
+    resizeObserver = new ResizeObserver(() => updateEffectivePanelWidth())
+    resizeObserver.observe(panelEl.value)
+  }
 })
 
 onUnmounted(() => {
-  // cleanup not strictly needed since listeners are removed on mouseup,
-  // but guard against edge case where component unmounts mid-drag
+  resizeObserver?.disconnect()
 })
 
 async function onGroupNewTask(group: { sessions: Session[] }) {
@@ -578,6 +602,7 @@ function onGroupDragEnd() {
 }
 
 .group-header {
+  position: relative;
   font-size: var(--aw-text-micro);
   font-weight: 500;
   color: var(--aw-ink-muted-48);
@@ -586,7 +611,6 @@ function onGroupDragEnd() {
   padding: 4px 4px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   cursor: pointer;
   user-select: none;
   transition: color 0.15s;
@@ -601,9 +625,12 @@ function onGroupDragEnd() {
   align-items: center;
   gap: 4px;
   min-width: 0;
+  flex: 1;
 }
 
 .group-label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -618,6 +645,67 @@ function onGroupDragEnd() {
 
 .group-header:hover .group-expand-arrow {
   opacity: 0.7;
+}
+
+.task-index-panel:not(.actions-hidden) .group-header:hover .group-expand-arrow {
+  opacity: 0;
+}
+
+.group-header-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 12px;
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-canvas-parchment);
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+
+.group-header-actions::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  background: linear-gradient(to right, transparent, var(--aw-canvas-parchment));
+  pointer-events: none;
+}
+
+.group-header:hover .group-header-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.group-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: var(--aw-canvas-parchment);
+  border-radius: var(--aw-radius-xs);
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.group-add-btn--terminal {
+  width: 24px;
+  height: 24px;
+}
+
+.group-add-btn:hover {
+  background: var(--aw-surface-pearl);
+  color: var(--aw-primary);
 }
 
 .drag-handle {
@@ -662,41 +750,6 @@ function onGroupDragEnd() {
   height: 2px;
   background: var(--aw-primary);
   z-index: 1;
-}
-
-.group-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.group-add-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: none;
-  background: transparent;
-  border-radius: var(--aw-radius-xs);
-  color: var(--aw-ink-muted-48);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
-}
-
-.group-add-btn--terminal {
-  width: 24px;
-  height: 24px;
-}
-
-.group-header:hover .group-add-btn {
-  opacity: 1;
-}
-
-.group-add-btn:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: var(--aw-primary);
 }
 
 .group-icon {
@@ -824,6 +877,10 @@ function onGroupDragEnd() {
 .session-item.confirming-delete .session-item-meta,
 .session-item.editing .session-item-meta {
   opacity: 0;
+}
+
+.task-index-panel.actions-hidden .session-item:hover .session-item-meta {
+  opacity: 1;
 }
 
 .session-spinner {
@@ -1022,6 +1079,23 @@ function onGroupDragEnd() {
 
 [data-theme="dark"] .action-btn {
   background: #1a1a2e;
+}
+
+[data-theme="dark"] .group-add-btn {
+  background: #1a1a2e;
+}
+
+[data-theme="dark"] .group-header-actions {
+  background: #1a1a2e;
+}
+
+[data-theme="dark"] .group-header-actions::before {
+  background: linear-gradient(to right, transparent, #1a1a2e);
+}
+
+[data-theme="dark"] .group-add-btn:hover {
+  background: #27272a;
+  color: var(--aw-primary);
 }
 
 [data-theme="dark"] .action-delete:hover {
