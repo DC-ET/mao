@@ -8,7 +8,7 @@
 
 如果你发现安全漏洞，请**不要**在公开 Issue 中披露细节。可通过以下方式联系维护者：
 
-1. 使用 GitHub [Security Advisories](https://github.com/OWNER/REPO/security/advisories/new)（推荐，请将 `OWNER/REPO` 替换为实际仓库地址）
+1. 使用 GitHub [Security Advisories](https://github.com/DC-ET/mao/security/advisories/new)（推荐，请将 `OWNER/REPO` 替换为实际仓库地址）
 2. 或通过私信方式联系仓库维护者
 
 请在报告中尽量包含：

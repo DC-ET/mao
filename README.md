@@ -46,47 +46,6 @@
 | 状态管理 | Pinia 3.x |
 | 桌面端 | Electron 28 |
 
-## 项目结构
-
-```
-mao/
-├── backend/                    # Java Spring Boot 后端（端口 9080，上下文 /api）
-│   ├── src/main/java/com/agentworkbench/
-│   │   ├── agent/              # Agent 管理
-│   │   ├── auth/               # 认证（JWT / LDAP / 飞书）
-│   │   ├── harness/            # Agent 运行引擎
-│   │   │   ├── core/           # AgentLoop, PromptEngine, ContextManager
-│   │   │   ├── llm/            # LLM 适配器（OpenAI 兼容协议）
-│   │   │   ├── mcp/            # MCP 协议客户端
-│   │   │   └── skill/          # 技能与内置工具
-│   │   ├── command/            # 快捷指令
-│   │   ├── permission/         # RBAC 权限
-│   │   ├── session/            # 会话、消息、WebSocket
-│   │   ├── audit/              # 审计日志
-│   │   └── ...
-│   └── src/main/resources/
-│       ├── application.yml
-│       ├── application-example.yml   # 配置模板
-│       └── db/migration/           # Flyway 迁移（46 个脚本）
-│
-├── admin/                      # Vue 3 管理后台（端口 5200，路由前缀 /admin）
-│   └── src/views/
-│       ├── dashboard/          # 数据概览
-│       ├── agent/              # Agent 管理
-│       ├── model/              # 模型管理（配置 LLM API Key）
-│       ├── user/               # 用户管理
-│       ├── skill/              # Skills 管理
-│       └── session/            # 会话管理与详情
-│
-├── desktop/                    # Electron 桌面客户端（端口 5201）
-│   ├── electron/main.cjs       # 主进程（本地工具执行、审批流）
-│   └── src/views/task/         # 任务对话界面
-│
-├── tests/                      # Playwright 端到端测试
-├── scripts/                    # 本地启停脚本
-└── docs/                       # 设计与需求文档
-```
-
 ## 快速开始
 
 ### 环境要求

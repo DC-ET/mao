@@ -21,7 +21,7 @@ spring:
   application:
     name: mao-server
   profiles:
-    active: init # copy from application-example.yml to application-local.yml
+    active: local # copy from application-example.yml to application-local.yml
 
   # Flyway
   flyway:
