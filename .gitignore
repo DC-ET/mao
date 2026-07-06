@@ -49,7 +49,7 @@ desktop/release/
 .cursor/
 application-prod.yml
 application-local.yml
-application-init.yml
+application-*.yml
 
 # Local deploy script
 deploy_local.sh
