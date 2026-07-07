@@ -6,17 +6,11 @@ import cn.etarch.mao.user.entity.User;
 import cn.etarch.mao.user.mapper.UserMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.security.crypto.password.PasswordEncoder;
-
-import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -27,10 +21,9 @@ class AuthServiceTest {
     private final UserMapper userMapper = mock(UserMapper.class);
     private final JwtService jwtService = mock(JwtService.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
-    private final StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
     private final LdapAuthService ldapAuthService = mock(LdapAuthService.class);
     private final AuthService service = new AuthService(
-            userMapper, jwtService, passwordEncoder, redisTemplate, ldapAuthService);
+            userMapper, jwtService, passwordEncoder, ldapAuthService);
 
     @Test
     void loginWithLocalPasswordUpdatesLastLoginAndReturnsTokens() {
@@ -95,31 +88,6 @@ class AuthServiceTest {
         user.setStatus(0);
         assertThatThrownBy(() -> service.refreshToken("refresh"))
                 .isInstanceOf(BusinessException.class);
-    }
-
-    @Test
-    void logoutBlacklistsValidTokenAndIgnoresRedisFailures() {
-        ValueOperations<String, String> ops = mock(ValueOperations.class);
-        when(jwtService.validateToken("token")).thenReturn(true);
-        when(redisTemplate.opsForValue()).thenReturn(ops);
-
-        service.logout("token");
-
-        verify(ops).set(eq("token:blacklist:token"), eq("1"), eq(24L), eq(TimeUnit.HOURS));
-
-        doThrow(new RuntimeException("redis")).when(ops)
-                .set(eq("token:blacklist:token"), eq("1"), eq(24L), eq(TimeUnit.HOURS));
-        service.logout("token");
-        service.logout(null);
-    }
-
-    @Test
-    void blacklistLookupReturnsFalseOnRedisFailure() {
-        when(redisTemplate.hasKey("token:blacklist:t1")).thenReturn(true);
-        assertThat(service.isTokenBlacklisted("t1")).isTrue();
-
-        when(redisTemplate.hasKey("token:blacklist:t2")).thenThrow(new RuntimeException("redis"));
-        assertThat(service.isTokenBlacklisted("t2")).isFalse();
     }
 
     private static User user(Long id, String username, String passwordHash, Integer status) {

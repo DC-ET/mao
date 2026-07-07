@@ -327,7 +327,6 @@ Agent Harness 是 Agent 的运行时引擎，负责：
 | 前端框架 | **Vue 3** + TypeScript | 管理后台 + 桌面客户端统一 |
 | 桌面客户端 | **Electron** + Vue 3 | 生态成熟，企业级稳定性优先 |
 | 数据库 | **MySQL** | 已确认 |
-| 缓存 | **Redis** | 会话、Token、限流 |
 | 对象存储 | MinIO / 阿里云 OSS | 文件存储 |
 | 实时通信 | WebSocket / SSE | Agent 流式输出 |
 | LLM 协议 | **OpenAI 兼容格式** | 统一通信协议 |

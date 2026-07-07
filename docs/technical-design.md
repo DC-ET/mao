@@ -23,7 +23,6 @@
 | Web 框架 | **Spring MVC** | - | 团队熟悉，SSE 通过 `SseEmitter` 实现 |
 | ORM | MyBatis-Plus | 3.5.x | 灵活的 SQL 控制，适合复杂查询 |
 | 认证 | Spring Security | - | LDAP / OAuth2 开箱即用 |
-| 缓存 | Redis + Spring Data Redis | 7.x | 会话、Token、限流、分布式锁 |
 | HTTP 客户端 | OkHttp / Apache HttpClient | - | LLM API 调用，支持 SSE 流式读取 |
 | 对象存储 | MinIO (S3 兼容) | - | 私有化部署，S3 协议标准 |
 | LLM 客户端 | 自研 OpenAI 协议适配层 | - | 统一协议，流式 SSE 解析 |
@@ -61,7 +60,6 @@
 | 组件 | 选型 | 备注 |
 |------|------|------|
 | 数据库 | MySQL 8.x | 主数据存储 |
-| 缓存 | Redis 7.x | 会话/Token/限流 |
 | 对象存储 | MinIO | 文件存储（私有化） |
 | 反向代理 | Nginx | 负载均衡 + HTTPS 终结 |
 | 容器化 | Docker + Docker Compose | 私有化部署 |
@@ -83,7 +81,6 @@ mao/
 │           │   ├── WorkbenchApplication.java
 │           │   ├── config/                 # 配置类
 │           │   │   ├── SecurityConfig.java
-│           │   │   ├── RedisConfig.java
 │           │   │   ├── WebMvcConfig.java
 │           │   │   └── LlmConfig.java
 │           │   ├── common/                 # 公共模块
@@ -884,17 +881,17 @@ public void execute(Long sessionId, String eventId, AgentEventListener listener)
     │
     ▼
 ┌──────────────┐
-│  用户级限流   │  Redis 滑动窗口
+│  用户级限流   │  应用内滑动窗口
 │  (每用户 QPS) │  例：10 次/分钟
 └──────┬───────┘
        ▼
 ┌──────────────┐
-│  Agent 级限流 │  Redis 计数器
+│  Agent 级限流 │  应用内计数器
 │  (并发会话数) │  例：同一 Agent 最多 50 并发
 └──────┬───────┘
        ▼
 ┌──────────────┐
-│  模型级限流   │  Redis 令牌桶
+│  模型级限流   │  应用内令牌桶
 │  (API 调用速率)│  例：60 次/分钟
 └──────┬───────┘
        ▼
@@ -905,7 +902,7 @@ public void execute(Long sessionId, String eventId, AgentEventListener listener)
 ```
 
 **实现细节：**
-- 用户级限流：Redis Lua 脚本实现滑动窗口
+- 用户级限流：应用内滑动窗口计数
 - 模型级限流：读取 `llm_model` 配置中的速率限制参数
 - 并发控制：Agent 执行提交到专用线程池，通过有界队列 + CallerRunsPolicy 背压
 - 客户端体验：线程池满时返回 `event: queue_position` 告知用户排队位置
@@ -1032,9 +1029,9 @@ User ──▶ UserRole ──▶ Role ──▶ RolePermission ──▶ Permis
 │  ┌────────▼──────────────────────────────────────────────┐  │
 │  │                    内部网络                             │  │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐               │  │
-│  │  │  MySQL   │  │  Redis  │  │  LDAP   │               │  │
-│  │  │  8.x    │  │  7.x    │  │ Server  │               │  │
-│  │  └─────────┘  └─────────┘  └─────────┘               │  │
+│  │  │  MySQL   │  │  LDAP   │                            │  │
+│  │  │  8.x    │  │ Server  │                            │  │
+│  │  └─────────┘  └─────────┘                            │  │
 │  └───────────────────────────────────────────────────────┘  │
 │                                                             │
 │  外部依赖：                                                  │
@@ -1070,10 +1067,8 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=prod
       - DB_HOST=mysql
-      - REDIS_HOST=redis
     depends_on:
       - mysql
-      - redis
 
   mysql:
     image: mysql:8.0
@@ -1084,11 +1079,6 @@ services:
       - mysql_data:/var/lib/mysql
     ports:
       - "3306:3306"
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
 
   minio:
     image: minio/minio

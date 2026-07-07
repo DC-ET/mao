@@ -462,7 +462,7 @@ Agent 线程执行 → run.status=RUNNING
 
 **用户设置（Phase 3）：**
 
-- 表 `user_preference` 或 Redis：`bashPolicy`, `fileWritePolicy`（ALLOW|ASK|DENY）
+- 表 `user_preference`：`bashPolicy`, `fileWritePolicy`（ALLOW|ASK|DENY）
 
 ### 5.4 前端改造
 

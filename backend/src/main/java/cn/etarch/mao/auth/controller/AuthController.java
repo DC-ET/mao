@@ -40,12 +40,8 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public Result<Void> logout(@RequestHeader(value = "Authorization", required = false) String authorization) {
-        String token = null;
-        if (authorization != null && authorization.startsWith("Bearer ")) {
-            token = authorization.substring(7);
-        }
-        authService.logout(token);
+    public Result<Void> logout() {
+        authService.logout();
         return Result.ok();
     }
 

@@ -10,7 +10,6 @@
 | 管理后台 | Nginx 静态文件 | 80/443 | `mao-admin.example.com` |
 | 桌面端 Web | Nginx 静态文件 | 80/443 | `mao.example.com` |
 | MySQL | 自建或云服务 | 3306 | 内网 |
-| Redis | 自建或云服务 | 6379 | 内网 |
 
 下文中的 `mao.example.com`、`mao-admin.example.com` 请替换为你自己的域名。
 
@@ -76,13 +75,6 @@ spring:
     username: <DB_USER>
     password: <DB_PASSWORD>
     driver-class-name: com.mysql.cj.jdbc.Driver
-
-  data:
-    redis:
-      host: <REDIS_HOST>
-      port: 6379
-      password: <REDIS_PASSWORD>
-      database: 1
 
 jwt:
   secret: ${JWT_SECRET}
@@ -362,7 +354,7 @@ sudo certbot --nginx -d mao.example.com -d mao-admin.example.com
 | TCP | 80 | 0.0.0.0/0 | HTTP |
 | TCP | 443 | 0.0.0.0/0 | HTTPS |
 
-后端 9080、MySQL、Redis 建议仅内网访问，不对外开放。
+后端 9080、MySQL 建议仅内网访问，不对外开放。
 
 ## 八、Electron 桌面端（可选）
 

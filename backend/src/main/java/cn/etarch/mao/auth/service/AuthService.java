@@ -7,15 +7,11 @@ import cn.etarch.mao.user.entity.User;
 import cn.etarch.mao.user.mapper.UserMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.concurrent.TimeUnit;
 
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthService {
@@ -23,10 +19,7 @@ public class AuthService {
     private final UserMapper userMapper;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
-    private final StringRedisTemplate redisTemplate;
     private final LdapAuthService ldapAuthService;
-
-    private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
 
     public LoginVO login(String username, String password) {
         User user = userMapper.selectOne(
@@ -108,25 +101,7 @@ public class AuthService {
         return vo;
     }
 
-    public void logout(String accessToken) {
-        if (accessToken != null && jwtService.validateToken(accessToken)) {
-            // Blacklist the token until its natural expiration
-            try {
-                redisTemplate.opsForValue().set(
-                        TOKEN_BLACKLIST_PREFIX + accessToken, "1",
-                        24, TimeUnit.HOURS);
-            } catch (Exception e) {
-                log.warn("Failed to blacklist token in Redis", e);
-            }
-        }
-    }
-
-    public boolean isTokenBlacklisted(String token) {
-        try {
-            return Boolean.TRUE.equals(
-                    redisTemplate.hasKey(TOKEN_BLACKLIST_PREFIX + token));
-        } catch (Exception e) {
-            return false;
-        }
+    public void logout() {
+        // Stateless JWT logout is handled client-side by discarding the token.
     }
 }

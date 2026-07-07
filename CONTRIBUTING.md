@@ -16,7 +16,6 @@
 - Maven 3.8+
 - Node.js 18+
 - MySQL 8.x
-- Redis 7.x
 
 ### 后端
 
@@ -27,7 +26,7 @@ mysql -e "CREATE DATABASE mao CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 # 2. 复制并编辑本地配置
 cp backend/src/main/resources/application-example.yml \
    backend/src/main/resources/application-local.yml
-# 修改 MySQL、Redis、JWT_SECRET 等
+# 修改 MySQL、JWT_SECRET 等
 
 # 3. 确保 application.yml 中 spring.profiles.active 为 local
 

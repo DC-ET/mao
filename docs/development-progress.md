@@ -32,12 +32,10 @@ Mao 是一个企业级 AI Agent 管理平台，包含三个子系统：
 | CORS 配置 | `config/WebMvcConfig.java` | 已完成 |
 | MyBatis-Plus 分页 | `config/MybatisPlusConfig.java` | 已完成 |
 | MyBatis-Plus 自动填充 | `config/MybatisPlusMetaObjectHandler.java` | 已完成 |
-| Redis 配置 | `config/RedisConfig.java` | 已完成 |
 | 审计拦截器 | `audit/interceptor/AuditInterceptor.java` | 已完成 (持久化到 api_call_log) |
 
 ### 1.3 数据库
 - MySQL: `127.0.0.1:3306/mao`
-- Redis: `127.0.0.1:6379` (database 1)
 - 建表脚本: `V001__init_schema.sql`, `V002__file_and_system_config.sql`, `V003__phase4_hub_analytics_apikey_notification.sql` - **24 张表已创建**
 - HikariCP: maximum-pool-size=20, connection-timeout=10s
 
@@ -51,7 +49,7 @@ Mao 是一个企业级 AI Agent 管理平台，包含三个子系统：
 | JWT 服务 (生成/验证/解析) | `auth/service/JwtService.java` | 已完成 |
 | 本地账号登录 | `auth/service/AuthService.java` | 已完成 |
 | Token 刷新 | `auth/service/AuthService.java` | 已完成 |
-| 登出 (Redis 黑名单) | `auth/service/AuthService.java` | 已完成 |
+| 登出接口 | `auth/service/AuthService.java` | 已完成（无服务端黑名单） |
 | 登录接口 | `auth/controller/AuthController.java` | 已完成 |
 | 刷新接口 | `auth/controller/AuthController.java` | 已完成 |
 | 登出接口 | `auth/controller/AuthController.java` | 已完成 |
@@ -415,5 +413,4 @@ Mao 是一个企业级 AI Agent 管理平台，包含三个子系统：
 | Admin | 5200 |
 | Desktop | 5201 |
 | MySQL | 127.0.0.1:3306 |
-| Redis | 127.0.0.1:6379 |
 | Swagger UI | http://localhost:9080/api/swagger-ui.html |

@@ -49,7 +49,7 @@ AI 对话页面通过 WebSocket 实时推送和运行时快照两种机制，将
 │  ┌───────────────────────────▼───────────────────────────────────┐  │
 │  │  ConversationRuntimeManager                                   │  │
 │  │  ├── buildRuntimeSnapshot() ──► snapshot.inputTokens          │  │
-│  │  └── Redis: etetet:agentic:runtime:{conversationId}          │  │
+│  │  └── MySQL: conversation_runtime_snapshot                    │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -349,7 +349,7 @@ public void bind(WsMessage message) {
 
 快照来源优先级：
 1. 内存中的 `routines` ConcurrentMap（当前运行中）
-2. Redis key `etetet:agentic:runtime:{conversationId}`（TTL 30 分钟）
+2. MySQL 表 `conversation_runtime_snapshot` 中的最近快照
 
 ### 2.8 Token 持久化
 

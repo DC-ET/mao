@@ -442,7 +442,7 @@ if ("RUNNING".equals(session.getPhase()) || "RESUMING".equals(session.getPhase()
 
 如果后端部署了多个实例（如 2 个 Pod），重启时所有实例都会执行 `CrashRecoveryRunner`，可能同时恢复同一个 session。
 
-**处理**：当前项目是单实例架构（CLAUDE.md 未提及多实例部署），暂不考虑。如果未来需要多实例，可以引入分布式锁（如 Redis SETNX）或利用 DB 的乐观锁（version 字段）防止并发恢复。
+**处理**：当前项目是单实例架构（CLAUDE.md 未提及多实例部署），暂不考虑。如果未来需要多实例，可以利用 DB 的乐观锁（version 字段）防止并发恢复。
 
 ### 5.6 workingSummary 丢失的影响
 

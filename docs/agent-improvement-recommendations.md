@@ -192,7 +192,7 @@ int id = rpcId.incrementAndGet();
       .maximumSize(1000)
       .build();
   ```
-- 或改用 Redis 存储，天然支持过期
+- 或改用数据库表配合定期清理，便于多实例共享
 
 ---
 

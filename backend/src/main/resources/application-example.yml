@@ -11,15 +11,6 @@ spring:
       connection-timeout: 10000
       idle-timeout: 300000
       max-lifetime: 600000
-  # Redis
-  data:
-    redis:
-      host: 127.0.0.1
-      port: 6379
-      password: 123456
-      database: 1
-      timeout: 5000ms
-
 # LDAP
 ldap:
   url: ${LDAP_URL:ldap://127.0.0.1:389}
