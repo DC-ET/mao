@@ -18,6 +18,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+@SuppressWarnings("unchecked")
 class AgentServiceTest {
 
     private final AgentMapper agentMapper = mock(AgentMapper.class);

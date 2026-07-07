@@ -26,6 +26,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+@SuppressWarnings("unchecked")
 class PermissionServiceTest {
 
     private final RoleMapper roleMapper = mock(RoleMapper.class);

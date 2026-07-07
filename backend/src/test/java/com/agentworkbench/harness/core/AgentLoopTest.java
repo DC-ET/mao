@@ -27,6 +27,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+@SuppressWarnings("unchecked")
 class AgentLoopTest {
 
     private final LlmAdapter llmAdapter = mock(LlmAdapter.class);
