@@ -127,7 +127,7 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 | `UPLOAD_STORAGE_MODE` | `local` 或 `oss` |
 | `UPLOAD_BASE_URL` | 本地存储模式下的公网访问前缀 |
 | `TAVILY_API_KEY` | Tavily 搜索（可选） |
-| `LDAP_URL` 等 | LDAP 认证（可选，留空即禁用） |
+| `LDAP_ENABLED` / `LDAP_URL` 等 | LDAP 认证（可选，`LDAP_ENABLED` 默认 `false`） |
 | `FEISHU_APP_ID` 等 | 飞书 OAuth（可选） |
 | `OSS_*` | 阿里云 OSS（可选） |
 

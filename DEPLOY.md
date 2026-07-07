@@ -94,6 +94,7 @@ app:
 
 # 禁用 LDAP（如不需要）
 ldap:
+  enabled: ${LDAP_ENABLED:false}
   url: ${LDAP_URL:}
 ```
 
@@ -117,7 +118,8 @@ chmod 600 /opt/mao/backend/.env
 | `APP_GIT_CREDENTIAL_SECRET` | **是** | 用户 Git Access Token 的 AES 加密密钥；未配置时后端**拒绝启动** |
 | `UPLOAD_STORAGE_MODE` | 否 | `local`（默认）或 `oss` |
 | `UPLOAD_BASE_URL` | local 模式建议设 | 上传文件的公网访问前缀，如 `https://mao.example.com/api` |
-| `LDAP_URL` | 否 | 留空即禁用 LDAP 登录 |
+| `LDAP_ENABLED` | 否 | LDAP 登录开关，默认 `false` |
+| `LDAP_URL` | 否 | LDAP 服务地址；仅当 `LDAP_ENABLED=true` 且该值非空时启用 LDAP 登录 |
 
 > 首次启动时 Flyway 自动执行迁移并创建默认管理员 `admin` / `admin123`，**登录后请立即改密**。LLM API Key 在管理后台「模型管理」中配置。
 >
@@ -182,7 +184,8 @@ start() {
     nohup java -jar "$APP_JAR" \
         --spring.profiles.active=prod \
         --spring.config.additional-location=file:/opt/mao/backend/application-prod.yml \
-        -DLDAP_URL="" >> "$LOG_FILE" 2>&1 &
+        --ldap.enabled=false \
+        --ldap.url="" >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     echo "Started (PID: $(cat $PID_FILE))"
     echo "Log: tail -f $LOG_FILE"

@@ -25,6 +25,9 @@ public class SystemSettingService {
     @Value("${app.harness.skills-dir:/opt/mao/data/skills}")
     private String skillsDir;
 
+    @Value("${ldap.enabled:false}")
+    private boolean ldapEnabled;
+
     @Value("${ldap.url:}")
     private String ldapUrl;
 
@@ -61,7 +64,7 @@ public class SystemSettingService {
         Map<String, String> runtimeValues = Map.of(
                 "workspace.root", workspaceRoot,
                 "skills.dir", skillsDir,
-                "auth.ldap.enabled", String.valueOf(StringUtils.hasText(ldapUrl)),
+                "auth.ldap.enabled", String.valueOf(ldapEnabled && StringUtils.hasText(ldapUrl)),
                 "auth.feishu.enabled", String.valueOf(StringUtils.hasText(feishuAppId) && !"1234567890".equals(feishuAppId))
         );
         for (SystemSetting setting : settings) {

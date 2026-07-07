@@ -7,6 +7,8 @@ import cn.etarch.mao.settings.service.SystemSettingService;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -22,6 +24,7 @@ class SystemSettingServiceTest {
     SystemSettingServiceTest() {
         ReflectionTestUtils.setField(service, "workspaceRoot", "/workspace");
         ReflectionTestUtils.setField(service, "skillsDir", "/skills");
+        ReflectionTestUtils.setField(service, "ldapEnabled", false);
         ReflectionTestUtils.setField(service, "ldapUrl", "");
         ReflectionTestUtils.setField(service, "feishuAppId", "");
     }
@@ -55,6 +58,19 @@ class SystemSettingServiceTest {
 
         assertThat(updated.getValue()).isEqualTo("50");
         verify(mapper).updateById(setting);
+    }
+
+    @Test
+    void listShowsLdapEnabledOnlyWhenSwitchAndUrlArePresent() {
+        SystemSetting ldapSetting = setting("auth.ldap.enabled", "认证", 0);
+        when(mapper.selectList(any())).thenReturn(List.of(ldapSetting));
+
+        ReflectionTestUtils.setField(service, "ldapEnabled", true);
+        ReflectionTestUtils.setField(service, "ldapUrl", "");
+        assertThat(service.list(null).get(0).getValue()).isEqualTo("false");
+
+        ReflectionTestUtils.setField(service, "ldapUrl", "ldap://example.test:389");
+        assertThat(service.list(null).get(0).getValue()).isEqualTo("true");
     }
 
     private SystemSetting setting(String key, String category, int editable) {

@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import javax.naming.Context;
 import javax.naming.NamingEnumeration;
@@ -30,6 +31,9 @@ public class LdapAuthService {
     private final UserRoleMapper userRoleMapper;
     private final JwtService jwtService;
 
+    @Value("${ldap.enabled:false}")
+    private boolean ldapEnabled;
+
     @Value("${ldap.url:}")
     private String ldapUrl;
 
@@ -46,7 +50,7 @@ public class LdapAuthService {
     private String userSearchBase;
 
     public boolean isConfigured() {
-        return ldapUrl != null && !ldapUrl.isEmpty();
+        return ldapEnabled && StringUtils.hasText(ldapUrl);
     }
 
     public LoginVO authenticate(String username, String password) {
