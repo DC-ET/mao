@@ -55,6 +55,20 @@ public class PathSandbox {
             throw new IllegalArgumentException("Path cannot be empty");
         }
 
+        if (userPath.startsWith("~")) {
+            throw new SecurityException("Tilde paths are not supported on server: " + userPath);
+        }
+
+        Path input = Paths.get(userPath);
+        if (input.isAbsolute()) {
+            Path normalized = input.toAbsolutePath().normalize();
+            if (isUnderAllowedRoot(normalized)) {
+                return normalized;
+            }
+            log.warn("Absolute path outside sandbox blocked: {}", userPath);
+            throw new SecurityException("Path escape attempt: " + userPath);
+        }
+
         Path root = (sessionWorkspace != null && !sessionWorkspace.isEmpty())
                 ? Paths.get(sessionWorkspace).toAbsolutePath().normalize()
                 : workspaceRoot;
@@ -64,15 +78,21 @@ public class PathSandbox {
             return resolved;
         }
 
-        // Check against additional allowed roots (e.g. skill files outside workspace)
-        for (Path allowed : allowedRoots) {
-            if (resolved.startsWith(allowed)) {
-                return resolved;
-            }
+        if (isUnderAllowedRoot(resolved)) {
+            return resolved;
         }
 
         log.warn("Path escape attempt blocked: {} (resolved to {})", userPath, resolved);
         throw new SecurityException("Path escape attempt: " + userPath);
+    }
+
+    private boolean isUnderAllowedRoot(Path resolved) {
+        for (Path allowed : allowedRoots) {
+            if (resolved.startsWith(allowed)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

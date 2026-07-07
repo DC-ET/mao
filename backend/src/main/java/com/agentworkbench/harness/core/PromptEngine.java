@@ -3,6 +3,7 @@ package com.agentworkbench.harness.core;
 import com.agentworkbench.command.entity.UserCommand;
 import com.agentworkbench.command.service.UserCommandService;
 import com.agentworkbench.harness.llm.ChatRequest;
+import com.agentworkbench.harness.runtime.RuntimeDataResolver;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.harness.skill.SkillLoader;
 import com.agentworkbench.harness.skill.SkillSyncService;
@@ -33,6 +34,7 @@ public class PromptEngine {
 
     private final SkillLoader skillLoader;
     private final PathSandbox pathSandbox;
+    private final RuntimeDataResolver runtimeDataResolver;
     private final UserCommandService userCommandService;
     private final SkillSyncService skillSyncService;
 
@@ -170,11 +172,11 @@ public class PromptEngine {
         // Skill catalog — inject name/description with workspace-relative paths
         List<String> skillNames = context.getAvailableSkillNames();
         if (skillNames != null && !skillNames.isEmpty()) {
-            String catalog = buildRelativeSkillCatalog(context);
+            String catalog = buildSkillCatalog(context);
             if (catalog != null && !catalog.isEmpty()) {
                 sb.append("## 可用技能\n\n");
                 sb.append("以下技能可用。每个技能都是一份知识文档，用于指导你在特定场景下高效使用工具。\n");
-                sb.append("技能会同步到工作区的 `.mao/skills/` 目录下。\n");
+                sb.append("技能副本位于会话运行时目录（不在用户项目目录内）。\n");
                 sb.append("如需阅读某个技能的完整内容，请使用 `read_file` 工具读取下方列出的文件路径。\n\n");
                 sb.append(catalog);
                 sb.append("\n\n");
@@ -190,7 +192,7 @@ public class PromptEngine {
         return sb.toString();
     }
 
-    private String buildRelativeSkillCatalog(AgentExecutionContext context) {
+    private String buildSkillCatalog(AgentExecutionContext context) {
         List<String> names = context.getAvailableSkillNames();
         if (names == null || names.isEmpty()) {
             names = skillLoader.getAllNames();
@@ -198,6 +200,10 @@ public class PromptEngine {
         if (names.isEmpty()) {
             return null;
         }
+
+        boolean isLocal = "LOCAL".equalsIgnoreCase(context.getExecutionMode());
+        Long userId = context.getUserId();
+        Long sessionId = context.getSessionId();
 
         var skillDocs = context.getAvailableSkillDocs();
         StringBuilder sb = new StringBuilder();
@@ -214,8 +220,13 @@ public class PromptEngine {
             }
             sb.append("- **").append(name).append("**：");
             sb.append(description);
-            sb.append("\n  目录：`.mao/skills/").append(name).append("`");
-            sb.append("\n  文件：`.mao/skills/").append(name).append("/SKILL.md`");
+            if (isLocal && sessionId != null) {
+                sb.append("\n  目录：`").append(runtimeDataResolver.formatLocalSkillsDir(sessionId, name)).append("`");
+                sb.append("\n  文件：`").append(runtimeDataResolver.formatLocalSkillsPath(sessionId, name)).append("`");
+            } else if (userId != null && sessionId != null) {
+                sb.append("\n  目录：`").append(runtimeDataResolver.formatCloudSkillsDir(userId, sessionId, name)).append("`");
+                sb.append("\n  文件：`").append(runtimeDataResolver.formatCloudSkillsPath(userId, sessionId, name)).append("`");
+            }
             sb.append("\n");
         }
         return sb.toString().trim();

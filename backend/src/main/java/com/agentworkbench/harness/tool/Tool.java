@@ -64,6 +64,13 @@ public interface Tool {
      * @return 执行结果
      */
     default String execute(String arguments, Long sessionId, String workspace) {
-        return execute(arguments, workspace);
+        return execute(arguments, sessionId, null, workspace);
+    }
+
+    /**
+     * 执行 Tool（带会话 ID、用户 ID 和工作空间上下文）
+     */
+    default String execute(String arguments, Long sessionId, Long userId, String workspace) {
+        return execute(arguments, sessionId, workspace);
     }
 }

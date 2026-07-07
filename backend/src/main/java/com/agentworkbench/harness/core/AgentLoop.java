@@ -396,8 +396,8 @@ public class AgentLoop {
     private String dispatchTool(String toolName, String arguments, AgentExecutionContext context) {
         try {
             return toolDispatcher.dispatch(toolName, arguments,
-                    context.getExecutionMode(), context.getSessionId(), context.getWorkspace(),
-                    context.getPermissionLevel(), context.getModelConfig());
+                    context.getExecutionMode(), context.getSessionId(), context.getUserId(),
+                    context.getWorkspace(), context.getPermissionLevel(), context.getModelConfig());
         } catch (Exception e) {
             return "Tool execution failed: " + e.getMessage();
         }

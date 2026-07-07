@@ -1,5 +1,6 @@
 package com.agentworkbench.harness.shell;
 
+import com.agentworkbench.harness.runtime.RuntimeDataResolver;
 import com.agentworkbench.harness.safety.PathSandbox;
 import com.agentworkbench.user.service.GitCredentialService;
 import lombok.extern.slf4j.Slf4j;
@@ -22,9 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class ShellSessionManager {
 
-    private static final String OUTPUT_DIR = ".mao/shellOutput";
-
     private final PathSandbox pathSandbox;
+    private final RuntimeDataResolver runtimeDataResolver;
 
     @Value("${app.harness.shell.max-sessions-per-conversation:30}")
     private int maxSessionsPerConversation;
@@ -35,64 +35,53 @@ public class ShellSessionManager {
     @Value("${app.harness.shell.session-max-lifetime-hours:2}")
     private int sessionMaxLifetimeHours;
 
-    // sessionId -> ShellSession
     private final ConcurrentHashMap<String, ShellSession> sessions = new ConcurrentHashMap<>();
-
-    // conversationId -> Set<sessionId>
     private final ConcurrentHashMap<Long, Set<String>> conversationSessions = new ConcurrentHashMap<>();
 
-    public ShellSessionManager(PathSandbox pathSandbox) {
+    public ShellSessionManager(PathSandbox pathSandbox, RuntimeDataResolver runtimeDataResolver) {
         this.pathSandbox = pathSandbox;
+        this.runtimeDataResolver = runtimeDataResolver;
     }
 
     /**
      * 获取或创建会话
      *
-     * @param conversationId   对话 ID
-     * @param sessionId          会话 ID（可选，为空则自动生成）
-     * @param workspace          工作空间路径
-     * @param domainTokenMap     用户 Git 域名→Token 映射（仅新建会话时使用）
-     * @return ShellSession
+     * @param conversationId   对话 ID（Mao session.id）
+     * @param shellSessionId   Shell 会话 ID（可选，为空则自动生成）
+     * @param userId           用户 ID，用于定位 runtime 目录
+     * @param workspace        工作空间路径（命令 cwd）
+     * @param domainTokenMap   用户 Git 域名→Token 映射（仅新建会话时使用）
      */
-    public ShellSession getOrCreate(Long conversationId, String sessionId, String workspace,
-                                    Map<String, String> domainTokenMap) {
-        // 如果 sessionId 已存在且存活，直接返回
-        if (sessionId != null && sessions.containsKey(sessionId)) {
-            ShellSession session = sessions.get(sessionId);
+    public ShellSession getOrCreate(Long conversationId, String shellSessionId, Long userId,
+                                    String workspace, Map<String, String> domainTokenMap) {
+        if (shellSessionId != null && sessions.containsKey(shellSessionId)) {
+            ShellSession session = sessions.get(shellSessionId);
             if (session.isAlive()) {
                 session.touch();
                 return session;
             }
-            // 会话已死亡，移除并创建新的
-            removeSession(sessionId);
+            removeSession(shellSessionId);
         }
 
-        // 检查会话数限制
         Set<String> convSessions = conversationSessions.computeIfAbsent(conversationId, k -> ConcurrentHashMap.newKeySet());
         if (convSessions.size() >= maxSessionsPerConversation) {
             throw new IllegalStateException("Maximum number of shell sessions (" + maxSessionsPerConversation +
                     ") reached for conversation " + conversationId + ". Close existing sessions first.");
         }
 
-        // 生成 sessionId
-        if (sessionId == null) {
-            sessionId = "sh-" + conversationId + "-" + System.currentTimeMillis();
+        if (shellSessionId == null) {
+            shellSessionId = "sh-" + conversationId + "-" + System.currentTimeMillis();
         }
 
-        // 创建新会话
-        ShellSession session = createSession(sessionId, conversationId, workspace, domainTokenMap);
+        ShellSession session = createSession(shellSessionId, conversationId, userId, workspace, domainTokenMap);
 
-        // 注册会话
-        sessions.put(sessionId, session);
-        convSessions.add(sessionId);
+        sessions.put(shellSessionId, session);
+        convSessions.add(shellSessionId);
 
-        log.info("Created shell session: {} for conversation: {}", sessionId, conversationId);
+        log.info("Created shell session: {} for conversation: {}", shellSessionId, conversationId);
         return session;
     }
 
-    /**
-     * 获取会话
-     */
     public ShellSession getSession(String sessionId) {
         ShellSession session = sessions.get(sessionId);
         if (session == null || !session.isAlive()) {
@@ -102,16 +91,10 @@ public class ShellSessionManager {
         return session;
     }
 
-    /**
-     * 关闭指定会话
-     */
     public void close(String sessionId) {
         removeSession(sessionId);
     }
 
-    /**
-     * 关闭某个对话的所有会话
-     */
     public void closeByConversation(Long conversationId) {
         Set<String> convSessions = conversationSessions.remove(conversationId);
         if (convSessions != null) {
@@ -125,9 +108,6 @@ public class ShellSessionManager {
         }
     }
 
-    /**
-     * 列出某个对话的所有活跃会话
-     */
     public List<ShellSession> listByConversation(Long conversationId) {
         Set<String> convSessions = conversationSessions.get(conversationId);
         if (convSessions == null) {
@@ -144,10 +124,7 @@ public class ShellSessionManager {
         return result;
     }
 
-    /**
-     * 清理过期会话（定时任务）
-     */
-    @Scheduled(fixedRate = 60000)  // 每分钟检查一次
+    @Scheduled(fixedRate = 60000)
     public void cleanupExpiredSessions() {
         Duration idleTimeout = Duration.ofMinutes(sessionIdleTimeoutMinutes);
         Duration maxLifetime = Duration.ofHours(sessionMaxLifetimeHours);
@@ -173,63 +150,51 @@ public class ShellSessionManager {
         }
     }
 
-    /**
-     * 获取活跃会话数量
-     */
     public int getActiveSessionCount() {
         return sessions.size();
     }
 
-    /**
-     * 创建新的 Shell 会话
-     */
-    private ShellSession createSession(String sessionId, Long conversationId, String workspace,
-                                       Map<String, String> domainTokenMap) {
+    private ShellSession createSession(String shellSessionId, Long conversationId, Long userId,
+                                       String workspace, Map<String, String> domainTokenMap) {
         try {
-            // 解析工作目录
             Path workDir = pathSandbox.getEffectiveWorkspaceRoot(workspace);
 
-            // 确保输出目录存在
-            Path outputDir = workDir.resolve(OUTPUT_DIR);
+            Path outputDir = runtimeDataResolver.resolveShellOutputDir(userId, conversationId);
             Files.createDirectories(outputDir);
+            pathSandbox.addAllowedRoot(runtimeDataResolver.resolveSessionRuntimeDir(userId, conversationId));
 
-            // 创建输出文件占位（实际路径在 nextOutputFile 时生成）
-            Path outputFile = outputDir.resolve(sessionId + ".out");
+            Path outputFile = outputDir.resolve(shellSessionId + ".out");
 
-            // 构建 bash 命令
             ProcessBuilder pb = new ProcessBuilder();
             pb.command("bash", "--norc", "--noprofile");
-
             pb.directory(workDir.toFile());
             pb.redirectErrorStream(true);
 
-            // 设置环境变量
             Map<String, String> env = pb.environment();
-            env.put("TERM", "dumb");  // 避免 ANSI 转义序列
-            env.put("PS1", "");       // 禁用提示符
+            env.put("TERM", "dumb");
+            env.put("PS1", "");
 
             if (domainTokenMap != null && !domainTokenMap.isEmpty()) {
-                configureGitCredentials(env, workDir, domainTokenMap);
+                configureGitCredentials(env, userId, conversationId, domainTokenMap);
             }
 
             Process process = pb.start();
 
-            return new ShellSession(sessionId, conversationId, process, workDir, outputFile);
+            return new ShellSession(shellSessionId, conversationId, process, workDir, outputFile);
 
         } catch (IOException e) {
             throw new RuntimeException("Failed to create shell session: " + e.getMessage(), e);
         }
     }
 
-    private void configureGitCredentials(Map<String, String> env, Path workDir,
+    private void configureGitCredentials(Map<String, String> env, Long userId, Long sessionId,
                                          Map<String, String> domainTokenMap) throws IOException {
         for (Map.Entry<String, String> entry : domainTokenMap.entrySet()) {
             env.put(GitCredentialService.envVarNameForDomain(entry.getKey()), entry.getValue());
         }
 
-        Path maoDir = workDir.resolve(".mao");
-        Files.createDirectories(maoDir);
-        Path askPassScript = maoDir.resolve("git-askpass.sh");
+        Path askPassScript = runtimeDataResolver.resolveGitAskpassScript(userId, sessionId);
+        Files.createDirectories(askPassScript.getParent());
         Files.writeString(askPassScript, GIT_ASKPASS_SCRIPT);
         try {
             Files.setPosixFilePermissions(askPassScript,
@@ -263,15 +228,11 @@ public class ShellSessionManager {
             fi
             """;
 
-    /**
-     * 移除并关闭会话
-     */
     private void removeSession(String sessionId) {
         ShellSession session = sessions.remove(sessionId);
         if (session != null) {
             session.close();
 
-            // 从对话索引中移除
             Set<String> convSessions = conversationSessions.get(session.getConversationId());
             if (convSessions != null) {
                 convSessions.remove(sessionId);

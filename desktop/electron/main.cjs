@@ -275,21 +275,50 @@ function getApiBaseUrl() {
   return 'https://mao.etarch.cn/api'
 }
 
+const LOCAL_RUNTIME_ROOT = path.join(os.homedir(), '.mao', 'runtime')
+
+function resolveLocalRuntimeDir(sessionId) {
+  return path.join(LOCAL_RUNTIME_ROOT, String(sessionId))
+}
+
+function resolveLocalSkillsDir(sessionId) {
+  return path.join(resolveLocalRuntimeDir(sessionId), 'skills')
+}
+
+function resolveLocalShellOutputDir(sessionId) {
+  return path.join(resolveLocalRuntimeDir(sessionId), 'shellOutput')
+}
+
+function formatLocalRuntimePath(sessionId, ...segments) {
+  return ['~/.mao/runtime', String(sessionId), ...segments].join('/')
+}
+
+function expandHomePath(filePath) {
+  if (!filePath) return filePath
+  if (filePath === '~') return os.homedir()
+  if (filePath.startsWith('~/')) return path.join(os.homedir(), filePath.slice(2))
+  return filePath
+}
+
+function isUnderLocalRuntime(absolutePath, maoSessionId) {
+  if (!maoSessionId) return false
+  const runtimeDir = resolveLocalRuntimeDir(maoSessionId)
+  const resolved = path.resolve(absolutePath)
+  return resolved === runtimeDir || resolved.startsWith(runtimeDir + path.sep)
+}
+
 // ========== Skill sync IPC handler ==========
 
-ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, workspace }) => {
-  // Use workspace parameter if provided, otherwise fall back to currentWorkspace
-  const effectiveWorkspace = workspace || currentWorkspace
-  if (!effectiveWorkspace) {
-    const err = 'No workspace configured. Please set a workspace for this session.'
+ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token }) => {
+  if (!sessionId) {
+    const err = 'No sessionId provided for skill sync.'
     sendToRenderer('skill-sync-complete', { sessionId, success: false, error: err })
     return { success: false, error: err }
   }
   try {
     const AdmZip = require('adm-zip')
-    const skillsDir = path.join(effectiveWorkspace, '.mao', 'skills')
+    const skillsDir = resolveLocalSkillsDir(sessionId)
 
-    // Download zip from REST endpoint
     const baseUrl = getApiBaseUrl()
     const fullUrl = `${baseUrl}${syncUrl}`
     const headers = token ? { 'Authorization': `Bearer ${token}` } : {}
@@ -299,11 +328,9 @@ ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, workspac
       throw new Error(`Skill sync download failed: ${response.status} ${response.statusText} - ${body}`)
     }
 
-    // Extract zip to .mao/skills/
     const zipBuffer = Buffer.from(await response.arrayBuffer())
     fs.mkdirSync(skillsDir, { recursive: true })
     const zip = new AdmZip(zipBuffer)
-    const entries = zip.getEntries()
     zip.extractAllTo(skillsDir, true)
     sendToRenderer('skill-sync-complete', { sessionId, success: true })
     return { success: true }
@@ -459,11 +486,19 @@ ipcMain.handle('read-local-skill-files', async (event, { folderName }) => {
   }
 })
 
-function resolveWorkspacePath(filePath, workspace) {
+function resolveWorkspacePath(filePath, workspace, maoSessionId) {
   const effectiveWorkspace = workspace || currentWorkspace
-  if (!filePath || !effectiveWorkspace) return filePath
-  if (path.isAbsolute(filePath)) return filePath
-  return path.join(effectiveWorkspace, filePath)
+  if (!filePath) return filePath
+
+  const expanded = expandHomePath(filePath)
+  if (path.isAbsolute(expanded)) {
+    if (maoSessionId && isUnderLocalRuntime(expanded, maoSessionId)) {
+      return expanded
+    }
+    return expanded
+  }
+  if (!effectiveWorkspace) return expanded
+  return path.join(effectiveWorkspace, expanded)
 }
 
 function detectShell() {
@@ -897,15 +932,15 @@ async function executeToolByName(toolName, parsedArgs, sessionId, workspace, nee
     case 'shell':
       return await handleShellFromWebSocket(parsedArgs, sessionId, workspace, needApproval, dangerReason)
     case 'read_file':
-      return await handleLocalReadFile(parsedArgs, workspace)
+      return await handleLocalReadFile(parsedArgs, workspace, sessionId)
     case 'write_file':
       return await handleLocalWriteFile(parsedArgs, workspace, sessionId, needApproval)
     case 'edit_file':
       return await handleLocalEditFile(parsedArgs, workspace, sessionId, needApproval)
     case 'glob_search':
-      return await handleLocalGlobSearch(parsedArgs, workspace)
+      return await handleLocalGlobSearch(parsedArgs, workspace, sessionId)
     case 'grep_search':
-      return await handleLocalGrepSearch(parsedArgs, workspace)
+      return await handleLocalGrepSearch(parsedArgs, workspace, sessionId)
     default:
       return { error: `Unknown tool: ${toolName}` }
   }
@@ -941,35 +976,30 @@ const MARKER_PREFIX = '__CMD_DONE_'
 const MARKER_SUFFIX = '__'
 const MAX_PREVIEW_LINES = 100
 const MAX_PREVIEW_CHARS = 10000
-const SHELL_OUTPUT_DIR = '.mao/shellOutput'
 
 function generateMarker() {
   return crypto.randomBytes(4).toString('hex')
 }
 
-/**
- * 截断输出并落盘，返回预览 + 截断标记 + 文件路径
- */
-function truncateAndSave(fullOutput, workspace, sessionId) {
+function truncateAndSave(fullOutput, maoSessionId, shellSessionId) {
   const lines = fullOutput.split('\n')
   const truncated = lines.length > MAX_PREVIEW_LINES || fullOutput.length > MAX_PREVIEW_CHARS
 
-  // 生成预览：取尾部 MAX_PREVIEW_LINES 行
   const startIdx = Math.max(0, lines.length - MAX_PREVIEW_LINES)
   let preview = lines.slice(startIdx).join('\n')
   if (preview.length > MAX_PREVIEW_CHARS) {
     preview = preview.substring(preview.length - MAX_PREVIEW_CHARS)
   }
 
-  // 落盘完整输出
   let outputFile = null
-  if (workspace && sessionId && truncated) {
+  if (maoSessionId && shellSessionId && truncated) {
     try {
-      const outputDir = path.join(workspace, SHELL_OUTPUT_DIR)
+      const outputDir = resolveLocalShellOutputDir(maoSessionId)
       fs.mkdirSync(outputDir, { recursive: true })
       const seq = Date.now()
-      outputFile = path.join(outputDir, `${sessionId}_${seq}.out`)
-      fs.writeFileSync(outputFile, fullOutput, 'utf-8')
+      const fileName = `${shellSessionId}_${seq}.out`
+      fs.writeFileSync(path.join(outputDir, fileName), fullOutput, 'utf-8')
+      outputFile = formatLocalRuntimePath(maoSessionId, 'shellOutput', fileName)
     } catch (e) {
       console.error('[shell] Failed to write output file:', e.message)
     }
@@ -1053,7 +1083,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
     session.process.stdin.write('echo ' + MARKER_PREFIX + marker + MARKER_SUFFIX + '\n')
     const result = await readUntilMarker(session.process, marker, args.yield_time_ms || 5000)
     session.lastActiveAt = Date.now()
-    const saved = truncateAndSave(result.output, workspace, session_id)
+    const saved = truncateAndSave(result.output, sessionId, session_id)
     return {
       session_id,
       current_workdir: session.cwd,
@@ -1072,7 +1102,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
     const result = await readUntilMarker(session.process, marker, args.yield_time_ms || 10000)
     session.lastActiveAt = Date.now()
     session.commandCount = (session.commandCount || 0) + 1
-    const saved = truncateAndSave(result.output, workspace, session_id)
+    const saved = truncateAndSave(result.output, sessionId, session_id)
     return {
       exit_code: 0,
       session_id,
@@ -1112,7 +1142,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
     const session = shellSessions.get(session_id)
     session.lastActiveAt = Date.now()
     session.commandCount = 1
-    const saved = truncateAndSave(result.output, workspace, session_id)
+    const saved = truncateAndSave(result.output, sessionId, session_id)
     return {
       exit_code: 0,
       session_id,
@@ -1138,7 +1168,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
         resolve({ exit_code: -1, output: `Command timed out after ${args.timeout || 60}s` })
       } else {
         const fullOutput = (stdout || '') + (stderr ? '\n' + stderr : '')
-        const saved = truncateAndSave(fullOutput, workspace, 'local')
+        const saved = truncateAndSave(fullOutput, sessionId, 'local')
         resolve({
           exit_code: error ? error.code || 1 : 0,
           session_id: 'local',
@@ -1156,13 +1186,13 @@ function extractFilePath(args) {
   return args.path || args.file || args.filePath || args.file_path || args.target_file
 }
 
-async function handleLocalReadFile(args, workspace) {
+async function handleLocalReadFile(args, workspace, maoSessionId) {
   try {
     const filePath = extractFilePath(args)
     if (!filePath) {
       return { error: 'Missing required parameter: path' }
     }
-    const resolvedPath = resolveWorkspacePath(filePath, workspace)
+    const resolvedPath = resolveWorkspacePath(filePath, workspace, maoSessionId)
     const content = fs.readFileSync(resolvedPath, 'utf-8')
     const lines = content.split('\n')
     const start = args.offset || 0
@@ -1181,7 +1211,7 @@ async function handleLocalWriteFile(args, workspace, sessionId, needApproval) {
     }
   }
   try {
-    const resolvedPath = resolveWorkspacePath(args.path, workspace)
+    const resolvedPath = resolveWorkspacePath(args.path, workspace, sessionId)
     // Snapshot before write for change tracking
     const fileExisted = fs.existsSync(resolvedPath)
     let beforeContent = ''
@@ -1220,7 +1250,7 @@ async function handleLocalEditFile(args, workspace, sessionId, needApproval) {
     }
   }
   try {
-    const resolvedPath = resolveWorkspacePath(args.path, workspace)
+    const resolvedPath = resolveWorkspacePath(args.path, workspace, sessionId)
     const content = fs.readFileSync(resolvedPath, 'utf-8')
     const count = content.split(args.old_string).length - 1
     if (count === 0) return { success: false, error: 'old_string not found in file' }
@@ -1264,12 +1294,14 @@ async function isRgAvailable() {
   return rgAvailable
 }
 
-async function handleLocalGlobSearch(args, workspace) {
+async function handleLocalGlobSearch(args, workspace, maoSessionId) {
   const pattern = args.pattern
   if (!pattern) return { files: [], error: 'pattern is required' }
 
   const headLimit = args.head_limit || 100
-  const searchRoot = args.path ? resolveWorkspacePath(args.path, workspace) : (workspace || currentWorkspace || '.')
+  const searchRoot = args.path
+    ? resolveWorkspacePath(args.path, workspace, maoSessionId)
+    : (workspace || currentWorkspace || '.')
 
   try {
     let files = []
@@ -1332,7 +1364,7 @@ function globWithNode(pattern, searchRoot, headLimit) {
   return files
 }
 
-async function handleLocalGrepSearch(args, workspace) {
+async function handleLocalGrepSearch(args, workspace, maoSessionId) {
   const pattern = args.pattern
   if (!pattern) return { matches: [], error: 'pattern is required' }
 
@@ -1340,7 +1372,9 @@ async function handleLocalGrepSearch(args, workspace) {
   const ignoreCase = args.ignore_case || false
   const contextLines = args.context_lines || 0
   const maxOutputChars = args.max_output_chars || 10000
-  const searchRoot = args.path ? resolveWorkspacePath(args.path, workspace) : (workspace || currentWorkspace || '.')
+  const searchRoot = args.path
+    ? resolveWorkspacePath(args.path, workspace, maoSessionId)
+    : (workspace || currentWorkspace || '.')
 
   try {
     if (await isRgAvailable()) {

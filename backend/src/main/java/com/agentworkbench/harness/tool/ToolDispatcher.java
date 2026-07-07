@@ -94,6 +94,13 @@ public class ToolDispatcher {
     public String dispatch(String toolName, String arguments, String executionMode,
                            Long sessionId, String workspace,
                            String permissionLevel, LlmModelConfig modelConfig) {
+        return dispatch(toolName, arguments, executionMode, sessionId, null, workspace,
+                permissionLevel, modelConfig);
+    }
+
+    public String dispatch(String toolName, String arguments, String executionMode,
+                           Long sessionId, Long userId, String workspace,
+                           String permissionLevel, LlmModelConfig modelConfig) {
         // ask_user_questions 始终路由到客户端，不受 executionMode 和权限影响
         if (ASK_USER_QUESTIONS.equals(toolName)) {
             return dispatchAskUserQuestions(arguments, sessionId);
@@ -104,7 +111,7 @@ public class ToolDispatcher {
             Tool tool = toolRegistry.getTool(toolName);
             if (tool != null) {
                 log.debug("Routing to server-side tool: {} (session={})", toolName, sessionId);
-                return tool.execute(arguments, sessionId, workspace);
+                return tool.execute(arguments, sessionId, userId, workspace);
             }
             throw new IllegalArgumentException("Unknown tool: " + toolName);
         }
@@ -129,7 +136,7 @@ public class ToolDispatcher {
         Tool tool = toolRegistry.getTool(toolName);
         if (tool != null) {
             log.debug("Routing to built-in tool: {} (session={})", toolName, sessionId);
-            return tool.execute(arguments, sessionId, workspace);
+            return tool.execute(arguments, sessionId, userId, workspace);
         }
         throw new IllegalArgumentException("Unknown tool: " + toolName);
     }

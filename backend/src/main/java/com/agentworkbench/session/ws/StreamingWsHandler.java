@@ -412,7 +412,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     try {
                         Agent agent = agentMapper.selectById(session.getAgentId());
                         if (agent != null) {
-                            skillSyncService.syncToWorkspace(agent, session.getWorkspace(), userId);
+                            skillSyncService.syncToSession(agent, userId, sessionId);
                         }
                     } catch (Exception e) {
                         log.warn("Skill sync to workspace failed for session {}: {}", sessionId, e.getMessage());
@@ -705,7 +705,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     try {
                         Agent agent = agentMapper.selectById(session.getAgentId());
                         if (agent != null) {
-                            skillSyncService.syncToWorkspace(agent, session.getWorkspace(), userId);
+                            skillSyncService.syncToSession(agent, userId, sessionId);
                         }
                     } catch (Exception e) {
                         log.warn("Skill sync to workspace failed for session {}: {}", sessionId, e.getMessage());
@@ -1150,7 +1150,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         }
 
         String syncUrl = "/v1/skills/sync-package?sessionId=" + sessionId;
-        List<String> removed = skillSyncService.getRemovedSkillNames(session.getAgentId(), session.getWorkspace());
+        List<String> removed = skillSyncService.getRemovedSkillNames(agent, userId, sessionId);
         log.info("Syncing skills to client for session={}, userId={}, syncUrl={}, workspace={}, removed={}", sessionId, userId, syncUrl, session.getWorkspace(), removed);
 
         CompletableFuture<Void> syncFuture = new CompletableFuture<>();

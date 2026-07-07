@@ -7,8 +7,6 @@ import com.agentworkbench.harness.shell.OutputManager.OutputResult;
 import com.agentworkbench.harness.shell.ShellSession;
 import com.agentworkbench.harness.shell.ShellSessionManager;
 import com.agentworkbench.harness.tool.Tool;
-import com.agentworkbench.session.entity.Session;
-import com.agentworkbench.session.mapper.SessionMapper;
 import com.agentworkbench.user.service.GitCredentialService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -38,19 +36,17 @@ public class ShellSessionTool implements Tool {
     private final ShellSessionManager sessionManager;
     private final OutputManager outputManager;
     private final BackgroundTaskManager backgroundTaskManager;
-    private final SessionMapper sessionMapper;
     private final GitCredentialService gitCredentialService;
 
     public ShellSessionTool(ObjectMapper objectMapper, PathSandbox pathSandbox,
                             ShellSessionManager sessionManager, OutputManager outputManager,
                             BackgroundTaskManager backgroundTaskManager,
-                            SessionMapper sessionMapper, GitCredentialService gitCredentialService) {
+                            GitCredentialService gitCredentialService) {
         this.objectMapper = objectMapper;
         this.pathSandbox = pathSandbox;
         this.sessionManager = sessionManager;
         this.outputManager = outputManager;
         this.backgroundTaskManager = backgroundTaskManager;
-        this.sessionMapper = sessionMapper;
         this.gitCredentialService = gitCredentialService;
     }
 
@@ -145,6 +141,11 @@ public class ShellSessionTool implements Tool {
 
     @Override
     public String execute(String arguments, Long sessionId, String workspace) {
+        return execute(arguments, sessionId, null, workspace);
+    }
+
+    @Override
+    public String execute(String arguments, Long sessionId, Long userId, String workspace) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
             String action = args.path("action").asText("exec");
@@ -153,7 +154,7 @@ public class ShellSessionTool implements Tool {
             }
 
             return switch (action) {
-                case "exec" -> handleExec(args, sessionId, workspace);
+                case "exec" -> handleExec(args, sessionId, userId, workspace);
                 case "write_stdin" -> handleWriteStdin(args, sessionId);
                 case "close" -> handleClose(args, sessionId);
                 case "list" -> handleList(sessionId);
@@ -165,7 +166,7 @@ public class ShellSessionTool implements Tool {
         }
     }
 
-    private String handleExec(JsonNode args, Long conversationId, String workspace) throws Exception {
+    private String handleExec(JsonNode args, Long conversationId, Long userId, String workspace) throws Exception {
         String command = args.has("command") ? args.get("command").asText() : null;
         if (command == null || command.isBlank()) {
             return errorJson("exec 动作必须提供 command");
@@ -183,7 +184,7 @@ public class ShellSessionTool implements Tool {
         if (isAsync) {
             String taskId = backgroundTaskManager.submit(() -> {
                 try {
-                    return doExec(command, sessionId, conversationId, workspace, workdir, yieldTimeMs);
+                    return doExec(command, sessionId, conversationId, userId, workspace, workdir, yieldTimeMs);
                 } catch (Exception e) {
                     return errorJson("异步执行失败：" + e.getMessage());
                 }
@@ -195,14 +196,13 @@ public class ShellSessionTool implements Tool {
             ));
         }
 
-        return doExec(command, sessionId, conversationId, workspace, workdir, yieldTimeMs);
+        return doExec(command, sessionId, conversationId, userId, workspace, workdir, yieldTimeMs);
     }
 
-    private String doExec(String command, String sessionId, Long conversationId,
+    private String doExec(String command, String sessionId, Long conversationId, Long userId,
                           String workspace, String workdir, int yieldTimeMs) throws Exception {
-        Map<String, String> domainTokenMap = resolveGitTokenMap(conversationId);
-        // 获取或创建会话
-        ShellSession session = sessionManager.getOrCreate(conversationId, sessionId, workspace, domainTokenMap);
+        Map<String, String> domainTokenMap = gitCredentialService.getTokenMapByUser(userId);
+        ShellSession session = sessionManager.getOrCreate(conversationId, sessionId, userId, workspace, domainTokenMap);
         sessionId = session.getSessionId();
 
         // 如果指定了工作目录，先执行 cd
@@ -365,17 +365,6 @@ public class ShellSessionTool implements Tool {
             log.debug("Failed to get current workdir: {}", e.getMessage());
         }
         return session.getCurrentWorkdir();
-    }
-
-    private Map<String, String> resolveGitTokenMap(Long conversationId) {
-        if (conversationId == null) {
-            return Map.of();
-        }
-        Session session = sessionMapper.selectById(conversationId);
-        if (session == null || session.getUserId() == null) {
-            return Map.of();
-        }
-        return gitCredentialService.getTokenMapByUser(session.getUserId());
     }
 
     private String generateMarker() {
