@@ -1,7 +1,7 @@
 # Mao
 
 <p align="center">
-  <img src="desktop/public/app-icon-small.png" alt="Mao Logo" width="96" style="border-radius: 20px;" />
+  <img src="docs/logo.png" alt="Mao Logo" width="96" />
 </p>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -15,7 +15,7 @@ Mao 面向希望把 AI Agent 纳入正式 IT 体系的企业。许多团队已�
 ## 客户端预览
 
 <p align="center">
-  <img src="docs/client.png" alt="Mao 桌面客户端页面样图" width="960" style="border-radius: 20px;" />
+  <img src="docs/client.png" alt="Mao 桌面客户端页面样图" width="960" />
 </p>
 
 ## 核心特性
