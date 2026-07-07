@@ -31,6 +31,9 @@ public class SystemSettingService {
     @Value("${ldap.url:}")
     private String ldapUrl;
 
+    @Value("${feishu.enabled:false}")
+    private boolean feishuEnabled;
+
     @Value("${feishu.app-id:}")
     private String feishuAppId;
 
@@ -65,7 +68,7 @@ public class SystemSettingService {
                 "workspace.root", workspaceRoot,
                 "skills.dir", skillsDir,
                 "auth.ldap.enabled", String.valueOf(ldapEnabled && StringUtils.hasText(ldapUrl)),
-                "auth.feishu.enabled", String.valueOf(StringUtils.hasText(feishuAppId) && !"1234567890".equals(feishuAppId))
+                "auth.feishu.enabled", String.valueOf(feishuEnabled && StringUtils.hasText(feishuAppId) && !"1234567890".equals(feishuAppId))
         );
         for (SystemSetting setting : settings) {
             if (runtimeValues.containsKey(setting.getSettingKey())) {

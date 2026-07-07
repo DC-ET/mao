@@ -128,7 +128,7 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 | `UPLOAD_BASE_URL` | 本地存储模式下的公网访问前缀 |
 | `TAVILY_API_KEY` | Tavily 搜索（可选） |
 | `LDAP_ENABLED` / `LDAP_URL` 等 | LDAP 认证（可选，`LDAP_ENABLED` 默认 `false`） |
-| `FEISHU_APP_ID` 等 | 飞书 OAuth（可选） |
+| `FEISHU_ENABLED` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_REDIRECT_URI` | 飞书 OAuth（可选，`FEISHU_ENABLED` 默认 `false`），`FEISHU_REDIRECT_URI` 必须是后端公网回调地址，如 `https://your-domain/api/v1/auth/feishu/callback` |
 | `OSS_*` | 阿里云 OSS（可选） |
 
 完整配置项请参考 [application-example.yml](backend/src/main/resources/application-example.yml)。

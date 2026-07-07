@@ -6,6 +6,8 @@ import cn.etarch.mao.common.result.Result;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -22,6 +24,13 @@ public class AuthController {
         return Result.ok(loginVO);
     }
 
+    @GetMapping("/features")
+    public Result<AuthFeaturesVO> features() {
+        AuthFeaturesVO vo = new AuthFeaturesVO();
+        vo.setFeishuEnabled(feishuAuthService.isEnabled());
+        return Result.ok(vo);
+    }
+
     @GetMapping("/feishu/qrcode")
     public Result<FeishuQrCodeVO> getFeishuQrCode() {
         return Result.ok(feishuAuthService.getQrCodeUrl());
@@ -31,6 +40,20 @@ public class AuthController {
     public Result<LoginVO> feishuCallback(@RequestBody FeishuCallbackRequest request) {
         LoginVO loginVO = feishuAuthService.handleCallback(request.getCode());
         return Result.ok(loginVO);
+    }
+
+    @GetMapping(value = "/feishu/callback", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> feishuRedirectCallback(
+            @RequestParam(required = false) String code,
+            @RequestParam(required = false) String state) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_HTML)
+                .body(feishuAuthService.renderCallbackPage(state, code));
+    }
+
+    @GetMapping("/feishu/status")
+    public Result<FeishuLoginStatusVO> getFeishuLoginStatus(@RequestParam String state) {
+        return Result.ok(feishuAuthService.getLoginStatus(state));
     }
 
     @PostMapping("/refresh")
@@ -86,7 +109,22 @@ public class AuthController {
 
     @Data
     public static class FeishuQrCodeVO {
+        private String authUrl;
         private String qrCodeUrl;
         private String state;
+        private Long expiresIn;
+        private Long pollInterval;
+    }
+
+    @Data
+    public static class FeishuLoginStatusVO {
+        private String status;
+        private String message;
+        private LoginVO login;
+    }
+
+    @Data
+    public static class AuthFeaturesVO {
+        private boolean feishuEnabled;
     }
 }

@@ -11,6 +11,7 @@ spring:
       connection-timeout: 10000
       idle-timeout: 300000
       max-lifetime: 600000
+
 # LDAP
 ldap:
   enabled: ${LDAP_ENABLED:false}
@@ -22,9 +23,10 @@ ldap:
 
 # Feishu
 feishu:
+  enabled: ${FEISHU_ENABLED:false}
   app-id: ${FEISHU_APP_ID:1234567890}
   app-secret: ${FEISHU_APP_SECRET:1234567890}
-  redirect-uri: ${FEISHU_REDIRECT_URI:http://example.com/auth/feishu/callback}
+  redirect-uri: ${FEISHU_REDIRECT_URI:http://frontend-local.danchuangglobal.com:9080/api/v1/auth/feishu/callback}
 
 # JWT
 jwt:

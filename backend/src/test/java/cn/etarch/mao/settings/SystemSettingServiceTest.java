@@ -26,6 +26,7 @@ class SystemSettingServiceTest {
         ReflectionTestUtils.setField(service, "skillsDir", "/skills");
         ReflectionTestUtils.setField(service, "ldapEnabled", false);
         ReflectionTestUtils.setField(service, "ldapUrl", "");
+        ReflectionTestUtils.setField(service, "feishuEnabled", false);
         ReflectionTestUtils.setField(service, "feishuAppId", "");
     }
 
@@ -70,6 +71,19 @@ class SystemSettingServiceTest {
         assertThat(service.list(null).get(0).getValue()).isEqualTo("false");
 
         ReflectionTestUtils.setField(service, "ldapUrl", "ldap://example.test:389");
+        assertThat(service.list(null).get(0).getValue()).isEqualTo("true");
+    }
+
+    @Test
+    void listShowsFeishuEnabledOnlyWhenSwitchAndAppIdArePresent() {
+        SystemSetting feishuSetting = setting("auth.feishu.enabled", "认证", 0);
+        when(mapper.selectList(any())).thenReturn(List.of(feishuSetting));
+
+        ReflectionTestUtils.setField(service, "feishuEnabled", true);
+        ReflectionTestUtils.setField(service, "feishuAppId", "");
+        assertThat(service.list(null).get(0).getValue()).isEqualTo("false");
+
+        ReflectionTestUtils.setField(service, "feishuAppId", "cli_xxx");
         assertThat(service.list(null).get(0).getValue()).isEqualTo("true");
     }
 

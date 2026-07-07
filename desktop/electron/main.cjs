@@ -675,6 +675,17 @@ ipcMain.handle('get-environment-info', (event, { workspace } = {}) => {
   }
 })
 
+ipcMain.handle('open-external', async (event, url) => {
+  if (typeof url !== 'string' || !url.trim()) {
+    throw new Error('URL is required')
+  }
+  const parsed = new URL(url)
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Unsupported external URL protocol')
+  }
+  await shell.openExternal(parsed.toString())
+})
+
 ipcMain.handle('select-directory', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
