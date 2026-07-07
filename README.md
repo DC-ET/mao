@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="#快速开始">快速开始</a> ·
+  <a href="#docker-compose推荐试用">Docker</a> ·
   <a href="#架构">架构</a> ·
   <a href="#文档">文档</a> ·
   <a href="#参与贡献">参与贡献</a>
@@ -127,14 +128,43 @@ flowchart TB
 
 ## 快速开始
 
-### 环境要求
+### Docker Compose（推荐试用）
+
+仅需安装 [Docker](https://docs.docker.com/get-docker/) 与 Docker Compose，无需本地 JDK / Node / MySQL。
+
+```bash
+# 可选：自定义密钥（复制 .env.docker.example 为 .env）
+cp .env.docker.example .env
+
+# 构建并启动 MySQL + 后端 + 管理后台 + 桌面端 Web
+docker compose up -d --build
+
+# 查看启动日志（首次构建较慢，后端需等待 Flyway 迁移完成）
+docker compose logs -f backend
+```
+
+| 服务 | 地址 |
+|------|------|
+| 管理后台 | http://localhost:5200 |
+| 桌面端 Web | http://localhost:5201 |
+| 后端 API / Swagger | http://localhost:9080/api/swagger-ui.html |
+
+默认账号：`admin` / `admin123`。启动后登录管理后台，在「模型管理」中配置真实 LLM API Key 即可对话。
+
+> **说明**：Docker 镜像提供 **CLOUD 模式** Web 体验（浏览器访问桌面端）。**LOCAL 模式**（Electron 本地工具执行）仍需按下方步骤本地构建 `desktop` 并运行 `npm run dev:electron`。
+
+停止服务：`docker compose down`（加 `-v` 可清除数据卷）。
+
+### 本地开发（手动）
+
+#### 环境要求
 
 - JDK 17+
 - Maven 3.8+
 - Node.js 18+
 - MySQL 8.x
 
-### 1. 初始化数据库与配置
+#### 1. 初始化数据库与配置
 
 ```bash
 # 创建数据库
@@ -149,7 +179,7 @@ cp backend/src/main/resources/application-example.yml \
 
 确保 `application.yml` 中 `spring.profiles.active` 指向你的本地 profile（通常为 `local`）。
 
-### 2. 启动后端
+#### 2. 启动后端
 
 ```bash
 cd backend
@@ -161,11 +191,11 @@ mvn spring-boot:run
 Swagger UI：`http://localhost:9080/api/swagger-ui.html`  
 Flyway 会在首次启动时自动建表并写入初始数据。
 
-### 3. 配置 LLM 模型
+#### 3. 配置 LLM 模型
 
 使用默认账号登录管理后台，进入「模型管理」，添加或编辑模型并填入你自己的 API Key。迁移脚本会插入占位模型 `deepseek-v4-flash`（`sk-xxxxxxxxxxxx`），**必须替换为真实密钥后才能对话**。
 
-### 4. 启动管理后台
+#### 4. 启动管理后台
 
 ```bash
 cd admin
@@ -175,7 +205,7 @@ npm run dev
 
 访问 `http://localhost:5200`
 
-### 5. 启动桌面客户端
+#### 5. 启动桌面客户端
 
 ```bash
 cd desktop
@@ -191,7 +221,7 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 ./scripts/stop-all.sh     # 停止全部服务
 ```
 
-### 默认账号
+#### 默认账号
 
 | 用户名 | 密码 | 角色 |
 |--------|------|------|

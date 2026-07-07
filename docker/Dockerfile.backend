@@ -1,0 +1,17 @@
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /build
+COPY backend/pom.xml backend/pom.xml
+COPY backend/src backend/src
+RUN mvn -f backend/pom.xml -B clean package -DskipTests
+
+FROM eclipse-temurin:17-jre-jammy
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git curl \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=build /build/backend/target/mao-server.jar app.jar
+RUN mkdir -p /opt/mao/data/workspace /opt/mao/data/skills /opt/mao/data/userskills /opt/mao/data/uploads /opt/mao/data/runtime
+VOLUME ["/opt/mao/data"]
+EXPOSE 9080
+ENTRYPOINT ["java", "-jar", "app.jar"]
+CMD ["--spring.profiles.active=docker"]

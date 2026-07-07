@@ -1,0 +1,72 @@
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: mao
+      MYSQL_USER: ${MYSQL_USER:-mao}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mao123}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_USER: ${MYSQL_USER:-mao}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mao123}
+      JWT_SECRET: ${JWT_SECRET:-docker-dev-jwt-secret-change-in-production}
+      APP_GIT_CREDENTIAL_SECRET: ${APP_GIT_CREDENTIAL_SECRET:-docker-dev-git-credential-secret}
+      UPLOAD_BASE_URL: ${UPLOAD_BASE_URL:-http://localhost:5201/api}
+    volumes:
+      - mao_data:/opt/mao/data
+    ports:
+      - "9080:9080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9080/api/swagger-ui.html"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+
+  admin:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.admin
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5200:80"
+    volumes:
+      - mao_data:/opt/mao/data:ro
+
+  desktop:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.desktop
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5201:80"
+    volumes:
+      - mao_data:/opt/mao/data:ro
+
+volumes:
+  mysql_data:
+  mao_data:
