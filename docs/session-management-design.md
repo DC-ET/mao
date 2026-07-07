@@ -133,8 +133,8 @@ public Page<Session> listSessionsForAdmin(int page, int size, Long userId,
 | 操作 | 文件 |
 |------|------|
 | 新增 | `backend/src/main/resources/db/migration/V038__add_session_permission.sql` |
-| 新增 | `backend/src/main/java/com/agentworkbench/session/controller/AdminSessionController.java` |
-| 修改 | `backend/src/main/java/com/agentworkbench/session/service/SessionService.java` |
+| 新增 | `backend/src/main/java/cn/etarch/mao/session/controller/AdminSessionController.java` |
+| 修改 | `backend/src/main/java/cn/etarch/mao/session/service/SessionService.java` |
 
 ### 前端
 

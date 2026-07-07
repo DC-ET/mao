@@ -321,11 +321,11 @@ Phase 4 (8+ 周) — 高级特性
 
 | 文件 | 作用 | 主要问题 |
 |---|---|---|
-| [AgentLoop.java](backend/src/main/java/com/agentworkbench/harness/core/AgentLoop.java) | Agent 核心循环 | 缺少压缩调用、工具并行执行 |
-| [ContextManager.java](backend/src/main/java/com/agentworkbench/harness/core/ContextManager.java) | 上下文管理 | 从未被调用，摘要策略过于简单 |
-| [SkillDispatcher.java](backend/src/main/java/com/agentworkbench/harness/skill/SkillDispatcher.java) | Skill/MCP 双层工具派发 | 缺少基础工具（bash/file），无安全拦截器 |
-| [SkillRegistry.java](backend/src/main/java/com/agentworkbench/harness/skill/SkillRegistry.java) | 内置 Skill 注册（Spring Bean） | 只支持 Spring Bean 扫描，`implClass` 动态加载未实现 |
-| [McpClient.java](backend/src/main/java/com/agentworkbench/harness/mcp/McpClient.java) | MCP 协议客户端 | rpcId 线程不安全 |
-| [PromptEngine.java](backend/src/main/java/com/agentworkbench/harness/core/PromptEngine.java) | Prompt 构建 | 无模板、无版本管理 |
-| [HarnessService.java](backend/src/main/java/com/agentworkbench/harness/service/HarnessService.java) | Harness 服务编排 | EVENT_CONTENT_STORE 内存泄漏 |
-| [SessionController.java](backend/src/main/java/com/agentworkbench/session/controller/SessionController.java) | 会话 API | 线程池硬编码 |
+| [AgentLoop.java](backend/src/main/java/cn/etarch/mao/harness/core/AgentLoop.java) | Agent 核心循环 | 缺少压缩调用、工具并行执行 |
+| [ContextManager.java](backend/src/main/java/cn/etarch/mao/harness/core/ContextManager.java) | 上下文管理 | 从未被调用，摘要策略过于简单 |
+| [SkillDispatcher.java](backend/src/main/java/cn/etarch/mao/harness/skill/SkillDispatcher.java) | Skill/MCP 双层工具派发 | 缺少基础工具（bash/file），无安全拦截器 |
+| [SkillRegistry.java](backend/src/main/java/cn/etarch/mao/harness/skill/SkillRegistry.java) | 内置 Skill 注册（Spring Bean） | 只支持 Spring Bean 扫描，`implClass` 动态加载未实现 |
+| [McpClient.java](backend/src/main/java/cn/etarch/mao/harness/mcp/McpClient.java) | MCP 协议客户端 | rpcId 线程不安全 |
+| [PromptEngine.java](backend/src/main/java/cn/etarch/mao/harness/core/PromptEngine.java) | Prompt 构建 | 无模板、无版本管理 |
+| [HarnessService.java](backend/src/main/java/cn/etarch/mao/harness/service/HarnessService.java) | Harness 服务编排 | EVENT_CONTENT_STORE 内存泄漏 |
+| [SessionController.java](backend/src/main/java/cn/etarch/mao/session/controller/SessionController.java) | 会话 API | 线程池硬编码 |

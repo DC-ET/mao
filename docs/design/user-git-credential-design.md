@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS `user_git_credential` (
 
 #### 4.2.1 新增实体 `GitCredential`
 
-**文件**：`backend/src/main/java/com/agentworkbench/user/entity/GitCredential.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/user/entity/GitCredential.java`
 
 ```java
 @Data
@@ -169,7 +169,7 @@ public class GitCredential {
 
 #### 4.2.2 新增 Mapper `GitCredentialMapper`
 
-**文件**：`backend/src/main/java/com/agentworkbench/user/mapper/GitCredentialMapper.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/user/mapper/GitCredentialMapper.java`
 
 ```java
 @Mapper
@@ -179,7 +179,7 @@ public interface GitCredentialMapper extends BaseMapper<GitCredential> {
 
 #### 4.2.3 新增 `GitCredentialService`（核心服务）
 
-**文件**：`backend/src/main/java/com/agentworkbench/user/service/GitCredentialService.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/user/service/GitCredentialService.java`
 
 **职责**：
 - CRUD 操作（按 userId 查询、新增、删除、更新）
@@ -194,7 +194,7 @@ public interface GitCredentialMapper extends BaseMapper<GitCredential> {
 
 #### 4.2.4 新增 Controller `GitCredentialController`
 
-**文件**：`backend/src/main/java/com/agentworkbench/user/controller/GitCredentialController.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/user/controller/GitCredentialController.java`
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -394,7 +394,7 @@ interface GitCredential {
 
 ```
 backend/
-├── src/main/java/com/agentworkbench/
+├── src/main/java/cn/etarch/mao/
 │   ├── user/
 │   │   ├── entity/GitCredential.java                          [新增]
 │   │   ├── mapper/GitCredentialMapper.java                    [新增]

@@ -101,7 +101,7 @@ app:
 #### TavilyConfig
 
 ```
-backend/src/main/java/com/agentworkbench/config/TavilyConfig.java
+backend/src/main/java/cn/etarch/mao/config/TavilyConfig.java
 ```
 
 - 使用 `@ConfigurationProperties(prefix = "app.harness.tavily")`
@@ -110,7 +110,7 @@ backend/src/main/java/com/agentworkbench/config/TavilyConfig.java
 #### WebPageConfig
 
 ```
-backend/src/main/java/com/agentworkbench/config/WebPageConfig.java
+backend/src/main/java/cn/etarch/mao/config/WebPageConfig.java
 ```
 
 - 使用 `@ConfigurationProperties(prefix = "app.harness.web-page")`
@@ -119,7 +119,7 @@ backend/src/main/java/com/agentworkbench/config/WebPageConfig.java
 ### 4.2 新增 WebSearchTool
 
 ```
-backend/src/main/java/com/agentworkbench/harness/tool/impl/WebSearchTool.java
+backend/src/main/java/cn/etarch/mao/harness/tool/impl/WebSearchTool.java
 ```
 
 **接口实现**：
@@ -194,7 +194,7 @@ backend/src/main/java/com/agentworkbench/harness/tool/impl/WebSearchTool.java
 ### 4.3 新增 OpenWebPageTool
 
 ```
-backend/src/main/java/com/agentworkbench/harness/tool/impl/OpenWebPageTool.java
+backend/src/main/java/cn/etarch/mao/harness/tool/impl/OpenWebPageTool.java
 ```
 
 **接口实现**：
@@ -253,7 +253,7 @@ backend/src/main/java/com/agentworkbench/harness/tool/impl/OpenWebPageTool.java
 ### 4.4 修改 ToolDispatcher
 
 ```
-backend/src/main/java/com/agentworkbench/harness/tool/ToolDispatcher.java
+backend/src/main/java/cn/etarch/mao/harness/tool/ToolDispatcher.java
 ```
 
 将 `web_search` 和 `open_web_page` 加入 `SERVER_ONLY_TOOLS` 集合：
@@ -267,7 +267,7 @@ private static final Set<String> SERVER_ONLY_TOOLS = Set.of(
 ### 4.5 修改 ToolResultSummarizer
 
 ```
-backend/src/main/java/com/agentworkbench/session/util/ToolResultSummarizer.java
+backend/src/main/java/cn/etarch/mao/session/util/ToolResultSummarizer.java
 ```
 
 在 `summarize()` 的 switch 中新增两个 case：
@@ -359,17 +359,17 @@ app:
 
 | # | 文件 | 说明 |
 |---|------|------|
-| 1 | `backend/src/main/java/com/agentworkbench/config/TavilyConfig.java` | Tavily 配置类，绑定 `app.harness.tavily.*` |
-| 2 | `backend/src/main/java/com/agentworkbench/config/WebPageConfig.java` | 网页抓取配置类，绑定 `app.harness.web-page.*` |
-| 3 | `backend/src/main/java/com/agentworkbench/harness/tool/impl/WebSearchTool.java` | web_search 工具实现 |
-| 4 | `backend/src/main/java/com/agentworkbench/harness/tool/impl/OpenWebPageTool.java` | open_web_page 工具实现 |
+| 1 | `backend/src/main/java/cn/etarch/mao/config/TavilyConfig.java` | Tavily 配置类，绑定 `app.harness.tavily.*` |
+| 2 | `backend/src/main/java/cn/etarch/mao/config/WebPageConfig.java` | 网页抓取配置类，绑定 `app.harness.web-page.*` |
+| 3 | `backend/src/main/java/cn/etarch/mao/harness/tool/impl/WebSearchTool.java` | web_search 工具实现 |
+| 4 | `backend/src/main/java/cn/etarch/mao/harness/tool/impl/OpenWebPageTool.java` | open_web_page 工具实现 |
 
 ### 5.2 修改文件
 
 | # | 文件 | 修改内容 |
 |---|------|----------|
-| 5 | `backend/src/main/java/com/agentworkbench/harness/tool/ToolDispatcher.java` | `SERVER_ONLY_TOOLS` 集合新增 `"web_search"`、`"open_web_page"` |
-| 6 | `backend/src/main/java/com/agentworkbench/session/util/ToolResultSummarizer.java` | 新增 `summarizeWebSearch()`、`summarizeOpenWebPage()` 方法及 switch case |
+| 5 | `backend/src/main/java/cn/etarch/mao/harness/tool/ToolDispatcher.java` | `SERVER_ONLY_TOOLS` 集合新增 `"web_search"`、`"open_web_page"` |
+| 6 | `backend/src/main/java/cn/etarch/mao/session/util/ToolResultSummarizer.java` | 新增 `summarizeWebSearch()`、`summarizeOpenWebPage()` 方法及 switch case |
 | 7 | `backend/pom.xml` | 新增 Boilerpipe、flexmark-html2md-converter、xercesImpl 依赖 |
 | 8 | `backend/src/main/resources/application.yml` | 新增 `app.harness.tavily.*` 和 `app.harness.web-page.*` 配置 |
 | 9 | `backend/src/main/resources/application-example.yml` | 同步新增上述配置段 |

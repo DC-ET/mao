@@ -63,7 +63,7 @@ LLM 收到 tool_result，继续执行任务
 
 ### 3.1 新增工具：AskUserQuestionsTool
 
-**文件**: `backend/src/main/java/com/agentworkbench/harness/tool/impl/AskUserQuestionsTool.java`
+**文件**: `backend/src/main/java/cn/etarch/mao/harness/tool/impl/AskUserQuestionsTool.java`
 
 ```java
 @Component
@@ -200,7 +200,7 @@ public class AskUserQuestionsTool implements Tool {
 
 ### 3.2 ToolDispatcher 路由改造
 
-**文件**: `backend/src/main/java/com/agentworkbench/harness/tool/ToolDispatcher.java`
+**文件**: `backend/src/main/java/cn/etarch/mao/harness/tool/ToolDispatcher.java`
 
 新增特殊路由判断。`ask_user_questions` 不属于 `SERVER_ONLY_TOOLS`（那组是 task_* 工具），需要独立处理：
 
@@ -227,7 +227,7 @@ if (ASK_USER_QUESTIONS.equals(toolName)) {
 
 ### 3.3 新增 AskUserQuestionsRegistry
 
-**文件**: `backend/src/main/java/com/agentworkbench/harness/tool/AskUserQuestionsRegistry.java`
+**文件**: `backend/src/main/java/cn/etarch/mao/harness/tool/AskUserQuestionsRegistry.java`
 
 ```java
 @Component
@@ -321,7 +321,7 @@ public class AskUserQuestionsRegistry {
 
 ### 3.5 StreamingWsHandler 处理
 
-**文件**: `backend/src/main/java/com/agentworkbench/session/ws/StreamingWsHandler.java`
+**文件**: `backend/src/main/java/cn/etarch/mao/session/ws/StreamingWsHandler.java`
 
 在 `handleTextMessage()` 的 switch 分支中新增：
 
@@ -356,7 +356,7 @@ AgentLoop 本身**不需要任何改动**。它只看到：
 
 ### 3.8 ToolResultSummarizer 扩展
 
-**文件**: `backend/src/main/java/com/agentworkbench/session/util/ToolResultSummarizer.java`
+**文件**: `backend/src/main/java/cn/etarch/mao/session/util/ToolResultSummarizer.java`
 
 新增对 `ask_user_questions` 的摘要生成：
 

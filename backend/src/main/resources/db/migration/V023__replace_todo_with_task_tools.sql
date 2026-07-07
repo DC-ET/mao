@@ -18,28 +18,28 @@ BEGIN
         SELECT 'task_create', 'Create todo items to break down multi-step work.', 'BUILTIN',
          '{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string"},"description":{"type":"string"},"active_form":{"type":"string"}},"required":["content"]}}},"required":["items"]}',
          '{"type":"object"}',
-         'com.agentworkbench.harness.tool.impl.TaskCreateTool', 1, 'ACTIVE', NOW(), NOW()
+         'cn.etarch.mao.harness.tool.impl.TaskCreateTool', 1, 'ACTIVE', NOW(), NOW()
         FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `tool` WHERE `name` = 'task_create');
 
         INSERT INTO `tool` (`name`, `description`, `type`, `input_schema`, `output_schema`, `impl_class`, `creator_id`, `status`, `created_at`, `updated_at`)
         SELECT 'task_update', 'Update the status or content of existing todo items.', 'BUILTIN',
          '{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"integer"},"status":{"type":"string","enum":["pending","in_progress","completed"]},"content":{"type":"string"},"description":{"type":"string"},"active_form":{"type":"string"}},"required":["id"]}}},"required":["items"]}',
          '{"type":"object"}',
-         'com.agentworkbench.harness.tool.impl.TaskUpdateTool', 1, 'ACTIVE', NOW(), NOW()
+         'cn.etarch.mao.harness.tool.impl.TaskUpdateTool', 1, 'ACTIVE', NOW(), NOW()
         FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `tool` WHERE `name` = 'task_update');
 
         INSERT INTO `tool` (`name`, `description`, `type`, `input_schema`, `output_schema`, `impl_class`, `creator_id`, `status`, `created_at`, `updated_at`)
         SELECT 'task_list', 'List all todo items and check progress.', 'BUILTIN',
          '{"type":"object","properties":{}}',
          '{"type":"object"}',
-         'com.agentworkbench.harness.tool.impl.TaskListTool', 1, 'ACTIVE', NOW(), NOW()
+         'cn.etarch.mao.harness.tool.impl.TaskListTool', 1, 'ACTIVE', NOW(), NOW()
         FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `tool` WHERE `name` = 'task_list');
 
         INSERT INTO `tool` (`name`, `description`, `type`, `input_schema`, `output_schema`, `impl_class`, `creator_id`, `status`, `created_at`, `updated_at`)
         SELECT 'task_delete', 'Delete todo items that are no longer relevant.', 'BUILTIN',
          '{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}}},"required":["items"]}',
          '{"type":"object"}',
-         'com.agentworkbench.harness.tool.impl.TaskDeleteTool', 1, 'ACTIVE', NOW(), NOW()
+         'cn.etarch.mao.harness.tool.impl.TaskDeleteTool', 1, 'ACTIVE', NOW(), NOW()
         FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `tool` WHERE `name` = 'task_delete');
 
         -- Migrate agent_tool references: replace old todo tool with all 4 new task tools

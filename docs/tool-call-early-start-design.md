@@ -32,7 +32,7 @@ WsStreamingEventListener.onToolCallStart() → send("tool_call_start", {tool_cal
 
 #### 1. AgentLoop.java — mergeToolCall 中检测首次可识别
 
-**文件**: `backend/src/main/java/com/agentworkbench/harness/core/AgentLoop.java`
+**文件**: `backend/src/main/java/cn/etarch/mao/harness/core/AgentLoop.java`
 
 修改 `mergeToolCall` 方法，在 id + name 首次同时具备时回调通知：
 
@@ -71,7 +71,7 @@ if (!toolCalls.isEmpty()) {
 
 #### 2. AgentEventListener.java — 新增 onToolCallArgsDelta
 
-**文件**: `backend/src/main/java/com/agentworkbench/harness/core/AgentEventListener.java`
+**文件**: `backend/src/main/java/cn/etarch/mao/harness/core/AgentEventListener.java`
 
 ```java
 /** 工具调用参数增量更新（LLM 流式输出 arguments 碎片时） */
@@ -119,7 +119,7 @@ if (delta.getToolCalls() != null) {
 
 #### 4. WsStreamingEventListener.java — 实现新事件
 
-**文件**: `backend/src/main/java/com/agentworkbench/session/ws/WsStreamingEventListener.java`
+**文件**: `backend/src/main/java/cn/etarch/mao/session/ws/WsStreamingEventListener.java`
 
 ```java
 @Override

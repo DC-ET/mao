@@ -11,8 +11,8 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.agentworkbench</groupId>
-    <artifactId>workbench-backend</artifactId>
+    <groupId>cn.etarch.mao</groupId>
+    <artifactId>mao-server</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <name>Mao Backend</name>
     <description>Mao Server — enterprise self-hosted AI Agent platform</description>

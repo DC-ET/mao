@@ -8,7 +8,7 @@ server:
 
 logging:
   level:
-    com.agentworkbench: DEBUG
+    cn.etarch.mao: DEBUG
     org.springframework.security: INFO
     org.springframework.web: INFO
     org.apache.ibatis: INFO
@@ -56,7 +56,7 @@ mybatis-plus:
       logic-delete-field: deleted
       logic-delete-value: 1
       logic-not-delete-value: 0
-  type-aliases-package: com.agentworkbench.**.entity
+  type-aliases-package: cn.etarch.mao.**.entity
 
 # SpringDoc
 springdoc:

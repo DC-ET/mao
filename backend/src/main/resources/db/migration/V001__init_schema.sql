@@ -211,6 +211,6 @@ SELECT 2, id FROM `permission` WHERE `code` IN ('agent:read', 'model:read') AND 
 
 -- 默认管理员账号 (admin / admin123)
 INSERT IGNORE INTO `user` (`id`, `username`, `display_name`, `email`, `auth_type`, `password_hash`, `status`) VALUES
-(1, 'admin', '管理员', 'admin@agentworkbench.com', 'LOCAL', '$2b$12$HDT85UDBpTv30P8kKrs1euencz94fhd1tw/W7zrOjyF8WrDQF1Z3G', 1);
+(1, 'admin', '管理员', 'admin@mao.local', 'LOCAL', '$2b$12$HDT85UDBpTv30P8kKrs1euencz94fhd1tw/W7zrOjyF8WrDQF1Z3G', 1);
 
 INSERT IGNORE INTO `user_role` (`user_id`, `role_id`) VALUES (1, 1);

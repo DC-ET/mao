@@ -53,7 +53,7 @@
 `Skill.java` → `Tool.java`
 
 ```java
-package com.agentworkbench.harness.tool;
+package cn.etarch.mao.harness.tool;
 
 public interface Tool {
     String getName();
@@ -64,7 +64,7 @@ public interface Tool {
 }
 ```
 
-路径：`backend/src/main/java/com/agentworkbench/harness/tool/Tool.java`
+路径：`backend/src/main/java/cn/etarch/mao/harness/tool/Tool.java`
 
 #### 1.2 实现类重命名
 
@@ -86,7 +86,7 @@ public interface Tool {
 
 `SkillRegistry.java` → `ToolRegistry.java`
 
-路径：`backend/src/main/java/com/agentworkbench/harness/tool/ToolRegistry.java`
+路径：`backend/src/main/java/cn/etarch/mao/harness/tool/ToolRegistry.java`
 
 ```java
 @Component
@@ -100,7 +100,7 @@ public class ToolRegistry {
 
 `SkillDispatcher.java` → `ToolDispatcher.java`
 
-路径：`backend/src/main/java/com/agentworkbench/harness/tool/ToolDispatcher.java`
+路径：`backend/src/main/java/cn/etarch/mao/harness/tool/ToolDispatcher.java`
 
 - `SkillRegistry` → `ToolRegistry`
 - `skillRegistry.getSkill()` → `toolRegistry.getTool()`
@@ -210,7 +210,7 @@ description: Git 工作流规范与最佳实践
 
 #### 3.2 SkillLoader 实现
 
-新增文件：`backend/src/main/java/com/agentworkbench/harness/skill/SkillLoader.java`
+新增文件：`backend/src/main/java/cn/etarch/mao/harness/skill/SkillLoader.java`
 
 ```java
 @Component
@@ -265,7 +265,7 @@ Spring Boot 已自带 SnakeYAML，无需额外依赖。
 
 #### 3.4 `load_skill` 工具实现
 
-新增文件：`backend/src/main/java/com/agentworkbench/harness/tool/LoadSkillTool.java`
+新增文件：`backend/src/main/java/cn/etarch/mao/harness/tool/LoadSkillTool.java`
 
 ```java
 @Component

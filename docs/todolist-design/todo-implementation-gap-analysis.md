@@ -22,7 +22,7 @@
 
 ### 现状
 
-[PromptEngine.java](backend/src/main/java/com/agentworkbench/harness/core/PromptEngine.java) 的 `buildSystemPrompt()` 方法（L51-90）组装 system prompt 时，只包含 Agent 人格、Working Directory、Current Time、Available Skills 四个段落，**完全没有注入 todo 工具的使用指令**。LLM 仅通过 tool definition 的 description 知道 `todo` 工具存在，但不知道"应该在什么场景下使用它"。
+[PromptEngine.java](backend/src/main/java/cn/etarch/mao/harness/core/PromptEngine.java) 的 `buildSystemPrompt()` 方法（L51-90）组装 system prompt 时，只包含 Agent 人格、Working Directory、Current Time、Available Skills 四个段落，**完全没有注入 todo 工具的使用指令**。LLM 仅通过 tool definition 的 description 知道 `todo` 工具存在，但不知道"应该在什么场景下使用它"。
 
 ### 改进
 
@@ -347,7 +347,7 @@ private String handleList(long sessionId) throws Exception {
 **Step 1 — 新增 4 个工具类**
 
 ```
-backend/src/main/java/com/agentworkbench/harness/tool/impl/
+backend/src/main/java/cn/etarch/mao/harness/tool/impl/
 ├── TaskCreateTool.java    // 仅处理 create，description 聚焦创建场景
 ├── TaskUpdateTool.java    // 仅处理 update，description 聚焦状态转换规则
 ├── TaskListTool.java      // 仅处理 list，description 聚焦查看进度
@@ -617,7 +617,7 @@ async function updateTodoManually(sessionId: string, todoId: number, action: str
 
 ### AgentLoop 残留注释
 
-[AgentLoop.java:213](backend/src/main/java/com/agentworkbench/harness/core/AgentLoop.java#L213) 的 Javadoc 写的是 "Returns true if any tool call was to the 'todo' skill"，但方法签名已改为 `void`，且 "todo skill" 是旧称。清理为：
+[AgentLoop.java:213](backend/src/main/java/cn/etarch/mao/harness/core/AgentLoop.java#L213) 的 Javadoc 写的是 "Returns true if any tool call was to the 'todo' skill"，但方法签名已改为 `void`，且 "todo skill" 是旧称。清理为：
 
 ```java
 /**
@@ -628,7 +628,7 @@ private void executeToolCalls(List<ChatRequest.ToolCall> pendingCalls,
 
 ### ToolResultSummarizer 适配
 
-[ToolResultSummarizer.java](backend/src/main/java/com/agentworkbench/session/util/ToolResultSummarizer.java) 需要适配新的 4 个工具名，为 `task_create`、`task_update`、`task_delete`、`task_list` 提供人类可读的摘要逻辑。
+[ToolResultSummarizer.java](backend/src/main/java/cn/etarch/mao/session/util/ToolResultSummarizer.java) 需要适配新的 4 个工具名，为 `task_create`、`task_update`、`task_delete`、`task_list` 提供人类可读的摘要逻辑。
 
 ---
 

@@ -50,7 +50,7 @@
     "wait-on": "^9.0.10"
   },
   "build": {
-    "appId": "com.agentworkbench.desktop",
+    "appId": "cn.etarch.mao.desktop",
     "productName": "Mao",
     "icon": "public/AppIcon.icns",
     "files": [

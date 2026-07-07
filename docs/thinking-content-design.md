@@ -107,7 +107,7 @@ ALTER TABLE `message` ADD COLUMN `thinking_content` MEDIUMTEXT NULL COMMENT '模
 
 #### Message 实体
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/entity/Message.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/entity/Message.java`
 
 在 `content` 字段之后新增：
 
@@ -123,7 +123,7 @@ MyBatis-Plus 自动按驼峰转下划线映射到 `thinking_content` 列。
 
 #### AgentEventListener 接口
 
-**文件**：`backend/src/main/java/com/agentworkbench/harness/core/AgentEventListener.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/harness/core/AgentEventListener.java`
 
 在 `onToolCallArgsDelta` 方法之后新增：
 
@@ -136,7 +136,7 @@ default void onThinkingDelta(String delta) {}
 
 #### AgentLoop — 提取 reasoning_content
 
-**文件**：`backend/src/main/java/com/agentworkbench/harness/core/AgentLoop.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/harness/core/AgentLoop.java`
 
 **改动 1**：在匿名 `StreamCallback` 中（约第 114 行），新增 `thinkingBuilder`：
 
@@ -173,7 +173,7 @@ void onSaveAssistantMessage(String content, String thinkingContent,
 
 #### MessagePersistenceCallback 实现
 
-**文件**：`backend/src/main/java/com/agentworkbench/harness/core/HarnessService.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/harness/core/HarnessService.java`
 
 更新第 74 行的匿名实现：
 
@@ -189,7 +189,7 @@ public void onSaveAssistantMessage(String content, String thinkingContent,
 
 #### SessionService — 保存思考内容
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/service/SessionService.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/service/SessionService.java`
 
 **改动 1**：修改第一个 `saveMessage` 方法签名（第 139 行），新增 `thinkingContent` 参数：
 
@@ -215,7 +215,7 @@ sessionService.saveMessage(sessionId, "USER", messageContent, null, null, null, 
 
 #### SessionController.MessageVO — API 返回
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/controller/SessionController.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/controller/SessionController.java`
 
 **改动 1**：在 `MessageVO` 内部类（约第 371 行）新增字段：
 
@@ -235,7 +235,7 @@ vo.setThinkingContent(message.getThinkingContent());
 
 #### WsStreamingEventListener — 发送思考内容增量
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/ws/WsStreamingEventListener.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/ws/WsStreamingEventListener.java`
 
 在 `onThinkingEnd()` 方法之后（第 192 行之后）新增：
 
@@ -478,14 +478,14 @@ cd desktop && npm run build
 - `desktop/src/components/chat/ThinkingBlock.vue`
 
 ### 修改文件
-- `backend/src/main/java/com/agentworkbench/session/entity/Message.java`
-- `backend/src/main/java/com/agentworkbench/harness/core/AgentEventListener.java`
-- `backend/src/main/java/com/agentworkbench/harness/core/AgentLoop.java`
-- `backend/src/main/java/com/agentworkbench/harness/core/HarnessService.java`
-- `backend/src/main/java/com/agentworkbench/session/service/SessionService.java`
-- `backend/src/main/java/com/agentworkbench/session/ws/StreamingWsHandler.java`
-- `backend/src/main/java/com/agentworkbench/session/controller/SessionController.java`
-- `backend/src/main/java/com/agentworkbench/session/ws/WsStreamingEventListener.java`
+- `backend/src/main/java/cn/etarch/mao/session/entity/Message.java`
+- `backend/src/main/java/cn/etarch/mao/harness/core/AgentEventListener.java`
+- `backend/src/main/java/cn/etarch/mao/harness/core/AgentLoop.java`
+- `backend/src/main/java/cn/etarch/mao/harness/core/HarnessService.java`
+- `backend/src/main/java/cn/etarch/mao/session/service/SessionService.java`
+- `backend/src/main/java/cn/etarch/mao/session/ws/StreamingWsHandler.java`
+- `backend/src/main/java/cn/etarch/mao/session/controller/SessionController.java`
+- `backend/src/main/java/cn/etarch/mao/session/ws/WsStreamingEventListener.java`
 - `desktop/src/types/chat.ts`
 - `desktop/src/utils/chatMessage.ts`
 - `desktop/src/stores/session.ts`

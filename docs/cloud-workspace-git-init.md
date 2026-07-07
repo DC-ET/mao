@@ -58,7 +58,7 @@
 
 ### 4.1 SessionController — 新增请求参数
 
-**文件**: `backend/src/main/java/com/agentworkbench/session/controller/SessionController.java`
+**文件**: `backend/src/main/java/cn/etarch/mao/session/controller/SessionController.java`
 
 `CreateSessionRequest` DTO 新增字段：
 
@@ -75,7 +75,7 @@ public static class CreateSessionRequest {
 
 ### 4.2 SessionService — 核心逻辑
 
-**文件**: `backend/src/main/java/com/agentworkbench/session/service/SessionService.java`
+**文件**: `backend/src/main/java/cn/etarch/mao/session/service/SessionService.java`
 
 修改 `createSession()` 中 CLOUD 模式分支：
 
@@ -133,7 +133,7 @@ if ("CLOUD".equals(session.getExecutionMode())) {
 
 ### 4.3 Git Clone 实现
 
-**新增文件**: `backend/src/main/java/com/agentworkbench/session/service/GitOperationService.java`
+**新增文件**: `backend/src/main/java/cn/etarch/mao/session/service/GitOperationService.java`
 
 ```java
 @Service
@@ -211,7 +211,7 @@ public class GitOperationService {
 
 ### 4.4 Git URL 解析与校验
 
-**新增文件**: `backend/src/main/java/com/agentworkbench/session/util/GitUrlParser.java`
+**新增文件**: `backend/src/main/java/cn/etarch/mao/session/util/GitUrlParser.java`
 
 ```java
 public final class GitUrlParser {

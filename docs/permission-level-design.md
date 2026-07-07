@@ -39,7 +39,7 @@ private String permissionLevel;  // READ_ONLY | READ_WRITE | SMART | FULL
 
 ### 2.3 权限级别枚举
 
-新建 `PermissionLevel.java`（包 `com.agentworkbench.session.entity`）：
+新建 `PermissionLevel.java`（包 `cn.etarch.mao.session.entity`）：
 
 ```java
 public enum PermissionLevel {
@@ -195,7 +195,7 @@ streamingWsRegistry.send(userId, WsEvent.of("tool_execute", sessionId, Map.of(
 
 ### 4.5 DangerAssessor — 智能审批模式的 LLM 危险判断
 
-新建 `com.agentworkbench.harness.tool.DangerAssessor`：
+新建 `cn.etarch.mao.harness.tool.DangerAssessor`：
 
 ```java
 @Slf4j

@@ -561,7 +561,7 @@ watch(sessionIdParam, (newSid, oldSid) => {
 ### 新增
 
 ```
-backend/src/main/java/com/agentworkbench/session/ws/
+backend/src/main/java/cn/etarch/mao/session/ws/
   ├── StreamingWsHandler.java
   ├── StreamingWsRegistry.java
   └── WsStreamingEventListener.java

@@ -286,7 +286,7 @@ ALTER TABLE `session`
 
 #### B1. HarnessService — 新增 `executeSideFirstMessage()` 方法
 
-**文件**：`backend/src/main/java/com/agentworkbench/harness/core/HarnessService.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/harness/core/HarnessService.java`
 
 **修改内容**：
 
@@ -399,7 +399,7 @@ private String generateContextSummary(Long parentSessionId) {
 
 #### B2. StreamingWsHandler — 新增 `handleCreateSideSession` 方法
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/ws/StreamingWsHandler.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/ws/StreamingWsHandler.java`
 
 **修改内容**：
 
@@ -537,7 +537,7 @@ private void handleCancelSideTask(Long userId, JsonNode root) {
 
 #### B3. StreamingWsHandler.handleSendMessage() — 确认边路会话兼容性
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/ws/StreamingWsHandler.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/ws/StreamingWsHandler.java`
 
 **无需修改**。`handleSendMessage()` 按 `sessionId` 查找 session、校验状态、加锁执行。因为边路任务的 `sessionLock` 按 `sideSessionId` 建立，与主任务的 `sessionLock(parentSessionId)` 完全独立，天然支持并行。
 
@@ -548,7 +548,7 @@ private void handleCancelSideTask(Long userId, JsonNode root) {
 
 #### B4. SessionService — 新增方法
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/service/SessionService.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/service/SessionService.java`
 
 **修改内容**：
 

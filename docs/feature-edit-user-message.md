@@ -30,7 +30,7 @@ ALTER TABLE message ADD COLUMN updated_at DATETIME NULL COMMENT '消息更新时
 
 ### 2.2 Message 实体类更新
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/entity/Message.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/entity/Message.java`
 
 新增字段：
 
@@ -94,7 +94,7 @@ Response:
 
 ### 3.2 SessionService 新增方法
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/service/SessionService.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/service/SessionService.java`
 
 ```java
 /**
@@ -146,7 +146,7 @@ private String buildContent(String text, List<String> images) {
 
 ### 3.3 StreamingWsHandler 新增处理
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/ws/StreamingWsHandler.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/ws/StreamingWsHandler.java`
 
 在 `handleTextMessage` 方法中新增 `edit_and_resend` 类型处理：
 

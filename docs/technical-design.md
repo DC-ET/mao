@@ -79,7 +79,7 @@ mao/
 │   ├── pom.xml
 │   └── src/
 │       └── main/
-│           ├── java/com/agentworkbench/
+│           ├── java/cn/etarch/mao/
 │           │   ├── WorkbenchApplication.java
 │           │   ├── config/                 # 配置类
 │           │   │   ├── SecurityConfig.java

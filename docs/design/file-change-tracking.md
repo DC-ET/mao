@@ -82,7 +82,7 @@ CREATE TABLE message_file_change (
 
 ### 4.1 新增实体与 Mapper
 
-**`FileChange` 实体** — `backend/src/main/java/com/agentworkbench/session/entity/FileChange.java`
+**`FileChange` 实体** — `backend/src/main/java/cn/etarch/mao/session/entity/FileChange.java`
 
 ```java
 @Data
@@ -101,7 +101,7 @@ public class FileChange {
 }
 ```
 
-**`FileChangeMapper`** — `backend/src/main/java/com/agentworkbench/session/mapper/FileChangeMapper.java`
+**`FileChangeMapper`** — `backend/src/main/java/cn/etarch/mao/session/mapper/FileChangeMapper.java`
 
 ```java
 @Mapper
@@ -618,8 +618,8 @@ ALTER TABLE message_file_change
 ## 10. 文件清单
 
 ### 后端新增文件
-- `backend/src/main/java/com/agentworkbench/session/entity/FileChange.java`
-- `backend/src/main/java/com/agentworkbench/session/mapper/FileChangeMapper.java`
+- `backend/src/main/java/cn/etarch/mao/session/entity/FileChange.java`
+- `backend/src/main/java/cn/etarch/mao/session/mapper/FileChangeMapper.java`
 - `backend/src/main/resources/db/migration/V037__add_message_file_change.sql`
 
 ### 后端修改文件

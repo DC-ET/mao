@@ -54,7 +54,7 @@ Spring Boot 启动
 
 ### 4.1 CrashRecoveryRunner — 启动钩子
 
-**新增文件**：`backend/src/main/java/com/agentworkbench/harness/core/CrashRecoveryRunner.java`
+**新增文件**：`backend/src/main/java/cn/etarch/mao/harness/core/CrashRecoveryRunner.java`
 
 **职责**：Spring Boot 启时扫描遗留的 RUNNING session，逐个提交恢复任务。
 
@@ -133,7 +133,7 @@ public class CrashRecoveryRunner implements ApplicationRunner {
 
 ### 4.2 尾部不完整消息清理
 
-**改动文件**：`backend/src/main/java/com/agentworkbench/session/service/SessionService.java`
+**改动文件**：`backend/src/main/java/cn/etarch/mao/session/service/SessionService.java`
 
 新增方法 `cleanupIncompleteTail(sessionId)`，逻辑如下：
 
@@ -196,7 +196,7 @@ public int cleanupIncompleteTail(Long sessionId) {
 
 ### 4.3 Session 实体与 Phase 管理
 
-**改动文件**：`backend/src/main/java/com/agentworkbench/session/entity/Session.java`
+**改动文件**：`backend/src/main/java/cn/etarch/mao/session/entity/Session.java`
 
 更新 `phase` 字段注释：
 
@@ -205,7 +205,7 @@ public int cleanupIncompleteTail(Long sessionId) {
 private String phase;
 ```
 
-**改动文件**：`backend/src/main/java/com/agentworkbench/session/service/SessionService.java`
+**改动文件**：`backend/src/main/java/cn/etarch/mao/session/service/SessionService.java`
 
 `updatePhase()` 方法需要处理 `RESUMING` phase。`RESUMING` 不应重置 `startedAt`（因为恢复的耗时应计入总 elapsed），但应更新 `lastActivityAt`：
 
@@ -239,7 +239,7 @@ private boolean isTerminalPhase(String phase) {
 
 ### 4.4 清扫逻辑调整
 
-**改动文件**：`backend/src/main/java/com/agentworkbench/session/service/SessionService.java`
+**改动文件**：`backend/src/main/java/cn/etarch/mao/session/service/SessionService.java`
 
 `sweepStaleRunningSessions()` 需要同时处理 `RESUMING` 状态的 session。如果一个 session 在 RESUMING 状态停留超过阈值（说明恢复本身也失败了），也应清扫为 FAILED：
 
@@ -263,7 +263,7 @@ public void sweepStaleRunningSessions() {
 
 ### 4.5 Dashboard 查询适配
 
-**改动文件**：`backend/src/main/java/com/agentworkbench/session/service/SessionService.java`
+**改动文件**：`backend/src/main/java/cn/etarch/mao/session/service/SessionService.java`
 
 `listSessionsForDashboard()` 中，`RESUMING` 应归入 running 分组：
 
@@ -279,11 +279,11 @@ public void sweepStaleRunningSessions() {
 
 ### 4.6 线程池 Bean 提取
 
-**改动文件**：`backend/src/main/java/com/agentworkbench/session/ws/StreamingWsHandler.java`
+**改动文件**：`backend/src/main/java/cn/etarch/mao/session/ws/StreamingWsHandler.java`
 
 当前 `agentExecutor` 在 `StreamingWsHandler` 构造函数中创建为私有字段。需要将其提取为独立的 `@Bean`。
 
-**新增文件或改动**：`backend/src/main/java/com/agentworkbench/config/AgentExecutorConfig.java`
+**新增文件或改动**：`backend/src/main/java/cn/etarch/mao/config/AgentExecutorConfig.java`
 
 ```java
 @Configuration
@@ -309,7 +309,7 @@ public class AgentExecutorConfig {
 
 ### 4.7 HarnessService.execute() 适配
 
-**改动文件**：`backend/src/main/java/com/agentworkbench/harness/core/HarnessService.java`
+**改动文件**：`backend/src/main/java/cn/etarch/mao/harness/core/HarnessService.java`
 
 当前 `execute()` 的 `userContent` 参数在恢复场景下为 null（用户消息已在 DB 中）。需要确认 `buildContext()` 能正确处理这种情况。
 
@@ -319,13 +319,13 @@ public class AgentExecutorConfig {
 
 ### 4.8 WsStreamingEventListener 的 userId 可空处理
 
-**改动文件**：`backend/src/main/java/com/agentworkbench/session/ws/WsStreamingEventListener.java`
+**改动文件**：`backend/src/main/java/cn/etarch/mao/session/ws/WsStreamingEventListener.java`
 
 恢复场景下，客户端可能尚未重连，`userId` 可能没有对应的 WS 连接。当前 `send()` 方法调用 `registry.send(userId, ...)` — 如果 userId 没有注册的 WS session，该方法应静默忽略（当前实现已是如此，无需改动）。
 
 但需要确认：恢复任务期间如果客户端重连并 subscribe，`handleSubscribe()` 中的 `session_snapshot` 逻辑需要识别 `RESUMING` 状态。
 
-**改动文件**：`backend/src/main/java/com/agentworkbench/session/ws/StreamingWsHandler.java`
+**改动文件**：`backend/src/main/java/cn/etarch/mao/session/ws/StreamingWsHandler.java`
 
 `handleSubscribe()` 方法：
 
@@ -392,7 +392,7 @@ case 'session_status':
 
 ### 4.10 AgentLoop 的 finally 块与恢复
 
-**改动文件**：`backend/src/main/java/com/agentworkbench/harness/core/AgentLoop.java`
+**改动文件**：`backend/src/main/java/cn/etarch/mao/harness/core/AgentLoop.java`
 
 `execute()` 的 `finally` 块（`AgentLoop.java:212-219`）会清理 cancelFlag 和 shell session。恢复场景下这是正确的行为 — 恢复完成后也应清理这些资源。**无需改动**。
 

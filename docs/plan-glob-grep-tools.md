@@ -8,9 +8,9 @@
 
 | 操作 | 文件 |
 |------|------|
-| 新增 | `backend/src/main/java/com/agentworkbench/harness/tool/impl/GlobSearchTool.java` |
-| 新增 | `backend/src/main/java/com/agentworkbench/harness/tool/impl/GrepSearchTool.java` |
-| 修改 | `backend/src/main/java/com/agentworkbench/session/util/ToolResultSummarizer.java` |
+| 新增 | `backend/src/main/java/cn/etarch/mao/harness/tool/impl/GlobSearchTool.java` |
+| 新增 | `backend/src/main/java/cn/etarch/mao/harness/tool/impl/GrepSearchTool.java` |
+| 修改 | `backend/src/main/java/cn/etarch/mao/session/util/ToolResultSummarizer.java` |
 | 修改 | `desktop/electron/main.cjs` — `executeToolByName` 增加两个 case + 对应 handler |
 
 **不需要改动**：ToolRegistry、ToolDispatcher、PromptEngine、HarnessService — 自动注册 + 自动路由。
@@ -19,7 +19,7 @@
 
 ## 一、GlobSearchTool
 
-**路径**：`backend/src/main/java/com/agentworkbench/harness/tool/impl/GlobSearchTool.java`
+**路径**：`backend/src/main/java/cn/etarch/mao/harness/tool/impl/GlobSearchTool.java`
 
 ### 类结构
 
@@ -88,7 +88,7 @@ private boolean isRgAvailable() {
 
 ## 二、GrepSearchTool
 
-**路径**：`backend/src/main/java/com/agentworkbench/harness/tool/impl/GrepSearchTool.java`
+**路径**：`backend/src/main/java/cn/etarch/mao/harness/tool/impl/GrepSearchTool.java`
 
 ### 类结构
 

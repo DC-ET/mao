@@ -120,7 +120,7 @@
 ### 1. AgentDefinition — 子智能体类型定义
 
 ```java
-package com.agentworkbench.harness.subagent;
+package cn.etarch.mao.harness.subagent;
 
 import lombok.Builder;
 import lombok.Data;
@@ -165,7 +165,7 @@ public class AgentDefinition {
 ### 2. AgentDefinitionRegistry — 子智能体类型注册中心
 
 ```java
-package com.agentworkbench.harness.subagent;
+package cn.etarch.mao.harness.subagent;
 
 import org.springframework.stereotype.Component;
 import java.util.List;
@@ -251,20 +251,20 @@ public class AgentDefinitionRegistry {
 这是主 Agent 可以调用的工具，实现 `Tool` 接口。
 
 ```java
-package com.agentworkbench.harness.subagent;
+package cn.etarch.mao.harness.subagent;
 
-import com.agentworkbench.harness.core.*;
-import com.agentworkbench.harness.llm.ChatRequest;
-import com.agentworkbench.harness.llm.LlmModelConfig;
-import com.agentworkbench.harness.tool.Tool;
-import com.agentworkbench.harness.tool.ToolRegistry;
-import com.agentworkbench.model.entity.LlmModel;
-import com.agentworkbench.model.mapper.LlmModelMapper;
-import com.agentworkbench.session.entity.Session;
-import com.agentworkbench.session.mapper.SessionMapper;
-import com.agentworkbench.session.service.SessionService;
-import com.agentworkbench.session.ws.StreamingWsRegistry;
-import com.agentworkbench.session.ws.WsEvent;
+import cn.etarch.mao.harness.core.*;
+import cn.etarch.mao.harness.llm.ChatRequest;
+import cn.etarch.mao.harness.llm.LlmModelConfig;
+import cn.etarch.mao.harness.tool.Tool;
+import cn.etarch.mao.harness.tool.ToolRegistry;
+import cn.etarch.mao.model.entity.LlmModel;
+import cn.etarch.mao.model.mapper.LlmModelMapper;
+import cn.etarch.mao.session.entity.Session;
+import cn.etarch.mao.session.mapper.SessionMapper;
+import cn.etarch.mao.session.service.SessionService;
+import cn.etarch.mao.session.ws.StreamingWsRegistry;
+import cn.etarch.mao.session.ws.WsEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -637,7 +637,7 @@ public class DelegateTool implements Tool {
         return ctx;
     }
 
-    private List<com.agentworkbench.harness.tool.Tool> resolveTools(AgentDefinition definition) {
+    private List<cn.etarch.mao.harness.tool.Tool> resolveTools(AgentDefinition definition) {
         List<String> allowed = definition.getTools();
         Set<String> disallowed = definition.getDisallowedTools();
 
@@ -645,7 +645,7 @@ public class DelegateTool implements Tool {
             allowed = null; // 全部工具
         }
 
-        List<com.agentworkbench.harness.tool.Tool> tools;
+        List<cn.etarch.mao.harness.tool.Tool> tools;
         if (allowed != null) {
             tools = toolRegistry.getToolsByNames(allowed);
         } else {
@@ -735,11 +735,11 @@ public class DelegateTool implements Tool {
 ### 4. SubAgentResultCollector — 结果收集器
 
 ```java
-package com.agentworkbench.harness.subagent;
+package cn.etarch.mao.harness.subagent;
 
-import com.agentworkbench.harness.core.AgentEventListener;
-import com.agentworkbench.harness.llm.ChatRequest;
-import com.agentworkbench.harness.llm.ChatUsage;
+import cn.etarch.mao.harness.core.AgentEventListener;
+import cn.etarch.mao.harness.llm.ChatRequest;
+import cn.etarch.mao.harness.llm.ChatUsage;
 import lombok.Getter;
 
 /**
@@ -846,13 +846,13 @@ public class SubAgentResultCollector implements AgentEventListener {
 当需要在前端实时显示子智能体的执行过程时使用。
 
 ```java
-package com.agentworkbench.harness.subagent;
+package cn.etarch.mao.harness.subagent;
 
-import com.agentworkbench.harness.core.AgentEventListener;
-import com.agentworkbench.harness.llm.ChatRequest;
-import com.agentworkbench.harness.llm.ChatUsage;
-import com.agentworkbench.session.ws.StreamingWsRegistry;
-import com.agentworkbench.session.ws.WsEvent;
+import cn.etarch.mao.harness.core.AgentEventListener;
+import cn.etarch.mao.harness.llm.ChatRequest;
+import cn.etarch.mao.harness.llm.ChatUsage;
+import cn.etarch.mao.session.ws.StreamingWsRegistry;
+import cn.etarch.mao.session.ws.WsEvent;
 import lombok.Getter;
 
 import java.util.Map;

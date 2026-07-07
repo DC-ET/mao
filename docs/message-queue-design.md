@@ -214,7 +214,7 @@ CREATE TABLE message_queue (
 
 ### 5.1 新增实体类
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/entity/MessageQueue.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/entity/MessageQueue.java`
 
 ```java
 @Data
@@ -239,7 +239,7 @@ public class MessageQueue {
 
 ### 5.2 新增 Mapper
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/mapper/MessageQueueMapper.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/mapper/MessageQueueMapper.java`
 
 ```java
 @Mapper
@@ -249,7 +249,7 @@ public interface MessageQueueMapper extends BaseMapper<MessageQueue> {
 
 ### 5.3 新增 MessageQueueService
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/service/MessageQueueService.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/service/MessageQueueService.java`
 
 核心方法：
 
@@ -452,7 +452,7 @@ private void handleReorderQueueMessage(Long sessionId, Long userId, Map<String, 
 
 ### 5.5 修改 SessionService - 自动消费钩子
 
-**文件**：`backend/src/main/java/com/agentworkbench/session/service/SessionService.java`
+**文件**：`backend/src/main/java/cn/etarch/mao/session/service/SessionService.java`
 
 在 `updatePhase()` 方法中，当 phase 变为终态（IDLE/COMPLETED/FAILED/CANCELLED）时，检查队列并自动消费：
 

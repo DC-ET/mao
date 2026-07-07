@@ -92,7 +92,7 @@ MySQL 8，Flyway 迁移脚本在 `backend/src/main/resources/db/migration/`（46
 
 **后端**：
 - Java 17 + Lombok（`@Data`、`@Slf4j`、`@RequiredArgsConstructor`）
-- MyBatis-Plus：下划线转驼峰，逻辑删除（`deleted` 字段），实体扫描 `com.agentworkbench.**.entity`
+- MyBatis-Plus：下划线转驼峰，逻辑删除（`deleted` 字段），实体扫描 `cn.etarch.mao.**.entity`
 - snake_case 表名/列名，BIGINT 自增主键，`created_at`/`updated_at` 时间戳
 
 **前端**：
