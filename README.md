@@ -1,10 +1,11 @@
-# Mao
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+<h1 align="center">Mao</h1>
 
 <p align="center">
   <img src="docs/logo.png" alt="Mao Logo" width="96" />
 </p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Mao 面向希望把 AI Agent 纳入正式 IT 体系的企业。许多团队已经在用各类智能体工具，但配置分散、权限难管、调用难以追溯——Mao 想解决的就是这件事：提供一个可私有化部署的统一工作台，让 Agent、模型、用户与审计集中在一处管理。
 
