@@ -11,12 +11,57 @@
         </div>
       </template>
 
+      <el-form :inline="true" class="search-form">
+        <el-form-item label="关键词">
+          <el-input
+            v-model="filters.keyword"
+            clearable
+            placeholder="名称 / 模型标识 / 供应商"
+            style="width: 220px"
+            @keyup.enter="handleSearch"
+            @clear="handleSearch"
+          />
+        </el-form-item>
+        <el-form-item label="供应商">
+          <el-select v-model="filters.provider" clearable filterable placeholder="全部供应商" style="width: 150px">
+            <el-option v-for="provider in providerOptions" :key="provider" :label="provider" :value="provider" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="filters.status" clearable placeholder="全部" style="width: 120px">
+            <el-option label="启用" :value="1" />
+            <el-option label="禁用" :value="0" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="视觉">
+          <el-select v-model="filters.supportsVision" clearable placeholder="全部" style="width: 120px">
+            <el-option label="支持" :value="1" />
+            <el-option label="不支持" :value="0" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="默认">
+          <el-select v-model="filters.isDefault" clearable placeholder="全部" style="width: 120px">
+            <el-option label="默认" :value="1" />
+            <el-option label="非默认" :value="0" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="handleSearch">查询</el-button>
+          <el-button @click="handleReset">重置</el-button>
+        </el-form-item>
+      </el-form>
+
       <el-table :data="models" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="名称" width="150" />
         <el-table-column prop="provider" label="供应商" width="120" />
         <el-table-column prop="modelId" label="模型标识" width="150" />
         <el-table-column prop="baseUrl" label="API 地址" min-width="200" show-overflow-tooltip />
+        <el-table-column label="上下文窗口" width="120" align="right">
+          <template #default="{ row }">
+            {{ row.contextWindowTokens ? row.contextWindowTokens.toLocaleString() : '-' }}
+          </template>
+        </el-table-column>
         <el-table-column label="视觉" width="80" align="center">
           <template #default="{ row }">
             <el-tag :type="row.supportsVision ? 'success' : 'info'" size="small">
@@ -35,6 +80,9 @@
               {{ row.status === 1 ? '启用' : '禁用' }}
             </el-tag>
           </template>
+        </el-table-column>
+        <el-table-column label="调用消息" width="100" align="right">
+          <template #default="{ row }">{{ modelStat(row.id).messageCount || 0 }}</template>
         </el-table-column>
         <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
@@ -77,34 +125,67 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import ModelFormDialog from './ModelFormDialog.vue'
 
 const loading = ref(false)
 const models = ref<any[]>([])
+const modelStats = ref<any[]>([])
+const providerOptions = ref<string[]>([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const dialogVisible = ref(false)
 const currentModel = ref<any>(null)
 const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
+const filters = reactive<{
+  keyword: string
+  provider: string
+  status?: number
+  supportsVision?: number
+  isDefault?: number
+}>({
+  keyword: '',
+  provider: '',
+  status: undefined,
+  supportsVision: undefined,
+  isDefault: undefined
+})
 
 async function fetchModels() {
   loading.value = true
   try {
-    const { data } = await api.get('/models', {
-      params: {
-        page: currentPage.value,
-        size: pageSize.value
-      }
-    })
+    const params: Record<string, string | number> = {
+      page: currentPage.value,
+      size: pageSize.value
+    }
+    if (filters.keyword) params.keyword = filters.keyword
+    if (filters.provider) params.provider = filters.provider
+    if (filters.status !== undefined) params.status = filters.status
+    if (filters.supportsVision !== undefined) params.supportsVision = filters.supportsVision
+    if (filters.isDefault !== undefined) params.isDefault = filters.isDefault
+
+    const [{ data }, summaryRes] = await Promise.all([
+      api.get('/models', { params }),
+      api.get('/admin/analytics/summary')
+    ])
     models.value = data?.records || []
+    modelStats.value = summaryRes.data?.modelStats || []
     total.value = data?.total || 0
   } finally {
     loading.value = false
   }
+}
+
+function modelStat(id: number) {
+  return modelStats.value.find(stat => stat.modelId === id) || {}
+}
+
+async function fetchProviderOptions() {
+  const { data } = await api.get('/models/providers')
+  providerOptions.value = data || []
 }
 
 function handleCreate() {
@@ -135,6 +216,20 @@ async function handleEdit(row: any) {
 function handleSizeChange() {
   currentPage.value = 1
   fetchModels()
+}
+
+function handleSearch() {
+  currentPage.value = 1
+  fetchModels()
+}
+
+function handleReset() {
+  filters.keyword = ''
+  filters.provider = ''
+  filters.status = undefined
+  filters.supportsVision = undefined
+  filters.isDefault = undefined
+  handleSearch()
 }
 
 async function handleTest(row: any) {
@@ -177,7 +272,10 @@ async function handleToggleStatus(row: any) {
   }
 }
 
-onMounted(fetchModels)
+onMounted(() => {
+  fetchProviderOptions()
+  fetchModels()
+})
 </script>
 
 <style scoped>
@@ -191,5 +289,9 @@ onMounted(fetchModels)
   display: flex;
   justify-content: flex-end;
   margin-top: 20px;
+}
+
+.search-form {
+  margin-bottom: 16px;
 }
 </style>

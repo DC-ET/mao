@@ -1,5 +1,16 @@
 <template>
   <div class="session-list">
+    <el-row :gutter="16" class="session-metrics">
+      <el-col :span="6" v-for="item in phaseMetrics" :key="item.label">
+        <el-card>
+          <div class="metric">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <el-card>
       <template #header>
         <div class="card-header">
@@ -30,6 +41,12 @@
             <el-option v-for="p in phaseOptions" :key="p.value" :label="p.label" :value="p.value" />
           </el-select>
         </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="filters.status" placeholder="ACTIVE" clearable style="width: 120px">
+            <el-option label="ACTIVE" value="ACTIVE" />
+            <el-option label="ARCHIVED" value="ARCHIVED" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" placeholder="标题/摘要" clearable style="width: 160px" @clear="handleSearch" />
         </el-form-item>
@@ -58,6 +75,16 @@
           </template>
         </el-table-column>
         <el-table-column prop="contextTokens" label="上下文Token" width="110" align="right" />
+        <el-table-column label="Token 水位" width="110">
+          <template #default="{ row }">
+            <el-progress
+              :percentage="tokenPercent(row)"
+              :stroke-width="8"
+              :show-text="false"
+              :status="tokenPercent(row) > 80 ? 'exception' : undefined"
+            />
+          </template>
+        </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="170" />
         <el-table-column prop="lastActivityAt" label="最后活动" width="170" />
         <el-table-column label="操作" width="80" fixed="right">
@@ -83,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { computed, ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api'
 
@@ -99,6 +126,7 @@ const filters = reactive({
   agentId: null as number | null,
   executionMode: '' as string,
   phase: '' as string,
+  status: '' as string,
   keyword: '' as string
 })
 
@@ -112,6 +140,13 @@ const phaseOptions = [
   { label: 'FAILED', value: 'FAILED' },
   { label: 'CANCELLED', value: 'CANCELLED' }
 ]
+
+const phaseMetrics = computed(() => [
+  { label: '当前页会话', value: sessions.value.length },
+  { label: '运行中', value: sessions.value.filter(s => s.phase === 'RUNNING').length },
+  { label: '已完成', value: sessions.value.filter(s => s.phase === 'COMPLETED').length },
+  { label: '失败/取消', value: sessions.value.filter(s => ['FAILED', 'CANCELLED'].includes(s.phase)).length }
+])
 
 function phaseTagType(phase: string): '' | 'success' | 'danger' | 'warning' | 'info' {
   switch (phase) {
@@ -134,6 +169,7 @@ async function fetchSessions() {
     if (filters.agentId) params.agentId = filters.agentId
     if (filters.executionMode) params.executionMode = filters.executionMode
     if (filters.phase) params.phase = filters.phase
+    if (filters.status) params.status = filters.status
     if (filters.keyword) params.keyword = filters.keyword
 
     const { data } = await api.get('/admin/sessions', { params })
@@ -163,6 +199,7 @@ function handleReset() {
   filters.agentId = null
   filters.executionMode = ''
   filters.phase = ''
+  filters.status = ''
   filters.keyword = ''
   currentPage.value = 1
   fetchSessions()
@@ -177,6 +214,15 @@ function handleView(row: any) {
   router.push(`/sessions/${row.id}`)
 }
 
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 256000
+
+function tokenPercent(row: { contextTokens?: number; contextWindowTokens?: number }) {
+  const tokens = row.contextTokens
+  if (!tokens) return 0
+  const windowTokens = row.contextWindowTokens || DEFAULT_CONTEXT_WINDOW_TOKENS
+  return Math.min(100, Math.round((tokens / windowTokens) * 100))
+}
+
 onMounted(() => {
   fetchSessions()
   fetchOptions()
@@ -186,6 +232,25 @@ onMounted(() => {
 <style scoped>
 .session-list {
   width: 100%;
+}
+
+.session-metrics {
+  margin-bottom: 16px;
+}
+
+.metric {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.metric span {
+  color: #606266;
+}
+
+.metric strong {
+  font-size: 22px;
+  color: #303133;
 }
 
 .card-header {

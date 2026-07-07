@@ -246,7 +246,14 @@ public class SessionService {
             qw.eq(Session::getExecutionMode, executionMode);
         }
         if (phase != null && !phase.isEmpty()) {
-            qw.eq(Session::getPhase, phase);
+            if (phase.contains(",")) {
+                qw.in(Session::getPhase, Arrays.stream(phase.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .toList());
+            } else {
+                qw.eq(Session::getPhase, phase);
+            }
         }
         if (keyword != null && !keyword.isEmpty()) {
             qw.and(w -> w.like(Session::getTitle, keyword).or().like(Session::getSummary, keyword));

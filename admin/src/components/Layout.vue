@@ -41,6 +41,36 @@
           <span>用户管理</span>
         </el-menu-item>
 
+        <el-menu-item index="/roles">
+          <el-icon><Lock /></el-icon>
+          <span>角色权限</span>
+        </el-menu-item>
+
+        <el-menu-item index="/audit-logs">
+          <el-icon><DocumentChecked /></el-icon>
+          <span>审计日志</span>
+        </el-menu-item>
+
+        <el-menu-item index="/runtime">
+          <el-icon><Operation /></el-icon>
+          <span>运行监控</span>
+        </el-menu-item>
+
+        <el-menu-item index="/analytics">
+          <el-icon><TrendCharts /></el-icon>
+          <span>用量分析</span>
+        </el-menu-item>
+
+        <el-menu-item index="/settings">
+          <el-icon><Setting /></el-icon>
+          <span>系统设置</span>
+        </el-menu-item>
+
+        <el-menu-item index="/notifications">
+          <el-icon><Bell /></el-icon>
+          <span>通知管理</span>
+        </el-menu-item>
+
       </el-menu>
     </el-aside>
 

@@ -72,6 +72,8 @@ public class PermissionController {
         vo.setName(role.getName());
         vo.setCode(role.getCode());
         vo.setDescription(role.getDescription());
+        vo.setPermissionIds(permissionService.getRolePermissionIds(role.getId()));
+        vo.setUserCount(permissionService.countRoleUsers(role.getId()));
         return vo;
     }
 
@@ -113,6 +115,8 @@ public class PermissionController {
         private String name;
         private String code;
         private String description;
+        private List<Long> permissionIds;
+        private Long userCount;
     }
 
     @Data

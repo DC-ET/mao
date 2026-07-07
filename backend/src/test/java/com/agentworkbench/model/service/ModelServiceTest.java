@@ -40,8 +40,10 @@ class ModelServiceTest {
         when(modelMapper.selectPage(any(Page.class), any(QueryWrapper.class))).thenReturn(expectedPage);
         when(modelMapper.selectList(any(QueryWrapper.class))).thenReturn(active);
         when(modelMapper.selectOne(any(QueryWrapper.class))).thenReturn(defaultModel);
+        when(modelMapper.selectObjs(any(QueryWrapper.class))).thenReturn(List.of(" anthropic ", "openai", "", 7));
 
-        assertThat(service.listModels(2, 5)).isSameAs(expectedPage);
+        assertThat(service.listModels(2, 5, null, null, null, null, null)).isSameAs(expectedPage);
+        assertThat(service.listProviders()).containsExactly("anthropic", "openai");
         assertThat(service.listActiveModels()).isEqualTo(active);
         assertThat(service.getDefaultModel()).isSameAs(defaultModel);
     }
@@ -57,11 +59,12 @@ class ModelServiceTest {
     @Test
     void createModelAppliesDefaultsAndClearsExistingDefault() {
         LlmModel created = service.createModel(
-                "  Name  ", "openai", "https://api", "key", "gpt-4o", null, 1);
+                "  Name  ", "openai", "https://api", "key", "gpt-4o", null, 1, 128000);
 
         assertThat(created.getName()).isEqualTo("  Name  ");
         assertThat(created.getSupportsVision()).isZero();
         assertThat(created.getIsDefault()).isEqualTo(1);
+        assertThat(created.getContextWindowTokens()).isEqualTo(128000);
         assertThat(created.getStatus()).isEqualTo(1);
         verify(modelMapper).update(any(LlmModel.class), any(QueryWrapper.class));
         verify(modelMapper).insert(created);
@@ -73,7 +76,7 @@ class ModelServiceTest {
         when(modelMapper.selectById(7L)).thenReturn(existing);
 
         LlmModel updated = service.updateModel(
-                7L, "new", null, "https://new", null, "gpt-4.1", 1, 1);
+                7L, "new", null, "https://new", null, "gpt-4.1", 1, 1, 256000);
 
         assertThat(updated.getName()).isEqualTo("new");
         assertThat(updated.getProvider()).isEqualTo("openai");
@@ -81,6 +84,7 @@ class ModelServiceTest {
         assertThat(updated.getModelId()).isEqualTo("gpt-4.1");
         assertThat(updated.getSupportsVision()).isEqualTo(1);
         assertThat(updated.getIsDefault()).isEqualTo(1);
+        assertThat(updated.getContextWindowTokens()).isEqualTo(256000);
         verify(modelMapper).update(any(LlmModel.class), any(QueryWrapper.class));
         verify(modelMapper).updateById(existing);
     }

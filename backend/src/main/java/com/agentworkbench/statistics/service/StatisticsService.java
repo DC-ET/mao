@@ -43,46 +43,7 @@ public class StatisticsService {
     }
 
     public List<Map<String, Object>> getAgentStats() {
-        List<Map<String, Object>> stats = new ArrayList<>();
-        // Query agent usage from message table joined with session
-        List<com.agentworkbench.agent.entity.Agent> agents = agentMapper.selectList(null);
-        for (com.agentworkbench.agent.entity.Agent agent : agents) {
-            Map<String, Object> stat = new HashMap<>();
-            stat.put("agentId", agent.getId());
-            stat.put("agentName", agent.getName());
-
-            // Count sessions for this agent
-            Long sessionCount = sessionMapper.selectCount(
-                    new QueryWrapper<com.agentworkbench.session.entity.Session>().eq("agent_id", agent.getId()));
-            stat.put("sessionCount", sessionCount);
-
-            // Count messages in sessions of this agent
-            List<com.agentworkbench.session.entity.Session> sessions = sessionMapper.selectList(
-                    new QueryWrapper<com.agentworkbench.session.entity.Session>().eq("agent_id", agent.getId()));
-            if (!sessions.isEmpty()) {
-                List<Long> sessionIds = sessions.stream()
-                        .map(com.agentworkbench.session.entity.Session::getId).toList();
-                Long messageCount = messageMapper.selectCount(
-                        new QueryWrapper<com.agentworkbench.session.entity.Message>().in("session_id", sessionIds));
-                stat.put("messageCount", messageCount);
-
-                // Sum token count
-                Integer totalTokens = messageMapper.selectList(
-                        new QueryWrapper<com.agentworkbench.session.entity.Message>()
-                                .in("session_id", sessionIds)
-                                .select("COALESCE(SUM(token_count), 0) as token_count"))
-                        .stream()
-                        .map(m -> m.getTokenCount())
-                        .reduce(0, Integer::sum);
-                stat.put("totalTokens", totalTokens);
-            } else {
-                stat.put("messageCount", 0);
-                stat.put("totalTokens", 0);
-            }
-
-            stats.add(stat);
-        }
-        return stats;
+        return messageMapper.selectAgentUsageStats();
     }
 
     public List<Map<String, Object>> getModelStats() {

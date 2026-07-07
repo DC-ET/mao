@@ -27,6 +27,16 @@
       <el-form-item label="API Key" prop="apiKey">
         <el-input v-model="form.apiKey" type="password" show-password placeholder="请输入 API Key" />
       </el-form-item>
+      <el-form-item label="上下文窗口">
+        <el-input-number
+          v-model="form.contextWindowTokens"
+          :min="1024"
+          :max="2000000"
+          :step="1024"
+          style="width: 220px"
+        />
+        <span style="margin-left: 8px; color: #909399; font-size: 12px;">用于上下文压缩水位展示</span>
+      </el-form-item>
       <el-form-item label="支持视觉">
         <el-switch v-model="form.supportsVision" />
         <span style="margin-left: 8px; color: #909399; font-size: 12px;">开启后可在任务中发送图片</span>
@@ -81,6 +91,7 @@ const form = reactive({
   modelId: '',
   baseUrl: '',
   apiKey: '',
+  contextWindowTokens: 256000,
   supportsVision: false,
   isDefault: false
 })
@@ -98,6 +109,7 @@ function resetForm() {
     modelId: '',
     baseUrl: '',
     apiKey: '',
+    contextWindowTokens: 256000,
     supportsVision: false,
     isDefault: false
   })
@@ -112,6 +124,7 @@ watch(() => props.visible, (val) => {
       modelId: props.modelData.modelId || '',
       baseUrl: props.modelData.baseUrl || '',
       apiKey: props.modelData.apiKey || '',
+      contextWindowTokens: props.modelData.contextWindowTokens || 256000,
       supportsVision: !!props.modelData.supportsVision,
       isDefault: !!props.modelData.isDefault
     })

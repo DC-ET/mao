@@ -62,6 +62,18 @@ public class PermissionService {
         return permissionMapper.selectList(null);
     }
 
+    public List<Long> getRolePermissionIds(Long roleId) {
+        return rolePermissionMapper.selectList(
+                        new QueryWrapper<RolePermission>().eq("role_id", roleId))
+                .stream()
+                .map(RolePermission::getPermissionId)
+                .toList();
+    }
+
+    public Long countRoleUsers(Long roleId) {
+        return userRoleMapper.selectCount(new QueryWrapper<UserRole>().eq("role_id", roleId));
+    }
+
     @Transactional
     public void assignPermissions(Long roleId, List<Long> permissionIds) {
         rolePermissionMapper.delete(

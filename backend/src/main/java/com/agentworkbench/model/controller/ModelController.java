@@ -22,8 +22,14 @@ public class ModelController {
     @GetMapping
     public Result<Map<String, Object>> listModels(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        Page<LlmModel> pageResult = modelService.listModels(page, size);
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String provider,
+            @RequestParam(required = false) Integer status,
+            @RequestParam(required = false) Integer supportsVision,
+            @RequestParam(required = false) Integer isDefault) {
+        Page<LlmModel> pageResult = modelService.listModels(
+                page, size, keyword, provider, status, supportsVision, isDefault);
         List<ModelVO> list = pageResult.getRecords().stream()
                 .map(this::toVO)
                 .collect(Collectors.toList());
@@ -43,6 +49,11 @@ public class ModelController {
         return Result.ok(list);
     }
 
+    @GetMapping("/providers")
+    public Result<List<String>> listProviders() {
+        return Result.ok(modelService.listProviders());
+    }
+
     @GetMapping("/default")
     public Result<ModelVO> getDefaultModel() {
         LlmModel model = modelService.getDefaultModel();
@@ -59,7 +70,8 @@ public class ModelController {
         LlmModel model = modelService.createModel(
                 request.getName(), request.getProvider(), request.getBaseUrl(),
                 request.getApiKey(), request.getModelId(),
-                request.getSupportsVision(), request.getIsDefault());
+                request.getSupportsVision(), request.getIsDefault(),
+                request.getContextWindowTokens());
         return Result.ok(toVO(model));
     }
 
@@ -68,7 +80,8 @@ public class ModelController {
         LlmModel model = modelService.updateModel(
                 id, request.getName(), request.getProvider(), request.getBaseUrl(),
                 request.getApiKey(), request.getModelId(),
-                request.getSupportsVision(), request.getIsDefault());
+                request.getSupportsVision(), request.getIsDefault(),
+                request.getContextWindowTokens());
         return Result.ok(toVO(model));
     }
 
@@ -98,6 +111,7 @@ public class ModelController {
         vo.setBaseUrl(entity.getBaseUrl());
         vo.setApiKey(entity.getApiKey());
         vo.setModelId(entity.getModelId());
+        vo.setContextWindowTokens(entity.getContextWindowTokens());
         vo.setSupportsVision(entity.getSupportsVision() != null && entity.getSupportsVision() == 1);
         vo.setIsDefault(entity.getIsDefault() != null && entity.getIsDefault() == 1);
         vo.setStatus(entity.getStatus());
@@ -112,6 +126,7 @@ public class ModelController {
         private String baseUrl;
         private String apiKey;
         private String modelId;
+        private Integer contextWindowTokens;
         private Integer supportsVision;
         private Integer isDefault;
     }
@@ -124,6 +139,7 @@ public class ModelController {
         private String baseUrl;
         private String apiKey;
         private String modelId;
+        private Integer contextWindowTokens;
         private Boolean supportsVision;
         private Boolean isDefault;
         private Integer status;

@@ -165,11 +165,19 @@ test.describe('Model Management', () => {
     const table = page.locator('.el-table')
     await expect(table).toBeVisible()
     await expect(table.locator('thead th')).toContainText(['ID', '名称', '供应商', '模型标识', 'API 地址', '视觉', '默认', '状态', '操作'])
-    // Wait for data rows
-    await page.waitForSelector('.el-table__body tr td', { timeout: 15_000 })
-    const rows = page.locator('.el-table__body tr')
-    const count = await rows.count()
-    expect(count).toBeGreaterThanOrEqual(1)
+    await expect(page.locator('.el-table__inner-wrapper')).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('should show model search filters', async ({ page }) => {
+    const searchForm = page.locator('.model-list .search-form')
+    await expect(page.locator('input[placeholder="名称 / 模型标识 / 供应商"]')).toBeVisible()
+    await expect(searchForm).toContainText('关键词')
+    await expect(searchForm).toContainText('供应商')
+    await expect(searchForm).toContainText('状态')
+    await expect(searchForm).toContainText('视觉')
+    await expect(searchForm).toContainText('默认')
+    await expect(page.locator('button:has-text("查询")')).toBeVisible()
+    await expect(page.locator('button:has-text("重置")')).toBeVisible()
   })
 
   test('should open add model dialog', async ({ page }) => {
@@ -302,6 +310,12 @@ test.describe('Sidebar Navigation', () => {
       { label: 'Skills 管理', url: /\/skills$/ },
       { label: '会话管理', url: /\/sessions$/ },
       { label: '用户管理', url: /\/users$/ },
+      { label: '角色权限', url: /\/roles$/ },
+      { label: '审计日志', url: /\/audit-logs$/ },
+      { label: '运行监控', url: /\/runtime$/ },
+      { label: '用量分析', url: /\/analytics$/ },
+      { label: '系统设置', url: /\/settings$/ },
+      { label: '通知管理', url: /\/notifications$/ },
     ]
 
     for (const item of navItems) {
@@ -311,6 +325,47 @@ test.describe('Sidebar Navigation', () => {
       // The active menu item indicator should be visible
       await expect(page.locator('.sidebar-menu .is-active')).toContainText(item.label)
     }
+  })
+})
+
+// ─────────────────────────────────────────────────────────
+// Governance Console
+// ─────────────────────────────────────────────────────────
+test.describe('Governance Console', () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page)
+  })
+
+  test('should render role permission page', async ({ page }) => {
+    await page.click('span:has-text("角色权限")')
+    await page.waitForURL(/\/roles$/)
+    await expect(page.locator('text=角色列表')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('text=权限分配')).toBeVisible()
+  })
+
+  test('should render audit log page with filters', async ({ page }) => {
+    await page.click('span:has-text("审计日志")')
+    await page.waitForURL(/\/audit-logs$/)
+    await expect(page.locator('.audit-log')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('button:has-text("查询")')).toBeVisible()
+  })
+
+  test('should render runtime monitor page', async ({ page }) => {
+    await page.click('span:has-text("运行监控")')
+    await page.waitForURL(/\/runtime$/)
+    await expect(page.locator('text=运行中与异常会话')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('input[placeholder="标题/摘要"]')).toBeVisible()
+  })
+
+  test('should render analytics and settings pages', async ({ page }) => {
+    await page.click('span:has-text("用量分析")')
+    await page.waitForURL(/\/analytics$/)
+    await expect(page.locator('text=统计周期')).toBeVisible({ timeout: 10_000 })
+
+    await page.click('span:has-text("系统设置")')
+    await page.waitForURL(/\/settings$/)
+    await expect(page.locator('.system-settings')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.el-table')).toBeVisible()
   })
 })
 

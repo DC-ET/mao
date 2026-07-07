@@ -1,5 +1,6 @@
 package com.agentworkbench.config;
 
+import com.agentworkbench.audit.interceptor.AuditInterceptor;
 import com.agentworkbench.permission.interceptor.PermissionInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,6 +15,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final PermissionInterceptor permissionInterceptor;
+    private final AuditInterceptor auditInterceptor;
 
     @Value("${app.file.upload-dir:$HOME/.mao/data/uploads}")
     private String uploadDir;
@@ -39,6 +41,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(permissionInterceptor)
+                .addPathPatterns("/v1/**")
+                .excludePathPatterns("/v1/auth/**");
+        registry.addInterceptor(auditInterceptor)
                 .addPathPatterns("/v1/**")
                 .excludePathPatterns("/v1/auth/**");
     }

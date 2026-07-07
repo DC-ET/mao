@@ -1,11 +1,8 @@
 package com.agentworkbench.statistics.service;
 
-import com.agentworkbench.agent.entity.Agent;
 import com.agentworkbench.agent.mapper.AgentMapper;
 import com.agentworkbench.model.entity.LlmModel;
 import com.agentworkbench.model.mapper.LlmModelMapper;
-import com.agentworkbench.session.entity.Message;
-import com.agentworkbench.session.entity.Session;
 import com.agentworkbench.session.mapper.MessageMapper;
 import com.agentworkbench.session.mapper.SessionMapper;
 import com.agentworkbench.user.entity.User;
@@ -56,26 +53,22 @@ class StatisticsServiceTest {
 
     @Test
     void agentStatsIncludesMessageAndTokenCountsForSessions() {
-        when(agentMapper.selectList(null)).thenReturn(List.of(agent(1L, "Coder"), agent(2L, "Empty")));
-        when(sessionMapper.selectCount(any(QueryWrapper.class))).thenReturn(2L, 0L);
-        when(sessionMapper.selectList(any(QueryWrapper.class)))
-                .thenReturn(List.of(session(10L), session(11L)))
-                .thenReturn(List.of());
-        when(messageMapper.selectCount(any(QueryWrapper.class))).thenReturn(3L);
-        Message t1 = message(10);
-        Message t2 = message(15);
-        when(messageMapper.selectList(any(QueryWrapper.class))).thenReturn(List.of(t1, t2));
+        List<Map<String, Object>> expected = List.of(
+                Map.of("agentId", 1L, "agentName", "Coder", "sessionCount", 2L, "messageCount", 3L, "totalTokens", 25L),
+                Map.of("agentId", 2L, "agentName", "Empty", "sessionCount", 0L, "messageCount", 0L, "totalTokens", 0L));
+        when(messageMapper.selectAgentUsageStats()).thenReturn(expected);
 
         List<Map<String, Object>> stats = service.getAgentStats();
 
+        assertThat(stats).isSameAs(expected);
         assertThat(stats).hasSize(2);
         assertThat(stats.get(0)).containsEntry("agentId", 1L)
                 .containsEntry("agentName", "Coder")
                 .containsEntry("sessionCount", 2L)
                 .containsEntry("messageCount", 3L)
-                .containsEntry("totalTokens", 25);
-        assertThat(stats.get(1)).containsEntry("messageCount", 0)
-                .containsEntry("totalTokens", 0);
+                .containsEntry("totalTokens", 25L);
+        assertThat(stats.get(1)).containsEntry("messageCount", 0L)
+                .containsEntry("totalTokens", 0L);
     }
 
     @Test
@@ -105,13 +98,6 @@ class StatisticsServiceTest {
         assertThat(stats.get(1).get("lastLoginAt")).isNull();
     }
 
-    private static Agent agent(Long id, String name) {
-        Agent agent = new Agent();
-        agent.setId(id);
-        agent.setName(name);
-        return agent;
-    }
-
     private static LlmModel model(Long id, String name) {
         LlmModel model = new LlmModel();
         model.setId(id);
@@ -127,15 +113,4 @@ class StatisticsServiceTest {
         return user;
     }
 
-    private static Session session(Long id) {
-        Session session = new Session();
-        session.setId(id);
-        return session;
-    }
-
-    private static Message message(Integer tokenCount) {
-        Message message = new Message();
-        message.setTokenCount(tokenCount);
-        return message;
-    }
 }

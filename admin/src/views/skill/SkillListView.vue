@@ -8,6 +8,12 @@
         </div>
       </template>
 
+      <el-form :inline="true" class="search-form">
+        <el-form-item label="关键词">
+          <el-input v-model="keyword" clearable placeholder="名称 / 描述" style="width: 220px" />
+        </el-form-item>
+      </el-form>
+
       <!-- Upload area -->
       <div
         class="upload-zone"
@@ -31,9 +37,24 @@
       </div>
 
       <!-- Skill table -->
-      <el-table :data="skillDocs" v-loading="loading" stripe style="margin-top: 16px">
+      <el-table :data="filteredSkillDocs" v-loading="loading" stripe style="margin-top: 16px">
         <el-table-column prop="name" label="名称" width="180" />
         <el-table-column prop="description" label="描述" min-width="300" show-overflow-tooltip />
+        <el-table-column label="校验" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.filePath || row.folderPath ? 'success' : 'danger'" size="small">
+              {{ row.filePath || row.folderPath ? '通过' : '异常' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="关联 Agent" width="110" align="right">
+          <template #default="{ row }">{{ relatedAgentCount(row.name) }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default>
+            <el-tag type="success" size="small">可用</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip />
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
@@ -72,13 +93,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
 
 const loading = ref(false)
 const skillDocs = ref<any[]>([])
+const agents = ref<any[]>([])
+const keyword = ref('')
 const detailVisible = ref(false)
 const currentDoc = ref<any>(null)
 const isDragover = ref(false)
@@ -88,11 +111,26 @@ const uploading = ref(false)
 async function fetchSkillDocs() {
   loading.value = true
   try {
-    const { data } = await api.get('/skill-docs')
+    const [{ data }, agentRes] = await Promise.all([
+      api.get('/skill-docs'),
+      api.get('/agents')
+    ])
     skillDocs.value = data || []
+    agents.value = agentRes.data || []
   } finally {
     loading.value = false
   }
+}
+
+const filteredSkillDocs = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return skillDocs.value
+  return skillDocs.value.filter(doc =>
+    `${doc.name || ''} ${doc.description || ''}`.toLowerCase().includes(kw))
+})
+
+function relatedAgentCount(skillName: string) {
+  return agents.value.filter(agent => (agent.skillNames || []).includes(skillName)).length
 }
 
 async function handleView(row: any) {
@@ -226,6 +264,10 @@ onMounted(fetchSkillDocs)
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.search-form {
+  margin-bottom: 16px;
 }
 .upload-zone {
   border: 2px dashed var(--el-color-primary-light-3);

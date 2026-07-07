@@ -21,13 +21,18 @@
             @clear="handleSearch"
           />
         </el-form-item>
+        <el-form-item label="标签">
+          <el-select v-model="tagFilter" placeholder="全部标签" clearable style="width: 150px">
+            <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
+          </el-select>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
         </el-form-item>
       </el-form>
 
       <!-- Table -->
-      <el-table :data="agents" v-loading="loading" stripe>
+      <el-table :data="filteredAgents" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="名称" min-width="120" />
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
@@ -41,6 +46,15 @@
               class="tag-item"
             >{{ tag }}</el-tag>
           </template>
+        </el-table-column>
+        <el-table-column label="关联 Skills" width="110" align="right">
+          <template #default="{ row }">{{ row.skillNames?.length || 0 }}</template>
+        </el-table-column>
+        <el-table-column label="会话数" width="90" align="right">
+          <template #default="{ row }">{{ agentStat(row.id).sessionCount || 0 }}</template>
+        </el-table-column>
+        <el-table-column label="Token" width="110" align="right">
+          <template #default="{ row }">{{ (agentStat(row.id).totalTokens || 0).toLocaleString() }}</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" />
         <el-table-column label="操作" width="190" fixed="right">
@@ -75,14 +89,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import AgentFormDialog from './AgentFormDialog.vue'
 
 const loading = ref(false)
 const agents = ref<any[]>([])
+const agentStats = ref<any[]>([])
 const searchQuery = ref('')
+const tagFilter = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
@@ -93,18 +109,37 @@ const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 async function fetchAgents() {
   loading.value = true
   try {
-    const { data } = await api.get('/agents', {
+    const [{ data }, statsRes] = await Promise.all([
+      api.get('/agents', {
       params: {
         page: currentPage.value,
         size: pageSize.value,
         keyword: searchQuery.value
       }
-    })
+      }),
+      api.get('/statistics/agents')
+    ])
     agents.value = data || []
+    agentStats.value = statsRes.data || []
     total.value = data?.length || 0
   } finally {
     loading.value = false
   }
+}
+
+const tagOptions = computed(() => {
+  const tags = new Set<string>()
+  agents.value.forEach(agent => (agent.tags || []).forEach((tag: string) => tags.add(tag)))
+  return Array.from(tags)
+})
+
+const filteredAgents = computed(() => {
+  if (!tagFilter.value) return agents.value
+  return agents.value.filter(agent => (agent.tags || []).includes(tagFilter.value))
+})
+
+function agentStat(id: number) {
+  return agentStats.value.find(stat => stat.agentId === id) || {}
 }
 
 function handleSearch() {

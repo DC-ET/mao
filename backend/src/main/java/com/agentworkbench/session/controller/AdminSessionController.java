@@ -12,6 +12,7 @@ import com.agentworkbench.session.service.SessionService;
 import com.agentworkbench.user.entity.User;
 import com.agentworkbench.user.mapper.UserMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -141,10 +142,20 @@ public class AdminSessionController {
         return agentMapper.selectBatchIds(ids).stream().collect(Collectors.toMap(Agent::getId, a -> a));
     }
 
+    private static final int DEFAULT_CONTEXT_WINDOW_TOKENS = 256000;
+
     private Map<Long, LlmModel> batchLoadModels(List<Session> sessions) {
+        Map<Long, LlmModel> map = new HashMap<>();
         Set<Long> ids = sessions.stream().map(Session::getModelId).filter(Objects::nonNull).collect(Collectors.toSet());
-        if (ids.isEmpty()) return Map.of();
-        return llmModelMapper.selectBatchIds(ids).stream().collect(Collectors.toMap(LlmModel::getId, m -> m));
+        if (!ids.isEmpty()) {
+            llmModelMapper.selectBatchIds(ids).forEach(m -> map.put(m.getId(), m));
+        }
+        LlmModel defaultModel = llmModelMapper.selectOne(
+                new QueryWrapper<LlmModel>().eq("is_default", 1).eq("status", 1));
+        if (defaultModel != null) {
+            map.put(0L, defaultModel);
+        }
+        return map;
     }
 
     private SessionVO toSessionVO(Session session, Map<Long, User> userMap, Map<Long, Agent> agentMap, Map<Long, LlmModel> modelMap) {
@@ -176,14 +187,25 @@ public class AdminSessionController {
                 vo.setAgentName(agent.getName());
             }
         }
-        if (session.getModelId() != null) {
-            LlmModel model = modelMap.get(session.getModelId());
-            if (model != null) {
-                vo.setModelName(model.getName());
-            }
+        LlmModel model = session.getModelId() != null ? modelMap.get(session.getModelId()) : null;
+        if (model == null) {
+            model = modelMap.get(0L);
+        }
+        if (model != null) {
+            vo.setModelName(model.getName());
+            vo.setContextWindowTokens(resolveContextWindowTokens(model));
+        } else {
+            vo.setContextWindowTokens(DEFAULT_CONTEXT_WINDOW_TOKENS);
         }
 
         return vo;
+    }
+
+    private int resolveContextWindowTokens(LlmModel model) {
+        if (model.getContextWindowTokens() != null && model.getContextWindowTokens() > 0) {
+            return model.getContextWindowTokens();
+        }
+        return DEFAULT_CONTEXT_WINDOW_TOKENS;
     }
 
     private List<MessageVO> toMessageVOList(Long sessionId, List<Message> messages) {
@@ -279,6 +301,7 @@ public class AdminSessionController {
         private String projectKey;
         private String workspace;
         private Integer contextTokens;
+        private Integer contextWindowTokens;
         private String modelName;
         private String createdAt;
         private String updatedAt;

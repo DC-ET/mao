@@ -51,6 +51,42 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '会话管理', keepAlive: true }
       },
       {
+        path: 'roles',
+        name: 'Roles',
+        component: () => import('../views/permission/RolePermissionView.vue'),
+        meta: { title: '角色权限', keepAlive: true }
+      },
+      {
+        path: 'audit-logs',
+        name: 'AuditLogs',
+        component: () => import('../views/audit/AuditLogView.vue'),
+        meta: { title: '审计日志', keepAlive: true }
+      },
+      {
+        path: 'runtime',
+        name: 'RuntimeMonitor',
+        component: () => import('../views/runtime/RuntimeMonitorView.vue'),
+        meta: { title: '运行监控', keepAlive: true }
+      },
+      {
+        path: 'analytics',
+        name: 'Analytics',
+        component: () => import('../views/analytics/AnalyticsView.vue'),
+        meta: { title: '用量分析', keepAlive: true }
+      },
+      {
+        path: 'settings',
+        name: 'SystemSettings',
+        component: () => import('../views/settings/SystemSettingsView.vue'),
+        meta: { title: '系统设置', keepAlive: true }
+      },
+      {
+        path: 'notifications',
+        name: 'Notifications',
+        component: () => import('../views/notification/NotificationListView.vue'),
+        meta: { title: '通知管理', keepAlive: true }
+      },
+      {
         path: 'sessions/:id',
         name: 'SessionDetail',
         component: () => import('../views/session/SessionDetailView.vue'),

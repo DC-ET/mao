@@ -48,6 +48,41 @@
       </el-col>
     </el-row>
 
+    <el-row :gutter="20" class="governance-cards">
+      <el-col :span="6">
+        <el-card shadow="hover">
+          <div class="governance-card">
+            <span>运行中会话</span>
+            <strong>{{ governance.runningSessions || 0 }}</strong>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card shadow="hover">
+          <div class="governance-card">
+            <span>待审批会话</span>
+            <strong>{{ governance.waitingSessions || 0 }}</strong>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card shadow="hover">
+          <div class="governance-card danger">
+            <span>失败会话</span>
+            <strong>{{ governance.failedSessions || 0 }}</strong>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card shadow="hover">
+          <div class="governance-card">
+            <span>取消会话</span>
+            <strong>{{ governance.cancelledSessions || 0 }}</strong>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <!-- Charts Row -->
     <el-row :gutter="20" style="margin-top: 20px">
       <!-- Usage Trends -->
@@ -87,6 +122,9 @@
             <span class="rank-name">{{ agent.agentName }}</span>
             <span class="rank-value">{{ agent.sessionCount }} 会话 / {{ agent.messageCount }} 消息</span>
           </div>
+          <div v-if="agentStats.length === 0" class="rank-item empty">
+            <span class="rank-name">暂无 Agent 使用数据</span>
+          </div>
         </el-card>
       </el-col>
     </el-row>
@@ -125,6 +163,7 @@ import { ref, computed, onMounted } from 'vue'
 import { api } from '../../api'
 
 const overview = ref<any>({})
+const governance = ref<any>({})
 const trends = ref<any[]>([])
 const agentStats = ref<any[]>([])
 const tokenStats = ref<any[]>([])
@@ -138,20 +177,13 @@ function barHeight(value: number, max: number) {
 }
 
 async function fetchAll() {
-  const [ov, tr, tk, us] = await Promise.all([
-    api.get('/statistics/overview'),
-    api.get('/analytics/trends', { params: { days: 7 } }),
-    api.get('/analytics/tokens'),
-    api.get('/analytics/users')
-  ])
-  overview.value = (ov as any).data || {}
-  trends.value = (tr as any).data?.trends || []
-  tokenStats.value = (tk as any).data?.agentTokens || []
-  userStats.value = (us as any).data?.userActivity || []
-
-  // Fetch agent stats
-  const { data } = await api.get('/statistics/agents') as any
-  agentStats.value = data || []
+  const { data } = await api.get('/admin/analytics/summary', { params: { days: 7 } }) as any
+  overview.value = data?.overview || {}
+  governance.value = data?.overview || {}
+  trends.value = data?.trends || []
+  tokenStats.value = data?.tokenStats || []
+  userStats.value = data?.userActivity || []
+  agentStats.value = data?.agentStats || []
 }
 
 onMounted(fetchAll)
@@ -162,6 +194,29 @@ onMounted(fetchAll)
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+.governance-cards {
+  margin-top: 20px;
+}
+
+.governance-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.governance-card span {
+  color: #606266;
+}
+
+.governance-card strong {
+  font-size: 24px;
+  color: #303133;
+}
+
+.governance-card.danger strong {
+  color: #f56c6c;
 }
 
 .stat-icon {
@@ -257,6 +312,10 @@ onMounted(fetchAll)
   align-items: center;
   padding: 8px 0;
   border-bottom: 1px solid #f0f0f0;
+}
+
+.rank-item.empty {
+  color: #909399;
 }
 
 .rank-num {

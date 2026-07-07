@@ -23,11 +23,46 @@ public class ModelService {
     private final SessionMapper sessionMapper;
     private final OpenAiLlmAdapter llmAdapter;
 
-    public Page<LlmModel> listModels(int page, int size) {
-        return llmModelMapper.selectPage(
-                Page.of(page, size),
-                new QueryWrapper<LlmModel>().orderByDesc("created_at")
-        );
+    public Page<LlmModel> listModels(int page, int size, String keyword, String provider,
+                                     Integer status, Integer supportsVision, Integer isDefault) {
+        QueryWrapper<LlmModel> query = new QueryWrapper<>();
+        if (keyword != null && !keyword.isBlank()) {
+            String value = keyword.trim();
+            query.and(wrapper -> wrapper
+                    .like("name", value)
+                    .or()
+                    .like("model_id", value)
+                    .or()
+                    .like("provider", value));
+        }
+        if (provider != null && !provider.isBlank()) {
+            query.eq("provider", provider.trim());
+        }
+        if (status != null) {
+            query.eq("status", status);
+        }
+        if (supportsVision != null) {
+            query.eq("supports_vision", supportsVision);
+        }
+        if (isDefault != null) {
+            query.eq("is_default", isDefault);
+        }
+        query.orderByDesc("created_at");
+        return llmModelMapper.selectPage(Page.of(page, size), query);
+    }
+
+    public List<String> listProviders() {
+        return llmModelMapper.selectObjs(
+                        new QueryWrapper<LlmModel>()
+                                .select("DISTINCT provider")
+                                .isNotNull("provider")
+                                .orderByAsc("provider"))
+                .stream()
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .map(String::trim)
+                .filter(provider -> !provider.isBlank())
+                .toList();
     }
 
     public List<LlmModel> listActiveModels() {
@@ -49,7 +84,8 @@ public class ModelService {
     }
 
     public LlmModel createModel(String name, String provider, String baseUrl, String apiKey,
-                                 String modelId, Integer supportsVision, Integer isDefault) {
+                                 String modelId, Integer supportsVision, Integer isDefault,
+                                 Integer contextWindowTokens) {
         if (isDefault != null && isDefault == 1) {
             clearDefaultFlag();
         }
@@ -61,13 +97,15 @@ public class ModelService {
         model.setModelId(modelId);
         model.setSupportsVision(supportsVision != null ? supportsVision : 0);
         model.setIsDefault(isDefault != null ? isDefault : 0);
+        model.setContextWindowTokens(contextWindowTokens);
         model.setStatus(1);
         llmModelMapper.insert(model);
         return model;
     }
 
     public LlmModel updateModel(Long id, String name, String provider, String baseUrl, String apiKey,
-                                 String modelId, Integer supportsVision, Integer isDefault) {
+                                 String modelId, Integer supportsVision, Integer isDefault,
+                                 Integer contextWindowTokens) {
         LlmModel model = getModel(id);
         if (name != null) model.setName(name);
         if (provider != null) model.setProvider(provider);
@@ -75,6 +113,7 @@ public class ModelService {
         if (apiKey != null) model.setApiKey(apiKey);
         if (modelId != null) model.setModelId(modelId);
         if (supportsVision != null) model.setSupportsVision(supportsVision);
+        if (contextWindowTokens != null) model.setContextWindowTokens(contextWindowTokens);
         if (isDefault != null) {
             if (isDefault == 1) clearDefaultFlag();
             model.setIsDefault(isDefault);
