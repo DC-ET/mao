@@ -10,7 +10,7 @@
     "build": "vue-tsc -b && vite build",
     "dist": "electron-builder",
     "preview": "vite preview",
-    "postinstall": "electron-rebuild -f -w node-pty"
+    "postinstall": "node ./node_modules/@electron/rebuild/lib/cli.js -f -w node-pty"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
