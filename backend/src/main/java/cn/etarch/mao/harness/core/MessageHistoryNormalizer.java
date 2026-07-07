@@ -51,6 +51,22 @@ public final class MessageHistoryNormalizer {
         return normalized;
     }
 
+    /**
+     * Ensures every message has a non-null {@code content} field before LLM API serialization.
+     * Some providers reject requests when {@code content} is omitted (e.g. assistant messages
+     * that only contain tool_calls).
+     */
+    public static void ensureContentPresent(List<ChatRequest.Message> messages) {
+        if (messages == null) {
+            return;
+        }
+        for (ChatRequest.Message msg : messages) {
+            if (msg != null && msg.getContent() == null) {
+                msg.setContent("");
+            }
+        }
+    }
+
     public static List<ChatRequest.Message> normalizeChatMessages(List<ChatRequest.Message> messages) {
         if (messages == null || messages.size() < 2) {
             return messages;

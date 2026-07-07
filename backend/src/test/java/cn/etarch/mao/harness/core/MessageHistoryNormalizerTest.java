@@ -31,6 +31,23 @@ class MessageHistoryNormalizerTest {
     }
 
     @Test
+    void ensureContentPresentFillsNullContentWithEmptyString() {
+        ChatRequest.Message assistant = ChatRequest.Message.builder()
+                .role("assistant")
+                .toolCalls(List.of(ChatRequest.ToolCall.builder().id("call-1").build()))
+                .build();
+        ChatRequest.Message tool = ChatRequest.Message.builder()
+                .role("tool")
+                .toolCallId("call-1")
+                .build();
+
+        MessageHistoryNormalizer.ensureContentPresent(List.of(assistant, tool));
+
+        assertThat(assistant.getContent()).isEqualTo("");
+        assertThat(tool.getContent()).isEqualTo("");
+    }
+
+    @Test
     void normalizeChatMessagesReturnsOriginalWhenNoWorkNeeded() {
         List<ChatRequest.Message> one = List.of(ChatRequest.Message.builder().role("user").content("hi").build());
 

@@ -102,7 +102,7 @@ public class AgentExecutionContext {
 
     public void addAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls) {
         boolean hasToolCalls = toolCalls != null && !toolCalls.isEmpty();
-        String normalizedContent = content != null && !content.isEmpty() ? content : null;
+        String normalizedContent = content != null ? content : "";
         messages.add(ChatRequest.Message.builder()
                 .role("assistant")
                 .content(normalizedContent)
@@ -114,7 +114,7 @@ public class AgentExecutionContext {
         messages.add(ChatRequest.Message.builder()
                 .role("tool")
                 .toolCallId(toolCallId)
-                .content(result)
+                .content(result != null ? result : "")
                 .build());
     }
 

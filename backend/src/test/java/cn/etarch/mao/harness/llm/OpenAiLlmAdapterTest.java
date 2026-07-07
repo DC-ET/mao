@@ -20,6 +20,33 @@ class OpenAiLlmAdapterTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
+    void chatIncludesEmptyContentForAssistantToolOnlyMessages() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(jsonResponse("{\"id\":\"ok\",\"choices\":[]}"));
+            server.start();
+
+            ChatRequest request = ChatRequest.builder()
+                    .messages(List.of(ChatRequest.Message.builder()
+                            .role("assistant")
+                            .toolCalls(List.of(ChatRequest.ToolCall.builder()
+                                    .id("call-1")
+                                    .type("function")
+                                    .function(ChatRequest.FunctionCall.builder()
+                                            .name("read_file")
+                                            .arguments("{}")
+                                            .build())
+                                    .build()))
+                            .build()))
+                    .build();
+
+            adapter(0, 0).chat(request, config(server));
+
+            String body = server.takeRequest().getBody().readUtf8();
+            assertThat(body).contains("\"content\":\"\"");
+        }
+    }
+
+    @Test
     void chatPostsOpenAiRequestAndParsesResponse() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(jsonResponse("""

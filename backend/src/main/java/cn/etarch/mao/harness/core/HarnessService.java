@@ -275,7 +275,7 @@ public class HarnessService {
      * Parse content from DB: JSON array → List<ContentPart>, otherwise plain String.
      */
     private Object parseContent(String raw) {
-        if (raw == null) return null;
+        if (raw == null) return "";
         String trimmed = raw.trim();
         if (trimmed.startsWith("[")) {
             try {

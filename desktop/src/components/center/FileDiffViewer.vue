@@ -92,6 +92,7 @@ async function syncViewer() {
         renderLineHighlight: 'none',
         overviewRulerLanes: 2,
         contextmenu: true,
+        unicodeHighlight: { ambiguousCharacters: false },
       })
     }
     originalModel?.dispose()
@@ -123,6 +124,7 @@ async function syncViewer() {
         renderLineHighlight: 'none',
         overviewRulerLanes: 0,
         contextmenu: true,
+        unicodeHighlight: { ambiguousCharacters: false },
       })
     } else if (patchModel && patchModel.getValue() !== value) {
       patchModel.setValue(value)

@@ -1,6 +1,7 @@
 package cn.etarch.mao.harness.llm;
 
 import cn.etarch.mao.config.LlmRetryConfig;
+import cn.etarch.mao.harness.core.MessageHistoryNormalizer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -316,6 +317,7 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         try {
             // Convert image URLs to base64 data URIs for models that don't support URL
             List<ChatRequest.Message> messages = request.getMessages();
+            MessageHistoryNormalizer.ensureContentPresent(messages);
             if (messages != null) {
                 for (ChatRequest.Message msg : messages) {
                     convertImageUrlsToBase64(msg);

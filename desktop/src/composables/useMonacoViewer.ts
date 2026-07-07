@@ -63,6 +63,7 @@ export function useMonacoViewer(options: {
         cursorBlinking: 'solid',
         cursorStyle: 'line',
         renderValidationDecorations: 'off',
+        unicodeHighlight: { ambiguousCharacters: false },
       })
       return
     }
