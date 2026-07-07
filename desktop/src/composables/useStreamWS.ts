@@ -218,6 +218,39 @@ export function useStreamWS() {
     }
   }
 
+  async function sendReliable(msg: any): Promise<boolean> {
+    const trySend = (): boolean => {
+      const socket = ws
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(msg))
+        return true
+      }
+      return false
+    }
+
+    if (trySend()) {
+      return true
+    }
+    try {
+      await connect()
+    } catch {
+      console.warn('[ws] sendReliable failed to reconnect for', msg.type)
+      return false
+    }
+    if (trySend()) {
+      return true
+    }
+    console.warn('[ws] sendReliable dropped after reconnect:', msg.type, 'readyState=' + ws?.readyState)
+    return false
+  }
+
+  function resetSessionStreamState(sessionId: string) {
+    sessionStore.setStreaming(sessionId, false)
+    sessionStore.setThinking(sessionId, false)
+    sessionStore.clearAskQuestions(sessionId)
+    clearActiveExecution(sessionId)
+  }
+
   function subscribe(sessionId: string | null) {
     if (sessionId) {
       send({ type: 'subscribe', sessionId: Number(sessionId) })
@@ -485,34 +518,30 @@ export function useStreamWS() {
         if (typeof window !== 'undefined' && (window as any).electronAPI?.toolExecute) {
           ;(window as any).electronAPI
             .toolExecute(toolName, toolArgs, requestId, workspace, Number(sessionId), !!needApproval, dangerReason || null)
-            .then((response: { requestId: string; result: string | null; error: string | null }) => {
-              if (ws?.readyState === WebSocket.OPEN) {
-                if (response.error) {
-                  ws.send(JSON.stringify({
-                    type: 'tool_error',
-                    sessionId: Number(sessionId),
-                    requestId: response.requestId,
-                    error: response.error
-                  }))
-                } else {
-                  ws.send(JSON.stringify({
-                    type: 'tool_result',
-                    sessionId: Number(sessionId),
-                    requestId: response.requestId,
-                    result: response.result
-                  }))
-                }
-              }
-            })
-            .catch((err: Error) => {
-              if (ws?.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
+            .then(async (response: { requestId: string; result: string | null; error: string | null }) => {
+              if (response.error) {
+                await sendReliable({
                   type: 'tool_error',
                   sessionId: Number(sessionId),
-                  requestId,
-                  error: err.message || 'IPC call failed'
-                }))
+                  requestId: response.requestId,
+                  error: response.error
+                })
+              } else {
+                await sendReliable({
+                  type: 'tool_result',
+                  sessionId: Number(sessionId),
+                  requestId: response.requestId,
+                  result: response.result
+                })
               }
+            })
+            .catch(async (err: Error) => {
+              await sendReliable({
+                type: 'tool_error',
+                sessionId: Number(sessionId),
+                requestId,
+                error: err.message || 'IPC call failed'
+              })
             })
         }
         // Non-Electron clients (browser tabs) silently ignore — let Electron handle it
@@ -542,6 +571,7 @@ export function useStreamWS() {
       case 'error': {
         if (sessionId) {
           sessionStore.updateSessionPhase(sessionId, 'FAILED' as TaskPhase)
+          resetSessionStreamState(sessionId)
           const cb = pendingCallbacks.get(sessionId)
           if (cb) {
             pendingCallbacks.delete(sessionId)

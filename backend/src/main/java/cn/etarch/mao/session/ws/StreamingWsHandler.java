@@ -87,6 +87,19 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         return sessionLocks.computeIfAbsent(sessionId, k -> new Object());
     }
 
+    /**
+     * Release in-flight local resources when an agent execution ends.
+     * Prevents agent threads and desktop clients from staying wedged after failures.
+     */
+    private void releaseSessionExecutionResources(Long sessionId) {
+        if (sessionId == null) {
+            return;
+        }
+        shellSessionManager.closeByConversation(sessionId);
+        localToolSessionRegistry.failAllForSession(sessionId);
+        askUserQuestionsRegistry.failAllForSession(sessionId);
+    }
+
     private boolean isSessionActive(String phase) {
         return "RUNNING".equals(phase) || "RESUMING".equals(phase) || "WAITING_APPROVAL".equals(phase);
     }
@@ -452,6 +465,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                         Map.of("phase", "FAILED", "unread", true, "executionId", executionId)));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
             } finally {
+                releaseSessionExecutionResources(sessionId);
                 runningTasks.remove(sessionId, futureRef[0]);
                 cancelFlags.remove(sessionId);
                 agentLoop.removeCancelFlag(sessionId);
@@ -745,6 +759,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                         Map.of("phase", "FAILED", "unread", true, "executionId", executionId)));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
             } finally {
+                releaseSessionExecutionResources(sessionId);
                 runningTasks.remove(sessionId, futureRef[0]);
                 cancelFlags.remove(sessionId);
                 agentLoop.removeCancelFlag(sessionId);
@@ -892,6 +907,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 registry.send(userId, WsEvent.of("error", sideSessionId,
                         Map.of("message", e.getMessage() != null ? e.getMessage() : "未知错误")));
             } finally {
+                releaseSessionExecutionResources(sideSessionId);
                 runningTasks.remove(sideSessionId, futureRef[0]);
                 cancelFlags.remove(sideSessionId);
                 agentLoop.removeCancelFlag(sideSessionId);
