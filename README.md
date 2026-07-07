@@ -15,6 +15,7 @@
 <p align="center">
   <a href="#快速开始">快速开始</a> ·
   <a href="#docker-compose推荐试用">Docker</a> ·
+  <a href="USER_GUIDE.md">用户手册</a> ·
   <a href="#架构">架构</a> ·
   <a href="#文档">文档</a> ·
   <a href="#参与贡献">参与贡献</a>
@@ -149,7 +150,7 @@ docker compose logs -f backend
 | 桌面端 Web | http://localhost:5201 |
 | 后端 API / Swagger | http://localhost:9080/api/swagger-ui.html |
 
-默认账号：`admin` / `admin123`。启动后登录管理后台，在「模型管理」中配置真实 LLM API Key 即可对话。
+默认账号：`admin` / `admin123`。启动后登录管理后台，在「模型管理」中配置真实 LLM API Key 即可对话。日常使用与功能说明见 **[用户手册](USER_GUIDE.md)**。
 
 > **说明**：Docker 镜像提供 **CLOUD 模式** Web 体验（浏览器访问桌面端）。**LOCAL 模式**（Electron 本地工具执行）仍需按下方步骤本地构建 `desktop` 并运行 `npm run dev:electron`。
 
@@ -193,7 +194,7 @@ Flyway 会在首次启动时自动建表并写入初始数据。
 
 #### 3. 配置 LLM 模型
 
-使用默认账号登录管理后台，进入「模型管理」，添加或编辑模型并填入你自己的 API Key。迁移脚本会插入占位模型 `deepseek-v4-flash`（`sk-xxxxxxxxxxxx`），**必须替换为真实密钥后才能对话**。
+使用默认账号登录管理后台，进入「模型管理」，添加或编辑模型并填入你自己的 API Key。迁移脚本会插入占位模型 `deepseek-v4-flash`（`sk-xxxxxxxxxxxx`），**必须替换为真实密钥后才能对话**。更多操作说明见 [用户手册](USER_GUIDE.md)。
 
 #### 4. 启动管理后台
 
@@ -349,6 +350,7 @@ npm run test:desktop
 
 | 文档 | 说明 |
 |------|------|
+| [USER_GUIDE.md](USER_GUIDE.md) | 用户手册（登录、模型与 Agent 配置、任务对话、工具审批、常见问题） |
 | [DEPLOY.md](DEPLOY.md) | 生产部署指南 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 | [SECURITY.md](SECURITY.md) | 安全策略 |
