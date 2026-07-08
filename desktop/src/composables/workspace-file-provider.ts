@@ -19,6 +19,9 @@ export interface DirectoryResult {
 export interface ReadFileResult {
   content: string
   total_lines: number
+  media_type?: string
+  mime?: string
+  data_uri?: string
   error?: string
 }
 
@@ -89,6 +92,9 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         return {
           content: data?.content ?? '',
           total_lines: data?.total_lines ?? 0,
+          media_type: data?.media_type,
+          mime: data?.mime,
+          data_uri: data?.data_uri,
         }
       } catch (e: any) {
         return { content: '', total_lines: 0, error: e.message || '读取文件失败' }

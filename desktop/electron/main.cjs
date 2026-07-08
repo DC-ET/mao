@@ -753,6 +753,9 @@ ipcMain.handle('terminal:list', () => {
 ipcMain.handle('local-read-file', async (event, { path: filePath, offset, limit }) => {
   try {
     const resolvedPath = resolveWorkspacePath(filePath)
+    if (mimeFromPath(filePath)) {
+      return readLocalImage(resolvedPath, filePath)
+    }
     const content = fs.readFileSync(resolvedPath, 'utf-8')
     const lines = content.split('\n')
     const totalLines = lines.length

@@ -121,6 +121,35 @@ class FileServicesTest {
                 .isInstanceOf(BusinessException.class);
     }
 
+    @Test
+    void workspaceBrowseReadsPngImageWithDataUri() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace);
+        byte[] png = java.util.Base64.getDecoder().decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+        Files.write(workspace.resolve("icon.png"), png);
+        WorkspaceBrowseService service = new WorkspaceBrowseService(new PathSandbox(workspace.toString()));
+
+        WorkspaceBrowseService.FileContentDTO content = service.readFile(workspace.toString(), "icon.png", 0, 5000);
+
+        assertThat(content.getMedia_type()).isEqualTo("image");
+        assertThat(content.getMime()).isEqualTo("image/png");
+        assertThat(content.getData_uri()).startsWith("data:image/png;base64,");
+        assertThat(content.getTotal_lines()).isZero();
+    }
+
+    @Test
+    void workspaceBrowseRejectsBinaryTextRead() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace);
+        Files.write(workspace.resolve("binary.bin"), new byte[] {0x00, 0x01, 0x02, (byte) 0xFF});
+        WorkspaceBrowseService service = new WorkspaceBrowseService(new PathSandbox(workspace.toString()));
+
+        assertThatThrownBy(() -> service.readFile(workspace.toString(), "binary.bin", 0, 1))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("二进制文件");
+    }
+
     private FileService fileService() {
         FileService service = new FileService(mapper);
         ReflectionTestUtils.setField(service, "uploadDir", tempDir.resolve("uploads").toString());

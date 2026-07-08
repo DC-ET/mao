@@ -6,6 +6,12 @@
       <button class="retry-btn" @click="loadFile">重试</button>
     </div>
 
+    <!-- Image preview -->
+    <div v-else-if="state === 'image'" class="file-message image-preview">
+      <img :src="imageDataUri" :alt="filePath" />
+      <p class="image-meta">{{ content }}</p>
+    </div>
+
     <!-- Binary file -->
     <div v-else-if="state === 'binary'" class="file-message">
       <p>二进制文件，无法预览</p>
@@ -58,10 +64,11 @@ const sessionStore = useSessionStore()
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { openFileTab } = useCenterTabs(activeSessionIdRef)
 
-type LoadState = 'loading' | 'ready' | 'error' | 'binary' | 'empty'
+type LoadState = 'loading' | 'ready' | 'error' | 'binary' | 'empty' | 'image'
 
 const state = ref<LoadState>('loading')
 const content = ref('')
+const imageDataUri = ref('')
 const monacoContainer = ref<HTMLElement>()
 const viewMode = ref<'source' | 'rendered'>('source')
 const { isDark } = useTheme()
@@ -126,6 +133,7 @@ async function loadFile() {
   }
   state.value = 'loading'
   content.value = ''
+  imageDataUri.value = ''
   errorMsg.value = ''
   truncated.value = false
 
@@ -138,7 +146,14 @@ async function loadFile() {
       return
     }
 
-    if (result.total_lines === 0) {
+    if (result.media_type === 'image' && result.data_uri) {
+      content.value = result.content
+      imageDataUri.value = result.data_uri
+      state.value = 'image'
+      return
+    }
+
+    if (result.total_lines === 0 && !result.content) {
       state.value = 'empty'
       totalLines.value = 0
       return
@@ -193,6 +208,25 @@ watch(() => [props.filePath, props.provider] as const, () => {
 
 .file-message p {
   margin: 0 0 12px;
+}
+
+.image-preview {
+  padding: 24px;
+  gap: 12px;
+}
+
+.image-preview img {
+  max-width: 100%;
+  max-height: calc(100% - 48px);
+  object-fit: contain;
+  border-radius: var(--aw-radius-sm);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+.image-meta {
+  margin: 12px 0 0 !important;
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink-muted-48);
 }
 
 .retry-btn {
