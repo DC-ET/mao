@@ -22,11 +22,15 @@
       </div>
       <div v-if="toolCall.result || imagePreviewUrl" class="tool-result">
         <div class="result-label">输出</div>
-        <img
+        <el-image
           v-if="imagePreviewUrl"
           :src="imagePreviewUrl"
-          alt="图片预览"
+          :preview-src-list="[imagePreviewUrl]"
+          :initial-index="0"
+          fit="contain"
           class="image-preview"
+          :preview-teleported="true"
+          @click.stop
         />
         <div v-if="displayResultText" class="code-block-wrapper">
           <pre class="result-content"><code>{{ displayResultText }}</code></pre>
@@ -261,11 +265,17 @@ function toggleExpand() {
 
 .image-preview {
   display: block;
-  max-width: 240px;
-  max-height: 180px;
-  object-fit: contain;
+  max-width: 120px;
+  max-height: 90px;
   border-radius: 4px;
   margin-bottom: 8px;
   border: 1px solid var(--el-border-color-lighter);
+  cursor: zoom-in;
+}
+
+.image-preview :deep(img) {
+  max-width: 120px;
+  max-height: 90px;
+  object-fit: contain;
 }
 </style>
