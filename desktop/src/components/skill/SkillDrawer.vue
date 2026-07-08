@@ -87,7 +87,7 @@
 
         <el-tab-pane v-if="isElectron" name="local">
           <template #label>
-            <span>本地未上传</span>
+            <span>本地技能</span>
             <el-badge
               v-if="pendingLocalSkills.length > 0"
               :value="pendingLocalSkills.length"
