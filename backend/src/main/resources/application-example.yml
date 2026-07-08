@@ -54,6 +54,7 @@ app:
   harness:
     workspace-root: ${WORKSPACE_ROOT:${MAO_ROOT_DIR}/data/workspace}
     runtime-dir: ${RUNTIME_DIR:${MAO_ROOT_DIR}/data/runtime}
+    user-home-dir: ${USER_HOME_DIR:${MAO_ROOT_DIR}/data/users}
     max-concurrent-agents: 100
     agent-thread-pool-size: 20
     agent-thread-pool-max: 100

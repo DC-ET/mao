@@ -263,7 +263,9 @@ public class PromptEngine {
         sb.append("工作目录是服务器上的临时/隔离目录，而不是用户电脑上的目录。\n");
         sb.append("因此，工具看到的文件系统、命令、依赖和环境变量都属于云端执行环境。");
         sb.append("当命令失败、文件不存在、依赖缺失或权限受限时，请先将其理解为云端工作区的问题，");
-        sb.append("不要默认归因于用户本地电脑，也不要要求用户在本地手动执行命令来规避异常，除非用户明确要求或任务确实需要本地操作。\n\n");
+        sb.append("不要默认归因于用户本地电脑，也不要要求用户在本地手动执行命令来规避异常，除非用户明确要求或任务确实需要本地操作。\n");
+        sb.append("文件类工具（`read_file`、`write_file`、`edit_file`、`glob_search`、`grep_search`）的路径参数不支持以 `~` 开头；");
+        sb.append("请使用工作区相对路径，或平台提供的绝对路径（如会话 runtime 目录、用户数据目录）。\n\n");
     }
 
     private String formatBoolean(Boolean value) {

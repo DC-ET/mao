@@ -174,6 +174,8 @@ public class ShellSessionManager {
             env.put("TERM", "dumb");
             env.put("PS1", "");
 
+            configureUserHome(env, userId);
+
             if (domainTokenMap != null && !domainTokenMap.isEmpty()) {
                 configureGitCredentials(env, userId, conversationId, domainTokenMap);
             }
@@ -185,6 +187,21 @@ public class ShellSessionManager {
         } catch (IOException e) {
             throw new RuntimeException("Failed to create shell session: " + e.getMessage(), e);
         }
+    }
+
+    private void configureUserHome(Map<String, String> env, Long userId) throws IOException {
+        Path userHome = runtimeDataResolver.resolveUserHomeDir(userId);
+        if (userHome == null) {
+            return;
+        }
+        Files.createDirectories(userHome);
+        try {
+            Files.setPosixFilePermissions(userHome, PosixFilePermissions.fromString("rwx------"));
+        } catch (UnsupportedOperationException ignored) {
+            // Windows 等不支持 POSIX 权限的文件系统
+        }
+        env.put("HOME", userHome.toString());
+        pathSandbox.addAllowedRoot(userHome);
     }
 
     private void configureGitCredentials(Map<String, String> env, Long userId, Long sessionId,

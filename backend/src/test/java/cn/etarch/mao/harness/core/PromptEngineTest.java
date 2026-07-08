@@ -65,7 +65,7 @@ class PromptEngineTest {
         assertThat(request.getMessages()).hasSize(2);
         assertThat(request.getMessages().get(0).getContent().toString())
                 .contains("You are careful.", "/repo", "CLOUD", "java", "/runtime/java/SKILL.md",
-                        "任务管理", "子代理委派");
+                        "任务管理", "子代理委派", "不支持以 `~` 开头");
         assertThat(request.getMessages().get(1).getContent())
                 .isEqualTo("Use /java, run mvn test, and src/main/App.java");
     }
@@ -90,7 +90,8 @@ class PromptEngineTest {
 
         assertThat(request.getTools()).isNull();
         assertThat(request.getMessages().get(0).getContent().toString())
-                .contains("/fallback", "LOCAL", "未知", "/local/skills/local-skill/SKILL.md");
+                .contains("/fallback", "LOCAL", "未知", "/local/skills/local-skill/SKILL.md")
+                .doesNotContain("不支持以 `~` 开头");
     }
 
     @Test

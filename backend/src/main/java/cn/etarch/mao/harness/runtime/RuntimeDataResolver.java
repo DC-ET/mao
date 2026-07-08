@@ -1,5 +1,6 @@
 package cn.etarch.mao.harness.runtime;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -21,10 +22,26 @@ public final class RuntimeDataResolver {
     private static final String LOCAL_UNSYNCED_SKILLS_PREFIX = "~/.agents/skills";
 
     private final Path runtimeRoot;
+    private final Path userHomeRoot;
 
+    private RuntimeDataResolver(Path runtimeRoot, Path userHomeRoot) {
+        this.runtimeRoot = runtimeRoot;
+        this.userHomeRoot = userHomeRoot;
+    }
+
+    @Autowired
     public RuntimeDataResolver(
-            @Value("${app.harness.runtime-dir:${app.root-dir}/data/runtime}") String runtimeDir) {
+            @Value("${app.harness.runtime-dir:${app.root-dir}/data/runtime}") String runtimeDir,
+            @Value("${app.harness.user-home-dir:${app.root-dir}/data/users}") String userHomeDir) {
         this.runtimeRoot = Paths.get(runtimeDir).toAbsolutePath().normalize();
+        this.userHomeRoot = Paths.get(userHomeDir).toAbsolutePath().normalize();
+    }
+
+    /** 供单元测试注入路径，避免依赖 Spring 配置。 */
+    public static RuntimeDataResolver forTest(String runtimeDir, String userHomeDir) {
+        return new RuntimeDataResolver(
+                Paths.get(runtimeDir).toAbsolutePath().normalize(),
+                Paths.get(userHomeDir).toAbsolutePath().normalize());
     }
 
     /** CLOUD: {runtime-dir}/{userId}/{sessionId} */
@@ -42,6 +59,14 @@ public final class RuntimeDataResolver {
 
     public Path resolveGitAskpassScript(Long userId, Long sessionId) {
         return resolveSessionRuntimeDir(userId, sessionId).resolve("git-askpass.sh");
+    }
+
+    /** CLOUD Shell: {user-home-dir}/{userId} — 虚拟 HOME，跨会话持久化用户级 CLI 状态 */
+    public Path resolveUserHomeDir(Long userId) {
+        if (userId == null) {
+            return null;
+        }
+        return userHomeRoot.resolve(String.valueOf(userId));
     }
 
     /** LOCAL Prompt 用：~/.mao/runtime/{sessionId}/skills/{skillName}/SKILL.md */
@@ -66,6 +91,10 @@ public final class RuntimeDataResolver {
 
     public Path getRuntimeRoot() {
         return runtimeRoot;
+    }
+
+    public Path getUserHomeRoot() {
+        return userHomeRoot;
     }
 
     /** LOCAL Prompt 用：~/.agents/skills/{folderName}/SKILL.md（本地未同步 Skill，见 LocalSkillRegistry） */

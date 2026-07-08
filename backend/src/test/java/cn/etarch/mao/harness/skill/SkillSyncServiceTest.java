@@ -91,7 +91,7 @@ class SkillSyncServiceTest {
         SkillSyncService service = new SkillSyncService(
                 loader,
                 new PathSandbox(tempDir.resolve("workspace").toString()),
-                new RuntimeDataResolver(runtimeRoot.toString()),
+                RuntimeDataResolver.forTest(runtimeRoot.toString(), runtimeRoot.getParent().resolve("users").toString()),
                 new ObjectMapper());
         ReflectionTestUtils.setField(service, "userSkillsDir", userRoot.toString());
         return service;

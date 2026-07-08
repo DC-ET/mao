@@ -115,6 +115,43 @@ class ShellRuntimeTest {
     }
 
     @Test
+    void shellSessionSetsIsolatedHomeForUser() throws Exception {
+        Path userHomeRoot = tempDir.resolve("users");
+        PathSandbox pathSandbox = new PathSandbox(tempDir.toString());
+        ShellSessionManager manager = new ShellSessionManager(
+                pathSandbox,
+                RuntimeDataResolver.forTest(tempDir.resolve("runtime").toString(), userHomeRoot.toString()));
+        ReflectionTestUtils.setField(manager, "maxSessionsPerConversation", 30);
+        ReflectionTestUtils.setField(manager, "sessionIdleTimeoutMinutes", 30);
+        ReflectionTestUtils.setField(manager, "sessionMaxLifetimeHours", 2);
+
+        OutputManager outputManager = new OutputManager();
+        ReflectionTestUtils.setField(outputManager, "maxPreviewLines", 100);
+        ReflectionTestUtils.setField(outputManager, "maxPreviewChars", 1000);
+        GitCredentialService gitCredentialService = mock(GitCredentialService.class);
+        when(gitCredentialService.getTokenMapByUser(7L)).thenReturn(Map.of());
+        ShellSessionTool tool = new ShellSessionTool(
+                objectMapper,
+                pathSandbox,
+                manager,
+                outputManager,
+                new BackgroundTaskManager(),
+                gitCredentialService);
+
+        Path expectedUserHome = userHomeRoot.resolve("7").toAbsolutePath().normalize();
+        String exec = tool.execute("""
+                {"command":"echo $HOME","session_id":"home-sh","yield_time_ms":2000}
+                """, 31L, 7L, tempDir.toString());
+
+        assertThat(exec).contains("exit_code: 0");
+        assertThat(exec).contains(expectedUserHome.toString());
+        assertThat(expectedUserHome).exists();
+
+        Path tokenFile = expectedUserHome.resolve(".mao").resolve("sso_token.json");
+        pathSandbox.resolve(tokenFile.toString());
+    }
+
+    @Test
     void shellSessionToolExecListWriteCloseAndAsyncPaths() throws Exception {
         ShellSessionManager manager = manager();
         OutputManager outputManager = new OutputManager();
@@ -185,7 +222,9 @@ class ShellRuntimeTest {
     private ShellSessionManager manager() {
         ShellSessionManager manager = new ShellSessionManager(
                 new PathSandbox(tempDir.toString()),
-                new RuntimeDataResolver(tempDir.resolve("runtime").toString()));
+                RuntimeDataResolver.forTest(
+                        tempDir.resolve("runtime").toString(),
+                        tempDir.resolve("users").toString()));
         ReflectionTestUtils.setField(manager, "maxSessionsPerConversation", 30);
         ReflectionTestUtils.setField(manager, "sessionIdleTimeoutMinutes", 30);
         ReflectionTestUtils.setField(manager, "sessionMaxLifetimeHours", 2);
