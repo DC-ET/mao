@@ -398,7 +398,8 @@ public class AgentLoop {
             return toolDispatcher.dispatch(toolName, arguments,
                     context.getExecutionMode(), context.getSessionId(), context.getUserId(),
                     context.getWorkspace(), context.getPermissionLevel(), context.getModelConfig());
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            log.error("[DIAG] dispatchTool threw for tool={} session={}", toolName, context.getSessionId(), e);
             return "Tool execution failed: " + e.getMessage();
         }
     }

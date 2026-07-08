@@ -90,7 +90,8 @@ public class PromptEngine {
             StringBuffer sb = new StringBuffer();
             while (skillMatcher.find()) {
                 String skillName = skillMatcher.group(1);
-                if (skillLoader.hasSkill(skillName) || hasUserSkill(skillName, userId)) {
+                if (skillLoader.hasSkill(skillName) || hasUserSkill(skillName, userId)
+                        || hasLocalUnsyncedSkill(skillName, context)) {
                     skillMatcher.appendReplacement(sb, "/" + Matcher.quoteReplacement(skillName));
                 } else {
                     log.warn("Skill not found for marker: ${{}}$", skillName);
@@ -139,6 +140,11 @@ public class PromptEngine {
         if (userId == null) return false;
         return skillSyncService.getUserSkillDocuments(userId).stream()
                 .anyMatch(d -> d.getName().equals(skillName));
+    }
+
+    private boolean hasLocalUnsyncedSkill(String skillName, AgentExecutionContext context) {
+        List<cn.etarch.mao.harness.skill.LocalSkillRef> localSkills = context.getLocalUnsyncedSkills();
+        return localSkills != null && localSkills.stream().anyMatch(s -> s.getName().equals(skillName));
     }
 
     private String buildSystemPrompt(AgentExecutionContext context) {
@@ -205,6 +211,11 @@ public class PromptEngine {
         Long userId = context.getUserId();
         Long sessionId = context.getSessionId();
 
+        Map<String, String> localUnsyncedFolders = new HashMap<>();
+        for (var ref : context.getLocalUnsyncedSkills()) {
+            localUnsyncedFolders.put(ref.getName(), ref.getFolderName());
+        }
+
         var skillDocs = context.getAvailableSkillDocs();
         StringBuilder sb = new StringBuilder();
         for (String name : names) {
@@ -220,7 +231,13 @@ public class PromptEngine {
             }
             sb.append("- **").append(name).append("**：");
             sb.append(description);
-            if (isLocal && sessionId != null) {
+
+            String localFolderName = localUnsyncedFolders.get(name);
+            if (localFolderName != null) {
+                sb.append("\n  目录：`").append(runtimeDataResolver.formatLocalUnsyncedSkillsDir(localFolderName)).append("`");
+                sb.append("\n  文件：`").append(runtimeDataResolver.formatLocalUnsyncedSkillsPath(localFolderName)).append("`");
+                sb.append("\n  （本地未同步：该技能仅存在于用户本地电脑，仅可用于当前本地任务；若需在云端模式任务中使用，用户需先在技能管理中上传）");
+            } else if (isLocal && sessionId != null) {
                 sb.append("\n  目录：`").append(runtimeDataResolver.formatLocalSkillsDir(sessionId, name)).append("`");
                 sb.append("\n  文件：`").append(runtimeDataResolver.formatLocalSkillsPath(sessionId, name)).append("`");
             } else if (userId != null && sessionId != null) {

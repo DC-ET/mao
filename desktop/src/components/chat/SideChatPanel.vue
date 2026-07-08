@@ -66,6 +66,7 @@ import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
 import { mapMessagesWithFileChanges } from '../../utils/chatMessage'
 import { deriveSessionTitle } from '../../utils/sessionTitle'
 import { generateUUID } from '../../utils/uuid'
+import { collectLocalUnsyncedSkills } from '../../utils/localSkills'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
 import { useCenterTabs } from '../../composables/useCenterTabs'
@@ -85,6 +86,7 @@ const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { updateSideTaskTab } = useCenterTabs(activeSessionIdRef)
 
 const parentExecutionMode = inject<Ref<string>>('executionMode', ref('CLOUD'))
+const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
 
 const parentSession = computed(() => sessionStore.activeSession)
 
@@ -243,8 +245,10 @@ function handleModelSwitch(modelId: number) {
   }
 }
 
-function handleChatSend(text: string, _files: File[]) {
+async function handleChatSend(text: string, _files: File[]) {
   if (!text.trim() || sending.value) return
+
+  const localSkills = await collectLocalUnsyncedSkills(parentExecutionMode.value, isElectron)
 
   if (!hasRealSession.value) {
     sessionStore.addUserMessage(placeholderCacheKey.value, {
@@ -266,7 +270,8 @@ function handleChatSend(text: string, _files: File[]) {
       parentSessionId,
       text.trim(),
       inheritContext.value,
-      currentModelId.value
+      currentModelId.value,
+      localSkills
     )
   } else {
     const sid = String(realSessionId.value)
@@ -277,7 +282,7 @@ function handleChatSend(text: string, _files: File[]) {
       createdAt: new Date().toLocaleString(),
     })
     sessionStore.ensureStreamingAssistantMessage(sid)
-    sendMessage(sid, text.trim(), generateUUID())
+    sendMessage(sid, text.trim(), generateUUID(), undefined, localSkills)
   }
 
   sending.value = true

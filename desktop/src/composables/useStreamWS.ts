@@ -13,6 +13,13 @@ export interface ActivityData {
   status?: string
 }
 
+// A local (not-yet-uploaded) skill from ~/.agents/skills, reported for LOCAL-mode tasks only
+export interface LocalSkillReport {
+  name: string
+  description: string
+  folderName: string
+}
+
 // Singleton state — shared across all components
 let ws: WebSocket | null = null
 const connected = ref(false)
@@ -263,21 +270,27 @@ export function useStreamWS() {
     }
   }
 
-  function sendMessage(sessionId: string, content: string, eventId: string, images?: string[]) {
+  function sendMessage(sessionId: string, content: string, eventId: string, images?: string[], localSkills?: LocalSkillReport[]) {
     send({
       type: 'send_message',
       sessionId: Number(sessionId),
-      data: { content, eventId, images: images || [] }
+      data: {
+        content,
+        eventId,
+        images: images || [],
+        ...(localSkills && localSkills.length > 0 ? { localSkills } : {})
+      }
     })
   }
 
-  function sendEditMessage(sessionId: string, content: string, messageId: string, images?: string[]) {
+  function sendEditMessage(sessionId: string, content: string, messageId: string, images?: string[], localSkills?: LocalSkillReport[]) {
     send({
       type: 'edit_and_resend',
       sessionId: Number(sessionId),
       messageId: Number(messageId),
       content,
-      images: images || []
+      images: images || [],
+      ...(localSkills && localSkills.length > 0 ? { localSkills } : {})
     })
   }
 
@@ -309,14 +322,21 @@ export function useStreamWS() {
     send({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, direction } })
   }
 
-  function createSideSession(parentSessionId: string, content: string, inheritContext: boolean, modelId?: number) {
+  function createSideSession(
+    parentSessionId: string,
+    content: string,
+    inheritContext: boolean,
+    modelId?: number,
+    localSkills?: LocalSkillReport[]
+  ) {
     send({
       type: 'create_side_session',
       sessionId: Number(parentSessionId),
       data: {
         content,
         inheritContext,
-        ...(modelId != null ? { modelId } : {})
+        ...(modelId != null ? { modelId } : {}),
+        ...(localSkills && localSkills.length > 0 ? { localSkills } : {})
       }
     })
   }

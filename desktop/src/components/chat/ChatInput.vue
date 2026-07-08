@@ -96,7 +96,7 @@
       <QuickCommandPanel
         ref="quickCommandPanelRef"
         :visible="panelVisible"
-        :skills="quickCommands.skills"
+        :skills="panelSkills"
         :commands="quickCommands.commands"
         :filter="panelFilter"
         @select="handleCommandSelect"
@@ -282,6 +282,13 @@ const editorContent = ref('')
 // Quick command state
 const quickCommandPanelRef = ref<InstanceType<typeof QuickCommandPanel>>()
 const quickCommands = ref<QuickCommandsData>({ skills: [], commands: [] })
+// LOCAL 模式下，桌面端本地未上传的技能（~/.agents/skills）也可直接用于快捷指令面板
+const localSkillItems = ref<QuickCommand[]>([])
+const panelSkills = computed<QuickCommand[]>(() => {
+  if (localSkillItems.value.length === 0) return quickCommands.value.skills
+  const uploadedNames = new Set(quickCommands.value.skills.map(s => s.name))
+  return [...quickCommands.value.skills, ...localSkillItems.value.filter(s => !uploadedNames.has(s.name))]
+})
 const panelVisible = ref(false)
 const panelFilter = ref('')
 const slashRange = ref<{ from: number; to: number } | null>(null)
@@ -375,6 +382,24 @@ async function ensureCommandsLoaded() {
     quickCommands.value = data || { skills: [], commands: [] }
   } catch {
     // Error handled by interceptor
+  }
+  await ensureLocalSkillsLoaded()
+}
+
+async function ensureLocalSkillsLoaded() {
+  if (props.executionMode !== 'LOCAL' || !isElectronClient) {
+    localSkillItems.value = []
+    return
+  }
+  try {
+    const result = await (window as any).electronAPI.listLocalSkills()
+    localSkillItems.value = (result?.skills || []).map((s: any) => ({
+      type: 'skill' as const,
+      name: s.name,
+      description: s.description ? `${s.description}（本地未上传，仅本次本地任务可用）` : '本地未上传，仅本次本地任务可用'
+    }))
+  } catch {
+    localSkillItems.value = []
   }
 }
 

@@ -3,6 +3,7 @@ package cn.etarch.mao.harness.core;
 import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.harness.llm.ChatUsage;
 import cn.etarch.mao.harness.llm.LlmModelConfig;
+import cn.etarch.mao.harness.skill.LocalSkillRef;
 import cn.etarch.mao.harness.skill.SkillDocument;
 import cn.etarch.mao.harness.tool.Tool;
 import lombok.Data;
@@ -47,6 +48,9 @@ public class AgentExecutionContext {
 
     // 合并后的 Skill 文档映射（name → SkillDocument），用于 PromptEngine 获取描述
     private Map<String, SkillDocument> availableSkillDocs = new LinkedHashMap<>();
+
+    // LOCAL 模式下，桌面端本地未上传的 Skill（仅本次本地任务可用，不参与 CLOUD 同步）
+    private List<LocalSkillRef> localUnsyncedSkills = new ArrayList<>();
 
     // 请求开始时间（单次请求内固定，保证 system prompt 前缀缓存命中）
     private String currentTimestamp;

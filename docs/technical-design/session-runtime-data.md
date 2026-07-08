@@ -332,7 +332,19 @@ Shell 命令输出超长
 
 ## 10. 相关文档
 
-- [Skills 工作区同步方案](./skill-workspace-sync.md) — 旧方案（`.skills/` / `.mao/skills` 在工作区内），**由本文档替代**
+- [Skills 工作区同步方案](./skill-workspace-sync.md) — 旧方案（`.skills/` / `.mao/skills` 在工作区内），**由本文档替代**；其第 11 节记录了下方「本地未同步 Skill」的详细实现
 - [Shell 会话系统技术方案](../shell-session-design.md) — shellOutput 落盘机制
 - [用户 Git 凭证设计](../design/user-git-credential-design.md) — git-askpass 脚本（路径将迁至 runtime）
 - [云端模式可选工作区](../cloud-workspace-project-design.md) — `Session.workspace` 与项目共享
+
+---
+
+## 11. 后续演进：LOCAL 模式本地未同步 Skill
+
+在上述 runtime 目录方案基础上，LOCAL 模式进一步支持**无需同步/上传**即可使用桌面端本地 Skill：
+
+- 桌面端「技能管理」抽屉扫描到的 `~/.agents/skills` 下未上传 Skill，会在 LOCAL 模式发送消息时随 WS 消息一并上报（`LocalSkillRegistry`，内存态、按 `sessionId`）。
+- `PromptEngine` 为这些 Skill 注入桌面端本机路径（`~/.agents/skills/{folderName}/SKILL.md`），而非本节的 runtime 副本路径；`read_file` 由 `LocalToolExecutor` 委托 Electron 直接读取本机文件，不经过 `SkillSyncService` 的 CLOUD 拷贝 / LOCAL zip 下发流程。
+- CLOUD 模式不受影响：仍要求 Skill 已上传（写入 `user-skills-dir`）才能参与 `SkillSyncService.syncToSession`。
+
+详见 [Skills 工作区同步方案 §11](./skill-workspace-sync.md#11-local-模式本地未上传-skill-直接可用无需上传)。

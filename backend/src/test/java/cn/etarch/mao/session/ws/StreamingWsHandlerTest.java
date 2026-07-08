@@ -6,6 +6,7 @@ import cn.etarch.mao.harness.core.AgentLoop;
 import cn.etarch.mao.harness.core.HarnessService;
 import cn.etarch.mao.harness.local.LocalToolSessionRegistry;
 import cn.etarch.mao.harness.shell.ShellSessionManager;
+import cn.etarch.mao.harness.skill.LocalSkillRegistry;
 import cn.etarch.mao.harness.skill.SkillSyncService;
 import cn.etarch.mao.harness.todo.mapper.SessionTodoMapper;
 import cn.etarch.mao.harness.tool.AskUserQuestionsRegistry;
@@ -32,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -54,13 +56,14 @@ class StreamingWsHandlerTest {
     private final AgentLoop agentLoop = mock(AgentLoop.class);
     private final ShellSessionManager shellSessionManager = mock(ShellSessionManager.class);
     private final SkillSyncService skillSyncService = mock(SkillSyncService.class);
+    private final LocalSkillRegistry localSkillRegistry = mock(LocalSkillRegistry.class);
     private final AgentMapper agentMapper = mock(AgentMapper.class);
     private final LlmModelMapper llmModelMapper = mock(LlmModelMapper.class);
     private final CapturingExecutor executor = new CapturingExecutor();
     private final StreamingWsHandler handler = new StreamingWsHandler(
             registry, harnessService, sessionService, messageQueueService, localToolSessionRegistry,
             askUserQuestionsRegistry, activityService, activityHeartbeat, sessionTodoMapper, agentLoop,
-            shellSessionManager, skillSyncService, agentMapper, llmModelMapper, executor);
+            shellSessionManager, skillSyncService, localSkillRegistry, agentMapper, llmModelMapper, executor);
     private final WebSocketSession ws = mock(WebSocketSession.class);
 
     @Test
@@ -212,6 +215,50 @@ class StreamingWsHandlerTest {
         verify(sessionService).save(any(Session.class));
         verify(sessionService).saveMessage(eq(13L), eq("USER"), eq("side work"), eq(null), eq(null), eq(null), eq(0), eq(null));
         verify(harnessService).executeSideFirstMessage(eq(11L), eq(13L), eq(true), any(), any(AtomicBoolean.class));
+    }
+
+    @Test
+    void createSideSessionInLocalModeRegistersToolSessionAndReportsLocalSkills() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        when(registry.hasLocalClientConnection(7L)).thenReturn(true);
+        Session parent = session("LOCAL", "IDLE");
+        parent.setWorkspace("/repo");
+        when(sessionService.getSession(11L)).thenReturn(parent);
+        when(sessionService.generateTitleFromUserMessage(7L, "side work")).thenReturn("Side work");
+        when(agentLoop.registerCancelFlag(any())).thenReturn(new AtomicBoolean(false));
+        doAnswer(invocation -> {
+            Session sideSession = invocation.getArgument(0);
+            sideSession.setId(13L);
+            return null;
+        }).when(sessionService).save(any(Session.class));
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"create_side_session","sessionId":11,"data":{"content":"side work","inheritContext":true,"modelId":9,
+                "localSkills":[{"name":"my-skill","description":"desc","folderName":"my-skill"}]}}
+                """));
+        executor.runAll();
+
+        verify(localToolSessionRegistry).setUserForSession(13L, 7L);
+        verify(localSkillRegistry).report(eq(13L), argThat(list ->
+                list.size() == 1 && "my-skill".equals(list.get(0).getName())));
+        verify(harnessService).executeSideFirstMessage(eq(11L), eq(13L), eq(true), any(), any(AtomicBoolean.class));
+    }
+
+    @Test
+    void createSideSessionInLocalModeFailsWhenDesktopNotConnected() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        when(registry.hasLocalClientConnection(7L)).thenReturn(false);
+        Session parent = session("LOCAL", "IDLE");
+        parent.setWorkspace("/repo");
+        when(sessionService.getSession(11L)).thenReturn(parent);
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"create_side_session","sessionId":11,"data":{"content":"side work","inheritContext":true}}
+                """));
+        executor.runAll();
+
+        verify(sessionService, never()).save(any(Session.class));
+        verify(registry).send(eq(7L), any(WsEvent.class));
     }
 
     @Test

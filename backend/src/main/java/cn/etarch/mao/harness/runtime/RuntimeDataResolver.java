@@ -17,6 +17,9 @@ public final class RuntimeDataResolver {
 
     private static final String LOCAL_RUNTIME_PREFIX = "~/.mao/runtime";
 
+    /** 桌面端本地未上传 Skill 目录（见 desktop/electron/main.cjs 的 LOCAL_SKILLS_DIR） */
+    private static final String LOCAL_UNSYNCED_SKILLS_PREFIX = "~/.agents/skills";
+
     private final Path runtimeRoot;
 
     public RuntimeDataResolver(
@@ -63,5 +66,15 @@ public final class RuntimeDataResolver {
 
     public Path getRuntimeRoot() {
         return runtimeRoot;
+    }
+
+    /** LOCAL Prompt 用：~/.agents/skills/{folderName}/SKILL.md（本地未同步 Skill，见 LocalSkillRegistry） */
+    public String formatLocalUnsyncedSkillsPath(String folderName) {
+        return LOCAL_UNSYNCED_SKILLS_PREFIX + "/" + folderName + "/SKILL.md";
+    }
+
+    /** LOCAL Prompt 用：~/.agents/skills/{folderName}（本地未同步 Skill，见 LocalSkillRegistry） */
+    public String formatLocalUnsyncedSkillsDir(String folderName) {
+        return LOCAL_UNSYNCED_SKILLS_PREFIX + "/" + folderName;
     }
 }

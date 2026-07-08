@@ -37,6 +37,13 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.MINUTES)
                 .writeTimeout(30, TimeUnit.SECONDS)
+                // 连接池保活时间设置得比常见网关/负载均衡的空闲超时更短，
+                // 避免复用一条已被中间设备静默断开、但本地看起来仍然存活的"假活"连接
+                // （表现为：进程运行一段时间后偶发卡死在 LLM 请求上，重启即可临时缓解）。
+                .connectionPool(new ConnectionPool(5, 20, TimeUnit.SECONDS))
+                // 对 HTTP/2 连接主动发送心跳探测，及时发现并淘汰已失效的连接
+                .pingInterval(15, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
                 .build();
     }
 

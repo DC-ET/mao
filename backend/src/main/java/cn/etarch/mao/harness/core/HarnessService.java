@@ -7,6 +7,8 @@ import cn.etarch.mao.common.result.ErrorCode;
 import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.harness.llm.ChatUsage;
 import cn.etarch.mao.harness.llm.LlmModelConfig;
+import cn.etarch.mao.harness.skill.LocalSkillRef;
+import cn.etarch.mao.harness.skill.LocalSkillRegistry;
 import cn.etarch.mao.harness.skill.SkillLoader;
 import cn.etarch.mao.harness.skill.SkillSyncService;
 import cn.etarch.mao.harness.tool.FileChangeDiffUtil;
@@ -42,6 +44,7 @@ public class HarnessService {
     private final ToolRegistry toolRegistry;
     private final SkillLoader skillLoader;
     private final SkillSyncService skillSyncService;
+    private final LocalSkillRegistry localSkillRegistry;
     private final SessionMapper sessionMapper;
     private final AgentMapper agentMapper;
     private final LlmModelMapper llmModelMapper;
@@ -242,6 +245,23 @@ public class HarnessService {
                 mergedSkillNames.add(userSkill);
             }
         }
+        // LOCAL mode: merge in desktop client's locally-scanned, not-yet-uploaded skills.
+        // These are usable for this LOCAL task only (read directly from the desktop
+        // machine at ~/.agents/skills); using them in a CLOUD task still requires upload.
+        // System/uploaded skills take priority on name conflict.
+        if ("LOCAL".equalsIgnoreCase(context.getExecutionMode())) {
+            List<LocalSkillRef> localSkills = localSkillRegistry.get(sessionId);
+            if (!localSkills.isEmpty()) {
+                List<LocalSkillRef> unsynced = new java.util.ArrayList<>();
+                for (LocalSkillRef ref : localSkills) {
+                    if (!mergedSkillNames.contains(ref.getName())) {
+                        mergedSkillNames.add(ref.getName());
+                        unsynced.add(ref);
+                    }
+                }
+                context.setLocalUnsyncedSkills(unsynced);
+            }
+        }
         context.setAvailableSkillNames(mergedSkillNames);
 
         // Build merged skill document lookup (name → doc) for PromptEngine
@@ -252,6 +272,15 @@ public class HarnessService {
         // User skills override system skills on name conflict
         for (var doc : skillSyncService.getUserSkillDocuments(session.getUserId())) {
             skillDocMap.put(doc.getName(), doc);
+        }
+        // Local unsynced skills only fill in when there's no existing doc for the name
+        for (LocalSkillRef ref : context.getLocalUnsyncedSkills()) {
+            skillDocMap.computeIfAbsent(ref.getName(), name -> {
+                var doc = new cn.etarch.mao.harness.skill.SkillDocument();
+                doc.setName(ref.getName());
+                doc.setDescription(ref.getDescription());
+                return doc;
+            });
         }
         context.setAvailableSkillDocs(skillDocMap);
 

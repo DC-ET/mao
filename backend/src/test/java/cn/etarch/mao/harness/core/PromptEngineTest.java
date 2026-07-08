@@ -5,6 +5,7 @@ import cn.etarch.mao.command.service.UserCommandService;
 import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.harness.runtime.RuntimeDataResolver;
 import cn.etarch.mao.harness.safety.PathSandbox;
+import cn.etarch.mao.harness.skill.LocalSkillRef;
 import cn.etarch.mao.harness.skill.SkillDocument;
 import cn.etarch.mao.harness.skill.SkillLoader;
 import cn.etarch.mao.harness.skill.SkillSyncService;
@@ -90,6 +91,37 @@ class PromptEngineTest {
         assertThat(request.getTools()).isNull();
         assertThat(request.getMessages().get(0).getContent().toString())
                 .contains("/fallback", "LOCAL", "未知", "/local/skills/local-skill/SKILL.md");
+    }
+
+    @Test
+    void buildRequestUsesLocalUnsyncedSkillPathAndAllowsMarkerReplacement() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/fallback"));
+        when(skillSyncService.getUserSkillDocuments(7L)).thenReturn(List.of());
+        when(runtimeDataResolver.formatLocalUnsyncedSkillsDir("local-only-folder"))
+                .thenReturn("~/.agents/skills/local-only-folder");
+        when(runtimeDataResolver.formatLocalUnsyncedSkillsPath("local-only-folder"))
+                .thenReturn("~/.agents/skills/local-only-folder/SKILL.md");
+
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setSessionId(5L);
+        context.setUserId(7L);
+        context.setExecutionMode("LOCAL");
+        context.setAvailableSkillNames(List.of("local-only"));
+        LocalSkillRef ref = new LocalSkillRef();
+        ref.setName("local-only");
+        ref.setDescription("Not yet uploaded");
+        ref.setFolderName("local-only-folder");
+        context.setLocalUnsyncedSkills(List.of(ref));
+        context.setTools(List.of());
+        context.addUserMessage("Use ${local-only}$ now");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+
+        assertThat(request.getMessages().get(0).getContent().toString())
+                .contains("~/.agents/skills/local-only-folder/SKILL.md",
+                        "~/.agents/skills/local-only-folder",
+                        "本地未同步");
+        assertThat(request.getMessages().get(1).getContent()).isEqualTo("Use /local-only now");
     }
 
     private Tool tool(String name) {

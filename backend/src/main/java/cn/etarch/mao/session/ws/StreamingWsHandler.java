@@ -8,6 +8,8 @@ import cn.etarch.mao.harness.shell.ShellSessionManager;
 import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.harness.local.LocalToolSessionRegistry;
 import cn.etarch.mao.harness.tool.AskUserQuestionsRegistry;
+import cn.etarch.mao.harness.skill.LocalSkillRef;
+import cn.etarch.mao.harness.skill.LocalSkillRegistry;
 import cn.etarch.mao.harness.skill.SkillSyncService;
 import cn.etarch.mao.model.entity.LlmModel;
 import cn.etarch.mao.model.mapper.LlmModelMapper;
@@ -54,6 +56,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final AgentLoop agentLoop;
     private final ShellSessionManager shellSessionManager;
     private final SkillSyncService skillSyncService;
+    private final LocalSkillRegistry localSkillRegistry;
     private final AgentMapper agentMapper;
     private final LlmModelMapper llmModelMapper;
     private final ExecutorService agentExecutor;
@@ -98,6 +101,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         shellSessionManager.closeByConversation(sessionId);
         localToolSessionRegistry.failAllForSession(sessionId);
         askUserQuestionsRegistry.failAllForSession(sessionId);
+        localSkillRegistry.clear(sessionId);
     }
 
     private boolean isSessionActive(String phase) {
@@ -164,6 +168,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                AgentLoop agentLoop,
                                ShellSessionManager shellSessionManager,
                                SkillSyncService skillSyncService,
+                               LocalSkillRegistry localSkillRegistry,
                                AgentMapper agentMapper,
                                LlmModelMapper llmModelMapper,
                                @Qualifier("agentExecutor") ExecutorService agentExecutor) {
@@ -179,6 +184,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.agentLoop = agentLoop;
         this.shellSessionManager = shellSessionManager;
         this.skillSyncService = skillSyncService;
+        this.localSkillRegistry = localSkillRegistry;
         this.agentMapper = agentMapper;
         this.llmModelMapper = llmModelMapper;
         this.agentExecutor = agentExecutor;
@@ -351,6 +357,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                         Map.of("message", "Local client is not connected. Please ensure the desktop app is running.")));
                 return;
             }
+            localSkillRegistry.report(sessionId, parseLocalSkills(data.get("localSkills")));
         }
 
         // Build multimodal content
@@ -451,8 +458,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                             Map.of("phase", "COMPLETED", "unread", true, "executionId", executionId)));
                     registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "COMPLETED")));
                 }
-            } catch (Exception e) {
-                log.error("Agent execution failed for session {}", sessionId, e);
+            } catch (Throwable e) {
+                log.error("[DIAG] Agent execution failed for session {}", sessionId, e);
                 try {
                     registry.send(userId, WsEvent.of("error", sessionId,
                             Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常",
@@ -656,6 +663,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                         Map.of("message", "Local client is not connected. Please ensure the desktop app is running.")));
                 return;
             }
+            localSkillRegistry.report(sessionId, parseLocalSkills(root.get("localSkills")));
         }
 
         // Build multimodal content
@@ -745,8 +753,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                             Map.of("phase", "COMPLETED", "unread", true, "executionId", executionId)));
                     registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "COMPLETED")));
                 }
-            } catch (Exception e) {
-                log.error("Agent execution failed for session {}", sessionId, e);
+            } catch (Throwable e) {
+                log.error("[DIAG] Agent execution failed for session {}", sessionId, e);
                 try {
                     registry.send(userId, WsEvent.of("error", sessionId,
                             Map.of("message", e.getMessage() != null ? e.getMessage() : "Agent 执行异常",
@@ -832,6 +840,13 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         // 2. 确认用户订阅了主会话
         registry.subscribe(userId, parentSessionId);
 
+        // 2.5 LOCAL 模式下校验桌面端已连接，避免创建后才发现无法执行
+        if ("LOCAL".equals(parentSession.getExecutionMode()) && !registry.hasLocalClientConnection(userId)) {
+            registry.send(userId, WsEvent.of("error", parentSessionId,
+                    Map.of("message", "Local client is not connected. Please ensure the desktop app is running.")));
+            return;
+        }
+
         // 3. 创建边路任务子会话
         Session sideSession = new Session();
         sideSession.setUserId(userId);
@@ -854,6 +869,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         sideSession.setSessionType("SIDE_TASK");
         sessionService.save(sideSession);
         Long sideSessionId = sideSession.getId();
+
+        // LOCAL 模式：注册本地工具会话映射，并登记桌面端随消息上报的本地未上传 Skill
+        if ("LOCAL".equals(sideSession.getExecutionMode())) {
+            localToolSessionRegistry.setUserForSession(sideSessionId, userId);
+            localSkillRegistry.report(sideSessionId, parseLocalSkills(data.get("localSkills")));
+        }
 
         log.info("Created side task session {} for parent session {}, userId={}, inheritContext={}",
                 sideSessionId, parentSessionId, userId, inheritContext);
@@ -1135,6 +1156,24 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * 解析桌面端随消息上报的本地未上传 Skill 列表（LOCAL 模式专用）。
+     * 每项形如 {name, description, folderName}，对应 ~/.agents/skills/{folderName}。
+     */
+    private List<LocalSkillRef> parseLocalSkills(JsonNode node) {
+        List<LocalSkillRef> result = new ArrayList<>();
+        if (node == null || !node.isArray()) return result;
+        for (JsonNode item : node) {
+            if (item == null || !item.has("name") || !item.has("folderName")) continue;
+            LocalSkillRef ref = new LocalSkillRef();
+            ref.setName(item.get("name").asText());
+            ref.setFolderName(item.get("folderName").asText());
+            ref.setDescription(item.has("description") ? item.get("description").asText() : "");
+            result.add(ref);
+        }
+        return result;
     }
 
     private Long resolveUserId(WebSocketSession session) {

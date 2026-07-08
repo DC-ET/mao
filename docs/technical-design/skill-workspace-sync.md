@@ -395,3 +395,48 @@ public Set<String> getAllNames() { ... }
 3. **并发安全**：同一 workspace 可能有多个 session 并发同步。CLOUD 模式通过文件系统原子写入保证一致；LOCAL 模式 zip 解压是覆盖写入，后写入者生效。
 4. **超时处理**：客户端 60 秒未完成下载 + 解压 + 确认，服务端中止本次执行并报错。
 5. **认证**：REST 接口需复用现有 JWT 认证机制，客户端请求时携带 `Authorization` header。
+
+> 注：本文档描述的 `.skills/` 工作区路径为早期方案。当前实现改为使用会话运行时目录
+> （CLOUD：`{runtime-dir}/{userId}/{sessionId}/skills/`；LOCAL：`~/.mao/runtime/{sessionId}/skills/`），
+> 详见 `RuntimeDataResolver` 与 `PromptEngine.buildSkillCatalog()`。整体同步流程（`skill_sync_required`/`skill_sync_done`）保持一致。
+
+## 11. LOCAL 模式：本地未上传 Skill 直接可用（无需上传）
+
+### 11.1 背景
+
+桌面端「技能管理」抽屉的「本地未上传」Tab 会扫描 `~/.agents/skills` 下的 Skill 目录，但此前必须先上传到服务端（写入 `user-skills-dir`）才能被 Agent 使用——即便是 LOCAL 模式任务，工具执行本就委托给桌面端 Electron 执行，理论上完全可以直接读取本地文件，无需先上传一份到服务端。
+
+### 11.2 方案
+
+LOCAL 模式下，`read_file` 等工具本就通过 `LocalToolExecutor` 委托给桌面端执行，路径解析（`resolveWorkspacePath`）支持任意 `~` 前缀的绝对路径。因此只需：
+
+1. 桌面端在 LOCAL 模式下发送 `send_message` / `edit_and_resend` 时，附带当前扫描到的本地未上传 Skill 列表（`{name, description, folderName}`），随消息一起上报。
+2. 服务端 `LocalSkillRegistry`（内存态，按 `sessionId` 存储）接收上报，`HarnessService.buildContext()` 将其与系统 Skill、已上传的用户 Skill 合并（系统/已上传优先，避免同名冲突）。
+3. `PromptEngine.buildSkillCatalog()` 对这些「本地未同步」Skill 使用桌面端本机路径 `~/.agents/skills/{folderName}/SKILL.md`（而不是 runtime 目录路径），并在描述中注明「本地未同步，仅本次本地任务可用」。
+4. Agent 调用 `read_file` 读取该路径时，桌面端 Electron 直接从 `~/.agents/skills/{folderName}/SKILL.md` 读取，无需任何服务端同步（不生成 `.sync-manifest.json`、不打包 zip）。
+
+若用户希望在 **CLOUD 模式**任务中使用这些 Skill，仍需按原流程上传（`POST /user-skills/upload`），因为 CLOUD 模式下工具在服务端执行，服务端磁盘上必须存在对应文件。
+
+### 11.3 关键改动
+
+| 文件 | 改动 |
+|------|------|
+| `backend/.../harness/skill/LocalSkillRef.java`（新增） | 本地未上传 Skill 的引用 POJO：`name`/`description`/`folderName` |
+| `backend/.../harness/skill/LocalSkillRegistry.java`（新增） | 内存态会话级登记表，按 `sessionId` 存储桌面端上报的本地 Skill 列表 |
+| `backend/.../harness/runtime/RuntimeDataResolver.java` | 新增 `formatLocalUnsyncedSkillsDir/Path()`，格式化 `~/.agents/skills/{folderName}` 路径 |
+| `backend/.../harness/core/AgentExecutionContext.java` | 新增 `localUnsyncedSkills` 字段 |
+| `backend/.../harness/core/HarnessService.java` | `buildContext()` 合并本地未同步 Skill（不覆盖系统/已上传同名 Skill） |
+| `backend/.../harness/core/PromptEngine.java` | Skill catalog 对本地未同步 Skill 使用本机路径并附加提示；`${skill}$` 标记识别新增本地未同步 Skill |
+| `backend/.../session/ws/StreamingWsHandler.java` | `send_message`/`edit_and_resend`/`create_side_session` 解析 `data.localSkills`，写入 `LocalSkillRegistry`（按各自的 `sessionId`，Side Task 用其子会话 ID）；执行结束后清理 |
+| `desktop/src/composables/useStreamWS.ts` | `sendMessage`/`sendEditMessage`/`createSideSession` 新增可选 `localSkills` 参数 |
+| `desktop/src/utils/localSkills.ts`（新增） | `collectLocalUnsyncedSkills()` 共享工具函数，供主聊天与 Side Task 共用 |
+| `desktop/src/composables/useChat.ts` | LOCAL 模式发送/编辑消息前调用共享工具收集本地未上传 Skill 并随消息上报 |
+| `desktop/src/components/chat/SideChatPanel.vue` | Side Task 首条消息（`createSideSession`）与后续消息（`sendMessage`）均收集并上报本地未上传 Skill |
+| `desktop/src/components/chat/ChatInput.vue` | 快捷指令面板（`/`）合并本地未上传 Skill，便于插入 `${skill}$` 标记 |
+| `desktop/src/components/skill/SkillDrawer.vue` | 「本地未上传」Tab 提示文案，说明可直接用于本地任务 |
+
+### 11.4 限制
+
+- 仅覆盖 `send_message` / `edit_and_resend` / `create_side_session` 三个消息发送路径；消息队列自动消费（`enqueue_message` 自动出队）复用会话上一次上报的快照，不会重新扫描。
+- 本地未同步 Skill 的上报为内存态、按 `sessionId` 覆盖式存储，服务重启后丢失（与现有 `SkillSyncService.syncState` 一致的设计取舍）。
+- Side Task 创建时（`handleCreateSideSession`）新增 LOCAL 模式桌面端连接性校验：未连接直接返回错误、不创建子会话，避免创建后才发现无法执行工具。

@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
+import { collectLocalUnsyncedSkills } from '../utils/localSkills'
 import { mapMessagesWithFileChanges } from '../utils/chatMessage'
 import type { ChatMessage, QuestionAnswer } from '../types/chat'
 
@@ -353,7 +354,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Send message via WS
       const eventId = generateUUID()
       setActiveExecution(sid, eventId)
-      wsSendMessage(sid, resolvedText, eventId, imageUrls)
+      const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
+      wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills)
 
       // Wait for completion (session_status reaches COMPLETED/FAILED)
       await new Promise<void>((resolve, reject) => {
@@ -478,7 +480,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       subscribe(sessionId.value)
 
       // 通过 WS 发送编辑请求
-      sendEditMessage(sessionId.value, newContent, messageId, imagesToSend)
+      const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
+      sendEditMessage(sessionId.value, newContent, messageId, imagesToSend, localSkills)
 
       // Wait for completion
       await new Promise<void>((resolve, reject) => {
