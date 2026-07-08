@@ -76,6 +76,7 @@ public class TokenEstimator {
         // Content tokens
         if (message.getContent() != null) {
             tokens += countTokens(contentToString(message.getContent()));
+            tokens += countImagePartTokens(message.getContent());
         }
 
         // Tool call id tokens
@@ -146,6 +147,27 @@ public class TokenEstimator {
             }
         }
         return tokens;
+    }
+
+    private static final int IMAGE_TOKEN_ESTIMATE = 1000;
+
+    private int countImagePartTokens(Object content) {
+        if (!(content instanceof List<?> list)) {
+            return 0;
+        }
+        int images = 0;
+        for (Object item : list) {
+            if (item instanceof ChatRequest.ContentPart part) {
+                if ("image_url".equals(part.getType())) {
+                    images++;
+                }
+            } else if (item instanceof java.util.Map<?, ?> map) {
+                if ("image_url".equals(map.get("type"))) {
+                    images++;
+                }
+            }
+        }
+        return images * IMAGE_TOKEN_ESTIMATE;
     }
 
     /**

@@ -446,7 +446,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 registry.send(userId, WsEvent.of("todo_updated", sessionId, Map.of("todos", List.of())));
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
-                        registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService, sessionId, userId, executionId);
+                        registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService,
+                        sessionId, userId, executionId, resolveSupportsVision(session));
 
                 harnessService.executeFromEvent(sessionId, resolvedEventId, listener, cancelFlag);
 
@@ -741,7 +742,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 registry.send(userId, WsEvent.of("todo_updated", sessionId, Map.of("todos", List.of())));
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
-                        registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService, sessionId, userId, executionId);
+                        registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService,
+                        sessionId, userId, executionId, resolveSupportsVision(session));
 
                 harnessService.executeFromEvent(sessionId, resolvedEventId, listener, cancelFlag);
 
@@ -903,7 +905,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
                         registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService,
-                        sideSessionId, userId, null);
+                        sideSessionId, userId, null, resolveSupportsVision(sideSession));
 
                 harnessService.executeSideFirstMessage(
                         parentSessionId, sideSessionId,
@@ -1147,6 +1149,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         return llmModelMapper.selectOne(
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<LlmModel>()
                         .eq("is_default", 1).eq("status", 1));
+    }
+
+    private boolean resolveSupportsVision(Session session) {
+        LlmModel model = resolveSessionModel(session);
+        return model != null && model.getSupportsVision() != null && model.getSupportsVision() == 1;
     }
 
     private Long getLong(JsonNode root, String field) {

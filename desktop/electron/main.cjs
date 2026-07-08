@@ -1197,20 +1197,90 @@ function extractFilePath(args) {
   return args.path || args.file || args.filePath || args.file_path || args.target_file
 }
 
+const IMAGE_EXTENSIONS = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp'
+}
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+function mimeFromPath(filePath) {
+  const lower = filePath.toLowerCase()
+  for (const [ext, mime] of Object.entries(IMAGE_EXTENSIONS)) {
+    if (lower.endsWith(ext)) return mime
+  }
+  return null
+}
+
+function detectMimeFromBytes(buffer) {
+  if (!buffer || buffer.length < 12) return null
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return 'image/png'
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg'
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return 'image/gif'
+  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46
+      && buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return 'image/webp'
+  return null
+}
+
+function formatImageSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function readLocalImage(resolvedPath, filePath) {
+  const sizeBytes = fs.statSync(resolvedPath).size
+  if (sizeBytes > MAX_IMAGE_BYTES) {
+    return {
+      content: `错误：文件过大（${formatImageSize(sizeBytes)}），图片读取上限为 ${formatImageSize(MAX_IMAGE_BYTES)}：${filePath}`,
+      total_lines: 0
+    }
+  }
+  const buffer = fs.readFileSync(resolvedPath)
+  const mime = detectMimeFromBytes(buffer)
+  if (!mime) {
+    return {
+      content: `错误：不支持的图片格式或文件内容无效：${filePath}`,
+      total_lines: 0
+    }
+  }
+  const dataUri = `data:${mime};base64,${buffer.toString('base64')}`
+  return {
+    content: `图片读取成功：${filePath} (${mime}, ${formatImageSize(sizeBytes)})`,
+    total_lines: 0,
+    media_type: 'image',
+    mime,
+    path: filePath,
+    size_bytes: sizeBytes,
+    data_uri: dataUri
+  }
+}
+
 async function handleLocalReadFile(args, workspace, maoSessionId) {
   try {
     const filePath = extractFilePath(args)
     if (!filePath) {
-      return { error: 'Missing required parameter: path' }
+      return { content: '错误：缺少必填参数 path', total_lines: 0 }
     }
     const resolvedPath = resolveWorkspacePath(filePath, workspace, maoSessionId)
+    if (!fs.existsSync(resolvedPath)) {
+      return { content: `错误：文件不存在：${filePath}`, total_lines: 0 }
+    }
+    if (!fs.statSync(resolvedPath).isFile()) {
+      return { content: `错误：不是普通文件：${filePath}`, total_lines: 0 }
+    }
+    if (mimeFromPath(filePath)) {
+      return readLocalImage(resolvedPath, filePath)
+    }
     const content = fs.readFileSync(resolvedPath, 'utf-8')
     const lines = content.split('\n')
     const start = args.offset || 0
     const end = args.limit ? Math.min(start + args.limit, lines.length) : lines.length
     return { content: lines.slice(start, end).join('\n'), total_lines: lines.length }
   } catch (e) {
-    return { error: e.message }
+    return { content: `错误：${e.message}`, total_lines: 0 }
   }
 }
 

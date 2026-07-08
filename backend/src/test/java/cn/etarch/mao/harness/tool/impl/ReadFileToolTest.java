@@ -6,6 +6,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -64,6 +69,54 @@ class ReadFileToolTest {
         JsonNode result = execute(tool, Map.of("path", "large.txt"));
 
         assertThat(result.get("content").asText()).contains("[output truncated]");
+    }
+
+    @Test
+    void readsPngImageWithDataUri() throws Exception {
+        writePng(tempDir.resolve("shot.png"), 32, 24);
+        ReadFileTool tool = new ReadFileTool(objectMapper, new PathSandbox(tempDir.toString()));
+
+        JsonNode result = execute(tool, Map.of("path", "shot.png"));
+
+        assertThat(result.get("media_type").asText()).isEqualTo("image");
+        assertThat(result.get("mime").asText()).isEqualTo("image/png");
+        assertThat(result.get("data_uri").asText()).startsWith("data:image/png;base64,");
+        assertThat(result.get("width").asInt()).isEqualTo(32);
+        assertThat(result.get("height").asInt()).isEqualTo(24);
+        assertThat(result.get("content").asText()).contains("图片读取成功");
+    }
+
+    @Test
+    void rejectsFakePngExtensionWithInvalidContent() throws Exception {
+        Files.writeString(tempDir.resolve("fake.png"), "not an image");
+        ReadFileTool tool = new ReadFileTool(objectMapper, new PathSandbox(tempDir.toString()));
+
+        JsonNode result = execute(tool, Map.of("path", "fake.png"));
+
+        assertThat(result.get("content").asText()).contains("不支持的图片格式");
+    }
+
+    @Test
+    void readsBmpAsTextBecauseExtensionIsNotSupportedImage() throws Exception {
+        Files.writeString(tempDir.resolve("photo.bmp"), "plain-text");
+        ReadFileTool tool = new ReadFileTool(objectMapper, new PathSandbox(tempDir.toString()));
+
+        JsonNode result = execute(tool, Map.of("path", "photo.bmp"));
+
+        assertThat(result.get("content").asText()).isEqualTo("plain-text");
+        assertThat(result.has("media_type")).isFalse();
+    }
+
+    private void writePng(Path path, int width, int height) throws Exception {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        g.setColor(Color.RED);
+        g.fillRect(0, 0, width, height);
+        g.dispose();
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            ImageIO.write(image, "png", out);
+            Files.write(path, out.toByteArray());
+        }
     }
 
     private JsonNode execute(ReadFileTool tool, Map<String, Object> args) throws Exception {

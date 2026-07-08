@@ -155,6 +155,35 @@ class OpenAiLlmAdapterTest {
         }
     }
 
+    @Test
+    void chatSerializesSyntheticUserImageParts() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(jsonResponse("{\"id\":\"ok\",\"choices\":[]}"));
+            server.start();
+
+            ChatRequest request = ChatRequest.builder()
+                    .messages(List.of(
+                            ChatRequest.Message.builder().role("tool").toolCallId("call-1").content("ok").build(),
+                            ChatRequest.Message.builder()
+                                    .role("user")
+                                    .content(List.of(
+                                            ChatRequest.ContentPart.builder().type("text")
+                                                    .text("Attached media from tool result:").build(),
+                                            ChatRequest.ContentPart.builder().type("image_url")
+                                                    .imageUrl(ChatRequest.ImageUrl.builder()
+                                                            .url("data:image/png;base64,abc").build())
+                                                    .build()))
+                                    .build()))
+                    .build();
+
+            adapter(0, 0).chat(request, config(server));
+
+            String body = server.takeRequest().getBody().readUtf8();
+            assertThat(body).contains("\"type\":\"image_url\"");
+            assertThat(body).contains("data:image/png;base64,abc");
+        }
+    }
+
     private OpenAiLlmAdapter adapter(int maxRetries, int retryDelaySeconds) {
         LlmRetryConfig retryConfig = new LlmRetryConfig();
         retryConfig.setRateLimitMaxRetries(maxRetries);

@@ -112,7 +112,12 @@ public class HarnessService {
 
             @Override
             public void onSaveToolMessage(String toolCallId, String content) {
-                sessionService.saveMessage(sessionId, "TOOL", content, null, toolCallId, null, 0, null);
+                onSaveToolMessage(toolCallId, content, null);
+            }
+
+            @Override
+            public void onSaveToolMessage(String toolCallId, String content, String metadataJson) {
+                sessionService.saveMessage(sessionId, "TOOL", content, null, toolCallId, null, 0, null, metadataJson);
             }
         };
 
@@ -170,6 +175,7 @@ public class HarnessService {
                 .apiKey(llmModel.getApiKey())
                 .modelId(llmModel.getModelId())
                 .contextWindowTokens(llmModel.getContextWindowTokens())
+                .supportsVision(llmModel.getSupportsVision() != null && llmModel.getSupportsVision() == 1)
                 .build());
 
         // 5. Load message history (normalize tool/assistant ordering for legacy rows)
@@ -194,6 +200,7 @@ public class HarnessService {
             }
             context.getMessages().add(msgBuilder.build());
         }
+        context.getToolAttachments().putAll(ToolAttachmentLoader.loadAllFromMessages(history, objectMapper));
 
         // 5.5. Session compaction — compress old history if needed
         CompactionConfig effectiveConfig = resolveCompactionConfig(agent);
@@ -580,8 +587,13 @@ public class HarnessService {
 
                 @Override
                 public void onSaveToolMessage(String toolCallId, String content) {
+                    onSaveToolMessage(toolCallId, content, null);
+                }
+
+                @Override
+                public void onSaveToolMessage(String toolCallId, String content, String metadataJson) {
                     sessionService.saveMessage(sideSessionId, "TOOL",
-                            content, null, toolCallId, null, 0, null);
+                            content, null, toolCallId, null, 0, null, metadataJson);
                 }
             };
 

@@ -284,7 +284,8 @@ public class CompactionService {
                 case "tool" -> {
                     String toolName = msg.getToolCallId() != null ? msg.getToolCallId() : "unknown";
                     sb.append("工具结果[").append(toolName).append("]: ")
-                            .append(truncate(textContent, MAX_TOOL_RESULT_CHARS)).append("\n\n");
+                            .append(truncate(formatToolResultForCompaction(textContent), MAX_TOOL_RESULT_CHARS))
+                            .append("\n\n");
                 }
                 case "system" -> {
                     sb.append("[系统] ").append(truncate(textContent, MAX_SINGLE_MESSAGE_CHARS)).append("\n\n");
@@ -292,6 +293,23 @@ public class CompactionService {
             }
         }
         return sb.toString();
+    }
+
+    private String formatToolResultForCompaction(String textContent) {
+        if (textContent == null || textContent.isBlank()) {
+            return "";
+        }
+        try {
+            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(textContent);
+            if (cn.etarch.mao.harness.tool.ToolImageResultProcessor.isImageResult(node)) {
+                return node.path("content").asText(textContent);
+            }
+            if (node.has("data_uri")) {
+                return textContent.replaceAll("\"data_uri\"\\s*:\\s*\"[^\"]*\"", "\"data_uri\":\"[stripped]\"");
+            }
+        } catch (Exception ignored) {
+        }
+        return textContent;
     }
 
     private String truncate(String text, int maxChars) {

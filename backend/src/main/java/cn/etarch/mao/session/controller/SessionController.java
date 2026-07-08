@@ -477,6 +477,7 @@ public class SessionController {
         vo.setThinkingContent(message.getThinkingContent());
         vo.setToolCallId(message.getToolCallId());
         vo.setToolCalls(message.getToolCalls());
+        vo.setMetadata(message.getMetadata());
         vo.setTokenCount(message.getTokenCount());
         vo.setCreatedAt(message.getCreatedAt() != null ? message.getCreatedAt().toString() : null);
         vo.setUpdatedAt(message.getUpdatedAt() != null ? message.getUpdatedAt().toString() : null);
@@ -619,6 +620,7 @@ public class SessionController {
         private List<String> images;
         private String toolCallId;
         private Object toolCalls;
+        private String metadata;
         private Integer tokenCount;
         private String createdAt;
         private String updatedAt;

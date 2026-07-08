@@ -75,6 +75,9 @@ public class AgentExecutionContext {
     // 取消标志 — 用户点击停止后立即设为 true
     private AtomicBoolean cancelFlag;
 
+    // toolCallId → image attachment extracted from read_file results
+    private Map<String, ToolAttachment> toolAttachments = new LinkedHashMap<>();
+
     public AgentExecutionContext() {
         this.totalUsage = ChatUsage.builder()
                 .promptTokens(0)
@@ -120,6 +123,12 @@ public class AgentExecutionContext {
                 .toolCallId(toolCallId)
                 .content(result != null ? result : "")
                 .build());
+    }
+
+    public void registerToolAttachment(String toolCallId, ToolAttachment attachment) {
+        if (toolCallId != null && attachment != null) {
+            toolAttachments.put(toolCallId, attachment);
+        }
     }
 
     public void addUsage(ChatUsage usage) {

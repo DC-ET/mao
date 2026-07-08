@@ -25,6 +25,25 @@ export function parseToolArguments(raw: unknown): Record<string, unknown> | unde
   return undefined
 }
 
+/** 从 TOOL 消息 metadata 提取图片预览 */
+export function extractToolPreviewFromMetadata(metadata: unknown): ToolCall['preview'] | undefined {
+  if (metadata == null) return undefined
+  try {
+    const root = typeof metadata === 'string' ? JSON.parse(metadata) : metadata
+    const attachments = (root as { attachments?: unknown[] })?.attachments
+    if (!Array.isArray(attachments) || attachments.length === 0) return undefined
+    const first = attachments[0] as { mime?: string; data_uri?: string }
+    if (!first?.data_uri) return undefined
+    return {
+      media_type: 'image',
+      mime: first.mime,
+      data_uri: first.data_uri
+    }
+  } catch {
+    return undefined
+  }
+}
+
 /** OpenAI / 后端 ToolCall → 前端 UI 结构 */
 export function normalizeApiToolCall(
   tc: Record<string, unknown>,
@@ -172,7 +191,7 @@ export function mapMessagesWithFileChanges(raw: Array<Record<string, unknown>>) 
 export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatMessage[] {
   const result: ChatMessage[] = []
   /** 第一轮未匹配的 TOOL 消息，留到第二轮处理 */
-  const pendingToolResults: Array<{ toolCallId: string; content: string }> = []
+  const pendingToolResults: Array<{ toolCallId: string; content: string; preview?: ToolCall['preview'] }> = []
 
   for (const m of raw) {
     const roleRaw = String(m.role ?? 'assistant').toLowerCase()
@@ -180,6 +199,7 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
     if (roleRaw === 'tool' || roleRaw === 'function') {
       const toolCallId = m.toolCallId != null ? String(m.toolCallId) : ''
       const content = String(m.content ?? '')
+      const preview = extractToolPreviewFromMetadata(m.metadata)
       let matched = false
       for (let j = result.length - 1; j >= 0; j--) {
         const prev = result[j]
@@ -188,12 +208,13 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
         if (call) {
           call.result = content
           call.status = inferToolStatus(content)
+          if (preview) call.preview = preview
           matched = true
           break
         }
       }
       if (!matched) {
-        pendingToolResults.push({ toolCallId, content })
+        pendingToolResults.push({ toolCallId, content, preview })
       }
       continue
     }
@@ -249,13 +270,14 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
 
   // 第二轮：匹配第一轮因顺序问题未关联的 TOOL 消息
   if (pendingToolResults.length > 0) {
-    for (const { toolCallId, content } of pendingToolResults) {
+    for (const { toolCallId, content, preview } of pendingToolResults) {
       for (const msg of result) {
         if (msg.role !== 'assistant' || !msg.toolCalls?.length) continue
         const call = msg.toolCalls.find(c => c.id === toolCallId)
         if (call) {
           call.result = content
           call.status = inferToolStatus(content)
+          if (preview) call.preview = preview
           break
         }
       }

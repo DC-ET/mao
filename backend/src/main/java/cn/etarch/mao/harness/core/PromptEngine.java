@@ -37,6 +37,7 @@ public class PromptEngine {
     private final RuntimeDataResolver runtimeDataResolver;
     private final UserCommandService userCommandService;
     private final SkillSyncService skillSyncService;
+    private final ToolMediaInjector toolMediaInjector;
 
     /**
      * 构建 LLM 请求
@@ -57,6 +58,9 @@ public class PromptEngine {
         // 3. Parse quick command markers and replace in user messages
         replaceQuickCommandMarkers(history, context);
         messages.addAll(history);
+
+        // 3.5 Inject synthetic user messages for tool image attachments
+        messages = toolMediaInjector.inject(messages, context.getToolAttachments(), context.getModelConfig());
 
         // 4. Build tool definitions
         List<ChatRequest.ToolDefinition> tools = buildToolDefinitions(context);

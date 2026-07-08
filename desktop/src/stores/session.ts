@@ -469,7 +469,13 @@ export const useSessionStore = defineStore('session', () => {
     sessionMessages.value.set(sid, [...list])
   }
 
-  function updateToolCallResult(sessionId: string, data: { tool_call_id: string; result: string; status?: string; summary?: string }) {
+  function updateToolCallResult(sessionId: string, data: {
+    tool_call_id: string
+    result: string
+    status?: string
+    summary?: string
+    preview?: { media_type?: string; mime?: string; data_uri?: string }
+  }) {
     const sid = String(sessionId)
     const lastMsg = ensureStreamingAssistantMessage(sid)
     if (!lastMsg.toolCalls) lastMsg.toolCalls = []
@@ -496,6 +502,7 @@ export const useSessionStore = defineStore('session', () => {
     call.isExpanded = false
     call.argsStreaming = false
     if (data.summary) call.summary = data.summary
+    if (data.preview) call.preview = data.preview
     const list = sessionMessages.value.get(sid) ?? []
     sessionMessages.value.set(sid, [...list])
   }

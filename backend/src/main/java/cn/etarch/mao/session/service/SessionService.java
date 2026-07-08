@@ -326,6 +326,12 @@ public class SessionService {
     public Message saveMessage(Long sessionId, String role, String content, String thinkingContent,
                                 String toolCallId, String toolCalls,
                                 Integer tokenCount, Long modelId) {
+        return saveMessage(sessionId, role, content, thinkingContent, toolCallId, toolCalls, tokenCount, modelId, null);
+    }
+
+    public Message saveMessage(Long sessionId, String role, String content, String thinkingContent,
+                                String toolCallId, String toolCalls,
+                                Integer tokenCount, Long modelId, String metadata) {
         Message message = new Message();
         message.setSessionId(sessionId);
         message.setRole(role);
@@ -335,6 +341,7 @@ public class SessionService {
         message.setToolCalls(toolCalls);
         message.setTokenCount(tokenCount != null ? tokenCount : 0);
         message.setModelId(modelId);
+        message.setMetadata(metadata);
         messageMapper.insert(message);
 
         // Update session's updated_at

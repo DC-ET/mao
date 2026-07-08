@@ -4,6 +4,11 @@ export interface ToolCall {
   input?: Record<string, unknown>
   result?: string
   summary?: string
+  preview?: {
+    media_type?: string
+    mime?: string
+    data_uri?: string
+  }
   status: 'pending' | 'running' | 'success' | 'error'
   isExpanded: boolean
   argsStreaming: boolean

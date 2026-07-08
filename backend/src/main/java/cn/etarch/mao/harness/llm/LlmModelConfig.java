@@ -14,4 +14,5 @@ public class LlmModelConfig {
     private String apiKey;
     private String modelId;
     private Integer contextWindowTokens;
+    private Boolean supportsVision;
 }

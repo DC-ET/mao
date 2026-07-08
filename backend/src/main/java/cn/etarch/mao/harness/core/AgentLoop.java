@@ -4,6 +4,7 @@ import cn.etarch.mao.harness.llm.*;
 import cn.etarch.mao.harness.shell.ShellSessionManager;
 import cn.etarch.mao.harness.tool.FileChangeDiffUtil;
 import cn.etarch.mao.harness.tool.ToolDispatcher;
+import cn.etarch.mao.harness.tool.ToolImageResultProcessor;
 import cn.etarch.mao.session.activity.SessionActivityHeartbeat;
 import cn.etarch.mao.session.util.ToolResultSummarizer;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -63,6 +64,10 @@ public class AgentLoop {
     public interface MessagePersistenceCallback {
         void onSaveAssistantMessage(String content, String thinkingContent, List<ChatRequest.ToolCall> toolCalls, ChatUsage usage);
         void onSaveToolMessage(String toolCallId, String content);
+
+        default void onSaveToolMessage(String toolCallId, String content, String metadataJson) {
+            onSaveToolMessage(toolCallId, content);
+        }
 
         default void onSaveAssistantMessage(String content, String thinkingContent,
                                              List<ChatRequest.ToolCall> toolCalls,
@@ -248,7 +253,8 @@ public class AgentLoop {
                 persistenceCallback.onSaveAssistantMessage(pendingSave[0], pendingThinking[0],
                         pendingSaveToolCalls[0], toolResults, pendingSaveUsage[0]);
                 for (ToolMessageSave toolSave : pendingToolSaves) {
-                    persistenceCallback.onSaveToolMessage(toolSave.toolCallId(), toolSave.content());
+                    persistenceCallback.onSaveToolMessage(
+                            toolSave.toolCallId(), toolSave.content(), toolSave.metadataJson());
                 }
                 pendingSave[0] = null;
                 pendingThinking[0] = null;
@@ -256,7 +262,8 @@ public class AgentLoop {
                 pendingSaveToolCalls[0] = null;
             } else if (!pendingToolSaves.isEmpty() && persistenceCallback != null) {
                 for (ToolMessageSave toolSave : pendingToolSaves) {
-                    persistenceCallback.onSaveToolMessage(toolSave.toolCallId(), toolSave.content());
+                    persistenceCallback.onSaveToolMessage(
+                            toolSave.toolCallId(), toolSave.content(), toolSave.metadataJson());
                 }
             }
 
@@ -294,7 +301,7 @@ public class AgentLoop {
         }
     }
 
-    private record ToolMessageSave(String toolCallId, String content) {}
+    private record ToolMessageSave(String toolCallId, String content, String metadataJson) {}
 
     /**
      * 回滚当前轮次写入内存的 assistant+tool 消息（用户中断时尚未持久化）。
@@ -338,14 +345,14 @@ public class AgentLoop {
             if (cancelFlag != null && cancelFlag.get()) return;
             ChatRequest.ToolCall tc = pendingCalls.get(0);
             String rawResult = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
-            String sanitizedResult = sanitizeToolResult(rawResult);
+            ToolMessageSave toolSave = processToolResult(rawResult, tc, context);
             if (cancelFlag != null && cancelFlag.get()) return;
             tc.setSummary(ToolResultSummarizer.summarize(
-                    tc.getFunction().getName(), tc.getFunction().getArguments(), sanitizedResult));
+                    tc.getFunction().getName(), tc.getFunction().getArguments(), toolSave.content()));
             toolResults.put(tc.getId(), rawResult);
-            context.addToolResult(tc.getId(), sanitizedResult);
+            context.addToolResult(tc.getId(), toolSave.content());
             listener.onToolCallResult(tc.getId(), rawResult);
-            pendingToolSaves.add(new ToolMessageSave(tc.getId(), sanitizedResult));
+            pendingToolSaves.add(toolSave);
         } else {
             List<CompletableFuture<Void>> futures = new ArrayList<>();
             String[] results = new String[pendingCalls.size()];
@@ -378,15 +385,28 @@ public class AgentLoop {
             for (int i = 0; i < pendingCalls.size(); i++) {
                 ChatRequest.ToolCall tc = pendingCalls.get(i);
                 String rawResult = results[i];
-                String sanitizedResult = sanitizeToolResult(rawResult);
+                ToolMessageSave toolSave = processToolResult(rawResult, tc, context);
                 tc.setSummary(ToolResultSummarizer.summarize(
-                        tc.getFunction().getName(), tc.getFunction().getArguments(), sanitizedResult));
+                        tc.getFunction().getName(), tc.getFunction().getArguments(), toolSave.content()));
                 toolResults.put(tc.getId(), rawResult);
-                context.addToolResult(tc.getId(), sanitizedResult);
+                context.addToolResult(tc.getId(), toolSave.content());
                 listener.onToolCallResult(tc.getId(), rawResult);
-                pendingToolSaves.add(new ToolMessageSave(tc.getId(), sanitizedResult));
+                pendingToolSaves.add(toolSave);
             }
         }
+    }
+
+    private ToolMessageSave processToolResult(String rawResult, ChatRequest.ToolCall tc,
+                                              AgentExecutionContext context) {
+        String diffStripped = sanitizeToolResult(rawResult);
+        boolean supportsVision = context.getModelConfig() != null
+                && Boolean.TRUE.equals(context.getModelConfig().getSupportsVision());
+        ToolImageResultProcessor.ProcessedToolResult processed =
+                ToolImageResultProcessor.process(diffStripped, supportsVision, objectMapper);
+        if (processed.attachment() != null) {
+            context.registerToolAttachment(tc.getId(), processed.attachment());
+        }
+        return new ToolMessageSave(tc.getId(), processed.sanitizedContent(), processed.metadataJson());
     }
 
     private String sanitizeToolResult(String result) {

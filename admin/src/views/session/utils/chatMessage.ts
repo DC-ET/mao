@@ -23,6 +23,24 @@ export function parseToolArguments(raw: unknown): Record<string, unknown> | unde
   return undefined
 }
 
+export function extractToolPreviewFromMetadata(metadata: unknown): ToolCall['preview'] | undefined {
+  if (metadata == null) return undefined
+  try {
+    const root = typeof metadata === 'string' ? JSON.parse(metadata) : metadata
+    const attachments = (root as { attachments?: unknown[] })?.attachments
+    if (!Array.isArray(attachments) || attachments.length === 0) return undefined
+    const first = attachments[0] as { mime?: string; data_uri?: string }
+    if (!first?.data_uri) return undefined
+    return {
+      media_type: 'image',
+      mime: first.mime,
+      data_uri: first.data_uri
+    }
+  } catch {
+    return undefined
+  }
+}
+
 export function normalizeApiToolCall(
   tc: Record<string, unknown>,
   overrides?: Partial<ToolCall>
@@ -94,7 +112,7 @@ export function buildSegmentsFromContentAndTools(
 
 export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatMessage[] {
   const result: ChatMessage[] = []
-  const pendingToolResults: Array<{ toolCallId: string; content: string }> = []
+  const pendingToolResults: Array<{ toolCallId: string; content: string; preview?: ToolCall['preview'] }> = []
 
   for (const m of raw) {
     const roleRaw = String(m.role ?? 'assistant').toLowerCase()
@@ -102,6 +120,7 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
     if (roleRaw === 'tool' || roleRaw === 'function') {
       const toolCallId = m.toolCallId != null ? String(m.toolCallId) : ''
       const content = String(m.content ?? '')
+      const preview = extractToolPreviewFromMetadata(m.metadata)
       let matched = false
       for (let j = result.length - 1; j >= 0; j--) {
         const prev = result[j]
@@ -110,12 +129,13 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
         if (call) {
           call.result = content
           call.status = inferToolStatus(content)
+          if (preview) call.preview = preview
           matched = true
           break
         }
       }
       if (!matched) {
-        pendingToolResults.push({ toolCallId, content })
+        pendingToolResults.push({ toolCallId, content, preview })
       }
       continue
     }
@@ -172,13 +192,14 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
 
   // Second pass: match pending tool results
   if (pendingToolResults.length > 0) {
-    for (const { toolCallId, content } of pendingToolResults) {
+    for (const { toolCallId, content, preview } of pendingToolResults) {
       for (const msg of result) {
         if (msg.role !== 'assistant' || !msg.toolCalls?.length) continue
         const call = msg.toolCalls.find(c => c.id === toolCallId)
         if (call) {
           call.result = content
           call.status = inferToolStatus(content)
+          if (preview) call.preview = preview
           break
         }
       }

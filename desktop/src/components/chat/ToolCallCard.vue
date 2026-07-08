@@ -25,11 +25,17 @@
           </button>
         </div>
       </div>
-      <div v-if="toolCall.result" class="tool-result">
+      <div v-if="toolCall.result || imagePreviewUrl" class="tool-result">
         <div class="result-label">输出</div>
-        <div class="code-block-wrapper">
-          <pre class="result-content"><code>{{ truncatedResult }}</code></pre>
-          <button class="copy-btn" title="复制" @click="copyText(truncatedResult)">
+        <img
+          v-if="imagePreviewUrl"
+          :src="imagePreviewUrl"
+          alt="图片预览"
+          class="image-preview"
+        />
+        <div v-if="displayResultText" class="code-block-wrapper">
+          <pre class="result-content"><code>{{ displayResultText }}</code></pre>
+          <button class="copy-btn" title="复制" @click="copyText(displayResultText)">
             <el-icon :size="14"><CopyDocument /></el-icon>
           </button>
         </div>
@@ -95,8 +101,38 @@ const formattedInput = computed(() => {
 })
 
 const hasExpandableBody = computed(
-  () => !!(formattedInput.value || props.toolCall.result)
+  () => !!(formattedInput.value || props.toolCall.result || imagePreviewUrl.value)
 )
+
+const imagePreviewUrl = computed(() => {
+  if (props.toolCall.preview?.data_uri) {
+    return props.toolCall.preview.data_uri
+  }
+  const r = props.toolCall.result || ''
+  try {
+    const obj = JSON.parse(r)
+    if (obj?.media_type === 'image' && obj?.data_uri) {
+      return obj.data_uri as string
+    }
+  } catch {
+    // not json
+  }
+  return ''
+})
+
+const displayResultText = computed(() => {
+  if (imagePreviewUrl.value) {
+    const r = props.toolCall.result || ''
+    try {
+      const obj = JSON.parse(r)
+      if (obj?.content) return String(obj.content)
+    } catch {
+      // fall through
+    }
+    return truncatedResult.value
+  }
+  return truncatedResult.value
+})
 
 const truncatedResult = computed(() => {
   const r = props.toolCall.result || ''
@@ -266,5 +302,15 @@ function toggleExpand() {
   background: none;
   padding: 0;
   white-space: pre;
+}
+
+.image-preview {
+  display: block;
+  max-width: 240px;
+  max-height: 180px;
+  object-fit: contain;
+  border-radius: var(--aw-radius-sm);
+  margin-bottom: 8px;
+  border: 1px solid var(--aw-divider-soft);
 }
 </style>

@@ -1,6 +1,8 @@
 package cn.etarch.mao.harness.core;
 
 import cn.etarch.mao.harness.todo.mapper.SessionTodoMapper;
+import cn.etarch.mao.model.entity.LlmModel;
+import cn.etarch.mao.model.mapper.LlmModelMapper;
 import cn.etarch.mao.session.activity.ActivityService;
 import cn.etarch.mao.session.activity.SessionActivityHeartbeat;
 import cn.etarch.mao.session.entity.Session;
@@ -39,6 +41,7 @@ public class CrashRecoveryRunner implements ApplicationRunner {
     private final ActivityService activityService;
     private final SessionActivityHeartbeat activityHeartbeat;
     private final SessionTodoMapper sessionTodoMapper;
+    private final LlmModelMapper llmModelMapper;
     @Qualifier("agentExecutor")
     private final ExecutorService agentExecutor;
 
@@ -75,7 +78,8 @@ public class CrashRecoveryRunner implements ApplicationRunner {
             // 4. Create listener — events are silently dropped if client is not connected
             String executionId = java.util.UUID.randomUUID().toString();
             WsStreamingEventListener listener = new WsStreamingEventListener(
-                    registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService, sessionId, userId, executionId);
+                    registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService,
+                    sessionId, userId, executionId, resolveSupportsVision(session));
 
             // 5. Execute — HarnessService.execute() rebuilds context from DB
             log.info("Session {}: starting recovery execution", sessionId);
@@ -116,5 +120,17 @@ public class CrashRecoveryRunner implements ApplicationRunner {
         } catch (Exception ignored) {
             // Client may not be connected yet — that's fine
         }
+    }
+
+    private boolean resolveSupportsVision(Session session) {
+        LlmModel model = null;
+        if (session.getModelId() != null) {
+            model = llmModelMapper.selectById(session.getModelId());
+        }
+        if (model == null) {
+            model = llmModelMapper.selectOne(
+                    new QueryWrapper<LlmModel>().eq("is_default", 1).eq("status", 1));
+        }
+        return model != null && model.getSupportsVision() != null && model.getSupportsVision() == 1;
     }
 }

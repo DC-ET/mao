@@ -27,8 +27,9 @@ class PromptEngineTest {
     private final RuntimeDataResolver runtimeDataResolver = mock(RuntimeDataResolver.class);
     private final UserCommandService userCommandService = mock(UserCommandService.class);
     private final SkillSyncService skillSyncService = mock(SkillSyncService.class);
+    private final ToolMediaInjector toolMediaInjector = new ToolMediaInjector();
     private final PromptEngine promptEngine = new PromptEngine(
-            skillLoader, pathSandbox, runtimeDataResolver, userCommandService, skillSyncService);
+            skillLoader, pathSandbox, runtimeDataResolver, userCommandService, skillSyncService, toolMediaInjector);
 
     @Test
     void buildRequestExpandsMarkersAndAddsCloudPromptSkillsAndTools() {

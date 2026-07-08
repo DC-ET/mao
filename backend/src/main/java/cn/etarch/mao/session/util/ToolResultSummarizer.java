@@ -76,6 +76,14 @@ public class ToolResultSummarizer {
         if (node == null) return "读取 " + displayPath;
 
         int totalLines = node.has("total_lines") ? node.get("total_lines").asInt(0) : 0;
+        if ("image".equals(node.path("media_type").asText(null))) {
+            int width = node.has("width") ? node.get("width").asInt(0) : 0;
+            int height = node.has("height") ? node.get("height").asInt(0) : 0;
+            if (width > 0 && height > 0) {
+                return "读取 " + displayPath + " (图片, " + width + "×" + height + ")";
+            }
+            return "读取 " + displayPath + " (图片)";
+        }
         if (totalLines > 0) {
             return "读取 " + displayPath + " (" + totalLines + " 行)";
         }

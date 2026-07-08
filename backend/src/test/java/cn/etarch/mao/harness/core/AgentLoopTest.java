@@ -1,6 +1,7 @@
 package cn.etarch.mao.harness.core;
 
 import cn.etarch.mao.harness.llm.ChatRequest;
+import cn.etarch.mao.harness.llm.LlmModelConfig;
 import cn.etarch.mao.harness.llm.ChatUsage;
 import cn.etarch.mao.harness.llm.LlmAdapter;
 import cn.etarch.mao.harness.llm.StreamCallback;
@@ -107,12 +108,57 @@ class AgentLoopTest {
         verify(persistence).onSaveAssistantMessage(eq(""), eq(null), any(), resultsCaptor.capture(), any(ChatUsage.class));
         assertThat(resultsCaptor.getValue()).containsKey("call-1");
         verify(persistence).onSaveToolMessage(eq("call-1"),
-                eq("{\"ok\":true,\"_private_diff\":{\"diff_mode\":\"PATCH\"}}"));
+                eq("{\"ok\":true,\"_private_diff\":{\"diff_mode\":\"PATCH\"}}"), eq(null));
         verify(persistence).onSaveAssistantMessage(eq("done"), eq(null), eq(List.of()), any(ChatUsage.class));
         verify(listener, times(2)).onToolCallStart(any(ChatRequest.ToolCall.class));
         verify(listener).onToolCallResult(eq("call-1"), anyString());
         assertThat(context.getMessages()).extracting(ChatRequest.Message::getRole)
                 .contains("assistant", "tool", "assistant");
+    }
+
+    @Test
+    void executeStripsImageDataUriFromPersistedToolMessage() {
+        AgentExecutionContext context = context();
+        context.setModelConfig(LlmModelConfig.builder().supportsVision(true).build());
+        AgentEventListener listener = mock(AgentEventListener.class);
+        AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
+        when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
+        when(contextManager.estimateRequestTokens(any())).thenReturn(5);
+        when(backgroundTaskManager.consumeCompletedResults()).thenReturn(Map.of());
+        String imageResult = """
+                {"content":"图片读取成功：a.png","total_lines":0,"media_type":"image","mime":"image/png",\
+                "path":"a.png","size_bytes":10,"data_uri":"data:image/png;base64,abc"}""";
+        when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
+                eq("/repo"), eq("READ_ONLY"), any())).thenReturn(imageResult);
+        doAnswer(new org.mockito.stubbing.Answer<Void>() {
+            private int call;
+
+            @Override
+            public Void answer(org.mockito.invocation.InvocationOnMock invocation) {
+                StreamCallback callback = invocation.getArgument(2);
+                if (call++ == 0) {
+                    callback.onChunk(toolChunk(ChatRequest.ToolCall.builder()
+                            .id("call-img")
+                            .function(ChatRequest.FunctionCall.builder()
+                                    .name("read_file")
+                                    .arguments("{\"path\":\"a.png\"}")
+                                    .build())
+                            .build()));
+                    callback.onComplete(ChatUsage.builder().promptTokens(3).completionTokens(2).totalTokens(5).build());
+                } else {
+                    callback.onChunk(contentChunk(null, "seen"));
+                    callback.onComplete(ChatUsage.builder().promptTokens(4).completionTokens(1).totalTokens(5).build());
+                }
+                return null;
+            }
+        }).when(llmAdapter).stream(any(), any(), any(), any());
+
+        agentLoop.execute(context, listener, persistence);
+
+        verify(persistence).onSaveToolMessage(eq("call-img"), org.mockito.ArgumentMatchers.argThat(content ->
+                content.contains("图片读取成功") && !content.contains("data_uri")), org.mockito.ArgumentMatchers.contains("data_uri"));
+        assertThat(context.getToolAttachments()).containsKey("call-img");
+        assertThat(context.getToolAttachments().get("call-img").getDataUri()).startsWith("data:image/png;base64,");
     }
 
     @Test

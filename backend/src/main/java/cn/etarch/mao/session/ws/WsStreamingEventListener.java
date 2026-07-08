@@ -4,6 +4,7 @@ import cn.etarch.mao.harness.core.AgentEventListener;
 import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.harness.llm.ChatUsage;
 import cn.etarch.mao.harness.tool.FileChangeDiffUtil;
+import cn.etarch.mao.harness.tool.ToolImageResultProcessor;
 import cn.etarch.mao.session.activity.ActivityService;
 import cn.etarch.mao.session.activity.ActivityTypeMapper;
 import cn.etarch.mao.session.activity.SessionActivity;
@@ -35,6 +36,7 @@ public class WsStreamingEventListener implements AgentEventListener {
     private final Long sessionId;
     private final Long userId;
     private final String executionId;
+    private final boolean supportsVision;
 
     private static final Set<String> TASK_TOOLS = Set.of(
             "task_create", "task_update", "task_delete", "task_list");
@@ -51,7 +53,8 @@ public class WsStreamingEventListener implements AgentEventListener {
                                      SessionActivityHeartbeat activityHeartbeat,
                                      SessionTodoMapper sessionTodoMapper,
                                      SessionService sessionService,
-                                     Long sessionId, Long userId, String executionId) {
+                                     Long sessionId, Long userId, String executionId,
+                                     boolean supportsVision) {
         this.registry = registry;
         this.activityService = activityService;
         this.activityHeartbeat = activityHeartbeat;
@@ -60,6 +63,7 @@ public class WsStreamingEventListener implements AgentEventListener {
         this.sessionId = sessionId;
         this.userId = userId;
         this.executionId = executionId;
+        this.supportsVision = supportsVision;
     }
 
     @Override
@@ -91,13 +95,25 @@ public class WsStreamingEventListener implements AgentEventListener {
         String toolName = info != null ? info[0] : null;
         String arguments = info != null ? info[1] : null;
         String publicResult = FileChangeDiffUtil.stripPrivateDiff(result, objectMapper);
-        String summary = ToolResultSummarizer.summarize(toolName, arguments, publicResult);
+        String displayResult = publicResult;
+        Map<String, Object> preview = null;
+        if (ToolImageResultProcessor.isImageResult(publicResult, objectMapper)) {
+            ToolImageResultProcessor.ProcessedToolResult processed =
+                    ToolImageResultProcessor.process(publicResult, supportsVision, objectMapper);
+            displayResult = processed.sanitizedContent();
+            preview = processed.preview();
+        }
+
+        boolean isError = isErrorResult(displayResult);
+        String summary = ToolResultSummarizer.summarize(toolName, arguments, displayResult);
         log.debug("[WS] onToolCallResult id={} summary={}", toolCallId, summary);
-        boolean isError = isErrorResult(publicResult);
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("tool_call_id", toolCallId);
-        data.put("result", publicResult);
+        if (preview != null) {
+            data.put("preview", preview);
+        }
+        data.put("result", displayResult);
         data.put("status", isError ? "error" : "success");
         if (summary != null) {
             data.put("summary", summary);
