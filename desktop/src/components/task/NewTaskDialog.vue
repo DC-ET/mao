@@ -117,7 +117,7 @@
         <div v-if="workspaceMode === 'new'" class="workspace-row">
           <el-input
             v-model="newProjectName"
-            placeholder="项目名（可留空，留空=独立工作区）"
+            placeholder="项目名（可留空，留空=临时工作区）"
             clearable
             class="project-input"
           />

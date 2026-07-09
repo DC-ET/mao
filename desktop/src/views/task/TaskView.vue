@@ -25,6 +25,7 @@
       :title="sessionTitle"
       :agent-name="agentName"
       :workspace="workspace"
+      :project-key="projectKey"
       :execution-mode="executionMode"
       :session-id="sessionIdForTabs"
       :file-provider="fileProvider"

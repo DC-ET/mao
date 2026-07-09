@@ -25,11 +25,11 @@ export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspac
   if (isSharedCloudProject(session)) {
     return `CLOUD:${session.workspace}`
   }
-  return 'CLOUD:独立工作区'
+  return 'CLOUD:临时工作区'
 }
 
 export function formatCloudGroupLabel(key: string): string {
-  if (key === 'CLOUD:独立工作区') return '独立工作区'
+  if (key === 'CLOUD:临时工作区') return '临时工作区'
   if (key.startsWith('CLOUD:')) {
     const ws = key.substring(6)
     const parts = ws.replace(/\\/g, '/').split('/').filter(Boolean)
@@ -112,7 +112,7 @@ export function cloudWorkspaceIndicator(
   }
   if (draftProjectKey) return draftProjectKey
   if (isSharedCloudProject({ executionMode: 'CLOUD', workspace })) {
-    return projectKey || '项目'
+    return projectKey || formatCloudGroupLabel(`CLOUD:${workspace}`)
   }
-  return '独立工作区'
+  return '临时工作区'
 }

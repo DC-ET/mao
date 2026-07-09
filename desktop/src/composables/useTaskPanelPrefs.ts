@@ -132,8 +132,8 @@ export function useTaskPanelPrefs() {
     known.sort((a, b) => orderMap.get(a.key)! - orderMap.get(b.key)!)
 
     unknown.sort((a, b) => {
-      if (a.key === 'CLOUD:独立工作区') return -1
-      if (b.key === 'CLOUD:独立工作区') return 1
+      if (a.key === 'CLOUD:临时工作区') return -1
+      if (b.key === 'CLOUD:临时工作区') return 1
       if (a.key.startsWith('CLOUD:') && !b.key.startsWith('CLOUD:')) return -1
       if (!a.key.startsWith('CLOUD:') && b.key.startsWith('CLOUD:')) return 1
       return a.key.localeCompare(b.key)

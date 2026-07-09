@@ -117,7 +117,7 @@ if ("CLOUD".equals(session.getExecutionMode())) {
             session.setWorkspace(projectPath);
             session.setProjectKey(slug);
         } else {
-            // 独立工作区（无项目名）
+            // 临时工作区（无项目名）
             String autoPath = pathSandbox.getWorkspaceRoot()
                     .resolve(String.valueOf(userId))
                     .resolve(String.valueOf(session.getId()))
@@ -375,7 +375,7 @@ public Result<List<CloudProjectVO>> listCloudProjects(
 │  └──────────────────────────────────────┘    │
 │                                              │
 │  ┌─ 创建新工作区 ────────────────────────┐    │
-│  │ 输入项目名（可留空，留空=独立工作区）    │    │
+│  │ 输入项目名（可留空，留空=临时工作区）    │    │
 │  │ ┌──────────────────────────────────┐ │    │
 │  │ │ new-project                      │ │    │
 │  │ └──────────────────────────────────┘ │    │

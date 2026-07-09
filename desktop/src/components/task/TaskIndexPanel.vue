@@ -316,8 +316,8 @@ const groupedSessions = computed(() => {
   const entries = Array.from(groups.entries())
 
   entries.sort(([a], [b]) => {
-    if (a === 'CLOUD:独立工作区') return -1
-    if (b === 'CLOUD:独立工作区') return 1
+    if (a === 'CLOUD:临时工作区') return -1
+    if (b === 'CLOUD:临时工作区') return 1
     if (a.startsWith('CLOUD:') && !b.startsWith('CLOUD:')) return -1
     if (!a.startsWith('CLOUD:') && b.startsWith('CLOUD:')) return 1
     return a.localeCompare(b)

@@ -63,7 +63,7 @@
             @mouseenter="workspaceHovered = true"
             @mouseleave="workspaceHovered = false"
           >
-            <span class="workspace-path">{{ executionMode === 'CLOUD' ? '云端工作区' : workspace }}</span>
+            <span class="workspace-path">{{ workspaceLabel }}</span>
             <button
               v-if="executionMode !== 'CLOUD' && workspace"
               class="workspace-copy-btn"
@@ -107,12 +107,14 @@ import type { TodoItem } from '../../types/chat'
 import type { TaskPhase } from '../../stores/session'
 import type { ContextWindowInfo } from '../../types/chat'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
+import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
 
 const props = defineProps<{
   todos?: TodoItem[]
   title: string
   agentName?: string
   workspace?: string
+  projectKey?: string
   executionMode?: string
   sessionId?: string
   fileProvider: WorkspaceFileProvider | null
@@ -195,6 +197,12 @@ const phaseClass = computed(() => {
 })
 
 const displayTitle = computed(() => props.title || '新任务')
+const workspaceLabel = computed(() => {
+  if (props.executionMode === 'CLOUD') {
+    return cloudWorkspaceIndicator(props.executionMode, props.workspace, props.projectKey)
+  }
+  return props.workspace || ''
+})
 
 // Workspace copy
 const workspaceHovered = ref(false)

@@ -369,7 +369,7 @@ const dynamicPlaceholder = computed(() => {
     if (props.workspaceMode === 'existing') {
       return props.cloudProjectKey ? `在「${props.cloudProjectKey}」中开始新任务...` : '选择一个已有云端工作区...'
     }
-    return props.cloudProjectKey ? `在「${props.cloudProjectKey}」中开始新任务...` : '输入项目名（留空=独立工作区），然后描述任务...'
+    return props.cloudProjectKey ? `在「${props.cloudProjectKey}」中开始新任务...` : '输入项目名（留空=临时工作区），然后描述任务...'
   }
   return props.placeholder
 })

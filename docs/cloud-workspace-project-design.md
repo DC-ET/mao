@@ -208,7 +208,7 @@ public final class CloudWorkspaceResolver {
 ┌─────────────────────────────────────────────────────────┐
 │ [Agent 选择器]                                            │
 │ (●) 云端模式  ( ) 本地模式    [项目: my-app ▼]  ← 可选   │
-│                              留空 = 独立工作区             │
+│                              留空 = 临时工作区             │
 ├─────────────────────────────────────────────────────────┤
 │ 输入消息...                                               │
 └─────────────────────────────────────────────────────────┘
@@ -249,14 +249,14 @@ if (s.executionMode === 'CLOUD') {
   if (s.workspace?.includes('/projects/')) {
     key = `CLOUD:${s.workspace}`
   } else {
-    key = 'CLOUD:独立工作区'  // 或未指定项目的会话
+    key = 'CLOUD:临时工作区'  // 或未指定项目的会话
   }
 }
 ```
 
 `formatGroupLabel`：
 
-- `CLOUD:独立工作区` → 「云端 · 独立工作区」
+- `CLOUD:临时工作区` → 「云端 · 临时工作区」
 - `CLOUD:/data/.../projects/my-app` → 「云端 · my-app」
 
 ### 5.4 分组内新建任务（`onGroupNewTask`）
@@ -278,7 +278,7 @@ workspace: last.executionMode === 'LOCAL' ? last.workspace : undefined,
 
 云端模式当前固定显示「云端工作区」，建议细化为：
 
-- 独立工作区：「云端 · 独立」
+- 临时工作区：「云端 · 独立」
 - 共享项目：「云端 · {projectKey}」
 
 ---
