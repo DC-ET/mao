@@ -38,6 +38,28 @@ class PathSandboxTest {
     }
 
     @Test
+    void allowsAbsolutePathsUnderSessionWorkspace() throws Exception {
+        Path sessionWorkspace = Files.createDirectories(tempDir.resolve("2/projects/mao"));
+        Path nested = Files.createDirectories(sessionWorkspace.resolve("backend"));
+        PathSandbox sandbox = new PathSandbox(tempDir.resolve("default").toString());
+
+        // PromptEngine 注入的是工作区绝对路径，模型常直接把它传给 shell.workdir
+        assertThat(sandbox.resolve(sessionWorkspace.toString(), sessionWorkspace.toString()))
+                .isEqualTo(sessionWorkspace.toAbsolutePath().normalize());
+        assertThat(sandbox.resolve(nested.toString(), sessionWorkspace.toString()))
+                .isEqualTo(nested.toAbsolutePath().normalize());
+    }
+
+    @Test
+    void allowsAbsolutePathsUnderDefaultWorkspaceRoot() {
+        PathSandbox sandbox = new PathSandbox(tempDir.toString());
+        Path nested = tempDir.resolve("projects/mao");
+
+        assertThat(sandbox.resolve(nested.toString()))
+                .isEqualTo(nested.toAbsolutePath().normalize());
+    }
+
+    @Test
     void rejectsEmptyTildeAndEscapingPaths() {
         PathSandbox sandbox = new PathSandbox(tempDir.toString());
 

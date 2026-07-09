@@ -104,7 +104,7 @@ public class ShellSessionTool implements Tool {
 
         Map<String, Object> workdir = new HashMap<>();
         workdir.put("type", "string");
-        workdir.put("description", "工作目录（相对于工作区）");
+        workdir.put("description", "工作目录：工作区相对路径，或工作区内的绝对路径");
         properties.put("workdir", workdir);
 
         Map<String, Object> yieldTimeMs = new HashMap<>();

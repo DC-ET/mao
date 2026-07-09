@@ -48,7 +48,8 @@ public class PathSandbox {
 
     /**
      * Resolve and validate a user-provided path against a session workspace (or fall back to default root).
-     * Throws SecurityException if the path escapes the sandbox.
+     * Absolute paths are allowed when they fall under the effective workspace root or a registered allowed root
+     * (e.g. session runtime). Throws SecurityException if the path escapes the sandbox.
      */
     public Path resolve(String userPath, String sessionWorkspace) {
         if (userPath == null || userPath.isEmpty()) {
@@ -59,26 +60,16 @@ public class PathSandbox {
             throw new SecurityException("Tilde paths are not supported on server: " + userPath);
         }
 
-        Path input = Paths.get(userPath);
-        if (input.isAbsolute()) {
-            Path normalized = input.toAbsolutePath().normalize();
-            if (isUnderAllowedRoot(normalized)) {
-                return normalized;
-            }
-            log.warn("Absolute path outside sandbox blocked: {}", userPath);
-            throw new SecurityException("Path escape attempt: " + userPath);
-        }
-
         Path root = (sessionWorkspace != null && !sessionWorkspace.isEmpty())
                 ? Paths.get(sessionWorkspace).toAbsolutePath().normalize()
                 : workspaceRoot;
 
-        Path resolved = root.resolve(userPath).normalize();
-        if (resolved.startsWith(root)) {
-            return resolved;
-        }
+        Path input = Paths.get(userPath);
+        Path resolved = input.isAbsolute()
+                ? input.toAbsolutePath().normalize()
+                : root.resolve(userPath).normalize();
 
-        if (isUnderAllowedRoot(resolved)) {
+        if (resolved.startsWith(root) || isUnderAllowedRoot(resolved)) {
             return resolved;
         }
 
