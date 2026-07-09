@@ -80,6 +80,28 @@ interface AuthTokens {
   refreshToken: string | null
 }
 
+type RemoveListener = () => void
+
+interface AppUpdateInfo {
+  version?: string
+  releaseName?: string
+  releaseNotes?: string | Array<{ version: string; note: string }>
+  releaseDate?: string
+  files?: Array<{ url: string; sha512: string; size?: number }>
+}
+
+interface AppUpdateProgress {
+  percent?: number
+  bytesPerSecond?: number
+  transferred?: number
+  total?: number
+}
+
+interface AppUpdateError {
+  message: string
+  stack?: string
+}
+
 interface ElectronAPI {
   getAuthTokens(): Promise<AuthTokens>
   setAuthTokens(tokens: { token: string; refreshToken: string }): Promise<void>
@@ -93,6 +115,14 @@ interface ElectronAPI {
     shell: string
     osVersion: string
   }>
+  checkForUpdate(): Promise<{ skipped?: boolean; reason?: string; updateInfo?: AppUpdateInfo | null }>
+  installUpdate(): Promise<{ success: boolean; error?: string }>
+  onUpdateChecking(callback: (data: { feedUrl?: string }) => void): RemoveListener
+  onDownloadProgress(callback: (data: AppUpdateProgress) => void): RemoveListener
+  onUpdateAvailable(callback: (data: AppUpdateInfo) => void): RemoveListener
+  onUpdateNotAvailable(callback: (data: AppUpdateInfo) => void): RemoveListener
+  onUpdateDownloaded(callback: (data: AppUpdateInfo) => void): RemoveListener
+  onUpdateError(callback: (data: AppUpdateError) => void): RemoveListener
   minimizeWindow(): Promise<void>
   maximizeWindow(): Promise<void>
   closeWindow(): Promise<void>

@@ -1,11 +1,14 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron')
 const { join } = require('path')
 const { exec, spawn } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
+const { autoUpdater } = require('electron-updater')
 const { TerminalManager } = require('./terminalManager.cjs')
 
+
+app.setName('Mao')
 
 let mainWindow = null
 let currentWorkspace = ''
@@ -21,6 +24,12 @@ const SNAPSHOT_LIMIT_BYTES = 512 * 1024
 const PATCH_LIMIT_CHARS = 256 * 1024
 const PATCH_CONTEXT_LINES = 3
 const LCS_CELL_LIMIT = 2_000_000
+
+let updaterInitialized = false
+let updateDownloaded = false
+let updateCheckPromise = null
+let updaterStatus = 'idle'
+let updaterProgressPercent = null
 
 function utf8Bytes(text) {
   return Buffer.byteLength(text || '', 'utf-8')
@@ -242,6 +251,260 @@ function sendToRenderer(channel, data) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, data)
   }
+}
+
+function setUpdaterStatus(status, progressPercent = updaterProgressPercent) {
+  updaterStatus = status
+  updaterProgressPercent = progressPercent
+  buildApplicationMenu()
+}
+
+function installDownloadedUpdate() {
+  if (!updateDownloaded) {
+    return { success: false, error: 'Update has not been downloaded yet.' }
+  }
+  autoUpdater.quitAndInstall(false, true)
+  return { success: true }
+}
+
+function showUpdateMessage(type, title, message, buttons = ['确定']) {
+  const options = {
+    type,
+    title,
+    message,
+    buttons,
+    defaultId: 0,
+    cancelId: buttons.length - 1
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return dialog.showMessageBox(mainWindow, options)
+  }
+  return dialog.showMessageBox(options)
+}
+
+async function showMenuUpdateCheckResult() {
+  if (updateDownloaded) {
+    const { response } = await showUpdateMessage(
+      'info',
+      '更新已就绪',
+      '客户端新版本已下载完成，可以重启 Mao 完成安装。',
+      ['重启完成更新', '稍后']
+    )
+    if (response === 0) installDownloadedUpdate()
+    return
+  }
+
+  if (updaterStatus === 'available' || updaterStatus === 'downloading') {
+    const progressLabel = updaterProgressPercent == null ? '' : `（${Math.round(updaterProgressPercent)}%）`
+    await showUpdateMessage('info', '正在下载新版本', `已发现客户端新版本，正在后台下载${progressLabel}。`)
+    return
+  }
+
+  if (updaterStatus === 'not-available') {
+    await showUpdateMessage('info', '已是最新版本', `当前 Mao ${app.getVersion()} 已是最新版本。`)
+    return
+  }
+
+  if (updaterStatus === 'unsupported') {
+    await showUpdateMessage('warning', '无法检查更新', '自动更新仅在打包后的客户端中可用。')
+  }
+}
+
+async function checkForAppUpdateFromMenu() {
+  try {
+    await checkForAppUpdate()
+    await showMenuUpdateCheckResult()
+  } catch (error) {
+    const message = error?.message || '检查更新失败'
+    console.error('[updater] menu check failed:', error)
+    await showUpdateMessage('error', '检查更新失败', message)
+  }
+}
+
+function buildUpdateMenuItem() {
+  const isDownloading = updaterStatus === 'available' || updaterStatus === 'downloading'
+  const progressLabel = updaterProgressPercent == null ? '' : ` ${Math.round(updaterProgressPercent)}%`
+
+  if (updateDownloaded) {
+    return {
+      label: '重启完成更新',
+      enabled: true,
+      click: () => {
+        installDownloadedUpdate()
+      }
+    }
+  } else if (isDownloading) {
+    return {
+      label: `正在下载新版本${progressLabel}`,
+      enabled: false
+    }
+  }
+
+  return {
+    label: updaterStatus === 'checking' ? '正在检查更新' : '检查更新',
+    enabled: app.isPackaged && !updateCheckPromise,
+    click: () => {
+      checkForAppUpdateFromMenu()
+    }
+  }
+}
+
+function buildApplicationMenu() {
+  if (!app.isReady()) return
+
+  const template = []
+
+  if (process.platform === 'darwin') {
+    template.push({
+      label: 'Mao',
+      submenu: [
+        { role: 'about', label: '关于 Mao' },
+        { type: 'separator' },
+        buildUpdateMenuItem(),
+        { type: 'separator' },
+        { role: 'services', label: '服务' },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏 Mao' },
+        { role: 'hideOthers', label: '隐藏其他' },
+        { role: 'unhide', label: '全部显示' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出 Mao' }
+      ]
+    })
+  } else {
+    template.push({
+      label: 'Mao',
+      submenu: [
+        buildUpdateMenuItem(),
+        { type: 'separator' },
+        { role: 'quit', label: '退出 Mao' }
+      ]
+    })
+  }
+
+  template.push(
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo', label: '撤销' },
+        { role: 'redo', label: '重做' },
+        { type: 'separator' },
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' },
+        { role: 'selectAll', label: '全选' }
+      ]
+    },
+    {
+      label: '显示',
+      submenu: [
+        { role: 'reload', label: '重新加载' },
+        { role: 'forceReload', label: '强制重新加载' },
+        { role: 'toggleDevTools', label: '开发者工具' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: '实际大小' },
+        { role: 'zoomIn', label: '放大' },
+        { role: 'zoomOut', label: '缩小' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: '切换全屏' }
+      ]
+    },
+    {
+      label: '窗口',
+      submenu: [
+        { role: 'minimize', label: '最小化' },
+        { role: 'close', label: '关闭' }
+      ]
+    }
+  )
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+function serializeUpdaterError(error) {
+  if (!error) return { message: 'Unknown updater error' }
+  return {
+    message: error.message || String(error),
+    stack: error.stack
+  }
+}
+
+function getUpdateFeedUrlOverride() {
+  return process.env.MAO_DESKTOP_UPDATE_URL || ''
+}
+
+function setupAutoUpdater() {
+  if (updaterInitialized) return
+  updaterInitialized = true
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  const feedUrlOverride = getUpdateFeedUrlOverride()
+  if (feedUrlOverride) {
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: feedUrlOverride
+    })
+  }
+
+  autoUpdater.on('checking-for-update', () => {
+    setUpdaterStatus('checking', null)
+    sendToRenderer('update-checking', { feedUrl: feedUrlOverride || null })
+  })
+
+  autoUpdater.on('update-available', (info) => {
+    updateDownloaded = false
+    setUpdaterStatus('available', 0)
+    sendToRenderer('update-available', info)
+  })
+
+  autoUpdater.on('update-not-available', (info) => {
+    setUpdaterStatus('not-available', null)
+    sendToRenderer('update-not-available', info)
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    setUpdaterStatus('downloading', Math.max(0, Math.min(100, progress?.percent || 0)))
+    sendToRenderer('download-progress', progress)
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    updateDownloaded = true
+    setUpdaterStatus('downloaded', 100)
+    sendToRenderer('update-downloaded', info)
+  })
+
+  autoUpdater.on('error', (error) => {
+    console.error('[updater] error:', error)
+    setUpdaterStatus('error', null)
+    sendToRenderer('update-error', serializeUpdaterError(error))
+  })
+}
+
+async function checkForAppUpdate() {
+  if (!app.isPackaged) {
+    setUpdaterStatus('unsupported', null)
+    return { skipped: true, reason: 'Auto update is only available in packaged builds.' }
+  }
+  setupAutoUpdater()
+  if (!updateCheckPromise) {
+    setUpdaterStatus('checking', null)
+    updateCheckPromise = autoUpdater.checkForUpdates()
+      .then((result) => ({
+        skipped: false,
+        updateInfo: result?.updateInfo || null
+      }))
+      .catch((error) => {
+        sendToRenderer('update-error', serializeUpdaterError(error))
+        throw error
+      })
+      .finally(() => {
+        updateCheckPromise = null
+        buildApplicationMenu()
+      })
+  }
+  return updateCheckPromise
 }
 
 function requestToolApproval(toolName, description, sessionId, dangerReason) {
@@ -572,7 +835,17 @@ function createWindow() {
   })
 }
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  buildApplicationMenu()
+  createWindow()
+  if (app.isPackaged) {
+    setTimeout(() => {
+      checkForAppUpdate().catch((error) => {
+        console.error('[updater] initial check failed:', error)
+      })
+    }, 3000)
+  }
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -664,6 +937,14 @@ ipcMain.handle('get-app-version', () => {
 
 ipcMain.handle('get-platform', () => {
   return process.platform
+})
+
+ipcMain.handle('check-for-update', () => {
+  return checkForAppUpdate()
+})
+
+ipcMain.handle('install-update', () => {
+  return installDownloadedUpdate()
 })
 
 ipcMain.handle('get-environment-info', (event, { workspace } = {}) => {

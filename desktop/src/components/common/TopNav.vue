@@ -41,14 +41,14 @@
           <el-icon><Flag /></el-icon>
         </div>
       </el-tooltip>
-      <el-tooltip :content="hasUpdate ? '发现新版本，点击更新' : '刷新页面'" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+      <el-tooltip :content="updateTooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div
           class="theme-toggle refresh-btn"
-          :class="{ 'has-update': hasUpdate }"
-          @click="reloadApp"
+          :class="{ 'has-update': showUpdateIndicator }"
+          @click="handleUpdateClick"
         >
           <el-icon :size="16"><Refresh /></el-icon>
-          <span v-if="hasUpdate" class="update-dot" />
+          <span v-if="showUpdateIndicator" class="update-dot" />
         </div>
       </el-tooltip>
       <el-tooltip :content="isDark ? '切换为浅色' : '切换为深色'" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
@@ -88,7 +88,8 @@
 
 <script setup lang="ts">
 import { ArrowDown, ArrowLeft, Moon, Refresh, Setting, Sunny } from '@element-plus/icons-vue'
-import { computed, onMounted, onUnmounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
@@ -120,9 +121,41 @@ const authStore = useAuthStore()
 const loginDialog = useLoginDialog()
 const router = useRouter()
 const route = useRoute()
-const { hasUpdate, reloadApp, startPolling, stopPolling } = useVersionCheck()
+const {
+  hasUpdate,
+  appUpdateStatus,
+  appUpdateAvailable,
+  appUpdateDownloaded,
+  appUpdateVersion,
+  appUpdateProgress,
+  appUpdateError,
+  reloadApp,
+  startPolling,
+  stopPolling,
+  startAppUpdater,
+  stopAppUpdater,
+  checkAppUpdate,
+  installAppUpdate
+} = useVersionCheck()
 
 const isSettingsRoute = computed(() => route.path.startsWith('/settings'))
+const showUpdateIndicator = computed(() => hasUpdate.value || appUpdateAvailable.value)
+const updateTooltip = computed(() => {
+  if (appUpdateDownloaded.value) {
+    return appUpdateVersion.value ? `客户端 ${appUpdateVersion.value} 已下载，点击安装` : '客户端更新已下载，点击安装'
+  }
+  if (appUpdateStatus.value === 'downloading') {
+    const percent = appUpdateProgress.value == null ? '' : ` ${Math.round(appUpdateProgress.value)}%`
+    return `正在下载客户端更新${percent}`
+  }
+  if (appUpdateStatus.value === 'available') {
+    return appUpdateVersion.value ? `发现客户端 ${appUpdateVersion.value}，正在下载` : '发现客户端更新，正在下载'
+  }
+  if (hasUpdate.value) return '发现页面新版本，点击刷新'
+  if (appUpdateStatus.value === 'checking') return '正在检查客户端更新'
+  if (appUpdateStatus.value === 'error') return appUpdateError.value || '检查客户端更新失败'
+  return '刷新页面'
+})
 
 function goBackFromSettings() {
   const active = sessionStore.activeSession
@@ -140,11 +173,72 @@ function goBackFromSettings() {
 
 onMounted(() => {
   startPolling()
+  startAppUpdater()
 })
 
 onUnmounted(() => {
   stopPolling()
+  stopAppUpdater()
 })
+
+let installPromptVisible = false
+
+watch(appUpdateDownloaded, (downloaded) => {
+  if (downloaded) {
+    void confirmInstallUpdate()
+  }
+})
+
+async function confirmInstallUpdate() {
+  if (installPromptVisible) return
+  installPromptVisible = true
+  try {
+    await ElMessageBox.confirm(
+      '客户端新版本已下载完成，重启 Mao 后将自动完成安装。',
+      '客户端更新已就绪',
+      {
+        confirmButtonText: '重启安装',
+        cancelButtonText: '稍后',
+        customClass: 'app-update-message-box',
+        type: 'success'
+      }
+    )
+    const result = await installAppUpdate()
+    if (result?.error) {
+      ElMessage.error(result.error)
+    }
+  } catch {
+    // 用户选择稍后安装
+  } finally {
+    installPromptVisible = false
+  }
+}
+
+async function handleUpdateClick() {
+  if (appUpdateDownloaded.value) {
+    void confirmInstallUpdate()
+    return
+  }
+  if (appUpdateStatus.value === 'downloading') {
+    ElMessage.info(updateTooltip.value)
+    return
+  }
+  if (appUpdateAvailable.value) {
+    ElMessage.info('客户端更新正在下载，请稍候')
+    return
+  }
+  if (hasUpdate.value) {
+    reloadApp()
+    return
+  }
+  await checkAppUpdate()
+  // 检查发现客户端更新时保留当前页，让下载/安装流程继续；否则再刷新页面
+  // appUpdateAvailable 在 update-available 时已为 true，覆盖 downloading 态
+  if (appUpdateAvailable.value || appUpdateDownloaded.value) {
+    return
+  }
+  reloadApp()
+}
 
 async function handleCommand(command: string) {
   if (command === 'settings') {
@@ -343,5 +437,61 @@ async function handleCommand(command: string) {
 @keyframes pulse-update {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+:global(.app-update-message-box) {
+  width: 420px;
+  max-width: calc(100vw - 48px);
+  padding: 18px 20px 16px;
+  border-radius: 8px;
+}
+
+:global(.app-update-message-box .el-message-box__header) {
+  padding: 0 28px 12px 0;
+}
+
+:global(.app-update-message-box .el-message-box__title) {
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+:global(.app-update-message-box .el-message-box__headerbtn) {
+  top: 14px;
+  right: 14px;
+  width: 24px;
+  height: 24px;
+  font-size: 16px;
+}
+
+:global(.app-update-message-box .el-message-box__content) {
+  padding: 4px 0 16px;
+  min-height: 0;
+}
+
+:global(.app-update-message-box .el-message-box__status) {
+  font-size: 22px !important;
+}
+
+:global(.app-update-message-box .el-message-box__message p) {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  letter-spacing: 0;
+}
+
+:global(.app-update-message-box .el-message-box__btns) {
+  padding: 0;
+  gap: 8px;
+}
+
+:global(.app-update-message-box .el-message-box__btns .el-button) {
+  min-width: 76px;
+  height: 34px;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 8px;
 }
 </style>

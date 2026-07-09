@@ -1,5 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
+function onIpc(channel, callback) {
+  const handler = (_event, data) => callback(data)
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.removeListener(channel, handler)
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // Auth token persistence (Electron userData/auth.json, all load protocols)
   getAuthTokens: () => ipcRenderer.invoke('auth-get-tokens'),
@@ -10,9 +16,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getPlatform: () => ipcRenderer.invoke('get-platform'),
   getEnvironmentInfo: (workspace) => ipcRenderer.invoke('get-environment-info', { workspace }),
-  onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (event, data) => callback(data)),
-  onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (event, data) => callback(data)),
-  onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (event, data) => callback(data)),
+  checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  onUpdateChecking: (callback) => onIpc('update-checking', callback),
+  onDownloadProgress: (callback) => onIpc('download-progress', callback),
+  onUpdateAvailable: (callback) => onIpc('update-available', callback),
+  onUpdateNotAvailable: (callback) => onIpc('update-not-available', callback),
+  onUpdateDownloaded: (callback) => onIpc('update-downloaded', callback),
+  onUpdateError: (callback) => onIpc('update-error', callback),
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-maximize'),
   closeWindow: () => ipcRenderer.invoke('window-close'),

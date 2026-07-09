@@ -80,7 +80,7 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 
 **后端**：Java 17 + Lombok（`@Data`、`@Slf4j`、`@RequiredArgsConstructor`）；MyBatis-Plus 下划线转驼峰、逻辑删除（`deleted`）；表名/列名 snake_case，BIGINT 自增主键，`created_at`/`updated_at`。
 
-**前端**：Vue 3 Composition API + `<script setup>`；Pinia 用函数式 `defineStore`；TypeScript 严格模式；无 ESLint/Prettier，类型检查靠 `vue-tsc`。
+**前端**：Vue 3 Composition API + `<script setup>`；Pinia 用函数式 `defineStore`；TypeScript 严格模式；无 ESLint/Prettier，类型检查靠 `vue-tsc`；改动Electron 壳代码时记得更新package.json的version，默认每次小版本号加1。
 
 ## 常见改动入口
 

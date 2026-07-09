@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.8",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -26,6 +26,7 @@
     "adm-zip": "^0.5.16",
     "ali-oss": "^6.23.0",
     "axios": "^1.16.1",
+    "electron-updater": "^6.8.9",
     "element-plus": "^2.14.0",
     "marked": "^18.0.4",
     "monaco-editor": "^0.55.1",
@@ -55,13 +56,22 @@
     "appId": "cn.etarch.mao.desktop",
     "productName": "Mao",
     "icon": "public/AppIcon.icns",
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://mao.etarch.cn/api/uploads/releases/"
+      }
+    ],
     "files": [
       "electron/**/*",
       "package.json"
     ],
     "mac": {
       "icon": "public/AppIcon.icns",
-      "target": "dmg"
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "win": {
       "target": "nsis"

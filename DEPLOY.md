@@ -373,6 +373,8 @@ npm run dist
 
 产物在 `desktop/release/` 目录。代码签名与内部分发需自行处理。
 
+Electron 壳已接入自动更新。默认检查地址为 `https://mao.etarch.cn/api/uploads/releases/`；私有部署请修改 `desktop/package.json` 的 `build.publish[0].url` 后再打包。发布新版本时提升 `desktop/package.json` 的 `version`，执行 `npm run build && npm run dist`，并将 `desktop/release/` 中的安装包、`.blockmap` 与 `latest*.yml` 上传到该目录。macOS 自动更新需要签名后的 zip 产物，正式分发建议 notarize；Windows 建议签名安装包。
+
 ## 九、访问地址（示例）
 
 | 用途 | 地址 |
