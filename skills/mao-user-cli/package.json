@@ -1,0 +1,26 @@
+{
+  "name": "mao-user-cli",
+  "version": "1.0.0",
+  "description": "Mao 用户端（桌面端）非对话操作命令行工具",
+  "type": "commonjs",
+  "bin": {
+    "mao-user": "bin/mao-user-cli.js",
+    "mao-user-cli": "bin/mao-user-cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "SKILL.md",
+    "business_process.md",
+    "reference/"
+  ],
+  "keywords": [
+    "mao",
+    "user",
+    "cli"
+  ],
+  "license": "UNLICENSED"
+}

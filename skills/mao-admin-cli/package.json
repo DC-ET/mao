@@ -1,0 +1,26 @@
+{
+  "name": "mao-admin-cli",
+  "version": "1.0.0",
+  "description": "Mao 管理后台 API 命令行工具",
+  "type": "commonjs",
+  "bin": {
+    "mao-admin": "bin/mao-admin-cli.js",
+    "mao-admin-cli": "bin/mao-admin-cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "SKILL.md",
+    "business_process.md",
+    "reference/"
+  ],
+  "keywords": [
+    "mao",
+    "admin",
+    "cli"
+  ],
+  "license": "UNLICENSED"
+}

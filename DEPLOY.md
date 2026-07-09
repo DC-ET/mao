@@ -78,6 +78,8 @@ spring:
 
 jwt:
   secret: ${JWT_SECRET}
+  # CLOUD shell 工具注入的临时 JWT 有效期（毫秒），默认 2 小时；可用 JWT_SHELL_EXPIRATION 覆盖
+  shell-expiration: ${JWT_SHELL_EXPIRATION:7200000}
 
 app:
   git-credential:
@@ -115,6 +117,7 @@ chmod 600 /opt/mao/backend/.env
 | 变量 | 必需 | 说明 |
 |------|------|------|
 | `JWT_SECRET` | **是** | JWT 签名密钥，生产环境必须设置，禁止使用默认值 |
+| `JWT_SHELL_EXPIRATION` | 否 | CLOUD shell 临时 JWT 有效期（毫秒），默认 `7200000`（2 小时） |
 | `APP_GIT_CREDENTIAL_SECRET` | **是** | 用户 Git Access Token 的 AES 加密密钥；未配置时后端**拒绝启动** |
 | `UPLOAD_STORAGE_MODE` | 否 | `local`（默认）或 `oss` |
 | `UPLOAD_BASE_URL` | local 模式建议设 | 上传文件的公网访问前缀，如 `https://mao.example.com/api` |

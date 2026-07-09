@@ -1,5 +1,6 @@
 package cn.etarch.mao.harness.tool.impl;
 
+import cn.etarch.mao.auth.service.JwtService;
 import cn.etarch.mao.harness.core.BackgroundTaskManager;
 import cn.etarch.mao.harness.safety.PathSandbox;
 import cn.etarch.mao.harness.shell.OutputManager;
@@ -7,6 +8,8 @@ import cn.etarch.mao.harness.shell.OutputManager.OutputResult;
 import cn.etarch.mao.harness.shell.ShellSession;
 import cn.etarch.mao.harness.shell.ShellSessionManager;
 import cn.etarch.mao.harness.tool.Tool;
+import cn.etarch.mao.user.entity.User;
+import cn.etarch.mao.user.mapper.UserMapper;
 import cn.etarch.mao.user.service.GitCredentialService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -37,17 +40,23 @@ public class ShellSessionTool implements Tool {
     private final OutputManager outputManager;
     private final BackgroundTaskManager backgroundTaskManager;
     private final GitCredentialService gitCredentialService;
+    private final JwtService jwtService;
+    private final UserMapper userMapper;
 
     public ShellSessionTool(ObjectMapper objectMapper, PathSandbox pathSandbox,
                             ShellSessionManager sessionManager, OutputManager outputManager,
                             BackgroundTaskManager backgroundTaskManager,
-                            GitCredentialService gitCredentialService) {
+                            GitCredentialService gitCredentialService,
+                            JwtService jwtService,
+                            UserMapper userMapper) {
         this.objectMapper = objectMapper;
         this.pathSandbox = pathSandbox;
         this.sessionManager = sessionManager;
         this.outputManager = outputManager;
         this.backgroundTaskManager = backgroundTaskManager;
         this.gitCredentialService = gitCredentialService;
+        this.jwtService = jwtService;
+        this.userMapper = userMapper;
     }
 
     @Override
@@ -205,6 +214,9 @@ public class ShellSessionTool implements Tool {
         ShellSession session = sessionManager.getOrCreate(conversationId, sessionId, userId, workspace, domainTokenMap);
         sessionId = session.getSessionId();
 
+        // 每次执行前注入短效 MAO_TOKEN（持久会话 env 不会自动更新）
+        injectMaoToken(session, userId);
+
         // 如果指定了工作目录，先执行 cd
         if (workdir != null && !workdir.isBlank()) {
             Path resolvedWorkdir = pathSandbox.resolve(workdir, workspace);
@@ -228,6 +240,33 @@ public class ShellSessionTool implements Tool {
 
         session.incrementCommandCount();
         return result;
+    }
+
+    /**
+     * 为 CLOUD shell 签发临时 JWT 并 export 到会话环境，供 mao-*-cli 使用。
+     */
+    private void injectMaoToken(ShellSession session, Long userId) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            User user = userMapper.selectById(userId);
+            if (user == null || user.getUsername() == null || user.getUsername().isBlank()) {
+                log.warn("Skip MAO_TOKEN inject: user not found or username empty, userId={}", userId);
+                return;
+            }
+            String token = jwtService.generateShellToken(userId, user.getUsername());
+            session.getStdin().write("export MAO_TOKEN=" + shellSingleQuote(token));
+            session.getStdin().newLine();
+            session.getStdin().flush();
+        } catch (Exception e) {
+            log.warn("Failed to inject MAO_TOKEN for userId={}: {}", userId, e.getMessage());
+        }
+    }
+
+    /** bash 单引号转义，避免 JWT 等特殊字符破坏命令 */
+    static String shellSingleQuote(String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
     }
 
     private String handleWriteStdin(JsonNode args, Long conversationId) throws Exception {

@@ -25,12 +25,23 @@ public class JwtService {
     @Value("${jwt.refresh-expiration}")
     private long refreshExpiration;
 
+    /** CLOUD shell 工具注入的临时 JWT 有效期，默认 2 小时 */
+    @Value("${jwt.shell-expiration:7200000}")
+    private long shellExpiration;
+
     public String generateToken(Long userId, String username) {
         return buildToken(userId, username, expiration);
     }
 
     public String generateRefreshToken(Long userId, String username) {
         return buildToken(userId, username, refreshExpiration);
+    }
+
+    /**
+     * 为 CLOUD shell 子进程签发短效 access token（与普通登录 token 同结构，便于 mao-*-cli 使用）。
+     */
+    public String generateShellToken(Long userId, String username) {
+        return buildToken(userId, username, shellExpiration);
     }
 
     private String buildToken(Long userId, String username, long expMs) {

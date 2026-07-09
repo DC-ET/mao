@@ -235,15 +235,42 @@ async function resolveUserPath() {
 }
 
 /**
- * Build environment with user's full PATH
+ * Single-quote a value for safe use in bash (JWT 等敏感值禁止未转义写入).
+ */
+function shellSingleQuote(value) {
+  return "'" + String(value).replace(/'/g, "'\\''") + "'"
+}
+
+/**
+ * Build environment with user's full PATH and current MAO_TOKEN from local auth store.
  */
 async function buildShellEnv() {
   const userPath = await resolveUserPath()
-  return {
+  const { token } = readAuthStore()
+  const env = {
     ...process.env,
     PATH: userPath,
     TERM: 'dumb',
     PS1: ''
+  }
+  if (token) {
+    env.MAO_TOKEN = token
+  } else {
+    delete env.MAO_TOKEN
+  }
+  return env
+}
+
+/**
+ * 持久 bash 会话的 env 在 spawn 后不会自动更新；每次执行命令前重新 export。
+ */
+function refreshMaoTokenInShellSession(session) {
+  if (!session?.process?.stdin) return
+  const { token } = readAuthStore()
+  if (token) {
+    session.process.stdin.write('export MAO_TOKEN=' + shellSingleQuote(token) + '\n')
+  } else {
+    session.process.stdin.write('unset MAO_TOKEN\n')
   }
 }
 
@@ -1391,6 +1418,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
   // 复用已有会话
   if (session_id && shellSessions.has(session_id)) {
     const session = shellSessions.get(session_id)
+    refreshMaoTokenInShellSession(session)
     const marker = generateMarker()
     session.process.stdin.write(command + '\n')
     session.process.stdin.write('echo ' + MARKER_PREFIX + marker + MARKER_SUFFIX + '\n')

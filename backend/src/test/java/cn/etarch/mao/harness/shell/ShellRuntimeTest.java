@@ -4,6 +4,9 @@ import cn.etarch.mao.harness.core.BackgroundTaskManager;
 import cn.etarch.mao.harness.runtime.RuntimeDataResolver;
 import cn.etarch.mao.harness.safety.PathSandbox;
 import cn.etarch.mao.harness.tool.impl.ShellSessionTool;
+import cn.etarch.mao.auth.service.JwtService;
+import cn.etarch.mao.user.entity.User;
+import cn.etarch.mao.user.mapper.UserMapper;
 import cn.etarch.mao.user.service.GitCredentialService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,6 +23,8 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -136,7 +141,9 @@ class ShellRuntimeTest {
                 manager,
                 outputManager,
                 new BackgroundTaskManager(),
-                gitCredentialService);
+                gitCredentialService,
+                mockJwtService(),
+                mockUserMapper(7L, "tester"));
 
         Path expectedUserHome = userHomeRoot.resolve("7").toAbsolutePath().normalize();
         String exec = tool.execute("""
@@ -149,6 +156,31 @@ class ShellRuntimeTest {
 
         Path tokenFile = expectedUserHome.resolve(".mao").resolve("sso_token.json");
         pathSandbox.resolve(tokenFile.toString());
+    }
+
+    @Test
+    void shellSessionToolInjectsMaoTokenEnvOnEachExec() throws Exception {
+        ShellSessionManager manager = manager();
+        OutputManager outputManager = new OutputManager();
+        ReflectionTestUtils.setField(outputManager, "maxPreviewLines", 100);
+        ReflectionTestUtils.setField(outputManager, "maxPreviewChars", 1000);
+        GitCredentialService gitCredentialService = mock(GitCredentialService.class);
+        when(gitCredentialService.getTokenMapByUser(7L)).thenReturn(Map.of());
+        ShellSessionTool tool = new ShellSessionTool(
+                objectMapper,
+                new PathSandbox(tempDir.toString()),
+                manager,
+                outputManager,
+                new BackgroundTaskManager(),
+                gitCredentialService,
+                mockJwtService(),
+                mockUserMapper(7L, "tester"));
+
+        String exec = tool.execute("""
+                {"command":"echo $MAO_TOKEN","session_id":"token-sh","yield_time_ms":2000}
+                """, 41L, 7L, tempDir.toString());
+        assertThat(exec).contains("exit_code: 0");
+        assertThat(exec).contains("shell-token-for-tester");
     }
 
     @Test
@@ -165,7 +197,9 @@ class ShellRuntimeTest {
                 manager,
                 outputManager,
                 new BackgroundTaskManager(),
-                gitCredentialService);
+                gitCredentialService,
+                mockJwtService(),
+                mockUserMapper(7L, "tester"));
 
         assertThat(tool.getName()).isEqualTo("shell");
         assertThat(tool.getDescription()).contains("shell");
@@ -205,7 +239,9 @@ class ShellRuntimeTest {
                 manager(),
                 new OutputManager(),
                 new BackgroundTaskManager(),
-                mock(GitCredentialService.class));
+                mock(GitCredentialService.class),
+                mockJwtService(),
+                mockUserMapper(7L, "tester"));
 
         assertThat(error(tool.execute("{\"action\":\"unknown\"}", 1L, 7L, tempDir.toString()))).contains("未知动作");
         assertThat(error(tool.execute("{\"action\":\"exec\"}", 1L, 7L, tempDir.toString()))).contains("command");
@@ -229,5 +265,21 @@ class ShellRuntimeTest {
         ReflectionTestUtils.setField(manager, "sessionIdleTimeoutMinutes", 30);
         ReflectionTestUtils.setField(manager, "sessionMaxLifetimeHours", 2);
         return manager;
+    }
+
+    private JwtService mockJwtService() {
+        JwtService jwtService = mock(JwtService.class);
+        when(jwtService.generateShellToken(anyLong(), anyString()))
+                .thenAnswer(inv -> "shell-token-for-" + inv.getArgument(1));
+        return jwtService;
+    }
+
+    private UserMapper mockUserMapper(Long userId, String username) {
+        UserMapper userMapper = mock(UserMapper.class);
+        User user = new User();
+        user.setId(userId);
+        user.setUsername(username);
+        when(userMapper.selectById(userId)).thenReturn(user);
+        return userMapper;
     }
 }
