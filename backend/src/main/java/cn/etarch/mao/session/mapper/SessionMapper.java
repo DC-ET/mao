@@ -14,18 +14,18 @@ import java.util.Map;
 public interface SessionMapper extends BaseMapper<Session> {
 
     @Select("SELECT DATE(created_at) AS day, COUNT(*) AS count " +
-            "FROM session WHERE created_at >= #{start} GROUP BY DATE(created_at)")
+            "FROM session WHERE created_at >= #{start} AND deleted = 0 GROUP BY DATE(created_at)")
     List<Map<String, Object>> selectSessionCountsByDay(@Param("start") LocalDateTime start);
 
     @Select("SELECT COALESCE(phase, 'IDLE') AS phase, COUNT(*) AS count " +
-            "FROM session GROUP BY COALESCE(phase, 'IDLE')")
+            "FROM session WHERE deleted = 0 GROUP BY COALESCE(phase, 'IDLE')")
     List<Map<String, Object>> selectPhaseCounts();
 
     @Select("SELECT user_id AS userId, COUNT(*) AS sessionCount " +
-            "FROM session GROUP BY user_id")
+            "FROM session WHERE deleted = 0 GROUP BY user_id")
     List<Map<String, Object>> selectSessionCountsByUser();
 
     @Select("SELECT model_id AS modelId, COUNT(*) AS sessionCount " +
-            "FROM session WHERE model_id IS NOT NULL GROUP BY model_id")
+            "FROM session WHERE model_id IS NOT NULL AND deleted = 0 GROUP BY model_id")
     List<Map<String, Object>> selectSessionCountsByModel();
 }

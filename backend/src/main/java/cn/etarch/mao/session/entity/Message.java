@@ -33,6 +33,10 @@ public class Message {
     /** Source session ID for messages produced by sub-agent delegation */
     private Long sourceSessionId;
 
+    /** Logical deletion flag: 0=normal, 1=deleted */
+    @TableLogic
+    private Integer deleted;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 
