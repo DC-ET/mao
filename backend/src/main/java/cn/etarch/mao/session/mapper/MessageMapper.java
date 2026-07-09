@@ -39,6 +39,7 @@ public interface MessageMapper extends BaseMapper<Message> {
             "FROM agent a " +
             "LEFT JOIN session s ON s.agent_id = a.id AND s.deleted = 0 " +
             "LEFT JOIN message m ON m.session_id = s.id AND m.deleted = 0 " +
+            "WHERE a.deleted = 0 " +
             "GROUP BY a.id, a.name " +
             "ORDER BY sessionCount DESC, messageCount DESC " +
             "LIMIT 20")

@@ -30,6 +30,10 @@ public class SessionTodo {
 
     private String blockedBy;
 
+    /** Logical deletion flag: 0=normal, 1=deleted */
+    @TableLogic
+    private Integer deleted;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

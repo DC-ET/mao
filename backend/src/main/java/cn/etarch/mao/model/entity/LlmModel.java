@@ -33,6 +33,10 @@ public class LlmModel {
     /** 是否默认模型：0=否 1=是 */
     private Integer isDefault;
 
+    /** Logical deletion flag: 0=normal, 1=deleted */
+    @TableLogic
+    private Integer deleted;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 
