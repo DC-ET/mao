@@ -18,22 +18,21 @@ public class AskUserQuestionsTool implements Tool {
     @Override
     public String getDescription() {
         return """
-                Use this tool when you need to ask the user questions during execution. \
-                This allows you to:
+                在执行过程中需要向用户提问时使用本工具。可用于：
                 \
-                - Gather user preferences or requirements
-                - Clarify ambiguous instructions
-                - Get decisions on implementation choices as you work
-                - Offer choices to the user about what direction to take
+                - 收集用户偏好或需求
+                - 澄清含糊不清的指令
+                - 在推进工作的同时就实现方案征求决策
+                - 向用户提供可选方向供其选择
                 \
-                Usage notes:
-                - Users will always be able to select "Other" to provide custom text input
-                - Use multiSelect: true to allow multiple answers to be selected for a question
-                - If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label
-                - preview supports rendered markdown in a monospace box, multi-line with newlines
-                - Previews only render for single-select questions (not multiSelect)
-                - When any option has preview, UI switches to side-by-side layout (options left, preview right)
-                - Use previews for mockups, code snippets, or visual comparisons — don't use for simple preference questions where labels/descriptions suffice
+                使用说明：
+                - 用户始终可以选择「其他」并填写自定义文本
+                - 将 multiSelect 设为 true，可允许同一问题多选
+                - 若推荐某一选项，请将其置于选项列表首位，并在 label 末尾加上「（推荐）」
+                - preview 支持在等宽框中渲染 Markdown，可用换行实现多行内容
+                - 预览仅对单选问题生效（非 multiSelect）
+                - 任一选项带有 preview 时，界面会切换为左右分栏（左侧选项，右侧预览）
+                - preview 适用于原型示意、代码片段或视觉对比；简单偏好类问题仅用 label/description 即可，无需 preview
                 """;
     }
 
@@ -48,7 +47,7 @@ public class AskUserQuestionsTool implements Tool {
         // questions array
         Map<String, Object> questionsProp = new LinkedHashMap<>();
         questionsProp.put("type", "array");
-        questionsProp.put("description", "Array of 1-4 question objects");
+        questionsProp.put("description", "包含 1–4 个问题对象的数组");
         questionsProp.put("minItems", 1);
         questionsProp.put("maxItems", 4);
 
@@ -60,18 +59,18 @@ public class AskUserQuestionsTool implements Tool {
 
         Map<String, Object> questionField = new LinkedHashMap<>();
         questionField.put("type", "string");
-        questionField.put("description", "The complete question, ending with ?");
+        questionField.put("description", "完整的问题文本，以问号结尾");
         questionProps.put("question", questionField);
 
         Map<String, Object> headerField = new LinkedHashMap<>();
         headerField.put("type", "string");
         headerField.put("maxLength", 12);
-        headerField.put("description", "Very short label, shown as chip/tag");
+        headerField.put("description", "极短标签，以芯片/标签形式展示");
         questionProps.put("header", headerField);
 
         Map<String, Object> optionsField = new LinkedHashMap<>();
         optionsField.put("type", "array");
-        optionsField.put("description", "2-4 option objects");
+        optionsField.put("description", "包含 2–4 个选项对象");
         optionsField.put("minItems", 2);
         optionsField.put("maxItems", 4);
 
@@ -83,17 +82,17 @@ public class AskUserQuestionsTool implements Tool {
 
         Map<String, Object> labelField = new LinkedHashMap<>();
         labelField.put("type", "string");
-        labelField.put("description", "Display text, 1-5 words");
+        labelField.put("description", "展示文案，1–5 个词");
         optionProps.put("label", labelField);
 
         Map<String, Object> descField = new LinkedHashMap<>();
         descField.put("type", "string");
-        descField.put("description", "Explanation of what this option means");
+        descField.put("description", "该选项含义的说明");
         optionProps.put("description", descField);
 
         Map<String, Object> previewField = new LinkedHashMap<>();
         previewField.put("type", "string");
-        previewField.put("description", "Optional preview content (mockups, code, diagrams)");
+        previewField.put("description", "可选预览内容（原型、代码、示意图等）");
         optionProps.put("preview", previewField);
 
         optionItem.put("properties", optionProps);
@@ -102,7 +101,7 @@ public class AskUserQuestionsTool implements Tool {
 
         Map<String, Object> multiSelectField = new LinkedHashMap<>();
         multiSelectField.put("type", "boolean");
-        multiSelectField.put("description", "true = multiple answers allowed");
+        multiSelectField.put("description", "为 true 时允许多选");
         questionProps.put("multiSelect", multiSelectField);
 
         questionItem.put("properties", questionProps);
@@ -112,7 +111,7 @@ public class AskUserQuestionsTool implements Tool {
         // metadata (optional)
         Map<String, Object> metadataProp = new LinkedHashMap<>();
         metadataProp.put("type", "object");
-        metadataProp.put("description", "Optional tracking metadata");
+        metadataProp.put("description", "可选的追踪元数据");
         properties.put("metadata", metadataProp);
 
         schema.put("properties", properties);
