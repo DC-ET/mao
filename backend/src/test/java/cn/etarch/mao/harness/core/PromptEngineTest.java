@@ -64,9 +64,13 @@ class PromptEngineTest {
         assertThat(request.getTools()).extracting(td -> td.getFunction().getName())
                 .containsExactly("task_create", "delegate", "read_file");
         assertThat(request.getMessages()).hasSize(2);
-        assertThat(request.getMessages().get(0).getContent().toString())
+        String systemPrompt = request.getMessages().get(0).getContent().toString();
+        assertThat(systemPrompt)
                 .contains("You are careful.", "/repo", "CLOUD", "java", "/runtime/java/SKILL.md",
-                        "任务管理", "子代理委派", "不支持以 `~` 开头");
+                        "任务管理", "子代理委派", "不支持以 `~` 开头",
+                        "# 使用你的工具", "ask_user_questions", "最大化并行工具调用");
+        assertThat(systemPrompt.indexOf("# 使用你的工具"))
+                .isLessThan(systemPrompt.indexOf("## 可用技能"));
         assertThat(request.getMessages().get(1).getContent())
                 .isEqualTo("Use /java, run mvn test, and src/main/App.java");
     }

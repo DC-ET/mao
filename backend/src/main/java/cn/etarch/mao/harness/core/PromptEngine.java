@@ -28,6 +28,20 @@ public class PromptEngine {
     private static final Set<String> TASK_TOOL_NAMES = Set.of(
             "task_create", "task_update", "task_list", "task_delete");
 
+    private static final String TOOL_USAGE_GUIDANCE = """
+            # 使用你的工具
+             - 当提供相关专用工具时，不要使用shell运行命令。使用专用工具可以让用户更好地理解和审查你的工作。这对协助用户至关重要：
+              - 要读取文件，使用read_file而不是cat、head、tail或sed
+              - 要编辑文件，使用edit_file而不是sed或awk
+              - 要创建文件，使用write_file而不是带heredoc的cat或echo重定向
+              - 要搜索文件，使用glob_search而不是find或ls
+              - 要搜索文件内容，使用grep_search而不是grep或rg
+              - 将shell专门保留用于需要shell执行的系统命令和终端操作。如果你不确定并且有相关专用工具，默认使用专用工具，只有在绝对必要时才回退到使用shell工具。
+             - 使用task_*工具分解和管理你的工作。这些工具有助于规划你的工作并帮助用户跟踪你的进度。完成任务后立即将其标记为已完成。不要在标记为已完成之前批量处理多个任务。
+             - 使用ask_user_questions工具实现在不中断任务进行的情况下向用户获取信息、收集需求、请求授权等行为，尽量避免因为这些问题中断任务。
+             - 你可以在单个响应中调用多个工具。如果你打算调用多个工具并且它们之间没有依赖关系，请并行执行所有独立的工具调用。尽可能最大化并行工具调用的使用以提高效率。但是，如果某些工具调用依赖于先前的调用来获取依赖值，请不要并行调用这些工具，而是按顺序调用它们。例如，如果一个操作必须在另一个操作开始之前完成，请按顺序运行这些操作。
+            """;
+
     private static final Pattern SKILL_PATTERN = Pattern.compile("\\$\\{([^}]+)\\}\\$");
     private static final Pattern COMMAND_PATTERN = Pattern.compile("#\\{([^}]+)\\}#");
     private static final Pattern FILE_REF_PATTERN = Pattern.compile("@\\{([^}]+)\\}@");
@@ -178,6 +192,10 @@ public class PromptEngine {
             sb.append("## 当前时间\n\n");
             sb.append("当前日期和时间：`").append(context.getCurrentTimestamp()).append("`\n\n");
         }
+
+        // Fixed tool usage guidance — always inject before skill catalog
+        sb.append(TOOL_USAGE_GUIDANCE);
+        sb.append("\n");
 
         // Skill catalog — inject name/description with workspace-relative paths
         List<String> skillNames = context.getAvailableSkillNames();
