@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { useSessionStore, type TaskPhase } from '../stores/session'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
+import { nowDateTime } from '../utils/datetime'
 
 /// <reference types="vite/client" />
 
@@ -614,7 +615,7 @@ export function useStreamWS() {
             id: String(data.messageId),
             role: 'user',
             content: data.content || '',
-            createdAt: new Date().toLocaleString(),
+            createdAt: nowDateTime(),
             images: data.images && data.images.length > 0 ? data.images : undefined
           })
           sessionStore.ensureStreamingAssistantMessage(sessionId)

@@ -2,14 +2,14 @@
   <el-dialog
     :model-value="visible"
     :title="dialogTitle"
-    width="680px"
+    width="760px"
     @close="$emit('update:visible', false)"
   >
     <el-form
       ref="formRef"
       :model="form"
       :rules="rules"
-      label-width="100px"
+      label-width="110px"
       label-position="right"
     >
       <el-form-item label="名称" prop="name">
@@ -18,10 +18,50 @@
       <el-form-item label="描述" prop="description">
         <el-input v-model="form.description" type="textarea" :rows="3" placeholder="请输入描述" />
       </el-form-item>
-      <el-form-item label="系统提示词" prop="systemPrompt">
-        <el-input v-model="form.systemPrompt" type="textarea" :rows="5" placeholder="请输入系统提示词" />
+      <el-form-item label="角色定义" prop="systemPrompt">
+        <el-input
+          v-model="form.systemPrompt"
+          type="textarea"
+          :rows="5"
+          placeholder="请输入角色定义：身份、目标、工作内容、表达方式等"
+        />
       </el-form-item>
-      <el-form-item label="关联 Skills" prop="skillNames">
+      <el-form-item label="最佳实践经验">
+        <div class="experience-list">
+          <div
+            v-for="(item, index) in form.experiences"
+            :key="item._key"
+            class="experience-item"
+          >
+            <el-input
+              v-model="item.content"
+              type="textarea"
+              :rows="2"
+              :maxlength="300"
+              show-word-limit
+              placeholder="请输入经验正文（最长 300 字）"
+            />
+            <div class="experience-actions">
+              <el-switch v-model="item.enabled" active-text="启用" inactive-text="停用" />
+              <el-button
+                link
+                type="primary"
+                :disabled="index === 0"
+                @click="moveExperience(index, -1)"
+              >上移</el-button>
+              <el-button
+                link
+                type="primary"
+                :disabled="index === form.experiences.length - 1"
+                @click="moveExperience(index, 1)"
+              >下移</el-button>
+              <el-button link type="danger" @click="removeExperience(index)">删除</el-button>
+            </div>
+          </div>
+          <el-button type="primary" link @click="addExperience">+ 添加经验</el-button>
+        </div>
+      </el-form-item>
+      <el-form-item label="Skills" prop="skillNames">
         <el-select
           v-model="form.skillNames"
           multiple
@@ -64,6 +104,14 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 
+interface ExperienceFormItem {
+  _key: string
+  id?: number | null
+  content: string
+  sortOrder: number
+  enabled: boolean
+}
+
 const props = withDefaults(defineProps<{
   visible: boolean
   agentData?: any | null
@@ -88,18 +136,36 @@ const submitButtonText = computed(() => (isEdit.value ? '保存' : '创建'))
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const skillDocs = ref<any[]>([])
+let experienceKeySeq = 0
 
 const form = reactive({
   name: '',
   description: '',
   systemPrompt: '',
   skillNames: [] as string[],
-  tags: [] as string[]
+  tags: [] as string[],
+  experiences: [] as ExperienceFormItem[]
 })
 
 const rules: FormRules = {
   name: [{ required: true, message: '请输入 Agent 名称', trigger: 'blur' }],
-  systemPrompt: [{ required: true, message: '请输入系统提示词', trigger: 'blur' }]
+  systemPrompt: [{ required: true, message: '请输入角色定义', trigger: 'blur' }]
+}
+
+function nextExperienceKey() {
+  experienceKeySeq += 1
+  return `exp-${experienceKeySeq}`
+}
+
+function mapExperiences(source: any[] | undefined | null, keepId: boolean): ExperienceFormItem[] {
+  if (!source || source.length === 0) return []
+  return source.map((item, index) => ({
+    _key: nextExperienceKey(),
+    id: keepId ? item.id ?? null : null,
+    content: item.content || '',
+    sortOrder: item.sortOrder ?? index,
+    enabled: item.enabled !== false
+  }))
 }
 
 function resetForm() {
@@ -108,8 +174,53 @@ function resetForm() {
     description: '',
     systemPrompt: '',
     skillNames: [],
-    tags: []
+    tags: [],
+    experiences: []
   })
+}
+
+function addExperience() {
+  form.experiences.push({
+    _key: nextExperienceKey(),
+    id: null,
+    content: '',
+    sortOrder: form.experiences.length,
+    enabled: true
+  })
+}
+
+function removeExperience(index: number) {
+  form.experiences.splice(index, 1)
+  form.experiences.forEach((item, i) => {
+    item.sortOrder = i
+  })
+}
+
+function moveExperience(index: number, delta: number) {
+  const target = index + delta
+  if (target < 0 || target >= form.experiences.length) return
+  const list = form.experiences
+  const tmp = list[index]
+  list[index] = list[target]
+  list[target] = tmp
+  list.forEach((item, i) => {
+    item.sortOrder = i
+  })
+}
+
+function validateExperiences(): boolean {
+  for (let i = 0; i < form.experiences.length; i++) {
+    const content = (form.experiences[i].content || '').trim()
+    if (!content) {
+      ElMessage.warning(`第 ${i + 1} 条经验不能为空`)
+      return false
+    }
+    if (content.length > 300) {
+      ElMessage.warning(`第 ${i + 1} 条经验不能超过 300 字`)
+      return false
+    }
+  }
+  return true
 }
 
 watch(() => props.visible, async (val) => {
@@ -121,7 +232,8 @@ watch(() => props.visible, async (val) => {
       description: props.agentData.description || '',
       systemPrompt: props.agentData.systemPrompt || '',
       skillNames: props.agentData.skillNames || [],
-      tags: props.agentData.tags || []
+      tags: props.agentData.tags || [],
+      experiences: mapExperiences(props.agentData.experiences, props.mode === 'edit')
     })
   } else {
     resetForm()
@@ -138,14 +250,29 @@ async function loadOptions() {
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
+  if (!validateExperiences()) return
+
+  const payload = {
+    name: form.name,
+    description: form.description,
+    systemPrompt: form.systemPrompt,
+    skillNames: form.skillNames,
+    tags: form.tags,
+    experiences: form.experiences.map((item, index) => ({
+      id: isEdit.value ? item.id ?? null : null,
+      content: item.content.trim(),
+      sortOrder: index,
+      enabled: item.enabled
+    }))
+  }
 
   submitting.value = true
   try {
     if (isEdit.value && props.agentData?.id) {
-      await api.put(`/agents/${props.agentData.id}`, form)
+      await api.put(`/agents/${props.agentData.id}`, payload)
       ElMessage.success('Agent 更新成功')
     } else {
-      await api.post('/agents', form)
+      await api.post('/agents', payload)
       ElMessage.success(props.mode === 'copy' ? 'Agent 复制成功' : 'Agent 创建成功')
     }
     emit('update:visible', false)
@@ -157,3 +284,29 @@ async function handleSubmit() {
   }
 }
 </script>
+
+<style scoped>
+.experience-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.experience-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-blank);
+}
+
+.experience-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+</style>

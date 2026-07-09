@@ -1,6 +1,7 @@
 package cn.etarch.mao.agent.service;
 
 import cn.etarch.mao.agent.entity.Agent;
+import cn.etarch.mao.agent.entity.AgentExperience;
 import cn.etarch.mao.agent.entity.AgentTag;
 import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.agent.mapper.AgentTagMapper;
@@ -20,6 +21,7 @@ public class AgentService {
 
     private final AgentMapper agentMapper;
     private final AgentTagMapper agentTagMapper;
+    private final AgentExperienceService experienceService;
     private final ObjectMapper objectMapper;
 
     public List<Agent> listAgents(Long userId, String keyword) {
@@ -43,7 +45,8 @@ public class AgentService {
     public Agent createAgent(Long userId, String name, String description,
                               String systemPrompt,
                               List<String> tags,
-                              List<String> skillNames) {
+                              List<String> skillNames,
+                              List<AgentExperienceService.ExperienceInput> experiences) {
         Agent agent = new Agent();
         agent.setName(name);
         agent.setDescription(description);
@@ -68,6 +71,10 @@ public class AgentService {
             }
         }
 
+        if (experiences != null) {
+            experienceService.syncExperiences(agent.getId(), experiences);
+        }
+
         return agent;
     }
 
@@ -75,7 +82,8 @@ public class AgentService {
     public Agent updateAgent(Long id, String name, String description,
                               String systemPrompt,
                               List<String> skillNames,
-                              List<String> tags) {
+                              List<String> tags,
+                              List<AgentExperienceService.ExperienceInput> experiences) {
         Agent agent = getAgent(id);
         if (name != null) agent.setName(name);
         if (description != null) agent.setDescription(description);
@@ -100,17 +108,25 @@ public class AgentService {
             }
         }
 
+        // experiences == null → 不改动；[] → 清空
+        experienceService.syncExperiences(id, experiences);
+
         return agent;
     }
 
     @Transactional
     public void deleteAgent(Long id) {
         agentTagMapper.delete(new QueryWrapper<AgentTag>().eq("agent_id", id));
+        experienceService.deleteByAgentId(id);
         agentMapper.deleteById(id);
     }
 
     public List<AgentTag> getAgentTags(Long agentId) {
         return agentTagMapper.selectList(
                 new QueryWrapper<AgentTag>().eq("agent_id", agentId));
+    }
+
+    public List<AgentExperience> getAgentExperiences(Long agentId) {
+        return experienceService.listByAgentId(agentId);
     }
 }

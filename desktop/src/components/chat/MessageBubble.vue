@@ -2,7 +2,7 @@
   <div :class="['message-bubble', role, { 'tool-only': isToolOnly }]">
     <div class="message-content">
       <div v-if="showTime" class="message-time-top">
-        <span class="message-time">{{ message.createdAt }}</span>
+        <span class="message-time">{{ formatDateTime(message.createdAt) }}</span>
       </div>
 
       <!-- 用户消息：正常态 -->
@@ -161,6 +161,7 @@ import {
   type ToolCall
 } from '../../composables/useChat'
 import { buildSegmentsFromContentAndTools } from '../../utils/chatMessage'
+import { formatDateTime } from '../../utils/datetime'
 import { useSessionStore } from '../../stores/session'
 
 const props = withDefaults(defineProps<{

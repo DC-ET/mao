@@ -8,7 +8,7 @@ server:
 
 logging:
   level:
-    cn.etarch.mao: DEBUG
+    cn.etarch.mao: INFO
     org.springframework.security: INFO
     org.springframework.web: INFO
     org.apache.ibatis: INFO

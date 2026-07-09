@@ -21,6 +21,7 @@ import { getUploadConfig, type UploadConfig } from '../utils/storageMode'
 import { deriveSessionTitle } from '../utils/sessionTitle'
 import { generateUUID } from '../utils/uuid'
 import { validateHttpsGitUrl } from '../utils/cloud-project'
+import { nowDateTime } from '../utils/datetime'
 
 export interface ApprovalItem {
   requestId: string
@@ -324,7 +325,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         id: `msg_${Date.now()}_user`,
         role: 'user',
         content: text,
-        createdAt: new Date().toLocaleString(),
+        createdAt: nowDateTime(),
         images: imageUrls.length > 0 ? imageUrls : undefined
       })
 
@@ -333,7 +334,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         id: `msg_${Date.now()}_assistant`,
         role: 'assistant',
         content: '',
-        createdAt: new Date().toLocaleString(),
+        createdAt: nowDateTime(),
         toolCalls: [],
         segments: []
       })
@@ -463,7 +464,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       id: `msg_${Date.now()}_assistant`,
       role: 'assistant',
       content: '',
-      createdAt: new Date().toLocaleString(),
+      createdAt: nowDateTime(),
       toolCalls: [],
       segments: []
     }

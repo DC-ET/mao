@@ -100,6 +100,53 @@ class PromptEngineTest {
     }
 
     @Test
+    void buildRequestInjectsExperiencesBetweenRoleAndWorkspace() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/workspace-root"));
+
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setSystemPrompt("You are an SRE.");
+        context.setExperiences(List.of(
+                "CPU 持续过高时，优先检查最近是否发布、流量是否突增。",
+                "排障时不要轻易建议重启。"));
+        context.setWorkspace("/repo");
+        context.setCurrentTimestamp("2026-07-09T10:00:00+08:00");
+        context.setTools(List.of());
+        context.addUserMessage("hello");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+        String systemPrompt = request.getMessages().get(0).getContent().toString();
+
+        assertThat(systemPrompt)
+                .contains("You are an SRE.", "## 最佳实践经验",
+                        "- CPU 持续过高时，优先检查最近是否发布、流量是否突增。",
+                        "- 排障时不要轻易建议重启。",
+                        "## 工作环境");
+        assertThat(systemPrompt.indexOf("You are an SRE."))
+                .isLessThan(systemPrompt.indexOf("## 最佳实践经验"));
+        assertThat(systemPrompt.indexOf("## 最佳实践经验"))
+                .isLessThan(systemPrompt.indexOf("## 工作环境"));
+    }
+
+    @Test
+    void buildRequestOmitsExperienceSectionWhenEmpty() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/workspace-root"));
+
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setSystemPrompt("You are careful.");
+        context.setExperiences(List.of());
+        context.setWorkspace("/repo");
+        context.setTools(List.of());
+        context.addUserMessage("hello");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+        String systemPrompt = request.getMessages().get(0).getContent().toString();
+
+        assertThat(systemPrompt)
+                .contains("You are careful.", "## 工作环境")
+                .doesNotContain("最佳实践经验");
+    }
+
+    @Test
     void buildRequestUsesLocalUnsyncedSkillPathAndAllowsMarkerReplacement() {
         when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/fallback"));
         when(skillSyncService.getUserSkillDocuments(7L)).thenReturn(List.of());

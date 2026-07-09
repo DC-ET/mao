@@ -67,6 +67,7 @@ import { mapMessagesWithFileChanges } from '../../utils/chatMessage'
 import { deriveSessionTitle } from '../../utils/sessionTitle'
 import { generateUUID } from '../../utils/uuid'
 import { collectLocalUnsyncedSkills } from '../../utils/localSkills'
+import { nowDateTime } from '../../utils/datetime'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
 import { useCenterTabs } from '../../composables/useCenterTabs'
@@ -255,7 +256,7 @@ async function handleChatSend(text: string, _files: File[]) {
       id: 'side_user_' + Date.now(),
       role: 'user',
       content: text.trim(),
-      createdAt: new Date().toLocaleString(),
+      createdAt: nowDateTime(),
     })
     sessionStore.ensureStreamingAssistantMessage(placeholderCacheKey.value)
 
@@ -279,7 +280,7 @@ async function handleChatSend(text: string, _files: File[]) {
       id: 'side_user_' + Date.now(),
       role: 'user',
       content: text.trim(),
-      createdAt: new Date().toLocaleString(),
+      createdAt: nowDateTime(),
     })
     sessionStore.ensureStreamingAssistantMessage(sid)
     sendMessage(sid, text.trim(), generateUUID(), undefined, localSkills)

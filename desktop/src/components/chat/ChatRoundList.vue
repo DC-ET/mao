@@ -14,7 +14,7 @@
 
     <template v-if="round.collapsedSteps.length > 0">
       <div v-if="round.finalReply" class="final-reply-time">
-        {{ round.finalReply.createdAt }}
+        {{ formatDateTime(round.finalReply.createdAt) }}
       </div>
 
       <div class="execution-steps-collapse">
@@ -112,6 +112,7 @@ import { toRef } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import type { ChatMessage } from '../../types/chat'
 import { useMessageRounds } from '../../composables/useMessageRounds'
+import { formatDateTime } from '../../utils/datetime'
 import MessageBubble from './MessageBubble.vue'
 import FileChangePanel from './FileChangePanel.vue'
 

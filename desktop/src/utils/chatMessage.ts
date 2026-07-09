@@ -5,6 +5,7 @@ import {
   type MessageSegment,
   type ToolCall
 } from '../types/chat'
+import { formatDateTime } from './datetime'
 
 /** 解析工具参数（后端 arguments 为 JSON 字符串） */
 export function parseToolArguments(raw: unknown): Record<string, unknown> | undefined {
@@ -260,8 +261,8 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
       role,
       content,
       thinkingContent: thinkingContent || undefined,
-      createdAt: String(m.createdAt ?? ''),
-      updatedAt: m.updatedAt ? String(m.updatedAt) : undefined,
+      createdAt: formatDateTime(m.createdAt != null ? String(m.createdAt) : ''),
+      updatedAt: m.updatedAt ? formatDateTime(String(m.updatedAt)) : undefined,
       images: images.length > 0 ? images : undefined,
       toolCalls,
       segments

@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { api } from '../api'
 import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage, FileChange, PendingQuestion } from '../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
+import { nowDateTime } from '../utils/datetime'
 
 export type SessionStatus = 'ACTIVE' | 'ARCHIVED'
 
@@ -403,7 +404,7 @@ export const useSessionStore = defineStore('session', () => {
       id: `msg_${Date.now()}_assistant`,
       role: 'assistant',
       content: '',
-      createdAt: new Date().toLocaleString(),
+      createdAt: nowDateTime(),
       toolCalls: [],
       segments: []
     }

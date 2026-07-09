@@ -2,6 +2,7 @@ package cn.etarch.mao.harness.core;
 
 import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.mapper.AgentMapper;
+import cn.etarch.mao.agent.service.AgentExperienceService;
 import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.common.result.ErrorCode;
 import cn.etarch.mao.harness.llm.ChatRequest;
@@ -47,6 +48,7 @@ public class HarnessService {
     private final LocalSkillRegistry localSkillRegistry;
     private final SessionMapper sessionMapper;
     private final AgentMapper agentMapper;
+    private final AgentExperienceService experienceService;
     private final LlmModelMapper llmModelMapper;
     private final FileChangeMapper fileChangeMapper;
     private final SessionService sessionService;
@@ -157,6 +159,7 @@ public class HarnessService {
         context.setUserId(session.getUserId());
         context.setAgentId(agent.getId());
         context.setSystemPrompt(agent.getSystemPrompt());
+        context.setExperiences(experienceService.listEnabledContents(agent.getId()));
         context.setAgentName(agent.getName());
         context.setMaxRounds(resolveMaxRounds(null));
         context.setExecutionMode(session.getExecutionMode() != null ? session.getExecutionMode() : "CLOUD");

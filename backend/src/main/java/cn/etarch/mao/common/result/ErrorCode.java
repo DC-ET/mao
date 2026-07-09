@@ -26,6 +26,8 @@ public enum ErrorCode {
     MODEL_IS_DEFAULT(3006, "不能删除默认模型，请先修改默认模型"),
     SKILL_NOT_FOUND(3004, "Skill 不存在"),
     AGENT_ACCESS_DENIED(3005, "无权访问该 Agent"),
+    AGENT_EXPERIENCE_CONTENT_INVALID(3023, "最佳实践经验内容无效（需 1～300 字）"),
+    AGENT_EXPERIENCE_NOT_FOUND(3024, "最佳实践经验不存在"),
     LLM_CALL_FAILED(3007, "LLM 调用失败"),
     LLM_TIMEOUT(3008, "LLM 调用超时"),
     SKILL_NAME_DUPLICATE(3010, "Skill 名称已存在"),

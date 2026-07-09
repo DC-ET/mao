@@ -168,10 +168,22 @@ public class PromptEngine {
     private String buildSystemPrompt(AgentExecutionContext context) {
         StringBuilder sb = new StringBuilder();
 
-        // Agent personality / system prompt
+        // Agent personality / system prompt（角色定义）
         if (context.getSystemPrompt() != null && !context.getSystemPrompt().isEmpty()) {
             sb.append(context.getSystemPrompt());
             sb.append("\n\n");
+        }
+
+        // 最佳实践经验（仅当有启用项时注入）
+        List<String> experiences = context.getExperiences();
+        if (experiences != null && !experiences.isEmpty()) {
+            sb.append("## 最佳实践经验\n\n");
+            for (String exp : experiences) {
+                if (exp != null && !exp.isBlank()) {
+                    sb.append("- ").append(exp).append("\n");
+                }
+            }
+            sb.append("\n");
         }
 
         // Workspace directory hint — always provide so the LLM never guesses

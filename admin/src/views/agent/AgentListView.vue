@@ -36,7 +36,6 @@
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="名称" min-width="120" />
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="modelName" label="模型" width="120" />
         <el-table-column label="标签" min-width="180">
           <template #default="{ row }">
             <el-tag
@@ -47,14 +46,11 @@
             >{{ tag }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="关联 Skills" width="110" align="right">
+        <el-table-column label="Skills" width="110" align="right">
           <template #default="{ row }">{{ row.skillNames?.length || 0 }}</template>
         </el-table-column>
-        <el-table-column label="会话数" width="90" align="right">
-          <template #default="{ row }">{{ agentStat(row.id).sessionCount || 0 }}</template>
-        </el-table-column>
-        <el-table-column label="Token" width="110" align="right">
-          <template #default="{ row }">{{ (agentStat(row.id).totalTokens || 0).toLocaleString() }}</template>
+        <el-table-column label="经验数" width="90" align="right">
+          <template #default="{ row }">{{ row.experiences?.length || 0 }}</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" />
         <el-table-column label="操作" width="190" fixed="right">
@@ -96,7 +92,6 @@ import AgentFormDialog from './AgentFormDialog.vue'
 
 const loading = ref(false)
 const agents = ref<any[]>([])
-const agentStats = ref<any[]>([])
 const searchQuery = ref('')
 const tagFilter = ref('')
 const currentPage = ref(1)
@@ -109,18 +104,14 @@ const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 async function fetchAgents() {
   loading.value = true
   try {
-    const [{ data }, statsRes] = await Promise.all([
-      api.get('/agents', {
+    const { data } = await api.get('/agents', {
       params: {
         page: currentPage.value,
         size: pageSize.value,
         keyword: searchQuery.value
       }
-      }),
-      api.get('/statistics/agents')
-    ])
+    })
     agents.value = data || []
-    agentStats.value = statsRes.data || []
     total.value = data?.length || 0
   } finally {
     loading.value = false
@@ -137,10 +128,6 @@ const filteredAgents = computed(() => {
   if (!tagFilter.value) return agents.value
   return agents.value.filter(agent => (agent.tags || []).includes(tagFilter.value))
 })
-
-function agentStat(id: number) {
-  return agentStats.value.find(stat => stat.agentId === id) || {}
-}
 
 function handleSearch() {
   currentPage.value = 1

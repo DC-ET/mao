@@ -26,6 +26,8 @@ public class AgentExecutionContext {
 
     // Agent 配置
     private String systemPrompt;
+    /** 已启用的最佳实践经验正文，按 sort_order 排序；可为空列表 */
+    private List<String> experiences = new ArrayList<>();
     private String agentName;
     private LlmModelConfig modelConfig;
     private int maxRounds;

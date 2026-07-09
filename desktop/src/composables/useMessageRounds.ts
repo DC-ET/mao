@@ -1,5 +1,6 @@
 import { ref, computed, type Ref } from 'vue'
 import { normalizeMessageRole, type ChatMessage, type FileChange } from '../types/chat'
+import { parseDateTime } from '../utils/datetime'
 
 export interface MessageRound {
   userMessage: ChatMessage
@@ -17,10 +18,14 @@ function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage 
     const first = steps[0].createdAt
     const last = (reply || steps[steps.length - 1]).createdAt
     if (first && last) {
-      const diff = new Date(last).getTime() - new Date(first).getTime()
-      if (diff > 0) {
-        const s = Math.floor(diff / 1000)
-        durationText = s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分${s % 60}秒`
+      const start = parseDateTime(first)
+      const end = parseDateTime(last)
+      if (start && end) {
+        const diff = end.getTime() - start.getTime()
+        if (diff > 0) {
+          const s = Math.floor(diff / 1000)
+          durationText = s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分${s % 60}秒`
+        }
       }
     }
   }
