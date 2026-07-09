@@ -42,19 +42,33 @@ class SkillLoaderTest {
     }
 
     @Test
-    void returnsNullCatalogForMissingDirectoryAndCanInvalidateCache() throws Exception {
+    void createsMissingDirectoryAsEmptyAndCanInvalidateCache() throws Exception {
         PathSandbox sandbox = new PathSandbox(tempDir.resolve("workspace").toString());
         SkillLoader loader = new SkillLoader(sandbox);
-        ReflectionTestUtils.setField(loader, "skillsDir", tempDir.resolve("missing").toString());
+        Path missing = tempDir.resolve("missing");
+        ReflectionTestUtils.setField(loader, "skillsDir", missing.toString());
         ReflectionTestUtils.setField(loader, "cacheSeconds", 300);
 
         assertThat(loader.getCatalogWithPaths(null)).isNull();
         assertThat(loader.getAllNames()).isEmpty();
+        assertThat(missing).isDirectory();
 
-        writeSkill(tempDir.resolve("missing").resolve("new"), "new", "New skill", "Body");
+        writeSkill(missing.resolve("new"), "new", "New skill", "Body");
         loader.invalidateCache();
 
         assertThat(loader.getAllNames()).containsExactly("new");
+    }
+
+    @Test
+    void ensureSkillsDirCreatesDirectoryOnStartup() {
+        PathSandbox sandbox = new PathSandbox(tempDir.resolve("workspace").toString());
+        SkillLoader loader = new SkillLoader(sandbox);
+        Path skills = tempDir.resolve("startup-skills");
+        ReflectionTestUtils.setField(loader, "skillsDir", skills.toString());
+
+        loader.ensureSkillsDir();
+
+        assertThat(skills).isDirectory();
     }
 
     private static void writeSkill(Path folder, String name, String description, String body) throws Exception {

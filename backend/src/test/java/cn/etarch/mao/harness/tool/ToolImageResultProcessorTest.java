@@ -41,6 +41,18 @@ class ToolImageResultProcessorTest {
     }
 
     @Test
+    void returnsPlainTextToolResultUnchangedWithoutWarningPath() {
+        String raw = "exit_code: 0\nstdout:\nok\n";
+
+        var processed = ToolImageResultProcessor.process(raw, true, objectMapper);
+
+        assertThat(processed.sanitizedContent()).isEqualTo(raw);
+        assertThat(processed.attachment()).isNull();
+        assertThat(processed.metadataJson()).isNull();
+        assertThat(processed.preview()).isNull();
+    }
+
+    @Test
     void loadsAttachmentFromMessageMetadata() throws Exception {
         Message message = new Message();
         message.setRole("TOOL");

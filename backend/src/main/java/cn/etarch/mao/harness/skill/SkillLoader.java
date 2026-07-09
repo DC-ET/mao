@@ -1,6 +1,7 @@
 package cn.etarch.mao.harness.skill;
 
 import cn.etarch.mao.harness.safety.PathSandbox;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -40,6 +41,11 @@ public class SkillLoader {
 
     private final Map<String, SkillDocument> cache = new ConcurrentHashMap<>();
     private volatile long cacheTimestamp = 0;
+
+    @PostConstruct
+    void ensureSkillsDir() {
+        ensureDirectory(getSkillsDir());
+    }
 
     /**
      * Get skill catalog with file paths for system prompt injection.
@@ -114,11 +120,11 @@ public class SkillLoader {
     }
 
     private Map<String, SkillDocument> loadSkills() {
-        if (!isCacheExpired() && !cache.isEmpty()) {
+        if (!isCacheExpired()) {
             return cache;
         }
         synchronized (this) {
-            if (!isCacheExpired() && !cache.isEmpty()) {
+            if (!isCacheExpired()) {
                 return cache;
             }
             refreshCache();
@@ -132,10 +138,9 @@ public class SkillLoader {
 
     private void refreshCache() {
         Map<String, SkillDocument> newSkills = new LinkedHashMap<>();
-        Path root = Paths.get(skillsDir).toAbsolutePath().normalize();
+        Path root = getSkillsDir();
 
-        if (!Files.isDirectory(root)) {
-            log.warn("Skills directory does not exist: {}", root);
+        if (!Files.isDirectory(root) && !ensureDirectory(root)) {
             cache.clear();
             cacheTimestamp = System.currentTimeMillis();
             return;
@@ -168,6 +173,16 @@ public class SkillLoader {
         cache.putAll(newSkills);
         cacheTimestamp = System.currentTimeMillis();
         log.info("SkillLoader refreshed: {} skills loaded from {}", cache.size(), root);
+    }
+
+    private boolean ensureDirectory(Path root) {
+        try {
+            Files.createDirectories(root);
+            return true;
+        } catch (IOException e) {
+            log.warn("Failed to create skills directory {}: {}", root, e.getMessage());
+            return false;
+        }
     }
 
     private SkillDocument parseSkillFolder(Path folder, Path skillMd) throws IOException {

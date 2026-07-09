@@ -32,6 +32,11 @@ public final class ToolImageResultProcessor {
         if (rawResult == null || rawResult.isBlank()) {
             return new ProcessedToolResult(rawResult, null, null, null);
         }
+        // Most tool results are plain text (e.g. shell output starting with exit_code); skip quietly.
+        String trimmed = rawResult.stripLeading();
+        if (trimmed.isEmpty() || (trimmed.charAt(0) != '{' && trimmed.charAt(0) != '[')) {
+            return new ProcessedToolResult(rawResult, null, null, null);
+        }
         try {
             JsonNode node = objectMapper.readTree(rawResult);
             if (!isImageResult(node)) {
