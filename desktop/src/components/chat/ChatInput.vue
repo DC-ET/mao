@@ -838,6 +838,9 @@ async function selectWorkspace() {
   }
 }
 
+// Auto-fill suggestion text for git workspace mode
+const GIT_SUGGEST_TEXT = '用一句话介绍一下当前工作区。'
+
 function focusInput() {
   nextTick(() => editor.value?.commands.focus())
 }
@@ -845,6 +848,29 @@ function focusInput() {
 watch(() => props.isNewTask, (val) => {
   if (val) nextTick(() => editor.value?.commands.focus())
 })
+
+// Auto-fill/clear suggestion text when workspace mode or git URL changes
+watch(
+  [() => props.workspaceMode, () => props.gitCloneUrl],
+  ([mode, url], [oldMode]) => {
+    if (!editor.value || !props.isNewTask) return
+
+    if (mode === 'git' && url) {
+      // When git mode with URL entered and editor is empty, auto-fill suggestion
+      if (editor.value.isEmpty) {
+        editor.value.commands.setContent(`<p>${GIT_SUGGEST_TEXT}</p>`)
+        editorContent.value = GIT_SUGGEST_TEXT
+      }
+    } else if (oldMode === 'git') {
+      // When switching away from git mode, clear the suggestion text if present
+      const text = editor.value.getText().trim()
+      if (text === GIT_SUGGEST_TEXT) {
+        editor.value.commands.clearContent()
+        editorContent.value = ''
+      }
+    }
+  }
+)
 
 watch(dynamicPlaceholder, () => {
   const ed = editor.value

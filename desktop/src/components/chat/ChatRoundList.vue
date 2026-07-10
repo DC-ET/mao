@@ -79,6 +79,7 @@
       :message="msg"
       :show-time="false"
       :show-copy="false"
+      :hide-file-changes="true"
       :is-last="msg === activeRoundMsgs[activeRoundMsgs.length - 1]"
     />
     <FileChangePanel

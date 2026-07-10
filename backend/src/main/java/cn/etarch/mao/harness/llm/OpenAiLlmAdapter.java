@@ -10,6 +10,7 @@ import okio.BufferedSource;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -322,9 +323,16 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
     private Request buildRequest(ChatRequest request, LlmModelConfig config, boolean stream) {
         try {
-            // Convert image URLs to base64 data URIs for models that don't support URL
             List<ChatRequest.Message> messages = request.getMessages();
             MessageHistoryNormalizer.ensureContentPresent(messages);
+
+            // 模型不支持视觉时，将图片替换为占位文案
+            boolean supportsVision = config.getSupportsVision() != null && config.getSupportsVision();
+            if (!supportsVision && messages != null) {
+                replaceImagesWithPlaceholder(messages);
+            }
+
+            // Convert image URLs to base64 data URIs for models that don't support URL
             if (messages != null) {
                 for (ChatRequest.Message msg : messages) {
                     convertImageUrlsToBase64(msg);
@@ -409,6 +417,75 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                 imgMap.put("url", base64Uri);
             }
         }
+    }
+
+    /**
+     * 当模型不支持视觉输入时，将消息中的 image_url ContentPart 替换为文本占位文案。
+     * 混合消息（文字+图片）：保留文字，移除所有 image_url part，末尾追加占位文案。
+     * 纯图片消息（无文字）：整条 content 替换为占位文案。
+     */
+    private void replaceImagesWithPlaceholder(List<ChatRequest.Message> messages) {
+        if (messages == null) return;
+        for (int i = 0; i < messages.size(); i++) {
+            ChatRequest.Message msg = messages.get(i);
+            if (!(msg.getContent() instanceof List<?> list)) continue;
+
+            List<Object> textParts = new ArrayList<>();
+            boolean hasImage = false;
+
+            for (Object part : list) {
+                String type = extractPartType(part);
+                if ("image_url".equals(type)) {
+                    hasImage = true;
+                } else {
+                    textParts.add(part);
+                }
+            }
+
+            if (!hasImage) continue;
+
+            String textContent = buildTextFromParts(textParts);
+            if (!textContent.isEmpty()) {
+                textContent += "\n\u300C\u6B64\u5904\u7528\u6237\u4E0A\u4F20\u4E86\u56FE\u7247\u300D";
+            } else {
+                textContent = "\u300C\u6B64\u5904\u7528\u6237\u4E0A\u4F20\u4E86\u56FE\u7247\u300D";
+            }
+
+            messages.set(i, ChatRequest.Message.builder()
+                    .role(msg.getRole())
+                    .content(textContent)
+                    .name(msg.getName())
+                    .toolCallId(msg.getToolCallId())
+                    .toolCalls(msg.getToolCalls())
+                    .build());
+        }
+    }
+
+    private String extractPartType(Object part) {
+        if (part instanceof ChatRequest.ContentPart cp) return cp.getType();
+        if (part instanceof Map<?, ?> map) {
+            Object type = map.get("type");
+            return type instanceof String s ? s : null;
+        }
+        return null;
+    }
+
+    private String buildTextFromParts(List<Object> textParts) {
+        StringBuilder sb = new StringBuilder();
+        for (Object part : textParts) {
+            String text = extractPartText(part);
+            if (text != null) sb.append(text);
+        }
+        return sb.toString().trim();
+    }
+
+    private String extractPartText(Object part) {
+        if (part instanceof ChatRequest.ContentPart cp) return cp.getText();
+        if (part instanceof Map<?, ?> map) {
+            Object text = map.get("text");
+            return text instanceof String s ? s : null;
+        }
+        return null;
     }
 
     /**
