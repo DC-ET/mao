@@ -13,6 +13,7 @@
         v-if="displayMessages.length > 0"
         :messages="displayMessages"
         :sending="sending"
+        @add-to-command="openWithContent"
       />
 
       <!-- 流式输出指示器 -->
@@ -31,6 +32,15 @@
         @submit="submitQuestionAnswer"
       />
     </div>
+
+    <!-- 消息队列面板 -->
+    <QueuePanel
+      v-if="hasRealSession"
+      :session-id="String(realSessionId)"
+      @insert="insertQueueMessage"
+      @delete="deleteQueueMessage"
+      @reorder="(id, dir) => reorderQueueMessage(id, dir)"
+    />
 
     <!-- 输入区 -->
     <div class="input-area">
@@ -71,9 +81,11 @@ import { nowDateTime } from '../../utils/datetime'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
 import { useCenterTabs } from '../../composables/useCenterTabs'
+import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QuestionPanel from './QuestionPanel.vue'
+import QueuePanel from './QueuePanel.vue'
 
 const props = defineProps<{
   tabId: string
@@ -81,7 +93,8 @@ const props = defineProps<{
 }>()
 
 const sessionStore = useSessionStore()
-const { createSideSession, sendMessage, cancel, subscribe, unsubscribe, sendAskUserQuestionsResult } = useStreamWS()
+const { createSideSession, sendMessage, cancel, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage } = useStreamWS()
+const { openWithContent } = useCommandDrawer()
 
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { updateSideTaskTab } = useCenterTabs(activeSessionIdRef)
@@ -146,6 +159,13 @@ const sidePendingQuestions = computed(() => {
 const ACTIVE_PHASES = new Set(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
 const TERMINAL_PHASES = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE'])
 
+/** 边路任务 session 是否正在执行中 */
+const isSideActive = computed(() => {
+  if (!hasRealSession.value) return false
+  const phase = sessionStore.getSessionPhase(String(realSessionId.value))
+  return phase != null && ACTIVE_PHASES.has(phase)
+})
+
 // Watch phase changes to reset sending state and re-fetch structured messages
 watch(
   () => {
@@ -159,6 +179,7 @@ watch(
       sending.value = false
       if (hasRealSession.value && prevPhase && ACTIVE_PHASES.has(prevPhase)) {
         fetchMessages()
+        fetchQueue()
       }
     } else if (ACTIVE_PHASES.has(phase)) {
       sending.value = true
@@ -194,7 +215,6 @@ async function loadSideSessionMeta() {
   try {
     const { data } = await api.get(`/sessions/${realSessionId.value}`)
     if (data?.modelId != null) {
-      // 优先保留用户已手动选择的模型，避免被主会话默认模型覆盖
       sideModelId.value = sideModelId.value ?? data.modelId
     }
     if (data?.phase) {
@@ -222,10 +242,21 @@ async function fetchMessages() {
   }
 }
 
+async function fetchQueue() {
+  if (!hasRealSession.value) return
+  const sid = String(realSessionId.value)
+  try {
+    const { data } = await api.get(`/sessions/${sid}/queue`)
+    sessionStore.setQueueMessages(sid, data || [])
+  } catch {
+    // ignore
+  }
+}
+
 onMounted(async () => {
   if (hasRealSession.value) {
     subscribe(String(realSessionId.value))
-    await Promise.all([loadSideSessionMeta(), fetchMessages()])
+    await Promise.all([loadSideSessionMeta(), fetchMessages(), fetchQueue()])
   }
 })
 
@@ -252,6 +283,7 @@ async function handleChatSend(text: string, _files: File[]) {
   const localSkills = await collectLocalUnsyncedSkills(parentExecutionMode.value, isElectron)
 
   if (!hasRealSession.value) {
+    // 首次发送：创建边路任务会话
     sessionStore.addUserMessage(placeholderCacheKey.value, {
       id: 'side_user_' + Date.now(),
       role: 'user',
@@ -274,8 +306,16 @@ async function handleChatSend(text: string, _files: File[]) {
       currentModelId.value,
       localSkills
     )
+    sending.value = true
   } else {
     const sid = String(realSessionId.value)
+
+    // 如果边路任务正在执行中，将消息加入队列
+    if (isSideActive.value) {
+      enqueueMessage(sid, text.trim(), generateUUID(), [])
+      return
+    }
+
     sessionStore.addUserMessage(sid, {
       id: 'side_user_' + Date.now(),
       role: 'user',
@@ -284,9 +324,8 @@ async function handleChatSend(text: string, _files: File[]) {
     })
     sessionStore.ensureStreamingAssistantMessage(sid)
     sendMessage(sid, text.trim(), generateUUID(), undefined, localSkills)
+    sending.value = true
   }
-
-  sending.value = true
 }
 
 function handleStop() {
@@ -301,6 +340,23 @@ function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
   if (!hasRealSession.value) return
   sendAskUserQuestionsResult(String(realSessionId.value), requestId, answers)
   sessionStore.removeAskQuestion(String(realSessionId.value), requestId)
+}
+
+// --- 消息队列操作 ---
+
+function insertQueueMessage(queueId: string) {
+  if (!hasRealSession.value) return
+  insertMessage(String(realSessionId.value), queueId)
+}
+
+function deleteQueueMessage(queueId: string) {
+  if (!hasRealSession.value) return
+  wsDeleteQueueMessage(String(realSessionId.value), queueId)
+}
+
+function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
+  if (!hasRealSession.value) return
+  wsReorderQueueMessage(String(realSessionId.value), queueId, direction)
 }
 </script>
 

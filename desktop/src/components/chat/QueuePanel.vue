@@ -68,6 +68,11 @@
 import { ref, computed, watch } from 'vue'
 import { useSessionStore } from '../../stores/session'
 
+const props = defineProps<{
+  /** 可选：指定会话 ID，用于非活跃会话（如边路任务）的队列消息 */
+  sessionId?: string
+}>()
+
 const emit = defineEmits<{
   insert: [queueId: string]
   delete: [queueId: string]
@@ -75,7 +80,12 @@ const emit = defineEmits<{
 }>()
 
 const sessionStore = useSessionStore()
-const queueMessages = computed(() => sessionStore.activeQueueMessages)
+const queueMessages = computed(() => {
+  if (props.sessionId) {
+    return sessionStore.getQueueMessages(props.sessionId)
+  }
+  return sessionStore.activeQueueMessages
+})
 
 const expanded = ref(false)
 const insertingQueueId = ref<string | null>(null)
@@ -90,7 +100,12 @@ watch(queueMessages, (newMessages) => {
 
 // Also reset on session phase change (handles insert timeout/error case
 // where the message stays in queue but the insert was rejected)
-const activePhase = computed(() => sessionStore.activeSession?.phase)
+const activePhase = computed(() => {
+  if (props.sessionId) {
+    return sessionStore.getSessionPhase(props.sessionId)
+  }
+  return sessionStore.activeSession?.phase
+})
 watch(activePhase, (phase) => {
   if (insertingQueueId.value && phase && ['CANCELLED', 'COMPLETED', 'FAILED', 'IDLE'].includes(phase)) {
     insertingQueueId.value = null

@@ -12,7 +12,7 @@ import java.util.List;
 @Builder
 public class AgentDefinition {
 
-    /** 类型标识，如 "researcher", "coder", "reviewer" */
+    /** 类型标识，如 "researcher", "reviewer" */
     private String name;
 
     /** 描述，展示在工具 schema 中 */

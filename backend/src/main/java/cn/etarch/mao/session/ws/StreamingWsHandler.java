@@ -935,6 +935,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 cancelFlags.remove(sideSessionId);
                 agentLoop.removeCancelFlag(sideSessionId);
                 activityHeartbeat.clear(sideSessionId);
+
+                // Auto-consume queue: if there are pending messages, send the next one
+                autoConsumeQueue(sideSessionId, userId);
             }
             }
         });

@@ -662,6 +662,10 @@ export const useSessionStore = defineStore('session', () => {
     sessionQueueMessages.value.set(String(sessionId), queue)
   }
 
+  function getQueueMessages(sessionId: string): QueueMessage[] {
+    return sessionQueueMessages.value.get(String(sessionId)) ?? []
+  }
+
   function clearQueueMessages(sessionId: string) {
     sessionQueueMessages.value.delete(String(sessionId))
   }
@@ -838,6 +842,7 @@ export const useSessionStore = defineStore('session', () => {
     // Queue messages
     activeQueueMessages,
     setQueueMessages,
+    getQueueMessages,
     clearQueueMessages,
     // File changes
     activeFileChanges,
