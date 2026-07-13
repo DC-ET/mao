@@ -111,7 +111,6 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { ChatDotRound, Check } from '@element-plus/icons-vue'
 import type { PendingQuestion, Question, QuestionAnswer } from '../../types/chat'
-import MarkdownContent from '../common/MarkdownContent.vue'
 
 const props = defineProps<{
   items: PendingQuestion[]
