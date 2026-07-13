@@ -10,6 +10,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class WebhookSecretCipherTest {
     @Test
+    void usesDefaultSecretWhenEnvironmentOverrideIsMissing() {
+        WebhookSecretCipher cipher = new WebhookSecretCipher(new TaskNotificationProperties());
+        String encrypted = cipher.encrypt("https://example.test");
+        assertEquals("https://example.test", cipher.decrypt(encrypted));
+    }
+
+    @Test
     void encryptsWithRandomNonceAndDetectsTampering() {
         TaskNotificationProperties properties = new TaskNotificationProperties();
         properties.setSecretKey("unit-test-secret");

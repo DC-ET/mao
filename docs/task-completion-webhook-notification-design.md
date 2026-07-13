@@ -415,7 +415,7 @@ app:
     max-attempts: ${TASK_NOTIFICATION_MAX_ATTEMPTS:4}
 ```
 
-`APP_NOTIFICATION_WEBHOOK_SECRET` 必须是部署环境注入的随机密钥。生产及 Docker 部署脚本必须增加该变量；后端启动时若为空则拒绝启动，避免 Webhook 被明文或不可恢复地保存。密钥轮换需要先用旧密钥解密，再用新密钥重新加密偏好表和未完成的投递记录。
+`APP_NOTIFICATION_WEBHOOK_SECRET` 用于覆盖应用内置的稳定默认密钥 `mao-task-notification-default-key-v1-20260713`。未配置或配置为空时使用默认密钥，消息通知功能可正常使用；生产环境应注入随机密钥。密钥轮换需要先用旧密钥解密，再用新密钥重新加密偏好表和未完成的投递记录。
 
 ## 8. 桌面端设计
 

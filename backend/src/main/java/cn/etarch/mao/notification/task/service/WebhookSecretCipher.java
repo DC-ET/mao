@@ -25,6 +25,7 @@ public class WebhookSecretCipher {
     private final SecureRandom secureRandom = new SecureRandom();
 
     public String encrypt(String plaintext) {
+        requireSecretKey();
         try {
             byte[] nonce = new byte[NONCE_LENGTH];
             secureRandom.nextBytes(nonce);
@@ -40,6 +41,7 @@ public class WebhookSecretCipher {
     }
 
     public String decrypt(String ciphertext) {
+        requireSecretKey();
         try {
             int separator = ciphertext.indexOf(':');
             if (separator <= 0) throw new IllegalArgumentException("Invalid ciphertext");
@@ -58,5 +60,12 @@ public class WebhookSecretCipher {
         byte[] bytes = MessageDigest.getInstance("SHA-256")
                 .digest(properties.getSecretKey().getBytes(StandardCharsets.UTF_8));
         return new SecretKeySpec(bytes, "AES");
+    }
+
+    private void requireSecretKey() {
+        if (!properties.isSecretConfigured()) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                    "消息通知加密密钥未配置，请设置 APP_NOTIFICATION_WEBHOOK_SECRET");
+        }
     }
 }

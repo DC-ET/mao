@@ -123,7 +123,7 @@ chmod 600 /opt/mao/backend/.env
 | `JWT_SECRET` | **是** | JWT 签名密钥，生产环境必须设置，禁止使用默认值 |
 | `JWT_SHELL_EXPIRATION` | 否 | CLOUD shell 临时 JWT 有效期（毫秒），默认 `7200000`（2 小时） |
 | `APP_GIT_CREDENTIAL_SECRET` | **是** | 用户 Git Access Token 的 AES 加密密钥；未配置时后端**拒绝启动** |
-| `APP_NOTIFICATION_WEBHOOK_SECRET` | **是** | 用户任务通知 Webhook 的 AES-GCM 加密密钥；未配置时后端**拒绝启动** |
+| `APP_NOTIFICATION_WEBHOOK_SECRET` | 否 | 用户任务通知 Webhook 的 AES-GCM 加密密钥；未配置时使用应用默认密钥，生产环境建议覆盖 |
 | `UPLOAD_STORAGE_MODE` | 否 | `local`（默认）或 `oss` |
 | `UPLOAD_BASE_URL` | local 模式建议设 | 上传文件的公网访问前缀，如 `https://mao.example.com/api` |
 | `LDAP_ENABLED` | 否 | LDAP 登录开关，默认 `false` |

@@ -71,7 +71,7 @@ ldap:
 
 app:
   task-notification:
-    secret-key: ${APP_NOTIFICATION_WEBHOOK_SECRET:}
+    secret-key: ${APP_NOTIFICATION_WEBHOOK_SECRET:mao-task-notification-default-key-v1-20260713}
     worker-delay-ms: ${TASK_NOTIFICATION_WORKER_DELAY_MS:30000}
     batch-size: ${TASK_NOTIFICATION_BATCH_SIZE:100}
     max-attempts: ${TASK_NOTIFICATION_MAX_ATTEMPTS:4}
