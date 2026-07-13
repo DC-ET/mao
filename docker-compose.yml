@@ -29,6 +29,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mao123}
       JWT_SECRET: ${JWT_SECRET:-docker-dev-jwt-secret-change-in-production}
       APP_GIT_CREDENTIAL_SECRET: ${APP_GIT_CREDENTIAL_SECRET:-docker-dev-git-credential-secret}
+      APP_NOTIFICATION_WEBHOOK_SECRET: ${APP_NOTIFICATION_WEBHOOK_SECRET:-docker-dev-notification-webhook-secret}
       UPLOAD_BASE_URL: ${UPLOAD_BASE_URL:-http://localhost:5201/api}
     volumes:
       - mao_data:/opt/mao/data

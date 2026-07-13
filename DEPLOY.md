@@ -84,6 +84,8 @@ jwt:
 app:
   git-credential:
     secret-key: ${APP_GIT_CREDENTIAL_SECRET}
+  task-notification:
+    secret-key: ${APP_NOTIFICATION_WEBHOOK_SECRET}
   harness:
     workspace-root: /opt/mao/data/workspace
     skills-dir: /opt/mao/data/skills
@@ -106,10 +108,12 @@ ldap:
 # 生成随机密钥
 JWT_SECRET=$(openssl rand -base64 32)
 APP_GIT_CREDENTIAL_SECRET=$(openssl rand -base64 32)
+APP_NOTIFICATION_WEBHOOK_SECRET=$(openssl rand -base64 32)
 
 cat > /opt/mao/backend/.env <<EOF
 JWT_SECRET=${JWT_SECRET}
 APP_GIT_CREDENTIAL_SECRET=${APP_GIT_CREDENTIAL_SECRET}
+APP_NOTIFICATION_WEBHOOK_SECRET=${APP_NOTIFICATION_WEBHOOK_SECRET}
 EOF
 chmod 600 /opt/mao/backend/.env
 ```
@@ -119,6 +123,7 @@ chmod 600 /opt/mao/backend/.env
 | `JWT_SECRET` | **是** | JWT 签名密钥，生产环境必须设置，禁止使用默认值 |
 | `JWT_SHELL_EXPIRATION` | 否 | CLOUD shell 临时 JWT 有效期（毫秒），默认 `7200000`（2 小时） |
 | `APP_GIT_CREDENTIAL_SECRET` | **是** | 用户 Git Access Token 的 AES 加密密钥；未配置时后端**拒绝启动** |
+| `APP_NOTIFICATION_WEBHOOK_SECRET` | **是** | 用户任务通知 Webhook 的 AES-GCM 加密密钥；未配置时后端**拒绝启动** |
 | `UPLOAD_STORAGE_MODE` | 否 | `local`（默认）或 `oss` |
 | `UPLOAD_BASE_URL` | local 模式建议设 | 上传文件的公网访问前缀，如 `https://mao.example.com/api` |
 | `LDAP_ENABLED` | 否 | LDAP 登录开关，默认 `false` |
@@ -127,6 +132,8 @@ chmod 600 /opt/mao/backend/.env
 > 首次启动时 Flyway 自动执行迁移并创建默认管理员 `admin` / `admin123`，**登录后请立即改密**。LLM API Key 在管理后台「模型管理」中配置。
 >
 > **Git 凭证加密密钥轮换**：更换 `APP_GIT_CREDENTIAL_SECRET` 前，需用旧密钥解密、新密钥重新加密所有 `user_git_credential` 表中的 Token，否则已存凭证无法使用。
+>
+> **通知 Webhook 密钥轮换**：更换 `APP_NOTIFICATION_WEBHOOK_SECRET` 前，需用旧密钥解密、新密钥重新加密通知偏好及未完成投递记录中的 Webhook，否则通知配置无法继续使用。
 
 ### 3. 启动脚本
 

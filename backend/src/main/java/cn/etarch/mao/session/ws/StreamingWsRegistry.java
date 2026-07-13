@@ -11,6 +11,7 @@ import org.springframework.web.socket.WebSocketSession;
 import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -26,14 +27,21 @@ public class StreamingWsRegistry {
         LOCAL_ONLY
     }
 
-    private record OutboundItem(Long userId, WsEvent event, String rawJson, SendTarget target) {}
+    private record OutboundItem(Long userId, WsEvent event, String rawJson, SendTarget target,
+                                CompletableFuture<WsDeliveryResult> resultFuture) {}
+
+    public record WsDeliveryResult(int targetCount, int successCount, int failureCount) {
+        public boolean delivered() {
+            return successCount > 0;
+        }
+    }
 
     private static OutboundItem eventItem(Long userId, WsEvent event, SendTarget target) {
-        return new OutboundItem(userId, event, null, target);
+        return new OutboundItem(userId, event, null, target, null);
     }
 
     private static OutboundItem rawItem(Long userId, String rawJson, SendTarget target) {
-        return new OutboundItem(userId, null, rawJson, target);
+        return new OutboundItem(userId, null, rawJson, target, null);
     }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -120,6 +128,20 @@ public class StreamingWsRegistry {
         enqueue(userId, event, SendTarget.ALL);
     }
 
+    public CompletableFuture<WsDeliveryResult> sendWithResult(Long userId, WsEvent event) {
+        CompletableFuture<WsDeliveryResult> future = new CompletableFuture<>();
+        if (userId == null || event == null) {
+            future.complete(new WsDeliveryResult(0, 0, 0));
+            return future;
+        }
+        if (!outboundQueue.offer(new OutboundItem(userId, event, null, SendTarget.ALL, future))) {
+            log.warn("WS outbound queue full, dropping tracked event type={} for userId={}",
+                    event.getType(), userId);
+            future.complete(new WsDeliveryResult(0, 0, 0));
+        }
+        return future;
+    }
+
     /**
      * Enqueue an event for Electron desktop connections only.
      */
@@ -174,6 +196,7 @@ public class StreamingWsRegistry {
     private void deliver(OutboundItem item) {
         Set<WebSocketSession> sessions = userSessions.get(item.userId());
         if (sessions == null || sessions.isEmpty()) {
+            completeResult(item, 0, 0, 0);
             return;
         }
 
@@ -184,6 +207,7 @@ public class StreamingWsRegistry {
                     .collect(Collectors.toSet());
         };
         if (targets.isEmpty()) {
+            completeResult(item, 0, 0, 0);
             return;
         }
 
@@ -195,22 +219,36 @@ public class StreamingWsRegistry {
                 json = objectMapper.writeValueAsString(item.event());
             } catch (Exception e) {
                 log.error("Failed to serialize WsEvent", e);
+                completeResult(item, targets.size(), 0, targets.size());
                 return;
             }
         }
 
         TextMessage message = new TextMessage(json);
+        int targetCount = 0;
+        int successCount = 0;
+        int failureCount = 0;
         for (WebSocketSession session : targets) {
             if (session.isOpen()) {
+                targetCount++;
                 try {
                     synchronized (session) {
                         session.sendMessage(message);
                     }
+                    successCount++;
                 } catch (IOException e) {
+                    failureCount++;
                     log.warn("Failed to send WS message to userId={}, wsSessionId={}: {}",
                             item.userId(), session.getId(), e.getMessage());
                 }
             }
+        }
+        completeResult(item, targetCount, successCount, failureCount);
+    }
+
+    private void completeResult(OutboundItem item, int targets, int successes, int failures) {
+        if (item.resultFuture() != null && !item.resultFuture().isDone()) {
+            item.resultFuture().complete(new WsDeliveryResult(targets, successes, failures));
         }
     }
 

@@ -148,3 +148,33 @@ export async function updateGitCredential(
 export async function deleteGitCredential(id: number): Promise<void> {
   await api.delete(`/user/git-credentials/${id}`)
 }
+
+export type NotificationChannel = 'DINGTALK' | 'FEISHU'
+
+export interface TaskNotificationPreference {
+  enabled: boolean
+  channel: NotificationChannel | null
+  webhookConfigured: boolean
+  maskedWebhook: string | null
+}
+
+export async function getTaskNotificationPreference(): Promise<TaskNotificationPreference> {
+  const { data } = await api.get('/user-preferences/task-notification')
+  return data
+}
+
+export async function saveTaskNotificationPreference(payload: {
+  enabled: boolean
+  channel: NotificationChannel | null
+  webhookUrl?: string
+}): Promise<TaskNotificationPreference> {
+  const { data } = await api.put('/user-preferences/task-notification', payload)
+  return data
+}
+
+export async function testTaskNotification(payload: {
+  channel: NotificationChannel
+  webhookUrl?: string
+}): Promise<void> {
+  await api.post('/user-preferences/task-notification/test', payload)
+}

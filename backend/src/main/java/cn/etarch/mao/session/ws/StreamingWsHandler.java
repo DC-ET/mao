@@ -19,6 +19,7 @@ import cn.etarch.mao.session.entity.MessageQueue;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.service.MessageQueueService;
 import cn.etarch.mao.session.service.SessionService;
+import cn.etarch.mao.session.service.TaskTerminalService;
 import cn.etarch.mao.harness.todo.entity.SessionTodo;
 import cn.etarch.mao.harness.todo.mapper.SessionTodoMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -36,6 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -47,6 +49,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final StreamingWsRegistry registry;
     private final HarnessService harnessService;
     private final SessionService sessionService;
+    private final TaskTerminalService taskTerminalService;
     private final MessageQueueService messageQueueService;
     private final LocalToolSessionRegistry localToolSessionRegistry;
     private final AskUserQuestionsRegistry askUserQuestionsRegistry;
@@ -139,14 +142,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         log.warn("Terminating stale session {} for userId={}", sessionId, userId);
         abortRunningExecution(sessionId, userId, true);
         try {
-            sessionService.updatePhase(sessionId, "FAILED");
+            taskTerminalService.finishExecution(sessionId, userId, "FAILED", UUID.randomUUID().toString());
         } catch (Exception e) {
             log.warn("Failed to mark stale session {} as FAILED: {}", sessionId, e.getMessage());
         }
         if (userId != null) {
-            registry.send(userId, WsEvent.of("session_status", sessionId,
-                    Map.of("phase", "FAILED", "unread", true)));
-            registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
             registry.send(userId, WsEvent.of("error", sessionId,
                     Map.of("message", "任务因长时间无响应已自动终止")));
         }
@@ -159,6 +159,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     public StreamingWsHandler(StreamingWsRegistry registry,
                                HarnessService harnessService,
                                SessionService sessionService,
+                               TaskTerminalService taskTerminalService,
                                MessageQueueService messageQueueService,
                                LocalToolSessionRegistry localToolSessionRegistry,
                                AskUserQuestionsRegistry askUserQuestionsRegistry,
@@ -175,6 +176,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.registry = registry;
         this.harnessService = harnessService;
         this.sessionService = sessionService;
+        this.taskTerminalService = taskTerminalService;
         this.messageQueueService = messageQueueService;
         this.localToolSessionRegistry = localToolSessionRegistry;
         this.askUserQuestionsRegistry = askUserQuestionsRegistry;
@@ -417,11 +419,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     if (agent != null) {
                         boolean synced = syncSkillsToClient(userId, sessionId, session, agent);
                         if (!synced) {
-                            sessionService.updatePhase(sessionId, "FAILED");
+                            taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
                             registry.send(userId, WsEvent.of("error", sessionId,
                                     Map.of("message", "Skill sync failed or timed out")));
-                            registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED")));
-                            registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
                             return;
                         }
                     }
@@ -454,10 +454,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 if (cancelFlag.get()) {
                     finishCancelledSession(sessionId, userId, executionId);
                 } else {
-                    sessionService.updatePhase(sessionId, "COMPLETED");
-                    registry.send(userId, WsEvent.of("session_status", sessionId,
-                            Map.of("phase", "COMPLETED", "unread", true, "executionId", executionId)));
-                    registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "COMPLETED")));
+                    taskTerminalService.finishExecution(sessionId, userId, "COMPLETED", executionId);
                 }
             } catch (Throwable e) {
                 log.error("[DIAG] Agent execution failed for session {}", sessionId, e);
@@ -467,11 +464,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                     "executionId", executionId)));
                 } catch (Exception ignored) {}
                 try {
-                    sessionService.updatePhase(sessionId, "FAILED");
+                    taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
                 } catch (Exception ignored) {}
-                registry.send(userId, WsEvent.of("session_status", sessionId,
-                        Map.of("phase", "FAILED", "unread", true, "executionId", executionId)));
-                registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
             } finally {
                 releaseSessionExecutionResources(sessionId);
                 runningTasks.remove(sessionId, futureRef[0]);
@@ -713,11 +707,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     if (agent != null) {
                         boolean synced = syncSkillsToClient(userId, sessionId, session, agent);
                         if (!synced) {
-                            sessionService.updatePhase(sessionId, "FAILED");
+                            taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
                             registry.send(userId, WsEvent.of("error", sessionId,
                                     Map.of("message", "Skill sync failed or timed out")));
-                            registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "FAILED")));
-                            registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
                             return;
                         }
                     }
@@ -750,10 +742,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 if (cancelFlag.get()) {
                     finishCancelledSession(sessionId, userId, executionId);
                 } else {
-                    sessionService.updatePhase(sessionId, "COMPLETED");
-                    registry.send(userId, WsEvent.of("session_status", sessionId,
-                            Map.of("phase", "COMPLETED", "unread", true, "executionId", executionId)));
-                    registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "COMPLETED")));
+                    taskTerminalService.finishExecution(sessionId, userId, "COMPLETED", executionId);
                 }
             } catch (Throwable e) {
                 log.error("[DIAG] Agent execution failed for session {}", sessionId, e);
@@ -763,11 +752,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                     "executionId", executionId)));
                 } catch (Exception ignored) {}
                 try {
-                    sessionService.updatePhase(sessionId, "FAILED");
+                    taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
                 } catch (Exception ignored) {}
-                registry.send(userId, WsEvent.of("session_status", sessionId,
-                        Map.of("phase", "FAILED", "unread", true, "executionId", executionId)));
-                registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "FAILED")));
             } finally {
                 releaseSessionExecutionResources(sessionId);
                 runningTasks.remove(sessionId, futureRef[0]);
@@ -892,6 +878,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         // 6. 注册取消标志
         AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(sideSessionId);
         cancelFlags.put(sideSessionId, cancelFlag);
+        final String sideExecutionId = UUID.randomUUID().toString();
 
         // 7. 异步执行首条消息
         Future<?>[] futureRef = new Future<?>[1];
@@ -905,28 +892,22 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
                         registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService,
-                        sideSessionId, userId, null, resolveSupportsVision(sideSession));
+                        sideSessionId, userId, sideExecutionId, resolveSupportsVision(sideSession));
 
                 harnessService.executeSideFirstMessage(
                         parentSessionId, sideSessionId,
                         inheritContext, listener, cancelFlag);
 
                 if (cancelFlag.get()) {
-                    sessionService.updateField(sideSessionId, "phase", "CANCELLED");
-                    registry.send(userId, WsEvent.of("session_status", sideSessionId,
-                            Map.of("phase", "CANCELLED")));
+                    taskTerminalService.finishExecution(sideSessionId, userId, "CANCELLED", sideExecutionId);
                 } else {
-                    sessionService.updateField(sideSessionId, "phase", "COMPLETED");
-                    registry.send(userId, WsEvent.of("session_status", sideSessionId,
-                            Map.of("phase", "COMPLETED")));
+                    taskTerminalService.finishExecution(sideSessionId, userId, "COMPLETED", sideExecutionId);
                 }
             } catch (Exception e) {
                 log.error("Side task execution failed for sideSession {}", sideSessionId, e);
                 try {
-                    sessionService.updateField(sideSessionId, "phase", "FAILED");
+                    taskTerminalService.finishExecution(sideSessionId, userId, "FAILED", sideExecutionId);
                 } catch (Exception ignored) {}
-                registry.send(userId, WsEvent.of("session_status", sideSessionId,
-                        Map.of("phase", "FAILED")));
                 registry.send(userId, WsEvent.of("error", sideSessionId,
                         Map.of("message", e.getMessage() != null ? e.getMessage() : "未知错误")));
             } finally {
@@ -959,10 +940,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         if (deleted > 0) {
             log.info("Session {}: cleaned {} incomplete messages after user cancel", sessionId, deleted);
         }
-        sessionService.updatePhase(sessionId, "CANCELLED");
-        registry.send(userId, WsEvent.of("session_status", sessionId,
-                Map.of("phase", "CANCELLED", "unread", true, "executionId", executionId)));
-        registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "CANCELLED")));
+        taskTerminalService.finishExecution(sessionId, userId, "CANCELLED", executionId);
     }
 
     private void handleCancel(Long userId, JsonNode root) {

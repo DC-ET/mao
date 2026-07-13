@@ -39,6 +39,11 @@ app:
   root-dir: ${MAO_ROOT_DIR:/opt/mao}
   git-credential:
     secret-key: ${APP_GIT_CREDENTIAL_SECRET:local-dev-git-credential-secret-change-me}
+  task-notification:
+    secret-key: ${APP_NOTIFICATION_WEBHOOK_SECRET:local-dev-notification-webhook-secret-change-me}
+    worker-delay-ms: ${TASK_NOTIFICATION_WORKER_DELAY_MS:30000}
+    batch-size: ${TASK_NOTIFICATION_BATCH_SIZE:100}
+    max-attempts: ${TASK_NOTIFICATION_MAX_ATTEMPTS:4}
   # Upload storage
   upload:
     storage-mode: ${UPLOAD_STORAGE_MODE:local}  # oss or local

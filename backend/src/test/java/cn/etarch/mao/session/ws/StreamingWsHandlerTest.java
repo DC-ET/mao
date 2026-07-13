@@ -19,6 +19,7 @@ import cn.etarch.mao.session.entity.MessageQueue;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.service.MessageQueueService;
 import cn.etarch.mao.session.service.SessionService;
+import cn.etarch.mao.session.service.TaskTerminalService;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -47,6 +48,7 @@ class StreamingWsHandlerTest {
     private final StreamingWsRegistry registry = mock(StreamingWsRegistry.class);
     private final HarnessService harnessService = mock(HarnessService.class);
     private final SessionService sessionService = mock(SessionService.class);
+    private final TaskTerminalService taskTerminalService = mock(TaskTerminalService.class);
     private final MessageQueueService messageQueueService = mock(MessageQueueService.class);
     private final LocalToolSessionRegistry localToolSessionRegistry = mock(LocalToolSessionRegistry.class);
     private final AskUserQuestionsRegistry askUserQuestionsRegistry = mock(AskUserQuestionsRegistry.class);
@@ -61,7 +63,7 @@ class StreamingWsHandlerTest {
     private final LlmModelMapper llmModelMapper = mock(LlmModelMapper.class);
     private final CapturingExecutor executor = new CapturingExecutor();
     private final StreamingWsHandler handler = new StreamingWsHandler(
-            registry, harnessService, sessionService, messageQueueService, localToolSessionRegistry,
+            registry, harnessService, sessionService, taskTerminalService, messageQueueService, localToolSessionRegistry,
             askUserQuestionsRegistry, activityService, activityHeartbeat, sessionTodoMapper, agentLoop,
             shellSessionManager, skillSyncService, localSkillRegistry, agentMapper, llmModelMapper, executor);
     private final WebSocketSession ws = mock(WebSocketSession.class);
@@ -90,7 +92,7 @@ class StreamingWsHandlerTest {
         verify(skillSyncService).syncToSession(agent, 7L, 11L);
         verify(harnessService).executeFromEvent(eq(11L), eq("event-1"), any(), any(AtomicBoolean.class));
         verify(sessionService).updatePhase(11L, "RUNNING");
-        verify(sessionService).updatePhase(11L, "COMPLETED");
+        verify(taskTerminalService).finishExecution(11L, 7L, "COMPLETED", "event-1");
         verify(activityHeartbeat).clear(11L);
         verify(agentLoop).removeCancelFlag(11L);
     }
@@ -140,7 +142,7 @@ class StreamingWsHandlerTest {
 
         verify(sessionService).editMessageAndTruncate(3L, "edited", List.of());
         verify(harnessService).executeFromEvent(eq(11L), eq("edit-event"), any(), any(AtomicBoolean.class));
-        verify(sessionService).updatePhase(11L, "COMPLETED");
+        verify(taskTerminalService).finishExecution(11L, 7L, "COMPLETED", "edit-event");
     }
 
     @Test

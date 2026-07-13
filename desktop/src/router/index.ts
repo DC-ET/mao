@@ -31,6 +31,11 @@ const routes: RouteRecordRaw[] = [
             path: 'git-credentials',
             name: 'GitCredentials',
             component: () => import('../views/settings/GitCredentialsView.vue')
+          },
+          {
+            path: 'notifications',
+            name: 'NotificationSettings',
+            component: () => import('../views/settings/NotificationSettingsView.vue')
           }
         ]
       }

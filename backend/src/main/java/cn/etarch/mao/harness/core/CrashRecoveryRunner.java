@@ -8,6 +8,7 @@ import cn.etarch.mao.session.activity.SessionActivityHeartbeat;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.mapper.SessionMapper;
 import cn.etarch.mao.session.service.SessionService;
+import cn.etarch.mao.session.service.TaskTerminalService;
 import cn.etarch.mao.session.ws.StreamingWsRegistry;
 import cn.etarch.mao.session.ws.WsEvent;
 import cn.etarch.mao.session.ws.WsStreamingEventListener;
@@ -35,6 +36,7 @@ public class CrashRecoveryRunner implements ApplicationRunner {
 
     private final SessionMapper sessionMapper;
     private final SessionService sessionService;
+    private final TaskTerminalService taskTerminalService;
     private final HarnessService harnessService;
     private final AgentLoop agentLoop;
     private final StreamingWsRegistry registry;
@@ -61,6 +63,7 @@ public class CrashRecoveryRunner implements ApplicationRunner {
     private void recoverSession(Session session) {
         Long sessionId = session.getId();
         Long userId = session.getUserId();
+        String executionId = java.util.UUID.randomUUID().toString();
         try {
             // 1. Clean up incomplete tail messages (assistant+tool_calls without tool results)
             int deleted = sessionService.cleanupIncompleteTail(sessionId);
@@ -76,7 +79,6 @@ public class CrashRecoveryRunner implements ApplicationRunner {
             AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(sessionId);
 
             // 4. Create listener — events are silently dropped if client is not connected
-            String executionId = java.util.UUID.randomUUID().toString();
             WsStreamingEventListener listener = new WsStreamingEventListener(
                     registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService,
                     sessionId, userId, executionId, resolveSupportsVision(session));
@@ -89,19 +91,16 @@ public class CrashRecoveryRunner implements ApplicationRunner {
 
             // 6. Normal completion
             if (cancelFlag.get()) {
-                sessionService.updatePhase(sessionId, "CANCELLED");
-                notifyClient(userId, sessionId, "CANCELLED");
+                taskTerminalService.finishExecution(sessionId, userId, "CANCELLED", executionId);
             } else {
-                sessionService.updatePhase(sessionId, "COMPLETED");
-                notifyClient(userId, sessionId, "COMPLETED");
+                taskTerminalService.finishExecution(sessionId, userId, "COMPLETED", executionId);
             }
             log.info("Session {}: recovery completed", sessionId);
         } catch (Exception e) {
             log.error("Recovery failed for session {}", sessionId, e);
             try {
-                sessionService.updatePhase(sessionId, "FAILED");
+                taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
             } catch (Exception ignored) {}
-            notifyClient(userId, sessionId, "FAILED");
         } finally {
             agentLoop.removeCancelFlag(sessionId);
             activityHeartbeat.clear(sessionId);

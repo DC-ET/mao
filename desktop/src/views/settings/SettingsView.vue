@@ -10,6 +10,9 @@
         <router-link to="/settings/git-credentials" class="settings-nav-item" active-class="active">
           Git 凭证
         </router-link>
+        <router-link to="/settings/notifications" class="settings-nav-item" active-class="active">
+          消息通知
+        </router-link>
       </nav>
     </aside>
     <section class="settings-content">
@@ -116,5 +119,43 @@ function goBack() {
   min-width: 0;
   overflow: auto;
   padding: 24px 32px;
+}
+
+@media (max-width: 640px) {
+  .settings-layout {
+    flex-direction: column;
+    height: 100%;
+    overflow: auto;
+  }
+
+  .settings-sidebar {
+    width: 100%;
+    padding: 14px 16px 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--aw-divider-soft);
+  }
+
+  .settings-back {
+    margin: 0 0 10px;
+  }
+
+  .settings-title {
+    margin: 0 0 10px;
+  }
+
+  .settings-nav {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .settings-nav-item {
+    flex: 0 0 auto;
+  }
+
+  .settings-content {
+    flex: none;
+    overflow: visible;
+    padding: 20px 16px 28px;
+  }
 }
 </style>

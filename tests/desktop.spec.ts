@@ -266,3 +266,54 @@ test.describe('Desktop Routes', () => {
     await expect(page.locator('.task-layout')).toBeVisible({ timeout: 10_000 })
   })
 })
+
+test.describe('Desktop Notification Settings', () => {
+  test('should configure and test one webhook channel', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('token', 'test-access-token')
+    })
+
+    let savedPayload: Record<string, unknown> | null = null
+    let testPayload: Record<string, unknown> | null = null
+    await page.route('**/api/v1/**', async route => {
+      const request = route.request()
+      const pathname = new URL(request.url()).pathname
+      let data: unknown = null
+      if (pathname.endsWith('/user-preferences/task-notification/test')) {
+        testPayload = request.postDataJSON()
+      } else if (pathname.endsWith('/user-preferences/task-notification')) {
+        if (request.method() === 'PUT') savedPayload = request.postDataJSON()
+        data = savedPayload
+          ? { enabled: true, channel: 'DINGTALK', webhookConfigured: true,
+              maskedWebhook: 'https://oapi.dingtalk.com/robot/send?access_token=****oken' }
+          : { enabled: false, channel: null, webhookConfigured: false, maskedWebhook: null }
+      } else if (pathname.endsWith('/auth/features')) {
+        data = { feishuEnabled: false }
+      } else if (pathname.endsWith('/auth/me')) {
+        data = { id: 1, username: 'admin', displayName: 'Admin' }
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, message: 'success', data })
+      })
+    })
+
+    await page.goto('/settings/notifications')
+    await expect(page.getByRole('heading', { name: '消息通知' })).toBeVisible()
+    await page.locator('.el-switch').click()
+    await page.getByText('钉钉', { exact: true }).click()
+
+    const webhook = 'https://oapi.dingtalk.com/robot/send?access_token=test-token'
+    await page.getByRole('textbox', { name: 'Webhook 地址' }).fill(webhook)
+    await expect(page.getByRole('button', { name: '发送测试通知' })).toBeEnabled()
+    await page.getByRole('button', { name: '发送测试通知' }).click()
+    await expect.poll(() => testPayload).toEqual({ channel: 'DINGTALK', webhookUrl: webhook })
+
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await expect.poll(() => savedPayload).toEqual({
+      enabled: true,
+      channel: 'DINGTALK',
+      webhookUrl: webhook
+    })
+  })
+})
