@@ -46,6 +46,7 @@ public class HarnessService {
     private final SkillLoader skillLoader;
     private final SkillSyncService skillSyncService;
     private final LocalSkillRegistry localSkillRegistry;
+    private final LocalAgentsMdRegistry localAgentsMdRegistry;
     private final SessionMapper sessionMapper;
     private final AgentMapper agentMapper;
     private final AgentExperienceService experienceService;
@@ -271,6 +272,9 @@ public class HarnessService {
                 }
                 context.setLocalUnsyncedSkills(unsynced);
             }
+            // 获取桌面端上报的 AGENTS.md 内容
+            String agentsMdContent = localAgentsMdRegistry.get(sessionId);
+            context.setAgentsMdContent(agentsMdContent);
         }
         context.setAvailableSkillNames(mergedSkillNames);
 

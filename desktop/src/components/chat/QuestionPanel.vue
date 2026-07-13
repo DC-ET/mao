@@ -30,7 +30,7 @@
         v-if="currentQuestions[activeTab]"
         :key="activeTab"
         class="question-group"
-        :class="{ 'has-preview': hasPreview(currentQuestions[activeTab]) && !currentQuestions[activeTab].multiSelect }"
+        
       >
         <div class="question-main">
           <div v-if="currentQuestions.length === 1" class="question-header">
@@ -44,8 +44,7 @@
               :key="oi"
               class="option-btn"
               :class="{
-                selected: isSelected(activeTab, opt.label),
-                'has-preview': hasPreview(currentQuestions[activeTab]) && !currentQuestions[activeTab].multiSelect
+                selected: isSelected(activeTab, opt.label)
               }"
               @click="selectOption(activeTab, opt.label, currentQuestions[activeTab].multiSelect)"
             >
@@ -83,15 +82,7 @@
           </div>
         </div>
 
-        <!-- Preview panel -->
-        <div v-if="hasPreview(currentQuestions[activeTab]) && !currentQuestions[activeTab].multiSelect" class="preview-panel">
-          <MarkdownContent
-            v-if="getSelectedPreview(activeTab)"
-            :content="getSelectedPreview(activeTab)!"
-            body-class="preview-content markdown-body"
-          />
-          <div v-else class="preview-placeholder">选择一个选项查看预览</div>
-        </div>
+        
       </div>
 
       <div class="panel-actions">
@@ -219,20 +210,6 @@ function onCustomFocus(qi: number) {
   if (q && !q.multiSelect) {
     selections.value = { ...selections.value, [qi]: [] }
   }
-}
-
-function hasPreview(q: Question): boolean {
-  return q.options.some(o => !!o.preview)
-}
-
-function getSelectedPreview(qi: number): string | null {
-  const sel = selections.value[qi]
-  if (!sel || sel.length !== 1) return null
-  const label = sel[0]
-  const q = currentQuestions.value[qi]
-  if (!q) return null
-  const opt = q.options.find(o => o.label === label)
-  return opt?.preview ?? null
 }
 
 function confirmAndNext() {
@@ -399,10 +376,7 @@ function handleSubmit() {
   margin-bottom: 4px;
 }
 
-.question-group.has-preview {
-  display: flex;
-  gap: 10px;
-}
+
 
 .question-main {
   flex: 1;
@@ -544,41 +518,7 @@ function handleSubmit() {
   color: var(--aw-ink-muted-40);
 }
 
-.preview-panel {
-  flex: 1;
-  min-width: 0;
-  max-width: 50%;
-  border: 1px solid var(--aw-hairline);
-  border-radius: var(--aw-radius-sm);
-  background: var(--aw-canvas);
-  overflow: auto;
-  max-height: 200px;
-}
 
-.preview-content {
-  padding: 8px 10px;
-  font-family: var(--aw-font-mono);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.preview-content :deep(pre) {
-  margin: 0;
-  background: none;
-}
-
-.preview-content :deep(code) {
-  font-family: var(--aw-font-mono);
-}
-
-.preview-placeholder {
-  padding: 16px 10px;
-  text-align: center;
-  font-size: 11px;
-  color: var(--aw-ink-muted-40);
-}
 
 .panel-actions {
   padding-top: 6px;

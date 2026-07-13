@@ -113,8 +113,15 @@ public class SessionService {
         session.setStatus("ACTIVE");
         session.setExecutionMode(executionMode != null ? executionMode : "CLOUD");
         if ("CLOUD".equals(session.getExecutionMode())) {
-            session.setWorkspace(null);
-            session.setProjectKey(null);
+            if (workspace != null && !workspace.isEmpty()) {
+                // If a workspace is explicitly provided (e.g., for sub-agent sessions),
+                // use it directly and skip cloud workspace initialization.
+                session.setWorkspace(workspace);
+                session.setProjectKey(deriveProjectKey(workspace));
+            } else {
+                session.setWorkspace(null);
+                session.setProjectKey(null);
+            }
         } else {
             session.setWorkspace(workspace);
             session.setProjectKey(deriveProjectKey(workspace));
@@ -132,17 +139,28 @@ public class SessionService {
         sessionMapper.insert(session);
 
         if ("CLOUD".equals(session.getExecutionMode())) {
-            try {
-                initializeCloudWorkspace(session, userId, workspaceMode, cloudProjectKey, gitCloneUrl, gitBranch);
+            // If workspace was already set (e.g., for sub-agent sessions), skip cloud workspace initialization.
+            if (session.getWorkspace() == null || session.getWorkspace().isEmpty()) {
+                try {
+                    initializeCloudWorkspace(session, userId, workspaceMode, cloudProjectKey, gitCloneUrl, gitBranch);
+                    var env = environmentInfoProvider.detect(session.getWorkspace());
+                    session.setIsGit(env.isGit());
+                    session.setPlatform(env.platform());
+                    session.setShellPath(env.shell());
+                    session.setOsVersion(env.osVersion());
+                    sessionMapper.updateById(session);
+                } catch (RuntimeException e) {
+                    rollbackCreatedSession(session);
+                    throw e;
+                }
+            } else {
+                // Workspace already provided, detect environment info.
                 var env = environmentInfoProvider.detect(session.getWorkspace());
                 session.setIsGit(env.isGit());
                 session.setPlatform(env.platform());
                 session.setShellPath(env.shell());
                 session.setOsVersion(env.osVersion());
                 sessionMapper.updateById(session);
-            } catch (RuntimeException e) {
-                rollbackCreatedSession(session);
-                throw e;
             }
         }
 

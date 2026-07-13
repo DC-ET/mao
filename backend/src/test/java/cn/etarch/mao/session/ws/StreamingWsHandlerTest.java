@@ -4,6 +4,7 @@ import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.harness.core.AgentLoop;
 import cn.etarch.mao.harness.core.HarnessService;
+import cn.etarch.mao.harness.core.LocalAgentsMdRegistry;
 import cn.etarch.mao.harness.local.LocalToolSessionRegistry;
 import cn.etarch.mao.harness.shell.ShellSessionManager;
 import cn.etarch.mao.harness.skill.LocalSkillRegistry;
@@ -59,13 +60,15 @@ class StreamingWsHandlerTest {
     private final ShellSessionManager shellSessionManager = mock(ShellSessionManager.class);
     private final SkillSyncService skillSyncService = mock(SkillSyncService.class);
     private final LocalSkillRegistry localSkillRegistry = mock(LocalSkillRegistry.class);
+    private final LocalAgentsMdRegistry localAgentsMdRegistry = mock(LocalAgentsMdRegistry.class);
     private final AgentMapper agentMapper = mock(AgentMapper.class);
     private final LlmModelMapper llmModelMapper = mock(LlmModelMapper.class);
     private final CapturingExecutor executor = new CapturingExecutor();
     private final StreamingWsHandler handler = new StreamingWsHandler(
             registry, harnessService, sessionService, taskTerminalService, messageQueueService, localToolSessionRegistry,
             askUserQuestionsRegistry, activityService, activityHeartbeat, sessionTodoMapper, agentLoop,
-            shellSessionManager, skillSyncService, localSkillRegistry, agentMapper, llmModelMapper, executor);
+            shellSessionManager, skillSyncService, localSkillRegistry, localAgentsMdRegistry,
+            agentMapper, llmModelMapper, executor);
     private final WebSocketSession ws = mock(WebSocketSession.class);
 
     @Test

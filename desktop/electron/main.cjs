@@ -776,6 +776,30 @@ ipcMain.handle('read-local-skill-files', async (event, { folderName }) => {
   }
 })
 
+ipcMain.handle('read-agents-md', async (event, { workspace }) => {
+  try {
+    if (!workspace) {
+      return { content: null }
+    }
+
+    const agentsMdPath = path.join(workspace, 'AGENTS.md')
+    if (!fs.existsSync(agentsMdPath)) {
+      return { content: null }
+    }
+
+    const stat = fs.statSync(agentsMdPath)
+    if (!stat.isFile()) {
+      return { content: null }
+    }
+
+    const content = fs.readFileSync(agentsMdPath, 'utf-8')
+    return { content: content || null }
+  } catch (e) {
+    console.error('[read-agents-md] Failed:', e.message)
+    return { error: e.message, content: null }
+  }
+})
+
 function resolveWorkspacePath(filePath, workspace, maoSessionId) {
   const effectiveWorkspace = workspace || currentWorkspace
   if (!filePath) return filePath

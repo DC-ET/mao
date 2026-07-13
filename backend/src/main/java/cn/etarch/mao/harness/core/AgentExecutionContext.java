@@ -80,6 +80,9 @@ public class AgentExecutionContext {
     // toolCallId → image attachment extracted from read_file results
     private Map<String, ToolAttachment> toolAttachments = new LinkedHashMap<>();
 
+    /** 桌面端上报的 AGENTS.md 内容（仅 LOCAL 模式） */
+    private String agentsMdContent;
+
     public AgentExecutionContext() {
         this.totalUsage = ChatUsage.builder()
                 .promptTokens(0)

@@ -24,8 +24,24 @@ class ToolResultSummarizerTest {
                 .isEqualTo("读取 src/App.vue (42 行)");
         assertThat(ToolResultSummarizer.summarize("write_file", "{\"path\":\"docs/a.md\"}", "{\"bytes_written\":2048}"))
                 .isEqualTo("写入 docs/a.md (2KB)");
-        assertThat(ToolResultSummarizer.summarize("edit_file", "{\"path\":\"src/main.java\"}", "{\"replacements\":3}"))
-                .isEqualTo("编辑 src/main.java (3 处替换)");
+        assertThat(ToolResultSummarizer.summarize("edit_file", "{\"path\":\"src/main.java\"}", "{\"replacements\":3,\"lines_added\":6,\"lines_deleted\":3}"))
+                .isEqualTo("编辑 src/main.java (+6行 -3行)");
+    }
+
+    @Test
+    void summarizesReadFileWithRange() {
+        // 指定 offset 和 limit，显示行范围
+        assertThat(ToolResultSummarizer.summarize("read_file", "{\"path\":\"chat/QuestionPanel.vue\",\"offset\":350,\"limit\":50}", "{\"total_lines\":615}"))
+                .isEqualTo("读取 chat/QuestionPanel.vue (350~400行)");
+        // 只指定 offset，从 offset 到文件末尾
+        assertThat(ToolResultSummarizer.summarize("read_file", "{\"path\":\"src/App.vue\",\"offset\":100}", "{\"total_lines\":200}"))
+                .isEqualTo("读取 src/App.vue (100~200行)");
+        // 只指定 limit，从开头读取 limit 行
+        assertThat(ToolResultSummarizer.summarize("read_file", "{\"path\":\"src/App.vue\",\"limit\":50}", "{\"total_lines\":615}"))
+                .isEqualTo("读取 src/App.vue (0~50行)");
+        // 没有 offset/limit，显示总行数
+        assertThat(ToolResultSummarizer.summarize("read_file", "{\"path\":\"src/App.vue\"}", "{\"total_lines\":42}"))
+                .isEqualTo("读取 src/App.vue (42 行)");
     }
 
     @Test

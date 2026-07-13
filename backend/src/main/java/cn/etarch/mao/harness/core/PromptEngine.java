@@ -12,6 +12,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -45,6 +48,10 @@ public class PromptEngine {
     private static final Pattern SKILL_PATTERN = Pattern.compile("\\$\\{([^}]+)\\}\\$");
     private static final Pattern COMMAND_PATTERN = Pattern.compile("#\\{([^}]+)\\}#");
     private static final Pattern FILE_REF_PATTERN = Pattern.compile("@\\{([^}]+)\\}@");
+
+    private static final int AGENTS_MD_MAX_LINES = 200;
+    private static final String AGENTS_MD_TRUNCATED_HINT =
+            "\n> 当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。\n";
 
     private final SkillLoader skillLoader;
     private final PathSandbox pathSandbox;
@@ -229,6 +236,9 @@ public class PromptEngine {
         // Delegate tool behavior hints
         appendDelegateToolHints(sb, context);
 
+        // Workspace rules (AGENTS.md)
+        appendWorkspaceRules(sb, context, effectiveWorkspace);
+
         return sb.toString();
     }
 
@@ -361,6 +371,49 @@ public class PromptEngine {
         sb.append("3. 子代理无法与用户交互，不要委派需要用户确认的任务\n");
         sb.append("4. 收到子代理结果后，请分析并整合到你的回答中\n");
         sb.append("5. 对于有依赖关系的子任务，请串行委派\n\n");
+    }
+
+    /**
+     * 向 system prompt 注入工作区规则（AGENTS.md）
+     * CLOUD 模式：服务端直接读取文件
+     * LOCAL 模式：使用桌面端上报的内容
+     */
+    private void appendWorkspaceRules(StringBuilder sb, AgentExecutionContext context, String effectiveWorkspace) {
+        String content = null;
+
+        if ("LOCAL".equalsIgnoreCase(context.getExecutionMode())) {
+            // LOCAL 模式：使用桌面端上报的内容
+            content = context.getAgentsMdContent();
+        } else {
+            // CLOUD 模式：服务端读取文件
+            Path agentsMdPath = Path.of(effectiveWorkspace, "AGENTS.md");
+            if (Files.exists(agentsMdPath) && Files.isRegularFile(agentsMdPath)) {
+                try {
+                    content = Files.readString(agentsMdPath);
+                } catch (IOException e) {
+                    log.warn("Failed to read AGENTS.md from workspace: {}", agentsMdPath, e);
+                }
+            }
+        }
+
+        if (content == null || content.isBlank()) {
+            return;
+        }
+
+        // 截断处理
+        String[] lines = content.split("\\R", -1); // 保留尾部空行
+        boolean truncated = lines.length > AGENTS_MD_MAX_LINES;
+        StringBuilder ruleContent = new StringBuilder();
+        for (int i = 0; i < Math.min(lines.length, AGENTS_MD_MAX_LINES); i++) {
+            ruleContent.append(lines[i]).append("\n");
+        }
+        if (truncated) {
+            ruleContent.append(AGENTS_MD_TRUNCATED_HINT);
+        }
+
+        sb.append("## 工作区规则\n\n");
+        sb.append(ruleContent);
+        sb.append("\n");
     }
 
 }

@@ -77,6 +77,7 @@ import { mapMessagesWithFileChanges } from '../../utils/chatMessage'
 import { deriveSessionTitle } from '../../utils/sessionTitle'
 import { generateUUID } from '../../utils/uuid'
 import { collectLocalUnsyncedSkills } from '../../utils/localSkills'
+import { collectAgentsMdContent } from '../../utils/agentsMd'
 import { nowDateTime } from '../../utils/datetime'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
@@ -281,6 +282,7 @@ async function handleChatSend(text: string, _files: File[]) {
   if (!text.trim() || sending.value) return
 
   const localSkills = await collectLocalUnsyncedSkills(parentExecutionMode.value, isElectron)
+  const agentsMdContent = await collectAgentsMdContent(parentWorkspace.value, parentExecutionMode.value, isElectron)
 
   if (!hasRealSession.value) {
     // 首次发送：创建边路任务会话
@@ -304,7 +306,8 @@ async function handleChatSend(text: string, _files: File[]) {
       text.trim(),
       inheritContext.value,
       currentModelId.value,
-      localSkills
+      localSkills,
+      agentsMdContent
     )
     sending.value = true
   } else {
@@ -323,7 +326,7 @@ async function handleChatSend(text: string, _files: File[]) {
       createdAt: nowDateTime(),
     })
     sessionStore.ensureStreamingAssistantMessage(sid)
-    sendMessage(sid, text.trim(), generateUUID(), undefined, localSkills)
+    sendMessage(sid, text.trim(), generateUUID(), undefined, localSkills, agentsMdContent)
     sending.value = true
   }
 }

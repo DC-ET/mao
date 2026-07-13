@@ -79,7 +79,6 @@ export interface QueueMessage {
 export interface QuestionOption {
   label: string
   description: string
-  preview?: string
 }
 
 export interface Question {

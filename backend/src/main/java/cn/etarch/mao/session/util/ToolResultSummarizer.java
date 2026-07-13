@@ -84,6 +84,23 @@ public class ToolResultSummarizer {
             }
             return "读取 " + displayPath + " (图片)";
         }
+
+        // 从 arguments 中提取 offset 和 limit
+        Integer offset = extractJsonInteger(arguments, "offset");
+        Integer limit = extractJsonInteger(arguments, "limit");
+
+        // 如果指定了 offset 或 limit，显示实际读取的行范围
+        if (offset != null || limit != null) {
+            int startLine = offset != null ? offset : 0;
+            int readCount = limit != null ? limit : totalLines;
+            int endLine = startLine + readCount;
+            // 不超过文件总行数
+            if (totalLines > 0 && endLine > totalLines) {
+                endLine = totalLines;
+            }
+            return "读取 " + displayPath + " (" + startLine + "~" + endLine + "行)";
+        }
+
         if (totalLines > 0) {
             return "读取 " + displayPath + " (" + totalLines + " 行)";
         }
@@ -115,9 +132,10 @@ public class ToolResultSummarizer {
         JsonNode node = parseJson(result);
         if (node == null) return "编辑 " + displayPath;
 
-        int replacements = node.has("replacements") ? node.get("replacements").asInt(0) : 0;
-        if (replacements > 0) {
-            return "编辑 " + displayPath + " (" + replacements + " 处替换)";
+        int linesAdded = node.has("lines_added") ? node.get("lines_added").asInt(0) : 0;
+        int linesDeleted = node.has("lines_deleted") ? node.get("lines_deleted").asInt(0) : 0;
+        if (linesAdded > 0 || linesDeleted > 0) {
+            return "编辑 " + displayPath + " (+" + linesAdded + "行 -" + linesDeleted + "行)";
         }
         return "编辑 " + displayPath;
     }
@@ -256,6 +274,18 @@ public class ToolResultSummarizer {
             JsonNode node = OBJECT_MAPPER.readTree(json);
             if (node.has(field)) {
                 return node.get(field).asText(null);
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private static Integer extractJsonInteger(String json, String field) {
+        if (json == null) return null;
+        try {
+            JsonNode node = OBJECT_MAPPER.readTree(json);
+            if (node.has(field) && node.get(field).canConvertToInt()) {
+                return node.get(field).asInt();
             }
         } catch (Exception ignored) {
         }

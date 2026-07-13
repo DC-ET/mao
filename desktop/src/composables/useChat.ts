@@ -4,6 +4,7 @@ import { api } from '../api'
 import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
 import { collectLocalUnsyncedSkills } from '../utils/localSkills'
+import { collectAgentsMdContent } from '../utils/agentsMd'
 import { mapMessagesWithFileChanges } from '../utils/chatMessage'
 import type { ChatMessage, QuestionAnswer } from '../types/chat'
 
@@ -311,13 +312,16 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       sessionStore.clearTodos(sid)
 
       // Update session title from first user message (when title is still the default)
-      if (text) {
-        const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
-        if (currentSession && (!currentSession.title || currentSession.title === '未命名会话')) {
-          const derivedTitle = await deriveSessionTitle(text)
-          sessionStore.updateSession(sid, { title: derivedTitle })
-          api.patch(`/sessions/${sid}`, { title: derivedTitle }).catch(() => {})
+      const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
+      if (currentSession && (!currentSession.title || currentSession.title === '未命名会话')) {
+        let derivedTitle = '任务'
+        if (text) {
+          derivedTitle = await deriveSessionTitle(text)
+        } else if (imageUrls.length > 0) {
+          derivedTitle = '图片消息'
         }
+        sessionStore.updateSession(sid, { title: derivedTitle })
+        api.patch(`/sessions/${sid}`, { title: derivedTitle }).catch(() => {})
       }
 
       // Add user message to store
@@ -356,7 +360,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const eventId = generateUUID()
       setActiveExecution(sid, eventId)
       const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
-      wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills)
+      const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
+      wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills, agentsMdContent)
 
       // Wait for completion (session_status reaches COMPLETED/FAILED)
       await new Promise<void>((resolve, reject) => {
@@ -482,7 +487,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
       // 通过 WS 发送编辑请求
       const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
-      sendEditMessage(sessionId.value, newContent, messageId, imagesToSend, localSkills)
+      const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
+      sendEditMessage(sessionId.value, newContent, messageId, imagesToSend, localSkills, agentsMdContent)
 
       // Wait for completion
       await new Promise<void>((resolve, reject) => {

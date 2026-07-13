@@ -81,6 +81,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getLocalSkillDetail: (folderName) => ipcRenderer.invoke('get-local-skill-detail', { folderName }),
   readLocalSkillFiles: (folderName) => ipcRenderer.invoke('read-local-skill-files', { folderName }),
 
+  // Read AGENTS.md from workspace root (for LOCAL mode system prompt injection)
+  readAgentsMd: (workspace) => ipcRenderer.invoke('read-agents-md', { workspace }),
+
   // Terminal (node-pty) — embedded terminal panel
   terminal: {
     create: (options) => ipcRenderer.invoke('terminal:create', options),

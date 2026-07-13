@@ -29,10 +29,6 @@ public class AskUserQuestionsTool implements Tool {
                 - 用户始终可以选择「其他」并填写自定义文本
                 - 将 multiSelect 设为 true，可允许同一问题多选
                 - 若推荐某一选项，请将其置于选项列表首位，并在 label 末尾加上「（推荐）」
-                - preview 支持在等宽框中渲染 Markdown，可用换行实现多行内容
-                - 预览仅对单选问题生效（非 multiSelect）
-                - 任一选项带有 preview 时，界面会切换为左右分栏（左侧选项，右侧预览）
-                - preview 适用于原型示意、代码片段或视觉对比；简单偏好类问题仅用 label/description 即可，无需 preview
                 """;
     }
 
@@ -89,11 +85,6 @@ public class AskUserQuestionsTool implements Tool {
         descField.put("type", "string");
         descField.put("description", "该选项含义的说明");
         optionProps.put("description", descField);
-
-        Map<String, Object> previewField = new LinkedHashMap<>();
-        previewField.put("type", "string");
-        previewField.put("description", "可选预览内容（原型、代码、示意图等）");
-        optionProps.put("preview", previewField);
 
         optionItem.put("properties", optionProps);
         optionsField.put("items", optionItem);

@@ -108,8 +108,8 @@ public class ReadFileTool implements Tool {
                 return readImage(filePath, path, imageMime.get());
             }
 
-            int offset = args.has("offset") ? args.get("offset").asInt() : 0;
-            int limit = args.has("limit") ? args.get("limit").asInt() : Integer.MAX_VALUE;
+            int offset = args.has("offset") ? Math.max(0, args.get("offset").asInt()) : 0;
+            int limit = args.has("limit") ? Math.max(0, args.get("limit").asInt()) : Integer.MAX_VALUE;
 
             List<String> allLines;
             try (Stream<String> lines = Files.lines(filePath)) {
@@ -118,7 +118,7 @@ public class ReadFileTool implements Tool {
 
             int totalLines = allLines.size();
             int from = Math.min(offset, totalLines);
-            int to = Math.min(from + limit, totalLines);
+            int to = (int) Math.min((long) from + (long) limit, totalLines);
 
             String content = String.join("\n", allLines.subList(from, to));
             if (content.length() > MAX_OUTPUT_LENGTH) {

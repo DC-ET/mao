@@ -271,7 +271,7 @@ export function useStreamWS() {
     }
   }
 
-  function sendMessage(sessionId: string, content: string, eventId: string, images?: string[], localSkills?: LocalSkillReport[]) {
+  function sendMessage(sessionId: string, content: string, eventId: string, images?: string[], localSkills?: LocalSkillReport[], agentsMdContent?: string) {
     send({
       type: 'send_message',
       sessionId: Number(sessionId),
@@ -279,19 +279,21 @@ export function useStreamWS() {
         content,
         eventId,
         images: images || [],
-        ...(localSkills && localSkills.length > 0 ? { localSkills } : {})
+        ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),
+        ...(agentsMdContent ? { agentsMdContent } : {})
       }
     })
   }
 
-  function sendEditMessage(sessionId: string, content: string, messageId: string, images?: string[], localSkills?: LocalSkillReport[]) {
+  function sendEditMessage(sessionId: string, content: string, messageId: string, images?: string[], localSkills?: LocalSkillReport[], agentsMdContent?: string) {
     send({
       type: 'edit_and_resend',
       sessionId: Number(sessionId),
       messageId: Number(messageId),
       content,
       images: images || [],
-      ...(localSkills && localSkills.length > 0 ? { localSkills } : {})
+      ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),
+      ...(agentsMdContent ? { agentsMdContent } : {})
     })
   }
 
@@ -328,7 +330,8 @@ export function useStreamWS() {
     content: string,
     inheritContext: boolean,
     modelId?: number,
-    localSkills?: LocalSkillReport[]
+    localSkills?: LocalSkillReport[],
+    agentsMdContent?: string
   ) {
     send({
       type: 'create_side_session',
@@ -337,7 +340,8 @@ export function useStreamWS() {
         content,
         inheritContext,
         ...(modelId != null ? { modelId } : {}),
-        ...(localSkills && localSkills.length > 0 ? { localSkills } : {})
+        ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),
+        ...(agentsMdContent ? { agentsMdContent } : {})
       }
     })
   }

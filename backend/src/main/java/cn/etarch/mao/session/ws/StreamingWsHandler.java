@@ -4,6 +4,7 @@ import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.harness.core.AgentLoop;
 import cn.etarch.mao.harness.core.HarnessService;
+import cn.etarch.mao.harness.core.LocalAgentsMdRegistry;
 import cn.etarch.mao.harness.shell.ShellSessionManager;
 import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.harness.local.LocalToolSessionRegistry;
@@ -60,6 +61,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final ShellSessionManager shellSessionManager;
     private final SkillSyncService skillSyncService;
     private final LocalSkillRegistry localSkillRegistry;
+    private final LocalAgentsMdRegistry localAgentsMdRegistry;
     private final AgentMapper agentMapper;
     private final LlmModelMapper llmModelMapper;
     private final ExecutorService agentExecutor;
@@ -105,6 +107,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         localToolSessionRegistry.failAllForSession(sessionId);
         askUserQuestionsRegistry.failAllForSession(sessionId);
         localSkillRegistry.clear(sessionId);
+        localAgentsMdRegistry.clear(sessionId);
     }
 
     private boolean isSessionActive(String phase) {
@@ -170,6 +173,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                ShellSessionManager shellSessionManager,
                                SkillSyncService skillSyncService,
                                LocalSkillRegistry localSkillRegistry,
+                               LocalAgentsMdRegistry localAgentsMdRegistry,
                                AgentMapper agentMapper,
                                LlmModelMapper llmModelMapper,
                                @Qualifier("agentExecutor") ExecutorService agentExecutor) {
@@ -187,6 +191,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.shellSessionManager = shellSessionManager;
         this.skillSyncService = skillSyncService;
         this.localSkillRegistry = localSkillRegistry;
+        this.localAgentsMdRegistry = localAgentsMdRegistry;
         this.agentMapper = agentMapper;
         this.llmModelMapper = llmModelMapper;
         this.agentExecutor = agentExecutor;
@@ -360,6 +365,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 return;
             }
             localSkillRegistry.report(sessionId, parseLocalSkills(data.get("localSkills")));
+            // 解析桌面端上报的 AGENTS.md 内容
+            localAgentsMdRegistry.report(sessionId, data.path("agentsMdContent").asText(null));
         }
 
         // Build multimodal content
@@ -659,6 +666,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 return;
             }
             localSkillRegistry.report(sessionId, parseLocalSkills(root.get("localSkills")));
+            // 解析桌面端上报的 AGENTS.md 内容
+            localAgentsMdRegistry.report(sessionId, root.path("agentsMdContent").asText(null));
         }
 
         // Build multimodal content
@@ -862,6 +871,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         if ("LOCAL".equals(sideSession.getExecutionMode())) {
             localToolSessionRegistry.setUserForSession(sideSessionId, userId);
             localSkillRegistry.report(sideSessionId, parseLocalSkills(data.get("localSkills")));
+            // 解析桌面端上报的 AGENTS.md 内容
+            localAgentsMdRegistry.report(sideSessionId, data.path("agentsMdContent").asText(null));
         }
 
         log.info("Created side task session {} for parent session {}, userId={}, inheritContext={}",

@@ -177,6 +177,67 @@ class PromptEngineTest {
         assertThat(request.getMessages().get(1).getContent()).isEqualTo("Use /local-only now");
     }
 
+    @Test
+    void buildRequestInjectsWorkspaceRulesForLocalMode() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/fallback"));
+
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setSessionId(5L);
+        context.setExecutionMode("LOCAL");
+        context.setAgentsMdContent("# 项目规则\n\n- 使用 TypeScript\n- 遵循 ESLint 规范\n");
+        context.setTools(List.of());
+        context.addUserMessage("hello");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+        String systemPrompt = request.getMessages().get(0).getContent().toString();
+
+        assertThat(systemPrompt)
+                .contains("## 工作区规则", "# 项目规则", "- 使用 TypeScript", "- 遵循 ESLint 规范");
+    }
+
+    @Test
+    void buildRequestOmitsWorkspaceRulesWhenNoAgentsMdForLocalMode() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/fallback"));
+
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setSessionId(5L);
+        context.setExecutionMode("LOCAL");
+        context.setAgentsMdContent(null);
+        context.setTools(List.of());
+        context.addUserMessage("hello");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+        String systemPrompt = request.getMessages().get(0).getContent().toString();
+
+        assertThat(systemPrompt).doesNotContain("## 工作区规则");
+    }
+
+    @Test
+    void buildRequestTruncatesWorkspaceRulesWhenExceeds200Lines() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/fallback"));
+
+        // 构建超过 200 行的内容
+        StringBuilder content = new StringBuilder();
+        for (int i = 1; i <= 250; i++) {
+            content.append("- 规则").append(i).append("\n");
+        }
+
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setSessionId(5L);
+        context.setExecutionMode("LOCAL");
+        context.setAgentsMdContent(content.toString());
+        context.setTools(List.of());
+        context.addUserMessage("hello");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+        String systemPrompt = request.getMessages().get(0).getContent().toString();
+
+        assertThat(systemPrompt).contains("## 工作区规则");
+        assertThat(systemPrompt).contains("- 规则200");
+        assertThat(systemPrompt).doesNotContain("- 规则201");
+        assertThat(systemPrompt).contains("当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。");
+    }
+
     private Tool tool(String name) {
         Tool tool = mock(Tool.class);
         when(tool.getName()).thenReturn(name);

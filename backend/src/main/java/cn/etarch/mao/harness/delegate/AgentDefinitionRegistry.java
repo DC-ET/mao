@@ -48,7 +48,7 @@ public class AgentDefinitionRegistry {
                         + "输出格式要求：先给出核心结论，再列出支撑证据和关键发现。\n"
                         + "重要：你只负责研究和分析，不要直接修改代码或文件。")
                 .maxRounds(100)
-                .excludedToolNames(List.of("write_file", "edit_file", "shell", "ask_user_questions"))
+                .excludedToolNames(List.of("write_file", "edit_file", "ask_user_questions"))
                 .build());
 
         register(AgentDefinition.builder()
@@ -61,7 +61,7 @@ public class AgentDefinitionRegistry {
                         + "输出格式：按严重程度分类列出问题，每个问题附带具体代码位置和修复建议。\n"
                         + "重要：你只负责审查和建议，不要直接修改代码或文件。")
                 .maxRounds(100)
-                .excludedToolNames(List.of("write_file", "edit_file", "shell", "ask_user_questions"))
+                .excludedToolNames(List.of("write_file", "edit_file", "ask_user_questions"))
                 .build());
     }
 }
