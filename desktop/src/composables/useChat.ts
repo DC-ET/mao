@@ -654,10 +654,16 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
     sessionId.value = sessionIdVal
     executionMode.value = mode
-    if (initialWorkspace) workspace.value = initialWorkspace
     sessionStore.setActiveSession(sessionIdVal)
 
+    // Read session data from the store — loadSession updates the store before
+    // triggering this watcher, so the data is guaranteed to be fresh
     const session = sessionStore.activeSession
+    if (session?.workspace) {
+      workspace.value = session.workspace
+    } else if (initialWorkspace) {
+      workspace.value = initialWorkspace
+    }
     cloudProjectKey.value = session?.projectKey && session.workspace?.includes('/projects/')
       ? session.projectKey
       : ''

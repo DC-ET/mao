@@ -119,7 +119,7 @@ const hasRealSession = computed(() => realSessionId.value > 0)
 // Stable cache key for placeholder tabs — tabId does not change when sideSessionId is assigned
 const placeholderCacheKey = computed(() => props.tabId)
 
-const inheritContext = ref(true)
+const inheritContext = ref(false)
 const sending = ref(false)
 const selectedModelId = ref<number | undefined>(undefined)
 const sideModelId = ref<number | undefined>(undefined)

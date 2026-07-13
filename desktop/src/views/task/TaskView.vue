@@ -383,7 +383,6 @@ function getRouteWatchState() {
 
 async function loadSession(sid: string) {
   newTaskAgentId.value = null
-  sessionStore.setActiveSession(sid)
 
   try {
     const { data } = await (await import('../../api')).api.get(`/sessions/${sid}`)
@@ -393,6 +392,7 @@ async function loadSession(sid: string) {
       if (existing?.title && existing.title !== '未命名会话') {
         data.title = existing.title
       }
+      // Update store BEFORE setActiveSession so ChatPanel's watcher reads correct data
       sessionStore.updateSession(sid, data)
       const normalizedAgentId = String(data.agentId)
       // Set shared refs — ChatPanel reads these for useChat
@@ -402,6 +402,8 @@ async function loadSession(sid: string) {
       projectKey.value = data.projectKey || ''
       permissionLevel.value = data.permissionLevel || 'READ_ONLY'
       workspace.value = data.workspace || ''
+      // Trigger ChatPanel watcher AFTER store and refs are updated
+      sessionStore.setActiveSession(sid)
       // workspace and agentName will be synced from ChatPanel's useChat
       await agentStore.fetchAgent(normalizedAgentId)
       lastViewedSession.value = {
@@ -412,9 +414,11 @@ async function loadSession(sid: string) {
         permissionLevel: data.permissionLevel,
         modelId: data.modelId
       }
+    } else {
+      sessionStore.setActiveSession(sid)
     }
   } catch {
-    // ignore
+    sessionStore.setActiveSession(sid)
   }
 
   // Restore open side task tabs (excluding user-closed ones)
