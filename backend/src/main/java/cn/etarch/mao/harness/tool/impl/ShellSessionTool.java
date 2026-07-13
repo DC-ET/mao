@@ -71,7 +71,9 @@ public class ShellSessionTool implements Tool {
                 "- exec：执行命令（如果省略 session_id，则创建新会话）\n" +
                 "- write_stdin：向正在运行的会话 stdin 写入输入\n" +
                 "- close：关闭 shell 会话\n" +
-                "- list：列出活跃会话";
+                "- list：列出活跃会话\n" +
+                "参数：\n" +
+                "- keep_session：是否保留会话（默认 false），执行后自动关闭会话以释放资源。";
     }
 
     @Override
@@ -109,13 +111,18 @@ public class ShellSessionTool implements Tool {
 
         Map<String, Object> yieldTimeMs = new HashMap<>();
         yieldTimeMs.put("type", "integer");
-        yieldTimeMs.put("description", "等待输出的最长时间，单位毫秒（默认 10000）");
+        yieldTimeMs.put("description", "等待输出的最长时间，单位毫秒（默认 60000）");
         properties.put("yield_time_ms", yieldTimeMs);
 
         Map<String, Object> async = new HashMap<>();
         async.put("type", "boolean");
         async.put("description", "是否在后台运行并立即返回 task_id（默认 false，仅用于 exec 动作）");
         properties.put("async", async);
+
+        Map<String, Object> keepSession = new HashMap<>();
+        keepSession.put("type", "boolean");
+        keepSession.put("description", "是否保留会话（默认 false）。执行后自动关闭会话以释放资源。");
+        properties.put("keep_session", keepSession);
 
         schema.put("properties", properties);
 
@@ -185,15 +192,16 @@ public class ShellSessionTool implements Tool {
         }
 
         String sessionId = args.has("session_id") ? args.get("session_id").asText() : null;
-        int yieldTimeMs = args.has("yield_time_ms") ? args.get("yield_time_ms").asInt() : 10000;
+        int yieldTimeMs = args.has("yield_time_ms") ? args.get("yield_time_ms").asInt() : 60000;
         String workdir = args.has("workdir") ? args.get("workdir").asText() : null;
         boolean isAsync = args.has("async") && args.get("async").asBoolean();
+        boolean keepSession = args.has("keep_session") && args.get("keep_session").asBoolean();
 
         // async 模式：提交后台任务，立即返回
         if (isAsync) {
             String taskId = backgroundTaskManager.submit(() -> {
                 try {
-                    return doExec(command, sessionId, conversationId, userId, workspace, workdir, yieldTimeMs);
+                    return doExec(command, sessionId, conversationId, userId, workspace, workdir, yieldTimeMs, keepSession);
                 } catch (Exception e) {
                     return errorJson("异步执行失败：" + e.getMessage());
                 }
@@ -205,11 +213,11 @@ public class ShellSessionTool implements Tool {
             ));
         }
 
-        return doExec(command, sessionId, conversationId, userId, workspace, workdir, yieldTimeMs);
+        return doExec(command, sessionId, conversationId, userId, workspace, workdir, yieldTimeMs, keepSession);
     }
 
     private String doExec(String command, String sessionId, Long conversationId, Long userId,
-                          String workspace, String workdir, int yieldTimeMs) throws Exception {
+                          String workspace, String workdir, int yieldTimeMs, boolean keepSession) throws Exception {
         Map<String, String> domainTokenMap = gitCredentialService.getTokenMapByUser(userId);
         ShellSession session = sessionManager.getOrCreate(conversationId, sessionId, userId, workspace, domainTokenMap);
         sessionId = session.getSessionId();
@@ -239,6 +247,9 @@ public class ShellSessionTool implements Tool {
         );
 
         session.incrementCommandCount();
+        if (!keepSession) {
+            sessionManager.close(sessionId);
+        }
         return result;
     }
 

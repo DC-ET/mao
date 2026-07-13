@@ -229,6 +229,27 @@ class ShellRuntimeTest {
                 """, 21L, 7L, tempDir.toString()));
         assertThat(async.get("async").asBoolean()).isTrue();
         assertThat(async.get("task_id").asText()).isNotBlank();
+
+        // 测试 keep_session 默认为 false 时自动关闭会话
+        JsonNode keepFalse = objectMapper.readTree(tool.execute("""
+                {"command":"echo keep_false","keep_session":false}
+                """, 21L, 7L, tempDir.toString()));
+        assertThat(keepFalse.get("exit_code").asInt()).isEqualTo(0);
+        // 会话应该已关闭，list 应该返回 0
+        JsonNode listAfterKeepFalse = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
+        assertThat(listAfterKeepFalse.get("count").asInt()).isEqualTo(0);
+
+        // 测试 keep_session 为 true 时保留会话
+        JsonNode keepTrue = objectMapper.readTree(tool.execute("""
+                {"command":"echo keep_true","keep_session":true}
+                """, 21L, 7L, tempDir.toString()));
+        assertThat(keepTrue.get("exit_code").asInt()).isEqualTo(0);
+        String keepTrueSessionId = keepTrue.get("session_id").asText();
+        // 会话应该仍然存在
+        JsonNode listAfterKeepTrue = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
+        assertThat(listAfterKeepTrue.get("count").asInt()).isEqualTo(1);
+        // 手动关闭会话
+        tool.execute("{\"action\":\"close\",\"session_id\":\"" + keepTrueSessionId + "\"}", 21L, 7L, tempDir.toString());
     }
 
     @Test
