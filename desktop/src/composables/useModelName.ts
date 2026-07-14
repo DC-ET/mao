@@ -17,7 +17,7 @@ export function useModelName(modelId: Ref<number | undefined | null>) {
     loading.value = true
     try {
       const { data } = await api.get(`/models/${id}`)
-      modelName.value = data?.modelId || ''
+      modelName.value = data?.name || ''
     } catch {
       modelName.value = ''
     } finally {
@@ -49,7 +49,7 @@ export async function getModelName(modelId: number): Promise<string> {
   if (!modelId) return ''
   try {
     const { data } = await api.get(`/models/${modelId}`)
-    return data?.modelId || ''
+    return data?.name || ''
   } catch {
     return ''
   }

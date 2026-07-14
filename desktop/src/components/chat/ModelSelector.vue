@@ -14,7 +14,7 @@
           @click.stop="handleSelect(m.id)"
         >
           <div class="model-option-info">
-            <span class="model-option-name">{{ m.modelId }}</span>
+            <span class="model-option-name">{{ m.name }}</span>
           </div>
           <el-tag v-if="m.supportsVision" size="small" type="success">视觉</el-tag>
         </div>
