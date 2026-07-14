@@ -124,7 +124,7 @@ public class SessionController {
     public Result<SessionVO> getSession(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
-        Session session = sessionService.getSession(id);
+        Session session = requireSessionOwner(userId, id);
         List<Session> single = List.of(session);
         Map<Long, Agent> agentMap = batchLoadAgents(single);
         Map<Long, LlmModel> modelMap = batchLoadModels(single);
@@ -135,6 +135,7 @@ public class SessionController {
     public Result<Void> deleteSession(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
+        requireSessionOwner(userId, id);
         sessionService.deleteSession(id);
         return Result.ok();
     }
@@ -143,6 +144,7 @@ public class SessionController {
     public Result<Void> togglePin(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
+        requireSessionOwner(userId, id);
         sessionService.togglePin(id);
         return Result.ok();
     }
@@ -151,6 +153,7 @@ public class SessionController {
     public Result<Void> toggleFavorite(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
+        requireSessionOwner(userId, id);
         sessionService.toggleFavorite(id);
         return Result.ok();
     }
@@ -159,6 +162,7 @@ public class SessionController {
     public Result<Void> archiveSession(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
+        requireSessionOwner(userId, id);
         sessionService.archiveSession(id);
         return Result.ok();
     }
@@ -167,10 +171,7 @@ public class SessionController {
     public Result<Void> markAsRead(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
-        Session session = sessionService.getSession(id);
-        if (!session.getUserId().equals(userId)) {
-            return Result.fail(403, "无权操作");
-        }
+        requireSessionOwner(userId, id);
         sessionService.markAsRead(id);
         return Result.ok();
     }
@@ -180,6 +181,7 @@ public class SessionController {
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id,
             @RequestBody UpdateSessionRequest request) {
+        requireSessionOwner(userId, id);
         if (request.getTitle() != null) {
             sessionService.updateTitle(id, request.getTitle());
         }
@@ -225,10 +227,7 @@ public class SessionController {
     public Result<List<SideTaskVO>> listSideTasks(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
-        Session parent = sessionService.getSession(id);
-        if (!parent.getUserId().equals(userId)) {
-            return Result.fail(403, "无权操作");
-        }
+        requireSessionOwner(userId, id);
         List<Session> sideTasks = sessionService.listSideTaskSessions(id, userId);
         List<SideTaskVO> voList = sideTasks.stream().map(s -> {
             SideTaskVO vo = new SideTaskVO();
@@ -248,6 +247,7 @@ public class SessionController {
             @PathVariable Long id,
             @RequestParam(defaultValue = "5") int roundLimit,
             @RequestParam(required = false) Long beforeMessageId) {
+        requireSessionOwner(userId, id);
         SessionService.MessagePage page = sessionService.getMessagesByRounds(id, roundLimit, beforeMessageId);
         List<MessageVO> voList = toMessageVOList(id, page.messages());
         MessagePageVO vo = new MessagePageVO();
@@ -263,8 +263,21 @@ public class SessionController {
             @PathVariable Long sessionId,
             @PathVariable Long messageId,
             @RequestBody EditMessageRequest request) {
+        requireSessionOwner(userId, sessionId);
         Message edited = sessionService.editMessageAndTruncate(messageId, request.getContent(), request.getImages());
         return Result.ok(toMessageVO(edited));
+    }
+
+    /**
+     * 获取会话并校验当前用户是否为拥有者，不一致则抛出 403。
+     */
+    private Session requireSessionOwner(Long userId, Long sessionId) {
+        Session session = sessionService.getSession(sessionId);
+        if (!session.getUserId().equals(userId)) {
+            throw new cn.etarch.mao.common.exception.BusinessException(
+                    cn.etarch.mao.common.result.ErrorCode.FORBIDDEN, "无权操作该会话");
+        }
+        return session;
     }
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -274,6 +287,7 @@ public class SessionController {
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id,
             @RequestParam(defaultValue = "50") int limit) {
+        requireSessionOwner(userId, id);
         List<SessionActivity> activities = activityService.listBySession(id, limit);
         List<ActivityVO> voList = activities.stream().map(this::toActivityVO).collect(Collectors.toList());
         return Result.ok(voList);
@@ -283,6 +297,7 @@ public class SessionController {
     public Result<List<TodoVO>> getTodos(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
+        requireSessionOwner(userId, id);
         List<SessionTodo> todos = sessionTodoMapper.selectList(
                 new LambdaQueryWrapper<SessionTodo>()
                         .eq(SessionTodo::getSessionId, id)
@@ -298,6 +313,7 @@ public class SessionController {
             @PathVariable Long sessionId,
             @PathVariable Long todoId,
             @RequestBody UpdateTodoRequest request) {
+        requireSessionOwner(userId, sessionId);
         LambdaUpdateWrapper<SessionTodo> wrapper = new LambdaUpdateWrapper<SessionTodo>()
                 .eq(SessionTodo::getId, todoId)
                 .eq(SessionTodo::getSessionId, sessionId);
@@ -325,6 +341,7 @@ public class SessionController {
             @AuthenticationPrincipal Long userId,
             @PathVariable Long sessionId,
             @PathVariable Long todoId) {
+        requireSessionOwner(userId, sessionId);
         sessionTodoMapper.delete(
                 new LambdaQueryWrapper<SessionTodo>()
                         .eq(SessionTodo::getId, todoId)
@@ -336,6 +353,7 @@ public class SessionController {
     public Result<List<QueueMessageVO>> getQueue(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
+        requireSessionOwner(userId, id);
         List<MessageQueue> queue = messageQueueService.listPending(id);
         List<QueueMessageVO> voList = queue.stream().map(this::toQueueMessageVO).toList();
         return Result.ok(voList);

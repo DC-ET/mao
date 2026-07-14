@@ -59,6 +59,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       // Increment version to force remount, ensuring latest file content is loaded
       existing.version = (existing.version ?? 0) + 1
       state.activeTabId = existing.id
+      notifyTabsChanged()
       return
     }
     // Use relative path as id (from title which is the filename, but filePath for uniqueness)
@@ -75,6 +76,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     if (existing) {
       existing.fileChange = { ...change }
       state.activeTabId = existing.id
+      notifyTabsChanged()
       return
     }
     const fileName = filePath.split(/[/\\]/).pop() || filePath
@@ -83,6 +85,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     const newTab: Tab = { id, type: 'diff', title: tabTitle, filePath, fileChange: { ...change } }
     state.tabs.push(newTab)
     state.activeTabId = id
+    notifyTabsChanged()
   }
 
   /**

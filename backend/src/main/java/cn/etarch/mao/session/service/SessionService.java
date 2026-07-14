@@ -462,6 +462,10 @@ public class SessionService {
                         Object text = map.get("text");
                         if (text != null) sb.append(text);
                     }
+                } else if (item instanceof ChatRequest.ContentPart part) {
+                    if ("text".equals(part.getType()) && part.getText() != null) {
+                        sb.append(part.getText());
+                    }
                 }
             }
             return sb.toString();
@@ -671,10 +675,10 @@ public class SessionService {
         message.setUpdatedAt(LocalDateTime.now());
         messageMapper.updateById(message);
 
-        // 3. 删除该消息之后的所有消息（按 created_at 降序删除）
+        // 3. 删除该消息之后的所有消息（按 id 截断，与排序 (created_at, id) 保持一致）
         LambdaQueryWrapper<Message> deleteWrapper = new LambdaQueryWrapper<Message>()
                 .eq(Message::getSessionId, message.getSessionId())
-                .gt(Message::getCreatedAt, message.getCreatedAt());
+                .gt(Message::getId, messageId);
         messageMapper.delete(deleteWrapper);
 
         log.info("Edited message {} in session {}, truncated subsequent messages", messageId, message.getSessionId());

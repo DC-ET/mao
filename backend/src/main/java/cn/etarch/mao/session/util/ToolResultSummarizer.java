@@ -132,8 +132,10 @@ public class ToolResultSummarizer {
         JsonNode node = parseJson(result);
         if (node == null) return "编辑 " + displayPath;
 
-        int linesAdded = node.has("lines_added") ? node.get("lines_added").asInt(0) : 0;
-        int linesDeleted = node.has("lines_deleted") ? node.get("lines_deleted").asInt(0) : 0;
+        // lines_added/lines_deleted 嵌套在 file_change 对象中
+        JsonNode fileChange = node.path("file_change");
+        int linesAdded = fileChange.has("lines_added") ? fileChange.get("lines_added").asInt(0) : 0;
+        int linesDeleted = fileChange.has("lines_deleted") ? fileChange.get("lines_deleted").asInt(0) : 0;
         if (linesAdded > 0 || linesDeleted > 0) {
             return "编辑 " + displayPath + " (+" + linesAdded + "行 -" + linesDeleted + "行)";
         }

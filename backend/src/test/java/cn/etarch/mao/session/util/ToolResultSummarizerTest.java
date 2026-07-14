@@ -24,7 +24,7 @@ class ToolResultSummarizerTest {
                 .isEqualTo("读取 src/App.vue (42 行)");
         assertThat(ToolResultSummarizer.summarize("write_file", "{\"path\":\"docs/a.md\"}", "{\"bytes_written\":2048}"))
                 .isEqualTo("写入 docs/a.md (2KB)");
-        assertThat(ToolResultSummarizer.summarize("edit_file", "{\"path\":\"src/main.java\"}", "{\"replacements\":3,\"lines_added\":6,\"lines_deleted\":3}"))
+        assertThat(ToolResultSummarizer.summarize("edit_file", "{\"path\":\"src/main.java\"}", "{\"replacements\":3,\"file_change\":{\"lines_added\":6,\"lines_deleted\":3}}"))
                 .isEqualTo("编辑 src/main.java (+6行 -3行)");
     }
 
