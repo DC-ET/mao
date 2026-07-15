@@ -21,6 +21,21 @@ class SearchToolsTest {
     Path tempDir;
 
     @Test
+    void globSearchFindsNestedPathPatternRegardlessOfProcessCwd() throws Exception {
+        Files.createDirectories(tempDir.resolve("desktop"));
+        Files.writeString(tempDir.resolve("desktop/package.json"), "{}");
+        GlobSearchTool tool = new GlobSearchTool(objectMapper, new PathSandbox(tempDir.toString()));
+
+        JsonNode result = objectMapper.readTree(tool.execute(objectMapper.writeValueAsString(
+                Map.of("pattern", "desktop/package.json")
+        )));
+
+        assertThat(result.get("files")).hasSize(1);
+        assertThat(result.get("files").get(0).asText()).isEqualTo("desktop/package.json");
+        assertThat(result.get("search_root").asText()).isEqualTo(tempDir.toString());
+    }
+
+    @Test
     void globSearchFindsFilesWithJavaFallbackAndMarksTruncation() throws Exception {
         Files.createDirectories(tempDir.resolve("src/main"));
         Files.writeString(tempDir.resolve("src/main/App.java"), "class App {}");

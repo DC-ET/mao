@@ -120,7 +120,9 @@ public class GlobSearchTool implements Tool {
     }
 
     private List<String> searchWithRg(String pattern, Path searchRoot, int headLimit) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder("rg", "--files", "--glob", pattern, searchRoot.toString());
+        // rg 的 glob 相对进程 cwd 解析；将 cwd 设为 searchRoot 后 pattern 才与 Java 回退语义一致
+        ProcessBuilder pb = new ProcessBuilder("rg", "--files", "--glob", pattern, ".");
+        pb.directory(searchRoot.toFile());
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
@@ -128,12 +130,7 @@ public class GlobSearchTool implements Tool {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null && files.size() < headLimit) {
-                Path absolute = Path.of(line).toAbsolutePath().normalize();
-                if (absolute.startsWith(searchRoot)) {
-                    files.add(searchRoot.relativize(absolute).toString());
-                } else {
-                    files.add(absolute.toString());
-                }
+                files.add(relativizeRgPath(line, searchRoot));
             }
         }
 
@@ -161,6 +158,18 @@ public class GlobSearchTool implements Tool {
             log.warn("Java glob search failed for pattern '{}': {}", pattern, e.getMessage());
         }
         return files;
+    }
+
+    static String relativizeRgPath(String pathStr, Path searchRoot) {
+        String trimmed = pathStr.startsWith("./") ? pathStr.substring(2) : pathStr;
+        Path path = Path.of(trimmed);
+        if (path.isAbsolute()) {
+            Path normalized = path.normalize();
+            return normalized.startsWith(searchRoot)
+                    ? searchRoot.relativize(normalized).toString()
+                    : normalized.toString();
+        }
+        return path.normalize().toString();
     }
 
     private boolean isRgAvailable() {

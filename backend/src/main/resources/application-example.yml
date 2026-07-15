@@ -118,6 +118,21 @@ app:
       max-output-length: 500000
       user-agent: "Mozilla/5.0 (compatible; AgentWorkbench/1.0)"
 
+# Weixin Bot
+weixin:
+  bot:
+    enabled: ${WEIXIN_BOT_ENABLED:true}
+    ilink-base-url: ${WEIXIN_BOT_ILINK_BASE_URL:https://ilinkai.weixin.qq.com}
+    cdn-base-url: ${WEIXIN_BOT_CDN_BASE_URL:https://novac2c.cdn.weixin.qq.com/c2c}
+    monitor:
+      enabled: ${WEIXIN_BOT_MONITOR_ENABLED:true}
+      reconcile-interval-ms: ${WEIXIN_BOT_MONITOR_RECONCILE_INTERVAL_MS:5000}
+      long-poll-timeout-ms: ${WEIXIN_BOT_MONITOR_LONG_POLL_TIMEOUT_MS:35000}
+      max-consecutive-failures: ${WEIXIN_BOT_MONITOR_MAX_CONSECUTIVE_FAILURES:3}
+    lease:
+      enabled: ${WEIXIN_BOT_LEASE_ENABLED:true}
+      ttl-ms: ${WEIXIN_BOT_LEASE_TTL_MS:15000}
+
 # Aliyun OSS
 oss:
   region: ${OSS_REGION:oss-cn-hangzhou}

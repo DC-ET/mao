@@ -142,9 +142,10 @@ public class GrepSearchTool implements Tool {
             cmd.add(glob);
         }
         cmd.add(pattern);
-        cmd.add(searchRoot.toString());
+        cmd.add(".");
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.directory(searchRoot.toFile());
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
@@ -211,13 +212,7 @@ public class GrepSearchTool implements Tool {
             }
         }
 
-        Path absolute = Path.of(filePath).toAbsolutePath().normalize();
-        String relativePath;
-        if (absolute.startsWith(searchRoot)) {
-            relativePath = searchRoot.relativize(absolute).toString();
-        } else {
-            relativePath = absolute.toString();
-        }
+        String relativePath = GlobSearchTool.relativizeRgPath(filePath, searchRoot);
 
         Map<String, Object> match = new HashMap<>();
         match.put("file", relativePath);

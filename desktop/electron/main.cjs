@@ -1740,16 +1740,22 @@ async function handleLocalGlobSearch(args, workspace, maoSessionId) {
   }
 }
 
+function relativizeRgPath(filePath, searchRoot) {
+  const trimmed = filePath.startsWith('./') ? filePath.slice(2) : filePath
+  if (path.isAbsolute(trimmed)) {
+    const normalized = path.normalize(trimmed)
+    return normalized.startsWith(searchRoot) ? path.relative(searchRoot, normalized) : normalized
+  }
+  return path.normalize(trimmed)
+}
+
 function globWithRg(pattern, searchRoot, headLimit) {
   return new Promise((resolve, reject) => {
     const { execFile } = require('child_process')
-    execFile('rg', ['--files', '--glob', pattern, searchRoot], { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+    execFile('rg', ['--files', '--glob', pattern, '.'], { cwd: searchRoot, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
       if (err && !stdout) return reject(err)
       const lines = (stdout || '').split('\n').filter(Boolean).slice(0, headLimit)
-      resolve(lines.map(l => {
-        const abs = path.resolve(l)
-        return abs.startsWith(searchRoot) ? path.relative(searchRoot, abs) : abs
-      }))
+      resolve(lines.map(l => relativizeRgPath(l, searchRoot)))
     })
   })
 }
@@ -1812,9 +1818,9 @@ function grepWithRg(pattern, searchRoot, glob, ignoreCase, contextLines, maxOutp
     if (contextLines > 0) { cmd.push('--context'); cmd.push(String(contextLines)) }
     if (glob) { cmd.push('--glob'); cmd.push(glob) }
     cmd.push(pattern)
-    cmd.push(searchRoot)
+    cmd.push('.')
 
-    execFile('rg', cmd, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+    execFile('rg', cmd, { cwd: searchRoot, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
       if (err && !stdout) return resolve({ matches: [], truncated: false, total_matches: 0 })
 
       const lines = (stdout || '').split('\n').filter(Boolean)
@@ -1859,14 +1865,10 @@ function parseRgLine(line, searchRoot) {
     if (secondDash < 0) return null
     const dashLineNum = parseInt(line.substring(firstDash + 1, secondDash), 10)
     if (isNaN(dashLineNum)) return null
-    const abs = path.resolve(line.substring(0, firstDash))
-    const rel = abs.startsWith(searchRoot) ? path.relative(searchRoot, abs) : abs
-    return { file: rel, line: dashLineNum, content: line.substring(secondDash + 1) }
+    return { file: relativizeRgPath(line.substring(0, firstDash), searchRoot), line: dashLineNum, content: line.substring(secondDash + 1) }
   }
 
-  const abs = path.resolve(filePath)
-  const rel = abs.startsWith(searchRoot) ? path.relative(searchRoot, abs) : abs
-  return { file: rel, line: lineNum, content }
+  return { file: relativizeRgPath(filePath, searchRoot), line: lineNum, content }
 }
 
 function grepWithNode(pattern, searchRoot, glob, ignoreCase, contextLines, maxOutputChars) {

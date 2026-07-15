@@ -111,7 +111,7 @@ public class ShellSessionTool implements Tool {
 
         Map<String, Object> yieldTimeMs = new HashMap<>();
         yieldTimeMs.put("type", "integer");
-        yieldTimeMs.put("description", "等待输出的最长时间，单位毫秒（默认 60000）");
+        yieldTimeMs.put("description", "等待输出的最长时间，单位毫秒（默认 300000）");
         properties.put("yield_time_ms", yieldTimeMs);
 
         Map<String, Object> async = new HashMap<>();
@@ -192,7 +192,7 @@ public class ShellSessionTool implements Tool {
         }
 
         String sessionId = args.has("session_id") ? args.get("session_id").asText() : null;
-        int yieldTimeMs = args.has("yield_time_ms") ? args.get("yield_time_ms").asInt() : 60000;
+        int yieldTimeMs = args.has("yield_time_ms") ? args.get("yield_time_ms").asInt() : 300000;
         String workdir = args.has("workdir") ? args.get("workdir").asText() : null;
         boolean isAsync = args.has("async") && args.get("async").asBoolean();
         boolean keepSession = args.has("keep_session") && args.get("keep_session").asBoolean();
