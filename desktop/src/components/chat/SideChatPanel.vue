@@ -284,7 +284,15 @@ function handleModelSwitch(modelId: number) {
 }
 
 async function handleChatSend(text: string, _files: File[]) {
-  if (!text.trim() || sending.value) return
+  if (!text.trim()) return
+
+  // 边路任务正在执行中：将消息加入队列（不受 sending 状态阻塞）
+  if (hasRealSession.value && isSideActive.value) {
+    enqueueMessage(String(realSessionId.value), text.trim(), generateUUID(), [])
+    return
+  }
+
+  if (sending.value) return
 
   const localSkills = await collectLocalUnsyncedSkills(parentExecutionMode.value, isElectron)
   const agentsMdContent = await collectAgentsMdContent(parentWorkspace.value, parentExecutionMode.value, isElectron)
@@ -317,12 +325,6 @@ async function handleChatSend(text: string, _files: File[]) {
     sending.value = true
   } else {
     const sid = String(realSessionId.value)
-
-    // 如果边路任务正在执行中，将消息加入队列
-    if (isSideActive.value) {
-      enqueueMessage(sid, text.trim(), generateUUID(), [])
-      return
-    }
 
     sessionStore.addUserMessage(sid, {
       id: 'side_user_' + Date.now(),
