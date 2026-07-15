@@ -2,8 +2,13 @@
   <div class="side-chat-panel">
     <!-- 消息列表 -->
     <div class="messages" ref="messagesContainer">
+      <!-- 创建会话中 loading -->
+      <div v-if="!hasRealSession && sending && displayMessages.length === 0" class="side-chat-loading">
+        <el-icon :size="32" class="is-loading"><Loading /></el-icon>
+      </div>
+
       <!-- 首条消息提示 -->
-      <div v-if="!hasRealSession && displayMessages.length === 0 && !sending" class="side-chat-empty">
+      <div v-else-if="!hasRealSession && displayMessages.length === 0 && !sending" class="side-chat-empty">
         <el-icon :size="48" class="empty-icon"><Opportunity /></el-icon>
         <p>边路任务：独立的对话通道，不影响主任务上下文</p>
       </div>
@@ -68,7 +73,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, inject, type Ref } from 'vue'
-import { Opportunity } from '@element-plus/icons-vue'
+import { Opportunity, Loading } from '@element-plus/icons-vue'
 import { useSessionStore } from '../../stores/session'
 import { useStreamWS } from '../../composables/useStreamWS'
 import { api } from '../../api'
@@ -383,6 +388,14 @@ function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
 .input-area {
   flex-shrink: 0;
   margin-bottom: 10px;
+}
+
+.side-chat-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--aw-ink-muted-48, #909399);
 }
 
 .side-chat-empty {
