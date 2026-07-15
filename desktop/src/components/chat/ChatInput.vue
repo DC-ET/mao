@@ -795,6 +795,12 @@ function handleSend() {
   const text = editor.value.getText().trim()
   if (!text && pendingFiles.value.length === 0) return
 
+  // 检查视觉能力：如果有图片但模型明确不支持视觉，提示用户
+  if (pendingFiles.value.length > 0 && props.modelSupportsVision === false) {
+    ElMessage.warning('当前模型不支持图片输入，请切换到支持视觉的模型')
+    return
+  }
+
   emit('send', text, [...pendingFiles.value])
 
   editor.value.commands.clearContent()

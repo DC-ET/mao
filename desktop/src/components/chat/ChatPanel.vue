@@ -73,7 +73,7 @@
       :project-key="currentSession?.projectKey"
       :execution-mode="isNewTaskMode ? newTaskMode : executionMode"
       :model-id="isNewTaskMode ? newTaskModelId : currentSession?.modelId"
-      :model-supports-vision="currentSession?.modelSupportsVision"
+      :model-supports-vision="currentModelSupportsVision"
       :permission-level="permissionLevel"
       :is-new-task="isNewTaskMode"
       :selected-agent-id="newTaskAgentId"
@@ -145,6 +145,7 @@ const router = useRouter()
 const { openWithContent } = useCommandDrawer()
 
 const chatInputRef = ref<InstanceType<typeof ChatInput>>()
+const models = ref<Array<{ id: number; supportsVision: boolean }>>([])
 
 const {
   messages,
@@ -240,6 +241,18 @@ watch(isNewTaskMode, (enabled) => {
 
 const currentSession = computed(() => sessionStore.activeSession)
 
+const currentModelSupportsVision = computed(() => {
+  if (isNewTaskMode.value) {
+    // 新建任务模式：从模型列表中查找
+    const modelId = newTaskModelId.value
+    if (!modelId) return undefined
+    const model = models.value.find(m => m.id === modelId)
+    return model?.supportsVision
+  }
+  // 已有会话模式：从会话中获取
+  return currentSession.value?.modelSupportsVision
+})
+
 const activePendingApprovals = computed(() =>
   pendingApprovals.value.filter(a => !a.sessionId || a.sessionId === sessionStore.activeSessionId)
 )
@@ -259,10 +272,18 @@ const showTypingIndicator = computed(() => {
   return !hasText && !hasTools
 })
 
-onMounted(() => {
+onMounted(async () => {
   const el = messagesContainer.value
   el?.addEventListener('scroll', handleScroll, { passive: true })
   el?.addEventListener('wheel', handleWheel, { passive: true })
+  
+  // 获取模型列表，用于新建任务模式下判断视觉能力
+  try {
+    const { data } = await api.get('/models/active')
+    models.value = data || []
+  } catch {
+    // ignore
+  }
 })
 
 onUnmounted(() => {
