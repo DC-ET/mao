@@ -64,7 +64,7 @@ api.interceptors.response.use(
     return data
   },
   async (error) => {
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean; skipErrorToast?: boolean }
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true
@@ -107,7 +107,7 @@ api.interceptors.response.use(
           (error as Error & { toastShown?: boolean }).toastShown = true
         }
       }
-    } else {
+    } else if (!originalRequest.skipErrorToast) {
       ElMessage.error('网络错误')
     }
     return Promise.reject(error)

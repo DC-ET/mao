@@ -251,6 +251,18 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     await connect()
 
     try {
+      // Defensive fallback: if sessionId is lost (e.g. after returning from settings),
+      // recover from the store's activeSessionId before creating a new session
+      if (!sessionId.value && sessionStore.activeSessionId) {
+        sessionId.value = sessionStore.activeSessionId
+        const active = sessionStore.activeSession
+        if (active) {
+          agentId.value = String(active.agentId)
+          if (active.workspace) workspace.value = active.workspace
+          if (active.agentName) agentName.value = active.agentName
+        }
+      }
+
       // Create session if needed
       if (!sessionId.value) {
         if (executionMode.value === 'LOCAL' && isElectron && !workspace.value) {
@@ -671,6 +683,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     // Sync agent name from session data
     if (session?.agentName) {
       agentName.value = session.agentName
+    }
+
+    // Sync agentId from session data — critical for existing sessions
+    if (session?.agentId) {
+      agentId.value = String(session.agentId)
     }
 
     // Sync sending state with the session's actual phase

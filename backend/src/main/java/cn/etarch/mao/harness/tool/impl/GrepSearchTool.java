@@ -1,6 +1,7 @@
 package cn.etarch.mao.harness.tool.impl;
 
 import cn.etarch.mao.harness.safety.PathSandbox;
+import cn.etarch.mao.harness.tool.SearchScope;
 import cn.etarch.mao.harness.tool.Tool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -88,24 +89,26 @@ public class GrepSearchTool implements Tool {
             int contextLines = args.has("context_lines") ? args.get("context_lines").asInt(0) : 0;
             int maxOutputChars = args.has("max_output_chars") ? args.get("max_output_chars").asInt(DEFAULT_MAX_OUTPUT_CHARS) : DEFAULT_MAX_OUTPUT_CHARS;
 
-            Path searchRoot;
+            Path resolvedPath;
             if (args.has("path") && !args.get("path").asText().isEmpty()) {
-                searchRoot = pathSandbox.resolve(args.get("path").asText(), workspace);
+                resolvedPath = pathSandbox.resolve(args.get("path").asText(), workspace);
             } else {
-                searchRoot = pathSandbox.getEffectiveWorkspaceRoot(workspace);
+                resolvedPath = pathSandbox.getEffectiveWorkspaceRoot(workspace);
             }
+            Path workspaceRoot = pathSandbox.getEffectiveWorkspaceRoot(workspace);
+            SearchScope scope = SearchScope.from(resolvedPath);
 
             List<Map<String, Object>> matches;
             int totalMatches;
             boolean truncated;
 
             if (isRgAvailable()) {
-                var result = searchWithRg(pattern, searchRoot, glob, ignoreCase, contextLines, maxOutputChars);
+                var result = searchWithRg(pattern, scope, workspaceRoot, glob, ignoreCase, contextLines, maxOutputChars);
                 matches = result.matches;
                 totalMatches = result.totalMatches;
                 truncated = result.truncated;
             } else {
-                var result = searchWithJava(pattern, searchRoot, glob, ignoreCase, contextLines, maxOutputChars);
+                var result = searchWithJava(pattern, scope, workspaceRoot, glob, ignoreCase, contextLines, maxOutputChars);
                 matches = result.matches;
                 totalMatches = result.totalMatches;
                 truncated = result.truncated;
@@ -129,7 +132,7 @@ public class GrepSearchTool implements Tool {
         }
     }
 
-    private SearchResult searchWithRg(String pattern, Path searchRoot, String glob, boolean ignoreCase,
+    private SearchResult searchWithRg(String pattern, SearchScope scope, Path workspaceRoot, String glob, boolean ignoreCase,
                                        int contextLines, int maxOutputChars) throws Exception {
         List<String> cmd = new ArrayList<>(List.of("rg", "--line-number", "--no-heading"));
         if (ignoreCase) cmd.add("--ignore-case");
@@ -142,10 +145,10 @@ public class GrepSearchTool implements Tool {
             cmd.add(glob);
         }
         cmd.add(pattern);
-        cmd.add(".");
+        cmd.add(scope.rgTarget());
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.directory(searchRoot.toFile());
+        pb.directory(scope.cwd().toFile());
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
@@ -161,7 +164,7 @@ public class GrepSearchTool implements Tool {
                     truncated = true;
                     break;
                 }
-                Map<String, Object> match = parseRgLine(line, searchRoot);
+                Map<String, Object> match = parseRgLine(line, scope, workspaceRoot);
                 if (match != null) {
                     matches.add(match);
                     totalMatches++;
@@ -181,7 +184,10 @@ public class GrepSearchTool implements Tool {
         return new SearchResult(matches, totalMatches, truncated);
     }
 
-    private Map<String, Object> parseRgLine(String line, Path searchRoot) {
+    private Map<String, Object> parseRgLine(String line, SearchScope scope, Path workspaceRoot) {
+        if (scope.isSingleFile()) {
+            return parseRgSingleFileLine(line, scope, workspaceRoot);
+        }
         // rg output format: file:line:content or file-line-content (context)
         int firstColon = line.indexOf(':');
         if (firstColon < 0) return null;
@@ -212,7 +218,7 @@ public class GrepSearchTool implements Tool {
             }
         }
 
-        String relativePath = GlobSearchTool.relativizeRgPath(filePath, searchRoot);
+        String relativePath = scope.outputFilePath(filePath, workspaceRoot);
 
         Map<String, Object> match = new HashMap<>();
         match.put("file", relativePath);
@@ -221,7 +227,34 @@ public class GrepSearchTool implements Tool {
         return match;
     }
 
-    private SearchResult searchWithJava(String pattern, Path searchRoot, String glob, boolean ignoreCase,
+    private Map<String, Object> parseRgSingleFileLine(String line, SearchScope scope, Path workspaceRoot) {
+        // Single-file mode: rg emits "line:content" or "line-content" (context), without a filename prefix
+        int colon = line.indexOf(':');
+        int dash = line.indexOf('-');
+        int sepIdx;
+        if (colon > 0 && (dash < 0 || colon < dash)) {
+            sepIdx = colon;
+        } else if (dash > 0) {
+            sepIdx = dash;
+        } else {
+            return null;
+        }
+
+        int lineNum;
+        try {
+            lineNum = Integer.parseInt(line.substring(0, sepIdx));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+
+        Map<String, Object> match = new HashMap<>();
+        match.put("file", scope.outputFilePath("", workspaceRoot));
+        match.put("line", lineNum);
+        match.put("content", line.substring(sepIdx + 1));
+        return match;
+    }
+
+    private SearchResult searchWithJava(String pattern, SearchScope scope, Path workspaceRoot, String glob, boolean ignoreCase,
                                          int contextLines, int maxOutputChars) {
         int flags = Pattern.MULTILINE;
         if (ignoreCase) flags |= Pattern.CASE_INSENSITIVE;
@@ -236,21 +269,22 @@ public class GrepSearchTool implements Tool {
         int charsUsed = 0;
         boolean truncated = false;
 
-        try (Stream<Path> walk = Files.walk(searchRoot)) {
-            List<Path> files = walk.filter(Files::isRegularFile)
-                    .filter(p -> globMatcher == null || globMatcher.matches(p.getFileName()))
-                    .toList();
+        try {
+            List<Path> files;
+            if (scope.isSingleFile()) {
+                files = List.of(scope.singleFile());
+            } else {
+                try (Stream<Path> walk = Files.walk(scope.cwd())) {
+                    files = walk.filter(Files::isRegularFile)
+                            .filter(p -> globMatcher == null || globMatcher.matches(p.getFileName()))
+                            .toList();
+                }
+            }
 
             for (Path file : files) {
                 if (truncated) break;
 
-                String relativePath;
-                Path absolute = file.toAbsolutePath().normalize();
-                if (absolute.startsWith(searchRoot)) {
-                    relativePath = searchRoot.relativize(absolute).toString();
-                } else {
-                    relativePath = absolute.toString();
-                }
+                String relativePath = scope.outputFilePath(file.toString(), workspaceRoot);
 
                 List<String> lines;
                 try {

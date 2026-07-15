@@ -1,6 +1,7 @@
 package cn.etarch.mao.harness.tool.impl;
 
 import cn.etarch.mao.harness.safety.PathSandbox;
+import cn.etarch.mao.harness.tool.SearchScope;
 import cn.etarch.mao.harness.tool.Tool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -82,19 +83,20 @@ public class GlobSearchTool implements Tool {
             String pattern = args.get("pattern").asText();
             int headLimit = args.has("head_limit") ? args.get("head_limit").asInt(DEFAULT_HEAD_LIMIT) : DEFAULT_HEAD_LIMIT;
 
-            Path searchRoot;
+            Path resolvedPath;
             if (args.has("path") && !args.get("path").asText().isEmpty()) {
-                searchRoot = pathSandbox.resolve(args.get("path").asText(), workspace);
+                resolvedPath = pathSandbox.resolve(args.get("path").asText(), workspace);
             } else {
-                searchRoot = pathSandbox.getEffectiveWorkspaceRoot(workspace);
+                resolvedPath = pathSandbox.getEffectiveWorkspaceRoot(workspace);
             }
+            SearchScope scope = SearchScope.from(resolvedPath);
 
             List<String> files;
             boolean rgUsed = isRgAvailable();
             if (rgUsed) {
-                files = searchWithRg(pattern, searchRoot, headLimit);
+                files = searchWithRg(pattern, scope, headLimit);
             } else {
-                files = searchWithJava(pattern, searchRoot, headLimit);
+                files = searchWithJava(pattern, scope, headLimit);
             }
 
             boolean truncated = files.size() >= headLimit;
@@ -102,7 +104,7 @@ public class GlobSearchTool implements Tool {
 
             return objectMapper.writeValueAsString(Map.of(
                     "files", files,
-                    "search_root", searchRoot.toString(),
+                    "search_root", scope.cwd().toString(),
                     "truncated", truncated,
                     "total_matched", totalMatched
             ));
@@ -119,10 +121,10 @@ public class GlobSearchTool implements Tool {
         }
     }
 
-    private List<String> searchWithRg(String pattern, Path searchRoot, int headLimit) throws Exception {
-        // rg 的 glob 相对进程 cwd 解析；将 cwd 设为 searchRoot 后 pattern 才与 Java 回退语义一致
-        ProcessBuilder pb = new ProcessBuilder("rg", "--files", "--glob", pattern, ".");
-        pb.directory(searchRoot.toFile());
+    private List<String> searchWithRg(String pattern, SearchScope scope, int headLimit) throws Exception {
+        // rg 的 glob 相对进程 cwd 解析；将 cwd 设为搜索目录后 pattern 才与 Java 回退语义一致
+        ProcessBuilder pb = new ProcessBuilder("rg", "--files", "--glob", pattern, scope.rgTarget());
+        pb.directory(scope.cwd().toFile());
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
@@ -130,7 +132,7 @@ public class GlobSearchTool implements Tool {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null && files.size() < headLimit) {
-                files.add(relativizeRgPath(line, searchRoot));
+                files.add(SearchScope.relativizeRgPath(line, scope.cwd()));
             }
         }
 
@@ -140,9 +142,10 @@ public class GlobSearchTool implements Tool {
         return files;
     }
 
-    private List<String> searchWithJava(String pattern, Path searchRoot, int headLimit) {
+    private List<String> searchWithJava(String pattern, SearchScope scope, int headLimit) {
         PathMatcher matcher = FileSystems.getDefault().getPathMatcher("glob:" + pattern);
         List<String> files = new ArrayList<>();
+        Path searchRoot = scope.cwd();
         try (Stream<Path> walk = Files.walk(searchRoot)) {
             walk.filter(Files::isRegularFile)
                     .filter(p -> {
@@ -158,18 +161,6 @@ public class GlobSearchTool implements Tool {
             log.warn("Java glob search failed for pattern '{}': {}", pattern, e.getMessage());
         }
         return files;
-    }
-
-    static String relativizeRgPath(String pathStr, Path searchRoot) {
-        String trimmed = pathStr.startsWith("./") ? pathStr.substring(2) : pathStr;
-        Path path = Path.of(trimmed);
-        if (path.isAbsolute()) {
-            Path normalized = path.normalize();
-            return normalized.startsWith(searchRoot)
-                    ? searchRoot.relativize(normalized).toString()
-                    : normalized.toString();
-        }
-        return path.normalize().toString();
     }
 
     private boolean isRgAvailable() {

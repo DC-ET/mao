@@ -102,8 +102,17 @@ public class WeixinSendService {
                 }
 
                 JsonNode responseJson = objectMapper.readTree(response.body().string());
-                int ret = responseJson.get("ret").asInt();
-                int errcode = responseJson.get("errcode").asInt();
+                JsonNode retNode = responseJson.get("ret");
+                JsonNode errcodeNode = responseJson.get("errcode");
+                
+                if (retNode == null || errcodeNode == null) {
+                    log.error("发送消息响应格式异常: response={}, accountId={}, toUserId={}", 
+                            responseJson, accountId, toUserId);
+                    return false;
+                }
+                
+                int ret = retNode.asInt();
+                int errcode = errcodeNode.asInt();
 
                 if (ret == 0 && errcode == 0) {
                     log.debug("发送消息成功, accountId={}, toUserId={}, clientId={}", accountId, toUserId, clientId);

@@ -6,6 +6,8 @@ import cn.etarch.mao.weixin.model.QrcodeResponse;
 import cn.etarch.mao.weixin.model.QrcodeStatusResponse;
 import cn.etarch.mao.weixin.service.QrLoginService;
 import cn.etarch.mao.weixin.service.WeixinAccountRepository;
+import cn.etarch.mao.weixin.service.WeixinMonitorService;
+import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -17,6 +19,7 @@ public class WeixinBotController {
 
     private final QrLoginService qrLoginService;
     private final WeixinAccountRepository accountRepository;
+    private final WeixinMonitorService monitorService;
 
     /**
      * 获取微信Bot绑定二维码
@@ -64,6 +67,11 @@ public class WeixinBotController {
      */
     @DeleteMapping("/binding")
     public Result<Void> unbind(@AuthenticationPrincipal Long userId) {
+        // 先停止该账号的消息监控
+        WeixinChannelAccount account = accountRepository.findByUserId(userId);
+        if (account != null) {
+            monitorService.stopMonitor(account.getAccountId());
+        }
         accountRepository.unbind(userId);
         return Result.ok();
     }

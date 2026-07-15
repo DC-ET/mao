@@ -54,6 +54,22 @@ class SearchToolsTest {
     }
 
     @Test
+    void grepSearchFindsMatchesInSingleFilePath() throws Exception {
+        Files.createDirectories(tempDir.resolve("desktop/src"));
+        Path file = tempDir.resolve("desktop/src/useChat.ts");
+        Files.writeString(file, "export function useChat() {}\nneedle line\n");
+
+        GrepSearchTool tool = new GrepSearchTool(objectMapper, new PathSandbox(tempDir.toString()));
+        JsonNode result = objectMapper.readTree(tool.execute(
+                objectMapper.writeValueAsString(Map.of("pattern", "needle", "path", "desktop/src/useChat.ts")),
+                tempDir.toString()
+        ));
+
+        assertThat(result.get("total_matches").asInt()).isEqualTo(1);
+        assertThat(result.get("matches").get(0).get("file").asText()).isEqualTo("desktop/src/useChat.ts");
+    }
+
+    @Test
     void grepSearchFindsMatchesWithContextAndIgnoreCase() throws Exception {
         Files.createDirectories(tempDir.resolve("src"));
         Files.writeString(tempDir.resolve("src/a.txt"), "before\nNeedle here\nafter\n");

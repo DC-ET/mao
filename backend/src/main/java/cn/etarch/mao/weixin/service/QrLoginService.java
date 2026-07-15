@@ -15,7 +15,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
-import java.util.Base64;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,24 +27,22 @@ public class QrLoginService {
 
     private final WeixinBotConfig config;
     private final WeixinAccountRepository accountRepository;
+    private final WeixinMonitorService monitorService;
     private final ObjectMapper objectMapper;
 
     // 获取二维码的客户端 - 较短超时
     private final OkHttpClient qrHttpClient = new OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(35, TimeUnit.SECONDS)
             .build();
 
-    // 查询状态的客户端 - 较短超时，避免长时间阻塞
+    // 查询状态的客户端 - callTimeout 限制整个请求生命周期
+    // 微信 get_qrcode_status 是长轮询接口，readTimeout 可能因 chunked keep-alive 不触发
     private final OkHttpClient statusHttpClient = new OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .build();
-
-    // 下载图片的客户端
-    private final OkHttpClient imageHttpClient = new OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .callTimeout(10, TimeUnit.SECONDS)
             .build();
 
     // 临时存储二维码会话信息: sessionKey -> qrcode
@@ -77,17 +74,21 @@ public class QrLoginService {
                 
                 JsonNode jsonNode = objectMapper.readTree(responseBody);
                 String qrcode = jsonNode.get("qrcode").asText();
-                String qrImgContent = jsonNode.get("qrcode_img_content").asText();
+                JsonNode qrImgNode = jsonNode.get("qrcode_img_content");
+                String qrImgContent = qrImgNode != null ? qrImgNode.asText() : "";
 
-                // 处理二维码图片 - 如果是URL则下载并转换为base64
+                // 处理二维码图片
                 String qrDataUrl;
                 if (qrImgContent.startsWith("http://") || qrImgContent.startsWith("https://")) {
-                    qrDataUrl = downloadAndConvertToBase64(qrImgContent);
+                    // 微信返回的是页面URL，前端会用 qrcode 库生成二维码图片
+                    qrDataUrl = qrImgContent;
                 } else if (qrImgContent.startsWith("data:")) {
                     qrDataUrl = qrImgContent;
-                } else {
+                } else if (!qrImgContent.isEmpty()) {
                     // 可能是纯base64数据
                     qrDataUrl = "data:image/png;base64," + qrImgContent;
+                } else {
+                    throw new BusinessException(ErrorCode.INTERNAL_ERROR, "获取二维码失败: 图片内容为空");
                 }
 
                 // 生成会话Key
@@ -103,35 +104,6 @@ public class QrLoginService {
         } catch (IOException e) {
             log.error("获取微信二维码失败", e);
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "获取二维码失败: " + e.getMessage());
-        }
-    }
-
-    /**
-     * 下载图片并转换为base64 data URL
-     */
-    private String downloadAndConvertToBase64(String imageUrl) throws IOException {
-        Request request = new Request.Builder()
-                .url(imageUrl)
-                .get()
-                .build();
-
-        try (Response response = imageHttpClient.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                log.warn("下载二维码图片失败: HTTP {}, URL: {}", response.code(), imageUrl);
-                // 返回一个占位图片或抛出异常
-                throw new IOException("下载二维码图片失败: HTTP " + response.code());
-            }
-
-            byte[] imageBytes = response.body().bytes();
-            String base64 = Base64.getEncoder().encodeToString(imageBytes);
-            
-            // 根据Content-Type确定MIME类型
-            String contentType = response.header("Content-Type", "image/png");
-            if (contentType.contains(";")) {
-                contentType = contentType.substring(0, contentType.indexOf(";")).trim();
-            }
-            
-            return "data:" + contentType + ";base64," + base64;
         }
     }
 
@@ -178,8 +150,12 @@ public class QrLoginService {
                 return builder.build();
             }
         } catch (IOException e) {
-            log.error("查询扫码状态失败", e);
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "查询扫码状态失败: " + e.getMessage());
+            // 微信长轮询接口可能因 callTimeout/readTimeout 超时
+            // 此时并非真正的错误，而是扫码尚未完成，返回 wait 状态
+            log.debug("查询扫码状态超时（视为wait）: {}", e.getMessage());
+            return QrcodeStatusResponse.builder()
+                    .status("wait")
+                    .build();
         }
     }
 
@@ -217,6 +193,9 @@ public class QrLoginService {
             }
 
             log.info("保存微信Bot绑定凭据成功, userId={}", userId);
+
+            // 启动该账号的消息监控
+            monitorService.startMonitor(accountId);
         } catch (Exception e) {
             log.error("保存微信Bot绑定凭据失败", e);
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "保存绑定凭据失败");

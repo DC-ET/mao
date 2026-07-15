@@ -23,6 +23,9 @@ class QrLoginServiceTest {
     @Mock
     private WeixinAccountRepository accountRepository;
 
+    @Mock
+    private WeixinMonitorService monitorService;
+
     private QrLoginService qrLoginService;
     private WeixinBotConfig config;
     private ObjectMapper objectMapper;
@@ -32,7 +35,7 @@ class QrLoginServiceTest {
         config = new WeixinBotConfig();
         config.setEnabled(true);
         objectMapper = new ObjectMapper();
-        qrLoginService = new QrLoginService(config, accountRepository, objectMapper);
+        qrLoginService = new QrLoginService(config, accountRepository, monitorService, objectMapper);
     }
 
     @Test

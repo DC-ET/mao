@@ -385,7 +385,7 @@ async function loadSession(sid: string) {
   newTaskAgentId.value = null
 
   try {
-    const { data } = await (await import('../../api')).api.get(`/sessions/${sid}`)
+    const { data } = await api.get(`/sessions/${sid}`)
     if (data) {
       // Preserve locally derived title (avoids race with deriveTitle in sendMessage)
       const existing = sessionStore.sessions.find(s => String(s.id) === String(sid))

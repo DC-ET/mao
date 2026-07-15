@@ -48,7 +48,7 @@ public class WeixinSessionService {
                 "Linux",  // 操作系统版本
                 null,     // 模型ID
                 "weixin-bot",  // 项目Key
-                "existing",  // 工作区模式
+                "new",    // 工作区模式 - 使用new模式自动创建工作区
                 null,     // Git克隆URL
                 null      // Git分支
         );

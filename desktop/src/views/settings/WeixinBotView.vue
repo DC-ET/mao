@@ -74,6 +74,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import QRCode from 'qrcode'
 import { api } from '../../api'
 
 interface BindingStatus {
@@ -103,6 +104,7 @@ const qrcodeError = ref('')
 const qrcodeData = ref<QrcodeData>({ sessionKey: '', qrDataUrl: '', message: '' })
 const scanStatus = ref('')
 let statusPollingTimer: number | null = null
+let pollingActive = false
 
 function formatTime(value?: string) {
   if (!value) return '-'
@@ -125,7 +127,14 @@ async function fetchQrcode() {
   scanStatus.value = ''
   try {
     const { data } = await api.get('/weixin/qrcode')
-    qrcodeData.value = data
+    // qrcode_img_content 是微信页面URL，不是图片，需要用 qrcode 库生成二维码图片
+    const qrImageUrl = data.qrDataUrl
+    const dataUrl = await QRCode.toDataURL(qrImageUrl, {
+      width: 256,
+      margin: 2,
+      errorCorrectionLevel: 'M'
+    })
+    qrcodeData.value = { ...data, qrDataUrl: dataUrl }
     startStatusPolling()
   } catch (error: any) {
     qrcodeError.value = error.message || '获取二维码失败'
@@ -136,44 +145,60 @@ async function fetchQrcode() {
 
 function startStatusPolling() {
   stopStatusPolling()
-  statusPollingTimer = window.setInterval(async () => {
-    try {
-      const { data } = await api.get<QrcodeStatusData>('/weixin/qrcode/status', {
-        params: { sessionKey: qrcodeData.value.sessionKey },
-        timeout: 15000  // 15秒超时，避免长时间阻塞
-      })
-      scanStatus.value = data.status
+  pollingActive = true
+  pollStatus()
+}
 
-      if (data.status === 'confirmed') {
-        stopStatusPolling()
+async function pollStatus() {
+  if (!pollingActive) return
 
-        // 确认绑定
-        if (data.botToken && data.baseUrl && data.ilinkUserId) {
-          await api.post('/weixin/binding/confirm', null, {
-            params: {
-              sessionKey: qrcodeData.value.sessionKey,
-              botToken: data.botToken,
-              baseUrl: data.baseUrl,
-              ilinkUserId: data.ilinkUserId
-            }
-          })
-        }
+  try {
+    const { data } = await api.get<QrcodeStatusData>('/weixin/qrcode/status', {
+      params: { sessionKey: qrcodeData.value.sessionKey },
+      timeout: 12000,
+      skipErrorToast: true
+    } as any)
+    scanStatus.value = data.status
 
-        ElMessage.success('微信Bot绑定成功！')
-        dialogVisible.value = false
-        await fetchBindingStatus()
-      } else if (data.status === 'expired') {
-        stopStatusPolling()
+    if (data.status === 'confirmed') {
+      stopStatusPolling()
+
+      // 确认绑定
+      if (data.botToken && data.baseUrl && data.ilinkUserId) {
+        await api.post('/weixin/binding/confirm', null, {
+          params: {
+            sessionKey: qrcodeData.value.sessionKey,
+            botToken: data.botToken,
+            baseUrl: data.baseUrl,
+            ilinkUserId: data.ilinkUserId
+          }
+        })
       }
-    } catch (error) {
-      console.error('查询扫码状态失败:', error)
+
+      ElMessage.success('微信Bot绑定成功！')
+      dialogVisible.value = false
+      await fetchBindingStatus()
+    } else if (data.status === 'expired') {
+      stopStatusPolling()
+    } else {
+      // 继续轮询（等上一轮完成后再发起下一轮，避免请求堆积）
+      if (pollingActive) {
+        statusPollingTimer = window.setTimeout(pollStatus, 2000)
+      }
     }
-  }, 2000)
+  } catch (error) {
+    console.error('查询扫码状态失败:', error)
+    // 超时或网络错误时继续轮询，不中断等待流程
+    if (pollingActive) {
+      statusPollingTimer = window.setTimeout(pollStatus, 3000)
+    }
+  }
 }
 
 function stopStatusPolling() {
+  pollingActive = false
   if (statusPollingTimer) {
-    clearInterval(statusPollingTimer)
+    clearTimeout(statusPollingTimer)
     statusPollingTimer = null
   }
 }
