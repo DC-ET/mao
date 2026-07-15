@@ -390,13 +390,23 @@ watch(buildScrollAnchor, () => {
 }, { flush: 'post' })
 
 // Phase sync
+// When sending goes false, verify against the server-side phase before
+// resetting currentPhase.  sending is a single ref shared by all sessions;
+// a non-active session completing can resolve its pendingCallbacks and set
+// sending=false even though the *active* session is still running.
+const ACTIVE_PHASES: TaskPhase[] = ['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING']
 watch(() => sending.value, (isSending) => {
   if (!sessionStore.activeSessionId) return
   if (isSending) {
     currentPhase.value = 'RUNNING'
   } else {
     if (currentPhase.value === 'RUNNING') {
-      currentPhase.value = 'IDLE'
+      const serverPhase = sessionStore.activeSession?.phase as TaskPhase | undefined
+      if (serverPhase && ACTIVE_PHASES.includes(serverPhase)) {
+        currentPhase.value = serverPhase
+      } else {
+        currentPhase.value = 'IDLE'
+      }
     }
   }
 })

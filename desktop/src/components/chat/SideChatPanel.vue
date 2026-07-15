@@ -56,6 +56,7 @@
       </div>
 
       <ChatInput
+        ref="chatInputRef"
         :loading="sending"
         :workspace="parentWorkspace"
         :cloud-project-key="parentCloudProjectKey"
@@ -72,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, inject, type Ref } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, inject, type Ref } from 'vue'
 import { Opportunity, Loading } from '@element-plus/icons-vue'
 import { useSessionStore } from '../../stores/session'
 import { useStreamWS } from '../../composables/useStreamWS'
@@ -92,6 +93,8 @@ import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QuestionPanel from './QuestionPanel.vue'
 import QueuePanel from './QueuePanel.vue'
+
+const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 
 const props = defineProps<{
   tabId: string
@@ -264,6 +267,11 @@ onMounted(async () => {
     subscribe(String(realSessionId.value))
     await Promise.all([loadSideSessionMeta(), fetchMessages(), fetchQueue()])
   }
+  nextTick(() => chatInputRef.value?.focusInput())
+})
+
+onActivated(() => {
+  nextTick(() => chatInputRef.value?.focusInput())
 })
 
 onUnmounted(() => {
