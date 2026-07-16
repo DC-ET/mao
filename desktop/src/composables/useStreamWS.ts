@@ -497,9 +497,23 @@ export function useStreamWS() {
         break
 
       case 'user_message_saved':
-        // Server returned the real DB ID for a user message — update the optimistic temp ID
+        // Desktop send: update optimistic temp ID.
+        // Weixin/remote: append the inbound user message so open sessions stream live.
         if (sessionId && data?.messageId) {
-          sessionStore.updateLastMessageId(sessionId, 'user', String(data.messageId))
+          if (data.source === 'weixin') {
+            sessionStore.addUserMessage(sessionId, {
+              id: String(data.messageId),
+              role: 'user',
+              content: typeof data.content === 'string' ? data.content : '',
+              createdAt: nowDateTime(),
+              images: Array.isArray(data.images) && data.images.length > 0
+                ? data.images as string[]
+                : undefined
+            })
+            sessionStore.ensureStreamingAssistantMessage(sessionId)
+          } else {
+            sessionStore.updateLastMessageId(sessionId, 'user', String(data.messageId))
+          }
         }
         break
 

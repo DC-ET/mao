@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentWeixinInboundHandlerTest {
 
     private final AgentWeixinInboundHandler handler = new AgentWeixinInboundHandler(
+            null, null, null, null, null, null,
             null, null, null, null, null, null);
 
     @Test

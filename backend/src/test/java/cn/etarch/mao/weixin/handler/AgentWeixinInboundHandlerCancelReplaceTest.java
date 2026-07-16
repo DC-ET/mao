@@ -3,9 +3,15 @@ package cn.etarch.mao.weixin.handler;
 import cn.etarch.mao.harness.core.AgentLoop;
 import cn.etarch.mao.harness.core.HarnessService;
 import cn.etarch.mao.harness.shell.ShellSessionManager;
+import cn.etarch.mao.harness.todo.mapper.SessionTodoMapper;
+import cn.etarch.mao.model.service.ModelService;
+import cn.etarch.mao.session.activity.ActivityService;
+import cn.etarch.mao.session.activity.SessionActivityHeartbeat;
 import cn.etarch.mao.session.entity.Message;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.service.SessionService;
+import cn.etarch.mao.session.service.TaskTerminalService;
+import cn.etarch.mao.session.ws.StreamingWsRegistry;
 import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
 import cn.etarch.mao.weixin.model.WeixinInboundMessageContext;
 import cn.etarch.mao.weixin.model.WeixinReply;
@@ -32,8 +38,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -46,6 +53,12 @@ class AgentWeixinInboundHandlerCancelReplaceTest {
     @Mock WeixinAccountRepository accountRepository;
     @Mock AgentLoop agentLoop;
     @Mock ShellSessionManager shellSessionManager;
+    @Mock StreamingWsRegistry registry;
+    @Mock TaskTerminalService taskTerminalService;
+    @Mock ActivityService activityService;
+    @Mock SessionActivityHeartbeat activityHeartbeat;
+    @Mock SessionTodoMapper sessionTodoMapper;
+    @Mock ModelService modelService;
 
     private AgentWeixinInboundHandler handler;
 
@@ -53,7 +66,11 @@ class AgentWeixinInboundHandlerCancelReplaceTest {
     void setUp() {
         handler = new AgentWeixinInboundHandler(
                 weixinSessionService, harnessService, sessionService,
-                accountRepository, agentLoop, shellSessionManager);
+                accountRepository, agentLoop, shellSessionManager,
+                registry, taskTerminalService, activityService, activityHeartbeat,
+                sessionTodoMapper, modelService);
+        when(harnessService.prepareMessage(anyLong(), any())).thenReturn("exec-1");
+        when(sessionService.cleanupIncompleteTail(anyLong())).thenReturn(0);
     }
 
     @AfterEach
@@ -69,9 +86,16 @@ class AgentWeixinInboundHandlerCancelReplaceTest {
 
         Session session = new Session();
         session.setId(100L);
+        session.setUserId(1L);
         when(weixinSessionService.getOrCreateWeixinSession(1L)).thenReturn(session);
-        when(sessionService.saveMessage(anyLong(), any(), any(), any(), any(), any(), any(), any()))
-                .thenReturn(new Message());
+        Message savedUser = new Message();
+        savedUser.setId(10L);
+        savedUser.setContent("msg");
+        // stub String / Object 两个重载（擦除后仅第三参不同，Mockito 需分别指定）
+        doReturn(savedUser).when(sessionService).saveMessage(
+                anyLong(), anyString(), anyString(), any(), any(), any(), any(), any());
+        doReturn(savedUser).when(sessionService).saveMessage(
+                anyLong(), anyString(), any(Object.class), any(), any(), any(), any(), any());
 
         AtomicBoolean firstFlag = new AtomicBoolean(false);
         AtomicBoolean secondFlag = new AtomicBoolean(false);
