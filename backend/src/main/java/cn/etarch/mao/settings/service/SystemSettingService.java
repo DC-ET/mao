@@ -4,6 +4,8 @@ import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.common.result.ErrorCode;
+import cn.etarch.mao.model.entity.LlmModel;
+import cn.etarch.mao.model.mapper.LlmModelMapper;
 import cn.etarch.mao.settings.entity.SystemSetting;
 import cn.etarch.mao.settings.mapper.SystemSettingMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -20,9 +22,11 @@ import java.util.Map;
 public class SystemSettingService {
 
     public static final String WEIXIN_AGENT_ID_KEY = "weixin.agentId";
+    public static final String WEIXIN_MODEL_ID_KEY = "weixin.modelId";
 
     private final SystemSettingMapper systemSettingMapper;
     private final AgentMapper agentMapper;
+    private final LlmModelMapper llmModelMapper;
 
     @Value("${app.harness.workspace-root:/opt/mao/data/workspace}")
     private String workspaceRoot;
@@ -101,6 +105,21 @@ public class SystemSettingService {
                 }
             } catch (NumberFormatException e) {
                 throw new BusinessException(ErrorCode.PARAM_INVALID, "微信智能体配置必须是有效的 Agent ID");
+            }
+            return;
+        }
+        if (WEIXIN_MODEL_ID_KEY.equals(key)) {
+            if (!StringUtils.hasText(value)) {
+                return;
+            }
+            try {
+                Long modelId = Long.parseLong(value.trim());
+                LlmModel model = llmModelMapper.selectById(modelId);
+                if (model == null) {
+                    throw new BusinessException(ErrorCode.PARAM_INVALID, "指定的模型不存在");
+                }
+            } catch (NumberFormatException e) {
+                throw new BusinessException(ErrorCode.PARAM_INVALID, "微信模型配置必须是有效的模型 ID");
             }
             return;
         }

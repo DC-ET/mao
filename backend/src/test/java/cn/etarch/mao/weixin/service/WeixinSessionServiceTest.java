@@ -2,6 +2,8 @@ package cn.etarch.mao.weixin.service;
 
 import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.service.AgentService;
+import cn.etarch.mao.model.entity.LlmModel;
+import cn.etarch.mao.model.service.ModelService;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.mapper.SessionMapper;
 import cn.etarch.mao.session.service.SessionService;
@@ -33,6 +35,9 @@ class WeixinSessionServiceTest {
     private AgentService agentService;
 
     @Mock
+    private ModelService modelService;
+
+    @Mock
     private SystemSettingService systemSettingService;
 
     private WeixinSessionService weixinSessionService;
@@ -40,11 +45,14 @@ class WeixinSessionServiceTest {
     @BeforeEach
     void setUp() {
         weixinSessionService = new WeixinSessionService(
-                sessionService, sessionMapper, agentService, systemSettingService);
+                sessionService, sessionMapper, agentService, modelService, systemSettingService);
+        when(systemSettingService.getValue(SystemSettingService.WEIXIN_MODEL_ID_KEY)).thenReturn("");
+        LlmModel defaultModel = model(100L);
+        when(modelService.getDefaultModel()).thenReturn(defaultModel);
     }
 
     @Test
-    void getOrCreateWeixinSessionReturnsExistingSessionAndKeepsAgent() {
+    void getOrCreateWeixinSessionReturnsExistingSessionAndKeepsAgentAndModel() {
         Agent agent = agent(10L);
         when(systemSettingService.getValue(SystemSettingService.WEIXIN_AGENT_ID_KEY)).thenReturn("10");
         when(agentService.getAgent(10L)).thenReturn(agent);
@@ -53,6 +61,7 @@ class WeixinSessionServiceTest {
         existingSession.setId(1L);
         existingSession.setUserId(1L);
         existingSession.setAgentId(10L);
+        existingSession.setModelId(100L);
         existingSession.setProjectKey("weixin-bot");
         existingSession.setStatus("ACTIVE");
         when(sessionMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(existingSession);
@@ -65,15 +74,18 @@ class WeixinSessionServiceTest {
     }
 
     @Test
-    void getOrCreateWeixinSessionSwitchesAgentOnExistingSession() {
+    void getOrCreateWeixinSessionSwitchesAgentAndModelOnExistingSession() {
         Agent agent = agent(20L);
         when(systemSettingService.getValue(SystemSettingService.WEIXIN_AGENT_ID_KEY)).thenReturn("20");
         when(agentService.getAgent(20L)).thenReturn(agent);
+        when(systemSettingService.getValue(SystemSettingService.WEIXIN_MODEL_ID_KEY)).thenReturn("7");
+        when(modelService.getModel(7L)).thenReturn(model(7L));
 
         Session existingSession = new Session();
         existingSession.setId(1L);
         existingSession.setUserId(1L);
         existingSession.setAgentId(10L);
+        existingSession.setModelId(100L);
         existingSession.setProjectKey("weixin-bot");
         existingSession.setStatus("ACTIVE");
         when(sessionMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(existingSession);
@@ -81,16 +93,19 @@ class WeixinSessionServiceTest {
         Session result = weixinSessionService.getOrCreateWeixinSession(1L);
 
         assertThat(result.getAgentId()).isEqualTo(20L);
+        assertThat(result.getModelId()).isEqualTo(7L);
         verify(sessionMapper).updateById(existingSession);
         verifyNoInteractions(sessionService);
     }
 
     @Test
-    void getOrCreateWeixinSessionCreatesNewSessionWithConfiguredAgent() {
+    void getOrCreateWeixinSessionCreatesNewSessionWithConfiguredAgentAndModel() {
         when(sessionMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         Agent agent = agent(5L);
         when(systemSettingService.getValue(SystemSettingService.WEIXIN_AGENT_ID_KEY)).thenReturn("5");
         when(agentService.getAgent(5L)).thenReturn(agent);
+        when(systemSettingService.getValue(SystemSettingService.WEIXIN_MODEL_ID_KEY)).thenReturn("3");
+        when(modelService.getModel(3L)).thenReturn(model(3L));
 
         Session newSession = new Session();
         newSession.setId(2L);
@@ -106,7 +121,7 @@ class WeixinSessionServiceTest {
         verify(sessionService).createSession(
                 eq(1L), eq(5L), anyString(), anyString(),
                 any(), anyString(), anyBoolean(), anyString(), anyString(), anyString(),
-                any(), anyString(), anyString(), any(), any());
+                eq(3L), anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -118,10 +133,25 @@ class WeixinSessionServiceTest {
         assertThat(weixinSessionService.resolveWeixinAgent().getId()).isEqualTo(99L);
     }
 
+    @Test
+    void resolveWeixinModelIdFallsBackToDefaultWhenUnset() {
+        when(systemSettingService.getValue(SystemSettingService.WEIXIN_MODEL_ID_KEY)).thenReturn("");
+        when(modelService.getDefaultModel()).thenReturn(model(55L));
+
+        assertThat(weixinSessionService.resolveWeixinModelId()).isEqualTo(55L);
+    }
+
     private static Agent agent(Long id) {
         Agent agent = new Agent();
         agent.setId(id);
         agent.setName("agent-" + id);
         return agent;
+    }
+
+    private static LlmModel model(Long id) {
+        LlmModel model = new LlmModel();
+        model.setId(id);
+        model.setName("model-" + id);
+        return model;
     }
 }

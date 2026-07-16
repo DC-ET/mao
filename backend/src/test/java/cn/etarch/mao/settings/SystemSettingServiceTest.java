@@ -3,6 +3,8 @@ package cn.etarch.mao.settings;
 import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.common.exception.BusinessException;
+import cn.etarch.mao.model.entity.LlmModel;
+import cn.etarch.mao.model.mapper.LlmModelMapper;
 import cn.etarch.mao.settings.entity.SystemSetting;
 import cn.etarch.mao.settings.mapper.SystemSettingMapper;
 import cn.etarch.mao.settings.service.SystemSettingService;
@@ -22,7 +24,8 @@ class SystemSettingServiceTest {
 
     private final SystemSettingMapper mapper = mock(SystemSettingMapper.class);
     private final AgentMapper agentMapper = mock(AgentMapper.class);
-    private final SystemSettingService service = new SystemSettingService(mapper, agentMapper);
+    private final LlmModelMapper llmModelMapper = mock(LlmModelMapper.class);
+    private final SystemSettingService service = new SystemSettingService(mapper, agentMapper, llmModelMapper);
 
     SystemSettingServiceTest() {
         ReflectionTestUtils.setField(service, "workspaceRoot", "/workspace");
@@ -97,6 +100,40 @@ class SystemSettingServiceTest {
         SystemSetting updated = service.update(SystemSettingService.WEIXIN_AGENT_ID_KEY, "9");
 
         assertThat(updated.getValue()).isEqualTo("9");
+    }
+
+    @Test
+    void updateAllowsEmptyWeixinModelId() {
+        SystemSetting setting = setting(SystemSettingService.WEIXIN_MODEL_ID_KEY, "微信", 1);
+        when(mapper.selectOne(any())).thenReturn(setting);
+
+        SystemSetting updated = service.update(SystemSettingService.WEIXIN_MODEL_ID_KEY, "");
+
+        assertThat(updated.getValue()).isEqualTo("");
+    }
+
+    @Test
+    void updateValidatesWeixinModelExists() {
+        SystemSetting setting = setting(SystemSettingService.WEIXIN_MODEL_ID_KEY, "微信", 1);
+        when(mapper.selectOne(any())).thenReturn(setting);
+        when(llmModelMapper.selectById(8L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.update(SystemSettingService.WEIXIN_MODEL_ID_KEY, "8"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("模型不存在");
+    }
+
+    @Test
+    void updateAcceptsValidWeixinModelId() {
+        SystemSetting setting = setting(SystemSettingService.WEIXIN_MODEL_ID_KEY, "微信", 1);
+        when(mapper.selectOne(any())).thenReturn(setting);
+        LlmModel model = new LlmModel();
+        model.setId(8L);
+        when(llmModelMapper.selectById(8L)).thenReturn(model);
+
+        SystemSetting updated = service.update(SystemSettingService.WEIXIN_MODEL_ID_KEY, "8");
+
+        assertThat(updated.getValue()).isEqualTo("8");
     }
 
     @Test

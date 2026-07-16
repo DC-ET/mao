@@ -7,6 +7,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletionStage;
 
 @Slf4j
@@ -14,9 +17,13 @@ import java.util.concurrent.CompletionStage;
 @RequiredArgsConstructor
 public class InboundProcessor {
 
+    private static final int ITEM_TYPE_TEXT = 1;
+    private static final int ITEM_TYPE_IMAGE = 2;
+
     private final WeixinInboundHandler inboundHandler;
     private final ContextTokenRepository contextTokenRepository;
     private final WeixinSendService weixinSendService;
+    private final WeixinMediaService weixinMediaService;
 
     /**
      * 处理入站消息
@@ -32,15 +39,35 @@ public class InboundProcessor {
                 contextTokenRepository.saveOrUpdate(accountId, fromUserId, contextToken);
             }
 
-            // 3. 提取消息内容
+            // 3. 提取文本与图片
             String body = extractMessageBody(message);
+            List<WeixinMediaService.DownloadedMedia> images = downloadImages(message);
+
+            if ((body == null || body.isBlank()) && images.isEmpty()) {
+                log.info("忽略空消息（无文本无图片）, accountId={}, fromUserId={}", accountId, fromUserId);
+                return;
+            }
+
+            List<String> imageDataUris = new ArrayList<>();
+            String mediaPath = null;
+            String mediaType = null;
+            for (WeixinMediaService.DownloadedMedia media : images) {
+                imageDataUris.add(media.dataUri());
+                if (mediaPath == null) {
+                    mediaPath = media.path().toString();
+                    mediaType = media.mimeType();
+                }
+            }
 
             // 4. 构建入站消息上下文
             WeixinInboundMessageContext context = WeixinInboundMessageContext.builder()
                     .accountId(accountId)
                     .fromUserId(fromUserId)
-                    .body(body)
+                    .body(body != null ? body : "")
                     .contextToken(contextToken)
+                    .mediaPath(mediaPath)
+                    .mediaType(mediaType)
+                    .imageDataUris(imageDataUris)
                     .rawMessage(message)
                     .build();
 
@@ -55,7 +82,6 @@ public class InboundProcessor {
                 }
 
                 if (reply != null && reply.getText() != null && !reply.getText().isEmpty()) {
-                    // 发送回复消息
                     sendReply(accountId, fromUserId, contextToken, reply);
                 }
             });
@@ -77,11 +103,25 @@ public class InboundProcessor {
 
             // 优先提取文本消息
             for (JsonNode item : itemList) {
-                int type = item.get("type").asInt();
-                if (type == 1) { // TEXT
+                int type = item.path("type").asInt(-1);
+                if (type == ITEM_TYPE_TEXT) {
                     JsonNode textItem = item.get("text_item");
                     if (textItem != null && textItem.has("text")) {
                         return textItem.get("text").asText();
+                    }
+                }
+            }
+
+            // 语音识别文本（若有）
+            for (JsonNode item : itemList) {
+                int type = item.path("type").asInt(-1);
+                if (type == 3) { // VOICE
+                    JsonNode voiceItem = item.get("voice_item");
+                    if (voiceItem != null && voiceItem.has("text")) {
+                        String text = voiceItem.get("text").asText();
+                        if (text != null && !text.isBlank()) {
+                            return text;
+                        }
                     }
                 }
             }
@@ -96,6 +136,29 @@ public class InboundProcessor {
             log.warn("提取消息正文失败", e);
             return "";
         }
+    }
+
+    private List<WeixinMediaService.DownloadedMedia> downloadImages(JsonNode message) {
+        List<WeixinMediaService.DownloadedMedia> result = new ArrayList<>();
+        JsonNode itemList = message.get("item_list");
+        if (itemList == null || !itemList.isArray()) {
+            return result;
+        }
+
+        for (JsonNode item : itemList) {
+            int type = item.path("type").asInt(-1);
+            if (type != ITEM_TYPE_IMAGE) {
+                continue;
+            }
+            JsonNode imageItem = item.get("image_item");
+            Optional<WeixinMediaService.DownloadedMedia> downloaded = weixinMediaService.downloadImage(imageItem);
+            if (downloaded.isPresent()) {
+                result.add(downloaded.get());
+            } else {
+                log.warn("微信图片下载失败，跳过该图片项");
+            }
+        }
+        return result;
     }
 
     /**

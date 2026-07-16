@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -27,6 +28,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class AgentWeixinInboundHandler implements WeixinInboundHandler {
 
+    private static final String DEFAULT_IMAGE_PROMPT = "请查看这张图片";
+
     private final WeixinSessionService weixinSessionService;
     private final HarnessService harnessService;
     private final SessionService sessionService;
@@ -34,7 +37,6 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
 
     @Override
     public boolean authorizeDirectMessage(String accountId, String fromUserId, String text) {
-        // 检查用户是否有权限使用微信Bot
         return true;
     }
 
@@ -42,7 +44,6 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
     public CompletionStage<WeixinReply> onMessage(WeixinInboundMessageContext context) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                // 1. 获取用户ID
                 Long userId = getUserIdFromAccountId(context.getAccountId());
                 if (userId == null) {
                     log.error("无法获取用户ID, accountId={}", context.getAccountId());
@@ -51,57 +52,48 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
                     return errorReply;
                 }
 
-                // 2. 获取或创建会话
                 Session session = weixinSessionService.getOrCreateWeixinSession(userId);
 
-                // 3. 保存用户消息
+                Object messageContent = buildMessageContent(context);
                 sessionService.saveMessage(
                         session.getId(),
                         "USER",
-                        context.getBody(),
+                        messageContent,
                         null, null, null, 0, null
                 );
 
-                // 4. 执行AI Agent处理
                 AtomicBoolean cancelFlag = new AtomicBoolean(false);
                 AgentEventListener listener = new AgentEventListener() {
                     @Override
                     public void onContentDelta(String delta) {
-                        // 处理内容增量
                     }
 
                     @Override
                     public void onToolCallStart(ChatRequest.ToolCall toolCall) {
-                        // 处理工具调用开始
                     }
 
                     @Override
                     public void onToolCallResult(String toolCallId, String result) {
-                        // 处理工具调用结果
                     }
 
                     @Override
                     public void onMessageEnd(ChatUsage usage) {
-                        // 处理消息结束
                     }
 
                     @Override
                     public void onError(Throwable error) {
-                        // 处理错误
                         log.error("AI Agent处理失败, sessionId={}", session.getId(), error);
                     }
                 };
 
-                harnessService.execute(session.getId(), context.getBody(), listener, cancelFlag);
+                // 用户消息已落库；execute 从 DB 加载历史（含多模态 content parts）
+                harnessService.execute(session.getId(), null, listener, cancelFlag);
 
-                // 5. 获取最新的助手回复
                 List<Message> messages = sessionService.getMessages(session.getId());
                 String assistantReply = getLatestAssistantReply(messages);
 
-                // 6. 构建回复
                 WeixinReply reply = new WeixinReply();
                 reply.setText(assistantReply);
-
                 return reply;
             } catch (Exception e) {
                 log.error("处理微信消息失败", e);
@@ -113,8 +105,38 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
     }
 
     /**
-     * 从账号ID获取用户ID
+     * 纯文本 → String；带图片 → ContentPart 列表（与桌面端多模态格式一致）。
      */
+    Object buildMessageContent(WeixinInboundMessageContext context) {
+        List<String> imageDataUris = context.getImageDataUris();
+        boolean hasImages = imageDataUris != null && !imageDataUris.isEmpty();
+        String text = context.getBody() != null ? context.getBody().trim() : "";
+
+        if (!hasImages) {
+            return text;
+        }
+
+        if (text.isEmpty()) {
+            text = DEFAULT_IMAGE_PROMPT;
+        }
+
+        List<ChatRequest.ContentPart> parts = new ArrayList<>();
+        parts.add(ChatRequest.ContentPart.builder()
+                .type("text")
+                .text(text)
+                .build());
+        for (String dataUri : imageDataUris) {
+            if (dataUri == null || dataUri.isBlank()) {
+                continue;
+            }
+            parts.add(ChatRequest.ContentPart.builder()
+                    .type("image_url")
+                    .imageUrl(ChatRequest.ImageUrl.builder().url(dataUri).build())
+                    .build());
+        }
+        return parts;
+    }
+
     private Long getUserIdFromAccountId(String accountId) {
         WeixinChannelAccount account = accountRepository.findByAccountId(accountId);
         if (account != null) {
@@ -123,9 +145,6 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
         return null;
     }
 
-    /**
-     * 获取最新的助手回复
-     */
     private String getLatestAssistantReply(List<Message> messages) {
         for (int i = messages.size() - 1; i >= 0; i--) {
             Message message = messages.get(i);

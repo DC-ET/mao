@@ -20,6 +20,7 @@
               {{ row.value === 'true' ? '已启用' : '未启用' }}
             </el-tag>
             <span v-else-if="row.settingKey === 'weixin.agentId'">{{ formatWeixinAgent(row.value) }}</span>
+            <span v-else-if="row.settingKey === 'weixin.modelId'">{{ formatWeixinModel(row.value) }}</span>
             <span v-else>{{ row.value }}</span>
           </template>
         </el-table-column>
@@ -59,6 +60,21 @@
               :value="String(agent.id)"
             />
           </el-select>
+          <el-select
+            v-else-if="currentSetting?.settingKey === 'weixin.modelId'"
+            v-model="settingValue"
+            clearable
+            filterable
+            placeholder="留空则使用默认模型"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="model in models"
+              :key="model.id"
+              :label="modelLabel(model)"
+              :value="String(model.id)"
+            />
+          </el-select>
           <el-input v-else v-model="settingValue" />
         </el-form-item>
       </el-form>
@@ -75,9 +91,12 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 
+const WEIXIN_SELECT_KEYS = new Set(['weixin.agentId', 'weixin.modelId'])
+
 const loading = ref(false)
 const settings = ref<any[]>([])
 const agents = ref<any[]>([])
+const models = ref<any[]>([])
 const dialogVisible = ref(false)
 const currentSetting = ref<any | null>(null)
 const settingValue = ref('')
@@ -91,12 +110,22 @@ async function fetchAgents() {
   }
 }
 
+async function fetchModels() {
+  try {
+    const { data } = await api.get('/models/active')
+    models.value = data || []
+  } catch {
+    models.value = []
+  }
+}
+
 async function fetchSettings() {
   loading.value = true
   try {
     const [{ data }] = await Promise.all([
       api.get('/system-settings'),
-      agents.value.length ? Promise.resolve(null) : fetchAgents()
+      agents.value.length ? Promise.resolve(null) : fetchAgents(),
+      models.value.length ? Promise.resolve(null) : fetchModels()
     ])
     settings.value = data || []
   } finally {
@@ -108,10 +137,20 @@ function agentLabel(agent: any) {
   return agent.isDefault ? `${agent.name}（默认）` : agent.name
 }
 
+function modelLabel(model: any) {
+  return model.isDefault ? `${model.name}（默认）` : model.name
+}
+
 function formatWeixinAgent(value: string | null | undefined) {
   if (!value) return '未设置（使用默认 Agent）'
   const agent = agents.value.find(a => String(a.id) === String(value))
   return agent ? `${agent.name}（ID: ${value}）` : `Agent ID: ${value}`
+}
+
+function formatWeixinModel(value: string | null | undefined) {
+  if (!value) return '未设置（使用默认模型）'
+  const model = models.value.find(m => String(m.id) === String(value))
+  return model ? `${model.name}（ID: ${value}）` : `模型 ID: ${value}`
 }
 
 async function handleEdit(row: any) {
@@ -119,13 +158,16 @@ async function handleEdit(row: any) {
   if (row.settingKey === 'weixin.agentId' && agents.value.length === 0) {
     await fetchAgents()
   }
+  if (row.settingKey === 'weixin.modelId' && models.value.length === 0) {
+    await fetchModels()
+  }
   settingValue.value = row.value || ''
   dialogVisible.value = true
 }
 
 async function saveSetting() {
   if (!currentSetting.value) return
-  const value = currentSetting.value.settingKey === 'weixin.agentId'
+  const value = WEIXIN_SELECT_KEYS.has(currentSetting.value.settingKey)
     ? (settingValue.value || '')
     : settingValue.value
   await api.put(`/system-settings/${currentSetting.value.settingKey}`, { value })
@@ -135,7 +177,7 @@ async function saveSetting() {
 }
 
 onMounted(async () => {
-  await fetchAgents()
+  await Promise.all([fetchAgents(), fetchModels()])
   await fetchSettings()
 })
 </script>
