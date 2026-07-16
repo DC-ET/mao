@@ -22,7 +22,7 @@
           @keydown.enter="confirmEdit(task)"
           @keydown.escape="cancelEdit"
           @click.stop
-          @blur="confirmEdit(task)"
+          @blur="onEditBlur(task)"
         />
         <span v-else class="side-task-title">{{ task.title || '任务' }}</span>
       </div>
@@ -35,6 +35,14 @@
             <el-icon :size="13"><Check /></el-icon>
           </button>
           <button class="action-btn action-cancel" @click.stop="cancelDelete" title="取消">
+            <el-icon :size="13"><Close /></el-icon>
+          </button>
+        </template>
+        <template v-else-if="editingId === task.id">
+          <button class="action-btn action-confirm" @click.stop="confirmEdit(task)" title="确认">
+            <el-icon :size="13"><Check /></el-icon>
+          </button>
+          <button class="action-btn action-cancel" @click.stop="cancelEdit" title="取消">
             <el-icon :size="13"><Close /></el-icon>
           </button>
         </template>
@@ -141,6 +149,16 @@ function confirmEdit(task: SideTaskItem) {
 function cancelEdit() {
   editingId.value = null
   editingTitle.value = ''
+}
+
+/** blur 时若焦点移到确认/取消按钮，不立即提交，交给按钮处理 */
+function onEditBlur(task: SideTaskItem) {
+  nextTick(() => {
+    if (editingId.value !== task.id) return
+    const active = document.activeElement
+    if (active?.closest('.side-task-item-actions')) return
+    confirmEdit(task)
+  })
 }
 
 function startDelete(task: SideTaskItem) {
