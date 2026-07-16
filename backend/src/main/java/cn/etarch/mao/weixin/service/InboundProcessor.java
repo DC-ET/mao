@@ -74,14 +74,20 @@ public class InboundProcessor {
             // 5. 调用业务处理器
             CompletionStage<WeixinReply> replyFuture = inboundHandler.onMessage(context);
 
-            // 6. 处理回复
+            // 6. 处理回复（null 表示被更新消息取消，不下行）
             replyFuture.whenComplete((reply, error) -> {
                 if (error != null) {
                     log.error("处理微信消息失败, accountId={}, fromUserId={}", accountId, fromUserId, error);
                     return;
                 }
 
-                if (reply != null && reply.getText() != null && !reply.getText().isEmpty()) {
+                if (reply == null) {
+                    log.debug("微信消息处理已取消（被后续消息接管）, accountId={}, fromUserId={}",
+                            accountId, fromUserId);
+                    return;
+                }
+
+                if (reply.getText() != null && !reply.getText().isEmpty()) {
                     sendReply(accountId, fromUserId, contextToken, reply);
                 }
             });
