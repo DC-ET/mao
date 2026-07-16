@@ -153,6 +153,18 @@ public class HarnessService {
         }
 
         // 4. Build context
+        String executionMode = session.getExecutionMode() != null ? session.getExecutionMode() : "CLOUD";
+
+        // CLOUD：同步 Skills 到会话 runtime，并注册 PathSandbox allowedRoots。
+        // 微信等非 WebSocket 入口也会走这里；桌面 WS 路径可能已同步过，重复调用对未变更 Skill 为 no-op。
+        if ("CLOUD".equalsIgnoreCase(executionMode)) {
+            try {
+                skillSyncService.syncToSession(agent, session.getUserId(), sessionId);
+            } catch (Exception e) {
+                log.warn("Skill sync to session runtime failed for session {}: {}", sessionId, e.getMessage());
+            }
+        }
+
         AgentExecutionContext context = new AgentExecutionContext();
         context.setCurrentTimestamp(java.time.ZonedDateTime.now()
                 .format(java.time.format.DateTimeFormatter.ISO_ZONED_DATE_TIME));
@@ -164,7 +176,7 @@ public class HarnessService {
         context.setExperiences(experienceService.listEnabledContents(agent.getId()));
         context.setAgentName(agent.getName());
         context.setMaxRounds(resolveMaxRounds(null));
-        context.setExecutionMode(session.getExecutionMode() != null ? session.getExecutionMode() : "CLOUD");
+        context.setExecutionMode(executionMode);
         context.setPermissionLevel(session.getPermissionLevel());
         context.setWorkspace(session.getWorkspace());
         var environmentInfo = environmentInfoProvider.fromSessionOrDetect(session);
