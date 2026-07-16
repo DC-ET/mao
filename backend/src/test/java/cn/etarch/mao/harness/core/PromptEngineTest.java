@@ -147,6 +147,74 @@ class PromptEngineTest {
     }
 
     @Test
+    void buildRequestInjectsWeixinDefaultExperiencesWhenWeixinSession() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/workspace-root"));
+
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setSystemPrompt("You are a WeChat assistant.");
+        context.setProjectKey("weixin-bot");
+        context.setExperiences(List.of());
+        context.setWorkspace("/weixin-workspace");
+        context.setTools(List.of());
+        context.addUserMessage("hello");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+        String systemPrompt = request.getMessages().get(0).getContent().toString();
+
+        assertThat(systemPrompt)
+                .contains("## 最佳实践经验")
+                .contains("AGENTS.md文件里面存储了当前用户最核心的信息")
+                .contains("你可以充分利用当前工作区目录配合文件读写能力")
+                .contains("## 工作环境");
+        assertThat(systemPrompt.indexOf("AGENTS.md文件里面存储了当前用户最核心的信息"))
+                .isLessThan(systemPrompt.indexOf("你可以充分利用当前工作区目录配合文件读写能力"));
+        assertThat(systemPrompt.indexOf("## 最佳实践经验"))
+                .isLessThan(systemPrompt.indexOf("## 工作环境"));
+    }
+
+    @Test
+    void buildRequestPrependsWeixinDefaultsBeforeConfiguredExperiences() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/workspace-root"));
+
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setSystemPrompt("You are a WeChat assistant.");
+        context.setProjectKey("weixin-bot");
+        context.setExperiences(List.of("自定义经验：回复尽量简短。"));
+        context.setWorkspace("/weixin-workspace");
+        context.setTools(List.of());
+        context.addUserMessage("hello");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+        String systemPrompt = request.getMessages().get(0).getContent().toString();
+
+        assertThat(systemPrompt)
+                .contains("AGENTS.md文件里面存储了当前用户最核心的信息")
+                .contains("自定义经验：回复尽量简短。");
+        assertThat(systemPrompt.indexOf("AGENTS.md文件里面存储了当前用户最核心的信息"))
+                .isLessThan(systemPrompt.indexOf("自定义经验：回复尽量简短。"));
+    }
+
+    @Test
+    void buildRequestDoesNotInjectWeixinDefaultsForNormalSession() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/workspace-root"));
+
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setSystemPrompt("You are careful.");
+        context.setProjectKey("my-project");
+        context.setExperiences(List.of());
+        context.setWorkspace("/repo");
+        context.setTools(List.of());
+        context.addUserMessage("hello");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+        String systemPrompt = request.getMessages().get(0).getContent().toString();
+
+        assertThat(systemPrompt)
+                .doesNotContain("最佳实践经验")
+                .doesNotContain("AGENTS.md文件里面存储了当前用户最核心的信息");
+    }
+
+    @Test
     void buildRequestUsesLocalUnsyncedSkillPathAndAllowsMarkerReplacement() {
         when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/fallback"));
         when(skillSyncService.getUserSkillDocuments(7L)).thenReturn(List.of());

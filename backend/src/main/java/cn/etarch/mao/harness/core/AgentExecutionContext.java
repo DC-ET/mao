@@ -24,6 +24,9 @@ public class AgentExecutionContext {
     private Long userId;
     private Long agentId;
 
+    /** 会话 projectKey（如微信工作区会话为 weixin-bot） */
+    private String projectKey;
+
     // Agent 配置
     private String systemPrompt;
     /** 已启用的最佳实践经验正文，按 sort_order 排序；可为空列表 */

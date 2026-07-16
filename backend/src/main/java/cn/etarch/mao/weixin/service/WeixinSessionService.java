@@ -17,6 +17,9 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class WeixinSessionService {
 
+    /** 微信工作区会话的 projectKey，用于会话识别与 Prompt 注入 */
+    public static final String PROJECT_KEY = "weixin-bot";
+
     private final SessionService sessionService;
     private final SessionMapper sessionMapper;
     private final AgentService agentService;
@@ -55,7 +58,7 @@ public class WeixinSessionService {
                 "/bin/bash",
                 "Linux",
                 null,
-                "weixin-bot",
+                PROJECT_KEY,
                 "new",
                 null,
                 null
@@ -65,7 +68,7 @@ public class WeixinSessionService {
     private Session findExistingWeixinSession(Long userId) {
         LambdaQueryWrapper<Session> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Session::getUserId, userId)
-                .eq(Session::getProjectKey, "weixin-bot")
+                .eq(Session::getProjectKey, PROJECT_KEY)
                 .eq(Session::getStatus, "ACTIVE")
                 .last("LIMIT 1");
         return sessionMapper.selectOne(wrapper);

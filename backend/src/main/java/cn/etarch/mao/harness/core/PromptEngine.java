@@ -31,6 +31,14 @@ public class PromptEngine {
     private static final Set<String> TASK_TOOL_NAMES = Set.of(
             "task_create", "task_update", "task_list", "task_delete");
 
+    /** 与 WeixinSessionService.PROJECT_KEY 保持一致 */
+    private static final String WEIXIN_PROJECT_KEY = "weixin-bot";
+
+    private static final List<String> WEIXIN_DEFAULT_EXPERIENCES = List.of(
+            "AGENTS.md文件里面存储了当前用户最核心的信息，该文件的内容的前200行每次都会被加载至对话上下文的系统提示词中，一般情况在你无需主动读取该文件（除非文件已超出200行），你可以在必要的时候编辑或新增该文件的内容（如果文件不存在你可以新建这个文件），但一定要保持文件内容的精简，避免内容过长。",
+            "你可以充分利用当前工作区目录配合文件读写能力，你可以以文件的形式记录用户的偏好，以及与用户长期交流下来所沉淀的信息（对于有时效的信息在记录时一定要标记时间信息）。你可以在任意对话时通过文件查阅来进行快速回忆。以便更好的长期的服务好用户。"
+    );
+
     private static final String TOOL_USAGE_GUIDANCE = """
             # 使用你的工具
              - 当提供相关专用工具时，不要使用shell运行命令。使用专用工具可以让用户更好地理解和审查你的工作。这对协助用户至关重要：
@@ -181,9 +189,9 @@ public class PromptEngine {
             sb.append("\n\n");
         }
 
-        // 最佳实践经验（仅当有启用项时注入）
-        List<String> experiences = context.getExperiences();
-        if (experiences != null && !experiences.isEmpty()) {
+        // 最佳实践经验（微信工作区会话额外注入默认项；仅当有内容时注入）
+        List<String> experiences = resolveExperiences(context);
+        if (!experiences.isEmpty()) {
             sb.append("## 最佳实践经验\n\n");
             for (String exp : experiences) {
                 if (exp != null && !exp.isBlank()) {
@@ -240,6 +248,25 @@ public class PromptEngine {
         appendWorkspaceRules(sb, context, effectiveWorkspace);
 
         return sb.toString();
+    }
+
+    /**
+     * 合并最佳实践经验：微信工作区会话在 Agent 配置经验之前追加两条默认项。
+     */
+    private List<String> resolveExperiences(AgentExecutionContext context) {
+        List<String> merged = new ArrayList<>();
+        if (WEIXIN_PROJECT_KEY.equals(context.getProjectKey())) {
+            merged.addAll(WEIXIN_DEFAULT_EXPERIENCES);
+        }
+        List<String> configured = context.getExperiences();
+        if (configured != null) {
+            for (String exp : configured) {
+                if (exp != null && !exp.isBlank()) {
+                    merged.add(exp);
+                }
+            }
+        }
+        return merged;
     }
 
     private String buildSkillCatalog(AgentExecutionContext context) {

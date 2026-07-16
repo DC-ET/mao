@@ -159,6 +159,7 @@ public class HarnessService {
         context.setSessionId(sessionId);
         context.setUserId(session.getUserId());
         context.setAgentId(agent.getId());
+        context.setProjectKey(session.getProjectKey());
         context.setSystemPrompt(agent.getSystemPrompt());
         context.setExperiences(experienceService.listEnabledContents(agent.getId()));
         context.setAgentName(agent.getName());
