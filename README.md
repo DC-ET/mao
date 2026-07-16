@@ -115,6 +115,7 @@ flowchart TB
 - **双执行模式** — CLOUD（服务端执行工具）与 LOCAL（委托桌面端 Electron 执行）；LOCAL 模式支持会话级权限等级与工具审批
 - **协作扩展** — 子代理委派（Delegate）与 Side Task 并行子会话；文件系统 Skill 知识文档扩展
 - **WebSocket 流式对话** — 实时双向通信，支持消息持久化与 Token 用量追踪
+- **可选微信通道** — 桌面端扫码绑定微信 Bot 后，可在微信中与指定 Agent 对话（CLOUD 模式）
 - **双端架构** — 管理后台 + Electron 桌面客户端
 
 ## 技术栈
@@ -263,6 +264,7 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 | `TAVILY_API_KEY` | Tavily 搜索（可选） |
 | `LDAP_ENABLED` / `LDAP_URL` 等 | LDAP 认证（可选，`LDAP_ENABLED` 默认 `false`） |
 | `FEISHU_ENABLED` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_REDIRECT_URI` | 飞书 OAuth（可选，`FEISHU_ENABLED` 默认 `false`），`FEISHU_REDIRECT_URI` 必须是后端公网回调地址，如 `https://your-domain/api/v1/auth/feishu/callback` |
+| `WEIXIN_BOT_ENABLED` / `WEIXIN_BOT_MONITOR_ENABLED` 等 | 微信 Bot 通道（可选，默认开启；详见 `application-example.yml`） |
 | `OSS_*` | 阿里云 OSS（可选） |
 
 完整配置项请参考 [application-example.yml](backend/src/main/resources/application-example.yml)。
@@ -374,6 +376,7 @@ npm run test:desktop
 | [SECURITY.md](SECURITY.md) | 安全策略 |
 | [docs/requirement.md](docs/requirement.md) | 需求说明 |
 | [docs/technical-design.md](docs/technical-design.md) | 技术设计 |
+| [docs/weixin-bot-integration-technical-design.md](docs/weixin-bot-integration-technical-design.md) | 微信 Bot 通道技术方案（可选能力） |
 | [CLAUDE.md](CLAUDE.md) | 维护者 / AI 辅助开发指引 |
 
 ## 许可证
