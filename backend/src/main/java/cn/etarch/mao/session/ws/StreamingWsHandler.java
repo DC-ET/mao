@@ -228,7 +228,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         String type = root.has("type") ? root.get("type").asText() : null;
         if (type == null) return;
 
-        log.info("WS message type={} from userId={}", type, userId);
+        log.debug("WS message type={} from userId={}", type, userId);
         switch (type) {
             case "subscribe" -> handleSubscribe(userId, root);
             case "unsubscribe" -> handleUnsubscribe(userId, root);
