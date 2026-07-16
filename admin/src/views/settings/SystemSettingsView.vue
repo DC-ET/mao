@@ -10,33 +10,41 @@
         </div>
       </template>
 
-      <el-table :data="settings" v-loading="loading" stripe>
-        <el-table-column prop="category" label="分类" width="110" />
-        <el-table-column prop="settingKey" label="配置键" width="190" />
-        <el-table-column prop="description" label="说明" min-width="220" />
-        <el-table-column prop="value" label="当前值" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">
-            <el-tag v-if="row.settingKey.endsWith('enabled')" :type="row.value === 'true' ? 'success' : 'info'" size="small">
-              {{ row.value === 'true' ? '已启用' : '未启用' }}
-            </el-tag>
-            <span v-else-if="row.settingKey === 'weixin.agentId'">{{ formatWeixinAgent(row.value) }}</span>
-            <span v-else-if="row.settingKey === 'weixin.modelId'">{{ formatWeixinModel(row.value) }}</span>
-            <span v-else>{{ row.value }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="可编辑" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.editable === 1 ? 'success' : 'info'" size="small">
-              {{ row.editable === 1 ? '是' : '否' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" link size="small" :disabled="row.editable !== 1" @click="handleEdit(row)">编辑</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <el-tabs v-model="activeCategory" v-loading="loading">
+        <el-tab-pane
+          v-for="category in categories"
+          :key="category"
+          :label="category"
+          :name="category"
+        >
+          <el-table :data="settingsByCategory[category] || []" stripe>
+            <el-table-column prop="settingKey" label="配置键" width="190" />
+            <el-table-column prop="description" label="说明" min-width="220" />
+            <el-table-column prop="value" label="当前值" min-width="220" show-overflow-tooltip>
+              <template #default="{ row }">
+                <el-tag v-if="row.settingKey.endsWith('enabled')" :type="row.value === 'true' ? 'success' : 'info'" size="small">
+                  {{ row.value === 'true' ? '已启用' : '未启用' }}
+                </el-tag>
+                <span v-else-if="row.settingKey === 'weixin.agentId'">{{ formatWeixinAgent(row.value) }}</span>
+                <span v-else-if="row.settingKey === 'weixin.modelId'">{{ formatWeixinModel(row.value) }}</span>
+                <span v-else>{{ row.value }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="可编辑" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.editable === 1 ? 'success' : 'info'" size="small">
+                  {{ row.editable === 1 ? '是' : '否' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="90" fixed="right">
+              <template #default="{ row }">
+                <el-button type="primary" link size="small" :disabled="row.editable !== 1" @click="handleEdit(row)">编辑</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+      </el-tabs>
     </el-card>
 
     <el-dialog v-model="dialogVisible" title="编辑配置" width="480px">
@@ -87,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 
@@ -97,9 +105,33 @@ const loading = ref(false)
 const settings = ref<any[]>([])
 const agents = ref<any[]>([])
 const models = ref<any[]>([])
+const activeCategory = ref('')
 const dialogVisible = ref(false)
 const currentSetting = ref<any | null>(null)
 const settingValue = ref('')
+
+const categories = computed(() => {
+  const seen = new Set<string>()
+  const list: string[] = []
+  for (const item of settings.value) {
+    const category = item.category || '未分类'
+    if (!seen.has(category)) {
+      seen.add(category)
+      list.push(category)
+    }
+  }
+  return list
+})
+
+const settingsByCategory = computed(() => {
+  const map: Record<string, any[]> = {}
+  for (const item of settings.value) {
+    const category = item.category || '未分类'
+    if (!map[category]) map[category] = []
+    map[category].push(item)
+  }
+  return map
+})
 
 async function fetchAgents() {
   try {
@@ -128,6 +160,9 @@ async function fetchSettings() {
       models.value.length ? Promise.resolve(null) : fetchModels()
     ])
     settings.value = data || []
+    if (!activeCategory.value || !categories.value.includes(activeCategory.value)) {
+      activeCategory.value = categories.value[0] || ''
+    }
   } finally {
     loading.value = false
   }
