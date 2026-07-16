@@ -1,26 +1,27 @@
 package cn.etarch.mao.weixin.service;
 
-import cn.etarch.mao.common.exception.BusinessException;
-import cn.etarch.mao.common.result.ErrorCode;
-import cn.etarch.mao.weixin.config.WeixinBotConfig;
-import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import okhttp3.*;
-import org.springframework.stereotype.Service;
-
-import java.io.IOException;
 import java.util.Map;
 import java.util.UUID;
+
+import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class WeixinSendService {
 
-    private final WeixinBotConfig config;
     private final WeixinAccountRepository accountRepository;
     private final ContextTokenRepository contextTokenRepository;
     private final ObjectMapper objectMapper;

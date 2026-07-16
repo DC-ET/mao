@@ -1,15 +1,12 @@
 package cn.etarch.mao.weixin.service;
 
-import cn.etarch.mao.weixin.config.WeixinBotConfig;
 import cn.etarch.mao.weixin.model.WeixinInboundMessageContext;
 import cn.etarch.mao.weixin.model.WeixinReply;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 @Slf4j
@@ -17,11 +14,9 @@ import java.util.concurrent.CompletionStage;
 @RequiredArgsConstructor
 public class InboundProcessor {
 
-    private final WeixinBotConfig config;
     private final WeixinInboundHandler inboundHandler;
     private final ContextTokenRepository contextTokenRepository;
     private final WeixinSendService weixinSendService;
-    private final ObjectMapper objectMapper;
 
     /**
      * 处理入站消息
