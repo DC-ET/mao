@@ -19,6 +19,7 @@
             <el-tag v-if="row.settingKey.endsWith('enabled')" :type="row.value === 'true' ? 'success' : 'info'" size="small">
               {{ row.value === 'true' ? '已启用' : '未启用' }}
             </el-tag>
+            <span v-else-if="row.settingKey === 'weixin.agentId'">{{ formatWeixinAgent(row.value) }}</span>
             <span v-else>{{ row.value }}</span>
           </template>
         </el-table-column>
@@ -43,7 +44,22 @@
           <el-input :model-value="currentSetting?.settingKey" disabled />
         </el-form-item>
         <el-form-item label="配置值">
-          <el-input v-model="settingValue" />
+          <el-select
+            v-if="currentSetting?.settingKey === 'weixin.agentId'"
+            v-model="settingValue"
+            clearable
+            filterable
+            placeholder="留空则使用默认 Agent"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="agent in agents"
+              :key="agent.id"
+              :label="agentLabel(agent)"
+              :value="String(agent.id)"
+            />
+          </el-select>
+          <el-input v-else v-model="settingValue" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -61,35 +77,67 @@ import { api } from '../../api'
 
 const loading = ref(false)
 const settings = ref<any[]>([])
+const agents = ref<any[]>([])
 const dialogVisible = ref(false)
 const currentSetting = ref<any | null>(null)
 const settingValue = ref('')
 
+async function fetchAgents() {
+  try {
+    const { data } = await api.get('/agents')
+    agents.value = data || []
+  } catch {
+    agents.value = []
+  }
+}
+
 async function fetchSettings() {
   loading.value = true
   try {
-    const { data } = await api.get('/system-settings')
+    const [{ data }] = await Promise.all([
+      api.get('/system-settings'),
+      agents.value.length ? Promise.resolve(null) : fetchAgents()
+    ])
     settings.value = data || []
   } finally {
     loading.value = false
   }
 }
 
-function handleEdit(row: any) {
+function agentLabel(agent: any) {
+  return agent.isDefault ? `${agent.name}（默认）` : agent.name
+}
+
+function formatWeixinAgent(value: string | null | undefined) {
+  if (!value) return '未设置（使用默认 Agent）'
+  const agent = agents.value.find(a => String(a.id) === String(value))
+  return agent ? `${agent.name}（ID: ${value}）` : `Agent ID: ${value}`
+}
+
+async function handleEdit(row: any) {
   currentSetting.value = row
+  if (row.settingKey === 'weixin.agentId' && agents.value.length === 0) {
+    await fetchAgents()
+  }
   settingValue.value = row.value || ''
   dialogVisible.value = true
 }
 
 async function saveSetting() {
   if (!currentSetting.value) return
-  await api.put(`/system-settings/${currentSetting.value.settingKey}`, { value: settingValue.value })
+  const value = currentSetting.value.settingKey === 'weixin.agentId'
+    ? (settingValue.value || '')
+    : settingValue.value
+  await api.put(`/system-settings/${currentSetting.value.settingKey}`, { value })
   ElMessage.success('配置已更新')
   dialogVisible.value = false
   fetchSettings()
 }
 
-onMounted(fetchSettings)
+onMounted(async () => {
+  await fetchAgents()
+  await fetchSettings()
+})
 </script>
 
 <style scoped>

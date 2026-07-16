@@ -54,7 +54,8 @@ public class AgentController {
                 request.getSystemPrompt(),
                 request.getTags(),
                 request.getSkillNames(),
-                toExperienceInputs(request.getExperiences()));
+                toExperienceInputs(request.getExperiences()),
+                request.getIsDefault());
         return Result.ok(toVO(agent));
     }
 
@@ -67,7 +68,8 @@ public class AgentController {
                 id, request.getName(), request.getDescription(),
                 request.getSystemPrompt(),
                 request.getSkillNames(), request.getTags(),
-                toExperienceInputs(request.getExperiences()));
+                toExperienceInputs(request.getExperiences()),
+                request.getIsDefault());
         return Result.ok(toVO(agent));
     }
 
@@ -132,6 +134,7 @@ public class AgentController {
         vo.setDescription(agent.getDescription());
         vo.setSystemPrompt(agent.getSystemPrompt());
         vo.setCreatorId(agent.getCreatorId());
+        vo.setIsDefault(agent.getIsDefault() != null && agent.getIsDefault() == 1);
         vo.setCreatedAt(agent.getCreatedAt() != null ? agent.getCreatedAt().toString() : null);
 
         // Load creator name
@@ -193,6 +196,7 @@ public class AgentController {
         private List<String> tags;
         private List<String> skillNames;
         private List<ExperienceVO> experiences;
+        private Integer isDefault;
     }
 
     @Data
@@ -203,6 +207,7 @@ public class AgentController {
         private List<String> skillNames;
         private List<String> tags;
         private List<ExperienceVO> experiences;
+        private Integer isDefault;
     }
 
     @Data
@@ -228,6 +233,7 @@ public class AgentController {
         private String systemPrompt;
         private Long creatorId;
         private String creatorName;
+        private Boolean isDefault;
         private List<String> tags;
         private List<String> skillNames;
         private List<ExperienceVO> experiences = Collections.emptyList();

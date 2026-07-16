@@ -1,10 +1,11 @@
 package cn.etarch.mao.weixin.service;
 
 import cn.etarch.mao.agent.entity.Agent;
-import cn.etarch.mao.agent.mapper.AgentMapper;
+import cn.etarch.mao.agent.service.AgentService;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.mapper.SessionMapper;
 import cn.etarch.mao.session.service.SessionService;
+import cn.etarch.mao.settings.service.SystemSettingService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,72 +30,70 @@ class WeixinSessionServiceTest {
     private SessionMapper sessionMapper;
 
     @Mock
-    private AgentMapper agentMapper;
+    private AgentService agentService;
+
+    @Mock
+    private SystemSettingService systemSettingService;
 
     private WeixinSessionService weixinSessionService;
 
     @BeforeEach
     void setUp() {
-        weixinSessionService = new WeixinSessionService(sessionService, sessionMapper, agentMapper);
+        weixinSessionService = new WeixinSessionService(
+                sessionService, sessionMapper, agentService, systemSettingService);
     }
 
     @Test
-    void getOrCreateWeixinSessionReturnsExistingSession() {
+    void getOrCreateWeixinSessionReturnsExistingSessionAndKeepsAgent() {
+        Agent agent = agent(10L);
+        when(systemSettingService.getValue(SystemSettingService.WEIXIN_AGENT_ID_KEY)).thenReturn("10");
+        when(agentService.getAgent(10L)).thenReturn(agent);
+
         Session existingSession = new Session();
         existingSession.setId(1L);
         existingSession.setUserId(1L);
+        existingSession.setAgentId(10L);
         existingSession.setProjectKey("weixin-bot");
         existingSession.setStatus("ACTIVE");
-
         when(sessionMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(existingSession);
 
         Session result = weixinSessionService.getOrCreateWeixinSession(1L);
 
-        assertThat(result).isNotNull();
         assertThat(result.getId()).isEqualTo(1L);
+        verify(sessionMapper, never()).updateById(any());
         verifyNoInteractions(sessionService);
     }
 
     @Test
-    void getOrCreateWeixinSessionCreatesNewSessionWhenNotFound() {
-        when(sessionMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+    void getOrCreateWeixinSessionSwitchesAgentOnExistingSession() {
+        Agent agent = agent(20L);
+        when(systemSettingService.getValue(SystemSettingService.WEIXIN_AGENT_ID_KEY)).thenReturn("20");
+        when(agentService.getAgent(20L)).thenReturn(agent);
 
-        Agent agent = new Agent();
-        agent.setId(1L);
-        agent.setName("微信Bot Agent");
-        when(agentMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(agent);
-
-        Session newSession = new Session();
-        newSession.setId(2L);
-        newSession.setUserId(1L);
-        newSession.setProjectKey("weixin-bot");
-        when(sessionService.createSession(
-                anyLong(), anyLong(), anyString(), anyString(),
-                any(), anyString(), anyBoolean(), anyString(), anyString(), anyString(),
-                any(), anyString(), anyString(), any(), any()
-        )).thenReturn(newSession);
+        Session existingSession = new Session();
+        existingSession.setId(1L);
+        existingSession.setUserId(1L);
+        existingSession.setAgentId(10L);
+        existingSession.setProjectKey("weixin-bot");
+        existingSession.setStatus("ACTIVE");
+        when(sessionMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(existingSession);
 
         Session result = weixinSessionService.getOrCreateWeixinSession(1L);
 
-        assertThat(result).isNotNull();
-        assertThat(result.getId()).isEqualTo(2L);
+        assertThat(result.getAgentId()).isEqualTo(20L);
+        verify(sessionMapper).updateById(existingSession);
+        verifyNoInteractions(sessionService);
     }
 
     @Test
-    void getOrCreateWeixinSessionCreatesDefaultAgentWhenNotFound() {
+    void getOrCreateWeixinSessionCreatesNewSessionWithConfiguredAgent() {
         when(sessionMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
-        when(agentMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
-
-        // Mock agent insert to set ID
-        doAnswer(invocation -> {
-            Agent agent = invocation.getArgument(0);
-            agent.setId(99L);
-            return 1;
-        }).when(agentMapper).insert(any(Agent.class));
+        Agent agent = agent(5L);
+        when(systemSettingService.getValue(SystemSettingService.WEIXIN_AGENT_ID_KEY)).thenReturn("5");
+        when(agentService.getAgent(5L)).thenReturn(agent);
 
         Session newSession = new Session();
         newSession.setId(2L);
-        newSession.setUserId(1L);
         when(sessionService.createSession(
                 anyLong(), anyLong(), anyString(), anyString(),
                 any(), anyString(), anyBoolean(), anyString(), anyString(), anyString(),
@@ -103,7 +102,26 @@ class WeixinSessionServiceTest {
 
         Session result = weixinSessionService.getOrCreateWeixinSession(1L);
 
-        assertThat(result).isNotNull();
-        verify(agentMapper).insert(any(Agent.class));
+        assertThat(result.getId()).isEqualTo(2L);
+        verify(sessionService).createSession(
+                eq(1L), eq(5L), anyString(), anyString(),
+                any(), anyString(), anyBoolean(), anyString(), anyString(), anyString(),
+                any(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void resolveWeixinAgentFallsBackToDefaultWhenUnset() {
+        when(systemSettingService.getValue(SystemSettingService.WEIXIN_AGENT_ID_KEY)).thenReturn("");
+        Agent defaultAgent = agent(99L);
+        when(agentService.requireDefaultAgent()).thenReturn(defaultAgent);
+
+        assertThat(weixinSessionService.resolveWeixinAgent().getId()).isEqualTo(99L);
+    }
+
+    private static Agent agent(Long id) {
+        Agent agent = new Agent();
+        agent.setId(id);
+        agent.setName("agent-" + id);
+        return agent;
     }
 }

@@ -29,7 +29,7 @@ public class AgentService {
         if (keyword != null && !keyword.isEmpty()) {
             qw.like("name", keyword);
         }
-        qw.orderByDesc("created_at");
+        qw.orderByDesc("is_default").orderByDesc("created_at");
         return agentMapper.selectList(qw);
     }
 
@@ -41,17 +41,34 @@ public class AgentService {
         return agent;
     }
 
+    public Agent getDefaultAgent() {
+        return agentMapper.selectOne(new QueryWrapper<Agent>().eq("is_default", 1).last("LIMIT 1"));
+    }
+
+    public Agent requireDefaultAgent() {
+        Agent agent = getDefaultAgent();
+        if (agent == null) {
+            throw new BusinessException(ErrorCode.AGENT_NOT_FOUND, "未配置默认 Agent，请先在管理后台设置");
+        }
+        return agent;
+    }
+
     @Transactional
     public Agent createAgent(Long userId, String name, String description,
                               String systemPrompt,
                               List<String> tags,
                               List<String> skillNames,
-                              List<AgentExperienceService.ExperienceInput> experiences) {
+                              List<AgentExperienceService.ExperienceInput> experiences,
+                              Integer isDefault) {
+        if (isDefault != null && isDefault == 1) {
+            clearDefaultFlag();
+        }
         Agent agent = new Agent();
         agent.setName(name);
         agent.setDescription(description);
         agent.setSystemPrompt(systemPrompt);
         agent.setCreatorId(userId);
+        agent.setIsDefault(isDefault != null ? isDefault : 0);
         if (skillNames != null && !skillNames.isEmpty()) {
             try {
                 agent.setSkillNames(objectMapper.writeValueAsString(skillNames));
@@ -83,7 +100,8 @@ public class AgentService {
                               String systemPrompt,
                               List<String> skillNames,
                               List<String> tags,
-                              List<AgentExperienceService.ExperienceInput> experiences) {
+                              List<AgentExperienceService.ExperienceInput> experiences,
+                              Integer isDefault) {
         Agent agent = getAgent(id);
         if (name != null) agent.setName(name);
         if (description != null) agent.setDescription(description);
@@ -94,6 +112,12 @@ public class AgentService {
             } catch (Exception e) {
                 // ignore serialization error
             }
+        }
+        if (isDefault != null) {
+            if (isDefault == 1) {
+                clearDefaultFlag();
+            }
+            agent.setIsDefault(isDefault);
         }
         agentMapper.updateById(agent);
 
@@ -116,6 +140,10 @@ public class AgentService {
 
     @Transactional
     public void deleteAgent(Long id) {
+        Agent agent = getAgent(id);
+        if (agent.getIsDefault() != null && agent.getIsDefault() == 1) {
+            throw new BusinessException(ErrorCode.AGENT_IS_DEFAULT);
+        }
         agentTagMapper.delete(new QueryWrapper<AgentTag>().eq("agent_id", id));
         experienceService.deleteByAgentId(id);
         agentMapper.deleteById(id);
@@ -128,5 +156,11 @@ public class AgentService {
 
     public List<AgentExperience> getAgentExperiences(Long agentId) {
         return experienceService.listByAgentId(agentId);
+    }
+
+    private void clearDefaultFlag() {
+        Agent update = new Agent();
+        update.setIsDefault(0);
+        agentMapper.update(update, new QueryWrapper<Agent>().eq("is_default", 1));
     }
 }

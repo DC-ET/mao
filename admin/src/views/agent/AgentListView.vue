@@ -34,7 +34,12 @@
       <!-- Table -->
       <el-table :data="filteredAgents" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="名称" min-width="120" />
+        <el-table-column prop="name" label="名称" min-width="120">
+          <template #default="{ row }">
+            <span>{{ row.name }}</span>
+            <el-tag v-if="row.isDefault" type="warning" size="small" style="margin-left: 8px">默认</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
         <el-table-column label="标签" min-width="180">
           <template #default="{ row }">

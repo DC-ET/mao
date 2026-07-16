@@ -88,6 +88,10 @@
           style="width: 100%"
         />
       </el-form-item>
+      <el-form-item label="默认 Agent">
+        <el-switch v-model="form.isDefault" />
+        <span class="form-hint">开启后，新建会话未指定 Agent 时将使用该智能体</span>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="$emit('update:visible', false)">取消</el-button>
@@ -144,7 +148,8 @@ const form = reactive({
   systemPrompt: '',
   skillNames: [] as string[],
   tags: [] as string[],
-  experiences: [] as ExperienceFormItem[]
+  experiences: [] as ExperienceFormItem[],
+  isDefault: false
 })
 
 const rules: FormRules = {
@@ -175,7 +180,8 @@ function resetForm() {
     systemPrompt: '',
     skillNames: [],
     tags: [],
-    experiences: []
+    experiences: [],
+    isDefault: false
   })
 }
 
@@ -233,7 +239,8 @@ watch(() => props.visible, async (val) => {
       systemPrompt: props.agentData.systemPrompt || '',
       skillNames: props.agentData.skillNames || [],
       tags: props.agentData.tags || [],
-      experiences: mapExperiences(props.agentData.experiences, props.mode === 'edit')
+      experiences: mapExperiences(props.agentData.experiences, props.mode === 'edit'),
+      isDefault: props.mode === 'copy' ? false : !!props.agentData.isDefault
     })
   } else {
     resetForm()
@@ -258,6 +265,7 @@ async function handleSubmit() {
     systemPrompt: form.systemPrompt,
     skillNames: form.skillNames,
     tags: form.tags,
+    isDefault: form.isDefault ? 1 : 0,
     experiences: form.experiences.map((item, index) => ({
       id: isEdit.value ? item.id ?? null : null,
       content: item.content.trim(),
@@ -308,5 +316,11 @@ async function handleSubmit() {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.form-hint {
+  margin-left: 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 </style>

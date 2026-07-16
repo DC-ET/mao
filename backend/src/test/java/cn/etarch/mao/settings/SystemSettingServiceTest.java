@@ -1,5 +1,7 @@
 package cn.etarch.mao.settings;
 
+import cn.etarch.mao.agent.entity.Agent;
+import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.settings.entity.SystemSetting;
 import cn.etarch.mao.settings.mapper.SystemSettingMapper;
@@ -19,7 +21,8 @@ import static org.mockito.Mockito.when;
 class SystemSettingServiceTest {
 
     private final SystemSettingMapper mapper = mock(SystemSettingMapper.class);
-    private final SystemSettingService service = new SystemSettingService(mapper);
+    private final AgentMapper agentMapper = mock(AgentMapper.class);
+    private final SystemSettingService service = new SystemSettingService(mapper, agentMapper);
 
     SystemSettingServiceTest() {
         ReflectionTestUtils.setField(service, "workspaceRoot", "/workspace");
@@ -59,6 +62,41 @@ class SystemSettingServiceTest {
 
         assertThat(updated.getValue()).isEqualTo("50");
         verify(mapper).updateById(setting);
+    }
+
+    @Test
+    void updateAllowsEmptyWeixinAgentId() {
+        SystemSetting setting = setting(SystemSettingService.WEIXIN_AGENT_ID_KEY, "微信", 1);
+        when(mapper.selectOne(any())).thenReturn(setting);
+
+        SystemSetting updated = service.update(SystemSettingService.WEIXIN_AGENT_ID_KEY, "");
+
+        assertThat(updated.getValue()).isEqualTo("");
+        verify(mapper).updateById(setting);
+    }
+
+    @Test
+    void updateValidatesWeixinAgentExists() {
+        SystemSetting setting = setting(SystemSettingService.WEIXIN_AGENT_ID_KEY, "微信", 1);
+        when(mapper.selectOne(any())).thenReturn(setting);
+        when(agentMapper.selectById(9L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.update(SystemSettingService.WEIXIN_AGENT_ID_KEY, "9"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Agent 不存在");
+    }
+
+    @Test
+    void updateAcceptsValidWeixinAgentId() {
+        SystemSetting setting = setting(SystemSettingService.WEIXIN_AGENT_ID_KEY, "微信", 1);
+        when(mapper.selectOne(any())).thenReturn(setting);
+        Agent agent = new Agent();
+        agent.setId(9L);
+        when(agentMapper.selectById(9L)).thenReturn(agent);
+
+        SystemSetting updated = service.update(SystemSettingService.WEIXIN_AGENT_ID_KEY, "9");
+
+        assertThat(updated.getValue()).isEqualTo("9");
     }
 
     @Test

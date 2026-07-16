@@ -224,6 +224,10 @@ async function onOpen() {
     const match = agents.value.find(a => String(a.id) === String(props.defaultAgentId))
     if (match) selectedAgent.value = match
   }
+  if (!selectedAgent.value) {
+    const defaultAgent = agents.value.find(a => a.isDefault)
+    if (defaultAgent) selectedAgent.value = defaultAgent
+  }
 
   // Load cloud projects and set default workspace mode
   cloudProjects.value = await sessionStore.fetchCloudProjects()

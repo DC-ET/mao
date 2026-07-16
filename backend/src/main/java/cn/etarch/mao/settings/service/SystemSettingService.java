@@ -1,5 +1,7 @@
 package cn.etarch.mao.settings.service;
 
+import cn.etarch.mao.agent.entity.Agent;
+import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.common.result.ErrorCode;
 import cn.etarch.mao.settings.entity.SystemSetting;
@@ -17,7 +19,10 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class SystemSettingService {
 
+    public static final String WEIXIN_AGENT_ID_KEY = "weixin.agentId";
+
     private final SystemSettingMapper systemSettingMapper;
+    private final AgentMapper agentMapper;
 
     @Value("${app.harness.workspace-root:/opt/mao/data/workspace}")
     private String workspaceRoot;
@@ -48,6 +53,12 @@ public class SystemSettingService {
         return settings;
     }
 
+    public String getValue(String key) {
+        SystemSetting setting = systemSettingMapper.selectOne(
+                new LambdaQueryWrapper<SystemSetting>().eq(SystemSetting::getSettingKey, key));
+        return setting != null ? setting.getValue() : null;
+    }
+
     public SystemSetting update(String key, String value) {
         SystemSetting setting = systemSettingMapper.selectOne(
                 new LambdaQueryWrapper<SystemSetting>().eq(SystemSetting::getSettingKey, key));
@@ -58,7 +69,7 @@ public class SystemSettingService {
             throw new BusinessException(ErrorCode.PARAM_INVALID, "该配置仅展示，不支持在后台修改");
         }
         validateValue(key, value);
-        setting.setValue(value);
+        setting.setValue(value != null ? value : "");
         systemSettingMapper.updateById(setting);
         return setting;
     }
@@ -78,6 +89,21 @@ public class SystemSettingService {
     }
 
     private void validateValue(String key, String value) {
+        if (WEIXIN_AGENT_ID_KEY.equals(key)) {
+            if (!StringUtils.hasText(value)) {
+                return;
+            }
+            try {
+                Long agentId = Long.parseLong(value.trim());
+                Agent agent = agentMapper.selectById(agentId);
+                if (agent == null) {
+                    throw new BusinessException(ErrorCode.PARAM_INVALID, "指定的 Agent 不存在");
+                }
+            } catch (NumberFormatException e) {
+                throw new BusinessException(ErrorCode.PARAM_INVALID, "微信智能体配置必须是有效的 Agent ID");
+            }
+            return;
+        }
         if (!StringUtils.hasText(value)) {
             throw new BusinessException(ErrorCode.PARAM_INVALID, "配置值不能为空");
         }

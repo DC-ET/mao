@@ -24,6 +24,7 @@ public enum ErrorCode {
     SESSION_NOT_FOUND(3002, "会话不存在"),
     MODEL_NOT_FOUND(3003, "模型配置不存在"),
     MODEL_IS_DEFAULT(3006, "不能删除默认模型，请先修改默认模型"),
+    AGENT_IS_DEFAULT(3009, "不能删除默认 Agent，请先修改默认 Agent"),
     SKILL_NOT_FOUND(3004, "Skill 不存在"),
     AGENT_ACCESS_DENIED(3005, "无权访问该 Agent"),
     AGENT_EXPERIENCE_CONTENT_INVALID(3023, "最佳实践经验内容无效（需 1～300 字）"),

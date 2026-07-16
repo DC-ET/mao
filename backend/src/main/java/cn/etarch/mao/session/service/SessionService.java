@@ -2,6 +2,7 @@ package cn.etarch.mao.session.service;
 
 import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.mapper.AgentMapper;
+import cn.etarch.mao.agent.service.AgentService;
 import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.common.result.ErrorCode;
 import cn.etarch.mao.harness.core.EnvironmentInfoProvider;
@@ -57,6 +58,7 @@ public class SessionService {
     private final MessageMapper messageMapper;
     private final FileChangeMapper fileChangeMapper;
     private final AgentMapper agentMapper;
+    private final AgentService agentService;
     private final PathSandbox pathSandbox;
     private final ObjectMapper objectMapper;
     private final EnvironmentInfoProvider environmentInfoProvider;
@@ -101,6 +103,9 @@ public class SessionService {
                                  String permissionLevel, Boolean isGit, String platform, String shellPath,
                                  String osVersion, Long modelId, String cloudProjectKey,
                                  String workspaceMode, String gitCloneUrl, String gitBranch) {
+        if (agentId == null) {
+            agentId = agentService.requireDefaultAgent().getId();
+        }
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
             throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);

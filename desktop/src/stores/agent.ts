@@ -9,6 +9,7 @@ export interface Agent {
   description: string
   tags: string[]
   executionMode: string
+  isDefault?: boolean
 }
 
 export const useAgentStore = defineStore('agent', () => {

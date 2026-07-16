@@ -26,6 +26,9 @@ public class Agent {
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String skillNames;
 
+    /** 是否默认 Agent：0=否 1=是 */
+    private Integer isDefault;
+
     /** Logical deletion flag: 0=normal, 1=deleted */
     @TableLogic
     private Integer deleted;

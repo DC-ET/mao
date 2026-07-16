@@ -5,6 +5,7 @@ import cn.etarch.mao.agent.entity.AgentTag;
 import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.agent.mapper.AgentTagMapper;
 import cn.etarch.mao.common.exception.BusinessException;
+import cn.etarch.mao.common.result.ErrorCode;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -30,7 +31,7 @@ class AgentServiceTest {
 
     @Test
     void listsGetsCreatesUpdatesDeletesAndLoadsTags() {
-        Agent existing = agent(1L, "old");
+        Agent existing = agent(1L, "old", 0);
         AgentTag tag = new AgentTag();
         tag.setAgentId(1L);
         tag.setTag("java");
@@ -46,17 +47,19 @@ class AgentServiceTest {
                 AgentExperienceService.ExperienceInput.of(null, "tip", 0, true));
         Agent created = service.createAgent(
                 7L, "coder", "desc", "prompt",
-                List.of("java", "spring"), List.of("skill-a"), experiences);
+                List.of("java", "spring"), List.of("skill-a"), experiences, 1);
         assertThat(created.getCreatorId()).isEqualTo(7L);
         assertThat(created.getSkillNames()).contains("skill-a");
+        assertThat(created.getIsDefault()).isEqualTo(1);
         verify(agentMapper).insert(created);
         verify(tagMapper, org.mockito.Mockito.times(2)).insert(any(AgentTag.class));
         verify(experienceService).syncExperiences(eq(created.getId()), eq(experiences));
 
         Agent updated = service.updateAgent(
-                1L, "new", null, "new prompt", List.of(), List.of("backend"), experiences);
+                1L, "new", null, "new prompt", List.of(), List.of("backend"), experiences, 0);
         assertThat(updated.getName()).isEqualTo("new");
         assertThat(updated.getSkillNames()).isNull();
+        assertThat(updated.getIsDefault()).isEqualTo(0);
         verify(agentMapper).updateById(existing);
         verify(tagMapper).delete(any(QueryWrapper.class));
         verify(experienceService).syncExperiences(1L, experiences);
@@ -72,10 +75,29 @@ class AgentServiceTest {
         assertThatThrownBy(() -> service.getAgent(404L)).isInstanceOf(BusinessException.class);
     }
 
-    private static Agent agent(Long id, String name) {
+    @Test
+    void deleteRejectsDefaultAgent() {
+        Agent existing = agent(1L, "default", 1);
+        when(agentMapper.selectById(1L)).thenReturn(existing);
+
+        assertThatThrownBy(() -> service.deleteAgent(1L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).getCode())
+                .isEqualTo(ErrorCode.AGENT_IS_DEFAULT.getCode());
+    }
+
+    @Test
+    void requireDefaultAgentThrowsWhenMissing() {
+        when(agentMapper.selectOne(any(QueryWrapper.class))).thenReturn(null);
+        assertThatThrownBy(() -> service.requireDefaultAgent())
+                .isInstanceOf(BusinessException.class);
+    }
+
+    private static Agent agent(Long id, String name, Integer isDefault) {
         Agent agent = new Agent();
         agent.setId(id);
         agent.setName(name);
+        agent.setIsDefault(isDefault);
         return agent;
     }
 }

@@ -306,9 +306,10 @@ async function resolveNewTaskDefaults(defaults?: NewTaskDefaults | null): Promis
     if (agentStore.agents.length === 0) {
       await agentStore.fetchAgents()
     }
-    const firstAgent = agentStore.agents[0]
-    if (firstAgent) {
-      resolved.agentId = String(firstAgent.id)
+    const defaultAgent = agentStore.agents.find(a => a.isDefault)
+    const fallbackAgent = defaultAgent || agentStore.agents[0]
+    if (fallbackAgent) {
+      resolved.agentId = String(fallbackAgent.id)
     }
   }
 
