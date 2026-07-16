@@ -64,6 +64,14 @@ export interface Session {
   sessionType?: 'NORMAL' | 'SUBAGENT' | 'SIDE_TASK'
 }
 
+export interface SideTaskItem {
+  id: number
+  title: string
+  modelId?: number
+  phase: TaskPhase
+  createdAt?: string
+}
+
 function normalizeId(id: any): string {
   return id != null ? String(id) : ''
 }
@@ -90,6 +98,8 @@ export const useSessionStore = defineStore('session', () => {
   const sessionMessageNextBeforeId = ref<Map<string, string | null>>(new Map())
   // Phase cache for sessions not in the main list (e.g. side tasks)
   const sessionPhases = ref<Map<string, TaskPhase>>(new Map())
+  // Side task list cache keyed by parentSessionId
+  const sideTaskCache = ref<Map<string, SideTaskItem[]>>(new Map())
 
   const activeSession = computed(() =>
     sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
@@ -292,6 +302,54 @@ export const useSessionStore = defineStore('session', () => {
     if (cached) return cached
     const session = sessions.value.find(s => String(s.id) === sid)
     return session?.phase ?? null
+  }
+
+  function setSideTasks(parentSessionId: string, tasks: SideTaskItem[]) {
+    sideTaskCache.value.set(String(parentSessionId), tasks)
+    sideTaskCache.value = new Map(sideTaskCache.value)
+  }
+
+  function addSideTask(parentSessionId: string, task: SideTaskItem) {
+    const key = String(parentSessionId)
+    const list = sideTaskCache.value.get(key) ?? []
+    const filtered = list.filter(t => t.id !== task.id)
+    sideTaskCache.value.set(key, [task, ...filtered])
+    sideTaskCache.value = new Map(sideTaskCache.value)
+  }
+
+  function updateSideTaskPhase(sideSessionId: number, phase: TaskPhase) {
+    for (const [, list] of sideTaskCache.value) {
+      const item = list.find(t => t.id === sideSessionId)
+      if (item) {
+        item.phase = phase
+        sideTaskCache.value = new Map(sideTaskCache.value)
+        break
+      }
+    }
+  }
+
+  function updateSideTaskTitle(parentSessionId: string, sideSessionId: number, title: string) {
+    const list = sideTaskCache.value.get(String(parentSessionId))
+    if (list) {
+      const item = list.find(t => t.id === sideSessionId)
+      if (item) {
+        item.title = title
+        sideTaskCache.value = new Map(sideTaskCache.value)
+      }
+    }
+  }
+
+  function removeSideTask(parentSessionId: string, sideSessionId: number) {
+    const key = String(parentSessionId)
+    const list = sideTaskCache.value.get(key)
+    if (list) {
+      sideTaskCache.value.set(key, list.filter(t => t.id !== sideSessionId))
+      sideTaskCache.value = new Map(sideTaskCache.value)
+    }
+  }
+
+  function getSideTasks(parentSessionId: string): SideTaskItem[] {
+    return sideTaskCache.value.get(String(parentSessionId)) ?? []
   }
 
   async function renameSession(id: string, title: string) {
@@ -769,6 +827,7 @@ export const useSessionStore = defineStore('session', () => {
     sessionMessageLoadingOlder.value = new Map()
     sessionMessageNextBeforeId.value = new Map()
     sessionPhases.value = new Map()
+    sideTaskCache.value = new Map()
   }
 
   return {
@@ -792,6 +851,12 @@ export const useSessionStore = defineStore('session', () => {
     updateSession,
     updateSessionPhase,
     getSessionPhase,
+    setSideTasks,
+    addSideTask,
+    updateSideTaskPhase,
+    updateSideTaskTitle,
+    removeSideTask,
+    getSideTasks,
     renameSession,
     updateSessionModel,
     deleteSession,

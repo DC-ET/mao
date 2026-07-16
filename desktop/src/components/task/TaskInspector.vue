@@ -81,6 +81,16 @@
         <h4 class="section-title">进度</h4>
         <TodoChecklist :todos="todos" />
       </div>
+
+      <div class="inspector-section">
+        <h4 class="section-title">边路任务</h4>
+        <SideTaskList
+          :tasks="sideTasks"
+          @open-side-task="handleOpenSideTask"
+          @edit-title="handleEditSideTaskTitle"
+          @delete-side-task="handleDeleteSideTask"
+        />
+      </div>
     </div>
 
     <!-- Tab: 文件树 -->
@@ -102,15 +112,17 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { FolderOpened, DocumentCopy, User } from '@element-plus/icons-vue'
 import TodoChecklist from './TodoChecklist.vue'
+import SideTaskList from './SideTaskList.vue'
 import FileTree from '../file-browser/FileTree.vue'
 import type { TodoItem } from '../../types/chat'
-import type { TaskPhase } from '../../stores/session'
+import type { SideTaskItem, TaskPhase } from '../../stores/session'
 import type { ContextWindowInfo } from '../../types/chat'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
 
 const props = defineProps<{
   todos?: TodoItem[]
+  sideTasks?: SideTaskItem[]
   title: string
   agentName?: string
   workspace?: string
@@ -128,6 +140,9 @@ const emit = defineEmits<{
   rename: [title: string]
   'open-file': [payload: { path: string; title: string }]
   'add-file-to-chat': [filePath: string]
+  'open-side-task': [payload: { sideSessionId: number; title: string }]
+  'edit-title': [payload: { sideSessionId: number; title: string }]
+  'delete-side-task': [sideSessionId: number]
 }>()
 
 const inspectorActiveTab = ref<'workspace' | 'filetree'>('workspace')
@@ -146,6 +161,18 @@ watch(showFileTreeTab, (visible) => {
 
 function handleOpenFile(payload: { path: string; title: string }) {
   emit('open-file', payload)
+}
+
+function handleOpenSideTask(payload: { sideSessionId: number; title: string }) {
+  emit('open-side-task', payload)
+}
+
+function handleEditSideTaskTitle(payload: { sideSessionId: number; title: string }) {
+  emit('edit-title', payload)
+}
+
+function handleDeleteSideTask(sideSessionId: number) {
+  emit('delete-side-task', sideSessionId)
 }
 
 // --- Title editing ---

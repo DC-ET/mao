@@ -426,6 +426,7 @@ export function useStreamWS() {
           }
 
           sessionStore.updateSessionPhase(sessionId, phase)
+          sessionStore.updateSideTaskPhase(Number(sessionId), phase)
           // Sync unread state — skip for active session (user is already viewing)
           if (data.unread !== undefined) {
             if (sessionId === sessionStore.activeSessionId) {
@@ -506,6 +507,7 @@ export function useStreamWS() {
         // Session was already running when we subscribed — sync phase so client can show correct UI
         if (sessionId && data?.phase) {
           sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
+          sessionStore.updateSideTaskPhase(Number(sessionId), data.phase as TaskPhase)
         }
         break
 
@@ -596,6 +598,7 @@ export function useStreamWS() {
       case 'error': {
         if (sessionId) {
           sessionStore.updateSessionPhase(sessionId, 'FAILED' as TaskPhase)
+          sessionStore.updateSideTaskPhase(Number(sessionId), 'FAILED' as TaskPhase)
           resetSessionStreamState(sessionId)
           const cb = pendingCallbacks.get(sessionId)
           if (cb) {

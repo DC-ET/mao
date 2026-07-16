@@ -88,18 +88,27 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     notifyTabsChanged()
   }
 
+  function findSideTaskTab(state: SessionTabState, sideSessionId: number) {
+    const id = 'side:' + sideSessionId
+    return state.tabs.find(t =>
+      t.type === 'side_task' && (t.id === id || t.sideSessionId === sideSessionId)
+    )
+  }
+
   /**
    * 打开边路任务 Tab。如果已存在则直接激活。
    * 传入 sideSessionId=0 表示"待创建"状态。
+   * 占位 Tab 的 id 可能是 side:-{timestamp}，需按 sideSessionId 字段匹配。
    */
   function openSideTaskTab(sideSessionId: number, title: string) {
     const state = getSessionState()
-    const id = 'side:' + sideSessionId
-    const existing = state.tabs.find(t => t.id === id)
+    const existing = findSideTaskTab(state, sideSessionId)
     if (existing) {
-      state.activeTabId = id
+      state.activeTabId = existing.id
+      notifyTabsChanged()
       return
     }
+    const id = 'side:' + sideSessionId
     const newTab: Tab = { id, type: 'side_task', title: normalizeSideTaskTitle(title), sideSessionId }
     state.tabs.push(newTab)
     state.activeTabId = id
@@ -109,10 +118,12 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   /**
    * 更新边路任务 Tab（收到 side_session_created 后更新属性）。
    * 不改变 tab.id，保持组件不重新挂载。
+   * oldId 可为占位 tab.id，也可传 side:{realId}；后者会按 sideSessionId 回退查找。
    */
   function updateSideTaskTab(oldId: string, sideSessionId: number, title: string) {
     const state = getSessionState()
     const tab = state.tabs.find(t => t.id === oldId)
+      || (sideSessionId > 0 ? findSideTaskTab(state, sideSessionId) : undefined)
     if (tab) {
       // Don't change tab.id — keep the component mounted
       if (sideSessionId > 0) {

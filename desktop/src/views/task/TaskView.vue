@@ -22,6 +22,7 @@
 
     <TaskInspector
       :todos="todos"
+      :side-tasks="sideTasks"
       :title="sessionTitle"
       :agent-name="agentName"
       :workspace="workspace"
@@ -37,6 +38,9 @@
       @rename="handleRename"
       @open-file="handleOpenFile"
       @add-file-to-chat="handleAddFileToChat"
+      @open-side-task="handleOpenSideTask"
+      @edit-title="handleEditSideTaskTitle"
+      @delete-side-task="handleDeleteSideTask"
     />
   </div>
 </template>
@@ -165,6 +169,7 @@ const { tabs, activeTabId, openFileTab, closeTab, closeAllFileTabs, closeOtherTa
 const sessionId = computed(() => sessionIdParam.value)
 const todos = computed(() => chatTodos.value)
 const contextWindow = computed(() => chatContextWindow.value)
+const sideTasks = computed(() => sessionStore.getSideTasks(activeSessionIdRef.value || ''))
 
 const sessionIdForTabs = computed(() => sessionId.value || sessionIdParam.value || '')
 
@@ -190,18 +195,29 @@ async function handleSideSessionCreated(e: Event) {
   const detail = (e as CustomEvent).detail
   if (!detail || !detail.sideSessionId) return
 
+  let title = detail.title || '任务'
   for (const tab of tabs.value) {
     if (tab.type !== 'side_task' || (tab.sideSessionId !== undefined && tab.sideSessionId > 0)) continue
 
     const placeholderMsgs = sessionStore.getMessages(tab.id)
     const firstUser = placeholderMsgs.find(m => m.role === 'user')
     const sourceText = firstUser?.content || detail.title || ''
-    const title = tab.title && tab.title !== '任务'
+    title = tab.title && tab.title !== '任务'
       ? tab.title
       : await deriveSessionTitle(sourceText)
 
     updateSideTaskTab(tab.id, detail.sideSessionId, title)
     break
+  }
+
+  const parentId = String(detail.parentSessionId || activeSessionIdRef.value || '')
+  if (parentId) {
+    sessionStore.addSideTask(parentId, {
+      id: detail.sideSessionId,
+      title: title || detail.title || '任务',
+      phase: 'RUNNING',
+      createdAt: new Date().toISOString(),
+    })
   }
 }
 
@@ -223,6 +239,36 @@ function handleRename(title: string) {
   if (sessionStore.activeSessionId) {
     sessionStore.renameSession(sessionStore.activeSessionId, title)
   }
+}
+
+function handleOpenSideTask(payload: { sideSessionId: number; title: string }) {
+  openSideTaskTab(payload.sideSessionId, payload.title)
+}
+
+async function handleEditSideTaskTitle(payload: { sideSessionId: number; title: string }) {
+  try {
+    const { data } = await api.patch(`/sessions/${payload.sideSessionId}`, { title: payload.title })
+    if (data) {
+      const newTitle = data.summary || data.title || payload.title
+      sessionStore.updateSideTaskTitle(activeSessionIdRef.value || '', payload.sideSessionId, newTitle)
+      updateSideTaskTab('side:' + payload.sideSessionId, payload.sideSessionId, newTitle)
+    }
+  } catch (e) {
+    console.warn('[side-task] Failed to rename side task:', e)
+  }
+}
+
+async function handleDeleteSideTask(sideSessionId: number) {
+  try {
+    await api.delete(`/sessions/${sideSessionId}`)
+  } catch (e) {
+    console.warn('[side-task] Failed to delete side task:', e)
+  }
+  const tab = tabs.value.find(t =>
+    t.type === 'side_task' && (t.sideSessionId === sideSessionId || t.id === 'side:' + sideSessionId)
+  )
+  if (tab) closeTab(tab.id)
+  sessionStore.removeSideTask(activeSessionIdRef.value || '', sideSessionId)
 }
 
 type NewTaskDefaults = {
@@ -425,9 +471,19 @@ async function loadSession(sid: string) {
   // Restore open side task tabs (excluding user-closed ones)
   try {
     const res = await api.get(`/sessions/${sid}/side-tasks`)
-    const sideTasks = res?.data
-    if (Array.isArray(sideTasks) && sideTasks.length > 0) {
-      const resolved = await Promise.all(sideTasks.map(async (st: { id: number; title: string }) => ({
+    const sideTasksData = res?.data
+    const items = Array.isArray(sideTasksData)
+      ? sideTasksData.map((st: { id: number; title: string; modelId?: number; phase?: string; createdAt?: string }) => ({
+          id: st.id,
+          title: st.title || '任务',
+          modelId: st.modelId,
+          phase: (st.phase || 'IDLE') as TaskPhase,
+          createdAt: st.createdAt,
+        }))
+      : []
+    sessionStore.setSideTasks(sid, items)
+    if (items.length > 0) {
+      const resolved = await Promise.all(items.map(async (st) => ({
         id: st.id,
         title: await deriveSessionTitle(st.title || '任务'),
       })))
@@ -435,6 +491,7 @@ async function loadSession(sid: string) {
     }
   } catch (e) {
     console.warn('[side-task] Failed to restore side task tabs:', e)
+    sessionStore.setSideTasks(sid, [])
   }
 
   initialLoading.value = false
