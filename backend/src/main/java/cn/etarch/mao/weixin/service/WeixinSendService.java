@@ -102,25 +102,33 @@ public class WeixinSendService {
                     return false;
                 }
 
-                JsonNode responseJson = objectMapper.readTree(response.body().string());
+                String body = response.body() != null ? response.body().string() : "";
+                // sendmessage 成功时常返回空对象 {}，无 ret/errcode
+                if (body.isBlank() || "{}".equals(body.trim())) {
+                    log.debug("发送消息成功, accountId={}, toUserId={}, clientId={}", accountId, toUserId, clientId);
+                    return true;
+                }
+
+                JsonNode responseJson = objectMapper.readTree(body);
                 JsonNode retNode = responseJson.get("ret");
                 JsonNode errcodeNode = responseJson.get("errcode");
-                
-                if (retNode == null || errcodeNode == null) {
-                    log.error("发送消息响应格式异常: response={}, accountId={}, toUserId={}", 
-                            responseJson, accountId, toUserId);
-                    return false;
+
+                // 无业务错误字段且 HTTP 已成功，视为发送成功
+                if (retNode == null && errcodeNode == null) {
+                    log.debug("发送消息成功, accountId={}, toUserId={}, clientId={}, response={}",
+                            accountId, toUserId, clientId, responseJson);
+                    return true;
                 }
-                
-                int ret = retNode.asInt();
-                int errcode = errcodeNode.asInt();
+
+                int ret = retNode != null ? retNode.asInt() : 0;
+                int errcode = errcodeNode != null ? errcodeNode.asInt() : 0;
 
                 if (ret == 0 && errcode == 0) {
                     log.debug("发送消息成功, accountId={}, toUserId={}, clientId={}", accountId, toUserId, clientId);
                     return true;
                 } else {
-                    log.error("发送消息失败: ret={}, errcode={}, accountId={}, toUserId={}", 
-                            ret, errcode, accountId, toUserId);
+                    log.error("发送消息失败: ret={}, errcode={}, response={}, accountId={}, toUserId={}",
+                            ret, errcode, responseJson, accountId, toUserId);
                     return false;
                 }
             }
