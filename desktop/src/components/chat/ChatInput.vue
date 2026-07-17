@@ -164,7 +164,15 @@
           @select="(id, modelIdStr) => emit('select:model', id, modelIdStr)"
         />
         <button
-          v-if="loading && !canSend && !initializingWorkspace"
+          v-if="waitingForSave"
+          class="send-btn saving"
+          title="正在保存..."
+          disabled
+        >
+          <el-icon :size="16" class="is-loading"><Loading /></el-icon>
+        </button>
+        <button
+          v-else-if="loading && !canSend && !initializingWorkspace"
           class="send-btn stop"
           title="停止"
           @click="handleStop()"
@@ -192,7 +200,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
-import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy, Monitor } from '@element-plus/icons-vue'
+import { Document, Close, Plus, WarningFilled, FolderOpened, Cloudy, Monitor, Loading } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
@@ -233,6 +241,7 @@ const props = withDefaults(defineProps<{
   gitCloneUrl?: string
   gitBranch?: string
   cloudProjects?: CloudProject[]
+  waitingForSave?: boolean
 }>(), {
   disabled: false,
   loading: false,
@@ -250,6 +259,7 @@ const props = withDefaults(defineProps<{
   gitCloneUrl: '',
   gitBranch: '',
   cloudProjects: () => [],
+  waitingForSave: false,
 })
 
 const emit = defineEmits<{
@@ -304,6 +314,7 @@ let fileSearchDebounce: ReturnType<typeof setTimeout> | null = null
 
 // ===== Computed =====
 const canSend = computed(() => {
+  if (props.waitingForSave) return false
   if (!(editorContent.value.trim().length > 0 || pendingFiles.value.length > 0)) return false
   if (props.isNewTask && !props.selectedAgentId) return false
   if (props.isNewTask && props.executionMode === 'CLOUD' && props.workspaceMode === 'git') {
@@ -803,11 +814,8 @@ function handleSend() {
 
   emit('send', text, [...pendingFiles.value])
 
-  editor.value.commands.clearContent()
-  editorContent.value = ''
-  filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
-  pendingFiles.value = []
-  filePreviewUrls.value = []
+  // 不立即清空输入框，等待消息保存确认
+  // 清空操作将由父组件在收到消息保存确认后调用 clearInput 方法执行
 }
 
 // ===== Other =====
@@ -902,11 +910,21 @@ function insertFileReference(filePath: string) {
   ed.commands.focus()
 }
 
+function clearInput() {
+  if (editor.value) {
+    editor.value.commands.clearContent()
+    editorContent.value = ''
+  }
+  filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
+  pendingFiles.value = []
+  filePreviewUrls.value = []
+}
+
 onMounted(() => {
   registerChatInput({ insertFileReference })
 })
 
-defineExpose({ focusInput, insertFileReference })
+defineExpose({ focusInput, insertFileReference, clearInput })
 
 onBeforeUnmount(() => {
   editor.value?.destroy()
@@ -1183,6 +1201,12 @@ onBeforeUnmount(() => {
 .send-btn.stop:hover {
   background: color-mix(in srgb, var(--aw-danger) 85%, black);
   transform: scale(1.05);
+}
+
+.send-btn.saving {
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-48);
+  cursor: default;
 }
 
 .send-btn.cancelling {

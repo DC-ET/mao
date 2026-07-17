@@ -80,6 +80,10 @@ const pendingCallbacks = new Map<string, {
   reject?: (err: Error) => void
 }>()
 
+// 消息保存确认的回调机制
+type MessageSavedCallback = (sessionId: string, messageId: string) => void
+const messageSavedCallbacks = new Map<string, MessageSavedCallback>()
+
 // Module-level flags to ensure IPC listeners are registered only once
 let skillSyncListenerRegistered = false
 
@@ -514,6 +518,10 @@ export function useStreamWS() {
           } else {
             sessionStore.updateLastMessageId(sessionId, 'user', String(data.messageId))
           }
+          // 调用注册的消息保存回调
+          messageSavedCallbacks.forEach((callback) => {
+            callback(sessionId, String(data.messageId))
+          })
         }
         break
 
@@ -647,6 +655,17 @@ export function useStreamWS() {
     }
   }
 
+  // 消息保存确认的回调注册函数
+  function onMessageSaved(callback: MessageSavedCallback): string {
+    const callbackId = `callback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    messageSavedCallbacks.set(callbackId, callback)
+    return callbackId
+  }
+
+  function offMessageSaved(callbackId: string) {
+    messageSavedCallbacks.delete(callbackId)
+  }
+
   // Don't disconnect on component unmount — WS is global
 
   return {
@@ -666,6 +685,8 @@ export function useStreamWS() {
     createSideSession,
     pendingCallbacks,
     setActiveExecution,
-    clearActiveExecution
+    clearActiveExecution,
+    onMessageSaved,
+    offMessageSaved
   }
 }

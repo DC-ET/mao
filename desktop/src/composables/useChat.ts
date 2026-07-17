@@ -39,7 +39,7 @@ const FILE_REF_PATTERN = /@\{([^}]+)\}@/g
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
-  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks, setActiveExecution, clearActiveExecution } = useStreamWS()
+  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks, setActiveExecution, clearActiveExecution, onMessageSaved, offMessageSaved } = useStreamWS()
 
   const sending = ref(false)
   const initializingWorkspace = ref(false)
@@ -418,6 +418,218 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
   }
 
+  /**
+   * 发送消息并等待消息保存确认
+   * @returns true 表示消息已发出（可清空输入框）；false 表示发送失败（保留输入以便重试）
+   */
+  async function sendMessageAndWaitForSave(text: string, files?: File[]): Promise<boolean> {
+    if ((!text && (!files || files.length === 0)) || sending.value) return false
+
+    sending.value = true
+    startedAt.value = new Date().toISOString()
+
+    if (executionMode.value === 'LOCAL' && !isElectron) {
+      ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
+      sending.value = false
+      return false
+    }
+
+    // Upload images to OSS
+    const imageUrls = await uploadImages(files || [])
+
+    // Ensure WS connection is established
+    await connect()
+
+    try {
+      // Defensive fallback: if sessionId is lost (e.g. after returning from settings),
+      // recover from the store's activeSessionId before creating a new session
+      if (!sessionId.value && sessionStore.activeSessionId) {
+        sessionId.value = sessionStore.activeSessionId
+        const active = sessionStore.activeSession
+        if (active) {
+          agentId.value = String(active.agentId)
+          if (active.workspace) workspace.value = active.workspace
+          if (active.agentName) agentName.value = active.agentName
+        }
+      }
+
+      // Create session if needed
+      if (!sessionId.value) {
+        if (executionMode.value === 'LOCAL' && isElectron && !workspace.value) {
+          const dir = await (window as any).electronAPI.selectDirectory()
+          if (dir) workspace.value = dir
+          else {
+            sending.value = false
+            return false
+          }
+        }
+
+        let environmentInfo: SessionEnvironmentInfo | undefined
+        if (executionMode.value === 'LOCAL' && isElectron && (window as any).electronAPI?.getEnvironmentInfo) {
+          environmentInfo = await (window as any).electronAPI.getEnvironmentInfo(workspace.value || undefined)
+        }
+
+        if (executionMode.value === 'CLOUD' && workspaceMode.value === 'git') {
+          const gitError = validateHttpsGitUrl(gitCloneUrl.value)
+          if (gitError) {
+            ElMessage.error(gitError)
+            sending.value = false
+            return false
+          }
+        }
+
+        initializingWorkspace.value = true
+        initializingWorkspaceLabel.value = resolveWorkspaceInitLabel()
+        try {
+          const sessionData = await sessionStore.createSession(
+            agentId.value,
+            executionMode.value,
+            executionMode.value === 'LOCAL' ? workspace.value || undefined : undefined,
+            environmentInfo,
+            selectedModelId?.value,
+            permissionLevel?.value,
+            executionMode.value === 'CLOUD' ? cloudProjectKey.value || undefined : undefined,
+            executionMode.value === 'CLOUD' ? workspaceMode.value : undefined,
+            executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? gitCloneUrl.value : undefined,
+            executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? (gitBranch.value || undefined) : undefined
+          )
+          sessionId.value = sessionData.id
+          if (sessionData.workspace) {
+            workspace.value = sessionData.workspace
+          }
+          if (sessionData.agentName) {
+            agentName.value = sessionData.agentName
+          }
+        } finally {
+          initializingWorkspace.value = false
+          initializingWorkspaceLabel.value = ''
+        }
+      }
+
+      const sid = sessionId.value!
+      // Track which session is sending (set AFTER session creation so ID is correct)
+      sendingSessionId.value = sid
+
+      // Clear previous turn's todos
+      sessionStore.clearTodos(sid)
+
+      // Update session title from first user message (when title is still the default)
+      const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
+      if (currentSession && (!currentSession.title || currentSession.title === '未命名会话')) {
+        let derivedTitle = '任务'
+        if (text) {
+          derivedTitle = await deriveSessionTitle(text)
+        } else if (imageUrls.length > 0) {
+          derivedTitle = '图片消息'
+        }
+        sessionStore.updateSession(sid, { title: derivedTitle })
+        api.patch(`/sessions/${sid}`, { title: derivedTitle }).catch(() => {})
+      }
+
+      // Add user message to store
+      sessionStore.addUserMessage(sid, {
+        id: `msg_${Date.now()}_user`,
+        role: 'user',
+        content: text,
+        createdAt: nowDateTime(),
+        images: imageUrls.length > 0 ? imageUrls : undefined
+      })
+
+      // Add empty assistant message
+      sessionStore.addAssistantMessage(sid, {
+        id: `msg_${Date.now()}_assistant`,
+        role: 'assistant',
+        content: '',
+        createdAt: nowDateTime(),
+        toolCalls: [],
+        segments: []
+      })
+
+      // Subscribe to this session's events
+      subscribe(sid)
+
+      // Resolve file reference relative paths to absolute paths
+      let resolvedText = text || ''
+      if (resolvedText.includes('@{') && workspace.value) {
+        FILE_REF_PATTERN.lastIndex = 0
+        resolvedText = resolvedText.replace(FILE_REF_PATTERN, (_, relPath) => {
+          const absPath = workspace.value.replace(/\/$/, '') + '/' + relPath.replace(/^\//, '')
+          return `@{${absPath}}@`
+        })
+      }
+
+      // Send message via WS
+      const eventId = generateUUID()
+      setActiveExecution(sid, eventId)
+      const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
+      const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
+      wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills, agentsMdContent)
+
+      // 等待消息保存确认后立即返回，解锁输入框；Agent 在后台继续执行
+      // 完成后的 sending / 刷新由 phase watcher 处理
+      await new Promise<void>((resolve) => {
+        const callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
+          if (callbackSessionId === sid) {
+            offMessageSaved(callbackId)
+            resolve()
+          }
+        })
+        // 设置超时，避免永远等待
+        setTimeout(() => {
+          offMessageSaved(callbackId)
+          resolve()
+        }, 5000)
+      })
+
+      // 保存确认后按实际 phase 同步 sending：
+      // - Agent 尚未进入 RUNNING 时复位，避免误显示停止按钮
+      // - 若 RUNNING 已先到达则保持 true；后续由 phase watcher 接管
+      // 必须用本次发送的 sid，而非 activeSession（等待期间用户可能已切走会话）
+      if (String(sessionId.value) === String(sid)) {
+        sending.value = isActivePhase(sessionStore.getSessionPhase(sid))
+      }
+
+      // Fire-and-forget：记录本轮执行耗时（不阻塞返回）
+      if (!pendingCallbacks.has(sid)) {
+        new Promise<void>((resolve, reject) => {
+          pendingCallbacks.set(sid, { resolve, reject })
+        }).then(() => {
+          if (startedAt.value) {
+            const lastMsg = messages.value[messages.value.length - 1]
+            if (lastMsg && lastMsg.role === 'assistant') {
+              lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
+            }
+            startedAt.value = null
+          }
+        }).catch(() => {
+          startedAt.value = null
+        })
+      }
+      return true
+    } catch (error: any) {
+      sending.value = false
+      initializingWorkspace.value = false
+      initializingWorkspaceLabel.value = ''
+      // Remove empty assistant message if it was added
+      const lastMsg = messages.value[messages.value.length - 1]
+      if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
+        messages.value.pop()
+      }
+      if (!(error as Error & { toastShown?: boolean }).toastShown) {
+        const failedBeforeSession = !sessionId.value
+        ElMessage.error(
+          error?.response?.data?.message
+          || error?.message
+          || (failedBeforeSession ? '任务创建失败' : 'Agent 执行中断')
+        )
+      }
+      if (sessionId.value) {
+        sessionStore.fetchSession(sessionId.value)
+      }
+      return false
+    }
+  }
+
   function stopExecution() {
     if (!sessionId.value) return
     const sid = sessionId.value
@@ -778,6 +990,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     contextWindow,
     startedAt,
     sendMessage,
+    sendMessageAndWaitForSave,
     sendMessageWithQueue,
     editAndResend,
     stopExecution,

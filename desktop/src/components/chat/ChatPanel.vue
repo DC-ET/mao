@@ -82,6 +82,7 @@
       :git-clone-url="isNewTaskMode ? newTaskGitCloneUrl : ''"
       :git-branch="isNewTaskMode ? newTaskGitBranch : ''"
       :cloud-projects="isNewTaskMode ? newTaskCloudProjects : []"
+      :waiting-for-save="waitingForSave"
       @send="handleSend"
       @stop="handleStop"
       @update:permission-level="handlePermissionLevelChange"
@@ -130,6 +131,11 @@ const newTaskCloudProjects = inject<Ref<Array<{ name: string; path: string; isGi
 const initialLoading = inject<Ref<boolean>>('initialLoading')!
 const currentPhase = inject<Ref<TaskPhase>>('currentPhase')!
 
+// 消息发送中状态，等待后端保存确认
+const waitingForSave = ref(false)
+// 用于在 KeepAlive 切回时作废进行中的发送 UI 副作用（避免晚到的 clearInput 清掉新输入）
+let sendGeneration = 0
+
 // Non-reactive callback to sync state to TaskView (avoids recursive updates)
 type SyncChatStateFn = (state: {
   workspace?: string; agentName?: string; todos?: any[]; contextWindow?: any
@@ -162,7 +168,9 @@ const {
   pendingApprovals,
   todos,
   contextWindow,
+  sendMessageAndWaitForSave,
   sendMessageWithQueue,
+  isActive,
   editAndResend,
   stopExecution,
   loadOlderMessages,
@@ -441,6 +449,11 @@ watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
 // Scroll to bottom when switching back to chat tab (KeepAlive restore)
 onActivated(() => {
   userScrolledUp.value = false
+  // KeepAlive 缓存期间若仍卡在 waitingForSave（异步挂起/超时未完成），切回后需解锁发送按钮
+  if (waitingForSave.value) {
+    waitingForSave.value = false
+    sendGeneration++
+  }
   nextTick(() => {
     const el = messagesContainer.value
     if (el) el.scrollTop = el.scrollHeight
@@ -458,7 +471,7 @@ watch(sessionId, (newSid) => {
   }
 })
 
-function handleSend(text: string, files: File[]) {
+async function handleSend(text: string, files: File[]) {
   if (isNewTaskMode.value) {
     if (!newTaskAgentId.value) return
     agentId.value = newTaskAgentId.value
@@ -468,7 +481,30 @@ function handleSend(text: string, files: File[]) {
     pendingNewTaskNav.value = true
   }
   userScrolledUp.value = false
-  sendMessageWithQueue(text, files)
+
+  // Agent 运行中走队列，不阻塞输入框
+  if (isActive.value) {
+    await sendMessageWithQueue(text, files)
+    chatInputRef.value?.clearInput()
+    nextTick(scrollToBottomSmooth)
+    return
+  }
+
+  // 首条消息：等待保存确认后再清空输入框并解锁；失败时保留输入以便重试
+  const generation = ++sendGeneration
+  waitingForSave.value = true
+  try {
+    const saved = await sendMessageAndWaitForSave(text, files)
+    // 若 KeepAlive 切回已作废本轮 UI，勿清空用户可能已重新编辑的输入
+    if (saved && generation === sendGeneration) {
+      chatInputRef.value?.clearInput()
+    }
+  } finally {
+    if (generation === sendGeneration) {
+      waitingForSave.value = false
+    }
+  }
+
   nextTick(scrollToBottomSmooth)
 }
 
