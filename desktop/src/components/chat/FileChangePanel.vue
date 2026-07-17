@@ -49,8 +49,6 @@ const sessionStore = useSessionStore()
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId)
 const { openDiffTab } = useCenterTabs(activeSessionIdRef)
 
-const isExpanded = ref(true)
-
 type MergedChange = FileChange & { displayPath: string }
 
 const mergedChanges = computed(() => {
@@ -72,6 +70,9 @@ const mergedChanges = computed(() => {
   }
   return result
 })
+
+/** ≤4 个文件默认展开，超过则默认折叠 */
+const isExpanded = ref(mergedChanges.value.length <= 4)
 
 const workspace = computed(() => sessionStore.activeSession?.workspace)
 
