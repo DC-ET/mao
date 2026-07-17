@@ -879,12 +879,16 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 sideSessionId, parentSessionId, userId, inheritContext);
 
         // 4. 保存首条 USER 消息
-        sessionService.saveMessage(sideSessionId, "USER", content,
+        cn.etarch.mao.session.entity.Message savedMessage = sessionService.saveMessage(sideSessionId, "USER", content,
                 null, null, null, 0, null);
 
         // 5. 通知前端会话已创建（前端随后订阅该 sideSessionId）
         registry.send(userId, WsEvent.of("side_session_created", parentSessionId,
                 Map.of("sideSessionId", sideSessionId, "title", sideSession.getTitle())));
+
+        // 5.5 通知前端用户消息已保存
+        registry.send(userId, WsEvent.of("user_message_saved", sideSessionId,
+                Map.of("messageId", savedMessage.getId())));
 
         // 6. 注册取消标志
         AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(sideSessionId);

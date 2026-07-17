@@ -58,6 +58,7 @@
       <ChatInput
         ref="chatInputRef"
         :loading="sending"
+        :waiting-for-save="waitingForSave"
         :workspace="parentWorkspace"
         :cloud-project-key="parentCloudProjectKey"
         :project-key="parentProjectKey"
@@ -102,11 +103,23 @@ const props = defineProps<{
 }>()
 
 const sessionStore = useSessionStore()
-const { createSideSession, sendMessage, cancel, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage } = useStreamWS()
+const { createSideSession, sendMessage, cancel, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, onMessageSaved, offMessageSaved } = useStreamWS()
 const { openWithContent } = useCommandDrawer()
 
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { updateSideTaskTab } = useCenterTabs(activeSessionIdRef)
+const { updateSideTaskTab, tabs } = useCenterTabs(activeSessionIdRef)
+
+/** 与 TaskView.handleSideSessionCreated 一致：首个含用户消息的占位边路 tab */
+function isFirstPlaceholderSideTab(): boolean {
+  for (const tab of tabs.value) {
+    if (tab.type !== 'side_task' || (tab.sideSessionId !== undefined && tab.sideSessionId > 0)) continue
+    const placeholderMsgs = sessionStore.getMessages(tab.id)
+    if (placeholderMsgs.some(m => m.role === 'user')) {
+      return tab.id === props.tabId
+    }
+  }
+  return false
+}
 
 const parentExecutionMode = inject<Ref<string>>('executionMode', ref('CLOUD'))
 const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
@@ -129,6 +142,10 @@ const placeholderCacheKey = computed(() => props.tabId)
 
 const inheritContext = ref(false)
 const sending = ref(false)
+const waitingForSave = ref(false)
+
+/** 等待 user_message_saved 期间的清理回调（卸载时需主动调用，避免泄漏 watcher / 回调） */
+let pendingSendCleanup: (() => void) | null = null
 const selectedModelId = ref<number | undefined>(undefined)
 const sideModelId = ref<number | undefined>(undefined)
 
@@ -275,6 +292,9 @@ onActivated(() => {
 })
 
 onUnmounted(() => {
+  pendingSendCleanup?.()
+  pendingSendCleanup = null
+
   if (hasRealSession.value) {
     unsubscribe(String(realSessionId.value))
   } else {
@@ -297,6 +317,7 @@ async function handleChatSend(text: string, _files: File[]) {
   // 边路任务正在执行中：将消息加入队列（不受 sending 状态阻塞）
   if (hasRealSession.value && isSideActive.value) {
     enqueueMessage(String(realSessionId.value), text.trim(), generateUUID(), [])
+    chatInputRef.value?.clearInput()
     return
   }
 
@@ -305,7 +326,26 @@ async function handleChatSend(text: string, _files: File[]) {
   const localSkills = await collectLocalUnsyncedSkills(parentExecutionMode.value, isElectron)
   const agentsMdContent = await collectAgentsMdContent(parentWorkspace.value, parentExecutionMode.value, isElectron)
 
-  if (!hasRealSession.value) {
+  // 设置发送中状态
+  waitingForSave.value = true
+
+  // 首次创建边路会话时尚未有真实 sessionId；后端先发 side_session_created 再发 user_message_saved。
+  // props.sideSessionId 由 TaskView 异步更新（且 watcher 为微任务），晚于同步的 user_message_saved 回调。
+  // 因此在 side_session_created 同步监听里设置 expectedSavedSessionId。
+  const isFirstSideSend = !hasRealSession.value
+  let expectedSavedSessionId: string | null = isFirstSideSend ? null : String(realSessionId.value)
+  let removeSideCreatedListener: (() => void) | undefined
+  if (isFirstSideSend) {
+    const onSideCreated = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail?.sideSessionId == null || !isFirstPlaceholderSideTab()) return
+      expectedSavedSessionId = String(detail.sideSessionId)
+    }
+    window.addEventListener('side_session_created', onSideCreated)
+    removeSideCreatedListener = () => window.removeEventListener('side_session_created', onSideCreated)
+  }
+
+  if (isFirstSideSend) {
     // 首次发送：创建边路任务会话
     sessionStore.addUserMessage(placeholderCacheKey.value, {
       id: 'side_user_' + Date.now(),
@@ -320,7 +360,11 @@ async function handleChatSend(text: string, _files: File[]) {
     })
 
     const parentSessionId = sessionStore.activeSessionId
-    if (!parentSessionId) return
+    if (!parentSessionId) {
+      removeSideCreatedListener?.()
+      waitingForSave.value = false
+      return
+    }
 
     createSideSession(
       parentSessionId,
@@ -344,6 +388,28 @@ async function handleChatSend(text: string, _files: File[]) {
     sendMessage(sid, text.trim(), generateUUID(), undefined, localSkills, agentsMdContent)
     sending.value = true
   }
+
+  // 等待消息保存确认
+  let settled = false
+  let saveTimeoutId: ReturnType<typeof setTimeout>
+  const finishWaiting = () => {
+    if (settled) return
+    settled = true
+    pendingSendCleanup = null
+    clearTimeout(saveTimeoutId)
+    removeSideCreatedListener?.()
+    offMessageSaved(callbackId)
+    waitingForSave.value = false
+    chatInputRef.value?.clearInput()
+  }
+  const callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
+    if (expectedSavedSessionId != null && callbackSessionId === expectedSavedSessionId) {
+      finishWaiting()
+    }
+  })
+  pendingSendCleanup = finishWaiting
+  // 设置超时，避免永远等待
+  saveTimeoutId = setTimeout(finishWaiting, 5000)
 }
 
 function handleStop() {
@@ -384,7 +450,7 @@ function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background: var(--el-bg-color, #fff);
+  background: var(--aw-canvas);
   padding: 0 20px;
 }
 
@@ -426,7 +492,7 @@ function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
 .inherit-bar {
   padding: 6px 0 8px;
   border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
-  background: var(--el-bg-color, #fff);
+  background: var(--aw-canvas);
 }
 
 .typing-indicator {
