@@ -44,8 +44,8 @@
       </div>
     </div>
 
-    <!-- Final reply (last assistant message with text) -->
-    <div v-if="finalReply" class="message-item assistant">
+    <!-- Final reply text (always last assistant message content, not folded) -->
+    <div v-if="finalReply && finalReplyText" class="message-item assistant">
       <div class="message-content">
         <div class="message-time">
           <span>{{ finalReply.createdAt }}</span>
@@ -80,20 +80,16 @@ function getVisibleToolCalls(msg: ChatMessage) {
   return msg.toolCalls?.filter(tc => !HIDDEN_TOOL_NAMES.has(tc.name)) || []
 }
 
-function hasToolsOrThinking(msg: ChatMessage): boolean {
-  return getVisibleToolCalls(msg).length > 0 || !!msg.thinkingContent
-}
-
-// Final reply: last assistant message with text but no tool calls / thinking
+// Align with desktop useMessageRounds: last assistant message is always the final reply
 const finalReply = computed(() => {
-  for (let i = props.assistantMessages.length - 1; i >= 0; i--) {
-    const msg = props.assistantMessages[i]
-    if (msg.content?.trim() && !hasToolsOrThinking(msg)) return msg
-  }
-  return null
+  const msgs = props.assistantMessages
+  return msgs.length > 0 ? msgs[msgs.length - 1] : null
 })
 
-// Process items: collect thinking, tool calls, file changes from all intermediate messages
+const finalReplyText = computed(() => finalReply.value?.content?.trim() || '')
+
+// Process items: intermediate messages fully + thinking/tools/fileChanges from final message
+// Final answer text is rendered outside the collapse (same intent as desktop ChatRoundList)
 type ProcessItem =
   | { type: 'thinking'; content: string }
   | { type: 'text'; content: string }
@@ -103,12 +99,13 @@ type ProcessItem =
 const processItems = computed((): ProcessItem[] => {
   const items: ProcessItem[] = []
   for (const msg of props.assistantMessages) {
-    if (finalReply.value?.id === msg.id) continue
+    const isFinal = finalReply.value?.id === msg.id
 
     if (msg.thinkingContent) {
       items.push({ type: 'thinking', content: msg.thinkingContent })
     }
-    if (msg.content?.trim()) {
+    // Intermediate assistant text stays in process; final text is shown outside
+    if (!isFinal && msg.content?.trim()) {
       items.push({ type: 'text', content: msg.content })
     }
     const tc = getVisibleToolCalls(msg)
@@ -127,10 +124,9 @@ const hasProcess = computed(() => processItems.value.length > 0)
 const processSummary = computed(() => {
   let toolCount = 0
   let hasThinking = false
-  for (const msg of props.assistantMessages) {
-    if (finalReply.value?.id === msg.id) continue
-    if (msg.thinkingContent) hasThinking = true
-    toolCount += getVisibleToolCalls(msg).length
+  for (const item of processItems.value) {
+    if (item.type === 'thinking') hasThinking = true
+    if (item.type === 'tools' && item.toolCalls) toolCount += item.toolCalls.length
   }
   const parts: string[] = []
   if (hasThinking) parts.push('思考')
