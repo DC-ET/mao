@@ -1,0 +1,87 @@
+/* ===== 移动端全局响应式覆盖（仅作用于 <=768px，不影响桌面端） ===== */
+
+@media (max-width: 768px) {
+  /* 布局容器使用动态视口高度，规避移动浏览器地址栏抖动 */
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  .layout-content {
+    padding: 12px !important;
+  }
+
+  /* 搜索/筛选表单：纵向堆叠，表单项占满宽度 */
+  .search-form.el-form--inline .el-form-item {
+    margin-right: 0 !important;
+    margin-bottom: 12px !important;
+    width: 100% !important;
+  }
+
+  .search-form.el-form--inline .el-form-item .el-input,
+  .search-form.el-form--inline .el-form-item .el-select {
+    width: 100% !important;
+  }
+
+  /* 分页：窄屏只保留上下页与页码，隐藏 sizes/jumper/total */
+  .el-pagination .el-pagination__sizes,
+  .el-pagination .el-pagination__jump,
+  .el-pagination .el-pagination__total {
+    display: none !important;
+  }
+
+  /* 弹窗：窄屏默认近全屏，避免溢出视口 */
+  .el-dialog {
+    width: 92% !important;
+    max-width: 100%;
+  }
+
+  /* 表格：允许内部横向滚动；隐藏标记为移动端隐藏的列 */
+  .el-table .hide-on-mobile {
+    display: none !important;
+  }
+
+  .el-table .cell {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  /* 标签栏：增大点击区域 */
+  .tab-item {
+    height: 34px !important;
+  }
+
+  /* 通用卡片间距收紧 */
+  .el-card {
+    --el-card-padding: 14px;
+  }
+
+  /* 移动端抽屉菜单：去除默认白底与内边距，让深色菜单铺满 */
+  .mobile-side-drawer .el-drawer,
+  .mobile-side-drawer .el-drawer__body {
+    background: #304156 !important;
+  }
+
+  .mobile-side-drawer .el-drawer__body {
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .mobile-side-drawer .el-drawer .el-menu,
+  .mobile-side-drawer .side-menu-wrap {
+    background: #304156 !important;
+    border-right: none !important;
+    height: 100% !important;
+  }
+
+  .mobile-side-drawer .side-menu-wrap {
+    overflow-y: auto !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .layout-content {
+    padding: 8px !important;
+  }
+}

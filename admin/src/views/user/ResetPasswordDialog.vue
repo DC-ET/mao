@@ -1,8 +1,9 @@
 <template>
-  <el-dialog
+  <ResponsiveDialog
     :model-value="visible"
     title="重置密码"
     width="480px"
+    @update:model-value="$emit('update:visible', $event)"
     @close="$emit('update:visible', false)"
   >
     <p class="user-hint">
@@ -38,7 +39,7 @@
         确认重置
       </el-button>
     </template>
-  </el-dialog>
+  </ResponsiveDialog>
 </template>
 
 <script setup lang="ts">

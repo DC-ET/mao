@@ -8,6 +8,7 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import App from './App.vue'
 import router from './router'
 import './style.css'
+import './styles/responsive.css'
 import { useAuthStore } from './stores/auth'
 
 const app = createApp(App)

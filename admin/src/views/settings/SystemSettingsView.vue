@@ -47,7 +47,7 @@
       </el-tabs>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" title="编辑配置" width="480px">
+    <ResponsiveDialog v-model="dialogVisible" title="编辑配置" width="480px">
       <el-form label-width="90px">
         <el-form-item label="配置键">
           <el-input :model-value="currentSetting?.settingKey" disabled />
@@ -90,7 +90,7 @@
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="saveSetting">保存</el-button>
       </template>
-    </el-dialog>
+    </ResponsiveDialog>
   </div>
 </template>
 
@@ -98,6 +98,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
+import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 const WEIXIN_SELECT_KEYS = new Set(['weixin.agentId', 'weixin.modelId'])
 

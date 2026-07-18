@@ -9,7 +9,7 @@
 
     <!-- Session info -->
     <el-card v-if="sessionInfo" class="info-card">
-      <el-descriptions :column="4" border size="small">
+      <el-descriptions :column="isMobile ? 1 : 4" border size="small">
         <el-descriptions-item label="ID">{{ sessionInfo.id }}</el-descriptions-item>
         <el-descriptions-item label="用户">{{ sessionInfo.userName }}</el-descriptions-item>
         <el-descriptions-item label="Agent">{{ sessionInfo.agentName }}</el-descriptions-item>
@@ -57,12 +57,14 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 import { mapApiMessagesToChat } from './utils/chatMessage'
 import type { ChatMessage } from './types/chat'
 import MessageGroup from './components/MessageGroup.vue'
 
 const route = useRoute()
 const router = useRouter()
+const { isMobile } = useBreakpoint()
 const loading = ref(false)
 const sessionInfo = ref<any>(null)
 const messages = ref<ChatMessage[]>([])

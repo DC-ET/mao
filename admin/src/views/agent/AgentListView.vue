@@ -33,7 +33,7 @@
 
       <!-- Table -->
       <el-table :data="filteredAgents" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="80" />
+        <el-table-column prop="id" label="ID" width="80" class="hide-on-mobile" />
         <el-table-column prop="name" label="名称" min-width="120">
           <template #default="{ row }">
             <span>{{ row.name }}</span>
@@ -41,7 +41,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-        <el-table-column label="标签" min-width="180">
+        <el-table-column label="标签" min-width="180" class="hide-on-mobile">
           <template #default="{ row }">
             <el-tag
               v-for="tag in row.tags"
@@ -51,13 +51,13 @@
             >{{ tag }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Skills" width="110" align="right">
+        <el-table-column label="Skills" width="110" align="right" class="hide-on-mobile">
           <template #default="{ row }">{{ row.skillNames?.length || 0 }}</template>
         </el-table-column>
-        <el-table-column label="经验数" width="90" align="right">
+        <el-table-column label="经验数" width="90" align="right" class="hide-on-mobile">
           <template #default="{ row }">{{ row.experiences?.length || 0 }}</template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="创建时间" width="180" />
+        <el-table-column prop="createdAt" label="创建时间" width="180" class="hide-on-mobile" />
         <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>

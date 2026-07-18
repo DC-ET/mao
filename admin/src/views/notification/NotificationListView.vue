@@ -66,7 +66,7 @@
       />
     </el-card>
 
-    <el-dialog v-model="dialogVisible" title="发布通知" width="520px">
+    <ResponsiveDialog v-model="dialogVisible" title="发布通知" width="520px">
       <el-form :model="form" label-width="80px">
         <el-form-item label="类型">
           <el-select v-model="form.type" style="width: 100%">
@@ -86,7 +86,7 @@
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="saveNotification">发布</el-button>
       </template>
-    </el-dialog>
+    </ResponsiveDialog>
   </div>
 </template>
 
@@ -94,6 +94,7 @@
 import { reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
+import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 const loading = ref(false)
 const notifications = ref<any[]>([])

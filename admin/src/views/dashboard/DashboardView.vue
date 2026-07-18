@@ -364,4 +364,28 @@ onMounted(fetchAll)
   font-size: 12px;
   color: #909399;
 }
+
+@media (max-width: 768px) {
+  /* Charts/table rows collapse to a single column */
+  .dashboard :deep(.el-row) {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  .dashboard :deep(.el-col) {
+    max-width: 100%;
+    flex: 0 0 100%;
+  }
+
+  /* Keep the small metric/stat cards in a 2-column grid */
+  .overview-cards :deep(.el-col),
+  .governance-cards :deep(.el-col) {
+    max-width: 50%;
+    flex: 0 0 50%;
+  }
+
+  .chart-container {
+    height: 140px;
+  }
+}
 </style>

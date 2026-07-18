@@ -1,94 +1,40 @@
 <template>
   <el-container class="layout-container">
-    <!-- Sidebar -->
-    <el-aside width="200px" class="layout-aside">
-      <div class="logo">
-        <h3>Agent 工作台</h3>
-      </div>
-
-      <el-menu
-        :default-active="activeMenu"
-        router
-        class="sidebar-menu"
-      >
-        <el-menu-item index="/dashboard">
-          <el-icon><DataLine /></el-icon>
-          <span>数据概览</span>
-        </el-menu-item>
-
-        <el-menu-item index="/agents">
-          <el-icon><Monitor /></el-icon>
-          <span>Agent 管理</span>
-        </el-menu-item>
-
-        <el-menu-item index="/models">
-          <el-icon><Connection /></el-icon>
-          <span>模型管理</span>
-        </el-menu-item>
-
-        <el-menu-item index="/skills">
-          <el-icon><MagicStick /></el-icon>
-          <span>Skills 管理</span>
-        </el-menu-item>
-
-        <el-menu-item index="/sessions">
-          <el-icon><ChatDotRound /></el-icon>
-          <span>会话管理</span>
-        </el-menu-item>
-
-        <el-menu-item index="/users">
-          <el-icon><User /></el-icon>
-          <span>用户管理</span>
-        </el-menu-item>
-
-        <el-menu-item index="/roles">
-          <el-icon><Lock /></el-icon>
-          <span>角色权限</span>
-        </el-menu-item>
-
-        <el-menu-item index="/audit-logs">
-          <el-icon><DocumentChecked /></el-icon>
-          <span>审计日志</span>
-        </el-menu-item>
-
-        <el-menu-item index="/runtime">
-          <el-icon><Operation /></el-icon>
-          <span>运行监控</span>
-        </el-menu-item>
-
-        <el-menu-item index="/analytics">
-          <el-icon><TrendCharts /></el-icon>
-          <span>用量分析</span>
-        </el-menu-item>
-
-        <el-menu-item index="/settings">
-          <el-icon><Setting /></el-icon>
-          <span>系统设置</span>
-        </el-menu-item>
-
-        <el-menu-item index="/notifications">
-          <el-icon><Bell /></el-icon>
-          <span>通知管理</span>
-        </el-menu-item>
-
-      </el-menu>
+    <!-- Sidebar (desktop only) -->
+    <el-aside v-if="!isMobile" width="200px" class="layout-aside">
+      <SideMenu :show-logo="true" />
     </el-aside>
+
+    <!-- Mobile drawer menu -->
+    <el-drawer
+      v-model="drawerVisible"
+      direction="ltr"
+      size="70%"
+      :with-header="false"
+      class="mobile-side-drawer"
+    >
+      <SideMenu :show-logo="true" @select="drawerVisible = false" />
+    </el-drawer>
 
     <!-- Main content -->
     <el-container>
       <el-header class="layout-header">
         <div class="header-left">
-          <el-breadcrumb separator="/">
+          <el-icon v-if="isMobile" class="menu-toggle" @click="drawerVisible = true">
+            <Menu />
+          </el-icon>
+          <el-breadcrumb v-if="!isMobile" separator="/">
             <el-breadcrumb-item :to="{ path: '/' }">首页</el-breadcrumb-item>
             <el-breadcrumb-item>{{ currentTitle }}</el-breadcrumb-item>
           </el-breadcrumb>
+          <span v-else class="mobile-title">{{ currentTitle }}</span>
         </div>
 
         <div class="header-right">
           <el-dropdown @command="handleCommand">
             <span class="user-info">
               <el-avatar :size="32" icon="User" />
-              <span class="username">{{ authStore.user?.displayName || '管理员' }}</span>
+              <span v-if="!isMobile" class="username">{{ authStore.user?.displayName || '管理员' }}</span>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
@@ -115,24 +61,28 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useTabStore } from '../stores/tabs'
+import { useBreakpoint } from '../composables/useBreakpoint'
 import TabBar from './TabBar.vue'
+import SideMenu from './SideMenu.vue'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const tabStore = useTabStore()
+const { isMobile } = useBreakpoint()
 
-const activeMenu = computed(() => {
-  // Match by top-level segment so detail routes (e.g. /sessions/:id) keep the
-  // corresponding menu item (e.g. /sessions) highlighted.
-  const seg = '/' + (route.path.split('/')[1] || '')
-  return seg
-})
+const drawerVisible = ref(false)
+
 const currentTitle = computed(() => (route.meta?.title as string) || '')
+
+// Close the drawer when leaving mobile size (e.g. rotating/resizing to desktop).
+watch(isMobile, (mobile) => {
+  if (!mobile) drawerVisible.value = false
+})
 
 watch(route, (newRoute) => {
   tabStore.addTab(newRoute)
@@ -149,39 +99,12 @@ async function handleCommand(command: string) {
 <style scoped>
 .layout-container {
   height: 100vh;
+  height: 100dvh;
 }
 
 .layout-aside {
   background: #304156;
   overflow: hidden;
-}
-
-.logo {
-  height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-}
-
-.logo h3 {
-  margin: 0;
-  font-size: 16px;
-}
-
-.sidebar-menu {
-  border-right: none;
-  background: #304156;
-}
-
-.sidebar-menu .el-menu-item {
-  color: #bfcbd9;
-}
-
-.sidebar-menu .el-menu-item:hover,
-.sidebar-menu .el-menu-item.is-active {
-  background: #263445;
-  color: #409eff;
 }
 
 .layout-header {
@@ -207,6 +130,18 @@ async function handleCommand(command: string) {
 .username {
   font-size: 14px;
   color: #606266;
+}
+
+.menu-toggle {
+  font-size: 22px;
+  cursor: pointer;
+  color: #606266;
+}
+
+.mobile-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
 }
 
 .layout-main {

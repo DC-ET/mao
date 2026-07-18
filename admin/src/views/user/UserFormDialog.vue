@@ -1,8 +1,9 @@
 <template>
-  <el-dialog
+  <ResponsiveDialog
     :model-value="visible"
     :title="dialogTitle"
     width="520px"
+    @update:model-value="$emit('update:visible', $event)"
     @close="$emit('update:visible', false)"
   >
     <el-form
@@ -72,7 +73,7 @@
         {{ submitButtonText }}
       </el-button>
     </template>
-  </el-dialog>
+  </ResponsiveDialog>
 </template>
 
 <script setup lang="ts">
@@ -80,6 +81,7 @@ import { computed, ref, watch, reactive } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
+import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 interface RoleOption {
   id: number

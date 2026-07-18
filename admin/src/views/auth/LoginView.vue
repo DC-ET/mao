@@ -76,11 +76,15 @@ async function handleLogin() {
   justify-content: center;
   align-items: center;
   min-height: 100vh;
+  min-height: 100dvh;
   background: #f5f7fa;
+  padding: 16px;
+  box-sizing: border-box;
 }
 
 .login-card {
   width: 400px;
+  max-width: 100%;
 }
 
 .login-card h2 {

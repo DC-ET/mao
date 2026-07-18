@@ -127,4 +127,26 @@ onMounted(fetchSummary)
   font-size: 24px;
   color: #303133;
 }
+
+@media (max-width: 768px) {
+  .analytics-view :deep(.el-row) {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  .analytics-view :deep(.el-col) {
+    max-width: 100%;
+    flex: 0 0 100%;
+    margin-bottom: 16px;
+  }
+
+  .metric-row :deep(.el-col) {
+    max-width: 50%;
+    flex: 0 0 50%;
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+  }
+}
 </style>

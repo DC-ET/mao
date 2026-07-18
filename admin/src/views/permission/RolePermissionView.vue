@@ -57,7 +57,7 @@
       </el-col>
     </el-row>
 
-    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建角色' : '编辑角色'" width="480px">
+    <ResponsiveDialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建角色' : '编辑角色'" width="480px">
       <el-form :model="roleForm" label-width="90px">
         <el-form-item label="角色名称">
           <el-input v-model="roleForm.name" placeholder="例如：运营管理员" />
@@ -73,7 +73,7 @@
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="saveRole">保存</el-button>
       </template>
-    </el-dialog>
+    </ResponsiveDialog>
   </div>
 </template>
 
@@ -81,6 +81,7 @@
 import { reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
+import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 interface Role {
   id: number
@@ -209,5 +210,22 @@ onMounted(fetchAll)
   display: block;
   color: #909399;
   margin-top: 2px;
+}
+
+@media (max-width: 768px) {
+  .role-permission :deep(.el-row) {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  .role-permission :deep(.el-col) {
+    max-width: 100%;
+    flex: 0 0 100%;
+    margin-bottom: 16px;
+  }
+
+  .permission-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

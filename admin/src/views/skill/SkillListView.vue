@@ -54,15 +54,15 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="关联 Agent" width="110" align="right">
+        <el-table-column label="关联 Agent" width="110" align="right" class="hide-on-mobile">
           <template #default="{ row }">{{ relatedAgentCount(row.name) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" class="hide-on-mobile">
           <template #default>
             <el-tag type="success" size="small">可用</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip />
+        <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip class="hide-on-mobile" />
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleView(row)">查看内容</el-button>
@@ -82,7 +82,7 @@
     </el-card>
 
     <!-- Skill content dialog -->
-    <el-dialog
+    <ResponsiveDialog
       v-model="detailVisible"
       :title="`Skill: ${currentDoc?.name || ''}`"
       width="700px"
@@ -95,7 +95,7 @@
           <pre>{{ currentDoc.body }}</pre>
         </div>
       </div>
-    </el-dialog>
+    </ResponsiveDialog>
   </div>
 </template>
 
@@ -104,6 +104,7 @@ import { computed, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 const loading = ref(false)
 const skillDocs = ref<any[]>([])

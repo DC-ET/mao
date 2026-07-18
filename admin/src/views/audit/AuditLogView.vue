@@ -34,7 +34,7 @@
         </el-form-item>
       </el-form>
 
-      <el-table :data="logs" v-loading="loading" stripe>
+      <el-table v-if="!isMobile" :data="logs" v-loading="loading" stripe>
         <el-table-column prop="createdAt" label="时间" width="170" />
         <el-table-column prop="username" label="用户" width="120" />
         <el-table-column prop="action" label="动作" width="100">
@@ -60,19 +60,52 @@
         </el-table-column>
       </el-table>
 
-      <el-pagination
+      <!-- Mobile card list -->
+      <div v-else class="mobile-card-list">
+        <el-card v-for="row in logs" :key="row.id" class="audit-card" shadow="hover">
+          <div class="audit-card-head">
+            <span class="audit-card-action">
+              <el-tag size="small" :type="actionType(row.action)">{{ row.action }}</el-tag>
+            </span>
+            <el-tag size="small" :type="row.success === 1 ? 'success' : 'danger'">
+              {{ row.success === 1 ? '成功' : '失败' }}
+            </el-tag>
+          </div>
+          <div class="audit-card-row">
+            <span class="audit-card-label">时间</span>
+            <span>{{ row.createdAt || '-' }}</span>
+          </div>
+          <div class="audit-card-row">
+            <span class="audit-card-label">用户</span>
+            <span>{{ row.username || '-' }}</span>
+          </div>
+          <div class="audit-card-row">
+            <span class="audit-card-label">对象</span>
+            <span>{{ row.objectType || '-' }}</span>
+          </div>
+          <div class="audit-card-row">
+            <span class="audit-card-label">路径</span>
+            <span class="audit-card-path">{{ row.path || '-' }}</span>
+          </div>
+          <div class="audit-card-actions">
+            <el-button type="primary" link size="small" @click="showDetail(row)">详情</el-button>
+          </div>
+        </el-card>
+        <el-empty v-if="!loading && logs.length === 0" description="暂无数据" />
+      </div>
+
+      <ResponsivePagination
         class="pagination"
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
-        :page-sizes="[20, 50, 100]"
         :total="total"
-        layout="total, sizes, prev, pager, next, jumper"
+        :page-sizes="[20, 50, 100]"
         @current-change="fetchLogs"
         @size-change="handleSizeChange"
       />
     </el-card>
 
-    <el-dialog v-model="detailVisible" title="审计详情" width="680px">
+    <ResponsiveDialog v-model="detailVisible" title="审计详情" width="680px">
       <div class="audit-detail">
       <el-descriptions v-if="currentLog" :column="2" border>
         <el-descriptions-item label="用户">{{ currentLog.username || '-' }}</el-descriptions-item>
@@ -84,14 +117,18 @@
         <el-descriptions-item label="错误" :span="2">{{ currentLog.errorMessage || '-' }}</el-descriptions-item>
       </el-descriptions>
       </div>
-    </el-dialog>
+    </ResponsiveDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
 import { api } from '../../api'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import ResponsivePagination from '../../components/ResponsivePagination.vue'
+import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
+const { isMobile } = useBreakpoint()
 const loading = ref(false)
 const logs = ref<any[]>([])
 const total = ref(0)
@@ -181,5 +218,46 @@ onMounted(fetchLogs)
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+}
+
+.mobile-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.audit-card {
+  font-size: 14px;
+}
+
+.audit-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.audit-card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  line-height: 1.5;
+}
+
+.audit-card-label {
+  width: 40px;
+  flex-shrink: 0;
+  color: #909399;
+}
+
+.audit-card-path {
+  word-break: break-all;
+}
+
+.audit-card-actions {
+  margin-top: 10px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 10px;
 }
 </style>

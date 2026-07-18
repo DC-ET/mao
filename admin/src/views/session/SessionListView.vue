@@ -57,7 +57,7 @@
       </el-form>
 
       <!-- Table -->
-      <el-table :data="sessions" stripe v-loading="loading">
+      <el-table v-if="!isMobile" :data="sessions" stripe v-loading="loading">
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
         <el-table-column prop="userName" label="用户" width="120" show-overflow-tooltip />
@@ -94,13 +94,54 @@
         </el-table-column>
       </el-table>
 
+      <!-- Mobile card list -->
+      <div v-else class="mobile-card-list">
+        <el-card v-for="row in sessions" :key="row.id" class="session-card" shadow="hover">
+          <div class="session-card-head">
+            <span class="session-card-title">{{ row.title || '-' }}</span>
+            <el-tag :type="phaseTagType(row.phase)" size="small">{{ row.phase }}</el-tag>
+          </div>
+          <div class="session-card-row">
+            <span class="session-card-label">用户</span>
+            <span>{{ row.userName || '-' }}</span>
+          </div>
+          <div class="session-card-row">
+            <span class="session-card-label">Agent</span>
+            <span>{{ row.agentName || '-' }}</span>
+          </div>
+          <div class="session-card-row">
+            <span class="session-card-label">模式</span>
+            <el-tag :type="row.executionMode === 'CLOUD' ? 'primary' : 'warning'" size="small">
+              {{ row.executionMode }}
+            </el-tag>
+          </div>
+          <div class="session-card-row">
+            <span class="session-card-label">Token</span>
+            <el-progress
+              :percentage="tokenPercent(row)"
+              :stroke-width="8"
+              :show-text="false"
+              :status="tokenPercent(row) > 80 ? 'exception' : undefined"
+              style="flex: 1"
+            />
+          </div>
+          <div class="session-card-row">
+            <span class="session-card-label">活动</span>
+            <span>{{ row.lastActivityAt || '-' }}</span>
+          </div>
+          <div class="session-card-actions">
+            <el-button type="primary" link size="small" @click="handleView(row)">查看</el-button>
+          </div>
+        </el-card>
+        <el-empty v-if="!loading && sessions.length === 0" description="暂无数据" />
+      </div>
+
       <!-- Pagination -->
-      <el-pagination
+      <ResponsivePagination
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
-        :page-sizes="[10, 20, 50, 100]"
         :total="total"
-        layout="total, sizes, prev, pager, next, jumper"
+        :page-sizes="[10, 20, 50, 100]"
         style="margin-top: 16px; justify-content: flex-end"
         @current-change="fetchSessions"
         @size-change="handleSizeChange"
@@ -113,8 +154,11 @@
 import { computed, ref, reactive, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 const router = useRouter()
+const { isMobile } = useBreakpoint()
 const loading = ref(false)
 const sessions = ref<any[]>([])
 const currentPage = ref(1)
@@ -270,5 +314,52 @@ onActivated(() => {
 
 .search-form .el-form-item {
   margin-bottom: 12px;
+}
+
+.mobile-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.session-card {
+  font-size: 14px;
+}
+
+.session-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.session-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  line-height: 1.5;
+}
+
+.session-card-label {
+  width: 40px;
+  flex-shrink: 0;
+  color: #909399;
+}
+
+.session-card-actions {
+  margin-top: 10px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 10px;
 }
 </style>

@@ -34,7 +34,7 @@
         </el-form-item>
       </el-form>
 
-      <el-table :data="users" v-loading="loading" stripe>
+      <el-table v-if="!isMobile" :data="users" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="username" label="用户名" width="120" />
         <el-table-column prop="displayName" label="显示名称" width="120" />
@@ -101,13 +101,74 @@
         </el-table-column>
       </el-table>
 
-      <el-pagination
+      <!-- Mobile card list -->
+      <div v-else class="mobile-card-list">
+        <el-card v-for="row in users" :key="row.id" class="user-card" shadow="hover">
+          <div class="user-card-head">
+            <span class="user-card-name">{{ row.displayName || row.username }}</span>
+            <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
+              {{ row.status === 1 ? '启用' : '禁用' }}
+            </el-tag>
+          </div>
+          <div class="user-card-row">
+            <span class="user-card-label">用户名</span>
+            <span>{{ row.username }}</span>
+          </div>
+          <div class="user-card-row">
+            <span class="user-card-label">邮箱</span>
+            <span>{{ row.email || '-' }}</span>
+          </div>
+          <div class="user-card-row">
+            <span class="user-card-label">角色</span>
+            <span>
+              <el-tag
+                v-for="name in row.roleNames || []"
+                :key="name"
+                size="small"
+                class="role-tag"
+              >
+                {{ name }}
+              </el-tag>
+              <span v-if="!row.roleNames?.length" class="text-muted">-</span>
+            </span>
+          </div>
+          <div class="user-card-row">
+            <span class="user-card-label">类型</span>
+            <el-tag :type="row.authSource === 'LOCAL' ? 'primary' : 'info'" size="small">
+              {{ row.authSource === 'LOCAL' ? '本地' : 'LDAP' }}
+            </el-tag>
+          </div>
+          <div class="user-card-actions">
+            <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
+            <el-button
+              type="primary"
+              link
+              size="small"
+              :disabled="row.authSource !== 'LOCAL'"
+              @click="handleResetPassword(row)"
+            >
+              重置密码
+            </el-button>
+            <el-button
+              :type="row.status === 1 ? 'danger' : 'success'"
+              link
+              size="small"
+              :disabled="isCurrentUser(row) && row.status === 1"
+              @click="handleToggleStatus(row)"
+            >
+              {{ row.status === 1 ? '禁用' : '启用' }}
+            </el-button>
+          </div>
+        </el-card>
+        <el-empty v-if="!loading && users.length === 0" description="暂无数据" />
+      </div>
+
+      <ResponsivePagination
         class="pagination"
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
-        :page-sizes="[10, 20, 50, 100]"
         :total="total"
-        layout="total, sizes, prev, pager, next, jumper"
+        :page-sizes="[10, 20, 50, 100]"
         @current-change="fetchUsers"
         @size-change="handleSizeChange"
       />
@@ -135,10 +196,13 @@ import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 import UserFormDialog from './UserFormDialog.vue'
 import ResetPasswordDialog from './ResetPasswordDialog.vue'
+import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 const authStore = useAuthStore()
+const { isMobile } = useBreakpoint()
 const loading = ref(false)
 const users = ref<any[]>([])
 const currentPage = ref(1)
@@ -260,5 +324,50 @@ onMounted(async () => {
 .pagination {
   margin-top: 20px;
   justify-content: flex-end;
+}
+
+.mobile-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.user-card {
+  font-size: 14px;
+}
+
+.user-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.user-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.user-card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  line-height: 1.5;
+}
+
+.user-card-label {
+  width: 48px;
+  flex-shrink: 0;
+  color: #909399;
+}
+
+.user-card-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 10px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 10px;
 }
 </style>

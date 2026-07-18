@@ -46,10 +46,10 @@
       </el-form>
 
       <el-table :data="sessions" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="80" />
+        <el-table-column prop="id" label="ID" width="80" class="hide-on-mobile" />
         <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
         <el-table-column prop="userName" label="用户" width="120" />
-        <el-table-column prop="agentName" label="Agent" width="130" />
+        <el-table-column prop="agentName" label="Agent" width="130" class="hide-on-mobile" />
         <el-table-column prop="executionMode" label="模式" width="90">
           <template #default="{ row }">
             <el-tag size="small" :type="row.executionMode === 'LOCAL' ? 'warning' : 'primary'">
@@ -62,8 +62,8 @@
             <el-tag size="small" :type="phaseTag(row.phase)">{{ row.phase }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="contextTokens" label="上下文 Token" width="130" align="right" />
-        <el-table-column prop="lastActivityAt" label="最后活动" width="170" />
+        <el-table-column prop="contextTokens" label="上下文 Token" width="130" align="right" class="hide-on-mobile" />
+        <el-table-column prop="lastActivityAt" label="最后活动" width="170" class="hide-on-mobile" />
         <el-table-column label="操作" width="80" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="router.push(`/sessions/${row.id}`)">查看</el-button>
@@ -188,5 +188,17 @@ onActivated(fetchSessions)
 .pagination {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+@media (max-width: 768px) {
+  .runtime-monitor :deep(.el-row) {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  .runtime-monitor :deep(.el-col) {
+    max-width: 50%;
+    flex: 0 0 50%;
+  }
 }
 </style>
