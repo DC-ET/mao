@@ -48,7 +48,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="关键词">
-          <el-input v-model="filters.keyword" placeholder="标题/摘要" clearable style="width: 160px" @clear="handleSearch" />
+          <el-input v-model="filters.keyword" placeholder="标题/摘要" clearable style="width: 160px" @keyup.enter="handleSearch" @clear="handleSearch" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
@@ -110,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted } from 'vue'
+import { computed, ref, reactive, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api'
 
@@ -143,9 +143,9 @@ const phaseOptions = [
 
 const phaseMetrics = computed(() => [
   { label: '当前页会话', value: sessions.value.length },
-  { label: '运行中', value: sessions.value.filter(s => s.phase === 'RUNNING').length },
-  { label: '已完成', value: sessions.value.filter(s => s.phase === 'COMPLETED').length },
-  { label: '失败/取消', value: sessions.value.filter(s => ['FAILED', 'CANCELLED'].includes(s.phase)).length }
+  { label: '运行中(当前页)', value: sessions.value.filter(s => s.phase === 'RUNNING').length },
+  { label: '已完成(当前页)', value: sessions.value.filter(s => s.phase === 'COMPLETED').length },
+  { label: '失败/取消(当前页)', value: sessions.value.filter(s => ['FAILED', 'CANCELLED'].includes(s.phase)).length }
 ])
 
 function phaseTagType(phase: string): '' | 'success' | 'danger' | 'warning' | 'info' {
@@ -226,6 +226,12 @@ function tokenPercent(row: { contextTokens?: number; contextWindowTokens?: numbe
 onMounted(() => {
   fetchSessions()
   fetchOptions()
+})
+
+// When returning from the session detail page (kept alive), refresh the list
+// so any changes made there are reflected, while preserving current filters/page.
+onActivated(() => {
+  fetchSessions()
 })
 </script>
 

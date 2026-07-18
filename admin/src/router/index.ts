@@ -106,6 +106,9 @@ router.beforeEach((to, _from, next) => {
   const token = localStorage.getItem('token')
   if (to.meta.requiresAuth !== false && !token) {
     next('/login')
+  } else if (to.path === '/login' && token) {
+    // Already authenticated: skip the login page
+    next('/')
   } else {
     next()
   }

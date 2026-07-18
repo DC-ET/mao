@@ -53,6 +53,17 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <el-pagination
+        class="pagination"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50, 100]"
+        :total="total"
+        layout="total, sizes, prev, pager, next, jumper"
+        @current-change="fetchNotifications"
+        @size-change="handleSizeChange"
+      />
     </el-card>
 
     <el-dialog v-model="dialogVisible" title="发布通知" width="520px">
@@ -86,6 +97,9 @@ import { api } from '../../api'
 
 const loading = ref(false)
 const notifications = ref<any[]>([])
+const total = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(10)
 const dialogVisible = ref(false)
 const filters = reactive({
   type: '',
@@ -100,11 +114,15 @@ const form = reactive({
 async function fetchNotifications() {
   loading.value = true
   try {
-    const params: Record<string, unknown> = { page: 1, size: 50 }
+    const params: Record<string, unknown> = {
+      page: currentPage.value,
+      size: pageSize.value
+    }
     if (filters.type) params.type = filters.type
     if (filters.isRead !== undefined) params.isRead = filters.isRead
     const { data } = await api.get('/notifications', { params })
     notifications.value = data?.records || []
+    total.value = data?.total || 0
   } finally {
     loading.value = false
   }
@@ -131,12 +149,19 @@ async function markRead(row: any) {
 }
 
 function handleSearch() {
+  currentPage.value = 1
   fetchNotifications()
 }
 
 function handleReset() {
   filters.type = ''
   filters.isRead = undefined
+  currentPage.value = 1
+  fetchNotifications()
+}
+
+function handleSizeChange() {
+  currentPage.value = 1
   fetchNotifications()
 }
 
@@ -152,5 +177,10 @@ onMounted(fetchNotifications)
 
 .search-form {
   margin-bottom: 16px;
+}
+
+.pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
 }
 </style>

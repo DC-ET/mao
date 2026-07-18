@@ -126,7 +126,12 @@ const router = useRouter()
 const authStore = useAuthStore()
 const tabStore = useTabStore()
 
-const activeMenu = computed(() => route.path)
+const activeMenu = computed(() => {
+  // Match by top-level segment so detail routes (e.g. /sessions/:id) keep the
+  // corresponding menu item (e.g. /sessions) highlighted.
+  const seg = '/' + (route.path.split('/')[1] || '')
+  return seg
+})
 const currentTitle = computed(() => (route.meta?.title as string) || '')
 
 watch(route, (newRoute) => {

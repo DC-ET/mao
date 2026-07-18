@@ -232,7 +232,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         switch (type) {
             case "subscribe" -> handleSubscribe(userId, root);
             case "unsubscribe" -> handleUnsubscribe(userId, root);
-            case "send_message" -> handleSendMessage(userId, root);
+            case "send_message" -> handleSendMessage(userId, root, true);
             case "edit_and_resend" -> handleEditAndResend(userId, root);
             case "cancel" -> handleCancel(userId, root);
             case "enqueue_message" -> handleEnqueueMessage(userId, root);
@@ -311,6 +311,17 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     }
 
     private void handleSendMessage(Long userId, JsonNode root) {
+        handleSendMessage(userId, root, true);
+    }
+
+    /**
+     * 处理用户发送消息并触发 Agent 执行。
+     *
+     * @param clearTodos 是否清空上一轮任务清单。
+     *                   仅"新任务"场景（直接发消息 / 队列正常消费 / 编辑重发）为 true；
+     *                   队列"立即发送打断"（纠偏）为 false，以保留上一轮已拆解的目标与进度。
+     */
+    private void handleSendMessage(Long userId, JsonNode root, boolean clearTodos) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
 
@@ -446,11 +457,15 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     }
                 }
 
-                // Clear previous turn's todos before starting new agent execution
-                sessionTodoMapper.delete(
-                        new LambdaQueryWrapper<SessionTodo>()
-                                .eq(SessionTodo::getSessionId, sessionId));
-                registry.send(userId, WsEvent.of("todo_updated", sessionId, Map.of("todos", List.of())));
+                // Clear previous turn's todos before starting a NEW task.
+                // Skipped for queue "send now" (insert_message) which is a correction
+                // mid-execution and must preserve the in-progress todo list.
+                if (clearTodos) {
+                    sessionTodoMapper.delete(
+                            new LambdaQueryWrapper<SessionTodo>()
+                                    .eq(SessionTodo::getSessionId, sessionId));
+                    registry.send(userId, WsEvent.of("todo_updated", sessionId, Map.of("todos", List.of())));
+                }
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
                         registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService,
@@ -586,7 +601,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 } catch (InterruptedException ignored) {
                     Thread.currentThread().interrupt();
                 }
-                handleSendMessage(userId, syntheticRoot);
+                handleSendMessage(userId, syntheticRoot, true);
             });
         } catch (Exception e) {
             log.error("Failed to auto-consume queue for session {}", sessionId, e);
@@ -736,7 +751,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     }
                 }
 
-                // Clear previous turn's todos before starting new agent execution
+                // Edit-and-resend is a new message (overwrite) — clear previous turn's todos.
                 sessionTodoMapper.delete(
                         new LambdaQueryWrapper<SessionTodo>()
                                 .eq(SessionTodo::getSessionId, sessionId));
@@ -1066,6 +1081,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     com.fasterxml.jackson.databind.node.ObjectNode syntheticData = objectMapper.createObjectNode();
                     syntheticData.put("content", content);
                     syntheticData.put("eventId", eventId);
+                    syntheticData.put("clearTodos", false);
                     com.fasterxml.jackson.databind.node.ArrayNode imagesArray = objectMapper.createArrayNode();
                     for (String img : imageList) {
                         imagesArray.add(img);
@@ -1078,8 +1094,10 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
                     // Clear suppress flag BEFORE calling handleSendMessage so it is not blocked
                     suppressAutoConsumeSend.remove(sessionId);
-                    log.info("Insert message for session {} — calling handleSendMessage", sessionId);
-                    handleSendMessage(userId, syntheticRoot);
+                    // clearTodos=false: queue "send now" interrupts the running task as a
+                    // correction and must preserve the current todo list.
+                    log.info("Insert message for session {} — calling handleSendMessage (preserve todos)", sessionId);
+                    handleSendMessage(userId, syntheticRoot, false);
                 } catch (Exception e) {
                     log.error("Failed to insert message for session {}", sessionId, e);
                 } finally {

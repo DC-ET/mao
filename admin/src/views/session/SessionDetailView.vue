@@ -26,7 +26,7 @@
         <el-descriptions-item label="上下文Token">{{ sessionInfo.contextTokens || '-' }}</el-descriptions-item>
         <el-descriptions-item label="摘要" :span="2">{{ sessionInfo.summary || '-' }}</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ sessionInfo.createdAt }}</el-descriptions-item>
-        <el-descriptions-item label="最后活动">{{ sessionInfo.lastActivityAt || sessionInfo.updatedAt }}</el-descriptions-item>
+        <el-descriptions-item label="最后活动">{{ formatTime(sessionInfo.lastActivityAt) || formatTime(sessionInfo.updatedAt) || '-' }}</el-descriptions-item>
       </el-descriptions>
     </el-card>
 
@@ -98,6 +98,10 @@ function phaseTagType(phase: string): '' | 'success' | 'danger' | 'warning' | 'i
   }
 }
 
+function formatTime(value: string | null | undefined): string {
+  return value ? String(value) : ''
+}
+
 async function fetchDetail() {
   const id = route.params.id
   loading.value = true
@@ -120,6 +124,10 @@ onMounted(fetchDetail)
 <style scoped>
 .session-detail {
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 .page-title {
@@ -128,11 +136,22 @@ onMounted(fetchDetail)
 }
 
 .info-card {
-  margin-top: 16px;
+  flex-shrink: 0;
 }
 
 .chat-card {
   margin-top: 16px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-card :deep(.el-card__body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .card-header {
@@ -141,7 +160,8 @@ onMounted(fetchDetail)
 }
 
 .chat-container {
-  max-height: calc(100vh - 360px);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 0 4px;
 }

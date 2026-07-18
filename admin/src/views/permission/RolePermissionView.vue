@@ -160,7 +160,6 @@ async function saveRole() {
     ElMessage.success('角色已更新')
   }
   dialogVisible.value = false
-  currentRole.value = null
   await fetchAll()
 }
 
@@ -170,8 +169,11 @@ async function savePermissions() {
     permissionIds: selectedPermissionIds.value
   })
   ElMessage.success('权限已保存')
-  currentRole.value = null
+  // Keep the current role selected and refresh so checkbox state stays in sync
+  const id = currentRole.value.id
   await fetchAll()
+  const updated = roles.value.find(r => r.id === id)
+  if (updated) selectRole(updated)
 }
 
 onMounted(fetchAll)

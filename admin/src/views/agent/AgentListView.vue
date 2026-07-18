@@ -96,7 +96,7 @@ import { api } from '../../api'
 import AgentFormDialog from './AgentFormDialog.vue'
 
 const loading = ref(false)
-const agents = ref<any[]>([])
+const allAgents = ref<any[]>([])
 const searchQuery = ref('')
 const tagFilter = ref('')
 const currentPage = ref(1)
@@ -110,14 +110,9 @@ async function fetchAgents() {
   loading.value = true
   try {
     const { data } = await api.get('/agents', {
-      params: {
-        page: currentPage.value,
-        size: pageSize.value,
-        keyword: searchQuery.value
-      }
+      params: { keyword: searchQuery.value }
     })
-    agents.value = data || []
-    total.value = data?.length || 0
+    allAgents.value = data || []
   } finally {
     loading.value = false
   }
@@ -125,13 +120,18 @@ async function fetchAgents() {
 
 const tagOptions = computed(() => {
   const tags = new Set<string>()
-  agents.value.forEach(agent => (agent.tags || []).forEach((tag: string) => tags.add(tag)))
+  allAgents.value.forEach(agent => (agent.tags || []).forEach((tag: string) => tags.add(tag)))
   return Array.from(tags)
 })
 
+// Filter by tag on the full dataset, then paginate client-side
 const filteredAgents = computed(() => {
-  if (!tagFilter.value) return agents.value
-  return agents.value.filter(agent => (agent.tags || []).includes(tagFilter.value))
+  const list = tagFilter.value
+    ? allAgents.value.filter(agent => (agent.tags || []).includes(tagFilter.value))
+    : allAgents.value
+  total.value = list.length
+  const start = (currentPage.value - 1) * pageSize.value
+  return list.slice(start, start + pageSize.value)
 })
 
 function handleSearch() {
@@ -141,7 +141,6 @@ function handleSearch() {
 
 function handleSizeChange() {
   currentPage.value = 1
-  fetchAgents()
 }
 
 function handleCreate() {

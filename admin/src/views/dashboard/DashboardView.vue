@@ -1,5 +1,5 @@
 <template>
-  <div class="dashboard">
+  <div class="dashboard" v-loading="loading">
     <!-- Overview Cards -->
     <el-row :gutter="20" class="overview-cards">
       <el-col :span="6">
@@ -89,7 +89,10 @@
       <el-col :span="14">
         <el-card>
           <template #header><span>使用趋势 (近 7 天)</span></template>
-          <div class="chart-container">
+          <div v-if="trends.length === 0" class="chart-empty">
+            <el-empty description="近 7 天暂无数据" :image-size="80" />
+          </div>
+          <div v-else class="chart-container">
             <div v-for="day in trends" :key="day.date" class="trend-bar-group">
               <div class="trend-bars">
                 <div class="trend-bar sessions" :style="{ height: barHeight(day.sessions, maxSessions) + 'px' }">
@@ -141,6 +144,7 @@
             </el-table-column>
             <el-table-column prop="messageCount" label="消息数" width="100" />
           </el-table>
+          <el-empty v-if="tokenStats.length === 0" description="暂无数据" :image-size="60" />
         </el-card>
       </el-col>
       <el-col :span="12">
@@ -152,6 +156,7 @@
             <el-table-column prop="messageCount" label="消息数" width="100" />
             <el-table-column prop="lastLoginAt" label="最后登录" width="180" />
           </el-table>
+          <el-empty v-if="userStats.length === 0" description="暂无数据" :image-size="60" />
         </el-card>
       </el-col>
     </el-row>
@@ -168,6 +173,7 @@ const trends = ref<any[]>([])
 const agentStats = ref<any[]>([])
 const tokenStats = ref<any[]>([])
 const userStats = ref<any[]>([])
+const loading = ref(false)
 
 const maxSessions = computed(() => Math.max(1, ...trends.value.map(d => d.sessions)))
 const maxMessages = computed(() => Math.max(1, ...trends.value.map(d => d.messages)))
@@ -177,13 +183,18 @@ function barHeight(value: number, max: number) {
 }
 
 async function fetchAll() {
-  const { data } = await api.get('/admin/analytics/summary', { params: { days: 7 } }) as any
-  overview.value = data?.overview || {}
-  governance.value = data?.overview || {}
-  trends.value = data?.trends || []
-  tokenStats.value = data?.tokenStats || []
-  userStats.value = data?.userActivity || []
-  agentStats.value = data?.agentStats || []
+  loading.value = true
+  try {
+    const { data } = await api.get('/admin/analytics/summary', { params: { days: 7 } }) as any
+    overview.value = data?.overview || {}
+    governance.value = overview.value
+    trends.value = data?.trends || []
+    tokenStats.value = data?.tokenStats || []
+    userStats.value = data?.userActivity || []
+    agentStats.value = data?.agentStats || []
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(fetchAll)
@@ -247,6 +258,13 @@ onMounted(fetchAll)
   justify-content: space-around;
   height: 160px;
   padding: 0 10px;
+}
+
+.chart-empty {
+  height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .trend-bar-group {

@@ -48,9 +48,11 @@ export const useTabStore = defineStore('tabs', () => {
     tabs.value.splice(idx, 1)
 
     if (wasActive) {
-      const lastTab = tabs.value[tabs.value.length - 1]
-      activeTabPath.value = lastTab.path
-      router.push(lastTab.path)
+      // Navigate to the adjacent tab (prefer the one on the left) for a
+      // predictable multi-tab experience.
+      const neighbor = tabs.value[Math.max(0, idx - 1)]
+      activeTabPath.value = neighbor.path
+      router.push(neighbor.path)
     }
   }
 

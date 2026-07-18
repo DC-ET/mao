@@ -40,6 +40,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 
 const router = useRouter()
@@ -53,6 +54,7 @@ const form = ref({
 
 async function handleLogin() {
   if (!form.value.username || !form.value.password) {
+    ElMessage.warning('请输入用户名和密码')
     return
   }
 
@@ -60,6 +62,8 @@ async function handleLogin() {
   try {
     await authStore.login(form.value.username, form.value.password)
     router.push('/')
+  } catch {
+    // Error handled by interceptor
   } finally {
     loading.value = false
   }

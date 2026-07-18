@@ -23,24 +23,24 @@
           />
         </el-form-item>
         <el-form-item label="供应商">
-          <el-select v-model="filters.provider" clearable filterable placeholder="全部供应商" style="width: 150px">
+          <el-select v-model="filters.provider" clearable filterable placeholder="全部供应商" style="width: 150px" @change="handleSearch">
             <el-option v-for="provider in providerOptions" :key="provider" :label="provider" :value="provider" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部" style="width: 120px">
+          <el-select v-model="filters.status" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
             <el-option label="启用" :value="1" />
             <el-option label="禁用" :value="0" />
           </el-select>
         </el-form-item>
         <el-form-item label="视觉">
-          <el-select v-model="filters.supportsVision" clearable placeholder="全部" style="width: 120px">
+          <el-select v-model="filters.supportsVision" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
             <el-option label="支持" :value="1" />
             <el-option label="不支持" :value="0" />
           </el-select>
         </el-form-item>
         <el-form-item label="默认">
-          <el-select v-model="filters.isDefault" clearable placeholder="全部" style="width: 120px">
+          <el-select v-model="filters.isDefault" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
             <el-option label="默认" :value="1" />
             <el-option label="非默认" :value="0" />
           </el-select>
@@ -248,8 +248,11 @@ async function handleDelete(row: any) {
     })
     await api.delete(`/models/${row.id}`)
     ElMessage.success('删除成功')
-    if (models.value.length === 1 && currentPage.value > 1) {
-      currentPage.value -= 1
+    // Step back a page if we just emptied the current page, so we never land on a blank page.
+    const remainingOnPage = models.value.length - 1
+    const maxPage = Math.max(1, Math.ceil((total.value - 1) / pageSize.value))
+    if (remainingOnPage === 0 && currentPage.value > maxPage) {
+      currentPage.value = maxPage
     }
     fetchModels()
   } catch {

@@ -8,6 +8,7 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import App from './App.vue'
 import router from './router'
 import './style.css'
+import { useAuthStore } from './stores/auth'
 
 const app = createApp(App)
 
@@ -19,5 +20,12 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
+
+// Restore current user info on startup so the header/username and permission
+// checks work immediately after a page refresh.
+const authStore = useAuthStore()
+if (localStorage.getItem('token')) {
+  authStore.fetchUserInfo().catch(() => {})
+}
 
 app.mount('#app')

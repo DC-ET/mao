@@ -20,7 +20,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="对象">
-          <el-input v-model="filters.objectType" clearable placeholder="users / agents" style="width: 160px" />
+          <el-input v-model="filters.objectType" clearable placeholder="users / agents" style="width: 160px" @keyup.enter="handleSearch" />
         </el-form-item>
         <el-form-item label="结果">
           <el-select v-model="filters.success" clearable placeholder="全部" style="width: 120px">
@@ -73,6 +73,7 @@
     </el-card>
 
     <el-dialog v-model="detailVisible" title="审计详情" width="680px">
+      <div class="audit-detail">
       <el-descriptions v-if="currentLog" :column="2" border>
         <el-descriptions-item label="用户">{{ currentLog.username || '-' }}</el-descriptions-item>
         <el-descriptions-item label="IP">{{ currentLog.ip || '-' }}</el-descriptions-item>
@@ -82,6 +83,7 @@
         <el-descriptions-item label="参数" :span="2">{{ currentLog.queryString || '-' }}</el-descriptions-item>
         <el-descriptions-item label="错误" :span="2">{{ currentLog.errorMessage || '-' }}</el-descriptions-item>
       </el-descriptions>
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -168,5 +170,16 @@ onMounted(fetchLogs)
 .pagination {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+.audit-detail :deep(.el-descriptions__content) {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.audit-detail :deep(pre) {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
 }
 </style>

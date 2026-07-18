@@ -10,8 +10,8 @@
     <div v-if="isExpanded" class="file-change-body">
       <div v-for="change in displayChanges" :key="change.path" class="file-change-item">
         <div class="file-path-row">
-          <span class="file-type-badge" :class="change.type.toLowerCase()">
-            {{ change.type === 'CREATED' ? '新建' : '修改' }}
+          <span class="file-type-badge" :class="changeTypeClass(change.type)">
+            {{ changeTypeLabel(change.type) }}
           </span>
           <span class="file-path" :title="change.path">{{ change.displayPath }}</span>
         </div>
@@ -41,6 +41,27 @@ const displayChanges = computed(() => {
     displayPath: ws ? toRelativeWorkspacePath(ws, c.path) : c.path
   }))
 })
+
+function changeTypeLabel(type: string): string {
+  switch ((type || '').toUpperCase()) {
+    case 'CREATED': return '新建'
+    case 'MODIFIED': return '修改'
+    case 'DELETED': return '删除'
+    case 'RENAMED': return '重命名'
+    case 'COPIED': return '复制'
+    default: return type || '变更'
+  }
+}
+
+function changeTypeClass(type: string): string {
+  switch ((type || '').toUpperCase()) {
+    case 'CREATED': return 'created'
+    case 'DELETED': return 'deleted'
+    case 'RENAMED':
+    case 'COPIED': return 'renamed'
+    default: return 'modified'
+  }
+}
 </script>
 
 <style scoped>
@@ -136,6 +157,14 @@ const displayChanges = computed(() => {
 
 .file-type-badge.modified {
   color: #b87a00;
+}
+
+.file-type-badge.deleted {
+  color: #d94141;
+}
+
+.file-type-badge.renamed {
+  color: #6b46c1;
 }
 
 .file-path {

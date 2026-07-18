@@ -86,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted } from 'vue'
+import { computed, reactive, ref, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api'
 
@@ -103,10 +103,10 @@ const filters = reactive({
 })
 
 const metrics = computed(() => [
-  { label: '重点会话', value: total.value },
-  { label: '运行中', value: sessions.value.filter(s => s.phase === 'RUNNING').length },
-  { label: '待审批', value: sessions.value.filter(s => s.phase === 'WAITING_APPROVAL').length },
-  { label: '失败/取消', value: sessions.value.filter(s => ['FAILED', 'CANCELLED'].includes(s.phase)).length }
+  { label: '重点会话(当前页)', value: sessions.value.length },
+  { label: '运行中(当前页)', value: sessions.value.filter(s => s.phase === 'RUNNING').length },
+  { label: '待审批(当前页)', value: sessions.value.filter(s => s.phase === 'WAITING_APPROVAL').length },
+  { label: '失败/取消(当前页)', value: sessions.value.filter(s => ['FAILED', 'CANCELLED'].includes(s.phase)).length }
 ])
 
 function phaseTag(phase: string) {
@@ -152,6 +152,7 @@ function handleSizeChange() {
 }
 
 onMounted(fetchSessions)
+onActivated(fetchSessions)
 </script>
 
 <style scoped>

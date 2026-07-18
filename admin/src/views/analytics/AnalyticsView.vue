@@ -1,5 +1,5 @@
 <template>
-  <div class="analytics-view">
+  <div class="analytics-view" v-loading="loading">
     <el-card class="toolbar-card">
       <div class="toolbar">
         <span>统计周期</span>
@@ -70,6 +70,7 @@ import { computed, ref, onMounted } from 'vue'
 import { api } from '../../api'
 
 const days = ref(30)
+const loading = ref(false)
 const periodOptions = [
   { label: '7 天', value: 7 },
   { label: '30 天', value: 30 },
@@ -88,8 +89,13 @@ const overviewCards = computed(() => {
 })
 
 async function fetchSummary() {
-  const { data } = await api.get('/admin/analytics/summary', { params: { days: days.value } })
-  summary.value = data || {}
+  loading.value = true
+  try {
+    const { data } = await api.get('/admin/analytics/summary', { params: { days: days.value } })
+    summary.value = data || {}
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(fetchSummary)

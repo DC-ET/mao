@@ -10,7 +10,12 @@
 
       <el-form :inline="true" class="search-form">
         <el-form-item label="关键词">
-          <el-input v-model="keyword" clearable placeholder="名称 / 描述" style="width: 220px" />
+          <el-input
+            v-model="keyword"
+            clearable
+            placeholder="名称 / 描述"
+            style="width: 220px"
+          />
         </el-form-item>
       </el-form>
 
@@ -18,6 +23,8 @@
       <div
         class="upload-zone"
         :class="{ 'is-dragover': isDragover }"
+        v-loading="uploading"
+        element-loading-text="上传中..."
         @dragover.prevent="isDragover = true"
         @dragleave.prevent="isDragover = false"
         @drop.prevent="handleDrop"

@@ -25,7 +25,7 @@
         <el-input v-model="form.baseUrl" placeholder="例如: https://api.openai.com/v1" />
       </el-form-item>
       <el-form-item label="API Key" prop="apiKey">
-        <el-input v-model="form.apiKey" type="password" show-password placeholder="请输入 API Key" />
+        <el-input v-model="form.apiKey" type="password" show-password :placeholder="isEdit ? '留空则不修改' : '请输入 API Key'" />
       </el-form-item>
       <el-form-item label="上下文窗口">
         <el-input-number
@@ -99,7 +99,9 @@ const form = reactive({
 const rules: FormRules = {
   name: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
   modelId: [{ required: true, message: '请输入模型标识', trigger: 'blur' }],
-  apiKey: [{ required: true, message: '请输入 API Key', trigger: 'blur' }]
+  apiKey: isEdit.value
+    ? []
+    : [{ required: true, message: '请输入 API Key', trigger: 'blur' }]
 }
 
 function resetForm() {
@@ -123,7 +125,8 @@ watch(() => props.visible, (val) => {
       provider: props.modelData.provider || '',
       modelId: props.modelData.modelId || '',
       baseUrl: props.modelData.baseUrl || '',
-      apiKey: props.modelData.apiKey || '',
+      // Do NOT echo the plaintext API Key back into the form; only send it when the user types a new one.
+      apiKey: '',
       contextWindowTokens: props.modelData.contextWindowTokens || 256000,
       supportsVision: !!props.modelData.supportsVision,
       isDefault: !!props.modelData.isDefault
@@ -142,6 +145,10 @@ async function handleSubmit() {
   submitting.value = true
   try {
     const payload: any = { ...form, supportsVision: form.supportsVision ? 1 : 0, isDefault: form.isDefault ? 1 : 0 }
+    // In edit mode, omit apiKey when left blank so the existing key is preserved.
+    if (isEdit.value && !form.apiKey) {
+      delete payload.apiKey
+    }
     if (isEdit.value && props.modelData?.id) {
       await api.put(`/models/${props.modelData.id}`, payload)
       ElMessage.success('模型更新成功')
