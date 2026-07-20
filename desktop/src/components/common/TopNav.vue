@@ -51,10 +51,11 @@
           <span v-if="showUpdateIndicator" class="update-dot" />
         </div>
       </el-tooltip>
-      <el-tooltip :content="isDark ? '切换为浅色' : '切换为深色'" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-        <div class="theme-toggle" @click="toggleTheme">
+      <el-tooltip :content="themeTooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+        <div class="theme-toggle" @click="toggleTheme" role="button" :aria-label="themeTooltip">
           <el-icon :size="16">
-            <Moon v-if="!isDark" />
+            <Monitor v-if="theme === 'auto'" />
+            <Moon v-else-if="theme === 'light'" />
             <Sunny v-else />
           </el-icon>
         </div>
@@ -87,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, ArrowLeft, Moon, Refresh, Setting, Sunny } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, Monitor, Moon, Refresh, Setting, Sunny } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -101,7 +102,13 @@ import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useLoginDialog } from '../../composables/useLoginDialog'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 
-const { isDark, toggleTheme } = useTheme()
+const { theme, toggleTheme } = useTheme()
+
+const themeTooltip = computed(() => {
+  if (theme.value === 'auto') return '跟随系统（点击切换浅色）'
+  if (theme.value === 'light') return '浅色（点击切换深色）'
+  return '深色（点击跟随系统）'
+})
 const sessionStore = useSessionStore()
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
 const { leftCollapsed, rightCollapsed, toggleLeft, toggleRight } = usePanelLayout()

@@ -240,18 +240,20 @@ test.describe('Desktop Theme', () => {
     expect(hasDark).toBeTruthy()
   })
 
-  test('should render with light theme by default', async ({ page }) => {
-    // Use addInitScript to clear localStorage before page loads
+  test('should follow system preference when theme mode is auto', async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.removeItem('aw-theme-mode')
+      localStorage.removeItem('aw-theme')
     })
     await page.goto('/')
     await page.waitForSelector('.layout', { timeout: 15_000 })
-    // Default should not have dark class
+    const prefersDark = await page.evaluate(() =>
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+    )
     const hasDark = await page.locator('html').evaluate(el =>
       el.classList.contains('dark')
     )
-    expect(hasDark).toBeFalsy()
+    expect(hasDark).toBe(prefersDark)
   })
 })
 
