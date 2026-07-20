@@ -18,6 +18,8 @@ let timer: ReturnType<typeof setInterval> | null = null
 let appUpdateTimer: ReturnType<typeof setInterval> | null = null
 let appUpdaterStarted = false
 let removeAppUpdaterListeners: Array<() => void> = []
+/** 页面加载后首次检查只同步基线，不提示更新（此时资源已是当前运行版本） */
+let baselineSynced = false
 
 async function checkVersion() {
   try {
@@ -27,6 +29,16 @@ async function checkVersion() {
     if (!resp.ok) return
     const data = await resp.json() as { version: string; buildTime: string }
     const remoteVersion = data.version
+
+    if (!baselineSynced) {
+      // 刚完成加载/刷新：以远程版本为基线，避免「已刷到新代码仍提示有更新」
+      localStorage.setItem(STORAGE_KEY, remoteVersion)
+      currentVersion.value = remoteVersion
+      hasUpdate.value = false
+      newVersion.value = null
+      baselineSynced = true
+      return
+    }
 
     if (currentVersion.value && currentVersion.value !== remoteVersion) {
       hasUpdate.value = true
