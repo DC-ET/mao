@@ -49,6 +49,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 
 export interface ApprovalItem {
@@ -90,8 +91,13 @@ function displayText(item: ApprovalItem): string {
   return item.description.substring(0, threshold) + '...'
 }
 
-function copyText(text: string) {
-  navigator.clipboard.writeText(text)
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败')
+  }
 }
 </script>
 

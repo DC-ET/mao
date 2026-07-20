@@ -14,9 +14,11 @@ export interface ToolCall {
   argsStreaming: boolean
 }
 
+export type FileChangeType = 'CREATED' | 'MODIFIED' | 'DELETED' | 'RENAMED' | 'COPIED' | string
+
 export interface FileChange {
   path: string
-  type: 'CREATED' | 'MODIFIED'
+  type: FileChangeType
   linesAdded: number
   linesDeleted: number
   toolCallId?: string

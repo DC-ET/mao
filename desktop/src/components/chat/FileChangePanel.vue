@@ -18,8 +18,8 @@
         @click="handleFileClick(change)"
       >
         <div class="file-path-row">
-          <span class="file-type-badge" :class="change.type.toLowerCase()">
-            {{ change.type === 'CREATED' ? '新建' : '修改' }}
+          <span class="file-type-badge" :class="changeTypeClass(change.type)">
+            {{ changeTypeLabel(change.type) }}
           </span>
           <span class="file-path" :title="change.path">{{ change.displayPath }}</span>
         </div>
@@ -103,6 +103,27 @@ const displayChanges = computed((): MergedChange[] => {
     displayPath: ws ? toRelativeWorkspacePath(ws, c.path) : c.path
   }))
 })
+
+function changeTypeLabel(type: string): string {
+  switch ((type || '').toUpperCase()) {
+    case 'CREATED': return '新建'
+    case 'MODIFIED': return '修改'
+    case 'DELETED': return '删除'
+    case 'RENAMED': return '重命名'
+    case 'COPIED': return '复制'
+    default: return type || '变更'
+  }
+}
+
+function changeTypeClass(type: string): string {
+  switch ((type || '').toUpperCase()) {
+    case 'CREATED': return 'created'
+    case 'DELETED': return 'deleted'
+    case 'RENAMED':
+    case 'COPIED': return 'renamed'
+    default: return 'modified'
+  }
+}
 
 function mergeDiff(target: FileChange, incoming: FileChange) {
   if (!incoming.diffMode) return
@@ -245,11 +266,19 @@ function handleFileClick(change: MergedChange) {
 }
 
 .file-type-badge.created {
-  color: #2d8a2d;
+  color: var(--aw-success);
 }
 
 .file-type-badge.modified {
-  color: #b87a00;
+  color: var(--aw-warning);
+}
+
+.file-type-badge.deleted {
+  color: var(--aw-danger);
+}
+
+.file-type-badge.renamed {
+  color: var(--aw-primary);
 }
 
 .file-path {
@@ -271,10 +300,10 @@ function handleFileClick(change: MergedChange) {
 }
 
 .stat-added {
-  color: #2d8a2d;
+  color: var(--aw-success);
 }
 
 .stat-deleted {
-  color: #d94141;
+  color: var(--aw-danger);
 }
 </style>

@@ -50,6 +50,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Select, CloseBold, ArrowDown, CopyDocument } from '@element-plus/icons-vue'
 import type { ToolCall } from '../../composables/useChat'
 
@@ -145,8 +146,13 @@ const truncatedResult = computed(() => {
   return r.slice(0, max) + '\n…（输出已截断）'
 })
 
-function copyText(text: string) {
-  navigator.clipboard.writeText(text)
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败')
+  }
 }
 
 function toggleExpand() {
