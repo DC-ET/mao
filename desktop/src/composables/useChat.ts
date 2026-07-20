@@ -17,8 +17,7 @@ export type {
 } from '../types/chat'
 export { normalizeMessageRole } from '../types/chat'
 
-import { normalizeImageForUpload, uploadToOss, type StsToken } from '../utils/ossUpload'
-import { getUploadConfig, type UploadConfig } from '../utils/storageMode'
+import { uploadImages } from '../utils/imageUpload'
 import { deriveSessionTitle } from '../utils/sessionTitle'
 import { generateUUID } from '../utils/uuid'
 import { validateHttpsGitUrl } from '../utils/cloud-project'
@@ -199,57 +198,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
   }
 
-  async function uploadImages(files: File[]): Promise<string[]> {
-    if (files.length === 0) return []
-
-    // Get upload config to determine storage mode
-    const config: UploadConfig = await getUploadConfig()
-
-    if (config.storageMode === 'local') {
-      // Local storage mode: upload via server API, backend returns absolute Nginx URL
-      const urls: string[] = []
-      for (const file of files) {
-        try {
-          const normalized = await normalizeImageForUpload(file)
-          const formData = new FormData()
-          formData.append('file', normalized)
-          if (sessionId.value) {
-            formData.append('sessionId', String(sessionId.value))
-          }
-          const { data } = await api.post('/files/upload', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-          })
-          urls.push(data.url)
-        } catch {
-          ElMessage.error(`图片 ${file.name} 上传失败`)
-        }
-      }
-      return urls
-    }
-
-    // OSS mode: get STS token and upload to OSS
-    let stsToken: StsToken
-    try {
-      const { data } = await api.post('/oss/sts-token', {
-        sessionId: sessionId.value ? Number(sessionId.value) : null
-      })
-      stsToken = data
-    } catch {
-      ElMessage.error('获取上传凭证失败')
-      return []
-    }
-
-    // Upload each file to OSS
-    const urls: string[] = []
-    for (const file of files) {
-      try {
-        const url = await uploadToOss(file, stsToken)
-        urls.push(url)
-      } catch {
-        ElMessage.error(`图片 ${file.name} 上传失败`)
-      }
-    }
-    return urls
+  function uploadChatImages(files: File[]): Promise<string[]> {
+    return uploadImages(files, sessionId.value)
   }
 
   function resolveWorkspaceInitLabel(): string {
@@ -276,7 +226,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
     try {
       // Upload images to OSS
-      const imageUrls = await uploadImages(files || [])
+      const imageUrls = await uploadChatImages(files || [])
 
       // Ensure WS connection is established
       await connect()
@@ -467,7 +417,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
     try {
       // Upload images to OSS
-      const imageUrls = await uploadImages(files || [])
+      const imageUrls = await uploadChatImages(files || [])
 
       // Ensure WS connection is established
       await connect()
@@ -844,7 +794,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
   async function enqueueMessage(text: string, files: File[]) {
     if (sessionId.value) sessionStore.clearExecutionError(sessionId.value)
-    const imageUrls = files.length > 0 ? await uploadImages(files) : []
+    const imageUrls = files.length > 0 ? await uploadChatImages(files) : []
     await connect()
     const eventId = generateUUID()
     wsEnqueueMessage(sessionId.value || '', text, eventId, imageUrls)

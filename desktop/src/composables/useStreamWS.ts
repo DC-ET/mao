@@ -346,7 +346,8 @@ export function useStreamWS() {
     inheritContext: boolean,
     modelId?: number,
     localSkills?: LocalSkillReport[],
-    agentsMdContent?: string
+    agentsMdContent?: string,
+    images?: string[]
   ) {
     send({
       type: 'create_side_session',
@@ -354,6 +355,7 @@ export function useStreamWS() {
       data: {
         content,
         inheritContext,
+        images: images || [],
         ...(modelId != null ? { modelId } : {}),
         ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),
         ...(agentsMdContent ? { agentsMdContent } : {})

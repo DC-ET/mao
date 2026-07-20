@@ -835,6 +835,16 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         Long modelId = data.has("modelId") && !data.get("modelId").isNull()
                 ? data.get("modelId").asLong() : null;
 
+        List<String> images = new ArrayList<>();
+        if (data.has("images") && data.get("images").isArray()) {
+            for (JsonNode img : data.get("images")) {
+                images.add(img.asText());
+            }
+        }
+        if ((content == null || content.isBlank()) && images.isEmpty()) {
+            return;
+        }
+
         // 1. 校验主会话存在
         Session parentSession;
         try {
@@ -855,19 +865,42 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             return;
         }
 
+        // 2.6 Vision model check when images are attached (same rules as send_message)
+        Long resolvedModelId = modelId != null ? modelId : parentSession.getModelId();
+        if (!images.isEmpty()) {
+            Session visionProbe = new Session();
+            visionProbe.setModelId(resolvedModelId);
+            visionProbe.setAgentId(parentSession.getAgentId());
+            LlmModel model = resolveSessionModel(visionProbe);
+            if (model == null || model.getSupportsVision() == null || model.getSupportsVision() != 1) {
+                registry.send(userId, WsEvent.of("error", parentSessionId,
+                        Map.of("message", "当前模型不支持图片输入，请切换支持视觉的模型")));
+                return;
+            }
+            if (images.size() > 10) {
+                registry.send(userId, WsEvent.of("error", parentSessionId,
+                        Map.of("message", "单条消息最多支持 10 张图片")));
+                return;
+            }
+        }
+
         // 3. 创建边路任务子会话
         Session sideSession = new Session();
         sideSession.setUserId(userId);
         sideSession.setAgentId(parentSession.getAgentId());
         String titleBody = sessionService.generateTitleFromUserMessage(userId, content);
         if (titleBody == null || titleBody.isBlank()) {
-            titleBody = content.length() > 30 ? content.substring(0, 30) + "..." : content;
+            if (content != null && !content.isBlank()) {
+                titleBody = content.length() > 30 ? content.substring(0, 30) + "..." : content;
+            } else {
+                titleBody = "图片消息";
+            }
         }
         sideSession.setTitle(titleBody);
         sideSession.setExecutionMode(parentSession.getExecutionMode());
         sideSession.setWorkspace(parentSession.getWorkspace());
         sideSession.setPermissionLevel(parentSession.getPermissionLevel());
-        sideSession.setModelId(modelId != null ? modelId : parentSession.getModelId());
+        sideSession.setModelId(resolvedModelId);
         sideSession.setIsGit(parentSession.getIsGit());
         sideSession.setPlatform(parentSession.getPlatform());
         sideSession.setShellPath(parentSession.getShellPath());
@@ -889,9 +922,25 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         log.info("Created side task session {} for parent session {}, userId={}, inheritContext={}",
                 sideSessionId, parentSessionId, userId, inheritContext);
 
-        // 4. 保存首条 USER 消息
-        cn.etarch.mao.session.entity.Message savedMessage = sessionService.saveMessage(sideSessionId, "USER", content,
-                null, null, null, 0, null);
+        // 4. 保存首条 USER 消息（支持多模态图片）
+        cn.etarch.mao.session.entity.Message savedMessage;
+        if (images.isEmpty()) {
+            savedMessage = sessionService.saveMessage(sideSessionId, "USER", content,
+                    null, null, null, 0, null);
+        } else {
+            List<ChatRequest.ContentPart> parts = new ArrayList<>();
+            if (content != null && !content.isBlank()) {
+                parts.add(ChatRequest.ContentPart.builder().type("text").text(content).build());
+            }
+            for (String imageUrl : images) {
+                parts.add(ChatRequest.ContentPart.builder()
+                        .type("image_url")
+                        .imageUrl(ChatRequest.ImageUrl.builder().url(imageUrl).build())
+                        .build());
+            }
+            savedMessage = sessionService.saveMessage(sideSessionId, "USER", parts,
+                    null, null, null, 0, null);
+        }
 
         // 5. 通知前端会话已创建（前端随后订阅该 sideSessionId）
         registry.send(userId, WsEvent.of("side_session_created", parentSessionId,

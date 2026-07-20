@@ -35,8 +35,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import org.mockito.ArgumentMatchers;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -205,6 +207,8 @@ class StreamingWsHandlerTest {
         parent.setWorkspace("/repo");
         when(sessionService.getSession(11L)).thenReturn(parent);
         when(sessionService.generateTitleFromUserMessage(7L, "side work")).thenReturn("Side work");
+        when(sessionService.saveMessage(eq(13L), eq("USER"), eq("side work"), eq(null), eq(null), eq(null), eq(0), eq(null)))
+                .thenReturn(message(99L, "USER"));
         when(agentLoop.registerCancelFlag(any())).thenReturn(new AtomicBoolean(false));
         doAnswer(invocation -> {
             Session sideSession = invocation.getArgument(0);
@@ -223,6 +227,55 @@ class StreamingWsHandlerTest {
     }
 
     @Test
+    void createSideSessionPersistsMultimodalImagesOnFirstMessage() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        Session parent = session("CLOUD", "IDLE");
+        parent.setWorkspace("/repo");
+        when(sessionService.getSession(11L)).thenReturn(parent);
+        when(sessionService.generateTitleFromUserMessage(7L, "look")).thenReturn("Look");
+        when(sessionService.saveMessage(eq(13L), eq("USER"), any(Object.class), eq(null), eq(null), eq(null), eq(0), eq(null)))
+                .thenReturn(message(99L, "USER"));
+        when(agentLoop.registerCancelFlag(any())).thenReturn(new AtomicBoolean(false));
+        LlmModel visionModel = new LlmModel();
+        visionModel.setSupportsVision(1);
+        when(llmModelMapper.selectById(9L)).thenReturn(visionModel);
+        doAnswer(invocation -> {
+            Session sideSession = invocation.getArgument(0);
+            sideSession.setId(13L);
+            return null;
+        }).when(sessionService).save(any(Session.class));
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"create_side_session","sessionId":11,"data":{"content":"look","inheritContext":false,"modelId":9,"images":["https://cdn.example/a.png"]}}
+                """));
+        executor.runAll();
+
+        verify(sessionService).saveMessage(eq(13L), eq("USER"),
+                ArgumentMatchers.<Object>argThat(content -> content instanceof List && ((List<?>) content).size() == 2),
+                eq(null), eq(null), eq(null), eq(0), eq(null));
+        verify(harnessService).executeSideFirstMessage(eq(11L), eq(13L), eq(false), any(), any(AtomicBoolean.class));
+    }
+
+    @Test
+    void createSideSessionRejectsImagesWhenModelLacksVision() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        Session parent = session("CLOUD", "IDLE");
+        parent.setModelId(2L);
+        when(sessionService.getSession(11L)).thenReturn(parent);
+        LlmModel model = new LlmModel();
+        model.setSupportsVision(0);
+        when(llmModelMapper.selectById(2L)).thenReturn(model);
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"create_side_session","sessionId":11,"data":{"content":"look","inheritContext":true,"images":["https://cdn.example/a.png"]}}
+                """));
+
+        verify(sessionService, never()).save(any(Session.class));
+        verify(registry).send(eq(7L), any(WsEvent.class));
+        verify(harnessService, never()).executeSideFirstMessage(any(), any(), anyBoolean(), any(), any());
+    }
+
+    @Test
     void createSideSessionInLocalModeRegistersToolSessionAndReportsLocalSkills() throws Exception {
         when(registry.getUserId(ws)).thenReturn(7L);
         when(registry.hasLocalClientConnection(7L)).thenReturn(true);
@@ -230,6 +283,8 @@ class StreamingWsHandlerTest {
         parent.setWorkspace("/repo");
         when(sessionService.getSession(11L)).thenReturn(parent);
         when(sessionService.generateTitleFromUserMessage(7L, "side work")).thenReturn("Side work");
+        when(sessionService.saveMessage(eq(13L), eq("USER"), eq("side work"), eq(null), eq(null), eq(null), eq(0), eq(null)))
+                .thenReturn(message(99L, "USER"));
         when(agentLoop.registerCancelFlag(any())).thenReturn(new AtomicBoolean(false));
         doAnswer(invocation -> {
             Session sideSession = invocation.getArgument(0);

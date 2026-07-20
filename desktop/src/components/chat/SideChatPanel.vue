@@ -99,6 +99,7 @@ import type { QuestionAnswer } from '../../types/chat'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useToolApprovals } from '../../composables/useChat'
+import { uploadImages } from '../../utils/imageUpload'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QuestionPanel from './QuestionPanel.vue'
@@ -322,16 +323,24 @@ function handleModelSwitch(modelId: number) {
   }
 }
 
-async function handleChatSend(text: string, _files: File[]) {
-  if (!text.trim()) return
+async function handleChatSend(text: string, files: File[]) {
+  const trimmed = text.trim()
+  if (!trimmed && (!files || files.length === 0)) return
 
   if (hasRealSession.value) {
     sessionStore.clearExecutionError(String(realSessionId.value))
   }
 
+  const uploadSessionId = hasRealSession.value
+    ? String(realSessionId.value)
+    : (sessionStore.activeSessionId ?? null)
+  const imageUrls = files.length > 0 ? await uploadImages(files, uploadSessionId) : []
+  // If user attached images but all uploads failed, do not send a text-only message by mistake.
+  if (files.length > 0 && imageUrls.length === 0) return
+
   // 边路任务正在执行中：将消息加入队列（不受 sending 状态阻塞）
   if (hasRealSession.value && isSideActive.value) {
-    enqueueMessage(String(realSessionId.value), text.trim(), generateUUID(), [])
+    enqueueMessage(String(realSessionId.value), trimmed, generateUUID(), imageUrls)
     chatInputRef.value?.clearInput()
     return
   }
@@ -365,12 +374,14 @@ async function handleChatSend(text: string, _files: File[]) {
     sessionStore.addUserMessage(placeholderCacheKey.value, {
       id: 'side_user_' + Date.now(),
       role: 'user',
-      content: text.trim(),
+      content: trimmed,
       createdAt: nowDateTime(),
+      images: imageUrls.length > 0 ? imageUrls : undefined,
     })
     sessionStore.ensureStreamingAssistantMessage(placeholderCacheKey.value)
 
-    void deriveSessionTitle(text.trim()).then(title => {
+    const titleSource = trimmed || (imageUrls.length > 0 ? '图片消息' : '')
+    void deriveSessionTitle(titleSource).then(title => {
       updateSideTaskTab(props.tabId, props.sideSessionId, title)
     })
 
@@ -383,11 +394,12 @@ async function handleChatSend(text: string, _files: File[]) {
 
     createSideSession(
       parentSessionId,
-      text.trim(),
+      trimmed,
       inheritContext.value,
       currentModelId.value,
       localSkills,
-      agentsMdContent
+      agentsMdContent,
+      imageUrls
     )
     sending.value = true
   } else {
@@ -396,11 +408,12 @@ async function handleChatSend(text: string, _files: File[]) {
     sessionStore.addUserMessage(sid, {
       id: 'side_user_' + Date.now(),
       role: 'user',
-      content: text.trim(),
+      content: trimmed,
       createdAt: nowDateTime(),
+      images: imageUrls.length > 0 ? imageUrls : undefined,
     })
     sessionStore.ensureStreamingAssistantMessage(sid)
-    sendMessage(sid, text.trim(), generateUUID(), undefined, localSkills, agentsMdContent)
+    sendMessage(sid, trimmed, generateUUID(), imageUrls, localSkills, agentsMdContent)
     sending.value = true
   }
 
