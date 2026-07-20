@@ -32,14 +32,63 @@ export interface ApprovalItem {
   dangerReason?: string
 }
 
-// Module-level flag to ensure IPC listeners are registered only once
+// Module-level shared approval queue — ChatPanel + SideChatPanel both consume this.
+// IPC listener must close over a stable ref, not a per-useChat() instance.
+const pendingApprovals = ref<ApprovalItem[]>([])
 let approvalListenerSetup = false
+
+function ensureApprovalListener() {
+  if (typeof window === 'undefined' || !(window as any).electronAPI || approvalListenerSetup) return
+  approvalListenerSetup = true
+
+  ;(window as any).electronAPI.onToolApprovalRequest((data: { requestId: string; toolName: string; description: string; sessionId?: number; dangerReason?: string }) => {
+    const sessionStore = useSessionStore()
+    const sid = data.sessionId != null ? String(data.sessionId) : undefined
+    if (!pendingApprovals.value.some(a => a.requestId === data.requestId)) {
+      pendingApprovals.value.push({ requestId: data.requestId, toolName: data.toolName, description: data.description, sessionId: sid, dangerReason: data.dangerReason })
+      if (sid) sessionStore.incrementPendingApproval(sid)
+    }
+  })
+
+  ;(window as any).electronAPI.onToolApprovalDismiss((data: { requestId: string }) => {
+    const sessionStore = useSessionStore()
+    const item = pendingApprovals.value.find(a => a.requestId === data.requestId)
+    if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
+    pendingApprovals.value = pendingApprovals.value.filter(a => a.requestId !== data.requestId)
+  })
+}
+
+/** Shared tool-approval queue for main chat and side tasks. */
+export function useToolApprovals() {
+  const sessionStore = useSessionStore()
+  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
+  ensureApprovalListener()
+
+  async function confirmApproval(requestId: string, approved: boolean) {
+    const item = pendingApprovals.value.find(a => a.requestId === requestId)
+    if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
+    pendingApprovals.value = pendingApprovals.value.filter(a => a.requestId !== requestId)
+    if (requestId && isElectron) {
+      await (window as any).electronAPI.respondToolApproval(requestId, approved)
+    }
+  }
+
+  function clearPendingApprovals() {
+    for (const item of pendingApprovals.value) {
+      if (item.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
+    }
+    pendingApprovals.value = []
+  }
+
+  return { pendingApprovals, confirmApproval, clearPendingApprovals }
+}
 
 const FILE_REF_PATTERN = /@\{([^}]+)\}@/g
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
   const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks, setActiveExecution, clearActiveExecution, onMessageSaved, offMessageSaved } = useStreamWS()
+  const { pendingApprovals, confirmApproval, clearPendingApprovals } = useToolApprovals()
 
   const sending = ref(false)
   const initializingWorkspace = ref(false)
@@ -56,9 +105,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const agentName = ref('Agent')
   const startedAt = ref<string | null>(null)
 
-  // Tool approval queue — supports multiple concurrent approvals
-  const pendingApprovals = ref<ApprovalItem[]>([])
-
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
 
   function isActivePhase(phase?: string | null) {
@@ -70,28 +116,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const todos = computed(() => sessionStore.activeTodos)
   const activities = computed(() => sessionStore.activeActivities)
   const contextWindow = computed(() => sessionStore.activeContextWindow)
-
-  function setupApprovalListener() {
-    if (!isElectron || approvalListenerSetup) return
-    approvalListenerSetup = true
-
-    ;(window as any).electronAPI.onToolApprovalRequest((data: { requestId: string; toolName: string; description: string; sessionId?: number; dangerReason?: string }) => {
-      const sid = data.sessionId != null ? String(data.sessionId) : undefined
-      if (!pendingApprovals.value.some(a => a.requestId === data.requestId)) {
-        pendingApprovals.value.push({ requestId: data.requestId, toolName: data.toolName, description: data.description, sessionId: sid, dangerReason: data.dangerReason })
-        if (sid) sessionStore.incrementPendingApproval(sid)
-      }
-    })
-
-    ;(window as any).electronAPI.onToolApprovalDismiss((data: { requestId: string }) => {
-      const item = pendingApprovals.value.find(a => a.requestId === data.requestId)
-      if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
-      pendingApprovals.value = pendingApprovals.value.filter(a => a.requestId !== data.requestId)
-    })
-  }
-
-  // Register approval listener globally (once per app lifecycle)
-  setupApprovalListener()
 
   async function fetchMessages() {
     if (!sessionId.value) return
@@ -849,13 +873,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
   }
 
-  function clearPendingApprovals() {
-    for (const item of pendingApprovals.value) {
-      if (item.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
-    }
-    pendingApprovals.value = []
-  }
-
   function newSession() {
     if (sessionId.value) {
       sessionStore.clearQueueMessages(sessionId.value)
@@ -953,15 +970,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
     // Resume phase watcher after session switch is complete
     switchingSession.value = false
-  }
-
-  async function confirmApproval(requestId: string, approved: boolean) {
-    const item = pendingApprovals.value.find(a => a.requestId === requestId)
-    if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
-    pendingApprovals.value = pendingApprovals.value.filter(a => a.requestId !== requestId)
-    if (requestId && isElectron) {
-      await (window as any).electronAPI.respondToolApproval(requestId, approved)
-    }
   }
 
   function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {

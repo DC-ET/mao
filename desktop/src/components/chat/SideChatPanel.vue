@@ -47,6 +47,12 @@
       @reorder="(id, dir) => reorderQueueMessage(id, dir)"
     />
 
+    <ApprovalStack
+      v-if="sidePendingApprovals.length > 0"
+      :items="sidePendingApprovals"
+      @confirm="confirmApproval"
+    />
+
     <!-- 输入区 -->
     <div class="input-area">
       <ExecutionErrorBanner :message="executionError" />
@@ -92,10 +98,12 @@ import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
+import { useToolApprovals } from '../../composables/useChat'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QuestionPanel from './QuestionPanel.vue'
 import QueuePanel from './QueuePanel.vue'
+import ApprovalStack from './ApprovalStack.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 
 const chatInputRef = ref<InstanceType<typeof ChatInput>>()
@@ -108,6 +116,7 @@ const props = defineProps<{
 const sessionStore = useSessionStore()
 const { createSideSession, sendMessage, cancel, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, onMessageSaved, offMessageSaved } = useStreamWS()
 const { openWithContent } = useCommandDrawer()
+const { pendingApprovals, confirmApproval } = useToolApprovals()
 
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { updateSideTaskTab } = useCenterTabs(activeSessionIdRef)
@@ -171,6 +180,12 @@ const showTypingIndicator = computed(() => {
 const sidePendingQuestions = computed(() => {
   if (!hasRealSession.value) return []
   return sessionStore.sessionPendingQuestions.get(String(realSessionId.value)) ?? []
+})
+
+const sidePendingApprovals = computed(() => {
+  if (!hasRealSession.value) return []
+  const sid = String(realSessionId.value)
+  return pendingApprovals.value.filter(a => a.sessionId === sid)
 })
 
 const executionError = computed(() => {
