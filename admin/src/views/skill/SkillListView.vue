@@ -63,7 +63,7 @@
         <el-table-column label="状态" width="90" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">
             <el-tag :type="isSkillAvailable(row) ? 'success' : 'danger'" size="small">
-              {{ isSkillAvailable(row) ? '可用' : '异常' }}
+              {{ isSkillAvailable(row) ? '可用' : '不可用' }}
             </el-tag>
           </template>
         </el-table-column>
