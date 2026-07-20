@@ -17,7 +17,7 @@ export type {
 } from '../types/chat'
 export { normalizeMessageRole } from '../types/chat'
 
-import { uploadToOss, type StsToken } from '../utils/ossUpload'
+import { normalizeImageForUpload, uploadToOss, type StsToken } from '../utils/ossUpload'
 import { getUploadConfig, type UploadConfig } from '../utils/storageMode'
 import { deriveSessionTitle } from '../utils/sessionTitle'
 import { generateUUID } from '../utils/uuid'
@@ -181,8 +181,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const urls: string[] = []
       for (const file of files) {
         try {
+          const normalized = await normalizeImageForUpload(file)
           const formData = new FormData()
-          formData.append('file', file)
+          formData.append('file', normalized)
           if (sessionId.value) {
             formData.append('sessionId', String(sessionId.value))
           }

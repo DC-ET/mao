@@ -2,6 +2,7 @@ package cn.etarch.mao.harness.llm;
 
 import cn.etarch.mao.config.LlmRetryConfig;
 import cn.etarch.mao.harness.core.MessageHistoryNormalizer;
+import cn.etarch.mao.harness.tool.ImageFileSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -323,7 +324,10 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
     private Request buildRequest(ChatRequest request, LlmModelConfig config, boolean stream) {
         try {
-            List<ChatRequest.Message> messages = request.getMessages();
+            // Copy so placeholder replacement can rewrite entries even when caller passed List.of(...)
+            List<ChatRequest.Message> messages = request.getMessages() != null
+                    ? new ArrayList<>(request.getMessages())
+                    : null;
             MessageHistoryNormalizer.ensureContentPresent(messages);
 
             // 模型不支持视觉时，将图片替换为占位文案
@@ -490,6 +494,8 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
     /**
      * Download an image from URL and encode it as a base64 data URI.
+     * Resolves MIME from magic bytes when the server returns application/octet-stream
+     * or another non-image Content-Type (common for extensionless OSS objects).
      */
     private String downloadAndEncode(String imageUrl) throws IOException {
         Request req = new Request.Builder().url(imageUrl).build();
@@ -502,9 +508,17 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                 throw new IOException("Empty body when downloading image: " + imageUrl);
             }
             byte[] bytes = body.bytes();
-            String mimeType = body.contentType() != null
-                    ? body.contentType().toString()
-                    : "application/octet-stream";
+            MediaType contentType = body.contentType();
+            String declaredMime = contentType != null
+                    ? contentType.type() + "/" + contentType.subtype()
+                    : null;
+            String mimeType = ImageFileSupport.resolveImageMime(bytes, declaredMime, imageUrl)
+                    .orElseThrow(() -> new IOException(
+                            "Downloaded content is not a supported image type: " + imageUrl
+                                    + " (Content-Type=" + declaredMime + ")"));
+            if (declaredMime != null && !ImageFileSupport.isImageMime(declaredMime)) {
+                log.info("Corrected image MIME for {}: {} -> {}", imageUrl, declaredMime, mimeType);
+            }
             String encoded = Base64.getEncoder().encodeToString(bytes);
             return "data:" + mimeType + ";base64," + encoded;
         }

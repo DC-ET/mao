@@ -45,7 +45,7 @@ public final class ImageFileSupport {
     }
 
     public static boolean isImageMime(String mime) {
-        return mime != null && mime.startsWith("image/");
+        return normalizeMime(mime).map(m -> m.startsWith("image/")).orElse(false);
     }
 
     /**
@@ -69,6 +69,40 @@ public final class ImageFileSupport {
             return Optional.of("image/webp");
         }
         return Optional.empty();
+    }
+
+    /**
+     * Resolve a usable image MIME for LLM/data-URI use.
+     * Prefer magic bytes, then a declared image/* type, then path/URL extension.
+     */
+    public static Optional<String> resolveImageMime(byte[] bytes, String declaredMime, String pathOrUrl) {
+        Optional<String> fromBytes = detectMimeFromBytes(bytes);
+        if (fromBytes.isPresent()) {
+            return fromBytes;
+        }
+        Optional<String> declared = normalizeMime(declaredMime).filter(m -> m.startsWith("image/"));
+        if (declared.isPresent()) {
+            return declared;
+        }
+        return mimeFromPath(pathOrUrl);
+    }
+
+    public static Optional<String> extensionForMime(String mime) {
+        return normalizeMime(mime).flatMap(m -> switch (m) {
+            case "image/png" -> Optional.of(".png");
+            case "image/jpeg" -> Optional.of(".jpg");
+            case "image/gif" -> Optional.of(".gif");
+            case "image/webp" -> Optional.of(".webp");
+            default -> Optional.empty();
+        });
+    }
+
+    public static Optional<String> normalizeMime(String mime) {
+        if (mime == null || mime.isBlank()) {
+            return Optional.empty();
+        }
+        String normalized = mime.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
+        return normalized.isEmpty() ? Optional.empty() : Optional.of(normalized);
     }
 
     public static String formatSize(long bytes) {

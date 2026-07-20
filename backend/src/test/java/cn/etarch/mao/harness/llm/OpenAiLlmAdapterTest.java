@@ -19,6 +19,14 @@ class OpenAiLlmAdapterTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /** Minimal bytes that pass ImageFileSupport magic-byte checks (12+ bytes). */
+    private static final byte[] PNG_MAGIC = new byte[] {
+            (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0
+    };
+    private static final byte[] JPEG_MAGIC = new byte[] {
+            (byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+
     @Test
     void chatIncludesEmptyContentForAssistantToolOnlyMessages() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
@@ -89,7 +97,8 @@ class OpenAiLlmAdapterTest {
     @Test
     void chatConvertsImageUrlsToBase64AndKeepsFailedDownloadsAsUrl() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
-            server.enqueue(new MockResponse().setResponseCode(200).setHeader("Content-Type", "image/png").setBody("img"));
+            server.enqueue(new MockResponse().setResponseCode(200).setHeader("Content-Type", "image/png")
+                    .setBody(new okio.Buffer().write(PNG_MAGIC)));
             server.enqueue(jsonResponse("{\"id\":\"ok\",\"choices\":[]}"));
             server.enqueue(new MockResponse().setResponseCode(404).setBody("no image"));
             server.enqueue(jsonResponse("{\"id\":\"fallback\",\"choices\":[]}"));
@@ -105,7 +114,7 @@ class OpenAiLlmAdapterTest {
                                     .build()))
                             .build()))
                     .build();
-            assertThat(adapter(0, 0).chat(request, config(server)).getId()).isEqualTo("ok");
+            assertThat(adapter(0, 0).chat(request, visionConfig(server)).getId()).isEqualTo("ok");
             assertThat(((ChatRequest.ContentPart) ((List<?>) request.getMessages().get(0).getContent()).get(0))
                     .getImageUrl().getUrl()).startsWith("data:image/png;base64,");
 
@@ -115,8 +124,35 @@ class OpenAiLlmAdapterTest {
             ChatRequest mapRequest = ChatRequest.builder()
                     .messages(List.of(ChatRequest.Message.builder().role("user").content(List.of(imageMap)).build()))
                     .build();
-            assertThat(adapter(0, 0).chat(mapRequest, config(server)).getId()).isEqualTo("fallback");
+            assertThat(adapter(0, 0).chat(mapRequest, visionConfig(server)).getId()).isEqualTo("fallback");
             assertThat(((Map<?, ?>) imageMap.get("image_url")).get("url").toString()).contains("/missing.png");
+        }
+    }
+
+    @Test
+    void chatCorrectsOctetStreamImageMimeFromMagicBytes() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .setHeader("Content-Type", "application/octet-stream")
+                    .setBody(new okio.Buffer().write(JPEG_MAGIC)));
+            server.enqueue(jsonResponse("{\"id\":\"ok\",\"choices\":[]}"));
+            server.start();
+
+            String imageUrl = server.url("/uploads/1784513683408_vsg_output_1784513632639").toString();
+            ChatRequest request = ChatRequest.builder()
+                    .messages(List.of(ChatRequest.Message.builder()
+                            .role("user")
+                            .content(List.of(ChatRequest.ContentPart.builder()
+                                    .type("image_url")
+                                    .imageUrl(ChatRequest.ImageUrl.builder().url(imageUrl).build())
+                                    .build()))
+                            .build()))
+                    .build();
+
+            assertThat(adapter(0, 0).chat(request, visionConfig(server)).getId()).isEqualTo("ok");
+            String dataUri = ((ChatRequest.ContentPart) ((List<?>) request.getMessages().get(0).getContent()).get(0))
+                    .getImageUrl().getUrl();
+            assertThat(dataUri).startsWith("data:image/jpeg;base64,");
         }
     }
 
@@ -176,7 +212,7 @@ class OpenAiLlmAdapterTest {
                                     .build()))
                     .build();
 
-            adapter(0, 0).chat(request, config(server));
+            adapter(0, 0).chat(request, visionConfig(server));
 
             String body = server.takeRequest().getBody().readUtf8();
             assertThat(body).contains("\"type\":\"image_url\"");
@@ -196,6 +232,15 @@ class OpenAiLlmAdapterTest {
                 .baseUrl(server.url("").toString().replaceAll("/$", ""))
                 .apiKey("key")
                 .modelId("gpt-test")
+                .build();
+    }
+
+    private static LlmModelConfig visionConfig(MockWebServer server) {
+        return LlmModelConfig.builder()
+                .baseUrl(server.url("").toString().replaceAll("/$", ""))
+                .apiKey("key")
+                .modelId("gpt-test")
+                .supportsVision(true)
                 .build();
     }
 

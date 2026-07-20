@@ -70,6 +70,23 @@ class FileServicesTest {
     }
 
     @Test
+    void uploadInfersImageMimeAndExtensionFromMagicBytes() throws Exception {
+        FileService service = fileService();
+        byte[] jpeg = new byte[] {
+                (byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2
+        };
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "vsg_output_1784513632639", "application/octet-stream", jpeg);
+
+        FileEntity saved = service.uploadFile(file, 1L, 2L);
+
+        assertThat(saved.getMimeType()).isEqualTo("image/jpeg");
+        assertThat(saved.getOriginalName()).endsWith(".jpg");
+        assertThat(saved.getStoredName()).endsWith(".jpg");
+        assertThat(Path.of(saved.getFilePath())).exists();
+    }
+
+    @Test
     void listWorkspaceFilesFiltersIgnoredDirsAndSortsRecentFirst() throws Exception {
         FileService service = fileService();
         Path workspace = tempDir.resolve("workspace");

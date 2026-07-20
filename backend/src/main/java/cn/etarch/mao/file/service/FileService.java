@@ -3,6 +3,7 @@ package cn.etarch.mao.file.service;
 import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.file.entity.FileEntity;
 import cn.etarch.mao.file.mapper.FileEntityMapper;
+import cn.etarch.mao.harness.tool.ImageFileSupport;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -44,27 +46,38 @@ public class FileService {
             throw new BusinessException(4001, "文件大小超过限制: " + maxSizeMb + "MB");
         }
 
-        String originalName = file.getOriginalFilename();
-        String extension = "";
-        if (originalName != null && originalName.contains(".")) {
-            extension = originalName.substring(originalName.lastIndexOf("."));
-        }
-        String storedName = UUID.randomUUID().toString() + extension;
-
         try {
+            byte[] bytes = file.getBytes();
+            String originalName = file.getOriginalFilename();
+            if (originalName == null || originalName.isBlank()) {
+                originalName = "upload";
+            }
+
+            String mimeType = resolveUploadMime(bytes, file.getContentType(), originalName);
+            Optional<String> imageExt = ImageFileSupport.extensionForMime(mimeType);
+            if (imageExt.isPresent() && !ImageFileSupport.isImagePath(originalName)) {
+                originalName = originalName + imageExt.get();
+            }
+
+            String extension = "";
+            if (originalName.contains(".")) {
+                extension = originalName.substring(originalName.lastIndexOf("."));
+            }
+            String storedName = UUID.randomUUID() + extension;
+
             Path uploadPath = Paths.get(uploadDir);
             if (!Files.exists(uploadPath)) {
                 Files.createDirectories(uploadPath);
             }
             Path filePath = uploadPath.resolve(storedName);
-            file.transferTo(filePath.toFile());
+            Files.write(filePath, bytes);
 
             FileEntity fileEntity = new FileEntity();
             fileEntity.setOriginalName(originalName);
             fileEntity.setStoredName(storedName);
             fileEntity.setFilePath(filePath.toString());
-            fileEntity.setFileSize(file.getSize());
-            fileEntity.setMimeType(file.getContentType());
+            fileEntity.setFileSize((long) bytes.length);
+            fileEntity.setMimeType(mimeType);
             fileEntity.setUploaderId(userId);
             fileEntity.setSessionId(sessionId);
             fileEntityMapper.insert(fileEntity);
@@ -74,6 +87,12 @@ public class FileService {
             log.error("Failed to save file", e);
             throw new BusinessException(5000, "文件保存失败");
         }
+    }
+
+    private static String resolveUploadMime(byte[] bytes, String declaredMime, String originalName) {
+        return ImageFileSupport.resolveImageMime(bytes, declaredMime, originalName)
+                .or(() -> ImageFileSupport.normalizeMime(declaredMime))
+                .orElse("application/octet-stream");
     }
 
     public FileEntity getFile(Long id) {
