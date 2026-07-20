@@ -13,6 +13,9 @@
   /* Colors — Surface */
   --aw-canvas: #ffffff;
   --aw-canvas-parchment: #f5f5f7;
+  --aw-surface: #ffffff;
+  --aw-surface-hover: #f5f5f7;
+  --aw-surface-glass: rgba(255, 255, 255, 0.72);
   --aw-surface-pearl: #fafafc;
   --aw-surface-tile-1: #272729;
   --aw-surface-tile-2: #2a2a2c;
@@ -31,12 +34,24 @@
   --aw-body: #1d1d1f;
   --aw-body-on-dark: #ffffff;
   --aw-body-muted: #cccccc;
+  --aw-ink-muted: #86868b;
   --aw-ink-muted-80: #333333;
+  --aw-ink-muted-64: #5c5c5c;
+  --aw-ink-muted-60: #666666;
   --aw-ink-muted-48: #7a7a7a;
+  --aw-ink-muted-40: #999999;
+  --aw-muted: #86868b;
 
   /* Colors — Borders & Dividers */
   --aw-divider-soft: #f0f0f0;
+  --aw-divider: #f0f0f0;
   --aw-hairline: #e0e0e0;
+  --aw-border: #e0e0e0;
+
+  /* Colors — Accent aliases */
+  --aw-accent: #0066cc;
+  --aw-accent-rgb: 0, 102, 204;
+  --aw-accent-bg: rgba(0, 102, 204, 0.08);
 
   /* Colors — Status */
   --aw-success: #34c759;
@@ -110,6 +125,9 @@
 [data-theme="dark"] {
   --aw-canvas: #0f0f17;
   --aw-canvas-parchment: #1a1a22;
+  --aw-surface: #1a1a22;
+  --aw-surface-hover: #252530;
+  --aw-surface-glass: rgba(30, 30, 40, 0.72);
   --aw-surface-pearl: #1e1e28;
   --aw-surface-black: #000000;
   --aw-surface-code: #1e1e28;
@@ -120,14 +138,24 @@
   --aw-body: #f5f5f7;
   --aw-body-on-dark: #f5f5f7;
   --aw-body-muted: #a1a1a6;
+  --aw-ink-muted: #a1a1a6;
   --aw-ink-muted-80: #cccccc;
+  --aw-ink-muted-64: #9a9a9f;
+  --aw-ink-muted-60: #8e8e93;
   --aw-ink-muted-48: #86868b;
+  --aw-ink-muted-40: #636366;
+  --aw-muted: #a1a1a6;
 
   --aw-divider-soft: #2a2a2e;
+  --aw-divider: #2a2a2e;
   --aw-hairline: #38383a;
+  --aw-border: #38383a;
 
   --aw-primary-on-dark: #2997ff;
   --aw-primary-lighter: rgba(41, 151, 255, 0.18);
+  --aw-accent: #2997ff;
+  --aw-accent-rgb: 41, 151, 255;
+  --aw-accent-bg: rgba(41, 151, 255, 0.12);
 
   --aw-nav-bg: #000000;
   --aw-nav-text: #f5f5f7;
