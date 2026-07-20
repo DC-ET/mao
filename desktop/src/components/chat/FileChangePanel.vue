@@ -1,6 +1,6 @@
 <template>
   <div class="file-change-panel" v-if="changes.length > 0">
-    <div class="file-change-header" @click="isExpanded = !isExpanded">
+    <div class="file-change-header" @click="toggleExpanded">
       <div class="file-change-info">
         <el-icon class="file-change-icon" :size="14"><Document /></el-icon>
         <span class="file-change-label">文件变更 ({{ mergedChanges.length }})</span>
@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { Document, ArrowDown } from '@element-plus/icons-vue'
 import type { FileChange } from '../../types/chat'
 import { useSessionStore } from '../../stores/session'
@@ -71,8 +71,28 @@ const mergedChanges = computed(() => {
   return result
 })
 
-/** ≤4 个文件默认展开，超过则默认折叠 */
-const isExpanded = ref(mergedChanges.value.length <= 4)
+/**
+ * ≤4 个文件默认展开，超过则默认折叠。
+ * 必须 watch 数量变化：面板常在变更较少时挂载，后续追加文件时需重新套用默认策略；
+ * 用户手动切换后不再覆盖。
+ */
+const userToggled = ref(false)
+const isExpanded = ref(true)
+
+watch(
+  () => mergedChanges.value.length,
+  (count) => {
+    if (!userToggled.value) {
+      isExpanded.value = count <= 4
+    }
+  },
+  { immediate: true }
+)
+
+function toggleExpanded() {
+  userToggled.value = true
+  isExpanded.value = !isExpanded.value
+}
 
 const workspace = computed(() => sessionStore.activeSession?.workspace)
 
