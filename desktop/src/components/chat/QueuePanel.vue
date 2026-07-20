@@ -48,7 +48,7 @@
           <button
             class="action-btn delete-btn"
             title="删除"
-            @click="emit('delete', msg.id)"
+            @click="handleDelete(msg.id)"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
           </button>
@@ -66,6 +66,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { useSessionStore } from '../../stores/session'
 
 const props = defineProps<{
@@ -121,6 +122,19 @@ function handleInsert(queueId: string) {
   if (insertingQueueId.value) return
   insertingQueueId.value = queueId
   emit('insert', queueId)
+}
+
+async function handleDelete(queueId: string) {
+  try {
+    await ElMessageBox.confirm(
+      '确定删除这条待发送消息吗？删除后无法恢复。',
+      '确认删除',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+    emit('delete', queueId)
+  } catch {
+    // user cancelled
+  }
 }
 </script>
 
