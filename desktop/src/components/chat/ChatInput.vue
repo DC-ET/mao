@@ -941,6 +941,8 @@ onMounted(() => {
 defineExpose({ focusInput, insertFileReference, clearInput })
 
 onBeforeUnmount(() => {
+  filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
+  filePreviewUrls.value = []
   editor.value?.destroy()
 })
 </script>

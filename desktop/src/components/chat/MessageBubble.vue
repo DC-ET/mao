@@ -296,8 +296,25 @@ const lastThinkingIdx = computed(() => {
   return -1
 })
 
-const userLineCount = computed(() => (props.message.content || '').split('\n').length)
-const isUserLong = computed(() => role.value === 'user' && userLineCount.value > 10)
+/** Approx. chars per visual line in the user bubble (max-width ~75%). */
+const USER_CHARS_PER_LINE = 48
+const USER_COLLAPSE_LINES = 10
+/** Skip collapse for tiny multi-line content (e.g. short numbered lists). */
+const USER_COLLAPSE_MIN_CHARS = 160
+
+function estimateUserVisualLines(content: string): number {
+  if (!content) return 0
+  return content.split('\n').reduce((sum, line) => {
+    return sum + Math.max(1, Math.ceil(line.length / USER_CHARS_PER_LINE))
+  }, 0)
+}
+
+const isUserLong = computed(() => {
+  if (role.value !== 'user') return false
+  const content = props.message.content || ''
+  return content.length >= USER_COLLAPSE_MIN_CHARS
+    && estimateUserVisualLines(content) > USER_COLLAPSE_LINES
+})
 
 const userParsedSegments = computed(() => {
   if (role.value !== 'user') return []
