@@ -33,12 +33,12 @@
       </el-tooltip>
       <el-tooltip content="我的技能/Skills" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" @click="toggleSkillDrawer()">
-          <el-icon><MagicStick /></el-icon>
+          <el-icon><Notebook /></el-icon>
         </div>
       </el-tooltip>
       <el-tooltip content="我的指令/Commands" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" @click="toggleCommandDrawer()">
-          <el-icon><Flag /></el-icon>
+          <el-icon><Reading /></el-icon>
         </div>
       </el-tooltip>
       <el-tooltip :content="updateTooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
@@ -54,7 +54,7 @@
       <el-tooltip :content="themeTooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" @click="toggleTheme" role="button" :aria-label="themeTooltip">
           <el-icon :size="16">
-            <Monitor v-if="theme === 'auto'" />
+            <Sunrise v-if="theme === 'auto'" />
             <Moon v-else-if="theme === 'light'" />
             <Sunny v-else />
           </el-icon>
@@ -88,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, ArrowLeft, Monitor, Moon, Refresh, Setting, Sunny } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, Sunrise, Moon, Refresh, Setting, Sunny } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
