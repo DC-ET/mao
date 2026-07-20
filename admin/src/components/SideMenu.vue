@@ -36,8 +36,7 @@ import {
   DocumentChecked,
   Operation,
   TrendCharts,
-  Setting,
-  Bell
+  Setting
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -67,7 +66,6 @@ const menuItems = [
   { index: '/runtime', label: '运行监控', icon: Operation, permission: 'session:read' },
   { index: '/analytics', label: '用量分析', icon: TrendCharts, permission: 'session:read' },
   { index: '/settings', label: '系统设置', icon: Setting, permission: 'user:write' },
-  { index: '/notifications', label: '通知管理', icon: Bell, permission: 'user:write' },
 ]
 
 const visibleMenus = computed(() =>

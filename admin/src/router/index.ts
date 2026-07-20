@@ -82,12 +82,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '系统设置', keepAlive: true, permission: 'user:write' }
       },
       {
-        path: 'notifications',
-        name: 'Notifications',
-        component: () => import('../views/notification/NotificationListView.vue'),
-        meta: { title: '通知管理', keepAlive: true, permission: 'user:write' }
-      },
-      {
         path: 'sessions/:id',
         name: 'SessionDetail',
         component: () => import('../views/session/SessionDetailView.vue'),

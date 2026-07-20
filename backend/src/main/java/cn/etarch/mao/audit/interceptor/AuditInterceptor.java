@@ -27,8 +27,7 @@ public class AuditInterceptor implements HandlerInterceptor {
             "/v1/permissions",
             "/v1/skill-docs",
             "/v1/admin",
-            "/v1/system-settings",
-            "/v1/notifications"
+            "/v1/system-settings"
     );
 
     private final AuditLogService auditLogService;

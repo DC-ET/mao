@@ -15,7 +15,6 @@ const runtimeCmd = require('./commands/runtime');
 const analyticsCmd = require('./commands/analytics');
 const auditCmd = require('./commands/audit');
 const settingsCmd = require('./commands/settings');
-const notificationCmd = require('./commands/notification');
 
 const GLOBAL_HELP = `mao-admin-cli — Mao 管理后台 API 命令行工具
 
@@ -43,7 +42,6 @@ const GLOBAL_HELP = `mao-admin-cli — Mao 管理后台 API 命令行工具
   analytics      分析汇总
   audit          审计日志
   settings       系统设置
-  notification   通知
 
 环境变量:
   MAO_ADMIN_BASE_URL
@@ -72,7 +70,6 @@ const MODULES = {
   analytics: analyticsCmd,
   audit: auditCmd,
   settings: settingsCmd,
-  notification: notificationCmd,
   permission: {
     help() {
       return roleCmd.helpPermission();

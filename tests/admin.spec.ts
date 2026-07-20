@@ -315,7 +315,6 @@ test.describe('Sidebar Navigation', () => {
       { label: '运行监控', url: /\/runtime$/ },
       { label: '用量分析', url: /\/analytics$/ },
       { label: '系统设置', url: /\/settings$/ },
-      { label: '通知管理', url: /\/notifications$/ },
     ]
 
     for (const item of navItems) {
