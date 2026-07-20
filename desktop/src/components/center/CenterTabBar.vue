@@ -168,6 +168,13 @@ onUnmounted(() => document.removeEventListener('click', hideContextMenu))
   opacity: 1;
 }
 
+/* Mobile / touch: no reliable hover — keep close button visible */
+@media (max-width: 768px), (hover: none) {
+  .tab-close {
+    opacity: 1;
+  }
+}
+
 .tab-close:hover {
   background: rgba(0, 0, 0, 0.08);
   color: var(--aw-ink);
