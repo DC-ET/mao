@@ -44,6 +44,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     set: (val: string) => {
       const state = getSessionState()
       state.activeTabId = val
+      notifyTabsChanged()
     }
   })
 
@@ -67,6 +68,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     const newTab: Tab = { id, type: 'file', title, filePath, version: 0 }
     state.tabs.push(newTab)
     state.activeTabId = id
+    notifyTabsChanged()
   }
 
   function openDiffTab(change: FileChange, title?: string) {
@@ -192,6 +194,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   function activateTab(tabId: string) {
     const state = getSessionState()
     state.activeTabId = tabId
+    notifyTabsChanged()
   }
 
   /** 仅关闭文件类标签（file / diff），保留边路任务等非文件标签。 */
@@ -209,6 +212,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     const tab = state.tabs.find(t => t.id === tabId)
     state.tabs = tab ? [tab] : []
     state.activeTabId = tabId
+    notifyTabsChanged()
   }
 
   // Clean up tab state when session is deleted
