@@ -103,17 +103,73 @@ public class SessionController {
         return Result.ok(projects);
     }
 
-    @GetMapping
-    public Result<List<SessionVO>> listSessions(
+    /**
+     * Task sidebar: sessions grouped by workspace key (aligned with desktop cloudGroupKey).
+     * Each group includes only the first {@code previewLimit} sessions.
+     */
+    @GetMapping("/groups")
+    public Result<SessionGroupsVO> listSessionGroups(
             @AuthenticationPrincipal Long userId,
             @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) String status) {
-        List<Session> sessions = sessionService.listSessions(userId, keyword, status);
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "5") int previewLimit) {
+        List<SessionService.SessionGroupBucket> buckets =
+                sessionService.listSessionGroups(userId, keyword, status, previewLimit);
 
-        // Batch-load related entities to avoid N+1 queries
+        List<Session> previewSessions = buckets.stream()
+                .flatMap(b -> b.sessions().stream())
+                .collect(Collectors.toList());
+        Map<Long, Agent> agentMap = batchLoadAgents(previewSessions);
+        Map<Long, LlmModel> modelMap = batchLoadModels(previewSessions);
+
+        SessionGroupsVO vo = new SessionGroupsVO();
+        vo.setGroups(buckets.stream().map(b -> {
+            SessionGroupVO g = new SessionGroupVO();
+            g.setKey(b.key());
+            g.setLabel(b.label());
+            g.setTotal(b.total());
+            g.setHasMore(b.hasMore());
+            g.setSessions(b.sessions().stream()
+                    .map(s -> toSessionVO(s, agentMap, modelMap))
+                    .collect(Collectors.toList()));
+            return g;
+        }).collect(Collectors.toList()));
+        return Result.ok(vo);
+    }
+
+    /**
+     * List sessions. With {@code groupKey}: paginated page within that group.
+     * Without {@code groupKey}: full list (CLI / keyword search).
+     */
+    @GetMapping
+    public Result<?> listSessions(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam(required = false) String groupKey,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Integer offset,
+            @RequestParam(required = false) Integer limit) {
+        if (groupKey != null && !groupKey.isBlank()) {
+            SessionService.SessionGroupPage page = sessionService.listSessionsByGroup(
+                    userId, groupKey, keyword, status,
+                    offset != null ? offset : 0,
+                    limit != null ? limit : 20);
+            Map<Long, Agent> agentMap = batchLoadAgents(page.items());
+            Map<Long, LlmModel> modelMap = batchLoadModels(page.items());
+            SessionGroupPageVO vo = new SessionGroupPageVO();
+            vo.setItems(page.items().stream()
+                    .map(s -> toSessionVO(s, agentMap, modelMap))
+                    .collect(Collectors.toList()));
+            vo.setTotal(page.total());
+            vo.setOffset(page.offset());
+            vo.setLimit(page.limit());
+            vo.setHasMore(page.hasMore());
+            return Result.ok(vo);
+        }
+
+        List<Session> sessions = sessionService.listSessions(userId, keyword, status);
         Map<Long, Agent> agentMap = batchLoadAgents(sessions);
         Map<Long, LlmModel> modelMap = batchLoadModels(sessions);
-
         List<SessionVO> voList = sessions.stream()
                 .map(s -> toSessionVO(s, agentMap, modelMap))
                 .collect(Collectors.toList());
@@ -578,6 +634,29 @@ public class SessionController {
         private String projectKey;
         private String permissionLevel;
         private Long modelId;
+    }
+
+    @Data
+    public static class SessionGroupsVO {
+        private List<SessionGroupVO> groups;
+    }
+
+    @Data
+    public static class SessionGroupVO {
+        private String key;
+        private String label;
+        private int total;
+        private boolean hasMore;
+        private List<SessionVO> sessions;
+    }
+
+    @Data
+    public static class SessionGroupPageVO {
+        private List<SessionVO> items;
+        private long total;
+        private int offset;
+        private int limit;
+        private boolean hasMore;
     }
 
     @Data

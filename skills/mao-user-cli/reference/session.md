@@ -13,6 +13,7 @@
 | 场景 | 命令 |
 |------|------|
 | 列表 | `session list` |
+| 按组预览 | `session groups` |
 | 详情 | `session get` |
 | 创建 | `session create` |
 | 更新元数据 | `session update` |
@@ -40,6 +41,28 @@
 
 ```bash
 mao-user session list --keyword 重构 --json
+```
+
+---
+
+## 命令：mao-user session groups
+
+按工作区分组返回会话预览（桌面端任务侧栏同源接口 `GET /sessions/groups`）。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--keyword` | 否 | 字符串 | 标题关键词 |
+| `--status` | 否 | 字符串 | 会话状态过滤 |
+| `--preview-limit` | 否 | 数字 | 每组预览条数，默认 5 |
+
+组内续载：`GET /sessions?groupKey=...&offset=...&limit=...`
+
+### 示例
+
+```bash
+mao-user session groups --preview-limit 5 --json
 ```
 
 ---

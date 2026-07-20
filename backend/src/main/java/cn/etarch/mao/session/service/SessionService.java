@@ -27,6 +27,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import cn.etarch.mao.session.util.SessionGroupKey;
 import cn.etarch.mao.session.util.TitleGenerator;
 import cn.etarch.mao.session.util.GitUrlParser;
 import cn.etarch.mao.command.entity.UserCommand;
@@ -230,6 +231,66 @@ public class SessionService {
     }
 
     public List<Session> listSessions(Long userId, String keyword, String status) {
+        QueryWrapper<Session> qw = baseSessionListQuery(userId, keyword, status);
+        qw.orderByDesc("is_pinned").orderByDesc("updated_at").orderByDesc("id");
+        return sessionMapper.selectList(qw);
+    }
+
+    /**
+     * Group ACTIVE (or filtered) main sessions for the task sidebar.
+     * Loads matching rows once, groups in memory (key aligned with desktop cloudGroupKey).
+     */
+    public List<SessionGroupBucket> listSessionGroups(Long userId, String keyword, String status, int previewLimit) {
+        int limit = Math.max(0, previewLimit);
+        List<Session> all = listSessions(userId, keyword, status);
+        Map<String, List<Session>> byKey = new LinkedHashMap<>();
+        for (Session s : all) {
+            String key = SessionGroupKey.of(s);
+            byKey.computeIfAbsent(key, k -> new ArrayList<>()).add(s);
+        }
+
+        List<String> keys = new ArrayList<>(byKey.keySet());
+        keys.sort(SessionGroupKey::compareKeys);
+
+        List<SessionGroupBucket> groups = new ArrayList<>(keys.size());
+        for (String key : keys) {
+            List<Session> members = byKey.get(key);
+            members.sort(SessionGroupKey::compareSessions);
+            int total = members.size();
+            List<Session> preview = limit >= total ? members : members.subList(0, limit);
+            groups.add(new SessionGroupBucket(key, SessionGroupKey.formatLabel(key), total, total > limit, List.copyOf(preview)));
+        }
+        return groups;
+    }
+
+    public SessionGroupPage listSessionsByGroup(Long userId, String groupKey, String keyword, String status,
+                                                int offset, int limit) {
+        if (groupKey == null || groupKey.isBlank()) {
+            throw new BusinessException(ErrorCode.PARAM_MISSING, "groupKey is required");
+        }
+        int safeOffset = Math.max(0, offset);
+        int safeLimit = Math.min(Math.max(1, limit), 100);
+
+        QueryWrapper<Session> countQw = baseSessionListQuery(userId, keyword, status);
+        try {
+            SessionGroupKey.applyFilter(countQw, groupKey);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, e.getMessage());
+        }
+        Long total = sessionMapper.selectCount(countQw);
+
+        QueryWrapper<Session> qw = baseSessionListQuery(userId, keyword, status);
+        SessionGroupKey.applyFilter(qw, groupKey);
+        // Active phases first, then pin, then updated_at — mirrors SessionGroupKey.compareSessions
+        qw.last("ORDER BY CASE WHEN phase IN ('RUNNING','RESUMING','WAITING_APPROVAL') THEN 0 ELSE 1 END, "
+                + "is_pinned DESC, updated_at DESC, id DESC LIMIT " + safeLimit + " OFFSET " + safeOffset);
+        List<Session> items = sessionMapper.selectList(qw);
+        long totalVal = total != null ? total : 0;
+        boolean hasMore = (long) safeOffset + items.size() < totalVal;
+        return new SessionGroupPage(items, totalVal, safeOffset, safeLimit, hasMore);
+    }
+
+    private QueryWrapper<Session> baseSessionListQuery(Long userId, String keyword, String status) {
         QueryWrapper<Session> qw = new QueryWrapper<>();
         qw.eq("user_id", userId);
         qw.notIn("session_type", "SUBAGENT", "SIDE_TASK");
@@ -241,9 +302,12 @@ public class SessionService {
         } else {
             qw.eq("status", "ACTIVE");
         }
-        qw.orderByDesc("is_pinned").orderByDesc("updated_at");
-        return sessionMapper.selectList(qw);
+        return qw;
     }
+
+    public record SessionGroupBucket(String key, String label, int total, boolean hasMore, List<Session> sessions) {}
+
+    public record SessionGroupPage(List<Session> items, long total, int offset, int limit, boolean hasMore) {}
 
     public List<Session> listSideTaskSessions(Long parentSessionId, Long userId) {
         QueryWrapper<Session> qw = new QueryWrapper<>();

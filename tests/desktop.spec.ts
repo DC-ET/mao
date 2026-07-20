@@ -6,6 +6,8 @@ async function mockDesktopApiFallback(page: Page) {
     let data: unknown = null
     if (url.pathname.endsWith('/auth/features')) {
       data = { feishuEnabled: false }
+    } else if (url.pathname.endsWith('/sessions/groups')) {
+      data = { groups: [] }
     } else if (url.pathname.endsWith('/agents') || url.pathname.endsWith('/sessions')) {
       data = []
     } else if (url.pathname.endsWith('/models/default')) {

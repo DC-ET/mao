@@ -4,6 +4,7 @@ import { api } from '../api'
 import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage, FileChange, PendingQuestion } from '../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
 import { nowDateTime } from '../utils/datetime'
+import { cloudGroupKey } from '../utils/cloud-project'
 
 export type SessionStatus = 'ACTIVE' | 'ARCHIVED'
 
@@ -72,14 +73,30 @@ export interface SideTaskItem {
   createdAt?: string
 }
 
+export interface SessionGroupMeta {
+  label: string
+  total: number
+  hasMore: boolean
+}
+
+const DEFAULT_GROUP_PREVIEW = 5
+const DEFAULT_GROUP_PAGE_SIZE = 20
+
 function normalizeId(id: any): string {
   return id != null ? String(id) : ''
 }
 
+function normalizeSession(s: any): Session {
+  return { ...s, id: normalizeId(s.id), agentId: normalizeId(s.agentId) }
+}
+
 export const useSessionStore = defineStore('session', () => {
   const sessions = ref<Session[]>([])
+  /** Per-group list metadata from /sessions/groups (and load-more). */
+  const groupMeta = ref<Map<string, SessionGroupMeta>>(new Map())
   const activeSessionId = ref<string | null>(null)
   const loading = ref(false)
+  const loadingMoreGroups = ref<Set<string>>(new Set())
 
   // Multi-session message cache — keyed by sessionId
   const sessionMessages = ref<Map<string, ChatMessage[]>>(new Map())
@@ -169,29 +186,35 @@ export const useSessionStore = defineStore('session', () => {
   async function fetchSessions(silent = false) {
     if (!silent) loading.value = true
     try {
-      const { data } = await api.get('/sessions')
-      const incoming: Session[] = (data || []).map((s: any) => ({ ...s, id: normalizeId(s.id), agentId: normalizeId(s.agentId) }))
-      // Merge: preserve local updates (e.g. server-generated title) that
-      // arrived after the request was fired but before it resolved.
-      const serverMap = new Map(incoming.map(s => [s.id, s]))
+      const { data } = await api.get('/sessions/groups', {
+        params: { previewLimit: DEFAULT_GROUP_PREVIEW }
+      })
+      const groups: any[] = data?.groups || []
+      const incoming: Session[] = []
+      const meta = new Map<string, SessionGroupMeta>()
+      for (const g of groups) {
+        const key = String(g.key)
+        meta.set(key, {
+          label: g.label || key,
+          total: Number(g.total) || 0,
+          hasMore: !!g.hasMore
+        })
+        for (const s of g.sessions || []) {
+          incoming.push(normalizeSession(s))
+        }
+      }
+
+      // Merge unread from local; refresh resets to group previews (drops prior load-more pages).
       const merged = incoming.map(s => {
         const local = sessions.value.find(ls => String(ls.id) === String(s.id))
         if (!local) return s
-        // Server data is authoritative; only preserve client-only optimistic fields
         const m = { ...local, ...s }
-        // Never let fetchSessions overwrite local unread state
-        // (managed by session_status events and markAsRead)
         m.unread = local.unread
         return m
       })
-      // Keep local-only sessions (created client-side, not yet in server list)
-      for (const local of sessions.value) {
-        if (!serverMap.has(String(local.id))) {
-          merged.unshift(local)
-        }
-      }
       sessions.value = merged
-      // Hydrate context window from persisted contextTokens
+      groupMeta.value = meta
+
       for (const s of merged) {
         if (s.contextTokens && s.contextTokens > 0) {
           const sid = String(s.id)
@@ -203,6 +226,73 @@ export const useSessionStore = defineStore('session', () => {
     } finally {
       loading.value = false
     }
+  }
+
+  async function loadMoreInGroup(groupKey: string, limit = DEFAULT_GROUP_PAGE_SIZE): Promise<boolean> {
+    const key = String(groupKey)
+    if (loadingMoreGroups.value.has(key)) return false
+    const meta = groupMeta.value.get(key)
+    if (meta && !meta.hasMore) return false
+
+    // Capture offset before await for pagination; do not reuse after await for totals.
+    const offset = sessions.value.filter(s => cloudGroupKey(s) === key).length
+    loadingMoreGroups.value = new Set(loadingMoreGroups.value).add(key)
+    try {
+      const { data } = await api.get('/sessions', {
+        params: { groupKey: key, offset, limit }
+      })
+      const items: Session[] = (data?.items || []).map(normalizeSession)
+      if (items.length === 0) {
+        if (meta) {
+          groupMeta.value.set(key, { ...meta, hasMore: false })
+          groupMeta.value = new Map(groupMeta.value)
+        }
+        return false
+      }
+
+      const existingIds = new Set(sessions.value.map(s => String(s.id)))
+      const appended = items.filter(s => !existingIds.has(String(s.id)))
+      if (appended.length > 0) {
+        sessions.value = [...sessions.value, ...appended]
+      }
+
+      const loadedAfter = sessions.value.filter(s => cloudGroupKey(s) === key).length
+      const serverTotal = data?.total
+      const nextMeta: SessionGroupMeta = {
+        label: meta?.label || key,
+        total: serverTotal != null ? Number(serverTotal) : (meta?.total ?? loadedAfter),
+        hasMore: !!data?.hasMore
+      }
+      groupMeta.value.set(key, nextMeta)
+      groupMeta.value = new Map(groupMeta.value)
+      return appended.length > 0 || !!data?.hasMore
+    } finally {
+      const next = new Set(loadingMoreGroups.value)
+      next.delete(key)
+      loadingMoreGroups.value = next
+    }
+  }
+
+  function getGroupMeta(groupKey: string): SessionGroupMeta | undefined {
+    return groupMeta.value.get(String(groupKey))
+  }
+
+  function isGroupLoadingMore(groupKey: string): boolean {
+    return loadingMoreGroups.value.has(String(groupKey))
+  }
+
+  function bumpGroupMetaForSession(session: Session, delta: number) {
+    const key = cloudGroupKey(session)
+    const existing = groupMeta.value.get(key)
+    if (existing) {
+      groupMeta.value.set(key, {
+        ...existing,
+        total: Math.max(0, existing.total + delta)
+      })
+    } else if (delta > 0) {
+      groupMeta.value.set(key, { label: key, total: 1, hasMore: false })
+    }
+    groupMeta.value = new Map(groupMeta.value)
   }
 
   async function fetchSession(id: string) {
@@ -264,6 +354,7 @@ export const useSessionStore = defineStore('session', () => {
       data.id = normalizeId(data.id)
       data.agentId = normalizeId(data.agentId)
       sessions.value.unshift(data)
+      bumpGroupMetaForSession(data, 1)
     }
     return data
   }
@@ -290,6 +381,15 @@ export const useSessionStore = defineStore('session', () => {
         next.agentId = normalizeId(updates.agentId)
       }
       sessions.value[idx] = next
+    } else if (updates.executionMode) {
+      // Deep-link / loadSession for a session outside the current group preview
+      const inserted = normalizeSession({ id: sid, ...updates })
+      sessions.value.unshift(inserted)
+      const key = cloudGroupKey(inserted)
+      if (!groupMeta.value.has(key)) {
+        groupMeta.value.set(key, { label: key, total: 1, hasMore: false })
+        groupMeta.value = new Map(groupMeta.value)
+      }
     }
   }
 
@@ -377,8 +477,12 @@ export const useSessionStore = defineStore('session', () => {
 
   async function deleteSession(id: string) {
     try {
+      const existing = sessions.value.find(s => String(s.id) === String(id))
       await api.delete(`/sessions/${id}`)
       sessions.value = sessions.value.filter(s => String(s.id) !== String(id))
+      if (existing) {
+        bumpGroupMetaForSession(existing, -1)
+      }
       if (activeSessionId.value === String(id)) {
         activeSessionId.value = null
       }
@@ -834,6 +938,8 @@ export const useSessionStore = defineStore('session', () => {
 
   function reset() {
     sessions.value = []
+    groupMeta.value = new Map()
+    loadingMoreGroups.value = new Set()
     activeSessionId.value = null
     loading.value = false
     sessionMessages.value = new Map()
@@ -857,8 +963,10 @@ export const useSessionStore = defineStore('session', () => {
 
   return {
     sessions,
+    groupMeta,
     activeSessionId,
     loading,
+    loadingMoreGroups,
     activeSession,
     activeMessages,
     activeTodos,
@@ -869,6 +977,9 @@ export const useSessionStore = defineStore('session', () => {
     activeMessageNextBeforeId,
     sessionsByAgent,
     fetchSessions,
+    loadMoreInGroup,
+    getGroupMeta,
+    isGroupLoadingMore,
     fetchSession,
     createSession,
     fetchCloudProjects,

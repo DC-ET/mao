@@ -131,14 +131,15 @@
               </div>
             </div>
             <div
-              v-if="group.sessions.length > getVisibleCount(group.key)"
+              v-if="canExpandGroup(group)"
               class="group-toggle"
-              @click="showMore(group.key, group.sessions.length)"
+              :class="{ disabled: isGroupLoadingMore(group.key) }"
+              @click="!isGroupLoadingMore(group.key) && showMore(group.key)"
             >
-              展开更多
+              {{ isGroupLoadingMore(group.key) ? '加载中…' : '展开更多' }}
             </div>
             <div
-              v-else-if="group.sessions.length > DEFAULT_VISIBLE"
+              v-else-if="getVisibleCount(group.key) > DEFAULT_VISIBLE"
               class="group-toggle"
               @click="showLess(group.key)"
             >
@@ -329,7 +330,11 @@ const groupedSessions = computed(() => {
     sessions: sessions.sort((a, b) => {
       if (a.running && !b.running) return -1
       if (!a.running && b.running) return 1
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      const tb = new Date(b.updatedAt || b.createdAt || 0).getTime()
+      const ta = new Date(a.updatedAt || a.createdAt || 0).getTime()
+      if (tb !== ta) return tb - ta
+      // updated_at 相同时按 id 倒序，避免批量更新导致按创建正序排列
+      return Number(b.id) - Number(a.id)
     })
   }))
 
@@ -377,10 +382,6 @@ function formatElapsed(session: Session) {
   if (months < 12) return `${months}月`
   const years = Math.floor(months / 12)
   return `${years}年`
-}
-
-async function refreshSessions() {
-  await sessionStore.fetchSessions()
 }
 
 async function selectSession(session: Session) {
@@ -464,14 +465,38 @@ function getVisibleCount(key: string): number {
   return expandedCounts.value.get(key) ?? DEFAULT_VISIBLE
 }
 
-function showMore(key: string, total: number) {
-  const current = getVisibleCount(key)
-  const next = Math.min(current + EXPAND_STEP, total)
-  expandedCounts.value.set(key, next)
+function canExpandGroup(group: { key: string; sessions: Session[] }): boolean {
+  const visible = getVisibleCount(group.key)
+  if (group.sessions.length > visible) return true
+  return !!sessionStore.getGroupMeta(group.key)?.hasMore
+}
+
+function isGroupLoadingMore(key: string): boolean {
+  return sessionStore.isGroupLoadingMore(key)
+}
+
+async function showMore(key: string) {
+  const groupSessions = sessionStore.sessions.filter(s => cloudGroupKey(s) === key)
+  const visible = getVisibleCount(key)
+  const meta = sessionStore.getGroupMeta(key)
+
+  if (groupSessions.length <= visible && meta?.hasMore) {
+    await sessionStore.loadMoreInGroup(key, EXPAND_STEP)
+  }
+
+  const loaded = sessionStore.sessions.filter(s => cloudGroupKey(s) === key).length
+  expandedCounts.value.set(key, Math.min(loaded, visible + EXPAND_STEP))
+  expandedCounts.value = new Map(expandedCounts.value)
 }
 
 function showLess(key: string) {
   expandedCounts.value.set(key, DEFAULT_VISIBLE)
+  expandedCounts.value = new Map(expandedCounts.value)
+}
+
+async function refreshSessions() {
+  expandedCounts.value = new Map()
+  await sessionStore.fetchSessions()
 }
 
 function toggleGroup(key: string) {
@@ -773,8 +798,17 @@ function onGroupDragEnd() {
   transition: color 0.15s;
 }
 
+.group-toggle.disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .group-toggle:hover {
   color: var(--aw-ink);
+}
+
+.group-toggle.disabled:hover {
+  color: var(--aw-ink-muted-48);
 }
 
 .session-item {

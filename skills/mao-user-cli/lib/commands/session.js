@@ -14,6 +14,7 @@ const { outputResult } = require('../output');
 
 const HELP = `用法:
   mao-user session list [--keyword] [--status]
+  mao-user session groups [--keyword] [--status] [--preview-limit]
   mao-user session get --id <id>
   mao-user session create --agent-id <id> --execution-mode LOCAL|CLOUD [选项...]
   mao-user session update --id <id> [--title] [--summary] [--project-key] [--permission-level] [--model-id]
@@ -53,6 +54,21 @@ async function handle(ctx) {
         query: {
           keyword: optionalString(flags, 'keyword'),
           status: optionalString(flags, 'status'),
+        },
+      });
+      outputResult(result, globals);
+      return;
+    }
+    case 'groups': {
+      const previewLimit = optionalNumber(flags, 'preview-limit');
+      const result = await request({
+        ...common,
+        method: 'GET',
+        path: '/sessions/groups',
+        query: {
+          keyword: optionalString(flags, 'keyword'),
+          status: optionalString(flags, 'status'),
+          previewLimit: previewLimit != null ? previewLimit : 5,
         },
       });
       outputResult(result, globals);
