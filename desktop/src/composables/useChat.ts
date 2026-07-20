@@ -274,13 +274,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       return
     }
 
-    // Upload images to OSS
-    const imageUrls = await uploadImages(files || [])
-
-    // Ensure WS connection is established
-    await connect()
-
     try {
+      // Upload images to OSS
+      const imageUrls = await uploadImages(files || [])
+
+      // Ensure WS connection is established
+      await connect()
+
       // Defensive fallback: if sessionId is lost (e.g. after returning from settings),
       // recover from the store's activeSessionId before creating a new session
       if (!sessionId.value && sessionStore.activeSessionId) {
@@ -465,13 +465,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       return false
     }
 
-    // Upload images to OSS
-    const imageUrls = await uploadImages(files || [])
-
-    // Ensure WS connection is established
-    await connect()
-
     try {
+      // Upload images to OSS
+      const imageUrls = await uploadImages(files || [])
+
+      // Ensure WS connection is established
+      await connect()
+
       // Defensive fallback: if sessionId is lost (e.g. after returning from settings),
       // recover from the store's activeSessionId before creating a new session
       if (!sessionId.value && sessionStore.activeSessionId) {

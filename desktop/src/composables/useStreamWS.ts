@@ -37,6 +37,9 @@ let isReconnecting = false
 const activeExecutionIds = new Map<string, string>()
 // Last cancelled execution ID per session — filters stragglers after clearActiveExecution
 const cancelledExecutionIds = new Map<string, string>()
+// Sessions the client intends to receive stream events for (main + side tasks).
+// Restored on every reconnect — server subscriptions do not survive a new WS.
+const subscribedSessionIds = new Set<string>()
 
 export function setActiveExecution(sessionId: string, executionId: string) {
   cancelledExecutionIds.delete(sessionId)
@@ -135,9 +138,14 @@ export function useStreamWS() {
         connectPromise = null
         initialConnect = false
         isReconnecting = false
-        // Re-subscribe to active session
+        // Re-subscribe all tracked sessions (main + open side tasks).
+        // Server-side subscriptions are tied to the previous socket and are lost on reconnect.
+        const toResubscribe = new Set(subscribedSessionIds)
         if (sessionStore.activeSessionId) {
-          const sid = sessionStore.activeSessionId
+          toResubscribe.add(String(sessionStore.activeSessionId))
+        }
+        for (const sid of toResubscribe) {
+          subscribedSessionIds.add(sid)
           send({ type: 'subscribe', sessionId: Number(sid) })
           refreshQueue(sid)
         }
@@ -203,6 +211,7 @@ export function useStreamWS() {
       ws = null
     }
     connected.value = false
+    subscribedSessionIds.clear()
   }
 
   function scheduleReconnect() {
@@ -265,12 +274,14 @@ export function useStreamWS() {
 
   function subscribe(sessionId: string | null) {
     if (sessionId) {
+      subscribedSessionIds.add(String(sessionId))
       send({ type: 'subscribe', sessionId: Number(sessionId) })
     }
   }
 
   function unsubscribe(sessionId: string | null) {
     if (sessionId) {
+      subscribedSessionIds.delete(String(sessionId))
       send({ type: 'unsubscribe', sessionId: Number(sessionId) })
     }
   }
