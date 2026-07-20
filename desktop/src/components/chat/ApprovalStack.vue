@@ -25,6 +25,9 @@
           <div class="command-line" :class="{ expanded: expandedSet.has(item.requestId) }">
             <code class="command-code">{{ displayText(item) }}</code>
           </div>
+          <div v-if="item.dangerReason" class="danger-reason">
+            {{ item.dangerReason }}
+          </div>
           <div class="card-actions">
             <button
               v-if="item.description.length > threshold"
@@ -194,6 +197,19 @@ function copyText(text: string) {
   white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.5;
+}
+
+.danger-reason {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: var(--aw-radius-xs);
+  border: 1px solid color-mix(in srgb, var(--aw-danger) 35%, var(--aw-hairline));
+  background: color-mix(in srgb, var(--aw-danger) 6%, var(--aw-canvas));
+  color: var(--aw-danger);
+  font-size: var(--aw-text-fine);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .card-actions {
