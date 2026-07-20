@@ -1096,20 +1096,39 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 8px 12px;
   min-height: 40px;
+  min-width: 0;
 }
 
 .toolbar-left {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .toolbar-right {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.toolbar-right :deep(.el-popover__reference-wrapper) {
+  min-width: 0;
+}
+
+.toolbar-right :deep(.model-name) {
+  display: block;
+  max-width: min(150px, 32vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Add button */
@@ -1137,6 +1156,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   font-size: var(--aw-text-fine);
   color: var(--aw-warning);
   cursor: pointer;
@@ -1226,6 +1246,29 @@ onBeforeUnmount(() => {
 
 .send-btn:disabled {
   cursor: default;
+}
+
+@media (max-width: 640px) {
+  .toolbar {
+    padding: 8px 10px;
+  }
+
+  .toolbar-left {
+    flex: 1 1 0;
+  }
+
+  .toolbar-right {
+    flex: 0 1 auto;
+    gap: 8px;
+  }
+
+  .workspace-indicator span {
+    max-width: 28vw;
+  }
+
+  .toolbar-right :deep(.model-name) {
+    max-width: 26vw;
+  }
 }
 
 /* New task config bar */
