@@ -610,6 +610,10 @@ const editor = useEditor({
     handleKeyDown: (_view, event) => {
       if (props.disabled) return false
 
+      // IME composing (e.g. Chinese/Japanese): Enter confirms candidates, must not send/select.
+      // keyCode 229 is a legacy fallback some browsers emit during composition.
+      const imeComposing = event.isComposing || event.keyCode === 229
+
       // File reference panel navigation
       if (filePanelVisible.value) {
         if (event.key === 'ArrowUp') {
@@ -623,6 +627,7 @@ const editor = useEditor({
           return true
         }
         if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
+          if (imeComposing) return false
           event.preventDefault()
           fileReferencePanelRef.value?.confirmSelection()
           return true
@@ -647,6 +652,7 @@ const editor = useEditor({
           return true
         }
         if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
+          if (imeComposing) return false
           event.preventDefault()
           quickCommandPanelRef.value?.confirmSelection()
           return true
@@ -661,7 +667,7 @@ const editor = useEditor({
       // Enter to send — only on non-touch devices
       // On touch devices (mobile), Enter inserts newline; send via button
       if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
-        if (isTouchDevice) return false
+        if (isTouchDevice || imeComposing) return false
         event.preventDefault()
         handleSend()
         return true
