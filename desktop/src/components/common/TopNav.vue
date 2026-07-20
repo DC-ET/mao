@@ -33,7 +33,7 @@
       </el-tooltip>
       <el-tooltip content="我的技能/Skills" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" @click="toggleSkillDrawer()">
-          <el-icon><Notebook /></el-icon>
+          <el-icon><MagicStick /></el-icon>
         </div>
       </el-tooltip>
       <el-tooltip content="我的指令/Commands" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
