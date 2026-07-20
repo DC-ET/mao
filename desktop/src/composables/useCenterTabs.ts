@@ -194,10 +194,14 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     state.activeTabId = tabId
   }
 
+  /** 仅关闭文件类标签（file / diff），保留边路任务等非文件标签。 */
   function closeAllFileTabs() {
     const state = getSessionState()
-    state.tabs = []
-    state.activeTabId = 'chat'
+    state.tabs = state.tabs.filter(t => t.type !== 'file' && t.type !== 'diff')
+    if (state.activeTabId !== 'chat' && !state.tabs.some(t => t.id === state.activeTabId)) {
+      state.activeTabId = state.tabs.length > 0 ? state.tabs[state.tabs.length - 1].id : 'chat'
+    }
+    notifyTabsChanged()
   }
 
   function closeOtherTabs(tabId: string) {
