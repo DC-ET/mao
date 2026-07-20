@@ -107,19 +107,7 @@ const { createSideSession, sendMessage, cancel, subscribe, unsubscribe, sendAskU
 const { openWithContent } = useCommandDrawer()
 
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { updateSideTaskTab, tabs } = useCenterTabs(activeSessionIdRef)
-
-/** 与 TaskView.handleSideSessionCreated 一致：首个含用户消息的占位边路 tab */
-function isFirstPlaceholderSideTab(): boolean {
-  for (const tab of tabs.value) {
-    if (tab.type !== 'side_task' || (tab.sideSessionId !== undefined && tab.sideSessionId > 0)) continue
-    const placeholderMsgs = sessionStore.getMessages(tab.id)
-    if (placeholderMsgs.some(m => m.role === 'user')) {
-      return tab.id === props.tabId
-    }
-  }
-  return false
-}
+const { updateSideTaskTab } = useCenterTabs(activeSessionIdRef)
 
 const parentExecutionMode = inject<Ref<string>>('executionMode', ref('CLOUD'))
 const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
@@ -330,15 +318,15 @@ async function handleChatSend(text: string, _files: File[]) {
   waitingForSave.value = true
 
   // 首次创建边路会话时尚未有真实 sessionId；后端先发 side_session_created 再发 user_message_saved。
-  // props.sideSessionId 由 TaskView 异步更新（且 watcher 为微任务），晚于同步的 user_message_saved 回调。
-  // 因此在 side_session_created 同步监听里设置 expectedSavedSessionId。
+  // TaskView 会在同事件中同步把 tab.sideSessionId 写成正数，不能再靠「占位 tab」判定。
+  // 本监听仅在本次首次发送期间注册，用本地 realSessionId 绑定即可。
   const isFirstSideSend = !hasRealSession.value
   let expectedSavedSessionId: string | null = isFirstSideSend ? null : String(realSessionId.value)
   let removeSideCreatedListener: (() => void) | undefined
   if (isFirstSideSend) {
     const onSideCreated = (e: Event) => {
       const detail = (e as CustomEvent).detail
-      if (detail?.sideSessionId == null || !isFirstPlaceholderSideTab()) return
+      if (detail?.sideSessionId == null || realSessionId.value > 0) return
       expectedSavedSessionId = String(detail.sideSessionId)
     }
     window.addEventListener('side_session_created', onSideCreated)
