@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-input-card" :class="{ 'is-initializing-workspace': initializingWorkspace }">
+  <div class="chat-input-card" :class="{ 'is-initializing-workspace': initializingWorkspace, 'is-disabled': disabled }">
     <!-- New task config bar -->
     <div v-if="isNewTask" class="new-task-config-bar">
       <AgentSelector
@@ -112,13 +112,6 @@
         @close="closeFilePanel"
       />
       <EditorContent :editor="editor" class="rich-editor" />
-      <div class="resize-handle" title="拖拽调整大小">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <path d="M13 1L1 13" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          <path d="M13 5L5 13" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          <path d="M13 9L9 13" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-        </svg>
-      </div>
     </div>
 
     <!-- Pending files -->
@@ -127,15 +120,15 @@
         <img v-if="filePreviewUrls[idx]" :src="filePreviewUrls[idx]" class="file-preview-img" />
         <el-icon v-else><Document /></el-icon>
         <span class="file-name">{{ file.name }}</span>
-        <el-icon class="remove-file" @click="removeFile(idx)"><Close /></el-icon>
+        <el-icon class="remove-file" :class="{ disabled: disabled }" @click="!disabled && removeFile(idx)"><Close /></el-icon>
       </div>
     </div>
 
     <!-- Bottom toolbar -->
     <div class="toolbar">
       <div class="toolbar-left">
-        <label class="add-btn" title="上传图片">
-          <input type="file" multiple accept="image/*" @change="handleFileSelect" style="display: none" />
+        <label class="add-btn" title="上传图片" :class="{ disabled: disabled }">
+          <input type="file" multiple accept="image/*" :disabled="disabled" @change="handleFileSelect" style="display: none" />
           <el-icon :size="16"><Plus /></el-icon>
         </label>
         <div class="workspace-indicator" :class="{ 'has-workspace': !!workspace || executionMode === 'CLOUD', 'cloud-mode': executionMode === 'CLOUD' }" @click="executionMode !== 'CLOUD' && openWorkspace()">
@@ -314,6 +307,7 @@ let fileSearchDebounce: ReturnType<typeof setTimeout> | null = null
 
 // ===== Computed =====
 const canSend = computed(() => {
+  if (props.disabled) return false
   if (props.waitingForSave) return false
   if (!(editorContent.value.trim().length > 0 || pendingFiles.value.length > 0)) return false
   if (props.isNewTask && !props.selectedAgentId) return false
@@ -523,6 +517,7 @@ async function fetchWorkspaceFiles(filter: string) {
 // ===== Editor =====
 
 const editor = useEditor({
+  editable: !props.disabled,
   extensions: [
     StarterKit.configure({
       heading: false,
@@ -545,6 +540,7 @@ const editor = useEditor({
   ],
   editorProps: {
     handlePaste: (_view, event) => {
+      if (props.disabled) return true
       const items = event.clipboardData?.items
       if (items) {
         for (const item of Array.from(items)) {
@@ -612,6 +608,8 @@ const editor = useEditor({
       return false
     },
     handleKeyDown: (_view, event) => {
+      if (props.disabled) return false
+
       // File reference panel navigation
       if (filePanelVisible.value) {
         if (event.key === 'ArrowUp') {
@@ -764,6 +762,7 @@ function detectAtTrigger() {
 // ===== File handling =====
 
 function handleFileSelect(event: Event) {
+  if (props.disabled) return
   const input = event.target as HTMLInputElement
   if (input.files) {
     for (const file of Array.from(input.files)) {
@@ -798,7 +797,7 @@ function removeFile(index: number) {
 // ===== Send =====
 
 function handleSend() {
-  if (!canSend.value || !editor.value) return
+  if (props.disabled || !canSend.value || !editor.value) return
   if (props.executionMode === 'LOCAL' && !isElectronClient) {
     ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
     return
@@ -856,11 +855,20 @@ async function selectWorkspace() {
 const GIT_SUGGEST_TEXT = '用一句话介绍一下当前工作区。'
 
 function focusInput() {
+  if (props.disabled) return
   nextTick(() => editor.value?.commands.focus())
 }
 
+watch(() => props.disabled, (disabled) => {
+  editor.value?.setEditable(!disabled)
+  if (disabled) {
+    closePanel()
+    closeFilePanel()
+  }
+})
+
 watch(() => props.isNewTask, (val) => {
-  if (val) nextTick(() => editor.value?.commands.focus())
+  if (val && !props.disabled) nextTick(() => editor.value?.commands.focus())
 })
 
 // Auto-fill/clear suggestion text when workspace mode or git URL changes
@@ -894,7 +902,7 @@ watch(dynamicPlaceholder, () => {
 
 
 function insertFileReference(filePath: string) {
-  if (!editor.value) return
+  if (!editor.value || props.disabled) return
   const ed = editor.value
   const { state, dispatch } = ed.view
   const nodeType = state.schema.nodes.fileReference
@@ -1031,20 +1039,6 @@ onBeforeUnmount(() => {
 :global([data-theme="dark"] .editor-tag-file) {
   background: #2dd4bf;
   color: #134e4a;
-}
-
-.resize-handle {
-  position: absolute;
-  right: 12px;
-  bottom: 6px;
-  color: var(--aw-ink-muted-48);
-  cursor: nwse-resize;
-  opacity: 0.5;
-  transition: opacity 0.15s;
-}
-
-.resize-handle:hover {
-  opacity: 1;
 }
 
 /* Pending files */
@@ -1425,6 +1419,26 @@ onBeforeUnmount(() => {
 .chat-input-card.is-initializing-workspace {
   pointer-events: none;
   opacity: 0.92;
+}
+
+.chat-input-card.is-disabled {
+  opacity: 0.72;
+}
+
+.chat-input-card.is-disabled :deep(.ProseMirror) {
+  caret-color: transparent;
+}
+
+.add-btn.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.remove-file.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 </style>
 
