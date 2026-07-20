@@ -83,12 +83,20 @@
               :value="String(model.id)"
             />
           </el-select>
+          <el-select
+            v-else-if="isBooleanSetting(currentSetting?.settingKey)"
+            v-model="settingValue"
+            style="width: 100%"
+          >
+            <el-option label="已启用 (true)" value="true" />
+            <el-option label="未启用 (false)" value="false" />
+          </el-select>
           <el-input v-else v-model="settingValue" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveSetting">保存</el-button>
+        <el-button type="primary" :loading="saving" @click="saveSetting">保存</el-button>
       </template>
     </ResponsiveDialog>
   </div>
@@ -110,6 +118,11 @@ const activeCategory = ref('')
 const dialogVisible = ref(false)
 const currentSetting = ref<any | null>(null)
 const settingValue = ref('')
+const saving = ref(false)
+
+function isBooleanSetting(key: string | undefined | null) {
+  return !!key && key.endsWith('enabled')
+}
 
 const categories = computed(() => {
   const seen = new Set<string>()
@@ -197,19 +210,28 @@ async function handleEdit(row: any) {
   if (row.settingKey === 'weixin.modelId' && models.value.length === 0) {
     await fetchModels()
   }
-  settingValue.value = row.value || ''
+  if (isBooleanSetting(row.settingKey)) {
+    settingValue.value = row.value === 'true' ? 'true' : 'false'
+  } else {
+    settingValue.value = row.value || ''
+  }
   dialogVisible.value = true
 }
 
 async function saveSetting() {
-  if (!currentSetting.value) return
+  if (!currentSetting.value || saving.value) return
   const value = WEIXIN_SELECT_KEYS.has(currentSetting.value.settingKey)
     ? (settingValue.value || '')
     : settingValue.value
-  await api.put(`/system-settings/${currentSetting.value.settingKey}`, { value })
-  ElMessage.success('配置已更新')
-  dialogVisible.value = false
-  fetchSettings()
+  saving.value = true
+  try {
+    await api.put(`/system-settings/${currentSetting.value.settingKey}`, { value })
+    ElMessage.success('配置已更新')
+    dialogVisible.value = false
+    fetchSettings()
+  } finally {
+    saving.value = false
+  }
 }
 
 onMounted(async () => {

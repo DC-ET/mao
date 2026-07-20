@@ -13,14 +13,14 @@
 
       <el-form :inline="true" class="search-form">
         <el-form-item label="类型">
-          <el-select v-model="filters.type" clearable placeholder="全部" style="width: 130px">
-            <el-option label="SYSTEM" value="SYSTEM" />
-            <el-option label="TASK" value="TASK" />
-            <el-option label="MODEL" value="MODEL" />
+          <el-select v-model="filters.type" clearable placeholder="全部" style="width: 130px" @change="handleSearch">
+            <el-option label="系统" value="SYSTEM" />
+            <el-option label="任务" value="TASK" />
+            <el-option label="模型" value="MODEL" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.isRead" clearable placeholder="全部" style="width: 120px">
+          <el-select v-model="filters.isRead" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
             <el-option label="未读" :value="0" />
             <el-option label="已读" :value="1" />
           </el-select>
@@ -32,9 +32,12 @@
       </el-form>
 
       <el-table :data="notifications" v-loading="loading" stripe>
+        <template #empty>
+          <el-empty description="暂无数据" :image-size="60" />
+        </template>
         <el-table-column prop="type" label="类型" width="100">
           <template #default="{ row }">
-            <el-tag size="small">{{ row.type }}</el-tag>
+            <el-tag size="small">{{ typeLabel(row.type) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="title" label="标题" min-width="180" />
@@ -67,24 +70,24 @@
     </el-card>
 
     <ResponsiveDialog v-model="dialogVisible" title="发布通知" width="520px">
-      <el-form :model="form" label-width="80px">
-        <el-form-item label="类型">
+      <el-form ref="formRef" :model="form" :rules="formRules" label-width="80px">
+        <el-form-item label="类型" prop="type">
           <el-select v-model="form.type" style="width: 100%">
-            <el-option label="SYSTEM" value="SYSTEM" />
-            <el-option label="TASK" value="TASK" />
-            <el-option label="MODEL" value="MODEL" />
+            <el-option label="系统" value="SYSTEM" />
+            <el-option label="任务" value="TASK" />
+            <el-option label="模型" value="MODEL" />
           </el-select>
         </el-form-item>
-        <el-form-item label="标题">
+        <el-form-item label="标题" prop="title">
           <el-input v-model="form.title" />
         </el-form-item>
-        <el-form-item label="内容">
+        <el-form-item label="内容" prop="content">
           <el-input v-model="form.content" type="textarea" :rows="4" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveNotification">发布</el-button>
+        <el-button type="primary" :loading="submitting" @click="saveNotification">发布</el-button>
       </template>
     </ResponsiveDialog>
   </div>
@@ -92,16 +95,19 @@
 
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
+import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 const loading = ref(false)
+const submitting = ref(false)
 const notifications = ref<any[]>([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const dialogVisible = ref(false)
+const formRef = ref<FormInstance>()
 const filters = reactive({
   type: '',
   isRead: undefined as number | undefined
@@ -111,6 +117,22 @@ const form = reactive({
   title: '',
   content: ''
 })
+
+const formRules: FormRules = {
+  type: [{ required: true, message: '请选择类型', trigger: 'change' }],
+  title: [{ required: true, message: '请输入标题', trigger: 'blur' }],
+  content: [{ required: true, message: '请输入内容', trigger: 'blur' }]
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  SYSTEM: '系统',
+  TASK: '任务',
+  MODEL: '模型'
+}
+
+function typeLabel(type: string) {
+  return TYPE_LABELS[type] || type
+}
 
 async function fetchNotifications() {
   loading.value = true
@@ -137,10 +159,18 @@ function handleCreate() {
 }
 
 async function saveNotification() {
-  await api.post('/notifications', form)
-  ElMessage.success('通知已发布')
-  dialogVisible.value = false
-  fetchNotifications()
+  if (submitting.value) return
+  const valid = await formRef.value?.validate().catch(() => false)
+  if (!valid) return
+  submitting.value = true
+  try {
+    await api.post('/notifications', form)
+    ElMessage.success('通知已发布')
+    dialogVisible.value = false
+    fetchNotifications()
+  } finally {
+    submitting.value = false
+  }
 }
 
 async function markRead(row: any) {

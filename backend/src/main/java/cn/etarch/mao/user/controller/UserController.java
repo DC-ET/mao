@@ -6,6 +6,7 @@ import cn.etarch.mao.common.result.ErrorCode;
 import cn.etarch.mao.common.result.Result;
 import cn.etarch.mao.permission.annotation.RequirePermission;
 import cn.etarch.mao.permission.entity.Role;
+import cn.etarch.mao.permission.service.PermissionService;
 import cn.etarch.mao.user.entity.User;
 import cn.etarch.mao.user.mapper.UserMapper;
 import cn.etarch.mao.user.service.UserService;
@@ -27,6 +28,7 @@ public class UserController {
 
     private final UserMapper userMapper;
     private final UserService userService;
+    private final PermissionService permissionService;
 
     @GetMapping("/me")
     public Result<UserInfoVO> getCurrentUser(@AuthenticationPrincipal Long userId) {
@@ -40,6 +42,7 @@ public class UserController {
         vo.setDisplayName(user.getDisplayName());
         vo.setEmail(user.getEmail());
         vo.setAvatarUrl(user.getAvatarUrl());
+        vo.setPermissions(permissionService.getUserPermissionCodes(userId).stream().distinct().toList());
         return Result.ok(vo);
     }
 

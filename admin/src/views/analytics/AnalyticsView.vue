@@ -23,6 +23,9 @@
         <el-card>
           <template #header><span>阶段分布</span></template>
           <el-table :data="summary.phaseDistribution || []" size="small" stripe>
+            <template #empty>
+              <el-empty description="暂无数据" :image-size="48" />
+            </template>
             <el-table-column prop="phase" label="阶段" />
             <el-table-column prop="count" label="会话数" align="right" />
           </el-table>
@@ -32,6 +35,9 @@
         <el-card>
           <template #header><span>模型调用</span></template>
           <el-table :data="summary.modelStats || []" size="small" stripe>
+            <template #empty>
+              <el-empty description="暂无数据" :image-size="48" />
+            </template>
             <el-table-column prop="modelName" label="模型" min-width="140" />
             <el-table-column prop="messageCount" label="消息" width="90" align="right" />
             <el-table-column prop="sessionCount" label="会话" width="90" align="right" />
@@ -45,6 +51,9 @@
         <el-card>
           <template #header><span>Token 消耗排行</span></template>
           <el-table :data="summary.tokenStats || []" size="small" stripe>
+            <template #empty>
+              <el-empty description="暂无数据" :image-size="48" />
+            </template>
             <el-table-column prop="agentName" label="Agent" />
             <el-table-column prop="totalTokens" label="Token" width="120" align="right" />
             <el-table-column prop="messageCount" label="消息" width="90" align="right" />
@@ -55,6 +64,9 @@
         <el-card>
           <template #header><span>活跃用户</span></template>
           <el-table :data="summary.userActivity || []" size="small" stripe>
+            <template #empty>
+              <el-empty description="暂无数据" :image-size="48" />
+            </template>
             <el-table-column prop="displayName" label="用户" />
             <el-table-column prop="sessionCount" label="会话" width="90" align="right" />
             <el-table-column prop="messageCount" label="消息" width="90" align="right" />

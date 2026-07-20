@@ -10,64 +10,13 @@
       class="sidebar-menu"
       @select="onSelect"
     >
-      <el-menu-item index="/dashboard">
-        <el-icon><DataLine /></el-icon>
-        <span>数据概览</span>
-      </el-menu-item>
-
-      <el-menu-item index="/agents">
-        <el-icon><Monitor /></el-icon>
-        <span>Agent 管理</span>
-      </el-menu-item>
-
-      <el-menu-item index="/models">
-        <el-icon><Connection /></el-icon>
-        <span>模型管理</span>
-      </el-menu-item>
-
-      <el-menu-item index="/skills">
-        <el-icon><MagicStick /></el-icon>
-        <span>Skills 管理</span>
-      </el-menu-item>
-
-      <el-menu-item index="/sessions">
-        <el-icon><ChatDotRound /></el-icon>
-        <span>会话管理</span>
-      </el-menu-item>
-
-      <el-menu-item index="/users">
-        <el-icon><User /></el-icon>
-        <span>用户管理</span>
-      </el-menu-item>
-
-      <el-menu-item index="/roles">
-        <el-icon><Lock /></el-icon>
-        <span>角色权限</span>
-      </el-menu-item>
-
-      <el-menu-item index="/audit-logs">
-        <el-icon><DocumentChecked /></el-icon>
-        <span>审计日志</span>
-      </el-menu-item>
-
-      <el-menu-item index="/runtime">
-        <el-icon><Operation /></el-icon>
-        <span>运行监控</span>
-      </el-menu-item>
-
-      <el-menu-item index="/analytics">
-        <el-icon><TrendCharts /></el-icon>
-        <span>用量分析</span>
-      </el-menu-item>
-
-      <el-menu-item index="/settings">
-        <el-icon><Setting /></el-icon>
-        <span>系统设置</span>
-      </el-menu-item>
-
-      <el-menu-item index="/notifications">
-        <el-icon><Bell /></el-icon>
-        <span>通知管理</span>
+      <el-menu-item
+        v-for="item in visibleMenus"
+        :key="item.index"
+        :index="item.index"
+      >
+        <el-icon><component :is="item.icon" /></el-icon>
+        <span>{{ item.label }}</span>
       </el-menu-item>
     </el-menu>
   </div>
@@ -76,8 +25,23 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import {
+  DataLine,
+  Monitor,
+  Connection,
+  MagicStick,
+  ChatDotRound,
+  User,
+  Lock,
+  DocumentChecked,
+  Operation,
+  TrendCharts,
+  Setting,
+  Bell
+} from '@element-plus/icons-vue'
+import { useAuthStore } from '../stores/auth'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     showLogo?: boolean
   }>(),
@@ -89,6 +53,26 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
+const authStore = useAuthStore()
+
+const menuItems = [
+  { index: '/dashboard', label: '数据概览', icon: DataLine },
+  { index: '/agents', label: 'Agent 管理', icon: Monitor, permission: 'agent:read' },
+  { index: '/models', label: '模型管理', icon: Connection, permission: 'model:read' },
+  { index: '/skills', label: 'Skills 管理', icon: MagicStick, permission: 'agent:read' },
+  { index: '/sessions', label: '会话管理', icon: ChatDotRound, permission: 'session:read' },
+  { index: '/users', label: '用户管理', icon: User, permission: 'user:read' },
+  { index: '/roles', label: '角色权限', icon: Lock, permission: 'user:write' },
+  { index: '/audit-logs', label: '审计日志', icon: DocumentChecked, permission: 'user:read' },
+  { index: '/runtime', label: '运行监控', icon: Operation, permission: 'session:read' },
+  { index: '/analytics', label: '用量分析', icon: TrendCharts, permission: 'session:read' },
+  { index: '/settings', label: '系统设置', icon: Setting, permission: 'user:write' },
+  { index: '/notifications', label: '通知管理', icon: Bell, permission: 'user:write' },
+]
+
+const visibleMenus = computed(() =>
+  menuItems.filter(item => !item.permission || authStore.hasPermission(item.permission))
+)
 
 const activeMenu = computed(() => {
   // Match by top-level segment so detail routes (e.g. /sessions/:id) keep the

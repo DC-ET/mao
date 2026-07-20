@@ -45,6 +45,9 @@
 
       <!-- Skill table -->
       <el-table :data="filteredSkillDocs" v-loading="loading" stripe style="margin-top: 16px">
+        <template #empty>
+          <el-empty description="暂无数据" :image-size="60" />
+        </template>
         <el-table-column prop="name" label="名称" width="180" />
         <el-table-column prop="description" label="描述" min-width="300" show-overflow-tooltip />
         <el-table-column label="校验" width="90">
@@ -54,15 +57,17 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="关联 Agent" width="110" align="right" class="hide-on-mobile">
+        <el-table-column label="关联 Agent" width="110" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">{{ relatedAgentCount(row.name) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90" class="hide-on-mobile">
-          <template #default>
-            <el-tag type="success" size="small">可用</el-tag>
+        <el-table-column label="状态" width="90" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
+          <template #default="{ row }">
+            <el-tag :type="isSkillAvailable(row) ? 'success' : 'danger'" size="small">
+              {{ isSkillAvailable(row) ? '可用' : '异常' }}
+            </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip class="hide-on-mobile" />
+        <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleView(row)">查看内容</el-button>
@@ -139,6 +144,10 @@ const filteredSkillDocs = computed(() => {
 
 function relatedAgentCount(skillName: string) {
   return agents.value.filter(agent => (agent.skillNames || []).includes(skillName)).length
+}
+
+function isSkillAvailable(row: { filePath?: string; folderPath?: string }) {
+  return !!(row.filePath || row.folderPath)
 }
 
 async function handleView(row: any) {

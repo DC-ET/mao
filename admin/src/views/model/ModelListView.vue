@@ -52,12 +52,15 @@
       </el-form>
 
       <el-table :data="models" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="80" class="hide-on-mobile" />
+        <template #empty>
+          <el-empty description="暂无数据" :image-size="60" />
+        </template>
+        <el-table-column prop="id" label="ID" width="80" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column prop="name" label="名称" width="150" />
         <el-table-column prop="provider" label="供应商" width="120" />
-        <el-table-column prop="modelId" label="模型标识" width="150" class="hide-on-mobile" />
-        <el-table-column prop="baseUrl" label="API 地址" min-width="200" show-overflow-tooltip class="hide-on-mobile" />
-        <el-table-column label="上下文窗口" width="120" align="right" class="hide-on-mobile">
+        <el-table-column prop="modelId" label="模型标识" width="150" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
+        <el-table-column prop="baseUrl" label="API 地址" min-width="200" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
+        <el-table-column label="上下文窗口" width="120" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">
             {{ row.contextWindowTokens ? row.contextWindowTokens.toLocaleString() : '-' }}
           </template>
@@ -81,12 +84,19 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="调用消息" width="100" align="right" class="hide-on-mobile">
+        <el-table-column label="调用消息" width="100" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">{{ modelStat(row.id).messageCount || 0 }}</template>
         </el-table-column>
         <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="handleTest(row)">测试</el-button>
+            <el-button
+              type="primary"
+              link
+              size="small"
+              :loading="testingId === row.id"
+              :disabled="testingId === row.id"
+              @click="handleTest(row)"
+            >测试</el-button>
             <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
             <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button
@@ -140,6 +150,7 @@ const pageSize = ref(10)
 const dialogVisible = ref(false)
 const currentModel = ref<any>(null)
 const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
+const testingId = ref<number | null>(null)
 const filters = reactive<{
   keyword: string
   provider: string
@@ -233,11 +244,15 @@ function handleReset() {
 }
 
 async function handleTest(row: any) {
+  if (testingId.value != null) return
+  testingId.value = row.id
   try {
     await api.post(`/models/${row.id}/test`)
     ElMessage.success('模型连通性测试成功')
   } catch {
     // Error handled by interceptor
+  } finally {
+    testingId.value = null
   }
 }
 

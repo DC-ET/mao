@@ -1,7 +1,7 @@
 <template>
   <div class="message-group">
-    <!-- User message -->
-    <div class="message-item user">
+    <!-- User message (optional: orphan assistant turns may have none) -->
+    <div v-if="userMessage" class="message-item user">
       <div class="message-content">
         <div class="message-time">
           <span>{{ userMessage.createdAt }}</span>
@@ -26,6 +26,7 @@
         </div>
       </div>
     </div>
+    <div v-else class="orphan-hint">无对应用户消息</div>
 
     <!-- Collapsible process block (thinking + tool calls + file changes) -->
     <div v-if="hasProcess" class="process-block">
@@ -66,7 +67,7 @@ import ToolCallGroup from './ToolCallGroup.vue'
 import FileChangePanel from './FileChangePanel.vue'
 
 const props = defineProps<{
-  userMessage: ChatMessage
+  userMessage: ChatMessage | null
   assistantMessages: ChatMessage[]
   workspace?: string
 }>()
@@ -134,12 +135,18 @@ const processSummary = computed(() => {
   return parts.join('，')
 })
 
-const isUserLong = computed(() => (props.userMessage.content || '').split('\n').length > 10)
+const isUserLong = computed(() => (props.userMessage?.content || '').split('\n').length > 10)
 </script>
 
 <style scoped>
 .message-group {
   margin-bottom: 20px;
+}
+
+.orphan-hint {
+  margin-bottom: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 .message-item {

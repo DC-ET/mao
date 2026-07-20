@@ -362,4 +362,17 @@ onActivated(() => {
   border-top: 1px solid #f0f0f0;
   padding-top: 10px;
 }
+
+@media (max-width: 768px) {
+  .session-list :deep(.session-metrics.el-row) {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  .session-metrics :deep(.el-col) {
+    max-width: 50%;
+    flex: 0 0 50%;
+    margin-bottom: 12px;
+  }
+}
 </style>

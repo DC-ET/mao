@@ -12,7 +12,7 @@
 
       <el-form :inline="true" class="search-form">
         <el-form-item label="动作">
-          <el-select v-model="filters.action" clearable placeholder="全部" style="width: 130px">
+          <el-select v-model="filters.action" clearable placeholder="全部" style="width: 130px" @change="handleSearch">
             <el-option label="READ" value="READ" />
             <el-option label="CREATE" value="CREATE" />
             <el-option label="UPDATE" value="UPDATE" />
@@ -23,7 +23,7 @@
           <el-input v-model="filters.objectType" clearable placeholder="users / agents" style="width: 160px" @keyup.enter="handleSearch" />
         </el-form-item>
         <el-form-item label="结果">
-          <el-select v-model="filters.success" clearable placeholder="全部" style="width: 120px">
+          <el-select v-model="filters.success" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
             <el-option label="成功" :value="true" />
             <el-option label="失败" :value="false" />
           </el-select>

@@ -11,6 +11,7 @@
             v-model="form.username"
             placeholder="用户名"
             prefix-icon="User"
+            @keyup.enter="handleLogin"
           />
         </el-form-item>
         <el-form-item>
@@ -20,14 +21,15 @@
             placeholder="密码"
             prefix-icon="Lock"
             show-password
+            @keyup.enter="handleLogin"
           />
         </el-form-item>
         <el-form-item>
           <el-button
             type="primary"
+            native-type="submit"
             :loading="loading"
             style="width: 100%"
-            @click="handleLogin"
           >
             登录
           </el-button>

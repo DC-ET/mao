@@ -43,7 +43,7 @@
       <div v-else class="chat-container">
         <MessageGroup
           v-for="turn in messageTurns"
-          :key="turn.user.id"
+          :key="turn.user?.id || turn.assistants[0]?.id || turn.key"
           :user-message="turn.user"
           :assistant-messages="turn.assistants"
           :workspace="sessionInfo?.workspace"
@@ -54,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onActivated, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
@@ -70,19 +70,27 @@ const sessionInfo = ref<any>(null)
 const messages = ref<ChatMessage[]>([])
 
 interface MessageTurn {
-  user: ChatMessage
+  key: string
+  user: ChatMessage | null
   assistants: ChatMessage[]
 }
 
 const messageTurns = computed((): MessageTurn[] => {
   const turns: MessageTurn[] = []
   let currentTurn: MessageTurn | null = null
+  let orphanSeq = 0
 
   for (const msg of messages.value) {
     if (msg.role === 'user') {
-      currentTurn = { user: msg, assistants: [] }
+      currentTurn = { key: `user-${msg.id}`, user: msg, assistants: [] }
       turns.push(currentTurn)
-    } else if (msg.role === 'assistant' && currentTurn) {
+    } else if (msg.role === 'assistant') {
+      // Orphan assistants (no preceding user) still render for admin diagnostics.
+      if (!currentTurn) {
+        orphanSeq += 1
+        currentTurn = { key: `orphan-${orphanSeq}-${msg.id}`, user: null, assistants: [] }
+        turns.push(currentTurn)
+      }
       currentTurn.assistants.push(msg)
     }
   }
@@ -120,7 +128,12 @@ async function fetchDetail() {
   }
 }
 
+watch(() => route.params.id, (id, prev) => {
+  if (id && id !== prev) fetchDetail()
+})
+
 onMounted(fetchDetail)
+onActivated(fetchDetail)
 </script>
 
 <style scoped>

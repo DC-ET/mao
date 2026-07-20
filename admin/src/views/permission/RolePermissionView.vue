@@ -31,7 +31,7 @@
           <template #header>
             <div class="card-header">
               <span>权限分配</span>
-              <el-button type="primary" :disabled="!currentRole" @click="savePermissions">保存权限</el-button>
+              <el-button type="primary" :disabled="!currentRole" :loading="savingPermissions" @click="savePermissions">保存权限</el-button>
             </div>
           </template>
 
@@ -58,11 +58,11 @@
     </el-row>
 
     <ResponsiveDialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建角色' : '编辑角色'" width="480px">
-      <el-form :model="roleForm" label-width="90px">
-        <el-form-item label="角色名称">
+      <el-form ref="roleFormRef" :model="roleForm" :rules="roleFormRules" label-width="90px">
+        <el-form-item label="角色名称" prop="name">
           <el-input v-model="roleForm.name" placeholder="例如：运营管理员" />
         </el-form-item>
-        <el-form-item label="角色编码">
+        <el-form-item label="角色编码" prop="code">
           <el-input v-model="roleForm.code" :disabled="dialogMode === 'edit'" placeholder="例如：OPS_ADMIN" />
         </el-form-item>
         <el-form-item label="描述">
@@ -71,7 +71,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveRole">保存</el-button>
+        <el-button type="primary" :loading="savingRole" @click="saveRole">保存</el-button>
       </template>
     </ResponsiveDialog>
   </div>
@@ -79,6 +79,7 @@
 
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
+import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
@@ -100,18 +101,26 @@ interface Permission {
 }
 
 const loading = ref(false)
+const savingRole = ref(false)
+const savingPermissions = ref(false)
 const roles = ref<Role[]>([])
 const permissions = ref<Permission[]>([])
 const currentRole = ref<Role | null>(null)
 const selectedPermissionIds = ref<number[]>([])
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
+const roleFormRef = ref<FormInstance>()
 const roleForm = reactive({
   id: 0,
   name: '',
   code: '',
   description: ''
 })
+
+const roleFormRules: FormRules = {
+  name: [{ required: true, message: '请输入角色名称', trigger: 'blur' }],
+  code: [{ required: true, message: '请输入角色编码', trigger: 'blur' }]
+}
 
 async function fetchAll() {
   loading.value = true
@@ -153,28 +162,41 @@ function handleEditRole(role: Role) {
 }
 
 async function saveRole() {
-  if (dialogMode.value === 'create') {
-    await api.post('/roles', roleForm)
-    ElMessage.success('角色已创建')
-  } else {
-    await api.put(`/roles/${roleForm.id}`, roleForm)
-    ElMessage.success('角色已更新')
+  if (savingRole.value) return
+  const valid = await roleFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+  savingRole.value = true
+  try {
+    if (dialogMode.value === 'create') {
+      await api.post('/roles', roleForm)
+      ElMessage.success('角色已创建')
+    } else {
+      await api.put(`/roles/${roleForm.id}`, roleForm)
+      ElMessage.success('角色已更新')
+    }
+    dialogVisible.value = false
+    await fetchAll()
+  } finally {
+    savingRole.value = false
   }
-  dialogVisible.value = false
-  await fetchAll()
 }
 
 async function savePermissions() {
-  if (!currentRole.value) return
-  await api.put(`/roles/${currentRole.value.id}/permissions`, {
-    permissionIds: selectedPermissionIds.value
-  })
-  ElMessage.success('权限已保存')
-  // Keep the current role selected and refresh so checkbox state stays in sync
-  const id = currentRole.value.id
-  await fetchAll()
-  const updated = roles.value.find(r => r.id === id)
-  if (updated) selectRole(updated)
+  if (!currentRole.value || savingPermissions.value) return
+  savingPermissions.value = true
+  try {
+    await api.put(`/roles/${currentRole.value.id}/permissions`, {
+      permissionIds: selectedPermissionIds.value
+    })
+    ElMessage.success('权限已保存')
+    // Keep the current role selected and refresh so checkbox state stays in sync
+    const id = currentRole.value.id
+    await fetchAll()
+    const updated = roles.value.find(r => r.id === id)
+    if (updated) selectRole(updated)
+  } finally {
+    savingPermissions.value = false
+  }
 }
 
 onMounted(fetchAll)

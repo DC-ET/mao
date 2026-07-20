@@ -23,13 +23,13 @@
 
       <el-form :inline="true" class="search-form">
         <el-form-item label="执行模式">
-          <el-select v-model="filters.executionMode" clearable placeholder="全部" style="width: 130px">
+          <el-select v-model="filters.executionMode" clearable placeholder="全部" style="width: 130px" @change="handleSearch">
             <el-option label="CLOUD" value="CLOUD" />
             <el-option label="LOCAL" value="LOCAL" />
           </el-select>
         </el-form-item>
         <el-form-item label="阶段">
-          <el-select v-model="filters.phase" clearable placeholder="重点状态" style="width: 160px">
+          <el-select v-model="filters.phase" clearable placeholder="重点状态" style="width: 160px" @change="handleSearch">
             <el-option label="RUNNING" value="RUNNING" />
             <el-option label="WAITING_APPROVAL" value="WAITING_APPROVAL" />
             <el-option label="FAILED" value="FAILED" />
@@ -37,7 +37,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="关键词">
-          <el-input v-model="filters.keyword" clearable placeholder="标题/摘要" style="width: 180px" />
+          <el-input v-model="filters.keyword" clearable placeholder="标题/摘要" style="width: 180px" @keyup.enter="handleSearch" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
@@ -46,10 +46,10 @@
       </el-form>
 
       <el-table :data="sessions" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="80" class="hide-on-mobile" />
+        <el-table-column prop="id" label="ID" width="80" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
         <el-table-column prop="userName" label="用户" width="120" />
-        <el-table-column prop="agentName" label="Agent" width="130" class="hide-on-mobile" />
+        <el-table-column prop="agentName" label="Agent" width="130" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column prop="executionMode" label="模式" width="90">
           <template #default="{ row }">
             <el-tag size="small" :type="row.executionMode === 'LOCAL' ? 'warning' : 'primary'">
@@ -62,8 +62,8 @@
             <el-tag size="small" :type="phaseTag(row.phase)">{{ row.phase }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="contextTokens" label="上下文 Token" width="130" align="right" class="hide-on-mobile" />
-        <el-table-column prop="lastActivityAt" label="最后活动" width="170" class="hide-on-mobile" />
+        <el-table-column prop="contextTokens" label="上下文 Token" width="130" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
+        <el-table-column prop="lastActivityAt" label="最后活动" width="170" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column label="操作" width="80" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="router.push(`/sessions/${row.id}`)">查看</el-button>

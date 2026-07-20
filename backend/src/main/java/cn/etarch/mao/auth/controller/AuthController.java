@@ -10,6 +10,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/v1/auth")
 @RequiredArgsConstructor
@@ -105,6 +107,8 @@ public class AuthController {
         private String displayName;
         private String email;
         private String avatarUrl;
+        /** Permission codes granted to the user via roles. */
+        private List<String> permissions;
     }
 
     @Data
