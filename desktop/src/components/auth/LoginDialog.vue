@@ -18,12 +18,15 @@
 
     <el-form
       v-if="mode === 'password'"
+      ref="formRef"
       :model="form"
+      :rules="formRules"
       @submit.prevent="handleLogin"
       class="login-form"
     >
-      <el-form-item>
+      <el-form-item prop="username">
         <el-input
+          ref="usernameInputRef"
           v-model="form.username"
           placeholder="用户名"
           prefix-icon="User"
@@ -31,8 +34,9 @@
           @keyup.enter="handleLogin"
         />
       </el-form-item>
-      <el-form-item>
+      <el-form-item prop="password">
         <el-input
+          ref="passwordInputRef"
           v-model="form.password"
           type="password"
           placeholder="密码"
@@ -45,10 +49,10 @@
       <el-form-item class="login-actions">
         <el-button
           type="primary"
+          native-type="submit"
           :loading="passwordLoading"
           size="large"
           class="login-btn"
-          @click="handleLogin"
         >
           登录
         </el-button>
@@ -107,12 +111,14 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import type { FormInstance, FormRules, InputInstance } from 'element-plus'
 import QRCode from 'qrcode'
 import { useAuthStore } from '../../stores/auth'
 import appIcon from '../../assets/app-icon-small.png'
 import { useLoginDialog } from '../../composables/useLoginDialog'
+import { getToken } from '../../utils/auth-storage'
 
 type LoginMode = 'password' | 'feishu'
 type ToastError = Error & { toastShown?: boolean }
@@ -127,10 +133,18 @@ const qrDataUrl = ref('')
 const feishuAuthUrl = ref('')
 const feishuState = ref('')
 const feishuStatusText = ref('请使用飞书扫码确认登录')
+const formRef = ref<FormInstance>()
+const usernameInputRef = ref<InputInstance>()
+const passwordInputRef = ref<InputInstance>()
 const form = ref({
   username: '',
   password: ''
 })
+
+const formRules: FormRules = {
+  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
+}
 
 let pollTimer: number | null = null
 let polling = false
@@ -142,13 +156,23 @@ onMounted(() => {
 })
 
 async function handleLogin() {
-  if (!form.value.username || !form.value.password) return
+  const valid = await formRef.value?.validate().catch(() => false)
+  if (!valid) {
+    await nextTick()
+    if (!form.value.username.trim()) {
+      usernameInputRef.value?.focus()
+    } else if (!form.value.password) {
+      passwordInputRef.value?.focus()
+    }
+    return
+  }
 
   passwordLoading.value = true
   try {
     await authStore.login(form.value.username, form.value.password)
     form.value.username = ''
     form.value.password = ''
+    formRef.value?.clearValidate()
     notifySuccess()
   } finally {
     passwordLoading.value = false
@@ -232,6 +256,9 @@ function backToPasswordLogin() {
 }
 
 function handleClose() {
+  if (!getToken()) {
+    ElMessage.warning('需登录才能使用完整功能')
+  }
   resetFeishuLogin()
   close()
 }
