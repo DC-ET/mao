@@ -69,7 +69,7 @@
       />
     </el-card>
 
-    <ResponsiveDialog v-model="dialogVisible" title="发布通知" width="520px">
+    <ResponsiveDialog v-if="dialogVisible" v-model="dialogVisible" title="发布通知" width="520px">
       <el-form ref="formRef" :model="form" :rules="formRules" label-width="80px">
         <el-form-item label="类型" prop="type">
           <el-select v-model="form.type" style="width: 100%">

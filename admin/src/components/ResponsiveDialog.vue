@@ -1,14 +1,20 @@
 <template>
   <el-dialog
-    v-model="visible"
+    v-bind="$attrs"
+    :model-value="modelValue"
     :title="title"
     :width="isMobile ? '92%' : width"
     :fullscreen="isMobile && fullscreenOnMobile"
     :top="isMobile ? '5vh' : top"
-    v-bind="$attrs"
+    :append-to-body="true"
+    :destroy-on-close="true"
+    @update:model-value="emit('update:modelValue', $event)"
   >
-    <!-- default 必须用 <slot /> 直接作为 el-dialog 子节点；
-         用 v-for 动态 #[name] 转发 default 时，内容会泄漏到弹窗外，内联显示在页面上 -->
+    <!--
+      1) default 必须用 <slot />，不能用 v-for 动态 #[name] 转发，否则内容会泄漏到弹窗外。
+      2) 当前 Element Plus 默认 appendToBody=false，Teleport 会被禁用，弹窗会留在布局内，
+         看起来像「内联在页面底部」而不是遮罩弹窗，因此这里强制 append-to-body。
+    -->
     <slot />
     <template v-if="$slots.header" #header="scope">
       <slot name="header" v-bind="scope || {}" />
@@ -23,10 +29,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import { useBreakpoint } from '../composables/useBreakpoint'
 
-const props = withDefaults(
+defineOptions({ inheritAttrs: false })
+
+withDefaults(
   defineProps<{
     modelValue: boolean
     title?: string
@@ -47,9 +54,4 @@ const emit = defineEmits<{
 }>()
 
 const { isMobile } = useBreakpoint()
-
-const visible = computed({
-  get: () => props.modelValue,
-  set: (v) => emit('update:modelValue', v)
-})
 </script>

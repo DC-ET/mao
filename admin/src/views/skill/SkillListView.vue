@@ -88,6 +88,7 @@
 
     <!-- Skill content dialog -->
     <ResponsiveDialog
+      v-if="detailVisible"
       v-model="detailVisible"
       :title="`Skill: ${currentDoc?.name || ''}`"
       width="700px"

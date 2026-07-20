@@ -47,7 +47,7 @@
       </el-tabs>
     </el-card>
 
-    <ResponsiveDialog v-model="dialogVisible" title="编辑配置" width="480px">
+    <ResponsiveDialog v-if="dialogVisible" v-model="dialogVisible" title="编辑配置" width="480px">
       <el-form label-width="90px">
         <el-form-item label="配置键">
           <el-input :model-value="currentSetting?.settingKey" disabled />

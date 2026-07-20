@@ -126,9 +126,11 @@
     </el-card>
 
     <ModelFormDialog
-      v-model:visible="dialogVisible"
+      v-if="dialogVisible"
+      :visible="true"
       :model-data="currentModel"
       :mode="dialogMode"
+      @update:visible="dialogVisible = $event"
       @saved="fetchModels"
     />
   </div>

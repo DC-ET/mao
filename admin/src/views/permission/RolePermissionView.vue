@@ -57,7 +57,7 @@
       </el-col>
     </el-row>
 
-    <ResponsiveDialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建角色' : '编辑角色'" width="480px">
+    <ResponsiveDialog v-if="dialogVisible" v-model="dialogVisible" :title="dialogMode === 'create' ? '新建角色' : '编辑角色'" width="480px">
       <el-form ref="roleFormRef" :model="roleForm" :rules="roleFormRules" label-width="90px">
         <el-form-item label="角色名称" prop="name">
           <el-input v-model="roleForm.name" placeholder="例如：运营管理员" />

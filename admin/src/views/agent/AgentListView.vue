@@ -84,9 +84,11 @@
     </el-card>
 
     <AgentFormDialog
-      v-model:visible="dialogVisible"
+      v-if="dialogVisible"
+      :visible="true"
       :agent-data="currentAgent"
       :mode="dialogMode"
+      @update:visible="dialogVisible = $event"
       @saved="fetchAgents"
     />
   </div>

@@ -178,16 +178,20 @@
     </el-card>
 
     <UserFormDialog
-      v-model:visible="formDialogVisible"
+      v-if="formDialogVisible"
+      :visible="true"
       :user-data="currentUser"
       :mode="formMode"
+      @update:visible="formDialogVisible = $event"
       @saved="fetchUsers"
     />
 
     <ResetPasswordDialog
-      v-model:visible="resetDialogVisible"
+      v-if="resetDialogVisible"
+      :visible="true"
       :user-id="resetUserId"
       :username="resetUsername"
+      @update:visible="resetDialogVisible = $event"
       @saved="fetchUsers"
     />
   </div>

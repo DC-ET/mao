@@ -110,7 +110,7 @@
       />
     </el-card>
 
-    <ResponsiveDialog v-model="detailVisible" title="审计详情" width="680px">
+    <ResponsiveDialog v-if="detailVisible" v-model="detailVisible" title="审计详情" width="680px">
       <div class="audit-detail">
       <el-descriptions v-if="currentLog" :column="2" border>
         <el-descriptions-item label="用户">{{ currentLog.username || '-' }}</el-descriptions-item>

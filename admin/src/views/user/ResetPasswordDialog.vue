@@ -1,8 +1,10 @@
 <template>
-  <ResponsiveDialog
+  <el-dialog
     :model-value="visible"
     title="重置密码"
     width="480px"
+    append-to-body
+    destroy-on-close
     @update:model-value="$emit('update:visible', $event)"
     @close="$emit('update:visible', false)"
   >
@@ -21,6 +23,7 @@
           v-model="form.newPassword"
           type="password"
           show-password
+          autocomplete="new-password"
           placeholder="至少 8 位，含字母和数字"
         />
       </el-form-item>
@@ -29,6 +32,7 @@
           v-model="form.confirmPassword"
           type="password"
           show-password
+          autocomplete="new-password"
           placeholder="再次输入新密码"
         />
       </el-form-item>
@@ -39,7 +43,7 @@
         确认重置
       </el-button>
     </template>
-  </ResponsiveDialog>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
