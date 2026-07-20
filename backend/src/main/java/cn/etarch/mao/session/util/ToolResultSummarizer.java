@@ -116,9 +116,20 @@ public class ToolResultSummarizer {
         JsonNode node = parseJson(result);
         if (node == null) return "写入 " + displayPath;
 
-        int bytes = node.has("bytes_written") ? node.get("bytes_written").asInt(0) : 0;
-        if (bytes > 0) {
-            return "写入 " + displayPath + " (" + formatBytes(bytes) + ")";
+        // 优先显示行数（嵌套在 file_change 对象中）
+        JsonNode fileChange = node.path("file_change");
+        int totalLines = fileChange.has("total_lines") ? fileChange.get("total_lines").asInt(0) : 0;
+        int linesAdded = fileChange.has("lines_added") ? fileChange.get("lines_added").asInt(0) : 0;
+        int linesDeleted = fileChange.has("lines_deleted") ? fileChange.get("lines_deleted").asInt(0) : 0;
+        // 新建文件：显示总行数；修改文件：显示行增减
+        if ("CREATED".equals(fileChange.path("type").asText(null)) && totalLines > 0) {
+            return "写入 " + displayPath + " (" + totalLines + " 行)";
+        }
+        if (linesAdded > 0 || linesDeleted > 0) {
+            return "写入 " + displayPath + " (+" + linesAdded + "行 -" + linesDeleted + "行)";
+        }
+        if (totalLines > 0) {
+            return "写入 " + displayPath + " (" + totalLines + " 行)";
         }
         return "写入 " + displayPath;
     }
@@ -333,12 +344,6 @@ public class ToolResultSummarizer {
         if (text == null) return "";
         if (text.length() <= max) return text;
         return text.substring(0, max) + "...";
-    }
-
-    private static String formatBytes(int bytes) {
-        if (bytes < 1024) return bytes + "B";
-        if (bytes < 1024 * 1024) return (bytes / 1024) + "KB";
-        return String.format("%.1fMB", bytes / (1024.0 * 1024.0));
     }
 
     private static String formatUrl(String url) {

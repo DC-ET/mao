@@ -102,6 +102,7 @@ public class WriteFileTool implements Tool {
             result.put("file_change", Map.of(
                     "path", path,
                     "type", changeType,
+                    "total_lines", newLineCount,
                     "lines_added", linesAdded,
                     "lines_deleted", linesDeleted
             ));

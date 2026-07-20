@@ -96,13 +96,13 @@ const form = reactive({
   isDefault: false
 })
 
-const rules: FormRules = {
+const rules = computed<FormRules>(() => ({
   name: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
   modelId: [{ required: true, message: '请输入模型标识', trigger: 'blur' }],
   apiKey: isEdit.value
     ? []
     : [{ required: true, message: '请输入 API Key', trigger: 'blur' }]
-}
+}))
 
 function resetForm() {
   Object.assign(form, {
@@ -125,8 +125,7 @@ watch(() => props.visible, (val) => {
       provider: props.modelData.provider || '',
       modelId: props.modelData.modelId || '',
       baseUrl: props.modelData.baseUrl || '',
-      // Do NOT echo the plaintext API Key back into the form; only send it when the user types a new one.
-      apiKey: '',
+      apiKey: props.modelData.apiKey || '',
       contextWindowTokens: props.modelData.contextWindowTokens || 256000,
       supportsVision: !!props.modelData.supportsVision,
       isDefault: !!props.modelData.isDefault
