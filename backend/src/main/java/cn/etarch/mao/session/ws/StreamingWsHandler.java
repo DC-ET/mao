@@ -310,10 +310,6 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         registry.unsubscribe(userId, sessionId);
     }
 
-    private void handleSendMessage(Long userId, JsonNode root) {
-        handleSendMessage(userId, root, true);
-    }
-
     /**
      * 处理用户发送消息并触发 Agent 执行。
      *
