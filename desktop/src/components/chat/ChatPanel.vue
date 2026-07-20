@@ -63,6 +63,8 @@
       </button>
     </div>
 
+    <ExecutionErrorBanner :message="executionError" />
+
     <ChatInput
       ref="chatInputRef"
       :loading="sending"
@@ -113,6 +115,7 @@ import ChatInput from './ChatInput.vue'
 import QueuePanel from './QueuePanel.vue'
 import ApprovalStack from './ApprovalStack.vue'
 import QuestionPanel from './QuestionPanel.vue'
+import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 
 // Inject shared refs from TaskView
 const agentId = inject<Ref<string>>('agentId')!
@@ -266,6 +269,8 @@ const activePendingApprovals = computed(() =>
 )
 
 const activePendingQuestions = computed(() => sessionStore.activePendingQuestions)
+
+const executionError = computed(() => sessionStore.activeExecutionError)
 
 const showTypingIndicator = computed(() => {
   if (initializingWorkspace.value) return false

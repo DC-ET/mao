@@ -619,13 +619,18 @@ export function useStreamWS() {
 
       case 'error': {
         if (sessionId) {
+          const message = (data?.message && String(data.message)) || 'Agent 执行异常'
+          sessionStore.setExecutionError(sessionId, message)
           sessionStore.updateSessionPhase(sessionId, 'FAILED' as TaskPhase)
           sessionStore.updateSideTaskPhase(Number(sessionId), 'FAILED' as TaskPhase)
           resetSessionStreamState(sessionId)
           const cb = pendingCallbacks.get(sessionId)
           if (cb) {
             pendingCallbacks.delete(sessionId)
-            cb.reject?.(new Error(data.message || 'Agent 执行异常'))
+            // Banner already shows the error — skip ephemeral toast in useChat catch
+            const err = new Error(message) as Error & { toastShown?: boolean }
+            err.toastShown = true
+            cb.reject?.(err)
           }
         }
         break

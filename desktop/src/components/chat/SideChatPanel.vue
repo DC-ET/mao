@@ -49,6 +49,8 @@
 
     <!-- 输入区 -->
     <div class="input-area">
+      <ExecutionErrorBanner :message="executionError" />
+
       <div v-if="!hasRealSession && displayMessages.length === 0" class="inherit-bar">
         <el-checkbox v-model="inheritContext" size="small">
           继承主任务上下文
@@ -94,6 +96,7 @@ import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QuestionPanel from './QuestionPanel.vue'
 import QueuePanel from './QueuePanel.vue'
+import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 
 const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 
@@ -168,6 +171,11 @@ const showTypingIndicator = computed(() => {
 const sidePendingQuestions = computed(() => {
   if (!hasRealSession.value) return []
   return sessionStore.sessionPendingQuestions.get(String(realSessionId.value)) ?? []
+})
+
+const executionError = computed(() => {
+  if (!hasRealSession.value) return null
+  return sessionStore.sessionExecutionErrors.get(String(realSessionId.value)) ?? null
 })
 
 const ACTIVE_PHASES = new Set(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
@@ -301,6 +309,10 @@ function handleModelSwitch(modelId: number) {
 
 async function handleChatSend(text: string, _files: File[]) {
   if (!text.trim()) return
+
+  if (hasRealSession.value) {
+    sessionStore.clearExecutionError(String(realSessionId.value))
+  }
 
   // 边路任务正在执行中：将消息加入队列（不受 sending 状态阻塞）
   if (hasRealSession.value && isSideActive.value) {

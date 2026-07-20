@@ -321,8 +321,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Track which session is sending (set AFTER session creation so ID is correct)
       sendingSessionId.value = sid
 
-      // Clear previous turn's todos
+      // Clear previous turn's todos / execution error banner
       sessionStore.clearTodos(sid)
+      sessionStore.clearExecutionError(sid)
 
       // Update session title from first user message (when title is still the default)
       const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
@@ -511,8 +512,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Track which session is sending (set AFTER session creation so ID is correct)
       sendingSessionId.value = sid
 
-      // Clear previous turn's todos
+      // Clear previous turn's todos / execution error banner
       sessionStore.clearTodos(sid)
+      sessionStore.clearExecutionError(sid)
 
       // Update session title from first user message (when title is still the default)
       const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
@@ -669,6 +671,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       return
     }
 
+    sessionStore.clearExecutionError(sessionId.value)
+
     // 校验是否是最后一条用户消息
     const msgs = sessionStore.getMessages(sessionId.value)
     const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user')
@@ -810,6 +814,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   }
 
   async function enqueueMessage(text: string, files: File[]) {
+    if (sessionId.value) sessionStore.clearExecutionError(sessionId.value)
     const imageUrls = files.length > 0 ? await uploadImages(files) : []
     await connect()
     const eventId = generateUUID()

@@ -93,6 +93,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
   const sessionFileChanges = ref<Map<string, FileChange[]>>(new Map())
   const sessionPendingQuestions = ref<Map<string, PendingQuestion[]>>(new Map())
+  const sessionExecutionErrors = ref<Map<string, string>>(new Map())
   const sessionMessageHasMore = ref<Map<string, boolean>>(new Map())
   const sessionMessageLoadingOlder = ref<Map<string, boolean>>(new Map())
   const sessionMessageNextBeforeId = ref<Map<string, string | null>>(new Map())
@@ -143,6 +144,10 @@ export const useSessionStore = defineStore('session', () => {
 
   const activePendingQuestions = computed(() =>
     sessionPendingQuestions.value.get(activeSessionId.value ?? '') ?? []
+  )
+
+  const activeExecutionError = computed(() =>
+    sessionExecutionErrors.value.get(activeSessionId.value ?? '') ?? null
   )
 
   const activeMessageHasMore = computed(() =>
@@ -808,6 +813,25 @@ export const useSessionStore = defineStore('session', () => {
     sessionPendingQuestions.value.delete(String(sessionId))
   }
 
+  function setExecutionError(sessionId: string, message: string) {
+    const sid = String(sessionId)
+    const next = new Map(sessionExecutionErrors.value)
+    next.set(sid, message)
+    sessionExecutionErrors.value = next
+  }
+
+  function clearExecutionError(sessionId: string) {
+    const sid = String(sessionId)
+    if (!sessionExecutionErrors.value.has(sid)) return
+    const next = new Map(sessionExecutionErrors.value)
+    next.delete(sid)
+    sessionExecutionErrors.value = next
+  }
+
+  function getExecutionError(sessionId: string): string | null {
+    return sessionExecutionErrors.value.get(String(sessionId)) ?? null
+  }
+
   function reset() {
     sessions.value = []
     activeSessionId.value = null
@@ -823,6 +847,7 @@ export const useSessionStore = defineStore('session', () => {
     sessionFileChanges.value = new Map()
     sessionQueueMessages.value = new Map()
     sessionPendingQuestions.value = new Map()
+    sessionExecutionErrors.value = new Map()
     sessionMessageHasMore.value = new Map()
     sessionMessageLoadingOlder.value = new Map()
     sessionMessageNextBeforeId.value = new Map()
@@ -920,6 +945,12 @@ export const useSessionStore = defineStore('session', () => {
     appendAskQuestion,
     removeAskQuestion,
     clearAskQuestions,
+    // Execution errors
+    sessionExecutionErrors,
+    activeExecutionError,
+    setExecutionError,
+    clearExecutionError,
+    getExecutionError,
     reset
   }
 })
