@@ -32,19 +32,27 @@
         </el-form-item>
         <el-form-item label="执行模式">
           <el-select v-model="filters.executionMode" placeholder="全部" clearable style="width: 120px">
-            <el-option label="CLOUD" value="CLOUD" />
-            <el-option label="LOCAL" value="LOCAL" />
+            <el-option
+              v-for="opt in EXECUTION_MODE_OPTIONS"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="任务阶段">
           <el-select v-model="filters.phase" placeholder="全部" clearable style="width: 140px">
-            <el-option v-for="p in phaseOptions" :key="p.value" :label="p.label" :value="p.value" />
+            <el-option v-for="p in PHASE_OPTIONS" :key="p.value" :label="p.label" :value="p.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" placeholder="ACTIVE" clearable style="width: 120px">
-            <el-option label="ACTIVE" value="ACTIVE" />
-            <el-option label="ARCHIVED" value="ARCHIVED" />
+          <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
+            <el-option
+              v-for="opt in SESSION_STATUS_OPTIONS"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="关键词">
@@ -58,6 +66,9 @@
 
       <!-- Table -->
       <el-table v-if="!isMobile" :data="sessions" stripe v-loading="loading">
+        <template #empty>
+          <el-empty description="暂无数据" :image-size="60" />
+        </template>
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
         <el-table-column prop="userName" label="用户" width="120" show-overflow-tooltip />
@@ -65,13 +76,13 @@
         <el-table-column prop="executionMode" label="执行模式" width="100">
           <template #default="{ row }">
             <el-tag :type="row.executionMode === 'CLOUD' ? 'primary' : 'warning'" size="small">
-              {{ row.executionMode }}
+              {{ executionModeLabel(row.executionMode) }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="phase" label="任务阶段" width="120">
           <template #default="{ row }">
-            <el-tag :type="phaseTagType(row.phase)" size="small">{{ row.phase }}</el-tag>
+            <el-tag :type="phaseTagType(row.phase)" size="small">{{ phaseLabel(row.phase) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="contextTokens" label="上下文Token" width="110" align="right" />
@@ -99,7 +110,7 @@
         <el-card v-for="row in sessions" :key="row.id" class="session-card" shadow="hover">
           <div class="session-card-head">
             <span class="session-card-title">{{ row.title || '-' }}</span>
-            <el-tag :type="phaseTagType(row.phase)" size="small">{{ row.phase }}</el-tag>
+            <el-tag :type="phaseTagType(row.phase)" size="small">{{ phaseLabel(row.phase) }}</el-tag>
           </div>
           <div class="session-card-row">
             <span class="session-card-label">用户</span>
@@ -112,7 +123,7 @@
           <div class="session-card-row">
             <span class="session-card-label">模式</span>
             <el-tag :type="row.executionMode === 'CLOUD' ? 'primary' : 'warning'" size="small">
-              {{ row.executionMode }}
+              {{ executionModeLabel(row.executionMode) }}
             </el-tag>
           </div>
           <div class="session-card-row">
@@ -156,6 +167,13 @@ import { useRouter } from 'vue-router'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
+import {
+  EXECUTION_MODE_OPTIONS,
+  PHASE_OPTIONS,
+  SESSION_STATUS_OPTIONS,
+  executionModeLabel,
+  phaseLabel
+} from '../../utils/labels'
 
 const router = useRouter()
 const { isMobile } = useBreakpoint()
@@ -176,14 +194,6 @@ const filters = reactive({
 
 const userOptions = ref<Array<{ id: number; username: string; displayName: string }>>([])
 const agentOptions = ref<Array<{ id: number; name: string }>>([])
-
-const phaseOptions = [
-  { label: 'IDLE', value: 'IDLE' },
-  { label: 'RUNNING', value: 'RUNNING' },
-  { label: 'COMPLETED', value: 'COMPLETED' },
-  { label: 'FAILED', value: 'FAILED' },
-  { label: 'CANCELLED', value: 'CANCELLED' }
-]
 
 const phaseMetrics = computed(() => [
   { label: '当前页会话', value: sessions.value.length },

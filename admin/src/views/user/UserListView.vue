@@ -35,6 +35,9 @@
       </el-form>
 
       <el-table v-if="!isMobile" :data="users" v-loading="loading" stripe>
+        <template #empty>
+          <el-empty description="暂无数据" :image-size="60" />
+        </template>
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="username" label="用户名" width="120" />
         <el-table-column prop="displayName" label="显示名称" width="120" />

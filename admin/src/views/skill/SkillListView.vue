@@ -3,8 +3,8 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>Agent Skills</span>
-          <el-tag type="info" size="small">按 Anthropic 规范管理目录包 Skill，每个包必须包含顶层 SKILL.md。</el-tag>
+          <span>Skills 管理</span>
+          <el-tag type="info" size="small">按 Skill 目录包规范管理，每个包必须包含顶层 SKILL.md。</el-tag>
         </div>
       </template>
 

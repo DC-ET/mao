@@ -26,7 +26,9 @@
             <template #empty>
               <el-empty description="暂无数据" :image-size="48" />
             </template>
-            <el-table-column prop="phase" label="阶段" />
+            <el-table-column label="阶段">
+              <template #default="{ row }">{{ phaseLabel(row.phase) }}</template>
+            </el-table-column>
             <el-table-column prop="count" label="会话数" align="right" />
           </el-table>
         </el-card>
@@ -80,6 +82,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { api } from '../../api'
+import { phaseLabel } from '../../utils/labels'
 
 const days = ref(30)
 const loading = ref(false)

@@ -24,16 +24,22 @@
       <el-form :inline="true" class="search-form">
         <el-form-item label="执行模式">
           <el-select v-model="filters.executionMode" clearable placeholder="全部" style="width: 130px" @change="handleSearch">
-            <el-option label="CLOUD" value="CLOUD" />
-            <el-option label="LOCAL" value="LOCAL" />
+            <el-option
+              v-for="opt in EXECUTION_MODE_OPTIONS"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="阶段">
           <el-select v-model="filters.phase" clearable placeholder="重点状态" style="width: 160px" @change="handleSearch">
-            <el-option label="RUNNING" value="RUNNING" />
-            <el-option label="WAITING_APPROVAL" value="WAITING_APPROVAL" />
-            <el-option label="FAILED" value="FAILED" />
-            <el-option label="CANCELLED" value="CANCELLED" />
+            <el-option
+              v-for="opt in RUNTIME_PHASE_OPTIONS"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="关键词">
@@ -46,6 +52,9 @@
       </el-form>
 
       <el-table :data="sessions" v-loading="loading" stripe>
+        <template #empty>
+          <el-empty description="暂无数据" :image-size="60" />
+        </template>
         <el-table-column prop="id" label="ID" width="80" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
         <el-table-column prop="userName" label="用户" width="120" />
@@ -53,13 +62,13 @@
         <el-table-column prop="executionMode" label="模式" width="90">
           <template #default="{ row }">
             <el-tag size="small" :type="row.executionMode === 'LOCAL' ? 'warning' : 'primary'">
-              {{ row.executionMode }}
+              {{ executionModeLabel(row.executionMode) }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="phase" label="阶段" width="150">
           <template #default="{ row }">
-            <el-tag size="small" :type="phaseTag(row.phase)">{{ row.phase }}</el-tag>
+            <el-tag size="small" :type="phaseTag(row.phase)">{{ phaseLabel(row.phase) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="contextTokens" label="上下文 Token" width="130" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
@@ -89,6 +98,12 @@
 import { computed, reactive, ref, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api'
+import {
+  EXECUTION_MODE_OPTIONS,
+  RUNTIME_PHASE_OPTIONS,
+  executionModeLabel,
+  phaseLabel
+} from '../../utils/labels'
 
 const router = useRouter()
 const loading = ref(false)

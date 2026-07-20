@@ -16,11 +16,11 @@
         <el-descriptions-item label="模型">{{ sessionInfo.modelName || '-' }}</el-descriptions-item>
         <el-descriptions-item label="执行模式">
           <el-tag :type="sessionInfo.executionMode === 'CLOUD' ? 'primary' : 'warning'" size="small">
-            {{ sessionInfo.executionMode }}
+            {{ executionModeLabel(sessionInfo.executionMode) }}
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="任务阶段">
-          <el-tag :type="phaseTagType(sessionInfo.phase)" size="small">{{ sessionInfo.phase }}</el-tag>
+          <el-tag :type="phaseTagType(sessionInfo.phase)" size="small">{{ phaseLabel(sessionInfo.phase) }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="项目">{{ sessionInfo.projectKey || '-' }}</el-descriptions-item>
         <el-descriptions-item label="上下文Token">{{ sessionInfo.contextTokens || '-' }}</el-descriptions-item>
@@ -58,6 +58,7 @@ import { ref, computed, onMounted, onActivated, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { executionModeLabel, phaseLabel } from '../../utils/labels'
 import { mapApiMessagesToChat } from './utils/chatMessage'
 import type { ChatMessage } from './types/chat'
 import MessageGroup from './components/MessageGroup.vue'

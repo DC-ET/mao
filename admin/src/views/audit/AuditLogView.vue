@@ -13,10 +13,12 @@
       <el-form :inline="true" class="search-form">
         <el-form-item label="动作">
           <el-select v-model="filters.action" clearable placeholder="全部" style="width: 130px" @change="handleSearch">
-            <el-option label="READ" value="READ" />
-            <el-option label="CREATE" value="CREATE" />
-            <el-option label="UPDATE" value="UPDATE" />
-            <el-option label="DELETE" value="DELETE" />
+            <el-option
+              v-for="opt in AUDIT_ACTION_OPTIONS"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="对象">
@@ -35,11 +37,14 @@
       </el-form>
 
       <el-table v-if="!isMobile" :data="logs" v-loading="loading" stripe>
+        <template #empty>
+          <el-empty description="暂无数据" :image-size="60" />
+        </template>
         <el-table-column prop="createdAt" label="时间" width="170" />
         <el-table-column prop="username" label="用户" width="120" />
         <el-table-column prop="action" label="动作" width="100">
           <template #default="{ row }">
-            <el-tag size="small" :type="actionType(row.action)">{{ row.action }}</el-tag>
+            <el-tag size="small" :type="actionType(row.action)">{{ auditActionLabel(row.action) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="objectType" label="对象" width="130" />
@@ -65,7 +70,7 @@
         <el-card v-for="row in logs" :key="row.id" class="audit-card" shadow="hover">
           <div class="audit-card-head">
             <span class="audit-card-action">
-              <el-tag size="small" :type="actionType(row.action)">{{ row.action }}</el-tag>
+              <el-tag size="small" :type="actionType(row.action)">{{ auditActionLabel(row.action) }}</el-tag>
             </span>
             <el-tag size="small" :type="row.success === 1 ? 'success' : 'danger'">
               {{ row.success === 1 ? '成功' : '失败' }}
@@ -110,7 +115,7 @@
       <el-descriptions v-if="currentLog" :column="2" border>
         <el-descriptions-item label="用户">{{ currentLog.username || '-' }}</el-descriptions-item>
         <el-descriptions-item label="IP">{{ currentLog.ip || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="动作">{{ currentLog.action }}</el-descriptions-item>
+        <el-descriptions-item label="动作">{{ auditActionLabel(currentLog.action) }}</el-descriptions-item>
         <el-descriptions-item label="对象">{{ currentLog.objectType }}</el-descriptions-item>
         <el-descriptions-item label="路径" :span="2">{{ currentLog.path }}</el-descriptions-item>
         <el-descriptions-item label="参数" :span="2">{{ currentLog.queryString || '-' }}</el-descriptions-item>
@@ -127,6 +132,7 @@ import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
+import { AUDIT_ACTION_OPTIONS, auditActionLabel } from '../../utils/labels'
 
 const { isMobile } = useBreakpoint()
 const loading = ref(false)
