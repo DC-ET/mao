@@ -74,10 +74,15 @@ export function useToolApprovals() {
   }
 
   function clearPendingApprovals() {
-    for (const item of pendingApprovals.value) {
-      if (item.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
-    }
+    const items = pendingApprovals.value.slice()
     pendingApprovals.value = []
+    for (const item of items) {
+      if (item.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
+      // Reject in main process so requestToolApproval() Promises do not hang forever.
+      if (item.requestId && isElectron) {
+        void (window as any).electronAPI.respondToolApproval(item.requestId, false)
+      }
+    }
   }
 
   return { pendingApprovals, confirmApproval, clearPendingApprovals }
