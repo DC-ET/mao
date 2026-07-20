@@ -7,8 +7,17 @@
     :top="isMobile ? '5vh' : top"
     v-bind="$attrs"
   >
-    <template v-for="(_, name) in $slots" #[name]="scope" :key="name">
-      <slot :name="name" v-bind="scope || {}" />
+    <!-- default 必须用 <slot /> 直接作为 el-dialog 子节点；
+         用 v-for 动态 #[name] 转发 default 时，内容会泄漏到弹窗外，内联显示在页面上 -->
+    <slot />
+    <template v-if="$slots.header" #header="scope">
+      <slot name="header" v-bind="scope || {}" />
+    </template>
+    <template v-if="$slots.title" #title>
+      <slot name="title" />
+    </template>
+    <template v-if="$slots.footer" #footer>
+      <slot name="footer" />
     </template>
   </el-dialog>
 </template>
