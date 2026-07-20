@@ -417,10 +417,11 @@ async function handleChatSend(text: string, files: File[]) {
     sending.value = true
   }
 
-  // 等待消息保存确认
+  // 等待消息保存确认：仅在保存成功时清空输入（与主会话 ChatPanel 一致）；
+  // 超时/卸载只解锁 waitingForSave，保留草稿以便重试。
   let settled = false
   let saveTimeoutId: ReturnType<typeof setTimeout>
-  const finishWaiting = () => {
+  const finishWaiting = (clearInput: boolean) => {
     if (settled) return
     settled = true
     pendingSendCleanup = null
@@ -428,16 +429,18 @@ async function handleChatSend(text: string, files: File[]) {
     removeSideCreatedListener?.()
     offMessageSaved(callbackId)
     waitingForSave.value = false
-    chatInputRef.value?.clearInput()
+    if (clearInput) {
+      chatInputRef.value?.clearInput()
+    }
   }
   const callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
     if (expectedSavedSessionId != null && callbackSessionId === expectedSavedSessionId) {
-      finishWaiting()
+      finishWaiting(true)
     }
   })
-  pendingSendCleanup = finishWaiting
+  pendingSendCleanup = () => finishWaiting(false)
   // 设置超时，避免永远等待
-  saveTimeoutId = setTimeout(finishWaiting, 5000)
+  saveTimeoutId = setTimeout(() => finishWaiting(false), 60000)
 }
 
 function handleStop() {

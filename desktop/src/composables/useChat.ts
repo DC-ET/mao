@@ -549,18 +549,24 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
       // 等待消息保存确认后立即返回，解锁输入框；Agent 在后台继续执行
       // 完成后的 sending / 刷新由 phase watcher 处理
-      await new Promise<void>((resolve) => {
-        const callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
+      // 超时不得当作保存成功，否则 ChatPanel 会误清空输入并表现为「发送成功」
+      const saved = await new Promise<boolean>((resolve) => {
+        let settled = false
+        let timeoutId: ReturnType<typeof setTimeout>
+        let callbackId = ''
+        const finish = (ok: boolean) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timeoutId)
+          offMessageSaved(callbackId)
+          resolve(ok)
+        }
+        callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
           if (callbackSessionId === sid) {
-            offMessageSaved(callbackId)
-            resolve()
+            finish(true)
           }
         })
-        // 设置超时，避免永远等待
-        setTimeout(() => {
-          offMessageSaved(callbackId)
-          resolve()
-        }, 5000)
+        timeoutId = setTimeout(() => finish(false), 60000)
       })
 
       // 保存确认后按实际 phase 同步 sending：
@@ -569,6 +575,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // 必须用本次发送的 sid，而非 activeSession（等待期间用户可能已切走会话）
       if (String(sessionId.value) === String(sid)) {
         sending.value = isActivePhase(sessionStore.getSessionPhase(sid))
+      }
+
+      if (!saved) {
+        return false
       }
 
       // Fire-and-forget：记录本轮执行耗时（不阻塞返回）
