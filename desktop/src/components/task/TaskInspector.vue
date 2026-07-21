@@ -232,6 +232,16 @@ watch(inspectorActiveTab, (tab) => {
   }
 })
 
+const ACTIVE_GIT_REFRESH_PHASES = new Set(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
+const TERMINAL_GIT_REFRESH_PHASES = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE'])
+
+watch(() => props.phase, (phase, oldPhase) => {
+  if (!oldPhase || !props.gitProvider) return
+  if (ACTIVE_GIT_REFRESH_PHASES.has(oldPhase) && TERMINAL_GIT_REFRESH_PHASES.has(phase)) {
+    void refreshGit()
+  }
+})
+
 function handleOpenFile(payload: { path: string; title: string }) {
   emit('open-file', payload)
 }
