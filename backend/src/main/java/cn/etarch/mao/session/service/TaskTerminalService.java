@@ -37,8 +37,12 @@ public class TaskTerminalService {
             throw new IllegalArgumentException("Unsupported terminal phase: " + phase);
         }
         Session previous = sessionService.getSession(sessionId);
-        if (phase.equals(previous.getPhase())) {
-            log.info("Ignoring duplicate task terminal transition: sessionId={}, phase={}", sessionId, phase);
+        // Once a session reaches a terminal phase it must not transition to another
+        // terminal phase. This prevents a late cancel from overriding a COMPLETED/FAILED
+        // session (and vice versa) when the request races the execution thread's finish.
+        if (isTerminalPhase(previous.getPhase())) {
+            log.info("Ignoring terminal transition for already-terminal session: sessionId={}, from={}, to={}",
+                    sessionId, previous.getPhase(), phase);
             return;
         }
         sessionService.updatePhase(sessionId, phase);
@@ -63,6 +67,10 @@ public class TaskTerminalService {
                                 delivery.get().getId(), e.getMessage());
                     }
                 }, notificationExecutor);
+    }
+
+    private boolean isTerminalPhase(String phase) {
+        return "COMPLETED".equals(phase) || "FAILED".equals(phase) || "CANCELLED".equals(phase);
     }
 
     private Optional<TaskNotificationDelivery> prepareDelivery(Session session, String phase, String executionId) {

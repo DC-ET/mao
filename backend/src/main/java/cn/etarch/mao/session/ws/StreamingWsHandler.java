@@ -72,6 +72,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     /** sessionId → running agent task future */
     private final ConcurrentHashMap<Long, Future<?>> runningTasks = new ConcurrentHashMap<>();
 
+    /** sessionId → current execution id */
+    private final ConcurrentHashMap<Long, String> runningExecutionIds = new ConcurrentHashMap<>();
+
     /** per-session lock — only one agent execution at a time */
     private final ConcurrentHashMap<Long, Object> sessionLocks = new ConcurrentHashMap<>();
 
@@ -114,6 +117,31 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         return "RUNNING".equals(phase) || "RESUMING".equals(phase) || "WAITING_APPROVAL".equals(phase);
     }
 
+    private boolean isSessionCancelled(Long sessionId) {
+        Session session = sessionService.getSession(sessionId);
+        return session != null && "CANCELLED".equals(session.getPhase());
+    }
+
+    private boolean isTerminalPhase(String phase) {
+        return "COMPLETED".equals(phase) || "FAILED".equals(phase) || "CANCELLED".equals(phase);
+    }
+
+    private void finishCompletedSession(Long sessionId, Long userId, String executionId) {
+        if (isSessionCancelled(sessionId)) {
+            log.info("Skip COMPLETED transition for cancelled session {}", sessionId);
+            return;
+        }
+        taskTerminalService.finishExecution(sessionId, userId, "COMPLETED", executionId);
+    }
+
+    private void finishFailedSession(Long sessionId, Long userId, String executionId) {
+        if (isSessionCancelled(sessionId)) {
+            log.info("Skip FAILED transition for cancelled session {}", sessionId);
+            return;
+        }
+        taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
+    }
+
     private void abortRunningExecution(Long sessionId, Long userId) {
         abortRunningExecution(sessionId, userId, false);
     }
@@ -154,6 +182,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     Map.of("message", "任务因长时间无响应已自动终止")));
         }
         runningTasks.remove(sessionId);
+        runningExecutionIds.remove(sessionId);
         cancelFlags.remove(sessionId);
         agentLoop.removeCancelFlag(sessionId);
         activityHeartbeat.clear(sessionId);
@@ -418,6 +447,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
         // Submit agent execution to thread pool
         log.info("Session {} executionMode={}, submitting to agentExecutor", sessionId, session.getExecutionMode());
+        runningExecutionIds.put(sessionId, executionId);
         Future<?>[] futureRef = new Future<?>[1];
         futureRef[0] = agentExecutor.submit(() -> {
             synchronized (sessionLock(sessionId)) {
@@ -433,7 +463,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     if (agent != null) {
                         boolean synced = syncSkillsToClient(userId, sessionId, session, agent);
                         if (!synced) {
-                            taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
+                            finishFailedSession(sessionId, userId, executionId);
                             registry.send(userId, WsEvent.of("error", sessionId,
                                     Map.of("message", "Skill sync failed or timed out")));
                             return;
@@ -472,7 +502,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 if (cancelFlag.get()) {
                     finishCancelledSession(sessionId, userId, executionId);
                 } else {
-                    taskTerminalService.finishExecution(sessionId, userId, "COMPLETED", executionId);
+                    finishCompletedSession(sessionId, userId, executionId);
                 }
             } catch (Throwable e) {
                 log.error("[DIAG] Agent execution failed for session {}", sessionId, e);
@@ -482,11 +512,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                     "executionId", executionId)));
                 } catch (Exception ignored) {}
                 try {
-                    taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
+                    finishFailedSession(sessionId, userId, executionId);
                 } catch (Exception ignored) {}
             } finally {
                 releaseSessionExecutionResources(sessionId);
                 runningTasks.remove(sessionId, futureRef[0]);
+                runningExecutionIds.remove(sessionId, executionId);
                 cancelFlags.remove(sessionId);
                 agentLoop.removeCancelFlag(sessionId);
                 activityHeartbeat.clear(sessionId);
@@ -712,6 +743,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
         // Submit agent execution to thread pool
         log.info("Session {} edit_and_resend, executionMode={}, submitting to agentExecutor", sessionId, session.getExecutionMode());
+        runningExecutionIds.put(sessionId, executionId);
         Future<?>[] futureRef = new Future<?>[1];
         futureRef[0] = agentExecutor.submit(() -> {
             synchronized (sessionLock(sessionId)) {
@@ -727,7 +759,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     if (agent != null) {
                         boolean synced = syncSkillsToClient(userId, sessionId, session, agent);
                         if (!synced) {
-                            taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
+                            finishFailedSession(sessionId, userId, executionId);
                             registry.send(userId, WsEvent.of("error", sessionId,
                                     Map.of("message", "Skill sync failed or timed out")));
                             return;
@@ -762,7 +794,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 if (cancelFlag.get()) {
                     finishCancelledSession(sessionId, userId, executionId);
                 } else {
-                    taskTerminalService.finishExecution(sessionId, userId, "COMPLETED", executionId);
+                    finishCompletedSession(sessionId, userId, executionId);
                 }
             } catch (Throwable e) {
                 log.error("[DIAG] Agent execution failed for session {}", sessionId, e);
@@ -772,11 +804,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                     "executionId", executionId)));
                 } catch (Exception ignored) {}
                 try {
-                    taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
+                    finishFailedSession(sessionId, userId, executionId);
                 } catch (Exception ignored) {}
             } finally {
                 releaseSessionExecutionResources(sessionId);
                 runningTasks.remove(sessionId, futureRef[0]);
+                runningExecutionIds.remove(sessionId, executionId);
                 cancelFlags.remove(sessionId);
                 agentLoop.removeCancelFlag(sessionId);
                 activityHeartbeat.clear(sessionId);
@@ -956,6 +989,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         final String sideExecutionId = UUID.randomUUID().toString();
 
         // 7. 异步执行首条消息
+        runningExecutionIds.put(sideSessionId, sideExecutionId);
         Future<?>[] futureRef = new Future<?>[1];
         futureRef[0] = agentExecutor.submit(() -> {
             synchronized (sessionLock(sideSessionId)) {
@@ -963,7 +997,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 sessionService.updateField(sideSessionId, "phase", "RUNNING");
                 // 通过标准事件通知执行状态（sessionId = sideSessionId，前端需订阅方可见）
                 registry.send(userId, WsEvent.of("session_status", sideSessionId,
-                        Map.of("phase", "RUNNING")));
+                        Map.of("phase", "RUNNING", "executionId", sideExecutionId)));
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
                         registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService,
@@ -976,18 +1010,19 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 if (cancelFlag.get()) {
                     taskTerminalService.finishExecution(sideSessionId, userId, "CANCELLED", sideExecutionId);
                 } else {
-                    taskTerminalService.finishExecution(sideSessionId, userId, "COMPLETED", sideExecutionId);
+                    finishCompletedSession(sideSessionId, userId, sideExecutionId);
                 }
             } catch (Exception e) {
                 log.error("Side task execution failed for sideSession {}", sideSessionId, e);
                 try {
-                    taskTerminalService.finishExecution(sideSessionId, userId, "FAILED", sideExecutionId);
+                    finishFailedSession(sideSessionId, userId, sideExecutionId);
                 } catch (Exception ignored) {}
                 registry.send(userId, WsEvent.of("error", sideSessionId,
                         Map.of("message", e.getMessage() != null ? e.getMessage() : "未知错误")));
             } finally {
                 releaseSessionExecutionResources(sideSessionId);
                 runningTasks.remove(sideSessionId, futureRef[0]);
+                runningExecutionIds.remove(sideSessionId, sideExecutionId);
                 cancelFlags.remove(sideSessionId);
                 agentLoop.removeCancelFlag(sideSessionId);
                 activityHeartbeat.clear(sideSessionId);
@@ -1007,10 +1042,22 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         Long sideSessionId = getLong(root, "sideSessionId");
         if (sideSessionId == null) return;
 
+        String executionId = runningExecutionIds.getOrDefault(sideSessionId, "");
         abortRunningExecution(sideSessionId, userId);
+        finishCancelledSession(sideSessionId, userId, executionId);
+        log.info("Cancel requested for side session {} by userId={}", sideSessionId, userId);
     }
 
     private void finishCancelledSession(Long sessionId, Long userId, String executionId) {
+        // If the session already reached a terminal phase (e.g. the execution thread
+        // finished COMPLETED/FAILED, or another cancel already ran), skip cleanup and
+        // the phase transition. Avoids deleting the tail twice / overriding a terminal phase.
+        Session session = sessionService.getSession(sessionId);
+        if (session != null && isTerminalPhase(session.getPhase())) {
+            log.info("Skip CANCELLED transition for already-terminal session {} (phase={})",
+                    sessionId, session.getPhase());
+            return;
+        }
         int deleted = sessionService.cleanupIncompleteTail(sessionId);
         if (deleted > 0) {
             log.info("Session {}: cleaned {} incomplete messages after user cancel", sessionId, deleted);
@@ -1022,15 +1069,10 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
 
-        boolean wasRunning = runningTasks.containsKey(sessionId);
+        String executionId = runningExecutionIds.getOrDefault(sessionId, "");
         abortRunningExecution(sessionId, userId);
-
-        if (!wasRunning) {
-            finishCancelledSession(sessionId, userId, "");
-        } else {
-            registry.send(userId, WsEvent.of("session_status", sessionId, Map.of("phase", "CANCELLING")));
-            log.info("Cancel requested for session {} by userId={}", sessionId, userId);
-        }
+        finishCancelledSession(sessionId, userId, executionId);
+        log.info("Cancel requested for session {} by userId={}", sessionId, userId);
     }
 
     // --- Message Queue handlers ---
