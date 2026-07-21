@@ -249,7 +249,7 @@ watch(() => props.visible, async (val) => {
   }
 
   formRef.value?.clearValidate()
-})
+}, { immediate: true })
 
 async function loadOptions() {
   const { data } = await api.get('/skill-docs')

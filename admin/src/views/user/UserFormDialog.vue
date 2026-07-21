@@ -215,7 +215,7 @@ watch(() => props.visible, async (val) => {
   }
 
   formRef.value?.clearValidate()
-})
+}, { immediate: true })
 
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
