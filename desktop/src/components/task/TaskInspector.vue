@@ -3,8 +3,7 @@
     <template v-if="!panelCollapsed">
     <div class="resize-handle" @mousedown="onResizeStart" @touchstart.prevent="onResizeStart"></div>
 
-    <!-- Tab bar — only when there are 2 tabs -->
-    <div v-if="showFileTreeTab" class="inspector-tabs">
+    <div v-if="showTabBar" class="inspector-tabs">
       <button
         class="inspector-tab"
         :class="{ active: inspectorActiveTab === 'workspace' }"
@@ -13,17 +12,24 @@
         任务
       </button>
       <button
+        v-if="showFileTreeTab"
         class="inspector-tab"
         :class="{ active: inspectorActiveTab === 'filetree' }"
         @click="inspectorActiveTab = 'filetree'"
       >
         文件
       </button>
+      <button
+        v-if="showGitTab"
+        class="inspector-tab"
+        :class="{ active: inspectorActiveTab === 'git' }"
+        @click="inspectorActiveTab = 'git'"
+      >
+        Git
+      </button>
     </div>
 
-    <!-- Tab: 工作区+进度 -->
     <div v-show="inspectorActiveTab === 'workspace'" class="inspector-tab-content">
-      <!-- Task info -->
       <div class="inspector-section task-info-section">
         <div class="task-info-top">
           <div class="task-title-group">
@@ -75,6 +81,21 @@
             </button>
           </span>
         </div>
+        <div v-if="gitSummaryVisible" class="task-workspace-row git-summary-row">
+          <el-icon class="workspace-icon"><Share /></el-icon>
+          <span class="git-summary">
+            <template v-if="gitStatus?.isGit">
+              <span class="git-branch">{{ gitStatus.branch || 'HEAD' }}</span>
+              <span v-if="gitStatus.changedFileCount === 0" class="git-clean">工作区干净</span>
+              <span v-else class="git-stat">
+                <span class="git-add">+{{ gitStatus.insertions }}</span>
+                <span class="git-del">-{{ gitStatus.deletions }}</span>
+              </span>
+            </template>
+            <span v-else-if="gitLoading" class="git-muted">检测 Git…</span>
+            <span v-else-if="gitError" class="git-muted">Git 状态不可用</span>
+          </span>
+        </div>
       </div>
 
       <div class="inspector-section">
@@ -93,7 +114,6 @@
       </div>
     </div>
 
-    <!-- Tab: 文件树 -->
     <div v-if="showFileTreeTab && inspectorActiveTab === 'filetree'" class="inspector-tab-content file-tree-tab">
       <FileTree
         :workspace="workspace || ''"
@@ -104,20 +124,34 @@
       />
     </div>
 
+    <div v-if="showGitTab && inspectorActiveTab === 'git'" class="inspector-tab-content git-tab">
+      <GitChangeList
+        :files="gitFiles"
+        :loading="gitLoading"
+        :error="gitError"
+        @refresh="refreshGit"
+        @open-diff="handleOpenGitDiff"
+      />
+    </div>
+
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { FolderOpened, DocumentCopy, User } from '@element-plus/icons-vue'
+import { FolderOpened, DocumentCopy, User, Share } from '@element-plus/icons-vue'
 import TodoChecklist from './TodoChecklist.vue'
 import SideTaskList from './SideTaskList.vue'
+import GitChangeList from './GitChangeList.vue'
 import FileTree from '../file-browser/FileTree.vue'
 import type { TodoItem } from '../../types/chat'
 import type { SideTaskItem, TaskPhase } from '../../stores/session'
 import type { ContextWindowInfo } from '../../types/chat'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
+import type { WorkspaceGitProvider } from '../../composables/workspace-git-provider'
+import { useGitStatus } from '../../composables/useGitStatus'
+import type { GitChangedFile } from '../../types/git'
 import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
 
 const props = defineProps<{
@@ -130,6 +164,7 @@ const props = defineProps<{
   executionMode?: string
   sessionId?: string
   fileProvider: WorkspaceFileProvider | null
+  gitProvider?: WorkspaceGitProvider | null
   phase: TaskPhase
   panelCollapsed: boolean
   contextWindow?: ContextWindowInfo | null
@@ -143,9 +178,10 @@ const emit = defineEmits<{
   'open-side-task': [payload: { sideSessionId: number; title: string }]
   'edit-title': [payload: { sideSessionId: number; title: string }]
   'delete-side-task': [sideSessionId: number]
+  'open-git-diff': [file: GitChangedFile]
 }>()
 
-const inspectorActiveTab = ref<'workspace' | 'filetree'>('workspace')
+const inspectorActiveTab = ref<'workspace' | 'filetree' | 'git'>('workspace')
 const showFileTreeTab = computed(() => {
   if (props.executionMode === 'CLOUD') {
     return !!props.sessionId
@@ -153,14 +189,55 @@ const showFileTreeTab = computed(() => {
   return !!props.workspace
 })
 
-watch(showFileTreeTab, (visible) => {
-  if (!visible && inspectorActiveTab.value === 'filetree') {
+const gitProviderRef = computed(() => props.gitProvider ?? null)
+const gitEnabled = computed(() => !!props.gitProvider)
+const {
+  loading: gitLoading,
+  error: gitError,
+  status: gitStatus,
+  files: gitFiles,
+  refresh: refreshGit,
+} = useGitStatus(gitProviderRef, { enabled: gitEnabled })
+
+const showGitTab = computed(() => {
+  if (!props.gitProvider) return false
+  if (gitStatus.value?.isGit) return true
+  // Confirmed non-git: never show, even during a refresh
+  if (gitStatus.value && !gitStatus.value.isGit) return false
+  // Only show while the initial probe is in flight (status still unknown)
+  return gitLoading.value
+})
+
+const showTabBar = computed(() => showFileTreeTab.value || showGitTab.value)
+
+const gitSummaryVisible = computed(() => {
+  if (!props.gitProvider) return false
+  if (gitStatus.value?.isGit) return true
+  if (gitLoading.value && gitStatus.value === null) return true
+  return false
+})
+
+watch([showFileTreeTab, showGitTab], () => {
+  if (inspectorActiveTab.value === 'filetree' && !showFileTreeTab.value) {
     inspectorActiveTab.value = 'workspace'
+  }
+  if (inspectorActiveTab.value === 'git' && !showGitTab.value) {
+    inspectorActiveTab.value = 'workspace'
+  }
+})
+
+watch(inspectorActiveTab, (tab) => {
+  if (tab === 'git') {
+    void refreshGit()
   }
 })
 
 function handleOpenFile(payload: { path: string; title: string }) {
   emit('open-file', payload)
+}
+
+function handleOpenGitDiff(file: GitChangedFile) {
+  emit('open-git-diff', file)
 }
 
 function handleOpenSideTask(payload: { sideSessionId: number; title: string }) {
@@ -175,7 +252,6 @@ function handleDeleteSideTask(sideSessionId: number) {
   emit('delete-side-task', sideSessionId)
 }
 
-// --- Title editing ---
 const editing = ref(false)
 const editingTitle = ref('')
 const editInput = ref<HTMLInputElement>()
@@ -202,7 +278,6 @@ function cancelEdit() {
   editing.value = false
 }
 
-// --- Task info logic ---
 const phaseLabel = computed(() => {
   switch (props.phase) {
     case 'RUNNING': return '执行中'
@@ -231,7 +306,6 @@ const workspaceLabel = computed(() => {
   return props.workspace || ''
 })
 
-// Workspace copy
 const workspaceHovered = ref(false)
 
 function copyWorkspace() {
@@ -256,7 +330,6 @@ const contextDisplay = computed(() => {
   return formatTokenCompact(tokens)
 })
 
-// Panel resize
 const panelEl = ref<HTMLElement | null>(null)
 const panelWidth = ref<number | null>(null)
 const MIN_WIDTH = 120
@@ -299,7 +372,6 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
 }
-
 </script>
 
 <style scoped>
@@ -318,7 +390,6 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   display: none;
 }
 
-/* Tab bar */
 .inspector-tabs {
   display: flex;
   border-bottom: 1px solid var(--aw-divider-soft);
@@ -348,15 +419,18 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   border-bottom-color: var(--aw-primary);
 }
 
-/* Tab content */
 .inspector-tab-content {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
 }
 
-.inspector-tab-content.file-tree-tab {
+.inspector-tab-content.file-tree-tab,
+.inspector-tab-content.git-tab {
   padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .inspector-section {
@@ -368,12 +442,10 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   font-size: var(--aw-text-caption);
   font-weight: 600;
   color: var(--aw-ink);
-  letter-spacing: -0.224px;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
-/* Resize handle */
 .resize-handle {
   position: absolute;
   top: 0;
@@ -407,7 +479,6 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   height: 48px;
 }
 
-/* Wider touch target on mobile */
 @media (max-width: 768px) {
   .resize-handle {
     width: 20px;
@@ -425,7 +496,6 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   }
 }
 
-/* Task info */
 .task-info-section {
   border-bottom: 1px solid var(--aw-divider-soft);
   padding-bottom: 12px;
@@ -502,6 +572,35 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   font-family: var(--aw-font-mono);
   font-size: var(--aw-text-caption);
   word-break: break-all;
+}
+
+.git-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--aw-text-caption);
+  line-height: 18px;
+}
+
+.git-branch {
+  font-family: var(--aw-font-mono);
+  color: var(--aw-ink);
+  word-break: break-all;
+}
+
+.git-stat {
+  font-family: var(--aw-font-mono);
+  display: inline-flex;
+  gap: 6px;
+}
+
+.git-add { color: #1a7f37; }
+.git-del { color: #cf222e; }
+.git-clean,
+.git-muted {
+  color: var(--aw-ink-muted-48);
 }
 
 .workspace-copy-btn {
@@ -589,7 +688,6 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   background: rgba(0, 0, 0, 0.04);
 }
 
-/* Scrollbar */
 .inspector-tab-content::-webkit-scrollbar {
   width: 4px;
 }
@@ -603,7 +701,6 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   border-radius: 2px;
 }
 
-/* Dark mode */
 [data-theme="dark"] .task-inspector {
   background: var(--aw-canvas);
   border-left-color: var(--aw-hairline);
@@ -626,5 +723,4 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   color: var(--aw-ink-muted-48);
   background: rgba(255, 255, 255, 0.06);
 }
-
 </style>

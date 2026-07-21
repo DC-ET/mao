@@ -41,6 +41,7 @@ let patchEditor: MonacoEditor.IStandaloneCodeEditor | null = null
 let originalModel: MonacoEditor.ITextModel | null = null
 let modifiedModel: MonacoEditor.ITextModel | null = null
 let patchModel: MonacoEditor.ITextModel | null = null
+let diffUpdateDisposable: { dispose: () => void } | null = null
 
 const mode = computed(() => props.change.diffMode || 'UNSUPPORTED')
 const unavailableText = computed(() => {
@@ -48,12 +49,26 @@ const unavailableText = computed(() => {
 })
 
 function disposeDiffEditor() {
+  diffUpdateDisposable?.dispose()
+  diffUpdateDisposable = null
   diffEditor?.dispose()
   diffEditor = null
   originalModel?.dispose()
   originalModel = null
   modifiedModel?.dispose()
   modifiedModel = null
+}
+
+function revealFirstDiffChange() {
+  if (!diffEditor) return
+  const changes = diffEditor.getLineChanges()
+  if (!changes?.length) return
+  const first = changes[0]
+  if (first.modifiedStartLineNumber > 0) {
+    diffEditor.getModifiedEditor().revealLineInCenter(first.modifiedStartLineNumber)
+  } else if (first.originalStartLineNumber > 0) {
+    diffEditor.getOriginalEditor().revealLineInCenter(first.originalStartLineNumber)
+  }
 }
 
 function disposePatchEditor() {
@@ -100,6 +115,15 @@ async function syncViewer() {
     originalModel = monaco.editor.createModel(props.change.beforeContent || '', language)
     modifiedModel = monaco.editor.createModel(props.change.afterContent || '', language)
     diffEditor.setModel({ original: originalModel, modified: modifiedModel })
+
+    diffUpdateDisposable?.dispose()
+    diffUpdateDisposable = diffEditor.onDidUpdateDiff(() => {
+      revealFirstDiffChange()
+      diffUpdateDisposable?.dispose()
+      diffUpdateDisposable = null
+    })
+    // Diff may already be ready synchronously for small files
+    revealFirstDiffChange()
     return
   }
 

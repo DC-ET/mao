@@ -30,6 +30,7 @@
       :execution-mode="executionMode"
       :session-id="sessionIdForTabs"
       :file-provider="fileProvider"
+      :git-provider="gitProvider"
       :phase="currentPhase"
       :panel-collapsed="rightCollapsed"
       :context-window="contextWindow"
@@ -41,6 +42,7 @@
       @open-side-task="handleOpenSideTask"
       @edit-title="handleEditSideTaskTitle"
       @delete-side-task="handleDeleteSideTask"
+      @open-git-diff="handleOpenGitDiff"
     />
   </div>
 </template>
@@ -56,7 +58,10 @@ import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useTerminal } from '../../composables/useTerminal'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useWorkspaceFileProvider } from '../../composables/workspace-file-provider'
+import { useWorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
+import type { GitChangedFile } from '../../types/git'
+import type { FileChange } from '../../types/chat'
 import { getToken } from '../../utils/auth-storage'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
 import { deriveSessionTitle } from '../../utils/sessionTitle'
@@ -163,7 +168,7 @@ function handleAddFileToChat(filePath: string) {
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTabId, openFileTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, updateSideTaskTab, restoreSideTaskTabs } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, updateSideTaskTab, restoreSideTaskTabs } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
@@ -174,6 +179,7 @@ const sideTasks = computed(() => sessionStore.getSideTasks(activeSessionIdRef.va
 const sessionIdForTabs = computed(() => sessionId.value || sessionIdParam.value || '')
 
 const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef)
+const gitProvider = useWorkspaceGitProvider(executionMode, workspace, activeSessionIdRef)
 
 const sessionTitle = computed(() => {
   const session = sessionStore.activeSession
@@ -229,6 +235,25 @@ onMounted(() => {
 // Open file from TaskInspector's file tree
 function handleOpenFile(payload: { path: string; title: string }) {
   openFileTab(payload.path, payload.title)
+}
+
+async function handleOpenGitDiff(file: GitChangedFile) {
+  const provider = gitProvider.value
+  if (!provider) return
+  const diff = await provider.getFileDiff(file.path)
+  const change: FileChange = {
+    path: diff.path,
+    type: diff.changeType,
+    linesAdded: file.insertions ?? 0,
+    linesDeleted: file.deletions ?? 0,
+    diffMode: diff.binary || diff.unavailableReason ? 'UNSUPPORTED' : 'SNAPSHOT',
+    beforeContent: diff.beforeContent,
+    afterContent: diff.afterContent,
+    diffUnavailableReason: diff.unavailableReason
+      || (diff.truncated ? '内容已截断，仅显示部分文本' : undefined),
+  }
+  const fileName = diff.path.split(/[/\\]/).pop() || diff.path
+  openDiffTab(change, `${fileName} (Git)`, { source: 'git' })
 }
 
 function handleTodoUpdate() {

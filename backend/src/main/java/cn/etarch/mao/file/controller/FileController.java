@@ -6,6 +6,7 @@ import cn.etarch.mao.common.result.Result;
 import cn.etarch.mao.file.entity.FileEntity;
 import cn.etarch.mao.file.service.FileService;
 import cn.etarch.mao.file.service.WorkspaceBrowseService;
+import cn.etarch.mao.file.service.WorkspaceGitService;
 import cn.etarch.mao.harness.safety.PathSandbox;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.service.SessionService;
@@ -36,6 +37,7 @@ public class FileController {
     private final FileService fileService;
     private final SessionService sessionService;
     private final WorkspaceBrowseService workspaceBrowseService;
+    private final WorkspaceGitService workspaceGitService;
     private final PathSandbox pathSandbox;
     private final UploadProperties uploadProperties;
 
@@ -117,6 +119,23 @@ public class FileController {
         Session session = requireOwnedSession(userId, sessionId);
         return Result.ok(workspaceBrowseService.readFile(
                 session.getWorkspace(), path, offset != null ? offset : 0, limit != null ? limit : 5000));
+    }
+
+    @GetMapping("/workspace-git-status")
+    public Result<WorkspaceGitService.GitStatusDTO> workspaceGitStatus(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam Long sessionId) {
+        Session session = requireOwnedSession(userId, sessionId);
+        return Result.ok(workspaceGitService.getStatus(session.getWorkspace()));
+    }
+
+    @GetMapping("/workspace-git-diff")
+    public Result<WorkspaceGitService.GitFileDiffDTO> workspaceGitDiff(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam Long sessionId,
+            @RequestParam String path) {
+        Session session = requireOwnedSession(userId, sessionId);
+        return Result.ok(workspaceGitService.getFileDiff(session.getWorkspace(), path));
     }
 
     @GetMapping("/project-list")

@@ -115,6 +115,33 @@ interface ElectronAPI {
     shell: string
     osVersion: string
   }>
+  gitStatus(workspace?: string): Promise<{
+    isGit: boolean
+    repoRoot?: string
+    branch?: string
+    insertions?: number
+    deletions?: number
+    changedFileCount?: number
+    files?: Array<{
+      path: string
+      oldPath?: string
+      changeType: string
+      untracked?: boolean
+      insertions?: number
+      deletions?: number
+      binary?: boolean
+    }>
+    error?: string
+  }>
+  gitFileDiff(workspace: string | undefined, path: string): Promise<{
+    path: string
+    changeType: string
+    beforeContent: string
+    afterContent: string
+    truncated?: boolean
+    binary?: boolean
+    unavailableReason?: string
+  }>
   checkForUpdate(): Promise<{ skipped?: boolean; reason?: string; updateInfo?: AppUpdateInfo | null }>
   installUpdate(): Promise<{ success: boolean; error?: string }>
   onUpdateChecking(callback: (data: { feedUrl?: string }) => void): RemoveListener

@@ -838,6 +838,8 @@ function isGitWorkspace(workspace) {
   return false
 }
 
+const { getGitStatus, getGitFileDiff } = require('./gitStatus.cjs')
+
 function loadMainContent() {
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5201')
@@ -1004,6 +1006,28 @@ ipcMain.handle('get-environment-info', (event, { workspace } = {}) => {
     platform: process.platform,
     shell: detectShell(),
     osVersion: buildOsVersion()
+  }
+})
+
+ipcMain.handle('git-status', async (event, { workspace } = {}) => {
+  try {
+    return await getGitStatus(workspace || currentWorkspace)
+  } catch (e) {
+    return { isGit: false, error: e.message || '读取 Git 状态失败' }
+  }
+})
+
+ipcMain.handle('git-file-diff', async (event, { workspace, path: filePath } = {}) => {
+  try {
+    return await getGitFileDiff(workspace || currentWorkspace, filePath)
+  } catch (e) {
+    return {
+      path: filePath || '',
+      changeType: 'MODIFIED',
+      beforeContent: '',
+      afterContent: '',
+      unavailableReason: e.message || '读取 Git diff 失败',
+    }
   }
 })
 

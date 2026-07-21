@@ -3,7 +3,8 @@
     <div
       class="node-row"
       :class="{ 'is-directory': node.isDirectory, 'is-symlink': node.isSymlink, 'is-expanded': node.expanded }"
-      :style="{ paddingLeft: depth * 16 + 'px' }"
+      :style="{ paddingLeft: depth * 14 + 8 + 'px' }"
+      :title="node.path || node.name"
       @click="handleClick"
       @contextmenu.prevent.stop="$emit('node-contextmenu', { node, x: $event.clientX, y: $event.clientY })"
     >
@@ -93,12 +94,13 @@ function handleClick() {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  padding: 3px 10px 3px 0;
   cursor: pointer;
   user-select: none;
   border-radius: var(--aw-radius-xs);
   transition: background 0.1s;
   min-height: 26px;
+  white-space: nowrap;
 }
 
 .node-row:hover {
@@ -137,10 +139,7 @@ function handleClick() {
   font-size: var(--aw-text-caption);
   color: var(--aw-ink);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 .node-name.large-file {
@@ -163,6 +162,7 @@ function handleClick() {
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
 }
 
 .retry-btn {
@@ -173,6 +173,7 @@ function handleClick() {
   border-radius: var(--aw-radius-xs);
   padding: 1px 8px;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .retry-btn:hover {

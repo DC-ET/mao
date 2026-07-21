@@ -17,16 +17,18 @@
         <div v-if="filteredTreeData.length === 0 && !loading" class="file-tree-empty">
           <p>{{ filterText ? '无匹配文件' : '空目录' }}</p>
         </div>
-        <FileTreeNode
-          v-for="node in filteredTreeData"
-          :key="node.path"
-          :node="node"
-          :depth="0"
-          @open-file="handleOpenFile"
-          @toggle-dir="handleToggleDir"
-          @retry="handleRetry"
-          @node-contextmenu="handleNodeContextmenu"
-        />
+        <div v-else class="file-tree-inner">
+          <FileTreeNode
+            v-for="node in filteredTreeData"
+            :key="node.path"
+            :node="node"
+            :depth="0"
+            @open-file="handleOpenFile"
+            @toggle-dir="handleToggleDir"
+            @retry="handleRetry"
+            @node-contextmenu="handleNodeContextmenu"
+          />
+        </div>
       </div>
     </template>
 
@@ -227,7 +229,14 @@ function handleRefresh() {
 
 .file-tree-content {
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
+  min-height: 0;
+}
+
+.file-tree-inner {
+  width: max-content;
+  min-width: 100%;
+  padding: 2px 0;
 }
 
 .file-tree-empty {
@@ -245,6 +254,7 @@ function handleRefresh() {
 
 .file-tree-content::-webkit-scrollbar {
   width: 4px;
+  height: 4px;
 }
 
 .file-tree-content::-webkit-scrollbar-track {

@@ -71,19 +71,22 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     notifyTabsChanged()
   }
 
-  function openDiffTab(change: FileChange, title?: string) {
+  function openDiffTab(change: FileChange, title?: string, opts?: { source?: 'tool' | 'git' }) {
     const state = getSessionState()
     const filePath = change.path
-    const existing = state.tabs.find(t => t.type === 'diff' && t.filePath === filePath)
+    const source = opts?.source || 'tool'
+    const idPrefix = source === 'git' ? 'git-diff:' : 'diff:'
+    const existing = state.tabs.find(t => t.id === idPrefix + filePath || (t.type === 'diff' && t.filePath === filePath && t.id.startsWith(idPrefix)))
     if (existing) {
       existing.fileChange = { ...change }
+      existing.title = title || existing.title
       state.activeTabId = existing.id
       notifyTabsChanged()
       return
     }
     const fileName = filePath.split(/[/\\]/).pop() || filePath
-    const tabTitle = title || `${fileName} (变更)`
-    const id = 'diff:' + filePath
+    const tabTitle = title || (source === 'git' ? `${fileName} (Git)` : `${fileName} (变更)`)
+    const id = idPrefix + filePath
     const newTab: Tab = { id, type: 'diff', title: tabTitle, filePath, fileChange: { ...change } }
     state.tabs.push(newTab)
     state.activeTabId = id
