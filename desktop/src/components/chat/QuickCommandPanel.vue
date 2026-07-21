@@ -75,13 +75,21 @@ const selectedIndex = ref(0)
 const filteredSkills = computed(() => {
   if (!props.filter) return props.skills
   const q = props.filter.toLowerCase()
-  return props.skills.filter(s => s.name.toLowerCase().includes(q))
+  return props.skills.filter(s => {
+    const nameMatch = s.name.toLowerCase().includes(q)
+    const descMatch = s.description && s.description.toLowerCase().includes(q)
+    return nameMatch || descMatch
+  })
 })
 
 const filteredCommands = computed(() => {
   if (!props.filter) return props.commands
   const q = props.filter.toLowerCase()
-  return props.commands.filter(c => c.name.toLowerCase().includes(q))
+  return props.commands.filter(c => {
+    const nameMatch = c.name.toLowerCase().includes(q)
+    const descMatch = c.description && c.description.toLowerCase().includes(q)
+    return nameMatch || descMatch
+  })
 })
 
 const filteredItems = computed(() => [...filteredSkills.value, ...filteredCommands.value])

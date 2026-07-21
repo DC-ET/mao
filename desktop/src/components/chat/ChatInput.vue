@@ -285,6 +285,8 @@ const editorContent = ref('')
 // Quick command state
 const quickCommandPanelRef = ref<InstanceType<typeof QuickCommandPanel>>()
 const quickCommands = ref<QuickCommandsData>({ skills: [], commands: [] })
+// 快捷指令数据是否已加载过（无论结果是否为空），用于避免自动补全触发重复请求
+const commandsLoaded = ref(false)
 // LOCAL 模式下，桌面端本地未上传的技能（~/.agents/skills）也可直接用于快捷指令面板
 const localSkillItems = ref<QuickCommand[]>([])
 const panelSkills = computed<QuickCommand[]>(() => {
@@ -295,6 +297,7 @@ const panelSkills = computed<QuickCommand[]>(() => {
 const panelVisible = ref(false)
 const panelFilter = ref('')
 const slashRange = ref<{ from: number; to: number } | null>(null)
+const autoComplete = ref(false)
 
 // File reference state
 const fileReferencePanelRef = ref<InstanceType<typeof FileReferencePanel>>()
@@ -387,6 +390,9 @@ async function ensureCommandsLoaded() {
     quickCommands.value = data || { skills: [], commands: [] }
   } catch {
     // Error handled by interceptor
+  } finally {
+    // 无论成功或失败都标记已加载，避免 detectAutoComplete 在失败时无限重试
+    commandsLoaded.value = true
   }
   await ensureLocalSkillsLoaded()
 }
@@ -442,6 +448,7 @@ function closePanel() {
   panelVisible.value = false
   panelFilter.value = ''
   slashRange.value = null
+  autoComplete.value = false
 }
 
 // ===== File reference: select =====
@@ -679,6 +686,7 @@ const editor = useEditor({
     editorContent.value = ed.getText()
     detectSlashTrigger()
     detectAtTrigger()
+    detectAutoComplete()
   },
 })
 
@@ -716,6 +724,66 @@ function detectSlashTrigger() {
   const triggerDocPos = from - (textBefore.length - lastTriggerIdx)
   slashRange.value = { from: triggerDocPos, to: from }
   panelFilter.value = afterTrigger
+  if (!panelVisible.value) {
+    ensureCommandsLoaded()
+    panelVisible.value = true
+  }
+}
+
+// ===== Auto-complete trigger detection =====
+
+function detectAutoComplete() {
+  if (!editor.value) return
+  // 如果面板已经打开但不是由自动补全触发的，不干扰
+  if (panelVisible.value && !autoComplete.value) return
+  if (filePanelVisible.value) return
+  
+  // 如果指令数据尚未加载过，先加载数据（用标志位判断，避免数据为空时重复请求）
+  if (!commandsLoaded.value) {
+    ensureCommandsLoaded().then(() => {
+      // 数据加载完成后重新检测
+      detectAutoComplete()
+    })
+    return
+  }
+  
+  const { state } = editor.value.view
+  const { from } = state.selection
+  const textBefore = state.doc.textBetween(Math.max(0, from - 50), from, '\n', '\n')
+  
+  // 获取最后输入的内容（取最后20个字符，避免匹配太长的文本）
+  const recentText = textBefore.slice(-20)
+  
+  // 如果文本长度不足，关闭自动补全面板
+  if (recentText.length < 2) {
+    if (panelVisible.value && autoComplete.value) closePanel()
+    return
+  }
+  
+  // 检查是否与任何快捷指令匹配（名称或描述）
+  let matched: any[] = []
+  try {
+    const allCommands = [...panelSkills.value, ...quickCommands.value.commands]
+    matched = allCommands.filter(cmd => {
+      const nameMatch = cmd.name.toLowerCase().includes(recentText.toLowerCase())
+      const descMatch = cmd.description && cmd.description.toLowerCase().includes(recentText.toLowerCase())
+      return nameMatch || descMatch
+    })
+  } catch (error) {
+    return
+  }
+  
+  // 如果没有匹配，关闭自动补全面板
+  if (matched.length === 0) {
+    if (panelVisible.value && autoComplete.value) closePanel()
+    return
+  }
+  
+  // 设置面板：使用最近文本的范围
+  const matchStart = from - recentText.length
+  slashRange.value = { from: matchStart, to: from }
+  panelFilter.value = recentText
+  autoComplete.value = true
   if (!panelVisible.value) {
     ensureCommandsLoaded()
     panelVisible.value = true
