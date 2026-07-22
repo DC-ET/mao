@@ -96,7 +96,7 @@
       :key="msg.id"
       :message="msg"
       :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
-      :show-copy="false"
+      :show-copy="msg.role === 'user'"
       :is-last="idx === messages.length - 1"
       :can-edit="canEditMessage?.(msg) ?? false"
       :is-editing="editingMessageId === msg.id"
