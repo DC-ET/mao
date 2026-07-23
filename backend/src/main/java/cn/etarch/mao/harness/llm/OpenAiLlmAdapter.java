@@ -3,6 +3,7 @@ package cn.etarch.mao.harness.llm;
 import cn.etarch.mao.config.LlmRetryConfig;
 import cn.etarch.mao.harness.core.MessageHistoryNormalizer;
 import cn.etarch.mao.harness.tool.ImageFileSupport;
+import cn.etarch.mao.harness.tool.PromptImageResizer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -372,8 +373,8 @@ public class OpenAiLlmAdapter implements LlmAdapter {
     }
 
     /**
-     * Convert image_url content parts from HTTP URLs to base64 data URIs.
-     * Skips URLs that are already base64 data URIs (starting with "data:").
+     * Convert image_url content parts to resized base64 data URIs.
+     * HTTP(S) URLs are downloaded; existing data: URIs are decoded and resized if needed.
      */
     private void convertImageUrlsToBase64(ChatRequest.Message msg) {
         if (!(msg.getContent() instanceof List<?> list)) {
@@ -381,17 +382,54 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         }
         for (Object part : list) {
             String url = extractImageUrl(part);
-            if (url == null || url.startsWith("data:")) {
+            if (url == null || url.isBlank()) {
                 continue;
             }
             try {
-                String base64Uri = downloadAndEncode(url);
-                setImageUrl(part, base64Uri);
-                log.debug("Converted image URL to base64: {} -> {} chars", url, base64Uri.length());
+                String base64Uri;
+                if (url.startsWith("data:")) {
+                    base64Uri = resizeDataUri(url);
+                } else {
+                    base64Uri = downloadAndEncode(url);
+                }
+                if (base64Uri != null) {
+                    setImageUrl(part, base64Uri);
+                    if (!base64Uri.equals(url)) {
+                        log.debug("Prepared image for prompt: {} -> {} chars",
+                                url.startsWith("data:") ? "data-uri" : url, base64Uri.length());
+                    }
+                }
             } catch (Exception e) {
-                log.warn("Failed to convert image URL to base64, keeping original URL: {}", url, e);
+                log.warn("Failed to prepare image for prompt, keeping original URL: {}",
+                        url.startsWith("data:") ? "data-uri" : url, e);
             }
         }
+    }
+
+    /**
+     * Decode a data URI, apply prompt resize, and re-encode.
+     */
+    private String resizeDataUri(String dataUri) throws IOException {
+        int comma = dataUri.indexOf(',');
+        if (comma < 0) {
+            throw new IOException("Invalid data URI");
+        }
+        String meta = dataUri.substring(5, comma); // after "data:"
+        String payload = dataUri.substring(comma + 1);
+        String mimeHint = null;
+        int semi = meta.indexOf(';');
+        if (semi > 0) {
+            mimeHint = meta.substring(0, semi);
+        } else if (!meta.isBlank() && !meta.contains("base64")) {
+            mimeHint = meta;
+        }
+        if (!meta.contains("base64")) {
+            throw new IOException("Only base64 data URIs are supported");
+        }
+        byte[] bytes = Base64.getDecoder().decode(payload);
+        return PromptImageResizer.tryResizeForPrompt(bytes, mimeHint)
+                .map(PromptImageResizer.Result::toDataUri)
+                .orElse(dataUri);
     }
 
     private String extractImageUrl(Object part) {
@@ -493,7 +531,7 @@ public class OpenAiLlmAdapter implements LlmAdapter {
     }
 
     /**
-     * Download an image from URL and encode it as a base64 data URI.
+     * Download an image from URL, resize for prompt, and encode as a base64 data URI.
      * Resolves MIME from magic bytes when the server returns application/octet-stream
      * or another non-image Content-Type (common for extensionless OSS objects).
      */
@@ -519,8 +557,10 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             if (declaredMime != null && !ImageFileSupport.isImageMime(declaredMime)) {
                 log.info("Corrected image MIME for {}: {} -> {}", imageUrl, declaredMime, mimeType);
             }
-            String encoded = Base64.getEncoder().encodeToString(bytes);
-            return "data:" + mimeType + ";base64," + encoded;
+            return PromptImageResizer.tryResizeForPrompt(bytes, mimeType)
+                    .map(PromptImageResizer.Result::toDataUri)
+                    .orElseGet(() -> "data:" + mimeType + ";base64,"
+                            + Base64.getEncoder().encodeToString(bytes));
         }
     }
 }

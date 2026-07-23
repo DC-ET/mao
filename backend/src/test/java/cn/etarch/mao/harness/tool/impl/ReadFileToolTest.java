@@ -87,6 +87,20 @@ class ReadFileToolTest {
     }
 
     @Test
+    void resizesLargePngForPromptBudget() throws Exception {
+        writePng(tempDir.resolve("huge.png"), 2048, 2048);
+        ReadFileTool tool = new ReadFileTool(objectMapper, new PathSandbox(tempDir.toString()));
+
+        JsonNode result = execute(tool, Map.of("path", "huge.png"));
+
+        assertThat(result.get("media_type").asText()).isEqualTo("image");
+        assertThat(result.get("width").asInt()).isEqualTo(1600);
+        assertThat(result.get("height").asInt()).isEqualTo(1600);
+        assertThat(result.get("content").asText()).contains("2048×2048→1600×1600");
+        assertThat(result.get("data_uri").asText()).startsWith("data:image/png;base64,");
+    }
+
+    @Test
     void rejectsFakePngExtensionWithInvalidContent() throws Exception {
         Files.writeString(tempDir.resolve("fake.png"), "not an image");
         ReadFileTool tool = new ReadFileTool(objectMapper, new PathSandbox(tempDir.toString()));

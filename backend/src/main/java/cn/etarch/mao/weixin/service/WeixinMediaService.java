@@ -1,6 +1,7 @@
 package cn.etarch.mao.weixin.service;
 
 import cn.etarch.mao.harness.tool.ImageFileSupport;
+import cn.etarch.mao.harness.tool.PromptImageResizer;
 import cn.etarch.mao.weixin.config.WeixinBotConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
@@ -86,14 +87,18 @@ public class WeixinMediaService {
             }
 
             String mime = ImageFileSupport.detectMimeFromBytes(plaintext).orElse("image/jpeg");
-            String ext = extensionForMime(mime);
+            PromptImageResizer.Result resized = PromptImageResizer.tryResizeForPrompt(plaintext, mime)
+                    .orElse(null);
+            byte[] outBytes = resized != null ? resized.bytes() : plaintext;
+            String outMime = resized != null ? resized.mime() : mime;
+            String ext = extensionForMime(outMime);
             Path dir = Path.of(System.getProperty("java.io.tmpdir"), "weixin-media");
             Files.createDirectories(dir);
             Path path = dir.resolve(UUID.randomUUID() + ext);
-            Files.write(path, plaintext);
+            Files.write(path, outBytes);
 
-            String dataUri = "data:" + mime + ";base64," + Base64.getEncoder().encodeToString(plaintext);
-            return Optional.of(new DownloadedMedia(path, mime, dataUri));
+            String dataUri = "data:" + outMime + ";base64," + Base64.getEncoder().encodeToString(outBytes);
+            return Optional.of(new DownloadedMedia(path, outMime, dataUri));
         } catch (Exception e) {
             log.error("下载或解密微信图片失败", e);
             return Optional.empty();

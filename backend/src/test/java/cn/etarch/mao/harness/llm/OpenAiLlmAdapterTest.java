@@ -7,6 +7,12 @@ import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.Test;
 
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -218,6 +224,78 @@ class OpenAiLlmAdapterTest {
             assertThat(body).contains("\"type\":\"image_url\"");
             assertThat(body).contains("data:image/png;base64,abc");
         }
+    }
+
+    @Test
+    void chatResizesDownloadedLargeImageForPrompt() throws Exception {
+        byte[] largePng = writePng(2048, 2048);
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setResponseCode(200).setHeader("Content-Type", "image/png")
+                    .setBody(new okio.Buffer().write(largePng)));
+            server.enqueue(jsonResponse("{\"id\":\"ok\",\"choices\":[]}"));
+            server.start();
+
+            String imageUrl = server.url("/huge.png").toString();
+            ChatRequest request = ChatRequest.builder()
+                    .messages(List.of(ChatRequest.Message.builder()
+                            .role("user")
+                            .content(List.of(ChatRequest.ContentPart.builder()
+                                    .type("image_url")
+                                    .imageUrl(ChatRequest.ImageUrl.builder().url(imageUrl).build())
+                                    .build()))
+                            .build()))
+                    .build();
+
+            assertThat(adapter(0, 0).chat(request, visionConfig(server)).getId()).isEqualTo("ok");
+            String dataUri = ((ChatRequest.ContentPart) ((List<?>) request.getMessages().get(0).getContent()).get(0))
+                    .getImageUrl().getUrl();
+            assertThat(dataUri).startsWith("data:image/png;base64,");
+            byte[] decoded = java.util.Base64.getDecoder().decode(dataUri.substring(dataUri.indexOf(',') + 1));
+            BufferedImage image = ImageIO.read(new ByteArrayInputStream(decoded));
+            assertThat(image.getWidth()).isEqualTo(1600);
+            assertThat(image.getHeight()).isEqualTo(1600);
+            assertThat(decoded.length).isLessThan(largePng.length);
+        }
+    }
+
+    @Test
+    void chatResizesExistingDataUriWhenOverBudget() throws Exception {
+        byte[] largePng = writePng(2048, 2048);
+        String originalUri = "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(largePng);
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(jsonResponse("{\"id\":\"ok\",\"choices\":[]}"));
+            server.start();
+
+            ChatRequest request = ChatRequest.builder()
+                    .messages(List.of(ChatRequest.Message.builder()
+                            .role("user")
+                            .content(List.of(ChatRequest.ContentPart.builder()
+                                    .type("image_url")
+                                    .imageUrl(ChatRequest.ImageUrl.builder().url(originalUri).build())
+                                    .build()))
+                            .build()))
+                    .build();
+
+            adapter(0, 0).chat(request, visionConfig(server));
+            String dataUri = ((ChatRequest.ContentPart) ((List<?>) request.getMessages().get(0).getContent()).get(0))
+                    .getImageUrl().getUrl();
+            assertThat(dataUri).isNotEqualTo(originalUri);
+            byte[] decoded = java.util.Base64.getDecoder().decode(dataUri.substring(dataUri.indexOf(',') + 1));
+            BufferedImage image = ImageIO.read(new ByteArrayInputStream(decoded));
+            assertThat(image.getWidth()).isEqualTo(1600);
+            assertThat(image.getHeight()).isEqualTo(1600);
+        }
+    }
+
+    private static byte[] writePng(int width, int height) throws Exception {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        g.setColor(Color.RED);
+        g.fillRect(0, 0, width, height);
+        g.dispose();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", out);
+        return out.toByteArray();
     }
 
     private OpenAiLlmAdapter adapter(int maxRetries, int retryDelaySeconds) {

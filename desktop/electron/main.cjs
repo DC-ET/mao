@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeImage } = require('electron')
 const { join } = require('path')
 const { exec, spawn } = require('child_process')
 const fs = require('fs')
@@ -6,6 +6,7 @@ const path = require('path')
 const os = require('os')
 const { autoUpdater } = require('electron-updater')
 const { TerminalManager } = require('./terminalManager.cjs')
+const promptImageResizer = require('./promptImageResizer.cjs')
 
 
 app.setName('Mao')
@@ -1606,14 +1607,48 @@ function readLocalImage(resolvedPath, filePath) {
       total_lines: 0
     }
   }
-  const dataUri = `data:${mime};base64,${buffer.toString('base64')}`
+
+  let outBuffer = buffer
+  let outMime = mime
+  let width = null
+  let height = null
+  let dimNote = ''
+
+  const resized = promptImageResizer.resizeForPrompt(buffer, mime, nativeImage)
+  if (resized) {
+    outBuffer = resized.buffer
+    outMime = resized.mime
+    width = resized.width
+    height = resized.height
+    if (resized.resized) {
+      try {
+        const orig = nativeImage.createFromBuffer(buffer)
+        if (!orig.isEmpty()) {
+          const { width: ow, height: oh } = orig.getSize()
+          if (ow && oh && (ow !== width || oh !== height)) {
+            dimNote = `, ${ow}×${oh}→${width}×${height}`
+          }
+        }
+      } catch { /* ignore */ }
+      if (!dimNote && width && height) {
+        dimNote = `, ${width}×${height}`
+      }
+    } else if (width && height) {
+      dimNote = `, ${width}×${height}`
+    }
+  }
+
+  const outSize = outBuffer.length
+  const dataUri = `data:${outMime};base64,${outBuffer.toString('base64')}`
   return {
-    content: `图片读取成功：${filePath} (${mime}, ${formatImageSize(sizeBytes)})`,
+    content: `图片读取成功：${filePath} (${outMime}, ${formatImageSize(outSize)}${dimNote})`,
     total_lines: 0,
     media_type: 'image',
-    mime,
+    mime: outMime,
     path: filePath,
-    size_bytes: sizeBytes,
+    size_bytes: outSize,
+    ...(width != null ? { width } : {}),
+    ...(height != null ? { height } : {}),
     data_uri: dataUri
   }
 }

@@ -2,6 +2,7 @@ package cn.etarch.mao.harness.tool.impl;
 
 import cn.etarch.mao.harness.safety.PathSandbox;
 import cn.etarch.mao.harness.tool.ImageFileSupport;
+import cn.etarch.mao.harness.tool.PromptImageResizer;
 import cn.etarch.mao.harness.tool.Tool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,7 +14,6 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -105,7 +105,7 @@ public class ReadFileTool implements Tool {
 
             Optional<String> imageMime = ImageFileSupport.mimeFromPath(path);
             if (imageMime.isPresent()) {
-                return readImage(filePath, path, imageMime.get());
+                return readImage(filePath, path);
             }
 
             int offset = args.has("offset") ? Math.max(0, args.get("offset").asInt()) : 0;
@@ -142,7 +142,7 @@ public class ReadFileTool implements Tool {
         }
     }
 
-    private String readImage(Path filePath, String path, String expectedMime) throws Exception {
+    private String readImage(Path filePath, String path) throws Exception {
         long sizeBytes = Files.size(filePath);
         if (sizeBytes > ImageFileSupport.MAX_IMAGE_BYTES) {
             return objectMapper.writeValueAsString(Map.of(
@@ -162,28 +162,47 @@ public class ReadFileTool implements Tool {
         }
 
         String mime = detectedMime.get();
-        String encoded = Base64.getEncoder().encodeToString(bytes);
-        String dataUri = "data:" + mime + ";base64," + encoded;
-
-        Integer width = null;
-        Integer height = null;
+        Integer origWidth = null;
+        Integer origHeight = null;
         try {
             BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
             if (image != null) {
-                width = image.getWidth();
-                height = image.getHeight();
+                origWidth = image.getWidth();
+                origHeight = image.getHeight();
             }
         } catch (Exception e) {
             log.debug("Failed to read image dimensions for {}", path, e);
         }
+
+        PromptImageResizer.Result resized;
+        try {
+            resized = PromptImageResizer.resizeForPrompt(bytes, mime);
+        } catch (Exception e) {
+            log.warn("Prompt resize failed for {}: {}", path, e.getMessage());
+            return objectMapper.writeValueAsString(Map.of(
+                    "content", "错误：不支持的图片格式或文件内容无效：" + path,
+                    "total_lines", 0
+            ));
+        }
+
+        mime = resized.mime();
+        bytes = resized.bytes();
+        long outSize = bytes.length;
+        int width = resized.width();
+        int height = resized.height();
+        String dataUri = resized.toDataUri();
 
         StringBuilder summary = new StringBuilder("图片读取成功：")
                 .append(path)
                 .append(" (")
                 .append(mime)
                 .append(", ")
-                .append(ImageFileSupport.formatSize(sizeBytes));
-        if (width != null && height != null) {
+                .append(ImageFileSupport.formatSize(outSize));
+        if (resized.resized() && origWidth != null && origHeight != null
+                && (origWidth != width || origHeight != height)) {
+            summary.append(", ").append(origWidth).append("×").append(origHeight)
+                    .append("→").append(width).append("×").append(height);
+        } else {
             summary.append(", ").append(width).append("×").append(height);
         }
         summary.append(")");
@@ -194,13 +213,9 @@ public class ReadFileTool implements Tool {
         result.put("media_type", "image");
         result.put("mime", mime);
         result.put("path", path);
-        result.put("size_bytes", sizeBytes);
-        if (width != null) {
-            result.put("width", width);
-        }
-        if (height != null) {
-            result.put("height", height);
-        }
+        result.put("size_bytes", outSize);
+        result.put("width", width);
+        result.put("height", height);
         result.put("data_uri", dataUri);
         return objectMapper.writeValueAsString(result);
     }
