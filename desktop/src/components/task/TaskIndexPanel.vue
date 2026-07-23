@@ -37,7 +37,6 @@
           >
             <div class="group-header" @click="toggleGroup(group.key)">
               <div class="group-header-left">
-                <span class="drag-handle" title="拖拽排序">⠿</span>
                 <el-icon :size="13" class="group-icon" :class="group.key.startsWith('CLOUD:') ? 'icon-cloud' : 'icon-folder'">
                   <PartlyCloudy v-if="group.key.startsWith('CLOUD:') && !isGroupCollapsed(group.key)" />
                   <Cloudy v-else-if="group.key.startsWith('CLOUD:')" />
@@ -87,7 +86,7 @@
                   class="session-question-dot"
                   title="有待回答的问题"
                 ></span>
-                <span v-else class="session-phase-dot" :class="phaseClass(session.phase)"></span>
+                <span v-else class="session-phase-dot" :class="effectivePhaseClass(session)"></span>
                 <input
                   v-if="editingSessionId === session.id"
                   v-model="editingTitle"
@@ -99,7 +98,7 @@
                 <span v-else class="session-title">{{ session.summary || session.title || '新任务' }}</span>
               </div>
               <div class="session-item-meta">
-                <span v-if="session.running" class="session-spinner"></span>
+                <span v-if="session.running || hasActiveSideTask(session.id)" class="session-spinner"></span>
                 <span v-if="session.unread && String(session.id) !== String(activeSessionId)" class="session-unread-dot"></span>
                 <span class="session-elapsed">{{ formatElapsed(session) }}</span>
               </div>
@@ -353,6 +352,12 @@ function formatGroupLabel(key: string): string {
   return key
 }
 
+const SIDE_ACTIVE_PHASES = new Set<TaskPhase>(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
+
+function hasActiveSideTask(sessionId: string): boolean {
+  return sessionStore.getSideTasks(String(sessionId)).some(t => SIDE_ACTIVE_PHASES.has(t.phase))
+}
+
 function phaseClass(phase: TaskPhase) {
   switch (phase) {
     case 'RUNNING': return 'running'
@@ -361,6 +366,14 @@ function phaseClass(phase: TaskPhase) {
     case 'FAILED': return 'failed'
     default: return 'idle'
   }
+}
+
+function effectivePhaseClass(session: Session): string {
+  if (session.running) return phaseClass(session.phase)
+  const sides = sessionStore.getSideTasks(String(session.id))
+  if (sides.some(t => t.phase === 'WAITING_APPROVAL')) return 'waiting'
+  if (sides.some(t => SIDE_ACTIVE_PHASES.has(t.phase))) return 'running'
+  return phaseClass(session.phase)
 }
 
 function formatElapsed(session: Session) {
@@ -504,7 +517,11 @@ function toggleGroup(key: string) {
 }
 
 function hasPendingApproval(sessionId: string): boolean {
-  return (sessionStore.sessionPendingApprovals?.get(sessionId) ?? 0) > 0
+  const sid = String(sessionId)
+  if ((sessionStore.sessionPendingApprovals?.get(sid) ?? 0) > 0) return true
+  return sessionStore.getSideTasks(sid).some(
+    t => (sessionStore.sessionPendingApprovals?.get(String(t.id)) ?? 0) > 0
+  )
 }
 
 function hasPendingQuestion(sessionId: string): boolean {
@@ -730,25 +747,6 @@ function onGroupDragEnd() {
 
 .group-add-btn:hover {
   background: var(--aw-surface-pearl);
-  color: var(--aw-primary);
-}
-
-.drag-handle {
-  cursor: grab;
-  opacity: 0;
-  transition: opacity 0.15s;
-  font-size: 12px;
-  line-height: 1;
-  letter-spacing: 1px;
-  color: var(--aw-ink-muted-48);
-}
-
-.group-header:hover .drag-handle {
-  opacity: 0.6;
-}
-
-.drag-handle:hover {
-  opacity: 1 !important;
   color: var(--aw-primary);
 }
 
@@ -1175,10 +1173,6 @@ function onGroupDragEnd() {
 
 [data-theme="dark"] .group-icon.icon-folder {
   color: #fbbf24;
-}
-
-[data-theme="dark"] .drag-handle {
-  color: var(--aw-ink-muted-48);
 }
 
 [data-theme="dark"] .session-group.drag-over::before {
