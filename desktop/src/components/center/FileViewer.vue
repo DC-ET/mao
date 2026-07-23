@@ -28,7 +28,7 @@
         <button :class="['mode-btn', { active: viewMode === 'rendered' }]" @click="viewMode = 'rendered'">预览</button>
         <button :class="['mode-btn', { active: viewMode === 'source' }]" @click="viewMode = 'source'">源码</button>
       </div>
-      <button class="refresh-btn" @click="loadFile" :disabled="state === 'loading'">
+      <button class="refresh-btn" @click="loadFile">
         <el-icon :size="14"><Refresh /></el-icon>
       </button>
       <div class="file-editor-area">
