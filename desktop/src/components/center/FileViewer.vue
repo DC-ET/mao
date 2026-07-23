@@ -28,6 +28,9 @@
         <button :class="['mode-btn', { active: viewMode === 'rendered' }]" @click="viewMode = 'rendered'">预览</button>
         <button :class="['mode-btn', { active: viewMode === 'source' }]" @click="viewMode = 'source'">源码</button>
       </div>
+      <button class="refresh-btn" @click="loadFile" :disabled="state === 'loading'">
+        <el-icon :size="14"><Refresh /></el-icon>
+      </button>
       <div class="file-editor-area">
         <div
           v-show="showSource"
@@ -46,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, toRef } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, toRef } from 'vue'
 import { useMonacoViewer } from '../../composables/useMonacoViewer'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import { useCenterTabs } from '../../composables/useCenterTabs'
@@ -54,6 +57,7 @@ import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
 import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdown-link'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
+import { Refresh } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   filePath: string
@@ -72,6 +76,14 @@ const imageDataUri = ref('')
 const monacoContainer = ref<HTMLElement>()
 const viewMode = ref<'source' | 'rendered'>('source')
 const { isDark } = useTheme()
+
+const activeFileChanges = computed(() => sessionStore.activeFileChanges)
+
+const matchingChangeCount = computed(() => {
+  return activeFileChanges.value.filter(
+    change => change.path === props.filePath
+  ).length
+})
 
 const isMarkdown = computed(() => {
   const ext = props.filePath.split('.').pop()?.toLowerCase()
@@ -177,9 +189,38 @@ async function loadFile() {
 
 onMounted(loadFile)
 
+let changeDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
 watch(() => [props.filePath, props.provider] as const, () => {
   viewMode.value = 'source'
+  // Cancel pending change-triggered reload so navigation does not double-load
+  if (changeDebounceTimer) {
+    clearTimeout(changeDebounceTimer)
+    changeDebounceTimer = null
+  }
   loadFile()
+})
+
+// Reload only when the current file gains new changes — not when path switches
+// (path change makes matchingChangeCount jump using the previous file's count as oldCount)
+watch(
+  () => ({ path: props.filePath, count: matchingChangeCount.value }),
+  (curr, prev) => {
+    if (!prev || curr.path !== prev.path) return
+    if (curr.count > prev.count) {
+      if (changeDebounceTimer) clearTimeout(changeDebounceTimer)
+      changeDebounceTimer = setTimeout(() => {
+        loadFile()
+      }, 300)
+    }
+  },
+)
+
+onUnmounted(() => {
+  if (changeDebounceTimer) {
+    clearTimeout(changeDebounceTimer)
+    changeDebounceTimer = null
+  }
 })
 </script>
 
@@ -275,6 +316,30 @@ watch(() => [props.filePath, props.provider] as const, () => {
   display: flex;
   gap: 2px;
   z-index: 10;
+}
+
+.refresh-btn {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  background: var(--aw-surface);
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  padding: 3px 6px;
+  color: var(--aw-ink-muted-48);
+  transition: all 0.15s;
+  backdrop-filter: blur(8px);
+}
+
+.refresh-btn:hover {
+  color: var(--aw-ink);
+}
+
+.refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .mode-btn {
