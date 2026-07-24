@@ -1,7 +1,6 @@
 <template>
   <div class="subagent-chat-panel">
     <div class="subagent-banner">
-      <span class="banner-label">子代理执行过程（只读）</span>
       <span v-if="phaseLabel" class="banner-phase" :class="phaseClass">{{ phaseLabel }}</span>
       <span v-if="agentType" class="banner-type">{{ agentType }}</span>
     </div>
