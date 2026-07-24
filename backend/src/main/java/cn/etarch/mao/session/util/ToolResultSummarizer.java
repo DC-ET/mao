@@ -23,6 +23,7 @@ public class ToolResultSummarizer {
             case "task_list" -> summarizeTaskList(result);
             case "task_delete" -> summarizeTaskDelete(result);
             case "ask_user_questions" -> summarizeAskUserQuestions(arguments, result);
+            case "delegate" -> summarizeGeneric("委派子代理", result);
             case "web_search" -> summarizeWebSearch(arguments, result);
             case "open_web_page" -> summarizeOpenWebPage(arguments, result);
 
