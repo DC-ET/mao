@@ -90,6 +90,46 @@ const messageSavedCallbacks = new Map<string, MessageSavedCallback>()
 // Module-level flags to ensure IPC listeners are registered only once
 let skillSyncListenerRegistered = false
 
+/** skill_sync_done payloads waiting for WS to become OPEN (reconnect during sync). */
+const pendingSkillSyncDones = new Map<number, {
+  sessionId: number
+  success: boolean
+  error?: string
+}>()
+
+function sendOrQueueSkillSyncDone(data: { sessionId: number; success: boolean; error?: string }) {
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'skill_sync_done',
+      sessionId: data.sessionId,
+      success: data.success,
+      error: data.error
+    }))
+    pendingSkillSyncDones.delete(data.sessionId)
+    return
+  }
+  console.warn(
+    '[skill-sync] WS not open, queue skill_sync_done for flush on reconnect, readyState=' + ws?.readyState
+  )
+  pendingSkillSyncDones.set(data.sessionId, data)
+}
+
+function flushPendingSkillSyncDones() {
+  if (pendingSkillSyncDones.size === 0) return
+  if (ws?.readyState !== WebSocket.OPEN) return
+  const pending = Array.from(pendingSkillSyncDones.values())
+  pendingSkillSyncDones.clear()
+  for (const data of pending) {
+    ws.send(JSON.stringify({
+      type: 'skill_sync_done',
+      sessionId: data.sessionId,
+      success: data.success,
+      error: data.error
+    }))
+  }
+  console.info(`[skill-sync] flushed ${pending.length} pending skill_sync_done after reconnect`)
+}
+
 function isElectronClient(): boolean {
   return typeof window !== 'undefined' && !!(window as any).electronAPI
 }
@@ -101,16 +141,7 @@ export function useStreamWS() {
   if (!skillSyncListenerRegistered && isElectronClient()) {
     skillSyncListenerRegistered = true
     ;(window as any).electronAPI.onSkillSyncComplete?.((data: { sessionId: number; success: boolean; error?: string }) => {
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'skill_sync_done',
-          sessionId: data.sessionId,
-          success: data.success,
-          error: data.error
-        }))
-      } else {
-        console.warn('[skill-sync] WS not open, cannot send skill_sync_done, readyState=' + ws?.readyState)
-      }
+      sendOrQueueSkillSyncDone(data)
     })
   }
 
@@ -149,6 +180,8 @@ export function useStreamWS() {
           send({ type: 'subscribe', sessionId: Number(sid) })
           refreshQueue(sid)
         }
+        // Flush skill_sync_done that completed while WS was down (LOCAL skill sync race)
+        flushPendingSkillSyncDones()
         // Start heartbeat with pong timeout detection
         lastPongAt = Date.now()
         heartbeatTimer = setInterval(() => {
