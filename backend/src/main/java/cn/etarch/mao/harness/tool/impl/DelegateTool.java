@@ -21,6 +21,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -198,27 +199,52 @@ public class DelegateTool implements Tool {
             sessionService.saveMessage(childSession.getId(), "USER", task,
                     null, null, null, 0, null);
 
-            // 6. 构建子上下文
+            // 6. 构建子上下文，并注册可取消标志（继承父会话 cancel，便于用户停止时打断）
             AgentExecutionContext subContext = buildSubContext(childSession, definition);
+            AtomicBoolean parentCancel = agentLoop.getCancelFlag(sessionId);
+            AtomicBoolean childCancel = agentLoop.registerCancelFlag(childSession.getId());
+            if (parentCancel != null) {
+                subContext.setCancelFlag(parentCancel);
+                if (parentCancel.get()) {
+                    childCancel.set(true);
+                }
+            }
 
             // 7. 同步执行子智能体
             SubAgentResultCollector resultCollector = new SubAgentResultCollector();
             try {
-                agentLoop.execute(subContext, resultCollector);
+                if (childCancel.get()) {
+                    log.info("Skip sub-agent session {}: parent already cancelled", childSession.getId());
+                } else {
+                    agentLoop.execute(subContext, resultCollector);
+                }
             } catch (Exception e) {
                 log.error("Sub-agent execution failed for session {}", childSession.getId(), e);
                 resultCollector = null;
             } finally {
+                agentLoop.removeCancelFlag(childSession.getId());
                 if ("LOCAL".equals(parentSession.getExecutionMode())) {
                     localToolSessionRegistry.removeSession(childSession.getId());
                 }
             }
 
+            boolean cancelled = childCancel.get()
+                    || (parentCancel != null && parentCancel.get());
+
             // 8. 处理结果
             String resultText;
-            boolean success = resultCollector != null && resultCollector.getError() == null;
+            boolean success = !cancelled && resultCollector != null && resultCollector.getError() == null;
 
-            if (success) {
+            if (cancelled) {
+                resultText = "子代理已随父会话取消";
+                execution.setStatus("CANCELLED");
+                execution.setResult(truncate(resultText, 65000));
+                execution.setCompletedAt(LocalDateTime.now());
+                execution.setTotalRounds(subContext.getCurrentRound());
+                subagentExecutionMapper.updateById(execution);
+                sessionService.updatePhase(childSession.getId(), "CANCELLED");
+                log.info("Sub-agent session {} cancelled with parent session {}", childSession.getId(), sessionId);
+            } else if (success) {
                 resultText = resultCollector.getResult();
                 if (resultText.isEmpty()) {
                     resultText = "(子代理未产生文本输出)";
@@ -266,9 +292,13 @@ public class DelegateTool implements Tool {
             // 9. 构建返回结果
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", success);
+            response.put("cancelled", cancelled);
             response.put("agent_type", agentType);
             response.put("child_session_id", childSession.getId());
             response.put("result", resultText);
+            if (cancelled) {
+                response.put("error", resultText);
+            }
             if (resultCollector != null && resultCollector.getTotalUsage() != null) {
                 response.put("usage", Map.of(
                         "prompt_tokens", resultCollector.getTotalUsage().getPromptTokens(),

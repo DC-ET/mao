@@ -196,6 +196,31 @@ class AgentLoopTest {
     }
 
     @Test
+    void executeStopsWhenInheritedParentCancelFlagIsSet() {
+        AgentExecutionContext context = context();
+        context.setSessionId(99L); // child session — no flag registered under this id
+        AtomicBoolean parentCancel = new AtomicBoolean(true);
+        context.setCancelFlag(parentCancel);
+        AgentEventListener listener = mock(AgentEventListener.class);
+
+        agentLoop.execute(context, listener, null);
+
+        verify(llmAdapter, never()).stream(any(), any(), any(), any());
+        verify(shellSessionManager).closeByConversation(99L);
+    }
+
+    @Test
+    void requestCancelSetsRegisteredFlag() {
+        AtomicBoolean flag = agentLoop.registerCancelFlag(42L);
+        assertThat(flag.get()).isFalse();
+        agentLoop.requestCancel(42L);
+        assertThat(flag.get()).isTrue();
+        assertThat(agentLoop.getCancelFlag(42L)).isSameAs(flag);
+        agentLoop.removeCancelFlag(42L);
+        assertThat(agentLoop.getCancelFlag(42L)).isNull();
+    }
+
+    @Test
     void executeStopsBeforeLlmWhenCancelFlagIsSet() {
         AgentExecutionContext context = context();
         AgentEventListener listener = mock(AgentEventListener.class);

@@ -320,6 +320,17 @@ public class SessionService {
         return sessionMapper.selectList(qw);
     }
 
+    /**
+     * List SUBAGENT child sessions for a parent (used to propagate cancel / fail LOCAL pending).
+     */
+    public List<Session> listSubagentSessions(Long parentSessionId) {
+        QueryWrapper<Session> qw = new QueryWrapper<>();
+        qw.eq("parent_session_id", parentSessionId);
+        qw.eq("session_type", "SUBAGENT");
+        qw.ne("status", "ARCHIVED");
+        return sessionMapper.selectList(qw);
+    }
+
     public Page<Session> listSessionsForAdmin(int page, int size, Long userId, Long agentId,
             String executionMode, String phase, String keyword, String status) {
         LambdaQueryWrapper<Session> qw = new LambdaQueryWrapper<>();

@@ -153,6 +153,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         if (flag != null) {
             flag.set(true);
         }
+        agentLoop.requestCancel(sessionId);
         shellSessionManager.closeByConversation(sessionId);
         localToolSessionRegistry.failAllForSession(sessionId);
 
@@ -166,6 +167,41 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             future.cancel(aggressive);
         }
         askUserQuestionsRegistry.failAllForSession(sessionId);
+
+        // Propagate cancel to in-flight delegate SUBAGENT children (parent thread may be blocked in DelegateTool)
+        abortSubagentChildren(sessionId);
+    }
+
+    /**
+     * Cancel subagent sessions created by {@code delegate} under this parent.
+     * Without this, AgentLoop only watches the child sessionId flag and never sees the parent cancel.
+     */
+    private void abortSubagentChildren(Long parentSessionId) {
+        List<Session> children;
+        try {
+            children = sessionService.listSubagentSessions(parentSessionId);
+        } catch (Exception e) {
+            log.warn("Failed to list subagent sessions for parent {}: {}", parentSessionId, e.getMessage());
+            return;
+        }
+        if (children == null || children.isEmpty()) {
+            return;
+        }
+        for (Session child : children) {
+            Long childId = child.getId();
+            if (childId == null) {
+                continue;
+            }
+            AtomicBoolean childFlag = cancelFlags.get(childId);
+            if (childFlag != null) {
+                childFlag.set(true);
+            }
+            agentLoop.requestCancel(childId);
+            shellSessionManager.closeByConversation(childId);
+            localToolSessionRegistry.failAllForSession(childId);
+            askUserQuestionsRegistry.failAllForSession(childId);
+            log.info("Propagated cancel to subagent session {} (parent={})", childId, parentSessionId);
+        }
     }
 
     /**

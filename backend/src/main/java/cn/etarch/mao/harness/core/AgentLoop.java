@@ -56,9 +56,55 @@ public class AgentLoop {
         return flag;
     }
 
+    /** Return the cancel flag for a session, or null if none registered. */
+    public AtomicBoolean getCancelFlag(Long sessionId) {
+        return sessionId != null ? cancelFlags.get(sessionId) : null;
+    }
+
+    /** Request cancellation for a session (no-op if no flag registered). */
+    public void requestCancel(Long sessionId) {
+        AtomicBoolean flag = getCancelFlag(sessionId);
+        if (flag != null) {
+            flag.set(true);
+        }
+    }
+
     /** Remove cancel flag after execution completes. */
     public void removeCancelFlag(Long sessionId) {
         cancelFlags.remove(sessionId);
+    }
+
+    /** True if context inherited cancel or session cancel flag is set. */
+    private boolean isCancelled(AgentExecutionContext context) {
+        AtomicBoolean inherited = context.getCancelFlag();
+        if (inherited != null && inherited.get()) {
+            return true;
+        }
+        Long sessionId = context.getSessionId();
+        if (sessionId != null) {
+            AtomicBoolean flag = cancelFlags.get(sessionId);
+            if (flag != null && flag.get()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Flag passed into LLM stream / tool execution.
+     * Prefer the session-registered flag (so abort can flip it); sync from inherited parent flag.
+     */
+    private AtomicBoolean resolveCancelFlag(AgentExecutionContext context) {
+        Long sessionId = context.getSessionId();
+        AtomicBoolean sessionFlag = sessionId != null ? cancelFlags.get(sessionId) : null;
+        AtomicBoolean inherited = context.getCancelFlag();
+        if (sessionFlag != null) {
+            if (inherited != null && inherited.get()) {
+                sessionFlag.set(true);
+            }
+            return sessionFlag;
+        }
+        return inherited;
     }
 
     public interface MessagePersistenceCallback {
@@ -110,11 +156,14 @@ public class AgentLoop {
             context.setCurrentRound(round);
             log.debug("Agent loop round {}", round);
 
-            // Check cancellation
+            // Check cancellation (session flag and/or inherited parent flag for subagents)
             Long sessionId = context.getSessionId();
             activityHeartbeat.touch(sessionId);
-            AtomicBoolean cancelFlag = sessionId != null ? cancelFlags.get(sessionId) : null;
-            if (cancelFlag != null && cancelFlag.get()) {
+            AtomicBoolean cancelFlag = resolveCancelFlag(context);
+            if (isCancelled(context)) {
+                if (cancelFlag != null) {
+                    cancelFlag.set(true);
+                }
                 log.info("Agent loop cancelled for session {}", sessionId);
                 return;
             }
@@ -250,7 +299,10 @@ public class AgentLoop {
             activityHeartbeat.touch(context.getSessionId());
 
             // 用户中断工具执行时，不持久化不完整的 assistant+tool_calls 轮次，避免下次 LLM 调用 400
-            if (cancelFlag != null && cancelFlag.get()) {
+            if (isCancelled(context)) {
+                if (cancelFlag != null) {
+                    cancelFlag.set(true);
+                }
                 rollbackIncompleteRound(context, pendingSaveToolCalls[0]);
                 pendingSave[0] = null;
                 pendingThinking[0] = null;
