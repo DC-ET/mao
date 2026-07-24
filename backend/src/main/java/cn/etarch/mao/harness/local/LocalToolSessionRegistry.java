@@ -22,6 +22,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class LocalToolSessionRegistry {
 
+    /** A pending LOCAL tool call: request id + completion future. */
+    public record PendingLocalToolRequest(String requestId, CompletableFuture<String> future) {}
+
     private final StreamingWsRegistry streamingWsRegistry;
     private final SessionMapper sessionMapper;
 
@@ -129,19 +132,19 @@ public class LocalToolSessionRegistry {
 
     /**
      * Send a tool execution request to the connected desktop client via Streaming WS.
-     * Returns a CompletableFuture that completes when the client responds.
+     * Returns the request id and a future that completes when the client responds.
      *
      * @param needApproval whether the client should request user approval before executing
      * @param dangerReason why the tool was flagged as dangerous (nullable)
      */
-    public CompletableFuture<String> sendToolRequest(Long sessionId, String toolName, String arguments,
-                                                     String workspace, boolean needApproval,
-                                                     String dangerReason) {
+    public PendingLocalToolRequest sendToolRequest(Long sessionId, String toolName, String arguments,
+                                                   String workspace, boolean needApproval,
+                                                   String dangerReason) {
         Long userId = resolveUserId(sessionId);
         if (userId == null || !streamingWsRegistry.hasLocalClientConnection(userId)) {
             CompletableFuture<String> f = new CompletableFuture<>();
             f.complete("{\"error\":\"Local client is not connected\"}");
-            return f;
+            return new PendingLocalToolRequest(null, f);
         }
 
         String requestId = UUID.randomUUID().toString();
@@ -162,7 +165,7 @@ public class LocalToolSessionRegistry {
 
         log.debug("Sent tool request {} to session {}: tool={}, workspace={}, needApproval={}, dangerReason={}",
                 requestId, sessionId, toolName, workspace, needApproval, dangerReason);
-        return future;
+        return new PendingLocalToolRequest(requestId, future);
     }
 
     /**

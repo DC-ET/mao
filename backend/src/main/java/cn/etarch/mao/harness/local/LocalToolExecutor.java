@@ -43,13 +43,21 @@ public class LocalToolExecutor {
         }
 
         try {
-            return sessionRegistry.sendToolRequest(sessionId, toolName, arguments, workspace, needApproval, dangerReason)
-                    .get(timeoutSeconds, TimeUnit.SECONDS);
-        } catch (TimeoutException e) {
-            log.warn("Local tool execution timed out for session {}: tool={}, timeout={}s",
-                    sessionId, toolName, timeoutSeconds);
-            sessionRegistry.failAllForSession(sessionId);
-            return "{\"error\":\"Local tool execution timed out after " + timeoutSeconds + " seconds\"}";
+            var pending = sessionRegistry.sendToolRequest(
+                    sessionId, toolName, arguments, workspace, needApproval, dangerReason);
+            try {
+                return pending.future().get(timeoutSeconds, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                log.warn("Local tool execution timed out for session {}: tool={}, requestId={}, timeout={}s",
+                        sessionId, toolName, pending.requestId(), timeoutSeconds);
+                // Fail only this request — parallel tools in the same session must keep running.
+                // failAllForSession remains for cancel / disconnect (session-level abort).
+                String timeoutMsg = "Local tool execution timed out after " + timeoutSeconds + " seconds";
+                if (pending.requestId() != null) {
+                    sessionRegistry.completeToolRequestError(sessionId, pending.requestId(), timeoutMsg);
+                }
+                return "{\"error\":\"" + timeoutMsg + "\"}";
+            }
         } catch (Exception e) {
             log.error("Local tool execution failed for session {}: tool={}", sessionId, toolName, e);
             return "{\"error\":\"Local tool execution failed: " + e.getMessage() + "\"}";
