@@ -314,32 +314,29 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private void handleSubscribe(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
+        Session s = requireOwnedSession(userId, sessionId);
+        if (s == null) return;
+
         registry.subscribe(userId, sessionId);
         log.debug("userId={} subscribed to session {}", userId, sessionId);
 
         // If session is RUNNING or RESUMING, send a snapshot so the client can catch up
         // Also re-register local tool session mapping (handles client reconnect)
-        try {
-            Session s = sessionService.getSession(sessionId);
-            if (s != null) {
-                boolean active = "RUNNING".equals(s.getPhase()) || "RESUMING".equals(s.getPhase());
-                if ("LOCAL".equals(s.getExecutionMode()) && active) {
-                    localToolSessionRegistry.setUserForSession(sessionId, userId);
-                }
-                if (active) {
-                    registry.send(userId, WsEvent.of("session_snapshot", sessionId, Map.of(
-                            "phase", s.getPhase()
-                    )));
-                }
-            }
-        } catch (Exception e) {
-            log.debug("Failed to send session_snapshot for session {}: {}", sessionId, e.getMessage());
+        boolean active = "RUNNING".equals(s.getPhase()) || "RESUMING".equals(s.getPhase());
+        if ("LOCAL".equals(s.getExecutionMode()) && active) {
+            localToolSessionRegistry.setUserForSession(sessionId, userId);
+        }
+        if (active) {
+            registry.send(userId, WsEvent.of("session_snapshot", sessionId, Map.of(
+                    "phase", s.getPhase()
+            )));
         }
     }
 
     private void handleUnsubscribe(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
+        // Only remove from caller's own subscription set — no cross-user effect
         registry.unsubscribe(userId, sessionId);
     }
 
@@ -366,14 +363,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 images.add(img.asText());
             }
         }
-        // Validate session exists
-        Session session;
-        try {
-            session = sessionService.getSession(sessionId);
-        } catch (Exception e) {
-            registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "Session not found")));
-            return;
-        }
+        Session session = requireOwnedSession(userId, sessionId);
+        if (session == null) return;
 
         // Abort any in-flight execution so the new message can take over
         if (isSessionActive(session.getPhase())) {
@@ -653,14 +644,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 images.add(img.asText());
             }
         }
-        // Validate session exists
-        Session session;
-        try {
-            session = sessionService.getSession(sessionId);
-        } catch (Exception e) {
-            registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "会话不存在")));
-            return;
-        }
+        Session session = requireOwnedSession(userId, sessionId);
+        if (session == null) return;
 
         // Abort any in-flight execution
         if (isSessionActive(session.getPhase())) {
@@ -827,24 +812,25 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         Long sessionId = getLong(root, "sessionId");
         String requestId = root.has("requestId") ? root.get("requestId").asText() : null;
         String result = root.has("result") ? root.get("result").asText() : "{}";
-        if (sessionId != null && requestId != null) {
-            localToolSessionRegistry.completeToolRequest(sessionId, requestId, result);
-        }
+        if (sessionId == null || requestId == null) return;
+        if (requireOwnedSession(userId, sessionId) == null) return;
+        localToolSessionRegistry.completeToolRequest(sessionId, requestId, result);
     }
 
     private void handleToolError(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         String requestId = root.has("requestId") ? root.get("requestId").asText() : null;
         String error = root.has("error") ? root.get("error").asText() : "Unknown error";
-        if (sessionId != null && requestId != null) {
-            localToolSessionRegistry.completeToolRequestError(sessionId, requestId, error);
-        }
+        if (sessionId == null || requestId == null) return;
+        if (requireOwnedSession(userId, sessionId) == null) return;
+        localToolSessionRegistry.completeToolRequestError(sessionId, requestId, error);
     }
 
     private void handleAskUserQuestionsResult(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         JsonNode data = root.get("data");
         if (sessionId == null || data == null) return;
+        if (requireOwnedSession(userId, sessionId) == null) return;
 
         String requestId = data.has("requestId") ? data.get("requestId").asText() : null;
         if (requestId == null) return;
@@ -882,15 +868,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             return;
         }
 
-        // 1. 校验主会话存在
-        Session parentSession;
-        try {
-            parentSession = sessionService.getSession(parentSessionId);
-        } catch (Exception e) {
-            registry.send(userId, WsEvent.of("error", parentSessionId,
-                    Map.of("message", "主会话不存在")));
-            return;
-        }
+        // 1. 校验主会话存在且归属当前用户
+        Session parentSession = requireOwnedSession(userId, parentSessionId);
+        if (parentSession == null) return;
 
         // 2. 确认用户订阅了主会话
         registry.subscribe(userId, parentSessionId);
@@ -1045,6 +1025,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private void handleCancelSideTask(Long userId, JsonNode root) {
         Long sideSessionId = getLong(root, "sideSessionId");
         if (sideSessionId == null) return;
+        if (requireOwnedSession(userId, sideSessionId) == null) return;
 
         String executionId = runningExecutionIds.getOrDefault(sideSessionId, "");
         abortRunningExecution(sideSessionId, userId);
@@ -1072,6 +1053,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private void handleCancel(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
+        if (requireOwnedSession(userId, sessionId) == null) return;
 
         String executionId = runningExecutionIds.getOrDefault(sessionId, "");
         abortRunningExecution(sessionId, userId);
@@ -1084,6 +1066,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private void handleEnqueueMessage(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
+        if (requireOwnedSession(userId, sessionId) == null) return;
 
         JsonNode data = root.get("data");
         if (data == null || !data.has("content")) return;
@@ -1100,6 +1083,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private void handleInsertMessage(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
+        if (requireOwnedSession(userId, sessionId) == null) return;
 
         JsonNode data = root.get("data");
         if (data == null || !data.has("queueId")) return;
@@ -1117,8 +1101,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 try {
                     // Remove from queue
                     MessageQueue item = messageQueueService.getById(queueId);
-                    if (item == null) {
-                        log.warn("Queue item {} not found for insert (may have been consumed)", queueId);
+                    if (item == null || !sessionId.equals(item.getSessionId())) {
+                        log.warn("Queue item {} not found or not in session {} for insert", queueId, sessionId);
                         sendQueueUpdated(sessionId, userId);
                         return;
                     }
@@ -1201,11 +1185,17 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private void handleDeleteQueueMessage(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
+        if (requireOwnedSession(userId, sessionId) == null) return;
 
         JsonNode data = root.get("data");
         if (data == null || !data.has("queueId")) return;
         Long queueId = data.get("queueId").asLong();
 
+        MessageQueue item = messageQueueService.getById(queueId);
+        if (item == null || !sessionId.equals(item.getSessionId())) {
+            log.warn("Refuse delete queue item {}: missing or not in session {}", queueId, sessionId);
+            return;
+        }
         messageQueueService.delete(queueId);
         sendQueueUpdated(sessionId, userId);
     }
@@ -1213,12 +1203,18 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private void handleReorderQueueMessage(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
         if (sessionId == null) return;
+        if (requireOwnedSession(userId, sessionId) == null) return;
 
         JsonNode data = root.get("data");
         if (data == null || !data.has("queueId") || !data.has("direction")) return;
         Long queueId = data.get("queueId").asLong();
         String direction = data.get("direction").asText();
 
+        MessageQueue item = messageQueueService.getById(queueId);
+        if (item == null || !sessionId.equals(item.getSessionId())) {
+            log.warn("Refuse reorder queue item {}: missing or not in session {}", queueId, sessionId);
+            return;
+        }
         messageQueueService.reorder(queueId, direction);
         sendQueueUpdated(sessionId, userId);
     }
@@ -1344,6 +1340,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         String error = root.has("error") && !root.get("error").isNull() ? root.get("error").asText() : null;
         log.info("Received skill_sync_done from userId={}, sessionId={}, success={}", userId, sessionId, success);
         if (sessionId == null) return;
+        if (requireOwnedSession(userId, sessionId) == null) return;
         CompletableFuture<Void> future = pendingSkillSyncs.get(sessionId);
         if (future != null) {
             if (success) {
@@ -1357,6 +1354,27 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         } else {
             log.warn("No pending skill sync future for session={}", sessionId);
         }
+    }
+
+    /**
+     * Load session and verify the caller owns it (same semantics as REST {@code requireSessionOwner}).
+     * On failure, sends an error WS event and returns null.
+     */
+    private Session requireOwnedSession(Long userId, Long sessionId) {
+        Session session;
+        try {
+            session = sessionService.getSession(sessionId);
+        } catch (Exception e) {
+            registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "会话不存在")));
+            return null;
+        }
+        if (session == null || session.getUserId() == null || !session.getUserId().equals(userId)) {
+            log.warn("WS ownership denied: userId={} sessionId={} owner={}",
+                    userId, sessionId, session != null ? session.getUserId() : null);
+            registry.send(userId, WsEvent.of("error", sessionId, Map.of("message", "无权操作该会话")));
+            return null;
+        }
+        return session;
     }
 
     private Long parseUserIdFromToken(String token) {

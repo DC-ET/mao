@@ -155,6 +155,7 @@ class StreamingWsHandlerTest {
     @Test
     void queueAndToolMessagesAreRoutedToCollaborators() throws Exception {
         when(registry.getUserId(ws)).thenReturn(7L);
+        when(sessionService.getSession(11L)).thenReturn(session("CLOUD", "IDLE"));
         MessageQueue queue = new MessageQueue();
         queue.setId(4L);
         queue.setSessionId(11L);
@@ -163,6 +164,7 @@ class StreamingWsHandlerTest {
         queue.setImages("[\"img\"]");
         queue.setCreatedAt(LocalDateTime.parse("2026-07-07T10:00:00"));
         when(messageQueueService.listPending(11L)).thenReturn(List.of(queue));
+        when(messageQueueService.getById(4L)).thenReturn(queue);
 
         handler.handleTextMessage(ws, json("""
                 {"type":"subscribe","sessionId":11}
@@ -200,6 +202,39 @@ class StreamingWsHandlerTest {
         verify(localToolSessionRegistry).completeToolRequest(11L, "req", "ok");
         verify(localToolSessionRegistry).completeToolRequestError(11L, "req", "bad");
         verify(askUserQuestionsRegistry).complete(eq(11L), eq("q"), eq("{\"answers\": [{\"id\":\"a\"}]}"));
+    }
+
+    @Test
+    void sessionOperationsRejectNonOwner() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        Session foreign = session("CLOUD", "RUNNING");
+        foreign.setUserId(99L);
+        when(sessionService.getSession(11L)).thenReturn(foreign);
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"send_message","sessionId":11,"data":{"content":"hello"}}
+                """));
+        handler.handleTextMessage(ws, json("""
+                {"type":"cancel","sessionId":11}
+                """));
+        handler.handleTextMessage(ws, json("""
+                {"type":"enqueue_message","sessionId":11,"data":{"content":"queued"}}
+                """));
+        handler.handleTextMessage(ws, json("""
+                {"type":"tool_result","sessionId":11,"requestId":"req","result":"ok"}
+                """));
+        handler.handleTextMessage(ws, json("""
+                {"type":"subscribe","sessionId":11}
+                """));
+
+        verify(harnessService, never()).executeFromEvent(any(), any(), any(), any());
+        verify(messageQueueService, never()).enqueue(any(), any(), any(), any());
+        verify(localToolSessionRegistry, never()).completeToolRequest(any(), any(), any());
+        verify(registry, never()).subscribe(any(), any());
+        verify(taskTerminalService, never()).finishExecution(any(), any(), any(), any());
+        verify(registry, times(5)).send(eq(7L), argThat(event ->
+                "error".equals(event.getType()) && event.getData() != null
+                        && "无权操作该会话".equals(String.valueOf(event.getData().get("message")))));
     }
 
     @Test
