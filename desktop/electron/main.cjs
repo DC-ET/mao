@@ -550,6 +550,12 @@ function requestToolApproval(toolName, description, sessionId, dangerReason) {
   })
 }
 
+/** Persist shell reuse / write_stdin must re-check approval — first approve must not unlock later commands. */
+async function ensureShellApproval(needApproval, description, sessionId, dangerReason) {
+  if (!needApproval) return true
+  return requestToolApproval('shell', description, sessionId, dangerReason)
+}
+
 ipcMain.handle('tool-approval-response', (event, { requestId, approved }) => {
   const resolve = pendingApprovals.get(requestId)
   if (resolve) {
@@ -1449,6 +1455,11 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
     if (!session) {
       return { error: `Session not found: ${session_id}` }
     }
+    const stdinDescription = input != null ? String(input) : ''
+    const approved = await ensureShellApproval(needApproval, stdinDescription, sessionId, dangerReason)
+    if (!approved) {
+      return { error: 'User denied command execution.', session_id }
+    }
     const marker = generateMarker()
     session.process.stdin.write(input + '\n')
     session.process.stdin.write('echo ' + MARKER_PREFIX + marker + MARKER_SUFFIX + '\n')
@@ -1464,9 +1475,13 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
     }
   }
 
-  // 复用已有会话
+  // 复用已有会话 — 每次 command 仍按 needApproval 审批，避免一次批准后任意执行
   if (session_id && shellSessions.has(session_id)) {
     const session = shellSessions.get(session_id)
+    const approved = await ensureShellApproval(needApproval, command, sessionId, dangerReason)
+    if (!approved) {
+      return { exit_code: -1, session_id, output: 'User denied command execution.' }
+    }
     refreshMaoTokenInShellSession(session)
     const marker = generateMarker()
     session.process.stdin.write(command + '\n')
@@ -1486,8 +1501,8 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
   }
 
   // 新会话或一次性执行 — 根据后端下发的 needApproval 决定是否需要审批
-  if (needApproval) {
-    const approved = await requestToolApproval('shell', command, sessionId, dangerReason)
+  {
+    const approved = await ensureShellApproval(needApproval, command, sessionId, dangerReason)
     if (!approved) {
       return { exit_code: -1, output: 'User denied command execution.' }
     }
