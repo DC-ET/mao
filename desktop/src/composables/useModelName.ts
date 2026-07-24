@@ -8,20 +8,27 @@ import { api } from '../api'
 export function useModelName(modelId: Ref<number | undefined | null>) {
   const modelName = ref('')
   const loading = ref(false)
+  // Ignore out-of-order responses when modelId changes quickly (e.g. enter new-task mode)
+  let fetchGeneration = 0
 
   async function fetchModelName(id: number) {
     if (!id) {
       modelName.value = ''
       return
     }
+    const generation = ++fetchGeneration
     loading.value = true
     try {
       const { data } = await api.get(`/models/${id}`)
+      if (generation !== fetchGeneration) return
       modelName.value = data?.name || ''
     } catch {
+      if (generation !== fetchGeneration) return
       modelName.value = ''
     } finally {
-      loading.value = false
+      if (generation === fetchGeneration) {
+        loading.value = false
+      }
     }
   }
 
@@ -30,7 +37,9 @@ export function useModelName(modelId: Ref<number | undefined | null>) {
     if (newId) {
       fetchModelName(newId)
     } else {
+      fetchGeneration++
       modelName.value = ''
+      loading.value = false
     }
   }, { immediate: true })
 

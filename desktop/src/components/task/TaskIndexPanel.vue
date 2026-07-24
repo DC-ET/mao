@@ -276,15 +276,22 @@ onUnmounted(() => {
 async function onGroupNewTask(group: { sessions: Session[] }) {
   const last = group.sessions[0] // already sorted by updatedAt desc
   if (!last) return
+  // Prefer the currently open session in this group (user may have just switched model mid-chat;
+  // model switch does not bump updatedAt, so sessions[0] can be a different older session).
+  const activeId = activeSessionId.value
+  const activeInGroup = activeId
+    ? group.sessions.find(s => String(s.id) === String(activeId))
+    : undefined
+  const source = activeInGroup || last
   emit('newTaskFromGroup', {
-    agentId: String(last.agentId),
-    executionMode: last.executionMode,
-    cloudProjectKey: last.executionMode === 'CLOUD' && isSharedCloudProject(last)
-      ? last.projectKey
+    agentId: String(source.agentId),
+    executionMode: source.executionMode,
+    cloudProjectKey: source.executionMode === 'CLOUD' && isSharedCloudProject(source)
+      ? source.projectKey
       : undefined,
-    workspace: last.executionMode === 'LOCAL' ? last.workspace : undefined,
-    permissionLevel: last.permissionLevel,
-    modelId: last.modelId
+    workspace: source.executionMode === 'LOCAL' ? source.workspace : undefined,
+    permissionLevel: source.permissionLevel,
+    modelId: source.modelId
   })
 }
 

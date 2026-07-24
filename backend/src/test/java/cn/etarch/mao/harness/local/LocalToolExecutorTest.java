@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -36,6 +38,7 @@ class LocalToolExecutorTest {
 
         assertThat(result).isEqualTo("{\"ok\":true}");
         verify(registry, never()).failAllForSession(7L);
+        verify(registry, never()).completeToolRequestError(eq(7L), eq("req-1"), org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
@@ -56,7 +59,7 @@ class LocalToolExecutorTest {
     }
 
     @Test
-    void wrapsRegistryFailuresAsJsonError() {
+    void cleansUpPendingRequestWhenFutureCompletesExceptionally() {
         LocalToolSessionRegistry registry = mock(LocalToolSessionRegistry.class);
         when(registry.isConnected(7L)).thenReturn(true);
         when(registry.sendToolRequest(7L, "shell", "{}", "workspace", false, null))
@@ -67,6 +70,29 @@ class LocalToolExecutorTest {
                 .execute(7L, "shell", "{}", "workspace", false, null);
 
         assertThat(result).contains("Local tool execution failed");
+        verify(registry).completeToolRequestError(eq(7L), eq("req-fail"), startsWith("Local tool execution failed:"));
         verify(registry, never()).failAllForSession(7L);
+    }
+
+    @Test
+    void cleansUpPendingRequestWhenWaitIsInterrupted() {
+        LocalToolSessionRegistry registry = mock(LocalToolSessionRegistry.class);
+        when(registry.isConnected(7L)).thenReturn(true);
+        CompletableFuture<String> pending = new CompletableFuture<>();
+        when(registry.sendToolRequest(7L, "shell", "{}", "workspace", false, null))
+                .thenReturn(new LocalToolSessionRegistry.PendingLocalToolRequest("req-interrupt", pending));
+
+        Thread.currentThread().interrupt();
+        try {
+            String result = new LocalToolExecutor(registry, 900)
+                    .execute(7L, "shell", "{}", "workspace", false, null);
+
+            assertThat(result).contains("interrupted");
+            verify(registry).completeToolRequestError(7L, "req-interrupt", "Local tool execution interrupted");
+            verify(registry, never()).failAllForSession(7L);
+        } finally {
+            // Consume interrupt status left by the executor under test
+            Thread.interrupted();
+        }
     }
 }

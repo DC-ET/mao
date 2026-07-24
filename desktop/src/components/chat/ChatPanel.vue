@@ -520,17 +520,15 @@ function handleStop() {
 }
 
 async function handleModelSwitch(modelId: number) {
-  if (isNewTaskMode.value) {
-    newTaskModelId.value = modelId
-  } else if (sessionStore.activeSessionId) {
+  // Keep new-task draft in sync so "新建会话" inherits the model just selected mid-chat
+  newTaskModelId.value = modelId
+  if (!isNewTaskMode.value && sessionStore.activeSessionId) {
     await sessionStore.updateSessionModel(sessionStore.activeSessionId, modelId)
   }
 }
 
 function handleModelSelect(modelId: number, _modelIdStr: string) {
-  if (isNewTaskMode.value) {
-    newTaskModelId.value = modelId
-  }
+  newTaskModelId.value = modelId
 }
 
 async function handlePermissionLevelChange(level: string) {

@@ -389,7 +389,26 @@ async function resolveNewTaskDefaults(defaults?: NewTaskDefaults | null): Promis
 
 async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   const generation = ++newTaskModeGeneration
+  // Apply known defaults synchronously BEFORE any await so the input model selector
+  // does not briefly show a stale newTaskModelId from a previous draft/session.
+  if (defaults?.modelId) {
+    newTaskModelId.value = defaults.modelId
+  }
+  if (defaults?.agentId) {
+    newTaskAgentId.value = String(defaults.agentId)
+  }
+  if (defaults?.executionMode) {
+    const earlyMode = normalizeNewTaskMode(defaults.executionMode)
+    newTaskMode.value = earlyMode
+    executionMode.value = earlyMode
+  }
+  if (defaults?.permissionLevel) {
+    permissionLevel.value = defaults.permissionLevel
+  }
+
   const resolved = await resolveNewTaskDefaults(defaults)
+  if (generation !== newTaskModeGeneration) return
+
   const mode = normalizeNewTaskMode(resolved.executionMode)
   newTaskAgentId.value = resolved.agentId ? String(resolved.agentId) : null
   newTaskMode.value = mode
@@ -591,6 +610,16 @@ async function resolveInitialRoute() {
     }
   }
 }
+
+// Keep lastViewedSession.modelId in sync when user switches model mid-conversation
+watch(
+  () => sessionStore.activeSession?.modelId,
+  (modelId) => {
+    if (modelId != null && lastViewedSession.value) {
+      lastViewedSession.value = { ...lastViewedSession.value, modelId }
+    }
+  }
+)
 
 // Session switching — single watcher avoids duplicate enterNewTaskMode on route transitions
 watch(getRouteWatchState, async (state, prev) => {
