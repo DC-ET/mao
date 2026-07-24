@@ -80,6 +80,36 @@ class SkillSyncServiceTest {
         assertThat(service.getUserSkillNames(null)).isEmpty();
     }
 
+    @Test
+    void nestedFileChangeUpdatesLastModifiedAndResyncs() throws Exception {
+        Path systemRoot = tempDir.resolve("system-skills");
+        Path userRoot = tempDir.resolve("user-skills");
+        Path runtimeRoot = tempDir.resolve("runtime");
+        Path skillDir = systemRoot.resolve("demo");
+        writeSkill(skillDir, "demo", "Demo", "v1");
+        Path nested = skillDir.resolve("scripts").resolve("helper.py");
+        Files.createDirectories(nested.getParent());
+        Files.writeString(nested, "print('v1')");
+
+        SkillSyncService service = service(loader(systemRoot), userRoot, runtimeRoot);
+        Agent agent = agent(3L, "[\"demo\"]");
+        service.syncToSession(agent, 7L, 11L);
+
+        Path targetNested = runtimeRoot.resolve("7").resolve("11").resolve("skills")
+                .resolve("demo").resolve("scripts").resolve("helper.py");
+        assertThat(targetNested).exists();
+        assertThat(Files.readString(targetNested)).contains("v1");
+
+        long before = (Long) ReflectionTestUtils.invokeMethod(service, "getLastModified", skillDir);
+        Thread.sleep(20);
+        Files.writeString(nested, "print('v2-nested-change')");
+        long after = (Long) ReflectionTestUtils.invokeMethod(service, "getLastModified", skillDir);
+        assertThat(after).isGreaterThan(before);
+
+        service.syncToSession(agent, 7L, 11L);
+        assertThat(Files.readString(targetNested)).contains("v2-nested-change");
+    }
+
     private SkillLoader loader(Path skillsRoot) {
         SkillLoader loader = new SkillLoader(new PathSandbox(tempDir.resolve("workspace").toString()));
         ReflectionTestUtils.setField(loader, "skillsDir", skillsRoot.toString());

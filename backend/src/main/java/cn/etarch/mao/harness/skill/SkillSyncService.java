@@ -286,16 +286,37 @@ public class SkillSyncService {
         return agentId + ":" + sessionId;
     }
 
+    /**
+     * Max last-modified time across the skill folder tree (files + dirs).
+     * Must recurse: nested scripts/resources can change without touching top-level entries
+     * in a way that is reliable across filesystems.
+     */
     private long getLastModified(Path dir) {
+        if (dir == null || !Files.isDirectory(dir)) {
+            return 0;
+        }
         try {
-            long max = 0;
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
-                for (Path entry : stream) {
-                    long lm = Files.getLastModifiedTime(entry).toMillis();
-                    if (lm > max) max = lm;
+            long[] max = {0};
+            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path current, BasicFileAttributes attrs) {
+                    if (!current.equals(dir) && shouldSkip(current)) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    max[0] = Math.max(max[0], attrs.lastModifiedTime().toMillis());
+                    return FileVisitResult.CONTINUE;
                 }
-            }
-            return max;
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (shouldSkip(file)) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    max[0] = Math.max(max[0], attrs.lastModifiedTime().toMillis());
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            return max[0];
         } catch (IOException e) {
             return 0;
         }
