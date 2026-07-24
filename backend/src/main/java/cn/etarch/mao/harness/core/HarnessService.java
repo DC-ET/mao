@@ -324,10 +324,10 @@ public class HarnessService {
      * 0 or null = unlimited (capped for safety); values &lt; 2 are bumped to 2 so a tool call
      * can be followed by at least one synthesis round.
      */
-    static int resolveMaxRounds(Integer configured) {
+    public static int resolveMaxRounds(Integer configured) {
         int maxRounds = configured != null ? configured : 30;
         if (maxRounds <= 0) {
-            return 100;
+            return 300;
         }
         return Math.max(maxRounds, 2);
     }

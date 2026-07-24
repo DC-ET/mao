@@ -83,6 +83,10 @@ public class AgentLoop {
     public void execute(AgentExecutionContext context, AgentEventListener listener,
                         MessagePersistenceCallback persistenceCallback) {
         int round = 0;
+        // Defensive: treat unset/non-positive maxRounds as safety-capped unlimited (same as resolveMaxRounds(0))
+        if (context.getMaxRounds() <= 0) {
+            context.setMaxRounds(300);
+        }
 
         try {
         // 用于延迟保存：有工具调用时，在 executeToolCalls 之后再保存（summary 已附加）
@@ -94,6 +98,14 @@ public class AgentLoop {
 
 
         while (true) {
+            // Enforce maxRounds (set by HarnessService / DelegateTool) to stop runaway tool loops
+            if (!context.hasNextRound()) {
+                log.warn("Agent loop reached maxRounds={} for session {}",
+                        context.getMaxRounds(), sessionIdForLog(context));
+                emitMaxRoundsExceeded(context, listener, persistenceCallback);
+                break;
+            }
+
             round++;
             context.setCurrentRound(round);
             log.debug("Agent loop round {}", round);
@@ -302,6 +314,25 @@ public class AgentLoop {
     }
 
     private record ToolMessageSave(String toolCallId, String content, String metadataJson) {}
+
+    private static Long sessionIdForLog(AgentExecutionContext context) {
+        return context != null ? context.getSessionId() : null;
+    }
+
+    /**
+     * Notify user/UI that the agent stopped because maxRounds was reached.
+     * Persists a short assistant message so the stop reason is visible in history.
+     */
+    private void emitMaxRoundsExceeded(AgentExecutionContext context,
+                                       AgentEventListener listener,
+                                       MessagePersistenceCallback persistenceCallback) {
+        String message = "已达到最大执行轮次（" + context.getMaxRounds() + "），任务已中止。";
+        context.addAssistantMessage(message, List.of());
+        listener.onContentDelta(message);
+        if (persistenceCallback != null) {
+            persistenceCallback.onSaveAssistantMessage(message, null, List.of(), null);
+        }
+    }
 
     /**
      * 回滚当前轮次写入内存的 assistant+tool 消息（用户中断时尚未持久化）。

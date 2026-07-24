@@ -162,6 +162,40 @@ class AgentLoopTest {
     }
 
     @Test
+    void executeStopsWhenMaxRoundsReachedDuringToolLoop() {
+        AgentExecutionContext context = context();
+        context.setMaxRounds(2);
+        AgentEventListener listener = mock(AgentEventListener.class);
+        AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
+        when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
+        when(contextManager.estimateRequestTokens(any())).thenReturn(5);
+        when(backgroundTaskManager.consumeCompletedResults()).thenReturn(Map.of());
+        when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
+                eq("/repo"), eq("READ_ONLY"), any())).thenReturn("{\"ok\":true}");
+        doAnswer(invocation -> {
+            StreamCallback callback = invocation.getArgument(2);
+            callback.onChunk(toolChunk(ChatRequest.ToolCall.builder()
+                    .id("call-" + System.nanoTime())
+                    .function(ChatRequest.FunctionCall.builder()
+                            .name("read_file")
+                            .arguments("{\"path\":\"a\"}")
+                            .build())
+                    .build()));
+            callback.onComplete(ChatUsage.builder().promptTokens(3).completionTokens(2).totalTokens(5).build());
+            return null;
+        }).when(llmAdapter).stream(any(), any(), any(), any());
+
+        agentLoop.execute(context, listener, persistence);
+
+        verify(llmAdapter, times(2)).stream(any(), any(), any(), any());
+        verify(listener).onContentDelta(org.mockito.ArgumentMatchers.contains("最大执行轮次"));
+        verify(persistence).onSaveAssistantMessage(
+                org.mockito.ArgumentMatchers.contains("最大执行轮次"), eq(null), eq(List.of()), eq(null));
+        verify(listener).onMessageEnd(any());
+        assertThat(context.getCurrentRound()).isEqualTo(2);
+    }
+
+    @Test
     void executeStopsBeforeLlmWhenCancelFlagIsSet() {
         AgentExecutionContext context = context();
         AgentEventListener listener = mock(AgentEventListener.class);

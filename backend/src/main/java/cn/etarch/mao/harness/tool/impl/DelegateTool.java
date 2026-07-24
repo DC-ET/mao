@@ -304,9 +304,9 @@ public class DelegateTool implements Tool {
             ctx.setSystemPrompt(definition.getSystemPromptOverride());
         }
 
-        // 覆盖 maxRounds
+        // 覆盖 maxRounds（经 resolveMaxRounds 规范化，保证下限与 0=安全封顶）
         if (definition.getMaxRounds() != null) {
-            ctx.setMaxRounds(definition.getMaxRounds());
+            ctx.setMaxRounds(HarnessService.resolveMaxRounds(definition.getMaxRounds()));
         }
 
         // 设置子智能体名称
