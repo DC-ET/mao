@@ -1326,7 +1326,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             syncFuture.get(60, TimeUnit.SECONDS);
             return true;
         } catch (Exception e) {
-            log.warn("Skill sync timeout for session {}", sessionId);
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            log.warn("Skill sync failed for session {}: {}", sessionId, cause.getMessage());
             return false;
         } finally {
             pendingSkillSyncs.remove(sessionId);
@@ -1335,12 +1336,20 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
     private void handleSkillSyncDone(Long userId, JsonNode root) {
         Long sessionId = getLong(root, "sessionId");
-        log.info("Received skill_sync_done from userId={}, sessionId={}", userId, sessionId);
+        boolean success = !root.has("success") || root.get("success").asBoolean(true);
+        String error = root.has("error") && !root.get("error").isNull() ? root.get("error").asText() : null;
+        log.info("Received skill_sync_done from userId={}, sessionId={}, success={}", userId, sessionId, success);
         if (sessionId == null) return;
         CompletableFuture<Void> future = pendingSkillSyncs.get(sessionId);
         if (future != null) {
-            future.complete(null);
-            log.info("Skill sync confirmed for session {}", sessionId);
+            if (success) {
+                future.complete(null);
+                log.info("Skill sync confirmed for session {}", sessionId);
+            } else {
+                String message = (error != null && !error.isBlank()) ? error : "Skill sync failed on client";
+                future.completeExceptionally(new RuntimeException(message));
+                log.warn("Skill sync failed for session {}: {}", sessionId, message);
+            }
         } else {
             log.warn("No pending skill sync future for session={}", sessionId);
         }

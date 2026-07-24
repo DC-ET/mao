@@ -260,31 +260,36 @@ public class HarnessService {
                 log.warn("Failed to parse skillNames for agent {}: {}", agent.getId(), e.getMessage());
             }
         }
-        // Merge system skills + user skills (user skills take priority on name conflict)
-        List<String> baseSkillNames = agentSkillNames != null ? agentSkillNames : skillLoader.getAllNames();
         List<String> userSkillNames = skillSyncService.getUserSkillNames(session.getUserId());
-        List<String> mergedSkillNames = new java.util.ArrayList<>(baseSkillNames);
+
+        // syncable = 服务端确实有文件、能打进 LOCAL sync zip / 拷进 CLOUD runtime 的技能。
+        // 注意：不能仅凭 agent.skillNames 里的名字判定为已同步——配置里可能有名无文件。
+        java.util.Set<String> syncableNames = new java.util.HashSet<>(userSkillNames);
+        List<String> mergedSkillNames = new java.util.ArrayList<>();
+        if (agentSkillNames != null) {
+            for (String name : agentSkillNames) {
+                if (skillLoader.hasSkill(name)) {
+                    syncableNames.add(name);
+                    mergedSkillNames.add(name);
+                }
+            }
+        } else {
+            for (String name : skillLoader.getAllNames()) {
+                syncableNames.add(name);
+                mergedSkillNames.add(name);
+            }
+        }
         for (String userSkill : userSkillNames) {
             if (!mergedSkillNames.contains(userSkill)) {
                 mergedSkillNames.add(userSkill);
             }
         }
+
         // LOCAL mode: merge in desktop client's locally-scanned, not-yet-uploaded skills.
         // These are usable for this LOCAL task only (read directly from the desktop
         // machine at ~/.agents/skills); using them in a CLOUD task still requires upload.
-        // System/uploaded skills take priority on name conflict.
         if ("LOCAL".equalsIgnoreCase(context.getExecutionMode())) {
-            List<LocalSkillRef> localSkills = localSkillRegistry.get(sessionId);
-            if (!localSkills.isEmpty()) {
-                List<LocalSkillRef> unsynced = new java.util.ArrayList<>();
-                for (LocalSkillRef ref : localSkills) {
-                    if (!mergedSkillNames.contains(ref.getName())) {
-                        mergedSkillNames.add(ref.getName());
-                        unsynced.add(ref);
-                    }
-                }
-                context.setLocalUnsyncedSkills(unsynced);
-            }
+            mergeLocalUnsyncedSkills(mergedSkillNames, syncableNames, localSkillRegistry.get(sessionId), context);
             // 获取桌面端上报的 AGENTS.md 内容
             String agentsMdContent = localAgentsMdRegistry.get(sessionId);
             context.setAgentsMdContent(agentsMdContent);
@@ -325,6 +330,36 @@ public class HarnessService {
             return 100;
         }
         return Math.max(maxRounds, 2);
+    }
+
+    /**
+     * 合并桌面端上报的本地技能。仅当服务端无法同步同名技能时标为 localUnsynced，
+     * 使 PromptEngine 注入 {@code ~/.agents/skills/...} 而非缺失的 runtime 副本路径。
+     * <p>
+     * 旧逻辑用 {@code mergedSkillNames.contains(name)} 判断，会把 agent.skillNames
+     * 中「有名无文件」的条目误判为已同步，导致 Agent 去读
+     * {@code ~/.mao/runtime/{sessionId}/skills/{name}/SKILL.md} 而文件从未被解压。
+     */
+    static void mergeLocalUnsyncedSkills(List<String> mergedSkillNames,
+                                         java.util.Set<String> syncableNames,
+                                         List<LocalSkillRef> localSkills,
+                                         AgentExecutionContext context) {
+        if (localSkills == null || localSkills.isEmpty()) {
+            return;
+        }
+        List<LocalSkillRef> unsynced = new java.util.ArrayList<>();
+        for (LocalSkillRef ref : localSkills) {
+            if (ref == null || ref.getName() == null || ref.getName().isBlank()) {
+                continue;
+            }
+            if (!syncableNames.contains(ref.getName())) {
+                if (!mergedSkillNames.contains(ref.getName())) {
+                    mergedSkillNames.add(ref.getName());
+                }
+                unsynced.add(ref);
+            }
+        }
+        context.setLocalUnsyncedSkills(unsynced);
     }
 
     /**
