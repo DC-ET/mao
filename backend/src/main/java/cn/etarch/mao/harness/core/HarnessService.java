@@ -380,7 +380,7 @@ public class HarnessService {
      * can be followed by at least one synthesis round.
      */
     public static int resolveMaxRounds(Integer configured) {
-        int maxRounds = configured != null ? configured : 30;
+        int maxRounds = configured != null ? configured : 300;
         if (maxRounds <= 0) {
             return 300;
         }
