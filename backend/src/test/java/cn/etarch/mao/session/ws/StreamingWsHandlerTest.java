@@ -2,6 +2,7 @@ package cn.etarch.mao.session.ws;
 
 import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.mapper.AgentMapper;
+import cn.etarch.mao.auth.service.JwtService;
 import cn.etarch.mao.harness.core.AgentLoop;
 import cn.etarch.mao.harness.core.HarnessService;
 import cn.etarch.mao.harness.core.LocalAgentsMdRegistry;
@@ -65,12 +66,13 @@ class StreamingWsHandlerTest {
     private final LocalAgentsMdRegistry localAgentsMdRegistry = mock(LocalAgentsMdRegistry.class);
     private final AgentMapper agentMapper = mock(AgentMapper.class);
     private final LlmModelMapper llmModelMapper = mock(LlmModelMapper.class);
+    private final JwtService jwtService = mock(JwtService.class);
     private final CapturingExecutor executor = new CapturingExecutor();
     private final StreamingWsHandler handler = new StreamingWsHandler(
             registry, harnessService, sessionService, taskTerminalService, messageQueueService, localToolSessionRegistry,
             askUserQuestionsRegistry, activityService, activityHeartbeat, sessionTodoMapper, agentLoop,
             shellSessionManager, skillSyncService, localSkillRegistry, localAgentsMdRegistry,
-            agentMapper, llmModelMapper, executor);
+            agentMapper, llmModelMapper, jwtService, executor);
     private final WebSocketSession ws = mock(WebSocketSession.class);
 
     @Test
@@ -323,8 +325,9 @@ class StreamingWsHandlerTest {
 
     @Test
     void connectionLifecycleUsesTokenAndCleanupHooks() throws Exception {
-        String token = "header." + java.util.Base64.getUrlEncoder().withoutPadding()
-                .encodeToString("{\"sub\":\"7\"}".getBytes()) + ".sig";
+        String token = "valid.jwt.token";
+        when(jwtService.validateToken(token)).thenReturn(true);
+        when(jwtService.getUserIdFromToken(token)).thenReturn(7L);
         WebSocketSession connected = mock(WebSocketSession.class);
         when(connected.getUri()).thenReturn(URI.create("ws://localhost/ws?token=" + token + "&client=electron"));
         when(connected.getId()).thenReturn("ws-1");
@@ -339,6 +342,22 @@ class StreamingWsHandlerTest {
         verify(registry).register(connected, 7L, "electron");
         verify(localToolSessionRegistry, times(2)).failAllForUser(7L);
         verify(askUserQuestionsRegistry, times(2)).failAllForSessions(java.util.Set.of(11L));
+    }
+
+    @Test
+    void connectionRejectsForgedOrInvalidJwt() throws Exception {
+        String forged = "header." + java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"sub\":\"7\"}".getBytes()) + ".sig";
+        when(jwtService.validateToken(forged)).thenReturn(false);
+        WebSocketSession connected = mock(WebSocketSession.class);
+        when(connected.getUri()).thenReturn(URI.create("ws://localhost/ws?token=" + forged + "&client=browser"));
+
+        handler.afterConnectionEstablished(connected);
+
+        verify(connected).close(argThat(status ->
+                status.getCode() == org.springframework.web.socket.CloseStatus.NOT_ACCEPTABLE.getCode()));
+        verify(registry, never()).register(any(), any(), any());
+        verify(jwtService, never()).getUserIdFromToken(any());
     }
 
     private TextMessage json(String payload) {

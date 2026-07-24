@@ -2,6 +2,7 @@ package cn.etarch.mao.session.ws;
 
 import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.mapper.AgentMapper;
+import cn.etarch.mao.auth.service.JwtService;
 import cn.etarch.mao.harness.core.AgentLoop;
 import cn.etarch.mao.harness.core.HarnessService;
 import cn.etarch.mao.harness.core.LocalAgentsMdRegistry;
@@ -64,6 +65,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final LocalAgentsMdRegistry localAgentsMdRegistry;
     private final AgentMapper agentMapper;
     private final LlmModelMapper llmModelMapper;
+    private final JwtService jwtService;
     private final ExecutorService agentExecutor;
 
     /** sessionId → cancel flag for running AgentLoops */
@@ -205,6 +207,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                LocalAgentsMdRegistry localAgentsMdRegistry,
                                AgentMapper agentMapper,
                                LlmModelMapper llmModelMapper,
+                               JwtService jwtService,
                                @Qualifier("agentExecutor") ExecutorService agentExecutor) {
         this.registry = registry;
         this.harnessService = harnessService;
@@ -223,6 +226,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.localAgentsMdRegistry = localAgentsMdRegistry;
         this.agentMapper = agentMapper;
         this.llmModelMapper = llmModelMapper;
+        this.jwtService = jwtService;
         this.agentExecutor = agentExecutor;
     }
 
@@ -1357,15 +1361,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
     private Long parseUserIdFromToken(String token) {
         try {
-            // Reuse the same JWT parsing logic as the auth filter
-            String[] parts = token.split("\\.");
-            if (parts.length < 2) return null;
-            String payload = new String(java.util.Base64.getUrlDecoder().decode(parts[1]));
-            JsonNode claims = objectMapper.readTree(payload);
-            // "sub" claim contains the userId
-            if (claims.has("sub")) {
-                return Long.parseLong(claims.get("sub").asText());
+            // Must verify signature + expiration — same path as JwtAuthenticationFilter / REST
+            if (!jwtService.validateToken(token)) {
+                return null;
             }
+            return jwtService.getUserIdFromToken(token);
         } catch (Exception e) {
             log.debug("Failed to parse JWT token for WS: {}", e.getMessage());
         }
