@@ -6,7 +6,7 @@ import { useStreamWS } from './useStreamWS'
 import { collectLocalUnsyncedSkills } from '../utils/localSkills'
 import { collectAgentsMdContent } from '../utils/agentsMd'
 import { mapMessagesWithFileChanges } from '../utils/chatMessage'
-import type { ChatMessage, QuestionAnswer } from '../types/chat'
+import { normalizeMessageRole, type ChatMessage, type QuestionAnswer } from '../types/chat'
 
 export type {
   ChatMessage,
@@ -15,7 +15,7 @@ export type {
   ToolCall,
   TodoItem
 } from '../types/chat'
-export { normalizeMessageRole } from '../types/chat'
+export { normalizeMessageRole }
 
 import { uploadImages } from '../utils/imageUpload'
 import { deriveSessionTitle } from '../utils/sessionTitle'
@@ -122,16 +122,18 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const contextWindow = computed(() => sessionStore.activeContextWindow)
 
   async function fetchMessages() {
-    if (!sessionId.value) return
-    sessionStore.clearMessagePageState(sessionId.value)
+    const sid = sessionId.value
+    if (!sid) return
+    sessionStore.clearMessagePageState(sid)
     try {
-      const { data } = await api.get(`/sessions/${sessionId.value}/messages`, { params: { roundLimit: 5 } })
+      const { data } = await api.get(`/sessions/${sid}/messages`, { params: { roundLimit: 5 } })
       const raw: Array<Record<string, unknown>> = data?.messages || []
       const { messages, allChanges } = mapMessagesWithFileChanges(raw)
-      sessionStore.setMessages(sessionId.value, messages)
-      sessionStore.setFileChanges(sessionId.value, allChanges)
+      // 使用请求时的 sid，避免切换会话后写入错误会话缓存
+      sessionStore.setMessages(sid, messages)
+      sessionStore.setFileChanges(sid, allChanges)
       sessionStore.setMessagePageState(
-        sessionId.value,
+        sid,
         Boolean(data?.hasMore),
         data?.nextBeforeMessageId != null ? String(data.nextBeforeMessageId) : null
       )
@@ -893,10 +895,16 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     // Sync sending state with the session's actual phase
     const phase = sessionStore.activeSession?.phase
     const active = isActivePhase(phase)
-    const hasCachedMessages = sessionStore.getMessages(sessionIdVal).length > 0
+    const cachedMessages = sessionStore.getMessages(sessionIdVal)
+    // 后端会向该用户所有连接广播流式事件（不按 subscribe 过滤）。
+    // 未打开过的进行中会话可能只缓存了残缺的 assistant 占位（无 user 消息），
+    // 此时不能跳过 fetchMessages，否则会丢历史进度。
+    const hasCompleteCache = cachedMessages.some(
+      m => normalizeMessageRole(m.role) === 'user'
+    )
     if (active) {
       sending.value = true
-      if (hasCachedMessages) {
+      if (hasCompleteCache) {
         sessionStore.ensureStreamingAssistantMessage(sessionIdVal)
       }
       // Register a pending callback so stopExecution() works and session_status can resolve it
@@ -923,7 +931,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
     subscribe(sessionIdVal)
 
-    if (!active || !hasCachedMessages) {
+    if (!active || !hasCompleteCache) {
       fetchMessages().then(() => {
         if (isActivePhase(sessionStore.activeSession?.phase)) {
           sessionStore.ensureStreamingAssistantMessage(sessionIdVal)
