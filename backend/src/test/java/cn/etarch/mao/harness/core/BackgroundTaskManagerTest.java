@@ -44,6 +44,20 @@ class BackgroundTaskManagerTest {
     }
 
     @Test
+    void consumeRemovesAllCompletedEntriesWithoutSkippingUnderManyTasks() throws Exception {
+        BackgroundTaskManager manager = new BackgroundTaskManager();
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < 50; i++) {
+            ids.add(manager.submit(9L, () -> "ok"));
+        }
+        Thread.sleep(150);
+
+        Map<String, String> first = manager.consumeCompletedResults(9L);
+        assertThat(first.keySet()).containsExactlyInAnyOrderElementsOf(ids);
+        assertThat(manager.consumeCompletedResults(9L)).isEmpty();
+    }
+
+    @Test
     void getResultHandlesMissingTimeoutSuccessAndFailure() {
         BackgroundTaskManager manager = new BackgroundTaskManager();
 

@@ -3,6 +3,7 @@ package cn.etarch.mao.harness.core;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
@@ -44,16 +45,23 @@ public class BackgroundTaskManager {
     /**
      * Get results of completed tasks for the given session only, removing them from the map.
      * Also cancels abandoned tasks (any session) that exceed {@link #ABANDONED_THRESHOLD_MS}.
+     * <p>
+     * Iterates a snapshot of entries so removals never happen during map traversal.
      */
     public Map<String, String> consumeCompletedResults(Long sessionId) {
         Map<String, String> completed = new ConcurrentHashMap<>();
         long now = System.currentTimeMillis();
-        tasks.forEach((taskId, entry) -> {
+        // Snapshot keys first — never remove while forEach-ing the live ConcurrentHashMap
+        for (String taskId : List.copyOf(tasks.keySet())) {
+            TaskEntry entry = tasks.get(taskId);
+            if (entry == null) {
+                continue;
+            }
             Future<String> future = entry.future();
             if (future.isDone()) {
                 if (!Objects.equals(sessionId, entry.sessionId())) {
                     // Leave for the owning session's AgentLoop to consume
-                    return;
+                    continue;
                 }
                 try {
                     String result = future.get(0, TimeUnit.SECONDS);
@@ -66,15 +74,16 @@ public class BackgroundTaskManager {
                     completed.put(taskId, "Error: " + cause.getMessage());
                 } catch (TimeoutException | InterruptedException e) {
                     // not ready yet, skip
-                    return;
+                    continue;
                 }
-                tasks.remove(taskId);
+                tasks.remove(taskId, entry);
             } else if ((now - entry.submitTimeMs()) > ABANDONED_THRESHOLD_MS) {
                 future.cancel(true);
-                tasks.remove(taskId);
-                log.warn("Cancelled abandoned background task: {} session={}", taskId, entry.sessionId());
+                if (tasks.remove(taskId, entry)) {
+                    log.warn("Cancelled abandoned background task: {} session={}", taskId, entry.sessionId());
+                }
             }
-        });
+        }
         return completed;
     }
 
