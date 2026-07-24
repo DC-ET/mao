@@ -49,7 +49,7 @@ class AgentLoopTest {
         AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
         when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
         when(contextManager.estimateRequestTokens(any())).thenReturn(42);
-        when(backgroundTaskManager.consumeCompletedResults()).thenReturn(Map.of("task-1", "done"), Map.of());
+        when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of("task-1", "done"), Map.of());
         doAnswer(invocation -> {
             StreamCallback callback = invocation.getArgument(2);
             callback.onChunk(contentChunk("thinking", null));
@@ -76,7 +76,7 @@ class AgentLoopTest {
         AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
         when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
         when(contextManager.estimateRequestTokens(any())).thenReturn(5);
-        when(backgroundTaskManager.consumeCompletedResults()).thenReturn(Map.of());
+        when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
                 eq("/repo"), eq("READ_ONLY"), any())).thenReturn("{\"ok\":true,\"_private_diff\":{\"diff_mode\":\"PATCH\"}}");
         doAnswer(new org.mockito.stubbing.Answer<Void>() {
@@ -124,7 +124,7 @@ class AgentLoopTest {
         AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
         when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
         when(contextManager.estimateRequestTokens(any())).thenReturn(5);
-        when(backgroundTaskManager.consumeCompletedResults()).thenReturn(Map.of());
+        when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
         String imageResult = """
                 {"content":"图片读取成功：a.png","total_lines":0,"media_type":"image","mime":"image/png",\
                 "path":"a.png","size_bytes":10,"data_uri":"data:image/png;base64,abc"}""";
@@ -169,7 +169,7 @@ class AgentLoopTest {
         AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
         when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
         when(contextManager.estimateRequestTokens(any())).thenReturn(5);
-        when(backgroundTaskManager.consumeCompletedResults()).thenReturn(Map.of());
+        when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
                 eq("/repo"), eq("READ_ONLY"), any())).thenReturn("{\"ok\":true}");
         doAnswer(invocation -> {

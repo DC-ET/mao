@@ -168,15 +168,15 @@ public class AgentLoop {
                 return;
             }
 
-            // 0.5. Inject completed background task results
-            Map<String, String> bgResults = backgroundTaskManager.consumeCompletedResults();
+            // 0.5. Inject completed background task results for this session only
+            Map<String, String> bgResults = backgroundTaskManager.consumeCompletedResults(sessionId);
             if (!bgResults.isEmpty()) {
                 StringBuilder sb = new StringBuilder("<后台任务结果>\n");
                 bgResults.forEach((taskId, result) ->
                         sb.append("任务 ").append(taskId).append("：").append(result).append("\n"));
                 sb.append("</后台任务结果>");
                 context.addSystemMessage(sb.toString());
-                log.info("Injected {} background task results", bgResults.size());
+                log.info("Injected {} background task results for session {}", bgResults.size(), sessionId);
             }
 
             // 1. Build Prompt

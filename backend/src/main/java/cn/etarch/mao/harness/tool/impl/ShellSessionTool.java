@@ -197,9 +197,9 @@ public class ShellSessionTool implements Tool {
         boolean isAsync = args.has("async") && args.get("async").asBoolean();
         boolean keepSession = args.has("keep_session") && args.get("keep_session").asBoolean();
 
-        // async 模式：提交后台任务，立即返回
+        // async 模式：提交后台任务，立即返回（按 conversation/session 隔离，避免跨会话串扰）
         if (isAsync) {
-            String taskId = backgroundTaskManager.submit(() -> {
+            String taskId = backgroundTaskManager.submit(conversationId, () -> {
                 try {
                     return doExec(command, sessionId, conversationId, userId, workspace, workdir, yieldTimeMs, keepSession);
                 } catch (Exception e) {
