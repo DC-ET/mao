@@ -205,6 +205,24 @@ class StreamingWsHandlerTest {
     }
 
     @Test
+    void subscribeSendsSnapshotForWaitingApproval() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        Session waiting = session("LOCAL", "WAITING_APPROVAL");
+        when(sessionService.getSession(11L)).thenReturn(waiting);
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"subscribe","sessionId":11}
+                """));
+
+        verify(registry).subscribe(7L, 11L);
+        verify(localToolSessionRegistry).setUserForSession(11L, 7L);
+        verify(registry).send(eq(7L), argThat(event ->
+                "session_snapshot".equals(event.getType())
+                        && Long.valueOf(11L).equals(event.getSessionId())
+                        && "WAITING_APPROVAL".equals(String.valueOf(event.getData().get("phase")))));
+    }
+
+    @Test
     void sessionOperationsRejectNonOwner() throws Exception {
         when(registry.getUserId(ws)).thenReturn(7L);
         Session foreign = session("CLOUD", "RUNNING");

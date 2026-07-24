@@ -356,9 +356,10 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         registry.subscribe(userId, sessionId);
         log.debug("userId={} subscribed to session {}", userId, sessionId);
 
-        // If session is RUNNING or RESUMING, send a snapshot so the client can catch up
-        // Also re-register local tool session mapping (handles client reconnect)
-        boolean active = "RUNNING".equals(s.getPhase()) || "RESUMING".equals(s.getPhase());
+        // If session is still active (RUNNING / RESUMING / WAITING_APPROVAL), send a snapshot
+        // so the client can catch up (e.g. reconnect during tool approval).
+        // Also re-register local tool session mapping (handles client reconnect).
+        boolean active = isSessionActive(s.getPhase());
         if ("LOCAL".equals(s.getExecutionMode()) && active) {
             localToolSessionRegistry.setUserForSession(sessionId, userId);
         }

@@ -37,12 +37,16 @@ let isReconnecting = false
 const activeExecutionIds = new Map<string, string>()
 // Last cancelled execution ID per session — filters stragglers after clearActiveExecution
 const cancelledExecutionIds = new Map<string, string>()
+// Session-level gate: after cancel, drop ALL stream events until next RUNNING sets an executionId.
+// Covers the race where stop happens before session_status carries executionId (events without id).
+const suppressedStreamSessions = new Set<string>()
 // Sessions the client intends to receive stream events for (main + side tasks).
 // Restored on every reconnect — server subscriptions do not survive a new WS.
 const subscribedSessionIds = new Set<string>()
 
 export function setActiveExecution(sessionId: string, executionId: string) {
   cancelledExecutionIds.delete(sessionId)
+  suppressedStreamSessions.delete(sessionId)
   activeExecutionIds.set(sessionId, executionId)
 }
 
@@ -52,9 +56,13 @@ export function clearActiveExecution(sessionId: string) {
     cancelledExecutionIds.set(sessionId, active)
   }
   activeExecutionIds.delete(sessionId)
+  suppressedStreamSessions.add(sessionId)
 }
 
 function isStaleExecution(sessionId: string, data: any): boolean {
+  if (suppressedStreamSessions.has(sessionId)) {
+    return true
+  }
   const active = activeExecutionIds.get(sessionId)
   if (!active) {
     const cancelled = cancelledExecutionIds.get(sessionId)
