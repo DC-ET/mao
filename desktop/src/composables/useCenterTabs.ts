@@ -100,6 +100,13 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     )
   }
 
+  function findSubagentTab(state: SessionTabState, childSessionId: number) {
+    const id = 'subagent:' + childSessionId
+    return state.tabs.find(t =>
+      t.type === 'subagent' && (t.id === id || t.sideSessionId === childSessionId)
+    )
+  }
+
   /**
    * 打开边路任务 Tab。如果已存在则直接激活。
    * 传入 sideSessionId=0 表示"待创建"状态。
@@ -115,6 +122,31 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     }
     const id = 'side:' + sideSessionId
     const newTab: Tab = { id, type: 'side_task', title: normalizeSideTaskTitle(title), sideSessionId }
+    state.tabs.push(newTab)
+    state.activeTabId = id
+    notifyTabsChanged()
+  }
+
+  /**
+   * 打开子代理只读 Tab。如果已存在则直接激活。
+   */
+  function openSubagentTab(childSessionId: number, title: string) {
+    if (childSessionId <= 0) return
+    const state = getSessionState()
+    const existing = findSubagentTab(state, childSessionId)
+    if (existing) {
+      existing.title = title || existing.title
+      state.activeTabId = existing.id
+      notifyTabsChanged()
+      return
+    }
+    const id = 'subagent:' + childSessionId
+    const newTab: Tab = {
+      id,
+      type: 'subagent',
+      title: title || '子代理',
+      sideSessionId: childSessionId,
+    }
     state.tabs.push(newTab)
     state.activeTabId = id
     notifyTabsChanged()
@@ -194,13 +226,49 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     }
   }
 
+  /**
+   * 恢复子代理 Tab（不自动打开全部，仅补齐已在 tabs 中的标题；列表点击再 openSubagentTab）。
+   * 若传入 openAll=true，则为每个子代理打开 Tab（默认 false，避免刷新刷屏）。
+   */
+  function restoreSubagentTabs(
+    parentSessionId: string,
+    subagents: Array<{ id: number; title: string }>,
+    opts?: { openAll?: boolean }
+  ) {
+    if (!parentSessionId || subagents.length === 0) return
+    if (!opts?.openAll) return
+    const state = sessionTabsMap.value.get(parentSessionId) ?? { tabs: [], activeTabId: 'chat' }
+    let changed = false
+    for (const sa of subagents) {
+      const id = 'subagent:' + sa.id
+      const existing = state.tabs.find(t => t.type === 'subagent' && (t.id === id || t.sideSessionId === sa.id))
+      if (existing) {
+        existing.sideSessionId = sa.id
+        existing.title = sa.title || existing.title
+        changed = true
+        continue
+      }
+      state.tabs.push({
+        id,
+        type: 'subagent',
+        title: sa.title || '子代理',
+        sideSessionId: sa.id,
+      })
+      changed = true
+    }
+    if (changed) {
+      sessionTabsMap.value.set(parentSessionId, state)
+      notifyTabsChanged()
+    }
+  }
+
   function activateTab(tabId: string) {
     const state = getSessionState()
     state.activeTabId = tabId
     notifyTabsChanged()
   }
 
-  /** 仅关闭文件类标签（file / diff），保留边路任务等非文件标签。 */
+  /** 仅关闭文件类标签（file / diff），保留边路任务 / 子代理等非文件标签。 */
   function closeAllFileTabs() {
     const state = getSessionState()
     state.tabs = state.tabs.filter(t => t.type !== 'file' && t.type !== 'diff')
@@ -230,8 +298,10 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     openFileTab,
     openDiffTab,
     openSideTaskTab,
+    openSubagentTab,
     updateSideTaskTab,
     restoreSideTaskTabs,
+    restoreSubagentTabs,
     closeTab,
     closeAllFileTabs,
     closeOtherTabs,

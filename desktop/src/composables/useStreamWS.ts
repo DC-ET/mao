@@ -485,6 +485,7 @@ export function useStreamWS() {
 
           sessionStore.updateSessionPhase(sessionId, phase)
           sessionStore.updateSideTaskPhase(Number(sessionId), phase)
+          sessionStore.updateSubagentPhase(Number(sessionId), phase)
           // Sync unread state — skip for active session (user is already viewing)
           if (data.unread !== undefined) {
             if (sessionId === sessionStore.activeSessionId) {
@@ -584,6 +585,7 @@ export function useStreamWS() {
         if (sessionId && data?.phase) {
           sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
           sessionStore.updateSideTaskPhase(Number(sessionId), data.phase as TaskPhase)
+          sessionStore.updateSubagentPhase(Number(sessionId), data.phase as TaskPhase)
         }
         break
 
@@ -599,6 +601,22 @@ export function useStreamWS() {
           }))
           // Subscribe to the new side session for stream events
           subscribe(String(data.sideSessionId))
+        }
+        break
+
+      case 'subagent_session_created':
+        if (sessionId && data?.childSessionId) {
+          window.dispatchEvent(new CustomEvent('subagent_session_created', {
+            detail: {
+              parentSessionId: sessionId,
+              childSessionId: data.childSessionId,
+              title: data.title || '子代理',
+              agentType: data.agentType || '',
+              task: data.task || '',
+              toolCallId: data.toolCallId || ''
+            }
+          }))
+          subscribe(String(data.childSessionId))
         }
         break
 
@@ -677,6 +695,7 @@ export function useStreamWS() {
           sessionStore.setExecutionError(sessionId, message)
           sessionStore.updateSessionPhase(sessionId, 'FAILED' as TaskPhase)
           sessionStore.updateSideTaskPhase(Number(sessionId), 'FAILED' as TaskPhase)
+          sessionStore.updateSubagentPhase(Number(sessionId), 'FAILED' as TaskPhase)
           resetSessionStreamState(sessionId)
           const cb = pendingCallbacks.get(sessionId)
           if (cb) {

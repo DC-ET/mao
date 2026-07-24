@@ -16,6 +16,9 @@ public class SubagentExecution {
 
     private Long childSessionId;
 
+    /** 子代理类型，如 researcher / reviewer */
+    private String agentType;
+
     private String taskDescription;
 
     private String result;

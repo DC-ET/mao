@@ -1,6 +1,6 @@
 # 子智能体执行过程可见性 — 技术方案
 
-> 状态：待开发  
+> 状态：开发中（后端底座 + 桌面 Tab/流式/列表已落地，待联调验收）  
 > 日期：2026-07-24  
 > 范围：桌面端（desktop）+ 后端流式/持久化改造  
 > 关联：[`subagent-integration-design.md`](../best-agent-spec/subagent-integration-design.md)、[`side-task.md`](./side-task.md)

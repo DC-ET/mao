@@ -331,6 +331,19 @@ public class SessionService {
         return sessionMapper.selectList(qw);
     }
 
+    /**
+     * List SUBAGENT child sessions for a parent owned by the given user (for desktop list UI).
+     */
+    public List<Session> listSubagentSessions(Long parentSessionId, Long userId) {
+        QueryWrapper<Session> qw = new QueryWrapper<>();
+        qw.eq("parent_session_id", parentSessionId);
+        qw.eq("user_id", userId);
+        qw.eq("session_type", "SUBAGENT");
+        qw.ne("status", "ARCHIVED");
+        qw.orderByDesc("created_at");
+        return sessionMapper.selectList(qw);
+    }
+
     public Page<Session> listSessionsForAdmin(int page, int size, Long userId, Long agentId,
             String executionMode, String phase, String keyword, String status) {
         LambdaQueryWrapper<Session> qw = new LambdaQueryWrapper<>();

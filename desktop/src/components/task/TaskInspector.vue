@@ -112,6 +112,14 @@
           @delete-side-task="handleDeleteSideTask"
         />
       </div>
+
+      <div class="inspector-section">
+        <h4 class="section-title">子代理</h4>
+        <SubagentList
+          :tasks="subagents"
+          @open-subagent="handleOpenSubagent"
+        />
+      </div>
     </div>
 
     <div v-if="showFileTreeTab && inspectorActiveTab === 'filetree'" class="inspector-tab-content file-tree-tab">
@@ -143,10 +151,11 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { FolderOpened, DocumentCopy, User, Share } from '@element-plus/icons-vue'
 import TodoChecklist from './TodoChecklist.vue'
 import SideTaskList from './SideTaskList.vue'
+import SubagentList from './SubagentList.vue'
 import GitChangeList from './GitChangeList.vue'
 import FileTree from '../file-browser/FileTree.vue'
 import type { TodoItem } from '../../types/chat'
-import type { SideTaskItem, TaskPhase } from '../../stores/session'
+import type { SideTaskItem, SubagentItem, TaskPhase } from '../../stores/session'
 import type { ContextWindowInfo } from '../../types/chat'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import type { WorkspaceGitProvider } from '../../composables/workspace-git-provider'
@@ -157,6 +166,7 @@ import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
 const props = defineProps<{
   todos?: TodoItem[]
   sideTasks?: SideTaskItem[]
+  subagents?: SubagentItem[]
   title: string
   agentName?: string
   workspace?: string
@@ -176,6 +186,7 @@ const emit = defineEmits<{
   'open-file': [payload: { path: string; title: string }]
   'add-file-to-chat': [filePath: string]
   'open-side-task': [payload: { sideSessionId: number; title: string }]
+  'open-subagent': [payload: { childSessionId: number; title: string }]
   'edit-title': [payload: { sideSessionId: number; title: string }]
   'delete-side-task': [sideSessionId: number]
   'open-git-diff': [file: GitChangedFile]
@@ -252,6 +263,10 @@ function handleOpenGitDiff(file: GitChangedFile) {
 
 function handleOpenSideTask(payload: { sideSessionId: number; title: string }) {
   emit('open-side-task', payload)
+}
+
+function handleOpenSubagent(payload: { childSessionId: number; title: string }) {
+  emit('open-subagent', payload)
 }
 
 function handleEditSideTaskTitle(payload: { sideSessionId: number; title: string }) {

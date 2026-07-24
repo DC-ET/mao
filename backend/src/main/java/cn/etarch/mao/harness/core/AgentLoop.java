@@ -3,6 +3,7 @@ package cn.etarch.mao.harness.core;
 import cn.etarch.mao.harness.llm.*;
 import cn.etarch.mao.harness.shell.ShellSessionManager;
 import cn.etarch.mao.harness.tool.FileChangeDiffUtil;
+import cn.etarch.mao.harness.tool.ToolCallContext;
 import cn.etarch.mao.harness.tool.ToolDispatcher;
 import cn.etarch.mao.harness.tool.ToolImageResultProcessor;
 import cn.etarch.mao.session.activity.SessionActivityHeartbeat;
@@ -427,7 +428,13 @@ public class AgentLoop {
             // 检查取消标志
             if (cancelFlag != null && cancelFlag.get()) return;
             ChatRequest.ToolCall tc = pendingCalls.get(0);
-            String rawResult = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
+            String rawResult;
+            try {
+                ToolCallContext.setToolCallId(tc.getId());
+                rawResult = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
+            } finally {
+                ToolCallContext.clear();
+            }
             ToolMessageSave toolSave = processToolResult(rawResult, tc, context);
             if (cancelFlag != null && cancelFlag.get()) return;
             tc.setSummary(ToolResultSummarizer.summarize(
@@ -444,7 +451,12 @@ public class AgentLoop {
                 final int index = i;
                 ChatRequest.ToolCall tc = pendingCalls.get(i);
                 futures.add(CompletableFuture.runAsync(() -> {
-                    results[index] = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
+                    try {
+                        ToolCallContext.setToolCallId(tc.getId());
+                        results[index] = dispatchTool(tc.getFunction().getName(), tc.getFunction().getArguments(), context);
+                    } finally {
+                        ToolCallContext.clear();
+                    }
                 }, toolExecutor));
             }
 

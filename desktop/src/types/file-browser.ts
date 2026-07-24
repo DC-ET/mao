@@ -13,12 +13,12 @@ export interface FileNode {
 
 export interface Tab {
   id: string            // 'chat' for chat tab, relative path for file tabs
-  type: 'chat' | 'file' | 'diff' | 'side_task'
+  type: 'chat' | 'file' | 'diff' | 'side_task' | 'subagent'
   title: string
   filePath?: string     // relative path within workspace
   fileChange?: FileChange
   version?: number      // increment on each re-open to force remount
-  /** 边路任务子会话 ID（仅 type === 'side_task' 时有效） */
+  /** 边路任务 / 子代理子会话 ID（type === 'side_task' | 'subagent'） */
   sideSessionId?: number
 }
 

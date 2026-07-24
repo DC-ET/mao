@@ -23,6 +23,7 @@
     <TaskInspector
       :todos="todos"
       :side-tasks="sideTasks"
+      :subagents="subagents"
       :title="sessionTitle"
       :agent-name="agentName"
       :workspace="workspace"
@@ -40,6 +41,7 @@
       @open-file="handleOpenFile"
       @add-file-to-chat="handleAddFileToChat"
       @open-side-task="handleOpenSideTask"
+      @open-subagent="handleOpenSubagent"
       @edit-title="handleEditSideTaskTitle"
       @delete-side-task="handleDeleteSideTask"
       @open-git-diff="handleOpenGitDiff"
@@ -168,13 +170,14 @@ function handleAddFileToChat(filePath: string) {
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, updateSideTaskTab, restoreSideTaskTabs } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, openSubagentTab, updateSideTaskTab, restoreSideTaskTabs } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
 const todos = computed(() => chatTodos.value)
 const contextWindow = computed(() => chatContextWindow.value)
 const sideTasks = computed(() => sessionStore.getSideTasks(activeSessionIdRef.value || ''))
+const subagents = computed(() => sessionStore.getSubagents(activeSessionIdRef.value || ''))
 
 const sessionIdForTabs = computed(() => sessionId.value || sessionIdParam.value || '')
 
@@ -230,7 +233,43 @@ async function handleSideSessionCreated(e: Event) {
 onMounted(() => {
   document.addEventListener('keydown', handleTerminalShortcut)
   window.addEventListener('side_session_created', handleSideSessionCreated)
+  window.addEventListener('subagent_session_created', handleSubagentSessionCreated)
 })
+
+function handleSubagentSessionCreated(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (!detail || !detail.childSessionId) return
+
+  const parentId = String(detail.parentSessionId || activeSessionIdRef.value || '')
+  const childId = String(detail.childSessionId)
+  const title = detail.title || '子代理'
+  if (parentId) {
+    sessionStore.addSubagent(parentId, {
+      id: detail.childSessionId,
+      title,
+      phase: 'RUNNING',
+      createdAt: new Date().toISOString(),
+      agentType: detail.agentType || undefined,
+      taskDescription: detail.task || undefined,
+    })
+  }
+  if (detail.toolCallId) {
+    sessionStore.bindDelegateToolCall(String(detail.toolCallId), detail.childSessionId)
+  }
+  // 预置 USER 任务消息，避免首包流式到达前空白
+  if (detail.task && sessionStore.getMessages(childId).length === 0) {
+    sessionStore.addUserMessage(childId, {
+      id: `subagent-user-${detail.childSessionId}`,
+      role: 'user',
+      content: String(detail.task),
+      createdAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+    })
+  }
+  // 仅当事件属于当前主会话时自动打开 Tab
+  if (parentId && parentId === String(activeSessionIdRef.value || '')) {
+    openSubagentTab(detail.childSessionId, title)
+  }
+}
 
 // Open file from TaskInspector's file tree
 function handleOpenFile(payload: { path: string; title: string }) {
@@ -269,6 +308,14 @@ function handleRename(title: string) {
 function handleOpenSideTask(payload: { sideSessionId: number; title: string }) {
   openSideTaskTab(payload.sideSessionId, payload.title)
 }
+
+function handleOpenSubagent(payload: { childSessionId: number; title: string }) {
+  openSubagentTab(payload.childSessionId, payload.title)
+}
+
+provide('openSubagent', (payload: { childSessionId: number; title?: string }) => {
+  openSubagentTab(payload.childSessionId, payload.title || '子代理')
+})
 
 async function handleEditSideTaskTitle(payload: { sideSessionId: number; title: string }) {
   try {
@@ -538,6 +585,33 @@ async function loadSession(sid: string) {
     sessionStore.setSideTasks(sid, [])
   }
 
+  // Restore subagent list (tabs opened on demand / via live event)
+  try {
+    const res = await api.get(`/sessions/${sid}/subagents`)
+    const subagentsData = res?.data
+    const items = Array.isArray(subagentsData)
+      ? subagentsData.map((sa: {
+          id: number
+          title?: string
+          phase?: string
+          createdAt?: string
+          agentType?: string
+          taskDescription?: string
+        }) => ({
+          id: sa.id,
+          title: sa.title || '子代理',
+          phase: (sa.phase || 'IDLE') as TaskPhase,
+          createdAt: sa.createdAt,
+          agentType: sa.agentType,
+          taskDescription: sa.taskDescription,
+        }))
+      : []
+    sessionStore.setSubagents(sid, items)
+  } catch (e) {
+    console.warn('[subagent] Failed to load subagent list:', e)
+    sessionStore.setSubagents(sid, [])
+  }
+
   initialLoading.value = false
 }
 
@@ -684,6 +758,7 @@ onMounted(async () => {
 onUnmounted(() => {
   document.removeEventListener('keydown', handleTerminalShortcut)
   window.removeEventListener('side_session_created', handleSideSessionCreated)
+  window.removeEventListener('subagent_session_created', handleSubagentSessionCreated)
 })
 </script>
 

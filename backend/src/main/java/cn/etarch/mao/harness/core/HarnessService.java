@@ -130,6 +130,61 @@ public class HarnessService {
         }
     }
 
+    /**
+     * 为指定会话创建消息持久化回调（主会话 / 边路 / 子智能体共用）。
+     */
+    public AgentLoop.MessagePersistenceCallback createPersistenceCallback(
+            Long targetSessionId, AgentExecutionContext context) {
+        return new AgentLoop.MessagePersistenceCallback() {
+            @Override
+            public void onSaveAssistantMessage(String content, String thinkingContent,
+                                                List<ChatRequest.ToolCall> toolCalls, ChatUsage usage) {
+                onSaveAssistantMessage(content, thinkingContent, toolCalls, java.util.Map.of(), usage);
+            }
+
+            @Override
+            public void onSaveAssistantMessage(String content, String thinkingContent,
+                                                List<ChatRequest.ToolCall> toolCalls,
+                                                Map<String, String> toolResults, ChatUsage usage) {
+                String toolCallsJson = null;
+                if (toolCalls != null && !toolCalls.isEmpty()) {
+                    try {
+                        toolCallsJson = objectMapper.writeValueAsString(toolCalls);
+                    } catch (JsonProcessingException e) {
+                        log.warn("Failed to serialize tool calls for session {}", targetSessionId, e);
+                    }
+                }
+                int tokenCount = usage != null ? usage.getTotalTokens() : 0;
+                Long modelId = context.getModelConfig() != null ? context.getModelConfig().getId() : null;
+                Message savedMsg = sessionService.saveMessage(targetSessionId, "ASSISTANT",
+                        content, thinkingContent, null, toolCallsJson, tokenCount, modelId);
+                if (toolCalls != null && !toolCalls.isEmpty() && toolResults != null && !toolResults.isEmpty()) {
+                    saveFileChanges(savedMsg.getId(), targetSessionId, toolCalls, toolResults);
+                }
+            }
+
+            @Override
+            public void onSaveToolMessage(String toolCallId, String content) {
+                onSaveToolMessage(toolCallId, content, null);
+            }
+
+            @Override
+            public void onSaveToolMessage(String toolCallId, String content, String metadataJson) {
+                sessionService.saveMessage(targetSessionId, "TOOL",
+                        content, null, toolCallId, null, 0, null, metadataJson);
+            }
+        };
+    }
+
+    /**
+     * 执行已构建好的上下文，并持久化中间轮次消息（供子智能体可见性使用）。
+     */
+    public void executePrepared(AgentExecutionContext context, AgentEventListener listener) {
+        AgentLoop.MessagePersistenceCallback persistence =
+                createPersistenceCallback(context.getSessionId(), context);
+        agentLoop.execute(context, listener, persistence);
+    }
+
     public AgentExecutionContext buildContext(Long sessionId) {
         // 清理上次中断遗留的不完整 tool_calls 消息，防止 LLM API 400
         sessionService.cleanupIncompleteTail(sessionId);

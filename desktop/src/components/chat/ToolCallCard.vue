@@ -5,6 +5,14 @@
         <span class="tool-summary">{{ displaySummary }}</span>
       </div>
       <div class="tool-status">
+        <button
+          v-if="isDelegate && childSessionId"
+          class="view-subagent-btn"
+          title="查看子代理过程"
+          @click.stop="openSubagentProcess"
+        >
+          查看过程
+        </button>
         <span v-if="toolCall.status === 'running'" class="status-spinner"></span>
         <el-icon v-else-if="toolCall.status === 'success'" class="status-icon success"><Select /></el-icon>
         <el-icon v-else-if="toolCall.status === 'error'" class="status-icon error"><CloseBold /></el-icon>
@@ -49,12 +57,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, inject } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Select, CloseBold, ArrowDown, CopyDocument } from '@element-plus/icons-vue'
 import type { ToolCall } from '../../composables/useChat'
+import { useSessionStore } from '../../stores/session'
 
 const props = defineProps<{ toolCall: ToolCall }>()
+
+const sessionStore = useSessionStore()
+const openSubagent = inject<(payload: { childSessionId: number; title?: string }) => void>('openSubagent', () => {})
 
 const isExpanded = ref(props.toolCall.isExpanded ?? false)
 
@@ -64,6 +76,51 @@ watch(
     if (val !== undefined) isExpanded.value = val
   }
 )
+
+const isDelegate = computed(() => props.toolCall.name === 'delegate')
+
+const childSessionId = computed(() => {
+  const result = props.toolCall.result
+  if (result) {
+    try {
+      const obj = JSON.parse(result)
+      const id = obj?.child_session_id ?? obj?.childSessionId
+      if (id != null && Number(id) > 0) return Number(id)
+    } catch {
+      // ignore
+    }
+  }
+  // 并行 delegate：优先按 tool_call_id 绑定
+  const byToolCall = sessionStore.findSubagentByToolCallId(props.toolCall.id)
+  if (byToolCall) return byToolCall
+
+  const parentId = sessionStore.activeSessionId
+  if (!parentId) return null
+  const agentType = typeof props.toolCall.input?.agent_type === 'string'
+    ? props.toolCall.input.agent_type
+    : undefined
+  const task = typeof props.toolCall.input?.task === 'string'
+    ? props.toolCall.input.task
+    : undefined
+  // 仅在能唯一匹配时返回，避免多个 RUNNING 时绑错
+  return sessionStore.findSubagentChildId(parentId, {
+    runningOnly: props.toolCall.status === 'running' || props.toolCall.status === 'pending',
+    agentType,
+    task,
+  })
+})
+
+function openSubagentProcess() {
+  const id = childSessionId.value
+  if (!id) {
+    ElMessage.info('子代理会话尚未就绪')
+    return
+  }
+  const title = typeof props.toolCall.input?.task === 'string'
+    ? `子代理: ${String(props.toolCall.input.task).slice(0, 40)}`
+    : '子代理'
+  openSubagent({ childSessionId: id, title })
+}
 
 const displaySummary = computed(() => {
   if (props.toolCall.summary) return props.toolCall.summary
@@ -210,6 +267,21 @@ function toggleExpand() {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+}
+
+.view-subagent-btn {
+  border: 1px solid var(--aw-hairline);
+  background: transparent;
+  color: var(--aw-primary);
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: var(--aw-radius-sm);
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.view-subagent-btn:hover {
+  background: var(--aw-canvas-parchment);
 }
 
 .status-spinner {

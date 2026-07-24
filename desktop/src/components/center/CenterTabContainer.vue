@@ -19,6 +19,11 @@
         :tab-id="activeTabId"
         :side-session-id="activeTab.sideSessionId"
       />
+      <SubagentChatPanel
+        v-else-if="activeTab?.type === 'subagent' && activeTab.sideSessionId != null && activeTab.sideSessionId > 0"
+        :key="activeTabId"
+        :child-session-id="activeTab.sideSessionId"
+      />
     </KeepAlive>
   </div>
 </template>
@@ -29,6 +34,7 @@ import ChatPanel from '../chat/ChatPanel.vue'
 import FileViewer from './FileViewer.vue'
 import FileDiffViewer from './FileDiffViewer.vue'
 import SideChatPanel from '../chat/SideChatPanel.vue'
+import SubagentChatPanel from '../chat/SubagentChatPanel.vue'
 import type { Tab } from '../../types/file-browser'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 

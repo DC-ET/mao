@@ -3,6 +3,8 @@ package cn.etarch.mao.session.controller;
 import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.common.result.Result;
+import cn.etarch.mao.harness.delegate.entity.SubagentExecution;
+import cn.etarch.mao.harness.delegate.mapper.SubagentExecutionMapper;
 import cn.etarch.mao.harness.safety.PathSandbox;
 import cn.etarch.mao.model.entity.LlmModel;
 import cn.etarch.mao.model.mapper.LlmModelMapper;
@@ -30,6 +32,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -48,6 +51,7 @@ public class SessionController {
     private final SessionTodoMapper sessionTodoMapper;
     private final MessageQueueService messageQueueService;
     private final PathSandbox pathSandbox;
+    private final SubagentExecutionMapper subagentExecutionMapper;
 
     public SessionController(SessionService sessionService,
                              AgentMapper agentMapper,
@@ -55,7 +59,8 @@ public class SessionController {
                              ActivityService activityService,
                              SessionTodoMapper sessionTodoMapper,
                              MessageQueueService messageQueueService,
-                             PathSandbox pathSandbox) {
+                             PathSandbox pathSandbox,
+                             SubagentExecutionMapper subagentExecutionMapper) {
         this.sessionService = sessionService;
         this.agentMapper = agentMapper;
         this.llmModelMapper = llmModelMapper;
@@ -63,6 +68,7 @@ public class SessionController {
         this.sessionTodoMapper = sessionTodoMapper;
         this.messageQueueService = messageQueueService;
         this.pathSandbox = pathSandbox;
+        this.subagentExecutionMapper = subagentExecutionMapper;
     }
 
     @PostMapping
@@ -295,6 +301,51 @@ public class SessionController {
             return vo;
         }).collect(Collectors.toList());
         return Result.ok(voList);
+    }
+
+    @GetMapping("/{id}/subagents")
+    public Result<List<SubagentVO>> listSubagents(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id) {
+        requireSessionOwner(userId, id);
+        List<Session> subagents = sessionService.listSubagentSessions(id, userId);
+        Map<Long, SubagentExecution> executionByChild = loadSubagentExecutions(subagents);
+        List<SubagentVO> voList = subagents.stream().map(s -> {
+            SubagentVO vo = new SubagentVO();
+            vo.setId(s.getId());
+            vo.setTitle(s.getTitle());
+            vo.setPhase(s.getPhase() != null ? s.getPhase() : "IDLE");
+            vo.setCreatedAt(s.getCreatedAt() != null ? s.getCreatedAt().toString() : null);
+            SubagentExecution exec = executionByChild.get(s.getId());
+            if (exec != null) {
+                vo.setAgentType(exec.getAgentType());
+                vo.setTaskDescription(exec.getTaskDescription());
+                // createSession 默认 IDLE，且 setPhase(null) 无法清掉；IDLE 视为未就绪，优先用审计状态
+                String sessionPhase = s.getPhase();
+                if (exec.getStatus() != null && (sessionPhase == null || sessionPhase.isBlank()
+                        || "IDLE".equals(sessionPhase))) {
+                    vo.setPhase(exec.getStatus());
+                }
+            }
+            return vo;
+        }).collect(Collectors.toList());
+        return Result.ok(voList);
+    }
+
+    private Map<Long, SubagentExecution> loadSubagentExecutions(List<Session> subagents) {
+        if (subagents == null || subagents.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> childIds = subagents.stream().map(Session::getId).collect(Collectors.toList());
+        List<SubagentExecution> executions = subagentExecutionMapper.selectList(
+                new LambdaQueryWrapper<SubagentExecution>()
+                        .in(SubagentExecution::getChildSessionId, childIds)
+                        .orderByDesc(SubagentExecution::getId));
+        Map<Long, SubagentExecution> map = new HashMap<>();
+        for (SubagentExecution exec : executions) {
+            map.putIfAbsent(exec.getChildSessionId(), exec);
+        }
+        return map;
     }
 
     @GetMapping("/{id}/messages")
@@ -699,6 +750,16 @@ public class SessionController {
         private Long modelId;
         private String phase;
         private String createdAt;
+    }
+
+    @Data
+    public static class SubagentVO {
+        private Long id;
+        private String title;
+        private String phase;
+        private String createdAt;
+        private String agentType;
+        private String taskDescription;
     }
 
     @Data

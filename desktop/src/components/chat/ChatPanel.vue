@@ -264,9 +264,20 @@ const currentModelSupportsVision = computed(() => {
   return currentSession.value?.modelSupportsVision
 })
 
-const activePendingApprovals = computed(() =>
-  pendingApprovals.value.filter(a => !a.sessionId || a.sessionId === sessionStore.activeSessionId)
-)
+const activePendingApprovals = computed(() => {
+  const parentId = sessionStore.activeSessionId
+  if (!parentId) {
+    return pendingApprovals.value.filter(a => !a.sessionId)
+  }
+  const subIds = new Set(
+    sessionStore.getSubagents(parentId).map(s => String(s.id))
+  )
+  return pendingApprovals.value.filter(a => {
+    if (!a.sessionId || a.sessionId === parentId) return true
+    // 子代理 Tab 未激活时，仍在主聊天展示其 LOCAL 审批，避免卡死
+    return subIds.has(String(a.sessionId))
+  })
+})
 
 const activePendingQuestions = computed(() => sessionStore.activePendingQuestions)
 
