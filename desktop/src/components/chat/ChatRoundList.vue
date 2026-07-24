@@ -82,11 +82,7 @@
       :hide-file-changes="true"
       :is-last="msg === activeRoundMsgs[activeRoundMsgs.length - 1]"
     />
-    <FileChangePanel
-      v-if="activeRound.fileChanges.length > 0"
-      :changes="activeRound.fileChanges"
-      mode="history"
-    />
+    <!-- 执行中不展示文件变更；刷新后 API 虽会带回已落库变更，也须等轮次完成后再展示 -->
   </template>
 
   <!-- 无轮次时：直接渲染所有消息 -->
