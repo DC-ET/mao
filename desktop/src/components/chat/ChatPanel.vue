@@ -276,13 +276,15 @@ const showTypingIndicator = computed(() => {
   if (initializingWorkspace.value) return false
   if (!sending.value) return false
   if (sessionStore.activeStreaming) return false
-  if (sessionStore.activeThinking) return true
   const lastMsg = messages.value[messages.value.length - 1]
   if (!lastMsg) return true
   if (normalizeMessageRole(lastMsg.role ?? '') !== 'assistant') return true
-  const hasText = !!(lastMsg.content?.trim() || lastMsg.segments?.some(s => s.type === 'text' && s.content.trim()))
-  const hasTools = (lastMsg.toolCalls?.length ?? 0) > 0
-  return !hasText && !hasTools
+  const hasRunningTool = lastMsg.toolCalls?.some(
+    tc => tc.status === 'pending' || tc.status === 'running'
+  ) ?? false
+  if (hasRunningTool) return false
+  // 执行中但暂无流式输出/工具进行中（含恢复会话后等待下一事件、工具间隙）→ 底部三点
+  return true
 })
 
 onMounted(async () => {

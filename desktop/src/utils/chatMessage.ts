@@ -155,10 +155,69 @@ export function appendToolCallStart(msg: ChatMessage, call: ToolCall) {
   const existing = msg.toolCalls.find(c => c.id === call.id)
   if (existing) {
     if (call.input) existing.input = call.input
+    if (call.status === 'running' || call.status === 'pending') {
+      existing.status = call.status
+      existing.argsStreaming = call.argsStreaming
+    }
     return
   }
   msg.toolCalls.push(call)
   msg.segments.push({ type: 'tool', callId: call.id })
+}
+
+/** 从实时缓存中收集仍在进行中的工具调用（fetchMessages 覆盖前需保留） */
+export function collectLiveRunningTools(messages: ChatMessage[]): ToolCall[] {
+  const running: ToolCall[] = []
+  for (const msg of messages) {
+    for (const tc of msg.toolCalls || []) {
+      if (tc.status === 'running' || tc.status === 'pending') {
+        running.push({ ...tc })
+      }
+    }
+  }
+  return running
+}
+
+/** 将进行中的工具调用合并到消息列表最后一条 assistant（避免 REST 覆盖丢失转圈状态） */
+export function mergeRunningToolsIntoMessages(
+  messages: ChatMessage[],
+  runningTools: ToolCall[]
+): ChatMessage[] {
+  if (messages.length === 0 || runningTools.length === 0) return messages
+
+  const result = messages.map(m => ({
+    ...m,
+    toolCalls: m.toolCalls ? m.toolCalls.map(tc => ({ ...tc })) : m.toolCalls,
+    segments: m.segments ? m.segments.map(s => ({ ...s })) : m.segments
+  }))
+
+  let lastAssistant: ChatMessage | undefined
+  for (let i = result.length - 1; i >= 0; i--) {
+    if (normalizeMessageRole(result[i].role) === 'assistant') {
+      lastAssistant = result[i]
+      break
+    }
+  }
+  if (!lastAssistant) return result
+
+  if (!lastAssistant.toolCalls) lastAssistant.toolCalls = []
+  if (!lastAssistant.segments) lastAssistant.segments = []
+
+  for (const live of runningTools) {
+    const existing = lastAssistant.toolCalls.find(tc => tc.id === live.id)
+    if (existing) {
+      // API 若尚未写入 TOOL 结果，保留 running 态
+      if (!existing.result) {
+        existing.status = live.status
+        existing.argsStreaming = live.argsStreaming
+        if (live.input) existing.input = live.input
+        if (live.summary) existing.summary = live.summary
+      }
+    } else {
+      appendToolCallStart(lastAssistant, live)
+    }
+  }
+  return result
 }
 
 /** 将 API 消息映射为聊天消息，并附加 fileChanges */

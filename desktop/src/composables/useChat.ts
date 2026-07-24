@@ -5,7 +5,7 @@ import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
 import { collectLocalUnsyncedSkills } from '../utils/localSkills'
 import { collectAgentsMdContent } from '../utils/agentsMd'
-import { mapMessagesWithFileChanges } from '../utils/chatMessage'
+import { mapMessagesWithFileChanges, collectLiveRunningTools, mergeRunningToolsIntoMessages } from '../utils/chatMessage'
 import { normalizeMessageRole, type ChatMessage, type QuestionAnswer } from '../types/chat'
 
 export type {
@@ -121,7 +121,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const activities = computed(() => sessionStore.activeActivities)
   const contextWindow = computed(() => sessionStore.activeContextWindow)
 
-  async function fetchMessages() {
+  async function fetchMessages(options?: { preserveRunningTools?: boolean }) {
     const sid = sessionId.value
     if (!sid) return
     sessionStore.clearMessagePageState(sid)
@@ -129,8 +129,14 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const { data } = await api.get(`/sessions/${sid}/messages`, { params: { roundLimit: 5 } })
       const raw: Array<Record<string, unknown>> = data?.messages || []
       const { messages, allChanges } = mapMessagesWithFileChanges(raw)
-      // 使用请求时的 sid，避免切换会话后写入错误会话缓存
-      sessionStore.setMessages(sid, messages)
+      // 覆盖前一刻采集仍在 running 的工具，避免 REST 历史抹掉转圈状态
+      const running = options?.preserveRunningTools
+        ? collectLiveRunningTools(sessionStore.getMessages(sid))
+        : []
+      const nextMessages = running.length > 0
+        ? mergeRunningToolsIntoMessages(messages, running)
+        : messages
+      sessionStore.setMessages(sid, nextMessages)
       sessionStore.setFileChanges(sid, allChanges)
       sessionStore.setMessagePageState(
         sid,
@@ -932,7 +938,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     subscribe(sessionIdVal)
 
     if (!active || !hasCompleteCache) {
-      fetchMessages().then(() => {
+      fetchMessages({ preserveRunningTools: active }).then(() => {
         if (isActivePhase(sessionStore.activeSession?.phase)) {
           sessionStore.ensureStreamingAssistantMessage(sessionIdVal)
         }

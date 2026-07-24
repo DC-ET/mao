@@ -168,14 +168,16 @@ const showTypingIndicator = computed(() => {
   if (!sending.value) return false
   const sid = hasRealSession.value ? String(realSessionId.value) : placeholderCacheKey.value
   if (sessionStore.isSessionStreaming(sid)) return false
-  if (sessionStore.isSessionThinking(sid)) return true
   const msgs = displayMessages.value
   const lastMsg = msgs[msgs.length - 1]
   if (!lastMsg) return true
   if (normalizeMessageRole(lastMsg.role ?? '') !== 'assistant') return true
-  const hasText = !!(lastMsg.content?.trim() || lastMsg.segments?.some(s => s.type === 'text' && s.content.trim()))
-  const hasTools = (lastMsg.toolCalls?.length ?? 0) > 0
-  return !hasText && !hasTools
+  const hasRunningTool = lastMsg.toolCalls?.some(
+    tc => tc.status === 'pending' || tc.status === 'running'
+  ) ?? false
+  if (hasRunningTool) return false
+  // 执行中但暂无流式输出/工具进行中 → 底部三点
+  return true
 })
 
 const sidePendingQuestions = computed(() => {
