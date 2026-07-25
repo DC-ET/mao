@@ -68,8 +68,22 @@ public class WriteFileTool implements Tool {
     public String execute(String arguments, String workspace) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
-            String path = args.get("path").asText();
-            String content = args.get("content").asText();
+            if (args == null || !args.isObject()) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "success", false,
+                        "bytes_written", 0,
+                        "error", "无效的JSON参数"
+                ));
+            }
+            String path = args.has("path") && !args.get("path").isNull() ? args.get("path").asText() : null;
+            String content = args.has("content") && !args.get("content").isNull() ? args.get("content").asText() : null;
+            if (path == null || content == null) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "success", false,
+                        "bytes_written", 0,
+                        "error", "缺少必填参数: path, content"
+                ));
+            }
 
             Path filePath = pathSandbox.resolve(path, workspace);
 

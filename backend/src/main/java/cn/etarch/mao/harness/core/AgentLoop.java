@@ -3,6 +3,7 @@ package cn.etarch.mao.harness.core;
 import cn.etarch.mao.harness.llm.*;
 import cn.etarch.mao.harness.shell.ShellSessionManager;
 import cn.etarch.mao.harness.tool.FileChangeDiffUtil;
+import cn.etarch.mao.harness.tool.Tool;
 import cn.etarch.mao.harness.tool.ToolCallContext;
 import cn.etarch.mao.harness.tool.ToolDispatcher;
 import cn.etarch.mao.harness.tool.ToolImageResultProcessor;
@@ -509,6 +510,15 @@ public class AgentLoop {
     }
 
     private String dispatchTool(String toolName, String arguments, AgentExecutionContext context) {
+        // 强制校验：只允许调用当前上下文允许集内的工具。
+        // 子智能体（如 researcher/reviewer）通过 DelegateTool.buildSubContext 过滤了工具集，
+        // 但过滤只影响发给 LLM 的 schema；若模型越界调用被排除的工具，必须在执行入口拦截，
+        // 否则 ToolDispatcher 会直接从全局注册表路由并执行。
+        if (!isToolAllowed(toolName, context)) {
+            log.warn("Blocked disallowed tool call: tool={} session={} (not in context tool set)",
+                    toolName, context.getSessionId());
+            return "Tool execution failed: 工具 '" + toolName + "' 不在当前允许的工具集内，无法调用。";
+        }
         try {
             return toolDispatcher.dispatch(toolName, arguments,
                     context.getExecutionMode(), context.getSessionId(), context.getUserId(),
@@ -517,6 +527,19 @@ public class AgentLoop {
             log.error("[DIAG] dispatchTool threw for tool={} session={}", toolName, context.getSessionId(), e);
             return "Tool execution failed: " + e.getMessage();
         }
+    }
+
+    private boolean isToolAllowed(String toolName, AgentExecutionContext context) {
+        List<Tool> tools = context.getTools();
+        if (tools == null) {
+            return true;
+        }
+        for (Tool tool : tools) {
+            if (tool.getName().equals(toolName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

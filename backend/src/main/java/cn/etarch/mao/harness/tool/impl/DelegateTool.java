@@ -154,8 +154,18 @@ public class DelegateTool implements Tool {
 
         try {
             JsonNode args = objectMapper.readTree(arguments);
-            String agentType = args.get("agent_type").asText();
-            String task = args.get("task").asText();
+            if (args == null || !args.isObject()) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "error", "无效的JSON参数"
+                ));
+            }
+            String agentType = args.has("agent_type") && !args.get("agent_type").isNull() ? args.get("agent_type").asText() : null;
+            String task = args.has("task") && !args.get("task").isNull() ? args.get("task").asText() : null;
+            if (agentType == null || task == null) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "error", "缺少必填参数: agent_type, task"
+                ));
+            }
 
             // 1. 查找子智能体定义
             AgentDefinition definition = definitionRegistry.getDefinition(agentType);

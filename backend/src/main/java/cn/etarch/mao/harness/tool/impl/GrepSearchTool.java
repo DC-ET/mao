@@ -83,14 +83,26 @@ public class GrepSearchTool implements Tool {
     public String execute(String arguments, String workspace) {
         try {
             var args = objectMapper.readTree(arguments);
-            String pattern = args.get("pattern").asText();
-            String glob = args.has("glob") ? args.get("glob").asText(null) : null;
+            if (args == null || !args.isObject()) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "matches", List.of(),
+                        "error", "无效的JSON参数"
+                ));
+            }
+            String pattern = args.has("pattern") && !args.get("pattern").isNull() ? args.get("pattern").asText() : null;
+            if (pattern == null) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "matches", List.of(),
+                        "error", "缺少必填参数: pattern"
+                ));
+            }
+            String glob = args.has("glob") && !args.get("glob").isNull() ? args.get("glob").asText(null) : null;
             boolean ignoreCase = args.has("ignore_case") && args.get("ignore_case").asBoolean(false);
             int contextLines = args.has("context_lines") ? args.get("context_lines").asInt(0) : 0;
             int maxOutputChars = args.has("max_output_chars") ? args.get("max_output_chars").asInt(DEFAULT_MAX_OUTPUT_CHARS) : DEFAULT_MAX_OUTPUT_CHARS;
 
             Path resolvedPath;
-            if (args.has("path") && !args.get("path").asText().isEmpty()) {
+            if (args.has("path") && !args.get("path").isNull() && !args.get("path").asText().isEmpty()) {
                 resolvedPath = pathSandbox.resolve(args.get("path").asText(), workspace);
             } else {
                 resolvedPath = pathSandbox.getEffectiveWorkspaceRoot(workspace);

@@ -80,11 +80,23 @@ public class GlobSearchTool implements Tool {
     public String execute(String arguments, String workspace) {
         try {
             var args = objectMapper.readTree(arguments);
-            String pattern = args.get("pattern").asText();
+            if (args == null || !args.isObject()) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "files", List.of(),
+                        "error", "无效的JSON参数"
+                ));
+            }
+            String pattern = args.has("pattern") && !args.get("pattern").isNull() ? args.get("pattern").asText() : null;
+            if (pattern == null) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "files", List.of(),
+                        "error", "缺少必填参数: pattern"
+                ));
+            }
             int headLimit = args.has("head_limit") ? args.get("head_limit").asInt(DEFAULT_HEAD_LIMIT) : DEFAULT_HEAD_LIMIT;
 
             Path resolvedPath;
-            if (args.has("path") && !args.get("path").asText().isEmpty()) {
+            if (args.has("path") && !args.get("path").isNull() && !args.get("path").asText().isEmpty()) {
                 resolvedPath = pathSandbox.resolve(args.get("path").asText(), workspace);
             } else {
                 resolvedPath = pathSandbox.getEffectiveWorkspaceRoot(workspace);

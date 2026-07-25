@@ -69,9 +69,23 @@ public class EditFileTool implements Tool {
     public String execute(String arguments, String workspace) {
         try {
             JsonNode args = objectMapper.readTree(arguments);
-            String path = args.get("path").asText();
-            String oldString = args.get("old_string").asText();
-            String newString = args.get("new_string").asText();
+            if (args == null || !args.isObject()) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "success", false,
+                        "replacements", 0,
+                        "error", "无效的JSON参数"
+                ));
+            }
+            String path = args.has("path") && !args.get("path").isNull() ? args.get("path").asText() : null;
+            String oldString = args.has("old_string") && !args.get("old_string").isNull() ? args.get("old_string").asText() : null;
+            String newString = args.has("new_string") && !args.get("new_string").isNull() ? args.get("new_string").asText() : null;
+            if (path == null || oldString == null || newString == null) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "success", false,
+                        "replacements", 0,
+                        "error", "缺少必填参数: path, old_string, new_string"
+                ));
+            }
 
             Path filePath = pathSandbox.resolve(path, workspace);
 

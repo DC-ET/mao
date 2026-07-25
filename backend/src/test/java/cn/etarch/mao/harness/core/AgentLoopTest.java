@@ -7,6 +7,7 @@ import cn.etarch.mao.harness.llm.LlmAdapter;
 import cn.etarch.mao.harness.llm.StreamCallback;
 import cn.etarch.mao.harness.llm.StreamChunk;
 import cn.etarch.mao.harness.shell.ShellSessionManager;
+import cn.etarch.mao.harness.tool.Tool;
 import cn.etarch.mao.harness.tool.ToolDispatcher;
 import cn.etarch.mao.session.activity.SessionActivityHeartbeat;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -242,7 +243,14 @@ class AgentLoopTest {
         context.setPermissionLevel("READ_ONLY");
         context.setMaxRounds(5);
         context.addUserMessage("hi");
+        context.setTools(List.of(namedTool("read_file")));
         return context;
+    }
+
+    private Tool namedTool(String name) {
+        Tool tool = mock(Tool.class);
+        when(tool.getName()).thenReturn(name);
+        return tool;
     }
 
     private StreamChunk contentChunk(String reasoning, String content) {
