@@ -6,6 +6,7 @@ import cn.etarch.mao.notification.task.mapper.TaskNotificationDeliveryMapper;
 import cn.etarch.mao.session.entity.MessageQueue;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.service.MessageQueueService;
+import cn.etarch.mao.weixin.service.WeixinSessionService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -54,6 +55,14 @@ class TaskNotificationDeliveryServiceTest {
 
         when(queueService.listPending(10L)).thenReturn(List.of(new MessageQueue()));
         assertTrue(service.prepare(normal, "FAILED", "exec-3").isEmpty());
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void excludesWeixinSession() {
+        Session weixinSession = session("NORMAL");
+        weixinSession.setProjectKey(WeixinSessionService.PROJECT_KEY);
+        assertTrue(service.prepare(weixinSession, "COMPLETED", "exec-1").isEmpty());
         verify(mapper, never()).insert(any());
     }
 

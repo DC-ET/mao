@@ -6,6 +6,7 @@ import cn.etarch.mao.notification.task.mapper.TaskNotificationDeliveryMapper;
 import cn.etarch.mao.notification.task.model.DeliveryStatus;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.service.MessageQueueService;
+import cn.etarch.mao.weixin.service.WeixinSessionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -26,6 +27,10 @@ public class TaskNotificationDeliveryService {
     public Optional<TaskNotificationDelivery> prepare(Session session, String phase, String executionId) {
         if (session == null || !("COMPLETED".equals(phase) || "FAILED".equals(phase))) return Optional.empty();
         if ("SUBAGENT".equals(session.getSessionType())) return Optional.empty();
+        if (WeixinSessionService.PROJECT_KEY.equals(session.getProjectKey())) {
+            log.debug("Skipping task notification for weixin session: sessionId={}", session.getId());
+            return Optional.empty();
+        }
         if (!messageQueueService.listPending(session.getId()).isEmpty()) return Optional.empty();
         UserTaskNotificationPreference preference = preferenceService.findEnabled(session.getUserId());
         if (preference == null) return Optional.empty();
