@@ -33,6 +33,10 @@ public class TaskTerminalService {
     }
 
     public void finishExecution(Long sessionId, Long userId, String phase, String executionId) {
+        finishExecution(sessionId, userId, phase, executionId, null);
+    }
+
+    public void finishExecution(Long sessionId, Long userId, String phase, String executionId, String failureReason) {
         if (!("COMPLETED".equals(phase) || "FAILED".equals(phase) || "CANCELLED".equals(phase))) {
             throw new IllegalArgumentException("Unsupported terminal phase: " + phase);
         }
@@ -54,7 +58,7 @@ public class TaskTerminalService {
         statusData.put("unread", true);
         if (executionId != null && !executionId.isBlank()) statusData.put("executionId", executionId);
 
-        Optional<TaskNotificationDelivery> delivery = prepareDelivery(session, phase, executionId);
+        Optional<TaskNotificationDelivery> delivery = prepareDelivery(session, phase, executionId, failureReason);
         registry.send(ownerId, WsEvent.of("session_list_update", sessionId, Map.of("phase", phase)));
         registry.sendWithResult(ownerId, WsEvent.of("session_status", sessionId, statusData))
                 .whenCompleteAsync((result, error) -> {
@@ -73,9 +77,9 @@ public class TaskTerminalService {
         return "COMPLETED".equals(phase) || "FAILED".equals(phase) || "CANCELLED".equals(phase);
     }
 
-    private Optional<TaskNotificationDelivery> prepareDelivery(Session session, String phase, String executionId) {
+    private Optional<TaskNotificationDelivery> prepareDelivery(Session session, String phase, String executionId, String failureReason) {
         try {
-            return deliveryService.prepare(session, phase, executionId);
+            return deliveryService.prepare(session, phase, executionId, failureReason);
         } catch (Exception e) {
             log.warn("Failed to prepare task notification delivery: sessionId={}, error={}",
                     session.getId(), e.getMessage());

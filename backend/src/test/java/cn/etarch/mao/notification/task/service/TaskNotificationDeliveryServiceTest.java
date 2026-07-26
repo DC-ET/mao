@@ -37,7 +37,7 @@ class TaskNotificationDeliveryServiceTest {
         when(queueService.listPending(10L)).thenReturn(List.of());
         when(preferenceService.findEnabled(7L)).thenReturn(preference);
 
-        assertTrue(service.prepare(session, "COMPLETED", "exec-1").isPresent());
+        assertTrue(service.prepare(session, "COMPLETED", "exec-1", null).isPresent());
 
         ArgumentCaptor<TaskNotificationDelivery> captor = ArgumentCaptor.forClass(TaskNotificationDelivery.class);
         verify(mapper).insert(captor.capture());
@@ -48,13 +48,13 @@ class TaskNotificationDeliveryServiceTest {
     @Test
     void excludesCancelledSubagentAndQueuedIntermediateRound() {
         Session normal = session("NORMAL");
-        assertTrue(service.prepare(normal, "CANCELLED", "exec-1").isEmpty());
+        assertTrue(service.prepare(normal, "CANCELLED", "exec-1", null).isEmpty());
 
         Session subagent = session("SUBAGENT");
-        assertTrue(service.prepare(subagent, "COMPLETED", "exec-2").isEmpty());
+        assertTrue(service.prepare(subagent, "COMPLETED", "exec-2", null).isEmpty());
 
         when(queueService.listPending(10L)).thenReturn(List.of(new MessageQueue()));
-        assertTrue(service.prepare(normal, "FAILED", "exec-3").isEmpty());
+        assertTrue(service.prepare(normal, "FAILED", "exec-3", null).isEmpty());
         verify(mapper, never()).insert(any());
     }
 
@@ -62,7 +62,7 @@ class TaskNotificationDeliveryServiceTest {
     void excludesWeixinSession() {
         Session weixinSession = session("NORMAL");
         weixinSession.setProjectKey(WeixinSessionService.PROJECT_KEY);
-        assertTrue(service.prepare(weixinSession, "COMPLETED", "exec-1").isEmpty());
+        assertTrue(service.prepare(weixinSession, "COMPLETED", "exec-1", null).isEmpty());
         verify(mapper, never()).insert(any());
     }
 

@@ -135,8 +135,13 @@ public class WebhookDeliveryScheduler {
 
     private String buildContent(TaskNotificationDelivery delivery) {
         String result = "COMPLETED".equals(delivery.getTerminalPhase()) ? "已完成" : "执行失败";
-        return "Mao Agent 任务通知\n任务：" + delivery.getTitleSnapshot()
+        String content = "Mao Agent 任务通知\n任务：" + delivery.getTitleSnapshot()
                 + "\n结果：" + result + "\n时间：" + LocalDateTime.now().format(TIME_FORMAT);
+        if ("FAILED".equals(delivery.getTerminalPhase()) && delivery.getFailureReason() != null
+                && !delivery.getFailureReason().isBlank()) {
+            content += "\n原因：" + delivery.getFailureReason();
+        }
+        return content;
     }
 
     private long retryDelayMinutes(int attempt) {

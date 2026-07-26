@@ -99,7 +99,8 @@ public class CrashRecoveryRunner implements ApplicationRunner {
         } catch (Exception e) {
             log.error("Recovery failed for session {}", sessionId, e);
             try {
-                taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
+                taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId,
+                        e.getMessage() != null ? e.getMessage() : "Recovery failed");
             } catch (Exception ignored) {}
         } finally {
             agentLoop.removeCancelFlag(sessionId);

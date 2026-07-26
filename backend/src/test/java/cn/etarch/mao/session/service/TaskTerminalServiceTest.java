@@ -31,7 +31,7 @@ class TaskTerminalServiceTest {
         TaskNotificationDelivery delivery = new TaskNotificationDelivery();
         delivery.setId(9L);
         when(sessionService.getSession(10L)).thenReturn(running, completed);
-        when(deliveryService.prepare(completed, "COMPLETED", "exec-1")).thenReturn(Optional.of(delivery));
+        when(deliveryService.prepare(completed, "COMPLETED", "exec-1", null)).thenReturn(Optional.of(delivery));
         when(registry.sendWithResult(eq(7L), any(WsEvent.class))).thenReturn(
                 CompletableFuture.completedFuture(new StreamingWsRegistry.WsDeliveryResult(1, 1, 0)));
 
@@ -48,7 +48,7 @@ class TaskTerminalServiceTest {
         TaskNotificationDelivery delivery = new TaskNotificationDelivery();
         delivery.setId(11L);
         when(sessionService.getSession(10L)).thenReturn(running, failed);
-        when(deliveryService.prepare(failed, "FAILED", "exec-2")).thenReturn(Optional.of(delivery));
+        when(deliveryService.prepare(failed, "FAILED", "exec-2", null)).thenReturn(Optional.of(delivery));
         when(registry.sendWithResult(eq(7L), any(WsEvent.class))).thenReturn(
                 CompletableFuture.completedFuture(new StreamingWsRegistry.WsDeliveryResult(0, 0, 0)));
 

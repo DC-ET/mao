@@ -209,7 +209,8 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
                 } catch (Exception ignored) {
                 }
                 try {
-                    taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
+                    taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId,
+                            e.getMessage() != null ? e.getMessage() : "Agent 执行异常");
                 } catch (Exception ignored) {
                 }
                 WeixinReply errorReply = new WeixinReply();

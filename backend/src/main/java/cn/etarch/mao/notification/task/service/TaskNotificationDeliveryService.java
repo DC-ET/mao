@@ -24,7 +24,7 @@ public class TaskNotificationDeliveryService {
     private final MessageQueueService messageQueueService;
     private final TaskNotificationMetrics metrics;
 
-    public Optional<TaskNotificationDelivery> prepare(Session session, String phase, String executionId) {
+    public Optional<TaskNotificationDelivery> prepare(Session session, String phase, String executionId, String failureReason) {
         if (session == null || !("COMPLETED".equals(phase) || "FAILED".equals(phase))) return Optional.empty();
         if ("SUBAGENT".equals(session.getSessionType())) return Optional.empty();
         if (WeixinSessionService.PROJECT_KEY.equals(session.getProjectKey())) {
@@ -47,6 +47,9 @@ public class TaskNotificationDeliveryService {
         delivery.setChannel(preference.getChannel());
         delivery.setWebhookCiphertext(preference.getWebhookCiphertext());
         delivery.setTitleSnapshot(normalizeTitle(session.getTitle()));
+        if ("FAILED".equals(phase) && failureReason != null && !failureReason.isBlank()) {
+            delivery.setFailureReason(truncate(failureReason, 500));
+        }
         delivery.setStatus(DeliveryStatus.WAITING_WS.name());
         delivery.setAttemptCount(0);
         delivery.setNextRetryAt(LocalDateTime.now().plusSeconds(10));
@@ -73,5 +76,10 @@ public class TaskNotificationDeliveryService {
     private String normalizeTitle(String title) {
         String value = title == null || title.isBlank() ? "未命名任务" : title.trim();
         return value.length() <= 255 ? value : value.substring(0, 255);
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null) return null;
+        return value.length() <= maxLength ? value : value.substring(0, maxLength);
     }
 }

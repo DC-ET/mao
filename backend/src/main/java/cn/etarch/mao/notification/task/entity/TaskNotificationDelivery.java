@@ -22,6 +22,7 @@ public class TaskNotificationDelivery {
     private String channel;
     private String webhookCiphertext;
     private String titleSnapshot;
+    private String failureReason;
     private String status;
     private Integer attemptCount;
     private LocalDateTime nextRetryAt;

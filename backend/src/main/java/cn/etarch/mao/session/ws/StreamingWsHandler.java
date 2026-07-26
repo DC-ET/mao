@@ -137,11 +137,15 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     }
 
     private void finishFailedSession(Long sessionId, Long userId, String executionId) {
+        finishFailedSession(sessionId, userId, executionId, null);
+    }
+
+    private void finishFailedSession(Long sessionId, Long userId, String executionId, String failureReason) {
         if (isSessionCancelled(sessionId)) {
             log.info("Skip FAILED transition for cancelled session {}", sessionId);
             return;
         }
-        taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId);
+        taskTerminalService.finishExecution(sessionId, userId, "FAILED", executionId, failureReason);
     }
 
     private void abortRunningExecution(Long sessionId, Long userId) {
@@ -211,7 +215,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         log.warn("Terminating stale session {} for userId={}", sessionId, userId);
         abortRunningExecution(sessionId, userId, true);
         try {
-            taskTerminalService.finishExecution(sessionId, userId, "FAILED", UUID.randomUUID().toString());
+            taskTerminalService.finishExecution(sessionId, userId, "FAILED", UUID.randomUUID().toString(),
+                    "任务因长时间无响应已自动终止");
         } catch (Exception e) {
             log.warn("Failed to mark stale session {} as FAILED: {}", sessionId, e.getMessage());
         }
@@ -495,7 +500,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     if (agent != null) {
                         boolean synced = syncSkillsToClient(userId, sessionId, session, agent);
                         if (!synced) {
-                            finishFailedSession(sessionId, userId, executionId);
+                            finishFailedSession(sessionId, userId, executionId, "Skill sync failed or timed out");
                             registry.send(userId, WsEvent.of("error", sessionId,
                                     Map.of("message", "Skill sync failed or timed out")));
                             return;
@@ -544,7 +549,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                     "executionId", executionId)));
                 } catch (Exception ignored) {}
                 try {
-                    finishFailedSession(sessionId, userId, executionId);
+                    finishFailedSession(sessionId, userId, executionId,
+                            e.getMessage() != null ? e.getMessage() : "Agent 执行异常");
                 } catch (Exception ignored) {}
             } finally {
                 releaseSessionExecutionResources(sessionId);
@@ -785,7 +791,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     if (agent != null) {
                         boolean synced = syncSkillsToClient(userId, sessionId, session, agent);
                         if (!synced) {
-                            finishFailedSession(sessionId, userId, executionId);
+                            finishFailedSession(sessionId, userId, executionId, "Skill sync failed or timed out");
                             registry.send(userId, WsEvent.of("error", sessionId,
                                     Map.of("message", "Skill sync failed or timed out")));
                             return;
@@ -830,7 +836,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                     "executionId", executionId)));
                 } catch (Exception ignored) {}
                 try {
-                    finishFailedSession(sessionId, userId, executionId);
+                    finishFailedSession(sessionId, userId, executionId,
+                            e.getMessage() != null ? e.getMessage() : "Agent 执行异常");
                 } catch (Exception ignored) {}
             } finally {
                 releaseSessionExecutionResources(sessionId);
@@ -1036,7 +1043,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             } catch (Exception e) {
                 log.error("Side task execution failed for sideSession {}", sideSessionId, e);
                 try {
-                    finishFailedSession(sideSessionId, userId, sideExecutionId);
+                    finishFailedSession(sideSessionId, userId, sideExecutionId,
+                            e.getMessage() != null ? e.getMessage() : "未知错误");
                 } catch (Exception ignored) {}
                 registry.send(userId, WsEvent.of("error", sideSessionId,
                         Map.of("message", e.getMessage() != null ? e.getMessage() : "未知错误")));
