@@ -132,22 +132,47 @@ class ModelServiceTest {
         LlmModel model = model(8L, "ok", 0, 1);
         when(modelMapper.selectById(8L)).thenReturn(model);
         when(llmAdapter.chat(any(ChatRequest.class), any(LlmModelConfig.class)))
-                .thenReturn(ChatResponse.builder().choices(List.of()).build());
+                .thenAnswer(invocation -> {
+                    ChatRequest request = invocation.getArgument(0);
+                    if (isConnectivityProbe(request)) {
+                        return ChatResponse.builder().choices(List.of()).build();
+                    }
+                    return ChatResponse.builder()
+                            .choices(List.of(ChatResponse.Choice.builder()
+                                    .message(ChatRequest.Message.builder()
+                                            .role("assistant")
+                                            .content(MID_SYSTEM_CODENAME_ASKED)
+                                            .build())
+                                    .build()))
+                            .build();
+                });
 
         ModelTestResult result = service.testConnectivity(8L);
         assertThat(result.isConnectivity()).isTrue();
+        assertThat(result.isMidSystemMessage()).isFalse();
 
-        // 验证调用了两次（连通性测试 + mid system message 测试）
         ArgumentCaptor<LlmModelConfig> configCaptor = ArgumentCaptor.forClass(LlmModelConfig.class);
         verify(llmAdapter, times(2)).chat(any(ChatRequest.class), configCaptor.capture());
         assertThat(configCaptor.getValue().getModelId()).isEqualTo("model-ok");
 
         when(llmAdapter.chat(any(ChatRequest.class), any(LlmModelConfig.class)))
-                .thenThrow(new RuntimeException("boom"));
+                .thenAnswer(invocation -> {
+                    throw new RuntimeException("boom");
+                });
         result = service.testConnectivity(8L);
         assertThat(result.isConnectivity()).isFalse();
         assertThat(result.getError()).contains("连通性测试失败");
     }
+
+    private static boolean isConnectivityProbe(ChatRequest request) {
+        List<ChatRequest.Message> messages = request.getMessages();
+        return messages != null
+                && messages.size() == 1
+                && "user".equals(messages.get(0).getRole())
+                && "Hi".equals(messages.get(0).getContent());
+    }
+
+    private static final String MID_SYSTEM_CODENAME_ASKED = "MAO_ALPHA";
 
     private static LlmModel model(Long id, String name, Integer isDefault, Integer status) {
         LlmModel model = new LlmModel();

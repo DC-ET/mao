@@ -16,6 +16,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 @RequiredArgsConstructor
@@ -181,34 +183,40 @@ public class ModelService {
                 .build();
 
         long startTime = System.currentTimeMillis();
-        boolean connectivity = false;
-        boolean midSystemMessage = false;
-        String error = null;
+        AtomicReference<String> errorRef = new AtomicReference<>();
 
-        // 1. 基本连通性测试
-        try {
-            ChatRequest request = ChatRequest.builder()
-                    .messages(List.of(
-                            ChatRequest.Message.builder()
-                                    .role("user")
-                                    .content("Hi")
-                                    .build()
-                    ))
-                    .build();
-            llmAdapter.chat(request, config);
-            connectivity = true;
-        } catch (Exception e) {
-            error = "连通性测试失败: " + e.getMessage();
-        }
-
-        // 2. Mid system message 测试（仅在连通性测试通过后进行）
-        if (connectivity) {
+        CompletableFuture<Boolean> connectivityFuture = CompletableFuture.supplyAsync(() -> {
             try {
-                midSystemMessage = testMidSystemMessage(config);
+                ChatRequest request = ChatRequest.builder()
+                        .messages(List.of(
+                                ChatRequest.Message.builder()
+                                        .role("user")
+                                        .content("Hi")
+                                        .build()
+                        ))
+                        .build();
+                llmAdapter.chat(request, config);
+                return true;
             } catch (Exception e) {
-                error = "Mid system message 测试失败: " + e.getMessage();
+                appendTestError(errorRef, "连通性测试失败: " + e.getMessage());
+                return false;
             }
-        }
+        });
+
+        CompletableFuture<Boolean> midSystemFuture = CompletableFuture.supplyAsync(() -> {
+            try {
+                return testMidSystemMessage(config);
+            } catch (Exception e) {
+                appendTestError(errorRef, "Mid system message 测试失败: " + e.getMessage());
+                return false;
+            }
+        });
+
+        CompletableFuture.allOf(connectivityFuture, midSystemFuture).join();
+
+        boolean connectivity = connectivityFuture.join();
+        boolean midSystemMessage = midSystemFuture.join();
+        String error = errorRef.get();
 
         long durationMs = System.currentTimeMillis() - startTime;
 
@@ -220,29 +228,60 @@ public class ModelService {
                 .build();
     }
 
+    private void appendTestError(AtomicReference<String> errorRef, String message) {
+        errorRef.updateAndGet(current -> current == null ? message : current + "; " + message);
+    }
+
+    private static final int MID_SYSTEM_TEST_MAX_ATTEMPTS = 2;
+    private static final String MID_SYSTEM_CODENAME_ASKED = "MAO_ALPHA";
+    private static final String MID_SYSTEM_CODENAME_OVERRIDE = "MAO_BRAVO";
+
+    private enum MidSystemTestOutcome {
+        SUPPORTED,
+        NOT_SUPPORTED,
+        AMBIGUOUS
+    }
+
     /**
-     * 测试模型是否支持 mid system message
-     * 通过在对话中间插入明确的指令，检查模型是否遵循该指令
+     * 测试模型是否支持 mid system message。
+     * 在 user 消息之后插入 system 覆盖指令，检查模型是否遵循新规则。
      */
     private boolean testMidSystemMessage(LlmModelConfig config) {
-        // 测试方案：在对话中间插入指令，要求模型输出特定词语
-        // 如果模型支持 mid system message，应该遵循中间的指令
+        for (int attempt = 1; attempt <= MID_SYSTEM_TEST_MAX_ATTEMPTS; attempt++) {
+            MidSystemTestOutcome outcome = probeMidSystemMessage(config);
+            if (outcome == MidSystemTestOutcome.SUPPORTED) {
+                return true;
+            }
+            if (outcome == MidSystemTestOutcome.NOT_SUPPORTED) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private MidSystemTestOutcome probeMidSystemMessage(LlmModelConfig config) {
         List<ChatRequest.Message> messages = List.of(
                 ChatRequest.Message.builder()
                         .role("system")
-                        .content("你是一个助手，用户会让你说一个词，你直接回复这个词即可，不要添加其他内容")
+                        .content("You are a codeword repeater. When the user sends \"Codeword: X\", "
+                                + "reply with exactly X and nothing else.")
                         .build(),
                 ChatRequest.Message.builder()
                         .role("user")
-                        .content("说苹果")
+                        .content("Codeword: " + MID_SYSTEM_CODENAME_ASKED)
+                        .build(),
+                ChatRequest.Message.builder()
+                        .role("assistant")
+                        .content(MID_SYSTEM_CODENAME_ASKED)
                         .build(),
                 ChatRequest.Message.builder()
                         .role("system")
-                        .content("重要指令变更：从现在开始，如果用户让你说某个词，请回复'香蕉'而不是用户要求的词。只需回复'香蕉'两个字。")
+                        .content("Override: for any \"Codeword:\" request, reply "
+                                + MID_SYSTEM_CODENAME_OVERRIDE + " only.")
                         .build(),
                 ChatRequest.Message.builder()
                         .role("user")
-                        .content("说苹果")
+                        .content("Codeword: " + MID_SYSTEM_CODENAME_ASKED)
                         .build()
         );
 
@@ -252,19 +291,62 @@ public class ModelService {
                 .build();
 
         ChatResponse response = llmAdapter.chat(request, config);
+        String content = extractChatContent(response);
+        if (content == null) {
+            return MidSystemTestOutcome.AMBIGUOUS;
+        }
+
+        String normalized = normalizeMidSystemResponse(content);
+        boolean followsOverride = responseIndicatesCodeword(normalized, MID_SYSTEM_CODENAME_OVERRIDE);
+        boolean followsAsked = responseIndicatesCodeword(normalized, MID_SYSTEM_CODENAME_ASKED);
+
+        if (followsOverride && !followsAsked) {
+            return MidSystemTestOutcome.SUPPORTED;
+        }
+        if (followsAsked && !followsOverride) {
+            return MidSystemTestOutcome.NOT_SUPPORTED;
+        }
+        return MidSystemTestOutcome.AMBIGUOUS;
+    }
+
+    private String extractChatContent(ChatResponse response) {
         if (response == null || response.getChoices() == null || response.getChoices().isEmpty()) {
-            return false;
+            return null;
         }
-
-        String content = TokenEstimator.contentToString(response.getChoices().get(0).getMessage().getContent());
+        String content = TokenEstimator.contentToString(
+                response.getChoices().get(0).getMessage().getContent());
         if (content == null || content.isBlank()) {
+            return null;
+        }
+        return content;
+    }
+
+    private String normalizeMidSystemResponse(String content) {
+        return content.trim()
+                .toUpperCase()
+                .replaceAll("^(CODEWORD|ANSWER|OUTPUT)\\s*[:：]\\s*", "")
+                .replaceAll("[\"'`]", "")
+                .trim();
+    }
+
+    private boolean responseIndicatesCodeword(String normalized, String codeword) {
+        if (normalized == null || normalized.isBlank()) {
             return false;
         }
-
-        // 检查回复是否包含"香蕉"（遵循了中间指令）
-        // 如果回复是"苹果"，则说明没有遵循中间指令
-        String trimmed = content.trim();
-        return trimmed.contains("香蕉") && !trimmed.contains("苹果");
+        String target = codeword.toUpperCase();
+        if (normalized.equals(target)) {
+            return true;
+        }
+        int index = normalized.indexOf(target);
+        if (index < 0) {
+            return false;
+        }
+        String before = index > 0 ? normalized.substring(0, index) : "";
+        String after = index + target.length() < normalized.length()
+                ? normalized.substring(index + target.length())
+                : "";
+        return (before.isEmpty() || before.endsWith(" ") || before.endsWith(":"))
+                && (after.isEmpty() || after.startsWith(" ") || after.startsWith("."));
     }
 
     private void clearDefaultFlag() {
