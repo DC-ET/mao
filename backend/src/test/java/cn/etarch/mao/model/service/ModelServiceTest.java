@@ -150,6 +150,8 @@ class ModelServiceTest {
         ModelTestResult result = service.testConnectivity(8L);
         assertThat(result.isConnectivity()).isTrue();
         assertThat(result.isMidSystemMessage()).isFalse();
+        assertThat(result.getConnectivityOutput()).isNull();
+        assertThat(result.getMidSystemMessageOutput()).isEqualTo(MID_SYSTEM_CODENAME_ASKED);
 
         ArgumentCaptor<LlmModelConfig> configCaptor = ArgumentCaptor.forClass(LlmModelConfig.class);
         verify(llmAdapter, times(2)).chat(any(ChatRequest.class), configCaptor.capture());

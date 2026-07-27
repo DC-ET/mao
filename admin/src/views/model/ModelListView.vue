@@ -254,20 +254,28 @@ async function handleTest(row: any) {
     
     let message = ''
     let type: 'success' | 'warning' | 'error' = 'success'
+    const formatOutput = (output?: string | null) => output?.trim() ? output : '(空响应)'
     
     if (result.connectivity && result.midSystemMessage) {
-      message = `测试通过！连通性：✓，Mid System Message：✓，耗时：${result.durationMs}ms`
+      message = `测试通过！耗时：${result.durationMs}ms`
       type = 'success'
     } else if (result.connectivity) {
-      message = `部分通过。连通性：✓，Mid System Message：✗，耗时：${result.durationMs}ms`
+      message = `部分通过。耗时：${result.durationMs}ms`
       type = 'warning'
     } else {
-      message = `测试失败。连通性：✗，耗时：${result.durationMs}ms`
+      message = `测试失败。耗时：${result.durationMs}ms`
       type = 'error'
     }
+
+    message += `\n\n连通性：${result.connectivity ? '✓' : '✗'}`
+    message += `\n模型输出：${formatOutput(result.connectivityOutput)}`
+
+    message += `\n\nMid System Message：${result.midSystemMessage ? '✓' : '✗'}`
+    message += `\n模型输出：${formatOutput(result.midSystemMessageOutput)}`
+    message += '\n期望输出：MAO_BRAVO（而非 MAO_ALPHA）'
     
     if (result.error) {
-      message += `\n错误：${result.error}`
+      message += `\n\n错误：${result.error}`
     }
     
     ElMessageBox.alert(message, '模型测试结果', {

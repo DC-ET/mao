@@ -15,6 +15,16 @@ public class ModelTestResult {
      * Mid system message 测试是否通过
      */
     private boolean midSystemMessage;
+
+    /**
+     * 连通性测试的模型实际输出
+     */
+    private String connectivityOutput;
+
+    /**
+     * Mid system message 测试的模型实际输出
+     */
+    private String midSystemMessageOutput;
     
     /**
      * 测试过程中的错误信息（如果有）

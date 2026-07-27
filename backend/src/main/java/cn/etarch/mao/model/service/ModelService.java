@@ -184,6 +184,8 @@ public class ModelService {
 
         long startTime = System.currentTimeMillis();
         AtomicReference<String> errorRef = new AtomicReference<>();
+        AtomicReference<String> connectivityOutputRef = new AtomicReference<>();
+        AtomicReference<String> midSystemOutputRef = new AtomicReference<>();
 
         CompletableFuture<Boolean> connectivityFuture = CompletableFuture.supplyAsync(() -> {
             try {
@@ -195,7 +197,8 @@ public class ModelService {
                                         .build()
                         ))
                         .build();
-                llmAdapter.chat(request, config);
+                ChatResponse response = llmAdapter.chat(request, config);
+                connectivityOutputRef.set(extractChatContent(response));
                 return true;
             } catch (Exception e) {
                 appendTestError(errorRef, "连通性测试失败: " + e.getMessage());
@@ -205,7 +208,9 @@ public class ModelService {
 
         CompletableFuture<Boolean> midSystemFuture = CompletableFuture.supplyAsync(() -> {
             try {
-                return testMidSystemMessage(config);
+                MidSystemTestResult result = runMidSystemMessageTest(config);
+                midSystemOutputRef.set(result.output());
+                return result.supported();
             } catch (Exception e) {
                 appendTestError(errorRef, "Mid system message 测试失败: " + e.getMessage());
                 return false;
@@ -223,6 +228,8 @@ public class ModelService {
         return ModelTestResult.builder()
                 .connectivity(connectivity)
                 .midSystemMessage(midSystemMessage)
+                .connectivityOutput(connectivityOutputRef.get())
+                .midSystemMessageOutput(midSystemOutputRef.get())
                 .error(error)
                 .durationMs(durationMs)
                 .build();
@@ -242,24 +249,40 @@ public class ModelService {
         AMBIGUOUS
     }
 
+    private record MidSystemTestResult(boolean supported, String output) {
+    }
+
     /**
      * 测试模型是否支持 mid system message。
      * 在 user 消息之后插入 system 覆盖指令，检查模型是否遵循新规则。
      */
-    private boolean testMidSystemMessage(LlmModelConfig config) {
+    private MidSystemTestResult runMidSystemMessageTest(LlmModelConfig config) {
+        String lastOutput = null;
         for (int attempt = 1; attempt <= MID_SYSTEM_TEST_MAX_ATTEMPTS; attempt++) {
-            MidSystemTestOutcome outcome = probeMidSystemMessage(config);
-            if (outcome == MidSystemTestOutcome.SUPPORTED) {
-                return true;
+            MidSystemProbeResult probe = probeMidSystemMessage(config);
+            lastOutput = probe.output();
+            if (probe.outcome() == MidSystemTestOutcome.SUPPORTED) {
+                return new MidSystemTestResult(true, formatProbeOutput(attempt, lastOutput));
             }
-            if (outcome == MidSystemTestOutcome.NOT_SUPPORTED) {
-                return false;
+            if (probe.outcome() == MidSystemTestOutcome.NOT_SUPPORTED) {
+                return new MidSystemTestResult(false, formatProbeOutput(attempt, lastOutput));
             }
         }
-        return false;
+        return new MidSystemTestResult(false, formatProbeOutput(MID_SYSTEM_TEST_MAX_ATTEMPTS, lastOutput));
     }
 
-    private MidSystemTestOutcome probeMidSystemMessage(LlmModelConfig config) {
+    private String formatProbeOutput(int attempt, String output) {
+        String display = output == null || output.isBlank() ? "(空响应)" : output;
+        if (attempt <= 1) {
+            return display;
+        }
+        return "第 " + attempt + " 次尝试: " + display;
+    }
+
+    private record MidSystemProbeResult(MidSystemTestOutcome outcome, String output) {
+    }
+
+    private MidSystemProbeResult probeMidSystemMessage(LlmModelConfig config) {
         List<ChatRequest.Message> messages = List.of(
                 ChatRequest.Message.builder()
                         .role("system")
@@ -293,7 +316,7 @@ public class ModelService {
         ChatResponse response = llmAdapter.chat(request, config);
         String content = extractChatContent(response);
         if (content == null) {
-            return MidSystemTestOutcome.AMBIGUOUS;
+            return new MidSystemProbeResult(MidSystemTestOutcome.AMBIGUOUS, null);
         }
 
         String normalized = normalizeMidSystemResponse(content);
@@ -301,12 +324,12 @@ public class ModelService {
         boolean followsAsked = responseIndicatesCodeword(normalized, MID_SYSTEM_CODENAME_ASKED);
 
         if (followsOverride && !followsAsked) {
-            return MidSystemTestOutcome.SUPPORTED;
+            return new MidSystemProbeResult(MidSystemTestOutcome.SUPPORTED, content);
         }
         if (followsAsked && !followsOverride) {
-            return MidSystemTestOutcome.NOT_SUPPORTED;
+            return new MidSystemProbeResult(MidSystemTestOutcome.NOT_SUPPORTED, content);
         }
-        return MidSystemTestOutcome.AMBIGUOUS;
+        return new MidSystemProbeResult(MidSystemTestOutcome.AMBIGUOUS, content);
     }
 
     private String extractChatContent(ChatResponse response) {
