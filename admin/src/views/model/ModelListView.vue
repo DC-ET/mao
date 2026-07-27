@@ -133,11 +133,61 @@
       @update:visible="dialogVisible = $event"
       @saved="fetchModels"
     />
+
+    <el-dialog
+      v-model="testResultVisible"
+      title="模型测试结果"
+      width="640px"
+      destroy-on-close
+    >
+      <div v-if="testResult" class="test-result-dialog">
+        <div class="test-result-summary" :class="`is-${testResultType}`">
+          <el-tag :type="testResultTagType" size="large">{{ testResultTitle }}</el-tag>
+          <span class="test-result-duration">耗时 {{ testResult.durationMs }}ms</span>
+        </div>
+
+        <div class="test-result-section">
+          <div class="test-result-section__header">
+            <span class="test-result-section__title">连通性</span>
+            <el-tag :type="testResult.connectivity ? 'success' : 'danger'" size="small">
+              {{ testResult.connectivity ? '通过' : '失败' }}
+            </el-tag>
+          </div>
+          <div class="test-result-label">模型输出</div>
+          <pre class="test-result-output">{{ formatTestOutput(testResult.connectivityOutput) }}</pre>
+        </div>
+
+        <div class="test-result-section">
+          <div class="test-result-section__header">
+            <span class="test-result-section__title">Mid System Message</span>
+            <el-tag :type="testResult.midSystemMessage ? 'success' : 'warning'" size="small">
+              {{ testResult.midSystemMessage ? '支持' : '不支持' }}
+            </el-tag>
+          </div>
+          <div class="test-result-label">模型输出</div>
+          <pre class="test-result-output">{{ formatTestOutput(testResult.midSystemMessageOutput) }}</pre>
+          <div class="test-result-hint">期望输出：MAO_BRAVO（而非 MAO_ALPHA）</div>
+        </div>
+
+        <el-alert
+          v-if="testResult.error"
+          class="test-result-error"
+          type="error"
+          :closable="false"
+          show-icon
+          :title="testResult.error"
+        />
+      </div>
+
+      <template #footer>
+        <el-button type="primary" @click="testResultVisible = false">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue'
+import { computed, reactive, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import ModelFormDialog from './ModelFormDialog.vue'
@@ -153,6 +203,8 @@ const dialogVisible = ref(false)
 const currentModel = ref<any>(null)
 const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 const testingId = ref<number | null>(null)
+const testResultVisible = ref(false)
+const testResult = ref<any>(null)
 const filters = reactive<{
   keyword: string
   provider: string
@@ -245,43 +297,36 @@ function handleReset() {
   handleSearch()
 }
 
+function formatTestOutput(output?: string | null) {
+  return output?.trim() ? output : '(空响应)'
+}
+
+const testResultType = computed(() => {
+  if (!testResult.value) return 'error'
+  if (testResult.value.connectivity && testResult.value.midSystemMessage) return 'success'
+  if (testResult.value.connectivity) return 'warning'
+  return 'error'
+})
+
+const testResultTitle = computed(() => {
+  if (testResultType.value === 'success') return '测试通过'
+  if (testResultType.value === 'warning') return '部分通过'
+  return '测试失败'
+})
+
+const testResultTagType = computed(() => {
+  if (testResultType.value === 'success') return 'success'
+  if (testResultType.value === 'warning') return 'warning'
+  return 'danger'
+})
+
 async function handleTest(row: any) {
   if (testingId.value != null) return
   testingId.value = row.id
   try {
     const { data } = await api.post(`/models/${row.id}/test`)
-    const result = data
-    
-    let message = ''
-    let type: 'success' | 'warning' | 'error' = 'success'
-    const formatOutput = (output?: string | null) => output?.trim() ? output : '(空响应)'
-    
-    if (result.connectivity && result.midSystemMessage) {
-      message = `测试通过！耗时：${result.durationMs}ms`
-      type = 'success'
-    } else if (result.connectivity) {
-      message = `部分通过。耗时：${result.durationMs}ms`
-      type = 'warning'
-    } else {
-      message = `测试失败。耗时：${result.durationMs}ms`
-      type = 'error'
-    }
-
-    message += `\n\n连通性：${result.connectivity ? '✓' : '✗'}`
-    message += `\n模型输出：${formatOutput(result.connectivityOutput)}`
-
-    message += `\n\nMid System Message：${result.midSystemMessage ? '✓' : '✗'}`
-    message += `\n模型输出：${formatOutput(result.midSystemMessageOutput)}`
-    message += '\n期望输出：MAO_BRAVO（而非 MAO_ALPHA）'
-    
-    if (result.error) {
-      message += `\n\n错误：${result.error}`
-    }
-    
-    ElMessageBox.alert(message, '模型测试结果', {
-      confirmButtonText: '确定',
-      type: type
-    })
+    testResult.value = data
+    testResultVisible.value = true
   } catch {
     // Error handled by interceptor
   } finally {
@@ -344,5 +389,90 @@ onMounted(() => {
 
 .search-form {
   margin-bottom: 16px;
+}
+
+.test-result-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.test-result-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+}
+
+.test-result-summary.is-success {
+  background: var(--el-color-success-light-9);
+}
+
+.test-result-summary.is-warning {
+  background: var(--el-color-warning-light-9);
+}
+
+.test-result-summary.is-error {
+  background: var(--el-color-danger-light-9);
+}
+
+.test-result-duration {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.test-result-section {
+  padding: 14px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+}
+
+.test-result-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.test-result-section__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.test-result-label {
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.test-result-output {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.test-result-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.test-result-error {
+  margin-top: 4px;
 }
 </style>
