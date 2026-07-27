@@ -141,6 +141,7 @@ function statusTagType(status: string) {
     case 'COMPLETED': return 'success'
     case 'FAILED': return 'danger'
     case 'SKIPPED': return 'warning'
+    case 'QUEUED': return 'primary'
     default: return 'info'
   }
 }
@@ -150,6 +151,7 @@ function statusLabel(status: string) {
     case 'COMPLETED': return '成功'
     case 'FAILED': return '失败'
     case 'SKIPPED': return '跳过'
+    case 'QUEUED': return '排队中'
     default: return status
   }
 }

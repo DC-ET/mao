@@ -162,6 +162,10 @@ onMounted(fetchTasks)
   color: #e6a23c;
 }
 
+.exec-queued {
+  color: #409eff;
+}
+
 .fire-count {
   color: var(--aw-ink-muted);
 }

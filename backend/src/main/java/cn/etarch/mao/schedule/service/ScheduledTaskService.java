@@ -9,6 +9,7 @@ import cn.etarch.mao.harness.llm.ChatUsage;
 import cn.etarch.mao.schedule.entity.ScheduledTask;
 import cn.etarch.mao.schedule.mapper.ScheduledTaskMapper;
 import cn.etarch.mao.session.entity.Session;
+import cn.etarch.mao.session.service.MessageQueueService;
 import cn.etarch.mao.session.service.SessionService;
 import cn.etarch.mao.session.service.TaskTerminalService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -31,24 +32,27 @@ public class ScheduledTaskService {
 
     private final ScheduledTaskMapper scheduledTaskMapper;
     private final SessionService sessionService;
+    private final MessageQueueService messageQueueService;
     private final HarnessService harnessService;
     private final TaskTerminalService taskTerminalService;
     private final ExecutorService agentExecutor;
 
     public ScheduledTaskService(ScheduledTaskMapper scheduledTaskMapper,
                                 SessionService sessionService,
+                                MessageQueueService messageQueueService,
                                 @Lazy HarnessService harnessService,
                                 TaskTerminalService taskTerminalService,
                                 @Qualifier("agentExecutor") ExecutorService agentExecutor) {
         this.scheduledTaskMapper = scheduledTaskMapper;
         this.sessionService = sessionService;
+        this.messageQueueService = messageQueueService;
         this.harnessService = harnessService;
         this.taskTerminalService = taskTerminalService;
         this.agentExecutor = agentExecutor;
     }
 
-    public ScheduledTask createTask(Long userId, Long agentId, String name,
-                                     String prompt, String cronExpression) {
+    public ScheduledTask createTask(Long userId, Long agentId, Long sessionId,
+                                     String name, String prompt, String cronExpression) {
         // Validate cron expression
         try {
             CronExpression.parse(cronExpression);
@@ -56,13 +60,10 @@ public class ScheduledTaskService {
             throw new BusinessException(ErrorCode.PARAM_INVALID, "无效的 cron 表达式: " + e.getMessage());
         }
 
-        // Create a dedicated session for this task
-        Session session = sessionService.createSession(userId, agentId, "[定时] " + name);
-
         ScheduledTask task = new ScheduledTask();
         task.setUserId(userId);
         task.setAgentId(agentId);
-        task.setSessionId(session.getId());
+        task.setSessionId(sessionId);
         task.setName(name);
         task.setPrompt(prompt);
         task.setCronExpression(cronExpression);
@@ -72,7 +73,7 @@ public class ScheduledTaskService {
         scheduledTaskMapper.insert(task);
 
         log.info("Created scheduled task: id={}, name={}, cron={}, sessionId={}",
-                task.getId(), name, cronExpression, session.getId());
+                task.getId(), name, cronExpression, sessionId);
         return task;
     }
 
@@ -144,12 +145,13 @@ public class ScheduledTaskService {
             return;
         }
 
-        // Skip if session is busy
+        // If session is busy, enqueue the message for auto-consume after current execution
         String phase = session.getPhase();
         if ("RUNNING".equals(phase) || "RESUMING".equals(phase) || "WAITING_APPROVAL".equals(phase)) {
-            log.info("Skipping scheduled task {}: session {} is busy (phase={})",
-                    task.getId(), task.getSessionId(), phase);
-            markTaskResult(task, "SKIPPED");
+            log.info("Session {} is busy, enqueueing scheduled task {} prompt to message queue",
+                    task.getSessionId(), task.getId());
+            messageQueueService.enqueue(task.getSessionId(), task.getUserId(), task.getPrompt(), null);
+            markTaskResult(task, "QUEUED");
             return;
         }
 

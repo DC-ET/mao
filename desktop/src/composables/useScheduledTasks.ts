@@ -74,6 +74,7 @@ export function useScheduledTasks() {
       case 'COMPLETED': return '成功'
       case 'FAILED': return '失败'
       case 'SKIPPED': return '跳过'
+      case 'QUEUED': return '排队中'
       default: return '-'
     }
   }

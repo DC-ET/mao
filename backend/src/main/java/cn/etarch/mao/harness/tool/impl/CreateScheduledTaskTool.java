@@ -62,6 +62,10 @@ public class CreateScheduledTaskTool implements Tool {
 
                 当用户希望创建定时自动执行的任务时使用此工具。
 
+                ### 执行方式
+                - 任务在当前对话 Session 中执行，结果会直接出现在当前对话中
+                - 如果触发时用户正在对话，任务消息会自动排队，等当前对话结束后执行
+
                 ### cron 表达式规则
                 - 格式：秒 分 时 日 月 周（Spring 6位 cron）
                 - "每天早上9点" → "0 0 9 * * ?"
@@ -105,7 +109,7 @@ public class CreateScheduledTaskTool implements Tool {
                 return errorJson("无法获取当前用户信息");
             }
 
-            ScheduledTask task = scheduledTaskService.createTask(resolvedUserId, agentId, name, prompt, cronExpression);
+            ScheduledTask task = scheduledTaskService.createTask(resolvedUserId, agentId, sessionId, name, prompt, cronExpression);
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("success", true);
