@@ -50,9 +50,16 @@
             <span v-if="phase === 'RUNNING'" class="phase-spinner"></span>
             {{ phaseLabel }}
           </span>
-          <span v-if="contextDisplay" class="context-badge">
-            上下文 {{ contextDisplay }}
-          </span>
+          <el-tooltip
+            v-if="contextDisplay"
+            :content="contextTooltip"
+            placement="top"
+            :show-after="300"
+          >
+            <span class="context-badge">
+              上下文 {{ contextDisplay }}
+            </span>
+          </el-tooltip>
         </div>
       </div>
 
@@ -149,6 +156,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import { FolderOpened, DocumentCopy, User, Share } from '@element-plus/icons-vue'
+import { ElTooltip } from 'element-plus'
 import TodoChecklist from './TodoChecklist.vue'
 import SideTaskList from './SideTaskList.vue'
 import SubagentList from './SubagentList.vue'
@@ -160,8 +168,10 @@ import type { ContextWindowInfo } from '../../types/chat'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import type { WorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import { useGitStatus } from '../../composables/useGitStatus'
+import { useModelContext } from '../../composables/useModelContext'
 import type { GitChangedFile } from '../../types/git'
 import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
+import { useSessionStore } from '../../stores/session'
 
 const props = defineProps<{
   todos?: TodoItem[]
@@ -191,6 +201,18 @@ const emit = defineEmits<{
   'delete-side-task': [sideSessionId: number]
   'open-git-diff': [file: GitChangedFile]
 }>()
+
+const sessionStore = useSessionStore()
+
+// Get current session's modelId
+const currentModelId = computed(() => {
+  if (!props.sessionId) return undefined
+  const session = sessionStore.sessions.find(s => String(s.id) === String(props.sessionId))
+  return session?.modelId
+})
+
+// Get model's max context window tokens
+const { maxTokens } = useModelContext(currentModelId)
 
 const inspectorActiveTab = ref<'workspace' | 'filetree' | 'git'>('workspace')
 const showFileTreeTab = computed(() => {
@@ -346,13 +368,34 @@ function formatTokenCompact(value: number): string {
   return `${Math.round(value / 1000)}k`
 }
 
-const contextDisplay = computed(() => {
-  if (!props.contextWindow) return ''
+const contextTokens = computed(() => {
+  if (!props.contextWindow) return 0
   const tokens = props.contextWindow.actual > 0
     ? props.contextWindow.actual
     : props.contextWindow.estimated
-  if (tokens <= 0) return ''
-  return formatTokenCompact(tokens)
+  return tokens > 0 ? tokens : 0
+})
+
+const contextPercentage = computed(() => {
+  if (!contextTokens.value || !maxTokens.value) return null
+  return (contextTokens.value / maxTokens.value) * 100
+})
+
+const contextDisplay = computed(() => {
+  if (!contextTokens.value) return ''
+  if (contextPercentage.value !== null) {
+    return `${contextPercentage.value.toFixed(1)}%`
+  }
+  // Fallback: show only tokens if maxTokens is not available
+  return formatTokenCompact(contextTokens.value)
+})
+
+const contextTooltip = computed(() => {
+  if (!contextTokens.value) return ''
+  if (maxTokens.value) {
+    return `${formatTokenCompact(contextTokens.value)}/${formatTokenCompact(maxTokens.value)}`
+  }
+  return formatTokenCompact(contextTokens.value)
 })
 
 const panelEl = ref<HTMLElement | null>(null)

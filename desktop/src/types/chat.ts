@@ -65,6 +65,7 @@ export interface TodoItem {
 export interface ContextWindowInfo {
   estimated: number
   actual: number
+  maxTokens?: number  // 模型最大窗口限制
 }
 
 export interface QueueMessage {
