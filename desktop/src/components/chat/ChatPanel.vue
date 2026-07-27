@@ -37,6 +37,10 @@
           <span></span>
         </div>
       </div>
+
+      <div v-if="sessionStore.activeCompacting" class="compaction-hint">
+        正在整理历史对话...
+      </div>
     </div>
 
     <QueuePanel
@@ -668,6 +672,12 @@ function handleNewTaskAgentChange(id: string | null) {
 @keyframes typing {
   0%, 80%, 100% { transform: scale(0.8); opacity: 0.3; }
   40% { transform: scale(1); opacity: 1; }
+}
+
+.compaction-hint {
+  padding: 4px 20px;
+  font-size: 12px;
+  color: var(--aw-ink-muted-48);
 }
 
 .side-task-entry {
