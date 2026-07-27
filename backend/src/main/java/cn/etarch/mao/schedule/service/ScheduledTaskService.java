@@ -8,10 +8,16 @@ import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.harness.llm.ChatUsage;
 import cn.etarch.mao.schedule.entity.ScheduledTask;
 import cn.etarch.mao.schedule.mapper.ScheduledTaskMapper;
+import cn.etarch.mao.session.entity.Message;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.service.MessageQueueService;
 import cn.etarch.mao.session.service.SessionService;
 import cn.etarch.mao.session.service.TaskTerminalService;
+import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
+import cn.etarch.mao.weixin.service.ContextTokenRepository;
+import cn.etarch.mao.weixin.service.WeixinAccountRepository;
+import cn.etarch.mao.weixin.service.WeixinSendService;
+import cn.etarch.mao.weixin.service.WeixinSessionService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +40,9 @@ public class ScheduledTaskService {
     private final MessageQueueService messageQueueService;
     private final HarnessService harnessService;
     private final TaskTerminalService taskTerminalService;
+    private final WeixinSendService weixinSendService;
+    private final WeixinAccountRepository weixinAccountRepository;
+    private final ContextTokenRepository weixinContextTokenRepository;
     private final ExecutorService agentExecutor;
 
     public ScheduledTaskService(ScheduledTaskMapper scheduledTaskMapper,
@@ -41,12 +50,18 @@ public class ScheduledTaskService {
                                 MessageQueueService messageQueueService,
                                 @Lazy HarnessService harnessService,
                                 TaskTerminalService taskTerminalService,
+                                WeixinSendService weixinSendService,
+                                WeixinAccountRepository weixinAccountRepository,
+                                ContextTokenRepository weixinContextTokenRepository,
                                 @Qualifier("agentExecutor") ExecutorService agentExecutor) {
         this.scheduledTaskMapper = scheduledTaskMapper;
         this.sessionService = sessionService;
         this.messageQueueService = messageQueueService;
         this.harnessService = harnessService;
         this.taskTerminalService = taskTerminalService;
+        this.weixinSendService = weixinSendService;
+        this.weixinAccountRepository = weixinAccountRepository;
+        this.weixinContextTokenRepository = weixinContextTokenRepository;
         this.agentExecutor = agentExecutor;
     }
 
@@ -192,6 +207,9 @@ public class ScheduledTaskService {
                     taskTerminalService.finishExecution(task.getSessionId(), userId, "COMPLETED", executionId);
                     markTaskResult(task, "COMPLETED");
 
+                    // Send result to WeChat channel if applicable
+                    sendWeixinReplyIfApplicable(task.getSessionId(), userId);
+
                 } catch (Exception e) {
                     log.error("Scheduled task {} execution failed", task.getId(), e);
                     try {
@@ -224,6 +242,68 @@ public class ScheduledTaskService {
     private void markTaskResult(ScheduledTask task, String status) {
         task.setLastExecutionStatus(status);
         scheduledTaskMapper.updateById(task);
+    }
+
+    /**
+     * If the session belongs to a WeChat channel, send the latest assistant reply back to the user.
+     */
+    private void sendWeixinReplyIfApplicable(Long sessionId, Long userId) {
+        try {
+            Session session = sessionService.getSession(sessionId);
+            if (session == null || !WeixinSessionService.PROJECT_KEY.equals(session.getProjectKey())) {
+                return;
+            }
+
+            WeixinChannelAccount account = weixinAccountRepository.findByUserId(userId);
+            if (account == null) {
+                log.warn("Cannot send WeChat reply for scheduled task: no account found for userId={}", userId);
+                return;
+            }
+
+            // Get the latest assistant message
+            java.util.List<Message> messages = sessionService.getMessages(sessionId);
+            String reply = null;
+            for (int i = messages.size() - 1; i >= 0; i--) {
+                if ("ASSISTANT".equals(messages.get(i).getRole())) {
+                    reply = messages.get(i).getContent();
+                    break;
+                }
+            }
+            if (reply == null || reply.isBlank()) {
+                log.warn("No assistant reply found for scheduled task WeChat delivery, sessionId={}", sessionId);
+                return;
+            }
+
+            // Resolve wxUserId from context token table (sendText needs WeChat user ID, not system userId)
+            String wxUserId = resolveWxUserId(account.getAccountId());
+            if (wxUserId == null) {
+                log.warn("Cannot send WeChat reply for scheduled task: no wxUserId found for accountId={}",
+                        account.getAccountId());
+                return;
+            }
+
+            boolean sent = weixinSendService.sendText(account.getAccountId(), wxUserId, reply);
+            if (sent) {
+                log.info("Scheduled task result sent to WeChat, sessionId={}, userId={}", sessionId, userId);
+            } else {
+                log.warn("Failed to send scheduled task result to WeChat, sessionId={}, userId={}", sessionId, userId);
+            }
+        } catch (Exception e) {
+            log.error("Error sending WeChat reply for scheduled task, sessionId={}", sessionId, e);
+        }
+    }
+
+    /**
+     * Resolve the WeChat user ID from context tokens for the given account.
+     * Returns the first wxUserId found (one account typically has one bound user).
+     */
+    private String resolveWxUserId(String accountId) {
+        List<cn.etarch.mao.weixin.entity.WeixinChannelContextToken> tokens =
+                weixinContextTokenRepository.findByAccountId(accountId);
+        if (tokens != null && !tokens.isEmpty()) {
+            return tokens.get(0).getWxUserId();
+        }
+        return null;
     }
 
     private ScheduledTask getTaskOwnedByUser(Long taskId, Long userId) {

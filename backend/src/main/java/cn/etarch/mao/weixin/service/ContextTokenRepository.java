@@ -59,4 +59,13 @@ public class ContextTokenRepository {
         contextTokenMapper.delete(wrapper);
         log.info("删除账号的所有context_token, accountId={}", accountId);
     }
+
+    /**
+     * 查询指定账号的所有context_token
+     */
+    public java.util.List<WeixinChannelContextToken> findByAccountId(String accountId) {
+        return contextTokenMapper.selectList(
+                new LambdaQueryWrapper<WeixinChannelContextToken>()
+                        .eq(WeixinChannelContextToken::getAccountId, accountId));
+    }
 }
