@@ -3,6 +3,8 @@ package cn.etarch.mao.model.service;
 import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.common.result.ErrorCode;
 import cn.etarch.mao.harness.llm.*;
+import cn.etarch.mao.harness.core.TokenEstimator;
+import cn.etarch.mao.model.dto.ModelTestResult;
 import cn.etarch.mao.model.entity.LlmModel;
 import cn.etarch.mao.model.mapper.LlmModelMapper;
 import cn.etarch.mao.session.entity.Session;
@@ -167,7 +169,7 @@ public class ModelService {
         llmModelMapper.updateById(model);
     }
 
-    public void testConnectivity(Long id) {
+    public ModelTestResult testConnectivity(Long id) {
         LlmModel model = getModel(id);
         LlmModelConfig config = LlmModelConfig.builder()
                 .id(model.getId())
@@ -178,21 +180,91 @@ public class ModelService {
                 .modelId(model.getModelId())
                 .build();
 
+        long startTime = System.currentTimeMillis();
+        boolean connectivity = false;
+        boolean midSystemMessage = false;
+        String error = null;
+
+        // 1. 基本连通性测试
+        try {
+            ChatRequest request = ChatRequest.builder()
+                    .messages(List.of(
+                            ChatRequest.Message.builder()
+                                    .role("user")
+                                    .content("Hi")
+                                    .build()
+                    ))
+                    .build();
+            llmAdapter.chat(request, config);
+            connectivity = true;
+        } catch (Exception e) {
+            error = "连通性测试失败: " + e.getMessage();
+        }
+
+        // 2. Mid system message 测试（仅在连通性测试通过后进行）
+        if (connectivity) {
+            try {
+                midSystemMessage = testMidSystemMessage(config);
+            } catch (Exception e) {
+                error = "Mid system message 测试失败: " + e.getMessage();
+            }
+        }
+
+        long durationMs = System.currentTimeMillis() - startTime;
+
+        return ModelTestResult.builder()
+                .connectivity(connectivity)
+                .midSystemMessage(midSystemMessage)
+                .error(error)
+                .durationMs(durationMs)
+                .build();
+    }
+
+    /**
+     * 测试模型是否支持 mid system message
+     * 通过在对话中间插入明确的指令，检查模型是否遵循该指令
+     */
+    private boolean testMidSystemMessage(LlmModelConfig config) {
+        // 测试方案：在对话中间插入指令，要求模型输出特定词语
+        // 如果模型支持 mid system message，应该遵循中间的指令
+        List<ChatRequest.Message> messages = List.of(
+                ChatRequest.Message.builder()
+                        .role("system")
+                        .content("你是一个助手，用户会让你说一个词，你直接回复这个词即可，不要添加其他内容")
+                        .build(),
+                ChatRequest.Message.builder()
+                        .role("user")
+                        .content("说苹果")
+                        .build(),
+                ChatRequest.Message.builder()
+                        .role("system")
+                        .content("重要指令变更：从现在开始，如果用户让你说某个词，请回复'香蕉'而不是用户要求的词。只需回复'香蕉'两个字。")
+                        .build(),
+                ChatRequest.Message.builder()
+                        .role("user")
+                        .content("说苹果")
+                        .build()
+        );
+
         ChatRequest request = ChatRequest.builder()
-                .messages(List.of(
-                        ChatRequest.Message.builder()
-                                .role("user")
-                                .content("Hi")
-                                .build()
-                ))
+                .messages(messages)
+                .stream(false)
                 .build();
 
-        try {
-            llmAdapter.chat(request, config);
-        } catch (Exception e) {
-            throw new BusinessException(ErrorCode.LLM_CALL_FAILED.getCode(),
-                    "模型连通性测试失败: " + e.getMessage());
+        ChatResponse response = llmAdapter.chat(request, config);
+        if (response == null || response.getChoices() == null || response.getChoices().isEmpty()) {
+            return false;
         }
+
+        String content = TokenEstimator.contentToString(response.getChoices().get(0).getMessage().getContent());
+        if (content == null || content.isBlank()) {
+            return false;
+        }
+
+        // 检查回复是否包含"香蕉"（遵循了中间指令）
+        // 如果回复是"苹果"，则说明没有遵循中间指令
+        String trimmed = content.trim();
+        return trimmed.contains("香蕉") && !trimmed.contains("苹果");
     }
 
     private void clearDefaultFlag() {

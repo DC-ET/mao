@@ -5,6 +5,7 @@ import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.harness.llm.ChatResponse;
 import cn.etarch.mao.harness.llm.LlmModelConfig;
 import cn.etarch.mao.harness.llm.OpenAiLlmAdapter;
+import cn.etarch.mao.model.dto.ModelTestResult;
 import cn.etarch.mao.model.entity.LlmModel;
 import cn.etarch.mao.model.mapper.LlmModelMapper;
 import cn.etarch.mao.session.mapper.SessionMapper;
@@ -21,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -132,17 +134,19 @@ class ModelServiceTest {
         when(llmAdapter.chat(any(ChatRequest.class), any(LlmModelConfig.class)))
                 .thenReturn(ChatResponse.builder().choices(List.of()).build());
 
-        service.testConnectivity(8L);
+        ModelTestResult result = service.testConnectivity(8L);
+        assertThat(result.isConnectivity()).isTrue();
 
+        // 验证调用了两次（连通性测试 + mid system message 测试）
         ArgumentCaptor<LlmModelConfig> configCaptor = ArgumentCaptor.forClass(LlmModelConfig.class);
-        verify(llmAdapter).chat(any(ChatRequest.class), configCaptor.capture());
+        verify(llmAdapter, times(2)).chat(any(ChatRequest.class), configCaptor.capture());
         assertThat(configCaptor.getValue().getModelId()).isEqualTo("model-ok");
 
         when(llmAdapter.chat(any(ChatRequest.class), any(LlmModelConfig.class)))
                 .thenThrow(new RuntimeException("boom"));
-        assertThatThrownBy(() -> service.testConnectivity(8L))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("模型连通性测试失败");
+        result = service.testConnectivity(8L);
+        assertThat(result.isConnectivity()).isFalse();
+        assertThat(result.getError()).contains("连通性测试失败");
     }
 
     private static LlmModel model(Long id, String name, Integer isDefault, Integer status) {

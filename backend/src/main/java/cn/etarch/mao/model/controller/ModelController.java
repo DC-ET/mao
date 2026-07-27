@@ -1,6 +1,7 @@
 package cn.etarch.mao.model.controller;
 
 import cn.etarch.mao.common.result.Result;
+import cn.etarch.mao.model.dto.ModelTestResult;
 import cn.etarch.mao.model.entity.LlmModel;
 import cn.etarch.mao.model.service.ModelService;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -98,9 +99,9 @@ public class ModelController {
     }
 
     @PostMapping("/{id}/test")
-    public Result<Void> testConnectivity(@PathVariable Long id) {
-        modelService.testConnectivity(id);
-        return Result.ok();
+    public Result<ModelTestResult> testConnectivity(@PathVariable Long id) {
+        ModelTestResult result = modelService.testConnectivity(id);
+        return Result.ok(result);
     }
 
     private ModelVO toVO(LlmModel entity) {

@@ -249,8 +249,31 @@ async function handleTest(row: any) {
   if (testingId.value != null) return
   testingId.value = row.id
   try {
-    await api.post(`/models/${row.id}/test`)
-    ElMessage.success('模型连通性测试成功')
+    const { data } = await api.post(`/models/${row.id}/test`)
+    const result = data
+    
+    let message = ''
+    let type: 'success' | 'warning' | 'error' = 'success'
+    
+    if (result.connectivity && result.midSystemMessage) {
+      message = `测试通过！连通性：✓，Mid System Message：✓，耗时：${result.durationMs}ms`
+      type = 'success'
+    } else if (result.connectivity) {
+      message = `部分通过。连通性：✓，Mid System Message：✗，耗时：${result.durationMs}ms`
+      type = 'warning'
+    } else {
+      message = `测试失败。连通性：✗，耗时：${result.durationMs}ms`
+      type = 'error'
+    }
+    
+    if (result.error) {
+      message += `\n错误：${result.error}`
+    }
+    
+    ElMessageBox.alert(message, '模型测试结果', {
+      confirmButtonText: '确定',
+      type: type
+    })
   } catch {
     // Error handled by interceptor
   } finally {
