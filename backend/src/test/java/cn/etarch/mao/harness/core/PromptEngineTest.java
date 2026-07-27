@@ -52,7 +52,7 @@ class PromptEngineTest {
         context.setPlatform("macOS");
         context.setShellPath("/bin/zsh");
         context.setOsVersion("15");
-        context.setCurrentTimestamp("2026-07-07T10:00:00+08:00");
+        context.setCurrentTimestamp("2026-07-07");
         context.setAvailableSkillNames(List.of("java"));
         context.setAvailableSkillDocs(Map.of("java", skillDoc("java", "Java dev", "/skills/java/SKILL.md")));
         context.setTools(List.of(tool("task_create"), tool("delegate"), tool("read_file")));
@@ -68,7 +68,8 @@ class PromptEngineTest {
         assertThat(systemPrompt)
                 .contains("You are careful.", "/repo", "CLOUD", "java", "/runtime/java/SKILL.md",
                         "任务管理", "子代理委派", "不支持以 `~` 开头",
-                        "# 使用你的工具", "ask_user_questions", "最大化并行工具调用");
+                        "# 使用你的工具", "ask_user_questions", "最大化并行工具调用",
+                        "## 当前日期", "2026-07-07", "`date` 命令");
         assertThat(systemPrompt.indexOf("# 使用你的工具"))
                 .isLessThan(systemPrompt.indexOf("## 可用技能"));
         assertThat(request.getMessages().get(1).getContent())
@@ -109,7 +110,7 @@ class PromptEngineTest {
                 "CPU 持续过高时，优先检查最近是否发布、流量是否突增。",
                 "排障时不要轻易建议重启。"));
         context.setWorkspace("/repo");
-        context.setCurrentTimestamp("2026-07-09T10:00:00+08:00");
+        context.setCurrentTimestamp("2026-07-09");
         context.setTools(List.of());
         context.addUserMessage("hello");
 

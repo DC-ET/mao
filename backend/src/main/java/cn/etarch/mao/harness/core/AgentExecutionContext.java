@@ -57,7 +57,7 @@ public class AgentExecutionContext {
     // LOCAL 模式下，桌面端本地未上传的 Skill（仅本次本地任务可用，不参与 CLOUD 同步）
     private List<LocalSkillRef> localUnsyncedSkills = new ArrayList<>();
 
-    // 请求开始时间（单次请求内固定，保证 system prompt 前缀缓存命中）
+    // 请求开始日期（仅日期、单次请求内固定，利于 system prompt 前缀缓存命中）
     private String currentTimestamp;
 
     // 会话压缩摘要（跨轮次）

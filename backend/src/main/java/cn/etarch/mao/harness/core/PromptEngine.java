@@ -214,10 +214,11 @@ public class PromptEngine {
         sb.append("- 操作系统版本：").append(formatValue(context.getOsVersion())).append("\n");
         appendExecutionEnvironmentHint(sb, context, effectiveWorkspace);
 
-        // Current time
+        // Current date (date-only, frozen per turn — helps LLM prompt prefix cache across loop rounds)
         if (context.getCurrentTimestamp() != null) {
-            sb.append("## 当前时间\n\n");
-            sb.append("当前日期和时间：`").append(context.getCurrentTimestamp()).append("`\n\n");
+            sb.append("## 当前日期\n\n");
+            sb.append("当前日期：`").append(context.getCurrentTimestamp()).append("`\n");
+            sb.append("如需精确到时分秒的时间，请使用 shell 执行 `date` 命令获取。\n\n");
         }
 
         // Fixed tool usage guidance — always inject before skill catalog
