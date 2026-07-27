@@ -24,7 +24,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 
 @Slf4j
 @Service
@@ -138,57 +137,44 @@ public class ScheduledTaskService {
      * Execute a due scheduled task. Called by ScheduledTaskScheduler.
      */
     public void executeTask(ScheduledTask task) {
-        Session session = sessionService.getSession(task.getSessionId());
-        if (session == null) {
-            log.error("Scheduled task {} references non-existent session {}", task.getId(), task.getSessionId());
-            markTaskResult(task, "FAILED");
-            return;
-        }
-
-        // If session is busy, enqueue the message for auto-consume after current execution
-        String phase = session.getPhase();
-        if ("RUNNING".equals(phase) || "RESUMING".equals(phase) || "WAITING_APPROVAL".equals(phase)) {
-            log.info("Session {} is busy, enqueueing scheduled task {} prompt to message queue",
-                    task.getSessionId(), task.getId());
-            messageQueueService.enqueue(task.getSessionId(), task.getUserId(), task.getPrompt(), null);
-            markTaskResult(task, "QUEUED");
-            return;
-        }
-
-        // Update session phase first (gate), then persist USER message
-        sessionService.updatePhase(task.getSessionId(), "RUNNING");
-        try {
-            sessionService.saveMessage(task.getSessionId(), "USER", task.getPrompt(),
-                    null, null, null, 0, null);
-        } catch (Exception e) {
-            // Rollback phase if message persistence fails
-            sessionService.updatePhase(task.getSessionId(), "IDLE");
-            log.error("Failed to persist USER message for scheduled task {}, rolled back phase", task.getId(), e);
-            markTaskResult(task, "FAILED");
-            return;
-        }
-
-        String executionId = UUID.randomUUID().toString();
-        Long userId = task.getUserId();
-
         // Pre-update nextFireTime to prevent re-triggering while this execution is in-flight
         task.setNextFireTime(calculateNextFireTime(task.getCronExpression()));
         scheduledTaskMapper.updateById(task);
 
-        // Submit to agent executor
-        Future<?> future = agentExecutor.submit(() -> {
+        String executionId = UUID.randomUUID().toString();
+        Long userId = task.getUserId();
+
+        // Submit to agent executor — all phase checks and state changes happen inside the lock
+        agentExecutor.submit(() -> {
             synchronized (sessionLock(task.getSessionId())) {
                 try {
-                    // Double-check session phase inside lock to avoid race with user messages
-                    Session freshSession = sessionService.getSession(task.getSessionId());
-                    if (freshSession != null && !"RUNNING".equals(freshSession.getPhase())
-                            && !"RESUMING".equals(freshSession.getPhase())
-                            && !"WAITING_APPROVAL".equals(freshSession.getPhase())) {
-                        // Phase is still idle-safe, proceed
-                    } else {
-                        log.info("Scheduled task {} aborted: session {} became busy before execution",
+                    Session session = sessionService.getSession(task.getSessionId());
+                    if (session == null) {
+                        log.error("Scheduled task {} references non-existent session {}",
                                 task.getId(), task.getSessionId());
-                        markTaskResult(task, "SKIPPED");
+                        markTaskResult(task, "FAILED");
+                        return;
+                    }
+
+                    // Check if session is busy
+                    String phase = session.getPhase();
+                    if ("RUNNING".equals(phase) || "RESUMING".equals(phase) || "WAITING_APPROVAL".equals(phase)) {
+                        log.info("Session {} is busy ({}), enqueueing scheduled task {} to message queue",
+                                task.getSessionId(), phase, task.getId());
+                        messageQueueService.enqueue(task.getSessionId(), userId, task.getPrompt(), null);
+                        markTaskResult(task, "QUEUED");
+                        return;
+                    }
+
+                    // Set phase to RUNNING (gate), then persist USER message
+                    sessionService.updatePhase(task.getSessionId(), "RUNNING");
+                    try {
+                        sessionService.saveMessage(task.getSessionId(), "USER", task.getPrompt(),
+                                null, null, null, 0, null);
+                    } catch (Exception e) {
+                        sessionService.updatePhase(task.getSessionId(), "IDLE");
+                        log.error("Failed to persist USER message for scheduled task {}, rolled back phase", task.getId(), e);
+                        markTaskResult(task, "FAILED");
                         return;
                     }
 
@@ -216,7 +202,7 @@ public class ScheduledTaskService {
                     }
                     markTaskResult(task, "FAILED");
                 } finally {
-                    // Update fireCount and lastFireTime after execution completes (success or failure)
+                    // Update fireCount and lastFireTime after execution completes
                     task.setLastFireTime(LocalDateTime.now());
                     task.setFireCount(task.getFireCount() + 1);
                     scheduledTaskMapper.updateById(task);
