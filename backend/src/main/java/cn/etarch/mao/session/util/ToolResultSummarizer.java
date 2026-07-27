@@ -26,6 +26,10 @@ public class ToolResultSummarizer {
             case "delegate" -> summarizeGeneric("委派子代理", result);
             case "web_search" -> summarizeWebSearch(arguments, result);
             case "open_web_page" -> summarizeOpenWebPage(arguments, result);
+            case "create_scheduled_task" -> summarizeCreateScheduledTask(arguments, result);
+            case "update_scheduled_task" -> summarizeUpdateScheduledTask(result);
+            case "delete_scheduled_task" -> summarizeDeleteScheduledTask(result);
+            case "list_scheduled_tasks" -> summarizeListScheduledTasks(result);
 
             default -> summarizeGeneric(toolName, result);
         };
@@ -263,6 +267,78 @@ public class ToolResultSummarizer {
         boolean truncated = node.has("truncated") && node.get("truncated").asBoolean();
         return "打开网页" + (!title.isEmpty() ? " " + truncate(title, 30) : "") +
                (truncated ? " (内容已截断)" : "");
+    }
+
+    private static String summarizeCreateScheduledTask(String arguments, String result) {
+        String name = extractJsonString(arguments, "name");
+        if (result == null) {
+            return name != null ? "创建定时任务 " + truncate(name, 20) : "创建定时任务";
+        }
+
+        JsonNode node = parseJson(result);
+        if (node == null) {
+            return name != null ? "创建定时任务 " + truncate(name, 20) : "创建定时任务";
+        }
+
+        if (node.has("message")) {
+            return node.get("message").asText("创建定时任务");
+        }
+        String resultName = node.has("name") ? node.get("name").asText(null) : null;
+        if (resultName != null) {
+            return "创建定时任务 " + truncate(resultName, 20);
+        }
+        return "创建定时任务";
+    }
+
+    private static String summarizeUpdateScheduledTask(String result) {
+        if (result == null) return "更新定时任务";
+
+        JsonNode node = parseJson(result);
+        if (node == null) return "更新定时任务";
+
+        if (node.has("message")) {
+            return node.get("message").asText("更新定时任务");
+        }
+        String name = node.has("name") ? node.get("name").asText(null) : null;
+        String status = node.has("status") ? node.get("status").asText(null) : null;
+        if (name != null && status != null) {
+            String statusLabel = "ACTIVE".equals(status) ? "启用" : "PAUSED".equals(status) ? "暂停" : status;
+            return "更新定时任务 " + truncate(name, 20) + " (" + statusLabel + ")";
+        }
+        if (name != null) {
+            return "更新定时任务 " + truncate(name, 20);
+        }
+        return "更新定时任务";
+    }
+
+    private static String summarizeDeleteScheduledTask(String result) {
+        if (result == null) return "删除定时任务";
+
+        JsonNode node = parseJson(result);
+        if (node == null) return "删除定时任务";
+
+        if (node.has("message")) {
+            return node.get("message").asText("删除定时任务");
+        }
+        return "删除定时任务";
+    }
+
+    private static String summarizeListScheduledTasks(String result) {
+        if (result == null) return "查询定时任务";
+
+        JsonNode node = parseJson(result);
+        if (node == null) return "查询定时任务";
+
+        if (node.has("message")) {
+            return node.get("message").asText("查询定时任务");
+        }
+        if (node.has("total")) {
+            return "定时任务列表 (" + node.get("total").asInt() + " 个)";
+        }
+        if (node.has("tasks") && node.get("tasks").isArray()) {
+            return "定时任务列表 (" + node.get("tasks").size() + " 个)";
+        }
+        return "查询定时任务";
     }
 
     private static String summarizeGeneric(String toolName, String result) {

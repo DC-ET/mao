@@ -61,6 +61,23 @@ class ToolResultSummarizerTest {
     }
 
     @Test
+    void summarizesScheduledTaskTools() {
+        assertThat(ToolResultSummarizer.summarize("create_scheduled_task",
+                "{\"name\":\"新股申购检查\"}",
+                "{\"message\":\"定时任务 '新股申购检查' 已创建，下次执行时间: 2026-07-28T09:00:00\"}"))
+                .isEqualTo("定时任务 '新股申购检查' 已创建，下次执行时间: 2026-07-28T09:00:00");
+        assertThat(ToolResultSummarizer.summarize("update_scheduled_task", "{}",
+                "{\"name\":\"新股申购检查\",\"status\":\"PAUSED\",\"message\":\"定时任务已更新\"}"))
+                .isEqualTo("定时任务已更新");
+        assertThat(ToolResultSummarizer.summarize("delete_scheduled_task", "{}",
+                "{\"message\":\"定时任务 '新股申购检查' 已删除\"}"))
+                .isEqualTo("定时任务 '新股申购检查' 已删除");
+        assertThat(ToolResultSummarizer.summarize("list_scheduled_tasks", "{}",
+                "{\"tasks\":[{},{}],\"total\":2,\"message\":\"共 2 个定时任务\"}"))
+                .isEqualTo("共 2 个定时任务");
+    }
+
+    @Test
     void summarizesQuestionAndWebTools() {
         assertThat(ToolResultSummarizer.summarize("ask_user_questions", "{}", "{\"answers\":[{},{}]}"))
                 .isEqualTo("向用户提问 (2 个问题已回答)");

@@ -57,7 +57,11 @@ function getToolDisplayName(name: string): string {
     task_delete: '删除任务',
     delegate: '委派子代理',
     web_search: '网页搜索',
-    open_web_page: '打开网页'
+    open_web_page: '打开网页',
+    create_scheduled_task: '创建定时任务',
+    update_scheduled_task: '更新定时任务',
+    delete_scheduled_task: '删除定时任务',
+    list_scheduled_tasks: '查询定时任务'
   }
   return nameMap[name] || name
 }
