@@ -15,6 +15,9 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -217,7 +220,12 @@ public class PromptEngine {
         // Current date (date-only, frozen per turn — helps LLM prompt prefix cache across loop rounds)
         if (context.getCurrentTimestamp() != null) {
             sb.append("## 当前日期\n\n");
-            sb.append("当前日期：`").append(context.getCurrentTimestamp()).append("`\n");
+            sb.append("当前日期：`").append(context.getCurrentTimestamp()).append("`");
+            String weekday = formatChineseWeekday(context.getCurrentTimestamp());
+            if (weekday != null) {
+                sb.append("（").append(weekday).append("）");
+            }
+            sb.append("\n");
             sb.append("如需精确到时分秒的时间，请使用 shell 执行 `date` 命令获取。\n\n");
         }
 
@@ -338,6 +346,30 @@ public class PromptEngine {
         sb.append("不要默认归因于用户本地电脑，也不要要求用户在本地手动执行命令来规避异常，除非用户明确要求或任务确实需要本地操作。\n");
         sb.append("文件类工具（`read_file`、`write_file`、`edit_file`、`glob_search`、`grep_search`）的路径参数不支持以 `~` 开头；");
         sb.append("请使用工作区相对路径，或平台提供的绝对路径（如会话 runtime 目录、用户数据目录）。\n\n");
+    }
+
+    private String formatChineseWeekday(String isoDate) {
+        if (isoDate == null || isoDate.isBlank()) {
+            return null;
+        }
+        try {
+            return chineseWeekday(LocalDate.parse(isoDate).getDayOfWeek());
+        } catch (DateTimeParseException e) {
+            log.warn("Failed to parse current date for weekday: {}", isoDate);
+            return null;
+        }
+    }
+
+    private static String chineseWeekday(DayOfWeek dayOfWeek) {
+        return switch (dayOfWeek) {
+            case MONDAY -> "星期一";
+            case TUESDAY -> "星期二";
+            case WEDNESDAY -> "星期三";
+            case THURSDAY -> "星期四";
+            case FRIDAY -> "星期五";
+            case SATURDAY -> "星期六";
+            case SUNDAY -> "星期日";
+        };
     }
 
     private String formatBoolean(Boolean value) {

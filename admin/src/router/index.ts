@@ -76,6 +76,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '用量分析', keepAlive: true, permission: 'session:read' }
       },
       {
+        path: 'scheduled-tasks',
+        name: 'ScheduledTasks',
+        component: () => import('../views/scheduled-tasks/index.vue'),
+        meta: { title: '定时任务', keepAlive: true, permission: 'session:read' }
+      },
+      {
         path: 'settings',
         name: 'SystemSettings',
         component: () => import('../views/settings/SystemSettingsView.vue'),

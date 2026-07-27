@@ -69,7 +69,7 @@ class PromptEngineTest {
                 .contains("You are careful.", "/repo", "CLOUD", "java", "/runtime/java/SKILL.md",
                         "任务管理", "子代理委派", "不支持以 `~` 开头",
                         "# 使用你的工具", "ask_user_questions", "最大化并行工具调用",
-                        "## 当前日期", "2026-07-07", "`date` 命令");
+                        "## 当前日期", "2026-07-07", "（星期二）", "`date` 命令");
         assertThat(systemPrompt.indexOf("# 使用你的工具"))
                 .isLessThan(systemPrompt.indexOf("## 可用技能"));
         assertThat(request.getMessages().get(1).getContent())

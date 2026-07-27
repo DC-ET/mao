@@ -44,6 +44,8 @@ public enum ErrorCode {
     PASSWORD_INVALID(3019, "密码格式不符合要求"),
     GIT_CREDENTIAL_NOT_FOUND(3021, "Git 凭证不存在"),
     GIT_CREDENTIAL_DOMAIN_DUPLICATE(3022, "该域名的凭证已存在"),
+    SCHEDULED_TASK_NOT_FOUND(3025, "定时任务不存在"),
+    SCHEDULED_TASK_ACCESS_DENIED(3026, "无权操作该定时任务"),
 
     // 服务端内部错误 5001-5999
     INTERNAL_ERROR(5001, "服务内部错误"),

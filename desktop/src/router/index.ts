@@ -41,6 +41,11 @@ const routes: RouteRecordRaw[] = [
             path: 'weixin-bot',
             name: 'WeixinBot',
             component: () => import('../views/settings/WeixinBotView.vue')
+          },
+          {
+            path: 'scheduled-tasks',
+            name: 'ScheduledTasks',
+            component: () => import('../components/ScheduledTaskPanel.vue')
           }
         ]
       }

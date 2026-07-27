@@ -16,6 +16,9 @@
         <router-link to="/settings/weixin-bot" class="settings-nav-item" active-class="active">
           微信Bot
         </router-link>
+        <router-link to="/settings/scheduled-tasks" class="settings-nav-item" active-class="active">
+          定时任务
+        </router-link>
       </nav>
     </aside>
     <section class="settings-content">

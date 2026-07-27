@@ -35,6 +35,7 @@ import {
   Lock,
   DocumentChecked,
   Operation,
+  Timer,
   TrendCharts,
   Setting
 } from '@element-plus/icons-vue'
@@ -60,6 +61,7 @@ const menuItems = [
   { index: '/models', label: '模型管理', icon: Connection, permission: 'model:read' },
   { index: '/skills', label: 'Skills 管理', icon: MagicStick, permission: 'agent:read' },
   { index: '/sessions', label: '会话管理', icon: ChatDotRound, permission: 'session:read' },
+  { index: '/scheduled-tasks', label: '定时任务', icon: Timer, permission: 'session:read' },
   { index: '/users', label: '用户管理', icon: User, permission: 'user:read' },
   { index: '/roles', label: '角色权限', icon: Lock, permission: 'user:write' },
   { index: '/audit-logs', label: '审计日志', icon: DocumentChecked, permission: 'user:read' },
