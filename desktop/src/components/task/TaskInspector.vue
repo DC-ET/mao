@@ -384,7 +384,7 @@ const contextPercentage = computed(() => {
 const contextDisplay = computed(() => {
   if (!contextTokens.value) return ''
   if (contextPercentage.value !== null) {
-    return `${contextPercentage.value.toFixed(1)}%`
+    return `${Math.round(contextPercentage.value)}%`
   }
   // Fallback: show only tokens if maxTokens is not available
   return formatTokenCompact(contextTokens.value)
