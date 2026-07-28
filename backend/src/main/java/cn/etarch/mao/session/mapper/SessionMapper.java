@@ -28,4 +28,7 @@ public interface SessionMapper extends BaseMapper<Session> {
     @Select("SELECT model_id AS modelId, COUNT(*) AS sessionCount " +
             "FROM session WHERE model_id IS NOT NULL AND deleted = 0 GROUP BY model_id")
     List<Map<String, Object>> selectSessionCountsByModel();
+
+    @Select("SELECT id FROM session WHERE id = #{sessionId} AND deleted = 0 FOR UPDATE")
+    Long lockActiveSessionById(@Param("sessionId") Long sessionId);
 }

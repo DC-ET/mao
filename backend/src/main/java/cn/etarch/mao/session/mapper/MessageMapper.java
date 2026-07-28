@@ -44,4 +44,15 @@ public interface MessageMapper extends BaseMapper<Message> {
             "ORDER BY sessionCount DESC, messageCount DESC " +
             "LIMIT 20")
     List<Map<String, Object>> selectAgentUsageStats();
+
+    @Select("SELECT * FROM message " +
+            "WHERE session_id = #{sessionId} AND deleted = 0 AND id > #{afterMessageId} " +
+            "ORDER BY id ASC")
+    List<Message> selectMessagesAfterId(@Param("sessionId") Long sessionId,
+                                        @Param("afterMessageId") Long afterMessageId);
+
+    @Select("SELECT * FROM message " +
+            "WHERE id = #{messageId} AND session_id = #{sessionId} AND deleted = 0")
+    Message selectValidBoundaryMessage(@Param("sessionId") Long sessionId,
+                                       @Param("messageId") Long messageId);
 }

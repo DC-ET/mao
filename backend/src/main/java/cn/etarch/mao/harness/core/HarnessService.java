@@ -19,9 +19,11 @@ import cn.etarch.mao.model.mapper.LlmModelMapper;
 import cn.etarch.mao.session.entity.FileChange;
 import cn.etarch.mao.session.entity.Message;
 import cn.etarch.mao.session.entity.Session;
+import cn.etarch.mao.session.entity.SessionCompaction;
 import cn.etarch.mao.session.mapper.FileChangeMapper;
 import cn.etarch.mao.session.mapper.SessionMapper;
 import cn.etarch.mao.session.service.SessionService;
+import cn.etarch.mao.session.service.SessionCompactionService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -53,6 +55,7 @@ public class HarnessService {
     private final LlmModelMapper llmModelMapper;
     private final FileChangeMapper fileChangeMapper;
     private final SessionService sessionService;
+    private final SessionCompactionService sessionCompactionService;
     private final ObjectMapper objectMapper;
     private final ContextManager contextManager;
     private final CompactionConfig compactionConfig;
@@ -186,9 +189,6 @@ public class HarnessService {
     }
 
     public AgentExecutionContext buildContext(Long sessionId) {
-        // 清理上次中断遗留的不完整 tool_calls 消息，防止 LLM API 400
-        sessionService.cleanupIncompleteTail(sessionId);
-
         // 1. Load session
         Session session = sessionMapper.selectById(sessionId);
         if (session == null) {
@@ -250,55 +250,50 @@ public class HarnessService {
                 .supportsVision(llmModel.getSupportsVision() != null && llmModel.getSupportsVision() == 1)
                 .build());
 
-        // 5. Load message history (normalize tool/assistant ordering for legacy rows)
-        List<Message> history = MessageHistoryNormalizer.normalizeEntities(
-                sessionService.getMessages(sessionId), objectMapper);
-        for (Message msg : history) {
-            Object parsedContent = parseContent(msg.getContent());
-            var msgBuilder = ChatRequest.Message.builder()
-                    .role(msg.getRole().toLowerCase())
-                    .content(parsedContent);
-            if (msg.getToolCallId() != null) {
-                msgBuilder.toolCallId(msg.getToolCallId());
-            }
-            if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
-                try {
-                    List<ChatRequest.ToolCall> toolCalls = objectMapper.readValue(
-                            msg.getToolCalls(), new TypeReference<List<ChatRequest.ToolCall>>() {});
-                    msgBuilder.toolCalls(toolCalls);
-                } catch (JsonProcessingException e) {
-                    log.warn("Failed to parse tool_calls for message {}", msg.getId(), e);
-                }
-            }
-            context.getMessages().add(msgBuilder.build());
-        }
-        context.getToolAttachments().putAll(ToolAttachmentLoader.loadAllFromMessages(history, objectMapper));
-
-        // 5.5. Session compaction — compress old history if needed
+        // 5. Resolve and validate the durable compaction boundary before loading history.
         CompactionConfig effectiveConfig = resolveCompactionConfig(agent);
         context.setCompactionConfig(effectiveConfig);
-        if (effectiveConfig.isEnabled() && !context.getMessages().isEmpty()) {
-            // Extract the latest user message as context for compaction
-            String currentUserQuestion = null;
-            for (int i = context.getMessages().size() - 1; i >= 0; i--) {
-                if ("user".equals(context.getMessages().get(i).getRole())) {
-                    currentUserQuestion = TokenEstimator.contentToString(context.getMessages().get(i).getContent());
-                    break;
-                }
-            }
+        SessionCompaction compactionRecord = sessionCompactionService.loadValidated(sessionId);
+        long boundary = sessionCompactionService.boundaryOf(compactionRecord);
+        String summary = compactionRecord != null ? compactionRecord.getSummaryText() : null;
+
+        // A safe boundary is always at a completed turn, so tail recovery only needs the increment.
+        sessionService.cleanupIncompleteTailAfterId(sessionId, boundary);
+        HistorySnapshot history = loadHistoryAfterBoundary(sessionId, boundary);
+        applyHistory(context, summary, history);
+
+        if (effectiveConfig.isEnabled() && !history.persistedMessages().isEmpty()) {
             try {
+                String currentUserQuestion = findCurrentUserQuestion(history.persistedMessages());
                 var result = contextManager.compactSession(
-                        sessionId, context.getMessages(), context.getModelConfig(),
-                        effectiveConfig, currentUserQuestion);
+                        sessionId, boundary, summary, history.persistedMessages(), history.snapshotMessageIds(),
+                        context.getModelConfig(), effectiveConfig, currentUserQuestion);
                 if (result != null) {
-                    context.getMessages().clear();
-                    context.getMessages().addAll(result.compactedMessages());
-                    context.setSessionSummary(result.summaryText());
-                    log.info("Session compaction applied: {} messages compacted, ~{} tokens saved",
-                            result.compactedCount(), result.savedTokens());
+                    boolean persisted = sessionCompactionService.persist(
+                            sessionId, compactionRecord, result.expectedOldBoundary(),
+                            result.newLastCompactedMessageId(), result.boundaryContentSnapshot(),
+                            result.summaryText(),
+                            result.inputTokens(), result.outputTokens(),
+                            context.getModelConfig() != null ? context.getModelConfig().getModelId() : null);
+
+                    // Re-read and validate after persistence to cover concurrent message edits/deletes.
+                    SessionCompaction latest = sessionCompactionService.loadValidated(sessionId);
+                    long latestBoundary = sessionCompactionService.boundaryOf(latest);
+                    String latestSummary = latest != null ? latest.getSummaryText() : null;
+                    sessionService.cleanupIncompleteTailAfterId(sessionId, latestBoundary);
+                    HistorySnapshot latestHistory = loadHistoryAfterBoundary(sessionId, latestBoundary);
+                    applyHistory(context, latestSummary, latestHistory);
+
+                    if (persisted && latestBoundary == result.newLastCompactedMessageId()) {
+                        log.info("Session compaction applied: boundary {} -> {}, {} messages, ~{} tokens saved",
+                                boundary, latestBoundary, result.compactedCount(), result.savedTokens());
+                    } else {
+                        log.info("Session compaction conflict or invalidated result: sessionId={}, expectedBoundary={}, candidateBoundary={}, latestBoundary={}",
+                                sessionId, boundary, result.newLastCompactedMessageId(), latestBoundary);
+                    }
                 }
             } catch (Exception e) {
-                log.warn("Session compaction failed, falling back to full history", e);
+                log.warn("Session compaction failed; continuing with the previously loaded summary and increment", e);
             }
         }
 
@@ -372,6 +367,63 @@ public class HarnessService {
         context.setAvailableSkillDocs(skillDocMap);
 
         return context;
+    }
+
+    private HistorySnapshot loadHistoryAfterBoundary(Long sessionId, long boundary) {
+        List<Message> rawMessages = sessionService.getMessagesAfterId(sessionId, boundary);
+        List<Long> snapshotMessageIds = rawMessages.stream().map(Message::getId).toList();
+        List<Message> normalized = MessageHistoryNormalizer.normalizeEntities(rawMessages, objectMapper);
+        List<PersistedChatMessage> persistedMessages = normalized.stream()
+                .map(message -> new PersistedChatMessage(
+                        message.getId(), message.getContent(), toChatMessage(message)))
+                .toList();
+        return new HistorySnapshot(snapshotMessageIds, normalized, persistedMessages);
+    }
+
+    private void applyHistory(AgentExecutionContext context, String summary, HistorySnapshot history) {
+        List<ChatRequest.Message> incrementalMessages = history.persistedMessages().stream()
+                .map(PersistedChatMessage::chatMessage)
+                .toList();
+        context.getMessages().clear();
+        context.getMessages().addAll(contextManager.prependSessionSummary(summary, incrementalMessages));
+        context.setSessionSummary(summary);
+        context.getToolAttachments().clear();
+        context.getToolAttachments().putAll(
+                ToolAttachmentLoader.loadAllFromMessages(history.normalizedEntities(), objectMapper));
+    }
+
+    private ChatRequest.Message toChatMessage(Message message) {
+        var builder = ChatRequest.Message.builder()
+                .role(message.getRole().toLowerCase())
+                .content(parseContent(message.getContent()));
+        if (message.getToolCallId() != null) {
+            builder.toolCallId(message.getToolCallId());
+        }
+        if (message.getToolCalls() != null && !message.getToolCalls().isEmpty()) {
+            try {
+                builder.toolCalls(objectMapper.readValue(
+                        message.getToolCalls(), new TypeReference<List<ChatRequest.ToolCall>>() {}));
+            } catch (JsonProcessingException e) {
+                log.warn("Failed to parse tool_calls for message {}", message.getId(), e);
+            }
+        }
+        return builder.build();
+    }
+
+    private String findCurrentUserQuestion(List<PersistedChatMessage> messages) {
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            ChatRequest.Message message = messages.get(i).chatMessage();
+            if ("user".equals(message.getRole())) {
+                return TokenEstimator.contentToString(message.getContent());
+            }
+        }
+        return null;
+    }
+
+    private record HistorySnapshot(
+            List<Long> snapshotMessageIds,
+            List<Message> normalizedEntities,
+            List<PersistedChatMessage> persistedMessages) {
     }
 
     /**

@@ -38,10 +38,18 @@ public class ContextManager {
      * 执行会话历史压缩
      */
     public CompactionService.SessionCompactionResult compactSession(
-            Long sessionId, List<ChatRequest.Message> messages,
+            Long sessionId, long expectedOldBoundary, String existingSummary,
+            List<PersistedChatMessage> messages, List<Long> snapshotMessageIds,
             LlmModelConfig modelConfig, CompactionConfig config,
             String currentUserQuestion) {
-        return compactionService.compactSession(sessionId, messages, modelConfig, config, currentUserQuestion);
+        return compactionService.compactSession(
+                sessionId, expectedOldBoundary, existingSummary, messages, snapshotMessageIds,
+                modelConfig, config, currentUserQuestion);
+    }
+
+    public List<ChatRequest.Message> prependSessionSummary(
+            String summary, List<ChatRequest.Message> incrementalMessages) {
+        return compactionService.prependSessionSummary(summary, incrementalMessages);
     }
 
     /**

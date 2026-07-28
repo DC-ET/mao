@@ -65,6 +65,7 @@ public class SessionService {
     private final EnvironmentInfoProvider environmentInfoProvider;
     private final UserCommandService userCommandService;
     private final GitOperationService gitOperationService;
+    private final SessionCompactionService sessionCompactionService;
 
     public Session createSession(Long userId, Long agentId, String title) {
         return createSession(userId, agentId, title, "CLOUD");
@@ -384,6 +385,8 @@ public class SessionService {
 
     @Transactional
     public void deleteSession(Long id) {
+        sessionMapper.lockActiveSessionById(id);
+        sessionCompactionService.deleteBySessionId(id);
         messageMapper.delete(new QueryWrapper<Message>().eq("session_id", id));
         sessionMapper.deleteById(id);
     }
@@ -575,6 +578,12 @@ public class SessionService {
         return MessageHistoryNormalizer.normalizeEntities(messages, objectMapper);
     }
 
+    /** Loads raw persisted history strictly after the durable compaction boundary. */
+    public List<Message> getMessagesAfterId(Long sessionId, Long afterMessageId) {
+        long boundary = afterMessageId != null ? afterMessageId : 0L;
+        return messageMapper.selectMessagesAfterId(sessionId, boundary);
+    }
+
     public MessagePage getMessagesByRounds(Long sessionId, int roundLimit, Long beforeMessageId) {
         int limit = Math.max(1, Math.min(roundLimit, 50));
         Message beforeMessage = null;
@@ -659,7 +668,16 @@ public class SessionService {
      * @return number of deleted messages
      */
     public int cleanupIncompleteTail(Long sessionId) {
-        List<Message> messages = getMessages(sessionId);
+        return cleanupIncompleteTail(sessionId, getMessages(sessionId));
+    }
+
+    public int cleanupIncompleteTailAfterId(Long sessionId, Long afterMessageId) {
+        List<Message> messages = MessageHistoryNormalizer.normalizeEntities(
+                getMessagesAfterId(sessionId, afterMessageId), objectMapper);
+        return cleanupIncompleteTail(sessionId, messages);
+    }
+
+    private int cleanupIncompleteTail(Long sessionId, List<Message> messages) {
         if (messages.isEmpty()) return 0;
 
         // Phase 1: Scan from tail to find the first incomplete assistant+tool_calls
@@ -761,6 +779,12 @@ public class SessionService {
         Message message = messageMapper.selectById(messageId);
         if (message == null || !"USER".equals(message.getRole())) {
             throw new IllegalArgumentException("只能编辑用户消息");
+        }
+
+        sessionMapper.lockActiveSessionById(message.getSessionId());
+        var compaction = sessionCompactionService.loadValidated(message.getSessionId());
+        if (compaction != null && messageId <= sessionCompactionService.boundaryOf(compaction)) {
+            throw new BusinessException(ErrorCode.MESSAGE_ALREADY_COMPACTED);
         }
 
         // 2. 更新消息内容

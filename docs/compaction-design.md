@@ -6,7 +6,7 @@
 
 ### 1.1 现状
 
-当前系统在 `HarnessService.buildContext()` 中从数据库加载会话的 **全部** 历史消息，经 `PromptEngine.buildRequest()` 拼接 system prompt 后直接发送给 LLM。没有任何裁剪、截断或压缩机制。
+当前系统在 `HarnessService.buildContext()` 中先读取并校验会话压缩记录。存在有效摘要时，只查询真实边界 `last_compacted_msg_id` 之后的消息，再由 `PromptEngine.buildRequest()` 组装最终请求；没有摘要时才从 ID 0 加载当前有效全量历史。
 
 已有的基础设施：
 - `TokenEstimator` — 基于 `cl100k_base` 估算 token 数
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS `session_compaction` (
     `id`                      BIGINT PRIMARY KEY AUTO_INCREMENT,
     `session_id`              BIGINT NOT NULL UNIQUE,
     `summary_text`            MEDIUMTEXT COMMENT '当前生效的滚动摘要正文',
-    `last_compacted_msg_id`   BIGINT DEFAULT 0 COMMENT '摘要已覆盖到的最后一条消息 ID',
+    `last_compacted_msg_id`   BIGINT DEFAULT 0 COMMENT '摘要已覆盖到的最后一条真实 message.id，0 表示未覆盖任何消息',
     `compact_count`           INT DEFAULT 0 COMMENT '累计压缩次数',
     `input_tokens`            BIGINT DEFAULT 0 COMMENT '累计压缩输入 token',
     `output_tokens`           BIGINT DEFAULT 0 COMMENT '累计压缩输出 token',
@@ -89,37 +89,31 @@ CREATE TABLE IF NOT EXISTS `session_compaction` (
 
 关键字段：
 - `summary_text`：当前生效的滚动摘要正文，每次压缩时将"已有摘要 + 新增历史片段"融合为新摘要。
-- `last_compacted_msg_id`：摘要覆盖边界，后续压缩只处理此 ID 之后的消息，避免重复处理。
+- `last_compacted_msg_id`：摘要覆盖的最大真实 `message.id`。摘要覆盖同会话中 `id <= boundary` 的有效历史，增量区固定查询 `id > boundary`。
+- 边界是服务层逻辑关联，不建立外键；每次读取都校验边界消息存在、未逻辑删除且属于当前会话。
+- `message(session_id, deleted, id)` 复合索引支持边界后的范围查询。
 
 ### 3.2 触发时机
 
-会话压缩发生在 `HarnessService.buildContext()` 内部、消息加载完成之后、返回 `AgentExecutionContext` 之前。即每次请求的上下文组装阶段。
+会话压缩发生在 `HarnessService.buildContext()` 内部、返回 `AgentExecutionContext` 之前。压缩记录必须先于消息读取，以免有效摘要会话重复加载边界前历史。
 
 ```
 buildContext(sessionId)
   ├── 加载 Session、Agent、Model 配置
-  ├── 加载全量历史消息
+  ├── 加载并校验 session_compaction
+  ├── 查询 id > boundary 的有效消息，再规范化 assistant/tool 顺序
+  ├── 已有摘要始终作为 system 消息注入
   ├── ★ 判断是否需要会话压缩 ★
-  │     ├── 估算 system prompt + 摘要 + 未压缩消息 + 用户消息的总 token
-  │     ├── 如果触发 → 调用压缩模型 → 更新摘要 → 重建消息列表
-  │     └── 如果不触发 → 保持原样
+  │     ├── 估算已有摘要 + 边界后原始消息的总 token
+  │     ├── 如果触发 → 生成摘要 → CAS 持久化 → 按新边界重载
+  │     └── 如果不触发或关闭压缩 → 继续使用已有摘要和增量消息
   ├── 加载 Tools、Skills、MCP
   └── 返回 context
 ```
 
 ### 3.3 触发判定逻辑
 
-采用双条件触发，满足其一即触发：
-
-**条件一：新增未压缩内容 token 达标**
-
-```
-新增消息 token 总和 >= minNewTokenCount (默认 20000)
-```
-
-适合处理"会话总长还没接近上限，但新增内容已经很大"的情况。
-
-**条件二：整体上下文接近窗口阈值**
+采用组合条件触发：
 
 ```
 整体估算 token >= contextWindowTokens * triggerRatio
@@ -128,16 +122,16 @@ buildContext(sessionId)
 ```
 
 默认值：
-- `contextWindowTokens = 96000`
+- `contextWindowTokens = 256000`
 - `triggerRatio = 0.72`
 - `minNewMessageCount = 8`
 - `minCompactMessageCount = 10`
 
-即整体上下文达到约 69120 token 时触发，同时要求有足够多的新消息，避免短会话被频繁压缩。
+即未被模型配置覆盖时，整体上下文达到约 184320 token 时触发，同时要求有足够多的新消息，避免短会话被频繁压缩。
 
 ### 3.4 保留窗口策略
 
-压缩不会触及最近的消息，保留最近 `recentTurns`（默认 6）轮对话的原始消息。1 轮 = 1 条 user + 1 条 assistant，共约 12 条消息。
+压缩按完整 USER 轮次切割：一轮从 USER 消息开始，到下一条 USER 之前结束，可包含多个 assistant/tool 调用组和最终 assistant 回复。最近 `recentTurns` 个已完成轮次完整保留；最后一条 USER 开始的当前轮次无条件保留，即使 `recentTurns = 0` 也不压缩。
 
 原因：
 - 最近消息与当前问题最直接相关
@@ -148,10 +142,10 @@ buildContext(sessionId)
 
 当未压缩消息量极大时，分批处理：
 
-- `maxCompactionBatchMessages = 200`：单批最多处理 200 条消息
+- `maxCompactionBatchMessages = 200`：单批消息数软上限
 - `maxRoundsPerRequest = 30`：单次请求最多连续压缩 30 轮
 
-分批逻辑：先处理最老的一批 → 更新摘要边界 → 继续处理下一批，直到剩余消息只剩保留窗口或不再满足触发条件。
+每批由一个或多个完整 USER 轮次组成。追加下一轮会超过软上限时结束当前批；单个超长轮次独立成批，绝不拆分。各批成功后更新内存摘要，计划批次结束后只持久化最后一个满足物理 ID 前缀完整性的摘要和真实边界。
 
 ### 3.6 压缩输入格式
 
@@ -198,7 +192,7 @@ buildContext(sessionId)
 
 ### 3.9 摘要回注方式
 
-压缩成功后，重建送模消息列表：
+只要摘要记录有效，无论本次是否触发新压缩、甚至 `compaction.enabled=false`，送模历史都按同一方式构建：
 
 ```
 原始列表: [sys, msg1, msg2, ..., msgN, user_latest]
@@ -213,11 +207,11 @@ buildContext(sessionId)
    user_latest]                                    // 当前用户消息
 ```
 
-摘要以 system 消息形式插入到 system prompt 之后、保留窗口之前。
+摘要以 system 消息形式插入到 system prompt 之后、边界后原始消息之前。压缩成功或 CAS 冲突后都会按最终有效边界重新查询，确保压缩期间新增的消息进入当前上下文。
 
 ### 3.10 失败降级
 
-如果压缩调用失败（模型异常、摘要为空、边界消息异常），系统回退到原始全量历史消息。原则：宁可多带原始上下文，也不能让主回答失败。
+压缩模型失败时继续使用调用前的有效摘要和边界后消息，不修改数据库。边界无效时记录 WARN、条件物理删除压缩记录，并从 ID 0 加载当前有效全量历史；达到正常触发条件时才重建摘要。CAS 冲突方丢弃本次结果，重读一次获胜摘要和增量消息，不再次调用压缩模型。
 
 ## 4. 工作记忆压缩详细设计
 
@@ -254,8 +248,7 @@ while (round < maxRounds) {
 
 双条件触发，满足其一即可：
 
-1. **工具轮次达标**：本轮已执行的工具调用轮数 >= `loopTriggerToolRounds`（默认 5）
-2. **工作区 token 达标**：最后一条用户消息之后的所有消息 token 总和 >= `loopTriggerTokens`（默认 96000）
+最后一条用户消息之后的工作区消息 token 总和达到 `loopTriggerTokens`（默认 96000），且存在超过 `loopRecentToolRounds` 的可压缩工具轮次时触发。
 
 ### 4.5 保留最近原始工具轮次
 
@@ -312,22 +305,23 @@ Loop 压缩失败时，直接保留原始 `context.messages`，不阻断后续�
 |------|--------|------|
 | `CompactionConfig` | `harness.core` | 压缩配置 POJO，包含所有阈值和开关 |
 | `CompactionService` | `harness.core` | 压缩核心逻辑：触发判定、输入组装、模型调用、摘要提取 |
+| `PersistedChatMessage` | `harness.core` | 保存真实消息 ID 与 LLM 消息 DTO 的内部包装，数据库 ID 不进入外部协议 |
 | `SessionCompaction` | `session.entity` | MyBatis-Plus 实体，映射 `session_compaction` 表 |
 | `SessionCompactionMapper` | `session.mapper` | MyBatis-Plus Mapper |
+| `SessionCompactionService` | `session.service` | 压缩记录查询、边界校验、CAS 持久化、并发插入和物理清理 |
 
 ### 5.2 修改类
 
 | 类 | 改动 |
 |----|------|
-| `ContextManager` | 从纯估算升级为上下文管理器：增加 `compactSessionIfNeeded()` 方法 |
-| `HarnessService.buildContext()` | 消息加载后调用 `ContextManager` 进行会话压缩 |
+| `ContextManager` | 代理会话压缩生成和统一摘要注入入口 |
+| `HarnessService.buildContext()` | 先校验边界，再增量加载、压缩、CAS 持久化和重载 |
 | `AgentLoop.execute()` | 工具调用完成后增加 loop 压缩判断逻辑 |
-| `PromptEngine.buildRequest()` | 支持插入会话摘要和工作记忆摘要 system 消息 |
+| `SessionService` / `MessageMapper` | 增加真实 ID 边界后查询；编辑和删除维护摘要一致性 |
 | `AgentExecutionContext` | 增加 `sessionSummary`、`workingSummary` 字段 |
-| `AgentEventListener` | 增加 `onCompactionStart`、`onCompactionEnd` 事件回调 |
-| `SessionController` | 处理压缩事件的 SSE 推送 |
+| `AgentEventListener` | 预留 `onCompactionStart`、`onCompactionEnd` 事件回调 |
 | `LlmModel` | 增加 `contextWindowTokens` 字段（模型实际上下文窗口大小） |
-| `Agent` | 接入现有 `tokenLimit` 字段，或改用 `configJson` 存储压缩配置 |
+| `Agent` | 使用 `configJson.compaction` 覆盖全局压缩配置 |
 
 ### 5.3 关键流程
 
@@ -337,27 +331,27 @@ Loop 压缩失败时，直接保留原始 `context.messages`，不阻断后续�
 HarnessService.buildContext(sessionId)
   │
   ├── 1. 加载 Session、Agent、Model
-  ├── 2. 加载全量历史消息 from DB
-  ├── 3. 加载 session_compaction 记录（如有）
+  ├── 2. 加载并校验 session_compaction（如有）
+  │     └── 无效：WARN + 条件物理删除 + boundary = 0
+  ├── 3. 查询 session_id = ? AND deleted = 0 AND id > boundary
+  ├── 4. 规范化 assistant/tool 顺序并保留真实 ID
   │
-  ├── 4. 计算压缩边界
-  │     ├── 已有摘要边界 = lastCompactedMsgId
-  │     ├── 可压缩消息 = 边界之后、保留窗口之前的全部消息
-  │     └── 保留窗口 = 最近 recentTurns * 2 条消息
+  ├── 5. 按完整 USER 轮次计算压缩候选区
+  │     ├── 当前 USER 轮次始终保留
+  │     ├── 最近 recentTurns 个已完成轮次完整保留
+  │     └── 更早完整轮次作为候选区
   │
-  ├── 5. 判断是否需要压缩
-  │     ├── 估算 system prompt + 摘要 + 未压缩消息 + 用户消息的总 token
-  │     ├── 条件一：新增未压缩 token >= minNewTokenCount
-  │     └── 条件二：总 token >= contextWindowTokens * triggerRatio 且消息数达标
+  ├── 6. 判断是否需要压缩
+  │     └── 摘要 + 增量消息 token 达阈值，且候选消息数达标
   │
-  ├── 6. 如果需要压缩
+  ├── 7. 如果需要压缩
   │     ├── a. 组装压缩输入（已有摘要 + 格式化历史片段 + 当前用户问题）
-  │     ├── b. 调用压缩模型（使用 session-compaction 场景配置）
-  │     ├── c. 提取摘要文本
-  │     ├── d. 更新 session_compaction 记录（新摘要 + 新边界）
-  │     └── e. 重建 context.messages = [摘要 system msg] + [保留窗口消息]
+  │     ├── b. 按完整轮次分批调用压缩模型
+  │     ├── c. 校验 oldBoundary < id <= candidateBoundary 的物理前缀完整性
+  │     ├── d. 基于旧边界 CAS 更新，首次记录通过唯一键竞争插入
+  │     └── e. 成功或冲突后按最终边界重载一次
   │
-  └── 7. 返回 context
+  └── 8. 返回 [有效摘要 system message] + [最终边界后原始消息]
 ```
 
 #### 5.3.2 Loop 压缩流程
@@ -395,16 +389,14 @@ AgentLoop.execute()
 {
   "compaction": {
     "enabled": true,
-    "contextWindowTokens": 96000,
+    "contextWindowTokens": 256000,
     "triggerRatio": 0.72,
     "recentTurns": 6,
     "minCompactMessageCount": 10,
     "minNewMessageCount": 8,
-    "minNewTokenCount": 20000,
     "maxCompactionBatchMessages": 200,
     "maxRoundsPerRequest": 30,
     "loopEnabled": true,
-    "loopTriggerToolRounds": 5,
     "loopTriggerTokens": 96000,
     "loopRecentToolRounds": 5
   }
@@ -414,35 +406,34 @@ AgentLoop.execute()
 同时支持通过 `application.yml` 全局默认配置：
 
 ```yaml
-agent:
-  compaction:
-    enabled: true
-    context-window-tokens: 96000
-    trigger-ratio: 0.72
-    recent-turns: 6
-    min-compact-message-count: 10
-    min-new-message-count: 8
-    min-new-token-count: 20000
-    max-compaction-batch-messages: 200
-    max-rounds-per-request: 30
-    loop-enabled: true
-    loop-trigger-tool-rounds: 5
-    loop-trigger-tokens: 96000
-    loop-recent-tool-rounds: 5
+app:
+  harness:
+    compaction:
+      enabled: true
+      context-window-tokens: 256000
+      trigger-ratio: 0.72
+      recent-turns: 6
+      min-compact-message-count: 10
+      min-new-message-count: 8
+      max-compaction-batch-messages: 200
+      max-rounds-per-request: 30
+      loop-enabled: true
+      loop-trigger-tokens: 96000
+      loop-recent-tool-rounds: 5
 ```
 
 ### 5.5 Prompt 管理
 
-压缩使用的 Prompt 通过 `SkillLoader` 或独立的 Prompt 模板管理，与业务代码解耦。至少需要两组 Prompt：
+压缩 Prompt 当前由 `CompactionService` 统一构造，分为两组：
 
 1. **会话压缩 Prompt**（system + user）
 2. **Loop 压缩 Prompt**（system + user）
 
-压缩模型可以与主对话模型不同，通过 `LlmModel` 表中独立的压缩模型配置指定，或复用主模型。
+压缩调用复用当前会话的主模型配置。
 
 ### 5.6 前端可观测性
 
-通过 SSE 事件暴露压缩状态：
+WebSocket 事件协议已预留以下压缩状态事件；当前实现主要通过后端日志记录会话压缩结果：
 
 | 事件名 | 数据 | 触发时机 |
 |--------|------|----------|
@@ -460,7 +451,7 @@ CREATE TABLE IF NOT EXISTS `session_compaction` (
     `id`                      BIGINT PRIMARY KEY AUTO_INCREMENT,
     `session_id`              BIGINT NOT NULL UNIQUE,
     `summary_text`            MEDIUMTEXT COMMENT '当前生效的滚动摘要正文',
-    `last_compacted_msg_id`   BIGINT DEFAULT 0 COMMENT '摘要已覆盖到的最后一条消息 ID',
+    `last_compacted_msg_id`   BIGINT DEFAULT 0 COMMENT '摘要已覆盖到的最后一条真实 message.id，0 表示未覆盖任何消息',
     `compact_count`           INT DEFAULT 0 COMMENT '累计压缩次数',
     `input_tokens`            BIGINT DEFAULT 0 COMMENT '累计压缩输入 token',
     `output_tokens`           BIGINT DEFAULT 0 COMMENT '累计压缩输出 token',
@@ -481,7 +472,18 @@ ALTER TABLE `llm_model` ADD COLUMN `context_window_tokens` INT DEFAULT NULL
     COMMENT '模型上下文窗口大小（token），用于压缩触发判定';
 ```
 
-此字段用于压缩触发判定。如果不设置，系统默认使用 `contextWindowTokens` 配置值（96000）。
+此字段用于压缩触发判定。如果不设置，系统默认使用 `contextWindowTokens` 配置值（256000）。
+
+### 6.3 真实边界迁移
+
+V062 清空使用旧列表位置语义的 `session_compaction` 记录，修正列注释，并创建：
+
+```sql
+CREATE INDEX `idx_message_session_deleted_id`
+    ON `message` (`session_id`, `deleted`, `id`);
+```
+
+旧摘要不换算，原始消息不删除。存量会话在后续请求达到正常触发条件时按需重建。
 
 ## 7. 关键设计决策
 
@@ -497,7 +499,9 @@ ALTER TABLE `llm_model` ADD COLUMN `context_window_tokens` INT DEFAULT NULL
 
 ### 7.2 摘要是滚动累积而非一次性重写
 
-`last_compacted_msg_id` 使得压缩过程是增量的。每次只处理边界之后的新消息，与已有摘要融合，而非从头总结整段会话。
+`last_compacted_msg_id` 是真实、单调推进的 `message.id`。每次只查询边界后的消息，与已有摘要融合；边界候选必须覆盖加载快照中的完整物理 ID 前缀，不能因 assistant/tool 逻辑重排跳过未摘要消息。
+
+摘要更新使用压缩记录 ID 和旧边界 CAS；首次创建依赖 `session_id` 唯一约束。持久化前还会在会话行锁内核对候选边界消息的原始内容，防止模型调用期间的消息编辑使旧摘要生效。CAS 或插入竞争失败时不复用失败方生成的摘要，而是重读获胜记录一次。编辑、删除和压缩持久化只在短事务内锁定会话行，模型调用期间不持有数据库锁。
 
 ### 7.3 原始消息永久保留
 
@@ -515,36 +519,21 @@ ALTER TABLE `llm_model` ADD COLUMN `context_window_tokens` INT DEFAULT NULL
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `compaction.enabled` | `true` | 是否启用会话压缩 |
-| `compaction.contextWindowTokens` | `96000` | 上下文窗口估算值 |
+| `compaction.contextWindowTokens` | `256000` | 上下文窗口估算值 |
 | `compaction.triggerRatio` | `0.72` | 窗口触发比例 |
-| `compaction.recentTurns` | `6` | 保留最近原始轮数 |
+| `compaction.recentTurns` | `6` | 保留最近已完成的完整 USER 轮次；当前轮次额外保留 |
 | `compaction.minCompactMessageCount` | `10` | 最小可压缩消息数 |
 | `compaction.minNewMessageCount` | `8` | 基于窗口触发时的最小新增消息数 |
-| `compaction.minNewTokenCount` | `20000` | 新增 token 达标即优先压缩 |
-| `compaction.maxCompactionBatchMessages` | `200` | 单批最多压缩消息数 |
+| `compaction.maxCompactionBatchMessages` | `200` | 单批消息数软上限；完整 USER 轮次可超出 |
 | `compaction.maxRoundsPerRequest` | `30` | 单次请求最多压缩轮数 |
 | `compaction.loopEnabled` | `true` | 是否启用 loop 压缩 |
-| `compaction.loopTriggerToolRounds` | `5` | loop 压缩工具轮次阈值 |
 | `compaction.loopTriggerTokens` | `96000` | loop 压缩 token 阈值 |
 | `compaction.loopRecentToolRounds` | `5` | loop 压缩后保留的最近工具轮数 |
 
 ## 9. 实施建议
 
-### 9.1 分阶段交付
+### 9.1 后续调优
 
-**Phase 1：会话历史压缩（优先级最高）**
-- 新建 `session_compaction` 表
-- 实现 `CompactionService` 的会话压缩逻辑
-- 改造 `HarnessService.buildContext()` 接入压缩
-- 压缩 Prompt 模板编写
-- 前端 SSE 事件接入
-
-**Phase 2：工作记忆压缩**
-- 在 `AgentLoop.execute()` 中增加 loop 压缩逻辑
-- Loop 压缩 Prompt 模板编写
-- 前端 loop 压缩事件展示
-
-**Phase 3：精细化调优**
 - 压缩质量评估指标（摘要覆盖率、重复执行率）
 - 动态保留窗口（根据消息长度自适应）
 - 压缩模型独立配置
@@ -557,4 +546,17 @@ ALTER TABLE `llm_model` ADD COLUMN `context_window_tokens` INT DEFAULT NULL
 | 压缩增加请求延迟 | 压缩模型可选用小模型；批量压缩分摊成本 |
 | 摘要丢失关键信息 | 保留窗口兜底；原始消息不删除；失败降级 |
 | 阈值不适合所有场景 | 支持 Agent 级配置覆盖；预留调优接口 |
-| 压缩模型调用失败 | 降级到原始全量消息，不影响主链路 |
+| 压缩模型调用失败 | 保留已有摘要和边界后原始消息，不修改持久化记录 |
+| 并发摘要覆盖 | 旧边界 CAS；冲突方丢弃结果并重载获胜摘要 |
+| 边界失效 | WARN、条件物理删除记录、从 ID 0 加载并按正常条件重建 |
+| 编辑摘要覆盖区 | 返回 `MESSAGE_ALREADY_COMPACTED`，不更新消息也不截断后续历史 |
+
+### 9.3 发布与回滚约束
+
+新版本首次启动时由 Flyway 执行 V062，并核验旧压缩记录已清空、复合索引已创建。若应用代码回滚到仍把边界解释为列表位置的旧版本，必须在启动旧代码前再次执行：
+
+```sql
+DELETE FROM `session_compaction`;
+```
+
+不得保留新语义压缩记录后直接回滚应用。复合索引可以保留，原始 `message` 历史无需恢复。

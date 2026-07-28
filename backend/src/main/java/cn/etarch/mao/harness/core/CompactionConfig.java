@@ -19,7 +19,7 @@ public class CompactionConfig {
     /** 窗口触发比例：整体 token 达到 contextWindowTokens * triggerRatio 时触发 */
     private double triggerRatio = 0.72;
 
-    /** 保留最近原始轮数（1 轮 = 1 user + 1 assistant） */
+    /** 保留最近已完成的完整 USER 轮次；当前 USER 轮次始终额外保留 */
     private int recentTurns = 6;
 
     /** 允许触发压缩的最小可压缩消息数 */
@@ -28,7 +28,7 @@ public class CompactionConfig {
     /** 基于窗口触发时要求的最小新增消息数 */
     private int minNewMessageCount = 8;
 
-    /** 单批最多压缩消息数 */
+    /** 单批压缩消息数软上限；单个完整 USER 轮次可超过该值 */
     private int maxCompactionBatchMessages = 200;
 
     /** 单次请求内最多连续压缩轮数 */
