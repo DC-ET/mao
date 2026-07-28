@@ -82,7 +82,7 @@ public class HarnessService {
 
     public void execute(Long sessionId, String userContent, AgentEventListener listener,
                          AtomicBoolean cancelFlag) {
-        AgentExecutionContext context = buildContext(sessionId);
+        AgentExecutionContext context = buildContext(sessionId, listener);
 
         // User message is already persisted by SessionController before streaming starts.
 
@@ -189,6 +189,10 @@ public class HarnessService {
     }
 
     public AgentExecutionContext buildContext(Long sessionId) {
+        return buildContext(sessionId, null);
+    }
+
+    private AgentExecutionContext buildContext(Long sessionId, AgentEventListener listener) {
         // 1. Load session
         Session session = sessionMapper.selectById(sessionId);
         if (session == null) {
@@ -265,9 +269,13 @@ public class HarnessService {
         if (effectiveConfig.isEnabled() && !history.persistedMessages().isEmpty()) {
             try {
                 String currentUserQuestion = findCurrentUserQuestion(history.persistedMessages());
-                var result = contextManager.compactSession(
-                        sessionId, boundary, summary, history.persistedMessages(), history.snapshotMessageIds(),
-                        context.getModelConfig(), effectiveConfig, currentUserQuestion);
+                var result = listener == null
+                        ? contextManager.compactSession(
+                                sessionId, boundary, summary, history.persistedMessages(), history.snapshotMessageIds(),
+                                context.getModelConfig(), effectiveConfig, currentUserQuestion)
+                        : contextManager.compactSession(
+                                sessionId, boundary, summary, history.persistedMessages(), history.snapshotMessageIds(),
+                                context.getModelConfig(), effectiveConfig, currentUserQuestion, listener);
                 if (result != null) {
                     boolean persisted = sessionCompactionService.persist(
                             sessionId, compactionRecord, result.expectedOldBoundary(),
@@ -697,7 +705,7 @@ public class HarnessService {
                                          AgentEventListener listener,
                                          AtomicBoolean cancelFlag) {
         // 1. 构建边路任务上下文（复用 buildContext）
-        AgentExecutionContext context = buildContext(sideSessionId);
+        AgentExecutionContext context = buildContext(sideSessionId, listener);
 
         // 2. 如果选择继承主任务上下文，注入摘要到 system prompt（仅首条消息）
         if (inheritContext) {

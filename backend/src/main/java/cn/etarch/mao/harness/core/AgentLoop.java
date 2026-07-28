@@ -342,7 +342,7 @@ public class AgentLoop {
                 try {
                     var loopResult = contextManager.compactLoop(
                             context.getMessages(), context.getModelConfig(), loopConfig,
-                            context.getWorkingSummary());
+                            context.getWorkingSummary(), listener);
                     if (loopResult != null) {
                         context.getMessages().clear();
                         context.getMessages().addAll(loopResult.compactedMessages());

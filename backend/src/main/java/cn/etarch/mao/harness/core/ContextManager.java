@@ -42,9 +42,18 @@ public class ContextManager {
             List<PersistedChatMessage> messages, List<Long> snapshotMessageIds,
             LlmModelConfig modelConfig, CompactionConfig config,
             String currentUserQuestion) {
+        return compactSession(sessionId, expectedOldBoundary, existingSummary, messages,
+                snapshotMessageIds, modelConfig, config, currentUserQuestion, null);
+    }
+
+    public CompactionService.SessionCompactionResult compactSession(
+            Long sessionId, long expectedOldBoundary, String existingSummary,
+            List<PersistedChatMessage> messages, List<Long> snapshotMessageIds,
+            LlmModelConfig modelConfig, CompactionConfig config,
+            String currentUserQuestion, AgentEventListener listener) {
         return compactionService.compactSession(
                 sessionId, expectedOldBoundary, existingSummary, messages, snapshotMessageIds,
-                modelConfig, config, currentUserQuestion);
+                modelConfig, config, currentUserQuestion, listener);
     }
 
     public List<ChatRequest.Message> prependSessionSummary(
@@ -59,6 +68,13 @@ public class ContextManager {
             List<ChatRequest.Message> messages,
             LlmModelConfig modelConfig, CompactionConfig config,
             String existingWorkingSummary) {
-        return compactionService.compactLoop(messages, modelConfig, config, existingWorkingSummary);
+        return compactLoop(messages, modelConfig, config, existingWorkingSummary, null);
+    }
+
+    public CompactionService.LoopCompactionResult compactLoop(
+            List<ChatRequest.Message> messages,
+            LlmModelConfig modelConfig, CompactionConfig config,
+            String existingWorkingSummary, AgentEventListener listener) {
+        return compactionService.compactLoop(messages, modelConfig, config, existingWorkingSummary, listener);
     }
 }

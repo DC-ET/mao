@@ -34,6 +34,19 @@ public class CompactionService {
                                                    LlmModelConfig modelConfig,
                                                    CompactionConfig config,
                                                    String currentUserQuestion) {
+        return compactSession(sessionId, expectedOldBoundary, existingSummary, messages,
+                snapshotMessageIds, modelConfig, config, currentUserQuestion, null);
+    }
+
+    public SessionCompactionResult compactSession(Long sessionId,
+                                                   long expectedOldBoundary,
+                                                   String existingSummary,
+                                                   List<PersistedChatMessage> messages,
+                                                   List<Long> snapshotMessageIds,
+                                                   LlmModelConfig modelConfig,
+                                                   CompactionConfig config,
+                                                   String currentUserQuestion,
+                                                   AgentEventListener listener) {
         if (!config.isEnabled() || messages.isEmpty()) return null;
 
         long startTime = System.currentTimeMillis();
@@ -71,6 +84,9 @@ public class CompactionService {
 
         log.info("Session compaction triggered for session {}: {} messages ({} tokens) to compact, {} total tokens",
                 sessionId, candidates.size(), candidateTokenCount, totalTokenEstimate);
+        if (listener != null) {
+            listener.onCompactionStart("session", candidates.size(), candidateTokenCount);
+        }
 
         String rollingSummary = existingSummary;
         int totalCompacted = 0;
@@ -146,6 +162,13 @@ public class CompactionService {
                     sessionId, expectedOldBoundary, lastSafeResult.newLastCompactedMessageId(),
                     lastSafeResult.compactedCount(), lastSafeResult.savedTokens());
         }
+        if (listener != null) {
+            listener.onCompactionEnd(
+                    "session",
+                    lastSafeResult != null ? lastSafeResult.summaryTokens() : 0,
+                    lastSafeResult != null ? lastSafeResult.savedTokens() : 0,
+                    System.currentTimeMillis() - startTime);
+        }
         return lastSafeResult;
     }
 
@@ -212,6 +235,13 @@ public class CompactionService {
     public LoopCompactionResult compactLoop(List<ChatRequest.Message> messages,
                                              LlmModelConfig modelConfig, CompactionConfig config,
                                              String existingWorkingSummary) {
+        return compactLoop(messages, modelConfig, config, existingWorkingSummary, null);
+    }
+
+    public LoopCompactionResult compactLoop(List<ChatRequest.Message> messages,
+                                             LlmModelConfig modelConfig, CompactionConfig config,
+                                             String existingWorkingSummary,
+                                             AgentEventListener listener) {
         if (!config.isLoopEnabled() || messages.isEmpty()) return null;
 
         long startTime = System.currentTimeMillis();
@@ -269,6 +299,9 @@ public class CompactionService {
 
         log.info("Loop compaction triggered: {} messages to compact, {} tool rounds, {} workspace tokens",
                 toCompact.size(), toolRounds, workspaceTokens);
+        if (listener != null) {
+            listener.onCompactionStart("loop", toCompact.size(), workspaceTokens);
+        }
 
         // 6. 提取已有工作摘要
         // 工作摘要不跨请求持久化，但可以在同一请求内累积
@@ -279,6 +312,9 @@ public class CompactionService {
         CompactionLlmResult llmResult = callCompactionModel(compactionPrompt, modelConfig);
         if (llmResult == null || llmResult.summaryText == null || llmResult.summaryText.isBlank()) {
             log.warn("Loop compaction LLM call returned empty result");
+            if (listener != null) {
+                listener.onCompactionEnd("loop", 0, 0, System.currentTimeMillis() - startTime);
+            }
             return null;
         }
 
@@ -296,8 +332,12 @@ public class CompactionService {
                 .build());
         result.addAll(keepMessages);
 
+        long durationMs = System.currentTimeMillis() - startTime;
+        if (listener != null) {
+            listener.onCompactionEnd("loop", summaryTokens, Math.max(0, savedTokens), durationMs);
+        }
         return new LoopCompactionResult(result, llmResult.summaryText, toCompact.size(), summaryTokens,
-                Math.max(0, savedTokens), System.currentTimeMillis() - startTime);
+                Math.max(0, savedTokens), durationMs);
     }
 
     // ======================== 内部方法 ========================

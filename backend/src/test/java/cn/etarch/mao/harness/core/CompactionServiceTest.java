@@ -13,6 +13,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -38,11 +40,14 @@ class CompactionServiceTest {
                 message(41, "assistant"),
                 message(100, "user"));
 
+        AgentEventListener listener = mock(AgentEventListener.class);
         var result = service.compactSession(
                 3L, 0, null, messages, ids(messages),
-                modelConfig(), config, "current question");
+                modelConfig(), config, "current question", listener);
 
         assertThat(result).isNotNull();
+        verify(listener).onCompactionStart("session", 2, 10_000);
+        verify(listener).onCompactionEnd(eq("session"), eq(10), eq(9_990), anyLong());
         assertThat(result.newLastCompactedMessageId()).isEqualTo(25L);
         assertThat(result.expectedOldBoundary()).isZero();
         assertThat(result.boundaryContentSnapshot()).isEqualTo("assistant 25" + " ".repeat(20));
@@ -211,10 +216,13 @@ class CompactionServiceTest {
         when(tokenEstimator.countTokens("working summary")).thenReturn(10);
         when(llmAdapter.chat(any(), any())).thenReturn(summaryResponse("<summary>working summary</summary>"));
 
+        AgentEventListener listener = mock(AgentEventListener.class);
         CompactionService.LoopCompactionResult result = service.compactLoop(
-                loopConversation(), modelConfig(), loopConfig(), "previous work");
+                loopConversation(), modelConfig(), loopConfig(), "previous work", listener);
 
         assertThat(result).isNotNull();
+        verify(listener).onCompactionStart("loop", 4, 10_000);
+        verify(listener).onCompactionEnd(eq("loop"), eq(10), eq(0), anyLong());
         assertThat(result.summaryText()).isEqualTo("working summary");
         assertThat(result.compactedMessages()).anySatisfy(message ->
                 assertThat(message.getContent().toString()).contains("工作记忆摘要"));
