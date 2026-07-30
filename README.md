@@ -28,7 +28,7 @@
 
 Mao 面向个人开发者与各类团队，提供可私有化部署的 AI Agent 管理与协作平台。许多用户已经在用各类智能体工具，但配置分散、权限难管、调用难以追溯——Mao 把 Agent、模型、用户与审计集中在一处，既适合个人自用，也方便在团队内统一管理。
 
-平台内置完整的 Agent 运行引擎（Think-Act-Observe 循环），支持流式对话、工具调用、技能扩展与上下文压缩；既可由服务端执行工具（CLOUD），也可通过 Electron 桌面端在本地执行（LOCAL），兼顾安全边界与开发效率。数据与模型密钥留在你自己的环境里，不依赖第三方托管。
+平台内置完整的 Agent 运行引擎（Think-Act-Observe 循环），支持流式对话、工具调用、技能扩展、上下文压缩、定时任务与子任务协作；既可由服务端执行工具（CLOUD），也可通过 Electron 桌面端在本地执行（LOCAL），兼顾安全边界与开发效率。数据与模型密钥留在你自己的环境里，不依赖第三方托管。
 
 > **开源说明**：本项目采用 [MIT 许可证](LICENSE)，仅提供源码与自部署文档，不提供官方托管服务。LLM 需在管理后台自行配置 API Key；桌面端提供 Electron 源码，需自行构建。当前界面语言为中文。
 
@@ -46,7 +46,8 @@ Mao 面向个人开发者与各类团队，提供可私有化部署的 AI Agent 
 | 权限与审计 | RBAC 角色权限 + 管理类 API 操作审计 |
 | 工具执行 | **CLOUD**（服务端）与 **LOCAL**（桌面端 Electron）双模式，LOCAL 支持工具审批 |
 | Agent 引擎 | 内置 Harness 运行时，非仅 LLM 网关或对话壳 |
-| 扩展 | 文件系统 Skill 知识文档 + 丰富内置工具（Shell / 文件 / 搜索等） |
+| 任务协作 | 主任务、Side Task、子代理委派、定时任务与完成通知 |
+| 扩展 | 文件系统 Skill 知识文档 + 丰富内置工具（Shell / 文件 / 搜索 / 定时任务等） |
 | 认证集成 | 本地账号 / LDAP / 飞书 SSO（可选） |
 
 若你更需要「低代码工作流编排」或「开箱即用的 SaaS」，可优先考虑 Dify、n8n 等产品；若你需要可私有化部署、可自选模型，并在服务端与本地之间灵活切换工具执行边界，Mao 更合适。
@@ -64,7 +65,7 @@ Mao 面向个人开发者与各类团队，提供可私有化部署的 AI Agent 
 | 权限与审计 | 面向个人与小团队效率 | RBAC 角色权限、操作审计、LDAP / 飞书 SSO |
 | 工具执行 | 云端 Sandbox 为主 | **CLOUD**（服务端）与 **LOCAL**（本机 Electron）可切换；LOCAL 支持工具审批 |
 | Agent 管理 | 单一助手体验为主 | 多 Agent 配置、Skill 绑定、会话与用量统计 |
-| 协作能力 | 异步后台任务、多 worktree 并行等（产品持续演进） | 子代理委派、Side Task 并行子会话 |
+| 协作能力 | 异步后台任务、多 worktree 并行等（产品持续演进） | Side Task 并行子会话、子代理委派、定时任务 |
 | 上手成本 | 注册即用 | 需自行部署（Docker Compose 或手动安装） |
 
 **一句话概括**：若你需要开箱即用、与 OpenAI 生态深度集成的个人/小团队工程助手，选 Codex；若你需要可私有化部署、自选模型、本地工具执行边界，并统一管理多个 Agent（个人自用或团队协作均可），选 Mao。
@@ -83,6 +84,8 @@ flowchart TB
         WS["WebSocket /api/ws/stream"]
         Harness["Agent Harness<br/>Think-Act-Observe"]
         Tools["工具调度<br/>CLOUD 模式"]
+        Scheduler["定时任务 / 通知投递"]
+        Weixin["微信 Bot 通道"]
     end
 
     subgraph local["本地执行（LOCAL 模式）"]
@@ -101,10 +104,13 @@ flowchart TB
     Desktop <-->|流式对话| WS
     WS --> Harness
     Harness --> Tools
+    Scheduler --> Harness
+    Scheduler --> Weixin
     Harness -->|LOCAL 委托| Electron
     Electron -->|tool_execute| WS
     Harness <-->|SSE 流式| LLM
     API --> MySQL
+    Scheduler --> MySQL
     Harness --> Workspace
     Tools --> Workspace
 ```
@@ -115,9 +121,12 @@ flowchart TB
 - **权限与治理** — RBAC 角色权限模型（用户管理已接入；Agent / 模型等模块持续完善）；管理类 REST API 操作审计
 - **Agent 运行引擎** — 内置 Think-Act-Observe 循环，支持 LLM 流式调用、工具调度与上下文压缩
 - **双执行模式** — CLOUD（服务端执行工具）与 LOCAL（委托桌面端 Electron 执行）；LOCAL 模式支持会话级权限等级与工具审批
-- **协作扩展** — 子代理委派（Delegate）与 Side Task 并行子会话；文件系统 Skill 知识文档扩展
-- **WebSocket 流式对话** — 实时双向通信，支持消息持久化与 Token 用量追踪
-- **可选微信通道** — 桌面端扫码绑定微信 Bot 后，可在微信中与指定 Agent 对话（CLOUD 模式）
+- **协作扩展** — Side Task 并行子会话、子代理委派（Delegate）与子智能体执行可见性；文件系统 Skill 知识文档扩展
+- **任务自动化** — Agent 可创建定时任务；用户与管理员可查看、暂停或删除任务；任务完成可通过钉钉/飞书 Webhook 通知
+- **工作区体验** — 云端工作区支持新建、复用与 HTTPS Git 初始化；桌面端可查看文件树、文件内容与 Git 状态/单文件差异
+- **WebSocket 流式对话** — 实时双向通信，支持消息持久化、Token 用量追踪、上下文窗口占比与压缩状态提示
+- **可选微信通道** — 桌面端扫码绑定微信 Bot 后，可在微信中与指定 Agent 对话；定时任务结果可回传微信通道
+- **内置操作 Skill** — 仓库提供 `mao-user-cli` / `mao-admin-cli`，便于 Agent 通过用户端或管理端 REST API 完成非对话运维操作
 - **双端架构** — 管理后台 + Electron 桌面客户端
 
 ## 技术栈
@@ -258,6 +267,8 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 | 变量 | 说明 |
 |------|------|
 | `JWT_SECRET` | JWT 签名密钥（生产必设） |
+| `APP_GIT_CREDENTIAL_SECRET` | 用户 Git Access Token 加密密钥（生产必设） |
+| `APP_NOTIFICATION_WEBHOOK_SECRET` | 任务通知 Webhook 加密密钥（生产建议设置） |
 | `WORKSPACE_ROOT` | Agent 工作区根目录，默认 `/opt/mao/data/workspace` |
 | `SKILLS_DIR` | 技能目录，默认 `/opt/mao/data/skills` |
 | `FILE_UPLOAD_DIR` | 上传文件目录 |
@@ -267,6 +278,7 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 | `LDAP_ENABLED` / `LDAP_URL` 等 | LDAP 认证（可选，`LDAP_ENABLED` 默认 `false`） |
 | `FEISHU_ENABLED` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_REDIRECT_URI` | 飞书 OAuth（可选，`FEISHU_ENABLED` 默认 `false`），`FEISHU_REDIRECT_URI` 必须是后端公网回调地址，如 `https://your-domain/api/v1/auth/feishu/callback` |
 | `WEIXIN_BOT_ENABLED` / `WEIXIN_BOT_MONITOR_ENABLED` 等 | 微信 Bot 通道（可选，默认开启；详见 `application-example.yml`） |
+| `TASK_NOTIFICATION_WORKER_DELAY_MS` / `TASK_NOTIFICATION_BATCH_SIZE` / `TASK_NOTIFICATION_MAX_ATTEMPTS` | 任务通知投递调度参数 |
 | `OSS_*` | 阿里云 OSS（可选） |
 
 完整配置项请参考 [application-example.yml](backend/src/main/resources/application-example.yml)。
@@ -342,7 +354,14 @@ npm run dist   # 本地打包，需自行处理代码签名与分发
 | 会话 | `/api/v1/sessions` | 对话会话 |
 | 模型 | `/api/v1/models` | LLM 模型配置 |
 | 技能 | `/api/v1/skills` | 技能管理 |
+| 用户技能 | `/api/v1/user-skills` | 个人 Skill 上传、查询、删除 |
 | 快捷指令 | `/api/v1/quick-commands` | 快捷指令列表 |
+| 文件 / 工作区 | `/api/v1/files` | 附件、工作区浏览、工作区 Git 只读诊断 |
+| Git 凭证 | `/api/v1/user/git-credentials` | 用户 Git Access Token 管理 |
+| 定时任务 | `/api/v1/scheduled-tasks` | 定时任务查询、暂停、删除 |
+| 用户偏好 | `/api/v1/user-preferences` | 任务面板与任务通知偏好 |
+| 微信 Bot | `/api/v1/weixin` | 微信 Bot 绑定与解绑 |
+| 工具元数据 | `/api/v1/tools` | 内置工具查询 |
 
 WebSocket 端点：`/api/ws/stream`
 
@@ -372,13 +391,20 @@ npm run test:desktop
 
 | 文档 | 说明 |
 |------|------|
-| [USER_GUIDE.md](USER_GUIDE.md) | 用户手册（登录、模型与 Agent 配置、任务对话、工具审批、常见问题） |
+| [USER_GUIDE.md](USER_GUIDE.md) | 用户手册（登录、模型与 Agent 配置、任务对话、定时任务、工具审批、常见问题） |
 | [DEPLOY.md](DEPLOY.md) | 生产部署指南 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 | [SECURITY.md](SECURITY.md) | 安全策略 |
 | [docs/requirement.md](docs/requirement.md) | 需求说明 |
 | [docs/technical-design.md](docs/technical-design.md) | 技术设计 |
+| [docs/cloud-workspace-git-init.md](docs/cloud-workspace-git-init.md) | 云端工作区 Git 初始化方案 |
+| [docs/desktop-git-inspector-design.md](docs/desktop-git-inspector-design.md) | 桌面端工作区 Git 状态/差异查看方案 |
+| [docs/scheduled-task-system-design.md](docs/scheduled-task-system-design.md) | 定时任务系统技术方案 |
+| [docs/task-completion-webhook-notification-design.md](docs/task-completion-webhook-notification-design.md) | 任务完成通知技术方案 |
+| [docs/compaction-design.md](docs/compaction-design.md) | 会话上下文压缩设计 |
 | [docs/weixin-bot-integration-technical-design.md](docs/weixin-bot-integration-technical-design.md) | 微信 Bot 通道技术方案（可选能力） |
+| [skills/mao-user-cli/SKILL.md](skills/mao-user-cli/SKILL.md) | 用户端 REST 操作 Skill / CLI |
+| [skills/mao-admin-cli/SKILL.md](skills/mao-admin-cli/SKILL.md) | 管理端 REST 操作 Skill / CLI |
 | [CLAUDE.md](CLAUDE.md) | 维护者 / AI 辅助开发指引 |
 
 ## 许可证
