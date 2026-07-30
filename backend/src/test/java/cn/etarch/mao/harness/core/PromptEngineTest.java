@@ -3,6 +3,7 @@ package cn.etarch.mao.harness.core;
 import cn.etarch.mao.command.entity.UserCommand;
 import cn.etarch.mao.command.service.UserCommandService;
 import cn.etarch.mao.harness.llm.ChatRequest;
+import cn.etarch.mao.harness.llm.LlmModelConfig;
 import cn.etarch.mao.harness.runtime.RuntimeDataResolver;
 import cn.etarch.mao.harness.safety.PathSandbox;
 import cn.etarch.mao.harness.skill.LocalSkillRef;
@@ -305,6 +306,33 @@ class PromptEngineTest {
         assertThat(systemPrompt).contains("- 规则200");
         assertThat(systemPrompt).doesNotContain("- 规则201");
         assertThat(systemPrompt).contains("当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。");
+    }
+
+    @Test
+    void buildRequestAddsReasoningEffortForGptModels() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/workspace-root"));
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setModelConfig(LlmModelConfig.builder().modelId("gpt-5.2").build());
+        context.setTools(List.of());
+        context.addUserMessage("hello");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+
+        assertThat(request.getReasoning()).isNotNull();
+        assertThat(request.getReasoning().getEffort()).isEqualTo("high");
+    }
+
+    @Test
+    void buildRequestOmitsReasoningForNonGptModels() {
+        when(pathSandbox.getWorkspaceRoot()).thenReturn(Path.of("/workspace-root"));
+        AgentExecutionContext context = new AgentExecutionContext();
+        context.setModelConfig(LlmModelConfig.builder().modelId("claude-sonnet-4").build());
+        context.setTools(List.of());
+        context.addUserMessage("hello");
+
+        ChatRequest request = promptEngine.buildRequest(context);
+
+        assertThat(request.getReasoning()).isNull();
     }
 
     private Tool tool(String name) {

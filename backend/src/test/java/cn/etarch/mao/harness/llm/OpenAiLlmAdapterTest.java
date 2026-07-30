@@ -82,6 +82,24 @@ class OpenAiLlmAdapterTest {
     }
 
     @Test
+    void chatIncludesReasoningWhenPresentOnRequest() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(jsonResponse("{\"id\":\"ok\",\"choices\":[]}"));
+            server.start();
+
+            ChatRequest request = ChatRequest.builder()
+                    .messages(List.of(ChatRequest.Message.builder().role("user").content("hello").build()))
+                    .reasoning(ChatRequest.Reasoning.builder().effort("high").build())
+                    .build();
+
+            adapter(0, 0).chat(request, config(server));
+
+            String body = server.takeRequest().getBody().readUtf8();
+            assertThat(body).contains("\"reasoning\":{\"effort\":\"high\"}");
+        }
+    }
+
+    @Test
     void chatRetriesRateLimitAndThrowsHttpErrors() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(new MockResponse().setResponseCode(429).setHeader("Retry-After", "bad").setBody("slow down"));

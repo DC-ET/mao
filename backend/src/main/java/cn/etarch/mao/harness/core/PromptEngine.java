@@ -3,6 +3,7 @@ package cn.etarch.mao.harness.core;
 import cn.etarch.mao.command.entity.UserCommand;
 import cn.etarch.mao.command.service.UserCommandService;
 import cn.etarch.mao.harness.llm.ChatRequest;
+import cn.etarch.mao.harness.llm.LlmModelConfig;
 import cn.etarch.mao.harness.runtime.RuntimeDataResolver;
 import cn.etarch.mao.harness.safety.PathSandbox;
 import cn.etarch.mao.harness.skill.SkillLoader;
@@ -97,11 +98,21 @@ public class PromptEngine {
         // 4. Build tool definitions
         List<ChatRequest.ToolDefinition> tools = buildToolDefinitions(context);
 
-        return ChatRequest.builder()
+        ChatRequest.ChatRequestBuilder requestBuilder = ChatRequest.builder()
                 .messages(messages)
                 .tools(tools.isEmpty() ? null : tools)
-                .stream(true)
-                .build();
+                .stream(true);
+        if (isGptModel(context.getModelConfig())) {
+            requestBuilder.reasoning(ChatRequest.Reasoning.builder().effort("high").build());
+        }
+        return requestBuilder.build();
+    }
+
+    private static boolean isGptModel(LlmModelConfig modelConfig) {
+        if (modelConfig == null || modelConfig.getModelId() == null) {
+            return false;
+        }
+        return modelConfig.getModelId().startsWith("gpt-");
     }
 
     /**

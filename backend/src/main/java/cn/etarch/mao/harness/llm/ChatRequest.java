@@ -21,6 +21,16 @@ public class ChatRequest {
     private List<ToolDefinition> tools;
     private Double temperature;
     private Boolean stream;
+    private Reasoning reasoning;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Reasoning {
+        private String effort;
+    }
 
     @Data
     @Builder
