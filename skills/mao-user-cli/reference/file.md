@@ -15,6 +15,8 @@
 | 工作区文件搜索列表 | `file workspace-list` |
 | 工作区目录浏览 | `file workspace-directory` |
 | 读取工作区文件内容 | `file workspace-read` |
+| 工作区 Git 状态 | `file workspace-git-status` |
+| 工作区 Git 单文件差异 | `file workspace-git-diff` |
 | 云端项目文件列表 | `file project-list` |
 
 ---
@@ -187,7 +189,57 @@ mao-user file workspace-read --session-id 12 --path README.md --offset 0 --limit
 mao-user file project-list --project-key demo --limit 30
 ```
 
+---
+
+## 命令：mao-user file workspace-git-status
+
+### 用途
+
+只读获取会话工作区的 Git 状态汇总，供桌面端文件变更面板/任务检查器同类诊断使用。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--session-id` | 是 | 数字 | 会话 ID |
+
+### 返回结果
+
+常见字段：`isGit`、`repoRoot`、`branch`、`insertions`、`deletions`、`changedFileCount`、`files`。`files` 元素含 `path`、`oldPath`、`changeType`、`insertions`、`deletions`、`binary`、`untracked`。
+
+### 示例
+
+```bash
+mao-user file workspace-git-status --session-id 12 --json
+```
+
+---
+
+## 命令：mao-user file workspace-git-diff
+
+### 用途
+
+只读获取某个工作区相对路径的 Git 差异内容。服务端会做工作区边界校验，并对大文件/二进制做截断或不可预览标记。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--session-id` | 是 | 数字 | 会话 ID |
+| `--path` | 是 | 字符串 | Git 仓库内相对路径 |
+
+### 返回结果
+
+`path`、`changeType`、`beforeContent`、`afterContent`、`truncated`、`binary`、`unavailableReason`。
+
+### 示例
+
+```bash
+mao-user file workspace-git-diff --session-id 12 --path src/main.ts --json
+```
+
 ## 注意事项
 
 - 工作区相关命令在会话无 workspace 时会失败
 - `download` 为二进制写文件，不是 Result JSON
+- 工作区 Git 命令是只读诊断，不执行 commit/push 等写操作

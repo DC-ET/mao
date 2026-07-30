@@ -4,6 +4,7 @@ const {
   createCliError,
   requireString,
   optionalString,
+  optionalBoolean,
   parseCsv,
   hasHelp,
 } = require('../args');
@@ -13,7 +14,21 @@ const { outputResult } = require('../output');
 const HELP = `用法:
   mao-user pref task-panel get
   mao-user pref task-panel set --group-order a,b,c [--collapsed-groups x,y]
+  mao-user pref task-notification get
+  mao-user pref task-notification set --enabled true|false [--channel DINGTALK|FEISHU] [--webhook-url <url>]
+  mao-user pref task-notification test --channel DINGTALK|FEISHU [--webhook-url <url>]
 `;
+
+const NOTIFICATION_CHANNELS = new Set(['DINGTALK', 'FEISHU']);
+
+function normalizeChannel(value) {
+  if (value === undefined) return undefined;
+  const normalized = value.toUpperCase();
+  if (!NOTIFICATION_CHANNELS.has(normalized)) {
+    throw createCliError('--channel 必须是 DINGTALK 或 FEISHU');
+  }
+  return normalized;
+}
 
 async function handle(ctx) {
   const { subcommand, rest, flags, globals } = ctx;
@@ -22,7 +37,7 @@ async function handle(ctx) {
     return;
   }
 
-  if (subcommand !== 'task-panel') {
+  if (subcommand !== 'task-panel' && subcommand !== 'task-notification') {
     throw createCliError(`未知 pref 子命令: ${subcommand}\n${HELP}`);
   }
 
@@ -38,7 +53,7 @@ async function handle(ctx) {
     timeoutMs: globals.timeoutMs,
   };
 
-  switch (action) {
+  if (subcommand === 'task-panel') switch (action) {
     case 'get': {
       const result = await request({
         ...common,
@@ -62,6 +77,53 @@ async function handle(ctx) {
     }
     default:
       throw createCliError(`未知 pref task-panel 子命令: ${action}\n${HELP}`);
+  }
+
+  switch (action) {
+    case 'get': {
+      const result = await request({
+        ...common,
+        method: 'GET',
+        path: '/user-preferences/task-notification',
+      });
+      outputResult(result, globals);
+      return;
+    }
+    case 'set': {
+      const enabled = optionalBoolean(flags, 'enabled');
+      if (enabled === undefined) {
+        throw createCliError('缺少必填参数 --enabled（是否启用通知）');
+      }
+      const channel = normalizeChannel(optionalString(flags, 'channel'));
+      const webhookUrl = optionalString(flags, 'webhook-url');
+      const body = { enabled };
+      if (channel !== undefined) body.channel = channel;
+      if (webhookUrl !== undefined) body.webhookUrl = webhookUrl;
+      const result = await request({
+        ...common,
+        method: 'PUT',
+        path: '/user-preferences/task-notification',
+        body,
+      });
+      outputResult(result, globals);
+      return;
+    }
+    case 'test': {
+      const channel = normalizeChannel(requireString(flags, 'channel', '通知渠道'));
+      const webhookUrl = optionalString(flags, 'webhook-url');
+      const body = { channel };
+      if (webhookUrl !== undefined) body.webhookUrl = webhookUrl;
+      const result = await request({
+        ...common,
+        method: 'POST',
+        path: '/user-preferences/task-notification/test',
+        body,
+      });
+      outputResult(result, globals);
+      return;
+    }
+    default:
+      throw createCliError(`未知 pref task-notification 子命令: ${action}\n${HELP}`);
   }
 }
 

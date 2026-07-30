@@ -2,7 +2,7 @@
 
 ## 模块职责
 
-读写用户任务面板（task-panel）偏好：分组顺序与折叠分组。
+读写用户偏好：任务面板（task-panel）分组顺序/折叠分组，以及任务完成通知（task-notification）的启停、渠道与测试。
 
 ## 命令选择
 
@@ -10,6 +10,9 @@
 |------|------|
 | 读取偏好 | `pref task-panel get` |
 | 保存偏好 | `pref task-panel set` |
+| 读取任务通知 | `pref task-notification get` |
+| 保存任务通知 | `pref task-notification set` |
+| 发送测试通知 | `pref task-notification test` |
 
 ---
 
@@ -60,4 +63,71 @@ mao-user pref task-panel get --json
 
 ```bash
 mao-user pref task-panel set --group-order running,recent,archived --collapsed-groups archived
+```
+
+---
+
+## 命令：mao-user pref task-notification get
+
+### 用途
+
+获取当前用户任务完成通知配置。服务端只返回脱敏 Webhook。
+
+### 返回结果
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `enabled` | 布尔 | 是否启用 |
+| `channel` | 字符串/null | `DINGTALK` 或 `FEISHU` |
+| `webhookConfigured` | 布尔 | 是否已保存 Webhook |
+| `maskedWebhook` | 字符串/null | 脱敏后的 Webhook |
+
+### 示例
+
+```bash
+mao-user pref task-notification get --json
+```
+
+---
+
+## 命令：mao-user pref task-notification set
+
+### 用途
+
+保存任务完成通知配置。开启通知时必须已有或同时传入渠道与 Webhook；切换渠道时必须传入新的 Webhook。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--enabled` | 是 | 布尔 `true/false` | 是否启用 |
+| `--channel` | 条件 | 字符串 | `DINGTALK` 或 `FEISHU` |
+| `--webhook-url` | 条件 | 字符串 | 钉钉/飞书机器人 Webhook |
+
+### 示例
+
+```bash
+mao-user pref task-notification set --enabled true --channel DINGTALK --webhook-url 'https://oapi.dingtalk.com/robot/send?access_token=...'
+mao-user pref task-notification set --enabled false
+```
+
+---
+
+## 命令：mao-user pref task-notification test
+
+### 用途
+
+发送一次任务通知测试。未传 `--webhook-url` 时，服务端使用已保存的当前渠道 Webhook。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--channel` | 是 | 字符串 | `DINGTALK` 或 `FEISHU` |
+| `--webhook-url` | 否 | 字符串 | 临时测试用 Webhook |
+
+### 示例
+
+```bash
+mao-user pref task-notification test --channel FEISHU
 ```

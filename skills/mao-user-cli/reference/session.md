@@ -2,18 +2,19 @@
 
 ## 模块职责
 
-管理会话**元数据**：创建 LOCAL/CLOUD 会话、查询、更新标题/摘要/权限/模型、置顶/收藏/归档/已读、看板、云端项目、子任务列表。
+管理会话**元数据**：创建 LOCAL/CLOUD 会话、查询、分组分页、更新标题/摘要/权限/模型、置顶/收藏/归档/已读、看板、云端项目、边路任务与子智能体列表。
 
 ## 明确不包含
 
-不提供 messages、queue、activities、发送消息、edit_and_resend、WebSocket 运行。
+不提供发送消息、queue 写操作、edit_and_resend、WebSocket 运行。
 
 ## 命令选择
 
 | 场景 | 命令 |
 |------|------|
 | 列表 | `session list` |
-| 按组预览 | `session groups` |
+| 分组预览 | `session groups` |
+| 分组分页 | `session list --group-key ...` |
 | 详情 | `session get` |
 | 创建 | `session create` |
 | 更新元数据 | `session update` |
@@ -24,7 +25,8 @@
 | 归档 | `session archive` |
 | 看板 | `session dashboard` |
 | 云端项目列表 | `session cloud-projects` |
-| 子任务 | `session side-tasks` |
+| 边路任务 | `session side-tasks` |
+| 子智能体 | `session subagents` |
 
 ---
 
@@ -36,33 +38,37 @@
 |------|------|------|------|
 | `--keyword` | 否 | 字符串 | 标题等关键词 → `keyword` |
 | `--status` | 否 | 字符串 | 会话状态过滤 → `status` |
+| `--group-key` | 否 | 字符串 | 分组 key；提供后返回该分组分页 |
+| `--offset` | 否 | 数字 | 分组分页偏移，仅 `--group-key` 时有效 |
+| `--limit` | 否 | 数字 | 分组分页条数，仅 `--group-key` 时有效 |
 
 ### 示例
 
 ```bash
 mao-user session list --keyword 重构 --json
+mao-user session list --group-key project:demo --offset 0 --limit 20
 ```
 
 ---
 
 ## 命令：mao-user session groups
 
-按工作区分组返回会话预览（桌面端任务侧栏同源接口 `GET /sessions/groups`）。
+### 用途
+
+获取桌面端任务侧栏使用的会话分组预览。
 
 ### 参数说明
 
 | 参数 | 必填 | 类型 | 含义 |
 |------|------|------|------|
-| `--keyword` | 否 | 字符串 | 标题关键词 |
+| `--keyword` | 否 | 字符串 | 标题等关键词 |
 | `--status` | 否 | 字符串 | 会话状态过滤 |
-| `--preview-limit` | 否 | 数字 | 每组预览条数，默认 5 |
-
-组内续载：`GET /sessions?groupKey=...&offset=...&limit=...`
+| `--preview-limit` | 否 | 数字 | 每组预览条数，服务端默认 5 |
 
 ### 示例
 
 ```bash
-mao-user session groups --preview-limit 5 --json
+mao-user session groups --preview-limit 8 --json
 ```
 
 ---
@@ -253,4 +259,28 @@ mao-user session cloud-projects
 
 ```bash
 mao-user session side-tasks --id 12
+```
+
+---
+
+## 命令：mao-user session subagents
+
+### 用途
+
+列出某父会话下由 `delegate` 产生的子智能体会话摘要与执行审计信息。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--id` | 是 | 数字 | 父会话 ID |
+
+### 返回结果
+
+元素含 `id`、`title`、`phase`、`createdAt`、`agentType`、`taskDescription`。
+
+### 示例
+
+```bash
+mao-user session subagents --id 12 --json
 ```

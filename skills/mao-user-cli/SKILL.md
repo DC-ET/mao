@@ -1,6 +1,6 @@
 ---
 name: mao-user-cli
-description: 用户端（桌面端）非对话操作能力：JWT 登录、Agent/模型/会话元数据、个人 Skill 与指令、附件与工作区、OSS STS、Git 凭证与任务面板偏好；不覆盖消息发送、消息历史、队列与 WebSocket Agent 运行。
+description: 用户端（桌面端）非对话操作能力：JWT 登录、Agent/模型/会话元数据、定时任务、微信 Bot 绑定、个人 Skill 与指令、附件与工作区/Git 只读诊断、OSS STS、Git 凭证与偏好；不覆盖消息发送、队列写操作与 WebSocket Agent 运行。
 ---
 
 # mao-user-cli
@@ -11,12 +11,13 @@ description: 用户端（桌面端）非对话操作能力：JWT 登录、Agent/
 
 - 需要登录用户端并缓存 JWT
 - 需要创建/管理 LOCAL 或 CLOUD 会话元数据（标题、置顶、收藏、归档、权限级别）
-- 需要管理个人 Skill、快捷指令、附件、工作区文件、OSS STS、Git 凭证、任务面板偏好
+- 需要管理个人 Skill、快捷指令、附件、工作区文件、工作区 Git 状态/差异、OSS STS、Git 凭证、任务面板/任务通知偏好
 - 需要下载 LOCAL 模式技能同步包（zip）
+- 需要查询/维护定时任务，或绑定/解绑微信 Bot
 
 ## 何时不要使用
 
-- **不要**用本 CLI 发送对话、拉取消息历史、操作消息队列、查看 activities、或连接 WebSocket 跑 Agent
+- **不要**用本 CLI 发送对话、写入/重排/插入消息队列、或连接 WebSocket 跑 Agent
 - 不要用本 CLI 做管理后台专属运维（用户/角色/系统设置/审计等）——那是管理端能力
 - 不要在未登录且未提供 `--token` / `MAO_TOKEN` 时调用需鉴权接口
 
@@ -61,9 +62,10 @@ npm install . -g
 2. 需要会话时先 `agent list` + `model list-active`，再 `session create`
 3. 只改会话元数据用 `session update|pin|favorite|archive|mark-read`
 4. 个人能力用 `skill` / `command` / `quick-command`
-5. 文件与 OSS 用 `file` / `oss` / `upload-config`
+5. 文件、工作区 Git 与 OSS 用 `file` / `oss` / `upload-config`
 6. CLOUD git 克隆前配置 `git` 凭证
-7. LOCAL 同步技能用 `skill sync-package`
+7. 定时任务与微信 Bot 用 `scheduled-task` / `weixin`
+8. LOCAL 同步技能用 `skill sync-package`
 
 ## 模块索引
 
@@ -76,13 +78,15 @@ npm install . -g
 | 模型查询 | [reference/model.md](reference/model.md) |
 | 会话元数据 | [reference/session.md](reference/session.md) |
 | 会话待办 | [reference/todo.md](reference/todo.md) |
+| 定时任务 | [reference/scheduled-task.md](reference/scheduled-task.md) |
 | 个人 Skill / 同步包 | [reference/skill.md](reference/skill.md) |
 | 个人指令 | [reference/command.md](reference/command.md) |
 | 附件与工作区 | [reference/file.md](reference/file.md) |
 | OSS / 上传配置 | [reference/oss.md](reference/oss.md) |
-| 任务面板偏好 | [reference/pref.md](reference/pref.md) |
+| 任务面板/任务通知偏好 | [reference/pref.md](reference/pref.md) |
 | Git 凭证 | [reference/git.md](reference/git.md) |
 | 内置工具查询 | [reference/tool.md](reference/tool.md) |
+| 微信 Bot 绑定 | [reference/weixin.md](reference/weixin.md) |
 
 业务流程总览见 [business_process.md](business_process.md)。
 

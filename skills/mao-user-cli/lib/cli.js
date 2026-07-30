@@ -15,6 +15,8 @@ const pref = require('./commands/pref');
 const git = require('./commands/git');
 const tool = require('./commands/tool');
 const todo = require('./commands/todo');
+const scheduledTask = require('./commands/scheduled-task');
+const weixin = require('./commands/weixin');
 
 const GLOBAL_HELP = `mao-user-cli — Mao 用户端（桌面端）非对话操作 CLI
 
@@ -42,6 +44,8 @@ const GLOBAL_HELP = `mao-user-cli — Mao 用户端（桌面端）非对话操�
   oss             OSS STS
   upload-config   上传配置
   pref            任务面板偏好
+  scheduled-task  定时任务列表、详情、更新、删除
+  weixin          微信 Bot 绑定与二维码状态
   git             Git 凭证
   tool            内置工具查询
 
@@ -53,7 +57,7 @@ const GLOBAL_HELP = `mao-user-cli — Mao 用户端（桌面端）非对话操�
 Token 缓存: ~/.mao/auth.json（与 mao-admin-cli 共用）
 
 明确不支持:
-  消息发送、消息历史、消息队列、WebSocket Agent 运行、edit_and_resend、activities
+  消息发送、消息队列写操作、WebSocket Agent 运行、edit_and_resend
 
 示例:
   mao-user auth login --username demo --password '***'
@@ -98,6 +102,10 @@ async function run(argv) {
       return oss.handleUploadConfig(ctx);
     case 'pref':
       return pref.handle(ctx);
+    case 'scheduled-task':
+      return scheduledTask.handle(ctx);
+    case 'weixin':
+      return weixin.handle(ctx);
     case 'git':
       return git.handle(ctx);
     case 'tool':

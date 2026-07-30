@@ -76,6 +76,7 @@ mao-user agent get --id 1
 | `--tags` | 否 | 逗号分隔字符串 | 标签列表 → `tags` 数组 |
 | `--skill-names` | 否 | 逗号分隔字符串 | 绑定技能名 → `skillNames` 数组 |
 | `--experiences-json` | 否 | JSON 字符串 | 经验数组 → `experiences`。元素字段：`content`（字符串）、`sortOrder`（整数）、`enabled`（布尔）、可选 `id` |
+| `--is-default` | 否 | 布尔 `true/false` | 是否设为默认 Agent → `isDefault` |
 
 ### 参数约束
 
@@ -112,6 +113,7 @@ mao-user agent create \
 | `--tags` | 否 | 逗号分隔 | 覆盖标签 |
 | `--skill-names` | 否 | 逗号分隔 | 覆盖技能名 |
 | `--experiences-json` | 否 | JSON | 覆盖经验列表 |
+| `--is-default` | 否 | 布尔 | 是否设为默认 Agent |
 
 ### 示例
 

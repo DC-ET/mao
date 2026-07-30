@@ -17,8 +17,8 @@ const { outputResult } = require('../output');
 const HELP = `用法:
   mao-user agent list [--keyword <关键词>]
   mao-user agent get --id <id>
-  mao-user agent create --name <名称> --system-prompt <提示词> [--description] [--tags] [--skill-names] [--experiences-json]
-  mao-user agent update --id <id> [--name] [--description] [--system-prompt] [--tags] [--skill-names] [--experiences-json]
+  mao-user agent create --name <名称> --system-prompt <提示词> [--description] [--tags] [--skill-names] [--experiences-json] [--is-default true|false]
+  mao-user agent update --id <id> [--name] [--description] [--system-prompt] [--tags] [--skill-names] [--experiences-json] [--is-default true|false]
   mao-user agent delete --id <id>
   mao-user agent experience list --agent-id <id>
   mao-user agent experience create --agent-id <id> --content <内容> [--sort-order] [--enabled]
@@ -34,6 +34,7 @@ function buildAgentBody(flags, { requireCore = false } = {}) {
   const tags = parseCsv(optionalString(flags, 'tags'));
   const skillNames = parseCsv(optionalString(flags, 'skill-names'));
   const experiences = parseJsonFlag(flags, 'experiences-json');
+  const isDefault = optionalBoolean(flags, 'is-default');
 
   if (requireCore) {
     body.name = requireString(flags, 'name', 'Agent 名称');
@@ -46,6 +47,7 @@ function buildAgentBody(flags, { requireCore = false } = {}) {
   if (tags !== undefined) body.tags = tags;
   if (skillNames !== undefined) body.skillNames = skillNames;
   if (experiences !== undefined) body.experiences = experiences;
+  if (isDefault !== undefined) body.isDefault = isDefault ? 1 : 0;
   return body;
 }
 

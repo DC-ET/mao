@@ -21,6 +21,8 @@ const HELP = `用法:
   mao-user file workspace-list --session-id <id> [--filter] [--limit]
   mao-user file workspace-directory --session-id <id> [--dir]
   mao-user file workspace-read --session-id <id> --path <相对路径> [--offset] [--limit]
+  mao-user file workspace-git-status --session-id <id>
+  mao-user file workspace-git-diff --session-id <id> --path <相对路径>
   mao-user file project-list --project-key <key> [--filter] [--limit]
 `;
 
@@ -134,6 +136,29 @@ async function handle(ctx) {
           offset: optionalNumber(flags, 'offset'),
           limit: optionalNumber(flags, 'limit'),
         },
+      });
+      outputResult(result, globals);
+      return;
+    }
+    case 'workspace-git-status': {
+      const sessionId = requireNumber(flags, 'session-id', '会话 ID');
+      const result = await request({
+        ...common,
+        method: 'GET',
+        path: '/files/workspace-git-status',
+        query: { sessionId },
+      });
+      outputResult(result, globals);
+      return;
+    }
+    case 'workspace-git-diff': {
+      const sessionId = requireNumber(flags, 'session-id', '会话 ID');
+      const fileRelPath = requireString(flags, 'path', '工作区相对路径');
+      const result = await request({
+        ...common,
+        method: 'GET',
+        path: '/files/workspace-git-diff',
+        query: { sessionId, path: fileRelPath },
       });
       outputResult(result, globals);
       return;

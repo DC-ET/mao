@@ -136,10 +136,6 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         taskTerminalService.finishExecution(sessionId, userId, "COMPLETED", executionId);
     }
 
-    private void finishFailedSession(Long sessionId, Long userId, String executionId) {
-        finishFailedSession(sessionId, userId, executionId, null);
-    }
-
     private void finishFailedSession(Long sessionId, Long userId, String executionId, String failureReason) {
         if (isSessionCancelled(sessionId)) {
             log.info("Skip FAILED transition for cancelled session {}", sessionId);

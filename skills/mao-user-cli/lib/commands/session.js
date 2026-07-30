@@ -15,6 +15,7 @@ const { outputResult } = require('../output');
 const HELP = `用法:
   mao-user session list [--keyword] [--status]
   mao-user session groups [--keyword] [--status] [--preview-limit]
+  mao-user session list --group-key <key> [--keyword] [--status] [--offset] [--limit]
   mao-user session get --id <id>
   mao-user session create --agent-id <id> --execution-mode LOCAL|CLOUD [选项...]
   mao-user session update --id <id> [--title] [--summary] [--project-key] [--permission-level] [--model-id]
@@ -26,6 +27,7 @@ const HELP = `用法:
   mao-user session dashboard
   mao-user session cloud-projects
   mao-user session side-tasks --id <id>
+  mao-user session subagents --id <id>
 `;
 
 const PERMISSION_LEVELS = new Set(['READ_ONLY', 'READ_WRITE', 'SMART', 'FULL']);
@@ -52,15 +54,17 @@ async function handle(ctx) {
         method: 'GET',
         path: '/sessions',
         query: {
+          groupKey: optionalString(flags, 'group-key'),
           keyword: optionalString(flags, 'keyword'),
           status: optionalString(flags, 'status'),
+          offset: optionalNumber(flags, 'offset'),
+          limit: optionalNumber(flags, 'limit'),
         },
       });
       outputResult(result, globals);
       return;
     }
     case 'groups': {
-      const previewLimit = optionalNumber(flags, 'preview-limit');
       const result = await request({
         ...common,
         method: 'GET',
@@ -68,7 +72,7 @@ async function handle(ctx) {
         query: {
           keyword: optionalString(flags, 'keyword'),
           status: optionalString(flags, 'status'),
-          previewLimit: previewLimit != null ? previewLimit : 5,
+          previewLimit: optionalNumber(flags, 'preview-limit'),
         },
       });
       outputResult(result, globals);
@@ -199,6 +203,12 @@ async function handle(ctx) {
     case 'side-tasks': {
       const id = requireNumber(flags, 'id', '父会话 ID');
       const result = await request({ ...common, method: 'GET', path: `/sessions/${id}/side-tasks` });
+      outputResult(result, globals);
+      return;
+    }
+    case 'subagents': {
+      const id = requireNumber(flags, 'id', '父会话 ID');
+      const result = await request({ ...common, method: 'GET', path: `/sessions/${id}/subagents` });
       outputResult(result, globals);
       return;
     }
