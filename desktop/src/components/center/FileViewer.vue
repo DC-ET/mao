@@ -74,7 +74,7 @@ const state = ref<LoadState>('loading')
 const content = ref('')
 const imageDataUri = ref('')
 const monacoContainer = ref<HTMLElement>()
-const viewMode = ref<'source' | 'rendered'>('source')
+const viewMode = ref<'source' | 'rendered'>('rendered')
 const { isDark } = useTheme()
 
 const activeFileChanges = computed(() => sessionStore.activeFileChanges)
@@ -192,7 +192,6 @@ onMounted(loadFile)
 let changeDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
 watch(() => [props.filePath, props.provider] as const, () => {
-  viewMode.value = 'source'
   // Cancel pending change-triggered reload so navigation does not double-load
   if (changeDebounceTimer) {
     clearTimeout(changeDebounceTimer)
