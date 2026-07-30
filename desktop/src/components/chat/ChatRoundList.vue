@@ -173,10 +173,11 @@ const {
 .execution-steps-collapse .steps-expand-icon {
   font-size: 12px;
   transition: transform 0.2s;
+  transform: rotate(-90deg);
 }
 
 .execution-steps-collapse .steps-expand-icon.expanded {
-  transform: rotate(180deg);
+  transform: rotate(0deg);
 }
 
 .execution-steps-collapse .steps-detail {
