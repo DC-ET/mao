@@ -22,7 +22,7 @@ class OpenWebPageToolTest {
         config = new WebPageConfig();
         config.setConnectTimeout(5000);
         config.setReadTimeout(10000);
-        config.setMaxRawBytes(500000);
+        config.setMaxRawBytes(1048576);
         config.setUserAgent("Mozilla/5.0 (compatible; AgentWorkbench/1.0; Test)");
         tool = new OpenWebPageTool(objectMapper, config);
     }

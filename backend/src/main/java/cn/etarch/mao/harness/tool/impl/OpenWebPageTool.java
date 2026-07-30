@@ -4,7 +4,9 @@ import cn.etarch.mao.config.WebPageConfig;
 import cn.etarch.mao.harness.tool.Tool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vladsch.flexmark.html2md.converter.FlexmarkHtmlConverter;
+import de.l3s.boilerpipe.BoilerpipeProcessingException;
 import de.l3s.boilerpipe.extractors.ArticleExtractor;
+import de.l3s.boilerpipe.extractors.DefaultExtractor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -22,6 +24,33 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Component
 public class OpenWebPageTool implements Tool {
+
+    private static final FlexmarkHtmlConverter HTML_TO_MD = FlexmarkHtmlConverter.builder().build();
+
+  /** 微信正文容器：Boilerpipe 会在首个图片 section 处过早截断，需直接提取。 */
+    private static final java.util.regex.Pattern WECHAT_JS_CONTENT_PATTERN = java.util.regex.Pattern.compile(
+            "id=[\"']js_content[\"'][^>]*>(.*?)</div>\\s*<script",
+            java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
+
+    private static final java.util.regex.Pattern WECHAT_RICH_MEDIA_PATTERN = java.util.regex.Pattern.compile(
+            "class=[\"'][^\"']*rich_media_content[^\"']*[\"'][^>]*>(.*?)</div>\\s*<script",
+            java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
+
+    private static final java.util.regex.Pattern OG_TITLE_PATTERN = java.util.regex.Pattern.compile(
+            "<meta[^>]+property=[\"']og:title[\"'][^>]+content=[\"'](.*?)[\"'][^>]*>",
+            java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
+
+    private static final java.util.regex.Pattern OG_TITLE_ALT_PATTERN = java.util.regex.Pattern.compile(
+            "<meta[^>]+content=[\"'](.*?)[\"'][^>]+property=[\"']og:title[\"'][^>]*>",
+            java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
+
+    private static final java.util.regex.Pattern ARTICLE_TAG_PATTERN = java.util.regex.Pattern.compile(
+            "<article[^>]*>(.*?)</article>",
+            java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
+
+    private static final java.util.regex.Pattern MAIN_TAG_PATTERN = java.util.regex.Pattern.compile(
+            "<main[^>]*>(.*?)</main>",
+            java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
 
     private final ObjectMapper objectMapper;
     private final OkHttpClient httpClient;
@@ -145,10 +174,11 @@ public class OpenWebPageTool implements Tool {
                     return errorJson("不支持的内容类型：" + contentType + "，仅支持 text/html", url);
                 }
 
-                // Read raw HTML with size limit — Boilerpipe needs complete HTML
+                // Read raw HTML with size limit
                 byte[] rawBytes = body.bytes();
                 int maxRaw = webPageConfig.getMaxRawBytes();
-                if (rawBytes.length > maxRaw) {
+                boolean rawTruncated = rawBytes.length > maxRaw;
+                if (rawTruncated) {
                     rawBytes = java.util.Arrays.copyOf(rawBytes, maxRaw);
                 }
 
@@ -168,17 +198,10 @@ public class OpenWebPageTool implements Tool {
                     }
                 }
 
-                // Extract page title from HTML
                 String title = extractTitle(html);
+                String markdown = extractContent(html, url);
 
-                // Extract main content using Boilerpipe
-                String extractedHtml = ArticleExtractor.INSTANCE.getText(html);
-
-                // Convert HTML to Markdown using flexmark
-                String markdown = FlexmarkHtmlConverter.builder().build().convert(extractedHtml);
-
-                // truncated 指提取后的 Markdown 是否因输出长度限制被截断
-                boolean truncated = false;
+                boolean truncated = rawTruncated;
                 int maxOutput = webPageConfig.getMaxOutputLength();
                 if (markdown.length() > maxOutput) {
                     markdown = markdown.substring(0, maxOutput)
@@ -205,6 +228,82 @@ public class OpenWebPageTool implements Tool {
             log.error("OpenWebPageTool execution failed for URL: {}", url, e);
             return errorJson("网页内容获取失败：" + e.getMessage(), url);
         }
+    }
+
+    /**
+     * 从 HTML 提取正文并转为 Markdown。微信文章优先提取 js_content，通用页走容器 + Boilerpipe 降级。
+     */
+    String extractContent(String html, String url) {
+        String best = "";
+
+        if (isWechatUrl(url)) {
+            String wechatHtml = extractWechatContentHtml(html);
+            if (wechatHtml != null && !wechatHtml.isBlank()) {
+                best = htmlToMarkdown(wechatHtml);
+            }
+        }
+
+        String fromContainers = extractFromCommonContainers(html);
+        if (fromContainers.length() > best.length()) {
+            best = fromContainers;
+        }
+
+        String fromBoilerpipe = extractWithBoilerpipe(html);
+        if (fromBoilerpipe.length() > best.length()) {
+            best = fromBoilerpipe;
+        }
+
+        return best;
+    }
+
+    private boolean isWechatUrl(String url) {
+        if (url == null) return false;
+        String lower = url.toLowerCase();
+        return lower.contains("mp.weixin.qq.com") || lower.contains("weixin.qq.com");
+    }
+
+    private String extractWechatContentHtml(String html) {
+        var matcher = WECHAT_JS_CONTENT_PATTERN.matcher(html);
+        if (matcher.find()) {
+            return matcher.group(1).trim();
+        }
+        matcher = WECHAT_RICH_MEDIA_PATTERN.matcher(html);
+        if (matcher.find()) {
+            return matcher.group(1).trim();
+        }
+        return null;
+    }
+
+    private String extractFromCommonContainers(String html) {
+        String best = "";
+        for (var pattern : new java.util.regex.Pattern[]{ARTICLE_TAG_PATTERN, MAIN_TAG_PATTERN}) {
+            var matcher = pattern.matcher(html);
+            if (matcher.find()) {
+                String markdown = htmlToMarkdown(matcher.group(1).trim());
+                if (markdown.length() > best.length()) {
+                    best = markdown;
+                }
+            }
+        }
+        return best;
+    }
+
+    private String extractWithBoilerpipe(String html) {
+        try {
+            String article = ArticleExtractor.INSTANCE.getText(html);
+            String defaultText = DefaultExtractor.INSTANCE.getText(html);
+            return article.length() >= defaultText.length() ? article : defaultText;
+        } catch (BoilerpipeProcessingException e) {
+            log.warn("Boilerpipe extraction failed: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    private String htmlToMarkdown(String htmlFragment) {
+        if (htmlFragment == null || htmlFragment.isBlank()) {
+            return "";
+        }
+        return HTML_TO_MD.convert(htmlFragment).trim();
     }
 
     /**
@@ -242,16 +341,39 @@ public class OpenWebPageTool implements Tool {
     }
 
     /**
-     * 从 HTML 中提取 title。
+     * 从 HTML 中提取 title，优先 og:title（微信文章常用）。
      */
     private String extractTitle(String html) {
         if (html == null || html.isBlank()) return null;
-        var pattern = java.util.regex.Pattern.compile("<title[^>]*>(.*?)</title>", java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
+
+        var ogMatcher = OG_TITLE_PATTERN.matcher(html);
+        if (ogMatcher.find()) {
+            return decodeBasicHtmlEntities(ogMatcher.group(1).trim());
+        }
+        ogMatcher = OG_TITLE_ALT_PATTERN.matcher(html);
+        if (ogMatcher.find()) {
+            return decodeBasicHtmlEntities(ogMatcher.group(1).trim());
+        }
+
+        var pattern = java.util.regex.Pattern.compile(
+                "<title[^>]*>(.*?)</title>",
+                java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
         var matcher = pattern.matcher(html);
         if (matcher.find()) {
-            return matcher.group(1).trim();
+            return decodeBasicHtmlEntities(matcher.group(1).trim());
         }
         return null;
+    }
+
+    private String decodeBasicHtmlEntities(String text) {
+        if (text == null) return null;
+        return text
+                .replace("&nbsp;", " ")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'");
     }
 
     private String errorJson(String message, String url) {

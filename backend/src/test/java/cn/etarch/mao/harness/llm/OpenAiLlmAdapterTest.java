@@ -118,6 +118,7 @@ class OpenAiLlmAdapterTest {
         }
     }
 
+    @SuppressWarnings("resource")
     @Test
     void chatConvertsImageUrlsToBase64AndKeepsFailedDownloadsAsUrl() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
@@ -153,7 +154,8 @@ class OpenAiLlmAdapterTest {
         }
     }
 
-    @Test
+    @SuppressWarnings("resource")
+@Test
     void chatCorrectsOctetStreamImageMimeFromMagicBytes() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(new MockResponse().setResponseCode(200)
@@ -244,7 +246,8 @@ class OpenAiLlmAdapterTest {
         }
     }
 
-    @Test
+    @SuppressWarnings("resource")
+@Test
     void chatResizesDownloadedLargeImageForPrompt() throws Exception {
         byte[] largePng = writePng(2048, 2048);
         try (MockWebServer server = new MockWebServer()) {

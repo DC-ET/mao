@@ -58,6 +58,7 @@ class SessionServiceCompactionTest {
         verify(messageMapper, never()).selectList(any());
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void rejectsEditingCoveredMessageWithoutPartialMutation() {
         Message target = message(90L, 9L, "USER", "original");
@@ -79,6 +80,7 @@ class SessionServiceCompactionTest {
         verify(messageMapper, never()).delete(any(Wrapper.class));
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void allowsEditingMessageAfterBoundaryAndTruncatesFollowingRows() {
         Message target = message(110L, 9L, "USER", "original");
@@ -95,6 +97,7 @@ class SessionServiceCompactionTest {
         verify(messageMapper).delete(any(Wrapper.class));
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void deletingSessionPhysicallyRemovesCompactionFirst() {
         when(sessionMapper.lockActiveSessionById(9L)).thenReturn(9L);

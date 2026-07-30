@@ -26,6 +26,7 @@ class ContextTokenRepositoryTest {
         contextTokenRepository = new ContextTokenRepository(contextTokenMapper);
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void saveOrUpdateCreatesNewToken() {
         when(contextTokenMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
@@ -36,6 +37,7 @@ class ContextTokenRepositoryTest {
         verify(contextTokenMapper).insert(any(WeixinChannelContextToken.class));
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void saveOrUpdateUpdatesExistingToken() {
         WeixinChannelContextToken existing = new WeixinChannelContextToken();
@@ -53,6 +55,7 @@ class ContextTokenRepositoryTest {
         verify(contextTokenMapper).updateById(existing);
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void getLatestTokenReturnsToken() {
         WeixinChannelContextToken token = new WeixinChannelContextToken();
@@ -65,6 +68,7 @@ class ContextTokenRepositoryTest {
         assertThat(result).isEqualTo("token123");
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void getLatestTokenReturnsNullWhenNotFound() {
         when(contextTokenMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
@@ -74,6 +78,7 @@ class ContextTokenRepositoryTest {
         assertThat(result).isNull();
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void deleteByAccountIdDeletesTokens() {
         when(contextTokenMapper.delete(any(LambdaQueryWrapper.class))).thenReturn(1);

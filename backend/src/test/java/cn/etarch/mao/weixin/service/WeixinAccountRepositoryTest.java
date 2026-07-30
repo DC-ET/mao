@@ -35,6 +35,7 @@ class WeixinAccountRepositoryTest {
         accountRepository = new WeixinAccountRepository(accountMapper, objectMapper);
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void findByUserIdReturnsAccount() {
         WeixinChannelAccount account = createAccount(1L, 1L, "user_1");
@@ -46,6 +47,7 @@ class WeixinAccountRepositoryTest {
         assertThat(result.getUserId()).isEqualTo(1L);
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void findByUserIdReturnsNullWhenNotFound() {
         when(accountMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
@@ -55,6 +57,7 @@ class WeixinAccountRepositoryTest {
         assertThat(result).isNull();
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void findByAccountIdReturnsAccount() {
         WeixinChannelAccount account = createAccount(1L, 1L, "user_1");
@@ -86,6 +89,7 @@ class WeixinAccountRepositoryTest {
         verify(accountMapper).updateById(account);
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void getBindingStatusReturnsBoundWhenAccountExists() {
         WeixinChannelAccount account = createAccount(1L, 1L, "user_1");
@@ -98,6 +102,7 @@ class WeixinAccountRepositoryTest {
         assertThat(status.getAccountId()).isEqualTo("wx123");
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void getBindingStatusReturnsNotBoundWhenAccountNotFound() {
         when(accountMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
@@ -107,6 +112,7 @@ class WeixinAccountRepositoryTest {
         assertThat(status.isBound()).isFalse();
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void unbindDisablesAccount() {
         WeixinChannelAccount account = createAccount(1L, 1L, "user_1");
@@ -119,6 +125,7 @@ class WeixinAccountRepositoryTest {
         verify(accountMapper).updateById(account);
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void unbindThrowsWhenAccountNotFound() {
         when(accountMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
@@ -128,6 +135,7 @@ class WeixinAccountRepositoryTest {
                 .hasMessageContaining("未找到绑定的微信Bot账号");
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void findAllEnabledReturnsAccounts() {
         List<WeixinChannelAccount> accounts = List.of(

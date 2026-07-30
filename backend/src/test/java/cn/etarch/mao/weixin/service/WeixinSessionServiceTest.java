@@ -51,6 +51,7 @@ class WeixinSessionServiceTest {
         when(modelService.getDefaultModel()).thenReturn(defaultModel);
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void getOrCreateWeixinSessionReturnsExistingSessionAndKeepsAgentAndModel() {
         Agent agent = agent(10L);
@@ -73,6 +74,7 @@ class WeixinSessionServiceTest {
         verifyNoInteractions(sessionService);
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void getOrCreateWeixinSessionSwitchesAgentAndModelOnExistingSession() {
         Agent agent = agent(20L);
@@ -98,6 +100,7 @@ class WeixinSessionServiceTest {
         verifyNoInteractions(sessionService);
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void getOrCreateWeixinSessionCreatesNewSessionWithConfiguredAgentAndModel() {
         when(sessionMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
