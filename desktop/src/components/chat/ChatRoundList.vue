@@ -24,7 +24,7 @@
         </div>
         <div v-if="roundsExpanded[round.userMessage.id]" class="steps-detail">
           <MessageBubble
-            v-for="step in round.collapsedSteps"
+            v-for="step in round.displaySteps"
             :key="step.id"
             :message="step"
             :show-time="false"

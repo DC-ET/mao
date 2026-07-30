@@ -5,10 +5,53 @@ import { parseDateTime } from '../utils/datetime'
 export interface MessageRound {
   userMessage: ChatMessage
   collapsedSteps: ChatMessage[]
+  displaySteps: ChatMessage[]
   finalReply: ChatMessage | null
   stepCount: number
   durationText: string
   fileChanges: FileChange[]
+}
+
+function isToolOnlyMessage(message: ChatMessage): boolean {
+  return normalizeMessageRole(message.role) === 'assistant'
+    && !message.content?.trim()
+    && !message.thinkingContent?.trim()
+    && !!message.toolCalls?.length
+}
+
+function endsWithToolSegment(message: ChatMessage): boolean {
+  if (normalizeMessageRole(message.role) !== 'assistant' || !message.toolCalls?.length) return false
+  if (!message.segments?.length) return true
+  return message.segments[message.segments.length - 1].type === 'tool'
+}
+
+function mergeAdjacentToolMessages(messages: ChatMessage[]): ChatMessage[] {
+  const result: ChatMessage[] = []
+
+  for (const message of messages) {
+    const previous = result[result.length - 1]
+    if (!isToolOnlyMessage(message) || !previous || !endsWithToolSegment(previous)) {
+      result.push({
+        ...message,
+        toolCalls: message.toolCalls?.map(toolCall => ({ ...toolCall })),
+        segments: message.segments?.map(segment => ({ ...segment })),
+      })
+      continue
+    }
+
+    const existingIds = new Set((previous.toolCalls || []).map(toolCall => toolCall.id))
+    const appendedToolCalls = (message.toolCalls || []).filter(toolCall => !existingIds.has(toolCall.id))
+    previous.toolCalls = [...(previous.toolCalls || []), ...appendedToolCalls]
+    previous.segments = [
+      ...(previous.segments || []),
+      ...(message.segments || []).filter(segment =>
+        segment.type !== 'tool' || !existingIds.has(segment.callId)
+      ),
+    ]
+    previous.updatedAt = message.updatedAt || message.createdAt
+  }
+
+  return result
 }
 
 function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage | null): MessageRound {
@@ -31,7 +74,15 @@ function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage 
   }
   const fileChanges: FileChange[] = [...steps, ...(reply ? [reply] : [])]
     .flatMap(m => m.fileChanges || [])
-  return { userMessage: user, collapsedSteps: steps, finalReply: reply, stepCount, durationText, fileChanges }
+  return {
+    userMessage: user,
+    collapsedSteps: steps,
+    displaySteps: mergeAdjacentToolMessages(steps),
+    finalReply: reply,
+    stepCount,
+    durationText,
+    fileChanges,
+  }
 }
 
 export function useMessageRounds(messages: Ref<ChatMessage[]>, sending: Ref<boolean>) {
@@ -79,9 +130,9 @@ export function useMessageRounds(messages: Ref<ChatMessage[]>, sending: Ref<bool
     if (!activeRound.value) return [] as ChatMessage[]
     const round = activeRound.value
     const msgs: ChatMessage[] = []
-    if (round.collapsedSteps.length > 0) msgs.push(...round.collapsedSteps)
+    if (round.displaySteps.length > 0) msgs.push(...round.displaySteps)
     if (round.finalReply) msgs.push(round.finalReply)
-    return msgs
+    return mergeAdjacentToolMessages(msgs)
   })
 
   function toggleRound(roundId: string) {
