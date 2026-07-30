@@ -2,7 +2,7 @@
   <div class="tool-call-group">
     <div class="group-header" @click="toggleExpand">
       <div class="group-info">
-        <el-icon class="group-icon" :size="14"><Search /></el-icon>
+        <el-icon class="group-icon" :size="14"><component :is="groupIcon" /></el-icon>
         <span class="group-summary">{{ groupSummary }}</span>
       </div>
       <div class="group-status">
@@ -24,8 +24,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { Search, ArrowDown } from '@element-plus/icons-vue'
+import { ref, computed, type Component } from 'vue'
+import {
+  ArrowDown,
+  Calendar,
+  ChatLineRound,
+  CirclePlus,
+  Connection,
+  Delete,
+  Document,
+  DocumentAdd,
+  EditPen,
+  FolderOpened,
+  Link,
+  List,
+  Monitor,
+  Refresh,
+  Search,
+  Timer,
+  Tools,
+} from '@element-plus/icons-vue'
 import type { ToolCall } from '../../composables/useChat'
 import ToolCallCard from './ToolCallCard.vue'
 
@@ -33,9 +51,35 @@ const props = defineProps<{ toolCalls: ToolCall[] }>()
 
 const isExpanded = ref(false)
 
+const toolDisplayMap: Record<string, { label: string; icon: Component }> = {
+  glob_search: { label: '搜索文件', icon: FolderOpened },
+  grep_search: { label: '搜索内容', icon: Search },
+  read_file: { label: '读取文件', icon: Document },
+  write_file: { label: '写入文件', icon: DocumentAdd },
+  edit_file: { label: '编辑文件', icon: EditPen },
+  shell: { label: '执行命令', icon: Monitor },
+  ask_user_questions: { label: '询问用户', icon: ChatLineRound },
+  task_create: { label: '创建任务', icon: CirclePlus },
+  task_update: { label: '更新任务', icon: Refresh },
+  task_list: { label: '查询任务', icon: List },
+  task_delete: { label: '删除任务', icon: Delete },
+  delegate: { label: '委派子代理', icon: Connection },
+  web_search: { label: '网页搜索', icon: Search },
+  open_web_page: { label: '打开网页', icon: Link },
+  create_scheduled_task: { label: '创建定时任务', icon: Calendar },
+  update_scheduled_task: { label: '更新定时任务', icon: Timer },
+  delete_scheduled_task: { label: '删除定时任务', icon: Delete },
+  list_scheduled_tasks: { label: '查询定时任务', icon: List },
+}
+
 const hasRunning = computed(() =>
   props.toolCalls.some(tc => tc.status === 'running' || tc.status === 'pending')
 )
+
+const groupIcon = computed<Component>(() => {
+  const primaryTool = props.toolCalls[0]
+  return primaryTool ? toolDisplayMap[primaryTool.name]?.icon ?? Tools : Tools
+})
 
 const groupSummary = computed(() => {
   const tools = props.toolCalls
@@ -58,27 +102,7 @@ const groupSummary = computed(() => {
 })
 
 function getToolDisplayName(name: string): string {
-  const nameMap: Record<string, string> = {
-    'glob_search': '搜索文件',
-    'grep_search': '搜索内容',
-    'read_file': '读取文件',
-    'write_file': '写入文件',
-    'edit_file': '编辑文件',
-    'shell': '执行命令',
-    'ask_user_questions': '询问用户',
-    'task_create': '创建任务',
-    'task_update': '更新任务',
-    'task_list': '查询任务',
-    'task_delete': '删除任务',
-    'delegate': '委派子代理',
-    'web_search': '网页搜索',
-    'open_web_page': '打开网页',
-    'create_scheduled_task': '创建定时任务',
-    'update_scheduled_task': '更新定时任务',
-    'delete_scheduled_task': '删除定时任务',
-    'list_scheduled_tasks': '查询定时任务'
-  }
-  return nameMap[name] || name
+  return toolDisplayMap[name]?.label ?? name
 }
 
 function toggleExpand() {
