@@ -233,6 +233,7 @@ watch(() => sessionStore.activeSessionId, (newSid) => {
     return
   }
   if (newSid === sessionId.value) return
+  userScrolledUp.value = false
   restoring.value = true
   const session = sessionStore.sessions.find(s => String(s.id) === String(newSid))
   const mode = session?.executionMode || executionMode.value
@@ -240,6 +241,7 @@ watch(() => sessionStore.activeSessionId, (newSid) => {
   restoreSession(newSid, mode, ws).finally(() => {
     restoring.value = false
     syncToTaskView()
+    scrollToBottom()
     nextTick(() => chatInputRef.value?.focusInput())
   })
 })
