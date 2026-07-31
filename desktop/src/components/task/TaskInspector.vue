@@ -517,10 +517,11 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 .resize-handle {
   position: absolute;
   top: 0;
-  left: -3px;
-  width: 6px;
+  left: -8px;
+  width: 16px;
   height: 100%;
   cursor: col-resize;
+  touch-action: none;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -547,20 +548,22 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   height: 48px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 768px), (pointer: coarse) {
   .resize-handle {
-    width: 20px;
-    left: -10px;
+    width: 44px;
+    left: -22px;
   }
 
   .resize-handle::before {
-    width: 3px;
-    height: 40px;
+    width: 6px;
+    height: 56px;
+    border-radius: 3px;
   }
 
   .resize-handle:hover::before,
   .resize-handle:active::before {
-    height: 56px;
+    width: 8px;
+    height: 72px;
   }
 }
 
