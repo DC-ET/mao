@@ -515,6 +515,9 @@ public class HarnessService {
             merged.setContextWindowTokens(compactionConfig.getContextWindowTokens());
             merged.setTriggerRatio(compactionConfig.getTriggerRatio());
             merged.setRecentTurns(compactionConfig.getRecentTurns());
+            merged.setTargetRatio(compactionConfig.getTargetRatio());
+            merged.setMinRetainedTurns(compactionConfig.getMinRetainedTurns());
+            merged.setMaxSummaryTokens(compactionConfig.getMaxSummaryTokens());
             merged.setMinCompactMessageCount(compactionConfig.getMinCompactMessageCount());
             merged.setMinNewMessageCount(compactionConfig.getMinNewMessageCount());
             merged.setMaxCompactionBatchMessages(compactionConfig.getMaxCompactionBatchMessages());
@@ -527,6 +530,9 @@ public class HarnessService {
             if (compactionNode.has("contextWindowTokens")) merged.setContextWindowTokens(compactionNode.get("contextWindowTokens").asInt());
             if (compactionNode.has("triggerRatio")) merged.setTriggerRatio(compactionNode.get("triggerRatio").asDouble());
             if (compactionNode.has("recentTurns")) merged.setRecentTurns(compactionNode.get("recentTurns").asInt());
+            if (compactionNode.has("targetRatio")) merged.setTargetRatio(compactionNode.get("targetRatio").asDouble());
+            if (compactionNode.has("minRetainedTurns")) merged.setMinRetainedTurns(compactionNode.get("minRetainedTurns").asInt());
+            if (compactionNode.has("maxSummaryTokens")) merged.setMaxSummaryTokens(compactionNode.get("maxSummaryTokens").asInt());
             if (compactionNode.has("minCompactMessageCount")) merged.setMinCompactMessageCount(compactionNode.get("minCompactMessageCount").asInt());
             if (compactionNode.has("minNewMessageCount")) merged.setMinNewMessageCount(compactionNode.get("minNewMessageCount").asInt());
             if (compactionNode.has("maxCompactionBatchMessages")) merged.setMaxCompactionBatchMessages(compactionNode.get("maxCompactionBatchMessages").asInt());

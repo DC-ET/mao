@@ -179,6 +179,38 @@ class CompactionServiceTest {
     }
 
     @Test
+    void borrowsRetainedTurnsToReachTargetWatermark() {
+        // 每条消息估算 100 token，summary 10 token；contextWindow=100 × targetRatio=0.25 → 目标 25
+        when(tokenEstimator.estimateMessages(any())).thenAnswer(inv -> {
+            List<?> msgs = inv.getArgument(0);
+            return msgs.size() * 100;
+        });
+        when(tokenEstimator.countTokens(any())).thenReturn(10);
+        when(llmAdapter.chat(any(), any())).thenReturn(summaryResponse("<summary>merged</summary>"));
+        CompactionConfig config = aggressiveSessionConfig();
+        config.setRecentTurns(4);
+        config.setMinRetainedTurns(2);
+
+        // 6 个完整轮次 + 当前轮；候选为最早 2 轮，压完后水位仍超目标，需依次借入保留的第 3、4 轮
+        List<PersistedChatMessage> messages = List.of(
+                message(1, "user"), message(2, "assistant"),
+                message(3, "user"), message(4, "assistant"),
+                message(5, "user"), message(6, "assistant"),
+                message(7, "user"), message(8, "assistant"),
+                message(9, "user"), message(10, "assistant"),
+                message(11, "user"), message(12, "assistant"),
+                message(20, "user"));
+
+        var result = service.compactSession(
+                1L, 0, null, messages, ids(messages), modelConfig(), config, null);
+
+        assertThat(result).isNotNull();
+        assertThat(result.newLastCompactedMessageId()).isEqualTo(8L);
+        assertThat(result.compactedCount()).isEqualTo(8);
+        verify(llmAdapter, times(3)).chat(any(), any());
+    }
+
+    @Test
     void returnsNullWhenDisabledTooSmallOrLlmFails() {
         CompactionConfig disabled = aggressiveSessionConfig();
         disabled.setEnabled(false);

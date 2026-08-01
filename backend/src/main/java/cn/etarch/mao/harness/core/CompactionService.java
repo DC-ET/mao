@@ -97,6 +97,11 @@ public class CompactionService {
         SessionCompactionResult lastSafeResult = null;
         int turnIndex = 0;
         int rounds = 0;
+        // 目标水位机制：初始候选为除 recentTurns 轮外的全部轮次；压完一批后若估算水位仍高于
+        // targetRatio，则从保留轮次的最老一轮开始借入继续压缩，直到达标或只剩 minRetainedTurns 轮。
+        int borrowIndex = candidateTurnCount;
+        int minBorrowIndex = Math.max(candidateTurnCount,
+                completeTurnCount - Math.min(config.getMinRetainedTurns(), completeTurnCount));
         while (turnIndex < candidateTurns.size() && rounds < config.getMaxRoundsPerRequest()) {
             List<PersistedChatMessage> batch = new ArrayList<>();
             do {
@@ -112,7 +117,7 @@ public class CompactionService {
 
             String formattedHistory = formatMessagesForCompaction(toChatMessages(batch));
             String compactionPrompt = buildSessionCompactionPrompt(
-                    rollingSummary, formattedHistory, currentUserQuestion);
+                    rollingSummary, formattedHistory, currentUserQuestion, config.getMaxSummaryTokens());
 
             CompactionLlmResult llmResult = callCompactionModel(compactionPrompt, modelConfig);
             if (llmResult == null || llmResult.summaryText == null || llmResult.summaryText.isBlank()) {
@@ -151,6 +156,28 @@ public class CompactionService {
                         summaryTokens,
                         Math.max(0, compactedTokens - summaryTokens),
                         System.currentTimeMillis() - startTime);
+            }
+
+            // 候选轮次全部压完后，检查目标水位：未达标且还有可借出的保留轮次时，
+            // 借入最老一轮继续压缩，直到达标或只剩 minRetainedTurns 轮
+            if (turnIndex >= candidateTurns.size()) {
+                if (borrowIndex >= minBorrowIndex) {
+                    break;
+                }
+                int watermarkTokens = tokenEstimator.countTokens(rollingSummary)
+                        + tokenEstimator.estimateMessages(
+                                toChatMessages(flatten(new ArrayList<>(turns.subList(borrowIndex, turns.size())))));
+                int targetTokens = (int) (effectiveContextWindow * config.getTargetRatio());
+                if (watermarkTokens <= targetTokens) {
+                    log.info("Session compaction reached target watermark {} <= {} tokens, stopping ({} rounds)",
+                            watermarkTokens, targetTokens, rounds);
+                    break;
+                }
+                List<PersistedChatMessage> borrowed = turns.get(borrowIndex);
+                candidateTurns.add(borrowed);
+                borrowIndex++;
+                log.info("Session compaction watermark {} > target {}, borrowing 1 retained turn ({} messages, {} compacted total)",
+                        watermarkTokens, targetTokens, borrowed.size(), totalCompacted);
             }
         }
 
@@ -407,7 +434,8 @@ public class CompactionService {
         return text.substring(0, maxChars / 2) + "\n... [truncated] ...\n" + text.substring(text.length() - maxChars / 2);
     }
 
-    private String buildSessionCompactionPrompt(String existingSummary, String history, String currentQuestion) {
+    private String buildSessionCompactionPrompt(String existingSummary, String history, String currentQuestion,
+                                                int maxSummaryTokens) {
         StringBuilder sb = new StringBuilder();
         sb.append("你是一个会话压缩助手。你的任务是将以下对话历史压缩为一段简洁的摘要，以便 Agent 在后续执行中能延续任务。\n\n");
         sb.append("摘要要求：\n");
@@ -416,7 +444,10 @@ public class CompactionService {
         sb.append("3. 保留文件路径、接口、命令、错误、测试结果、版本号\n");
         sb.append("4. 保留已完成事项、未完成待办、当前停留位置\n");
         sb.append("5. 保留与当前请求最相关的下一步\n");
-        sb.append("6. 不要泛泛总结，要保留可执行的具体信息\n\n");
+        sb.append("6. 不要泛泛总结，要保留可执行的具体信息\n");
+        sb.append("7. 摘要尽量精炼，正文控制在约 ")
+                .append(maxSummaryTokens)
+                .append(" tokens 以内；在保留关键信息的前提下，删除冗余过程描述和重复内容\n\n");
 
         if (existingSummary != null && !existingSummary.isBlank()) {
             sb.append("## 已有摘要\n\n").append(existingSummary).append("\n\n");

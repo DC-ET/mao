@@ -76,6 +76,36 @@ app:
     batch-size: ${TASK_NOTIFICATION_BATCH_SIZE:100}
     max-attempts: ${TASK_NOTIFICATION_MAX_ATTEMPTS:4}
 
+  # 对话上下文压缩（Agent 级可通过 agent.configJson.compaction.* 按 Agent 覆盖）
+  harness:
+    compaction:
+      enabled: true
+      # 上下文窗口估算值（token）；若模型配置了 contextWindowTokens 则优先使用模型值
+      context-window-tokens: 256000
+      # 触发阈值：总 token 达窗口该比例时触发压缩。
+      # 输入命中缓存时费用很低，只要在上下文窗口内尽量不主动压缩，故阈值较高
+      trigger-ratio: 0.8
+      # 压缩后目标水位（窗口占比）：一次压缩后若仍高于该值，继续把保留轮次从最老开始借入压缩
+      target-ratio: 0.25
+      # 初始保留的最近完整 USER 轮次（当前 USER 轮次始终额外保留）
+      recent-turns: 6
+      # 压缩后保底保留的完整 USER 轮次（防止压掉正在执行的任务上下文）
+      min-retained-turns: 2
+      # rolling summary 的 token 上限提示（压缩 prompt 会要求摘要控制在该范围内）
+      max-summary-tokens: 12000
+      # 允许触发压缩的最小可压缩消息数
+      min-compact-message-count: 10
+      # 基于窗口触发时要求的最小新增消息数
+      min-new-message-count: 8
+      # 单批压缩消息数软上限
+      max-compaction-batch-messages: 200
+      # 单次请求内最多连续压缩轮数
+      max-rounds-per-request: 30
+      # Loop 工作记忆压缩（单请求内工具链），约窗口 80% 触发，窗口内尽量不压
+      loop-enabled: true
+      loop-trigger-tokens: 204800
+      loop-recent-tool-rounds: 5
+
 # 微信 Bot 通道
 weixin:
   bot:
