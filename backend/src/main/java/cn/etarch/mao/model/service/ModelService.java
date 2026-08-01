@@ -92,6 +92,18 @@ public class ModelService {
                         .last("LIMIT 1"));
     }
 
+    /**
+     * 查询第一个启用的文生图模型，用于图片生成工具。
+     */
+    public LlmModel findFirstActiveImageModel() {
+        return llmModelMapper.selectOne(
+                new QueryWrapper<LlmModel>()
+                        .eq("status", 1)
+                        .eq("model_type", "image")
+                        .orderByAsc("id")
+                        .last("LIMIT 1"));
+    }
+
     public LlmModel getDefaultModel() {
         return llmModelMapper.selectOne(
                 new QueryWrapper<LlmModel>().eq("is_default", 1).eq("status", 1).eq("model_type", "text"));

@@ -22,7 +22,7 @@ public class LlmModel {
 
     private String modelId;
 
-    /** 模型类型：text=文本模型（LLM），audio=语音模型（TTS） */
+    /** 模型类型：text=文本模型（LLM），audio=语音模型（TTS），image=文生图 */
     private String modelType;
 
     /** 模型上下文窗口大小（token），用于压缩触发判定 */

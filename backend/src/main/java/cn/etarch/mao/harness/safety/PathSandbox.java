@@ -77,6 +77,29 @@ public class PathSandbox {
         throw new SecurityException("Path escape attempt: " + userPath);
     }
 
+    /**
+     * Resolve a user-provided path without restricting to the workspace.
+     * Relative paths are resolved against the effective workspace root;
+     * absolute paths are allowed as-is (read-only tools like read_file need
+     * to read files outside the workspace, e.g. /tmp uploads).
+     * Throws SecurityException for tilde paths (not expandable on server).
+     */
+    public Path resolveLenient(String userPath, String sessionWorkspace) {
+        if (userPath == null || userPath.isEmpty()) {
+            throw new IllegalArgumentException("Path cannot be empty");
+        }
+
+        if (userPath.startsWith("~")) {
+            throw new SecurityException("Tilde paths are not supported on server: " + userPath);
+        }
+
+        Path root = getEffectiveWorkspaceRoot(sessionWorkspace);
+        Path input = Paths.get(userPath);
+        return input.isAbsolute()
+                ? input.toAbsolutePath().normalize()
+                : root.resolve(userPath).normalize();
+    }
+
     private boolean isUnderAllowedRoot(Path resolved) {
         for (Path allowed : allowedRoots) {
             if (resolved.startsWith(allowed)) {

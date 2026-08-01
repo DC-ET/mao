@@ -17,8 +17,9 @@
         <el-radio-group v-model="form.modelType">
           <el-radio value="text">文本模型</el-radio>
           <el-radio value="audio">语音模型</el-radio>
+          <el-radio value="image">文生图</el-radio>
         </el-radio-group>
-        <span style="margin-left: 8px; color: #909399; font-size: 12px;">语音模型用于 TTS 等音频合成</span>
+        <span style="margin-left: 8px; color: #909399; font-size: 12px;">语音模型用于 TTS 等音频合成，文生图用于图片生成</span>
       </el-form-item>
       <el-form-item label="名称" prop="name">
         <el-input v-model="form.name" placeholder="例如: GPT-4o, Claude Opus" />
@@ -74,7 +75,7 @@ const props = withDefaults(defineProps<{
   visible: boolean
   modelData?: any | null
   mode?: 'create' | 'edit' | 'copy'
-  defaultType?: 'text' | 'audio'
+  defaultType?: 'text' | 'audio' | 'image'
 }>(), {
   modelData: null,
   mode: 'create',
@@ -159,8 +160,8 @@ async function handleSubmit() {
   submitting.value = true
   try {
     const payload: any = { ...form, supportsVision: form.supportsVision ? 1 : 0, isDefault: form.isDefault ? 1 : 0 }
-    // 语音模型不参与默认模型与上下文压缩，强制归零
-    if (form.modelType === 'audio') {
+    // 语音/文生图模型不参与默认模型与上下文压缩，强制归零
+    if (form.modelType !== 'text') {
       payload.supportsVision = 0
       payload.isDefault = 0
     }

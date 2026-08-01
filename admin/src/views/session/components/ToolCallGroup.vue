@@ -58,6 +58,7 @@ function getToolDisplayName(name: string): string {
     delegate: '委派子代理',
     web_search: '网页搜索',
     open_web_page: '打开网页',
+    generate_image: '生成图片',
     create_scheduled_task: '创建定时任务',
     update_scheduled_task: '更新定时任务',
     delete_scheduled_task: '删除定时任务',

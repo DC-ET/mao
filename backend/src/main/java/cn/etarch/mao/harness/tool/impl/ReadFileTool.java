@@ -51,7 +51,7 @@ public class ReadFileTool implements Tool {
         Map<String, Object> schema = new HashMap<>();
         schema.put("type", "object");
         Map<String, Object> properties = new HashMap<>();
-        properties.put("path", Map.of("type", "string", "description", "相对于工作区根目录的文件路径"));
+        properties.put("path", Map.of("type", "string", "description", "文件路径：相对路径基于工作区根目录解析，绝对路径可读取工作区外文件（如 /tmp/xxx.jpg）"));
         properties.put("offset", Map.of("type", "integer", "description", "开始读取的行号（从 0 开始），仅文本文件"));
         properties.put("limit", Map.of("type", "integer", "description", "最多读取的行数，仅文本文件"));
         schema.put("properties", properties);
@@ -87,7 +87,7 @@ public class ReadFileTool implements Tool {
                 ));
             }
 
-            Path filePath = pathSandbox.resolve(path, workspace);
+            Path filePath = pathSandbox.resolveLenient(path, workspace);
 
             if (!Files.exists(filePath)) {
                 return objectMapper.writeValueAsString(Map.of(

@@ -26,6 +26,7 @@ public class ToolResultSummarizer {
             case "delegate" -> summarizeGeneric("委派子代理", result);
             case "web_search" -> summarizeWebSearch(arguments, result);
             case "open_web_page" -> summarizeOpenWebPage(arguments, result);
+            case "generate_image" -> summarizeGenerateImage(arguments, result);
             case "create_scheduled_task" -> summarizeCreateScheduledTask(arguments, result);
             case "update_scheduled_task" -> summarizeUpdateScheduledTask(result);
             case "delete_scheduled_task" -> summarizeDeleteScheduledTask(result);
@@ -267,6 +268,25 @@ public class ToolResultSummarizer {
         boolean truncated = node.has("truncated") && node.get("truncated").asBoolean();
         return "打开网页" + (!title.isEmpty() ? " " + truncate(title, 30) : "") +
                (truncated ? " (内容已截断)" : "");
+    }
+
+    private static String summarizeGenerateImage(String arguments, String result) {
+        String prompt = extractJsonString(arguments, "prompt");
+        String label = "生成图片" + (prompt != null ? ": " + truncate(prompt, 30) : "");
+
+        if (result == null) return label;
+
+        JsonNode node = parseJson(result);
+        if (node == null) return label;
+
+        if (node.has("error")) {
+            return "生成图片 (失败)";
+        }
+        int count = node.has("images") && node.get("images").isArray() ? node.get("images").size() : 0;
+        if (count > 0) {
+            return label + " (" + count + " 张)";
+        }
+        return label;
     }
 
     private static String summarizeCreateScheduledTask(String arguments, String result) {

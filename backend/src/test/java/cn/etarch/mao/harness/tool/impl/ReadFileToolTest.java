@@ -111,6 +111,17 @@ class ReadFileToolTest {
     }
 
     @Test
+    void readsAbsolutePathOutsideWorkspace() throws Exception {
+        Path outside = Files.createTempDirectory("read-outside");
+        Files.writeString(outside.resolve("pic.txt"), "outside content");
+        ReadFileTool tool = new ReadFileTool(objectMapper, new PathSandbox(tempDir.toString()));
+
+        JsonNode result = execute(tool, Map.of("path", outside.resolve("pic.txt").toString()));
+
+        assertThat(result.get("content").asText()).isEqualTo("outside content");
+    }
+
+    @Test
     void readsBmpAsTextBecauseExtensionIsNotSupportedImage() throws Exception {
         Files.writeString(tempDir.resolve("photo.bmp"), "plain-text");
         ReadFileTool tool = new ReadFileTool(objectMapper, new PathSandbox(tempDir.toString()));

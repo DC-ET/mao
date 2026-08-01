@@ -14,6 +14,7 @@
       <el-tabs v-model="activeTab" class="model-tabs" @tab-change="handleTabChange">
         <el-tab-pane label="文本模型" name="text" />
         <el-tab-pane label="语音模型" name="audio" />
+        <el-tab-pane label="文生图" name="image" />
       </el-tabs>
 
       <el-form :inline="true" class="search-form">
@@ -223,7 +224,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import ModelFormDialog from './ModelFormDialog.vue'
 
-type TabType = 'text' | 'audio'
+type TabType = 'text' | 'audio' | 'image'
 
 interface TabState {
   models: any[]
@@ -258,7 +259,8 @@ function createTabState(): TabState {
 const activeTab = ref<TabType>('text')
 const tabStates: Record<TabType, TabState> = {
   text: createTabState(),
-  audio: createTabState()
+  audio: createTabState(),
+  image: createTabState()
 }
 const state = computed(() => tabStates[activeTab.value])
 const isTextTab = computed(() => activeTab.value === 'text')
