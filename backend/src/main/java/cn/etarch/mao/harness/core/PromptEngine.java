@@ -35,6 +35,10 @@ public class PromptEngine {
     private static final Set<String> TASK_TOOL_NAMES = Set.of(
             "task_create", "task_update", "task_list", "task_delete");
 
+    /** 微信媒体发送工具（与 WeixinChannelTool 实现保持一致） */
+    private static final Set<String> WEIXIN_MEDIA_TOOL_NAMES = Set.of(
+            "send_wechat_image", "send_wechat_file");
+
     /** 与 WeixinSessionService.PROJECT_KEY 保持一致 */
     private static final String WEIXIN_PROJECT_KEY = "weixin-bot";
 
@@ -264,6 +268,9 @@ public class PromptEngine {
         // Delegate tool behavior hints
         appendDelegateToolHints(sb, context);
 
+        // Weixin media send tool hints
+        appendWeixinMediaToolHints(sb, context);
+
         // Workspace rules (AGENTS.md)
         appendWorkspaceRules(sb, context, effectiveWorkspace);
 
@@ -442,6 +449,24 @@ public class PromptEngine {
         sb.append("3. 子代理无法与用户交互，不要委派需要用户确认的任务\n");
         sb.append("4. 收到子代理结果后，请分析并整合到你的回答中\n");
         sb.append("5. 对于有依赖关系的子任务，请串行委派\n\n");
+    }
+
+    /**
+     * 向 system prompt 注入微信媒体发送行为指令（仅微信通道会话存在该工具时生效）
+     */
+    private void appendWeixinMediaToolHints(StringBuilder sb, AgentExecutionContext context) {
+        boolean hasWeixinMediaTool = context.getTools().stream()
+                .anyMatch(t -> WEIXIN_MEDIA_TOOL_NAMES.contains(t.getName()));
+        if (!hasWeixinMediaTool) return;
+
+        sb.append("""
+                ## 微信媒体发送
+
+                - 当前会话为微信通道。用户请求"把这张图/照片发给我""生成一张图发我"时，使用 send_wechat_image；请求"发一份文件/PDF/报告"时使用 send_wechat_file。
+                - 工具只负责发送媒体本身；文字说明通过正常回复给出。
+                - 工具返回 {"error": ...} 时，如实向用户说明原因（如账号未绑定、需要先给机器人发一条消息建立会话、文件超限等），不要重复调用。
+
+                """);
     }
 
     /**

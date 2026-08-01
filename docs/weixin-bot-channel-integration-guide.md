@@ -488,6 +488,89 @@ Content-Type: application/json
 
 这样更容易兼容微信侧展示和失败重试。
 
+### 9.4 出站图片发送（image_item）
+
+协议：`getuploadurl`（media_type=1）→ AES-128-ECB + PKCS7 加密 → POST CDN `/upload` → `sendmessage` 携带 `image_item`（type=2）。
+
+`getuploadurl` 请求（图片）：
+
+```json
+{
+  "filekey": "7cc7ad1d6aaf4c32b23dc4f8c40ec0cf",
+  "media_type": 1,
+  "to_user_id": "o9cq800kum_4g8Py8Qw5G0a@im.wechat",
+  "rawsize": 248731,
+  "rawfilemd5": "9c4d5c0b21f7f5c77c2b12f05f1b8df8",
+  "filesize": 248736,
+  "no_need_thumb": true,
+  "aeskey": "00112233445566778899aabbccddeeff",
+  "base_info": { "channel_version": "mao-server-1.0" }
+}
+```
+
+说明：
+
+- `media_type`：1=IMAGE、2=VIDEO、3=FILE、4=VOICE。
+- `filesize` = PKCS7 填充后的密文大小：`ceil((rawsize + 1) / 16) * 16`。
+- 响应取 `upload_full_url`（回退 `upload_param` + CDN base 拼接）。
+
+CDN 上传成功后响应头 `x-encrypted-param` 即 `CDNMedia.encrypt_query_param`。
+
+`sendmessage` 图片消息：
+
+```json
+{
+  "type": 2,
+  "image_item": {
+    "media": {
+      "encrypt_query_param": "AAFFc8c2PXQ5mKPw7rbcH7S1EA=",
+      "aes_key": "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+      "encrypt_type": 1
+    },
+    "mid_size": 248736
+  }
+}
+```
+
+要点：
+
+- `aes_key` 使用协议格式 B：`base64(hex string)`，即把 16 字节 key 的 hex 文本字节再 base64。
+- `mid_size` 填主图密文长度。
+- 官方发送实现仅带 `media` + `mid_size`，不带 `thumb_media`（`no_need_thumb=true`）。
+
+### 9.5 出站文件发送（file_item）
+
+`getuploadurl`（media_type=3）→ AES-128-ECB 加密 → CDN 上传 → `sendmessage` 携带 `file_item`（type=4）。
+
+`sendmessage` 文件消息：
+
+```json
+{
+  "type": 4,
+  "file_item": {
+    "media": {
+      "encrypt_query_param": "AALk1J1Rljnmdk6PMx1PZ0h4mA=",
+      "aes_key": "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+      "encrypt_type": 1
+    },
+    "file_name": "报价单-2026Q1.pdf",
+    "md5": "9d2a7b9c3e2f1d41c7d5b3a1a7e1c6f0",
+    "len": "542188"
+  }
+}
+```
+
+要点：
+
+- `md5` 为明文文件 MD5；`len` 为明文大小（字符串形式）。
+- 不需要缩略图。
+
+### 9.6 媒体发送限制
+
+- 图片建议 ≤ 20MB，超出后微信侧可能拒收。
+- 文件建议 ≤ 100MB，上传耗时较长，客户端 readTimeout 需放宽（建议 ≥ 180s）。
+- 文本与媒体务必使用不同的 `client_id`，每一条 `sendmessage` 独立发送。
+
 ## 10. Typing 状态
 
 可选能力，用于在 AI 生成期间展示“正在输入”。

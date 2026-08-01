@@ -39,7 +39,8 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class WeixinMediaUploadService {
 
-    /** getuploadurl 的媒体类型：3 = FILE，4 = VOICE */
+    /** getuploadurl 的媒体类型：1 = IMAGE，3 = FILE，4 = VOICE */
+    private static final int MEDIA_TYPE_IMAGE = 1;
     private static final int MEDIA_TYPE_FILE = 3;
     private static final int MEDIA_TYPE_VOICE = 4;
 
@@ -49,7 +50,7 @@ public class WeixinMediaUploadService {
 
     private final OkHttpClient httpClient = new OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(180, TimeUnit.SECONDS)
             .build();
 
     private final SecureRandom secureRandom = new SecureRandom();
@@ -65,14 +66,26 @@ public class WeixinMediaUploadService {
     }
 
     /**
-     * 上传音频密文到微信 CDN（作为文件消息，media_type=FILE）。
+     * 上传图片密文到微信 CDN（图片消息，media_type=IMAGE）。
      *
      * @param account   绑定账号（含 baseUrl / botToken）
      * @param toUserId  目标用户 ID
-     * @param plaintext 明文音频文件（MP3 等）
+     * @param plaintext 明文图片文件（PNG/JPG/GIF/WebP 等）
      * @return CDN 媒体引用；任一环节失败返回 empty
      */
-    public Optional<CdnMedia> uploadAudioFile(WeixinChannelAccount account, String toUserId, byte[] plaintext) {
+    public Optional<CdnMedia> uploadImage(WeixinChannelAccount account, String toUserId, byte[] plaintext) {
+        return uploadMedia(account, toUserId, MEDIA_TYPE_IMAGE, plaintext);
+    }
+
+    /**
+     * 上传文件密文到微信 CDN（文件消息，media_type=FILE）。
+     *
+     * @param account   绑定账号（含 baseUrl / botToken）
+     * @param toUserId  目标用户 ID
+     * @param plaintext 明文文件（MP3、PDF 等）
+     * @return CDN 媒体引用；任一环节失败返回 empty
+     */
+    public Optional<CdnMedia> uploadFile(WeixinChannelAccount account, String toUserId, byte[] plaintext) {
         return uploadMedia(account, toUserId, MEDIA_TYPE_FILE, plaintext);
     }
 

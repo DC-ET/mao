@@ -13,7 +13,9 @@ import cn.etarch.mao.harness.skill.LocalSkillRegistry;
 import cn.etarch.mao.harness.skill.SkillLoader;
 import cn.etarch.mao.harness.skill.SkillSyncService;
 import cn.etarch.mao.harness.tool.FileChangeDiffUtil;
+import cn.etarch.mao.harness.tool.Tool;
 import cn.etarch.mao.harness.tool.ToolRegistry;
+import cn.etarch.mao.harness.tool.WeixinChannelTool;
 import cn.etarch.mao.model.entity.LlmModel;
 import cn.etarch.mao.model.mapper.LlmModelMapper;
 import cn.etarch.mao.session.entity.FileChange;
@@ -24,6 +26,7 @@ import cn.etarch.mao.session.mapper.FileChangeMapper;
 import cn.etarch.mao.session.mapper.SessionMapper;
 import cn.etarch.mao.session.service.SessionService;
 import cn.etarch.mao.session.service.SessionCompactionService;
+import cn.etarch.mao.weixin.service.WeixinSessionService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -305,8 +308,12 @@ public class HarnessService {
             }
         }
 
-        // 6. All built-in tools are available to every agent
-        context.setTools(toolRegistry.getAllTools());
+        // 6. All built-in tools are available to every agent; WeixinChannelTool 仅在微信通道会话注入
+        List<Tool> sessionTools = new java.util.ArrayList<>(toolRegistry.getAllTools());
+        if (!WeixinSessionService.PROJECT_KEY.equals(session.getProjectKey())) {
+            sessionTools.removeIf(t -> t instanceof WeixinChannelTool);
+        }
+        context.setTools(sessionTools);
 
         // 7. Load available Skill names for this agent
         List<String> agentSkillNames = null;

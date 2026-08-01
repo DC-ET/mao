@@ -27,7 +27,8 @@ public class ToolDispatcher {
      */
     private static final Set<String> SERVER_ONLY_TOOLS = Set.of(
             "task_create", "task_update", "task_list", "task_delete", "delegate",
-            "web_search", "open_web_page", "generate_image");
+            "web_search", "open_web_page", "generate_image",
+            "send_wechat_image", "send_wechat_file");
 
     /** Tools that modify files */
     private static final Set<String> WRITE_TOOLS = Set.of("write_file", "edit_file");

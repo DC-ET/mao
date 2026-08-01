@@ -75,7 +75,7 @@ public class WeixinVoiceReplyService {
                 return false;
             }
             Optional<WeixinMediaUploadService.CdnMedia> mediaOpt =
-                    uploadService.uploadAudioFile(account, toUserId, mp3Bytes);
+                    uploadService.uploadFile(account, toUserId, mp3Bytes);
             if (mediaOpt.isEmpty()) {
                 return false;
             }

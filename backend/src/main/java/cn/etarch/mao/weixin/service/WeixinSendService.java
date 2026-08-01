@@ -73,6 +73,28 @@ public class WeixinSendService {
     }
 
     /**
+     * 发送图片消息（image_item，type=2）。
+     *
+     * @param media 上传后拿到的 CDN 媒体引用（size 为密文长度，即 mid_size）
+     */
+    public boolean sendImage(String accountId, String toUserId,
+                             WeixinMediaUploadService.CdnMedia media) {
+        Map<String, Object> mediaMap = Map.of(
+                "encrypt_query_param", media.encryptQueryParam(),
+                "aes_key", media.aesKey(),
+                "encrypt_type", media.encryptType()
+        );
+        Map<String, Object> imageItem = Map.of(
+                "type", 2,
+                "image_item", Map.of(
+                        "media", mediaMap,
+                        "mid_size", media.size()
+                )
+        );
+        return sendMessage(accountId, toUserId, List.of(imageItem));
+    }
+
+    /**
      * 发送文件消息（file_item，type=4）。
      *
      * @param media    上传后拿到的 CDN 媒体引用（含 rawSize/rawMd5）
