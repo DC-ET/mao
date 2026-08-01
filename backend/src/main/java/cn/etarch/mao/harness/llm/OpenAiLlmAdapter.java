@@ -359,6 +359,9 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             if (request.getReasoning() != null) {
                 body.put("reasoning", request.getReasoning());
             }
+            if (request.getAudio() != null && !request.getAudio().isEmpty()) {
+                body.put("audio", request.getAudio());
+            }
 
             String json = objectMapper.writeValueAsString(body);
             log.debug("LLM request to {}: {}", config.getBaseUrl() + "/chat/completions", json);

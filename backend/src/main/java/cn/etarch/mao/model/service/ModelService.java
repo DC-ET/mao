@@ -15,7 +15,9 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -28,7 +30,8 @@ public class ModelService {
     private final OpenAiLlmAdapter llmAdapter;
 
     public Page<LlmModel> listModels(int page, int size, String keyword, String provider,
-                                     Integer status, Integer supportsVision, Integer isDefault) {
+                                     Integer status, Integer supportsVision, Integer isDefault,
+                                     String modelType) {
         QueryWrapper<LlmModel> query = new QueryWrapper<>();
         if (keyword != null && !keyword.isBlank()) {
             String value = keyword.trim();
@@ -51,6 +54,9 @@ public class ModelService {
         if (isDefault != null) {
             query.eq("is_default", isDefault);
         }
+        if (modelType != null && !modelType.isBlank()) {
+            query.eq("model_type", modelType.trim());
+        }
         query.orderByDesc("created_at");
         return llmModelMapper.selectPage(Page.of(page, size), query);
     }
@@ -71,12 +77,12 @@ public class ModelService {
 
     public List<LlmModel> listActiveModels() {
         return llmModelMapper.selectList(
-                new QueryWrapper<LlmModel>().eq("status", 1).orderByAsc("model_id"));
+                new QueryWrapper<LlmModel>().eq("status", 1).eq("model_type", "text").orderByAsc("model_id"));
     }
 
     public LlmModel getDefaultModel() {
         return llmModelMapper.selectOne(
-                new QueryWrapper<LlmModel>().eq("is_default", 1).eq("status", 1));
+                new QueryWrapper<LlmModel>().eq("is_default", 1).eq("status", 1).eq("model_type", "text"));
     }
 
     public LlmModel getModel(Long id) {
@@ -89,7 +95,7 @@ public class ModelService {
 
     public LlmModel createModel(String name, String provider, String baseUrl, String apiKey,
                                  String modelId, Integer supportsVision, Integer isDefault,
-                                 Integer contextWindowTokens) {
+                                 Integer contextWindowTokens, String modelType) {
         if (isDefault != null && isDefault == 1) {
             clearDefaultFlag();
         }
@@ -99,6 +105,7 @@ public class ModelService {
         model.setBaseUrl(baseUrl);
         model.setApiKey(apiKey);
         model.setModelId(modelId);
+        model.setModelType(modelType != null && !modelType.isBlank() ? modelType.trim() : "text");
         model.setSupportsVision(supportsVision != null ? supportsVision : 0);
         model.setIsDefault(isDefault != null ? isDefault : 0);
         model.setContextWindowTokens(contextWindowTokens);
@@ -109,13 +116,14 @@ public class ModelService {
 
     public LlmModel updateModel(Long id, String name, String provider, String baseUrl, String apiKey,
                                  String modelId, Integer supportsVision, Integer isDefault,
-                                 Integer contextWindowTokens) {
+                                 Integer contextWindowTokens, String modelType) {
         LlmModel model = getModel(id);
         if (name != null) model.setName(name);
         if (provider != null) model.setProvider(provider);
         if (baseUrl != null) model.setBaseUrl(baseUrl);
         if (apiKey != null) model.setApiKey(apiKey);
         if (modelId != null) model.setModelId(modelId);
+        if (modelType != null && !modelType.isBlank()) model.setModelType(modelType.trim());
         if (supportsVision != null) model.setSupportsVision(supportsVision);
         if (contextWindowTokens != null) model.setContextWindowTokens(contextWindowTokens);
         if (isDefault != null) {
@@ -183,6 +191,12 @@ public class ModelService {
                 .build();
 
         long startTime = System.currentTimeMillis();
+
+        // 语音模型走 TTS 合成测试
+        if ("audio".equals(model.getModelType())) {
+            return testAudioSynthesis(config, startTime);
+        }
+
         AtomicReference<String> errorRef = new AtomicReference<>();
         AtomicReference<String> connectivityOutputRef = new AtomicReference<>();
         AtomicReference<String> midSystemOutputRef = new AtomicReference<>();
@@ -233,6 +247,147 @@ public class ModelService {
                 .error(error)
                 .durationMs(durationMs)
                 .build();
+    }
+
+    // ==================== 语音模型（TTS）测试 ====================
+
+    /** TTS 测试使用的合成文本（放 assistant 消息中，符合 MiMo TTS 调用规范） */
+    private static final String TTS_TEST_TEXT = "你好，欢迎使用 Mao 语音合成测试。";
+
+    /** TTS 测试请求的音频参数 */
+    private static final Map<String, Object> TTS_TEST_AUDIO = Map.of("format", "wav");
+
+    /**
+     * 语音合成模型连通性测试：发送一段文本，请求合成音频并校验返回的音频数据。
+     */
+    private ModelTestResult testAudioSynthesis(LlmModelConfig config, long startTime) {
+        try {
+            ChatRequest request = ChatRequest.builder()
+                    .messages(List.of(
+                            ChatRequest.Message.builder()
+                                    .role("assistant")
+                                    .content(TTS_TEST_TEXT)
+                                    .build()
+                    ))
+                    .audio(TTS_TEST_AUDIO)
+                    .build();
+
+            ChatResponse response = llmAdapter.chat(request, config);
+            if (response == null || response.getChoices() == null || response.getChoices().isEmpty()) {
+                return buildAudioTestFailure("语音合成接口未返回结果", startTime);
+            }
+
+            ChatRequest.Audio audio = response.getChoices().get(0).getMessage() != null
+                    ? response.getChoices().get(0).getMessage().getAudio()
+                    : null;
+            if (audio == null || audio.getData() == null || audio.getData().isBlank()) {
+                return buildAudioTestFailure("语音合成接口未返回音频数据", startTime);
+            }
+
+            byte[] audioBytes;
+            try {
+                audioBytes = Base64.getDecoder().decode(audio.getData());
+            } catch (IllegalArgumentException e) {
+                return buildAudioTestFailure("音频数据解码失败: " + e.getMessage(), startTime);
+            }
+            if (audioBytes.length == 0) {
+                return buildAudioTestFailure("合成的音频数据为空", startTime);
+            }
+
+            String format = audio.getFormat() != null && !audio.getFormat().isBlank()
+                    ? audio.getFormat() : "wav";
+
+            // 解析 WAV 头（采样率 / 时长），非 WAV 格式时忽略
+            WavInfo wavInfo = "wav".equalsIgnoreCase(format) ? parseWavInfo(audioBytes) : null;
+            if (wavInfo != null && wavInfo.sampleRate() > 0 && wavInfo.durationMs() > 0) {
+                return ModelTestResult.builder()
+                        .connectivity(true)
+                        .audioTest(true)
+                        .audioFormat(format)
+                        .audioData(audio.getData())
+                        .audioSizeBytes(audioBytes.length)
+                        .audioSampleRate(wavInfo.sampleRate())
+                        .audioDurationMs(wavInfo.durationMs())
+                        .durationMs(System.currentTimeMillis() - startTime)
+                        .build();
+            }
+
+            // 无 WAV 头信息时仍视为合成成功（可能为其他格式）
+            return ModelTestResult.builder()
+                    .connectivity(true)
+                    .audioTest(true)
+                    .audioFormat(format)
+                    .audioData(audio.getData())
+                    .audioSizeBytes(audioBytes.length)
+                    .durationMs(System.currentTimeMillis() - startTime)
+                    .build();
+        } catch (Exception e) {
+            return buildAudioTestFailure("语音合成测试失败: " + e.getMessage(), startTime);
+        }
+    }
+
+    private ModelTestResult buildAudioTestFailure(String error, long startTime) {
+        return ModelTestResult.builder()
+                .connectivity(false)
+                .audioTest(true)
+                .error(error)
+                .durationMs(System.currentTimeMillis() - startTime)
+                .build();
+    }
+
+    /**
+     * 解析 WAV 文件头，返回采样率与音频时长（毫秒）。
+     * 非标准 WAV（缺少 RIFF/WAVE 标记或 fmt 块）时返回 null。
+     */
+    private WavInfo parseWavInfo(byte[] bytes) {
+        if (bytes.length < 44) {
+            return null;
+        }
+        // RIFF header
+        if (bytes[0] != 'R' || bytes[1] != 'I' || bytes[2] != 'F' || bytes[3] != 'F') {
+            return null;
+        }
+        if (bytes[8] != 'W' || bytes[9] != 'A' || bytes[10] != 'V' || bytes[11] != 'E') {
+            return null;
+        }
+        // 遍历子块查找 fmt 与 data
+        int offset = 12;
+        int channels = 1;
+        int sampleRate = 0;
+        int bitsPerSample = 16;
+        long dataSize = 0;
+        while (offset + 8 <= bytes.length) {
+            String chunkId = new String(bytes, offset, 4, java.nio.charset.StandardCharsets.US_ASCII);
+            long chunkSize = ((bytes[offset + 7] & 0xFFL) << 24)
+                    | ((bytes[offset + 6] & 0xFFL) << 16)
+                    | ((bytes[offset + 5] & 0xFFL) << 8)
+                    | (bytes[offset + 4] & 0xFFL);
+            int bodyStart = offset + 8;
+            if ("fmt ".equals(chunkId) && bodyStart + 16 <= bytes.length) {
+                sampleRate = ((bytes[bodyStart + 7] & 0xFF) << 24)
+                        | ((bytes[bodyStart + 6] & 0xFF) << 16)
+                        | ((bytes[bodyStart + 5] & 0xFF) << 8)
+                        | (bytes[bodyStart + 4] & 0xFF);
+                channels = ((bytes[bodyStart + 3] & 0xFF) << 8) | (bytes[bodyStart + 2] & 0xFF);
+                bitsPerSample = ((bytes[bodyStart + 15] & 0xFF) << 8) | (bytes[bodyStart + 14] & 0xFF);
+            } else if ("data".equals(chunkId)) {
+                dataSize = chunkSize;
+            }
+            offset = bodyStart + (int) Math.min(chunkSize, Integer.MAX_VALUE);
+            // 块大小可能为奇数，跳过填充字节
+            if ((chunkSize & 1) == 1) {
+                offset += 1;
+            }
+        }
+        if (sampleRate <= 0 || dataSize <= 0) {
+            return null;
+        }
+        int bytesPerSecond = sampleRate * Math.max(channels, 1) * (bitsPerSample / 8);
+        long durationMs = bytesPerSecond > 0 ? dataSize * 1000L / bytesPerSecond : 0;
+        return new WavInfo(sampleRate, durationMs);
+    }
+
+    private record WavInfo(int sampleRate, long durationMs) {
     }
 
     private void appendTestError(AtomicReference<String> errorRef, String message) {

@@ -11,10 +11,15 @@
         </div>
       </template>
 
+      <el-tabs v-model="activeTab" class="model-tabs" @tab-change="handleTabChange">
+        <el-tab-pane label="文本模型" name="text" />
+        <el-tab-pane label="语音模型" name="audio" />
+      </el-tabs>
+
       <el-form :inline="true" class="search-form">
         <el-form-item label="关键词">
           <el-input
-            v-model="filters.keyword"
+            v-model="state.filters.keyword"
             clearable
             placeholder="名称 / 模型标识 / 供应商"
             style="width: 220px"
@@ -23,24 +28,24 @@
           />
         </el-form-item>
         <el-form-item label="供应商">
-          <el-select v-model="filters.provider" clearable filterable placeholder="全部供应商" style="width: 150px" @change="handleSearch">
+          <el-select v-model="state.filters.provider" clearable filterable placeholder="全部供应商" style="width: 150px" @change="handleSearch">
             <el-option v-for="provider in providerOptions" :key="provider" :label="provider" :value="provider" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+          <el-select v-model="state.filters.status" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
             <el-option label="启用" :value="1" />
             <el-option label="禁用" :value="0" />
           </el-select>
         </el-form-item>
-        <el-form-item label="视觉">
-          <el-select v-model="filters.supportsVision" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+        <el-form-item v-if="isTextTab" label="视觉">
+          <el-select v-model="state.filters.supportsVision" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
             <el-option label="支持" :value="1" />
             <el-option label="不支持" :value="0" />
           </el-select>
         </el-form-item>
-        <el-form-item label="默认">
-          <el-select v-model="filters.isDefault" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+        <el-form-item v-if="isTextTab" label="默认">
+          <el-select v-model="state.filters.isDefault" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
             <el-option label="默认" :value="1" />
             <el-option label="非默认" :value="0" />
           </el-select>
@@ -51,7 +56,7 @@
         </el-form-item>
       </el-form>
 
-      <el-table :data="models" v-loading="loading" stripe>
+      <el-table :data="state.models" v-loading="loading" stripe>
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
@@ -60,19 +65,19 @@
         <el-table-column prop="provider" label="供应商" width="120" />
         <el-table-column prop="modelId" label="模型标识" width="150" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column prop="baseUrl" label="API 地址" min-width="200" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
-        <el-table-column label="上下文窗口" width="120" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
+        <el-table-column v-if="isTextTab" label="上下文窗口" width="120" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">
             {{ row.contextWindowTokens ? row.contextWindowTokens.toLocaleString() : '-' }}
           </template>
         </el-table-column>
-        <el-table-column label="视觉" width="80" align="center">
+        <el-table-column v-if="isTextTab" label="视觉" width="80" align="center">
           <template #default="{ row }">
             <el-tag :type="row.supportsVision ? 'success' : 'info'" size="small">
               {{ row.supportsVision ? '是' : '否' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="默认" width="80" align="center">
+        <el-table-column v-if="isTextTab" label="默认" width="80" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
           </template>
@@ -114,10 +119,10 @@
 
       <div class="pagination">
         <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
+          v-model:current-page="state.currentPage"
+          v-model:page-size="state.pageSize"
           :page-sizes="[10, 20, 50, 100]"
-          :total="total"
+          :total="state.total"
           layout="total, sizes, prev, pager, next, jumper"
           @current-change="fetchModels"
           @size-change="handleSizeChange"
@@ -130,6 +135,7 @@
       :visible="true"
       :model-data="currentModel"
       :mode="dialogMode"
+      :default-type="activeTab"
       @update:visible="dialogVisible = $event"
       @saved="fetchModels"
     />
@@ -146,28 +152,53 @@
           <span class="test-result-duration">耗时 {{ testResult.durationMs }}ms</span>
         </div>
 
-        <div class="test-result-section">
-          <div class="test-result-section__header">
-            <span class="test-result-section__title">连通性</span>
-            <el-tag :type="testResult.connectivity ? 'success' : 'danger'" size="small">
-              {{ testResult.connectivity ? '通过' : '失败' }}
-            </el-tag>
+        <!-- 语音模型：音频试听与合成信息 -->
+        <template v-if="testResult.audioTest">
+          <div class="test-result-section">
+            <div class="test-result-section__header">
+              <span class="test-result-section__title">合成音频</span>
+              <el-tag :type="testResult.connectivity ? 'success' : 'danger'" size="small">
+                {{ testResult.connectivity ? '合成成功' : '合成失败' }}
+              </el-tag>
+            </div>
+            <div v-if="testResult.connectivity && testResult.audioData" class="test-result-audio">
+              <audio :src="audioSrc" controls class="test-result-audio__player" />
+              <div class="test-result-audio__meta">
+                <span v-if="testResult.audioFormat">格式：{{ testResult.audioFormat }}</span>
+                <span v-if="testResult.audioSizeBytes">大小：{{ formatBytes(testResult.audioSizeBytes) }}</span>
+                <span v-if="testResult.audioSampleRate">采样率：{{ testResult.audioSampleRate }} Hz</span>
+                <span v-if="testResult.audioDurationMs">时长：{{ formatDuration(testResult.audioDurationMs) }}</span>
+              </div>
+            </div>
+            <div v-else class="test-result-label">未生成音频数据</div>
           </div>
-          <div class="test-result-label">模型输出</div>
-          <pre class="test-result-output">{{ formatTestOutput(testResult.connectivityOutput) }}</pre>
-        </div>
+        </template>
 
-        <div class="test-result-section">
-          <div class="test-result-section__header">
-            <span class="test-result-section__title">Mid System Message</span>
-            <el-tag :type="testResult.midSystemMessage ? 'success' : 'warning'" size="small">
-              {{ testResult.midSystemMessage ? '支持' : '不支持' }}
-            </el-tag>
+        <!-- 文本模型：连通性输出 -->
+        <template v-else>
+          <div class="test-result-section">
+            <div class="test-result-section__header">
+              <span class="test-result-section__title">连通性</span>
+              <el-tag :type="testResult.connectivity ? 'success' : 'danger'" size="small">
+                {{ testResult.connectivity ? '通过' : '失败' }}
+              </el-tag>
+            </div>
+            <div class="test-result-label">模型输出</div>
+            <pre class="test-result-output">{{ formatTestOutput(testResult.connectivityOutput) }}</pre>
           </div>
-          <div class="test-result-label">模型输出</div>
-          <pre class="test-result-output">{{ formatTestOutput(testResult.midSystemMessageOutput) }}</pre>
-          <div class="test-result-hint">期望输出：MAO_BRAVO（而非 MAO_ALPHA）</div>
-        </div>
+
+          <div class="test-result-section">
+            <div class="test-result-section__header">
+              <span class="test-result-section__title">Mid System Message</span>
+              <el-tag :type="testResult.midSystemMessage ? 'success' : 'warning'" size="small">
+                {{ testResult.midSystemMessage ? '支持' : '不支持' }}
+              </el-tag>
+            </div>
+            <div class="test-result-label">模型输出</div>
+            <pre class="test-result-output">{{ formatTestOutput(testResult.midSystemMessageOutput) }}</pre>
+            <div class="test-result-hint">期望输出：MAO_BRAVO（而非 MAO_ALPHA）</div>
+          </div>
+        </template>
 
         <el-alert
           v-if="testResult.error"
@@ -192,40 +223,66 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import ModelFormDialog from './ModelFormDialog.vue'
 
+type TabType = 'text' | 'audio'
+
+interface TabState {
+  models: any[]
+  total: number
+  currentPage: number
+  pageSize: number
+  filters: {
+    keyword: string
+    provider: string
+    status?: number
+    supportsVision?: number
+    isDefault?: number
+  }
+}
+
+function createTabState(): TabState {
+  return reactive<TabState>({
+    models: [],
+    total: 0,
+    currentPage: 1,
+    pageSize: 10,
+    filters: {
+      keyword: '',
+      provider: '',
+      status: undefined,
+      supportsVision: undefined,
+      isDefault: undefined
+    }
+  })
+}
+
+const activeTab = ref<TabType>('text')
+const tabStates: Record<TabType, TabState> = {
+  text: createTabState(),
+  audio: createTabState()
+}
+const state = computed(() => tabStates[activeTab.value])
+const isTextTab = computed(() => activeTab.value === 'text')
+
 const loading = ref(false)
-const models = ref<any[]>([])
 const modelStats = ref<any[]>([])
 const providerOptions = ref<string[]>([])
-const total = ref(0)
-const currentPage = ref(1)
-const pageSize = ref(10)
 const dialogVisible = ref(false)
 const currentModel = ref<any>(null)
 const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 const testingId = ref<number | null>(null)
 const testResultVisible = ref(false)
 const testResult = ref<any>(null)
-const filters = reactive<{
-  keyword: string
-  provider: string
-  status?: number
-  supportsVision?: number
-  isDefault?: number
-}>({
-  keyword: '',
-  provider: '',
-  status: undefined,
-  supportsVision: undefined,
-  isDefault: undefined
-})
 
 async function fetchModels() {
   loading.value = true
   try {
+    const tab = activeTab.value
     const params: Record<string, string | number> = {
-      page: currentPage.value,
-      size: pageSize.value
+      page: tabStates[tab].currentPage,
+      size: tabStates[tab].pageSize,
+      modelType: tab
     }
+    const filters = tabStates[tab].filters
     if (filters.keyword) params.keyword = filters.keyword
     if (filters.provider) params.provider = filters.provider
     if (filters.status !== undefined) params.status = filters.status
@@ -236,9 +293,9 @@ async function fetchModels() {
       api.get('/models', { params }),
       api.get('/admin/analytics/summary')
     ])
-    models.value = data?.records || []
+    tabStates[tab].models = data?.records || []
     modelStats.value = summaryRes.data?.modelStats || []
-    total.value = data?.total || 0
+    tabStates[tab].total = data?.total || 0
   } finally {
     loading.value = false
   }
@@ -279,39 +336,73 @@ async function handleEdit(row: any) {
 }
 
 function handleSizeChange() {
-  currentPage.value = 1
+  state.value.currentPage = 1
   fetchModels()
 }
 
 function handleSearch() {
-  currentPage.value = 1
+  state.value.currentPage = 1
   fetchModels()
 }
 
 function handleReset() {
-  filters.keyword = ''
-  filters.provider = ''
-  filters.status = undefined
-  filters.supportsVision = undefined
-  filters.isDefault = undefined
+  Object.assign(state.value.filters, {
+    keyword: '',
+    provider: '',
+    status: undefined,
+    supportsVision: undefined,
+    isDefault: undefined
+  })
   handleSearch()
+}
+
+function handleTabChange() {
+  // 切换 tab 时按需加载该 tab 数据（首次进入时加载）
+  const tab = activeTab.value
+  if (tabStates[tab].models.length === 0) {
+    fetchModels()
+  }
 }
 
 function formatTestOutput(output?: string | null) {
   return output?.trim() ? output : '(空响应)'
 }
 
+const audioSrc = computed(() => {
+  if (!testResult.value?.audioTest || !testResult.value.audioData) return ''
+  const format = testResult.value.audioFormat || 'wav'
+  return `data:audio/${format};base64,${testResult.value.audioData}`
+})
+
+function formatBytes(bytes: number) {
+  if (!bytes || bytes <= 0) return '-'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+}
+
+function formatDuration(ms: number) {
+  if (!ms || ms <= 0) return '-'
+  if (ms < 1000) return `${ms} ms`
+  return `${(ms / 1000).toFixed(2)} s`
+}
+
 const testResultType = computed(() => {
   if (!testResult.value) return 'error'
+  if (testResult.value.audioTest) {
+    return testResult.value.connectivity ? 'success' : 'error'
+  }
   if (testResult.value.connectivity && testResult.value.midSystemMessage) return 'success'
   if (testResult.value.connectivity) return 'warning'
   return 'error'
 })
 
 const testResultTitle = computed(() => {
-  if (testResultType.value === 'success') return '测试通过'
+  if (testResultType.value === 'success') {
+    return testResult.value?.audioTest ? '合成成功' : '测试通过'
+  }
   if (testResultType.value === 'warning') return '部分通过'
-  return '测试失败'
+  return testResult.value?.audioTest ? '合成失败' : '测试失败'
 })
 
 const testResultTagType = computed(() => {
@@ -336,16 +427,16 @@ async function handleTest(row: any) {
 
 async function handleDelete(row: any) {
   try {
-    await ElMessageBox.confirm(`确定要删除模型 \"${row.name}\" 吗？`, '确认', {
+    await ElMessageBox.confirm(`确定要删除模型 "${row.name}" 吗？`, '确认', {
       type: 'warning'
     })
     await api.delete(`/models/${row.id}`)
     ElMessage.success('删除成功')
     // Step back a page if we just emptied the current page, so we never land on a blank page.
-    const remainingOnPage = models.value.length - 1
-    const maxPage = Math.max(1, Math.ceil((total.value - 1) / pageSize.value))
-    if (remainingOnPage === 0 && currentPage.value > maxPage) {
-      currentPage.value = maxPage
+    const remainingOnPage = state.value.models.length - 1
+    const maxPage = Math.max(1, Math.ceil((state.value.total - 1) / state.value.pageSize))
+    if (remainingOnPage === 0 && state.value.currentPage > maxPage) {
+      state.value.currentPage = maxPage
     }
     fetchModels()
   } catch {
@@ -357,7 +448,7 @@ async function handleToggleStatus(row: any) {
   const enable = row.status !== 1
   const actionText = enable ? '启用' : '停用'
   try {
-    await ElMessageBox.confirm(`确定要${actionText}模型 \"${row.name}\" 吗？`, '确认', {
+    await ElMessageBox.confirm(`确定要${actionText}模型 "${row.name}" 吗？`, '确认', {
       type: enable ? 'success' : 'warning'
     })
     await api.patch(`/models/${row.id}/status`, { status: enable ? 1 : 0 })
@@ -379,6 +470,10 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.model-tabs {
+  margin-bottom: 4px;
 }
 
 .pagination {
@@ -469,6 +564,25 @@ onMounted(() => {
 .test-result-hint {
   margin-top: 8px;
   font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.test-result-audio {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.test-result-audio__player {
+  width: 100%;
+  height: 40px;
+}
+
+.test-result-audio__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 13px;
   color: var(--el-text-color-secondary);
 }
 

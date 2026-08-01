@@ -44,7 +44,7 @@ class ModelServiceTest {
         when(modelMapper.selectOne(any(QueryWrapper.class))).thenReturn(defaultModel);
         when(modelMapper.selectObjs(any(QueryWrapper.class))).thenReturn(List.of(" anthropic ", "openai", "", 7));
 
-        assertThat(service.listModels(2, 5, null, null, null, null, null)).isSameAs(expectedPage);
+        assertThat(service.listModels(2, 5, null, null, null, null, null, null)).isSameAs(expectedPage);
         assertThat(service.listProviders()).containsExactly("anthropic", "openai");
         assertThat(service.listActiveModels()).isEqualTo(active);
         assertThat(service.getDefaultModel()).isSameAs(defaultModel);
@@ -61,7 +61,7 @@ class ModelServiceTest {
     @Test
     void createModelAppliesDefaultsAndClearsExistingDefault() {
         LlmModel created = service.createModel(
-                "  Name  ", "openai", "https://api", "key", "gpt-4o", null, 1, 128000);
+                "  Name  ", "openai", "https://api", "key", "gpt-4o", null, 1, 128000, "text");
 
         assertThat(created.getName()).isEqualTo("  Name  ");
         assertThat(created.getSupportsVision()).isZero();
@@ -78,7 +78,7 @@ class ModelServiceTest {
         when(modelMapper.selectById(7L)).thenReturn(existing);
 
         LlmModel updated = service.updateModel(
-                7L, "new", null, "https://new", null, "gpt-4.1", 1, 1, 256000);
+                7L, "new", null, "https://new", null, "gpt-4.1", 1, 1, 256000, null);
 
         assertThat(updated.getName()).isEqualTo("new");
         assertThat(updated.getProvider()).isEqualTo("openai");

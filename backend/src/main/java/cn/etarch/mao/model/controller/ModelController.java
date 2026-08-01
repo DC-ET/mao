@@ -28,9 +28,10 @@ public class ModelController {
             @RequestParam(required = false) String provider,
             @RequestParam(required = false) Integer status,
             @RequestParam(required = false) Integer supportsVision,
-            @RequestParam(required = false) Integer isDefault) {
+            @RequestParam(required = false) Integer isDefault,
+            @RequestParam(required = false) String modelType) {
         Page<LlmModel> pageResult = modelService.listModels(
-                page, size, keyword, provider, status, supportsVision, isDefault);
+                page, size, keyword, provider, status, supportsVision, isDefault, modelType);
         List<ModelVO> list = pageResult.getRecords().stream()
                 .map(this::toVO)
                 .collect(Collectors.toList());
@@ -72,7 +73,7 @@ public class ModelController {
                 request.getName(), request.getProvider(), request.getBaseUrl(),
                 request.getApiKey(), request.getModelId(),
                 request.getSupportsVision(), request.getIsDefault(),
-                request.getContextWindowTokens());
+                request.getContextWindowTokens(), request.getModelType());
         return Result.ok(toVO(model));
     }
 
@@ -82,7 +83,7 @@ public class ModelController {
                 id, request.getName(), request.getProvider(), request.getBaseUrl(),
                 request.getApiKey(), request.getModelId(),
                 request.getSupportsVision(), request.getIsDefault(),
-                request.getContextWindowTokens());
+                request.getContextWindowTokens(), request.getModelType());
         return Result.ok(toVO(model));
     }
 
@@ -112,6 +113,7 @@ public class ModelController {
         vo.setBaseUrl(entity.getBaseUrl());
         vo.setApiKey(entity.getApiKey());
         vo.setModelId(entity.getModelId());
+        vo.setModelType(entity.getModelType());
         vo.setContextWindowTokens(entity.getContextWindowTokens());
         vo.setSupportsVision(entity.getSupportsVision() != null && entity.getSupportsVision() == 1);
         vo.setIsDefault(entity.getIsDefault() != null && entity.getIsDefault() == 1);
@@ -127,6 +129,7 @@ public class ModelController {
         private String baseUrl;
         private String apiKey;
         private String modelId;
+        private String modelType;
         private Integer contextWindowTokens;
         private Integer supportsVision;
         private Integer isDefault;
@@ -140,6 +143,7 @@ public class ModelController {
         private String baseUrl;
         private String apiKey;
         private String modelId;
+        private String modelType;
         private Integer contextWindowTokens;
         private Boolean supportsVision;
         private Boolean isDefault;

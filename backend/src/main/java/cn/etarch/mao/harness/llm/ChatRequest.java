@@ -23,6 +23,9 @@ public class ChatRequest {
     private Boolean stream;
     private Reasoning reasoning;
 
+    /** TTS 等音频模型的请求参数，如 {"format": "wav", "voice": "mimo_default"} */
+    private Map<String, Object> audio;
+
     @Data
     @Builder
     @NoArgsConstructor
@@ -45,6 +48,24 @@ public class ChatRequest {
         private String toolCallId;
         @JsonProperty("tool_calls")
         private List<ToolCall> toolCalls;
+        /** TTS 响应中的音频数据（base64） */
+        private Audio audio;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Audio {
+        /** base64 编码的音频数据 */
+        private String data;
+        /** 音频格式：wav / pcm16 等 */
+        private String format;
+        /** 音频转写文本（部分模型返回） */
+        private String transcript;
+        /** 音频时长（秒） */
+        private Double duration;
     }
 
     @Data
