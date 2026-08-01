@@ -93,12 +93,9 @@ public class WeixinVoiceReplyService {
     }
 
     /**
-     * 判断语音回复是否开启：优先用户级偏好，未配置回退全局默认。
+     * 判断语音回复是否开启：用户级偏好优先，未配置时回退全局默认。
      */
     private boolean isVoiceReplyEnabled(String accountId) {
-        if (!weixinBotConfig.isVoiceReply()) {
-            return false;
-        }
         WeixinChannelAccount account = accountRepository.findByAccountId(accountId);
         if (account != null && account.getUserId() != null) {
             Boolean userPreference = userPreferenceService.getVoiceReply(account.getUserId());
@@ -106,6 +103,6 @@ public class WeixinVoiceReplyService {
                 return userPreference;
             }
         }
-        return true;
+        return weixinBotConfig.isVoiceReply();
     }
 }
