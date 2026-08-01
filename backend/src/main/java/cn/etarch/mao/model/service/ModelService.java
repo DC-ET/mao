@@ -80,6 +80,18 @@ public class ModelService {
                 new QueryWrapper<LlmModel>().eq("status", 1).eq("model_type", "text").orderByAsc("model_id"));
     }
 
+    /**
+     * 查询第一个启用的语音模型（TTS），用于微信语音回复等场景。
+     */
+    public LlmModel findFirstActiveAudioModel() {
+        return llmModelMapper.selectOne(
+                new QueryWrapper<LlmModel>()
+                        .eq("status", 1)
+                        .eq("model_type", "audio")
+                        .orderByAsc("id")
+                        .last("LIMIT 1"));
+    }
+
     public LlmModel getDefaultModel() {
         return llmModelMapper.selectOne(
                 new QueryWrapper<LlmModel>().eq("is_default", 1).eq("status", 1).eq("model_type", "text"));

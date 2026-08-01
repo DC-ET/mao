@@ -15,6 +15,18 @@ public class WeixinBotConfig {
 
     private String cdnBaseUrl = "https://novac2c.cdn.weixin.qq.com/c2c";
 
+    /** Agent 回复是否附带语音（语音模型合成 → MP3 文件消息），默认关闭 */
+    private boolean voiceReply = false;
+
+    /** SILK 编码器路径（腾讯 silk-v3 encoder，-tencent 模式） */
+    private String silkEncoderPath = "/usr/local/bin/silk-encoder";
+
+    /** ffmpeg 可执行文件路径 */
+    private String ffmpegPath = "ffmpeg";
+
+    /** 语音最大时长（秒），超过则截断文本 */
+    private int voiceMaxSeconds = 60;
+
     private MonitorConfig monitor = new MonitorConfig();
 
     private LeaseConfig lease = new LeaseConfig();

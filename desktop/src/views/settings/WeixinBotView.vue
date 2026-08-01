@@ -23,6 +23,20 @@
           <span class="binding-account">账号：{{ bindingStatus.accountId }}</span>
         </div>
       </div>
+
+      <div class="binding-card voice-card">
+        <div class="voice-row">
+          <div class="voice-info">
+            <div class="voice-title">语音回复</div>
+            <div class="voice-desc">Agent 完成任务后，将回复内容合成为语音发送到微信（先发文本，再附带语音）。</div>
+          </div>
+          <el-switch
+            :model-value="voiceReply"
+            :loading="voiceSaving"
+            @change="handleVoiceReplyChange"
+          />
+        </div>
+      </div>
     </div>
     <div v-else class="binding-action">
       <button class="bind-btn" @click="handleBind">
@@ -76,6 +90,7 @@ import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QRCode from 'qrcode'
 import { api } from '../../api'
+import { getWeixinPreference, saveWeixinPreference } from '../../api'
 
 interface BindingStatus {
   bound: boolean
@@ -98,6 +113,8 @@ interface QrcodeStatusData {
 
 const loading = ref(false)
 const bindingStatus = ref<BindingStatus>({ bound: false })
+const voiceReply = ref(false)
+const voiceSaving = ref(false)
 const dialogVisible = ref(false)
 const qrcodeLoading = ref(false)
 const qrcodeError = ref('')
@@ -116,8 +133,35 @@ async function fetchBindingStatus() {
   try {
     const { data } = await api.get('/weixin/binding/status')
     bindingStatus.value = data || { bound: false }
+    if (bindingStatus.value.bound) {
+      await loadVoicePreference()
+    }
   } finally {
     loading.value = false
+  }
+}
+
+async function loadVoicePreference() {
+  try {
+    const pref = await getWeixinPreference()
+    voiceReply.value = pref.voiceReply
+  } catch (error) {
+    console.error('加载微信语音偏好失败:', error)
+  }
+}
+
+async function handleVoiceReplyChange(value: boolean | string | number) {
+  const next = Boolean(value)
+  voiceSaving.value = true
+  try {
+    const pref = await saveWeixinPreference({ voiceReply: next })
+    voiceReply.value = pref.voiceReply
+    ElMessage.success(next ? '已开启语音回复' : '已关闭语音回复')
+  } catch (error: any) {
+    voiceReply.value = !next
+    ElMessage.error(error.message || '保存失败')
+  } finally {
+    voiceSaving.value = false
   }
 }
 
@@ -325,6 +369,35 @@ onUnmounted(() => {
   gap: 4px;
   font-size: 13px;
   color: var(--aw-ink-muted);
+}
+
+.voice-card {
+  margin-top: 12px;
+}
+
+.voice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.voice-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.voice-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--aw-ink);
+  margin-bottom: 4px;
+}
+
+.voice-desc {
+  font-size: 12px;
+  color: var(--aw-ink-muted);
+  line-height: 1.5;
 }
 
 .bind-btn {

@@ -75,3 +75,15 @@ app:
     worker-delay-ms: ${TASK_NOTIFICATION_WORKER_DELAY_MS:30000}
     batch-size: ${TASK_NOTIFICATION_BATCH_SIZE:100}
     max-attempts: ${TASK_NOTIFICATION_MAX_ATTEMPTS:4}
+
+# 微信 Bot 通道
+weixin:
+  bot:
+    # Agent 回复是否附带语音（TTS 合成 → MP3 文件消息），默认关闭，用户可在客户端「微信Bot」设置页单独开启
+    voice-reply: false
+    # SILK 编码器路径（腾讯 silk-v3 encoder，编译后部署到 /usr/local/bin/silk-encoder）
+    silk-encoder-path: /usr/local/bin/silk-encoder
+    # ffmpeg 可执行文件路径
+    ffmpeg-path: ffmpeg
+    # 语音最大时长（秒），超长文本会被截断
+    voice-max-seconds: 60

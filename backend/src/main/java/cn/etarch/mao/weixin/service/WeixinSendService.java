@@ -1,5 +1,6 @@
 package cn.etarch.mao.weixin.service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -34,6 +35,72 @@ public class WeixinSendService {
      * 发送文本消息
      */
     public boolean sendText(String accountId, String toUserId, String text) {
+        Map<String, Object> textItem = Map.of(
+                "type", 1,
+                "text_item", Map.of("text", text)
+        );
+        return sendMessage(accountId, toUserId, List.of(textItem));
+    }
+
+    /**
+     * 发送语音消息（SILK，encode_type=6）。
+     *
+     * @param media      上传后拿到的 CDN 媒体引用
+     * @param sampleRate 采样率（Hz），通常 24000
+     * @param playtimeMs 播放时长（毫秒）
+     * @param transcript 语音转写文本（可空，仅作展示）
+     */
+    public boolean sendVoice(String accountId, String toUserId,
+                             WeixinMediaUploadService.CdnMedia media,
+                             int sampleRate, long playtimeMs, String transcript) {
+        Map<String, Object> mediaMap = Map.of(
+                "encrypt_query_param", media.encryptQueryParam(),
+                "aes_key", media.aesKey(),
+                "encrypt_type", media.encryptType()
+        );
+        Map<String, Object> voiceItem = Map.of(
+                "type", 3,
+                "voice_item", Map.of(
+                        "media", mediaMap,
+                        "encode_type", 6,
+                        "bits_per_sample", 16,
+                        "sample_rate", sampleRate,
+                        "playtime", playtimeMs,
+                        "text", transcript != null ? transcript : ""
+                )
+        );
+        return sendMessage(accountId, toUserId, List.of(voiceItem));
+    }
+
+    /**
+     * 发送文件消息（file_item，type=4）。
+     *
+     * @param media    上传后拿到的 CDN 媒体引用（含 rawSize/rawMd5）
+     * @param fileName 文件名（如 xxx.mp3）
+     */
+    public boolean sendFile(String accountId, String toUserId,
+                            WeixinMediaUploadService.CdnMedia media, String fileName) {
+        Map<String, Object> mediaMap = Map.of(
+                "encrypt_query_param", media.encryptQueryParam(),
+                "aes_key", media.aesKey(),
+                "encrypt_type", media.encryptType()
+        );
+        Map<String, Object> fileItem = Map.of(
+                "type", 4,
+                "file_item", Map.of(
+                        "media", mediaMap,
+                        "file_name", fileName,
+                        "md5", media.rawMd5(),
+                        "len", String.valueOf(media.rawSize())
+                )
+        );
+        return sendMessage(accountId, toUserId, List.of(fileItem));
+    }
+
+    /**
+     * 通用消息发送：组装 sendmessage 请求并解析响应。
+     */
+    public boolean sendMessage(String accountId, String toUserId, List<Map<String, Object>> itemList) {
         // 1. 获取账号信息
         WeixinChannelAccount account = accountRepository.findByAccountId(accountId);
         if (account == null) {
@@ -42,8 +109,8 @@ public class WeixinSendService {
         }
 
         // 2. 解析账号凭据
-        String botToken = null;
-        String baseUrl = null;
+        String botToken;
+        String baseUrl;
         try {
             JsonNode payload = objectMapper.readTree(account.getPayloadJson());
             botToken = payload.get("token").asText();
@@ -60,7 +127,7 @@ public class WeixinSendService {
             return false;
         }
 
-        // 4. 构建消息体
+        // 4. 构建消息体（message_state=2 FINISH，稳定投递）
         String clientId = UUID.randomUUID().toString();
         Map<String, Object> message = Map.of(
                 "msg", Map.of(
@@ -68,14 +135,9 @@ public class WeixinSendService {
                         "to_user_id", toUserId,
                         "client_id", clientId,
                         "message_type", 2,
-                        "message_state", 1,
+                        "message_state", 2,
                         "context_token", contextToken,
-                        "item_list", new Object[]{
-                                Map.of(
-                                        "type", 1,
-                                        "text_item", Map.of("text", text)
-                                )
-                        }
+                        "item_list", itemList
                 ),
                 "base_info", Map.of(
                         "channel_version", "mao-server-1.0"
@@ -97,7 +159,7 @@ public class WeixinSendService {
 
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
-                    log.error("发送消息失败: HTTP {}, accountId={}, toUserId={}", 
+                    log.error("发送消息失败: HTTP {}, accountId={}, toUserId={}",
                             response.code(), accountId, toUserId);
                     return false;
                 }

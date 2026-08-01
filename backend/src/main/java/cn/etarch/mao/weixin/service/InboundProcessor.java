@@ -3,6 +3,7 @@ package cn.etarch.mao.weixin.service;
 import cn.etarch.mao.weixin.model.WeixinInboundMessageContext;
 import cn.etarch.mao.weixin.model.WeixinReply;
 import com.fasterxml.jackson.databind.JsonNode;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -11,6 +12,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Slf4j
 @Service
@@ -24,6 +27,20 @@ public class InboundProcessor {
     private final ContextTokenRepository contextTokenRepository;
     private final WeixinSendService weixinSendService;
     private final WeixinMediaService weixinMediaService;
+    private final WeixinVoiceReplyService weixinVoiceReplyService;
+
+    /** 语音回复异步发送线程池（避免阻塞回复主流程） */
+    private final ExecutorService voiceReplyExecutor =
+            Executors.newFixedThreadPool(2, r -> {
+                Thread t = new Thread(r, "weixin-voice-reply");
+                t.setDaemon(true);
+                return t;
+            });
+
+    @PreDestroy
+    void shutdown() {
+        voiceReplyExecutor.shutdownNow();
+    }
 
     /**
      * 处理入站消息
@@ -182,6 +199,18 @@ public class InboundProcessor {
                 log.debug("发送微信回复成功, accountId={}, toUserId={}", accountId, toUserId);
             } else {
                 log.warn("发送微信回复失败, accountId={}, toUserId={}", accountId, toUserId);
+            }
+
+            // 文本发送成功后，尝试附带语音回复（失败自动回退，不影响文本）
+            String text = reply.getText();
+            if (success && text != null && !text.isEmpty()) {
+                voiceReplyExecutor.execute(() -> {
+                    boolean voiceSent = weixinVoiceReplyService.sendVoiceReply(accountId, toUserId, text);
+                    if (!voiceSent) {
+                        log.debug("微信语音回复未发送（开关关闭或链路失败）, accountId={}, toUserId={}",
+                                accountId, toUserId);
+                    }
+                });
             }
         } catch (Exception e) {
             log.error("发送回复消息失败", e);

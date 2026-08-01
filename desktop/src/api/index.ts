@@ -178,3 +178,19 @@ export async function testTaskNotification(payload: {
 }): Promise<void> {
   await api.post('/user-preferences/task-notification/test', payload)
 }
+
+export interface WeixinPreference {
+  voiceReply: boolean
+}
+
+export async function getWeixinPreference(): Promise<WeixinPreference> {
+  const { data } = await api.get('/user-preferences/weixin')
+  return data
+}
+
+export async function saveWeixinPreference(payload: {
+  voiceReply: boolean
+}): Promise<WeixinPreference> {
+  const { data } = await api.put('/user-preferences/weixin', payload)
+  return data
+}
