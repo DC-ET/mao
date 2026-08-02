@@ -275,6 +275,27 @@ watch(() => props.phase, (phase, oldPhase) => {
   }
 })
 
+// Side tasks share the main session's workspace — when one of them finishes,
+// the git status may have changed even though the main session phase hasn't.
+watch(
+  () => (props.sideTasks ?? []).map((t) => `${t.id}:${t.phase}`).join('|'),
+  (_sig, oldSig) => {
+    if (!oldSig || !props.gitProvider) return
+    const oldPhases = new Map<number, string>(
+      oldSig.split('|').filter(Boolean).map((part) => {
+        const sep = part.indexOf(':')
+        return [Number(part.slice(0, sep)), part.slice(sep + 1)]
+      })
+    )
+    const finished = (props.sideTasks ?? []).some((t) => {
+      const oldPhase = oldPhases.get(t.id)
+      if (!oldPhase) return false
+      return ACTIVE_GIT_REFRESH_PHASES.has(oldPhase) && TERMINAL_GIT_REFRESH_PHASES.has(t.phase)
+    })
+    if (finished) void refreshGit()
+  }
+)
+
 function handleOpenFile(payload: { path: string; title: string }) {
   emit('open-file', payload)
 }

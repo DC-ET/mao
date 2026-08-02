@@ -8,6 +8,8 @@ import cn.etarch.mao.harness.tool.ToolCallContext;
 import cn.etarch.mao.harness.tool.ToolDispatcher;
 import cn.etarch.mao.harness.tool.ToolImageResultProcessor;
 import cn.etarch.mao.session.activity.SessionActivityHeartbeat;
+import cn.etarch.mao.session.entity.Session;
+import cn.etarch.mao.session.service.SessionService;
 import cn.etarch.mao.session.util.ToolResultSummarizer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +44,7 @@ public class AgentLoop {
     private final BackgroundTaskManager backgroundTaskManager;
     private final ShellSessionManager shellSessionManager;
     private final SessionActivityHeartbeat activityHeartbeat;
+    private final SessionService sessionService;
     private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
 
     /** Per-session cancel flags: set to true to request cancellation */
@@ -88,8 +91,34 @@ public class AgentLoop {
             if (flag != null && flag.get()) {
                 return true;
             }
+            // DB 兜底：会话已被外部标记为终态（stale 终止 FAILED / 用户取消 CANCELLED）。
+            // 即使 cancel flag 因竞态被提前移除，AgentLoop 也应当停止执行后续轮次。
+            if (isTerminalPhaseInDb(sessionId)) {
+                // 同时置位本地 flag，确保调用方（StreamingWsHandler）收尾时能感知取消
+                // （走 finishCancelledSession），避免 DB 已是 FAILED 却被误标记为 COMPLETED。
+                if (flag == null) {
+                    flag = cancelFlags.computeIfAbsent(sessionId, k -> new AtomicBoolean(false));
+                }
+                flag.set(true);
+                return true;
+            }
         }
         return false;
+    }
+
+    /** DB 兜底检查：会话 phase 是否已被标记为 FAILED / CANCELLED（查询失败时降级为 false）。 */
+    private boolean isTerminalPhaseInDb(Long sessionId) {
+        try {
+            Session session = sessionService.getSession(sessionId);
+            if (session == null) {
+                return false;
+            }
+            String phase = session.getPhase();
+            return "FAILED".equals(phase) || "CANCELLED".equals(phase);
+        } catch (Exception e) {
+            log.debug("Failed to check session phase for session {}: {}", sessionId, e.getMessage());
+            return false;
+        }
     }
 
     /**

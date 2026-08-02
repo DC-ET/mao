@@ -222,8 +222,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         }
         runningTasks.remove(sessionId);
         runningExecutionIds.remove(sessionId);
-        cancelFlags.remove(sessionId);
-        agentLoop.removeCancelFlag(sessionId);
+        // 注意：不要在此移除 cancel flag —— AgentLoop 线程可能还阻塞在工具执行中，
+        // 需要保留 flag 使其从阻塞中恢复后能感知取消并停止后续轮次。
+        // 清理由执行线程的 finally 块完成（cancelFlags.remove / agentLoop.removeCancelFlag）。
         activityHeartbeat.clear(sessionId);
     }
 

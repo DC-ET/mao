@@ -10,6 +10,7 @@ import cn.etarch.mao.harness.shell.ShellSessionManager;
 import cn.etarch.mao.harness.tool.Tool;
 import cn.etarch.mao.harness.tool.ToolDispatcher;
 import cn.etarch.mao.session.activity.SessionActivityHeartbeat;
+import cn.etarch.mao.session.service.SessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -39,9 +40,10 @@ class AgentLoopTest {
     private final BackgroundTaskManager backgroundTaskManager = mock(BackgroundTaskManager.class);
     private final ShellSessionManager shellSessionManager = mock(ShellSessionManager.class);
     private final SessionActivityHeartbeat activityHeartbeat = mock(SessionActivityHeartbeat.class);
+    private final SessionService sessionService = mock(SessionService.class);
     private final AgentLoop agentLoop = new AgentLoop(
             llmAdapter, promptEngine, contextManager, toolDispatcher, new ObjectMapper(),
-            backgroundTaskManager, shellSessionManager, activityHeartbeat);
+            backgroundTaskManager, shellSessionManager, activityHeartbeat, sessionService);
 
     @Test
     void executeStreamsPlainAssistantMessageAndPersistsIt() {

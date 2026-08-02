@@ -49,7 +49,7 @@ import java.util.stream.Collectors;
 public class SessionService {
 
     /** Stale threshold: sessions RUNNING longer than this are swept to FAILED */
-    private static final int STALE_MINUTES = 10;
+    private static final int STALE_MINUTES = 60;
 
     public static int getStaleMinutes() {
         return STALE_MINUTES;
