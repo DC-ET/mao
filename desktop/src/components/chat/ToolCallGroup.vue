@@ -68,6 +68,8 @@ const toolDisplayMap: Record<string, { label: string; icon: Component }> = {
   web_search: { label: '网页搜索', icon: Search },
   open_web_page: { label: '打开网页', icon: Link },
   generate_image: { label: '生成图片', icon: Picture },
+  send_wechat_image: { label: '发送微信图片', icon: Picture },
+  send_wechat_file: { label: '发送微信文件', icon: Document },
   create_scheduled_task: { label: '创建定时任务', icon: Calendar },
   update_scheduled_task: { label: '更新定时任务', icon: Timer },
   delete_scheduled_task: { label: '删除定时任务', icon: Delete },

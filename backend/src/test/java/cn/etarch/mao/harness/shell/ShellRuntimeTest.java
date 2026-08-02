@@ -207,10 +207,11 @@ class ShellRuntimeTest {
         assertThat(tool.getOutputSchema()).containsKey("properties");
 
         String exec = tool.execute("""
-                {"command":"echo hello","session_id":"tool-sh","yield_time_ms":2000}
+                {"command":"echo hello","session_id":"tool-sh","yield_time_ms":2000,"keep_session":true}
                 """, 21L, 7L, tempDir.toString());
         assertThat(exec).contains("exit_code: 0").contains("hello");
 
+        // keep_session=true 保留会话，list 应能看到 tool-sh
         JsonNode list = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
         assertThat(list.get("count").asInt()).isEqualTo(1);
 
@@ -224,32 +225,44 @@ class ShellRuntimeTest {
                 """, 21L, 7L, tempDir.toString()));
         assertThat(close.get("status").asText()).contains("关闭");
 
+        // 测试 keep_session 默认为 false 时自动关闭会话（exec 返回文本格式，用 contains 断言）
+        String keepFalse = tool.execute("""
+                {"command":"echo keep_false","keep_session":false}
+                """, 21L, 7L, tempDir.toString());
+        assertThat(keepFalse).contains("exit_code: 0");
+        // 会话应该已关闭，list 应该返回 0
+        JsonNode listAfterKeepFalse = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
+        assertThat(listAfterKeepFalse.get("count").asInt()).isEqualTo(0);
+
+        // 测试 keep_session 为 true 时保留会话
+        String keepTrue = tool.execute("""
+                {"command":"echo keep_true","keep_session":true}
+                """, 21L, 7L, tempDir.toString());
+        assertThat(keepTrue).contains("exit_code: 0");
+        // 会话应该仍然存在，从 list 结果中获取 session_id
+        JsonNode listAfterKeepTrue = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
+        assertThat(listAfterKeepTrue.get("count").asInt()).isEqualTo(1);
+        String keepTrueSessionId = listAfterKeepTrue.get("sessions").get(0).get("session_id").asText();
+        // 手动关闭会话
+        tool.execute("{\"action\":\"close\",\"session_id\":\"" + keepTrueSessionId + "\"}", 21L, 7L, tempDir.toString());
+
+        // async 模式：提交后台任务并立即返回（不创建前台会话，与上面的会话计数断言互不干扰）
         JsonNode async = objectMapper.readTree(tool.execute("""
                 {"command":"echo async","async":true}
                 """, 21L, 7L, tempDir.toString()));
         assertThat(async.get("async").asBoolean()).isTrue();
         assertThat(async.get("task_id").asText()).isNotBlank();
 
-        // 测试 keep_session 默认为 false 时自动关闭会话
-        JsonNode keepFalse = objectMapper.readTree(tool.execute("""
-                {"command":"echo keep_false","keep_session":false}
-                """, 21L, 7L, tempDir.toString()));
-        assertThat(keepFalse.get("exit_code").asInt()).isEqualTo(0);
-        // 会话应该已关闭，list 应该返回 0
-        JsonNode listAfterKeepFalse = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
-        assertThat(listAfterKeepFalse.get("count").asInt()).isEqualTo(0);
-
-        // 测试 keep_session 为 true 时保留会话
-        JsonNode keepTrue = objectMapper.readTree(tool.execute("""
-                {"command":"echo keep_true","keep_session":true}
-                """, 21L, 7L, tempDir.toString()));
-        assertThat(keepTrue.get("exit_code").asInt()).isEqualTo(0);
-        String keepTrueSessionId = keepTrue.get("session_id").asText();
-        // 会话应该仍然存在
-        JsonNode listAfterKeepTrue = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
-        assertThat(listAfterKeepTrue.get("count").asInt()).isEqualTo(1);
-        // 手动关闭会话
-        tool.execute("{\"action\":\"close\",\"session_id\":\"" + keepTrueSessionId + "\"}", 21L, 7L, tempDir.toString());
+        // async 任务在后台线程执行，其自动创建的会话执行完毕后会自动关闭；
+        // 轮询等待后台会话收尾，避免留下未清理的 bash 进程
+        long deadline = System.currentTimeMillis() + 15000;
+        while (System.currentTimeMillis() < deadline) {
+            JsonNode active = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
+            if (active.get("count").asInt() == 0) {
+                break;
+            }
+            Thread.sleep(200);
+        }
     }
 
     @Test

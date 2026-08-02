@@ -195,9 +195,15 @@ class CoverageSurfaceTest {
                 || name.contains("harness.local.LocalToolExecutor")
                 || name.contains("file.service.WorkspaceBrowseService")
                 || name.contains("file.service.FileService")
+                // readTextLimited 等私有方法对 mock Path 执行真实文件 IO，会陷入 mock channel 无限循环
+                || name.contains("file.service.WorkspaceGitService")
                 || name.contains("session.service.GitOperationService")
                 || name.contains("harness.shell")
-                || name.contains("harness.tool.impl.ShellSessionTool");
+                || name.contains("harness.tool.impl.ShellSessionTool")
+                // 工具实现类反射调用会真正执行工具逻辑（发消息/删任务/编辑文件等），且有专门测试类覆盖
+                || name.contains("harness.tool.impl.")
+                // 微信类反射调用副作用大（TTS 合成、ffmpeg 转码、临时文件、入站处理），且有专门测试类覆盖
+                || name.contains(".weixin.");
     }
 
     private static boolean shouldSkipInternalMethod(Class<?> type, Method method) {
@@ -216,6 +222,8 @@ class CoverageSurfaceTest {
                 || methodName.equals("executeToolCalls")
                 || methodName.equals("dispatchTool")
                 || methodName.equals("executeCloud")
+                // 真实文件 IO：mock Path 的 channel read() 返回 0 会陷入无限循环
+                || methodName.equals("readTextLimited")
                 || name.contains("OpenAiLlmAdapter")
                 || name.contains("OpenWebPageTool")
                 || name.contains("WebSearchTool")

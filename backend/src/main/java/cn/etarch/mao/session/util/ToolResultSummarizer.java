@@ -27,6 +27,8 @@ public class ToolResultSummarizer {
             case "web_search" -> summarizeWebSearch(arguments, result);
             case "open_web_page" -> summarizeOpenWebPage(arguments, result);
             case "generate_image" -> summarizeGenerateImage(arguments, result);
+            case "send_wechat_image" -> summarizeSendWechatImage(arguments, result);
+            case "send_wechat_file" -> summarizeSendWechatFile(arguments, result);
             case "create_scheduled_task" -> summarizeCreateScheduledTask(arguments, result);
             case "update_scheduled_task" -> summarizeUpdateScheduledTask(result);
             case "delete_scheduled_task" -> summarizeDeleteScheduledTask(result);
@@ -136,6 +138,11 @@ public class ToolResultSummarizer {
         }
         if (totalLines > 0) {
             return "写入 " + displayPath + " (" + totalLines + " 行)";
+        }
+        // 无 file_change 时，显示写入字节数
+        int bytesWritten = node.has("bytes_written") ? node.get("bytes_written").asInt(0) : 0;
+        if (bytesWritten > 0) {
+            return "写入 " + displayPath + " (" + formatFileSize(bytesWritten) + ")";
         }
         return "写入 " + displayPath;
     }
@@ -285,6 +292,53 @@ public class ToolResultSummarizer {
         int count = node.has("images") && node.get("images").isArray() ? node.get("images").size() : 0;
         if (count > 0) {
             return label + " (" + count + " 张)";
+        }
+        return label;
+    }
+
+    private static String summarizeSendWechatImage(String arguments, String result) {
+        String image = extractJsonString(arguments, "image");
+        String label = "发送微信图片" + (image != null ? ": " + truncateFilename(image) : "");
+
+        if (result == null) return label;
+
+        JsonNode node = parseJson(result);
+        if (node == null) return label;
+
+        if (node.has("error")) {
+            return "发送微信图片 (失败)";
+        }
+        if (node.has("success") && node.get("success").asBoolean()) {
+            return label + " (成功)";
+        }
+        return label;
+    }
+
+    private static String summarizeSendWechatFile(String arguments, String result) {
+        String fileName = extractJsonString(arguments, "file_name");
+        String file = extractJsonString(arguments, "file");
+        String label;
+        if (fileName != null && !fileName.isBlank()) {
+            label = "发送微信文件: " + truncate(fileName, 30);
+        } else if (file != null && !file.isBlank()) {
+            label = "发送微信文件: " + truncateFilename(file);
+        } else {
+            label = "发送微信文件";
+        }
+
+        if (result == null) return label;
+
+        JsonNode node = parseJson(result);
+        if (node == null) return label;
+
+        if (node.has("error")) {
+            return "发送微信文件 (失败)";
+        }
+        if (node.has("success") && node.get("success").asBoolean()) {
+            String sentName = node.has("file_name") ? node.get("file_name").asText(null) : null;
+            return (sentName != null && !sentName.isBlank())
+                    ? "发送微信文件: " + truncate(sentName, 30) + " (成功)"
+                    : label + " (成功)";
         }
         return label;
     }
@@ -441,6 +495,12 @@ public class ToolResultSummarizer {
         if (text == null) return "";
         if (text.length() <= max) return text;
         return text.substring(0, max) + "...";
+    }
+
+    private static String formatFileSize(int bytes) {
+        if (bytes < 1024) return bytes + "B";
+        if (bytes < 1024 * 1024) return (bytes / 1024) + "KB";
+        return (bytes / (1024 * 1024)) + "MB";
     }
 
     private static String formatUrl(String url) {

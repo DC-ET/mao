@@ -90,6 +90,30 @@ class ToolResultSummarizerTest {
     }
 
     @Test
+    void summarizesWechatMediaTools() {
+        assertThat(ToolResultSummarizer.summarize("send_wechat_image",
+                "{\"image\":\"/tmp/sunset.png\"}",
+                "{\"success\":true,\"media_type\":\"image\",\"sent_to\":\"wx-1\"}"))
+                .isEqualTo("发送微信图片: tmp/sunset.png (成功)");
+        assertThat(ToolResultSummarizer.summarize("send_wechat_image",
+                "{\"image\":\"https://a.com/pic.jpg\"}",
+                "{\"error\":\"图片上传微信 CDN 失败\"}"))
+                .isEqualTo("发送微信图片 (失败)");
+        assertThat(ToolResultSummarizer.summarize("send_wechat_file",
+                "{\"file\":\"/tmp/report.pdf\"}",
+                "{\"success\":true,\"file_name\":\"report.pdf\",\"sent_to\":\"wx-1\"}"))
+                .isEqualTo("发送微信文件: report.pdf (成功)");
+        assertThat(ToolResultSummarizer.summarize("send_wechat_file",
+                "{\"file\":\"/tmp/report.pdf\",\"file_name\":\"季度报告.pdf\"}",
+                "{\"success\":true,\"file_name\":\"季度报告.pdf\"}"))
+                .isEqualTo("发送微信文件: 季度报告.pdf (成功)");
+        assertThat(ToolResultSummarizer.summarize("send_wechat_file",
+                "{\"file\":\"/tmp/report.pdf\"}",
+                "{\"error\":\"文件发送失败\"}"))
+                .isEqualTo("发送微信文件 (失败)");
+    }
+
+    @Test
     void summarizesGenericToolsAndInvalidJsonGracefully() {
         assertThat(ToolResultSummarizer.summarize(null, "{}", "{}")).isNull();
         assertThat(ToolResultSummarizer.summarize("custom", "{}", "{\"success\":true}"))

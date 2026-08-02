@@ -242,6 +242,15 @@
                 </configuration>
             </plugin>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- 测试 fork 进程堆内存：默认仅为物理内存 1/4，完整套件（含 jacoco agent）会 OOM -->
+                    <!-- @{argLine} 为 late replacement，保留 jacoco prepare-agent 注入的 agent 参数 -->
+                    <argLine>@{argLine} -Xmx3g</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
                 <version>0.8.12</version>
