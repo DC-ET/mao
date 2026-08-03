@@ -27,9 +27,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class WeixinVoiceReplyService {
 
-    /** 音频采样率（与 TTS 输出一致） */
-    private static final int SAMPLE_RATE = 24000;
-
     private static final DateTimeFormatter FILE_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     private final WeixinBotConfig weixinBotConfig;

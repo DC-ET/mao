@@ -80,7 +80,7 @@ public class McpClientManager {
         try {
             Map<String, Object> args = parseArguments(argumentsJson);
             McpSchema.CallToolResult result = client.callTool(
-                    McpSchema.CallToolRequest.builder().name(toolName).arguments(args).build());
+                    McpSchema.CallToolRequest.builder(toolName).arguments(args).build());
             return formatResult(result);
         } catch (Exception e) {
             log.warn("MCP callTool failed: serverId={}, tool={}, error={}", serverId, toolName, e.getMessage());
