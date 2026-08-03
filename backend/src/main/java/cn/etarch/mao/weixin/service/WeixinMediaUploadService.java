@@ -45,7 +45,6 @@ public class WeixinMediaUploadService {
     private static final int MEDIA_TYPE_VOICE = 4;
 
     private final WeixinBotConfig weixinBotConfig;
-    private final WeixinAccountRepository accountRepository;
     private final ObjectMapper objectMapper;
 
     private final OkHttpClient httpClient = new OkHttpClient.Builder()

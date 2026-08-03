@@ -202,7 +202,6 @@ public class McpServerService {
      * 解密环境变量 JSON → Map。
      * 供运行时（CLOUD 直连 / LOCAL 下发）读取真实环境变量。
      */
-    @SuppressWarnings("unchecked")
     public Map<String, String> decryptEnv(McpServer server) {
         if (server.getEnvJson() == null || server.getEnvJson().isBlank()) {
             return Map.of();
