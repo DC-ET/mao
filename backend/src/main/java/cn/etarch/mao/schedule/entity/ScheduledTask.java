@@ -36,6 +36,12 @@ public class ScheduledTask {
 
     private Integer fireCount;
 
+    /** 是否已执行完结：1=已完结(不再自动触发)，0=进行中 */
+    private Integer finished;
+
+    /** 完结时间 */
+    private LocalDateTime finishedAt;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 
