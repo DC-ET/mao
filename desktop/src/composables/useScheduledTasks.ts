@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { api } from '../api'
 
 export interface ScheduledTask {
@@ -14,12 +14,18 @@ export interface ScheduledTask {
   lastExecutionStatus: string | null
   nextFireTime: string | null
   fireCount: number
+  finished: boolean
+  finishedAt: string | null
   createdAt: string
   updatedAt?: string
 }
 
 const tasks = ref<ScheduledTask[]>([])
 const loading = ref(false)
+
+// 进行中 / 已完结 分组
+const activeTasks = computed(() => tasks.value.filter(t => !t.finished))
+const finishedTasks = computed(() => tasks.value.filter(t => t.finished))
 
 export function useScheduledTasks() {
 
@@ -79,13 +85,31 @@ export function useScheduledTasks() {
     }
   }
 
+  function formatFinishedAt(time: string | null): string {
+    if (!time) return '-'
+    try {
+      const d = new Date(time)
+      return d.toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    } catch {
+      return time
+    }
+  }
+
   return {
     tasks,
+    activeTasks,
+    finishedTasks,
     loading,
     fetchTasks,
     toggleStatus,
     deleteTask,
     formatNextFire,
+    formatFinishedAt,
     statusLabel
   }
 }

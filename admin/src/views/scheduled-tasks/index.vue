@@ -23,6 +23,19 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column prop="finished" label="完结" width="90">
+          <template #default="{ row }">
+            <el-tag
+              v-if="row.finished"
+              type="info"
+              size="small"
+              :title="row.finishedAt ? `完结于 ${row.finishedAt}` : '已完结'"
+            >
+              已完结
+            </el-tag>
+            <span v-else class="text-muted">进行中</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="lastExecutionStatus" label="上次执行" width="100">
           <template #default="{ row }">
             <el-tag v-if="row.lastExecutionStatus" :type="statusTagType(row.lastExecutionStatus)" size="small">
@@ -44,6 +57,7 @@
               inline-prompt
               active-text="启"
               inactive-text="停"
+              :disabled="row.finished"
               style="margin-right: 8px"
               @change="handleToggleStatus(row)"
             />
@@ -87,6 +101,8 @@ interface ScheduledTask {
   lastExecutionStatus: string | null
   nextFireTime: string | null
   fireCount: number
+  finished: boolean
+  finishedAt: string | null
   createdAt: string
 }
 

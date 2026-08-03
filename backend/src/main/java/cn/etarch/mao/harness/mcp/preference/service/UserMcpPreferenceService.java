@@ -86,4 +86,17 @@ public class UserMcpPreferenceService {
                 new LambdaQueryWrapper<UserMcpPreference>()
                         .eq(UserMcpPreference::getUserId, userId));
     }
+
+    /**
+     * 删除指向指定服务器的全部偏好记录（服务器被删除时级联清理）。
+     */
+    public void deleteByServer(Long serverId) {
+        if (serverId == null) {
+            return;
+        }
+        preferenceMapper.delete(
+                new LambdaQueryWrapper<UserMcpPreference>()
+                        .eq(UserMcpPreference::getServerId, serverId));
+        log.info("Cleared MCP preferences for serverId={}", serverId);
+    }
 }

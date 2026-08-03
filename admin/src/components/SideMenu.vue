@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type Component } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   DataLine,
@@ -56,12 +56,20 @@ const emit = defineEmits<{
 const route = useRoute()
 const authStore = useAuthStore()
 
-const menuItems = [
+interface MenuItem {
+  index: string
+  label: string
+  icon: Component
+  permission?: string
+  adminOnly?: boolean
+}
+
+const menuItems: MenuItem[] = [
   { index: '/dashboard', label: '数据概览', icon: DataLine },
   { index: '/agents', label: 'Agent 管理', icon: Monitor, permission: 'agent:read' },
   { index: '/models', label: '模型管理', icon: Connection, permission: 'model:read' },
   { index: '/skills', label: 'Skills 管理', icon: MagicStick, permission: 'agent:read' },
-  { index: '/mcp-servers', label: 'MCP 服务器', icon: Link, permission: 'mcp:read' },
+  { index: '/mcp-servers', label: 'MCP 服务器', icon: Link, adminOnly: true },
   { index: '/sessions', label: '会话管理', icon: ChatDotRound, permission: 'session:read' },
   { index: '/scheduled-tasks', label: '定时任务', icon: Timer, permission: 'session:read' },
   { index: '/users', label: '用户管理', icon: User, permission: 'user:read' },
@@ -73,7 +81,10 @@ const menuItems = [
 ]
 
 const visibleMenus = computed(() =>
-  menuItems.filter(item => !item.permission || authStore.hasPermission(item.permission))
+  menuItems.filter(item => {
+    if (item.adminOnly) return authStore.isAdmin
+    return !item.permission || authStore.hasPermission(item.permission)
+  })
 )
 
 const activeMenu = computed(() => {

@@ -49,7 +49,7 @@ const routes: RouteRecordRaw[] = [
         path: 'mcp-servers',
         name: 'McpServers',
         component: () => import('../views/mcp/McpServerListView.vue'),
-        meta: { title: 'MCP 服务器', keepAlive: true, permission: 'mcp:read' }
+        meta: { title: 'MCP 服务器', keepAlive: true, adminOnly: true }
       },
       {
         path: 'sessions',
@@ -138,6 +138,11 @@ router.beforeEach(async (to, _from, next) => {
     }
     const permission = to.meta.permission as string | undefined
     if (permission && !authStore.hasPermission(permission)) {
+      next('/forbidden')
+      return
+    }
+    // 管理员专属页面（MCP 服务器等）：权限维度已移除，改为管理员角色控制
+    if (to.meta.adminOnly && !authStore.isAdmin) {
       next('/forbidden')
       return
     }

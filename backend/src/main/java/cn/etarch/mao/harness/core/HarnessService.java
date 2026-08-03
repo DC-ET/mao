@@ -65,7 +65,6 @@ public class HarnessService {
     private final EnvironmentInfoProvider environmentInfoProvider;
     private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
     private final cn.etarch.mao.harness.mcp.local.McpSyncService mcpSyncService;
-    private final cn.etarch.mao.permission.service.PermissionService permissionService;
 
     public String prepareMessage(Long sessionId, Object userContent) {
         return java.util.UUID.randomUUID().toString();
@@ -318,20 +317,12 @@ public class HarnessService {
         }
         context.setTools(sessionTools);
 
-        // 6.5 MCP 工具注入（按 Agent 关联的 MCP 服务器，双模式）
+        // 6.5 MCP 工具注入（按 Agent 关联的全局服务器 + 用户私有服务器，双模式）
         // 防御：mcpSyncService 为 null（非 Spring 装配的测试/入口）时整体跳过 MCP 注入，
         // 避免 NPE 被 catch 后以「加载失败」警告形式污染会话提示词。
+        // 权限说明：mcp:read/mcp:write 权限维度已移除，所有登录用户均可在会话中使用 MCP 工具。
         java.util.List<String> mcpWarnings = new java.util.ArrayList<>();
-        boolean userHasMcpPermission = permissionService != null
-                && session.getUserId() != null
-                && permissionService.hasPermission(session.getUserId(), "mcp:read");
         if (mcpSyncService != null) {
-            if (!userHasMcpPermission) {
-                // 安全边界：无 mcp:read 权限的用户不注入 MCP 工具（CLOUD/LOCAL 一致拦截），
-                // 避免普通用户利用管理员配置的 Agent 调用 MCP 服务。
-                log.debug("Skip MCP injection for session {}: userId={} lacks mcp:read permission",
-                        sessionId, session.getUserId());
-            } else {
             try {
                 java.util.List<cn.etarch.mao.harness.mcp.entity.McpServer> mcpServers =
                         mcpSyncService.loadAgentServers(agent, session.getUserId());
@@ -358,7 +349,6 @@ public class HarnessService {
             } catch (Exception e) {
                 log.warn("MCP tool injection failed for session {}: {}", sessionId, e.getMessage());
                 mcpWarnings.add("MCP 工具加载失败：" + e.getMessage());
-            }
             }
         }
         context.setTools(sessionTools);

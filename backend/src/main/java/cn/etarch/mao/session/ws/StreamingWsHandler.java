@@ -66,7 +66,6 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final LocalAgentsMdRegistry localAgentsMdRegistry;
     private final cn.etarch.mao.harness.mcp.local.McpSyncService mcpSyncService;
     private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
-    private final cn.etarch.mao.permission.service.PermissionService permissionService;
     private final AgentMapper agentMapper;
     private final long mcpSyncTimeoutSeconds;
     private final LlmModelMapper llmModelMapper;
@@ -265,7 +264,6 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                LocalAgentsMdRegistry localAgentsMdRegistry,
                                cn.etarch.mao.harness.mcp.local.McpSyncService mcpSyncService,
                                cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager,
-                               cn.etarch.mao.permission.service.PermissionService permissionService,
                                AgentMapper agentMapper,
                                LlmModelMapper llmModelMapper,
                                JwtService jwtService,
@@ -288,7 +286,6 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.localAgentsMdRegistry = localAgentsMdRegistry;
         this.mcpSyncService = mcpSyncService;
         this.mcpClientManager = mcpClientManager;
-        this.permissionService = permissionService;
         this.agentMapper = agentMapper;
         this.mcpSyncTimeoutSeconds = mcpSyncTimeoutSeconds;
         this.llmModelMapper = llmModelMapper;
@@ -1447,14 +1444,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
      */
     private void syncMcpServersToClient(Long userId, Long sessionId, Session session, Agent agent) {
         try {
-            // 安全边界：MCP 服务器为管理员级全局配置，仅授予 mcp:read 的用户
-            // 才能获得工具清单与环境变量下发。普通用户即使使用管理员创建的 Agent
-            // 也无法取得服务器凭据（CLOUD 模式由 buildContext 同样拦截）。
-            if (!permissionService.hasPermission(userId, "mcp:read")) {
-                log.info("Skip MCP sync for session {}: userId={} lacks mcp:read permission", sessionId, userId);
-                mcpSyncService.clearSession(sessionId);
-                return;
-            }
+            // 权限说明：mcp:read/mcp:write 权限维度已移除，所有登录用户均可获得
+            // MCP 服务器配置下发（含用户私有服务器与管理员配置的全局服务器）。
             var servers = mcpSyncService.loadAgentServers(agent, userId);
             if (servers.isEmpty()) {
                 mcpSyncService.clearSession(sessionId);

@@ -43,6 +43,7 @@ public class UserController {
         vo.setEmail(user.getEmail());
         vo.setAvatarUrl(user.getAvatarUrl());
         vo.setPermissions(permissionService.getUserPermissionCodes(userId).stream().distinct().toList());
+        vo.setIsAdmin(permissionService.isAdmin(userId));
         return Result.ok(vo);
     }
 

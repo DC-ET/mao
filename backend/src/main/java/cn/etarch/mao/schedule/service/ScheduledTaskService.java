@@ -110,14 +110,23 @@ public class ScheduledTaskService {
                 throw new BusinessException(ErrorCode.PARAM_INVALID, "无效的 cron 表达式: " + e.getMessage());
             }
             task.setCronExpression(cronExpression);
-            if ("ACTIVE".equals(task.getStatus())) {
-                task.setNextFireTime(calculateNextFireTime(cronExpression));
+            LocalDateTime next = calculateNextFireTime(cronExpression);
+            task.setNextFireTime(next);
+            if (next != null) {
+                // 新 cron 仍有触发计划 → 任务重新进入进行中
+                task.setFinished(0);
+                task.setFinishedAt(null);
             }
         }
 
         // Recalculate next_fire_time when activating a paused task
         if ("ACTIVE".equals(task.getStatus()) && task.getNextFireTime() == null) {
-            task.setNextFireTime(calculateNextFireTime(task.getCronExpression()));
+            LocalDateTime next = calculateNextFireTime(task.getCronExpression());
+            task.setNextFireTime(next);
+            if (next != null) {
+                task.setFinished(0);
+                task.setFinishedAt(null);
+            }
         }
 
         scheduledTaskMapper.updateById(task);
@@ -223,6 +232,13 @@ public class ScheduledTaskService {
                     // Update fireCount and lastFireTime after execution completes
                     task.setLastFireTime(LocalDateTime.now());
                     task.setFireCount(task.getFireCount() + 1);
+                    // 任务确已执行到终态（排除 QUEUED：消息仍在队列中，尚未真正执行完）；
+                    // 若 cron 已无下次匹配（一次性任务执行完毕），显式置为已完结
+                    if (!"QUEUED".equals(task.getLastExecutionStatus())
+                            && calculateNextFireTime(task.getCronExpression()) == null) {
+                        task.setFinished(1);
+                        task.setFinishedAt(LocalDateTime.now());
+                    }
                     scheduledTaskMapper.updateById(task);
                 }
             }
