@@ -101,6 +101,7 @@
       v-model="formVisible"
       :title="isEdit ? `编辑服务器：${form.name}` : '新增 MCP 服务器'"
       width="640px"
+      class="mcp-server-dialog"
       :close-on-click-modal="false"
     >
       <el-form ref="formRef" :model="form" :rules="formRules" label-width="90px">
@@ -572,6 +573,31 @@ async function handleTest(server: MyMcpServer) {
 .form-hint {
   color: var(--aw-ink-muted, #8b949e);
   font-size: 12px;
+}
+
+:deep(.mcp-server-dialog) {
+  --el-dialog-title-font-size: 16px;
+  --el-font-size-base: 13px;
+}
+
+:deep(.mcp-server-dialog .el-dialog__header) {
+  padding-bottom: 12px;
+}
+
+:deep(.mcp-server-dialog .el-form-item__label),
+:deep(.mcp-server-dialog .el-radio),
+:deep(.mcp-server-dialog .el-input__inner),
+:deep(.mcp-server-dialog .el-textarea__inner),
+:deep(.mcp-server-dialog .el-button) {
+  font-size: 13px;
+}
+
+:deep(.mcp-server-dialog .el-input__wrapper) {
+  font-size: 13px;
+}
+
+:deep(.mcp-server-dialog .el-dialog__footer .el-button) {
+  font-size: 14px;
 }
 
 .test-content {

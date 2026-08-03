@@ -5,6 +5,7 @@ import cn.etarch.mao.harness.mcp.model.McpToolRef;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -150,10 +152,51 @@ public class McpClientManager {
                     .build();
             return new StdioClientTransport(params, jsonMapper);
         }
-        // HTTP/SSE：优先 Streamable HTTP（同时兼容 2025-03-26 与 2025-06-18 协议）
-        HttpClientStreamableHttpTransport.Builder builder = HttpClientStreamableHttpTransport.builder(server.getUrl())
+        // HTTP/SSE：构建远程 HTTP 传输（Streamable HTTP 或传统 SSE）
+        return buildHttpTransport(server);
+    }
+
+    /**
+     * 构建 HTTP 远程传输。
+     * <p>
+     * MCP Java SDK 的 HTTP transport 构造请求时只取 baseUri（scheme://host[:port]），
+     * 会丢弃 URL 中的 query 参数；而部分远程服务器（如百度地图 MCP）要求鉴权参数
+     * （如 ?ak=xxx）挂在 query 上，丢失后服务器返回 400 导致初始化失败。
+     * 因此需将 URL 拆分为 baseUri 与 endpoint（path + query）分别传入：
+     * - Streamable HTTP 端点（如 https://host/mcp?ak=xxx）→ {@link HttpClientStreamableHttpTransport}
+     * - 传统 SSE 端点（如 https://host/sse?ak=xxx）→ {@link HttpClientSseClientTransport}
+     */
+    private io.modelcontextprotocol.spec.McpClientTransport buildHttpTransport(McpServer server) {
+        URI uri;
+        try {
+            uri = URI.create(server.getUrl());
+        } catch (Exception e) {
+            throw new IllegalStateException("无效的 MCP URL: " + server.getUrl(), e);
+        }
+        String baseUri = uri.getScheme() + "://" + uri.getAuthority();
+        String endpoint = uri.getPath();
+        if (uri.getQuery() != null) {
+            endpoint = endpoint + "?" + uri.getQuery();
+        }
+        Duration connectTimeout = Duration.ofSeconds(Math.min(clientTimeoutSeconds, 30));
+        boolean hasEndpoint = endpoint != null && !endpoint.isBlank();
+        if (endpoint != null && endpoint.contains("/sse")) {
+            // 传统 SSE 端点（GET /sse 建立事件流）
+            HttpClientSseClientTransport.Builder builder = HttpClientSseClientTransport.builder(baseUri)
+                    .jsonMapper(jsonMapper)
+                    .connectTimeout(connectTimeout);
+            if (hasEndpoint) {
+                builder.sseEndpoint(endpoint);
+            }
+            return builder.build();
+        }
+        // Streamable HTTP 端点
+        HttpClientStreamableHttpTransport.Builder builder = HttpClientStreamableHttpTransport.builder(baseUri)
                 .jsonMapper(jsonMapper)
-                .connectTimeout(Duration.ofSeconds(Math.min(clientTimeoutSeconds, 30)));
+                .connectTimeout(connectTimeout);
+        if (hasEndpoint) {
+            builder.endpoint(endpoint);
+        }
         return builder.build();
     }
 
