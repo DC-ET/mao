@@ -191,6 +191,15 @@ public class PermissionService {
                 .count();
     }
 
+    /** 判断用户是否为管理员（拥有 ADMIN 角色）。 */
+    public boolean isAdmin(Long userId) {
+        if (userId == null) {
+            return false;
+        }
+        Role adminRole = getAdminRole();
+        return adminRole != null && userHasRole(userId, adminRole.getId());
+    }
+
     /**
      * Check if a user has a specific permission
      */

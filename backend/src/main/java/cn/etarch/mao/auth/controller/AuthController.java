@@ -109,6 +109,8 @@ public class AuthController {
         private String avatarUrl;
         /** Permission codes granted to the user via roles. */
         private List<String> permissions;
+        /** 是否为管理员角色（拥有 ADMIN 角色）。 */
+        private Boolean isAdmin;
     }
 
     @Data

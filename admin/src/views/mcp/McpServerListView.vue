@@ -33,6 +33,12 @@
           <el-empty description="暂无数据" :image-size="60" />
         </template>
         <el-table-column prop="name" label="名称" width="160" />
+        <el-table-column label="归属" width="120">
+          <template #default="{ row }">
+            <span v-if="!isUserServer(row)">全局</span>
+            <el-tag v-else size="small" type="info">{{ row.userName || '用户' }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="类型" width="90">
           <template #default="{ row }">
             <el-tag :type="row.serverType === 'STDIO' ? 'warning' : 'primary'" size="small">
@@ -55,27 +61,51 @@
         </el-table-column>
         <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button type="primary" link size="small" @click="openTest(row)">测试连接</el-button>
-            <el-button link size="small" @click="openTools(row)">查看工具</el-button>
-            <el-button
-              :type="row.status === 'ENABLED' ? 'warning' : 'success'"
-              link
-              size="small"
-              @click="toggleStatus(row)"
-            >
-              {{ row.status === 'ENABLED' ? '停用' : '启用' }}
-            </el-button>
-            <el-popconfirm
-              :title="`确认删除「${row.name}」？`"
-              confirm-button-text="删除"
-              cancel-button-text="取消"
-              @confirm="handleDelete(row)"
-            >
-              <template #reference>
-                <el-button type="danger" link size="small">删除</el-button>
-              </template>
-            </el-popconfirm>
+            <!-- 用户私有服务器仅提供治理操作（停用/启用/删除），不展示配置 -->
+            <template v-if="isUserServer(row)">
+              <el-button
+                :type="row.status === 'ENABLED' ? 'warning' : 'success'"
+                link
+                size="small"
+                @click="toggleStatus(row)"
+              >
+                {{ row.status === 'ENABLED' ? '停用' : '启用' }}
+              </el-button>
+              <el-popconfirm
+                :title="`确认删除用户「${row.userName || '未知'}」的服务器「${row.name}」？`"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm="handleDelete(row)"
+              >
+                <template #reference>
+                  <el-button type="danger" link size="small">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
+            <!-- 全局服务器提供完整管理能力 -->
+            <template v-else>
+              <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
+              <el-button type="primary" link size="small" @click="openTest(row)">测试连接</el-button>
+              <el-button link size="small" @click="openTools(row)">查看工具</el-button>
+              <el-button
+                :type="row.status === 'ENABLED' ? 'warning' : 'success'"
+                link
+                size="small"
+                @click="toggleStatus(row)"
+              >
+                {{ row.status === 'ENABLED' ? '停用' : '启用' }}
+              </el-button>
+              <el-popconfirm
+                :title="`确认删除「${row.name}」？`"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm="handleDelete(row)"
+              >
+                <template #reference>
+                  <el-button type="danger" link size="small">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -294,6 +324,11 @@ function connectionSummary(row: any) {
     return [row.command, ...args].join(' ')
   }
   return row.url || ''
+}
+
+/** 是否为用户私有服务器（userId 非 0）。 */
+function isUserServer(row: any) {
+  return row.userId != null && row.userId !== 0
 }
 
 function schemaSummary(schema: any) {

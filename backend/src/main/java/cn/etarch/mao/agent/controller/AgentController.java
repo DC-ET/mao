@@ -7,7 +7,6 @@ import cn.etarch.mao.agent.service.AgentExperienceService;
 import cn.etarch.mao.agent.service.AgentService;
 import cn.etarch.mao.common.result.Result;
 import cn.etarch.mao.harness.mcp.service.McpServerService;
-import cn.etarch.mao.permission.service.PermissionService;
 import cn.etarch.mao.user.entity.User;
 import cn.etarch.mao.user.mapper.UserMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,7 +29,6 @@ public class AgentController {
     private final AgentExperienceService experienceService;
     private final UserMapper userMapper;
     private final ObjectMapper objectMapper;
-    private final PermissionService permissionService;
     private final McpServerService mcpServerService;
 
     @GetMapping
@@ -82,17 +80,12 @@ public class AgentController {
 
     /**
      * 解析并校验 Agent 请求中的 MCP 服务器 ID 列表。
-     * 安全约束：MCP 服务器为管理员级全局配置，普通用户无权关联——
-     * 关联（写入）需要 mcp:read 权限；同时校验引用的服务器存在且已启用，
-     * 防止用户通过 Agent 接口获取或利用未授权的 MCP 服务配置。
+     * mcp:read 权限维度已移除；此处仅校验引用的服务器存在、为全局服务器且已启用，
+     * 防止 Agent 配置引用无效或私有服务器。
      */
     private List<Long> resolveMcpServerIds(Long userId, List<Long> mcpServerIds) {
         if (mcpServerIds == null || mcpServerIds.isEmpty()) {
             return null;
-        }
-        if (!permissionService.hasPermission(userId, "mcp:read")) {
-            throw new cn.etarch.mao.common.exception.BusinessException(
-                    cn.etarch.mao.common.result.ErrorCode.FORBIDDEN, "无权限关联 MCP 服务器");
         }
         return mcpServerService.validateForAgent(mcpServerIds);
     }

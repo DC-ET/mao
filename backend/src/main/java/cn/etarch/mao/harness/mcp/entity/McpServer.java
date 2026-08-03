@@ -29,6 +29,9 @@ public class McpServer {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    /** 归属用户ID：0=全局服务器（管理员维护）；>0=该用户私有服务器 */
+    private Long userId;
+
     /** 服务器唯一标识（小写字母/数字/下划线/中划线），工具名前缀来源 */
     private String name;
 
@@ -55,6 +58,10 @@ public class McpServer {
     /** Logical deletion flag: 0=normal, 1=deleted */
     @TableLogic
     private Integer deleted;
+
+    /** 归属用户名（仅管理列表展示用，非表字段） */
+    @TableField(exist = false)
+    private String userName;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

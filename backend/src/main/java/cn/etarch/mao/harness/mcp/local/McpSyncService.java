@@ -71,15 +71,16 @@ public class McpSyncService {
     /**
      * 按配置顺序加载 Agent 关联的已启用 MCP 服务器（跳过不存在 / 已停用的），
      * 并按用户级偏好过滤：用户在客户端设置页停用的服务器不加载（仅影响本人会话）。
+     * <p>
+     * 合并注入：全局服务器（Agent 关联）在前、该用户已启用的私有服务器在后；
+     * 私有服务器同样受用户偏好过滤（默认启用，停用后不注入）。
      */
     public List<McpServer> loadAgentServers(Agent agent, Long userId) {
         List<Long> ids = parseAgentServerIds(agent);
-        if (ids.isEmpty()) {
-            return List.of();
-        }
         List<Long> disabledByUser = userId != null
                 ? userMcpPreferenceService.getDisabledServerIds(userId) : List.of();
         List<McpServer> result = new ArrayList<>();
+        // 1. 全局服务器（Agent 关联，保持配置顺序）
         for (Long id : ids) {
             if (id == null) {
                 continue;
@@ -94,6 +95,21 @@ public class McpSyncService {
                 continue;
             }
             result.add(server);
+        }
+        // 2. 用户私有服务器（自动生效，按 id 升序）
+        if (userId != null) {
+            LambdaQueryWrapper<McpServer> qw = new LambdaQueryWrapper<>();
+            qw.eq(McpServer::getUserId, userId)
+                    .eq(McpServer::getStatus, McpServer.STATUS_ENABLED)
+                    .orderByAsc(McpServer::getId);
+            List<McpServer> mine = mcpServerMapper.selectList(qw);
+            for (McpServer server : mine) {
+                if (disabledByUser.contains(server.getId())) {
+                    log.debug("Skipping user MCP server id={} disabled by user {}", server.getId(), userId);
+                    continue;
+                }
+                result.add(server);
+            }
         }
         return result;
     }

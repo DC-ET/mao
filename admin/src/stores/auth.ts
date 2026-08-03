@@ -9,6 +9,7 @@ interface User {
   email: string
   avatarUrl: string
   permissions?: string[]
+  isAdmin?: boolean
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -16,6 +17,8 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
 
   const permissions = computed(() => user.value?.permissions || [])
+
+  const isAdmin = computed(() => Boolean(user.value?.isAdmin))
 
   function hasPermission(code: string): boolean {
     return permissions.value.includes(code)
@@ -51,6 +54,7 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     user,
     permissions,
+    isAdmin,
     hasPermission,
     login,
     logout,

@@ -197,10 +197,14 @@ export async function saveWeixinPreference(payload: {
 
 export interface McpServerPreferenceItem {
   id: number
+  /** 服务器来源：GLOBAL=全局服务器，USER=用户私有服务器 */
+  scope: string
   name: string
   description: string | null
   serverType: string
-  /** 用户级启用状态：true=启用（含未单独配置跟随全局），false=用户已停用 */
+  /** 服务器状态：ENABLED | DISABLED */
+  status: string
+  /** 用户级启用状态：true=启用（含未单独配置跟随全局），false=用户已停用或管理员已停用 */
   userEnabled: boolean
 }
 
@@ -213,4 +217,62 @@ export async function getMcpServerPreferences(): Promise<McpServerPreferenceItem
 /** 保存单个 MCP 服务器的用户级启用/停用偏好。 */
 export async function saveMcpServerPreference(serverId: number, enabled: boolean): Promise<void> {
   await api.put('/mcp-servers/preferences', { items: [{ serverId, enabled }] })
+}
+
+export interface McpServerConfig {
+  id: number
+  userId: number
+  name: string
+  description: string | null
+  serverType: string
+  command: string | null
+  argsJson: string | null
+  url: string | null
+  status: string
+}
+
+export interface SaveMcpServerPayload {
+  name: string
+  description?: string
+  serverType: string
+  command?: string
+  args?: string[]
+  url?: string
+  env?: Record<string, string>
+}
+
+export interface McpToolItem {
+  serverId: number
+  serverName: string
+  toolName: string
+  description: string
+}
+
+/** 获取当前用户的私有 MCP 服务器列表。 */
+export async function getMyMcpServers(): Promise<McpServerConfig[]> {
+  const { data } = await api.get('/mcp-servers/me')
+  return data
+}
+
+/** 创建用户私有 MCP 服务器。 */
+export async function createMyMcpServer(payload: SaveMcpServerPayload): Promise<McpServerConfig> {
+  const { data } = await api.post('/mcp-servers/me', payload)
+  return data
+}
+
+/** 编辑用户私有 MCP 服务器。 */
+export async function updateMyMcpServer(id: number, payload: SaveMcpServerPayload): Promise<McpServerConfig> {
+  const { data } = await api.put(`/mcp-servers/me/${id}`, payload)
+  return data
+}
+
+/** 删除用户私有 MCP 服务器。 */
+export async function deleteMyMcpServer(id: number): Promise<void> {
+  await api.delete(`/mcp-servers/me/${id}`)
+}
+
+/** 测试用户私有 MCP 服务器连接，返回服务器暴露的工具清单。 */
+export async function testMyMcpServer(id: number): Promise<McpToolItem[]> {
+  const { data } = await api.post(`/mcp-servers/me/${id}/test`)
+  return data
 }
