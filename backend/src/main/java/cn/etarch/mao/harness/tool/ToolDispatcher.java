@@ -22,6 +22,9 @@ public class ToolDispatcher {
 
     private static final String ASK_USER_QUESTIONS = "ask_user_questions";
 
+    /** MCP 工具名前缀：mcp__{serverName}__{toolName} */
+    private static final String MCP_TOOL_PREFIX = "mcp__";
+
     /**
      * 纯服务端工具 —— LOCAL 模式下也由服务端执行，不发给客户端
      */
@@ -102,6 +105,20 @@ public class ToolDispatcher {
     public String dispatch(String toolName, String arguments, String executionMode,
                            Long sessionId, Long userId, String workspace,
                            String permissionLevel, LlmModelConfig modelConfig) {
+        return dispatch(toolName, arguments, executionMode, sessionId, userId, workspace,
+                permissionLevel, modelConfig, null);
+    }
+
+    /**
+     * Execute a tool call with execution mode routing and permission level control.
+     *
+     * @param sessionTools 会话级工具集（含 MCP 适配器等未注册进全局 ToolRegistry 的工具），
+     *                     用于 CLOUD 模式下执行 MCP 工具；可传 null
+     */
+    public String dispatch(String toolName, String arguments, String executionMode,
+                           Long sessionId, Long userId, String workspace,
+                           String permissionLevel, LlmModelConfig modelConfig,
+                           List<Tool> sessionTools) {
         // ask_user_questions 始终路由到客户端，不受 executionMode 和权限影响
         if (ASK_USER_QUESTIONS.equals(toolName)) {
             return dispatchAskUserQuestions(arguments, sessionId);
@@ -133,8 +150,16 @@ public class ToolDispatcher {
             return localToolExecutor.execute(sessionId, toolName, arguments, workspace, decision.needApproval, decision.dangerReason);
         }
 
-        // CLOUD mode — route to built-in tool
+        // CLOUD mode — route to built-in tool; MCP 等会话级工具回退到 sessionTools 查找
         Tool tool = toolRegistry.getTool(toolName);
+        if (tool == null && sessionTools != null) {
+            for (Tool sessionTool : sessionTools) {
+                if (sessionTool.getName().equals(toolName)) {
+                    tool = sessionTool;
+                    break;
+                }
+            }
+        }
         if (tool != null) {
             log.debug("Routing to built-in tool: {} (session={})", toolName, sessionId);
             return tool.execute(arguments, sessionId, userId, workspace);
@@ -213,11 +238,15 @@ public class ToolDispatcher {
      */
     private ApprovalDecision shouldRequireApproval(String toolName, PermissionLevel level,
                                                    String arguments, LlmModelConfig modelConfig) {
+        // MCP 工具在 LOCAL 模式下按「写工具」对待：除 FULL 外一律审批。
+        // 不做 AI 危险评估——DangerAssessor 仅适用于 shell 命令，MCP 参数无法用同样方式判定。
+        boolean isMcpTool = toolName != null && toolName.startsWith(MCP_TOOL_PREFIX);
         return switch (level) {
-            case READ_ONLY -> new ApprovalDecision(isWriteOrShellTool(toolName), null);
-            case READ_WRITE -> new ApprovalDecision("shell".equals(toolName), null);
+            case READ_ONLY -> new ApprovalDecision(isWriteOrShellTool(toolName) || isMcpTool, null);
+            case READ_WRITE -> new ApprovalDecision("shell".equals(toolName) || isMcpTool, null);
             case SMART -> {
-                if (!"shell".equals(toolName)) yield new ApprovalDecision(false, null);
+                if (!"shell".equals(toolName) && !isMcpTool) yield new ApprovalDecision(false, null);
+                if (isMcpTool) yield new ApprovalDecision(true, "MCP 工具调用需要用户确认");
                 if (modelConfig == null) {
                     log.warn("SMART mode: no modelConfig available, defaulting to approval required");
                     yield new ApprovalDecision(true, "无法进行安全评估，默认需要审批");

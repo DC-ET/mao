@@ -921,6 +921,11 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   terminalManager.killAll()
+  // 关闭全部 MCP 连接（stdio 子进程 / HTTP 会话）
+  const sessionIds = Array.from(mcpClients.keys())
+  sessionIds.forEach((sid) => {
+    closeMcpSession(sid).catch((e) => console.warn('[mcp] quit cleanup failed:', e.message))
+  })
 })
 
 // ========== Auth token persistence (file:// localStorage is not reliable) ==========
@@ -1302,6 +1307,202 @@ ipcMain.handle('list-directory', async (event, { dirPath, workspace }) => {
   }
 })
 
+// ========== MCP (Model Context Protocol) support ==========
+// LOCAL 模式下桌面端作为 MCP 客户端代理：服务端下发 mcp_sync_required，
+// 主进程用官方 Node SDK 建立连接并上报工具清单；工具执行走 tool-execute 委托。
+
+const { Client: McpClient } = require('@modelcontextprotocol/sdk/client')
+const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js')
+const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js')
+const { getDefaultEnvironment } = require('@modelcontextprotocol/sdk/client/stdio.js')
+
+const MCP_TOOL_PREFIX = 'mcp__'
+const MCP_CALL_TIMEOUT_MS = 120000
+
+/**
+ * sessionId -> serverName -> { client, transport, tools }
+ * @type {Map<number, Map<string, {client: import('@modelcontextprotocol/sdk/client').Client, transport: any, tools: Array}>>}
+ */
+const mcpClients = new Map()
+
+function mcpServerKey(serverName) {
+  return String(serverName || '')
+}
+
+/** 解析 mcp__{serverName}__{toolName}，非法名返回 null */
+function parseMcpToolName(toolName) {
+  if (!toolName || !toolName.startsWith(MCP_TOOL_PREFIX)) return null
+  const rest = toolName.slice(MCP_TOOL_PREFIX.length)
+  const sep = rest.indexOf('__')
+  if (sep <= 0) return null
+  const serverName = rest.slice(0, sep)
+  const innerName = rest.slice(sep + 2)
+  if (!serverName || !innerName) return null
+  return { serverName, toolName: innerName }
+}
+
+async function connectMcpServer(sessionId, server) {
+  const { name, type, command, args, url, env } = server || {}
+  if (!name) throw new Error('MCP server missing name')
+
+  let transport
+  if (type === 'STDIO') {
+    if (!command) throw new Error(`MCP server "${name}": STDIO requires command`)
+    // 合并默认安全环境（PATH/HOME 等），再叠加管理员配置的环境变量
+    const mergedEnv = { ...getDefaultEnvironment() }
+    if (env && typeof env === 'object') {
+      for (const [k, v] of Object.entries(env)) {
+        if (v != null) mergedEnv[k] = String(v)
+      }
+    }
+    transport = new StdioClientTransport({
+      command,
+      args: Array.isArray(args) ? args.map(String) : [],
+      env: mergedEnv,
+      stderr: 'pipe'
+    })
+  } else if (type === 'HTTP') {
+    if (!url) throw new Error(`MCP server "${name}": HTTP requires url`)
+    transport = new StreamableHTTPClientTransport(new URL(url))
+  } else {
+    throw new Error(`MCP server "${name}": unsupported type "${type}"`)
+  }
+
+  const client = new McpClient({ name: 'mao-desktop', version: require('../package.json').version || '1.0.0' })
+  await client.connect(transport)
+  const list = await client.listTools()
+  const tools = (list.tools || []).map((t) => ({
+    name: t.name,
+    description: t.description || '',
+    schema: t.inputSchema || { type: 'object', properties: {} }
+  }))
+  return { client, transport, tools }
+}
+
+async function closeMcpSession(sessionId) {
+  const connections = mcpClients.get(Number(sessionId))
+  if (!connections) return
+  mcpClients.delete(Number(sessionId))
+  const names = Array.from(connections.keys())
+  await Promise.allSettled(names.map(async (serverName) => {
+    try {
+      const conn = connections.get(serverName)
+      if (conn?.client) {
+        await conn.client.close()
+      }
+    } catch (e) {
+      console.warn(`[mcp] close failed for ${serverName}:`, e.message)
+    }
+  }))
+  console.log(`[mcp] closed ${names.length} connection(s) for session ${sessionId}`)
+}
+
+async function syncMcpServers(sessionId, servers) {
+  const sid = Number(sessionId)
+  // 先清理旧连接，避免重复同步时泄漏
+  await closeMcpSession(sid)
+
+  const connections = new Map()
+  mcpClients.set(sid, connections)
+
+  const reports = []
+  for (const server of servers || []) {
+    const name = server?.name
+    if (!name) continue
+    try {
+      const conn = await connectMcpServer(sid, server)
+      connections.set(mcpServerKey(name), conn)
+      reports.push({ name, connected: true, tools: conn.tools, error: null })
+      console.log(`[mcp] connected server "${name}" for session ${sid}, ${conn.tools.length} tool(s)`)
+    } catch (e) {
+      console.warn(`[mcp] connect failed for "${name}" (session ${sid}):`, e.message)
+      reports.push({ name, connected: false, tools: [], error: e.message })
+    }
+  }
+  return reports
+}
+
+async function callMcpTool(sessionId, serverName, toolName, args) {
+  const sid = Number(sessionId)
+  const connections = mcpClients.get(sid)
+  const conn = connections && connections.get(mcpServerKey(serverName))
+  if (!conn?.client) {
+    throw new Error(`MCP server "${serverName}" is not connected (session ${sid}). Re-run the session to re-sync MCP servers.`)
+  }
+  const timer = setTimeout(() => {
+    console.warn(`[mcp] call ${serverName}.${toolName} timed out after ${MCP_CALL_TIMEOUT_MS}ms`)
+  }, MCP_CALL_TIMEOUT_MS)
+  try {
+    const result = await conn.client.callTool({ name: toolName, arguments: args }, undefined, {
+      timeout: MCP_CALL_TIMEOUT_MS
+    })
+    if (result?.isError) {
+      throw new Error(formatCallToolResult(result) || `MCP tool ${serverName}.${toolName} returned an error`)
+    }
+    // 传入完整 result，保留顶层 structuredContent（部分服务器主要或仅返回该字段）
+    return formatCallToolResult(result)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * 将 MCP CallToolResult 转为文本（与后端 Java McpClientManager.formatResult 语义一致）：
+ * - 顶层 structuredContent 非空时优先序列化输出（结构化数据更利于模型理解）；
+ * - 否则拼接 content 中的文本/图片/资源内容。
+ */
+function formatCallToolResult(result) {
+  if (!result) return ''
+  if (result.structuredContent != null) {
+    try { return JSON.stringify(result.structuredContent, null, 2) } catch { /* fallthrough */ }
+  }
+  return formatMcpContent(result.content)
+}
+
+function formatMcpContent(content) {
+  if (content == null) return ''
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) {
+    try { return JSON.stringify(content) } catch { return String(content) }
+  }
+  const parts = []
+  for (const item of content) {
+    if (!item) continue
+    if (item.type === 'text' && typeof item.text === 'string') {
+      parts.push(item.text)
+    } else if (item.type === 'image' && item.data) {
+      parts.push(`[image data: ${item.mimeType || 'unknown'}, ${item.data.length} chars base64]`)
+    } else if (item.type === 'resource' && item.resource) {
+      parts.push(`[resource: ${item.resource.uri || ''}]\n${item.resource.text || ''}`)
+    } else if (item.structuredContent != null) {
+      try { parts.push(JSON.stringify(item.structuredContent, null, 2)) } catch { /* ignore */ }
+    } else {
+      try { parts.push(JSON.stringify(item)) } catch { /* ignore */ }
+    }
+  }
+  return parts.filter(Boolean).join('\n')
+}
+
+ipcMain.handle('mcp-sync', async (event, { sessionId, servers }) => {
+  if (!sessionId) return { success: false, error: 'No sessionId provided for mcp-sync.' }
+  try {
+    const reports = await syncMcpServers(sessionId, servers || [])
+    return { success: true, reports }
+  } catch (e) {
+    console.error('[mcp] mcp-sync failed:', e)
+    return { success: false, error: e.message, reports: [] }
+  }
+})
+
+ipcMain.handle('mcp-close', async (event, { sessionId }) => {
+  try {
+    await closeMcpSession(Number(sessionId))
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
 // ========== Tool execution via Streaming WS ==========
 
 async function executeToolByName(toolName, parsedArgs, sessionId, workspace, needApproval, dangerReason) {
@@ -1318,8 +1519,31 @@ async function executeToolByName(toolName, parsedArgs, sessionId, workspace, nee
       return await handleLocalGlobSearch(parsedArgs, workspace, sessionId)
     case 'grep_search':
       return await handleLocalGrepSearch(parsedArgs, workspace, sessionId)
-    default:
+    default: {
+      const mcp = parseMcpToolName(toolName)
+      if (mcp) {
+        return await handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApproval, dangerReason)
+      }
       return { error: `Unknown tool: ${toolName}` }
+    }
+  }
+}
+
+async function handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApproval, dangerReason) {
+  // 与 shell/write_file 等一致：needApproval 时先征求用户审批再执行
+  if (needApproval) {
+    const description = `调用 MCP 工具 ${mcp.serverName}.${mcp.toolName}`
+    const approved = await requestToolApproval(`mcp:${mcp.serverName}`, description, sessionId, dangerReason)
+    if (!approved) {
+      return { error: 'User denied MCP tool execution.' }
+    }
+  }
+  try {
+    const result = await callMcpTool(sessionId, mcp.serverName, mcp.toolName, parsedArgs)
+    return { result }
+  } catch (e) {
+    console.error(`[mcp] tool ${mcp.serverName}.${mcp.toolName} execution failed:`, e)
+    return { error: e.message || 'MCP tool execution failed' }
   }
 }
 

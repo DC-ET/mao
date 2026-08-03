@@ -194,3 +194,23 @@ export async function saveWeixinPreference(payload: {
   const { data } = await api.put('/user-preferences/weixin', payload)
   return data
 }
+
+export interface McpServerPreferenceItem {
+  id: number
+  name: string
+  description: string | null
+  serverType: string
+  /** 用户级启用状态：true=启用（含未单独配置跟随全局），false=用户已停用 */
+  userEnabled: boolean
+}
+
+/** 获取当前用户可用的 MCP 服务器及其用户级启用状态（客户端设置页）。 */
+export async function getMcpServerPreferences(): Promise<McpServerPreferenceItem[]> {
+  const { data } = await api.get('/mcp-servers/preferences')
+  return data
+}
+
+/** 保存单个 MCP 服务器的用户级启用/停用偏好。 */
+export async function saveMcpServerPreference(serverId: number, enabled: boolean): Promise<void> {
+  await api.put('/mcp-servers/preferences', { items: [{ serverId, enabled }] })
+}

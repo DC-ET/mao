@@ -41,21 +41,26 @@ class ShellRuntimeTest {
         ReflectionTestUtils.setField(outputManager, "maxPreviewLines", 2);
         ReflectionTestUtils.setField(outputManager, "maxPreviewChars", 20);
         Path outputFile = tempDir.resolve("out").resolve("cmd.out");
+        Path sessionLog = tempDir.resolve("out").resolve("session.out");
 
         OutputManager.OutputResult result = outputManager.readUntilMarker(
                 new BufferedReader(new StringReader("one\ntwo\nthree\n__DONE__\nafter\n")),
                 "__DONE__",
                 Duration.ofSeconds(1),
-                outputFile);
+                outputFile, sessionLog);
 
         assertThat(result.markerFound()).isTrue();
-        assertThat(result.totalLines()).isEqualTo(3);
-        assertThat(result.preview()).contains("two").contains("three").doesNotContain("one");
-        assertThat(Files.readString(outputFile)).contains("one").contains("three");
-        assertThat(outputManager.formatToolResult(0, "sh-1", 12, result, tempDir.toString()))
+        // marker 之后的残留输出 "after" 不再丢失
+        assertThat(result.totalLines()).isEqualTo(4);
+        assertThat(result.preview()).contains("three").contains("after").doesNotContain("one");
+        // 切片文件与会话累积日志均包含完整输出（marker 行本身排除）
+        assertThat(Files.readString(outputFile)).contains("one").contains("three").contains("after");
+        assertThat(Files.readString(sessionLog)).contains("one").contains("three").contains("after");
+        assertThat(outputManager.formatToolResult(0, "sh-1", 12, result, tempDir.toString(), sessionLog))
                 .contains("exit_code: 0")
                 .contains("session_id: sh-1")
-                .contains("current_workdir");
+                .contains("current_workdir")
+                .contains("session_log: " + sessionLog);
     }
 
     @Test
@@ -68,7 +73,7 @@ class ShellRuntimeTest {
                 new BufferedReader(new StringReader("unterminated")),
                 "__MISSING__",
                 Duration.ofMillis(1),
-                null);
+                null, null);
         assertThat(timeout.markerFound()).isFalse();
         assertThat(timeout.truncated()).isTrue();
 
@@ -78,7 +83,7 @@ class ShellRuntimeTest {
                 throw new java.io.IOException("boom");
             }
         };
-        assertThat(outputManager.readUntilMarker(broken, "x", Duration.ofSeconds(1), null).preview())
+        assertThat(outputManager.readUntilMarker(broken, "x", Duration.ofSeconds(1), null, null).preview())
                 .contains("Error reading output");
     }
 
@@ -166,12 +171,13 @@ class ShellRuntimeTest {
         ReflectionTestUtils.setField(outputManager, "maxPreviewChars", 1000);
         GitCredentialService gitCredentialService = mock(GitCredentialService.class);
         when(gitCredentialService.getTokenMapByUser(7L)).thenReturn(Map.of());
+        BackgroundTaskManager backgroundTaskManager = new BackgroundTaskManager();
         ShellSessionTool tool = new ShellSessionTool(
                 objectMapper,
                 new PathSandbox(tempDir.toString()),
                 manager,
                 outputManager,
-                new BackgroundTaskManager(),
+                backgroundTaskManager,
                 gitCredentialService,
                 mockJwtService(),
                 mockUserMapper(7L, "tester"));
@@ -191,12 +197,13 @@ class ShellRuntimeTest {
         ReflectionTestUtils.setField(outputManager, "maxPreviewChars", 1000);
         GitCredentialService gitCredentialService = mock(GitCredentialService.class);
         when(gitCredentialService.getTokenMapByUser(7L)).thenReturn(Map.of());
+        BackgroundTaskManager backgroundTaskManager = new BackgroundTaskManager();
         ShellSessionTool tool = new ShellSessionTool(
                 objectMapper,
                 new PathSandbox(tempDir.toString()),
                 manager,
                 outputManager,
-                new BackgroundTaskManager(),
+                backgroundTaskManager,
                 gitCredentialService,
                 mockJwtService(),
                 mockUserMapper(7L, "tester"));
@@ -209,7 +216,7 @@ class ShellRuntimeTest {
         String exec = tool.execute("""
                 {"command":"echo hello","session_id":"tool-sh","yield_time_ms":2000,"keep_session":true}
                 """, 21L, 7L, tempDir.toString());
-        assertThat(exec).contains("exit_code: 0").contains("hello");
+        assertThat(exec).contains("exit_code: 0").contains("hello").contains("session_log: ");
 
         // keep_session=true 保留会话，list 应能看到 tool-sh
         JsonNode list = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
@@ -219,6 +226,11 @@ class ShellRuntimeTest {
                 {"action":"write_stdin","session_id":"tool-sh","input":"echo stdin","yield_time_ms":2000}
                 """, 21L, 7L, tempDir.toString()));
         assertThat(stdin.get("output").asText()).contains("stdin");
+        // write_stdin 应返回 completed 信号，告知 Agent 命令是否已执行完
+        assertThat(stdin.get("completed").asBoolean()).isTrue();
+        // 回查能力：返回会话累积日志路径，且日志文件真实包含本次输出
+        assertThat(stdin.get("session_log").asText()).isNotBlank();
+        assertThat(Files.readString(Path.of(stdin.get("session_log").asText()))).contains("stdin");
 
         JsonNode close = objectMapper.readTree(tool.execute("""
                 {"action":"close","session_id":"tool-sh"}
@@ -251,18 +263,13 @@ class ShellRuntimeTest {
                 {"command":"echo async","async":true}
                 """, 21L, 7L, tempDir.toString()));
         assertThat(async.get("async").asBoolean()).isTrue();
-        assertThat(async.get("task_id").asText()).isNotBlank();
+        String taskId = async.get("task_id").asText();
+        assertThat(taskId).isNotBlank();
 
-        // async 任务在后台线程执行，其自动创建的会话执行完毕后会自动关闭；
-        // 轮询等待后台会话收尾，避免留下未清理的 bash 进程
-        long deadline = System.currentTimeMillis() + 15000;
-        while (System.currentTimeMillis() < deadline) {
-            JsonNode active = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
-            if (active.get("count").asInt() == 0) {
-                break;
-            }
-            Thread.sleep(200);
-        }
+        // 阻塞等待后台任务真正完成（doExec 返回前会关闭会话并销毁进程），
+        // 避免 @TempDir 清理时会话文件/进程仍被占用导致删除失败
+        String asyncResult = backgroundTaskManager.getResult(taskId, 10);
+        assertThat(asyncResult).contains("async");
     }
 
     @Test

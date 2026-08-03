@@ -63,6 +63,9 @@ public class HarnessService {
     private final ContextManager contextManager;
     private final CompactionConfig compactionConfig;
     private final EnvironmentInfoProvider environmentInfoProvider;
+    private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
+    private final cn.etarch.mao.harness.mcp.local.McpSyncService mcpSyncService;
+    private final cn.etarch.mao.permission.service.PermissionService permissionService;
 
     public String prepareMessage(Long sessionId, Object userContent) {
         return java.util.UUID.randomUUID().toString();
@@ -315,6 +318,51 @@ public class HarnessService {
         }
         context.setTools(sessionTools);
 
+        // 6.5 MCP 工具注入（按 Agent 关联的 MCP 服务器，双模式）
+        // 防御：mcpSyncService 为 null（非 Spring 装配的测试/入口）时整体跳过 MCP 注入，
+        // 避免 NPE 被 catch 后以「加载失败」警告形式污染会话提示词。
+        java.util.List<String> mcpWarnings = new java.util.ArrayList<>();
+        boolean userHasMcpPermission = permissionService != null
+                && session.getUserId() != null
+                && permissionService.hasPermission(session.getUserId(), "mcp:read");
+        if (mcpSyncService != null) {
+            if (!userHasMcpPermission) {
+                // 安全边界：无 mcp:read 权限的用户不注入 MCP 工具（CLOUD/LOCAL 一致拦截），
+                // 避免普通用户利用管理员配置的 Agent 调用 MCP 服务。
+                log.debug("Skip MCP injection for session {}: userId={} lacks mcp:read permission",
+                        sessionId, session.getUserId());
+            } else {
+            try {
+                java.util.List<cn.etarch.mao.harness.mcp.entity.McpServer> mcpServers =
+                        mcpSyncService.loadAgentServers(agent, session.getUserId());
+                if (!mcpServers.isEmpty()) {
+                    if ("LOCAL".equalsIgnoreCase(executionMode)) {
+                        // LOCAL 模式：使用桌面端已上报的工具清单（StreamingWsHandler 已同步等待完成）
+                        java.util.List<cn.etarch.mao.harness.mcp.model.McpToolRef> localTools =
+                                mcpSyncService.getLocalSessionTools(sessionId);
+                        if (!localTools.isEmpty()) {
+                            localTools.forEach(ref -> sessionTools.add(
+                                    new cn.etarch.mao.harness.mcp.McpToolAdapter(ref, mcpClientManager)));
+                        }
+                    } else if (mcpClientManager != null) {
+                        // CLOUD 模式：服务端直连，逐台连接拉取清单；单台失败降级
+                        cn.etarch.mao.harness.mcp.local.McpSyncService.CloudConnectResult cloudResult =
+                                mcpSyncService.connectForCloud(sessionId, mcpServers, mcpClientManager);
+                        cloudResult.tools().forEach(ref -> sessionTools.add(
+                                new cn.etarch.mao.harness.mcp.McpToolAdapter(ref, mcpClientManager)));
+                        mcpWarnings.addAll(cloudResult.warnings());
+                    } else {
+                        log.warn("MCP client manager unavailable for session {}, skipping CLOUD MCP injection", sessionId);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("MCP tool injection failed for session {}: {}", sessionId, e.getMessage());
+                mcpWarnings.add("MCP 工具加载失败：" + e.getMessage());
+            }
+            }
+        }
+        context.setTools(sessionTools);
+
         // 7. Load available Skill names for this agent
         List<String> agentSkillNames = null;
         if (agent.getSkillNames() != null && !agent.getSkillNames().isEmpty()) {
@@ -380,6 +428,12 @@ public class HarnessService {
             });
         }
         context.setAvailableSkillDocs(skillDocMap);
+
+        // MCP 连接降级提示（仅当存在失败服务器时；messages 每轮由 applyHistory 重置，不会累积）
+        if (!mcpWarnings.isEmpty()) {
+            context.addSystemMessage("⚠ " + String.join("；", mcpWarnings)
+                    + "。相关 MCP 工具不可用，请勿调用；如需恢复请检查服务器配置后新开会话。");
+        }
 
         return context;
     }

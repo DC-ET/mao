@@ -55,6 +55,14 @@ app:
   # WebSocket streaming
   ws:
     outbound-queue-capacity: 10000
+  # MCP（Model Context Protocol）
+  mcp:
+    # MCP 服务器环境变量加密密钥（生产必设，通过环境变量注入）
+    secret-key: ${APP_MCP_SECRET:mao-mcp-default-secret-change-me}
+    # CLOUD 模式单次工具调用超时（秒）
+    client-timeout-seconds: ${APP_MCP_CLIENT_TIMEOUT_SECONDS:120}
+    # LOCAL 模式等待桌面端工具上报超时（秒）
+    sync-timeout-seconds: ${APP_MCP_SYNC_TIMEOUT_SECONDS:60}
   # Agent Harness
   harness:
     workspace-root: ${WORKSPACE_ROOT:${MAO_ROOT_DIR}/data/workspace}

@@ -45,7 +45,15 @@ public class ToolResultSummarizer {
 
         if ("write_stdin".equals(action)) {
             String input = extractJsonString(arguments, "input");
-            return "写入 stdin" + (input != null ? ": " + truncate(input, 30) : "");
+            StringBuilder label = new StringBuilder("写入 stdin");
+            if (input != null) {
+                label.append(": ").append(truncate(input, 30));
+            }
+            JsonNode node = parseJson(result);
+            if (node != null && node.has("completed") && !node.get("completed").asBoolean()) {
+                label.append(" (未完成/超时)");
+            }
+            return label.toString();
         }
         if ("close".equals(action)) return "关闭 Shell 会话";
         if ("list".equals(action)) return "列出 Shell 会话";

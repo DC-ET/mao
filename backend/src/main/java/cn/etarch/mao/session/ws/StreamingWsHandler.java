@@ -29,6 +29,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -63,7 +64,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final SkillSyncService skillSyncService;
     private final LocalSkillRegistry localSkillRegistry;
     private final LocalAgentsMdRegistry localAgentsMdRegistry;
+    private final cn.etarch.mao.harness.mcp.local.McpSyncService mcpSyncService;
+    private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
+    private final cn.etarch.mao.permission.service.PermissionService permissionService;
     private final AgentMapper agentMapper;
+    private final long mcpSyncTimeoutSeconds;
     private final LlmModelMapper llmModelMapper;
     private final JwtService jwtService;
     private final ExecutorService agentExecutor;
@@ -82,6 +87,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
     /** sessionId → pending skill sync future (waiting for client confirmation) */
     private final ConcurrentHashMap<Long, CompletableFuture<Void>> pendingSkillSyncs = new ConcurrentHashMap<>();
+
+    /** sessionId → pending MCP tools report future（含轮次标识 syncId，拒绝迟到报告） */
+    private final ConcurrentHashMap<Long, PendingMcpSync> pendingMcpSyncs = new ConcurrentHashMap<>();
+
+    /** 一次 MCP 同步等待：syncId 用于匹配 mcp_tools_report 回传的轮次标识。 */
+    private record PendingMcpSync(String syncId, CompletableFuture<Void> future) {}
 
     /** sessionIds currently in auto-consume flow (skip user_message_saved) */
     private final Set<Long> autoConsumingSessionIds = ConcurrentHashMap.newKeySet();
@@ -113,6 +124,10 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         askUserQuestionsRegistry.failAllForSession(sessionId);
         localSkillRegistry.clear(sessionId);
         localAgentsMdRegistry.clear(sessionId);
+        // 清理 LOCAL 模式 MCP 工具清单缓存（CLOUD 模式连接由 AgentLoop finally 关闭）
+        mcpSyncService.clearSession(sessionId);
+        // 兜底关闭会话级 MCP 连接（幂等，AgentLoop finally 已执行时无操作）
+        mcpClientManager.closeSession(sessionId);
     }
 
     private boolean isSessionActive(String phase) {
@@ -160,6 +175,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         CompletableFuture<Void> skillSync = pendingSkillSyncs.remove(sessionId);
         if (skillSync != null && !skillSync.isDone()) {
             skillSync.completeExceptionally(new CancellationException("Session aborted"));
+        }
+
+        PendingMcpSync mcpSync = pendingMcpSyncs.remove(sessionId);
+        if (mcpSync != null && !mcpSync.future().isDone()) {
+            mcpSync.future().completeExceptionally(new CancellationException("Session aborted"));
         }
 
         Future<?> future = runningTasks.get(sessionId);
@@ -243,10 +263,14 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                SkillSyncService skillSyncService,
                                LocalSkillRegistry localSkillRegistry,
                                LocalAgentsMdRegistry localAgentsMdRegistry,
+                               cn.etarch.mao.harness.mcp.local.McpSyncService mcpSyncService,
+                               cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager,
+                               cn.etarch.mao.permission.service.PermissionService permissionService,
                                AgentMapper agentMapper,
                                LlmModelMapper llmModelMapper,
                                JwtService jwtService,
-                               @Qualifier("agentExecutor") ExecutorService agentExecutor) {
+                               @Qualifier("agentExecutor") ExecutorService agentExecutor,
+                               @Value("${app.mcp.sync-timeout-seconds:60}") long mcpSyncTimeoutSeconds) {
         this.registry = registry;
         this.harnessService = harnessService;
         this.sessionService = sessionService;
@@ -262,7 +286,11 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.skillSyncService = skillSyncService;
         this.localSkillRegistry = localSkillRegistry;
         this.localAgentsMdRegistry = localAgentsMdRegistry;
+        this.mcpSyncService = mcpSyncService;
+        this.mcpClientManager = mcpClientManager;
+        this.permissionService = permissionService;
         this.agentMapper = agentMapper;
+        this.mcpSyncTimeoutSeconds = mcpSyncTimeoutSeconds;
         this.llmModelMapper = llmModelMapper;
         this.jwtService = jwtService;
         this.agentExecutor = agentExecutor;
@@ -311,6 +339,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             case "delete_queue_message" -> handleDeleteQueueMessage(userId, root);
             case "reorder_queue_message" -> handleReorderQueueMessage(userId, root);
             case "skill_sync_done" -> handleSkillSyncDone(userId, root);
+            case "mcp_tools_report" -> handleMcpToolsReport(userId, root);
             case "tool_result" -> handleToolResult(userId, root);
             case "tool_error" -> handleToolError(userId, root);
             case "ask_user_questions_result" -> handleAskUserQuestionsResult(userId, root);
@@ -502,6 +531,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                     Map.of("message", "Skill sync failed or timed out")));
                             return;
                         }
+                        // LOCAL 模式 MCP 工具清单下发与等待上报（失败降级，不阻塞会话）
+                        syncMcpServersToClient(userId, sessionId, session, agent);
                     }
                 }
 
@@ -793,6 +824,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                     Map.of("message", "Skill sync failed or timed out")));
                             return;
                         }
+                        // LOCAL 模式 MCP 工具清单下发与等待上报（失败降级，不阻塞会话）
+                        syncMcpServersToClient(userId, sessionId, session, agent);
                     }
                 }
 
@@ -1023,6 +1056,16 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 // 通过标准事件通知执行状态（sessionId = sideSessionId，前端需订阅方可见）
                 registry.send(userId, WsEvent.of("session_status", sideSessionId,
                         Map.of("phase", "RUNNING", "executionId", sideExecutionId)));
+
+                // LOCAL 模式：Side Task 使用独立的子会话（MCP 工具缓存按 sessionId 隔离），
+                // 首条消息前必须同步该子会话的 MCP 工具清单，否则模型无法发现/调用 MCP 工具。
+                // 与主消息路径一致：同步失败降级（不阻塞会话），仅该会话无 MCP 工具可用。
+                if ("LOCAL".equals(sideSession.getExecutionMode())) {
+                    Agent sideAgent = agentMapper.selectById(sideSession.getAgentId());
+                    if (sideAgent != null) {
+                        syncMcpServersToClient(userId, sideSessionId, sideSession, sideAgent);
+                    }
+                }
 
                 WsStreamingEventListener listener = new WsStreamingEventListener(
                         registry, activityService, activityHeartbeat, sessionTodoMapper, sessionService,
@@ -1395,6 +1438,125 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             }
         } else {
             log.warn("No pending skill sync future for session={}", sessionId);
+        }
+    }
+
+    /**
+     * LOCAL 模式：下发 Agent 关联的 MCP 服务器配置，并阻塞等待桌面端上报工具清单。
+     * 失败降级：不阻塞会话，仅记日志；该会话的 MCP 工具不会被注入（buildContext 读到空清单）。
+     */
+    private void syncMcpServersToClient(Long userId, Long sessionId, Session session, Agent agent) {
+        try {
+            // 安全边界：MCP 服务器为管理员级全局配置，仅授予 mcp:read 的用户
+            // 才能获得工具清单与环境变量下发。普通用户即使使用管理员创建的 Agent
+            // 也无法取得服务器凭据（CLOUD 模式由 buildContext 同样拦截）。
+            if (!permissionService.hasPermission(userId, "mcp:read")) {
+                log.info("Skip MCP sync for session {}: userId={} lacks mcp:read permission", sessionId, userId);
+                mcpSyncService.clearSession(sessionId);
+                return;
+            }
+            var servers = mcpSyncService.loadAgentServers(agent, userId);
+            if (servers.isEmpty()) {
+                mcpSyncService.clearSession(sessionId);
+                return;
+            }
+            if (!registry.hasLocalClientConnection(userId)) {
+                log.warn("Skip MCP sync for session {}: no Electron client connected", sessionId);
+                mcpSyncService.clearSession(sessionId);
+                return;
+            }
+
+            Map<String, Object> payload = mcpSyncService.buildSyncPayload(servers);
+            // 每次同步生成唯一轮次标识，随下发携带；回传时匹配，拒绝迟到报告
+            String syncId = UUID.randomUUID().toString();
+            payload.put("syncId", syncId);
+            CompletableFuture<Void> syncFuture = new CompletableFuture<>();
+            pendingMcpSyncs.put(sessionId, new PendingMcpSync(syncId, syncFuture));
+            registry.sendToLocalClients(userId, WsEvent.of("mcp_sync_required", sessionId, payload));
+            log.info("Sent mcp_sync_required to userId={}, sessionId={}, syncId={}, servers={}",
+                    userId, sessionId, syncId, servers.stream().map(s -> s.getName()).toList());
+
+            long timeout = mcpSyncTimeoutSeconds;
+            syncFuture.get(timeout, TimeUnit.SECONDS);
+            log.info("MCP tools report received for session {}", sessionId);
+        } catch (Exception e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            log.warn("MCP sync failed for session {}: {}", sessionId, cause.getMessage());
+            mcpSyncService.clearSession(sessionId);
+        } finally {
+            pendingMcpSyncs.remove(sessionId);
+        }
+    }
+
+    /**
+     * 接收桌面端 mcp_tools_report：解析各服务器上报的工具清单，
+     * 合并 connected=true 的服务器写入 McpToolsRegistry，并唤醒等待中的同步。
+     */
+    private void handleMcpToolsReport(Long userId, JsonNode root) {
+        Long sessionId = getLong(root, "sessionId");
+        if (sessionId == null) return;
+        if (requireOwnedSession(userId, sessionId) == null) return;
+
+        // 轮次校验：只接受与当前等待同步匹配的 syncId，拒绝上一轮超时后的迟到报告
+        PendingMcpSync pending = pendingMcpSyncs.get(sessionId);
+        String reportSyncId = root.has("syncId") && !root.get("syncId").isNull()
+                ? root.get("syncId").asText() : null;
+        if (pending == null) {
+            log.warn("No pending MCP sync future for session={}, ignoring report", sessionId);
+            return;
+        }
+        if (reportSyncId == null || !reportSyncId.equals(pending.syncId())) {
+            log.warn("MCP tools report syncId mismatch for session {}: expected={}, got={}, ignoring",
+                    sessionId, pending.syncId(), reportSyncId);
+            return;
+        }
+
+        List<cn.etarch.mao.harness.mcp.model.McpToolRef> tools = new ArrayList<>();
+        JsonNode servers = root.get("servers");
+        if (servers != null && servers.isArray()) {
+            for (JsonNode serverNode : servers) {
+                boolean connected = !serverNode.has("connected") || serverNode.get("connected").asBoolean();
+                String name = serverNode.has("name") ? serverNode.get("name").asText() : null;
+                if (!connected || name == null || name.isBlank()) {
+                    String error = serverNode.has("error") && !serverNode.get("error").isNull()
+                            ? serverNode.get("error").asText() : "unknown error";
+                    log.warn("MCP server {} unavailable for session {}: {}", name, sessionId, error);
+                    continue;
+                }
+                Long serverId = mcpSyncService.resolveServerIdByName(name);
+                JsonNode toolArray = serverNode.get("tools");
+                if (toolArray == null || !toolArray.isArray()) {
+                    continue;
+                }
+                for (JsonNode toolNode : toolArray) {
+                    String toolName = toolNode.has("name") ? toolNode.get("name").asText() : null;
+                    if (toolName == null || toolName.isBlank()) {
+                        continue;
+                    }
+                    String description = toolNode.has("description") && !toolNode.get("description").isNull()
+                            ? toolNode.get("description").asText() : "";
+                    Map<String, Object> schema = null;
+                    if (toolNode.has("schema") && !toolNode.get("schema").isNull()) {
+                        try {
+                            schema = objectMapper.convertValue(toolNode.get("schema"),
+                                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                        } catch (Exception e) {
+                            log.warn("Failed to parse MCP tool schema for {}.{}: {}", name, toolName, e.getMessage());
+                        }
+                    }
+                    tools.add(new cn.etarch.mao.harness.mcp.model.McpToolRef(
+                            serverId, name, toolName, description,
+                            schema != null ? schema : Map.of()));
+                }
+            }
+        }
+        mcpSyncService.recordReport(sessionId, tools);
+        log.info("Received mcp_tools_report from userId={}, sessionId={}, syncId={}, tools={}",
+                userId, sessionId, reportSyncId, tools.size());
+
+        PendingMcpSync current = pendingMcpSyncs.get(sessionId);
+        if (current != null && current.syncId().equals(reportSyncId)) {
+            current.future().complete(null);
         }
     }
 

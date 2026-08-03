@@ -26,6 +26,10 @@ public class Agent {
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String skillNames;
 
+    /** 该 Agent 启用的 MCP 服务器 ID 列表（JSON 数组），为空表示不启用 MCP */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String mcpServerIds;
+
     /** 是否默认 Agent：0=否 1=是 */
     private Integer isDefault;
 

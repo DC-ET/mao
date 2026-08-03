@@ -47,16 +47,18 @@ class AgentServiceTest {
                 AgentExperienceService.ExperienceInput.of(null, "tip", 0, true));
         Agent created = service.createAgent(
                 7L, "coder", "desc", "prompt",
-                List.of("java", "spring"), List.of("skill-a"), experiences, 1);
+                List.of("java", "spring"), List.of("skill-a"),
+                List.of(10L, 20L), experiences, 1);
         assertThat(created.getCreatorId()).isEqualTo(7L);
         assertThat(created.getSkillNames()).contains("skill-a");
+        assertThat(created.getMcpServerIds()).contains("10");
         assertThat(created.getIsDefault()).isEqualTo(1);
         verify(agentMapper).insert(created);
         verify(tagMapper, org.mockito.Mockito.times(2)).insert(any(AgentTag.class));
         verify(experienceService).syncExperiences(eq(created.getId()), eq(experiences));
 
         Agent updated = service.updateAgent(
-                1L, "new", null, "new prompt", List.of(), List.of("backend"), experiences, 0);
+                1L, "new", null, "new prompt", List.of(), List.of(), List.of("backend"), experiences, 0);
         assertThat(updated.getName()).isEqualTo("new");
         assertThat(updated.getSkillNames()).isNull();
         assertThat(updated.getIsDefault()).isEqualTo(0);

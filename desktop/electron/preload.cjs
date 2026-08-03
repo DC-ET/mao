@@ -78,6 +78,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('skill-sync-complete')
   },
 
+  // MCP — renderer triggers, main process connects & lists tools
+  mcpSync: (sessionId, servers) =>
+    ipcRenderer.invoke('mcp-sync', { sessionId, servers }),
+  mcpClose: (sessionId) =>
+    ipcRenderer.invoke('mcp-close', { sessionId }),
+
   // Local skills in ~/.agents/skills
   listLocalSkills: () => ipcRenderer.invoke('list-local-skills'),
   getLocalSkillDetail: (folderName) => ipcRenderer.invoke('get-local-skill-detail', { folderName }),

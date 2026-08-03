@@ -45,6 +45,7 @@ public class AgentLoop {
     private final ShellSessionManager shellSessionManager;
     private final SessionActivityHeartbeat activityHeartbeat;
     private final SessionService sessionService;
+    private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
     private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
 
     /** Per-session cancel flags: set to true to request cancellation */
@@ -369,9 +370,11 @@ public class AgentLoop {
             CompactionConfig loopConfig = context.getCompactionConfig();
             if (loopConfig != null && loopConfig.isLoopEnabled()) {
                 try {
+                    int nextRequestTokens = contextManager.estimateRequestTokens(
+                            promptEngine.buildRequest(context));
                     var loopResult = contextManager.compactLoop(
                             context.getMessages(), context.getModelConfig(), loopConfig,
-                            context.getWorkingSummary(), listener);
+                            context.getWorkingSummary(), listener, nextRequestTokens);
                     if (loopResult != null) {
                         context.getMessages().clear();
                         context.getMessages().addAll(loopResult.compactedMessages());
@@ -392,6 +395,8 @@ public class AgentLoop {
                 cancelFlags.remove(sessionId);
                 // 清理该对话的所有 Shell 会话
                 shellSessionManager.closeByConversation(sessionId);
+                // 关闭该会话的 MCP 客户端连接（终止 stdio 子进程 / 释放 HTTP 连接）
+                mcpClientManager.closeSession(sessionId);
             }
         }
     }
@@ -551,7 +556,8 @@ public class AgentLoop {
         try {
             return toolDispatcher.dispatch(toolName, arguments,
                     context.getExecutionMode(), context.getSessionId(), context.getUserId(),
-                    context.getWorkspace(), context.getPermissionLevel(), context.getModelConfig());
+                    context.getWorkspace(), context.getPermissionLevel(), context.getModelConfig(),
+                    context.getTools());
         } catch (Throwable e) {
             log.error("[DIAG] dispatchTool threw for tool={} session={}", toolName, context.getSessionId(), e);
             return "Tool execution failed: " + e.getMessage();

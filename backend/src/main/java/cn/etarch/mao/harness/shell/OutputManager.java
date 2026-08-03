@@ -30,14 +30,18 @@ public class OutputManager {
     /**
      * 逐行读取输出直到遇到 marker 行或超时。
      * marker 行本身不包含在返回的输出中。
+     * marker 之后的残留输出（异步/后台任务输出）不会丢弃：落入当前缓冲的部分会一并返回，
+     * 并追加到会话累积日志（sessionLogFile）。
      *
-     * @param reader    输出流读取器
-     * @param marker    结束标记（如 __CMD_DONE_xxx__）
-     * @param timeout   最大等待时间
-     * @param outputFile 输出文件路径（可为 null，不落盘）
+     * @param reader         输出流读取器
+     * @param marker         结束标记（如 __CMD_DONE_xxx__）
+     * @param timeout        最大等待时间
+     * @param outputFile     本次调用切片输出文件（可为 null，不落盘）
+     * @param sessionLogFile 会话累积日志文件（可为 null；非 null 时全量输出追加写入，支持事后回查）
      * @return OutputResult
      */
-    public OutputResult readUntilMarker(BufferedReader reader, String marker, Duration timeout, Path outputFile) {
+    public OutputResult readUntilMarker(BufferedReader reader, String marker, Duration timeout,
+                                        Path outputFile, Path sessionLogFile) {
         List<String> allLines = new StringBuilder() != null ? new ArrayList<>() : new ArrayList<>();
         StringBuilder fullOutput = new StringBuilder();
         boolean markerFound = false;
@@ -94,7 +98,8 @@ public class OutputManager {
                             markerFound = true;
                             log.info("readUntilMarker marker found: readCalls={}, totalReadChars={}, linesCollected={}, elapsedMs={}",
                                     readCalls, totalReadChars, allLines.size(), System.currentTimeMillis() - startTime);
-                            break;
+                            // 不 break：继续处理当前缓冲中 marker 之后的残留字符（异步输出），避免数据被丢弃
+                            continue;
                         }
 
                         allLines.add(line);
@@ -107,8 +112,8 @@ public class OutputManager {
                 if (markerFound) break;
             }
 
-            // 处理最后没有换行的残留内容
-            if (!markerFound && lineBuffer.length() > 0) {
+            // 处理最后没有换行的残留内容（无论是否命中 marker，marker 之后的半行也不应丢失）
+            if (lineBuffer.length() > 0) {
                 String remaining = lineBuffer.toString();
                 if (!remaining.contains(marker)) {
                     allLines.add(remaining);
@@ -116,9 +121,13 @@ public class OutputManager {
                 }
             }
 
-            // 落盘
+            // 落盘：本次调用切片文件
             if (outputFile != null && !allLines.isEmpty()) {
                 writeToFile(outputFile, fullOutput.toString());
+            }
+            // 落盘：会话累积日志（每次调用追加，供事后回查完整输出）
+            if (sessionLogFile != null && !fullOutput.isEmpty()) {
+                writeToFile(sessionLogFile, fullOutput.toString());
             }
 
             String preview = generatePreview(allLines);
@@ -153,7 +162,7 @@ public class OutputManager {
      * 格式化工具返回结果
      */
     public String formatToolResult(int exitCode, String sessionId, long elapsedMs,
-                                    OutputResult output, String currentWorkdir) {
+                                    OutputResult output, String currentWorkdir, Path sessionLogFile) {
         StringBuilder sb = new StringBuilder();
         sb.append("exit_code: ").append(exitCode).append("\n");
         sb.append("session_id: ").append(sessionId).append("\n");
@@ -170,6 +179,10 @@ public class OutputManager {
             if (output.outputFile() != null) {
                 sb.append("output_file: ").append(output.outputFile()).append("\n");
             }
+        }
+
+        if (sessionLogFile != null) {
+            sb.append("session_log: ").append(sessionLogFile).append("\n");
         }
 
         sb.append("---\n");

@@ -57,6 +57,9 @@ class HarnessServiceCompactionTest {
     @Mock private CompactionConfig compactionConfig;
     @Mock private EnvironmentInfoProvider environmentInfoProvider;
     @Mock private SessionCompactionService sessionCompactionService;
+    @Mock private cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
+    @Mock private cn.etarch.mao.harness.mcp.local.McpSyncService mcpSyncService;
+    @Mock private cn.etarch.mao.permission.service.PermissionService permissionService;
 
     @InjectMocks private HarnessService harnessService;
 

@@ -121,6 +121,7 @@ flowchart TB
 - **权限与治理** — RBAC 角色权限模型（用户管理已接入；Agent / 模型等模块持续完善）；管理类 REST API 操作审计
 - **Agent 运行引擎** — 内置 Think-Act-Observe 循环，支持 LLM 流式调用、工具调度与上下文压缩
 - **双执行模式** — CLOUD（服务端执行工具）与 LOCAL（委托桌面端 Electron 执行）；LOCAL 模式支持会话级权限等级与工具审批
+- **MCP 集成** — 管理后台统一管理 MCP 服务器（stdio 本地进程 / HTTP 远程 URL），按 Agent 关联注入外部工具（命名 `mcp__{server}__{tool}`）；CLOUD 模式服务端直连执行，LOCAL 模式由桌面端代理执行并纳入工具审批流；单台服务器故障降级不阻塞会话
 - **协作扩展** — Side Task 并行子会话、子代理委派（Delegate）与子智能体执行可见性；文件系统 Skill 知识文档扩展
 - **任务自动化** — Agent 可创建定时任务；用户与管理员可查看、暂停或删除任务；任务完成可通过钉钉/飞书 Webhook 通知
 - **工作区体验** — 云端工作区支持新建、复用与 HTTPS Git 初始化；桌面端可查看文件树、文件内容与 Git 状态/单文件差异
@@ -269,6 +270,7 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 | `JWT_SECRET` | JWT 签名密钥（生产必设） |
 | `APP_GIT_CREDENTIAL_SECRET` | 用户 Git Access Token 加密密钥（生产必设） |
 | `APP_NOTIFICATION_WEBHOOK_SECRET` | 任务通知 Webhook 加密密钥（生产建议设置） |
+| `APP_MCP_SECRET` | MCP 服务器环境变量加密密钥（生产建议设置；使用 MCP 功能时必设） |
 | `WORKSPACE_ROOT` | Agent 工作区根目录，默认 `/opt/mao/data/workspace` |
 | `SKILLS_DIR` | 技能目录，默认 `/opt/mao/data/skills` |
 | `FILE_UPLOAD_DIR` | 上传文件目录 |

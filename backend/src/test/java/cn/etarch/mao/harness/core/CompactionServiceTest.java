@@ -261,6 +261,19 @@ class CompactionServiceTest {
     }
 
     @Test
+    void compactLoopTriggersWhenFullRequestApproachesModelWindow() {
+        when(tokenEstimator.estimateMessages(any())).thenReturn(1);
+        when(tokenEstimator.countTokens("working summary")).thenReturn(1);
+        when(llmAdapter.chat(any(), any())).thenReturn(summaryResponse("<summary>working summary</summary>"));
+
+        CompactionService.LoopCompactionResult result = service.compactLoop(
+                loopConversation(), modelConfig(), loopConfig(), null, null, 80);
+
+        assertThat(result).isNotNull();
+        assertThat(result.summaryText()).isEqualTo("working summary");
+    }
+
+    @Test
     void compactLoopReturnsNullWhenNotTriggered() {
         CompactionConfig disabled = loopConfig();
         disabled.setLoopEnabled(false);

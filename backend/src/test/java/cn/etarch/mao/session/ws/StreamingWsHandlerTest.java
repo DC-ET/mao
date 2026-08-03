@@ -64,6 +64,12 @@ class StreamingWsHandlerTest {
     private final SkillSyncService skillSyncService = mock(SkillSyncService.class);
     private final LocalSkillRegistry localSkillRegistry = mock(LocalSkillRegistry.class);
     private final LocalAgentsMdRegistry localAgentsMdRegistry = mock(LocalAgentsMdRegistry.class);
+    private final cn.etarch.mao.harness.mcp.local.McpSyncService mcpSyncService =
+            mock(cn.etarch.mao.harness.mcp.local.McpSyncService.class);
+    private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager =
+            mock(cn.etarch.mao.harness.mcp.McpClientManager.class);
+    private final cn.etarch.mao.permission.service.PermissionService permissionService =
+            mock(cn.etarch.mao.permission.service.PermissionService.class);
     private final AgentMapper agentMapper = mock(AgentMapper.class);
     private final LlmModelMapper llmModelMapper = mock(LlmModelMapper.class);
     private final JwtService jwtService = mock(JwtService.class);
@@ -72,7 +78,8 @@ class StreamingWsHandlerTest {
             registry, harnessService, sessionService, taskTerminalService, messageQueueService, localToolSessionRegistry,
             askUserQuestionsRegistry, activityService, activityHeartbeat, sessionTodoMapper, agentLoop,
             shellSessionManager, skillSyncService, localSkillRegistry, localAgentsMdRegistry,
-            agentMapper, llmModelMapper, jwtService, executor);
+            mcpSyncService, mcpClientManager, permissionService,
+            agentMapper, llmModelMapper, jwtService, executor, 60L);
     private final WebSocketSession ws = mock(WebSocketSession.class);
 
     @Test

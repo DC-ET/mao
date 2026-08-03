@@ -269,6 +269,14 @@ public class CompactionService {
                                              LlmModelConfig modelConfig, CompactionConfig config,
                                              String existingWorkingSummary,
                                              AgentEventListener listener) {
+        return compactLoop(messages, modelConfig, config, existingWorkingSummary, listener, null);
+    }
+
+    public LoopCompactionResult compactLoop(List<ChatRequest.Message> messages,
+                                             LlmModelConfig modelConfig, CompactionConfig config,
+                                             String existingWorkingSummary,
+                                             AgentEventListener listener,
+                                             Integer requestTokens) {
         if (!config.isLoopEnabled() || messages.isEmpty()) return null;
 
         long startTime = System.currentTimeMillis();
@@ -297,23 +305,37 @@ public class CompactionService {
             }
         }
 
-        // 4. 判断是否触发：仅基于工作区 token 阈值
+        // 4. 判断是否触发：兼顾工作区大小与下一轮完整请求大小，避免 system prompt、
+        // 历史消息和工具定义占用未计入固定工作区阈值，导致请求先超过模型窗口。
         int workspaceTokens = tokenEstimator.estimateMessages(workspace);
-        boolean shouldCompact = workspaceTokens >= config.getLoopTriggerTokens();
+        int effectiveContextWindow = config.getContextWindowTokens();
+        if (modelConfig != null && modelConfig.getContextWindowTokens() != null
+                && modelConfig.getContextWindowTokens() > 0) {
+            effectiveContextWindow = modelConfig.getContextWindowTokens();
+        }
+        boolean requestNearLimit = requestTokens != null
+                && requestTokens >= effectiveContextWindow * config.getTriggerRatio();
+        boolean shouldCompact = workspaceTokens >= config.getLoopTriggerTokens() || requestNearLimit;
 
         if (!shouldCompact) return null;
 
-        // 5. 保留最近 N 轮原始工具交互
-        int keepRounds = config.getLoopRecentToolRounds();
+        // 5. 完整请求接近窗口时不再固定保留多轮工具结果，优先为下一次 LLM 调用腾出空间。
+        int keepRounds = requestNearLimit ? 0 : config.getLoopRecentToolRounds();
         int keepStart = workspace.size();
         int roundsFound = 0;
-        for (int i = workspace.size() - 1; i >= 0; i--) {
-            ChatRequest.Message msg = workspace.get(i);
-            if ("assistant".equals(msg.getRole()) && msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
-                roundsFound++;
-                if (roundsFound > keepRounds) {
-                    keepStart = i;
-                    break;
+        if (keepRounds == 0) {
+            keepStart = workspace.size();
+            roundsFound = toolRounds;
+        } else {
+            for (int i = workspace.size() - 1; i >= 0; i--) {
+                ChatRequest.Message msg = workspace.get(i);
+                if ("assistant".equals(msg.getRole())
+                        && msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
+                    roundsFound++;
+                    if (roundsFound > keepRounds) {
+                        keepStart = i;
+                        break;
+                    }
                 }
             }
         }

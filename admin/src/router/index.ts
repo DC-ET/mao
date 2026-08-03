@@ -46,6 +46,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Skills 管理', keepAlive: true, permission: 'agent:read' }
       },
       {
+        path: 'mcp-servers',
+        name: 'McpServers',
+        component: () => import('../views/mcp/McpServerListView.vue'),
+        meta: { title: 'MCP 服务器', keepAlive: true, permission: 'mcp:read' }
+      },
+      {
         path: 'sessions',
         name: 'Sessions',
         component: () => import('../views/session/SessionListView.vue'),

@@ -149,6 +149,15 @@ const inputPreview = computed(() => {
   if (typeof path === 'string') return path
   const query = input.query
   if (typeof query === 'string') return query
+  // delegate 工具：展示 agent_type + task 摘要。
+  // 否则 inputPreview 恒为空，卡片在子代理执行期间一直显示"参数加载中..."
+  const agentType = input.agent_type
+  const task = input.task
+  if (typeof agentType === 'string' || typeof task === 'string') {
+    const prefix = typeof agentType === 'string' && agentType ? `${agentType}: ` : ''
+    const text = prefix + (typeof task === 'string' ? task : '')
+    return text.length > 60 ? text.slice(0, 60) + '...' : text
+  }
   return ''
 })
 

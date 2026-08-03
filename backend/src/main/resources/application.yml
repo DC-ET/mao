@@ -106,6 +106,15 @@ app:
       loop-trigger-tokens: 204800
       loop-recent-tool-rounds: 5
 
+  # MCP（Model Context Protocol）客户端
+  mcp:
+    # 环境变量加密密钥（必须通过环境变量注入，禁止明文写死）
+    secret-key: ${APP_MCP_SECRET:mao-mcp-default-secret-change-me}
+    # CLOUD 模式单次工具调用超时（秒）
+    client-timeout-seconds: ${APP_MCP_CLIENT_TIMEOUT_SECONDS:120}
+    # LOCAL 模式等待桌面端工具清单上报超时（秒）
+    sync-timeout-seconds: ${APP_MCP_SYNC_TIMEOUT_SECONDS:60}
+
 # 微信 Bot 通道
 weixin:
   bot:

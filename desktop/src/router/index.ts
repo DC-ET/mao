@@ -43,6 +43,11 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/WeixinBotView.vue')
           },
           {
+            path: 'mcp-servers',
+            name: 'McpServers',
+            component: () => import('../views/settings/McpServersView.vue')
+          },
+          {
             path: 'scheduled-tasks',
             name: 'ScheduledTasks',
             component: () => import('../components/ScheduledTaskPanel.vue')

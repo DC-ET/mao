@@ -58,6 +58,7 @@ public class AgentService {
                               String systemPrompt,
                               List<String> tags,
                               List<String> skillNames,
+                              List<Long> mcpServerIds,
                               List<AgentExperienceService.ExperienceInput> experiences,
                               Integer isDefault) {
         if (isDefault != null && isDefault == 1) {
@@ -72,6 +73,13 @@ public class AgentService {
         if (skillNames != null && !skillNames.isEmpty()) {
             try {
                 agent.setSkillNames(objectMapper.writeValueAsString(skillNames));
+            } catch (Exception e) {
+                // ignore serialization error
+            }
+        }
+        if (mcpServerIds != null && !mcpServerIds.isEmpty()) {
+            try {
+                agent.setMcpServerIds(objectMapper.writeValueAsString(mcpServerIds));
             } catch (Exception e) {
                 // ignore serialization error
             }
@@ -99,6 +107,7 @@ public class AgentService {
     public Agent updateAgent(Long id, String name, String description,
                               String systemPrompt,
                               List<String> skillNames,
+                              List<Long> mcpServerIds,
                               List<String> tags,
                               List<AgentExperienceService.ExperienceInput> experiences,
                               Integer isDefault) {
@@ -109,6 +118,13 @@ public class AgentService {
         if (skillNames != null) {
             try {
                 agent.setSkillNames(skillNames.isEmpty() ? null : objectMapper.writeValueAsString(skillNames));
+            } catch (Exception e) {
+                // ignore serialization error
+            }
+        }
+        if (mcpServerIds != null) {
+            try {
+                agent.setMcpServerIds(mcpServerIds.isEmpty() ? null : objectMapper.writeValueAsString(mcpServerIds));
             } catch (Exception e) {
                 // ignore serialization error
             }

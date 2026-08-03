@@ -37,7 +37,8 @@ import {
   Operation,
   Timer,
   TrendCharts,
-  Setting
+  Setting,
+  Link
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -60,6 +61,7 @@ const menuItems = [
   { index: '/agents', label: 'Agent 管理', icon: Monitor, permission: 'agent:read' },
   { index: '/models', label: '模型管理', icon: Connection, permission: 'model:read' },
   { index: '/skills', label: 'Skills 管理', icon: MagicStick, permission: 'agent:read' },
+  { index: '/mcp-servers', label: 'MCP 服务器', icon: Link, permission: 'mcp:read' },
   { index: '/sessions', label: '会话管理', icon: ChatDotRound, permission: 'session:read' },
   { index: '/scheduled-tasks', label: '定时任务', icon: Timer, permission: 'session:read' },
   { index: '/users', label: '用户管理', icon: User, permission: 'user:read' },

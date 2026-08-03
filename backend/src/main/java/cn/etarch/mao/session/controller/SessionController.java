@@ -308,7 +308,8 @@ public class SessionController {
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
         requireSessionOwner(userId, id);
-        List<Session> subagents = sessionService.listSubagentSessions(id, userId);
+        // 聚合主会话直接子代理 + 边路任务触发的子代理（边路任务委派时其 parent 是边路任务会话）
+        List<Session> subagents = sessionService.listSubagentSessionsWithSideTasks(id, userId);
         Map<Long, SubagentExecution> executionByChild = loadSubagentExecutions(subagents);
         List<SubagentVO> voList = subagents.stream().map(s -> {
             SubagentVO vo = new SubagentVO();

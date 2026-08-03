@@ -252,7 +252,15 @@ export function useStreamWS() {
       ws = null
     }
     connected.value = false
+    // 关闭已订阅会话在桌面端的 MCP 连接（stdio 子进程 / HTTP 会话）
+    const mcpSessionIds = Array.from(subscribedSessionIds)
     subscribedSessionIds.clear()
+    if (mcpSessionIds.length > 0 && typeof window !== 'undefined' && (window as any).electronAPI?.mcpClose) {
+      mcpSessionIds.forEach((sid) => {
+        ;(window as any).electronAPI.mcpClose?.(Number(sid)).catch?.((err: Error) =>
+          console.warn('[mcp-close] failed for session', sid, err?.message))
+      })
+    }
   }
 
   function scheduleReconnect() {
@@ -629,6 +637,48 @@ export function useStreamWS() {
           ;(window as any).electronAPI.skillSync?.(Number(sessionId), syncUrl, token, workspace || '')
         } else {
           console.warn('[skill-sync] cannot sync:', { sessionId, syncUrl, hasElectronAPI: isElectronClient() })
+        }
+        break
+      }
+
+      case 'mcp_sync_required': {
+        // Server requests MCP sync — main process connects to MCP servers and lists tools
+        const servers = data?.servers
+        const syncId = data?.syncId
+        const reportToServer = (reports: Array<{ name: string; connected: boolean; tools: unknown[]; error: string | null }>) => {
+          sendReliable({
+            type: 'mcp_tools_report',
+            sessionId: Number(sessionId),
+            syncId: syncId || null,
+            servers: reports
+          }).catch((err: Error) => console.error('[mcp-sync] report failed:', err?.message))
+        }
+        if (sessionId && Array.isArray(servers) && isElectronClient()) {
+          ;(window as any).electronAPI
+            .mcpSync?.(Number(sessionId), servers)
+            .then((resp: { reports?: Array<{ name: string; connected: boolean; tools: unknown[]; error: string | null }> }) => {
+              reportToServer(resp?.reports || [])
+            })
+            .catch((err: Error) => {
+              console.error('[mcp-sync] failed:', err)
+              reportToServer((servers as Array<{ name: string }>).map((s) => ({
+                name: s?.name,
+                connected: false,
+                tools: [],
+                error: err instanceof Error ? err.message : 'MCP sync failed'
+              })))
+            })
+        } else {
+          console.warn('[mcp-sync] cannot sync:', { sessionId, hasServers: Array.isArray(servers), hasElectronAPI: isElectronClient() })
+          if (sessionId) {
+            // 非 Electron 或无法连接：上报全部失败，让服务端降级处理
+            reportToServer((Array.isArray(servers) ? servers : []).map((s: { name: string }) => ({
+              name: s?.name,
+              connected: false,
+              tools: [],
+              error: 'Electron MCP client unavailable'
+            })))
+          }
         }
         break
       }

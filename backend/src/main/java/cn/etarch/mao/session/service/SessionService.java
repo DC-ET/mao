@@ -345,6 +345,34 @@ public class SessionService {
         return sessionMapper.selectList(qw);
     }
 
+    /**
+     * List SUBAGENT child sessions for a parent AND its side tasks (desktop list UI).
+     * 边路任务触发的子代理 parent_session_id 是边路任务会话，而非主会话；
+     * 仅查直接子代理会导致刷新后右侧边栏子代理列表缺数据。
+     */
+    public List<Session> listSubagentSessionsWithSideTasks(Long parentSessionId, Long userId) {
+        List<Session> direct = listSubagentSessions(parentSessionId, userId);
+        List<Session> sideTasks = listSideTaskSessions(parentSessionId, userId);
+        if (sideTasks.isEmpty()) {
+            return direct;
+        }
+        List<Long> sideTaskIds = sideTasks.stream().map(Session::getId).collect(Collectors.toList());
+        QueryWrapper<Session> qw = new QueryWrapper<>();
+        qw.in("parent_session_id", sideTaskIds);
+        qw.eq("user_id", userId);
+        qw.eq("session_type", "SUBAGENT");
+        qw.ne("status", "ARCHIVED");
+        List<Session> sideChildren = sessionMapper.selectList(qw);
+        if (sideChildren.isEmpty()) {
+            return direct;
+        }
+        List<Session> merged = new ArrayList<>(direct);
+        merged.addAll(sideChildren);
+        merged.sort(Comparator.comparing(Session::getCreatedAt,
+                Comparator.nullsLast(Comparator.reverseOrder())));
+        return merged;
+    }
+
     public Page<Session> listSessionsForAdmin(int page, int size, Long userId, Long agentId,
             String executionMode, String phase, String keyword, String status) {
         LambdaQueryWrapper<Session> qw = new LambdaQueryWrapper<>();

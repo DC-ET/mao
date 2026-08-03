@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -108,6 +109,9 @@ public class ShellSession implements Closeable {
         }
         alive = false;
 
+        // 关闭 stdout 前，先非阻塞读取残留输出并追加到会话日志，避免后台输出丢失
+        drainPendingOutput();
+
         try {
             // 关闭 stdin
             stdin.close();
@@ -133,6 +137,44 @@ public class ShellSession implements Closeable {
         }
 
         log.info("Closed shell session: {}", sessionId);
+    }
+
+    /**
+     * 会话关闭前，把 stdout 中尚未被消费的输出尽量保存到会话日志（{@link #outputFile}）。
+     * 仅非阻塞读取当前已就绪的数据，不等待新输出；带时间与大小上限，避免被持续输出阻塞 close。
+     */
+    private void drainPendingOutput() {
+        char[] buf = new char[8192];
+        StringBuilder pending = new StringBuilder();
+        long drainStart = System.currentTimeMillis();
+        long drainLimitMs = 1000;
+        int maxChars = 100_000;
+        try {
+            while (stdout.ready()
+                    && System.currentTimeMillis() - drainStart < drainLimitMs
+                    && pending.length() < maxChars) {
+                int n = stdout.read(buf);
+                if (n <= 0) {
+                    break;
+                }
+                pending.append(buf, 0, n);
+            }
+        } catch (IOException e) {
+            log.debug("Failed to drain pending output for session {}: {}", sessionId, e.getMessage());
+        }
+        if (pending.length() == 0) {
+            return;
+        }
+        try {
+            Files.createDirectories(outputFile.getParent());
+            try (Writer writer = Files.newBufferedWriter(outputFile, StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)) {
+                writer.write(pending.toString());
+            }
+            log.info("Persisted {} chars of pending output for session {}", pending.length(), sessionId);
+        } catch (IOException e) {
+            log.debug("Failed to persist pending output for session {}: {}", sessionId, e.getMessage());
+        }
     }
 
     /**

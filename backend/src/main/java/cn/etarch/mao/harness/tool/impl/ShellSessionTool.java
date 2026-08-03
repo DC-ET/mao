@@ -139,6 +139,12 @@ public class ShellSessionTool implements Tool {
         properties.put("output", Map.of("type", "string"));
         properties.put("current_workdir", Map.of("type", "string"));
         properties.put("truncated", Map.of("type", "boolean"));
+        properties.put("completed", Map.of("type", "boolean",
+                "description", "write_stdin：本次写入后命令是否已执行完（true=已结束，false=等待超时仍在运行）"));
+        properties.put("output_file", Map.of("type", "string",
+                "description", "本次调用的切片输出文件（truncated 时有值），可读取该文件回查全量输出"));
+        properties.put("session_log", Map.of("type", "string",
+                "description", "会话累积输出日志文件，包含该会话从创建起所有调用读取到的输出，可随时回查"));
         properties.put("async", Map.of("type", "boolean"));
         properties.put("task_id", Map.of("type", "string"));
         schema.put("properties", properties);
@@ -243,7 +249,8 @@ public class ShellSessionTool implements Tool {
                 sessionId,
                 elapsedMs,
                 output,
-                currentWorkdir
+                currentWorkdir,
+                session.getOutputFile()
         );
 
         session.incrementCommandCount();
@@ -311,7 +318,7 @@ public class ShellSessionTool implements Tool {
         Path outputFile = session.nextOutputFile();
         String fullMarker = MARKER_PREFIX + marker + MARKER_SUFFIX;
         OutputResult output = outputManager.readUntilMarker(session.getStdout(), fullMarker,
-                Duration.ofMillis(yieldTimeMs), outputFile);
+                Duration.ofMillis(yieldTimeMs), outputFile, session.getOutputFile());
         String currentWorkdir = pwdWithMarker(session);
 
         session.touch();
@@ -319,7 +326,10 @@ public class ShellSessionTool implements Tool {
                 "session_id", sessionId,
                 "current_workdir", currentWorkdir != null ? currentWorkdir : "",
                 "output", output.preview(),
-                "truncated", output.truncated()
+                "truncated", output.truncated(),
+                "completed", output.markerFound(),
+                "output_file", output.outputFile() != null ? output.outputFile().toString() : "",
+                "session_log", session.getOutputFile() != null ? session.getOutputFile().toString() : ""
         ));
     }
 
@@ -375,7 +385,8 @@ public class ShellSessionTool implements Tool {
             session.getStdin().flush();
 
             Path outputFile = session.nextOutputFile();
-            return outputManager.readUntilMarker(session.getStdout(), fullMarker, timeout, outputFile);
+            return outputManager.readUntilMarker(session.getStdout(), fullMarker, timeout,
+                    outputFile, session.getOutputFile());
         } catch (Exception e) {
             log.error("Failed to execute command in session {}: {}", session.getSessionId(), e.getMessage());
             return new OutputResult("错误：" + e.getMessage(), 0, 0, false, false, null);
@@ -397,7 +408,8 @@ public class ShellSessionTool implements Tool {
             session.getStdin().flush();
 
             OutputResult result = outputManager.readUntilMarker(
-                    session.getStdout(), fullMarker, Duration.ofSeconds(5), null);
+                    session.getStdout(), fullMarker, Duration.ofSeconds(5),
+                    null, session.getOutputFile());
 
             String output = result.preview();
             if (output != null && !output.isEmpty()) {

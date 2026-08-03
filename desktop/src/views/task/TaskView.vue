@@ -55,7 +55,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useStreamWS } from '../../composables/useStreamWS'
 import { useLoginDialog } from '../../composables/useLoginDialog'
 import { useAgentStore } from '../../stores/agent'
-import { useSessionStore, type TaskPhase } from '../../stores/session'
+import { useSessionStore, type TaskPhase, type SubagentItem } from '../../stores/session'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useTerminal } from '../../composables/useTerminal'
 import { useCenterTabs } from '../../composables/useCenterTabs'
@@ -177,7 +177,23 @@ const sessionId = computed(() => sessionIdParam.value)
 const todos = computed(() => chatTodos.value)
 const contextWindow = computed(() => chatContextWindow.value)
 const sideTasks = computed(() => sessionStore.getSideTasks(activeSessionIdRef.value || ''))
-const subagents = computed(() => sessionStore.getSubagents(activeSessionIdRef.value || ''))
+// 子代理列表：聚合主会话 + 各边路任务名下的子代理。
+// 边路任务触发的子代理挂在其会话名下，若只取主会话则右侧边栏看不到。
+const subagents = computed(() => {
+  const active = activeSessionIdRef.value || ''
+  if (!active) return []
+  const scopeIds = [active, ...sessionStore.getSideTasks(active).map(s => String(s.id))]
+  const seen = new Set<number>()
+  const result: SubagentItem[] = []
+  for (const sid of scopeIds) {
+    for (const sa of sessionStore.getSubagents(sid)) {
+      if (seen.has(sa.id)) continue
+      seen.add(sa.id)
+      result.push(sa)
+    }
+  }
+  return result
+})
 
 const sessionIdForTabs = computed(() => sessionId.value || sessionIdParam.value || '')
 
@@ -265,9 +281,15 @@ function handleSubagentSessionCreated(e: Event) {
       createdAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
     })
   }
-  // 仅当事件属于当前主会话时自动打开 Tab
-  if (parentId && parentId === String(activeSessionIdRef.value || '')) {
+  // 自动打开 Tab：事件属于当前主会话，或属于当前主会话的边路任务（边路任务触发子代理同样自动跳转）
+  const activeParent = String(activeSessionIdRef.value || '')
+  if (parentId && parentId === activeParent) {
     openSubagentTab(detail.childSessionId, title)
+  } else if (parentId && activeParent) {
+    const sideIds = new Set(sessionStore.getSideTasks(activeParent).map(s => String(s.id)))
+    if (sideIds.has(parentId)) {
+      openSubagentTab(detail.childSessionId, title)
+    }
   }
 }
 

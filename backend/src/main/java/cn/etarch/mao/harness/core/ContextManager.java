@@ -77,4 +77,13 @@ public class ContextManager {
             String existingWorkingSummary, AgentEventListener listener) {
         return compactionService.compactLoop(messages, modelConfig, config, existingWorkingSummary, listener);
     }
+
+    public CompactionService.LoopCompactionResult compactLoop(
+            List<ChatRequest.Message> messages,
+            LlmModelConfig modelConfig, CompactionConfig config,
+            String existingWorkingSummary, AgentEventListener listener,
+            int requestTokens) {
+        return compactionService.compactLoop(
+                messages, modelConfig, config, existingWorkingSummary, listener, requestTokens);
+    }
 }

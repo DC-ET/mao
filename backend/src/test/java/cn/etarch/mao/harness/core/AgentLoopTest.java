@@ -41,9 +41,11 @@ class AgentLoopTest {
     private final ShellSessionManager shellSessionManager = mock(ShellSessionManager.class);
     private final SessionActivityHeartbeat activityHeartbeat = mock(SessionActivityHeartbeat.class);
     private final SessionService sessionService = mock(SessionService.class);
+    private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager =
+            mock(cn.etarch.mao.harness.mcp.McpClientManager.class);
     private final AgentLoop agentLoop = new AgentLoop(
             llmAdapter, promptEngine, contextManager, toolDispatcher, new ObjectMapper(),
-            backgroundTaskManager, shellSessionManager, activityHeartbeat, sessionService);
+            backgroundTaskManager, shellSessionManager, activityHeartbeat, sessionService, mcpClientManager);
 
     @Test
     void executeStreamsPlainAssistantMessageAndPersistsIt() {
@@ -81,7 +83,7 @@ class AgentLoopTest {
         when(contextManager.estimateRequestTokens(any())).thenReturn(5);
         when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
-                eq("/repo"), eq("READ_ONLY"), any())).thenReturn("{\"ok\":true,\"_private_diff\":{\"diff_mode\":\"PATCH\"}}");
+                eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true,\"_private_diff\":{\"diff_mode\":\"PATCH\"}}");
         doAnswer(new org.mockito.stubbing.Answer<Void>() {
             private int call;
 
@@ -132,7 +134,7 @@ class AgentLoopTest {
                 {"content":"图片读取成功：a.png","total_lines":0,"media_type":"image","mime":"image/png",\
                 "path":"a.png","size_bytes":10,"data_uri":"data:image/png;base64,abc"}""";
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
-                eq("/repo"), eq("READ_ONLY"), any())).thenReturn(imageResult);
+                eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn(imageResult);
         doAnswer(new org.mockito.stubbing.Answer<Void>() {
             private int call;
 
@@ -174,7 +176,7 @@ class AgentLoopTest {
         when(contextManager.estimateRequestTokens(any())).thenReturn(5);
         when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
-                eq("/repo"), eq("READ_ONLY"), any())).thenReturn("{\"ok\":true}");
+                eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");
         doAnswer(invocation -> {
             StreamCallback callback = invocation.getArgument(2);
             callback.onChunk(toolChunk(ChatRequest.ToolCall.builder()
