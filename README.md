@@ -24,11 +24,11 @@
 
 ---
 
-> **重要提示**：当前项目尚未经过企业级生产环境验证，也未达到企业级生产标准。部署前请务必充分了解本项目的功能限制与适用边界，自行评估风险后再决定是否上线使用。
+> **重要提示**：当前项目尚未经过企业级生产环境验证。部署前请务必充分了解本项目的功能限制与适用边界，自行评估风险后再决定是否上线使用。
 
 Mao 面向个人开发者与各类团队，提供可私有化部署的 AI Agent 管理与协作平台。许多用户已经在用各类智能体工具，但配置分散、权限难管、调用难以追溯——Mao 把 Agent、模型、用户与审计集中在一处，既适合个人自用，也方便在团队内统一管理。
 
-平台内置完整的 Agent 运行引擎（Think-Act-Observe 循环），支持流式对话、工具调用、技能扩展、上下文压缩、定时任务与子任务协作；既可由服务端执行工具（CLOUD），也可通过 Electron 桌面端在本地执行（LOCAL），兼顾安全边界与开发效率。数据与模型密钥留在你自己的环境里，不依赖第三方托管。
+平台内置完整的 Agent 运行引擎（Think-Act-Observe 循环），支持流式对话、工具调用、MCP 外部工具、技能扩展、上下文压缩、定时任务与子任务协作；既可由服务端执行工具（CLOUD），也可通过 Electron 桌面端在本地执行（LOCAL），兼顾安全边界与开发效率。客户端覆盖管理后台、桌面端（Web / Electron）与安卓 APP（Capacitor，CLOUD 模式）。数据与模型密钥留在你自己的环境里，不依赖第三方托管。
 
 > **开源说明**：本项目采用 [MIT 许可证](LICENSE)，仅提供源码与自部署文档，不提供官方托管服务。LLM 需在管理后台自行配置 API Key；桌面端提供 Electron 源码，需自行构建。当前界面语言为中文。
 
@@ -46,8 +46,9 @@ Mao 面向个人开发者与各类团队，提供可私有化部署的 AI Agent 
 | 权限与审计 | RBAC 角色权限 + 管理类 API 操作审计 |
 | 工具执行 | **CLOUD**（服务端）与 **LOCAL**（桌面端 Electron）双模式，LOCAL 支持工具审批 |
 | Agent 引擎 | 内置 Harness 运行时，非仅 LLM 网关或对话壳 |
+| 客户端 | 管理后台 + 桌面端（Web / Electron）+ 安卓 APP（Capacitor，CLOUD） |
 | 任务协作 | 主任务、Side Task、子代理委派、定时任务与完成通知 |
-| 扩展 | 文件系统 Skill 知识文档 + 丰富内置工具（Shell / 文件 / 搜索 / 定时任务等） |
+| 扩展 | 文件系统 Skill + MCP 外部工具 + 内置工具（Shell / 文件 / 搜索 / 文生图 / 定时任务等） |
 | 认证集成 | 本地账号 / LDAP / 飞书 SSO（可选） |
 
 若你更需要「低代码工作流编排」或「开箱即用的 SaaS」，可优先考虑 Dify、n8n 等产品；若你需要可私有化部署、可自选模型，并在服务端与本地之间灵活切换工具执行边界，Mao 更合适。
@@ -60,7 +61,7 @@ Mao 面向个人开发者与各类团队，提供可私有化部署的 AI Agent 
 |------|--------------|-----|
 | 产品形态 | 商业 SaaS，绑定 ChatGPT 订阅 | 开源（MIT），可私有化自托管 |
 | 数据与密钥 | 由 OpenAI 云端托管 | 数据、工作区、API Key 留在本地或内网 |
-| 使用入口 | App / CLI / IDE / Web 等多端统一 | 管理后台 + 桌面端（Web / Electron） |
+| 使用入口 | App / CLI / IDE / Web 等多端统一 | 管理后台 + 桌面端（Web / Electron）+ 安卓 APP |
 | 模型选择 | OpenAI 体系 | 任意 OpenAI 兼容 API，多模型可配置 |
 | 权限与审计 | 面向个人与小团队效率 | RBAC 角色权限、操作审计、LDAP / 飞书 SSO |
 | 工具执行 | 云端 Sandbox 为主 | **CLOUD**（服务端）与 **LOCAL**（本机 Electron）可切换；LOCAL 支持工具审批 |
@@ -77,19 +78,20 @@ flowchart TB
     subgraph clients["客户端"]
         Admin["管理后台<br/>Vue 3 · :5200"]
         Desktop["桌面端<br/>Electron / Web · :5201"]
+        Android["安卓 APP<br/>Capacitor · CLOUD"]
     end
 
     subgraph backend["后端 · Spring Boot :9080"]
         API["REST API /api/v1"]
         WS["WebSocket /api/ws/stream"]
         Harness["Agent Harness<br/>Think-Act-Observe"]
-        Tools["工具调度<br/>CLOUD 模式"]
+        Tools["工具调度<br/>CLOUD / MCP"]
         Scheduler["定时任务 / 通知投递"]
         Weixin["微信 Bot 通道"]
     end
 
     subgraph local["本地执行（LOCAL 模式）"]
-        Electron["Electron Main<br/>Shell / 文件 / 审批"]
+        Electron["Electron Main<br/>Shell / 文件 / MCP / 审批"]
     end
 
     subgraph data["数据层"]
@@ -98,12 +100,17 @@ flowchart TB
     end
 
     LLM["LLM 提供商<br/>OpenAI 兼容 API"]
+    MCP["MCP 服务器<br/>stdio / HTTP"]
 
     Admin --> API
     Desktop --> API
+    Android --> API
     Desktop <-->|流式对话| WS
+    Android <-->|流式对话| WS
     WS --> Harness
     Harness --> Tools
+    Tools -->|CLOUD| MCP
+    Electron -->|LOCAL| MCP
     Scheduler --> Harness
     Scheduler --> Weixin
     Harness -->|LOCAL 委托| Electron
@@ -121,14 +128,15 @@ flowchart TB
 - **权限与治理** — RBAC 角色权限模型（用户管理已接入；Agent / 模型等模块持续完善）；管理类 REST API 操作审计
 - **Agent 运行引擎** — 内置 Think-Act-Observe 循环，支持 LLM 流式调用、工具调度与上下文压缩
 - **双执行模式** — CLOUD（服务端执行工具）与 LOCAL（委托桌面端 Electron 执行）；LOCAL 模式支持会话级权限等级与工具审批
-- **MCP 集成** — 管理后台统一管理 MCP 服务器（stdio 本地进程 / HTTP 远程 URL），按 Agent 关联注入外部工具（命名 `mcp__{server}__{tool}`）；CLOUD 模式服务端直连执行，LOCAL 模式由桌面端代理执行并纳入工具审批流；单台服务器故障降级不阻塞会话
+- **MCP 集成** — 管理后台统一管理全局 MCP 服务器（stdio / HTTP），桌面端支持用户级私有 MCP；按 Agent 关联注入外部工具（命名 `mcp__{server}__{tool}`）；CLOUD 模式服务端直连，LOCAL 模式由桌面端代理并纳入工具审批；单台服务器故障降级不阻塞会话
+- **多模态能力** — 模型按类型分类（chat / reasoning / image / speech 等）；支持文生图工具；微信通道可语音回复，并可发送图片与文件
 - **协作扩展** — Side Task 并行子会话、子代理委派（Delegate）与子智能体执行可见性；文件系统 Skill 知识文档扩展
-- **任务自动化** — Agent 可创建定时任务；用户与管理员可查看、暂停或删除任务；任务完成可通过钉钉/飞书 Webhook 通知
+- **任务自动化** — Agent 可创建定时任务；用户与管理员可查看、暂停或删除任务；任务完成可通过钉钉/飞书 Webhook 或微信通道通知
 - **工作区体验** — 云端工作区支持新建、复用与 HTTPS Git 初始化；桌面端可查看文件树、文件内容与 Git 状态/单文件差异
 - **WebSocket 流式对话** — 实时双向通信，支持消息持久化、Token 用量追踪、上下文窗口占比与压缩状态提示
-- **可选微信通道** — 桌面端扫码绑定微信 Bot 后，可在微信中与指定 Agent 对话；定时任务结果可回传微信通道
+- **可选微信通道** — 桌面端扫码绑定微信 Bot 后，可在微信中与指定 Agent 对话；支持语音回复、图片/文件发送；定时任务结果可回传微信
 - **内置操作 Skill** — 仓库提供 `mao-user-cli` / `mao-admin-cli`，便于 Agent 通过用户端或管理端 REST API 完成非对话运维操作
-- **双端架构** — 管理后台 + Electron 桌面客户端
+- **多端架构** — 管理后台 + Electron / Web 桌面端 + 安卓 APP（Capacitor WebView，仅 CLOUD）
 
 ## 技术栈
 
@@ -148,7 +156,7 @@ flowchart TB
 | API 文档 | SpringDoc OpenAPI 2.8.6 |
 | 构建工具 | Maven |
 
-### 前端（管理后台 & 桌面端）
+### 前端（管理后台 & 桌面端 & 安卓）
 
 | 组件 | 技术 |
 |------|------|
@@ -157,6 +165,7 @@ flowchart TB
 | UI 组件库 | Element Plus 2.14 |
 | 状态管理 | Pinia 3.x |
 | 桌面端 | Electron 28 |
+| 安卓 APP | Capacitor 7（复用 `desktop/` 前端，仅 CLOUD） |
 
 ## 快速开始
 
@@ -344,25 +353,24 @@ npm run dist   # 本地打包，需自行处理代码签名与分发
 
 ### 安卓 APP
 
-基于 Capacitor（WebView 壳）复用桌面端 Vue 前端源码，仅支持 CLOUD 模式（工具在服务端执行）。
+基于 Capacitor 7（WebView 壳）复用桌面端 Vue 前端，包名 `cn.etarch.mao.app`，**仅支持 CLOUD 模式**（无 `electronAPI`，LOCAL / 工具审批不可用）。发版前先更新 `android/CHANGELOG.md` 顶部版本条目（`versionName` 取首条 `##`；`versionCode` 由脚本按已发布 APK 自增）。
 
-**环境要求**：JDK 21 + Android SDK（`platforms;android-35`、`build-tools;34.0.0`）
+**环境要求**：JDK 21 + Android SDK（`platforms;android-35`、`build-tools;34.0.0`）；签名凭据通过环境变量 `MAO_KEYSTORE_*` 或本地 `keystore-credentials.env` 注入（**严禁入 git**）。
 
 ```bash
-# 一键构建并发布 APK（含前端构建 → cap sync → gradle assembleRelease → 发布到 releases）
+# 一键：构建 desktop（--base=./）→ cap sync → assembleRelease → 发布
 cd android
-export ANDROID_HOME=/opt/android-sdk
-bash build-apk.sh
+export ANDROID_HOME=/opt/android-sdk   # 按本机路径调整
+bash build-apk.sh                      # 可选 --dry-run / --version 0.0.x
 ```
 
-构建产物：
-- APK：`/root/soft/mao/data/uploads/releases/mao-android-<version>-<code>.apk`
-- OTA 清单：`/root/soft/mao/data/uploads/releases/android-latest.json`
-- APK 分发地址：`https://mao.etarch.cn/uploads/releases/`
+默认发布目录（可用环境变量覆盖）：
+- APK：`mao-android-<versionName>-<versionCode>.apk`
+- OTA 清单：`android-latest.json`（含 changelog）
 
-首次构建前需配置 release 签名（`/root/soft/mao/keystore/keystore-credentials.env`），详见 `docs/android-app-technical-design.md`。
+详见 [安卓 APP 技术方案](docs/android-app-technical-design.md)。
 
-**应用内更新（OTA）**：APP 启动时自动检查版本，支持强制更新（不可跳过）与普通更新（可忽略），下载安装在 APP 内完成。
+**应用内更新（OTA）**：启动时检查 `android-latest.json`；支持强制更新（不可跳过）与普通更新（可忽略）；原生 `AppUpdate` 插件完成下载与安装。
 
 ## API 文档
 
@@ -384,6 +392,7 @@ bash build-apk.sh
 | Git 凭证 | `/api/v1/user/git-credentials` | 用户 Git Access Token 管理 |
 | 定时任务 | `/api/v1/scheduled-tasks` | 定时任务查询、暂停、删除 |
 | 用户偏好 | `/api/v1/user-preferences` | 任务面板与任务通知偏好 |
+| MCP 服务器 | `/api/v1/mcp-servers` | 全局 / 用户级 MCP 配置、启停、测试连接、工具清单与用户偏好 |
 | 微信 Bot | `/api/v1/weixin` | 微信 Bot 绑定与解绑 |
 | 工具元数据 | `/api/v1/tools` | 内置工具查询 |
 
@@ -426,7 +435,11 @@ npm run test:desktop
 | [docs/scheduled-task-system-design.md](docs/scheduled-task-system-design.md) | 定时任务系统技术方案 |
 | [docs/task-completion-webhook-notification-design.md](docs/task-completion-webhook-notification-design.md) | 任务完成通知技术方案 |
 | [docs/compaction-design.md](docs/compaction-design.md) | 会话上下文压缩设计 |
+| [docs/loop-compaction-reuse-session-design.md](docs/loop-compaction-reuse-session-design.md) | Loop 中途压缩复用会话策略 |
+| [docs/mcp-integration-technical-design.md](docs/mcp-integration-technical-design.md) | MCP 协议集成技术方案 |
+| [docs/android-app-technical-design.md](docs/android-app-technical-design.md) | 安卓 APP（Capacitor）技术方案 |
 | [docs/weixin-bot-integration-technical-design.md](docs/weixin-bot-integration-technical-design.md) | 微信 Bot 通道技术方案（可选能力） |
+| [android/CHANGELOG.md](android/CHANGELOG.md) | 安卓 APP 发版说明 |
 | [skills/mao-user-cli/SKILL.md](skills/mao-user-cli/SKILL.md) | 用户端 REST 操作 Skill / CLI |
 | [skills/mao-admin-cli/SKILL.md](skills/mao-admin-cli/SKILL.md) | 管理端 REST 操作 Skill / CLI |
 | [CLAUDE.md](CLAUDE.md) | 维护者 / AI 辅助开发指引 |
