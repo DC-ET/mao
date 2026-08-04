@@ -41,11 +41,14 @@ class AgentLoopTest {
     private final ShellSessionManager shellSessionManager = mock(ShellSessionManager.class);
     private final SessionActivityHeartbeat activityHeartbeat = mock(SessionActivityHeartbeat.class);
     private final SessionService sessionService = mock(SessionService.class);
+    private final SessionCompactionOrchestrator sessionCompactionOrchestrator =
+            mock(SessionCompactionOrchestrator.class);
     private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager =
             mock(cn.etarch.mao.harness.mcp.McpClientManager.class);
     private final AgentLoop agentLoop = new AgentLoop(
             llmAdapter, promptEngine, contextManager, toolDispatcher, new ObjectMapper(),
-            backgroundTaskManager, shellSessionManager, activityHeartbeat, sessionService, mcpClientManager);
+            backgroundTaskManager, shellSessionManager, activityHeartbeat, sessionService,
+            sessionCompactionOrchestrator, mcpClientManager);
 
     @Test
     void executeStreamsPlainAssistantMessageAndPersistsIt() {
@@ -236,6 +239,134 @@ class AgentLoopTest {
 
         verify(llmAdapter, never()).stream(any(), any(), any(), any());
         verify(shellSessionManager).closeByConversation(11L);
+    }
+
+    @Test
+    void midLoopCompactionTriggersWhenRequestNearWindow() {
+        AgentExecutionContext context = contextWithMidLoopConfig(100, 0.5);
+        AgentEventListener listener = mock(AgentEventListener.class);
+        AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
+        when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
+        when(contextManager.estimateRequestTokens(any())).thenReturn(80);
+        when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
+        when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
+                eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");
+        when(sessionCompactionOrchestrator.compact(
+                eq(11L), eq(context), eq(listener), any(), eq(true), eq(80)))
+                .thenReturn(true);
+        stubToolThenDone();
+
+        agentLoop.execute(context, listener, persistence);
+
+        verify(sessionCompactionOrchestrator).compact(
+                eq(11L), eq(context), eq(listener), any(), eq(true), eq(80));
+        assertThat(context.isMidLoopCompactionExhausted()).isFalse();
+    }
+
+    @Test
+    void midLoopCompactionSkippedWithoutPersistenceCallback() {
+        AgentExecutionContext context = contextWithMidLoopConfig(100, 0.5);
+        AgentEventListener listener = mock(AgentEventListener.class);
+        when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
+        when(contextManager.estimateRequestTokens(any())).thenReturn(80);
+        when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
+        when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
+                eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");
+        stubToolThenDone();
+
+        agentLoop.execute(context, listener, null);
+
+        verify(sessionCompactionOrchestrator, never()).compact(
+                any(), any(), any(), any(), any(Boolean.class), any());
+    }
+
+    @Test
+    void midLoopCompactionExhaustsAfterNoProgress() {
+        AgentExecutionContext context = contextWithMidLoopConfig(100, 0.5);
+        context.setMaxRounds(4);
+        AgentEventListener listener = mock(AgentEventListener.class);
+        AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
+        when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
+        when(contextManager.estimateRequestTokens(any())).thenReturn(80);
+        when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
+        when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
+                eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");
+        when(sessionCompactionOrchestrator.compact(
+                eq(11L), eq(context), eq(listener), any(), eq(true), eq(80)))
+                .thenReturn(false);
+        doAnswer(invocation -> {
+            StreamCallback callback = invocation.getArgument(2);
+            callback.onChunk(toolChunk(ChatRequest.ToolCall.builder()
+                    .id("call-" + System.nanoTime())
+                    .function(ChatRequest.FunctionCall.builder()
+                            .name("read_file")
+                            .arguments("{\"path\":\"a\"}")
+                            .build())
+                    .build()));
+            callback.onComplete(ChatUsage.builder().promptTokens(3).completionTokens(2).totalTokens(5).build());
+            return null;
+        }).when(llmAdapter).stream(any(), any(), any(), any());
+
+        agentLoop.execute(context, listener, persistence);
+
+        verify(sessionCompactionOrchestrator, times(1)).compact(
+                eq(11L), eq(context), eq(listener), any(), eq(true), eq(80));
+        assertThat(context.isMidLoopCompactionExhausted()).isTrue();
+    }
+
+    @Test
+    void midLoopCompactionNotTriggeredBelowThreshold() {
+        AgentExecutionContext context = contextWithMidLoopConfig(100, 0.9);
+        AgentEventListener listener = mock(AgentEventListener.class);
+        AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
+        when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
+        when(contextManager.estimateRequestTokens(any())).thenReturn(50);
+        when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
+        when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
+                eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");
+        stubToolThenDone();
+
+        agentLoop.execute(context, listener, persistence);
+
+        verify(sessionCompactionOrchestrator, never()).compact(
+                any(), any(), any(), any(), any(Boolean.class), any());
+    }
+
+    private void stubToolThenDone() {
+        doAnswer(new org.mockito.stubbing.Answer<Void>() {
+            private int call;
+
+            @Override
+            public Void answer(org.mockito.invocation.InvocationOnMock invocation) {
+                StreamCallback callback = invocation.getArgument(2);
+                if (call++ == 0) {
+                    callback.onChunk(toolChunk(ChatRequest.ToolCall.builder()
+                            .id("call-1")
+                            .function(ChatRequest.FunctionCall.builder()
+                                    .name("read_file")
+                                    .arguments("{\"path\":\"a\"}")
+                                    .build())
+                            .build()));
+                    callback.onComplete(ChatUsage.builder().promptTokens(3).completionTokens(2).totalTokens(5).build());
+                } else {
+                    callback.onChunk(contentChunk(null, "done"));
+                    callback.onComplete(ChatUsage.builder().promptTokens(4).completionTokens(1).totalTokens(5).build());
+                }
+                return null;
+            }
+        }).when(llmAdapter).stream(any(), any(), any(), any());
+    }
+
+    private AgentExecutionContext contextWithMidLoopConfig(int window, double triggerRatio) {
+        AgentExecutionContext context = context();
+        CompactionConfig config = new CompactionConfig();
+        config.setEnabled(true);
+        config.setLoopMidwayCompact(true);
+        config.setContextWindowTokens(window);
+        config.setTriggerRatio(triggerRatio);
+        context.setCompactionConfig(config);
+        context.setModelConfig(LlmModelConfig.builder().contextWindowTokens(window).build());
+        return context;
     }
 
     private AgentExecutionContext context() {

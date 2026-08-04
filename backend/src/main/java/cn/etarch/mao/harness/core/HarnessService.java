@@ -29,7 +29,6 @@ import cn.etarch.mao.session.service.SessionCompactionService;
 import cn.etarch.mao.weixin.service.WeixinSessionService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -59,8 +58,9 @@ public class HarnessService {
     private final FileChangeMapper fileChangeMapper;
     private final SessionService sessionService;
     private final SessionCompactionService sessionCompactionService;
+    private final SessionHistoryLoader sessionHistoryLoader;
+    private final SessionCompactionOrchestrator sessionCompactionOrchestrator;
     private final ObjectMapper objectMapper;
-    private final ContextManager contextManager;
     private final CompactionConfig compactionConfig;
     private final EnvironmentInfoProvider environmentInfoProvider;
     private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
@@ -266,45 +266,24 @@ public class HarnessService {
         long boundary = sessionCompactionService.boundaryOf(compactionRecord);
         String summary = compactionRecord != null ? compactionRecord.getSummaryText() : null;
 
-        // A safe boundary is always at a completed turn, so tail recovery only needs the increment.
+        // A safe boundary is always at a completed tool round (assistant + all tool results).
         sessionService.cleanupIncompleteTailAfterId(sessionId, boundary);
-        HistorySnapshot history = loadHistoryAfterBoundary(sessionId, boundary);
-        applyHistory(context, summary, history);
+        SessionHistoryLoader.HistorySnapshot history =
+                sessionHistoryLoader.loadHistoryAfterBoundary(sessionId, boundary);
+        sessionHistoryLoader.applyHistory(context, summary, history);
 
         if (effectiveConfig.isEnabled() && !history.persistedMessages().isEmpty()) {
             try {
-                String currentUserQuestion = findCurrentUserQuestion(history.persistedMessages());
-                var result = listener == null
-                        ? contextManager.compactSession(
-                                sessionId, boundary, summary, history.persistedMessages(), history.snapshotMessageIds(),
-                                context.getModelConfig(), effectiveConfig, currentUserQuestion)
-                        : contextManager.compactSession(
-                                sessionId, boundary, summary, history.persistedMessages(), history.snapshotMessageIds(),
-                                context.getModelConfig(), effectiveConfig, currentUserQuestion, listener);
-                if (result != null) {
-                    boolean persisted = sessionCompactionService.persist(
-                            sessionId, compactionRecord, result.expectedOldBoundary(),
-                            result.newLastCompactedMessageId(), result.boundaryContentSnapshot(),
-                            result.summaryText(),
-                            result.inputTokens(), result.outputTokens(),
-                            context.getModelConfig() != null ? context.getModelConfig().getModelId() : null);
-
-                    // Re-read and validate after persistence to cover concurrent message edits/deletes.
-                    SessionCompaction latest = sessionCompactionService.loadValidated(sessionId);
-                    long latestBoundary = sessionCompactionService.boundaryOf(latest);
-                    String latestSummary = latest != null ? latest.getSummaryText() : null;
-                    sessionService.cleanupIncompleteTailAfterId(sessionId, latestBoundary);
-                    HistorySnapshot latestHistory = loadHistoryAfterBoundary(sessionId, latestBoundary);
-                    applyHistory(context, latestSummary, latestHistory);
-
-                    if (persisted && latestBoundary == result.newLastCompactedMessageId()) {
-                        log.info("Session compaction applied: boundary {} -> {}, {} messages, ~{} tokens saved",
-                                boundary, latestBoundary, result.compactedCount(), result.savedTokens());
-                    } else {
-                        log.info("Session compaction conflict or invalidated result: sessionId={}, expectedBoundary={}, candidateBoundary={}, latestBoundary={}",
-                                sessionId, boundary, result.newLastCompactedMessageId(), latestBoundary);
-                    }
-                }
+                sessionCompactionOrchestrator.compact(
+                        sessionId, context, listener, effectiveConfig, false, null);
+                // 请求开始路径后置 cleanup：orchestrator 不调用 cleanup，此处兜底不完整尾部
+                SessionCompaction latest = sessionCompactionService.loadValidated(sessionId);
+                long latestBoundary = sessionCompactionService.boundaryOf(latest);
+                String latestSummary = latest != null ? latest.getSummaryText() : null;
+                sessionService.cleanupIncompleteTailAfterId(sessionId, latestBoundary);
+                SessionHistoryLoader.HistorySnapshot latestHistory =
+                        sessionHistoryLoader.loadHistoryAfterBoundary(sessionId, latestBoundary);
+                sessionHistoryLoader.applyHistory(context, latestSummary, latestHistory);
             } catch (Exception e) {
                 log.warn("Session compaction failed; continuing with the previously loaded summary and increment", e);
             }
@@ -428,63 +407,6 @@ public class HarnessService {
         return context;
     }
 
-    private HistorySnapshot loadHistoryAfterBoundary(Long sessionId, long boundary) {
-        List<Message> rawMessages = sessionService.getMessagesAfterId(sessionId, boundary);
-        List<Long> snapshotMessageIds = rawMessages.stream().map(Message::getId).toList();
-        List<Message> normalized = MessageHistoryNormalizer.normalizeEntities(rawMessages, objectMapper);
-        List<PersistedChatMessage> persistedMessages = normalized.stream()
-                .map(message -> new PersistedChatMessage(
-                        message.getId(), message.getContent(), toChatMessage(message)))
-                .toList();
-        return new HistorySnapshot(snapshotMessageIds, normalized, persistedMessages);
-    }
-
-    private void applyHistory(AgentExecutionContext context, String summary, HistorySnapshot history) {
-        List<ChatRequest.Message> incrementalMessages = history.persistedMessages().stream()
-                .map(PersistedChatMessage::chatMessage)
-                .toList();
-        context.getMessages().clear();
-        context.getMessages().addAll(contextManager.prependSessionSummary(summary, incrementalMessages));
-        context.setSessionSummary(summary);
-        context.getToolAttachments().clear();
-        context.getToolAttachments().putAll(
-                ToolAttachmentLoader.loadAllFromMessages(history.normalizedEntities(), objectMapper));
-    }
-
-    private ChatRequest.Message toChatMessage(Message message) {
-        var builder = ChatRequest.Message.builder()
-                .role(message.getRole().toLowerCase())
-                .content(parseContent(message.getContent()));
-        if (message.getToolCallId() != null) {
-            builder.toolCallId(message.getToolCallId());
-        }
-        if (message.getToolCalls() != null && !message.getToolCalls().isEmpty()) {
-            try {
-                builder.toolCalls(objectMapper.readValue(
-                        message.getToolCalls(), new TypeReference<List<ChatRequest.ToolCall>>() {}));
-            } catch (JsonProcessingException e) {
-                log.warn("Failed to parse tool_calls for message {}", message.getId(), e);
-            }
-        }
-        return builder.build();
-    }
-
-    private String findCurrentUserQuestion(List<PersistedChatMessage> messages) {
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            ChatRequest.Message message = messages.get(i).chatMessage();
-            if ("user".equals(message.getRole())) {
-                return TokenEstimator.contentToString(message.getContent());
-            }
-        }
-        return null;
-    }
-
-    private record HistorySnapshot(
-            List<Long> snapshotMessageIds,
-            List<Message> normalizedEntities,
-            List<PersistedChatMessage> persistedMessages) {
-    }
-
     /**
      * Resolve agent max LLM rounds.
      * 0 or null = unlimited (capped for safety); values &lt; 2 are bumped to 2 so a tool call
@@ -529,23 +451,6 @@ public class HarnessService {
     }
 
     /**
-     * Parse content from DB: JSON array → List<ContentPart>, otherwise plain String.
-     */
-    private Object parseContent(String raw) {
-        if (raw == null) return "";
-        String trimmed = raw.trim();
-        if (trimmed.startsWith("[")) {
-            try {
-                return objectMapper.readValue(trimmed,
-                        new com.fasterxml.jackson.core.type.TypeReference<List<ChatRequest.ContentPart>>() {});
-            } catch (Exception e) {
-                return raw;  // fallback to plain text
-            }
-        }
-        return raw;
-    }
-
-    /**
      * 解析 Agent 级压缩配置，未配置时使用全局默认值。
      * 通过 agent.configJson 中的 "compaction" 节覆盖。
      */
@@ -573,9 +478,9 @@ public class HarnessService {
             merged.setMinNewMessageCount(compactionConfig.getMinNewMessageCount());
             merged.setMaxCompactionBatchMessages(compactionConfig.getMaxCompactionBatchMessages());
             merged.setMaxRoundsPerRequest(compactionConfig.getMaxRoundsPerRequest());
-            merged.setLoopEnabled(compactionConfig.isLoopEnabled());
-            merged.setLoopTriggerTokens(compactionConfig.getLoopTriggerTokens());
+            merged.setLoopMidwayCompact(compactionConfig.isLoopMidwayCompact());
             merged.setLoopRecentToolRounds(compactionConfig.getLoopRecentToolRounds());
+            merged.setLoopMaxCompactionRounds(compactionConfig.getLoopMaxCompactionRounds());
             // Apply agent overrides
             if (compactionNode.has("enabled")) merged.setEnabled(compactionNode.get("enabled").asBoolean());
             if (compactionNode.has("contextWindowTokens")) merged.setContextWindowTokens(compactionNode.get("contextWindowTokens").asInt());
@@ -588,9 +493,9 @@ public class HarnessService {
             if (compactionNode.has("minNewMessageCount")) merged.setMinNewMessageCount(compactionNode.get("minNewMessageCount").asInt());
             if (compactionNode.has("maxCompactionBatchMessages")) merged.setMaxCompactionBatchMessages(compactionNode.get("maxCompactionBatchMessages").asInt());
             if (compactionNode.has("maxRoundsPerRequest")) merged.setMaxRoundsPerRequest(compactionNode.get("maxRoundsPerRequest").asInt());
-            if (compactionNode.has("loopEnabled")) merged.setLoopEnabled(compactionNode.get("loopEnabled").asBoolean());
-            if (compactionNode.has("loopTriggerTokens")) merged.setLoopTriggerTokens(compactionNode.get("loopTriggerTokens").asInt());
+            if (compactionNode.has("loopMidwayCompact")) merged.setLoopMidwayCompact(compactionNode.get("loopMidwayCompact").asBoolean());
             if (compactionNode.has("loopRecentToolRounds")) merged.setLoopRecentToolRounds(compactionNode.get("loopRecentToolRounds").asInt());
+            if (compactionNode.has("loopMaxCompactionRounds")) merged.setLoopMaxCompactionRounds(compactionNode.get("loopMaxCompactionRounds").asInt());
             return merged;
         } catch (Exception e) {
             log.warn("Failed to parse agent compaction config, using defaults", e);

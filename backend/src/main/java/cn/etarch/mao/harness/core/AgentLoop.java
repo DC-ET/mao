@@ -45,6 +45,7 @@ public class AgentLoop {
     private final ShellSessionManager shellSessionManager;
     private final SessionActivityHeartbeat activityHeartbeat;
     private final SessionService sessionService;
+    private final SessionCompactionOrchestrator sessionCompactionOrchestrator;
     private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
     private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
 
@@ -366,24 +367,32 @@ public class AgentLoop {
             // 5. Clear pending calls for next round
             context.clearPendingToolCalls();
 
-            // 6. Loop compaction — compress working memory if tool loop is growing
+            // 6. Loop 中途压缩：复用 session 压缩（基于 DB、持久化），同步继续
             CompactionConfig loopConfig = context.getCompactionConfig();
-            if (loopConfig != null && loopConfig.isLoopEnabled()) {
+            boolean midLoopAllowed = loopConfig != null
+                    && loopConfig.isEnabled() && loopConfig.isLoopMidwayCompact()
+                    && persistenceCallback != null
+                    && context.getSessionId() != null
+                    && !context.isMidLoopCompactionExhausted();
+            if (midLoopAllowed) {
                 try {
                     int nextRequestTokens = contextManager.estimateRequestTokens(
                             promptEngine.buildRequest(context));
-                    var loopResult = contextManager.compactLoop(
-                            context.getMessages(), context.getModelConfig(), loopConfig,
-                            context.getWorkingSummary(), listener, nextRequestTokens);
-                    if (loopResult != null) {
-                        context.getMessages().clear();
-                        context.getMessages().addAll(loopResult.compactedMessages());
-                        context.setWorkingSummary(loopResult.summaryText());
-                        log.info("Loop compaction applied: {} messages compacted, ~{} tokens saved",
-                                loopResult.compactedCount(), loopResult.savedTokens());
+                    int effectiveContextWindow = CompactionConfig.resolveEffectiveContextWindow(
+                            context.getModelConfig(), loopConfig);
+                    if (nextRequestTokens >= effectiveContextWindow * loopConfig.getTriggerRatio()) {
+                        boolean advanced = sessionCompactionOrchestrator.compact(
+                                context.getSessionId(), context, listener, loopConfig,
+                                true, nextRequestTokens);
+                        if (!advanced) {
+                            context.setMidLoopCompactionExhausted(true);
+                            log.info("Mid-loop compaction made no progress for session {}; disabled for this request",
+                                    context.getSessionId());
+                        }
                     }
                 } catch (Exception e) {
-                    log.warn("Loop compaction failed, continuing with full history", e);
+                    context.setMidLoopCompactionExhausted(true);
+                    log.warn("Mid-loop compaction failed, continuing with full history", e);
                 }
             }
         }

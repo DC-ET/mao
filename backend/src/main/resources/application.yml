@@ -99,12 +99,14 @@ app:
       min-new-message-count: 8
       # 单批压缩消息数软上限
       max-compaction-batch-messages: 200
-      # 单次请求内最多连续压缩轮数
+      # 单次请求内最多连续压缩轮数（仅请求开始压缩）
       max-rounds-per-request: 30
-      # Loop 工作记忆压缩（单请求内工具链），约窗口 80% 触发，窗口内尽量不压
-      loop-enabled: true
-      loop-trigger-tokens: 204800
+      # Loop 中途压缩（复用 session 压缩算法与持久化）
+      loop-midway-compact: true
+      # mid-loop 压缩时当前 turn 尾部保留的原始工具轮数
       loop-recent-tool-rounds: 5
+      # mid-loop 单次压缩最多连续调用压缩 LLM 的次数
+      loop-max-compaction-rounds: 5
 
   # MCP（Model Context Protocol）客户端
   mcp:

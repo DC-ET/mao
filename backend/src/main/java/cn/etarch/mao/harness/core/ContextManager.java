@@ -43,7 +43,7 @@ public class ContextManager {
             LlmModelConfig modelConfig, CompactionConfig config,
             String currentUserQuestion) {
         return compactSession(sessionId, expectedOldBoundary, existingSummary, messages,
-                snapshotMessageIds, modelConfig, config, currentUserQuestion, null);
+                snapshotMessageIds, modelConfig, config, currentUserQuestion, null, false, null);
     }
 
     public CompactionService.SessionCompactionResult compactSession(
@@ -51,39 +51,24 @@ public class ContextManager {
             List<PersistedChatMessage> messages, List<Long> snapshotMessageIds,
             LlmModelConfig modelConfig, CompactionConfig config,
             String currentUserQuestion, AgentEventListener listener) {
+        return compactSession(sessionId, expectedOldBoundary, existingSummary, messages,
+                snapshotMessageIds, modelConfig, config, currentUserQuestion, listener, false, null);
+    }
+
+    public CompactionService.SessionCompactionResult compactSession(
+            Long sessionId, long expectedOldBoundary, String existingSummary,
+            List<PersistedChatMessage> messages, List<Long> snapshotMessageIds,
+            LlmModelConfig modelConfig, CompactionConfig config,
+            String currentUserQuestion, AgentEventListener listener,
+            boolean compactCurrentTurn, Integer measuredRequestTokens) {
         return compactionService.compactSession(
                 sessionId, expectedOldBoundary, existingSummary, messages, snapshotMessageIds,
-                modelConfig, config, currentUserQuestion, listener);
+                modelConfig, config, currentUserQuestion, listener,
+                compactCurrentTurn, measuredRequestTokens);
     }
 
     public List<ChatRequest.Message> prependSessionSummary(
             String summary, List<ChatRequest.Message> incrementalMessages) {
         return compactionService.prependSessionSummary(summary, incrementalMessages);
-    }
-
-    /**
-     * 执行 loop 工作记忆压缩
-     */
-    public CompactionService.LoopCompactionResult compactLoop(
-            List<ChatRequest.Message> messages,
-            LlmModelConfig modelConfig, CompactionConfig config,
-            String existingWorkingSummary) {
-        return compactLoop(messages, modelConfig, config, existingWorkingSummary, null);
-    }
-
-    public CompactionService.LoopCompactionResult compactLoop(
-            List<ChatRequest.Message> messages,
-            LlmModelConfig modelConfig, CompactionConfig config,
-            String existingWorkingSummary, AgentEventListener listener) {
-        return compactionService.compactLoop(messages, modelConfig, config, existingWorkingSummary, listener);
-    }
-
-    public CompactionService.LoopCompactionResult compactLoop(
-            List<ChatRequest.Message> messages,
-            LlmModelConfig modelConfig, CompactionConfig config,
-            String existingWorkingSummary, AgentEventListener listener,
-            int requestTokens) {
-        return compactionService.compactLoop(
-                messages, modelConfig, config, existingWorkingSummary, listener, requestTokens);
     }
 }

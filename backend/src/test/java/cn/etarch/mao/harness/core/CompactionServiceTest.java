@@ -243,44 +243,184 @@ class CompactionServiceTest {
     }
 
     @Test
-    void compactLoopSummarizesOlderToolRounds() {
-        when(tokenEstimator.estimateMessages(any())).thenReturn(10_000);
-        when(tokenEstimator.countTokens("working summary")).thenReturn(10);
-        when(llmAdapter.chat(any(), any())).thenReturn(summaryResponse("<summary>working summary</summary>"));
+    void prependSessionSummaryAddsSyntheticUserWhenIncrementStartsWithAssistant() {
+        List<ChatRequest.Message> messages = service.prependSessionSummary(
+                "summary",
+                List.of(ChatRequest.Message.builder().role("assistant").content("cont").build()));
+
+        assertThat(messages).extracting(ChatRequest.Message::getRole)
+                .containsExactly("system", "user", "assistant");
+        assertThat(messages.get(1).getContent().toString()).contains("历史压缩摘要");
+    }
+
+    @Test
+    void prependSessionSummaryDoesNotAddSyntheticUserWhenStartsWithUser() {
+        List<ChatRequest.Message> messages = service.prependSessionSummary(
+                "summary",
+                List.of(ChatRequest.Message.builder().role("user").content("hi").build()));
+
+        assertThat(messages).extracting(ChatRequest.Message::getRole)
+                .containsExactly("system", "user");
+    }
+
+    @Test
+    void prependSessionSummaryDoesNotAddSyntheticUserWithoutSummary() {
+        List<ChatRequest.Message> messages = service.prependSessionSummary(
+                null,
+                List.of(ChatRequest.Message.builder().role("assistant").content("cont").build()));
+
+        assertThat(messages).extracting(ChatRequest.Message::getRole)
+                .containsExactly("assistant");
+    }
+
+    @Test
+    void loopModeCompactsContinuousPrefixIncludingCurrentTurnHead() {
+        triggerCompaction("loop summary");
+        CompactionConfig config = loopMidwayConfig();
+        config.setLoopRecentToolRounds(1);
+        config.setLoopMaxCompactionRounds(5);
+        config.setMaxCompactionBatchMessages(200);
+
+        // history turn + current turn with 3 tool rounds → compact history + USER + first 2 rounds
+        List<PersistedChatMessage> messages = loopModeMessages();
 
         AgentEventListener listener = mock(AgentEventListener.class);
-        CompactionService.LoopCompactionResult result = service.compactLoop(
-                loopConversation(), modelConfig(), loopConfig(), "previous work", listener);
+        var result = service.compactSession(
+                3L, 0, null, messages, ids(messages),
+                modelConfig(), config, "do the task", listener, true, 10_000);
 
         assertThat(result).isNotNull();
-        verify(listener).onCompactionStart("loop", 4, 10_000);
-        verify(listener).onCompactionEnd(eq("loop"), eq(10), eq(0), anyLong());
-        assertThat(result.summaryText()).isEqualTo("working summary");
-        assertThat(result.compactedMessages()).anySatisfy(message ->
-                assertThat(message.getContent().toString()).contains("工作记忆摘要"));
+        verify(listener).onCompactionStart(eq("session"), any(Integer.class), any(Integer.class));
+        verify(listener).onCompactionEnd(eq("session"), any(Integer.class), any(Integer.class), anyLong());
+        // Boundary at end of second tool round in current turn (msg 50 = last tool of round 2)
+        assertThat(result.newLastCompactedMessageId()).isEqualTo(50L);
+        assertThat(result.summaryText()).isEqualTo("loop summary");
+
+        ArgumentCaptor<ChatRequest> requestCaptor = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(llmAdapter).chat(requestCaptor.capture(), any());
+        String prompt = requestCaptor.getValue().getMessages().get(0).getContent().toString();
+        assertThat(prompt).contains("当前用户问题", "do the task", "原文完整保留");
     }
 
     @Test
-    void compactLoopTriggersWhenFullRequestApproachesModelWindow() {
-        when(tokenEstimator.estimateMessages(any())).thenReturn(1);
-        when(tokenEstimator.countTokens("working summary")).thenReturn(1);
-        when(llmAdapter.chat(any(), any())).thenReturn(summaryResponse("<summary>working summary</summary>"));
+    void loopModeDoesNotEnterCurrentTurnWhenToolRoundsWithinKeepLimit() {
+        triggerCompaction("only history");
+        CompactionConfig config = loopMidwayConfig();
+        config.setLoopRecentToolRounds(5);
 
-        CompactionService.LoopCompactionResult result = service.compactLoop(
-                loopConversation(), modelConfig(), loopConfig(), null, null, 80);
+        List<PersistedChatMessage> messages = List.of(
+                message(1, "user"), message(2, "assistant"),
+                message(10, "user"),
+                assistantWithTools(20, "c1"),
+                toolMsg(21, "c1"),
+                assistantWithTools(30, "c2"),
+                toolMsg(31, "c2"));
+
+        var result = service.compactSession(
+                1L, 0, null, messages, ids(messages),
+                modelConfig(), config, "q", null, true, 10_000);
 
         assertThat(result).isNotNull();
-        assertThat(result.summaryText()).isEqualTo("working summary");
+        // Only history turn compacted; current turn has 2 rounds <= 5 keep
+        assertThat(result.newLastCompactedMessageId()).isEqualTo(2L);
     }
 
     @Test
-    void compactLoopReturnsNullWhenNotTriggered() {
-        CompactionConfig disabled = loopConfig();
-        disabled.setLoopEnabled(false);
-        assertThat(service.compactLoop(loopConversation(), modelConfig(), disabled, null)).isNull();
+    void loopModeKeepsParallelToolCallsInSameUnit() {
+        when(tokenEstimator.estimateMessages(any())).thenAnswer(inv -> {
+            List<?> msgs = inv.getArgument(0);
+            return msgs.size() * 100;
+        });
+        when(tokenEstimator.countTokens(any())).thenReturn(10);
+        when(llmAdapter.chat(any(), any())).thenReturn(summaryResponse("<summary>parallel</summary>"));
+        CompactionConfig config = loopMidwayConfig();
+        config.setLoopRecentToolRounds(1);
+        config.setMaxCompactionBatchMessages(2); // smaller than 1 assistant + 3 tools
+        config.setTargetRatio(0.01); // keep compressing past first (USER-only) batch
 
-        when(tokenEstimator.estimateMessages(any())).thenReturn(1);
-        assertThat(service.compactLoop(loopConversation(), modelConfig(), loopConfig(), null)).isNull();
+        List<PersistedChatMessage> messages = List.of(
+                message(1, "user"),
+                assistantWithTools(10, "a", "b", "c"),
+                toolMsg(11, "a"),
+                toolMsg(12, "b"),
+                toolMsg(13, "c"),
+                assistantWithTools(20, "d"),
+                toolMsg(21, "d"));
+
+        var result = service.compactSession(
+                1L, 0, null, messages, ids(messages),
+                modelConfig(), config, "q", null, true, 10_000);
+
+        assertThat(result).isNotNull();
+        // First tool round (10-13) compacted as one intact unit (not split mid-round)
+        assertThat(result.newLastCompactedMessageId()).isEqualTo(13L);
+        assertThat(result.compactedCount()).isEqualTo(5); // user + assistant + 3 tools
+        // USER unit then parallel tool-round unit → 2 LLM rounds, unit never split
+        verify(llmAdapter, times(2)).chat(any(), any());
+    }
+
+    @Test
+    void loopModeIgnoresMinMessageCountWhenRequestTokensHigh() {
+        triggerCompaction("few msgs");
+        CompactionConfig config = loopMidwayConfig();
+        config.setMinCompactMessageCount(100);
+        config.setMinNewMessageCount(100);
+        config.setLoopRecentToolRounds(1);
+
+        List<PersistedChatMessage> messages = List.of(
+                message(1, "user"),
+                assistantWithTools(10, "a"),
+                toolMsg(11, "a"),
+                assistantWithTools(20, "b"),
+                toolMsg(21, "b"));
+
+        var result = service.compactSession(
+                1L, 0, null, messages, ids(messages),
+                modelConfig(), config, "q", null, true, 10_000);
+
+        assertThat(result).isNotNull();
+        assertThat(result.newLastCompactedMessageId()).isEqualTo(11L);
+    }
+
+    @Test
+    void loopModeStopsAtMaxCompactionRounds() {
+        when(tokenEstimator.estimateMessages(any())).thenReturn(10_000);
+        when(tokenEstimator.countTokens(any())).thenReturn(10);
+        when(llmAdapter.chat(any(), any())).thenReturn(summaryResponse("<summary>r</summary>"));
+        CompactionConfig config = loopMidwayConfig();
+        config.setLoopRecentToolRounds(1);
+        config.setLoopMaxCompactionRounds(1);
+        config.setMaxCompactionBatchMessages(2);
+        config.setTargetRatio(0.01); // never reach watermark
+
+        List<PersistedChatMessage> messages = loopModeMessages();
+        var result = service.compactSession(
+                1L, 0, null, messages, ids(messages),
+                modelConfig(), config, "q", null, true, 10_000);
+
+        assertThat(result).isNotNull();
+        verify(llmAdapter, times(1)).chat(any(), any());
+    }
+
+    @Test
+    void loopModeReturnsNullWhenRequestBelowTrigger() {
+        CompactionConfig config = loopMidwayConfig();
+        List<PersistedChatMessage> messages = loopModeMessages();
+        assertThat(service.compactSession(
+                1L, 0, null, messages, ids(messages),
+                modelConfig(), config, "q", null, true, 1)).isNull();
+    }
+
+    private List<PersistedChatMessage> loopModeMessages() {
+        return List.of(
+                message(1, "user"), message(2, "assistant"),
+                message(10, "user"),
+                assistantWithTools(20, "c1"),
+                toolMsg(21, "c1"),
+                assistantWithTools(40, "c2"),
+                toolMsg(50, "c2"),
+                assistantWithTools(60, "c3"),
+                toolMsg(61, "c3"));
     }
 
     private void triggerCompaction(String summary) {
@@ -303,26 +443,29 @@ class CompactionServiceTest {
         return new PersistedChatMessage(id, message);
     }
 
-    private List<Long> ids(List<PersistedChatMessage> messages) {
-        return messages.stream().map(PersistedChatMessage::messageId).sorted().toList();
+    private PersistedChatMessage assistantWithTools(long id, String... callIds) {
+        List<ChatRequest.ToolCall> calls = new ArrayList<>();
+        for (String callId : callIds) {
+            calls.add(toolCall(callId));
+        }
+        ChatRequest.Message message = ChatRequest.Message.builder()
+                .role("assistant")
+                .content("calling " + id)
+                .toolCalls(calls)
+                .build();
+        return new PersistedChatMessage(id, message);
     }
 
-    private List<ChatRequest.Message> loopConversation() {
-        List<ChatRequest.Message> messages = new ArrayList<>();
-        messages.add(ChatRequest.Message.builder().role("user").content("do work").build());
-        for (int i = 0; i < 4; i++) {
-            messages.add(ChatRequest.Message.builder()
-                    .role("assistant")
-                    .content("calling")
-                    .toolCalls(List.of(toolCall("call-" + i)))
-                    .build());
-            messages.add(ChatRequest.Message.builder()
-                    .role("tool")
-                    .toolCallId("call-" + i)
-                    .content("tool result " + i + " ".repeat(50))
-                    .build());
-        }
-        return messages;
+    private PersistedChatMessage toolMsg(long id, String callId) {
+        return new PersistedChatMessage(id, ChatRequest.Message.builder()
+                .role("tool")
+                .toolCallId(callId)
+                .content("tool result " + id + " ".repeat(20))
+                .build());
+    }
+
+    private List<Long> ids(List<PersistedChatMessage> messages) {
+        return messages.stream().map(PersistedChatMessage::messageId).sorted().toList();
     }
 
     private ChatRequest.ToolCall toolCall(String id) {
@@ -359,11 +502,17 @@ class CompactionServiceTest {
         return config;
     }
 
-    private CompactionConfig loopConfig() {
+    private CompactionConfig loopMidwayConfig() {
         CompactionConfig config = new CompactionConfig();
-        config.setLoopEnabled(true);
-        config.setLoopTriggerTokens(10);
+        config.setEnabled(true);
+        config.setLoopMidwayCompact(true);
+        config.setContextWindowTokens(100);
+        config.setTriggerRatio(0.1);
+        config.setTargetRatio(0.25);
         config.setLoopRecentToolRounds(1);
+        config.setLoopMaxCompactionRounds(5);
+        config.setMaxCompactionBatchMessages(200);
+        config.setMaxSummaryTokens(12000);
         return config;
     }
 }

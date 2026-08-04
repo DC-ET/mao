@@ -63,8 +63,16 @@ public class AgentExecutionContext {
     // 会话压缩摘要（跨轮次）
     private String sessionSummary;
 
-    // 工作记忆摘要（当前请求内 loop 压缩）
-    private String workingSummary;
+    /**
+     * 从未落库的 system 消息（后台任务结果、MCP 降级提示等）。
+     * applyHistory 从 DB 重载时会按原顺序追加到 messages 尾部，避免永久丢失。
+     */
+    private List<ChatRequest.Message> ephemeralSystemMessages = new ArrayList<>();
+
+    /**
+     * 本请求内 mid-loop 压缩无进展熔断：任一次未推进边界后置位，本请求内不再尝试。
+     */
+    private boolean midLoopCompactionExhausted = false;
 
     // 压缩配置（Agent 级覆盖，为 null 时使用全局默认）
     private CompactionConfig compactionConfig;
@@ -73,9 +81,6 @@ public class AgentExecutionContext {
     private List<ChatRequest.ToolCall> pendingToolCalls;
     private ChatUsage totalUsage;
     private int currentRound = 0;
-
-    // Loop 压缩计数
-    private int loopToolRounds = 0;
 
     // 取消标志 — 用户点击停止后立即设为 true
     private AtomicBoolean cancelFlag;
@@ -109,10 +114,12 @@ public class AgentExecutionContext {
     }
 
     public void addSystemMessage(String content) {
-        messages.add(ChatRequest.Message.builder()
+        ChatRequest.Message systemMessage = ChatRequest.Message.builder()
                 .role("system")
                 .content(content)
-                .build());
+                .build();
+        messages.add(systemMessage);
+        ephemeralSystemMessages.add(systemMessage);
     }
 
     public void addAssistantMessage(String content, List<ChatRequest.ToolCall> toolCalls) {

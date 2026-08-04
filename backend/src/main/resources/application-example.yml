@@ -90,9 +90,9 @@ app:
       min-new-message-count: 8
       max-compaction-batch-messages: 200
       max-rounds-per-request: 30
-      loop-enabled: true
-      loop-trigger-tokens: 96000
+      loop-midway-compact: true
       loop-recent-tool-rounds: 5
+      loop-max-compaction-rounds: 5
 
     # Skills directory (external filesystem path, each subfolder is a skill)
     skills-dir: ${SKILLS_DIR:${MAO_ROOT_DIR}/data/skills}

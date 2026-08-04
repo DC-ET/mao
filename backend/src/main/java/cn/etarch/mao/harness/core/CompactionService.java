@@ -24,6 +24,9 @@ public class CompactionService {
     private static final int MAX_SINGLE_MESSAGE_CHARS = 2000;
     private static final int MAX_TOOL_RESULT_CHARS = 3000;
 
+    private static final String SYNTHETIC_CONTINUE_USER =
+            "（以上为历史压缩摘要）请基于摘要与下方保留的原始工具结果继续完成当前任务，不要重复已完成的步骤。";
+
     // ======================== 会话历史压缩 ========================
 
     public SessionCompactionResult compactSession(Long sessionId,
@@ -35,7 +38,7 @@ public class CompactionService {
                                                    CompactionConfig config,
                                                    String currentUserQuestion) {
         return compactSession(sessionId, expectedOldBoundary, existingSummary, messages,
-                snapshotMessageIds, modelConfig, config, currentUserQuestion, null);
+                snapshotMessageIds, modelConfig, config, currentUserQuestion, null, false, null);
     }
 
     public SessionCompactionResult compactSession(Long sessionId,
@@ -47,8 +50,38 @@ public class CompactionService {
                                                    CompactionConfig config,
                                                    String currentUserQuestion,
                                                    AgentEventListener listener) {
+        return compactSession(sessionId, expectedOldBoundary, existingSummary, messages,
+                snapshotMessageIds, modelConfig, config, currentUserQuestion, listener, false, null);
+    }
+
+    public SessionCompactionResult compactSession(Long sessionId,
+                                                   long expectedOldBoundary,
+                                                   String existingSummary,
+                                                   List<PersistedChatMessage> messages,
+                                                   List<Long> snapshotMessageIds,
+                                                   LlmModelConfig modelConfig,
+                                                   CompactionConfig config,
+                                                   String currentUserQuestion,
+                                                   AgentEventListener listener,
+                                                   boolean compactCurrentTurn,
+                                                   Integer measuredRequestTokens) {
         if (!config.isEnabled() || messages.isEmpty()) return null;
 
+        if (compactCurrentTurn) {
+            return compactSessionLoopMode(sessionId, expectedOldBoundary, existingSummary, messages,
+                    snapshotMessageIds, modelConfig, config, currentUserQuestion, listener,
+                    measuredRequestTokens);
+        }
+        return compactSessionRequestStart(sessionId, expectedOldBoundary, existingSummary, messages,
+                snapshotMessageIds, modelConfig, config, currentUserQuestion, listener);
+    }
+
+    /** 请求开始压缩：行为与改造前逐行一致（不压当前 USER turn）。 */
+    private SessionCompactionResult compactSessionRequestStart(
+            Long sessionId, long expectedOldBoundary, String existingSummary,
+            List<PersistedChatMessage> messages, List<Long> snapshotMessageIds,
+            LlmModelConfig modelConfig, CompactionConfig config,
+            String currentUserQuestion, AgentEventListener listener) {
         long startTime = System.currentTimeMillis();
 
         List<List<PersistedChatMessage>> turns = splitUserTurns(messages);
@@ -70,11 +103,7 @@ public class CompactionService {
         int totalTokenEstimate = tokenEstimator.estimateMessages(allMessages)
                 + tokenEstimator.countTokens(existingSummary);
 
-        // 确定实际使用的上下文窗口值：优先使用模型配置值
-        int effectiveContextWindow = config.getContextWindowTokens();
-        if (modelConfig != null && modelConfig.getContextWindowTokens() != null && modelConfig.getContextWindowTokens() > 0) {
-            effectiveContextWindow = modelConfig.getContextWindowTokens();
-        }
+        int effectiveContextWindow = CompactionConfig.resolveEffectiveContextWindow(modelConfig, config);
 
         boolean shouldCompact = candidates.size() >= config.getMinNewMessageCount()
                 && candidates.size() >= config.getMinCompactMessageCount()
@@ -97,30 +126,16 @@ public class CompactionService {
         SessionCompactionResult lastSafeResult = null;
         int turnIndex = 0;
         int rounds = 0;
-        // 目标水位机制：初始候选为除 recentTurns 轮外的全部轮次；压完一批后若估算水位仍高于
-        // targetRatio，则从保留轮次的最老一轮开始借入继续压缩，直到达标或只剩 minRetainedTurns 轮。
         int borrowIndex = candidateTurnCount;
         int minBorrowIndex = Math.max(candidateTurnCount,
                 completeTurnCount - Math.min(config.getMinRetainedTurns(), completeTurnCount));
         while (turnIndex < candidateTurns.size() && rounds < config.getMaxRoundsPerRequest()) {
-            List<PersistedChatMessage> batch = new ArrayList<>();
-            do {
-                List<PersistedChatMessage> nextTurn = candidateTurns.get(turnIndex);
-                if (!batch.isEmpty()
-                        && batch.size() + nextTurn.size() > config.getMaxCompactionBatchMessages()) {
-                    break;
-                }
-                batch.addAll(nextTurn);
-                turnIndex++;
-            } while (turnIndex < candidateTurns.size()
-                    && batch.size() < config.getMaxCompactionBatchMessages());
+            List<PersistedChatMessage> batch = takeNextBatch(candidateTurns, turnIndex, config);
+            turnIndex += countUnitsInBatch(candidateTurns, turnIndex, batch);
 
-            String formattedHistory = formatMessagesForCompaction(toChatMessages(batch));
-            String compactionPrompt = buildSessionCompactionPrompt(
-                    rollingSummary, formattedHistory, currentUserQuestion, config.getMaxSummaryTokens());
-
-            CompactionLlmResult llmResult = callCompactionModel(compactionPrompt, modelConfig);
-            if (llmResult == null || llmResult.summaryText == null || llmResult.summaryText.isBlank()) {
+            CompactionLlmResult llmResult = runCompactionRound(
+                    rollingSummary, batch, currentUserQuestion, config, modelConfig, false);
+            if (llmResult == null) {
                 log.warn("Session compaction LLM call returned empty result for session {}", sessionId);
                 break;
             }
@@ -132,34 +147,13 @@ public class CompactionService {
             batch.stream().map(PersistedChatMessage::messageId).forEach(summarizedIds::add);
             rounds++;
 
-            long candidateBoundary = summarizedIds.stream().mapToLong(Long::longValue).max().orElse(0L);
-            if (isCompletePhysicalPrefix(
-                    expectedOldBoundary, candidateBoundary, snapshotMessageIds, summarizedIds)) {
-                String boundaryContentSnapshot = messages.stream()
-                        .filter(message -> message.messageId() == candidateBoundary)
-                        .findFirst()
-                        .map(PersistedChatMessage::persistedContentSnapshot)
-                        .orElse(null);
-                int summaryTokens = tokenEstimator.countTokens(rollingSummary);
-                int compactedTokens = tokenEstimator.estimateMessages(
-                        toChatMessages(messages.stream()
-                                .filter(message -> summarizedIds.contains(message.messageId()))
-                                .toList()));
-                lastSafeResult = new SessionCompactionResult(
-                        rollingSummary,
-                        expectedOldBoundary,
-                        candidateBoundary,
-                        boundaryContentSnapshot,
-                        totalCompacted,
-                        totalInputTokens,
-                        totalOutputTokens,
-                        summaryTokens,
-                        Math.max(0, compactedTokens - summaryTokens),
-                        System.currentTimeMillis() - startTime);
+            SessionCompactionResult safe = maybeBuildSafeResult(
+                    messages, snapshotMessageIds, expectedOldBoundary, summarizedIds,
+                    rollingSummary, totalCompacted, totalInputTokens, totalOutputTokens, startTime);
+            if (safe != null) {
+                lastSafeResult = safe;
             }
 
-            // 候选轮次全部压完后，检查目标水位：未达标且还有可借出的保留轮次时，
-            // 借入最老一轮继续压缩，直到达标或只剩 minRetainedTurns 轮
             if (turnIndex >= candidateTurns.size()) {
                 if (borrowIndex >= minBorrowIndex) {
                     break;
@@ -181,6 +175,248 @@ public class CompactionService {
             }
         }
 
+        return finishSessionCompaction(sessionId, expectedOldBoundary, lastSafeResult,
+                totalCompacted, listener, startTime);
+    }
+
+    /**
+     * Loop 中途压缩：候选为连续前缀 unit（历史轮 → 当前 USER → 头部工具轮），
+     * 门槛与水位基于完整请求 token 透传值。
+     */
+    private SessionCompactionResult compactSessionLoopMode(
+            Long sessionId, long expectedOldBoundary, String existingSummary,
+            List<PersistedChatMessage> messages, List<Long> snapshotMessageIds,
+            LlmModelConfig modelConfig, CompactionConfig config,
+            String currentUserQuestion, AgentEventListener listener,
+            Integer measuredRequestTokens) {
+        if (measuredRequestTokens == null) return null;
+
+        long startTime = System.currentTimeMillis();
+        List<List<PersistedChatMessage>> turns = splitUserTurns(messages);
+        List<List<PersistedChatMessage>> units = buildLoopUnits(turns, config);
+        if (units.isEmpty()) return null;
+
+        int effectiveContextWindow = CompactionConfig.resolveEffectiveContextWindow(modelConfig, config);
+        if (measuredRequestTokens < effectiveContextWindow * config.getTriggerRatio()) {
+            return null;
+        }
+
+        List<PersistedChatMessage> candidates = flatten(units);
+        int candidateTokenCount = tokenEstimator.estimateMessages(toChatMessages(candidates));
+
+        log.info("Session mid-loop compaction triggered for session {}: {} units / {} messages ({} tokens), requestTokens={}",
+                sessionId, units.size(), candidates.size(), candidateTokenCount, measuredRequestTokens);
+        if (listener != null) {
+            listener.onCompactionStart("session", candidates.size(), candidateTokenCount);
+        }
+
+        String rollingSummary = existingSummary;
+        int totalCompacted = 0;
+        int totalInputTokens = 0;
+        int totalOutputTokens = 0;
+        Set<Long> summarizedIds = new HashSet<>();
+
+        SessionCompactionResult lastSafeResult = null;
+        int unitIndex = 0;
+        int rounds = 0;
+        int maxRounds = Math.max(1, config.getLoopMaxCompactionRounds());
+        int targetTokens = (int) (effectiveContextWindow * config.getTargetRatio());
+
+        while (unitIndex < units.size() && rounds < maxRounds) {
+            List<PersistedChatMessage> batch = takeNextBatch(units, unitIndex, config);
+            unitIndex += countUnitsInBatch(units, unitIndex, batch);
+
+            CompactionLlmResult llmResult = runCompactionRound(
+                    rollingSummary, batch, currentUserQuestion, config, modelConfig, true);
+            if (llmResult == null) {
+                log.warn("Session mid-loop compaction LLM call returned empty result for session {}", sessionId);
+                break;
+            }
+
+            rollingSummary = llmResult.summaryText;
+            totalCompacted += batch.size();
+            totalInputTokens += llmResult.inputTokens;
+            totalOutputTokens += llmResult.outputTokens;
+            batch.stream().map(PersistedChatMessage::messageId).forEach(summarizedIds::add);
+            rounds++;
+
+            SessionCompactionResult safe = maybeBuildSafeResult(
+                    messages, snapshotMessageIds, expectedOldBoundary, summarizedIds,
+                    rollingSummary, totalCompacted, totalInputTokens, totalOutputTokens, startTime);
+            if (safe != null) {
+                lastSafeResult = safe;
+            }
+
+            // 水位：完整请求口径 = measured - 已摘要消息 tokens + 新摘要 tokens
+            int summarizedMsgTokens = tokenEstimator.estimateMessages(
+                    toChatMessages(messages.stream()
+                            .filter(m -> summarizedIds.contains(m.messageId()))
+                            .toList()));
+            int watermark = measuredRequestTokens - summarizedMsgTokens
+                    + tokenEstimator.countTokens(rollingSummary);
+            if (watermark <= targetTokens) {
+                log.info("Session mid-loop compaction reached target watermark {} <= {}, stopping ({} rounds)",
+                        watermark, targetTokens, rounds);
+                break;
+            }
+        }
+
+        return finishSessionCompaction(sessionId, expectedOldBoundary, lastSafeResult,
+                totalCompacted, listener, startTime);
+    }
+
+    /**
+     * Loop 模式连续前缀候选：历史完整 turn 各为一个 unit；
+     * 若当前 turn 可压工具轮非空，再追加 USER 头部 unit + 各可压工具轮 unit。
+     */
+    List<List<PersistedChatMessage>> buildLoopUnits(
+            List<List<PersistedChatMessage>> turns, CompactionConfig config) {
+        List<List<PersistedChatMessage>> units = new ArrayList<>();
+        if (turns.isEmpty()) return units;
+
+        List<List<PersistedChatMessage>> history;
+        List<PersistedChatMessage> current;
+        if (turns.size() == 1) {
+            history = List.of();
+            current = turns.get(0);
+        } else {
+            history = turns.subList(0, turns.size() - 1);
+            current = turns.get(turns.size() - 1);
+        }
+
+        for (List<PersistedChatMessage> turn : history) {
+            units.add(new ArrayList<>(turn));
+        }
+
+        ToolRoundSplit split = splitToolRounds(current);
+        int keepRounds = Math.max(0, config.getLoopRecentToolRounds());
+        List<List<PersistedChatMessage>> compactable;
+        if (split.rounds().size() <= keepRounds) {
+            compactable = List.of();
+        } else {
+            compactable = split.rounds().subList(0, split.rounds().size() - keepRounds);
+        }
+
+        if (!compactable.isEmpty()) {
+            if (!split.header().isEmpty()) {
+                units.add(new ArrayList<>(split.header()));
+            }
+            for (List<PersistedChatMessage> round : compactable) {
+                units.add(new ArrayList<>(round));
+            }
+        }
+
+        return units;
+    }
+
+    /**
+     * 按 assistant 起始切工具轮；USER / 孤立 tool 归入 header。
+     */
+    ToolRoundSplit splitToolRounds(List<PersistedChatMessage> turn) {
+        List<PersistedChatMessage> header = new ArrayList<>();
+        List<List<PersistedChatMessage>> rounds = new ArrayList<>();
+        List<PersistedChatMessage> currentRound = null;
+
+        for (PersistedChatMessage message : turn) {
+            String role = message.chatMessage().getRole();
+            if ("assistant".equals(role)) {
+                currentRound = new ArrayList<>();
+                currentRound.add(message);
+                rounds.add(currentRound);
+            } else if ("tool".equals(role)) {
+                if (currentRound != null) {
+                    currentRound.add(message);
+                } else {
+                    header.add(message);
+                }
+            } else if (currentRound == null) {
+                header.add(message);
+            } else {
+                // 不应出现在完整工具轮中间；保守归入 header 并断开当前轮归属
+                header.add(message);
+                currentRound = null;
+            }
+        }
+        return new ToolRoundSplit(header, rounds);
+    }
+
+    private List<PersistedChatMessage> takeNextBatch(
+            List<List<PersistedChatMessage>> units, int startIndex, CompactionConfig config) {
+        List<PersistedChatMessage> batch = new ArrayList<>();
+        int i = startIndex;
+        do {
+            List<PersistedChatMessage> nextUnit = units.get(i);
+            if (!batch.isEmpty()
+                    && batch.size() + nextUnit.size() > config.getMaxCompactionBatchMessages()) {
+                break;
+            }
+            batch.addAll(nextUnit);
+            i++;
+        } while (i < units.size() && batch.size() < config.getMaxCompactionBatchMessages());
+        return batch;
+    }
+
+    private int countUnitsInBatch(List<List<PersistedChatMessage>> units, int startIndex,
+                                  List<PersistedChatMessage> batch) {
+        int count = 0;
+        int covered = 0;
+        for (int i = startIndex; i < units.size() && covered < batch.size(); i++) {
+            covered += units.get(i).size();
+            count++;
+        }
+        return count;
+    }
+
+    private CompactionLlmResult runCompactionRound(
+            String rollingSummary, List<PersistedChatMessage> batch,
+            String currentUserQuestion, CompactionConfig config,
+            LlmModelConfig modelConfig, boolean loopMode) {
+        String formattedHistory = formatMessagesForCompaction(toChatMessages(batch));
+        String compactionPrompt = buildSessionCompactionPrompt(
+                rollingSummary, formattedHistory, currentUserQuestion,
+                config.getMaxSummaryTokens(), loopMode);
+        CompactionLlmResult llmResult = callCompactionModel(compactionPrompt, modelConfig);
+        if (llmResult == null || llmResult.summaryText == null || llmResult.summaryText.isBlank()) {
+            return null;
+        }
+        return llmResult;
+    }
+
+    private SessionCompactionResult maybeBuildSafeResult(
+            List<PersistedChatMessage> messages, List<Long> snapshotMessageIds,
+            long expectedOldBoundary, Set<Long> summarizedIds, String rollingSummary,
+            int totalCompacted, int totalInputTokens, int totalOutputTokens, long startTime) {
+        long candidateBoundary = summarizedIds.stream().mapToLong(Long::longValue).max().orElse(0L);
+        if (!isCompletePhysicalPrefix(
+                expectedOldBoundary, candidateBoundary, snapshotMessageIds, summarizedIds)) {
+            return null;
+        }
+        String boundaryContentSnapshot = messages.stream()
+                .filter(message -> message.messageId() == candidateBoundary)
+                .findFirst()
+                .map(PersistedChatMessage::persistedContentSnapshot)
+                .orElse(null);
+        int summaryTokens = tokenEstimator.countTokens(rollingSummary);
+        int compactedTokens = tokenEstimator.estimateMessages(
+                toChatMessages(messages.stream()
+                        .filter(message -> summarizedIds.contains(message.messageId()))
+                        .toList()));
+        return new SessionCompactionResult(
+                rollingSummary,
+                expectedOldBoundary,
+                candidateBoundary,
+                boundaryContentSnapshot,
+                totalCompacted,
+                totalInputTokens,
+                totalOutputTokens,
+                summaryTokens,
+                Math.max(0, compactedTokens - summaryTokens),
+                System.currentTimeMillis() - startTime);
+    }
+
+    private SessionCompactionResult finishSessionCompaction(
+            Long sessionId, long expectedOldBoundary, SessionCompactionResult lastSafeResult,
+            int totalCompacted, AgentEventListener listener, long startTime) {
         if (lastSafeResult == null && totalCompacted > 0) {
             log.warn("Session compaction produced no safe physical ID prefix: sessionId={}, oldBoundary={}",
                     sessionId, expectedOldBoundary);
@@ -202,17 +438,42 @@ public class CompactionService {
     public List<ChatRequest.Message> prependSessionSummary(
             String summary, List<ChatRequest.Message> incrementalMessages) {
         List<ChatRequest.Message> result = new ArrayList<>();
-        if (summary != null && !summary.isBlank()) {
+        boolean hasSummary = summary != null && !summary.isBlank();
+        if (hasSummary) {
             result.add(ChatRequest.Message.builder()
                     .role("system")
                     .content(buildSummaryInjectionPrompt(summary))
                     .build());
         }
-        result.addAll(incrementalMessages);
+
+        // 增量首条非 system 不是 user 时补合成 user（仅有摘要时），保证兼容网关序列合法
+        if (hasSummary && needsSyntheticUser(incrementalMessages)) {
+            result.add(ChatRequest.Message.builder()
+                    .role("user")
+                    .content(SYNTHETIC_CONTINUE_USER)
+                    .build());
+        }
+
+        if (incrementalMessages != null) {
+            result.addAll(incrementalMessages);
+        }
         return result;
     }
 
-    private List<List<PersistedChatMessage>> splitUserTurns(List<PersistedChatMessage> messages) {
+    private boolean needsSyntheticUser(List<ChatRequest.Message> incrementalMessages) {
+        if (incrementalMessages == null || incrementalMessages.isEmpty()) {
+            return false;
+        }
+        for (ChatRequest.Message msg : incrementalMessages) {
+            if ("system".equals(msg.getRole())) {
+                continue;
+            }
+            return !"user".equals(msg.getRole());
+        }
+        return false;
+    }
+
+    List<List<PersistedChatMessage>> splitUserTurns(List<PersistedChatMessage> messages) {
         List<List<PersistedChatMessage>> turns = new ArrayList<>();
         List<PersistedChatMessage> current = null;
         for (PersistedChatMessage message : messages) {
@@ -252,148 +513,8 @@ public class CompactionService {
                 .allMatch(summarizedIds::contains);
     }
 
-    // ======================== Loop 工作记忆压缩 ========================
-
-    /**
-     * 执行 loop 工作记忆压缩。返回压缩后的消息列表。
-     * 如果不需要压缩或压缩失败，返回 null。
-     * @param existingWorkingSummary 之前已有的工作摘要（同一请求内累积），可为 null
-     */
-    public LoopCompactionResult compactLoop(List<ChatRequest.Message> messages,
-                                             LlmModelConfig modelConfig, CompactionConfig config,
-                                             String existingWorkingSummary) {
-        return compactLoop(messages, modelConfig, config, existingWorkingSummary, null);
-    }
-
-    public LoopCompactionResult compactLoop(List<ChatRequest.Message> messages,
-                                             LlmModelConfig modelConfig, CompactionConfig config,
-                                             String existingWorkingSummary,
-                                             AgentEventListener listener) {
-        return compactLoop(messages, modelConfig, config, existingWorkingSummary, listener, null);
-    }
-
-    public LoopCompactionResult compactLoop(List<ChatRequest.Message> messages,
-                                             LlmModelConfig modelConfig, CompactionConfig config,
-                                             String existingWorkingSummary,
-                                             AgentEventListener listener,
-                                             Integer requestTokens) {
-        if (!config.isLoopEnabled() || messages.isEmpty()) return null;
-
-        long startTime = System.currentTimeMillis();
-
-        // 1. 找到最后一条用户消息的位置
-        int lastUserIdx = -1;
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            if ("user".equals(messages.get(i).getRole())) {
-                lastUserIdx = i;
-                break;
-            }
-        }
-        if (lastUserIdx < 0) return null;
-
-        // 2. 工作区消息 = lastUserIdx 之后的全部消息
-        List<ChatRequest.Message> prefix = new ArrayList<>(messages.subList(0, lastUserIdx + 1));
-        List<ChatRequest.Message> workspace = new ArrayList<>(messages.subList(lastUserIdx + 1, messages.size()));
-
-        if (workspace.size() < 4) return null; // 太少不需要压缩
-
-        // 3. 统计工具轮次
-        int toolRounds = 0;
-        for (ChatRequest.Message msg : workspace) {
-            if ("assistant".equals(msg.getRole()) && msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
-                toolRounds++;
-            }
-        }
-
-        // 4. 判断是否触发：兼顾工作区大小与下一轮完整请求大小，避免 system prompt、
-        // 历史消息和工具定义占用未计入固定工作区阈值，导致请求先超过模型窗口。
-        int workspaceTokens = tokenEstimator.estimateMessages(workspace);
-        int effectiveContextWindow = config.getContextWindowTokens();
-        if (modelConfig != null && modelConfig.getContextWindowTokens() != null
-                && modelConfig.getContextWindowTokens() > 0) {
-            effectiveContextWindow = modelConfig.getContextWindowTokens();
-        }
-        boolean requestNearLimit = requestTokens != null
-                && requestTokens >= effectiveContextWindow * config.getTriggerRatio();
-        boolean shouldCompact = workspaceTokens >= config.getLoopTriggerTokens() || requestNearLimit;
-
-        if (!shouldCompact) return null;
-
-        // 5. 完整请求接近窗口时不再固定保留多轮工具结果，优先为下一次 LLM 调用腾出空间。
-        int keepRounds = requestNearLimit ? 0 : config.getLoopRecentToolRounds();
-        int keepStart = workspace.size();
-        int roundsFound = 0;
-        if (keepRounds == 0) {
-            keepStart = workspace.size();
-            roundsFound = toolRounds;
-        } else {
-            for (int i = workspace.size() - 1; i >= 0; i--) {
-                ChatRequest.Message msg = workspace.get(i);
-                if ("assistant".equals(msg.getRole())
-                        && msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
-                    roundsFound++;
-                    if (roundsFound > keepRounds) {
-                        keepStart = i;
-                        break;
-                    }
-                }
-            }
-        }
-        if (roundsFound <= keepRounds) return null; // 工具轮次不够，不值得压缩
-
-        List<ChatRequest.Message> toCompact = new ArrayList<>(workspace.subList(0, keepStart));
-        List<ChatRequest.Message> keepMessages = new ArrayList<>(workspace.subList(keepStart, workspace.size()));
-
-        if (toCompact.isEmpty()) return null;
-
-        log.info("Loop compaction triggered: {} messages to compact, {} tool rounds, {} workspace tokens",
-                toCompact.size(), toolRounds, workspaceTokens);
-        if (listener != null) {
-            listener.onCompactionStart("loop", toCompact.size(), workspaceTokens);
-        }
-
-        // 6. 提取已有工作摘要
-        // 工作摘要不跨请求持久化，但可以在同一请求内累积
-
-        String formattedHistory = formatMessagesForCompaction(toCompact);
-        String compactionPrompt = buildLoopCompactionPrompt(existingWorkingSummary, formattedHistory);
-
-        CompactionLlmResult llmResult = callCompactionModel(compactionPrompt, modelConfig);
-        if (llmResult == null || llmResult.summaryText == null || llmResult.summaryText.isBlank()) {
-            log.warn("Loop compaction LLM call returned empty result");
-            if (listener != null) {
-                listener.onCompactionEnd("loop", 0, 0, System.currentTimeMillis() - startTime);
-            }
-            return null;
-        }
-
-        // 7. 重建消息列表
-        int summaryTokens = tokenEstimator.countTokens(llmResult.summaryText);
-        int savedTokens = workspaceTokens - summaryTokens - tokenEstimator.estimateMessages(keepMessages);
-
-        log.info("Loop compaction completed: saved ~{} tokens (took {}ms)",
-                savedTokens, System.currentTimeMillis() - startTime);
-
-        List<ChatRequest.Message> result = new ArrayList<>(prefix);
-        result.add(ChatRequest.Message.builder()
-                .role("system")
-                .content(buildWorkingSummaryInjectionPrompt(llmResult.summaryText))
-                .build());
-        result.addAll(keepMessages);
-
-        long durationMs = System.currentTimeMillis() - startTime;
-        if (listener != null) {
-            listener.onCompactionEnd("loop", summaryTokens, Math.max(0, savedTokens), durationMs);
-        }
-        return new LoopCompactionResult(result, llmResult.summaryText, toCompact.size(), summaryTokens,
-                Math.max(0, savedTokens), durationMs);
-    }
-
     // ======================== 内部方法 ========================
 
-    /**
-     * 格式化消息为压缩友好的文本
-     */
     private String formatMessagesForCompaction(List<ChatRequest.Message> messages) {
         StringBuilder sb = new StringBuilder();
         for (ChatRequest.Message msg : messages) {
@@ -457,7 +578,7 @@ public class CompactionService {
     }
 
     private String buildSessionCompactionPrompt(String existingSummary, String history, String currentQuestion,
-                                                int maxSummaryTokens) {
+                                                int maxSummaryTokens, boolean loopMode) {
         StringBuilder sb = new StringBuilder();
         sb.append("你是一个会话压缩助手。你的任务是将以下对话历史压缩为一段简洁的摘要，以便 Agent 在后续执行中能延续任务。\n\n");
         sb.append("摘要要求：\n");
@@ -469,7 +590,13 @@ public class CompactionService {
         sb.append("6. 不要泛泛总结，要保留可执行的具体信息\n");
         sb.append("7. 摘要尽量精炼，正文控制在约 ")
                 .append(maxSummaryTokens)
-                .append(" tokens 以内；在保留关键信息的前提下，删除冗余过程描述和重复内容\n\n");
+                .append(" tokens 以内；在保留关键信息的前提下，删除冗余过程描述和重复内容\n");
+        if (loopMode) {
+            sb.append("8. 额外保留当前任务目标、已完成动作、关键发现、当前状态与下一步\n");
+            sb.append("9. 必须将「当前用户问题」原文完整保留在摘要中，不得改写或省略"
+                    + "（该用户消息本身将被摘要化，摘要是其唯一载体）\n");
+        }
+        sb.append("\n");
 
         if (existingSummary != null && !existingSummary.isBlank()) {
             sb.append("## 已有摘要\n\n").append(existingSummary).append("\n\n");
@@ -494,34 +621,6 @@ public class CompactionService {
                 + "如果摘要与后续原始消息冲突，以后续原始消息为准。";
     }
 
-    private String buildLoopCompactionPrompt(String existingSummary, String history) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("你是一个工作记忆压缩助手。你的任务是将以下工具调用链路压缩为工作摘要，以便 Agent 继续执行当前任务。\n\n");
-        sb.append("摘要要求：\n");
-        sb.append("1. 保留当前目标\n");
-        sb.append("2. 保留已完成动作\n");
-        sb.append("3. 保留关键发现（文件内容、错误信息、搜索结果）\n");
-        sb.append("4. 保留关键路径、对象、参数\n");
-        sb.append("5. 保留当前状态和下一步待做\n\n");
-
-        if (existingSummary != null && !existingSummary.isBlank()) {
-            sb.append("## 已有工作摘要\n\n").append(existingSummary).append("\n\n");
-        }
-
-        sb.append("## 工具调用链路\n\n").append(history).append("\n\n");
-
-        sb.append("请生成工作摘要。用 <summary> 标签包裹摘要正文。\n");
-
-        return sb.toString();
-    }
-
-    private String buildWorkingSummaryInjectionPrompt(String summary) {
-        return "## 工作记忆摘要\n\n"
-                + "以下是当前任务较早的工具调用链路压缩摘要：\n\n"
-                + summary + "\n\n"
-                + "这是工具调用链路的延续。如果工作摘要与后续原始工具结果冲突，以后续原始消息为准。";
-    }
-
     private CompactionLlmResult callCompactionModel(String prompt, LlmModelConfig modelConfig) {
         try {
             List<ChatRequest.Message> msgs = List.of(
@@ -541,7 +640,6 @@ public class CompactionService {
             String content = TokenEstimator.contentToString(response.getChoices().get(0).getMessage().getContent());
             if (content == null || content.isBlank()) return null;
 
-            // 提取 <summary> 标签内容
             String summaryText = content;
             Matcher matcher = SUMMARY_PATTERN.matcher(content);
             if (matcher.find()) {
@@ -562,6 +660,8 @@ public class CompactionService {
 
     private record CompactionLlmResult(String summaryText, int inputTokens, int outputTokens) {}
 
+    record ToolRoundSplit(List<PersistedChatMessage> header, List<List<PersistedChatMessage>> rounds) {}
+
     public record SessionCompactionResult(
             String summaryText,
             Long expectedOldBoundary,
@@ -570,15 +670,6 @@ public class CompactionService {
             int compactedCount,
             long inputTokens,
             long outputTokens,
-            int summaryTokens,
-            int savedTokens,
-            long durationMs
-    ) {}
-
-    public record LoopCompactionResult(
-            List<ChatRequest.Message> compactedMessages,
-            String summaryText,
-            int compactedCount,
             int summaryTokens,
             int savedTokens,
             long durationMs
