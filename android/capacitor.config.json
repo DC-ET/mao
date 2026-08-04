@@ -1,0 +1,8 @@
+{
+  "appId": "cn.etarch.mao.app",
+  "appName": "Mao",
+  "webDir": "../desktop/dist",
+  "android": {
+    "adjustMarginsForEdgeToEdge": "force"
+  }
+}

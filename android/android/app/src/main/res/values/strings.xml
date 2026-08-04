@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Mao</string>
+    <string name="title_activity_main">Mao</string>
+    <string name="package_name">cn.etarch.mao.app</string>
+    <string name="custom_url_scheme">cn.etarch.mao.app</string>
+</resources>

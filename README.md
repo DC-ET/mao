@@ -342,6 +342,28 @@ npm run build
 npm run dist   # 本地打包，需自行处理代码签名与分发
 ```
 
+### 安卓 APP
+
+基于 Capacitor（WebView 壳）复用桌面端 Vue 前端源码，仅支持 CLOUD 模式（工具在服务端执行）。
+
+**环境要求**：JDK 21 + Android SDK（`platforms;android-35`、`build-tools;34.0.0`）
+
+```bash
+# 一键构建并发布 APK（含前端构建 → cap sync → gradle assembleRelease → 发布到 releases）
+cd android
+export ANDROID_HOME=/opt/android-sdk
+bash build-apk.sh
+```
+
+构建产物：
+- APK：`/root/soft/mao/data/uploads/releases/mao-android-<version>-<code>.apk`
+- OTA 清单：`/root/soft/mao/data/uploads/releases/android-latest.json`
+- APK 分发地址：`https://mao.etarch.cn/uploads/releases/`
+
+首次构建前需配置 release 签名（`/root/soft/mao/keystore/keystore-credentials.env`），详见 `docs/android-app-technical-design.md`。
+
+**应用内更新（OTA）**：APP 启动时自动检查版本，支持强制更新（不可跳过）与普通更新（可忽略），下载安装在 APP 内完成。
+
 ## API 文档
 
 后端启动后访问：`http://localhost:9080/api/swagger-ui.html`

@@ -3,10 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="%BASE_URL%app-icon-small.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <title>Mao</title>
     <script>
+      // 尽早标记 Capacitor 安卓（仅 localhost WebView，避免误伤手机浏览器）
+      // 配合 CSS 立即隐藏 #splash，并启用安卓紧凑顶栏样式
+      ;(function () {
+        var ua = navigator.userAgent || ''
+        var host = location.hostname || ''
+        if (/Android/i.test(ua) && /^(localhost|127\.0\.0\.1)$/i.test(host)) {
+          document.documentElement.classList.add('android-capacitor')
+        }
+      })()
       ;(function () {
         var mode = localStorage.getItem('aw-theme-mode')
         var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -25,6 +34,11 @@
 
       html.dark body {
         background: #1d1d1f;
+      }
+
+      /* 与 style.css 双保险：外部 CSS 未加载时也要藏掉安卓 HTML splash */
+      html.android-capacitor #splash {
+        display: none !important;
       }
 
       #splash {
@@ -115,7 +129,7 @@
   <body>
     <div id="splash" aria-hidden="true">
       <img src="%BASE_URL%app-icon-small.png" alt="" width="72" height="72" />
-      <p class="splash-title">Mao</p>
+      <p class="splash-title" aria-hidden="true"></p>
       <div class="splash-dots" aria-label="加载中">
         <span></span>
         <span></span>

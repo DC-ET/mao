@@ -25,7 +25,7 @@
         </div>
       </el-tooltip>
       <el-tooltip content="终端 (Ctrl+`)" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-        <div class="theme-toggle" :class="{ active: terminalOpen }" @click="toggleTerminal">
+        <div class="theme-toggle terminal-toggle" :class="{ active: terminalOpen }" @click="toggleTerminal">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
           </svg>
@@ -142,7 +142,10 @@ const {
   startAppUpdater,
   stopAppUpdater,
   checkAppUpdate,
-  installAppUpdate
+  installAppUpdate,
+  ignoreAndroidUpdate,
+  isAndroidForcedUpdate,
+  isAndroidCapacitor
 } = useVersionCheck()
 
 const isSettingsRoute = computed(() => route.path.startsWith('/settings'))
@@ -191,10 +194,55 @@ onUnmounted(() => {
 let installPromptVisible = false
 
 watch(appUpdateDownloaded, (downloaded) => {
-  if (downloaded) {
+  if (downloaded && !isAndroidCapacitor()) {
     void confirmInstallUpdate()
   }
 })
+
+let androidUpdatePromptVisible = false
+
+watch(appUpdateAvailable, (available) => {
+  if (available && isAndroidCapacitor() && appUpdateStatus.value === 'available') {
+    void confirmAndroidUpdate()
+  }
+})
+
+async function confirmAndroidUpdate() {
+  if (androidUpdatePromptVisible) return
+  androidUpdatePromptVisible = true
+  const forced = isAndroidForcedUpdate()
+  try {
+    await ElMessageBox.confirm(
+      appUpdateVersion.value ? `发现安卓客户端 ${appUpdateVersion.value}，是否立即更新？` : '发现安卓客户端新版本，是否立即更新？',
+      forced ? '必须更新' : '发现新版本',
+      {
+        confirmButtonText: '立即更新',
+        cancelButtonText: forced ? undefined : '稍后',
+        distinguishCancelAndClose: !forced,
+        showCancelButton: !forced,
+        closeOnClickModal: !forced,
+        closeOnPressEscape: !forced,
+        showClose: !forced,
+        customClass: 'app-update-message-box',
+        type: forced ? 'warning' : 'success'
+      }
+    )
+    const result = await installAppUpdate()
+    if (result?.error && result.error !== 'need-permission') {
+      ElMessage.error(result.error)
+    } else if (result?.error === 'need-permission') {
+      ElMessage.warning('请开启“允许安装未知来源应用”后返回 Mao 再次点击更新')
+    }
+  } catch (action) {
+    if (forced) {
+      void confirmAndroidUpdate()
+    } else if (action === 'close') {
+      ignoreAndroidUpdate()
+    }
+  } finally {
+    androidUpdatePromptVisible = false
+  }
+}
 
 async function confirmInstallUpdate() {
   if (installPromptVisible) return
@@ -231,7 +279,11 @@ async function handleUpdateClick() {
     return
   }
   if (appUpdateAvailable.value) {
-    ElMessage.info('客户端更新正在下载，请稍候')
+    if (isAndroidCapacitor()) {
+      void confirmAndroidUpdate()
+    } else {
+      ElMessage.info('客户端更新正在下载，请稍候')
+    }
     return
   }
   if (hasUpdate.value) {
@@ -258,14 +310,17 @@ async function handleCommand(command: string) {
 
 <style scoped>
 .top-nav {
-  display: flex;
+  display: flex !important;
   align-items: center;
   justify-content: space-between;
   height: var(--aw-nav-height);
+  min-height: var(--aw-nav-height);
   padding: 0 16px;
   background: var(--aw-nav-bg);
   border-bottom: 1px solid var(--aw-divider-soft);
   flex-shrink: 0;
+  visibility: visible !important;
+  opacity: 1 !important;
   -webkit-app-region: drag;
 }
 

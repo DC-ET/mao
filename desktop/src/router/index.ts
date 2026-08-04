@@ -58,9 +58,26 @@ const routes: RouteRecordRaw[] = [
   }
 ]
 
+function isCapacitorNative(): boolean {
+  try {
+    const capacitor = (window as any).Capacitor
+    if (capacitor?.isNativePlatform?.()) return true
+  } catch {
+    // ignore
+  }
+  // Capacitor 注入前的兜底：安卓 WebView 以 localhost 加载本地资产
+  const host = window.location.hostname || ''
+  return /Android/i.test(navigator.userAgent || '') && /^(localhost|127\.0\.0\.1)$/i.test(host)
+}
+
 function createAppHistory() {
   // Electron 打包后从本地 dist 加载（file://），需使用 hash 路由
   if (typeof window !== 'undefined' && window.location.protocol === 'file:') {
+    return createWebHashHistory()
+  }
+  // Capacitor 安卓构建使用 --base=./；History 模式下在 /tasks/:id 整页刷新时，
+  // 相对路径 ./assets/* 会解析到 /tasks/assets/* 导致 JS/图标 404，卡在 splash。
+  if (typeof window !== 'undefined' && isCapacitorNative()) {
     return createWebHashHistory()
   }
   return createWebHistory()

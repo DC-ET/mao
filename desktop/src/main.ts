@@ -13,7 +13,22 @@ import { initAuthStorage } from './utils/auth-storage'
 import './style.css'
 import 'monaco-editor/min/vs/editor/editor.main.css'
 
+function markAndroidCapacitor() {
+  try {
+    const capacitor = (window as any).Capacitor
+    const host = window.location.hostname
+    const isAndroid = capacitor?.getPlatform?.() === 'android'
+      || (/Android/i.test(navigator.userAgent) && /^(localhost|127\.0\.0\.1)$/i.test(host))
+    if (isAndroid) {
+      document.documentElement.classList.add('android-capacitor')
+    }
+  } catch {
+    // 非 Capacitor 环境忽略
+  }
+}
+
 async function bootstrap() {
+  markAndroidCapacitor()
   await initAuthStorage()
 
   const app = createApp(App)

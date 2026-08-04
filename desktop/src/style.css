@@ -118,6 +118,51 @@
   }
 }
 
+/* Capacitor 安卓：立即隐藏 HTML splash，避免与原生 SplashScreen 叠出残留图标。 */
+html.android-capacitor #splash {
+  display: none !important;
+}
+
+/*
+ * Capacitor 安卓顶部导航：必须显示（0.0.7 曾 display:none 导致操作栏消失）。
+ * 去掉 macOS 红绿灯预留的 78px 左缩进，改为紧凑单行。
+ * 系统状态栏 / 手势条由原生 WebView WindowInsets padding 避让（勿再给 body 加同值 padding，会双倍）。
+ */
+html.android-capacitor .top-nav {
+  display: flex !important;
+  box-sizing: border-box;
+  height: var(--aw-nav-height) !important;
+  min-height: var(--aw-nav-height) !important;
+  padding: 0 8px !important;
+  -webkit-app-region: no-drag;
+}
+
+html.android-capacitor .nav-left {
+  gap: 4px;
+  padding-left: 0 !important;
+}
+
+html.android-capacitor .nav-right {
+  gap: 2px;
+  min-width: 0;
+}
+
+html.android-capacitor .theme-toggle {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+}
+
+html.android-capacitor .nav-user {
+  flex-shrink: 0;
+  padding: 2px;
+}
+
+html.android-capacitor .nav-username,
+html.android-capacitor .nav-user > .el-icon {
+  display: none;
+}
+
 /* ============================================
    Dark Mode — Apple Near-Black Surfaces
    ============================================ */

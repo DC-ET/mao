@@ -1,0 +1,17 @@
+# 依赖与构建产物
+node_modules/
+dist/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/capacitor-cordova-android-plugins/build/
+
+# 敏感信息（严禁提交）
+*.keystore
+*.jks
+keystore-credentials.env
+*.env
+
+# 系统文件
+.DS_Store

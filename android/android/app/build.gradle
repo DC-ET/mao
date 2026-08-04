@@ -1,0 +1,79 @@
+apply plugin: 'com.android.application'
+
+// 版本号由构建脚本通过 -P 参数注入（单一来源：build-apk.sh）
+def maoVersionCode = project.findProperty('MAO_VERSION_CODE')?.toInteger() ?: 1
+def maoVersionName = project.findProperty('MAO_VERSION_NAME') ?: '0.0.1'
+
+// release 签名凭据从环境变量注入（不写入代码库）
+def maoKeystorePath = System.getenv('MAO_KEYSTORE_PATH')
+def maoKeystorePassword = System.getenv('MAO_KEYSTORE_PASSWORD')
+def maoKeyAlias = System.getenv('MAO_KEY_ALIAS')
+def maoKeyPassword = System.getenv('MAO_KEY_PASSWORD')
+
+android {
+    namespace "cn.etarch.mao.app"
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "cn.etarch.mao.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode maoVersionCode
+        versionName maoVersionName
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+        buildFeatures {
+            buildConfig true
+        }
+    }
+    signingConfigs {
+        release {
+            if (maoKeystorePath) {
+                storeFile file(maoKeystorePath)
+                storePassword maoKeystorePassword
+                keyAlias maoKeyAlias
+                keyPassword maoKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // 未配置 keystore 时回退 debug 签名，保证本地开发构建可用
+            signingConfig maoKeystorePath ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
