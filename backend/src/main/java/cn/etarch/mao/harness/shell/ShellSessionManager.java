@@ -138,8 +138,11 @@ public class ShellSessionManager {
 
             if (!session.isAlive() || session.isIdleTimeout(idleTimeout) || session.isExpired(maxLifetime)) {
                 String sessionId = entry.getKey();
+                // 先 close 再移除：iterator.remove() 之后 sessions 中已无该会话，
+                // 若再走 removeSession()（内部再 remove）会因返回 null 而跳过 close，
+                // 导致 bash 进程与流泄漏。
                 iterator.remove();
-                removeSession(sessionId);
+                closeSession(sessionId, session);
                 cleaned++;
                 log.info("Cleaned up expired shell session: {}", sessionId);
             }
@@ -247,15 +250,25 @@ public class ShellSessionManager {
 
     private void removeSession(String sessionId) {
         ShellSession session = sessions.remove(sessionId);
-        if (session != null) {
-            session.close();
+        closeSession(sessionId, session);
+    }
 
-            Set<String> convSessions = conversationSessions.get(session.getConversationId());
-            if (convSessions != null) {
-                convSessions.remove(sessionId);
-                if (convSessions.isEmpty()) {
-                    conversationSessions.remove(session.getConversationId());
-                }
+    /**
+     * 关闭会话并清理 conversationSessions 索引。
+     * 与 removeSession 的区别：接收已从 {@link #sessions} 取出的会话对象，
+     * 避免先移除后再次 remove 返回 null 导致 close 被跳过。
+     */
+    private void closeSession(String sessionId, ShellSession session) {
+        if (session == null) {
+            return;
+        }
+        session.close();
+
+        Set<String> convSessions = conversationSessions.get(session.getConversationId());
+        if (convSessions != null) {
+            convSessions.remove(sessionId);
+            if (convSessions.isEmpty()) {
+                conversationSessions.remove(session.getConversationId());
             }
         }
     }

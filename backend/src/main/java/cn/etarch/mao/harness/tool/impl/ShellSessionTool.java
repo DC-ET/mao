@@ -318,7 +318,7 @@ public class ShellSessionTool implements Tool {
         Path outputFile = session.nextOutputFile();
         String fullMarker = MARKER_PREFIX + marker + MARKER_SUFFIX;
         OutputResult output = outputManager.readUntilMarker(session.getStdout(), fullMarker,
-                Duration.ofMillis(yieldTimeMs), outputFile, session.getOutputFile());
+                Duration.ofMillis(yieldTimeMs), outputFile, session.getOutputFile(), session::isAlive);
         String currentWorkdir = pwdWithMarker(session);
 
         session.touch();
@@ -386,7 +386,7 @@ public class ShellSessionTool implements Tool {
 
             Path outputFile = session.nextOutputFile();
             return outputManager.readUntilMarker(session.getStdout(), fullMarker, timeout,
-                    outputFile, session.getOutputFile());
+                    outputFile, session.getOutputFile(), session::isAlive);
         } catch (Exception e) {
             log.error("Failed to execute command in session {}: {}", session.getSessionId(), e.getMessage());
             return new OutputResult("错误：" + e.getMessage(), 0, 0, false, false, null);
@@ -409,7 +409,7 @@ public class ShellSessionTool implements Tool {
 
             OutputResult result = outputManager.readUntilMarker(
                     session.getStdout(), fullMarker, Duration.ofSeconds(5),
-                    null, session.getOutputFile());
+                    null, session.getOutputFile(), session::isAlive);
 
             String output = result.preview();
             if (output != null && !output.isEmpty()) {

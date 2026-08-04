@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 
 /**
  * 管理 Shell 命令输出：marker 检测 + 截断预览 + 完整落盘
@@ -42,6 +43,28 @@ public class OutputManager {
      */
     public OutputResult readUntilMarker(BufferedReader reader, String marker, Duration timeout,
                                         Path outputFile, Path sessionLogFile) {
+        return readUntilMarker(reader, marker, timeout, outputFile, sessionLogFile, null);
+    }
+
+    /**
+     * 逐行读取输出直到遇到 marker 行、超时，或底层进程已死亡。
+     * <p>
+     * 修复：之前空闲轮询（{@code !reader.ready()}）从不真正 {@code read()}，
+     * 无法感知 EOF（read 返回 -1），导致 bash 进程已退出时仍空转到 timeout。
+     * 通过 {@code alive} 回调检测进程存活：进程死亡即转为快速读模式，
+     * 读尽管道残留数据并感知 EOF，立即返回，避免干等长超时。
+     *
+     * @param reader         输出流读取器
+     * @param marker         结束标记（如 __CMD_DONE_xxx__）
+     * @param timeout        最大等待时间
+     * @param outputFile     本次调用切片输出文件（可为 null，不落盘）
+     * @param sessionLogFile 会话累积日志文件（可为 null；非 null 时全量输出追加写入，支持事后回查）
+     * @param alive          进程存活检测（可为 null；null 时保持旧的纯超时行为）
+     * @return OutputResult
+     */
+    public OutputResult readUntilMarker(BufferedReader reader, String marker, Duration timeout,
+                                        Path outputFile, Path sessionLogFile,
+                                        BooleanSupplier alive) {
         List<String> allLines = new StringBuilder() != null ? new ArrayList<>() : new ArrayList<>();
         StringBuilder fullOutput = new StringBuilder();
         boolean markerFound = false;
@@ -58,8 +81,10 @@ public class OutputManager {
             StringBuilder lineBuffer = new StringBuilder();
 
             while (System.currentTimeMillis() < deadline) {
-                // 检查是否有数据可读
-                if (!reader.ready()) {
+                // 进程已死亡：管道写端已关闭，read() 不会阻塞（返回残留数据或 -1）。
+                // 快速读完残留并感知 EOF，避免一直空转到 timeout。
+                boolean processDead = alive != null && !alive.getAsBoolean();
+                if (!processDead && !reader.ready()) {
                     idleCount++;
                     if (idleCount % 100 == 0) {
                         long elapsed = System.currentTimeMillis() - startTime;

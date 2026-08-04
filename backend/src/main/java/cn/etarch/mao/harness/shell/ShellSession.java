@@ -109,7 +109,23 @@ public class ShellSession implements Closeable {
         }
         alive = false;
 
-        // 关闭 stdout 前，先非阻塞读取残留输出并追加到会话日志，避免后台输出丢失
+        // 先销毁整个进程树（bash 及其后代进程），停止一切输出。
+        // 若 bash 已退出但子进程（如 gradle）残留，管道不会 EOF，readUntilMarker 会一直空等。
+        if (process.isAlive()) {
+            try {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+            } catch (Exception e) {
+                log.debug("Failed to destroy process tree for session {}: {}", sessionId, e.getMessage());
+            }
+            process.destroyForcibly();
+            try {
+                process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        // 进程已终止：把 stdout 中尚未被消费的输出保存到会话日志（进程死后 read 不阻塞）
         drainPendingOutput();
 
         try {
@@ -124,16 +140,6 @@ public class ShellSession implements Closeable {
             stdout.close();
         } catch (IOException e) {
             log.debug("Failed to close stdout for session {}: {}", sessionId, e.getMessage());
-        }
-
-        // 终止进程
-        if (process.isAlive()) {
-            process.destroyForcibly();
-            try {
-                process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
         }
 
         log.info("Closed shell session: {}", sessionId);
