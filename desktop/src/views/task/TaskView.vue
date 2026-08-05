@@ -21,20 +21,22 @@
     </div>
 
     <TaskInspector
-      :todos="todos"
+      :todos="inspectorTodos"
       :side-tasks="sideTasks"
       :subagents="subagents"
-      :title="sessionTitle"
+      :title="inspectorTitle"
       :agent-name="agentName"
       :workspace="workspace"
       :project-key="projectKey"
       :execution-mode="executionMode"
-      :session-id="sessionIdForTabs"
+      :session-id="inspectorSessionId"
       :file-provider="fileProvider"
       :git-provider="gitProvider"
-      :phase="currentPhase"
+      :phase="inspectorPhase"
       :panel-collapsed="rightCollapsed"
-      :context-window="contextWindow"
+      :context-window="inspectorContextWindow"
+      :view-type="inspectorViewType"
+      :model-id="inspectorModelId"
       @toggle-panel="toggleRight"
       @todo-update="handleTodoUpdate"
       @rename="handleRename"
@@ -170,7 +172,7 @@ function handleAddFileToChat(filePath: string) {
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, openSubagentTab, updateSideTaskTab, restoreSideTaskTabs } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, openSubagentTab, updateSideTaskTab, restoreSideTaskTabs } = useCenterTabs(activeSessionIdRef)
 
 // Derived state
 const sessionId = computed(() => sessionIdParam.value)
@@ -196,6 +198,180 @@ const subagents = computed(() => {
 })
 
 const sessionIdForTabs = computed(() => sessionId.value || sessionIdParam.value || '')
+
+/**
+ * 右侧边栏展示对象：主会话（chat） / 边路任务（side_task） / 子代理（subagent）。
+ * 文件 / Diff Tab 只是浏览工具，无独立会话，保持主会话视角。
+ */
+const inspectorViewType = computed<'chat' | 'side_task' | 'subagent'>(() => {
+  const tab = activeTab.value
+  if (tab?.type === 'side_task' && tab.sideSessionId != null && tab.sideSessionId > 0) return 'side_task'
+  if (tab?.type === 'subagent' && tab.sideSessionId != null && tab.sideSessionId > 0) return 'subagent'
+  return 'chat'
+})
+
+const inspectorSessionId = computed(() => {
+  if (inspectorViewType.value === 'chat') return sessionIdForTabs.value
+  return String(activeTab.value.sideSessionId ?? '')
+})
+
+// 右侧边栏标题：子会话优先取列表缓存 title，缺失回退主会话标题
+const inspectorTitle = computed(() => {
+  const sid = activeTab.value.sideSessionId
+  if (inspectorViewType.value === 'side_task' && sid != null) {
+    const item = sideTasks.value.find(t => t.id === sid)
+    if (item?.title) return item.title
+  } else if (inspectorViewType.value === 'subagent' && sid != null) {
+    const item = subagents.value.find(sa => sa.id === sid)
+    if (item?.title) return item.title
+  }
+  return sessionTitle.value
+})
+
+// 右侧边栏状态：子会话优先取 phase 缓存（WS 实时），缺失回退主会话 phase
+const inspectorPhase = computed<TaskPhase>(() => {
+  if (inspectorViewType.value === 'chat') return currentPhase.value
+  const sid = activeTab.value.sideSessionId
+  if (sid == null || sid <= 0) return currentPhase.value
+  const phase = sessionStore.getSessionPhase(String(sid))
+  if (phase) return phase
+  if (inspectorViewType.value === 'side_task') {
+    const item = sideTasks.value.find(t => t.id === sid)
+    if (item?.phase) return item.phase
+  } else {
+    const item = subagents.value.find(sa => sa.id === sid)
+    if (item?.phase) return item.phase
+  }
+  return currentPhase.value
+})
+
+// 右侧边栏进度：子会话取对应会话 todos，缺失回退主会话
+const inspectorTodos = computed(() => {
+  if (inspectorViewType.value === 'chat') return todos.value
+  const sid = activeTab.value.sideSessionId
+  if (sid == null || sid <= 0) return todos.value
+  return sessionStore.getTodos(String(sid))
+})
+
+// 右侧边栏上下文：子会话取对应会话 context_window，缺失回退主会话
+const inspectorContextWindow = computed(() => {
+  if (inspectorViewType.value === 'chat') return contextWindow.value
+  const sid = activeTab.value.sideSessionId
+  if (sid == null || sid <= 0) return contextWindow.value
+  return sessionStore.getContextWindow(String(sid)) ?? contextWindow.value
+})
+
+// 右侧边栏上下文占比分母：token 与模型必须来自同一会话。
+// 子会话有自身 contextWindow 时用自身 modelId；上下文缺失时 token 回退主会话，模型一并回退主会话，避免「主会话 token / 子会话模型上限」错配。
+const inspectorModelId = computed<number | undefined>(() => {
+  if (inspectorViewType.value === 'chat') return undefined
+  const sid = activeTab.value.sideSessionId
+  if (sid == null || sid <= 0) return undefined
+  const hasOwnContext = sessionStore.getContextWindow(String(sid)) != null
+  if (!hasOwnContext) return sessionStore.activeSession?.modelId
+  if (inspectorViewType.value === 'side_task') {
+    return sideTasks.value.find(t => t.id === sid)?.modelId
+  }
+  return subagents.value.find(sa => sa.id === sid)?.modelId
+})
+
+/**
+ * 子会话元数据补拉：
+ * - 成功才记账（fetchedInspector*），失败允许下次切入时重试；
+ * - pendingInspector* 用 Map<sid, Promise>，pending 期间重入复用同一请求；
+ * - 请求失败时若用户仍停留在此子会话，受控自动重试一次（autoRetried* 防循环）；
+ * - meta 与 todos 相互独立，单接口失败不阻断另一个。
+ * 请求前由调用方固定 viewType 与 parentId，响应写缓存不依赖当时的响应式状态。
+ */
+const fetchedInspectorMeta = new Set<string>()
+const fetchedInspectorTodos = new Set<string>()
+const pendingInspectorMeta = new Map<string, Promise<void>>()
+const pendingInspectorTodos = new Map<string, Promise<void>>()
+const autoRetriedMeta = new Set<string>()
+const autoRetriedTodos = new Set<string>()
+
+function ensureInspectorMeta(sid: string, viewType: 'side_task' | 'subagent', parentId: string): Promise<void> {
+  if (fetchedInspectorMeta.has(sid)) return Promise.resolve()
+  const existing = pendingInspectorMeta.get(sid)
+  if (existing) return existing
+  const p = (async () => {
+    try {
+      const { data: meta } = await api.get(`/sessions/${sid}`)
+      if (meta?.phase) sessionStore.updateSessionPhase(sid, meta.phase)
+      const num = Number(sid)
+      if (viewType === 'side_task') {
+        const cur = sessionStore.getSideTasks(parentId).find(t => t.id === num)
+        if ((meta?.title && !cur?.title) || meta?.modelId != null) {
+          sessionStore.updateSideTaskTitle(
+            parentId,
+            num,
+            meta.title || cur?.title || '任务',
+            meta.modelId
+          )
+        }
+      } else {
+        sessionStore.updateSubagentMeta(num, {
+          title: meta?.title,
+          phase: meta?.phase,
+          modelId: meta?.modelId,
+        })
+      }
+      fetchedInspectorMeta.add(sid)
+    } catch (e) {
+      console.warn(`[inspector] Failed to fetch meta for sub-session ${sid}:`, e)
+      pendingInspectorMeta.delete(sid)
+      // inspectorSessionId === sid 已保证当前展示对象仍是该子会话（chat 时为主会话 id，不可能相等）
+      if (!autoRetriedMeta.has(sid) && inspectorSessionId.value === sid) {
+        autoRetriedMeta.add(sid)
+        await new Promise(resolve => setTimeout(resolve, 600))
+        if (inspectorSessionId.value === sid) {
+          await ensureInspectorMeta(sid, viewType, parentId)
+        }
+      }
+    } finally {
+      pendingInspectorMeta.delete(sid)
+    }
+  })()
+  pendingInspectorMeta.set(sid, p)
+  return p
+}
+
+function ensureInspectorTodos(sid: string): Promise<void> {
+  if (fetchedInspectorTodos.has(sid)) return Promise.resolve()
+  const existing = pendingInspectorTodos.get(sid)
+  if (existing) return existing
+  const p = (async () => {
+    try {
+      const { data } = await api.get(`/sessions/${sid}/todos`)
+      if (Array.isArray(data)) sessionStore.setTodos(sid, data)
+      fetchedInspectorTodos.add(sid)
+    } catch (e) {
+      console.warn(`[inspector] Failed to fetch todos for sub-session ${sid}:`, e)
+      pendingInspectorTodos.delete(sid)
+      if (!autoRetriedTodos.has(sid) && inspectorSessionId.value === sid) {
+        autoRetriedTodos.add(sid)
+        await new Promise(resolve => setTimeout(resolve, 600))
+        if (inspectorSessionId.value === sid) {
+          await ensureInspectorTodos(sid)
+        }
+      }
+    } finally {
+      pendingInspectorTodos.delete(sid)
+    }
+  })()
+  pendingInspectorTodos.set(sid, p)
+  return p
+}
+
+watch(inspectorSessionId, (sid) => {
+  const viewType = inspectorViewType.value
+  if (viewType === 'chat') return
+  if (!sid || sid === String(sessionIdForTabs.value)) return
+  // 固定本次请求的上下文，防止 await 期间用户切换 Tab / 主会话导致写错缓存
+  const parentId = activeSessionIdRef.value || ''
+  void ensureInspectorMeta(sid, viewType, parentId)
+  void ensureInspectorTodos(sid)
+}, { immediate: true })
 
 const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef)
 const gitProvider = useWorkspaceGitProvider(executionMode, workspace, activeSessionIdRef)
@@ -322,6 +498,15 @@ function handleTodoUpdate() {
 }
 
 function handleRename(title: string) {
+  // 右侧边栏重命名按当前展示对象分流：边路任务走独立 PATCH；子代理只读（双保险不处理）
+  if (inspectorViewType.value === 'side_task') {
+    const sid = activeTab.value.sideSessionId
+    if (sid != null && sid > 0) {
+      void handleEditSideTaskTitle({ sideSessionId: sid, title })
+    }
+    return
+  }
+  if (inspectorViewType.value === 'subagent') return
   if (sessionStore.activeSessionId) {
     sessionStore.renameSession(sessionStore.activeSessionId, title)
   }
@@ -340,12 +525,17 @@ provide('openSubagent', (payload: { childSessionId: number; title?: string }) =>
 })
 
 async function handleEditSideTaskTitle(payload: { sideSessionId: number; title: string }) {
+  // 请求前固定父会话 ID：PATCH 返回时可能已切换主会话，需用发起时的父会话更新缓存
+  const parentSessionId = activeSessionIdRef.value || ''
   try {
     const { data } = await api.patch(`/sessions/${payload.sideSessionId}`, { title: payload.title })
     if (data) {
       const newTitle = data.summary || data.title || payload.title
-      sessionStore.updateSideTaskTitle(activeSessionIdRef.value || '', payload.sideSessionId, newTitle)
-      updateSideTaskTab('side:' + payload.sideSessionId, payload.sideSessionId, newTitle)
+      sessionStore.updateSideTaskTitle(parentSessionId, payload.sideSessionId, newTitle)
+      // 标签状态基于当前主会话的 useCenterTabs 单例：仅当仍停留原父会话时才更新，避免改到别的会话
+      if (parentSessionId && parentSessionId === activeSessionIdRef.value) {
+        updateSideTaskTab('side:' + payload.sideSessionId, payload.sideSessionId, newTitle)
+      }
     }
   } catch (e) {
     console.warn('[side-task] Failed to rename side task:', e)
@@ -353,6 +543,8 @@ async function handleEditSideTaskTitle(payload: { sideSessionId: number; title: 
 }
 
 async function handleDeleteSideTask(sideSessionId: number) {
+  // 同样固定父会话 ID，避免删除返回时已切换主会话导致用错 ID 移除缓存
+  const parentSessionId = activeSessionIdRef.value || ''
   try {
     await api.delete(`/sessions/${sideSessionId}`)
   } catch (e) {
@@ -362,7 +554,7 @@ async function handleDeleteSideTask(sideSessionId: number) {
     t.type === 'side_task' && (t.sideSessionId === sideSessionId || t.id === 'side:' + sideSessionId)
   )
   if (tab) closeTab(tab.id)
-  sessionStore.removeSideTask(activeSessionIdRef.value || '', sideSessionId)
+  sessionStore.removeSideTask(parentSessionId, sideSessionId)
 }
 
 type NewTaskDefaults = {

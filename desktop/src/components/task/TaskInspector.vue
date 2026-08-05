@@ -42,7 +42,14 @@
               @keydown.escape="cancelEdit"
               @blur="confirmEdit"
             />
-            <h3 v-else class="task-title" @click="startEdit">{{ displayTitle }}</h3>
+            <div v-else class="task-title-row">
+              <h3
+                class="task-title"
+                :class="{ readonly: viewType === 'subagent' }"
+                @click="startEdit"
+              >{{ displayTitle }}</h3>
+              <span v-if="viewBadge" class="view-badge">{{ viewBadge }}</span>
+            </div>
           </div>
         </div>
         <div class="task-status-row">
@@ -188,6 +195,10 @@ const props = defineProps<{
   phase: TaskPhase
   panelCollapsed: boolean
   contextWindow?: ContextWindowInfo | null
+  /** 当前展示对象：chat=主会话 / side_task=边路任务 / subagent=子代理 */
+  viewType?: 'chat' | 'side_task' | 'subagent'
+  /** 当前展示会话的模型 id（上下文占比分母优先使用，缺失回退主会话模型） */
+  modelId?: number
 }>()
 
 const emit = defineEmits<{
@@ -204,8 +215,9 @@ const emit = defineEmits<{
 
 const sessionStore = useSessionStore()
 
-// Get current session's modelId
+// Get current session's modelId — 子会话场景优先使用 TaskView 传入的 modelId
 const currentModelId = computed(() => {
+  if (props.modelId != null) return props.modelId
   if (!props.sessionId) return undefined
   const session = sessionStore.sessions.find(s => String(s.id) === String(props.sessionId))
   return session?.modelId
@@ -325,6 +337,7 @@ const editingTitle = ref('')
 const editInput = ref<HTMLInputElement>()
 
 function startEdit() {
+  if (props.viewType === 'subagent') return
   editingTitle.value = props.title || ''
   editing.value = true
   nextTick(() => {
@@ -367,6 +380,13 @@ const phaseClass = computed(() => {
 })
 
 const displayTitle = computed(() => props.title || '新任务')
+
+// 会话类型标识：主会话不显示，边路任务 / 子代理显示徽标
+const viewBadge = computed(() => {
+  if (props.viewType === 'side_task') return '边路任务'
+  if (props.viewType === 'subagent') return '子代理'
+  return ''
+})
 const workspaceLabel = computed(() => {
   if (props.executionMode === 'CLOUD') {
     return cloudWorkspaceIndicator(props.executionMode, props.workspace, props.projectKey)
@@ -607,6 +627,31 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   flex: 1;
 }
 
+.task-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.view-badge {
+  flex-shrink: 0;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 4px;
+  color: var(--aw-ink-muted-48);
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--aw-hairline);
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .view-badge {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .task-title {
   margin: 0;
   font-family: var(--aw-font-display);
@@ -616,6 +661,10 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   letter-spacing: 0.231px;
   word-break: break-word;
   cursor: pointer;
+}
+
+.task-title.readonly {
+  cursor: default;
 }
 
 .task-title-input {

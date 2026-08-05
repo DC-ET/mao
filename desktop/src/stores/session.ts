@@ -80,6 +80,7 @@ export interface SubagentItem {
   createdAt?: string
   agentType?: string
   taskDescription?: string
+  modelId?: number
 }
 
 export interface SessionGroupMeta {
@@ -451,12 +452,13 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  function updateSideTaskTitle(parentSessionId: string, sideSessionId: number, title: string) {
+  function updateSideTaskTitle(parentSessionId: string, sideSessionId: number, title: string, modelId?: number) {
     const list = sideTaskCache.value.get(String(parentSessionId))
     if (list) {
       const item = list.find(t => t.id === sideSessionId)
       if (item) {
         item.title = title
+        if (modelId != null) item.modelId = modelId
         sideTaskCache.value = new Map(sideTaskCache.value)
       }
     }
@@ -493,6 +495,20 @@ export const useSessionStore = defineStore('session', () => {
       const item = list.find(t => t.id === childSessionId)
       if (item) {
         item.phase = phase
+        subagentCache.value = new Map(subagentCache.value)
+        break
+      }
+    }
+  }
+
+  /** 合并更新子代理元数据（补拉 /sessions/{id} 后写回缓存）。 */
+  function updateSubagentMeta(childSessionId: number, meta: { title?: string; phase?: TaskPhase; modelId?: number }) {
+    for (const [, list] of subagentCache.value) {
+      const item = list.find(t => t.id === childSessionId)
+      if (item) {
+        if (meta.title) item.title = meta.title
+        if (meta.phase) item.phase = meta.phase
+        if (meta.modelId != null) item.modelId = meta.modelId
         subagentCache.value = new Map(subagentCache.value)
         break
       }
@@ -859,6 +875,10 @@ export const useSessionStore = defineStore('session', () => {
     sessionTodos.value.set(String(sessionId), todos)
   }
 
+  function getTodos(sessionId: string): TodoItem[] {
+    return sessionTodos.value.get(String(sessionId)) ?? []
+  }
+
   function clearTodos(sessionId: string) {
     sessionTodos.value.set(String(sessionId), [])
   }
@@ -875,6 +895,10 @@ export const useSessionStore = defineStore('session', () => {
 
   function setContextWindow(sessionId: string, info: ContextWindowInfo) {
     sessionContextWindow.value.set(String(sessionId), info)
+  }
+
+  function getContextWindow(sessionId: string): ContextWindowInfo | null {
+    return sessionContextWindow.value.get(String(sessionId)) ?? null
   }
 
   function setCompactionEvents(sessionId: string, events: CompactionEvent[]) {
@@ -1103,6 +1127,7 @@ export const useSessionStore = defineStore('session', () => {
     setSubagents,
     addSubagent,
     updateSubagentPhase,
+    updateSubagentMeta,
     getSubagents,
     findSubagentChildId,
     bindDelegateToolCall,
@@ -1135,11 +1160,13 @@ export const useSessionStore = defineStore('session', () => {
     updateLastMessageId,
     // Todo cache
     setTodos,
+    getTodos,
     clearTodos,
     // Activity cache
     addActivity,
     // Context window
     setContextWindow,
+    getContextWindow,
     // Compaction
     activeCompacting,
     setCompacting,
