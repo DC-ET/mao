@@ -351,9 +351,25 @@ npm run build
 npm run dist   # 本地打包，需自行处理代码签名与分发
 ```
 
+### 发版说明
+
+用户可见版本 `0.0.x` 统一维护在根目录 [`CHANGELOG.md`](CHANGELOG.md)。发版前在顶部新增 `## 版本 (日期)` 并按受众分节（前端 / 后端 / 安卓原生 / 桌面 Electron / 管理后台）。
+
+```bash
+# 查看当前版本、OTA 文案、按节提取
+./scripts/changelog-extract.sh version
+./scripts/changelog-extract.sh ota-text 0.0.15
+./scripts/changelog-extract.sh body 0.0.15 --section 后端
+
+# 将版本号同步到 desktop/package.json
+./scripts/changelog-extract.sh sync-desktop
+```
+
+安卓打包时会自动同步 desktop 版本号；历史扁平条目（无 `###` 分节）仍可作为 OTA 全文说明。
+
 ### 安卓 APP
 
-基于 Capacitor 7（WebView 壳）复用桌面端 Vue 前端，包名 `cn.etarch.mao.app`，**仅支持 CLOUD 模式**（无 `electronAPI`，LOCAL / 工具审批不可用）。发版前先更新 `android/CHANGELOG.md` 顶部版本条目（`versionName` 取首条 `##`；`versionCode` 由脚本按已发布 APK 自增）。
+基于 Capacitor 7（WebView 壳）复用桌面端 Vue 前端，包名 `cn.etarch.mao.app`，**仅支持 CLOUD 模式**（无 `electronAPI`，LOCAL / 工具审批不可用）。发版前先更新根目录 [`CHANGELOG.md`](CHANGELOG.md) 顶部版本条目（`versionName` 取首条 `##`；`versionCode` 由脚本按已发布 APK 自增）。
 
 **环境要求**：JDK 21 + Android SDK（`platforms;android-35`、`build-tools;34.0.0`）；签名凭据通过环境变量 `MAO_KEYSTORE_*` 或本地 `keystore-credentials.env` 注入（**严禁入 git**）。
 
@@ -439,7 +455,7 @@ npm run test:desktop
 | [docs/mcp-integration-technical-design.md](docs/mcp-integration-technical-design.md) | MCP 协议集成技术方案 |
 | [docs/android-app-technical-design.md](docs/android-app-technical-design.md) | 安卓 APP（Capacitor）技术方案 |
 | [docs/weixin-bot-integration-technical-design.md](docs/weixin-bot-integration-technical-design.md) | 微信 Bot 通道技术方案（可选能力） |
-| [android/CHANGELOG.md](android/CHANGELOG.md) | 安卓 APP 发版说明 |
+| [CHANGELOG.md](CHANGELOG.md) | 项目发版说明（安卓 OTA / 桌面版本同步） |
 | [skills/mao-user-cli/SKILL.md](skills/mao-user-cli/SKILL.md) | 用户端 REST 操作 Skill / CLI |
 | [skills/mao-admin-cli/SKILL.md](skills/mao-admin-cli/SKILL.md) | 管理端 REST 操作 Skill / CLI |
 | [CLAUDE.md](CLAUDE.md) | 维护者 / AI 辅助开发指引 |

@@ -83,7 +83,7 @@ Mao 客户端目前支持两种访问形态：
 | OTA 数据源 | 静态 `android-latest.json` 清单，与 APK 一同发布到 `https://mao.etarch.cn/uploads/releases/`（复用现有 Nginx 静态服务与 electron 发布目录） | 后端/admin 零改动 |
 | OTA 下载安装 | 原生 DownloadManager 下载 APK + FileProvider 拉起系统安装器（自研小插件，不依赖社区库） | APP 内完成，不跳浏览器 |
 | OTA 策略 | `minVersionCode` 强制更新 / 普通更新；普通更新支持"忽略此版本"（localStorage 记忆） | 覆盖协议变更强升与日常迭代 |
-| OTA 更新说明 | `android/CHANGELOG.md` 最近一条记录，构建脚本自动写入清单 JSON | 发版时只改一个文件 |
+| OTA 更新说明 | 根 `CHANGELOG.md` 最近一条（前端 + 安卓原生小节），`scripts/changelog-extract.sh` 写入清单 JSON | 发版时只改一个文件 |
 
 ### 3.3 现状兼容性（代码探索结论）
 
@@ -159,7 +159,7 @@ Mao 客户端目前支持两种访问形态：
    - "立即更新" → 调插件下载安装。
 3. 发布侧（`android/build-apk.sh` 内）：
    - 构建成功后复制 `app-release.apk` → `releases/mao-android-<versionName>.apk`；
-   - 生成 `android-latest.json`（versionCode / versionName / 下载 URL / minVersionCode / changelog / 发布时间），changelog 取 `android/CHANGELOG.md` 最近一条；
+   - 生成 `android-latest.json`（versionCode / versionName / 下载 URL / minVersionCode / changelog / 发布时间），changelog 由 `scripts/changelog-extract.sh ota-text` 从根 `CHANGELOG.md` 提取；
 
 ## 5. 落地清单
 

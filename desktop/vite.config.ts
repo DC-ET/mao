@@ -10,8 +10,10 @@ export default defineConfig({
     {
       name: 'generate-version',
       closeBundle() {
+        const pkgPath = path.resolve(__dirname, 'package.json')
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
         const version = {
-          version: Date.now().toString(),
+          version: pkg.version,
           buildTime: new Date().toISOString()
         }
         const distDir = path.resolve(__dirname, 'dist')

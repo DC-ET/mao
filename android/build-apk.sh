@@ -3,7 +3,7 @@
 # build-apk.sh — 一键构建安卓 APK 并发布到 releases 目录
 #
 # 用法：
-#   ./build-apk.sh                  # 自动从 CHANGELOG.md 提取版本
+#   ./build-apk.sh                  # 自动从根 CHANGELOG.md 提取版本
 #   ./build-apk.sh --version 0.0.2  # 手动指定版本名（versionCode 仍自动递增）
 #   ./build-apk.sh --dry-run        # 仅构建，不发布
 #
@@ -24,6 +24,8 @@ DESKTOP_DIR="$PROJECT_ROOT/desktop"
 ANDROID_DIR="$SCRIPT_DIR"
 ANDROID_APP="$ANDROID_DIR/android/app"
 RELEASES_DIR="/root/soft/mao/data/uploads/releases"
+CHANGELOG_EXTRACT="$PROJECT_ROOT/scripts/changelog-extract.sh"
+CHANGELOG_FILE="$PROJECT_ROOT/CHANGELOG.md"
 
 # ---- 参数解析 ----
 DRY_RUN=false
@@ -60,8 +62,7 @@ fi
 if [ -n "$CUSTOM_VERSION" ]; then
   VERSION_NAME="$CUSTOM_VERSION"
 else
-  # 从 CHANGELOG.md 第一个 ## 行提取版本号
-  VERSION_NAME=$(grep -m1 '^## ' "$SCRIPT_DIR/CHANGELOG.md" | sed 's/^## \([^ ]*\).*/\1/')
+  VERSION_NAME=$("$CHANGELOG_EXTRACT" version "$CHANGELOG_FILE")
   if [ -z "$VERSION_NAME" ]; then
     echo "错误：无法从 CHANGELOG.md 提取版本号，请使用 --version 手动指定"; exit 1
   fi
@@ -87,7 +88,8 @@ echo "=========================================="
 echo ""
 
 # ---- Step 1: 构建 desktop 前端（安卓专用 base） ----
-echo "[1/4] 构建 desktop 前端（--base=./）..."
+echo "[1/4] 同步 desktop 版本号 + 构建前端（--base=./）..."
+"$CHANGELOG_EXTRACT" sync-desktop "$CHANGELOG_FILE"
 cd "$DESKTOP_DIR"
 npx --no-install vue-tsc -b
 npx --no-install vite build --base=./
@@ -123,9 +125,8 @@ mkdir -p "$RELEASES_DIR"
 APK_NAME="mao-android-${VERSION_NAME}-${VERSION_CODE}.apk"
 cp "$APK_OUT" "$RELEASES_DIR/$APK_NAME"
 
-# 提取 changelog
-CHANGELOG=$(awk '/^## '"$VERSION_NAME"'/{found=1; next} /^## /{if(found) exit} found{print}' \
-  "$SCRIPT_DIR/CHANGELOG.md" | sed '/^[[:space:]]*$/d' | sed 's/^- //' | tr '\n' '|' | sed 's/|$//')
+# 提取 changelog（前端 + 安卓原生；无分节时取全部）
+CHANGELOG=$("$CHANGELOG_EXTRACT" ota-text "$VERSION_NAME" "$CHANGELOG_FILE")
 
 # 生成 android-latest.json
 cat > "$RELEASES_DIR/android-latest.json" <<ENDJSON

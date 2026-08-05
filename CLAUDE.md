@@ -9,33 +9,49 @@
 - **Agent 严禁擅自重启服务器上的 Mao 后端服务**（包括但不限于执行 `./scripts/restart-all.sh`、`./scripts/stop-all.sh` + 启动命令、`mvn spring-boot:run`、kill 后端进程等）。后端服务的重启必须由用户自己完成，Agent 不得代劳。
 - 尤其注意：**在修复一个问题后，不要习惯性地自动重启后端服务**，这是明令禁止的。修复完成后只需告知用户需要重启后端即可，重启动作交给用户执行。
 
+## 发版与 CHANGELOG
+
+根目录 [`CHANGELOG.md`](CHANGELOG.md) 是**项目级唯一发版说明**。改动 `backend/`、`admin/`、`desktop/`、`android/` 且**对用户或运维可见**时，Agent 应在同一任务中更新 CHANGELOG（勿留到发版时才补）。
+
+| 改动目录 | 写入小节 |
+|---------|---------|
+| `backend/` | `### 后端` |
+| `admin/` | `### 管理后台` |
+| `desktop/`（Web / 共用 UI） | `### 前端（桌面 / Web / 安卓）` |
+| `desktop/electron/`（壳、LOCAL、自动更新） | `### 桌面 Electron` |
+| `android/android/app/`（Capacitor 壳、OTA 原生） | `### 安卓原生` |
+
+**写法**：
+- 在文件顶部当前版本的 `## x.y.z (日期)` 下追加条目；尚无该版本则新建一节。
+- 新版本推荐用 `###` 分节；纯内部重构、单测、注释、无行为变化的依赖升级**可不记**。
+- 用户要求「打包 / 发版 / OTA」时：先确认 CHANGELOG 已写好，再执行 `build-apk.sh` 或 `changelog-extract.sh sync-desktop`。
+
+```bash
+./scripts/changelog-extract.sh version
+./scripts/changelog-extract.sh body 0.0.15 --section 后端
+./scripts/changelog-extract.sh ota-text 0.0.15   # 安卓 OTA：前端 + 安卓原生
+./scripts/changelog-extract.sh sync-desktop        # 同步 desktop/package.json 版本号
+```
+
 ## 常用命令
 
 ```bash
 # 后端
 cd backend && mvn compile              # 编译检查
 cd backend && mvn test                 # 单元测试（backend/src/test/）
-cd backend && mvn spring-boot:run      # 启动（端口 9080，上下文 /api）
+cd backend && mvn package -DskipTests  # 打包（backend/target/mao-server.jar），禁止擅自重启服务
 
-# 管理后台（端口 5200，/api 代理到 9080）
-cd admin && npm run dev
-cd admin && npm run build
+# 管理后台
+cd admin && npm run build && cp -r dist/* /root/soft/mao/admin/ # 打包并部署到服务器资源目录，无需重启服务
 
-# 桌面端（端口 5201；Electron 模式支持 LOCAL 工具执行）
-cd desktop && npm run dev
-cd desktop && npm run dev:electron
-cd desktop && npm run build && npm run dist
+# 桌面端
+cd desktop && npm run build && cp -r dist/* /root/soft/mao/desktop/ # 打包并部署到服务器资源目录，无需重启服务
+cd desktop && npm run dist # 由用户自行运行打包 electron 程序
 
 # 安卓 APP（Capacitor 壳，复用 desktop 前端；仅 CLOUD 模式）
 cd android && bash build-apk.sh              # 一键：构建前端 → cap sync → assembleRelease → 发布
 cd android && bash build-apk.sh --dry-run    # 仅构建不发布
 cd android && bash build-apk.sh --version 0.0.x  # 手动指定 versionName
-
-# 一键启停
-./scripts/start-all.sh | ./scripts/stop-all.sh | ./scripts/restart-all.sh
-
-# E2E（需 backend + admin + desktop 均已启动）
-npm test | npm run test:admin | npm run test:desktop | npm run test:debug
 ```
 
 CI（`.github/workflows/ci.yml`）仅做后端 `mvn compile` 与前端 build，不跑单测和 Playwright。
@@ -96,7 +112,7 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 |------|------|
 | `android/capacitor.config.json` | appId / webDir（`../desktop/dist`）/ `adjustMarginsForEdgeToEdge` |
 | `android/build-apk.sh` | 一键构建与发布脚本 |
-| `android/CHANGELOG.md` | 发版说明；`versionName` 取首条 `##`；changelog 写入 OTA 清单 |
+| `CHANGELOG.md` | 项目发版说明；`versionName` 取首条 `##`；安卓 OTA changelog 由 `scripts/changelog-extract.sh` 提取 |
 | `android/android/` | Capacitor 生成的原生 Gradle 工程 |
 | `android/android/app/.../MainActivity.java` | BridgeActivity：Splash、系统栏、WebView 无缓存、注入 `android-capacitor` |
 | `android/android/app/.../AppUpdatePlugin.java` | 自研 OTA 插件：`getVersionCode` / `downloadAndInstall` |
@@ -121,22 +137,23 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 
 - JDK 21（`JAVA_HOME` 默认 `/usr/lib/jvm/java-21-openjdk-amd64`）、`ANDROID_HOME`（默认 `/opt/android-sdk`）、minSdk 24 / targetSdk 35
 - 签名凭据：环境变量 `MAO_KEYSTORE_*`，或 `/root/soft/mao/keystore/keystore-credentials.env`；**keystore / 凭据严禁入 git**
-- 发版前先更新 `android/CHANGELOG.md` 顶部版本条目（versionCode 由脚本按已发布 APK 自增）
+- 发版前先更新根目录 `CHANGELOG.md` 顶部版本条目（versionCode 由脚本按已发布 APK 自增）
 
 **明确不做**：LOCAL 能力、工具审批、系统推送、移动端布局重构、上架应用商店、改后端/admin。
 
 ## 代码规范
 
-**后端**：Java 17 + Lombok（`@Data`、`@Slf4j`、`@RequiredArgsConstructor`）；MyBatis-Plus 下划线转驼峰、逻辑删除（`deleted`）；表名/列名 snake_case，BIGINT 自增主键，`created_at`/`updated_at`。
+**后端**：Java 17 + Lombok（`@Data`、`@Slf4j`、`@RequiredArgsConstructor`）；MyBatis-Plus 下划线转驼峰、逻辑删除（`deleted`）；表名/列名 snake_case，BIGINT 自增主键，`created_at`/`updated_at`；用户可见 API / 行为改动记入 `CHANGELOG.md` 的 `### 后端`。
 
-**前端**：Vue 3 Composition API + `<script setup>`；Pinia 用函数式 `defineStore`；TypeScript 严格模式；无 ESLint/Prettier，类型检查靠 `vue-tsc`；改动Electron 壳代码时记得更新package.json的version，默认每次小版本号加1。
+**前端**：Vue 3 Composition API + `<script setup>`；Pinia 用函数式 `defineStore`；TypeScript 严格模式；无 ESLint/Prettier，类型检查靠 `vue-tsc`；用户可见改动记入 `CHANGELOG.md` 对应小节；`desktop/package.json` 版本由 `scripts/changelog-extract.sh sync-desktop` 从 CHANGELOG 同步，勿手改。
 
-**安卓**：原生 Java 在 `android/android/app/`；发版改 `android/CHANGELOG.md` 后跑 `build-apk.sh`；安卓专用 UI/路由/OTA 逻辑写在 `desktop/` 并用 `android-capacitor` / `Capacitor.isNativePlatform()` 守卫，勿影响 Web/Electron。
+**安卓**：原生 Java 在 `android/android/app/`；发版改根 `CHANGELOG.md` 后跑 `build-apk.sh`；安卓专用 UI/路由/OTA 逻辑写在 `desktop/` 并用 `android-capacitor` / `Capacitor.isNativePlatform()` 守卫，勿影响 Web/Electron。
 
 ## 常见改动入口
 
 | 目标 | 位置 |
 |------|------|
+| 发版说明 | 根 `CHANGELOG.md` + `scripts/changelog-extract.sh` |
 | 新增 REST API | 对应领域包下的 `entity` / `mapper` / `service` / `controller` |
 | 数据库变更 | `backend/src/main/resources/db/migration/V0xx__*.sql` |
 | 新增内置工具 | `harness/tool/impl/` 实现 `Tool` 接口并标注 `@Component` |
@@ -148,7 +165,7 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 | 桌面端 UI | `desktop/src/components/`、`desktop/src/views/` |
 | 安卓壳 / 系统栏 / WebView | `android/android/app/.../MainActivity.java`、`capacitor.config.json` |
 | 安卓 OTA 原生下载安装 | `AppUpdatePlugin.java` + `desktop/.../useVersionCheck.ts` |
-| 安卓发版 | 更新 `android/CHANGELOG.md` → `cd android && bash build-apk.sh` |
+| 安卓发版 | 更新根 `CHANGELOG.md` → `cd android && bash build-apk.sh` |
 
 设计文档索引见 `docs/technical-design.md`、`docs/android-app-technical-design.md` 及 `docs/` 下各专题文档。
 
