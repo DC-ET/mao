@@ -3,6 +3,7 @@ import { useSessionStore, type TaskPhase } from '../stores/session'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
 import { nowDateTime } from '../utils/datetime'
+import { mapCompactionEvents } from '../utils/chatMessage'
 
 /// <reference types="vite/client" />
 
@@ -76,7 +77,8 @@ function isStaleExecution(sessionId: string, data: any): boolean {
 const STREAM_EVENT_TYPES = new Set([
   'content_delta', 'tool_call_start', 'tool_call_args_delta', 'tool_call_result',
   'thinking_start', 'thinking_end', 'thinking_delta', 'message_end',
-  'file_change', 'activity', 'compaction_start', 'compaction_end', 'context_window', 'error'
+  'file_change', 'activity', 'compaction_start', 'compaction_end', 'compaction_marker',
+  'context_window', 'error'
 ])
 
 function refreshQueue(sessionId: string) {
@@ -539,6 +541,13 @@ export function useStreamWS() {
 
       case 'compaction_end':
         if (sessionId) sessionStore.setCompacting(sessionId, false)
+        break
+
+      case 'compaction_marker':
+        if (sessionId && data) {
+          const events = mapCompactionEvents([data as Record<string, unknown>])
+          if (events[0]) sessionStore.addCompactionEvent(sessionId, events[0])
+        }
         break
 
       case 'thinking_start':

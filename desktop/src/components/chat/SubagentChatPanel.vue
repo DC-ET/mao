@@ -15,6 +15,7 @@
         v-if="displayMessages.length > 0"
         :messages="displayMessages"
         :sending="sending"
+        :compaction-events="compactionEvents"
         @add-to-command="openWithContent"
       />
 
@@ -54,7 +55,7 @@ import { useStreamWS } from '../../composables/useStreamWS'
 import { useToolApprovals } from '../../composables/useChat'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { api } from '../../api'
-import { mapMessagesWithFileChanges } from '../../utils/chatMessage'
+import { mapMessagesWithFileChanges, mapCompactionEvents } from '../../utils/chatMessage'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
 import ChatRoundList from './ChatRoundList.vue'
@@ -78,6 +79,7 @@ const agentType = ref(props.agentType || '')
 const sid = computed(() => String(props.childSessionId))
 
 const displayMessages = computed(() => sessionStore.getMessages(sid.value))
+const compactionEvents = computed(() => sessionStore.getCompactionEvents(sid.value))
 
 const ACTIVE_PHASES = new Set(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
 const TERMINAL_PHASES = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE'])
@@ -206,6 +208,9 @@ async function fetchMessages() {
 
     sessionStore.setMessages(sid.value, messages)
     sessionStore.setFileChanges(sid.value, allChanges)
+    if (Array.isArray(data?.compactionEvents)) {
+      sessionStore.setCompactionEvents(sid.value, mapCompactionEvents(data.compactionEvents))
+    }
   } catch {
     // ignore
   }

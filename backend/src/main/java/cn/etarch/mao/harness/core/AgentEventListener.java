@@ -20,8 +20,8 @@ public interface AgentEventListener {
 
     /**
      * 上下文窗口大小变更通知
-     * @param estimatedTokens 估算 token 数（cl100k_base，快速反馈）
-     * @param actualTokens LLM 真实返回的 prompt_tokens（0 表示尚未返回）
+     * @param estimatedTokens 活跃上下文估算（锚点+增量，或全量字节/4）
+     * @param actualTokens LLM 真实返回的 prompt_tokens（0 表示尚未返回 / 锚点已清空）
      */
     default void onContextWindow(int estimatedTokens, int actualTokens) {}
 
@@ -41,6 +41,18 @@ public interface AgentEventListener {
      * @param durationMs 压缩耗时（毫秒）
      */
     default void onCompactionEnd(String type, int summaryTokens, int savedTokens, long durationMs) {}
+
+    /**
+     * 压缩结果已持久化，可供客户端在时间线展示标记
+     */
+    default void onCompactionPersisted(long eventId,
+                                       String triggerMode,
+                                       long prevBoundaryMsgId,
+                                       long boundaryMsgId,
+                                       int compactedMessageCount,
+                                       int summaryTokens,
+                                       int savedTokens,
+                                       long durationMs) {}
 
     /** Agent 正在思考（工具执行完毕，等待下一次 LLM 调用期间） */
     default void onThinkingStart() {}

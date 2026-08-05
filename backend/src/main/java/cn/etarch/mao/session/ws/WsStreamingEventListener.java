@@ -243,6 +243,27 @@ public class WsStreamingEventListener implements AgentEventListener {
     }
 
     @Override
+    public void onCompactionPersisted(long eventId,
+                                      String triggerMode,
+                                      long prevBoundaryMsgId,
+                                      long boundaryMsgId,
+                                      int compactedMessageCount,
+                                      int summaryTokens,
+                                      int savedTokens,
+                                      long durationMs) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("id", eventId);
+        payload.put("triggerMode", triggerMode);
+        payload.put("prevBoundaryMsgId", prevBoundaryMsgId);
+        payload.put("boundaryMsgId", boundaryMsgId);
+        payload.put("compactedMessageCount", compactedMessageCount);
+        payload.put("summaryTokens", summaryTokens);
+        payload.put("savedTokens", savedTokens);
+        payload.put("durationMs", durationMs);
+        send("compaction_marker", payload);
+    }
+
+    @Override
     public void onThinkingStart() {
         send("thinking_start", Map.of());
     }

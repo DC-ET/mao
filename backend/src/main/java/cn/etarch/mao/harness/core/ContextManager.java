@@ -21,7 +21,7 @@ public class ContextManager {
     private final CompactionService compactionService;
 
     /**
-     * Estimate token count for messages using cl100k_base tokenizer
+     * Estimate token count for messages using UTF-8 bytes/4 heuristic
      */
     public int estimateTokens(List<ChatRequest.Message> messages) {
         return tokenEstimator.estimateMessages(messages);

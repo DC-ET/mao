@@ -4,6 +4,8 @@ import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.harness.llm.LlmModelConfig;
 import cn.etarch.mao.session.entity.Message;
 import cn.etarch.mao.session.entity.SessionCompaction;
+import cn.etarch.mao.session.entity.SessionCompactionEvent;
+import cn.etarch.mao.session.service.SessionCompactionEventService;
 import cn.etarch.mao.session.service.SessionCompactionService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,6 +19,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -29,8 +32,11 @@ import static org.mockito.Mockito.when;
 class SessionCompactionOrchestratorTest {
 
     @Mock private SessionCompactionService sessionCompactionService;
+    @Mock private SessionCompactionEventService sessionCompactionEventService;
     @Mock private SessionHistoryLoader sessionHistoryLoader;
     @Mock private ContextManager contextManager;
+    @Mock private cn.etarch.mao.session.service.SessionService sessionService;
+    @Mock private ActiveContextCalculator activeContextCalculator;
     @InjectMocks private SessionCompactionOrchestrator orchestrator;
 
     @Test
@@ -65,12 +71,25 @@ class SessionCompactionOrchestratorTest {
                 eq(7L), eq(original), eq(100L), eq(120L), eq("snap"),
                 eq("new"), eq(12L), eq(4L), eq("gpt-test")))
                 .thenReturn(true);
+        SessionCompactionEvent recorded = new SessionCompactionEvent();
+        recorded.setId(9L);
+        when(sessionCompactionEventService.record(
+                eq(7L), eq("request_start"), eq(100L), eq(120L),
+                eq(2), eq(10), eq(100), eq(5L), eq("gpt-test")))
+                .thenReturn(recorded);
+        when(activeContextCalculator.estimateMessages(anyList())).thenReturn(20);
+        when(activeContextCalculator.estimateText(any())).thenReturn(5);
 
         boolean advanced = orchestrator.compact(7L, context, null, new CompactionConfig(), false, null);
 
         assertThat(advanced).isTrue();
         assertThat(context.getMessages()).isSameAs(messagesRef);
         verify(sessionHistoryLoader).applyHistory(eq(context), eq("new"), eq(after));
+        verify(sessionCompactionEventService).record(
+                eq(7L), eq("request_start"), eq(100L), eq(120L),
+                eq(2), eq(10), eq(100), eq(5L), eq("gpt-test"));
+        verify(sessionService).clearContextAnchor(7L);
+        verify(sessionService).updateContextTokens(7L, 25);
     }
 
     @Test
@@ -125,6 +144,9 @@ class SessionCompactionOrchestratorTest {
 
         assertThat(advanced).isFalse();
         verify(sessionHistoryLoader).applyHistory(eq(context), eq("old"), eq(snap));
+        verify(sessionCompactionEventService, never()).record(
+                anyLong(), any(), anyLong(), anyLong(), anyInt(),
+                anyInt(), anyInt(), anyLong(), any());
     }
 
     private SessionCompaction compaction(long boundary, String summary) {

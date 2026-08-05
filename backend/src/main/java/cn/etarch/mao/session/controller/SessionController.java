@@ -15,7 +15,9 @@ import cn.etarch.mao.session.entity.Message;
 import cn.etarch.mao.session.entity.MessageQueue;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.service.MessageQueueService;
+import cn.etarch.mao.session.service.SessionCompactionEventService;
 import cn.etarch.mao.session.service.SessionService;
+import cn.etarch.mao.session.entity.SessionCompactionEvent;
 import cn.etarch.mao.harness.todo.entity.SessionTodo;
 import cn.etarch.mao.harness.todo.mapper.SessionTodoMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -52,6 +54,7 @@ public class SessionController {
     private final MessageQueueService messageQueueService;
     private final PathSandbox pathSandbox;
     private final SubagentExecutionMapper subagentExecutionMapper;
+    private final SessionCompactionEventService sessionCompactionEventService;
 
     public SessionController(SessionService sessionService,
                              AgentMapper agentMapper,
@@ -60,7 +63,8 @@ public class SessionController {
                              SessionTodoMapper sessionTodoMapper,
                              MessageQueueService messageQueueService,
                              PathSandbox pathSandbox,
-                             SubagentExecutionMapper subagentExecutionMapper) {
+                             SubagentExecutionMapper subagentExecutionMapper,
+                             SessionCompactionEventService sessionCompactionEventService) {
         this.sessionService = sessionService;
         this.agentMapper = agentMapper;
         this.llmModelMapper = llmModelMapper;
@@ -69,6 +73,7 @@ public class SessionController {
         this.messageQueueService = messageQueueService;
         this.pathSandbox = pathSandbox;
         this.subagentExecutionMapper = subagentExecutionMapper;
+        this.sessionCompactionEventService = sessionCompactionEventService;
     }
 
     @PostMapping
@@ -362,6 +367,12 @@ public class SessionController {
         vo.setMessages(voList);
         vo.setHasMore(page.hasMore());
         vo.setNextBeforeMessageId(page.nextBeforeMessageId());
+        // 首屏拉取时附带全量压缩事件；翻页请求不再重复下发（客户端已有缓存）
+        if (beforeMessageId == null) {
+            vo.setCompactionEvents(sessionCompactionEventService.listBySessionId(id).stream()
+                    .map(this::toCompactionEventVO)
+                    .collect(Collectors.toList()));
+        }
         return Result.ok(vo);
     }
 
@@ -583,6 +594,21 @@ public class SessionController {
         return vo;
     }
 
+    private CompactionEventVO toCompactionEventVO(SessionCompactionEvent event) {
+        CompactionEventVO vo = new CompactionEventVO();
+        vo.setId(event.getId());
+        vo.setTriggerMode(event.getTriggerMode());
+        vo.setPrevBoundaryMsgId(event.getPrevBoundaryMsgId());
+        vo.setBoundaryMsgId(event.getBoundaryMsgId());
+        vo.setCompactedMessageCount(event.getCompactedMessageCount());
+        vo.setSummaryTokens(event.getSummaryTokens());
+        vo.setSavedTokens(event.getSavedTokens());
+        vo.setDurationMs(event.getDurationMs());
+        vo.setCompactModel(event.getCompactModel());
+        vo.setCreatedAt(event.getCreatedAt() != null ? event.getCreatedAt().toString() : null);
+        return vo;
+    }
+
     private List<MessageVO> toMessageVOList(Long sessionId, List<Message> messages) {
         List<Long> messageIds = messages.stream().map(Message::getId).collect(Collectors.toList());
         Map<Long, List<FileChange>> changesByMsg = sessionService.getFileChangesByMessageIds(sessionId, messageIds);
@@ -768,6 +794,21 @@ public class SessionController {
         private List<MessageVO> messages;
         private boolean hasMore;
         private Long nextBeforeMessageId;
+        private List<CompactionEventVO> compactionEvents;
+    }
+
+    @Data
+    public static class CompactionEventVO {
+        private Long id;
+        private String triggerMode;
+        private Long prevBoundaryMsgId;
+        private Long boundaryMsgId;
+        private Integer compactedMessageCount;
+        private Integer summaryTokens;
+        private Integer savedTokens;
+        private Long durationMs;
+        private String compactModel;
+        private String createdAt;
     }
 
     @Data

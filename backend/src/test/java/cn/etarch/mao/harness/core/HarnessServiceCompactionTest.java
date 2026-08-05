@@ -60,6 +60,7 @@ class HarnessServiceCompactionTest {
     @Mock private SessionCompactionService sessionCompactionService;
     @Mock private SessionHistoryLoader sessionHistoryLoader;
     @Mock private SessionCompactionOrchestrator sessionCompactionOrchestrator;
+    @Mock private ActiveContextCalculator activeContextCalculator;
     @Mock private cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
     @Mock private cn.etarch.mao.harness.mcp.local.McpSyncService mcpSyncService;
     @Mock private cn.etarch.mao.permission.service.PermissionService permissionService;
@@ -75,6 +76,9 @@ class HarnessServiceCompactionTest {
         session.setModelId(10L);
         session.setExecutionMode("CLOUD");
         when(sessionMapper.selectById(7L)).thenReturn(session);
+        when(sessionService.loadContextAnchor(7L)).thenReturn(new SessionService.ContextAnchor(0, 0L));
+        when(activeContextCalculator.estimateMessages(anyList())).thenReturn(10);
+        when(activeContextCalculator.estimateText(any())).thenReturn(0);
 
         Agent agent = new Agent();
         agent.setId(9L);
@@ -147,14 +151,14 @@ class HarnessServiceCompactionTest {
         when(sessionCompactionService.boundaryOf(original)).thenReturn(100L);
         when(sessionCompactionService.boundaryOf(latest)).thenReturn(120L);
         when(sessionCompactionOrchestrator.compact(
-                eq(7L), any(), isNull(), any(), eq(false), isNull()))
+                eq(7L), any(), isNull(), any(), eq(false), any()))
                 .thenReturn(true);
 
         AgentExecutionContext context = harnessService.buildContext(7L);
 
         assertThat(context.getSessionSummary()).isEqualTo("new summary");
         verify(sessionCompactionOrchestrator).compact(
-                eq(7L), any(), isNull(), any(), eq(false), isNull());
+                eq(7L), any(), isNull(), any(), eq(false), any());
         verify(sessionService, times(2)).cleanupIncompleteTailAfterId(eq(7L), any(Long.class));
         verify(sessionService).cleanupIncompleteTailAfterId(7L, 100L);
         verify(sessionService).cleanupIncompleteTailAfterId(7L, 120L);

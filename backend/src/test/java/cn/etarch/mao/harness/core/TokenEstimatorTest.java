@@ -28,6 +28,17 @@ class TokenEstimatorTest {
     }
 
     @Test
+    void countTokensUsesUtf8BytesDiv4() {
+        assertThat(estimator.countTokens(null)).isZero();
+        assertThat(estimator.countTokens("")).isZero();
+        assertThat(estimator.countTokens("abcd")).isEqualTo(1);
+        assertThat(estimator.countTokens("abcde")).isEqualTo(2);
+        // 中文：每个字 3 字节 → "中" = 3 bytes → ceil(3/4)=1；"中文" = 6 → 2
+        assertThat(estimator.countTokens("中")).isEqualTo(1);
+        assertThat(estimator.countTokens("中文")).isEqualTo(2);
+    }
+
+    @Test
     void estimatesMessagesToolCallsDefinitionsAndWholeRequests() {
         ChatRequest.ToolCall toolCall = ChatRequest.ToolCall.builder()
                 .id("call-1")

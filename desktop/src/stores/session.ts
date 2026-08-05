@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api'
-import type { ChatMessage, TodoItem, ContextWindowInfo, QueueMessage, FileChange, PendingQuestion } from '../types/chat'
+import type { ChatMessage, TodoItem, ContextWindowInfo, CompactionEvent, QueueMessage, FileChange, PendingQuestion } from '../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil, collectLiveRunningTools, mergeRunningToolsIntoMessages } from '../utils/chatMessage'
 import { nowDateTime } from '../utils/datetime'
 import { cloudGroupKey } from '../utils/cloud-project'
@@ -112,6 +112,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessionTodos = ref<Map<string, TodoItem[]>>(new Map())
   const sessionActivities = ref<Map<string, any[]>>(new Map())
   const sessionContextWindow = ref<Map<string, ContextWindowInfo>>(new Map())
+  const sessionCompactionEvents = ref<Map<string, CompactionEvent[]>>(new Map())
   const sessionCompacting = ref<Map<string, boolean>>(new Map())
   const sessionThinking = ref<Map<string, boolean>>(new Map())
   const sessionStreaming = ref<Map<string, boolean>>(new Map())
@@ -150,6 +151,10 @@ export const useSessionStore = defineStore('session', () => {
 
   const activeContextWindow = computed(() =>
     sessionContextWindow.value.get(activeSessionId.value ?? '') ?? null
+  )
+
+  const activeCompactionEvents = computed(() =>
+    sessionCompactionEvents.value.get(activeSessionId.value ?? '') ?? []
   )
 
   const activeCompacting = computed(() =>
@@ -565,6 +570,7 @@ export const useSessionStore = defineStore('session', () => {
       sessionTodos.value.delete(sid)
       sessionActivities.value.delete(sid)
       sessionContextWindow.value.delete(sid)
+      sessionCompactionEvents.value.delete(sid)
       sessionQueueMessages.value.delete(sid)
       sessionFileChanges.value.delete(sid)
       clearMessagePageState(sid)
@@ -871,6 +877,17 @@ export const useSessionStore = defineStore('session', () => {
     sessionContextWindow.value.set(String(sessionId), info)
   }
 
+  function setCompactionEvents(sessionId: string, events: CompactionEvent[]) {
+    sessionCompactionEvents.value.set(String(sessionId), events)
+  }
+
+  function addCompactionEvent(sessionId: string, event: CompactionEvent) {
+    const sid = String(sessionId)
+    const list = sessionCompactionEvents.value.get(sid) ?? []
+    if (list.some(e => e.id === event.id)) return
+    sessionCompactionEvents.value.set(sid, [...list, event])
+  }
+
   function setCompacting(sessionId: string, compacting: boolean) {
     sessionCompacting.value.set(String(sessionId), compacting)
   }
@@ -1032,6 +1049,7 @@ export const useSessionStore = defineStore('session', () => {
     sessionTodos.value = new Map()
     sessionActivities.value = new Map()
     sessionContextWindow.value = new Map()
+    sessionCompactionEvents.value = new Map()
     sessionCompacting.value = new Map()
     sessionThinking.value = new Map()
     sessionStreaming.value = new Map()
@@ -1060,6 +1078,7 @@ export const useSessionStore = defineStore('session', () => {
     activeTodos,
     activeActivities,
     activeContextWindow,
+    activeCompactionEvents,
     activeMessageHasMore,
     activeMessageLoadingOlder,
     activeMessageNextBeforeId,
@@ -1124,6 +1143,10 @@ export const useSessionStore = defineStore('session', () => {
     // Compaction
     activeCompacting,
     setCompacting,
+    setCompactionEvents,
+    addCompactionEvent,
+    getCompactionEvents: (sessionId: string) =>
+      sessionCompactionEvents.value.get(String(sessionId)) ?? [],
     // Thinking
     activeThinking,
     setThinking,

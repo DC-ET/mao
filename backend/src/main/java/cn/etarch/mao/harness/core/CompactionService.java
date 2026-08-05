@@ -73,7 +73,8 @@ public class CompactionService {
                     measuredRequestTokens);
         }
         return compactSessionRequestStart(sessionId, expectedOldBoundary, existingSummary, messages,
-                snapshotMessageIds, modelConfig, config, currentUserQuestion, listener);
+                snapshotMessageIds, modelConfig, config, currentUserQuestion, listener,
+                measuredRequestTokens);
     }
 
     /** 请求开始压缩：行为与改造前逐行一致（不压当前 USER turn）。 */
@@ -81,7 +82,8 @@ public class CompactionService {
             Long sessionId, long expectedOldBoundary, String existingSummary,
             List<PersistedChatMessage> messages, List<Long> snapshotMessageIds,
             LlmModelConfig modelConfig, CompactionConfig config,
-            String currentUserQuestion, AgentEventListener listener) {
+            String currentUserQuestion, AgentEventListener listener,
+            Integer measuredActiveTokens) {
         long startTime = System.currentTimeMillis();
 
         List<List<PersistedChatMessage>> turns = splitUserTurns(messages);
@@ -100,8 +102,10 @@ public class CompactionService {
         List<ChatRequest.Message> allMessages = toChatMessages(messages);
 
         int candidateTokenCount = tokenEstimator.estimateMessages(candidateMessages);
-        int totalTokenEstimate = tokenEstimator.estimateMessages(allMessages)
-                + tokenEstimator.countTokens(existingSummary);
+        int totalTokenEstimate = measuredActiveTokens != null
+                ? measuredActiveTokens
+                : tokenEstimator.estimateMessages(allMessages)
+                        + tokenEstimator.countTokens(existingSummary);
 
         int effectiveContextWindow = CompactionConfig.resolveEffectiveContextWindow(modelConfig, config);
 
@@ -111,7 +115,7 @@ public class CompactionService {
 
         if (!shouldCompact) return null;
 
-        log.info("Session compaction triggered for session {}: {} messages ({} tokens) to compact, {} total tokens",
+        log.info("Session compaction triggered for session {}: {} messages ({} tokens) to compact, {} active tokens",
                 sessionId, candidates.size(), candidateTokenCount, totalTokenEstimate);
         if (listener != null) {
             listener.onCompactionStart("session", candidates.size(), candidateTokenCount);

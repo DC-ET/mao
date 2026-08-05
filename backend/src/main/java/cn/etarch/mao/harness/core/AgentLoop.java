@@ -46,6 +46,7 @@ public class AgentLoop {
     private final SessionActivityHeartbeat activityHeartbeat;
     private final SessionService sessionService;
     private final SessionCompactionOrchestrator sessionCompactionOrchestrator;
+    private final ActiveContextCalculator activeContextCalculator;
     private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
     private final ExecutorService toolExecutor = Executors.newCachedThreadPool();
 
@@ -175,6 +176,7 @@ public class AgentLoop {
         @SuppressWarnings("unchecked")
         final List<ChatRequest.ToolCall>[] pendingSaveToolCalls = new List[1];
 
+        ensureContextAnchorLoaded(context);
 
         while (true) {
             // Enforce maxRounds (set by HarnessService / DelegateTool) to stop runaway tool loops
@@ -215,9 +217,13 @@ public class AgentLoop {
             // 1. Build Prompt
             ChatRequest request = promptEngine.buildRequest(context);
 
-            // 1.5. Emit estimated context window before LLM call
-            int estimatedTokens = contextManager.estimateRequestTokens(request);
-            listener.onContextWindow(estimatedTokens, 0);
+            // 1.5. Emit active context window before LLM call
+            final long preRequestMaxMsgId = context.getSessionId() != null
+                    ? sessionService.getMaxMessageId(context.getSessionId()) : 0L;
+            final int messagesCoveredThisRound = context.getMessages().size();
+            int estimatedTokens = computeActiveTokens(context, request);
+            listener.onContextWindow(estimatedTokens, context.getLastPromptTokens() > 0
+                    ? context.getLastPromptTokens() : 0);
 
             // 2. Call LLM
             final int currentRound = round;
@@ -274,9 +280,23 @@ public class AgentLoop {
                     log.debug("LLM round {} complete: contentLength={}, toolCallCount={}, usage={}",
                             currentRound, contentBuilder.length(), toolCalls.size(), usage);
 
-                    // Emit actual prompt_tokens from LLM response
+                    // Persist prompt_tokens anchor + emit context window
                     if (usage != null && usage.getPromptTokens() > 0) {
-                        listener.onContextWindow(estimatedTokens, usage.getPromptTokens());
+                        int promptTokens = usage.getPromptTokens();
+                        long anchorMsgId = preRequestMaxMsgId > 0 ? preRequestMaxMsgId : context.getContextAnchorMsgId();
+                        context.setLastPromptTokens(promptTokens);
+                        context.setContextAnchorMsgId(anchorMsgId);
+                        context.setMessagesCoveredByAnchor(messagesCoveredThisRound);
+                        if (context.getSessionId() != null && anchorMsgId > 0) {
+                            try {
+                                sessionService.updateContextAnchor(
+                                        context.getSessionId(), promptTokens, anchorMsgId);
+                            } catch (Exception e) {
+                                log.warn("Failed to persist context anchor for session {}",
+                                        context.getSessionId(), e);
+                            }
+                        }
+                        listener.onContextWindow(promptTokens, promptTokens);
                     }
 
                     if (!toolCalls.isEmpty()) {
@@ -376,8 +396,10 @@ public class AgentLoop {
                     && !context.isMidLoopCompactionExhausted();
             if (midLoopAllowed) {
                 try {
-                    int nextRequestTokens = contextManager.estimateRequestTokens(
-                            promptEngine.buildRequest(context));
+                    ChatRequest nextRequest = promptEngine.buildRequest(context);
+                    int nextRequestTokens = computeActiveTokens(context, nextRequest);
+                    listener.onContextWindow(nextRequestTokens, context.getLastPromptTokens() > 0
+                            ? context.getLastPromptTokens() : 0);
                     int effectiveContextWindow = CompactionConfig.resolveEffectiveContextWindow(
                             context.getModelConfig(), loopConfig);
                     if (nextRequestTokens >= effectiveContextWindow * loopConfig.getTriggerRatio()) {
@@ -408,6 +430,32 @@ public class AgentLoop {
                 mcpClientManager.closeSession(sessionId);
             }
         }
+    }
+
+    private void ensureContextAnchorLoaded(AgentExecutionContext context) {
+        if (context.getSessionId() == null) {
+            return;
+        }
+        if (context.getLastPromptTokens() > 0 && context.getContextAnchorMsgId() > 0) {
+            return;
+        }
+        try {
+            SessionService.ContextAnchor anchor = sessionService.loadContextAnchor(context.getSessionId());
+            context.setLastPromptTokens(anchor.lastPromptTokens());
+            context.setContextAnchorMsgId(anchor.contextAnchorMsgId());
+        } catch (Exception e) {
+            log.debug("Failed to load context anchor for session {}: {}",
+                    context.getSessionId(), e.getMessage());
+        }
+    }
+
+    private int computeActiveTokens(AgentExecutionContext context, ChatRequest request) {
+        return activeContextCalculator.activeFromMessageSuffix(
+                context.getLastPromptTokens(),
+                context.getContextAnchorMsgId(),
+                context.getMessages(),
+                context.getMessagesCoveredByAnchor(),
+                request);
     }
 
     private record ToolMessageSave(String toolCallId, String content, String metadataJson) {}

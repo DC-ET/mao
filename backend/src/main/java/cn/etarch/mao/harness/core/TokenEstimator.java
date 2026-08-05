@@ -2,24 +2,20 @@ package cn.etarch.mao.harness.core;
 
 import cn.etarch.mao.harness.llm.ChatRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.knuddels.jtokkit.Encodings;
-import com.knuddels.jtokkit.api.Encoding;
-import com.knuddels.jtokkit.api.EncodingRegistry;
-import com.knuddels.jtokkit.api.EncodingType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * 基于 cl100k_base 编码器的 Token 精确估算器
- * 与 OpenAI GPT-3.5/GPT-4 系列模型使用相同的分词算法
+ * 基于 UTF-8 字节数的粗算 Token 估算器：{@code ceil(bytes / 4)}。
+ * 结构化内容先序列化为 JSON 再按可见字节估算；图片使用定额，不对 base64 做字节/4。
  */
 @Slf4j
 @Component
 public class TokenEstimator {
 
-    private final Encoding encoding;
     private final ObjectMapper objectMapper;
 
     // OpenAI chat format overhead per message
@@ -27,9 +23,7 @@ public class TokenEstimator {
 
     public TokenEstimator(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
-        EncodingRegistry registry = Encodings.newDefaultEncodingRegistry();
-        this.encoding = registry.getEncoding(EncodingType.CL100K_BASE);
-        log.info("TokenEstimator initialized with cl100k_base encoding");
+        log.info("TokenEstimator initialized with UTF-8 bytes/4 heuristic");
     }
 
     /**
@@ -197,17 +191,13 @@ public class TokenEstimator {
     }
 
     /**
-     * 使用 cl100k_base 编码器精确计算 token 数
+     * UTF-8 字节粗算：{@code ceil(bytes / 4)}。
      */
     public int countTokens(String text) {
         if (text == null || text.isEmpty()) {
             return 0;
         }
-        try {
-            return encoding.countTokens(text);
-        } catch (Exception e) {
-            log.warn("Token encoding failed, falling back to char estimate", e);
-            return text.length() / 4;
-        }
+        int bytes = text.getBytes(StandardCharsets.UTF_8).length;
+        return (bytes + 3) / 4;
     }
 }

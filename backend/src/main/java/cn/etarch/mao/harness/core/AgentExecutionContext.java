@@ -74,6 +74,18 @@ public class AgentExecutionContext {
      */
     private boolean midLoopCompactionExhausted = false;
 
+    /** 持久化/内存锚点：最近一次真实 prompt_tokens */
+    private int lastPromptTokens = 0;
+
+    /** 锚点覆盖到的消息 ID（DB） */
+    private long contextAnchorMsgId = 0L;
+
+    /**
+     * 构建 LLM request 时 messages.size()；之后追加的 assistant/tool 计入增量。
+     * -1 表示尚未锚定本轮 request。
+     */
+    private int messagesCoveredByAnchor = -1;
+
     // 压缩配置（Agent 级覆盖，为 null 时使用全局默认）
     private CompactionConfig compactionConfig;
 

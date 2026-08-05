@@ -2,7 +2,10 @@ package cn.etarch.mao.harness.core;
 
 import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.session.entity.SessionCompaction;
+import cn.etarch.mao.session.entity.SessionCompactionEvent;
+import cn.etarch.mao.session.service.SessionCompactionEventService;
 import cn.etarch.mao.session.service.SessionCompactionService;
+import cn.etarch.mao.session.service.SessionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -19,10 +22,14 @@ import java.util.List;
 public class SessionCompactionOrchestrator {
 
     private final SessionCompactionService sessionCompactionService;
+    private final SessionCompactionEventService sessionCompactionEventService;
     private final SessionHistoryLoader sessionHistoryLoader;
     private final ContextManager contextManager;
+    private final SessionService sessionService;
+    private final ActiveContextCalculator activeContextCalculator;
 
     /**
+     * @param measuredActiveTokens 统一活跃上下文 token（锚点+增量或全量估算）；可为 null（内部兜底）
      * @return 边界是否真的前进（persist 成功且重读边界等于候选边界）
      */
     public boolean compact(Long sessionId,
@@ -30,7 +37,7 @@ public class SessionCompactionOrchestrator {
                            AgentEventListener listener,
                            CompactionConfig config,
                            boolean compactCurrentTurn,
-                           Integer measuredRequestTokens) {
+                           Integer measuredActiveTokens) {
         SessionCompaction compactionRecord = sessionCompactionService.loadValidated(sessionId);
         long boundary = sessionCompactionService.boundaryOf(compactionRecord);
         String summary = compactionRecord != null ? compactionRecord.getSummaryText() : null;
@@ -45,7 +52,7 @@ public class SessionCompactionOrchestrator {
         CompactionService.SessionCompactionResult result = contextManager.compactSession(
                 sessionId, boundary, summary, history.persistedMessages(), history.snapshotMessageIds(),
                 context.getModelConfig(), config, currentUserQuestion, listener,
-                compactCurrentTurn, measuredRequestTokens);
+                compactCurrentTurn, measuredActiveTokens);
         if (result == null) {
             return false;
         }
@@ -71,8 +78,47 @@ public class SessionCompactionOrchestrator {
 
         boolean advanced = persisted && latestBoundary == result.newLastCompactedMessageId();
         if (advanced) {
-            log.info("Session compaction applied: boundary {} -> {}, {} messages, ~{} tokens saved",
-                    boundary, latestBoundary, result.compactedCount(), result.savedTokens());
+            String triggerMode = compactCurrentTurn ? "mid_loop" : "request_start";
+            String compactModel = context.getModelConfig() != null ? context.getModelConfig().getModelId() : null;
+            SessionCompactionEvent event = sessionCompactionEventService.record(
+                    sessionId,
+                    triggerMode,
+                    result.expectedOldBoundary(),
+                    result.newLastCompactedMessageId(),
+                    result.compactedCount(),
+                    result.summaryTokens(),
+                    result.savedTokens(),
+                    result.durationMs(),
+                    compactModel);
+            if (listener != null) {
+                listener.onCompactionPersisted(
+                        event.getId(),
+                        triggerMode,
+                        result.expectedOldBoundary(),
+                        result.newLastCompactedMessageId(),
+                        result.compactedCount(),
+                        result.summaryTokens(),
+                        result.savedTokens(),
+                        result.durationMs());
+            }
+
+            // 压缩成功：清空 prompt 锚点，用全量字节/4 作为展示基线
+            sessionService.clearContextAnchor(sessionId);
+            context.setLastPromptTokens(0);
+            context.setContextAnchorMsgId(0L);
+            context.setMessagesCoveredByAnchor(-1);
+            List<ChatRequest.Message> afterMsgs = latestHistory.persistedMessages().stream()
+                    .map(PersistedChatMessage::chatMessage)
+                    .toList();
+            int baseline = activeContextCalculator.estimateMessages(afterMsgs)
+                    + activeContextCalculator.estimateText(latestSummary);
+            sessionService.updateContextTokens(sessionId, baseline);
+            if (listener != null) {
+                listener.onContextWindow(baseline, 0);
+            }
+
+            log.info("Session compaction applied: boundary {} -> {}, {} messages, ~{} tokens saved, trigger={}",
+                    boundary, latestBoundary, result.compactedCount(), result.savedTokens(), triggerMode);
         }
         return advanced;
     }

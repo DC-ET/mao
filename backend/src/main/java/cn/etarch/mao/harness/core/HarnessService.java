@@ -60,6 +60,7 @@ public class HarnessService {
     private final SessionCompactionService sessionCompactionService;
     private final SessionHistoryLoader sessionHistoryLoader;
     private final SessionCompactionOrchestrator sessionCompactionOrchestrator;
+    private final ActiveContextCalculator activeContextCalculator;
     private final ObjectMapper objectMapper;
     private final CompactionConfig compactionConfig;
     private final EnvironmentInfoProvider environmentInfoProvider;
@@ -272,10 +273,31 @@ public class HarnessService {
                 sessionHistoryLoader.loadHistoryAfterBoundary(sessionId, boundary);
         sessionHistoryLoader.applyHistory(context, summary, history);
 
+        // Load persisted prompt_tokens anchor for unified active-context calculation
+        SessionService.ContextAnchor anchor = sessionService.loadContextAnchor(sessionId);
+        context.setLastPromptTokens(anchor.lastPromptTokens());
+        context.setContextAnchorMsgId(anchor.contextAnchorMsgId());
+
         if (effectiveConfig.isEnabled() && !history.persistedMessages().isEmpty()) {
             try {
-                sessionCompactionOrchestrator.compact(
-                        sessionId, context, listener, effectiveConfig, false, null);
+                List<ChatRequest.Message> deltaAfterAnchor = history.persistedMessages().stream()
+                        .filter(m -> m.messageId() != null && m.messageId() > anchor.contextAnchorMsgId())
+                        .map(PersistedChatMessage::chatMessage)
+                        .toList();
+                int measuredActive;
+                if (anchor.isValid()) {
+                    measuredActive = activeContextCalculator.active(
+                            anchor.lastPromptTokens(), anchor.contextAnchorMsgId(),
+                            deltaAfterAnchor, null);
+                } else {
+                    List<ChatRequest.Message> all = history.persistedMessages().stream()
+                            .map(PersistedChatMessage::chatMessage)
+                            .toList();
+                    measuredActive = activeContextCalculator.estimateMessages(all)
+                            + activeContextCalculator.estimateText(summary);
+                }
+                boolean advanced = sessionCompactionOrchestrator.compact(
+                        sessionId, context, listener, effectiveConfig, false, measuredActive);
                 // 请求开始路径后置 cleanup：orchestrator 不调用 cleanup，此处兜底不完整尾部
                 SessionCompaction latest = sessionCompactionService.loadValidated(sessionId);
                 long latestBoundary = sessionCompactionService.boundaryOf(latest);
@@ -284,6 +306,13 @@ public class HarnessService {
                 SessionHistoryLoader.HistorySnapshot latestHistory =
                         sessionHistoryLoader.loadHistoryAfterBoundary(sessionId, latestBoundary);
                 sessionHistoryLoader.applyHistory(context, latestSummary, latestHistory);
+                if (advanced) {
+                    // Anchor cleared inside orchestrator; refresh in-memory copy
+                    SessionService.ContextAnchor refreshed = sessionService.loadContextAnchor(sessionId);
+                    context.setLastPromptTokens(refreshed.lastPromptTokens());
+                    context.setContextAnchorMsgId(refreshed.contextAnchorMsgId());
+                    context.setMessagesCoveredByAnchor(-1);
+                }
             } catch (Exception e) {
                 log.warn("Session compaction failed; continuing with the previously loaded summary and increment", e);
             }

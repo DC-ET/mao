@@ -67,8 +67,14 @@ public class Session {
     /** Last activity timestamp */
     private LocalDateTime lastActivityAt;
 
-    /** Estimated context tokens from the most recent LLM call */
+    /** Estimated context tokens from the most recent active calculation */
     private Integer contextTokens;
+
+    /** Last real LLM prompt_tokens used as context anchor */
+    private Integer lastPromptTokens;
+
+    /** Message id covered by last_prompt_tokens (messages after this are deltas) */
+    private Long contextAnchorMsgId;
 
     /** Unread mark: 0=read, 1=unread (background completion) */
     private Integer unread;

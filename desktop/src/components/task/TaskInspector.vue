@@ -391,9 +391,11 @@ function formatTokenCompact(value: number): string {
 
 const contextTokens = computed(() => {
   if (!props.contextWindow) return 0
-  const tokens = props.contextWindow.actual > 0
-    ? props.contextWindow.actual
-    : props.contextWindow.estimated
+  // estimated = 服务端活跃上下文（锚点+增量）；actual = 最近一次真实 prompt_tokens
+  // 取较大值，避免增量阶段被偏小的 stale actual 压住占比
+  const estimated = props.contextWindow.estimated || 0
+  const actual = props.contextWindow.actual || 0
+  const tokens = Math.max(estimated, actual)
   return tokens > 0 ? tokens : 0
 })
 

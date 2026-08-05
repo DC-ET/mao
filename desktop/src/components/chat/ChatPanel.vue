@@ -24,6 +24,7 @@
         :sending="sending"
         :editing-message-id="editingMessageId"
         :can-edit-message="canEditMessage"
+        :compaction-events="sessionStore.activeCompactionEvents"
         @edit="startEdit"
         @cancel-edit="cancelEdit"
         @confirm-edit="confirmEdit"
@@ -36,10 +37,6 @@
           <span></span>
           <span></span>
         </div>
-      </div>
-
-      <div v-if="sessionStore.activeCompacting" class="compaction-hint">
-        正在整理历史对话...
       </div>
     </div>
 
@@ -65,6 +62,11 @@
       <button type="button" class="side-task-btn" @click="openSideTask?.()">
         + 边路任务
       </button>
+    </div>
+
+    <div v-if="sessionStore.activeCompacting" class="compaction-hint" role="status">
+      <span class="compaction-spinner" aria-hidden="true"></span>
+      <span>正在整理历史对话，腾出上下文空间…</span>
     </div>
 
     <ExecutionErrorBanner :message="executionError" />
@@ -677,9 +679,30 @@ function handleNewTaskAgentChange(id: string | null) {
 }
 
 .compaction-hint {
-  padding: 4px 20px;
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 6px 12px;
+  font-size: var(--aw-text-caption);
   color: var(--aw-ink-muted-48);
+  background: var(--aw-canvas-parchment);
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+}
+
+.compaction-spinner {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(0, 102, 204, 0.2);
+  border-top-color: var(--aw-primary);
+  border-radius: 50%;
+  animation: compaction-spin 0.8s linear infinite;
+}
+
+@keyframes compaction-spin {
+  to { transform: rotate(360deg); }
 }
 
 .side-task-entry {

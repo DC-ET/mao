@@ -11,6 +11,11 @@
       @confirm-edit="$emit('confirmEdit', round.userMessage.id, $event)"
       @add-to-command="$emit('addToCommand', $event)"
     />
+    <CompactionMarker
+      v-for="ev in markersAfter(round.userMessage.id)"
+      :key="'c-' + ev.id"
+      :event="ev"
+    />
 
     <template v-if="round.collapsedSteps.length > 0">
       <div v-if="round.finalReply" class="final-reply-time">
@@ -23,22 +28,40 @@
           <span>已执行 {{ round.stepCount }} 个步骤，任务耗时 {{ round.durationText }}</span>
         </div>
         <div v-if="roundsExpanded[round.userMessage.id]" class="steps-detail">
-          <MessageBubble
-            v-for="step in round.displaySteps"
-            :key="step.id"
-            :message="step"
-            :show-time="false"
-            :show-copy="false"
-            :hide-file-changes="true"
-          />
+          <template v-for="step in round.displaySteps" :key="step.id">
+            <MessageBubble
+              :message="step"
+              :show-time="false"
+              :show-copy="false"
+              :hide-file-changes="true"
+            />
+            <CompactionMarker
+              v-for="ev in markersAfter(step.id)"
+              :key="'c-' + ev.id"
+              :event="ev"
+            />
+          </template>
         </div>
       </div>
+
+      <template v-if="!roundsExpanded[round.userMessage.id]">
+        <CompactionMarker
+          v-for="ev in markersInMessages(round.collapsedSteps)"
+          :key="'c-' + ev.id"
+          :event="ev"
+        />
+      </template>
 
       <MessageBubble
         v-if="round.finalReply"
         :message="round.finalReply"
         :hide-thinking="true"
         :hide-file-changes="true"
+      />
+      <CompactionMarker
+        v-for="ev in markersAfter(round.finalReply?.id)"
+        :key="'c-' + ev.id"
+        :event="ev"
       />
 
       <FileChangePanel
@@ -48,17 +71,24 @@
       />
     </template>
 
-    <MessageBubble
-      v-else-if="round.finalReply"
-      :message="round.finalReply"
-      :show-time="true"
-      :hide-file-changes="true"
-    />
-    <FileChangePanel
-      v-if="!round.collapsedSteps.length && round.fileChanges.length > 0"
-      :changes="round.fileChanges"
-      mode="history"
-    />
+    <template v-else>
+      <MessageBubble
+        v-if="round.finalReply"
+        :message="round.finalReply"
+        :show-time="true"
+        :hide-file-changes="true"
+      />
+      <CompactionMarker
+        v-for="ev in markersAfter(round.finalReply?.id)"
+        :key="'c-' + ev.id"
+        :event="ev"
+      />
+      <FileChangePanel
+        v-if="round.fileChanges.length > 0"
+        :changes="round.fileChanges"
+        mode="history"
+      />
+    </template>
   </template>
 
   <!-- 当前轮次：执行中平铺展示 -->
@@ -73,51 +103,68 @@
       @confirm-edit="$emit('confirmEdit', activeRound.userMessage.id, $event)"
       @add-to-command="$emit('addToCommand', $event)"
     />
-    <MessageBubble
-      v-for="msg in activeRoundMsgs"
-      :key="msg.id"
-      :message="msg"
-      :show-time="false"
-      :show-copy="false"
-      :hide-file-changes="true"
-      :is-last="msg === activeRoundMsgs[activeRoundMsgs.length - 1]"
+    <CompactionMarker
+      v-for="ev in markersAfter(activeRound.userMessage.id)"
+      :key="'c-' + ev.id"
+      :event="ev"
     />
+    <template v-for="msg in activeRoundMsgs" :key="msg.id">
+      <MessageBubble
+        :message="msg"
+        :show-time="false"
+        :show-copy="false"
+        :hide-file-changes="true"
+        :is-last="msg === activeRoundMsgs[activeRoundMsgs.length - 1]"
+      />
+      <CompactionMarker
+        v-for="ev in markersAfter(msg.id)"
+        :key="'c-' + ev.id"
+        :event="ev"
+      />
+    </template>
     <!-- 执行中不展示文件变更；刷新后 API 虽会带回已落库变更，也须等轮次完成后再展示 -->
   </template>
 
   <!-- 无轮次时：直接渲染所有消息 -->
   <template v-if="historyRounds.length === 0 && !activeRound">
-    <MessageBubble
-      v-for="(msg, idx) in messages"
-      :key="msg.id"
-      :message="msg"
-      :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
-      :show-copy="msg.role === 'user'"
-      :is-last="idx === messages.length - 1"
-      :can-edit="canEditMessage?.(msg) ?? false"
-      :is-editing="editingMessageId === msg.id"
-      @edit="$emit('edit', msg)"
-      @cancel-edit="$emit('cancelEdit')"
-      @confirm-edit="$emit('confirmEdit', msg.id, $event)"
-      @add-to-command="$emit('addToCommand', $event)"
-    />
+    <template v-for="(msg, idx) in messages" :key="msg.id">
+      <MessageBubble
+        :message="msg"
+        :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
+        :show-copy="msg.role === 'user'"
+        :is-last="idx === messages.length - 1"
+        :can-edit="canEditMessage?.(msg) ?? false"
+        :is-editing="editingMessageId === msg.id"
+        @edit="$emit('edit', msg)"
+        @cancel-edit="$emit('cancelEdit')"
+        @confirm-edit="$emit('confirmEdit', msg.id, $event)"
+        @add-to-command="$emit('addToCommand', $event)"
+      />
+      <CompactionMarker
+        v-for="ev in markersAfter(msg.id)"
+        :key="'c-' + ev.id"
+        :event="ev"
+      />
+    </template>
   </template>
 </template>
 
 <script setup lang="ts">
 import { toRef } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
-import type { ChatMessage } from '../../types/chat'
+import type { ChatMessage, CompactionEvent } from '../../types/chat'
 import { useMessageRounds } from '../../composables/useMessageRounds'
 import { formatDateTime } from '../../utils/datetime'
 import MessageBubble from './MessageBubble.vue'
 import FileChangePanel from './FileChangePanel.vue'
+import CompactionMarker from './CompactionMarker.vue'
 
 const props = defineProps<{
   messages: ChatMessage[]
   sending: boolean
   editingMessageId?: string | null
   canEditMessage?: (msg: ChatMessage) => boolean
+  compactionEvents?: CompactionEvent[]
 }>()
 
 defineEmits<{
@@ -137,6 +184,17 @@ const {
   activeRoundMsgs,
   toggleRound,
 } = useMessageRounds(messagesRef, sendingRef)
+
+function markersAfter(messageId?: string | number | null): CompactionEvent[] {
+  if (messageId == null) return []
+  const id = String(messageId)
+  return (props.compactionEvents ?? []).filter(ev => String(ev.boundaryMsgId) === id)
+}
+
+function markersInMessages(messages: ChatMessage[]): CompactionEvent[] {
+  const ids = new Set(messages.map(m => String(m.id)))
+  return (props.compactionEvents ?? []).filter(ev => ids.has(String(ev.boundaryMsgId)))
+}
 </script>
 
 <style scoped>
@@ -180,7 +238,7 @@ const {
   transform: rotate(0deg);
 }
 
-.execution-steps-collapse .steps-detail {
+.steps-detail {
   margin-top: 8px;
 }
 </style>

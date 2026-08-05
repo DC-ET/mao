@@ -21,6 +21,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -43,12 +45,22 @@ class AgentLoopTest {
     private final SessionService sessionService = mock(SessionService.class);
     private final SessionCompactionOrchestrator sessionCompactionOrchestrator =
             mock(SessionCompactionOrchestrator.class);
+    private final ActiveContextCalculator activeContextCalculator = mock(ActiveContextCalculator.class);
     private final cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager =
             mock(cn.etarch.mao.harness.mcp.McpClientManager.class);
     private final AgentLoop agentLoop = new AgentLoop(
             llmAdapter, promptEngine, contextManager, toolDispatcher, new ObjectMapper(),
             backgroundTaskManager, shellSessionManager, activityHeartbeat, sessionService,
-            sessionCompactionOrchestrator, mcpClientManager);
+            sessionCompactionOrchestrator, activeContextCalculator, mcpClientManager);
+
+    private void stubActiveContext(int tokens) {
+        when(activeContextCalculator.activeFromMessageSuffix(
+                anyInt(), anyLong(), any(), anyInt(), any()))
+                .thenReturn(tokens);
+        when(sessionService.loadContextAnchor(any())).thenReturn(
+                new SessionService.ContextAnchor(0, 0L));
+        when(sessionService.getMaxMessageId(any())).thenReturn(1L);
+    }
 
     @Test
     void executeStreamsPlainAssistantMessageAndPersistsIt() {

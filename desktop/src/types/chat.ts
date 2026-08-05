@@ -68,6 +68,19 @@ export interface ContextWindowInfo {
   maxTokens?: number  // 模型最大窗口限制
 }
 
+export interface CompactionEvent {
+  id: string
+  triggerMode: 'request_start' | 'mid_loop' | string
+  prevBoundaryMsgId: string
+  boundaryMsgId: string
+  compactedMessageCount: number
+  summaryTokens: number
+  savedTokens: number
+  durationMs: number
+  compactModel?: string
+  createdAt?: string
+}
+
 export interface QueueMessage {
   id: string
   sessionId: string

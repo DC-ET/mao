@@ -5,7 +5,7 @@ import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
 import { collectLocalUnsyncedSkills } from '../utils/localSkills'
 import { collectAgentsMdContent } from '../utils/agentsMd'
-import { mapMessagesWithFileChanges, collectLiveRunningTools, mergeRunningToolsIntoMessages } from '../utils/chatMessage'
+import { mapMessagesWithFileChanges, collectLiveRunningTools, mergeRunningToolsIntoMessages, mapCompactionEvents } from '../utils/chatMessage'
 import { normalizeMessageRole, type ChatMessage, type QuestionAnswer } from '../types/chat'
 
 export type {
@@ -138,6 +138,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         : messages
       sessionStore.setMessages(sid, nextMessages)
       sessionStore.setFileChanges(sid, allChanges)
+      if (Array.isArray(data?.compactionEvents)) {
+        sessionStore.setCompactionEvents(sid, mapCompactionEvents(data.compactionEvents))
+      }
       sessionStore.setMessagePageState(
         sid,
         Boolean(data?.hasMore),

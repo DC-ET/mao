@@ -69,6 +69,20 @@ public class CompositeAgentEventListener implements AgentEventListener {
     }
 
     @Override
+    public void onCompactionPersisted(long eventId,
+                                      String triggerMode,
+                                      long prevBoundaryMsgId,
+                                      long boundaryMsgId,
+                                      int compactedMessageCount,
+                                      int summaryTokens,
+                                      int savedTokens,
+                                      long durationMs) {
+        forEach("onCompactionPersisted", l -> l.onCompactionPersisted(
+                eventId, triggerMode, prevBoundaryMsgId, boundaryMsgId,
+                compactedMessageCount, summaryTokens, savedTokens, durationMs));
+    }
+
+    @Override
     public void onThinkingStart() {
         forEach("onThinkingStart", AgentEventListener::onThinkingStart);
     }

@@ -66,6 +66,7 @@ public class SessionService {
     private final UserCommandService userCommandService;
     private final GitOperationService gitOperationService;
     private final SessionCompactionService sessionCompactionService;
+    private final SessionCompactionEventService sessionCompactionEventService;
 
     public Session createSession(Long userId, Long agentId, String title) {
         return createSession(userId, agentId, title, "CLOUD");
@@ -415,6 +416,7 @@ public class SessionService {
     public void deleteSession(Long id) {
         sessionMapper.lockActiveSessionById(id);
         sessionCompactionService.deleteBySessionId(id);
+        sessionCompactionEventService.deleteBySessionId(id);
         messageMapper.delete(new QueryWrapper<Message>().eq("session_id", id));
         sessionMapper.deleteById(id);
     }
@@ -933,6 +935,38 @@ public class SessionService {
         Session session = getSession(sessionId);
         session.setContextTokens(contextTokens);
         sessionMapper.updateById(session);
+    }
+
+    public void updateContextAnchor(Long sessionId, int lastPromptTokens, long contextAnchorMsgId) {
+        Session session = getSession(sessionId);
+        session.setLastPromptTokens(lastPromptTokens);
+        session.setContextAnchorMsgId(contextAnchorMsgId);
+        session.setContextTokens(lastPromptTokens);
+        sessionMapper.updateById(session);
+    }
+
+    public void clearContextAnchor(Long sessionId) {
+        Session session = getSession(sessionId);
+        session.setLastPromptTokens(0);
+        session.setContextAnchorMsgId(0L);
+        sessionMapper.updateById(session);
+    }
+
+    public long getMaxMessageId(Long sessionId) {
+        return messageMapper.selectMaxMessageId(sessionId);
+    }
+
+    public ContextAnchor loadContextAnchor(Long sessionId) {
+        Session session = getSession(sessionId);
+        int lastPrompt = session.getLastPromptTokens() != null ? session.getLastPromptTokens() : 0;
+        long anchorMsgId = session.getContextAnchorMsgId() != null ? session.getContextAnchorMsgId() : 0L;
+        return new ContextAnchor(lastPrompt, anchorMsgId);
+    }
+
+    public record ContextAnchor(int lastPromptTokens, long contextAnchorMsgId) {
+        public boolean isValid() {
+            return lastPromptTokens > 0 && contextAnchorMsgId > 0;
+        }
     }
 
     public Map<String, List<Session>> listSessionsForDashboard(Long userId) {

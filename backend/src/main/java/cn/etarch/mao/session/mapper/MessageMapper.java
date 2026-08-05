@@ -55,4 +55,8 @@ public interface MessageMapper extends BaseMapper<Message> {
             "WHERE id = #{messageId} AND session_id = #{sessionId} AND deleted = 0")
     Message selectValidBoundaryMessage(@Param("sessionId") Long sessionId,
                                        @Param("messageId") Long messageId);
+
+    @Select("SELECT COALESCE(MAX(id), 0) FROM message " +
+            "WHERE session_id = #{sessionId} AND deleted = 0")
+    long selectMaxMessageId(@Param("sessionId") Long sessionId);
 }

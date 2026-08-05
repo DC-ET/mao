@@ -1,6 +1,7 @@
 import {
   normalizeMessageRole,
   type ChatMessage,
+  type CompactionEvent,
   type FileChange,
   type MessageSegment,
   type ToolCall
@@ -245,6 +246,23 @@ export function mapMessagesWithFileChanges(raw: Array<Record<string, unknown>>) 
     }
   }
   return { messages, allChanges }
+}
+
+/** 将 API / WS 压缩事件转为前端结构 */
+export function mapCompactionEvents(raw: Array<Record<string, unknown>> | undefined | null): CompactionEvent[] {
+  if (!raw?.length) return []
+  return raw.map(e => ({
+    id: String(e.id ?? ''),
+    triggerMode: String(e.triggerMode ?? ''),
+    prevBoundaryMsgId: String(e.prevBoundaryMsgId ?? 0),
+    boundaryMsgId: String(e.boundaryMsgId ?? ''),
+    compactedMessageCount: Number(e.compactedMessageCount ?? 0),
+    summaryTokens: Number(e.summaryTokens ?? 0),
+    savedTokens: Number(e.savedTokens ?? 0),
+    durationMs: Number(e.durationMs ?? 0),
+    compactModel: e.compactModel != null ? String(e.compactModel) : undefined,
+    createdAt: e.createdAt != null ? String(e.createdAt) : undefined,
+  })).filter(e => e.id && e.boundaryMsgId)
 }
 
 /** 将 API 原始消息列表转为聊天 UI 消息（合并 TOOL 结果、过滤 tool 气泡） */

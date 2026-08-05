@@ -18,6 +18,7 @@
         v-if="displayMessages.length > 0"
         :messages="displayMessages"
         :sending="sending"
+        :compaction-events="compactionEvents"
         @add-to-command="openWithContent"
       />
 
@@ -88,7 +89,7 @@ import { useSessionStore } from '../../stores/session'
 import { useStreamWS } from '../../composables/useStreamWS'
 import { api } from '../../api'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
-import { mapMessagesWithFileChanges } from '../../utils/chatMessage'
+import { mapMessagesWithFileChanges, mapCompactionEvents } from '../../utils/chatMessage'
 import { deriveSessionTitle } from '../../utils/sessionTitle'
 import { generateUUID } from '../../utils/uuid'
 import { collectLocalUnsyncedSkills } from '../../utils/localSkills'
@@ -162,6 +163,11 @@ const displayMessages = computed(() => {
     return sessionStore.getMessages(String(realSessionId.value))
   }
   return sessionStore.getMessages(placeholderCacheKey.value)
+})
+
+const compactionEvents = computed(() => {
+  if (!hasRealSession.value) return []
+  return sessionStore.getCompactionEvents(String(realSessionId.value))
 })
 
 const showTypingIndicator = computed(() => {
@@ -276,6 +282,9 @@ async function fetchMessages() {
     if (messages.length > 0) {
       sessionStore.setMessages(sid, messages)
       sessionStore.setFileChanges(sid, allChanges)
+    }
+    if (Array.isArray(data?.compactionEvents)) {
+      sessionStore.setCompactionEvents(sid, mapCompactionEvents(data.compactionEvents))
     }
   } catch {
     // session might not exist yet
