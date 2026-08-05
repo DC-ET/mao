@@ -1,5 +1,6 @@
 import { computed, type Ref } from 'vue'
 import { api } from '../api'
+import { getToken } from '../utils/auth-storage'
 import { resolveWorkspaceFilePath } from '../utils/workspace-path'
 
 export interface DirectoryEntry {
@@ -25,10 +26,19 @@ export interface ReadFileResult {
   error?: string
 }
 
+export interface DownloadResult {
+  ok: boolean
+  error?: string
+}
+
 export interface WorkspaceFileProvider {
   listDirectory(relativeDir: string): Promise<DirectoryResult>
   readFile(relativePath: string, opts?: { offset?: number; limit?: number }): Promise<ReadFileResult>
   getAbsolutePath?(relativePath: string): string
+  /** 下载单个文件到浏览器（仅 CLOUD 模式实现）。 */
+  downloadFile?(relativePath: string, suggestedName: string): Promise<DownloadResult>
+  /** 打包下载目录（zip）到浏览器（仅 CLOUD 模式实现）。 */
+  downloadDirectory?(relativePath: string, suggestedName: string): Promise<DownloadResult>
 }
 
 export function createLocalProvider(workspace: string): WorkspaceFileProvider {
@@ -61,6 +71,12 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
       },
       async readFile() {
         return { content: '', total_lines: 0, error: '会话未就绪' }
+      },
+      async downloadFile() {
+        return { ok: false, error: '会话未就绪' }
+      },
+      async downloadDirectory() {
+        return { ok: false, error: '会话未就绪' }
       },
     }
   }
@@ -100,7 +116,79 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
         return { content: '', total_lines: 0, error: e.message || '读取文件失败' }
       }
     },
+    downloadFile(relativePath: string, suggestedName: string) {
+      return downloadWorkspaceResource('/files/workspace-download', numericSessionId, relativePath, suggestedName)
+    },
+    downloadDirectory(relativePath: string, suggestedName: string) {
+      return downloadWorkspaceResource('/files/workspace-download-zip', numericSessionId, relativePath, suggestedName)
+    },
   }
+}
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
+
+async function downloadWorkspaceResource(
+  endpoint: string,
+  sessionId: number,
+  relativePath: string,
+  suggestedName: string,
+): Promise<DownloadResult> {
+  const token = getToken()
+  const url = `${API_BASE}${endpoint}?sessionId=${sessionId}&path=${encodeURIComponent(relativePath)}`
+  try {
+    const resp = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (!resp.ok) {
+      return { ok: false, error: await extractDownloadError(resp) }
+    }
+    const blob = await resp.blob()
+    const fileName = parseDownloadFileName(resp.headers.get('content-disposition')) || suggestedName
+    triggerBrowserDownload(blob, fileName)
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || '下载失败' }
+  }
+}
+
+async function extractDownloadError(resp: Response): Promise<string> {
+  try {
+    const contentType = resp.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const body = await resp.json()
+      if (body?.message) return body.message
+    }
+  } catch {
+    // 忽略解析失败，回退通用提示
+  }
+  return `下载失败（HTTP ${resp.status}）`
+}
+
+/** 解析 Content-Disposition 中的文件名，优先 filename*=UTF-8'' 编码，失败返回 undefined。 */
+function parseDownloadFileName(disposition: string | null): string | undefined {
+  if (!disposition) return undefined
+  const starMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (starMatch) {
+    try {
+      return decodeURIComponent(starMatch[1].trim())
+    } catch {
+      return undefined
+    }
+  }
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/i)
+  if (plainMatch) return plainMatch[1].trim()
+  return undefined
+}
+
+function triggerBrowserDownload(blob: Blob, fileName: string) {
+  const objectUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objectUrl
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(objectUrl)
 }
 
 export function useWorkspaceFileProvider(

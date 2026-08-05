@@ -13,15 +13,21 @@ import cn.etarch.mao.session.service.SessionService;
 import cn.etarch.mao.config.UploadProperties;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -29,6 +35,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+@Slf4j
 @RestController
 @RequestMapping("/v1/files")
 @RequiredArgsConstructor
@@ -119,6 +126,67 @@ public class FileController {
         Session session = requireOwnedSession(userId, sessionId);
         return Result.ok(workspaceBrowseService.readFile(
                 session.getWorkspace(), path, offset != null ? offset : 0, limit != null ? limit : 5000));
+    }
+
+    @GetMapping("/workspace-download")
+    public ResponseEntity<Resource> downloadWorkspaceFile(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam Long sessionId,
+            @RequestParam String path) {
+        Session session = requireOwnedSession(userId, sessionId);
+        WorkspaceBrowseService.DownloadResult result = workspaceBrowseService.downloadFile(session.getWorkspace(), path);
+
+        MediaType mediaType = MediaType.APPLICATION_OCTET_STREAM;
+        try {
+            String probe = Files.probeContentType(result.getPath());
+            if (probe != null && !probe.isBlank()) {
+                mediaType = MediaType.parseMediaType(probe);
+            }
+        } catch (IOException ignored) {
+            // 无法探测时回退 octet-stream
+        }
+
+        Resource resource = new FileSystemResource(result.getPath());
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, attachmentHeader(result.getFileName()))
+                .contentType(mediaType)
+                .contentLength(result.getSize())
+                .body(resource);
+    }
+
+    @GetMapping("/workspace-download-zip")
+    public ResponseEntity<StreamingResponseBody> downloadWorkspaceDirectory(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam Long sessionId,
+            @RequestParam String path) {
+        Session session = requireOwnedSession(userId, sessionId);
+        WorkspaceBrowseService.ZipResult result = workspaceBrowseService.zipDirectory(session.getWorkspace(), path);
+
+        // StreamingResponseBody 在响应写完后执行 finally，确保临时 zip 在传输完成后被清理
+        StreamingResponseBody body = outputStream -> {
+            try (InputStream in = Files.newInputStream(result.getZipPath())) {
+                in.transferTo(outputStream);
+            } finally {
+                try {
+                    Files.deleteIfExists(result.getZipPath());
+                } catch (IOException e) {
+                    log.warn("Failed to delete temp zip after download: {}", result.getZipPath(), e);
+                }
+            }
+        };
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, attachmentHeader(result.getFileName()))
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .contentLength(result.getSize())
+                .body(body);
+    }
+
+    private static String attachmentHeader(String fileName) {
+        return ContentDisposition.attachment()
+                .filename(fileName, StandardCharsets.UTF_8)
+                .build()
+                .toString();
     }
 
     @GetMapping("/workspace-git-status")

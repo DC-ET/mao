@@ -167,6 +167,98 @@ class FileServicesTest {
                 .hasMessageContaining("二进制文件");
     }
 
+    @Test
+    void workspaceDownloadReturnsFileInfo() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace);
+        Files.writeString(workspace.resolve("hello.txt"), "hello");
+        WorkspaceBrowseService service = new WorkspaceBrowseService(new PathSandbox(workspace.toString()));
+
+        WorkspaceBrowseService.DownloadResult result = service.downloadFile(workspace.toString(), "hello.txt");
+
+        assertThat(result.getFileName()).isEqualTo("hello.txt");
+        assertThat(result.getSize()).isEqualTo(5L);
+        assertThat(Files.readString(result.getPath())).isEqualTo("hello");
+    }
+
+    @Test
+    void workspaceDownloadRejectsInvalidPaths() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace);
+        Files.writeString(workspace.resolve("hello.txt"), "hello");
+        WorkspaceBrowseService service = new WorkspaceBrowseService(new PathSandbox(workspace.toString()));
+
+        assertThatThrownBy(() -> service.downloadFile(workspace.toString(), ""))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> service.downloadFile(workspace.toString(), "missing.txt"))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> service.downloadFile(workspace.toString(), "../escape.txt"))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> service.downloadFile(workspace.toString(), "."))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void workspaceZipIncludesNestedAndHiddenDirectories() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace.resolve("dir/sub"));
+        Files.createDirectories(workspace.resolve(".git"));
+        Files.writeString(workspace.resolve("dir/a.txt"), "a");
+        Files.writeString(workspace.resolve("dir/sub/b.txt"), "b");
+        Files.writeString(workspace.resolve(".git/config"), "config");
+        Files.writeString(workspace.resolve("root.txt"), "root");
+        WorkspaceBrowseService service = new WorkspaceBrowseService(new PathSandbox(workspace.toString()));
+
+        WorkspaceBrowseService.ZipResult result = service.zipDirectory(workspace.toString(), "dir");
+
+        assertThat(result.getFileName()).isEqualTo("dir.zip");
+        assertThat(result.getZipPath()).exists();
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(result.getZipPath().toFile())) {
+            assertThat(zip.getEntry("dir/a.txt")).isNotNull();
+            assertThat(zip.getEntry("dir/sub/b.txt")).isNotNull();
+            assertThat(zip.getEntry("dir/sub/")).isNotNull();
+            assertThat(zip.getEntry("dir")).isNotNull();
+            assertThat(zip.getEntry(".git/config")).isNull();
+        }
+        Files.deleteIfExists(result.getZipPath());
+    }
+
+    @Test
+    void workspaceZipOfRootUsesWorkspaceDirNameAndSkipsSymlinks() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace.resolve("sub"));
+        Files.writeString(workspace.resolve("sub/a.txt"), "a");
+        Files.writeString(workspace.resolve("root.txt"), "root");
+        // 符号链接指向工作区外文件，必须被跳过，防止逃逸或 zip 膨胀
+        Path outside = tempDir.resolve("outside-secret.txt");
+        Files.writeString(outside, "secret");
+        Files.createSymbolicLink(workspace.resolve("link.txt"), outside);
+        WorkspaceBrowseService service = new WorkspaceBrowseService(new PathSandbox(workspace.toString()));
+
+        WorkspaceBrowseService.ZipResult result = service.zipDirectory(workspace.toString(), ".");
+
+        assertThat(result.getFileName()).isEqualTo("workspace.zip");
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(result.getZipPath().toFile())) {
+            assertThat(zip.getEntry("workspace/root.txt")).isNotNull();
+            assertThat(zip.getEntry("workspace/sub/a.txt")).isNotNull();
+            assertThat(zip.getEntry("workspace/link.txt")).isNull();
+        }
+        Files.deleteIfExists(result.getZipPath());
+    }
+
+    @Test
+    void workspaceZipRejectsOversizedDirectory() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        Files.createDirectories(workspace.resolve("sub"));
+        Files.write(workspace.resolve("sub/big.bin"), new byte[1024]);
+        WorkspaceBrowseService service = new WorkspaceBrowseService(new PathSandbox(workspace.toString()));
+        ReflectionTestUtils.setField(service, "maxZipBytes", 512L);
+
+        assertThatThrownBy(() -> service.zipDirectory(workspace.toString(), "sub"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("目录过大");
+    }
+
     private FileService fileService() {
         FileService service = new FileService(mapper);
         ReflectionTestUtils.setField(service, "uploadDir", tempDir.resolve("uploads").toString());

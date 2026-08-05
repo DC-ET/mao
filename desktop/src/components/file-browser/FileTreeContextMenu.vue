@@ -25,19 +25,30 @@
         <el-icon><ChatDotRound /></el-icon>
         <span>添加到聊天</span>
       </div>
+      <div v-if="showDownloadActions" class="context-menu-divider"></div>
+      <div v-if="showDownloadActions && !isDirectory" class="context-menu-item" @click="$emit('download-file')">
+        <el-icon><Download /></el-icon>
+        <span>下载此文件</span>
+      </div>
+      <div v-else-if="showDownloadActions && isDirectory" class="context-menu-item" @click="$emit('download-directory')">
+        <el-icon><Download /></el-icon>
+        <span>下载此目录</span>
+      </div>
     </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { DocumentCopy, FolderOpened, ChatDotRound } from '@element-plus/icons-vue'
+import { DocumentCopy, FolderOpened, ChatDotRound, Download } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   visible: boolean
   x: number
   y: number
   showLocalActions?: boolean
+  showDownloadActions?: boolean
+  isDirectory?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -45,6 +56,8 @@ const emit = defineEmits<{
   'copy-relative': []
   'open-in-finder': []
   'add-to-chat': []
+  'download-file': []
+  'download-directory': []
   hide: []
 }>()
 

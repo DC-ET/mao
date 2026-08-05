@@ -37,11 +37,15 @@
       :x="ctxMenu.x"
       :y="ctxMenu.y"
       :show-local-actions="executionMode !== 'CLOUD'"
+      :show-download-actions="executionMode === 'CLOUD'"
+      :is-directory="ctxMenu.node?.isDirectory ?? false"
       @hide="ctxMenu.visible = false"
       @copy-absolute="handleCopyAbsolute"
       @copy-relative="handleCopyRelative"
       @open-in-finder="handleOpenInFinder"
       @add-to-chat="handleAddToChat"
+      @download-file="handleDownloadFile"
+      @download-directory="handleDownloadDirectory"
     />
   </div>
 </template>
@@ -49,6 +53,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, toRef, watch } from 'vue'
 import { Refresh, Search } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useFileBrowser } from '../../composables/useFileBrowser'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import FileTreeNode from './FileTreeNode.vue'
@@ -127,6 +132,50 @@ function handleOpenInFinder() {
 function handleAddToChat() {
   if (!ctxMenu.node) return
   emit('add-file-to-chat', ctxMenu.node.path)
+}
+
+const downloading = ref(false)
+
+async function handleDownloadFile() {
+  const node = ctxMenu.node
+  if (!node || downloading.value) return
+  if (!props.provider?.downloadFile) {
+    ElMessage.warning('当前模式不支持下载')
+    return
+  }
+  downloading.value = true
+  ElMessage.info(`开始下载 ${node.name}…`)
+  try {
+    const result = await props.provider.downloadFile(node.path, node.name)
+    if (result.ok) {
+      ElMessage.success(`下载完成：${node.name}`)
+    } else {
+      ElMessage.error(result.error || '下载失败')
+    }
+  } finally {
+    downloading.value = false
+  }
+}
+
+async function handleDownloadDirectory() {
+  const node = ctxMenu.node
+  if (!node || downloading.value) return
+  if (!props.provider?.downloadDirectory) {
+    ElMessage.warning('当前模式不支持下载')
+    return
+  }
+  downloading.value = true
+  ElMessage.info(`正在打包 ${node.name}…`)
+  try {
+    const result = await props.provider.downloadDirectory(node.path, `${node.name}.zip`)
+    if (result.ok) {
+      ElMessage.success(`下载完成：${node.name}.zip`)
+    } else {
+      ElMessage.error(result.error || '下载失败')
+    }
+  } finally {
+    downloading.value = false
+  }
 }
 
 let filterSeq = 0

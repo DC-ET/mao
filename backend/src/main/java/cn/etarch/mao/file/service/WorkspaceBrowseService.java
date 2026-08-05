@@ -15,6 +15,7 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -22,6 +23,8 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -36,6 +39,8 @@ public class WorkspaceBrowseService {
     private static final int DEFAULT_READ_LIMIT = 5000;
     private static final int MAX_READ_LIMIT = 5000;
     private static final int MAX_CONTENT_BYTES = 512 * 1024;
+    private static final long DEFAULT_MAX_ZIP_BYTES = 1024L * 1024 * 1024; // 1GB
+    private long maxZipBytes = DEFAULT_MAX_ZIP_BYTES;
 
     public DirectoryListingDTO listDirectory(String sessionWorkspace, String relativeDir) {
         Path workspaceRoot = pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace);
@@ -95,6 +100,169 @@ public class WorkspaceBrowseService {
         result.setEntries(entries);
         result.setTruncated(truncated);
         return result;
+    }
+
+    public DownloadResult downloadFile(String sessionWorkspace, String relativePath) {
+        if (relativePath == null || relativePath.isBlank()) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "文件路径不能为空");
+        }
+
+        Path filePath = resolvePath(relativePath, sessionWorkspace);
+
+        if (!Files.exists(filePath)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "文件不存在：" + relativePath);
+        }
+        if (!Files.isRegularFile(filePath) || Files.isSymbolicLink(filePath)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "不是普通文件：" + relativePath);
+        }
+
+        long size;
+        try {
+            size = Files.size(filePath);
+        } catch (IOException e) {
+            log.warn("Failed to stat file for download: {}", filePath, e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "读取文件失败");
+        }
+
+        DownloadResult result = new DownloadResult();
+        result.setPath(filePath);
+        result.setSize(size);
+        result.setFileName(filePath.getFileName().toString());
+        return result;
+    }
+
+    public ZipResult zipDirectory(String sessionWorkspace, String relativeDir) {
+        Path workspaceRoot = pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace);
+        String dir = normalizeRelativeDir(relativeDir);
+        Path dirPath = resolvePath(dir, sessionWorkspace);
+
+        if (!Files.exists(dirPath)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "目录不存在");
+        }
+        if (!Files.isDirectory(dirPath)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "不是目录");
+        }
+
+        // 打包前先统计总大小（跳过符号链接），超限直接拒绝，避免浪费磁盘与打包时间
+        long totalBytes = 0;
+        try (Stream<Path> stream = Files.walk(dirPath)) {
+            totalBytes = stream
+                    .filter(p -> !Files.isSymbolicLink(p) && Files.isRegularFile(p))
+                    .mapToLong(p -> {
+                        try {
+                            return Files.size(p);
+                        } catch (IOException e) {
+                            return 0L;
+                        }
+                    })
+                    .sum();
+        } catch (IOException | UncheckedIOException e) {
+            log.warn("Failed to walk directory for zip: {}", dirPath, e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "读取目录失败");
+        }
+
+        if (totalBytes > maxZipBytes) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "目录过大（" + formatSize(totalBytes) + "），请选择子目录下载");
+        }
+
+        // zip 内顶层目录名：下载根目录时用工作区目录名，否则用目录自身名
+        String rootName = resolveZipRootName(dirPath, workspaceRoot);
+
+        Path zipPath;
+        try {
+            zipPath = Files.createTempFile("mao-workspace-", ".zip");
+        } catch (IOException e) {
+            log.warn("Failed to create temp zip file", e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "创建临时文件失败");
+        }
+
+        boolean written = false;
+        try {
+            Path finalDirPath = dirPath;
+            try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zipPath));
+                 Stream<Path> stream = Files.walk(finalDirPath)) {
+                List<Path> paths = stream
+                        .sorted(Comparator.comparing(p -> zipEntryName(finalDirPath, rootName, p)))
+                        .toList();
+                for (Path p : paths) {
+                    // 跳过符号链接，防止链接指向沙箱外导致 zip 膨胀或逃逸
+                    if (Files.isSymbolicLink(p)) {
+                        continue;
+                    }
+                    String entryName = zipEntryName(finalDirPath, rootName, p);
+                    if (Files.isDirectory(p)) {
+                        zos.putNextEntry(new ZipEntry(entryName + "/"));
+                        zos.closeEntry();
+                    } else if (Files.isRegularFile(p)) {
+                        zos.putNextEntry(new ZipEntry(entryName));
+                        Files.copy(p, zos);
+                        zos.closeEntry();
+                    }
+                }
+            } catch (IOException | UncheckedIOException e) {
+                log.warn("Failed to write zip for directory: {}", finalDirPath, e);
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "打包目录失败");
+            }
+            written = true;
+        } finally {
+            if (!written) {
+                try {
+                    Files.deleteIfExists(zipPath);
+                } catch (IOException e) {
+                    log.warn("Failed to delete temp zip after error: {}", zipPath, e);
+                }
+            }
+        }
+
+        long zipSize;
+        try {
+            zipSize = Files.size(zipPath);
+        } catch (IOException e) {
+            log.warn("Failed to stat zip file: {}", zipPath, e);
+            zipSize = 0L;
+        }
+
+        ZipResult result = new ZipResult();
+        result.setZipPath(zipPath);
+        result.setSize(zipSize);
+        result.setFileName(rootName + ".zip");
+        return result;
+    }
+
+    private String zipEntryName(Path baseDir, String rootName, Path file) {
+        Path base = baseDir.toAbsolutePath().normalize();
+        Path target = file.toAbsolutePath().normalize();
+        if (base.equals(target)) {
+            return rootName;
+        }
+        String rel = base.relativize(target).toString().replace('\\', '/');
+        return rootName + "/" + rel;
+    }
+
+    private String resolveZipRootName(Path dirPath, Path workspaceRoot) {
+        try {
+            Path normalizedDir = dirPath.toAbsolutePath().normalize();
+            Path normalizedRoot = workspaceRoot.toAbsolutePath().normalize();
+            return normalizedDir.equals(normalizedRoot)
+                    ? normalizedRoot.getFileName().toString()
+                    : normalizedDir.getFileName().toString();
+        } catch (Exception e) {
+            return "workspace";
+        }
+    }
+
+    private static String formatSize(long bytes) {
+        if (bytes >= 1024 * 1024 * 1024) {
+            return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
+        }
+        if (bytes >= 1024 * 1024) {
+            return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        }
+        if (bytes >= 1024) {
+            return String.format("%.1f KB", bytes / 1024.0);
+        }
+        return bytes + " B";
     }
 
     public FileContentDTO readFile(String sessionWorkspace, String relativePath, int offset, int limit) {
@@ -251,5 +419,19 @@ public class WorkspaceBrowseService {
         private String media_type;
         private String mime;
         private String data_uri;
+    }
+
+    @Data
+    public static class DownloadResult {
+        private Path path;
+        private long size;
+        private String fileName;
+    }
+
+    @Data
+    public static class ZipResult {
+        private Path zipPath;
+        private long size;
+        private String fileName;
     }
 }
