@@ -104,17 +104,18 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 
 ### 安卓 APP（`android/`）
 
-基于 **Capacitor 7** WebView 壳打包 `desktop/` Vue 前端为 APK；包名 `cn.etarch.mao.app`；**仅 CLOUD 模式**（无 `electronAPI` → 自动禁用 LOCAL）。后端零改动。设计文档：`docs/android-app-technical-design.md`。
+基于 **Capacitor 7** WebView 壳；生产环境**远程加载** `https://mao.etarch.cn`（与 Electron 一致），前端改动部署 Web 后刷新即可。包名 `cn.etarch.mao.app`；**仅 CLOUD 模式**（无 `electronAPI` → 自动禁用 LOCAL）。设计文档：`docs/android-app-technical-design.md`。
 
 **目录结构**：
 
 | 路径 | 职责 |
 |------|------|
-| `android/capacitor.config.json` | appId / webDir（`../desktop/dist`）/ `adjustMarginsForEdgeToEdge` |
-| `android/build-apk.sh` | 一键构建与发布脚本 |
-| `CHANGELOG.md` | 项目发版说明；`versionName` 取首条 `##`；安卓 OTA changelog 由 `scripts/changelog-extract.sh` 提取 |
+| `android/capacitor.config.json` | appId / `web-stub` / `server.url`（远程 SPA）/ `adjustMarginsForEdgeToEdge` |
+| `android/web-stub/` | Capacitor 占位页（启动后跳转远程，不打包 desktop 前端） |
+| `android/build-apk.sh` | 原生壳构建与 APK OTA 发布 |
+| `CHANGELOG.md` | 项目发版说明；APK `versionName` 取首条 `##`；OTA 文案取 `### 安卓原生` |
 | `android/android/` | Capacitor 生成的原生 Gradle 工程 |
-| `android/android/app/.../MainActivity.java` | BridgeActivity：Splash、系统栏、WebView 无缓存、注入 `android-capacitor` |
+| `android/android/app/.../MainActivity.java` | BridgeActivity：Splash、系统栏、WebView、注入 `android-capacitor` |
 | `android/android/app/.../AppUpdatePlugin.java` | 自研 OTA 插件：`getVersionCode` / `downloadAndInstall` |
 
 **与 desktop 前端的衔接**（改安卓相关行为时常动这些文件）：
@@ -122,16 +123,17 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 | 文件 | 职责 |
 |------|------|
 | `desktop/src/main.ts` | 检测 Capacitor 后给 `<html>` 加 `android-capacitor` |
-| `desktop/src/router/index.ts` | 原生环境用 **hash 路由**（避免 `--base=./` 下深路径刷新 404） |
-| `desktop/src/composables/useVersionCheck.ts` | 拉 `android-latest.json`、强制/普通更新、调 `AppUpdate` 插件 |
+| `desktop/src/router/index.ts` | 远程加载用 History 路由；仅旧版内嵌包（localhost）用 hash |
+| `desktop/src/composables/useVersionCheck.ts` | `version.json` 页面刷新 + `android-latest.json` 原生壳 OTA |
 | `desktop/src/style.css` / `TopNav.vue` | `html.android-capacitor` 顶栏紧凑布局与安全区 |
 
-**构建链路**（`build-apk.sh`）：
+**构建链路**（`build-apk.sh`，仅原生壳变更时需要）：
 
-1. `desktop`：`vue-tsc` + `vite build --base=./`（不改 `vite.config.ts` 的 Web/Nginx `base:'/'`）
-2. `npx cap copy/update android` 同步 Web 资产
-3. `gradlew assembleRelease`（`-PMAO_VERSION_CODE` / `-PMAO_VERSION_NAME`）
-4. 发布到 `/root/soft/mao/data/uploads/releases/`：`mao-android-<name>-<code>.apk` + `android-latest.json`
+1. `npx cap copy/update android`（同步 `web-stub` 与 `capacitor.config.json`）
+2. `gradlew assembleRelease`（`-PMAO_VERSION_CODE` / `-PMAO_VERSION_NAME`）
+3. 发布到 `/root/soft/mao/data/uploads/releases/`：`mao-android-<name>-<code>.apk` + `android-latest.json`
+
+**前端发版**：与 Web/Electron 相同——`desktop` 构建部署到 Nginx，安卓用户顶栏刷新或等 `version.json` 提示即可。
 
 **环境与签名**：
 
@@ -165,7 +167,8 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 | 桌面端 UI | `desktop/src/components/`、`desktop/src/views/` |
 | 安卓壳 / 系统栏 / WebView | `android/android/app/.../MainActivity.java`、`capacitor.config.json` |
 | 安卓 OTA 原生下载安装 | `AppUpdatePlugin.java` + `desktop/.../useVersionCheck.ts` |
-| 安卓发版 | 更新根 `CHANGELOG.md` → `cd android && bash build-apk.sh` |
+| 安卓发版（仅原生壳） | 更新根 `CHANGELOG.md` 的 `### 安卓原生` → `cd android && bash build-apk.sh` |
+| 安卓前端更新 | 与 Web 相同：部署 `desktop/dist` → 用户刷新 / `version.json` 提示 |
 
 设计文档索引见 `docs/technical-design.md`、`docs/android-app-technical-design.md` 及 `docs/` 下各专题文档。
 

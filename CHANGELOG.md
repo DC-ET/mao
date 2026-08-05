@@ -4,15 +4,22 @@
 
 **书写约定**（新版本推荐分节；历史条目保持扁平列表）：
 
-- **前端（桌面 / Web / 安卓）** — 三端共用的 UI / 交互改动（安卓 APK 内嵌 desktop 前端）
+- **前端（桌面 / Web / 安卓）** — 三端共用的 UI / 交互改动（安卓与 Web 同源远程加载，部署 Nginx 后刷新即可）
 - **后端** — API、引擎、数据库等服务端改动（独立部署，不进 OTA 用户文案）
 - **安卓原生** — Capacitor 壳、系统栏、OTA 插件等
 - **桌面 Electron** — Electron 壳、本地工具、自动更新等
 - **管理后台** — admin 专用改动
 
-发版前在顶部新增 `## 版本 (日期)` 条目；安卓打包：`cd android && bash build-apk.sh`。
+发版前在顶部新增 `## 版本 (日期)` 条目；前端部署 Web 后安卓/Electron 刷新即可；仅安卓原生壳变更时 `cd android && bash build-apk.sh`。
 
 ---
+
+## 0.0.16 (2026-08-05)
+
+### 安卓原生
+- 改为远程加载 `https://mao.etarch.cn`（与 Electron 一致），前端更新部署 Web 后刷新即可，无需每次打 APK
+- APK OTA 仅用于原生壳（Capacitor 插件、系统栏、WebView 配置等）更新
+- 构建链路简化：`web-stub` + Capacitor `server.url`，不再打包 `desktop/dist` 进 APK
 
 ## 0.0.15 (2026-08-05)
 

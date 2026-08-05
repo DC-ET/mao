@@ -83,7 +83,7 @@ Mao 客户端目前支持两种访问形态：
 | OTA 数据源 | 静态 `android-latest.json` 清单，与 APK 一同发布到 `https://mao.etarch.cn/uploads/releases/`（复用现有 Nginx 静态服务与 electron 发布目录） | 后端/admin 零改动 |
 | OTA 下载安装 | 原生 DownloadManager 下载 APK + FileProvider 拉起系统安装器（自研小插件，不依赖社区库） | APP 内完成，不跳浏览器 |
 | OTA 策略 | `minVersionCode` 强制更新 / 普通更新；普通更新支持"忽略此版本"（localStorage 记忆） | 覆盖协议变更强升与日常迭代 |
-| OTA 更新说明 | 根 `CHANGELOG.md` 最近一条（前端 + 安卓原生小节），`scripts/changelog-extract.sh` 写入清单 JSON | 发版时只改一个文件 |
+| OTA 更新说明 | 根 `CHANGELOG.md` 的 `### 安卓原生`（`apk-ota-text`） | 原生壳发版时更新 |
 
 ### 3.3 现状兼容性（代码探索结论）
 
@@ -119,14 +119,15 @@ Mao 客户端目前支持两种访问形态：
 1. 新建 `android/` 目录（与 backend/admin/desktop 平级），初始化 npm 项目；
 2. 安装 `@capacitor/core`、`@capacitor/cli`、`@capacitor/android`；
 3. `npx cap init`：appName=`Mao`，appId=`cn.etarch.mao.app`；
-4. 配置 `capacitor.config.ts`：`webDir: '../desktop/dist'`；
+4. 配置 `capacitor.config.json`：`webDir: 'web-stub'`，`server.url: 'https://mao.etarch.cn'`（远程加载，与 Electron 一致）；
 5. `npx cap add android` 生成安卓原生工程（自带 gradle wrapper）。
 
-### 4.3 构建产物衔接
+### 4.3 前端加载方式
 
-1. 先构建桌面端 Web 产物：`cd desktop && npx vue-tsc -b && npx vite build`；
-2. 因 Vite `base: '/'` 在 Capacitor 自定义 scheme 下存在绝对路径边界风险，安卓构建脚本中对 desktop 产物使用 `vite build --base=./`（独立构建，不改动 `vite.config.ts` 的 Web/Nginx 行为）；
-3. `npx cap sync android` 同步 Web 产物与插件到安卓工程。
+1. **生产环境**：Capacitor `server.url` 指向 `https://mao.etarch.cn`，WebView 加载与 Web/Electron 相同的远程 SPA；
+2. `android/web-stub/` 仅作 Capacitor 占位，**不打包** `desktop/dist`；
+3. 前端更新：部署 Nginx 上的 `desktop/dist`，用户顶栏刷新或 `version.json` 轮询提示（`useVersionCheck.startPolling`）；
+4. `npx cap sync android` 同步 `web-stub` 与配置到安卓工程（发原生壳时执行，非每次前端发版必需）。
 
 ### 4.4 release 签名
 
@@ -134,11 +135,11 @@ Mao 客户端目前支持两种访问形态：
 2. keystore 存放于服务器安全目录（如 `/root/soft/mao/keystore/`），**禁止入 git**（加入 `.gitignore`）；
 3. 在 `android/` 工程 `gradle.properties` 中通过环境变量注入签名配置（keystore 路径、密码不写入代码库）。
 
-### 4.5 构建 APK
+### 4.5 构建 APK（仅原生壳变更时）
 
-1. 提供一键脚本 `android/build-apk.sh`：构建 desktop（`--base=./`）→ `cap sync` → `gradlew assembleRelease`；
+1. 一键脚本 `android/build-apk.sh`：`cap sync` → `gradlew assembleRelease` → 发布 APK + `android-latest.json`；
 2. 产物 `android/app/build/outputs/apk/release/app-release.apk`；
-3. 复制到分发目录（如 `/root/soft/mao/releases/mao-0.0.x.apk`），命名含版本号。
+3. 复制到 `/root/soft/mao/data/uploads/releases/mao-android-<versionName>-<code>.apk`。
 
 ### 4.6 验证与分发
 
@@ -152,14 +153,15 @@ Mao 客户端目前支持两种访问形态：
    - `downloadAndInstall(url)`：DownloadManager 下载 APK，完成后通过 FileProvider 拉起系统安装器；
    - 权限：`REQUEST_INSTALL_PACKAGES`（Android 8+ 未知来源）、写入 Downloads 目录；
    - 下载进度通过插件事件回传前端展示。
-2. 前端 OTA 检查模块（`desktop/src/` 新增 composable，非 Electron 且安卓环境生效）：
-   - 启动时 + 设置页"检查更新"按钮触发；
-   - `fetch(https://mao.etarch.cn/uploads/releases/android-latest.json)`，比对 `versionCode`；
-   - `currentVersionCode < minVersionCode` → 强制更新弹窗（不可跳过）；否则普通更新弹窗（可"忽略此版本"/"稍后再说"）；
-   - "立即更新" → 调插件下载安装。
-3. 发布侧（`android/build-apk.sh` 内）：
-   - 构建成功后复制 `app-release.apk` → `releases/mao-android-<versionName>.apk`；
-   - 生成 `android-latest.json`（versionCode / versionName / 下载 URL / minVersionCode / changelog / 发布时间），changelog 由 `scripts/changelog-extract.sh ota-text` 从根 `CHANGELOG.md` 提取；
+2. 前端更新（与 Web/Electron 共用）：
+   - `version.json` 轮询（`useVersionCheck.startPolling`），有更新时顶栏刷新；
+   - 启动时与手动点击刷新按钮均会检查。
+3. 原生壳 OTA（仅 `MainActivity` / 插件 / Capacitor 配置变更时发 APK）：
+   - `fetch(android-latest.json)` 比对 `versionCode`；
+   - `currentVersionCode < minVersionCode` → 强制更新；否则普通更新（可忽略）；
+   - `AppUpdate` 插件下载安装 APK。
+4. 发布侧（`android/build-apk.sh`）：
+   - changelog 取 `CHANGELOG.md` 的 `### 安卓原生`（`apk-ota-text`）；
 
 ## 5. 落地清单
 
@@ -182,7 +184,8 @@ Mao 客户端目前支持两种访问形态：
 |---|---|---|
 | WebView 的 localStorage 持久性依赖系统行为 | 用户清数据/系统清理后需重新登录 | 可接受（与 Web 端一致）；后续如需要可换 Capacitor Preferences |
 | 老旧安卓机型 WebView 内核过旧 | 渲染异常 | minSdk 24 + 要求系统 WebView 可升级，覆盖主流机型即可 |
-| Vite `base:'/'` 与 Capacitor 加载协议边界 | 资源 404 | 安卓构建统一用 `--base=./`，已写入步骤 |
+| Vite `base:'/'` 与远程加载 | 无（已改为 `server.url` 远程 SPA） | 与 Web/Electron 同源 |
+| 无网络时无法打开 | 首屏依赖线上前端 | 可接受；与 Electron 远程模式一致 |
 | 桌面布局在手机上的可用性 | 操作体验一般 | 已确认第一版接受，不做布局适配 |
 | keystore 丢失 | 无法覆盖升级 | keystore 与密码在服务器安全目录备份，避免丢失 |
 | OTA 下载中断/失败 | 用户停留在旧版 | 下载失败提示重试；强制更新场景不可跳过 |

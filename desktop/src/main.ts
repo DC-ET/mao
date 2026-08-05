@@ -16,10 +16,12 @@ import 'monaco-editor/min/vs/editor/editor.main.css'
 function markAndroidCapacitor() {
   try {
     const capacitor = (window as any).Capacitor
+    if (capacitor?.getPlatform?.() === 'android') {
+      document.documentElement.classList.add('android-capacitor')
+      return
+    }
     const host = window.location.hostname
-    const isAndroid = capacitor?.getPlatform?.() === 'android'
-      || (/Android/i.test(navigator.userAgent) && /^(localhost|127\.0\.0\.1)$/i.test(host))
-    if (isAndroid) {
+    if (/Android/i.test(navigator.userAgent) && /^(localhost|127\.0\.0\.1)$/i.test(host)) {
       document.documentElement.classList.add('android-capacitor')
     }
   } catch {

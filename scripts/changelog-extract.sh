@@ -6,6 +6,7 @@
 #   changelog-extract.sh version [CHANGELOG]
 #   changelog-extract.sh body <version> [--section 名称]... [CHANGELOG]
 #   changelog-extract.sh ota-text <version> [CHANGELOG]
+#   changelog-extract.sh apk-ota-text <version> [CHANGELOG]
 #   changelog-extract.sh sync-desktop [CHANGELOG]
 # =============================================================================
 set -euo pipefail
@@ -110,6 +111,10 @@ cmd_body() {
   ' "$CHANGELOG_FILE"
 }
 
+lines_to_pipe() {
+  echo "$1" | sed '/^[[:space:]]*$/d' | tr '\n' '|' | sed 's/|$//'
+}
+
 # ota-text: pipe 分隔；有 ### 分节时仅取前端 + 安卓原生，否则取全部条目
 cmd_ota_text() {
   local version="$1"
@@ -133,6 +138,27 @@ cmd_ota_text() {
   fi
 
   echo "$lines" | sed '/^[[:space:]]*$/d' | tr '\n' '|' | sed 's/|$//'
+}
+
+# apk-ota-text: 安卓壳 APK OTA 文案（优先 ### 安卓原生，否则回退 ota-text）
+cmd_apk_ota_text() {
+  local version="$1"
+  shift
+  local changelog_arg=""
+  if [[ $# -ge 1 && -f "$1" && "$1" == *.md ]]; then
+    changelog_arg="$1"
+    shift
+  fi
+  local CHANGELOG_FILE="${changelog_arg:-$DEFAULT_CHANGELOG}"
+
+  local lines
+  lines=$(cmd_body "$version" --section "安卓原生" "$CHANGELOG_FILE" || true)
+  if [[ -z "$lines" ]]; then
+    cmd_ota_text "$version" "$CHANGELOG_FILE"
+    return
+  fi
+
+  lines_to_pipe "$lines"
 }
 
 cmd_sync_desktop() {
@@ -172,6 +198,11 @@ case "$1" in
     shift
     [[ $# -ge 1 ]] || usage
     cmd_ota_text "$@"
+    ;;
+  apk-ota-text)
+    shift
+    [[ $# -ge 1 ]] || usage
+    cmd_apk_ota_text "$@"
     ;;
   sync-desktop) shift; cmd_sync_desktop "$@" ;;
   -h|--help) usage ;;

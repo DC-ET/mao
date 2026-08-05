@@ -95,13 +95,12 @@ public class MainActivity extends BridgeActivity {
         webView.postDelayed(inject, 2500);
 
         if (versionChanged) {
-            // 必须回到应用根路径再加载：相对 base(./) 下若停留在 /tasks/:id，
-            // reload 会使 ./assets 解析到错误目录，JS 无法启动。
+            // APK 升级后清缓存并重新加载远程入口
             webView.postDelayed(() -> webView.loadUrl(bridge.getAppUrl()), 50);
         }
     }
 
-    /** APK versionCode 变化时清 WebView 缓存，避免旧 CSS 继续隐藏 .top-nav。 */
+    /** APK versionCode 变化时清 WebView 缓存，避免壳升级后仍用旧页面缓存。 */
     private boolean shouldClearCacheForNewVersion() {
         int current = BuildConfig.VERSION_CODE;
         android.content.SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);

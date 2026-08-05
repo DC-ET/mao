@@ -365,28 +365,32 @@ npm run dist   # 本地打包，需自行处理代码签名与分发
 ./scripts/changelog-extract.sh sync-desktop
 ```
 
-安卓打包时会自动同步 desktop 版本号；历史扁平条目（无 `###` 分节）仍可作为 OTA 全文说明。
+**各端前端更新**：Web / Electron / 安卓 APP 均加载 `https://mao.etarch.cn`，部署 `desktop/dist` 后刷新即可。
 
 ### 安卓 APP
 
-基于 Capacitor 7（WebView 壳）复用桌面端 Vue 前端，包名 `cn.etarch.mao.app`，**仅支持 CLOUD 模式**（无 `electronAPI`，LOCAL / 工具审批不可用）。发版前先更新根目录 [`CHANGELOG.md`](CHANGELOG.md) 顶部版本条目（`versionName` 取首条 `##`；`versionCode` 由脚本按已发布 APK 自增）。
+基于 Capacitor 7 WebView 壳，**远程加载**与 Web/Electron 相同的 `https://mao.etarch.cn`；包名 `cn.etarch.mao.app`，**仅支持 CLOUD 模式**。前端改动**无需打 APK**，部署 Web 后顶栏刷新或等待 `version.json` 提示即可。
+
+**仅原生壳变更**（`MainActivity`、`AppUpdatePlugin`、Capacitor 配置等）时：更新根目录 [`CHANGELOG.md`](CHANGELOG.md) 的 `### 安卓原生` 条目，再执行 `build-apk.sh`（`versionCode` 自动递增）。
 
 **环境要求**：JDK 21 + Android SDK（`platforms;android-35`、`build-tools;34.0.0`）；签名凭据通过环境变量 `MAO_KEYSTORE_*` 或本地 `keystore-credentials.env` 注入（**严禁入 git**）。
 
 ```bash
-# 一键：构建 desktop（--base=./）→ cap sync → assembleRelease → 发布
+# 仅原生壳：cap sync → assembleRelease → 发布 APK OTA
 cd android
 export ANDROID_HOME=/opt/android-sdk   # 按本机路径调整
 bash build-apk.sh                      # 可选 --dry-run / --version 0.0.x
 ```
 
 默认发布目录（可用环境变量覆盖）：
-- APK：`mao-android-<versionName>-<versionCode>.apk`
-- OTA 清单：`android-latest.json`（含 changelog）
+- APK：`mao-android-<versionName>-<versionCode>.apk`（原生壳）
+- OTA 清单：`android-latest.json`（含 `### 安卓原生` changelog）
 
 详见 [安卓 APP 技术方案](docs/android-app-technical-design.md)。
 
-**应用内更新（OTA）**：启动时检查 `android-latest.json`；支持强制更新（不可跳过）与普通更新（可忽略）；原生 `AppUpdate` 插件完成下载与安装。
+**应用内更新**：
+- **页面更新**：轮询 `version.json`，与 Web/Electron 一致
+- **原生壳 OTA**：`android-latest.json` + `AppUpdate` 插件下载安装 APK
 
 ## API 文档
 

@@ -4,8 +4,7 @@ const STORAGE_KEY = 'app_version'
 const CHECK_INTERVAL = 60_000
 const APP_UPDATE_CHECK_INTERVAL = 60_000
 
-/* ---- 安卓 OTA 相关常量 ---- */
-// Capacitor WebView 中 BASE_URL 指向本地资产，需用完整 URL 访问服务端
+/* ---- 安卓 OTA（原生壳 APK）---- */
 const _apiBase = import.meta.env.VITE_API_BASE_URL || ''  // e.g. https://mao.etarch.cn/api/v1
 const ANDROID_MANIFEST_URL = _apiBase ? _apiBase.replace(/\/api\/v1\/?$/, '/uploads/releases/android-latest.json') : '/uploads/releases/android-latest.json'
 const IGNORED_VERSION_KEY = 'mao_android_ignored_version_code'
@@ -18,6 +17,13 @@ function isAndroidCapacitor(): boolean {
   } catch {
     return false
   }
+}
+
+/** 旧版内嵌资源包（localhost）；远程加载后与 Web/Electron 一致 */
+function isAndroidCapacitorLocalBundle(): boolean {
+  if (!isAndroidCapacitor()) return false
+  const host = window.location.hostname || ''
+  return /^(localhost|127\.0\.0\.1)$/i.test(host)
 }
 
 // @ts-ignore
@@ -100,10 +106,8 @@ export function useVersionCheck() {
       window.location.replace(`${base}#/?_t=${Date.now()}`)
       return
     }
-    // Capacitor 相对 base(./) + 深路径 History URL 时，location.reload() 会使
-    // ./assets、./app-icon-small.png 解析到错误目录 → JS 不加载、图标裂图、卡 splash。
-    // 强制从应用根路径重新进入（配合 hash 路由）。
-    if (isAndroidCapacitor()) {
+    // 旧版 APK 内嵌资源：相对 base(./) + hash 路由需从根路径重载
+    if (isAndroidCapacitorLocalBundle()) {
       window.location.replace(`${window.location.origin}/index.html?_t=${Date.now()}#/`)
       return
     }
@@ -117,7 +121,7 @@ export function useVersionCheck() {
   function startAppUpdater() {
     if (appUpdaterStarted) return
 
-    /* ---- Android（Capacitor）路径 ---- */
+    /* ---- Android：页面 version.json 轮询（startPolling）+ 原生壳 APK OTA ---- */
     if (isAndroidCapacitor() && getAndroidPlugin()) {
       appUpdaterStarted = true
       void checkAndroidUpdate()
