@@ -18,6 +18,7 @@
 
 ### 后端
 - 新增工作区文件下载接口 `/files/workspace-download`（单文件原始字节流）与 `/files/workspace-download-zip`（目录打包 zip，上限 1GB，超限拒绝）
+- WebSocket 断开不再取消进行中的 `ask_user_questions`：Agent 继续等待回答；重连或刷新页面后，后端重新推送问题，用户可继续提交（等待总时长仍为 15 分钟超时，会话取消/打断仍立即终止询问）
 
 ### 前端（桌面 / Web / 安卓）
 - 云端工作区（CLOUD）文件树右键菜单新增「下载此文件 / 下载此目录」，可将工作区文件与目录打包下载到本地

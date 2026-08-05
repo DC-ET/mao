@@ -196,25 +196,31 @@ public class ToolDispatcher {
             return "{\"error\": \"No connected client to receive questions\"}";
         }
 
-        // Register pending question
-        String requestId = askUserQuestionsRegistry.register(sessionId);
-
-        // Parse arguments to extract questions for the WS payload
-        Map<String, Object> data = new java.util.LinkedHashMap<>();
-        data.put("requestId", requestId);
+        // Parse arguments to extract questions/metadata for the WS payload and registry
+        List<Map<String, Object>> questions = List.of();
+        Map<String, Object> metadata = null;
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> parsed = objectMapper.readValue(arguments, Map.class);
-            if (parsed.containsKey("questions")) {
-                data.put("questions", parsed.get("questions"));
+            if (parsed.get("questions") instanceof List<?> rawQuestions) {
+                questions = rawQuestions.stream()
+                        .filter(Map.class::isInstance)
+                        .map(item -> (Map<String, Object>) item)
+                        .toList();
             }
-            if (parsed.containsKey("metadata")) {
-                data.put("metadata", parsed.get("metadata"));
+            if (parsed.get("metadata") instanceof Map<?, ?> rawMetadata) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> meta = (Map<String, Object>) rawMetadata;
+                metadata = meta;
             }
         } catch (Exception e) {
             log.warn("Failed to parse ask_user_questions arguments: {}", e.getMessage());
-            data.put("questions", List.of());
         }
+
+        // Register pending question with original content (for re-push on reconnect)
+        String requestId = askUserQuestionsRegistry.register(sessionId, questions, metadata);
+
+        Map<String, Object> data = buildAskUserQuestionsPayload(requestId, questions, metadata);
 
         // Send to client
         streamingWsRegistry.send(userId, WsEvent.of("ask_user_questions", sessionId, data));
@@ -231,6 +237,21 @@ public class ToolDispatcher {
         }
 
         return result;
+    }
+
+    /**
+     * Build the WS payload for an ask_user_questions event.
+     * Used both for the initial push and for re-push after reconnect.
+     */
+    private Map<String, Object> buildAskUserQuestionsPayload(
+            String requestId, List<Map<String, Object>> questions, Map<String, Object> metadata) {
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("requestId", requestId);
+        data.put("questions", questions != null ? questions : List.of());
+        if (metadata != null) {
+            data.put("metadata", metadata);
+        }
+        return data;
     }
 
     /**

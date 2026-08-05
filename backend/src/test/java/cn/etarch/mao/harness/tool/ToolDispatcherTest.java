@@ -15,6 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -114,7 +115,7 @@ class ToolDispatcherTest {
     void askUserQuestionsRoutesThroughConnectedClientAndCancelsOnError() {
         when(localToolSessionRegistry.getUserIdForSession(7L)).thenReturn(9L);
         when(streamingWsRegistry.hasConnection(9L)).thenReturn(true);
-        when(askUserQuestionsRegistry.register(7L)).thenReturn("req-1");
+        when(askUserQuestionsRegistry.register(eq(7L), any(), any())).thenReturn("req-1");
         when(askUserQuestionsRegistry.waitForAnswer(7L, "req-1")).thenReturn("{\"error\":\"timeout\"}");
 
         String result = dispatcher.dispatch("ask_user_questions",
@@ -122,8 +123,13 @@ class ToolDispatcherTest {
                 "CLOUD", 7L, "workspace");
 
         assertThat(result).contains("timeout");
+        // 1 次初次推送 + 1 次超时取消通知
         verify(streamingWsRegistry, times(2)).send(eq(9L), any());
         verify(askUserQuestionsRegistry).waitForAnswer(7L, "req-1");
+        // 解析出的 questions/metadata 随 register 一并存入 registry（供重连重推）
+        verify(askUserQuestionsRegistry).register(eq(7L),
+                argThat(qs -> qs.size() == 1 && "q1".equals(qs.get(0).get("id"))),
+                argThat(meta -> "test".equals(meta.get("source"))));
     }
 
     @Test

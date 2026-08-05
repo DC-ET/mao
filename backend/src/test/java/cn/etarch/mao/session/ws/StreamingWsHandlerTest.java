@@ -30,6 +30,7 @@ import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -37,6 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import org.mockito.ArgumentMatchers;
@@ -390,7 +392,6 @@ class StreamingWsHandlerTest {
         when(connected.getUri()).thenReturn(URI.create("ws://localhost/ws?token=" + token + "&client=electron"));
         when(connected.getId()).thenReturn("ws-1");
         when(registry.getUserId(connected)).thenReturn(7L);
-        when(registry.getSubscribedSessionIds(7L)).thenReturn(java.util.Set.of(11L));
         when(registry.hasLocalClientConnection(7L)).thenReturn(false);
 
         handler.afterConnectionEstablished(connected);
@@ -399,7 +400,83 @@ class StreamingWsHandlerTest {
 
         verify(registry).register(connected, 7L, "electron");
         verify(localToolSessionRegistry, times(2)).failAllForUser(7L);
-        verify(askUserQuestionsRegistry, times(2)).failAllForSessions(java.util.Set.of(11L));
+        // 断线不再取消 ask_user_questions（等待中的询问保留，重连后由 handleSubscribe 重推）
+        verify(askUserQuestionsRegistry, never()).failAllForSession(anyLong());
+        verify(askUserQuestionsRegistry, never()).failAllForSessions(any());
+    }
+
+    @Test
+    void subscribeRePushesPendingAskUserQuestionsOnReconnect() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        when(sessionService.getSession(11L)).thenReturn(session("CLOUD", "RUNNING"));
+        AskUserQuestionsRegistry.PendingQuestion pending = new AskUserQuestionsRegistry.PendingQuestion(
+                "req-1", List.of(Map.of("question", "如何处理?", "header", "方案")), Map.of("source", "test"));
+        when(askUserQuestionsRegistry.getPendingForSession(11L)).thenReturn(List.of(pending));
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"subscribe","sessionId":11}
+                """));
+
+        verify(registry).subscribe(7L, 11L);
+        // session_snapshot 照常推送
+        verify(registry).send(eq(7L), argThat(event ->
+                "session_snapshot".equals(event.getType()) && 11L == event.getSessionId()));
+        // pending 询问重推，payload 含原 requestId + questions + metadata
+        verify(registry).send(eq(7L), argThat(event -> {
+            if (!"ask_user_questions".equals(event.getType()) || 11L != event.getSessionId()) {
+                return false;
+            }
+            return "req-1".equals(event.getData().get("requestId"))
+                    && event.getData().get("questions") instanceof List<?> list && list.size() == 1
+                    && Map.of("source", "test").equals(event.getData().get("metadata"));
+        }));
+    }
+
+    @Test
+    void subscribeDoesNotRePushWhenSessionInactive() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        when(sessionService.getSession(11L)).thenReturn(session("CLOUD", "COMPLETED"));
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"subscribe","sessionId":11}
+                """));
+
+        verify(registry).subscribe(7L, 11L);
+        verify(askUserQuestionsRegistry, never()).getPendingForSession(11L);
+    }
+
+    @Test
+    void askUserQuestionsResultBroadcastsDismissWhenCompleted() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        when(sessionService.getSession(11L)).thenReturn(session("CLOUD", "RUNNING"));
+        when(askUserQuestionsRegistry.complete(eq(11L), eq("q"), any())).thenReturn(true);
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"ask_user_questions_result","sessionId":11,"data":{"requestId":"q","answers":[{"id":"a"}]}}
+                """));
+
+        verify(askUserQuestionsRegistry).complete(eq(11L), eq("q"), eq("{\"answers\": [{\"id\":\"a\"}]}"));
+        // 完成成功后广播取消事件，关闭所有连接上的问题面板（防重连恢复出失效面板）
+        verify(registry).send(eq(7L), argThat(event ->
+                "ask_user_questions_cancelled".equals(event.getType())
+                        && 11L == event.getSessionId()
+                        && "q".equals(event.getData().get("requestId"))));
+    }
+
+    @Test
+    void askUserQuestionsResultSkipsDismissWhenStale() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        when(sessionService.getSession(11L)).thenReturn(session("CLOUD", "RUNNING"));
+        // complete 返回 false：该 requestId 已不存在（过期回答）
+        when(askUserQuestionsRegistry.complete(eq(11L), eq("q"), any())).thenReturn(false);
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"ask_user_questions_result","sessionId":11,"data":{"requestId":"q","answers":[]}}
+                """));
+
+        verify(askUserQuestionsRegistry).complete(eq(11L), eq("q"), any());
+        verify(registry, never()).send(eq(7L), argThat(event ->
+                "ask_user_questions_cancelled".equals(event.getType())));
     }
 
     @Test

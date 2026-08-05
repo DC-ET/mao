@@ -3,6 +3,10 @@ package cn.etarch.mao.harness.tool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -12,23 +16,51 @@ import java.util.concurrent.TimeUnit;
  * Manages pending ask_user_questions requests.
  * When the agent calls ask_user_questions, a CompletableFuture is registered here
  * and completed when the user responds via WebSocket.
+ *
+ * <p>Each pending entry also keeps the original question content (questions + metadata),
+ * so that on client reconnect the question can be re-pushed to restore the question panel.</p>
  */
 @Slf4j
 @Component
 public class AskUserQuestionsRegistry {
 
-    private static final long DEFAULT_TIMEOUT_SECONDS = 900; // 15 minutes
+    private static final long DEFAULT_TIMEOUT_MILLIS = 900_000; // 15 minutes
 
-    /** sessionId:requestId → CompletableFuture */
-    private final ConcurrentHashMap<String, CompletableFuture<String>> pending = new ConcurrentHashMap<>();
+    private final long timeoutMillis;
+
+    public AskUserQuestionsRegistry() {
+        this(DEFAULT_TIMEOUT_MILLIS);
+    }
+
+    /** 仅测试用：注入自定义超时毫秒数。 */
+    AskUserQuestionsRegistry(long timeoutMillis) {
+        this.timeoutMillis = timeoutMillis;
+    }
+
+    /**
+     * A pending ask_user_questions request: the completion future plus the original
+     * question content needed to re-push the question after a client reconnect.
+     */
+    public record PendingQuestion(
+            String requestId,
+            List<Map<String, Object>> questions,
+            Map<String, Object> metadata) {}
+
+    private record PendingEntry(CompletableFuture<String> future,
+                                List<Map<String, Object>> questions,
+                                Map<String, Object> metadata) {}
+
+    /** sessionId:requestId → pending 询问（future + 原问题内容） */
+    private final ConcurrentHashMap<String, PendingEntry> pending = new ConcurrentHashMap<>();
 
     /**
      * Register a new pending question and return the requestId.
+     * Keeps the original question content so the question can be re-pushed on reconnect.
      */
-    public String register(Long sessionId) {
+    public String register(Long sessionId, List<Map<String, Object>> questions, Map<String, Object> metadata) {
         String requestId = UUID.randomUUID().toString();
         CompletableFuture<String> future = new CompletableFuture<>();
-        pending.put(key(sessionId, requestId), future);
+        pending.put(key(sessionId, requestId), new PendingEntry(future, questions, metadata));
         log.debug("Registered ask_user_questions request {} for session {}", requestId, sessionId);
         return requestId;
     }
@@ -39,12 +71,12 @@ public class AskUserQuestionsRegistry {
      * @return the user's answer as JSON, or a timeout error JSON
      */
     public String waitForAnswer(Long sessionId, String requestId) {
-        CompletableFuture<String> future = pending.get(key(sessionId, requestId));
-        if (future == null) {
+        PendingEntry entry = pending.get(key(sessionId, requestId));
+        if (entry == null) {
             return "{\"error\": \"No pending question found for requestId: " + requestId + "\"}";
         }
         try {
-            return future.get(DEFAULT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return entry.future().get(timeoutMillis, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             pending.remove(key(sessionId, requestId));
             log.warn("ask_user_questions timeout for session {}, requestId {}", sessionId, requestId);
@@ -54,13 +86,37 @@ public class AskUserQuestionsRegistry {
 
     /**
      * Complete a pending question with the user's answer.
+     *
+     * @return true if a pending question was actually completed, false if the
+     *         requestId was unknown or already completed (e.g. stale answer)
      */
-    public void complete(Long sessionId, String requestId, String result) {
-        CompletableFuture<String> future = pending.remove(key(sessionId, requestId));
-        if (future != null) {
-            future.complete(result);
+    public boolean complete(Long sessionId, String requestId, String result) {
+        PendingEntry entry = pending.remove(key(sessionId, requestId));
+        if (entry != null) {
+            entry.future().complete(result);
             log.debug("Completed ask_user_questions request {} for session {}", requestId, sessionId);
+            return true;
         }
+        return false;
+    }
+
+    /**
+     * Return all pending (unanswered) questions for a session, e.g. to re-push
+     * them to the client after a WebSocket reconnect or page refresh.
+     */
+    public List<PendingQuestion> getPendingForSession(Long sessionId) {
+        if (sessionId == null) {
+            return List.of();
+        }
+        String prefix = sessionId + ":";
+        List<PendingQuestion> result = new ArrayList<>();
+        pending.forEach((key, entry) -> {
+            if (key.startsWith(prefix)) {
+                String requestId = key.substring(prefix.length());
+                result.add(new PendingQuestion(requestId, entry.questions(), entry.metadata()));
+            }
+        });
+        return result;
     }
 
     /**
@@ -70,7 +126,7 @@ public class AskUserQuestionsRegistry {
         String prefix = sessionId + ":";
         pending.entrySet().removeIf(entry -> {
             if (entry.getKey().startsWith(prefix)) {
-                entry.getValue().complete("{\"error\": \"Session cancelled\"}");
+                entry.getValue().future().complete("{\"error\": \"Session cancelled\"}");
                 return true;
             }
             return false;
@@ -78,9 +134,9 @@ public class AskUserQuestionsRegistry {
     }
 
     /**
-     * Fail all pending questions for all given sessions (e.g. on user disconnect).
+     * Fail all pending questions for all given sessions.
      */
-    public void failAllForSessions(java.util.Collection<Long> sessionIds) {
+    public void failAllForSessions(Collection<Long> sessionIds) {
         for (Long sessionId : sessionIds) {
             failAllForSession(sessionId);
         }

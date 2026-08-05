@@ -350,14 +350,13 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         Long userId = registry.getUserId(session);
-        // Collect subscribed session IDs before unregistering (which clears subscriptions)
-        Set<Long> subscribedSessionIds = userId != null ? registry.getSubscribedSessionIds(userId) : Set.of();
         registry.unregister(session);
         if (userId != null) {
+            // LOCAL 模式工具请求依赖桌面端连接，断线后无法继续执行，作废所有 pending 请求
             if (!registry.hasLocalClientConnection(userId)) {
                 localToolSessionRegistry.failAllForUser(userId);
             }
-            askUserQuestionsRegistry.failAllForSessions(subscribedSessionIds);
+            // ask_user_questions 断线不取消：Agent 继续阻塞等待，重连后由 handleSubscribe 重推问题
         }
     }
 
@@ -365,13 +364,13 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         log.warn("WS transport error for session={}: {}", session.getId(), exception.getMessage());
         Long userId = registry.getUserId(session);
-        Set<Long> subscribedSessionIds = userId != null ? registry.getSubscribedSessionIds(userId) : Set.of();
         registry.unregister(session);
         if (userId != null) {
+            // LOCAL 模式工具请求依赖桌面端连接，断线后无法继续执行，作废所有 pending 请求
             if (!registry.hasLocalClientConnection(userId)) {
                 localToolSessionRegistry.failAllForUser(userId);
             }
-            askUserQuestionsRegistry.failAllForSessions(subscribedSessionIds);
+            // ask_user_questions 断线不取消：Agent 继续阻塞等待，重连后由 handleSubscribe 重推问题
         }
     }
 
@@ -395,6 +394,21 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             registry.send(userId, WsEvent.of("session_snapshot", sessionId, Map.of(
                     "phase", s.getPhase()
             )));
+
+            // Re-push pending ask_user_questions so the client can restore the question panel
+            // after a WebSocket reconnect or page refresh. Reuses the original requestId,
+            // so a stale answer submitted from another tab still resolves correctly.
+            for (AskUserQuestionsRegistry.PendingQuestion pq : askUserQuestionsRegistry.getPendingForSession(sessionId)) {
+                Map<String, Object> payload = new java.util.LinkedHashMap<>();
+                payload.put("requestId", pq.requestId());
+                payload.put("questions", pq.questions() != null ? pq.questions() : List.of());
+                if (pq.metadata() != null) {
+                    payload.put("metadata", pq.metadata());
+                }
+                registry.send(userId, WsEvent.of("ask_user_questions", sessionId, payload));
+                log.debug("Re-pushed pending ask_user_questions requestId={} for session={} (userId={})",
+                        pq.requestId(), sessionId, userId);
+            }
         }
     }
 
@@ -909,8 +923,17 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         // Pass the answers JSON as-is to the registry
         String answersJson = data.has("answers") ? data.get("answers").toString() : "[]";
         String resultJson = "{\"answers\": " + answersJson + "}";
-        askUserQuestionsRegistry.complete(sessionId, requestId, resultJson);
-        log.info("Received ask_user_questions_result for session={}, requestId={}", sessionId, requestId);
+        boolean completed = askUserQuestionsRegistry.complete(sessionId, requestId, resultJson);
+        log.info("Received ask_user_questions_result for session={}, requestId={} (completed={})",
+                sessionId, requestId, completed);
+
+        // Broadcast a dismiss event so all of the user's connections (including one that
+        // just reconnected and re-received the question) close the question panel.
+        // Prevents a stale panel from lingering after another tab/device already answered.
+        if (completed) {
+            registry.send(userId, WsEvent.of("ask_user_questions_cancelled", sessionId,
+                    Map.of("requestId", requestId)));
+        }
     }
 
     /**
