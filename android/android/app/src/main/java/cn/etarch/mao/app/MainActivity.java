@@ -8,8 +8,11 @@ import android.view.Window;
 import android.webkit.WebView;
 
 import androidx.appcompat.app.ActionBar;
+import androidx.core.graphics.Insets;
 import androidx.core.splashscreen.SplashScreen;
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.getcapacitor.BridgeActivity;
@@ -78,8 +81,21 @@ public class MainActivity extends BridgeActivity {
         if (root instanceof ViewGroup) {
             ((ViewGroup) root).setBackgroundColor(Color.parseColor("#f5f5f7"));
         }
-        // decorFits 在 configureSystemBars 里刚关掉，强制再派发一次 insets，让 Capacitor margin 生效。
-        webView.post(() -> androidx.core.view.ViewCompat.requestApplyInsets(webView));
+        // Capacitor 默认只避让 systemBars 并消费 Insets。
+        // 同时处理 IME，把 WebView 内容区直接收缩到键盘上方。
+        ViewCompat.setOnApplyWindowInsetsListener(webView, (view, windowInsets) -> {
+            Insets systemBars = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            Insets ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime());
+            ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) view.getLayoutParams();
+            margins.leftMargin = systemBars.left;
+            margins.topMargin = systemBars.top;
+            margins.rightMargin = systemBars.right;
+            margins.bottomMargin = Math.max(systemBars.bottom, ime.bottom);
+            view.setLayoutParams(margins);
+            return WindowInsetsCompat.CONSUMED;
+        });
+        webView.post(() -> ViewCompat.requestApplyInsets(webView));
 
         boolean versionChanged = shouldClearCacheForNewVersion();
         if (versionChanged) {
