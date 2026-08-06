@@ -433,7 +433,17 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function setSideTasks(parentSessionId: string, tasks: SideTaskItem[]) {
-    sideTaskCache.value.set(String(parentSessionId), tasks)
+    const key = String(parentSessionId)
+    // 保留本地已读状态（与 fetchSessions 对主会话 unread 的保留逻辑一致）：
+    // 后端 read 请求与 side-tasks 拉取存在竞态，若后端尚未落库已读（或失败），
+    // 直接用后端返回值会覆盖本地已清除的 unread，导致已消除的圆点复活。
+    const existing = sideTaskCache.value.get(key) ?? []
+    const existingById = new Map(existing.map(t => [t.id, t]))
+    const merged = tasks.map(t => {
+      const old = existingById.get(t.id)
+      return old && old.unread === false ? { ...t, unread: false } : t
+    })
+    sideTaskCache.value.set(key, merged)
     sideTaskCache.value = new Map(sideTaskCache.value)
   }
 
@@ -462,8 +472,7 @@ export const useSessionStore = defineStore('session', () => {
       if (item) {
         if (unread && viewingSideTaskId.value === sideSessionId) {
           // 用户正打开着该边路任务 Tab：不计未读，并同步清除后端未读
-          item.unread = false
-          void api.put(`/sessions/${sideSessionId}/read`).catch(() => {})
+          void markSideTaskRead(sideSessionId)
         } else {
           item.unread = unread
         }
@@ -478,22 +487,23 @@ export const useSessionStore = defineStore('session', () => {
     viewingSideTaskId.value = sideSessionId
   }
 
-  /** 按边路任务独立标记已读：仅在实际打开该边路任务 Tab 时调用。 */
+  /** 按边路任务独立标记已读：仅在实际打开该边路任务 Tab 时调用。
+   *  先同步后端已读，成功后再清除本地未读，避免后端 read 失败/竞态导致圆点看似清除、刷新后又复活。 */
   async function markSideTaskRead(sideSessionId: number) {
-    for (const [, list] of sideTaskCache.value) {
-      const item = list.find(t => t.id === sideSessionId)
-      if (item) {
-        if (item.unread) {
-          item.unread = false
-          sideTaskCache.value = new Map(sideTaskCache.value)
-        }
-        break
-      }
-    }
     try {
       await api.put(`/sessions/${sideSessionId}/read`)
     } catch {
-      // Silent fail — next fetchSessions / WS event will sync
+      // 失败保留本地未读，下次打开 Tab 时重试
+      return
+    }
+    for (const [, list] of sideTaskCache.value) {
+      const idx = list.findIndex(t => t.id === sideSessionId)
+      if (idx === -1) continue
+      if (list[idx].unread) {
+        list[idx].unread = false
+        sideTaskCache.value = new Map(sideTaskCache.value)
+      }
+      break
     }
   }
 

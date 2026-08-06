@@ -58,13 +58,18 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
 
   // 用户实际查看的边路任务：激活 side_task Tab 时清除其未读；切到其他 Tab 时记录为 null。
   // 完成事件据此判断是否标未读（不再以父会话激活推断已读）。
+  // 注意：监听的是「激活 tab 的 sideSessionId」而非 activeTab 对象本身——
+  // 占位 Tab（sideSessionId<=0）经 side_session_created 更新为真实 id 时 tab 对象引用不变，
+  // 若只 watch activeTab 将不触发，导致 viewingSideTaskId 未同步、已查看的边路任务圆点无法消除。
   if (!sideTaskReadWatchRegistered) {
     sideTaskReadWatchRegistered = true
     const sessionStore = useSessionStore()
-    watch(activeTab, (tab) => {
-      const sid = tab?.type === 'side_task' && tab.sideSessionId && tab.sideSessionId > 0
-        ? tab.sideSessionId
-        : null
+    watch(() => {
+      const tab = activeTab.value
+      if (!tab || tab.type !== 'side_task') return null
+      const sid = tab.sideSessionId
+      return sid && sid > 0 ? sid : null
+    }, (sid) => {
       sessionStore.setViewingSideTask(sid)
       if (sid != null) {
         void sessionStore.markSideTaskRead(sid)
