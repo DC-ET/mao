@@ -99,7 +99,7 @@
               </div>
               <div class="session-item-meta">
                 <span v-if="session.running || hasActiveSideTask(session.id)" class="session-spinner"></span>
-                <span v-if="session.unread && String(session.id) !== String(activeSessionId)" class="session-unread-dot"></span>
+                <span v-if="(session.unread || hasUnreadSideTask(session.id)) && String(session.id) !== String(activeSessionId)" class="session-unread-dot"></span>
                 <span class="session-elapsed">{{ formatElapsed(session) }}</span>
               </div>
               <div v-if="showItemActions" class="session-item-actions">
@@ -363,6 +363,10 @@ const SIDE_ACTIVE_PHASES = new Set<TaskPhase>(['RUNNING', 'RESUMING', 'WAITING_A
 
 function hasActiveSideTask(sessionId: string): boolean {
   return sessionStore.getSideTasks(String(sessionId)).some(t => SIDE_ACTIVE_PHASES.has(t.phase))
+}
+
+function hasUnreadSideTask(sessionId: string): boolean {
+  return sessionStore.getSideTasks(String(sessionId)).some(t => t.unread)
 }
 
 function phaseClass(phase: TaskPhase) {

@@ -2,12 +2,16 @@ import { ref, computed, watch, type Ref } from 'vue'
 import type { Tab, SessionTabState } from '../types/file-browser'
 import type { FileChange } from '../types/chat'
 import { getClosedSideTaskIds, markSideTaskClosed, normalizeSideTaskTitle, type SideTaskSummary } from '../utils/side-task-tabs'
+import { useSessionStore } from '../stores/session'
 
 // Module-level singleton state
 const sessionTabsMap = ref<Map<string, SessionTabState>>(new Map())
 const currentSessionId = ref('')
 
 const CHAT_TAB: Tab = { id: 'chat', type: 'chat', title: '主会话' }
+
+// 仅注册一次：激活边路任务 Tab 时清除该边路任务的未读标记（按 sideSessionId 独立已读）
+let sideTaskReadWatchRegistered = false
 
 export function useCenterTabs(activeSessionId: Ref<string | null>) {
   // Sync currentSessionId with the provided ref
@@ -51,6 +55,22 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   const activeTab = computed(() => {
     return tabs.value.find(t => t.id === activeTabId.value) || CHAT_TAB
   })
+
+  // 用户实际查看的边路任务：激活 side_task Tab 时清除其未读；切到其他 Tab 时记录为 null。
+  // 完成事件据此判断是否标未读（不再以父会话激活推断已读）。
+  if (!sideTaskReadWatchRegistered) {
+    sideTaskReadWatchRegistered = true
+    const sessionStore = useSessionStore()
+    watch(activeTab, (tab) => {
+      const sid = tab?.type === 'side_task' && tab.sideSessionId && tab.sideSessionId > 0
+        ? tab.sideSessionId
+        : null
+      sessionStore.setViewingSideTask(sid)
+      if (sid != null) {
+        void sessionStore.markSideTaskRead(sid)
+      }
+    }, { immediate: true })
+  }
 
   function openFileTab(filePath: string, title: string) {
     const state = getSessionState()

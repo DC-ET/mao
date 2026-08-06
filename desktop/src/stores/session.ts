@@ -71,6 +71,8 @@ export interface SideTaskItem {
   modelId?: number
   phase: TaskPhase
   createdAt?: string
+  /** 边路任务后台完成且父会话未被查看时的未读标记（左侧任务栏青色圆点） */
+  unread?: boolean
 }
 
 export interface SubagentItem {
@@ -129,6 +131,8 @@ export const useSessionStore = defineStore('session', () => {
   const sessionPhases = ref<Map<string, TaskPhase>>(new Map())
   // Side task list cache keyed by parentSessionId
   const sideTaskCache = ref<Map<string, SideTaskItem[]>>(new Map())
+  /** 用户当前正在查看的边路任务 Tab（sideSessionId），未查看时为 null。由 useCenterTabs 维护。 */
+  const viewingSideTaskId = ref<number | null>(null)
   // Subagent list cache keyed by parentSessionId
   const subagentCache = ref<Map<string, SubagentItem[]>>(new Map())
   /** parent tool_call_id → child session id（并行 delegate 精确绑定） */
@@ -452,6 +456,47 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  function updateSideTaskUnread(sideSessionId: number, unread: boolean) {
+    for (const [, list] of sideTaskCache.value) {
+      const item = list.find(t => t.id === sideSessionId)
+      if (item) {
+        if (unread && viewingSideTaskId.value === sideSessionId) {
+          // 用户正打开着该边路任务 Tab：不计未读，并同步清除后端未读
+          item.unread = false
+          void api.put(`/sessions/${sideSessionId}/read`).catch(() => {})
+        } else {
+          item.unread = unread
+        }
+        sideTaskCache.value = new Map(sideTaskCache.value)
+        break
+      }
+    }
+  }
+
+  /** 用户切换查看的边路任务（由 useCenterTabs 在 Tab 激活时维护）。 */
+  function setViewingSideTask(sideSessionId: number | null) {
+    viewingSideTaskId.value = sideSessionId
+  }
+
+  /** 按边路任务独立标记已读：仅在实际打开该边路任务 Tab 时调用。 */
+  async function markSideTaskRead(sideSessionId: number) {
+    for (const [, list] of sideTaskCache.value) {
+      const item = list.find(t => t.id === sideSessionId)
+      if (item) {
+        if (item.unread) {
+          item.unread = false
+          sideTaskCache.value = new Map(sideTaskCache.value)
+        }
+        break
+      }
+    }
+    try {
+      await api.put(`/sessions/${sideSessionId}/read`)
+    } catch {
+      // Silent fail — next fetchSessions / WS event will sync
+    }
+  }
+
   function updateSideTaskTitle(parentSessionId: string, sideSessionId: number, title: string, modelId?: number) {
     const list = sideTaskCache.value.get(String(parentSessionId))
     if (list) {
@@ -600,6 +645,7 @@ export const useSessionStore = defineStore('session', () => {
     if (session) {
       session.unread = false
     }
+    // 只清除父会话自身未读；边路任务未读按 sideSessionId 独立清除（见 markSideTaskRead）
     try {
       await api.put(`/sessions/${sessionId}/read`)
     } catch {
@@ -1121,6 +1167,9 @@ export const useSessionStore = defineStore('session', () => {
     setSideTasks,
     addSideTask,
     updateSideTaskPhase,
+    updateSideTaskUnread,
+    setViewingSideTask,
+    markSideTaskRead,
     updateSideTaskTitle,
     removeSideTask,
     getSideTasks,

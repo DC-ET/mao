@@ -784,12 +784,13 @@ async function loadSession(sid: string) {
     const res = await api.get(`/sessions/${sid}/side-tasks`)
     const sideTasksData = res?.data
     const items = Array.isArray(sideTasksData)
-      ? sideTasksData.map((st: { id: number; title: string; modelId?: number; phase?: string; createdAt?: string }) => ({
+      ? sideTasksData.map((st: { id: number; title: string; modelId?: number; phase?: string; createdAt?: string; unread?: boolean }) => ({
           id: st.id,
           title: st.title || '任务',
           modelId: st.modelId,
           phase: (st.phase || 'IDLE') as TaskPhase,
           createdAt: st.createdAt,
+          unread: st.unread,
         }))
       : []
     sessionStore.setSideTasks(sid, items)

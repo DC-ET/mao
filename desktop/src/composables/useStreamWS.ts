@@ -658,6 +658,8 @@ export function useStreamWS() {
               sessionStore.markAsRead(sessionId)
             } else {
               sessionStore.updateSession(sessionId, { unread: data.unread })
+              // 边路任务会话不在主列表：unread 单独落到 SideTask 缓存（左侧任务栏圆点）
+              sessionStore.updateSideTaskUnread(Number(sessionId), data.unread)
             }
           }
           if (terminalPhases.includes(phase)) {

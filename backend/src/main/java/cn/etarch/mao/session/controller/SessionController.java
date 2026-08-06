@@ -303,6 +303,7 @@ public class SessionController {
             vo.setModelId(s.getModelId());
             vo.setPhase(s.getPhase() != null ? s.getPhase() : "IDLE");
             vo.setCreatedAt(s.getCreatedAt() != null ? s.getCreatedAt().toString() : null);
+            vo.setUnread(Integer.valueOf(1).equals(s.getUnread()));
             return vo;
         }).collect(Collectors.toList());
         return Result.ok(voList);
@@ -777,6 +778,7 @@ public class SessionController {
         private Long modelId;
         private String phase;
         private String createdAt;
+        private Boolean unread;
     }
 
     @Data
