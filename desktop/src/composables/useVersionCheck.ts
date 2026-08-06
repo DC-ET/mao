@@ -53,18 +53,43 @@ let removeAppUpdaterListeners: Array<() => void> = []
 /** 页面加载后首次检查只同步基线，不提示更新（此时资源已是当前运行版本） */
 let baselineSynced = false
 
+interface StoredVersion {
+  version: string
+  buildTime?: string
+}
+
+/** 读取本地记录的版本基线；兼容旧格式（纯版本字符串） */
+function readStoredVersion(): StoredVersion | null {
+  const raw = localStorage.getItem(STORAGE_KEY)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed.version === 'string') {
+      return { version: parsed.version, buildTime: parsed.buildTime || undefined }
+    }
+  } catch {
+    // 旧格式：纯版本字符串，无 buildTime
+  }
+  return { version: raw }
+}
+
+function writeStoredVersion(info: StoredVersion) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(info))
+}
+
 async function checkVersion() {
   try {
     const versionUrl = new URL(`${import.meta.env.BASE_URL}version.json`, window.location.href)
     versionUrl.searchParams.set('_t', String(Date.now()))
     const resp = await fetch(versionUrl)
     if (!resp.ok) return
-    const data = await resp.json() as { version: string; buildTime: string }
+    const data = await resp.json() as { version: string; buildTime?: string }
     const remoteVersion = data.version
+    const remoteBuildTime = data.buildTime || ''
 
     if (!baselineSynced) {
       // 刚完成加载/刷新：以远程版本为基线，避免「已刷到新代码仍提示有更新」
-      localStorage.setItem(STORAGE_KEY, remoteVersion)
+      writeStoredVersion({ version: remoteVersion, buildTime: remoteBuildTime })
       currentVersion.value = remoteVersion
       hasUpdate.value = false
       newVersion.value = null
@@ -72,12 +97,16 @@ async function checkVersion() {
       return
     }
 
-    if (currentVersion.value && currentVersion.value !== remoteVersion) {
+    const stored = readStoredVersion()
+    // 版本号不同，或版本号相同但构建时间更新（发版漏同步版本号时的兜底）
+    const versionChanged = !!stored?.version && stored.version !== remoteVersion
+    const buildChanged = !!stored?.buildTime && stored.buildTime !== remoteBuildTime
+    if (versionChanged || buildChanged) {
       hasUpdate.value = true
       newVersion.value = remoteVersion
     }
 
-    localStorage.setItem(STORAGE_KEY, remoteVersion)
+    writeStoredVersion({ version: remoteVersion, buildTime: remoteBuildTime })
     currentVersion.value = remoteVersion
   } catch {
     // 网络不可用时静默忽略

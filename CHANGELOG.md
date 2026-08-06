@@ -22,6 +22,8 @@
 - LLM 调用对 5xx 服务端错误（含 524 网关超时）新增自动重试：与 429 限流共用 `app.harness.llm.rate-limit-max-retries` / `rate-limit-retry-delay-seconds` 配置，重试耗尽后错误信息会标明已重试次数
 
 ### 前端（桌面 / Web / 安卓）
+- 修复桌面客户端「远程资源有更新」提示失效的问题：`version.json` 版本号未随发版同步时不再提示。现同时比对构建时间（buildTime），只要有新部署即可在右上角刷新按钮亮起更新提示；并同步 `desktop/package.json` 版本至 0.0.23
+- 移除右侧边栏任务标题旁的「边路任务 / 子代理」类型徽标，仅保留任务标题
 - 安卓端新增 WebSocket 兼容桥接层：Capacitor 平台下流式事件收发交由原生连接承载（Web/Electron 零影响）
 - 安卓 App 退到后台 / 锁屏后实时会话不再断线；回前台自动执行恢复流程（缓冲事件重放 + REST 快照校准 + 去重 ACK）
 - 退出登录时停止原生保活连接与服务
