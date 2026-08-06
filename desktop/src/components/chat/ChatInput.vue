@@ -253,6 +253,9 @@ const props = withDefaults(defineProps<{
   gitBranch: '',
   cloudProjects: () => [],
   waitingForSave: false,
+  // 视觉能力 tri-state：true=支持 / false=不支持 / undefined=未知（不拦截，交给后端校验）。
+  // 必须显式声明，否则 Boolean 类型 props 未传时会被 Vue 强制为 false，导致发送被误拦截。
+  modelSupportsVision: undefined,
 })
 
 const emit = defineEmits<{

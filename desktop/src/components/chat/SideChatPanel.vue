@@ -73,6 +73,7 @@
         :project-key="parentProjectKey"
         :execution-mode="parentExecutionMode"
         :model-id="currentModelId"
+        :model-supports-vision="currentModelSupportsVision"
         :is-new-task="false"
         @send="handleChatSend"
         @stop="handleStop"
@@ -158,6 +159,34 @@ const currentModelId = computed(() => {
     return sideModelId.value ?? parentSession.value?.modelId
   }
   return selectedModelId.value ?? parentSession.value?.modelId
+})
+
+// 可用模型列表（判断当前模型的视觉能力；占位会话 / PATCH 未完成时无法依赖会话缓存）
+const models = ref<Array<{ id: number; supportsVision: boolean }>>([])
+async function loadModels() {
+  try {
+    const { data } = await api.get('/models/active')
+    models.value = data || []
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * 当前模型视觉能力 tri-state：true=支持 / false=不支持 / undefined=未知（不拦截，交给后端校验）。
+ * 优先按用户当前选择的模型从模型列表查（切换后立即生效，不受 PATCH 时序影响）；
+ * 列表未命中时回退会话缓存。
+ */
+const currentModelSupportsVision = computed<boolean | undefined>(() => {
+  const mid = currentModelId.value
+  if (mid == null) return undefined
+  const m = models.value.find(x => x.id === mid)
+  if (m) return m.supportsVision
+  if (hasRealSession.value) {
+    const s = sessionStore.sessions.find(x => String(x.id) === String(realSessionId.value))
+    if (s?.modelSupportsVision != null) return s.modelSupportsVision
+  }
+  return undefined
 })
 
 const displayMessages = computed(() => {
@@ -394,6 +423,7 @@ onMounted(async () => {
     await Promise.all([loadSideSessionMeta(), fetchMessages(), fetchQueue()])
     scrollToBottomForce()
   }
+  void loadModels()
   nextTick(() => chatInputRef.value?.focusInput())
 })
 
@@ -518,7 +548,7 @@ async function handleChatSend(text: string, files: File[]) {
       images: imageUrls.length > 0 ? imageUrls : undefined,
     })
     sessionStore.ensureStreamingAssistantMessage(sid)
-    sendMessage(sid, trimmed, generateUUID(), imageUrls, localSkills, agentsMdContent)
+    sendMessage(sid, trimmed, generateUUID(), imageUrls, localSkills, agentsMdContent, currentModelId.value)
     sending.value = true
   }
 

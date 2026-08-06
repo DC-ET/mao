@@ -450,7 +450,7 @@ export function useStreamWS() {
     }
   }
 
-  async function sendMessage(sessionId: string, content: string, eventId: string, images?: string[], localSkills?: LocalSkillReport[], agentsMdContent?: string): Promise<boolean> {
+  async function sendMessage(sessionId: string, content: string, eventId: string, images?: string[], localSkills?: LocalSkillReport[], agentsMdContent?: string, modelId?: number): Promise<boolean> {
     const payload = {
       type: 'send_message',
       sessionId: Number(sessionId),
@@ -458,6 +458,7 @@ export function useStreamWS() {
         content,
         eventId,
         images: images || [],
+        ...(modelId != null ? { modelId } : {}),
         ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),
         ...(agentsMdContent ? { agentsMdContent } : {})
       }

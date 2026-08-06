@@ -450,6 +450,16 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             abortRunningExecution(sessionId, userId);
         }
 
+        // 若消息携带 modelId（边路任务切换模型后立即发送），先持久化到会话再校验/执行，
+        // 避免依赖前端 PATCH 的异步时序导致视觉校验或 buildContext 读到旧模型。
+        if (data.has("modelId") && !data.get("modelId").isNull()) {
+            Long newModelId = data.get("modelId").asLong();
+            if (newModelId != null && !newModelId.equals(session.getModelId())) {
+                sessionService.updateModelId(sessionId, newModelId);
+                session.setModelId(newModelId);
+            }
+        }
+
         // Vision model check: if images are attached, verify model supports vision
         if (!images.isEmpty()) {
             LlmModel model = resolveSessionModel(session);
