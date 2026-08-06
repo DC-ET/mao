@@ -36,15 +36,16 @@ public class UserController {
         if (user == null) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
-        UserInfoVO vo = new UserInfoVO();
-        vo.setId(user.getId());
-        vo.setUsername(user.getUsername());
-        vo.setDisplayName(user.getDisplayName());
-        vo.setEmail(user.getEmail());
-        vo.setAvatarUrl(user.getAvatarUrl());
-        vo.setPermissions(permissionService.getUserPermissionCodes(userId).stream().distinct().toList());
-        vo.setIsAdmin(permissionService.isAdmin(userId));
-        return Result.ok(vo);
+        return Result.ok(buildUserInfoVO(user));
+    }
+
+    @PutMapping("/me/profile")
+    public Result<UserInfoVO> updateOwnProfile(
+            @AuthenticationPrincipal Long userId,
+            @RequestBody UpdateOwnProfileRequest request) {
+        userService.updateOwnProfile(userId, request.getDisplayName(), request.getEmail(), request.getAvatarUrl());
+        User user = userMapper.selectById(userId);
+        return Result.ok(buildUserInfoVO(user));
     }
 
     @GetMapping
@@ -129,6 +130,19 @@ public class UserController {
         return Result.ok();
     }
 
+    private UserInfoVO buildUserInfoVO(User user) {
+        UserInfoVO vo = new UserInfoVO();
+        vo.setId(user.getId());
+        vo.setUsername(user.getUsername());
+        vo.setDisplayName(user.getDisplayName());
+        vo.setEmail(user.getEmail());
+        vo.setAvatarUrl(user.getAvatarUrl());
+        vo.setAuthSource(UserService.resolveAuthSource(user));
+        vo.setPermissions(permissionService.getUserPermissionCodes(user.getId()).stream().distinct().toList());
+        vo.setIsAdmin(permissionService.isAdmin(user.getId()));
+        return vo;
+    }
+
     private UserVO toVO(User user, List<Role> roles) {
         UserVO vo = new UserVO();
         vo.setId(user.getId());
@@ -137,7 +151,7 @@ public class UserController {
         vo.setEmail(user.getEmail());
         vo.setAvatarUrl(user.getAvatarUrl());
         vo.setStatus(user.getStatus());
-        vo.setAuthSource(userService.resolveAuthSource(user));
+        vo.setAuthSource(UserService.resolveAuthSource(user));
         vo.setRoleIds(roles.stream().map(Role::getId).collect(Collectors.toList()));
         vo.setRoleNames(roles.stream().map(Role::getName).collect(Collectors.toList()));
         vo.setLastLoginAt(user.getLastLoginAt() != null ? user.getLastLoginAt().toString() : null);
@@ -167,6 +181,13 @@ public class UserController {
     public static class ResetPasswordRequest {
         private String newPassword;
         private String confirmPassword;
+    }
+
+    @Data
+    public static class UpdateOwnProfileRequest {
+        private String displayName;
+        private String email;
+        private String avatarUrl;
     }
 
     @Data

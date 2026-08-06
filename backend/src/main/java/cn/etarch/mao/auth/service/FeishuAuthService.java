@@ -8,6 +8,7 @@ import cn.etarch.mao.permission.entity.UserRole;
 import cn.etarch.mao.permission.mapper.UserRoleMapper;
 import cn.etarch.mao.user.entity.User;
 import cn.etarch.mao.user.mapper.UserMapper;
+import cn.etarch.mao.user.service.UserService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -283,7 +284,7 @@ public class FeishuAuthService {
             user.setFeishuUserId(feishuUserId);
             user.setDisplayName(StringUtils.hasText(name) ? name : user.getDisplayName());
             user.setEmail(email);
-            user.setAvatarUrl(avatarUrl);
+            // 不覆盖用户头像：头像由用户自行管理（上传/移除），不做飞书头像自动同步
             user.setLastLoginAt(now);
             userMapper.updateById(user);
         }
@@ -372,6 +373,7 @@ public class FeishuAuthService {
         userInfoVO.setDisplayName(user.getDisplayName());
         userInfoVO.setEmail(user.getEmail());
         userInfoVO.setAvatarUrl(user.getAvatarUrl());
+        userInfoVO.setAuthSource(UserService.resolveAuthSource(user));
         vo.setUser(userInfoVO);
         return vo;
     }

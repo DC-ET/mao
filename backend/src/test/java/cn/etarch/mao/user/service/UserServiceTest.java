@@ -6,8 +6,10 @@ import cn.etarch.mao.permission.service.PermissionService;
 import cn.etarch.mao.user.entity.User;
 import cn.etarch.mao.user.mapper.UserMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.List;
@@ -16,8 +18,10 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -148,6 +152,115 @@ class UserServiceTest {
         verify(userMapper, never()).selectById(any());
     }
 
+    @Test
+    void updateOwnProfileAllowsLocalUserToEditProfileAndAvatar() {
+        User local = user(1L, "local", "Local", "old@example.com", "hash", 1);
+        when(userMapper.selectById(1L)).thenReturn(local);
+
+        service.updateOwnProfile(1L, "新名称", "new@example.com", "https://oss/avatar.png");
+
+        String sqlSet = captureSqlSet(userMapper);
+        assertThat(sqlSet).contains("display_name").contains("email").contains("avatar_url");
+    }
+
+    @Test
+    void updateOwnProfileRejectsProfileEditForLdapUserButAllowsAvatar() {
+        User ldap = user(2L, "ldap", "Ldap", null, null, 1);
+        when(userMapper.selectById(2L)).thenReturn(ldap);
+
+        assertThatThrownBy(() -> service.updateOwnProfile(2L, "改名", null, null))
+                .isInstanceOf(BusinessException.class);
+
+        service.updateOwnProfile(2L, null, null, "https://oss/avatar.png");
+        assertThat(captureSqlSet(userMapper)).contains("avatar_url");
+    }
+
+    @Test
+    void updateOwnProfileClearsAvatarWithBlankUrlAndKeepsProfileUntouched() {
+        User local = user(3L, "local", "Local", null, "hash", 1);
+        local.setAvatarUrl("https://oss/old.png");
+        when(userMapper.selectById(3L)).thenReturn(local);
+
+        service.updateOwnProfile(3L, null, null, "  ");
+
+        // 回归：置空头像必须走 wrapper.set 显式写列（updateById 的 NOT_NULL 策略会忽略 null）
+        String sqlSet = captureSqlSet(userMapper);
+        assertThat(sqlSet).contains("avatar_url");
+        assertThat(sqlSet).doesNotContain("display_name");
+    }
+
+    @Test
+    void updateOwnProfileRejectsInvalidDisplayNameAndEmail() {
+        User local = user(4L, "local", "Local", null, "hash", 1);
+        when(userMapper.selectById(4L)).thenReturn(local);
+
+        assertThatThrownBy(() -> service.updateOwnProfile(4L, "", null, null))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> service.updateOwnProfile(4L, "x".repeat(129), null, null))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> service.updateOwnProfile(4L, null, "not-an-email", null))
+                .isInstanceOf(BusinessException.class);
+        verify(userMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void updateOwnProfileRejectsDuplicateEmailButAllowsOwnEmail() {
+        User local = user(6L, "local", "Local", null, "hash", 1);
+        when(userMapper.selectById(6L)).thenReturn(local);
+
+        when(userMapper.selectCount(any(QueryWrapper.class))).thenReturn(1L);
+        assertThatThrownBy(() -> service.updateOwnProfile(6L, null, "dup@example.com", null))
+                .isInstanceOf(BusinessException.class);
+
+        when(userMapper.selectCount(any(QueryWrapper.class))).thenReturn(0L);
+        service.updateOwnProfile(6L, null, "mine@example.com", null);
+        assertThat(captureSqlSet(userMapper)).contains("email");
+    }
+
+    @Test
+    void updateOwnProfileSkipsValidationWhenEmailUnchanged() {
+        // 回归：历史邮箱与他人重复的用户，仅改头像/显示名时不应被邮箱查重拒绝
+        User local = user(8L, "local", "Local", "dup@example.com", "hash", 1);
+        when(userMapper.selectById(8L)).thenReturn(local);
+
+        // selectCount 未被调用（未 mock 时默认返回 0，若被调用也不影响；这里显式断言不触发查重）
+        service.updateOwnProfile(8L, null, "dup@example.com", "https://oss/new.png");
+        verify(userMapper, never()).selectCount(any(QueryWrapper.class));
+        assertThat(captureSqlSet(userMapper)).contains("avatar_url").doesNotContain("email");
+
+        // 模拟首次更新已落库（真实场景下一次请求会从 DB 加载最新实体）
+        local.setAvatarUrl("https://oss/new.png");
+        // 邮箱未变更且其他字段也未变更时，不再触发新的 UPDATE（总调用次数仍为 1 次）
+        service.updateOwnProfile(8L, "Local", "dup@example.com", "https://oss/new.png");
+        verify(userMapper, times(1)).update(isNull(), any());
+    }
+
+    @Test
+    void updateOwnProfileRejectsInvalidAvatarUrl() {
+        User local = user(7L, "local", "Local", null, "hash", 1);
+        when(userMapper.selectById(7L)).thenReturn(local);
+
+        assertThatThrownBy(() -> service.updateOwnProfile(7L, null, null, "javascript:alert(1)"))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> service.updateOwnProfile(7L, null, null, "ftp://evil.com/a.png"))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> service.updateOwnProfile(7L, null, null, "http://a.com/" + "x".repeat(600)))
+                .isInstanceOf(BusinessException.class);
+
+        // 相对路径与 https 均放行
+        service.updateOwnProfile(7L, null, null, "/uploads/avatar.png");
+        service.updateOwnProfile(7L, null, null, "https://oss.example.com/a.png");
+        verify(userMapper, times(2)).update(isNull(), any());
+    }
+
+    @Test
+    void resolveAuthSourceDetectsFeishuUser() {
+        User feishu = new User();
+        feishu.setId(5L);
+        feishu.setFeishuUserId("ou_123");
+        assertThat(service.resolveAuthSource(feishu)).isEqualTo("FEISHU");
+    }
+
     private static User user(Long id, String username, String displayName, String email, String hash, Integer status) {
         User user = new User();
         user.setId(id);
@@ -157,5 +270,12 @@ class UserServiceTest {
         user.setPasswordHash(hash);
         user.setStatus(status);
         return user;
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static String captureSqlSet(UserMapper mapper) {
+        ArgumentCaptor<UpdateWrapper> captor = ArgumentCaptor.forClass(UpdateWrapper.class);
+        verify(mapper).update(isNull(), captor.capture());
+        return captor.getValue().getSqlSet();
     }
 }

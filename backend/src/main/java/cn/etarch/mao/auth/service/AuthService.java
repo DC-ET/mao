@@ -5,6 +5,7 @@ import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.common.result.ErrorCode;
 import cn.etarch.mao.user.entity.User;
 import cn.etarch.mao.user.mapper.UserMapper;
+import cn.etarch.mao.user.service.UserService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -64,6 +65,7 @@ public class AuthService {
         userInfo.setDisplayName(user.getDisplayName());
         userInfo.setEmail(user.getEmail());
         userInfo.setAvatarUrl(user.getAvatarUrl());
+        userInfo.setAuthSource(UserService.resolveAuthSource(user));
         vo.setUser(userInfo);
 
         return vo;
@@ -96,6 +98,7 @@ public class AuthService {
         userInfo.setDisplayName(user.getDisplayName());
         userInfo.setEmail(user.getEmail());
         userInfo.setAvatarUrl(user.getAvatarUrl());
+        userInfo.setAuthSource(UserService.resolveAuthSource(user));
         vo.setUser(userInfo);
 
         return vo;

@@ -7,6 +7,9 @@
       </button>
       <h2 class="settings-title">设置</h2>
       <nav class="settings-nav">
+        <router-link to="/settings/profile" class="settings-nav-item" active-class="active">
+          个人信息
+        </router-link>
         <router-link to="/settings/git-credentials" class="settings-nav-item" active-class="active">
           Git 凭证
         </router-link>

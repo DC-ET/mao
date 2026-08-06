@@ -25,7 +25,12 @@ const routes: RouteRecordRaw[] = [
         children: [
           {
             path: '',
-            redirect: '/settings/git-credentials'
+            redirect: '/settings/profile'
+          },
+          {
+            path: 'profile',
+            name: 'Profile',
+            component: () => import('../views/settings/ProfileView.vue')
           },
           {
             path: 'git-credentials',

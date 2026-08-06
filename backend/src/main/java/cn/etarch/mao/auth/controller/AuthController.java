@@ -107,6 +107,8 @@ public class AuthController {
         private String displayName;
         private String email;
         private String avatarUrl;
+        /** 登录方式：LOCAL / LDAP / FEISHU。 */
+        private String authSource;
         /** Permission codes granted to the user via roles. */
         private List<String> permissions;
         /** 是否为管理员角色（拥有 ADMIN 角色）。 */

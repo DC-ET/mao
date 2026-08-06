@@ -63,12 +63,18 @@
       <template v-if="authStore.user">
         <el-dropdown @command="handleCommand" trigger="click">
           <div class="nav-user">
-            <el-avatar :size="24" icon="User" />
+            <el-avatar :size="24" :src="authStore.user?.avatarUrl || undefined">
+              <el-icon v-if="!authStore.user?.avatarUrl"><User /></el-icon>
+            </el-avatar>
             <span class="nav-username">{{ authStore.user?.username }}</span>
             <el-icon :size="10"><ArrowDown /></el-icon>
           </div>
           <template #dropdown>
             <el-dropdown-menu class="nav-dropdown">
+              <el-dropdown-item command="profile">
+                <el-icon><User /></el-icon>
+                个人信息
+              </el-dropdown-item>
               <el-dropdown-item command="settings">
                 <el-icon><Setting /></el-icon>
                 设置
@@ -88,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, ArrowLeft, Sunrise, Moon, Refresh, Setting, Sunny } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, Sunrise, Moon, Refresh, Setting, Sunny, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -300,8 +306,10 @@ async function handleUpdateClick() {
 }
 
 async function handleCommand(command: string) {
-  if (command === 'settings') {
-    router.push('/settings/git-credentials')
+  if (command === 'profile') {
+    router.push('/settings/profile')
+  } else if (command === 'settings') {
+    router.push('/settings')
   } else if (command === 'logout') {
     await authStore.logout()
   }

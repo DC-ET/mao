@@ -5,6 +5,7 @@ import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.permission.entity.UserRole;
 import cn.etarch.mao.user.entity.User;
 import cn.etarch.mao.user.mapper.UserMapper;
+import cn.etarch.mao.user.service.UserService;
 import cn.etarch.mao.permission.mapper.UserRoleMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
@@ -117,6 +118,7 @@ public class LdapAuthService {
             userInfo.setDisplayName(user.getDisplayName());
             userInfo.setEmail(user.getEmail());
             userInfo.setAvatarUrl(user.getAvatarUrl());
+            userInfo.setAuthSource(UserService.resolveAuthSource(user));
             vo.setUser(userInfo);
 
             return vo;

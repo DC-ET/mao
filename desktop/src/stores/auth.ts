@@ -11,6 +11,7 @@ interface User {
   displayName: string
   email: string
   avatarUrl: string
+  authSource: 'LOCAL' | 'LDAP' | 'FEISHU' | string
 }
 
 interface LoginResponse {
