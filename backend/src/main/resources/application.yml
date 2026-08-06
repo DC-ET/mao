@@ -70,6 +70,11 @@ ldap:
   enabled: ${LDAP_ENABLED:false}
 
 app:
+  # WebSocket 空闲超时（毫秒）：客户端超过该时长无任何消息（含 ping/pong 心跳）即断开。
+  # 安卓保活端原生层 25s 心跳可稳定覆盖 90s 默认值；该参数为全局容器参数，仅运维需要时调整。
+  ws:
+    idle-timeout-ms: ${APP_WS_IDLE_TIMEOUT_MS:90000}
+
   task-notification:
     secret-key: ${APP_NOTIFICATION_WEBHOOK_SECRET:mao-task-notification-default-key-v1-20260713}
     worker-delay-ms: ${TASK_NOTIFICATION_WORKER_DELAY_MS:30000}

@@ -4,6 +4,7 @@ import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
 import { nowDateTime } from '../utils/datetime'
 import { mapCompactionEvents } from '../utils/chatMessage'
+import { createWsBridge, shouldUseNativeBridge, WS_OPEN, WS_CONNECTING, WS_CLOSING } from '../capacitor/wsBridge'
 
 /// <reference types="vite/client" />
 
@@ -33,6 +34,14 @@ const PONG_TIMEOUT_MS = 15_000
 let intentionalClose = false
 let connectPromise: Promise<void> | null = null
 let isReconnecting = false
+// 安卓原生桥：连接建立后的超时保护（原生连接异常时防止 connect() 永久 pending）
+let bridgeConnectTimeout: ReturnType<typeof setTimeout> | null = null
+const BRIDGE_CONNECT_TIMEOUT_MS = 15_000
+
+// 当前是否使用原生桥（安卓 Capacitor 且已成功创建）
+function isNativeBridgeActive(): boolean {
+  return !!ws && typeof (ws as any).trackSessions === 'function'
+}
 
 // Active execution ID per session — used to discard stale stream events after cancel
 const activeExecutionIds = new Map<string, string>()
@@ -165,20 +174,66 @@ export function useStreamWS() {
     const token = getToken()
     if (!token) return Promise.reject(new Error('No token'))
 
-    const client = isElectronClient() ? 'electron' : 'browser'
-    const url = `${wsBase}/ws/stream?token=${token}&client=${client}`
-    ws = new WebSocket(url)
+    const nativeBridge = shouldUseNativeBridge()
+    const client = nativeBridge ? 'android' : (isElectronClient() ? 'electron' : 'browser')
+
+    if (nativeBridge) {
+      // 复用逻辑：连接生命周期由原生层维护（原生内部重连），避免重复创建桥/重复注册插件监听。
+      const existing = ws && typeof (ws as any).trackSessions === 'function' ? (ws as any) : null
+      if (existing) {
+        if (existing.readyState === WS_OPEN) {
+          return Promise.resolve()
+        }
+        if (existing.readyState === WS_CONNECTING || existing.readyState === WS_CLOSING) {
+          // 原生正在重连：等待 open（或超时/关闭），不能立即成功——
+          // 否则 recovery/sendReliable 会误以为连接就绪而直接丢弃或提前恢复
+          return existing.waitForOpen(BRIDGE_CONNECT_TIMEOUT_MS).catch((err: Error) => {
+            console.warn('[ws] native bridge reconnect wait failed:', err?.message)
+            throw err
+          })
+        }
+        // WS_CLOSED（auth_failed / 服务端关闭）：旧桥已终态，销毁后新建
+        try {
+          existing.close()
+        } catch {
+          // 忽略
+        }
+        ws = null
+      }
+      // 首次创建或旧桥已终态：新建桥，原生 ensureKeepAlive 会重建连接并重新订阅
+      const bridge = createWsBridge(token, `${wsBase}/ws/stream`)
+      if (!bridge) return Promise.reject(new Error('Native WS bridge unavailable'))
+      ws = bridge as unknown as WebSocket
+    } else {
+      const url = `${wsBase}/ws/stream?token=${token}&client=${client}`
+      ws = new WebSocket(url)
+    }
     intentionalClose = false
 
     let initialConnect = true
 
     connectPromise = new Promise<void>((resolve, reject) => {
+      // 原生桥：连接异常时防止 connect() 永久 pending（如 auth_failed 未触发 onclose）
+      if (nativeBridge) {
+        bridgeConnectTimeout = setTimeout(() => {
+          if (connectPromise) {
+            connectPromise = null
+            initialConnect = false
+            reject(new Error('Native WS connect timeout'))
+          }
+        }, BRIDGE_CONNECT_TIMEOUT_MS)
+      }
+
       ws!.onopen = () => {
         connected.value = true
         reconnectDelay.value = 1000
         connectPromise = null
         initialConnect = false
         isReconnecting = false
+        if (bridgeConnectTimeout) {
+          clearTimeout(bridgeConnectTimeout)
+          bridgeConnectTimeout = null
+        }
         // Re-subscribe all tracked sessions (main + open side tasks).
         // Server-side subscriptions are tied to the previous socket and are lost on reconnect.
         const toResubscribe = new Set(subscribedSessionIds)
@@ -192,16 +247,21 @@ export function useStreamWS() {
         }
         // Flush skill_sync_done that completed while WS was down (LOCAL skill sync race)
         flushPendingSkillSyncDones()
-        // Start heartbeat with pong timeout detection
-        lastPongAt = Date.now()
-        heartbeatTimer = setInterval(() => {
-          if (ws?.readyState !== WebSocket.OPEN) return
-          if (Date.now() - lastPongAt > PONG_TIMEOUT_MS) {
-            ws.close()
-            return
-          }
-          ws.send(JSON.stringify({ type: 'ping' }))
-        }, 5_000)
+        if (nativeBridge) {
+          // 原生心跳负责；把 UI 订阅集合同步给原生（原生重连后自动重订阅）
+          ;(ws as any).syncSubscriptions(Array.from(subscribedSessionIds).map(Number)).catch(() => {})
+        } else {
+          // Start heartbeat with pong timeout detection
+          lastPongAt = Date.now()
+          heartbeatTimer = setInterval(() => {
+            if (ws?.readyState !== WebSocket.OPEN) return
+            if (Date.now() - lastPongAt > PONG_TIMEOUT_MS) {
+              ws.close()
+              return
+            }
+            ws.send(JSON.stringify({ type: 'ping' }))
+          }, 5_000)
+        }
         resolve()
       }
 
@@ -218,6 +278,10 @@ export function useStreamWS() {
       ws!.onclose = () => {
         connected.value = false
         stopHeartbeat()
+        if (bridgeConnectTimeout) {
+          clearTimeout(bridgeConnectTimeout)
+          bridgeConnectTimeout = null
+        }
         if (initialConnect && !isReconnecting) {
           // First-ever connection attempt failed — reject the promise
           initialConnect = false
@@ -248,6 +312,14 @@ export function useStreamWS() {
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
+    }
+    // 安卓原生桥：退出登录 → 真正停止原生保活服务（清除订阅/缓冲/认证状态）
+    if (isNativeBridgeActive()) {
+      ;(ws as any).stopKeepAlive?.().catch?.((err: Error) =>
+        console.warn('[ws] stopKeepAlive failed:', err?.message))
+      ws = null
+      connected.value = false
+      return
     }
     if (ws) {
       ws.close()
@@ -291,16 +363,21 @@ export function useStreamWS() {
   }
 
   async function sendReliable(msg: any): Promise<boolean> {
-    const trySend = (): boolean => {
+    const trySend = async (): Promise<boolean> => {
       const socket = ws
       if (socket?.readyState === WebSocket.OPEN) {
+        if (typeof (socket as any).sendAsync === 'function') {
+          // 原生桥：await 插件确认，发送被拒（socket 恰好断开）如实返回 false，
+          // 触发下方重连重试，不再静默吞掉
+          return await (socket as any).sendAsync(JSON.stringify(msg))
+        }
         socket.send(JSON.stringify(msg))
         return true
       }
       return false
     }
 
-    if (trySend()) {
+    if (await trySend()) {
       return true
     }
     try {
@@ -309,7 +386,7 @@ export function useStreamWS() {
       console.warn('[ws] sendReliable failed to reconnect for', msg.type)
       return false
     }
-    if (trySend()) {
+    if (await trySend()) {
       return true
     }
     console.warn('[ws] sendReliable dropped after reconnect:', msg.type, 'readyState=' + ws?.readyState)
@@ -327,6 +404,9 @@ export function useStreamWS() {
     if (sessionId) {
       subscribedSessionIds.add(String(sessionId))
       send({ type: 'subscribe', sessionId: Number(sessionId) })
+      if (isNativeBridgeActive()) {
+        ;(ws as any).syncSubscriptions(Array.from(subscribedSessionIds).map(Number)).catch(() => {})
+      }
     }
   }
 
@@ -334,11 +414,44 @@ export function useStreamWS() {
     if (sessionId) {
       subscribedSessionIds.delete(String(sessionId))
       send({ type: 'unsubscribe', sessionId: Number(sessionId) })
+      if (isNativeBridgeActive()) {
+        ;(ws as any).syncSubscriptions(Array.from(subscribedSessionIds).map(Number)).catch(() => {})
+      }
     }
   }
 
-  function sendMessage(sessionId: string, content: string, eventId: string, images?: string[], localSkills?: LocalSkillReport[], agentsMdContent?: string) {
-    send({
+  /**
+   * 原生桥：会话纳入后台保活集合（发送前调用，服务提升 FGS）。
+   * UI 关闭面板（unsubscribe）绝不触发 untrack。
+   */
+  async function trackSessions(sessionIds: number[]): Promise<boolean> {
+    if (!isNativeBridgeActive()) return true
+    try {
+      await (ws as any).trackSessions(sessionIds)
+      return true
+    } catch (err) {
+      console.warn('[ws] trackSessions failed:', err)
+      return false
+    }
+  }
+
+  /**
+   * 原生桥：移出保活集合。仅用于发送失败回滚 / REST 确认终态 / 取消未启动 STARTING；
+   * 普通 WS 终态由原生状态机处理，JS 不应主动 untrack。
+   */
+  async function untrackSessions(sessionIds: number[], reason: string): Promise<boolean> {
+    if (!isNativeBridgeActive()) return true
+    try {
+      await (ws as any).untrackSessions(sessionIds, reason)
+      return true
+    } catch (err) {
+      console.warn('[ws] untrackSessions failed:', err)
+      return false
+    }
+  }
+
+  async function sendMessage(sessionId: string, content: string, eventId: string, images?: string[], localSkills?: LocalSkillReport[], agentsMdContent?: string): Promise<boolean> {
+    const payload = {
       type: 'send_message',
       sessionId: Number(sessionId),
       data: {
@@ -348,11 +461,26 @@ export function useStreamWS() {
         ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),
         ...(agentsMdContent ? { agentsMdContent } : {})
       }
-    })
+    }
+    if (isNativeBridgeActive()) {
+      // 发送前把会话纳入后台保活集合（FGS 提升异步进行）
+      await (ws as any).trackSessions?.([Number(sessionId)]).catch(() => {})
+      const ok = await (ws as any).sendAsync?.(JSON.stringify(payload)).catch(() => false)
+      if (ok === false) {
+        // 原生 socket 未就绪/发送被拒（竞态断开）：回滚 STARTING track，
+        // 避免会话滞留保活集合；调用方据返回值提示失败
+        console.warn('[ws] send_message not delivered, rollback track', sessionId)
+        await untrackSessions([Number(sessionId)], 'send_failed')
+        return false
+      }
+      return true
+    }
+    send(payload)
+    return true
   }
 
-  function sendEditMessage(sessionId: string, content: string, messageId: string, images?: string[], localSkills?: LocalSkillReport[], agentsMdContent?: string) {
-    send({
+  async function sendEditMessage(sessionId: string, content: string, messageId: string, images?: string[], localSkills?: LocalSkillReport[], agentsMdContent?: string): Promise<boolean> {
+    const payload = {
       type: 'edit_and_resend',
       sessionId: Number(sessionId),
       messageId: Number(messageId),
@@ -360,7 +488,20 @@ export function useStreamWS() {
       images: images || [],
       ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),
       ...(agentsMdContent ? { agentsMdContent } : {})
-    })
+    }
+    if (isNativeBridgeActive()) {
+      // 原生桥：编辑重发同样启动新一轮执行，纳入后台保活集合
+      await (ws as any).trackSessions?.([Number(sessionId)]).catch(() => {})
+      const ok = await (ws as any).sendAsync?.(JSON.stringify(payload)).catch(() => false)
+      if (ok === false) {
+        console.warn('[ws] edit_and_resend not delivered, rollback track', sessionId)
+        await untrackSessions([Number(sessionId)], 'send_failed')
+        return false
+      }
+      return true
+    }
+    send(payload)
+    return true
   }
 
   function cancel(sessionId: string) {
@@ -391,7 +532,7 @@ export function useStreamWS() {
     send({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, direction } })
   }
 
-  function createSideSession(
+  async function createSideSession(
     parentSessionId: string,
     content: string,
     inheritContext: boolean,
@@ -399,8 +540,8 @@ export function useStreamWS() {
     localSkills?: LocalSkillReport[],
     agentsMdContent?: string,
     images?: string[]
-  ) {
-    send({
+  ): Promise<boolean> {
+    const payload = {
       type: 'create_side_session',
       sessionId: Number(parentSessionId),
       data: {
@@ -411,7 +552,21 @@ export function useStreamWS() {
         ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),
         ...(agentsMdContent ? { agentsMdContent } : {})
       }
-    })
+    }
+    if (isNativeBridgeActive()) {
+      // 原生桥：父会话纳入保活集合——原生自动 track 子会话要求父会话已 tracked；
+      // 若父会话此前未发送过消息（如首次创建 Side Task），不 track 则后台无法保活
+      await (ws as any).trackSessions?.([Number(parentSessionId)]).catch(() => {})
+      const ok = await (ws as any).sendAsync?.(JSON.stringify(payload)).catch(() => false)
+      if (ok === false) {
+        console.warn('[ws] create_side_session not delivered, rollback track', parentSessionId)
+        await untrackSessions([Number(parentSessionId)], 'send_failed')
+        return false
+      }
+      return true
+    }
+    send(payload)
+    return true
   }
 
   function routeEvent(msg: any) {
@@ -811,6 +966,8 @@ export function useStreamWS() {
     disconnect,
     subscribe,
     unsubscribe,
+    trackSessions,
+    untrackSessions,
     sendMessage,
     sendEditMessage,
     cancel,

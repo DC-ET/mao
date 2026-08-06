@@ -277,6 +277,8 @@ public class StreamingWsRegistry {
     }
 
     private String normalizeClientType(String clientType) {
-        return "electron".equalsIgnoreCase(clientType) ? "electron" : "browser";
+        if ("electron".equalsIgnoreCase(clientType)) return "electron";
+        if ("android".equalsIgnoreCase(clientType)) return "android";
+        return "browser";
     }
 }

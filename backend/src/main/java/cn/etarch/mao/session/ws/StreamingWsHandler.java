@@ -1396,7 +1396,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
     private String resolveClientType(WebSocketSession session) {
         String client = getQueryParam(session, "client");
-        return "electron".equalsIgnoreCase(client) ? "electron" : "browser";
+        if ("electron".equalsIgnoreCase(client)) return "electron";
+        if ("android".equalsIgnoreCase(client)) return "android";
+        return "browser";
     }
 
     private String getQueryParam(WebSocketSession session, String key) {

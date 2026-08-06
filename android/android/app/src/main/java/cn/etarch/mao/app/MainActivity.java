@@ -1,13 +1,20 @@
 package cn.etarch.mao.app;
 
+import android.Manifest;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.webkit.WebView;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.ActionBar;
+import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.splashscreen.SplashScreen;
 import androidx.core.view.ViewCompat;
@@ -20,6 +27,22 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     private static final String PREFS = "mao_webview";
     private static final String KEY_ASSET_VERSION = "asset_version_code";
+
+    /** 通知点击跳转携带的会话 ID（冷启动时 Service 尚不存在，由 Service.ensureKeepAlive 消费） */
+    private static volatile long pendingNavigationSessionId = -1;
+
+    /** Android 13+ POST_NOTIFICATIONS 运行时申请 */
+    private ActivityResultLauncher<String> notificationPermissionLauncher;
+
+    /**
+     * 读取并清零待跳转会话 ID。通知冷启动时 Service 尚未创建，sessionId 暂存于此，
+     * 待前端 connect → Service.ensureKeepAlive 时消费（Service 的 registerEventListener 补发机制保证送达）。
+     */
+    public static long consumePendingNavigationSessionId() {
+        long v = pendingNavigationSessionId;
+        pendingNavigationSessionId = -1;
+        return v;
+    }
 
     /** 强制显示 TopNav、移除 HTML splash，覆盖升级后可能残留的旧 CSS 缓存。 */
     private static final String FORCE_TOP_NAV_JS =
@@ -47,12 +70,60 @@ public class MainActivity extends BridgeActivity {
         SplashScreen.installSplashScreen(this);
 
         registerPlugin(AppUpdatePlugin.class);
+        registerPlugin(WsBridgePlugin.class);
         super.onCreate(savedInstanceState);
 
         // BridgeActivity 会 setTheme(NoActionBar)；再显式藏掉 ActionBar，杜绝标题「Mao」。
         hideActionBar();
         configureSystemBars();
         configureWebView();
+        registerNotificationPermission();
+        handleIntent(getIntent());
+    }
+
+    /** 通知点击冷启动/热启动：提取 sessionId 存 pending，转发给保活服务消费。 */
+    private void handleIntent(Intent intent) {
+        if (intent == null || intent.getLongExtra(AppNotification.EXTRA_SESSION_ID, -1) <= 0) {
+            return;
+        }
+        long sessionId = intent.getLongExtra(AppNotification.EXTRA_SESSION_ID, -1);
+        pendingNavigationSessionId = sessionId;
+        WsKeepAliveService svc = WsKeepAliveService.getInstance();
+        if (svc != null) {
+            svc.notifyPendingNavigate(sessionId);
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIntent(intent);
+    }
+
+    /** 前后台状态通知保活服务（后台立即转缓冲模式）。 */
+    @Override
+    public void onStart() {
+        super.onStart();
+        WsKeepAliveService.setAppForeground(true);
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        WsKeepAliveService.setAppForeground(false);
+    }
+
+    private void registerNotificationPermission() {
+        notificationPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                granted -> { /* 拒绝则前台服务仍运行，仅通知可见性受限 */ });
+        // Android 13+（API 33）首次启动请求一次
+        if (Build.VERSION.SDK_INT >= 33
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS);
+        }
     }
 
     private void hideActionBar() {
