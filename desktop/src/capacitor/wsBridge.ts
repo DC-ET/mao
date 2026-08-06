@@ -21,6 +21,7 @@ export interface WsBridgeEvent {
 export interface RecoverySnapshot {
   active: boolean
   recoveryId: string | null
+  replayFrom: number
   watermark: number
   restSyncSessionIds: number[]
   pendingRecoverySessionIds: number[]
@@ -47,6 +48,7 @@ export interface WsBridge {
   untrackSessions(sessionIds: number[], reason: string): Promise<void>
   syncSubscriptions(sessionIds: number[]): Promise<void>
   beginRecovery(): Promise<RecoverySnapshot | null>
+  waitUntilApplied(seq: number, timeoutMs: number): Promise<void>
   completeRestSync(recoveryId: string, sessionIds: number[]): Promise<void>
   completeRecovery(recoveryId: string): Promise<void>
   abortRecovery(recoveryId: string): Promise<void>
@@ -117,7 +119,17 @@ export function createWsBridge(token: string, wsUrl: string): WsBridge | null {
 class NativeWsBridge implements WsBridge {
   readyState: number = WS_CONNECTING
   onopen: (() => void) | null = null
-  onmessage: ((ev: WsBridgeEvent) => void) | null = null
+  private messageHandler: ((ev: WsBridgeEvent) => void) | null = null
+  get onmessage(): ((ev: WsBridgeEvent) => void) | null {
+    return this.messageHandler
+  }
+  set onmessage(handler: ((ev: WsBridgeEvent) => void) | null) {
+    this.messageHandler = handler
+    if (handler && this.queue.length > 0 && !this.processing) {
+      this.processing = true
+      this.drain()
+    }
+  }
   onclose: ((ev?: unknown) => void) | null = null
   onerror: ((ev?: unknown) => void) | null = null
   onReplayDone: (() => void) | null = null
@@ -132,6 +144,7 @@ class NativeWsBridge implements WsBridge {
   private closed = false
   /** CONNECTING 复用场景的等待者（waitForOpen） */
   private openWaiters: Array<() => void> = []
+  private appliedWaiters: Array<{ seq: number; resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }> = []
 
   constructor(token: string, wsUrl: string) {
     this.plugin = getPlugin()
@@ -178,6 +191,7 @@ class NativeWsBridge implements WsBridge {
     })
 
     this.plugin.addListener('wsEvent', (data: { seq: number; message: string }) => {
+      if (this.closed) return
       this.enqueue({ data: data.message, seq: data.seq })
     })
 
@@ -189,11 +203,13 @@ class NativeWsBridge implements WsBridge {
     })
 
     this.plugin.addListener('replayDone', () => {
+      if (this.closed) return
       this.onReplayDone?.()
       replayDoneHandler?.()
     })
 
     this.plugin.addListener('pendingNavigate', (info: { sessionId: number }) => {
+      if (this.closed) return
       if (info && info.sessionId > 0) {
         const sid = Number(info.sessionId)
         this.onPendingNavigate?.(sid)
@@ -204,38 +220,68 @@ class NativeWsBridge implements WsBridge {
 
   /** 串行处理事件：去重 → 路由（onmessage）→ ACK。 */
   private enqueue(ev: WsBridgeEvent) {
+    if (this.closed) return
     this.queue.push(ev)
-    if (!this.processing) {
+    // 插件监听可能先于 useStreamWS 挂载 onmessage 收到重放事件；必须保留到处理器就绪，
+    // 否则事件会被当作已应用而 ACK，界面却永久缺失。
+    if (this.messageHandler && !this.processing) {
       this.processing = true
       this.drain()
     }
   }
 
   private drain() {
-    // 串行（同步循环天然串行）：保证 routeEvent 按 sequence 顺序应用
-    while (this.queue.length > 0) {
-      const ev = this.queue.shift()!
-      if (ev.seq > 0) {
-        // tracked 事件：去重
-        if (ev.seq <= this.lastAppliedSeq) {
-          this.ack(ev.seq) // 已应用过：只 ACK 不路由
-          continue
-        }
-        // 路由成功后更新 lastAppliedSeq 并 ACK
-        try {
-          this.onmessage?.({ data: ev.data, seq: ev.seq })
-        } finally {
-          if (ev.seq > this.lastAppliedSeq) {
-            this.lastAppliedSeq = ev.seq
+    try {
+      // 串行（同步循环天然串行）：保证 routeEvent 按 sequence 顺序应用
+      while (this.queue.length > 0 && this.messageHandler && !this.closed) {
+        const ev = this.queue[0]
+        if (ev.seq > 0) {
+          // tracked 事件：去重
+          if (ev.seq <= this.lastAppliedSeq) {
+            this.queue.shift()
+            this.ack(ev.seq) // 已应用过：只 ACK 不路由
+            continue
           }
+          // 只有实际路由成功后才能移出队列、推进水位并 ACK。
+          this.messageHandler({ data: ev.data, seq: ev.seq })
+          this.queue.shift()
+          this.lastAppliedSeq = ev.seq
+          this.resolveAppliedWaiters()
           this.ack(ev.seq)
+        } else {
+          // subscribed 未 tracked 事件（seq=-1）：实时转发，不 ACK
+          this.messageHandler({ data: ev.data, seq: -1 })
+          this.queue.shift()
         }
-      } else {
-        // subscribed 未 tracked 事件（seq=-1）：实时转发，不 ACK
-        this.onmessage?.({ data: ev.data, seq: -1 })
       }
+    } finally {
+      this.processing = false
     }
-    this.processing = false
+  }
+
+  private resolveAppliedWaiters() {
+    const ready = this.appliedWaiters.filter((waiter) => waiter.seq <= this.lastAppliedSeq)
+    this.appliedWaiters = this.appliedWaiters.filter((waiter) => waiter.seq > this.lastAppliedSeq)
+    ready.forEach((waiter) => {
+      clearTimeout(waiter.timer)
+      waiter.resolve()
+    })
+  }
+
+  waitUntilApplied(seq: number, timeoutMs: number): Promise<void> {
+    if (seq <= this.lastAppliedSeq) return Promise.resolve()
+    return new Promise((resolve, reject) => {
+      const waiter: { seq: number; resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> } = {
+        seq,
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.appliedWaiters = this.appliedWaiters.filter((item) => item !== waiter)
+          reject(new Error(`native replay apply timeout at seq ${seq}`))
+        }, timeoutMs)
+      }
+      this.appliedWaiters.push(waiter)
+    })
   }
 
   private ack(seq: number) {
@@ -338,6 +384,14 @@ class NativeWsBridge implements WsBridge {
   close(): void {
     this.closed = true
     this.readyState = WS_CLOSED
+    this.messageHandler = null
+    this.queue.length = 0
+    const waiters = this.appliedWaiters
+    this.appliedWaiters = []
+    waiters.forEach((waiter) => {
+      clearTimeout(waiter.timer)
+      waiter.reject(new Error('native ws bridge closed'))
+    })
     if (this.jsAliveTimer) {
       clearInterval(this.jsAliveTimer)
       this.jsAliveTimer = null
@@ -362,6 +416,7 @@ class NativeWsBridge implements WsBridge {
     return {
       active: true,
       recoveryId: snap.recoveryId ?? null,
+      replayFrom: Number(snap.replayFrom ?? 1),
       watermark: Number(snap.watermark ?? 0),
       restSyncSessionIds: Array.isArray(snap.restSyncSessionIds) ? snap.restSyncSessionIds.map(Number) : [],
       pendingRecoverySessionIds: Array.isArray(snap.pendingRecoverySessionIds) ? snap.pendingRecoverySessionIds.map(Number) : []

@@ -664,8 +664,9 @@ public class WsKeepAliveService extends Service {
     public RecoveryCoordinator.RecoverySnapshot beginRecovery() {
         if (queue == null || tracked == null || recovery == null) return null;
         RecoveryCoordinator.RecoverySnapshot snap = recovery.beginRecovery();
-        // 重放水位内事件（lastAck+1 → watermark）
-        long from = queue.getLastAck() + 1;
+        // 重放水位内事件（本次 recovery 固定起点 → watermark）。重复 beginRecovery
+        // 必须使用同一起点，不能受异步 ACK 推进影响，否则 WebView 重建后会缺少未应用事件。
+        long from = recovery.getReplayFrom();
         long watermark = snap.watermark;
         for (PendingQueue.EventRecord r : queue.replayFrom(from)) {
             if (r.seq > watermark) break;
@@ -686,15 +687,17 @@ public class WsKeepAliveService extends Service {
         if (recovery != null) recovery.abortRecovery(recoveryId);
     }
 
-    /** SYNC 解除：补放 watermark 之后的新事件，发 replayDone，恢复实时。 */
+    /** SYNC 解除：只补放本次 watermark 之后的新事件，发 replayDone，恢复实时。 */
     private void onSyncReleased(boolean completed) {
-        if (queue == null) return;
-        long from = queue.getLastAck() + 1;
+        if (queue == null || recovery == null) return;
+        // ACK 经 Capacitor 异步返回，completeRecovery 到达时 queue.lastAck 可能尚未追上
+        // 首轮重放水位。若从 lastAck+1 补放，会把整段 content_delta 再应用一次。
+        long from = recovery.getWatermark() + 1;
         for (PendingQueue.EventRecord r : queue.replayFrom(from)) {
             dispatchToJs(r.seq, r.json);
         }
         if (listener != null) listener.onReplayDone();
-        Log.i(TAG, "sync released, realtime resumed");
+        Log.i(TAG, "sync released, realtime resumed from seq=" + from);
     }
 
     // ---------------- STARTING 超时回滚 ----------------

@@ -67,6 +67,11 @@ export function useAppResumeSync() {
       if (!bridge) return
       const snap = await bridge.beginRecovery()
       if (!snap || !snap.active || !snap.recoveryId) return
+      // beginRecovery 返回仅表示原生已开始投递；等待 WebView 实际按序应用到水位，
+      // 再执行 REST 校准/结束恢复，避免水位后的新事件先到并跨越去重水位。
+      if (snap.watermark >= snap.replayFrom) {
+        await bridge.waitUntilApplied(snap.watermark, 10_000)
+      }
 
       // REST 校准（部分失败保留待下次）
       const done: number[] = []

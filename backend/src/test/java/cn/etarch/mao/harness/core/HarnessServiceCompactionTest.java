@@ -77,8 +77,6 @@ class HarnessServiceCompactionTest {
         session.setExecutionMode("CLOUD");
         when(sessionMapper.selectById(7L)).thenReturn(session);
         when(sessionService.loadContextAnchor(7L)).thenReturn(new SessionService.ContextAnchor(0, 0L));
-        when(activeContextCalculator.estimateMessages(anyList())).thenReturn(10);
-        when(activeContextCalculator.estimateText(any())).thenReturn(0);
 
         Agent agent = new Agent();
         agent.setId(9L);
@@ -144,6 +142,8 @@ class HarnessServiceCompactionTest {
 
     @Test
     void buildContextUsesOrchestratorAndKeepsBothCleanups() {
+        when(activeContextCalculator.estimateMessages(anyList())).thenReturn(10);
+        when(activeContextCalculator.estimateText(any())).thenReturn(0);
         SessionCompaction original = compaction(1L, 7L, 100L, "old summary");
         SessionCompaction latest = compaction(1L, 7L, 120L, "new summary");
         when(compactionConfig.isEnabled()).thenReturn(true);

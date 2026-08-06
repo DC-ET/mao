@@ -167,6 +167,7 @@ public class WsBridgePlugin extends Plugin implements WsKeepAliveService.EventLi
         JSObject ret = new JSObject();
         ret.put("active", true);
         ret.put("recoveryId", snap.recoveryId);
+        ret.put("replayFrom", snap.replayFrom);
         ret.put("watermark", snap.watermark);
         ret.put("restSyncSessionIds", toJsArray(snap.restSyncSessionIds));
         ret.put("pendingRecoverySessionIds", toJsArray(snap.pendingRecoverySessionIds));

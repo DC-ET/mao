@@ -298,6 +298,12 @@ function ensureInspectorMeta(sid: string, viewType: 'side_task' | 'subagent', pa
     try {
       const { data: meta } = await api.get(`/sessions/${sid}`)
       if (meta?.phase) sessionStore.updateSessionPhase(sid, meta.phase)
+      // 补拉上下文占用：context_window 事件仅在该会话执行期间经 WS 推送，
+      // 页面刷新或会话已停止后 store 缓存缺失，会回退显示主会话上下文。
+      // 仅当无实时缓存时写入，避免覆盖执行中的实时值。
+      if (meta?.contextTokens && meta.contextTokens > 0 && !sessionStore.getContextWindow(sid)) {
+        sessionStore.setContextWindow(sid, { estimated: meta.contextTokens, actual: 0 })
+      }
       const num = Number(sid)
       if (viewType === 'side_task') {
         const cur = sessionStore.getSideTasks(parentId).find(t => t.id === num)

@@ -259,7 +259,7 @@ class AgentLoopTest {
         AgentEventListener listener = mock(AgentEventListener.class);
         AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
         when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
-        when(contextManager.estimateRequestTokens(any())).thenReturn(80);
+        stubActiveContext(80);
         when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
                 eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");
@@ -280,7 +280,7 @@ class AgentLoopTest {
         AgentExecutionContext context = contextWithMidLoopConfig(100, 0.5);
         AgentEventListener listener = mock(AgentEventListener.class);
         when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
-        when(contextManager.estimateRequestTokens(any())).thenReturn(80);
+        stubActiveContext(80);
         when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
                 eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");
@@ -299,7 +299,7 @@ class AgentLoopTest {
         AgentEventListener listener = mock(AgentEventListener.class);
         AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
         when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
-        when(contextManager.estimateRequestTokens(any())).thenReturn(80);
+        stubActiveContext(80);
         when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
                 eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");
@@ -332,7 +332,7 @@ class AgentLoopTest {
         AgentEventListener listener = mock(AgentEventListener.class);
         AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
         when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
-        when(contextManager.estimateRequestTokens(any())).thenReturn(50);
+        stubActiveContext(50);
         when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
                 eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");

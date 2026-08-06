@@ -45,6 +45,7 @@ class SessionServiceCompactionTest {
     @Mock private UserCommandService userCommandService;
     @Mock private GitOperationService gitOperationService;
     @Mock private SessionCompactionService sessionCompactionService;
+    @Mock private SessionCompactionEventService sessionCompactionEventService;
 
     @InjectMocks private SessionService sessionService;
 

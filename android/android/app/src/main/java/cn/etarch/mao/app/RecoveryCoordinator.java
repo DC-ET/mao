@@ -34,6 +34,7 @@ public class RecoveryCoordinator {
 
     private String recoveryId = null;
     private volatile long watermark = 0;
+    private volatile long replayFrom = 1;
     private final Set<Long> restSyncSessionIds = new LinkedHashSet<>();
     private final Set<Long> pendingRecoverySessionIds = new LinkedHashSet<>();
     private final AtomicBoolean inSync = new AtomicBoolean(false);
@@ -47,13 +48,15 @@ public class RecoveryCoordinator {
     /** beginRecovery 返回给 JS 的恢复快照。 */
     public static final class RecoverySnapshot {
         public final String recoveryId;
+        public final long replayFrom;
         public final long watermark;
         public final Set<Long> restSyncSessionIds;
         public final Set<Long> pendingRecoverySessionIds;
 
-        RecoverySnapshot(String recoveryId, long watermark,
+        RecoverySnapshot(String recoveryId, long replayFrom, long watermark,
                          Set<Long> restSyncSessionIds, Set<Long> pendingRecoverySessionIds) {
             this.recoveryId = recoveryId;
+            this.replayFrom = replayFrom;
             this.watermark = watermark;
             this.restSyncSessionIds = restSyncSessionIds;
             this.pendingRecoverySessionIds = pendingRecoverySessionIds;
@@ -76,6 +79,10 @@ public class RecoveryCoordinator {
         return watermark;
     }
 
+    public long getReplayFrom() {
+        return replayFrom;
+    }
+
     public String getRecoveryId() {
         return recoveryId;
     }
@@ -86,6 +93,7 @@ public class RecoveryCoordinator {
             return snapshot();
         }
         recoveryId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        replayFrom = queue.getLastAck() + 1;
         watermark = queue.maxPendingSeq();
         restSyncSessionIds.clear();
         restSyncSessionIds.addAll(queue.getRestSyncRequired());
@@ -106,7 +114,7 @@ public class RecoveryCoordinator {
     }
 
     public synchronized RecoverySnapshot snapshot() {
-        return new RecoverySnapshot(recoveryId, watermark,
+        return new RecoverySnapshot(recoveryId, replayFrom, watermark,
                 new LinkedHashSet<>(restSyncSessionIds),
                 new LinkedHashSet<>(pendingRecoverySessionIds));
     }

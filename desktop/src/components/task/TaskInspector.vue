@@ -48,7 +48,6 @@
                 :class="{ readonly: viewType === 'subagent' }"
                 @click="startEdit"
               >{{ displayTitle }}</h3>
-              <span v-if="viewBadge" class="view-badge">{{ viewBadge }}</span>
             </div>
           </div>
         </div>
@@ -381,12 +380,6 @@ const phaseClass = computed(() => {
 
 const displayTitle = computed(() => props.title || '新任务')
 
-// 会话类型标识：主会话不显示，边路任务 / 子代理显示徽标
-const viewBadge = computed(() => {
-  if (props.viewType === 'side_task') return '边路任务'
-  if (props.viewType === 'subagent') return '子代理'
-  return ''
-})
 const workspaceLabel = computed(() => {
   if (props.executionMode === 'CLOUD') {
     return cloudWorkspaceIndicator(props.executionMode, props.workspace, props.projectKey)
@@ -632,24 +625,6 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   align-items: flex-start;
   gap: 8px;
   min-width: 0;
-}
-
-.view-badge {
-  flex-shrink: 0;
-  margin-top: 3px;
-  font-size: 11px;
-  line-height: 1;
-  padding: 3px 7px;
-  border-radius: 4px;
-  color: var(--aw-ink-muted-48);
-  background: rgba(0, 0, 0, 0.05);
-  border: 1px solid var(--aw-hairline);
-  letter-spacing: 0.3px;
-  white-space: nowrap;
-}
-
-[data-theme="dark"] .view-badge {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .task-title {
