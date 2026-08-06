@@ -109,7 +109,10 @@ public class WeixinVoiceSynthesisService {
     }
 
     /**
-     * 按语音最大时长截断文本，避免合成音频超出微信语音条时长限制。
+     * 按语音最大时长截断文本，避免合成音频超出语音条时长限制。
+     * <p>
+     * 截断优先落在句子边界（句号/叹号/问号/换行），避免硬切切断完整语义；
+     * 仅在边界点过于靠前（不足一半）时才回退到字符硬截断。
      */
     private String clipText(String text) {
         int maxSeconds = weixinBotConfig.getVoiceMaxSeconds() > 0
@@ -118,6 +121,14 @@ public class WeixinVoiceSynthesisService {
         if (text.length() <= maxChars) {
             return text;
         }
-        return text.substring(0, maxChars);
+        String prefix = text.substring(0, maxChars);
+        int boundary = Math.max(prefix.lastIndexOf('。'),
+                Math.max(prefix.lastIndexOf('！'),
+                Math.max(prefix.lastIndexOf('？'), prefix.lastIndexOf('\n'))));
+        if (boundary > maxChars / 2) {
+            // 包含分句符，语音在完整句读处结束
+            return text.substring(0, boundary + 1);
+        }
+        return prefix;
     }
 }

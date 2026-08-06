@@ -131,5 +131,5 @@ weixin:
     silk-encoder-path: /usr/local/bin/silk-encoder
     # ffmpeg 可执行文件路径
     ffmpeg-path: ffmpeg
-    # 语音最大时长（秒），超长文本会被截断
-    voice-max-seconds: 60
+    # 语音最大时长（秒），超长文本在句子边界截断；微信侧为 MP3 文件消息，无语音条 60 秒限制，默认 300 秒尽量覆盖完整回复
+    voice-max-seconds: 300

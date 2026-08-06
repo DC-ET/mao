@@ -27,8 +27,11 @@ public class WeixinBotConfig {
     /** ffmpeg 可执行文件路径 */
     private String ffmpegPath = "ffmpeg";
 
-    /** 语音最大时长（秒），超过则截断文本 */
-    private int voiceMaxSeconds = 60;
+    /**
+     * 语音最大时长（秒），超长文本在句子边界截断。
+     * 微信侧以 MP3 文件消息发送，无语音条 60 秒限制，默认 300 秒以尽量覆盖完整回复。
+     */
+    private int voiceMaxSeconds = 300;
 
     private MonitorConfig monitor = new MonitorConfig();
 
