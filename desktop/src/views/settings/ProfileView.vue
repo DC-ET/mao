@@ -207,6 +207,24 @@ onBeforeUnmount(() => {
   max-width: 560px;
 }
 
+.page-header {
+  margin-bottom: 20px;
+}
+
+.page-title {
+  margin: 0 0 8px;
+  color: var(--aw-ink);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.page-desc {
+  margin: 0;
+  color: var(--aw-ink-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .profile-card {
   background: var(--aw-surface);
   border: 1px solid var(--aw-divider-soft);
@@ -242,6 +260,23 @@ onBeforeUnmount(() => {
 
 .profile-form {
   max-width: 360px;
+}
+
+.profile-form :deep(.el-form-item__label) {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.profile-form :deep(.el-input__inner) {
+  font-size: 13px;
+}
+
+.profile-card :deep(.el-button) {
+  font-size: 13px;
+}
+
+.profile-card :deep(.el-tag) {
+  font-size: 12px;
 }
 
 .profile-tip {

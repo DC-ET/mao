@@ -62,12 +62,10 @@
       </el-tooltip>
       <template v-if="authStore.user">
         <el-dropdown @command="handleCommand" trigger="click">
-          <div class="nav-user">
+          <div class="nav-user" role="button" aria-label="用户菜单">
             <el-avatar :size="24" :src="authStore.user?.avatarUrl || undefined">
               <el-icon v-if="!authStore.user?.avatarUrl"><User /></el-icon>
             </el-avatar>
-            <span class="nav-username">{{ authStore.user?.username }}</span>
-            <el-icon :size="10"><ArrowDown /></el-icon>
           </div>
           <template #dropdown>
             <el-dropdown-menu class="nav-dropdown">
@@ -94,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, ArrowLeft, Sunrise, Moon, Refresh, Setting, Sunny, User } from '@element-plus/icons-vue'
+import { ArrowLeft, Sunrise, Moon, Refresh, Setting, Sunny, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -417,9 +415,8 @@ async function handleCommand(command: string) {
 .nav-user {
   display: flex;
   align-items: center;
-  gap: 4px;
   cursor: pointer;
-  padding: 4px 6px;
+  padding: 4px;
   border-radius: var(--aw-radius-xs);
   transition: background 0.15s;
   color: var(--aw-nav-text-muted);
@@ -438,15 +435,6 @@ async function handleCommand(command: string) {
   color: var(--aw-ink);
 }
 
-.nav-username {
-  font-size: var(--aw-text-caption);
-  color: var(--aw-nav-text-muted);
-  max-width: 80px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1;
-}
 
 .nav-dropdown :deep(.el-dropdown-menu__item) {
   font-size: var(--aw-text-caption);
