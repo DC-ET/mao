@@ -21,8 +21,8 @@
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${LOG_PATH}/debug.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
             <maxFileSize>100MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>5GB</totalSizeCap>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
             <pattern>${LOG_PATTERN}</pattern>
@@ -40,8 +40,8 @@
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${LOG_PATH}/info.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
             <maxFileSize>100MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>5GB</totalSizeCap>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
             <pattern>${LOG_PATTERN}</pattern>
@@ -59,8 +59,8 @@
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${LOG_PATH}/warn.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
             <maxFileSize>100MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>5GB</totalSizeCap>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
             <pattern>${LOG_PATTERN}</pattern>
@@ -78,8 +78,8 @@
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${LOG_PATH}/error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
             <maxFileSize>100MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>5GB</totalSizeCap>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
             <pattern>${LOG_PATTERN}</pattern>
