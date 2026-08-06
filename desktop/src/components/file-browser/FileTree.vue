@@ -144,11 +144,10 @@ async function handleDownloadFile() {
     return
   }
   downloading.value = true
-  ElMessage.info(`开始下载 ${node.name}…`)
   try {
     const result = await props.provider.downloadFile(node.path, node.name)
     if (result.ok) {
-      ElMessage.success(`下载完成：${node.name}`)
+      ElMessage.success(`已触发下载：${node.name}`)
     } else {
       ElMessage.error(result.error || '下载失败')
     }
@@ -169,7 +168,7 @@ async function handleDownloadDirectory() {
   try {
     const result = await props.provider.downloadDirectory(node.path, `${node.name}.zip`)
     if (result.ok) {
-      ElMessage.success(`下载完成：${node.name}.zip`)
+      ElMessage.success(`已触发下载：${node.name}.zip`)
     } else {
       ElMessage.error(result.error || '下载失败')
     }
