@@ -15,6 +15,7 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -116,6 +117,20 @@ public class WorkspaceBrowseService {
             throw new BusinessException(ErrorCode.PARAM_INVALID, "不是普通文件：" + relativePath);
         }
 
+        // 跟随所有符号链接后校验真实路径仍位于真实工作区内，防止中间目录符号链接绕过沙箱
+        Path realPath;
+        Path realRoot;
+        try {
+            realPath = filePath.toRealPath();
+            realRoot = pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace).toRealPath();
+        } catch (IOException e) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "文件不存在：" + relativePath);
+        }
+        if (!realPath.startsWith(realRoot)) {
+            log.warn("Path escape via symlink blocked: {} (real: {})", relativePath, realPath);
+            throw new BusinessException(ErrorCode.FORBIDDEN, "路径访问被拒绝");
+        }
+
         long size;
         try {
             size = Files.size(filePath);
@@ -129,6 +144,83 @@ public class WorkspaceBrowseService {
         result.setSize(size);
         result.setFileName(filePath.getFileName().toString());
         return result;
+    }
+
+    /**
+     * 校验并返回 PDF 文件供客户端预览。与 downloadFile 的沙箱校验一致，
+     * 额外要求扩展名为 .pdf 且文件头为 PDF 魔数（%PDF-，兼容 UTF-8 BOM 前缀）。
+     */
+    public DownloadResult readPdfFile(String sessionWorkspace, String relativePath) {
+        if (relativePath == null || relativePath.isBlank()) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "文件路径不能为空");
+        }
+
+        String lower = relativePath.toLowerCase();
+        if (!lower.endsWith(".pdf")) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "仅支持预览 .pdf 文件");
+        }
+
+        Path filePath = resolvePath(relativePath, sessionWorkspace);
+
+        if (!Files.exists(filePath)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "文件不存在：" + relativePath);
+        }
+        if (!Files.isRegularFile(filePath) || Files.isSymbolicLink(filePath)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "不是普通文件：" + relativePath);
+        }
+
+        // 跟随所有符号链接后校验真实路径仍位于真实工作区内，防止中间目录符号链接绕过沙箱
+        Path realPath;
+        Path realRoot;
+        try {
+            realPath = filePath.toRealPath();
+            realRoot = pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace).toRealPath();
+        } catch (IOException e) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "文件不存在：" + relativePath);
+        }
+        if (!realPath.startsWith(realRoot)) {
+            log.warn("PDF path escape via symlink blocked: {} (real: {})", relativePath, realPath);
+            throw new BusinessException(ErrorCode.FORBIDDEN, "路径访问被拒绝");
+        }
+
+        byte[] head = new byte[8];
+        int read;
+        try (InputStream in = Files.newInputStream(filePath)) {
+            read = in.readNBytes(head, 0, head.length);
+        } catch (IOException e) {
+            log.warn("Failed to read pdf header: {}", filePath, e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "读取文件失败");
+        }
+        if (!isPdfHeader(head, read)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "不是有效的 PDF 文件或文件已损坏：" + relativePath);
+        }
+
+        long size;
+        try {
+            size = Files.size(filePath);
+        } catch (IOException e) {
+            log.warn("Failed to stat pdf file: {}", filePath, e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "读取文件失败");
+        }
+
+        DownloadResult result = new DownloadResult();
+        result.setPath(filePath);
+        result.setSize(size);
+        result.setFileName(filePath.getFileName().toString());
+        return result;
+    }
+
+    private static boolean isPdfHeader(byte[] head, int read) {
+        int offset = 0;
+        // 跳过 UTF-8 BOM (EF BB BF)
+        if (read >= 3 && (head[0] & 0xFF) == 0xEF && (head[1] & 0xFF) == 0xBB && (head[2] & 0xFF) == 0xBF) {
+            offset = 3;
+        }
+        if (read - offset < 5) {
+            return false;
+        }
+        return head[offset] == '%' && head[offset + 1] == 'P' && head[offset + 2] == 'D'
+                && head[offset + 3] == 'F' && head[offset + 4] == '-';
     }
 
     public ZipResult zipDirectory(String sessionWorkspace, String relativeDir) {

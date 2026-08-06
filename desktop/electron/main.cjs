@@ -1124,6 +1124,17 @@ ipcMain.handle('local-read-file', async (event, { path: filePath, offset, limit 
     if (mimeFromPath(filePath)) {
       return readLocalImage(resolvedPath, filePath)
     }
+    if (filePath.toLowerCase().endsWith('.pdf')) {
+      // PDF 预览：按字节读取并以 base64 data_uri 返回，由渲染进程转为 Blob 交给 pdf.js
+      const buffer = fs.readFileSync(resolvedPath)
+      return {
+        content: `PDF 文件：${filePath}`,
+        total_lines: 0,
+        media_type: 'pdf',
+        mime: 'application/pdf',
+        data_uri: `data:application/pdf;base64,${buffer.toString('base64')}`,
+      }
+    }
     const content = fs.readFileSync(resolvedPath, 'utf-8')
     const lines = content.split('\n')
     const totalLines = lines.length

@@ -12,6 +12,16 @@
       <p class="image-meta">{{ content }}</p>
     </div>
 
+    <!-- PDF preview -->
+    <div v-else-if="state === 'pdf' && pdfBlobUrl" class="pdf-container">
+      <PdfViewer
+        :blob-url="pdfBlobUrl"
+        :file-path="props.filePath"
+        :file-name="pdfFileName"
+        :provider="provider"
+      />
+    </div>
+
     <!-- Binary file -->
     <div v-else-if="state === 'binary'" class="file-message">
       <p>二进制文件，无法预览</p>
@@ -52,6 +62,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, toRef } from 'vue'
 import { useMonacoViewer } from '../../composables/useMonacoViewer'
 import MarkdownContent from '../common/MarkdownContent.vue'
+import PdfViewer from './PdfViewer.vue'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
@@ -68,11 +79,13 @@ const sessionStore = useSessionStore()
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { openFileTab } = useCenterTabs(activeSessionIdRef)
 
-type LoadState = 'loading' | 'ready' | 'error' | 'binary' | 'empty' | 'image'
+type LoadState = 'loading' | 'ready' | 'error' | 'binary' | 'empty' | 'image' | 'pdf'
 
 const state = ref<LoadState>('loading')
 const content = ref('')
 const imageDataUri = ref('')
+const pdfBlobUrl = ref('')
+const pdfFileName = ref('')
 const monacoContainer = ref<HTMLElement>()
 const viewMode = ref<'source' | 'rendered'>('rendered')
 const { isDark } = useTheme()
@@ -136,6 +149,46 @@ function isBinaryContent(text: string): boolean {
   return false
 }
 
+function releasePdfBlobUrl() {
+  if (pdfBlobUrl.value) {
+    URL.revokeObjectURL(pdfBlobUrl.value)
+    pdfBlobUrl.value = ''
+  }
+}
+
+function isPdfPath(filePath: string): boolean {
+  const ext = filePath.split('.').pop()?.toLowerCase()
+  return ext === 'pdf'
+}
+
+// PDF 预览请求序号：快速切换文件时丢弃过期响应，防止旧 PDF 覆盖当前标签内容
+let pdfPreviewSeq = 0
+
+async function loadPdfPreview() {
+  if (!props.provider?.previewFile) {
+    state.value = 'error'
+    errorMsg.value = '当前模式不支持 PDF 预览'
+    return
+  }
+  const seq = ++pdfPreviewSeq
+  const result = await props.provider.previewFile(props.filePath)
+  if (seq !== pdfPreviewSeq) return
+  if (result.error) {
+    state.value = 'error'
+    errorMsg.value = result.error
+    return
+  }
+  if (!result.blob || result.blob.size === 0) {
+    state.value = 'error'
+    errorMsg.value = 'PDF 内容为空'
+    return
+  }
+  releasePdfBlobUrl()
+  pdfFileName.value = props.filePath.split(/[/\\]/).pop() || props.filePath
+  pdfBlobUrl.value = URL.createObjectURL(result.blob)
+  state.value = 'pdf'
+}
+
 async function loadFile() {
   if (!props.filePath) return
   if (!props.provider) {
@@ -143,6 +196,8 @@ async function loadFile() {
     errorMsg.value = '工作区未就绪，请稍后再试'
     return
   }
+  // 作废旧 PDF 预览请求（路径切换/重载时丢弃过期响应）
+  pdfPreviewSeq++
   state.value = 'loading'
   content.value = ''
   imageDataUri.value = ''
@@ -150,6 +205,11 @@ async function loadFile() {
   truncated.value = false
 
   try {
+    if (isPdfPath(props.filePath)) {
+      await loadPdfPreview()
+      return
+    }
+
     const result = await props.provider.readFile(props.filePath, { limit: 5000 })
 
     if (result.error) {
@@ -197,6 +257,7 @@ watch(() => [props.filePath, props.provider] as const, () => {
     clearTimeout(changeDebounceTimer)
     changeDebounceTimer = null
   }
+  releasePdfBlobUrl()
   loadFile()
 })
 
@@ -220,6 +281,7 @@ onUnmounted(() => {
     clearTimeout(changeDebounceTimer)
     changeDebounceTimer = null
   }
+  releasePdfBlobUrl()
 })
 </script>
 
@@ -290,6 +352,12 @@ onUnmounted(() => {
   overflow: hidden;
   position: relative;
   min-height: 0;
+}
+
+.pdf-container {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .file-editor-area {

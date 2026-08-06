@@ -154,6 +154,22 @@ public class FileController {
                 .body(resource);
     }
 
+    @GetMapping("/workspace-preview")
+    public ResponseEntity<Resource> previewWorkspacePdf(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam Long sessionId,
+            @RequestParam String path) {
+        Session session = requireOwnedSession(userId, sessionId);
+        WorkspaceBrowseService.DownloadResult result = workspaceBrowseService.readPdfFile(session.getWorkspace(), path);
+
+        Resource resource = new FileSystemResource(result.getPath());
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, inlinePdfHeader(result.getFileName()))
+                .contentType(MediaType.parseMediaType("application/pdf"))
+                .contentLength(result.getSize())
+                .body(resource);
+    }
+
     @GetMapping("/workspace-download-zip")
     public ResponseEntity<StreamingResponseBody> downloadWorkspaceDirectory(
             @AuthenticationPrincipal Long userId,
@@ -184,6 +200,13 @@ public class FileController {
 
     private static String attachmentHeader(String fileName) {
         return ContentDisposition.attachment()
+                .filename(fileName, StandardCharsets.UTF_8)
+                .build()
+                .toString();
+    }
+
+    private static String inlinePdfHeader(String fileName) {
+        return ContentDisposition.inline()
                 .filename(fileName, StandardCharsets.UTF_8)
                 .build()
                 .toString();

@@ -26,6 +26,11 @@ export interface ReadFileResult {
   error?: string
 }
 
+export interface PreviewFileResult {
+  blob?: Blob
+  error?: string
+}
+
 export interface DownloadResult {
   ok: boolean
   error?: string
@@ -34,6 +39,8 @@ export interface DownloadResult {
 export interface WorkspaceFileProvider {
   listDirectory(relativeDir: string): Promise<DirectoryResult>
   readFile(relativePath: string, opts?: { offset?: number; limit?: number }): Promise<ReadFileResult>
+  /** 预览 PDF：获取文件字节 Blob，交由前端 pdf.js 渲染。 */
+  previewFile?(relativePath: string): Promise<PreviewFileResult>
   getAbsolutePath?(relativePath: string): string
   /** 下载单个文件到浏览器（仅 CLOUD 模式实现）。 */
   downloadFile?(relativePath: string, suggestedName: string): Promise<DownloadResult>
@@ -56,6 +63,22 @@ export function createLocalProvider(workspace: string): WorkspaceFileProvider {
         limit: opts?.limit ?? 5000,
       })
     },
+    async previewFile(relativePath: string) {
+      try {
+        const result = await window.electronAPI.localReadFile({
+          path: resolveWorkspaceFilePath(workspace, relativePath),
+        })
+        if (result.error) {
+          return { error: result.error }
+        }
+        if (result.media_type !== 'pdf' || !result.data_uri) {
+          return { error: '无法预览该文件' }
+        }
+        return { blob: dataUriToBlob(result.data_uri, result.mime || 'application/pdf') }
+      } catch (e: any) {
+        return { error: e?.message || 'PDF 预览失败' }
+      }
+    },
     getAbsolutePath(relativePath: string) {
       return resolveWorkspaceFilePath(workspace, relativePath)
     },
@@ -71,6 +94,9 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
       },
       async readFile() {
         return { content: '', total_lines: 0, error: '会话未就绪' }
+      },
+      async previewFile() {
+        return { error: '会话未就绪' }
       },
       async downloadFile() {
         return { ok: false, error: '会话未就绪' }
@@ -122,7 +148,37 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
     downloadDirectory(relativePath: string, suggestedName: string) {
       return downloadWorkspaceResource('/files/workspace-download-zip', numericSessionId, relativePath, suggestedName)
     },
+    async previewFile(relativePath: string) {
+      try {
+        const token = getToken()
+        const url = `${API_BASE}/files/workspace-preview?sessionId=${numericSessionId}&path=${encodeURIComponent(relativePath)}`
+        const resp = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!resp.ok) {
+          return { error: await extractDownloadError(resp) }
+        }
+        const blob = await resp.blob()
+        if (!blob || blob.size === 0) {
+          return { error: 'PDF 内容为空' }
+        }
+        return { blob }
+      } catch (e: any) {
+        return { error: e?.message || 'PDF 预览失败' }
+      }
+    },
   }
+}
+
+/** 将 data URI（base64）解码为 Blob。 */
+function dataUriToBlob(dataUri: string, mime: string): Blob {
+  const base64 = dataUri.slice(dataUri.indexOf(',') + 1)
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return new Blob([bytes], { type: mime })
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
