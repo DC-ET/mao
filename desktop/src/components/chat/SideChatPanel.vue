@@ -110,6 +110,8 @@ import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 
 const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 
+const messagesContainer = ref<HTMLElement>()
+
 const props = defineProps<{
   tabId: string
   sideSessionId: number
@@ -302,21 +304,113 @@ async function fetchQueue() {
   }
 }
 
+// --- 自动滚动（与主聊天 ChatPanel 对齐） ---
+const userScrolledUp = ref(false)
+const isProgrammaticScroll = ref(false)
+const NEAR_BOTTOM = 80
+
+function isNearBottom(): boolean {
+  const el = messagesContainer.value
+  if (!el) return false
+  return el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM
+}
+
+/** 仅在用户未主动上滑时滚动到底部（流式输出 / 消息变化时调用） */
+function scrollToBottom() {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      if (userScrolledUp.value) return
+      const el = messagesContainer.value
+      if (!el) return
+      isProgrammaticScroll.value = true
+      el.scrollTop = el.scrollHeight
+      requestAnimationFrame(() => {
+        isProgrammaticScroll.value = false
+      })
+    })
+  })
+}
+
+/** 忽略用户上滑状态，强制滚动到底部（切换 tab / 首次加载时调用） */
+function scrollToBottomForce() {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      const el = messagesContainer.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
+  })
+}
+
+/**
+ * 聚合会影响消息区「可见高度」的状态，用于触发自动滚动。
+ * 不包含 thinking 正文长度等高频但不可见（折叠态）的变化，避免流式阶段反复滚动。
+ */
+function buildScrollAnchor(): string {
+  const msgs = displayMessages.value
+  const last = msgs[msgs.length - 1]
+  const segmentStructure = last?.segments?.map(s => {
+    switch (s.type) {
+      case 'thinking': return 't'
+      case 'text': return 'x'
+      case 'tool': return `o:${s.callId}`
+    }
+  }).join(',') || ''
+  return [
+    msgs.length,
+    last?.content?.length || 0,
+    segmentStructure,
+    last?.toolCalls?.map(t => t.status).join(',') || '',
+    sending.value,
+    showTypingIndicator.value,
+    sidePendingQuestions.value.length,
+  ].join('|')
+}
+
+function handleWheel(e: WheelEvent) {
+  if (e.deltaY < 0) userScrolledUp.value = true
+}
+
+function handleScroll() {
+  const el = messagesContainer.value
+  if (!el) return
+  if (isProgrammaticScroll.value) return
+  // 用户滚动离开底部时暂停自动滚动，滚回底部附近时恢复
+  userScrolledUp.value = !isNearBottom()
+}
+
+// 消息 / 流式状态变化时自动滚动（flush:'post' 确保 DOM 已更新）
+watch(buildScrollAnchor, () => {
+  if (userScrolledUp.value) return
+  scrollToBottom()
+}, { flush: 'post' })
+
 onMounted(async () => {
+  const el = messagesContainer.value
+  el?.addEventListener('scroll', handleScroll, { passive: true })
+  el?.addEventListener('wheel', handleWheel, { passive: true })
+
   if (hasRealSession.value) {
     subscribe(String(realSessionId.value))
     await Promise.all([loadSideSessionMeta(), fetchMessages(), fetchQueue()])
+    scrollToBottomForce()
   }
   nextTick(() => chatInputRef.value?.focusInput())
 })
 
 onActivated(() => {
+  userScrolledUp.value = false
+  // 切回边路会话 tab（KeepAlive 恢复）时自动滚动到底部
+  scrollToBottomForce()
   nextTick(() => chatInputRef.value?.focusInput())
 })
 
 onUnmounted(() => {
   pendingSendCleanup?.()
   pendingSendCleanup = null
+
+  const el = messagesContainer.value
+  el?.removeEventListener('scroll', handleScroll)
+  el?.removeEventListener('wheel', handleWheel)
 
   if (hasRealSession.value) {
     unsubscribe(String(realSessionId.value))
