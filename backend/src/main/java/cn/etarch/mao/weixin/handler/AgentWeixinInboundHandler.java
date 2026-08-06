@@ -21,6 +21,7 @@ import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
 import cn.etarch.mao.weixin.model.WeixinInboundMessageContext;
 import cn.etarch.mao.weixin.model.WeixinReply;
 import cn.etarch.mao.weixin.service.WeixinAccountRepository;
+import cn.etarch.mao.weixin.service.WeixinFileStorageService;
 import cn.etarch.mao.weixin.service.WeixinInboundHandler;
 import cn.etarch.mao.weixin.service.WeixinSessionService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -29,6 +30,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -70,6 +72,7 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
     private final SessionActivityHeartbeat activityHeartbeat;
     private final SessionTodoMapper sessionTodoMapper;
     private final ModelService modelService;
+    private final WeixinFileStorageService weixinFileStorageService;
 
     private final ConcurrentHashMap<Long, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, AtomicLong> generations = new ConcurrentHashMap<>();
@@ -116,12 +119,39 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
         }
 
         Long sessionId = session.getId();
-        long generation = nextGeneration(sessionId);
 
-        // 先取消同会话在途执行（类似桌面端 insert / 新消息接管）
+        // 新一代消息：先使旧执行失效并取消在途执行（无论本消息后续是否触发 Agent，均遵循"新消息接管"语义）
+        long generation = nextGeneration(sessionId);
         abortRunningExecution(sessionId, userId);
 
-        Object messageContent = buildMessageContent(context);
+        List<String> downloadErrors = context.getFileDownloadErrors() != null
+                ? context.getFileDownloadErrors() : List.of();
+        List<WeixinInboundMessageContext.InboundFile> files = context.getFiles() != null
+                ? context.getFiles() : List.of();
+
+        // 保存入站文件到会话工作区（逐个收集失败，不中断其余文件）
+        List<String> storageErrors = new ArrayList<>();
+        List<String> savedFilePaths = saveInboundFiles(session.getWorkspace(), files, storageErrors);
+
+        List<String> allErrors = new ArrayList<>(downloadErrors);
+        allErrors.addAll(storageErrors);
+
+        boolean hasSavedFiles = !savedFilePaths.isEmpty();
+        boolean hasBody = context.getBody() != null && !context.getBody().isBlank();
+        boolean hasImages = context.getImageDataUris() != null && !context.getImageDataUris().isEmpty();
+
+        // 无任何可处理内容且存在失败：直接回复错误，不触发 Agent
+        if (!hasSavedFiles && !hasBody && !hasImages && !allErrors.isEmpty()) {
+            log.warn("微信入站文件处理失败且无其他内容, sessionId={}, errors={}", sessionId, allErrors);
+            return replyFileError(result, sessionId, allErrors, context);
+        }
+
+        // 存在失败但有其他可处理内容（成功文件/文字/图片）：追加失败说明，继续处理有效内容
+        if (!allErrors.isEmpty()) {
+            context.setBody(appendDownloadErrorNotice(context.getBody(), allErrors));
+        }
+
+        Object messageContent = buildMessageContent(context, savedFilePaths);
         Message savedMessage;
         try {
             savedMessage = sessionService.saveMessage(
@@ -308,13 +338,31 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
     }
 
     /**
-     * 纯文本 → String；带图片 → ContentPart 列表（与桌面端多模态格式一致）。
+     * 纯文本 → String；带图片 → ContentPart 列表（与桌面端多模态格式一致）；
+     * 带文件 → 注入 @{绝对路径}@ 标记（String 场景由 PromptEngine 剥离为纯路径）。
      */
-    Object buildMessageContent(WeixinInboundMessageContext context) {
+    Object buildMessageContent(WeixinInboundMessageContext context, List<String> filePaths) {
         List<String> imageDataUris = context.getImageDataUris();
         boolean hasImages = imageDataUris != null && !imageDataUris.isEmpty();
+        boolean hasFiles = filePaths != null && !filePaths.isEmpty();
         String text = context.getBody() != null ? context.getBody().trim() : "";
 
+        // 文件消息：注入 @{绝对路径}@ 标记
+        if (hasFiles) {
+            if (!hasImages) {
+                return buildFileText(text, filePaths);
+            }
+            // 图片+文件混合：ContentPart（PromptEngine 不剥离 ContentPart 内标记，text part 直接放纯路径）
+            List<ChatRequest.ContentPart> parts = new ArrayList<>();
+            parts.add(ChatRequest.ContentPart.builder()
+                    .type("text")
+                    .text(buildMixedText(text, filePaths))
+                    .build());
+            appendImageParts(parts, imageDataUris);
+            return parts;
+        }
+
+        // 无文件：维持现状（纯文本 / 图片）
         if (!hasImages) {
             return text;
         }
@@ -328,6 +376,39 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
                 .type("text")
                 .text(text)
                 .build());
+        appendImageParts(parts, imageDataUris);
+        return parts;
+    }
+
+    /**
+     * 文件文本：文字 + 每个文件一个 @{路径}@ 标记（纯文件消息仅路径标记）。
+     */
+    private String buildFileText(String text, List<String> filePaths) {
+        StringBuilder sb = new StringBuilder();
+        if (!text.isEmpty()) {
+            sb.append(text).append("\n");
+        }
+        for (String path : filePaths) {
+            sb.append("@{").append(path).append("}@\n");
+        }
+        return sb.toString().stripTrailing();
+    }
+
+    /**
+     * 混合消息的 text part：文字 + 每个文件一行纯路径（无 @{} 标记）。
+     */
+    private String buildMixedText(String text, List<String> filePaths) {
+        StringBuilder sb = new StringBuilder();
+        if (!text.isEmpty()) {
+            sb.append(text).append("\n");
+        }
+        for (String path : filePaths) {
+            sb.append(path).append("\n");
+        }
+        return sb.toString().stripTrailing();
+    }
+
+    private void appendImageParts(List<ChatRequest.ContentPart> parts, List<String> imageDataUris) {
         for (String dataUri : imageDataUris) {
             if (dataUri == null || dataUri.isBlank()) {
                 continue;
@@ -337,7 +418,85 @@ public class AgentWeixinInboundHandler implements WeixinInboundHandler {
                     .imageUrl(ChatRequest.ImageUrl.builder().url(dataUri).build())
                     .build());
         }
-        return parts;
+    }
+
+    /**
+     * 将入站文件逐个保存到会话工作区，返回成功保存的绝对路径列表；
+     * 失败项收集到 storageErrors（含文件名与原因），不中断其余文件。
+     */
+    private List<String> saveInboundFiles(String workspace, List<WeixinInboundMessageContext.InboundFile> files,
+                                          List<String> storageErrors) {
+        List<String> paths = new ArrayList<>();
+        for (WeixinInboundMessageContext.InboundFile file : files) {
+            try {
+                Path saved = weixinFileStorageService.saveFile(workspace, file.fileName(), file.bytes());
+                log.info("微信入站文件已保存, workspace={}, file={}", workspace, saved);
+                paths.add(saved.toString());
+            } catch (WeixinFileStorageService.StorageException e) {
+                log.warn("微信入站文件保存失败, workspace={}, file={}: {}", workspace, file.fileName(), e.getMessage());
+                storageErrors.add(file.fileName() + "（" + e.getMessage() + "）");
+            }
+        }
+        return paths;
+    }
+
+    /**
+     * 文件下载/解密/保存全部失败且无其他可处理内容：记录消息历史，回复错误提示，不触发 Agent。
+     */
+    private CompletionStage<WeixinReply> replyFileError(CompletableFuture<WeixinReply> result, Long sessionId,
+                                                        List<String> errorItems, WeixinInboundMessageContext context) {
+        String errorText = "文件接收失败：" + String.join("、", errorItems) + "，请重试";
+        try {
+            sessionService.saveMessage(sessionId, "USER",
+                    buildFileMessageText(context.getBody(), context.getFiles()),
+                    null, null, null, 0, null);
+            sessionService.saveMessage(sessionId, "ASSISTANT", errorText,
+                    null, null, null, 0, null);
+        } catch (Exception e) {
+            log.warn("记录微信文件处理失败消息失败, sessionId={}", sessionId, e);
+        }
+        WeixinReply errorReply = new WeixinReply();
+        errorReply.setText(errorText);
+        result.complete(errorReply);
+        return result;
+    }
+
+    /**
+     * 部分文件下载失败时，在消息正文末尾追加失败说明，使 Agent 知晓并可在回复中告知用户。
+     * 返回拼接后的完整正文。
+     */
+    static String appendDownloadErrorNotice(String body, List<String> failedNames) {
+        StringBuilder sb = new StringBuilder();
+        if (body != null && !body.isBlank()) {
+            sb.append(body);
+        }
+        if (failedNames != null && !failedNames.isEmpty()) {
+            if (!sb.isEmpty()) {
+                sb.append("\n");
+            }
+            sb.append("[以下文件接收失败：").append(String.join("、", failedNames)).append("]");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 构造文件消息的历史文本（保存失败场景，无路径可注入）。
+     */
+    private String buildFileMessageText(String body, List<WeixinInboundMessageContext.InboundFile> files) {
+        StringBuilder sb = new StringBuilder();
+        if (body != null && !body.isBlank()) {
+            sb.append(body);
+        }
+        if (files != null && !files.isEmpty()) {
+            List<String> names = files.stream()
+                    .map(WeixinInboundMessageContext.InboundFile::fileName)
+                    .toList();
+            if (!sb.isEmpty()) {
+                sb.append(" ");
+            }
+            sb.append("(文件: ").append(String.join("、", names)).append(")");
+        }
+        return sb.toString();
     }
 
     private Long getUserIdFromAccountId(String accountId) {

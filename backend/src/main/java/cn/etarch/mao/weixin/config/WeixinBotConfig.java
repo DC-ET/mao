@@ -18,6 +18,9 @@ public class WeixinBotConfig {
     /** Agent 回复是否附带语音（语音模型合成 → MP3 文件消息），默认关闭 */
     private boolean voiceReply = false;
 
+    /** 入站文件大小上限（MB），超限拒绝保存并回复"文件过大" */
+    private int maxInboundFileMb = 100;
+
     /** SILK 编码器路径（腾讯 silk-v3 encoder，-tencent 模式） */
     private String silkEncoderPath = "/usr/local/bin/silk-encoder";
 

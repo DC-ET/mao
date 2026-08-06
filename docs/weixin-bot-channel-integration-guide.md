@@ -367,6 +367,43 @@ Body：
 
 业务处理器可以只接收已下载的本地路径，不直接处理 ilink/CDN 加密参数。
 
+### 7.4 入站文件接收（file_item）
+
+**当前实现**：`InboundProcessor` 识别 `item_list` 中 `type = FILE`（`type=4`，`file_item`）的条目，经 CDN 下载（`encrypt_query_param`）+ AES-128-ECB 解密后，保存到微信会话工作区 `weixin-files/YYYY-MM-DD/` 目录，并将绝对路径以 `@{路径}@` 文件引用形式注入 Agent 消息（复用桌面端文件引用格式，`PromptEngine` 剥离标记后 Agent 得到纯路径文本）。文件下载/解密/保存失败或超过大小上限（`weixin.bot.max-inbound-file-mb`，默认 100MB）时，向用户回复明确错误提示，不再静默忽略；多文件部分失败时会在消息中告知 Agent 哪些文件接收失败。
+
+| 入站项 | item type | 处理 |
+| --- | --- | --- |
+| 文本 | 1 | 提取为消息正文 |
+| 图片 | 2 | 下载解密 → data URI 供多模态 |
+| 语音（含识别文本） | 3 | 取识别文本为正文 |
+| 文件（file_item） | 4 | 下载解密 → 保存工作区 → `@{路径}@` 注入 |
+
+入站上下文示例（含文件）：
+
+```json
+{
+  "accountId": "business-user-id",
+  "appCode": "agent_abm",
+  "fromUserId": "wx-user-id",
+  "body": "用户消息文本",
+  "contextToken": "context-token",
+  "mediaPath": "/tmp/weixin/media/xxx.png",
+  "mediaType": "image/png",
+  "files": [
+    { "fileName": "报价单.pdf", "bytes": "...", "mimeType": "application/pdf" }
+  ],
+  "rawMessage": {}
+}
+```
+
+文件消息保存规则：
+- 保存目录：`{会话工作区}/weixin-files/{yyyy-MM-dd}/`，按日期归档。
+- 文件名清洗：取 basename、剔除非法字符与文件引用保留字符（`{}@`）、截断长度（≤120），防路径穿越、避免破坏 `@{路径}@` 引用解析。
+- 同名文件：自动追加时间戳后缀（`xxx_20260806153012.pdf`），原子写入（CREATE_NEW），并发消息不互相覆盖。
+- 下载参数与 AES key 按同一媒体节点回退解析（`media` → `thumb_media` → `file_item` 级），保证回退时同源。
+- 失败处理：下载/解密/保存失败时向用户回复明确错误提示；失败消息同样执行"新消息接管"（取消在途执行）；仅当消息无任何可处理内容（无成功文件、无文字、无图片）时才直接回复错误，带文字/图片时继续处理有效内容并附失败说明。
+- 不登记 `file` 表、不做管理后台文件列表；Agent 通过 `read_file` / `shell` 工具按路径自主读取内容（PDF/Office 解析由 Agent 自行通过 shell 工具或脚本完成）。
+
 ## 8. 业务处理器接口
 
 建议定义一个项目无关的接口：

@@ -22,6 +22,7 @@ public class InboundProcessor {
 
     private static final int ITEM_TYPE_TEXT = 1;
     private static final int ITEM_TYPE_IMAGE = 2;
+    private static final int ITEM_TYPE_FILE = 4;
 
     private final WeixinInboundHandler inboundHandler;
     private final ContextTokenRepository contextTokenRepository;
@@ -56,12 +57,15 @@ public class InboundProcessor {
                 contextTokenRepository.saveOrUpdate(accountId, fromUserId, contextToken);
             }
 
-            // 3. 提取文本与图片
+            // 3. 提取文本、图片与文件
             String body = extractMessageBody(message);
             List<WeixinMediaService.DownloadedMedia> images = downloadImages(message);
+            FileDownloadResult fileResult = downloadFiles(message);
+            List<WeixinInboundMessageContext.InboundFile> files = fileResult.files();
 
-            if ((body == null || body.isBlank()) && images.isEmpty()) {
-                log.info("忽略空消息（无文本无图片）, accountId={}, fromUserId={}", accountId, fromUserId);
+            if ((body == null || body.isBlank()) && images.isEmpty()
+                    && files.isEmpty() && fileResult.failedNames().isEmpty()) {
+                log.info("忽略空消息（无文本无图片无文件）, accountId={}, fromUserId={}", accountId, fromUserId);
                 return;
             }
 
@@ -85,6 +89,8 @@ public class InboundProcessor {
                     .mediaPath(mediaPath)
                     .mediaType(mediaType)
                     .imageDataUris(imageDataUris)
+                    .files(files)
+                    .fileDownloadErrors(fileResult.failedNames())
                     .rawMessage(message)
                     .build();
 
@@ -182,6 +188,57 @@ public class InboundProcessor {
             }
         }
         return result;
+    }
+
+    /**
+     * 下载消息中的文件项（file_item, type=4）。
+     * 下载/解密失败的项不再静默丢弃：失败原始文件名记录在 failedNames，交由上层提示用户。
+     */
+    private FileDownloadResult downloadFiles(JsonNode message) {
+        List<WeixinInboundMessageContext.InboundFile> files = new ArrayList<>();
+        List<String> failedNames = new ArrayList<>();
+        JsonNode itemList = message.get("item_list");
+        if (itemList == null || !itemList.isArray()) {
+            return new FileDownloadResult(files, failedNames);
+        }
+
+        for (JsonNode item : itemList) {
+            int type = item.path("type").asInt(-1);
+            if (type != ITEM_TYPE_FILE) {
+                continue;
+            }
+            JsonNode fileItem = item.get("file_item");
+            String fileName = extractFileDisplayName(fileItem);
+            Optional<WeixinMediaService.DownloadedFile> downloaded = weixinMediaService.downloadFile(fileItem);
+            if (downloaded.isPresent()) {
+                WeixinMediaService.DownloadedFile file = downloaded.get();
+                files.add(new WeixinInboundMessageContext.InboundFile(
+                        file.fileName(), file.bytes(), file.mimeType()));
+            } else {
+                log.warn("微信文件下载失败，记录失败项, fileName={}", fileName);
+                failedNames.add(fileName);
+            }
+        }
+        return new FileDownloadResult(files, failedNames);
+    }
+
+    /**
+     * 提取文件项显示名（失败提示用）：优先 file_name，缺失时用默认名。
+     */
+    private String extractFileDisplayName(JsonNode fileItem) {
+        if (fileItem != null && !fileItem.isNull()) {
+            JsonNode name = fileItem.get("file_name");
+            if (name != null && !name.isNull() && !name.asText().isBlank()) {
+                return name.asText();
+            }
+        }
+        return "未知文件";
+    }
+
+    /** 文件下载结果：成功文件 + 失败文件名列表 */
+    private record FileDownloadResult(
+            List<WeixinInboundMessageContext.InboundFile> files,
+            List<String> failedNames) {
     }
 
     /**

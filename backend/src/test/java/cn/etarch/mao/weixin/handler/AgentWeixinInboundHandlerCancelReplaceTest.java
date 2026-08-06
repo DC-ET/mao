@@ -16,6 +16,7 @@ import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
 import cn.etarch.mao.weixin.model.WeixinInboundMessageContext;
 import cn.etarch.mao.weixin.model.WeixinReply;
 import cn.etarch.mao.weixin.service.WeixinAccountRepository;
+import cn.etarch.mao.weixin.service.WeixinFileStorageService;
 import cn.etarch.mao.weixin.service.WeixinSessionService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,6 +60,7 @@ class AgentWeixinInboundHandlerCancelReplaceTest {
     @Mock SessionActivityHeartbeat activityHeartbeat;
     @Mock SessionTodoMapper sessionTodoMapper;
     @Mock ModelService modelService;
+    @Mock WeixinFileStorageService weixinFileStorageService;
 
     private AgentWeixinInboundHandler handler;
 
@@ -68,7 +70,7 @@ class AgentWeixinInboundHandlerCancelReplaceTest {
                 weixinSessionService, harnessService, sessionService,
                 accountRepository, agentLoop, shellSessionManager,
                 registry, taskTerminalService, activityService, activityHeartbeat,
-                sessionTodoMapper, modelService);
+                sessionTodoMapper, modelService, weixinFileStorageService);
         when(harnessService.prepareMessage(anyLong(), any())).thenReturn("exec-1");
         when(sessionService.cleanupIncompleteTail(anyLong())).thenReturn(0);
     }

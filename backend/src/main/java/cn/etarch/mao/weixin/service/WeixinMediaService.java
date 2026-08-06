@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
@@ -39,7 +40,16 @@ public class WeixinMediaService {
             .readTimeout(60, TimeUnit.SECONDS)
             .build();
 
+    /** 文件下载专用 client：大文件（≤100MB）读取超时放宽到 180s，与出站上传一致 */
+    private final OkHttpClient fileHttpClient = new OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(180, TimeUnit.SECONDS)
+            .build();
+
     public record DownloadedMedia(Path path, String mimeType, String dataUri) {
+    }
+
+    public record DownloadedFile(String fileName, byte[] bytes, String mimeType) {
     }
 
     /**
@@ -105,7 +115,137 @@ public class WeixinMediaService {
         }
     }
 
+    /**
+     * 从 file_item 下载并解密文件（PDF、Office、zip 等任意类型）。
+     * <p>
+     * 与 {@link #downloadImage} 同协议：CDN 下载密文 → AES-128-ECB 解密；
+     * 不做图片压缩与图片大小限制，大文件使用放宽超时的专用 client。
+     */
+    public Optional<DownloadedFile> downloadFile(JsonNode fileItem) {
+        if (fileItem == null || fileItem.isNull()) {
+            return Optional.empty();
+        }
+
+        String encryptQueryParam = resolveEncryptQueryParam(fileItem);
+        if (encryptQueryParam == null || encryptQueryParam.isBlank()) {
+            log.warn("文件消息缺少 encrypt_query_param");
+            return Optional.empty();
+        }
+
+        // 下载参数与 AES key 基于同一媒体节点解析（media → thumb_media → null），保证回退时同源
+        JsonNode media = resolveMediaNode(fileItem);
+        byte[] aesKey = resolveAesKey(fileItem, media);
+        try {
+            byte[] ciphertext = downloadCiphertext(encryptQueryParam, fileHttpClient);
+            if (ciphertext == null || ciphertext.length == 0) {
+                return Optional.empty();
+            }
+
+            byte[] plaintext;
+            if (aesKey != null) {
+                plaintext = decryptAes128Ecb(ciphertext, aesKey);
+            } else {
+                log.warn("文件消息缺少 AES key，尝试按明文处理");
+                plaintext = ciphertext;
+            }
+
+            String fileName = extractFileName(fileItem);
+            String mime = detectFileMime(plaintext, fileName);
+            return Optional.of(new DownloadedFile(fileName, plaintext, mime));
+        } catch (Exception e) {
+            log.error("下载或解密微信文件失败", e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * 返回持有有效 encrypt_query_param 的媒体节点：media → thumb_media → null。
+     * 与 {@link #resolveEncryptQueryParam} 同源，保证 AES key 与下载参数来自同一节点。
+     */
+    static JsonNode resolveMediaNode(JsonNode fileItem) {
+        if (fileItem == null || fileItem.isNull()) {
+            return null;
+        }
+        for (String mediaField : List.of("media", "thumb_media")) {
+            JsonNode media = fileItem.get(mediaField);
+            if (media != null && !media.isNull()) {
+                String param = textOrNull(media.get("encrypt_query_param"));
+                if (param != null && !param.isBlank()) {
+                    return media;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 解析 encrypt_query_param，按字段位置回退：
+     * media.encrypt_query_param → thumb_media.encrypt_query_param → file_item.encrypt_query_param。
+     */
+    static String resolveEncryptQueryParam(JsonNode fileItem) {
+        JsonNode media = resolveMediaNode(fileItem);
+        if (media != null) {
+            return textOrNull(media.get("encrypt_query_param"));
+        }
+        return textOrNull(fileItem != null ? fileItem.get("encrypt_query_param") : null);
+    }
+
+    /**
+     * 提取 file_item 中的原始文件名；缺失时生成默认名。
+     */
+    private String extractFileName(JsonNode fileItem) {
+        String name = textOrNull(fileItem.get("file_name"));
+        if (name == null || name.isBlank()) {
+            JsonNode media = fileItem.get("media");
+            String mediaName = media != null ? textOrNull(media.get("file_name")) : null;
+            if (mediaName != null && !mediaName.isBlank()) {
+                name = mediaName;
+            }
+        }
+        if (name == null || name.isBlank()) {
+            return "file-" + UUID.randomUUID() + ".bin";
+        }
+        return name;
+    }
+
+    /**
+     * 基于魔数与扩展名探测文件 MIME，用于记录；不影响保存与读取。
+     */
+    static String detectFileMime(byte[] bytes, String fileName) {
+        if (bytes != null && bytes.length >= 4
+                && bytes[0] == '%' && bytes[1] == 'P' && bytes[2] == 'D' && bytes[3] == 'F') {
+            return "application/pdf";
+        }
+        String lower = fileName != null ? fileName.toLowerCase(Locale.ROOT) : "";
+        int dot = lower.lastIndexOf('.');
+        if (dot >= 0 && dot < lower.length() - 1) {
+            return switch (lower.substring(dot + 1)) {
+                case "pdf" -> "application/pdf";
+                case "txt", "md", "markdown" -> "text/plain";
+                case "doc" -> "application/msword";
+                case "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                case "xls" -> "application/vnd.ms-excel";
+                case "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                case "ppt" -> "application/vnd.ms-powerpoint";
+                case "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+                case "png" -> "image/png";
+                case "jpg", "jpeg" -> "image/jpeg";
+                case "gif" -> "image/gif";
+                case "webp" -> "image/webp";
+                case "zip" -> "application/zip";
+                case "json" -> "application/json";
+                case "csv" -> "text/csv";
+                default -> "application/octet-stream";
+            };
+        }
+        return "application/octet-stream";
+    }
+
     byte[] downloadCiphertext(String encryptQueryParam) throws Exception {
+        return downloadCiphertext(encryptQueryParam, httpClient);
+    }
+
+    byte[] downloadCiphertext(String encryptQueryParam, OkHttpClient client) throws Exception {
         String cdnBase = weixinBotConfig.getCdnBaseUrl();
         if (cdnBase == null || cdnBase.isBlank()) {
             cdnBase = "https://novac2c.cdn.weixin.qq.com/c2c";
@@ -123,7 +263,7 @@ public class WeixinMediaService {
                 .build();
 
         Request request = new Request.Builder().url(fullUrl).get().build();
-        try (Response response = httpClient.newCall(request).execute()) {
+        try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) {
                 log.error("CDN 下载失败: HTTP {}", response.code());
                 return null;
@@ -133,7 +273,8 @@ public class WeixinMediaService {
     }
 
     /**
-     * 解析 AES key：优先 image_item.aeskey（32 位 hex），否则解析 media.aes_key。
+     * 解析 AES key，按字段位置回退：
+     * item.aeskey → item.aes_key → media.aes_key。
      */
     static byte[] resolveAesKey(JsonNode imageItem, JsonNode media) {
         String imageAesKey = textOrNull(imageItem != null ? imageItem.get("aeskey") : null);
@@ -145,6 +286,15 @@ public class WeixinMediaService {
             byte[] fromBase64 = decodeAesKey(imageAesKey.trim());
             if (fromBase64 != null) {
                 return fromBase64;
+            }
+        }
+
+        // 兼容 aes_key 直接位于 item 级（部分 file_item 结构）
+        String itemAesKey = textOrNull(imageItem != null ? imageItem.get("aes_key") : null);
+        if (itemAesKey != null && !itemAesKey.isBlank()) {
+            byte[] decoded = decodeAesKey(itemAesKey.trim());
+            if (decoded != null) {
+                return decoded;
             }
         }
 
