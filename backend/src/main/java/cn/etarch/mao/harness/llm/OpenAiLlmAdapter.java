@@ -58,13 +58,14 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         while (true) {
             attempt++;
             try (Response response = httpClient.newCall(httpRequest).execute()) {
-                if (response.code() == 429) {
+                if (isRetryableStatus(response.code())) {
                     if (attempt > llmRetryConfig.getRateLimitMaxRetries()) {
-                        throw buildRateLimitException(response);
+                        throw buildRetryExhaustedException(response);
                     }
                     int delaySeconds = resolveRetryDelaySeconds(response);
-                    log.warn("LLM API rate limited (429), retry {}/{} after {}s, model={}",
-                            attempt, llmRetryConfig.getRateLimitMaxRetries(), delaySeconds, config.getModelId());
+                    log.warn("LLM API transient error ({}), retry {}/{} after {}s, model={}",
+                            response.code(), attempt, llmRetryConfig.getRateLimitMaxRetries(),
+                            delaySeconds, config.getModelId());
                     sleepSeconds(delaySeconds);
                     continue;
                 }
@@ -107,14 +108,15 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
             try {
                 log.debug("stream: response code={}", response.code());
-                if (response.code() == 429) {
+                if (isRetryableStatus(response.code())) {
                     if (attempt > llmRetryConfig.getRateLimitMaxRetries()) {
-                        callback.onError(buildRateLimitException(response));
+                        callback.onError(buildRetryExhaustedException(response));
                         return;
                     }
                     int delaySeconds = resolveRetryDelaySeconds(response);
-                    log.warn("LLM API rate limited (429), retry {}/{} after {}s, model={}",
-                            attempt, llmRetryConfig.getRateLimitMaxRetries(), delaySeconds, config.getModelId());
+                    log.warn("LLM API transient error ({}), retry {}/{} after {}s, model={}",
+                            response.code(), attempt, llmRetryConfig.getRateLimitMaxRetries(),
+                            delaySeconds, config.getModelId());
                     if (!sleepSecondsRespectingCancel(delaySeconds, cancelFlag)) {
                         callback.onError(new RuntimeException("Cancelled by user"));
                         return;
@@ -300,10 +302,17 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         return cancelFlag != null && cancelFlag.get();
     }
 
-    private RuntimeException buildRateLimitException(Response response) {
+    private RuntimeException buildRetryExhaustedException(Response response) {
         String detail = readErrorBody(response);
-        return new RuntimeException("LLM API rate limited (429) after "
+        return new RuntimeException("LLM API returned " + response.code() + " after "
                 + llmRetryConfig.getRateLimitMaxRetries() + " retries: " + detail);
+    }
+
+    /**
+     * 瞬时错误判定：429 限流、5xx 服务端错误（含 524 网关超时等）均可重试。
+     */
+    private boolean isRetryableStatus(int code) {
+        return code == 429 || (code >= 500 && code < 600);
     }
 
     private RuntimeException buildHttpException(Response response) {

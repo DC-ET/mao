@@ -100,21 +100,24 @@ class OpenAiLlmAdapterTest {
     }
 
     @Test
-    void chatRetriesRateLimitAndThrowsHttpErrors() throws Exception {
+    void chatRetries429And5xxAndThrowsAfterRetriesExhausted() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(new MockResponse().setResponseCode(429).setHeader("Retry-After", "bad").setBody("slow down"));
-            server.enqueue(jsonResponse("""
-                    {"id":"ok","choices":[]}
-                    """));
-            server.enqueue(new MockResponse().setResponseCode(500).setBody("server error"));
+            server.enqueue(jsonResponse("{\"id\":\"ok\",\"choices\":[]}"));
+            server.enqueue(new MockResponse().setResponseCode(524).setBody("gateway timeout"));
+            server.enqueue(jsonResponse("{\"id\":\"ok-5xx\",\"choices\":[]}"));
+            server.enqueue(new MockResponse().setResponseCode(503).setBody("unavailable"));
+            server.enqueue(new MockResponse().setResponseCode(503).setBody("unavailable"));
             server.start();
 
             OpenAiLlmAdapter adapter = adapter(1, 0);
-            assertThat(adapter.chat(request("retry"), config(server)).getId()).isEqualTo("ok");
-            assertThat(server.getRequestCount()).isEqualTo(2);
+            assertThat(adapter.chat(request("retry-429"), config(server)).getId()).isEqualTo("ok");
+            assertThat(adapter.chat(request("retry-5xx"), config(server)).getId()).isEqualTo("ok-5xx");
             assertThatThrownBy(() -> adapter.chat(request("fail"), config(server)))
                     .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("LLM API returned 500");
+                    .hasMessageContaining("LLM API returned 503")
+                    .hasMessageContaining("after 1 retries");
+            assertThat(server.getRequestCount()).isEqualTo(6);
         }
     }
 
@@ -210,6 +213,22 @@ class OpenAiLlmAdapterTest {
             CapturingCallback errorCallback = new CapturingCallback();
             adapter(0, 0).stream(request("error"), config(server), errorCallback, new AtomicBoolean(false));
             assertThat(errorCallback.error).hasMessageContaining("LLM API returned 500");
+
+            // 5xx（524）重试后成功
+            server.enqueue(new MockResponse().setResponseCode(524).setBody("timeout"));
+            server.enqueue(new MockResponse()
+                    .setHeader("Content-Type", "text/event-stream")
+                    .setBody("""
+                            data: {"choices":[{"delta":{"content":"retried"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+
+                            data: [DONE]
+
+                            """));
+            CapturingCallback retried = new CapturingCallback();
+            adapter(1, 0).stream(request("retry-stream"), config(server), retried, new AtomicBoolean(false));
+            assertThat(retried.error).isNull();
+            assertThat(retried.chunks).hasSize(1);
+            assertThat(retried.usage.getTotalTokens()).isEqualTo(2);
 
             CapturingCallback cancelled = new CapturingCallback();
             adapter(0, 0).stream(request("cancel"), config(server), cancelled, new AtomicBoolean(true));
