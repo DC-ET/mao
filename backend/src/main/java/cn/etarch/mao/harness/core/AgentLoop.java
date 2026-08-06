@@ -616,7 +616,13 @@ public class AgentLoop {
                     context.getWorkspace(), context.getPermissionLevel(), context.getModelConfig(),
                     context.getTools());
         } catch (Throwable e) {
-            log.error("[DIAG] dispatchTool threw for tool={} session={}", toolName, context.getSessionId(), e);
+            if (e instanceof SecurityException) {
+                // 沙箱拦截属正常安全机制（PathSandbox 已记录 warn），不重复打 error
+                log.warn("[DIAG] dispatchTool blocked for tool={} session={}: {}",
+                        toolName, context.getSessionId(), e.getMessage());
+            } else {
+                log.error("[DIAG] dispatchTool threw for tool={} session={}", toolName, context.getSessionId(), e);
+            }
             return "Tool execution failed: " + e.getMessage();
         }
     }

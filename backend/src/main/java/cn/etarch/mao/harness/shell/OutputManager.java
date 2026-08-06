@@ -175,12 +175,54 @@ public class OutputManager {
             );
 
         } catch (IOException e) {
-            log.error("Failed to read output", e);
-            return new OutputResult("Error reading output: " + e.getMessage(), 0, 0, false, false, null);
+            // 会话被并发关闭（cleanup 清理 / close 动作 / 超时回收）时，ShellSession.close()
+            // 会关闭 stdout，正在 read() 的线程抛 "Stream closed"。此时已读到的输出不应丢弃：
+            // 返回部分结果，让 LLM 能基于已执行的输出继续，而不是把成功命令误判为失败。
+            boolean streamClosed = isStreamClosed(e);
+            if (streamClosed) {
+                log.warn("Output stream closed while reading (session likely closed): linesCollected={}, charsCollected={}",
+                        allLines.size(), fullOutput.length());
+            } else {
+                log.error("Failed to read output", e);
+            }
+            return buildPartialResult(allLines, fullOutput, outputFile, sessionLogFile, streamClosed, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new OutputResult("Output reading interrupted", 0, 0, false, false, null);
         }
+    }
+
+    private boolean isStreamClosed(IOException e) {
+        String message = e.getMessage();
+        return message != null && message.contains("Stream closed");
+    }
+
+    /**
+     * 读取中断时尽量保留已收集到的输出：落盘切片/会话日志并生成预览，
+     * 避免并发关闭会话等竞态导致已执行命令的输出全部丢失。
+     */
+    private OutputResult buildPartialResult(List<String> allLines, StringBuilder fullOutput,
+                                            Path outputFile, Path sessionLogFile,
+                                            boolean streamClosed, IOException cause) {
+        if (outputFile != null && !allLines.isEmpty()) {
+            writeToFile(outputFile, fullOutput.toString());
+        }
+        if (sessionLogFile != null && !fullOutput.isEmpty()) {
+            writeToFile(sessionLogFile, fullOutput.toString());
+        }
+
+        String preview = generatePreview(allLines);
+        String note = streamClosed
+                ? "[注意: 输出流已关闭（会话被清理或关闭），输出可能不完整]"
+                : "[注意: 读取输出失败: " + cause.getMessage() + "]";
+        if (preview.isEmpty()) {
+            preview = note;
+        } else {
+            preview = preview + "\n" + note;
+        }
+
+        return new OutputResult(preview, allLines.size(), fullOutput.length(),
+                true, false, outputFile != null ? outputFile.toString() : null);
     }
 
     /**

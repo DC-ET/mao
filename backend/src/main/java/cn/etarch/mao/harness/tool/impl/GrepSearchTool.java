@@ -132,7 +132,12 @@ public class GrepSearchTool implements Tool {
                     "total_matches", totalMatches
             ));
         } catch (Exception e) {
-            log.error("GrepSearchTool execution failed", e);
+            if (e instanceof SecurityException) {
+                // 沙箱拦截属正常安全机制（PathSandbox 已记录 warn），不重复打 error
+                log.warn("GrepSearchTool blocked by sandbox: {}", e.getMessage());
+            } else {
+                log.error("GrepSearchTool execution failed", e);
+            }
             try {
                 return objectMapper.writeValueAsString(Map.of(
                         "matches", List.of(),

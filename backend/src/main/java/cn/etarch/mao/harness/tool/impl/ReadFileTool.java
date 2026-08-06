@@ -130,7 +130,12 @@ public class ReadFileTool implements Tool {
                     "total_lines", totalLines
             ));
         } catch (Exception e) {
-            log.error("ReadFileTool execution failed", e);
+            if (e instanceof SecurityException) {
+                // 沙箱拦截属正常安全机制（PathSandbox 已记录 warn），不重复打 error
+                log.warn("ReadFileTool blocked by sandbox: {}", e.getMessage());
+            } else {
+                log.error("ReadFileTool execution failed", e);
+            }
             try {
                 return objectMapper.writeValueAsString(Map.of(
                         "content", "错误：" + e.getMessage(),

@@ -121,7 +121,12 @@ public class GlobSearchTool implements Tool {
                     "total_matched", totalMatched
             ));
         } catch (Exception e) {
-            log.error("GlobSearchTool execution failed", e);
+            if (e instanceof SecurityException) {
+                // 沙箱拦截属正常安全机制（PathSandbox 已记录 warn），不重复打 error
+                log.warn("GlobSearchTool blocked by sandbox: {}", e.getMessage());
+            } else {
+                log.error("GlobSearchTool execution failed", e);
+            }
             try {
                 return objectMapper.writeValueAsString(Map.of(
                         "files", List.of(),

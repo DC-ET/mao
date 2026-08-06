@@ -183,7 +183,12 @@ public class ShellSessionTool implements Tool {
                 default -> errorJson("未知动作：" + action);
             };
         } catch (Exception e) {
-            log.error("ShellSessionTool execution failed", e);
+            if (e instanceof SecurityException) {
+                // 沙箱拦截属正常安全机制（PathSandbox 已记录 warn），不重复打 error
+                log.warn("ShellSessionTool blocked by sandbox: {}", e.getMessage());
+            } else {
+                log.error("ShellSessionTool execution failed", e);
+            }
             return errorJson("错误：" + e.getMessage());
         }
     }
