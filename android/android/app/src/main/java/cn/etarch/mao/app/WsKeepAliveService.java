@@ -248,7 +248,12 @@ public class WsKeepAliveService extends Service {
             aliveCheckStarted = true;
             handler.post(this::checkWebViewAlive);
         }
-        if (!wsOpen) {
+        if (wsOpen) {
+            // WebView 刷新/重建后，JS 侧是新桥（readyState=CONNECTING，等待 open 才 resolve connect()），
+            // 而原生连接仍保持（后台保活设计，刷新不销毁 Service）。主动补发一次 open，
+            // 让新 JS 桥立即感知连接就绪，避免 connect() 一直 pending 到超时、消息加载被阻塞。
+            notifyStatus("open", "reused");
+        } else {
             connectWebSocket();
         }
     }

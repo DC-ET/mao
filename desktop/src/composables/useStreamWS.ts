@@ -219,6 +219,14 @@ export function useStreamWS() {
           if (connectPromise) {
             connectPromise = null
             initialConnect = false
+            // 销毁半死桥（原生连接异常时既不发 open 也不发 close，JS 侧永远等不到）：
+            // 下次 connect() 重建新桥，避免旧桥停在 CONNECTING 让后续连接再等一个超时周期。
+            try {
+              ws?.close?.()
+            } catch {
+              // 忽略
+            }
+            ws = null
             reject(new Error('Native WS connect timeout'))
           }
         }, BRIDGE_CONNECT_TIMEOUT_MS)

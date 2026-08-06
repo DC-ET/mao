@@ -166,6 +166,9 @@ class NativeWsBridge implements WsBridge {
     this.plugin.addListener('wsStatus', (info: { status: string; detail?: string }) => {
       if (this.closed) return
       if (info.status === 'open') {
+        // 幂等：WebView 刷新后原生复用连接会补发 open（ensureKeepAlive 的 reused 分支），
+        // 此时 readyState 可能已是 OPEN，忽略避免重复触发 onopen（重复重订阅）。
+        if (this.readyState === WS_OPEN) return
         this.readyState = WS_OPEN
         this.onopen?.()
         // 唤醒 CONNECTING 复用场景的等待者（connect() / recovery / sendReliable）
