@@ -4,6 +4,7 @@
     title="我的指令"
     direction="rtl"
     size="420px"
+    class="management-drawer"
     :before-close="handleClose"
   >
     <div class="command-drawer-body">
@@ -62,7 +63,7 @@
       v-model="dialogVisible"
       :title="isEditing ? '编辑指令' : '新建指令'"
       width="480px"
-      class="command-dialog"
+      class="command-dialog management-dialog"
       append-to-body
       @closed="resetForm"
     >

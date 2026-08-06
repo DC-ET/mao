@@ -4,6 +4,7 @@
     title="我的技能"
     direction="rtl"
     size="420px"
+    class="management-drawer"
     :before-close="handleClose"
   >
     <div class="skill-drawer-body">
@@ -171,6 +172,7 @@
       v-model="detailVisible"
       :title="`技能详情：${currentDoc?.name || ''}`"
       width="540px"
+      class="skill-detail-dialog management-dialog"
       append-to-body
     >
       <div v-if="currentDoc" class="skill-detail">
