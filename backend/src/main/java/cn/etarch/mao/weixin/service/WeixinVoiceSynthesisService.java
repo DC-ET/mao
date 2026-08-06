@@ -30,12 +30,16 @@ public class WeixinVoiceSynthesisService {
     private final ModelService modelService;
     private final OpenAiLlmAdapter llmAdapter;
     private final WeixinBotConfig weixinBotConfig;
+    private final WeixinVoiceTextSanitizer textSanitizer;
 
     /** 中文按 4 字/秒估算，60 秒上限对应的安全字符数（含标点） */
     private static final int DEFAULT_MAX_CHARS = 240;
 
     /**
      * 将文本合成为 WAV 语音。
+     * <p>
+     * 合成前先经 {@link WeixinVoiceTextSanitizer} 剥去 Markdown 语法：
+     * 语音模型对表格等结构鲁棒性差，直接喂 Markdown 往往只合成表格之前的内容。
      *
      * @return 解码后的 WAV 字节；无可用语音模型或合成失败时返回 empty
      */
@@ -50,7 +54,13 @@ public class WeixinVoiceSynthesisService {
             return Optional.empty();
         }
 
-        String clipped = clipText(text);
+        String plain = textSanitizer.toSpeechText(text);
+        if (plain.isBlank()) {
+            log.warn("微信语音回复：剥离 Markdown 后无可朗读文本，跳过语音合成");
+            return Optional.empty();
+        }
+
+        String clipped = clipText(plain);
 
         LlmModelConfig config = LlmModelConfig.builder()
                 .id(model.getId())
