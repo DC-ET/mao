@@ -837,6 +837,23 @@ async function loadSession(sid: string) {
 }
 
 async function navigateToLatestSession(): Promise<string | null> {
+  // 优先恢复持久化的最后查看会话（刷新 / 安卓 WebView 冷启动后仍回到上次会话）
+  const lastId = sessionStore.getLastSessionId()
+  if (lastId) {
+    // 侧栏仅含每组预览，最后会话可能不在列表中：先查本地列表，命中直接恢复；
+    // 否则用 /sessions/{id} 验证（可能位于组内预览之外）
+    const inList = sessionStore.sessions.some(s => String(s.id) === String(lastId))
+    const sid = inList ? String(lastId) : await (async () => {
+      const detail = await sessionStore.fetchSession(lastId)
+      return detail ? String(detail.id) : null
+    })()
+    if (sid) {
+      await router.replace(`/tasks/${sid}`)
+      return sid
+    }
+    // 会话已删除/失效：遗忘并回退列表首项
+    sessionStore.forgetLastSession()
+  }
   const latest = sessionStore.sessions[0]
   if (!latest) return null
   const sid = String(latest.id)

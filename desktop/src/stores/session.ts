@@ -94,6 +94,23 @@ export interface SessionGroupMeta {
 const DEFAULT_GROUP_PREVIEW = 5
 const DEFAULT_GROUP_PAGE_SIZE = 20
 
+/**
+ * 最后查看的会话 ID 持久化 key。
+ * activeSessionId 仅存内存，刷新 / 冷启动（安卓 WebView 被回收后重开）后丢失，
+ * 而侧栏排序（活跃任务优先 → 置顶 → updated_at）并不等于“最后查看”，
+ * 因此用 localStorage 记录最后活跃会话，恢复时优先还原，失效再回退列表首项。
+ */
+const LAST_SESSION_KEY = 'mao_last_session_id'
+
+function persistLastSession(id: string | null) {
+  try {
+    if (id) localStorage.setItem(LAST_SESSION_KEY, id)
+    else localStorage.removeItem(LAST_SESSION_KEY)
+  } catch {
+    // storage 不可用（如 Electron file:// 下不持久化）——内存态仍可用，忽略
+  }
+}
+
 function normalizeId(id: any): string {
   return id != null ? String(id) : ''
 }
@@ -393,6 +410,21 @@ export const useSessionStore = defineStore('session', () => {
 
   function setActiveSession(id: string | null) {
     activeSessionId.value = id
+    persistLastSession(id)
+  }
+
+  /** 读取持久化的最后查看会话 ID（存储不可用时返回 null）。 */
+  function getLastSessionId(): string | null {
+    try {
+      return localStorage.getItem(LAST_SESSION_KEY)
+    } catch {
+      return null
+    }
+  }
+
+  /** 清除持久化的最后查看会话 ID（会话已删除/失效时调用）。 */
+  function forgetLastSession() {
+    persistLastSession(null)
   }
 
   function updateSession(id: string, updates: Partial<Session>) {
@@ -634,6 +666,10 @@ export const useSessionStore = defineStore('session', () => {
       }
       if (activeSessionId.value === String(id)) {
         activeSessionId.value = null
+      }
+      // 若删除的是持久化的最后查看会话，一并清除，避免下次冷启动恢复一个已删除会话
+      if (getLastSessionId() === String(id)) {
+        forgetLastSession()
       }
       // Clean up cached data
       const sid = String(id)
@@ -1171,6 +1207,8 @@ export const useSessionStore = defineStore('session', () => {
     createSession,
     fetchCloudProjects,
     setActiveSession,
+    getLastSessionId,
+    forgetLastSession,
     updateSession,
     updateSessionPhase,
     getSessionPhase,
