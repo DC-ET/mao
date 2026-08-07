@@ -42,10 +42,12 @@ cd backend && mvn test                 # 单元测试（backend/src/test/）
 cd backend && mvn package -DskipTests  # 打包（backend/target/mao-server.jar），禁止擅自重启服务
 
 # 管理后台
-cd admin && npm run build && cp -r dist/* /root/soft/mao/admin/ # 打包并部署到服务器资源目录，无需重启服务
+bash scripts/deploy-admin.sh # 构建并部署（rsync --delete 自动清理历史构建文件），无需重启服务
+bash scripts/deploy-admin.sh --dry-run # 仅预览将同步/删除哪些文件
 
 # 桌面端
-cd desktop && npm run build && cp -r dist/* /root/soft/mao/desktop/ # 打包并部署到服务器资源目录，无需重启服务
+bash scripts/deploy-desktop.sh # 构建并部署（rsync --delete 自动清理历史构建文件），无需重启服务
+bash scripts/deploy-desktop.sh --dry-run # 仅预览将同步/删除哪些文件
 cd desktop && npm run dist # 由用户自行运行打包 electron 程序
 
 # 安卓 APP（Capacitor 壳，复用 desktop 前端；仅 CLOUD 模式）
