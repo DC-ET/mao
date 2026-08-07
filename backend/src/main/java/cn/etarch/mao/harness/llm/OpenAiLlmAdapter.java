@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -375,12 +376,22 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             String json = objectMapper.writeValueAsString(body);
             log.debug("LLM request to {}: {}", config.getBaseUrl() + "/chat/completions", json);
 
-            return new Request.Builder()
+            Request.Builder requestBuilder = new Request.Builder()
                     .url(config.getBaseUrl() + "/chat/completions")
                     .header("Authorization", "Bearer " + config.getApiKey())
                     .header("Content-Type", "application/json")
-                    .post(RequestBody.create(json, MediaType.parse("application/json")))
-                    .build();
+                    .post(RequestBody.create(json, MediaType.parse("application/json")));
+
+            // 模型以 gpt 开头时附加 codex 相关请求头（用于识别调用方）
+            if (config.getModelId() != null
+                    && config.getModelId().toLowerCase(Locale.ROOT).startsWith("gpt")) {
+                requestBuilder
+                        .header("User-Agent", "codex_cli_rs/0.146.0 (Linux 6.1.0; x86_64) xterm-256color")
+                        .header("originator", "codex_cli_rs")
+                        .header("x-codex-window-id", "019e9e6a-e81e-7442-bac0-d3bc42cc1b45");
+            }
+
+            return requestBuilder.build();
 
         } catch (Exception e) {
             throw new RuntimeException("Failed to build LLM request", e);
