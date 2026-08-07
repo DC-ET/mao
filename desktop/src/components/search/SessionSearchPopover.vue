@@ -1,16 +1,29 @@
 <template>
   <template v-if="authStore.user">
-    <el-popover
-      ref="popoverRef"
-      trigger="click"
-      placement="bottom-end"
-      popper-class="session-search-popover"
-      @show="onShow"
-      @hide="onHide"
+    <div class="theme-toggle search-toggle" role="button" aria-label="搜索会话" @click="openSearch">
+      <el-icon :size="16"><Search /></el-icon>
+    </div>
+    <el-dialog
+      v-model="isOpen"
+      class="session-search-dialog"
+      width="min(760px, calc(100vw - 32px))"
+      align-center
+      append-to-body
+      modal-class="session-search-overlay"
+      :show-close="false"
+      :lock-scroll="true"
+      @opened="onOpened"
+      @closed="onClosed"
     >
-      <template #reference>
-        <div class="theme-toggle search-toggle" role="button" aria-label="搜索会话">
-          <el-icon :size="16"><Search /></el-icon>
+      <template #header>
+        <div class="search-header">
+          <div>
+            <h2>搜索会话</h2>
+            <p>搜索你在主会话和边路任务中发送过的消息</p>
+          </div>
+          <button class="search-close" type="button" aria-label="关闭搜索" @click="isOpen = false">
+            <el-icon :size="18"><Close /></el-icon>
+          </button>
         </div>
       </template>
       <div class="search-panel">
@@ -18,16 +31,22 @@
           ref="inputRef"
           v-model="keyword"
           class="search-input"
-          placeholder="搜索会话消息…"
+          size="large"
+          placeholder="输入关键词搜索会话消息…"
           clearable
           :maxlength="100"
           @input="onKeywordInput"
           @keydown="onPanelKeydown"
-        />
-        <div class="search-body">
-          <div v-if="status === 'idle'" class="search-tip">输入关键词搜索会话</div>
-          <div v-else-if="status === 'loading'" class="search-tip">搜索中…</div>
-          <div v-else-if="status === 'error'" class="search-tip">搜索失败，请重试</div>
+        >
+          <template #prefix><el-icon :size="18"><Search /></el-icon></template>
+        </el-input>
+        <template v-if="status !== 'idle' && status !== 'loading'">
+          <div class="search-summary">
+            <span>{{ status === 'results' ? `找到 ${results.length} 个相关会话` : '搜索结果' }}</span>
+            <span class="search-shortcuts"><kbd>↑</kbd><kbd>↓</kbd> 选择 <kbd>Enter</kbd> 打开 <kbd>Esc</kbd> 关闭</span>
+          </div>
+          <div class="search-body">
+          <div v-if="status === 'error'" class="search-tip">搜索失败，请重试</div>
           <div v-else-if="status === 'empty'" class="search-tip">未找到相关会话</div>
           <ul v-else class="search-results">
             <li
@@ -51,9 +70,10 @@
               </div>
             </li>
           </ul>
-        </div>
+          </div>
+        </template>
       </div>
-    </el-popover>
+    </el-dialog>
   </template>
   <template v-else>
     <div class="theme-toggle search-toggle" role="button" aria-label="搜索会话" @click="loginDialog.open()">
@@ -65,7 +85,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Search } from '@element-plus/icons-vue'
+import { Close, Search } from '@element-plus/icons-vue'
 import { searchSessions } from '../../api'
 import type { SessionSearchItem } from '../../types/chat'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
@@ -79,7 +99,6 @@ const sessionStore = useSessionStore()
 const router = useRouter()
 const route = useRoute()
 
-const popoverRef = ref()
 const inputRef = ref()
 const keyword = ref('')
 const results = ref<SessionSearchItem[]>([])
@@ -103,13 +122,15 @@ function invalidatePending() {
   }
 }
 
-function onShow() {
+function openSearch() {
   isOpen.value = true
+}
+
+function onOpened() {
   nextTick(() => inputRef.value?.focus())
 }
 
-function onHide() {
-  isOpen.value = false
+function onClosed() {
   // 关闭后清空，保证下次打开从空态开始；在途请求返回也不会重新显示结果
   invalidatePending()
   keyword.value = ''
@@ -183,12 +204,12 @@ function onPanelKeydown(e: KeyboardEvent) {
       void handleJump(item)
     }
   } else if (e.key === 'Escape') {
-    popoverRef.value?.hide()
+    isOpen.value = false
   }
 }
 
 async function handleJump(item: SessionSearchItem) {
-  popoverRef.value?.hide()
+  isOpen.value = false
   if (item.sessionType === 'SIDE_TASK') {
     const parentId = String(item.parentSessionId ?? '')
     if (!parentId) return
@@ -251,13 +272,12 @@ function highlightParts(text: string, kw: string): Array<{ text: string; hit: bo
 }
 
 function toggle() {
-  if (isOpen.value) popoverRef.value?.hide()
-  else popoverRef.value?.show()
+  isOpen.value = !isOpen.value
 }
 
 onUnmounted(() => { invalidatePending() })
 
-defineExpose({ toggle, open: () => popoverRef.value?.show() })
+defineExpose({ toggle, open: openSearch })
 </script>
 
 <style scoped>
@@ -284,61 +304,160 @@ defineExpose({ toggle, open: () => popoverRef.value?.show() })
 </style>
 
 <style>
-/* ElPopover 内容 teleport 到 body，需用非 scoped 样式配合 popper-class */
-.session-search-popover.el-popover {
-  width: min(420px, calc(100vw - 24px));
-  padding: 0;
-  overflow: hidden;
+/* ElDialog 内容 teleport 到 body，需用非 scoped 样式 */
+.session-search-overlay.el-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.session-search-popover .search-panel {
-  padding: 10px;
-}
-
-.session-search-popover .search-input {
+.session-search-overlay .el-overlay-dialog {
+  position: static;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
+  height: 100%;
+  padding: 24px 16px;
+  overflow: auto;
 }
 
-.session-search-popover .search-body {
-  max-height: min(440px, calc(100vh - var(--aw-nav-height) - 120px));
-  overflow-y: auto;
-  margin-top: 8px;
-}
-
-.session-search-popover .search-tip {
-  color: var(--aw-ink-muted-48);
-  font-size: 13px;
-  text-align: center;
-  padding: 24px 0;
-}
-
-.session-search-popover .search-results {
-  list-style: none;
+.session-search-dialog.el-dialog {
+  max-height: min(720px, calc(100vh - 48px));
   margin: 0;
   padding: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
 }
 
-.session-search-popover .search-result-item {
-  padding: 8px 10px;
+.session-search-dialog .el-dialog__header {
+  margin: 0;
+  padding: 22px 24px 16px;
+}
+
+.session-search-dialog .el-dialog__body {
+  padding: 0 24px 24px;
+}
+
+.session-search-dialog .search-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.session-search-dialog .search-header h2 {
+  margin: 0;
+  color: var(--aw-ink);
+  font-size: 20px;
+  line-height: 1.4;
+}
+
+.session-search-dialog .search-header p {
+  margin: 4px 0 0;
+  color: var(--aw-ink-muted-48);
+  font-size: 13px;
+}
+
+.session-search-dialog .search-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
   border-radius: 8px;
+  color: var(--aw-ink-muted-48);
+  background: transparent;
   cursor: pointer;
 }
 
-.session-search-popover .search-result-item.active,
-.session-search-popover .search-result-item:hover {
+.session-search-dialog .search-close:hover {
+  color: var(--aw-ink);
   background: var(--aw-surface-hover);
 }
 
-.session-search-popover .result-line1 {
+.session-search-dialog .search-panel {
+  min-width: 0;
+}
+
+.session-search-dialog .search-input {
+  width: 100%;
+}
+
+.session-search-dialog .search-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 38px;
+  color: var(--aw-ink-muted-48);
+  font-size: 12px;
+}
+
+.session-search-dialog .search-shortcuts {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.session-search-dialog kbd {
+  min-width: 20px;
+  padding: 1px 5px;
+  border: 1px solid var(--aw-border);
+  border-radius: 5px;
+  color: var(--aw-ink-muted-80);
+  background: var(--aw-surface-hover);
+  font: inherit;
+  text-align: center;
+}
+
+.session-search-dialog .search-body {
+  max-height: min(440px, calc(100vh - 260px));
+  overflow-y: auto;
+  border: 1px solid var(--aw-border);
+  border-radius: 12px;
+}
+
+.session-search-dialog .search-tip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--aw-ink-muted-48);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
+}
+
+.session-search-dialog .search-results {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+}
+
+.session-search-dialog .search-result-item {
+  padding: 13px 14px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.session-search-dialog .search-result-item.active,
+.session-search-dialog .search-result-item:hover {
+  background: var(--aw-surface-hover);
+}
+
+.session-search-dialog .result-line1 {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
 
-.session-search-popover .result-title {
-  font-size: 13px;
-  font-weight: 500;
+.session-search-dialog .result-title {
+  font-size: 14px;
+  font-weight: 600;
   color: var(--aw-ink);
   white-space: nowrap;
   overflow: hidden;
@@ -347,20 +466,20 @@ defineExpose({ toggle, open: () => popoverRef.value?.show() })
   min-width: 0;
 }
 
-.session-search-popover .result-tag {
+.session-search-dialog .result-tag {
   flex-shrink: 0;
 }
 
-.session-search-popover .result-time {
+.session-search-dialog .result-time {
   flex-shrink: 0;
   font-size: 12px;
   color: var(--aw-ink-muted-48);
 }
 
-.session-search-popover .result-snippet {
-  margin-top: 3px;
-  font-size: 12px;
-  line-height: 1.5;
+.session-search-dialog .result-snippet {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.55;
   color: var(--aw-ink-muted-80);
   word-break: break-all;
   display: -webkit-box;
@@ -369,7 +488,7 @@ defineExpose({ toggle, open: () => popoverRef.value?.show() })
   overflow: hidden;
 }
 
-.session-search-popover .snippet-hit {
+.session-search-dialog .snippet-hit {
   background: rgba(255, 193, 7, 0.35);
   color: var(--aw-ink);
   border-radius: 2px;

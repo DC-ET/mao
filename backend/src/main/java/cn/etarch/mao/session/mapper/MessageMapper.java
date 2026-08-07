@@ -78,7 +78,7 @@ public interface MessageMapper extends BaseMapper<Message> {
             "    <foreach collection='sessionIds' item='sid' open='(' separator=',' close=')'>#{sid}</foreach>",
             "    AND m.content LIKE CONCAT('%', #{escapedKeyword}, '%') ESCAPE '\\\\'",
             ") t",
-            "WHERE t.rn <= 5",
+            "WHERE t.rn &lt;= 5",
             "ORDER BY t.id ASC",
             "</script>"
     })

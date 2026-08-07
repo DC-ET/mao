@@ -54,8 +54,9 @@ class MessageSearchSqlContractTest {
                 .contains("m.session_id IN")
                 .contains("ESCAPE '\\\\'")
                 // 每会话仅取前几条命中消息（窗口函数 rn<=5），避免全局 LIMIT 截断
+                // <script> 内比较符必须 XML 转义，否则启动时报 SAXParseException
                 .contains("ROW_NUMBER() OVER (PARTITION BY m.session_id ORDER BY m.id ASC)")
-                .contains("WHERE t.rn <= 5")
+                .contains("WHERE t.rn &lt;= 5")
                 .doesNotContain("LIMIT");
     }
 }
