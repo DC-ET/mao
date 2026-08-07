@@ -23,7 +23,8 @@ public class ToolResultSummarizer {
             case "task_list" -> summarizeTaskList(result);
             case "task_delete" -> summarizeTaskDelete(result);
             case "ask_user_questions" -> summarizeAskUserQuestions(arguments, result);
-            case "delegate" -> summarizeGeneric("委派子代理", result);
+            case "delegate" -> summarizeDelegate("委派子代理", result);
+            case "delegate_followup" -> summarizeDelegate("追问子代理", result);
             case "web_search" -> summarizeWebSearch(arguments, result);
             case "open_web_page" -> summarizeOpenWebPage(arguments, result);
             case "generate_image" -> summarizeGenerateImage(arguments, result);
@@ -436,6 +437,30 @@ public class ToolResultSummarizer {
             return toolName + " (成功)";
         }
         return toolName;
+    }
+
+    /**
+     * delegate / delegate_followup 摘要：保留 child_session_id，
+     * 使主代理上下文被压缩后仍能定位子代理会话发起追问。
+     */
+    private static String summarizeDelegate(String label, String result) {
+        if (result == null) return label;
+
+        JsonNode node = parseJson(result);
+        if (node == null) return label;
+
+        String childId = node.has("child_session_id") && !node.get("child_session_id").isNull()
+                ? " #" + node.get("child_session_id").asText() : "";
+        if (node.has("cancelled") && node.get("cancelled").asBoolean()) {
+            return label + childId + " (已取消)";
+        }
+        if (node.has("error")) {
+            return label + childId + " (错误)";
+        }
+        if (node.has("success") && node.get("success").asBoolean()) {
+            return label + childId + " (成功)";
+        }
+        return label + childId;
     }
 
     // --- helpers ---

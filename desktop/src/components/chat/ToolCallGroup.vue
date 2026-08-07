@@ -65,6 +65,7 @@ const toolDisplayMap: Record<string, { label: string; icon: Component }> = {
   task_list: { label: '查询任务', icon: List },
   task_delete: { label: '删除任务', icon: Delete },
   delegate: { label: '委派子代理', icon: Connection },
+  delegate_followup: { label: '追问子代理', icon: Connection },
   web_search: { label: '网页搜索', icon: Search },
   open_web_page: { label: '打开网页', icon: Link },
   generate_image: { label: '生成图片', icon: Picture },

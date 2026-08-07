@@ -29,7 +29,7 @@ public class ToolDispatcher {
      * 纯服务端工具 —— LOCAL 模式下也由服务端执行，不发给客户端
      */
     private static final Set<String> SERVER_ONLY_TOOLS = Set.of(
-            "task_create", "task_update", "task_list", "task_delete", "delegate",
+            "task_create", "task_update", "task_list", "task_delete", "delegate", "delegate_followup",
             "web_search", "open_web_page", "generate_image",
             "send_wechat_image", "send_wechat_file");
 

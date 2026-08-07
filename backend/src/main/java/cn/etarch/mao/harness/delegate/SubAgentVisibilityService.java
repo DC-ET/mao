@@ -85,6 +85,13 @@ public class SubAgentVisibilityService {
     }
 
     /**
+     * 确保用户对某会话的 WS 订阅有效（追问复用既有子会话时兜底，幂等）。
+     */
+    public void ensureSubscribed(Long userId, Long sessionId) {
+        registry.subscribe(userId, sessionId);
+    }
+
+    /**
      * 以可见方式执行子智能体：推送 RUNNING、组合 WS+结果收集、持久化中间轮次。
      */
     public VisibleRunResult executeVisible(Session childSession,

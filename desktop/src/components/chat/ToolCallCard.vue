@@ -77,7 +77,7 @@ watch(
   }
 )
 
-const isDelegate = computed(() => props.toolCall.name === 'delegate')
+const isDelegate = computed(() => props.toolCall.name === 'delegate' || props.toolCall.name === 'delegate_followup')
 
 const childSessionId = computed(() => {
   const result = props.toolCall.result

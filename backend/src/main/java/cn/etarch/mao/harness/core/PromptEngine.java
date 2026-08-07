@@ -434,21 +434,39 @@ public class PromptEngine {
     }
 
     /**
-     * 向 system prompt 注入子智能体委派行为指令
+     * 向 system prompt 注入子智能体委派 / 追问行为指令
      */
     private void appendDelegateToolHints(StringBuilder sb, AgentExecutionContext context) {
         boolean hasDelegateTool = context.getTools().stream()
                 .anyMatch(t -> "delegate".equals(t.getName()));
-        if (!hasDelegateTool) return;
+        boolean hasFollowupTool = context.getTools().stream()
+                .anyMatch(t -> "delegate_followup".equals(t.getName()));
+        if (!hasDelegateTool && !hasFollowupTool) return;
 
-        sb.append("## 子代理委派\n\n");
-        sb.append("你可以使用 `delegate` 工具将子任务委派给专用子代理。子代理拥有独立会话，完成后将结果返回给你。\n\n");
-        sb.append("**使用原则：**\n");
-        sb.append("1. 只有当子任务足够独立、复杂度适中时才委派\n");
-        sb.append("2. 任务描述要具体，包含明确目标、输入数据和期望输出格式\n");
-        sb.append("3. 子代理无法与用户交互，不要委派需要用户确认的任务\n");
-        sb.append("4. 收到子代理结果后，请分析并整合到你的回答中\n");
-        sb.append("5. 对于有依赖关系的子任务，请串行委派\n\n");
+        if (hasDelegateTool) {
+            sb.append("## 子代理委派\n\n");
+            sb.append("你可以使用 `delegate` 工具将子任务委派给专用子代理。子代理拥有独立会话，完成后将结果返回给你。\n\n");
+            sb.append("**使用原则：**\n");
+            sb.append("1. 只有当子任务足够独立、复杂度适中时才委派\n");
+            sb.append("2. 任务描述要具体，包含明确目标、输入数据和期望输出格式\n");
+            sb.append("3. 子代理无法与用户交互，不要委派需要用户确认的任务\n");
+            sb.append("4. 收到子代理结果后，请分析并整合到你的回答中\n");
+            sb.append("5. 对于有依赖关系的子任务，请串行委派\n\n");
+        }
+
+        if (hasFollowupTool) {
+            sb.append("## 子代理追问\n\n");
+            sb.append("你可以使用 `delegate_followup` 工具对**既有子代理会话**发起追问（续查），复用其历史上下文做增量核查。\n\n");
+            sb.append("**适用场景：**\n");
+            sb.append("1. 子代理（如审查）返回结果后，你按其结论修复了问题，需要同一子代理核查修复情况并继续审查\n");
+            sb.append("2. 需要基于上次结论增量推进（如审查 → 修复 → 再审查闭环），而不是重新新建子代理全量分析\n\n");
+            sb.append("**使用步骤：**\n");
+            sb.append("1. 从历史工具结果中取目标子代理的 `child_session_id`（`delegate` 返回的字段）\n");
+            sb.append("2. 在 `task` 中说明上次结论、本次修复内容与核查重点，调用 `delegate_followup`\n\n");
+            sb.append("**注意：**\n");
+            sb.append("1. 追问会让子代理保留上次全部上下文，聚焦增量核查，避免让它重新全量扫描\n");
+            sb.append("2. 全新任务请使用 `delegate` 新建子代理，不要追问无关子代理\n\n");
+        }
     }
 
     /**

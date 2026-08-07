@@ -433,9 +433,10 @@ public class DelegateTool implements Tool {
     /**
      * 构建子智能体执行上下文。
      * 复用 HarnessService.buildContext() 获取基础上下文，然后覆盖 system prompt、maxRounds 和工具集。
+     * 包内可见：DelegateFollowupTool 复用同一逻辑对既有子会话续跑。
      */
-    private AgentExecutionContext buildSubContext(Session childSession,
-                                                  AgentDefinition definition) {
+    AgentExecutionContext buildSubContext(Session childSession,
+                                          AgentDefinition definition) {
         // 复用 HarnessService 构建基础上下文（含模型配置、环境信息等）
         AgentExecutionContext ctx = harnessService.buildContext(childSession.getId());
 
@@ -455,6 +456,7 @@ public class DelegateTool implements Tool {
         // 过滤工具集
         Set<String> excludedNames = new HashSet<>();
         excludedNames.add("delegate"); // 始终排除，防止递归
+        excludedNames.add("delegate_followup"); // 始终排除，防止递归追问
         if (definition.getExcludedToolNames() != null) {
             excludedNames.addAll(definition.getExcludedToolNames());
         }
