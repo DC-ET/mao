@@ -17,6 +17,7 @@
       </div>
     </div>
     <div class="nav-right">
+      <SessionSearchPopover ref="searchPopoverRef" />
       <el-tooltip content="右侧面板" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div class="theme-toggle" :class="{ active: !rightCollapsed }" @click="toggleRight">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -94,7 +95,7 @@
 <script setup lang="ts">
 import { ArrowLeft, Sunrise, Moon, Refresh, Setting, Sunny, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
@@ -105,8 +106,11 @@ import { useSkillDrawer } from '../../composables/useSkillDrawer'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useLoginDialog } from '../../composables/useLoginDialog'
 import { useVersionCheck } from '../../composables/useVersionCheck'
+import SessionSearchPopover from '../search/SessionSearchPopover.vue'
 
 const { theme, toggleTheme } = useTheme()
+
+const searchPopoverRef = ref()
 
 const themeTooltip = computed(() => {
   if (theme.value === 'auto') return '跟随系统（点击切换浅色）'
@@ -188,12 +192,27 @@ function goBackFromSettings() {
 onMounted(() => {
   startPolling()
   startAppUpdater()
+  document.addEventListener('keydown', handleSearchShortcut)
 })
 
 onUnmounted(() => {
   stopPolling()
   stopAppUpdater()
+  document.removeEventListener('keydown', handleSearchShortcut)
 })
+
+/** Ctrl/Cmd+K：打开/关闭会话搜索浮窗。未登录时唤起登录对话框，不发起搜索请求。 */
+function handleSearchShortcut(e: KeyboardEvent) {
+  if (e.repeat) return
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault()
+    if (authStore.user) {
+      searchPopoverRef.value?.toggle()
+    } else {
+      loginDialog.open()
+    }
+  }
+}
 
 let installPromptVisible = false
 

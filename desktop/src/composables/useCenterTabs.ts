@@ -1,7 +1,7 @@
 import { ref, computed, watch, type Ref } from 'vue'
 import type { Tab, SessionTabState } from '../types/file-browser'
 import type { FileChange } from '../types/chat'
-import { getClosedSideTaskIds, markSideTaskClosed, normalizeSideTaskTitle, type SideTaskSummary } from '../utils/side-task-tabs'
+import { getClosedSideTaskIds, markSideTaskClosed, unmarkSideTaskClosed, normalizeSideTaskTitle, type SideTaskSummary } from '../utils/side-task-tabs'
 import { useSessionStore } from '../stores/session'
 
 // Module-level singleton state
@@ -9,6 +9,34 @@ const sessionTabsMap = ref<Map<string, SessionTabState>>(new Map())
 const currentSessionId = ref('')
 
 const CHAT_TAB: Tab = { id: 'chat', type: 'chat', title: '主会话' }
+
+/**
+ * 模块级边路任务 Tab 打开函数（供顶部搜索等脱离 TaskView 上下文的入口使用）。
+ * 始终按显式 parentSessionId 操作模块级单例 Map，不依赖 currentSessionId——
+ * 因此不受 router.push 异步加载会话的影响；restoreSideTaskTabs 只会合并数据、不重置已激活 Tab。
+ */
+export function openSideTaskTabFor(parentSessionId: string, sideSessionId: number, title: string) {
+  if (!parentSessionId || sideSessionId <= 0) return
+  // 从搜索结果重新打开：清除「用户曾关闭」记录，保证刷新后 restoreSideTaskTabs 仍能恢复该 Tab
+  unmarkSideTaskClosed(parentSessionId, sideSessionId)
+  const sid = String(parentSessionId)
+  let state = sessionTabsMap.value.get(sid)
+  if (!state) {
+    state = { tabs: [], activeTabId: 'chat' }
+    sessionTabsMap.value.set(sid, state)
+  }
+  const existing = state.tabs.find(t => t.type === 'side_task' && t.sideSessionId === sideSessionId)
+  if (existing) {
+    existing.title = normalizeSideTaskTitle(title)
+    state.activeTabId = existing.id
+  } else {
+    const id = 'side:' + sideSessionId
+    state.tabs.push({ id, type: 'side_task', title: normalizeSideTaskTitle(title), sideSessionId })
+    state.activeTabId = id
+  }
+  // Map 内部对象变更不会自动触发 computed，需要替换 Map 引用
+  sessionTabsMap.value = new Map(sessionTabsMap.value)
+}
 
 // 仅注册一次：激活边路任务 Tab 时清除该边路任务的未读标记（按 sideSessionId 独立已读）
 let sideTaskReadWatchRegistered = false

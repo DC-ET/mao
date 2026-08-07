@@ -31,4 +31,37 @@ public interface SessionMapper extends BaseMapper<Session> {
 
     @Select("SELECT id FROM session WHERE id = #{sessionId} AND deleted = 0 FOR UPDATE")
     Long lockActiveSessionById(@Param("sessionId") Long sessionId);
+
+    /**
+     * 按用户消息内容搜索会话候选（主会话 + 边路会话，排除子代理/归档/孤儿边路）。
+     * 仅第一层粗筛：message.content LIKE 命中（含多模态 JSON 原文），
+     * 由 Service 层做纯文本二次校验剔除假命中。LIKE 特殊字符已由 Service 转义。
+     */
+    @Select({
+            "<script>",
+            "SELECT DISTINCT s.id, s.title, s.session_type, s.parent_session_id, s.phase, s.updated_at, s.agent_id",
+            "FROM session s",
+            "JOIN message m ON m.session_id = s.id AND m.deleted = 0",
+            "WHERE s.user_id = #{userId} AND s.deleted = 0",
+            "  AND s.session_type IN ('NORMAL', 'SIDE_TASK')",
+            "  AND s.status = 'ACTIVE'",
+            "  AND m.role = 'USER'",
+            "  AND m.content LIKE CONCAT('%', #{escapedKeyword}, '%') ESCAPE '\\\\'",
+            "  AND (",
+            "    s.session_type = 'NORMAL'",
+            "    OR EXISTS (",
+            "      SELECT 1 FROM session p",
+            "      WHERE p.id = s.parent_session_id",
+            "        AND p.user_id = s.user_id",
+            "        AND p.deleted = 0",
+            "        AND p.status = 'ACTIVE'",
+            "        AND p.session_type = 'NORMAL'",
+            "    )",
+            "  )",
+            "ORDER BY s.updated_at DESC, s.id DESC",
+            "LIMIT 20",
+            "</script>"
+    })
+    List<Session> selectMessageSearchCandidates(@Param("userId") Long userId,
+                                                @Param("escapedKeyword") String escapedKeyword);
 }

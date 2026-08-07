@@ -2,6 +2,7 @@ import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import { useLoginDialog } from '../composables/useLoginDialog'
 import { getRefreshToken, getToken, setTokens } from '../utils/auth-storage'
+import type { SessionSearchItem } from '../types/chat'
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1',
@@ -275,4 +276,16 @@ export async function deleteMyMcpServer(id: number): Promise<void> {
 export async function testMyMcpServer(id: number): Promise<McpToolItem[]> {
   const { data } = await api.post(`/mcp-servers/me/${id}/test`)
   return data
+}
+
+// ─── 会话消息搜索 ───
+
+/** 按用户消息内容搜索会话（主会话 + 边路会话），最多返回 20 条。 */
+export async function searchSessions(keyword: string, options?: { signal?: AbortSignal }): Promise<SessionSearchItem[]> {
+  const { data } = await api.get('/sessions/search', {
+    params: { keyword },
+    signal: options?.signal,
+    skipErrorToast: true
+  } as any)
+  return data?.items ?? []
 }

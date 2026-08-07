@@ -8,6 +8,8 @@ async function mockDesktopApiFallback(page: Page) {
       data = { feishuEnabled: false }
     } else if (url.pathname.endsWith('/sessions/groups')) {
       data = { groups: [] }
+    } else if (url.pathname.endsWith('/sessions/search')) {
+      data = { items: [] }
     } else if (url.pathname.endsWith('/agents') || url.pathname.endsWith('/sessions')) {
       data = []
     } else if (url.pathname.endsWith('/models/default')) {
@@ -319,5 +321,116 @@ test.describe('Desktop Notification Settings', () => {
       channel: 'DINGTALK',
       webhookUrl: webhook
     })
+  })
+})
+
+// ─────────────────────────────────────────────────────────
+// Desktop - Session Search
+// ─────────────────────────────────────────────────────────
+test.describe('Session Search', () => {
+  const SEARCH_RESULTS = {
+    items: [
+      {
+        id: 11,
+        title: '修复登录 Bug',
+        sessionType: 'NORMAL',
+        parentSessionId: null,
+        updatedAt: '2026-08-07T10:30',
+        phase: 'COMPLETED',
+        agentName: '默认 Agent',
+        snippet: '……帮我看看登录页面为什么报 500 错误……'
+      },
+      {
+        id: 22,
+        title: '边路整理文档',
+        sessionType: 'SIDE_TASK',
+        parentSessionId: 3,
+        updatedAt: '2026-08-07T09:00',
+        phase: 'RUNNING',
+        agentName: '默认 Agent',
+        snippet: '……把登录流程整理成文档……'
+      }
+    ]
+  }
+
+  /** 已登录 + 全量 API mock：/sessions/search 返回固定结果，/sessions/{id} 系列返回空对象兜底。 */
+  async function mockLoggedInDesktopApi(page: Page, onSearch?: (keyword: string) => void) {
+    await page.addInitScript(() => {
+      localStorage.setItem('token', 'test-access-token')
+    })
+    await page.route('**/api/v1/**', async route => {
+      const url = new URL(route.request().url())
+      const pathname = url.pathname
+      let data: unknown = null
+      if (pathname.endsWith('/users/me')) {
+        data = { id: 1, username: 'admin', displayName: 'Admin' }
+      } else if (pathname.endsWith('/sessions/search')) {
+        onSearch?.(url.searchParams.get('keyword') || '')
+        data = SEARCH_RESULTS
+      } else if (pathname.endsWith('/sessions/groups')) {
+        data = { groups: [] }
+      } else if (pathname.endsWith('/agents') || pathname.endsWith('/models/default')) {
+        data = pathname.endsWith('/models/default') ? { id: 1, name: 'Default Model' } : []
+      } else if (pathname.includes('/sessions/')) {
+        // /sessions/{id}、/sessions/{id}/side-tasks、/sessions/{id}/subagents 等
+        data = {}
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, message: 'success', data })
+      })
+    })
+  }
+
+  test('should search by user message and jump to main session', async ({ page }) => {
+    let searchKeyword = ''
+    await mockLoggedInDesktopApi(page, kw => { searchKeyword = kw })
+
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    await page.locator('.search-toggle').first().click()
+    await expect(page.locator('.session-search-popover')).toBeVisible({ timeout: 5_000 })
+
+    await page.locator('.session-search-popover input').fill('登录')
+    await expect.poll(() => searchKeyword, { timeout: 8_000 }).toBe('登录')
+    await expect(page.locator('.search-result-item')).toHaveCount(2)
+    await expect(page.locator('.snippet-hit').first()).toContainText('登录')
+
+    await page.locator('.search-result-item').first().click()
+    await expect(page).toHaveURL(/\/tasks\/11$/, { timeout: 8_000 })
+  })
+
+  test('should jump to parent session and open side task tab', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    await page.locator('.search-toggle').first().click()
+    await page.locator('.session-search-popover input').fill('登录')
+    await expect(page.locator('.search-result-item')).toHaveCount(2)
+
+    // 第二个结果为边路会话（parentSessionId=3）→ 跳父会话并打开边路 Tab
+    await page.locator('.search-result-item').nth(1).click()
+    await expect(page).toHaveURL(/\/tasks\/3$/, { timeout: 8_000 })
+    await expect(page.locator('.center-tab-bar .tab-item').filter({ hasText: '边路整理文档' }))
+      .toBeVisible({ timeout: 8_000 })
+  })
+
+  test('should not call search API when not logged in', async ({ page }) => {
+    let searchCalled = false
+    await page.route('**/api/v1/sessions/search', async route => {
+      searchCalled = true
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, message: 'success', data: { items: [] } })
+      })
+    })
+
+    await page.goto('/')
+    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    // 未登录按 Ctrl+K 应唤起登录对话框而非发起搜索请求
+    await page.keyboard.press('Control+k')
+    await expect(page.locator('.login-dialog')).toBeVisible({ timeout: 8_000 })
+    expect(searchCalled).toBeFalsy()
   })
 })

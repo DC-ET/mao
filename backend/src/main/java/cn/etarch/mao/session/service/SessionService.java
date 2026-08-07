@@ -18,6 +18,7 @@ import cn.etarch.mao.session.mapper.FileChangeMapper;
 import cn.etarch.mao.session.mapper.MessageMapper;
 import cn.etarch.mao.session.mapper.SessionMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -419,6 +420,143 @@ public class SessionService {
         sessionCompactionEventService.deleteBySessionId(id);
         messageMapper.delete(new QueryWrapper<Message>().eq("session_id", id));
         sessionMapper.deleteById(id);
+    }
+
+    // ─── 会话消息搜索 ───
+
+    public static final int SEARCH_RESULT_LIMIT = 20;
+    private static final int SEARCH_KEYWORD_MAX_LENGTH = 100;
+    private static final int SNIPPET_CONTEXT_CHARS = 25;
+    private static final int SNIPPET_MAX_LENGTH = 80;
+
+    public record MessageSearchItem(Long id, String title, String sessionType, Long parentSessionId,
+                                    String updatedAt, String phase, String agentName, String snippet) {}
+
+    /**
+     * 按用户消息内容搜索会话（主会话 + 有效边路会话，排除子代理/归档/孤儿边路）。
+     * 两层过滤：SQL LIKE 候选 + Java 纯文本二次校验，剔除多模态 JSON 字段/图片 URL 假命中。
+     */
+    public List<MessageSearchItem> searchSessionsByUserMessage(Long userId, String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            throw new BusinessException(ErrorCode.PARAM_MISSING, "缺少搜索关键词");
+        }
+        String trimmed = keyword.trim();
+        if (trimmed.length() > SEARCH_KEYWORD_MAX_LENGTH) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "搜索关键词不能超过 " + SEARCH_KEYWORD_MAX_LENGTH + " 个字符");
+        }
+        String escaped = escapeLike(trimmed);
+        List<Session> candidates = sessionMapper.selectMessageSearchCandidates(userId, escaped);
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
+        List<Long> sessionIds = candidates.stream().map(Session::getId).collect(Collectors.toList());
+        List<Message> hitMessages = messageMapper.selectMessagesForSearch(sessionIds, escaped);
+        Map<Long, List<Message>> messagesBySession = hitMessages.stream()
+                .filter(m -> m.getContent() != null)
+                .collect(Collectors.groupingBy(Message::getSessionId));
+
+        Map<Long, Agent> agentMap = batchLoadAgents(candidates);
+        List<MessageSearchItem> items = new ArrayList<>();
+        for (Session s : candidates) {
+            String snippet = null;
+            for (Message m : messagesBySession.getOrDefault(s.getId(), List.of())) {
+                String text = extractVisibleText(m.getContent());
+                if (text == null || text.isEmpty()) continue;
+                snippet = buildSnippet(text, trimmed);
+                if (snippet != null) break;
+            }
+            // SQL 第一层命中但纯文本未命中（多模态 JSON 字段 / 图片 URL 假命中）→ 剔除该会话
+            if (snippet == null) continue;
+            Agent agent = s.getAgentId() != null ? agentMap.get(s.getAgentId()) : null;
+            items.add(new MessageSearchItem(
+                    s.getId(),
+                    s.getTitle(),
+                    s.getSessionType(),
+                    s.getParentSessionId(),
+                    s.getUpdatedAt() != null ? s.getUpdatedAt().toString() : null,
+                    s.getPhase() != null ? s.getPhase() : "IDLE",
+                    agent != null ? agent.getName() : null,
+                    snippet));
+        }
+        return items;
+    }
+
+    /** LIKE 通配符转义：\ → \\，% → \% ，_ → \_（配合 SQL ESCAPE '\'）。 */
+    private String escapeLike(String keyword) {
+        return keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
+    /**
+     * 围绕首次命中位置生成片段：命中词前后各保留至多 {@link #SNIPPET_CONTEXT_CHARS} 字，
+     * 总长限制在 {@link #SNIPPET_MAX_LENGTH} 内，前后截断补省略号。未命中返回 null。
+     */
+    static String buildSnippet(String text, String keyword) {
+        if (text == null || keyword == null || keyword.isEmpty()) return null;
+        int idx = indexOfIgnoreCase(text, keyword);
+        if (idx < 0) return null;
+        int kwLen = keyword.length();
+        int ctx = SNIPPET_CONTEXT_CHARS;
+        if (kwLen + ctx * 2 > SNIPPET_MAX_LENGTH) {
+            ctx = Math.max(0, (SNIPPET_MAX_LENGTH - kwLen) / 2);
+        }
+        int start = Math.max(0, idx - ctx);
+        int end = Math.min(text.length(), idx + kwLen + ctx);
+        String body = text.substring(start, end);
+        return (start > 0 ? "…" : "") + body + (end < text.length() ? "…" : "");
+    }
+
+    /** 大小写不敏感定位（与数据库 utf8mb4 默认 collation 的 ASCII 大小写行为一致；重音等特殊字符场景存在理论差异）。 */
+    static int indexOfIgnoreCase(String text, String keyword) {
+        return text.toLowerCase(Locale.ROOT).indexOf(keyword.toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * 提取消息内容中的用户可见文本：仅当 JSON 数组所有元素均为多模态结构（type=text / image_url）
+     * 时拼接 text 部分（图片 URL 丢弃）；普通/混合 JSON 数组（如 [1,2,3]、[1,{"type":"text",...}]）
+     * 与纯文本原样返回。解析失败回退原文（第二层校验会再次判断是否真正命中）。
+     */
+    String extractVisibleText(String content) {
+        if (content == null) return null;
+        String raw = content.trim();
+        if (!raw.startsWith("[")) {
+            return content;
+        }
+        try {
+            List<?> parts = objectMapper.readValue(raw, new TypeReference<List<?>>() {});
+            if (parts.isEmpty()) {
+                return content;
+            }
+            StringBuilder sb = new StringBuilder();
+            boolean multimodal = false;
+            boolean allParts = true;
+            for (Object part : parts) {
+                if (part instanceof Map<?, ?> map) {
+                    Object type = map.get("type");
+                    if ("text".equals(type)) {
+                        Object text = map.get("text");
+                        if (text != null) sb.append(text);
+                        multimodal = true;
+                    } else if ("image_url".equals(type)) {
+                        multimodal = true;
+                    } else {
+                        allParts = false;
+                    }
+                } else {
+                    allParts = false;
+                }
+            }
+            // 仅当全部元素均为 ContentPart 时才视为多模态消息；混合/普通数组按纯文本处理
+            return multimodal && allParts ? sb.toString() : content;
+        } catch (JsonProcessingException e) {
+            log.warn("Failed to parse multimodal message content, fallback to raw: {}", e.getMessage());
+            return content;
+        }
+    }
+
+    private Map<Long, Agent> batchLoadAgents(List<Session> sessions) {
+        Set<Long> ids = sessions.stream().map(Session::getAgentId).filter(Objects::nonNull).collect(Collectors.toSet());
+        if (ids.isEmpty()) return Map.of();
+        return agentMapper.selectBatchIds(ids).stream().collect(Collectors.toMap(Agent::getId, a -> a));
     }
 
     public void togglePin(Long id) {

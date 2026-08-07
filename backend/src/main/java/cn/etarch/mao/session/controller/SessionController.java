@@ -187,6 +187,21 @@ public class SessionController {
         return Result.ok(voList);
     }
 
+    /**
+     * 按用户消息内容搜索会话（主会话 + 有效边路会话）。keyword 为必填；
+     * 结果固定最多 {@link SessionService#SEARCH_RESULT_LIMIT} 条，按会话更新时间倒序。
+     */
+    @GetMapping("/search")
+    public Result<SessionSearchVO> searchSessions(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam String keyword) {
+        List<SessionService.MessageSearchItem> items =
+                sessionService.searchSessionsByUserMessage(userId, keyword);
+        SessionSearchVO vo = new SessionSearchVO();
+        vo.setItems(items);
+        return Result.ok(vo);
+    }
+
     @GetMapping("/{id}")
     public Result<SessionVO> getSession(
             @AuthenticationPrincipal Long userId,
@@ -718,6 +733,11 @@ public class SessionController {
     @Data
     public static class SessionGroupsVO {
         private List<SessionGroupVO> groups;
+    }
+
+    @Data
+    public static class SessionSearchVO {
+        private List<SessionService.MessageSearchItem> items;
     }
 
     @Data

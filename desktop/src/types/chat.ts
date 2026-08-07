@@ -121,3 +121,16 @@ export function normalizeMessageRole(role: string): ChatMessage['role'] {
   if (r === 'user' || r === 'assistant' || r === 'system') return r
   return 'assistant'
 }
+
+// --- 会话消息搜索 ---
+
+export interface SessionSearchItem {
+  id: number
+  title: string
+  sessionType: 'NORMAL' | 'SIDE_TASK'
+  parentSessionId: number | null
+  updatedAt?: string
+  phase: string
+  agentName?: string
+  snippet?: string
+}

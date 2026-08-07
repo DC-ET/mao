@@ -59,4 +59,29 @@ public interface MessageMapper extends BaseMapper<Message> {
     @Select("SELECT COALESCE(MAX(id), 0) FROM message " +
             "WHERE session_id = #{sessionId} AND deleted = 0")
     long selectMaxMessageId(@Param("sessionId") Long sessionId);
+
+    /**
+     * 按候选会话批量取回每个会话前几条命中 user 消息（供会话搜索的二次纯文本校验与 snippet 生成）。
+     * 窗口函数每会话至多取 5 条（id ASC），避免全局 LIMIT 截断；Service 层按第一条文本命中即止。
+     * 若只取第一条，会话最早的命中消息为多模态假命中（关键词在图片 URL/JSON 字段）时会误剔真实命中会话。
+     * LIKE 特殊字符已由 Service 转义。
+     */
+    @Select({
+            "<script>",
+            "SELECT t.sessionId AS sessionId, t.id AS id, t.content AS content",
+            "FROM (",
+            "  SELECT m.session_id AS sessionId, m.id AS id, m.content AS content,",
+            "         ROW_NUMBER() OVER (PARTITION BY m.session_id ORDER BY m.id ASC) AS rn",
+            "  FROM message m",
+            "  WHERE m.deleted = 0 AND m.role = 'USER'",
+            "    AND m.session_id IN",
+            "    <foreach collection='sessionIds' item='sid' open='(' separator=',' close=')'>#{sid}</foreach>",
+            "    AND m.content LIKE CONCAT('%', #{escapedKeyword}, '%') ESCAPE '\\\\'",
+            ") t",
+            "WHERE t.rn <= 5",
+            "ORDER BY t.id ASC",
+            "</script>"
+    })
+    List<Message> selectMessagesForSearch(@Param("sessionIds") List<Long> sessionIds,
+                                          @Param("escapedKeyword") String escapedKeyword);
 }

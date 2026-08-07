@@ -28,6 +28,15 @@ export function markSideTaskClosed(parentSessionId: string, sideSessionId: numbe
   localStorage.setItem(STORAGE_PREFIX + parentSessionId, JSON.stringify([...closed]))
 }
 
+/** 移除「用户曾关闭」记录：从搜索结果主动重新打开边路任务时调用，保证刷新后仍可恢复。 */
+export function unmarkSideTaskClosed(parentSessionId: string, sideSessionId: number) {
+  if (sideSessionId <= 0) return
+  const closed = getClosedSideTaskIds(parentSessionId)
+  if (!closed.has(sideSessionId)) return
+  closed.delete(sideSessionId)
+  localStorage.setItem(STORAGE_PREFIX + parentSessionId, JSON.stringify([...closed]))
+}
+
 export interface SideTaskSummary {
   id: number
   title: string
