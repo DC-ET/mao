@@ -73,8 +73,9 @@ const currentPage = ref(1)
 
 const scrollContainer = ref<HTMLElement>()
 const containerWidth = ref(0)
-const pageSlots = ref<HTMLElement[]>([])
-const canvases = ref<HTMLCanvasElement[]>([])
+// DOM 引用用普通数组（避免 reactive 代理 DOM / pdf.js 对象导致私有字段崩溃）
+const pageSlots: HTMLElement[] = []
+const canvases: HTMLCanvasElement[] = []
 
 // 每页 scale=1 的基础视口尺寸（宽/高），用于 slot 尺寸与渲染比例
 const pageBaseSizes = ref<Array<{ width: number; height: number }>>([])
@@ -106,16 +107,17 @@ function pageSlotStyle(idx: number) {
 function setPageSlot(el: any) {
   if (!el) return
   const idx = Number(el.dataset.pageIdx)
-  pageSlots.value[idx] = el
+  pageSlots[idx] = el
 }
 
 function setCanvas(el: any) {
   if (!el) return
   const idx = Number(el.dataset.pageIdx)
-  canvases.value[idx] = el
+  canvases[idx] = el
 }
 
-const pdfDoc = ref<PDFDocumentProxy | null>(null)
+// pdf.js 文档对象不可被 Vue 响应式代理（内部大量私有字段），必须用普通变量
+let pdfDoc: PDFDocumentProxy | null = null
 // Set 内部变更需响应式以驱动模板 v-show（reactive 代理 Set 的内部方法）
 const renderedPages = reactive(new Set<number>())
 // 渲染任务登记（含 await 前的占位，防并发渲染同一 canvas）；cancel 为 no-op 时表示占位
@@ -154,23 +156,23 @@ function setupObservers() {
     },
     { root: scrollContainer.value, rootMargin: '200px 0px' },
   )
-  for (const slot of pageSlots.value) {
+  for (const slot of pageSlots) {
     if (slot) observer.observe(slot)
   }
 }
 
 async function renderPage(idx: number) {
-  if (state.value !== 'ready' || !pdfDoc.value) return
+  if (state.value !== 'ready' || !pdfDoc) return
   if (renderedPages.has(idx) || renderTasks.has(idx)) return
-  const canvas = canvases.value[idx]
-  const slot = pageSlots.value[idx]
+  const canvas = canvases[idx]
+  const slot = pageSlots[idx]
   if (!canvas || !slot) return
 
   // await getPage 前登记占位，防止缩放/滚动期间并发渲染同一 canvas
   const placeholder: { cancel: () => void } = { cancel: () => {} }
   renderTasks.set(idx, placeholder)
   try {
-    const pdfPage = await pdfDoc.value.getPage(idx + 1)
+    const pdfPage = await pdfDoc.getPage(idx + 1)
     // 已被取消/替换（如缩放、滚动离屏、重新加载）则放弃本次渲染
     if (!slot.isConnected || renderTasks.get(idx) !== placeholder) return
     const base = pageBaseSizes.value[idx]
@@ -222,8 +224,8 @@ function onScroll() {
   if (!container) return
   const containerTop = container.getBoundingClientRect().top
   const threshold = container.scrollTop + 50
-  for (let i = 0; i < pageSlots.value.length; i++) {
-    const slot = pageSlots.value[i]
+  for (let i = 0; i < pageSlots.length; i++) {
+    const slot = pageSlots[i]
     if (!slot?.isConnected) continue
     // 与容器滚动坐标对齐（getBoundingClientRect 相对视口，换算到容器坐标系）
     const slotTop = slot.getBoundingClientRect().top - containerTop + container.scrollTop
@@ -266,12 +268,12 @@ async function loadPdf() {
   loadProgress.value = 0
   numPages.value = 0
   pageBaseSizes.value = []
-  pageSlots.value = []
-  canvases.value = []
+  pageSlots.length = 0
+  canvases.length = 0
   renderedPages.clear()
   cancelAllRenders()
-  pdfDoc.value?.destroy()
-  pdfDoc.value = null
+  pdfDoc?.destroy()
+  pdfDoc = null
 
   try {
     const loadingTask = pdfjsLib.getDocument({
@@ -288,7 +290,7 @@ async function loadPdf() {
       doc.destroy()
       return
     }
-    pdfDoc.value = doc
+    pdfDoc = doc
     numPages.value = doc.numPages
 
     // 预取每页基础尺寸（scale=1），用于 slot 布局
@@ -309,8 +311,8 @@ async function loadPdf() {
     setupObservers()
   } catch (e: any) {
     if (seq !== loadSeq) return
-    pdfDoc.value?.destroy()
-    pdfDoc.value = null
+    pdfDoc?.destroy()
+    pdfDoc = null
     state.value = 'error'
     errorMsg.value = e?.message || '文件已损坏或格式不受支持'
   }
@@ -324,7 +326,7 @@ watch(cssScale, () => {
   // 缩放变化：slot 尺寸随 style 绑定自动更新，重渲染可视页
   cancelAllRenders()
   renderedPages.clear()
-  for (const slot of pageSlots.value) {
+  for (const slot of pageSlots) {
     const idx = slot?.dataset.pageIdx
     if (idx !== undefined && slot?.isConnected && isSlotVisible(slot)) {
       void renderPage(Number(idx))
@@ -360,8 +362,8 @@ onDeactivated(() => {
   observer = null
   resizeObserver = null
   cancelAllRenders()
-  pdfDoc.value?.destroy()
-  pdfDoc.value = null
+  pdfDoc?.destroy()
+  pdfDoc = null
 })
 
 onUnmounted(() => {
@@ -371,8 +373,8 @@ onUnmounted(() => {
   observer = null
   resizeObserver = null
   cancelAllRenders()
-  pdfDoc.value?.destroy()
-  pdfDoc.value = null
+  pdfDoc?.destroy()
+  pdfDoc = null
 })
 </script>
 
