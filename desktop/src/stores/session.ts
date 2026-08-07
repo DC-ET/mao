@@ -91,6 +91,14 @@ export interface SessionGroupMeta {
   hasMore: boolean
 }
 
+/** LLM 请求瞬时错误（429/5xx）重试进度 */
+export interface LlmRetryInfo {
+  statusCode: number
+  attempt: number
+  maxRetries: number
+  delaySeconds: number
+}
+
 const DEFAULT_GROUP_PREVIEW = 5
 const DEFAULT_GROUP_PAGE_SIZE = 20
 
@@ -136,6 +144,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessionCompacting = ref<Map<string, boolean>>(new Map())
   const sessionThinking = ref<Map<string, boolean>>(new Map())
   const sessionStreaming = ref<Map<string, boolean>>(new Map())
+  const sessionLlmRetry = ref<Map<string, LlmRetryInfo>>(new Map())
   const sessionPendingApprovals = ref<Map<string, number>>(new Map())
   const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
   const sessionFileChanges = ref<Map<string, FileChange[]>>(new Map())
@@ -189,6 +198,10 @@ export const useSessionStore = defineStore('session', () => {
 
   const activeStreaming = computed(() =>
     sessionStreaming.value.get(activeSessionId.value ?? '') ?? false
+  )
+
+  const activeLlmRetry = computed(() =>
+    sessionLlmRetry.value.get(activeSessionId.value ?? '') ?? null
   )
 
   const activeQueueMessages = computed(() =>
@@ -1016,6 +1029,22 @@ export const useSessionStore = defineStore('session', () => {
     sessionStreaming.value.set(String(sessionId), streaming)
   }
 
+  function setLlmRetry(sessionId: string, info: LlmRetryInfo) {
+    sessionLlmRetry.value.set(String(sessionId), info)
+  }
+
+  function clearLlmRetry(sessionId: string) {
+    sessionLlmRetry.value.delete(String(sessionId))
+  }
+
+  function clearAllLlmRetry() {
+    sessionLlmRetry.value = new Map()
+  }
+
+  function getLlmRetry(sessionId: string): LlmRetryInfo | null {
+    return sessionLlmRetry.value.get(String(sessionId)) ?? null
+  }
+
   function isSessionThinking(sessionId: string): boolean {
     return sessionThinking.value.get(String(sessionId)) ?? false
   }
@@ -1169,6 +1198,7 @@ export const useSessionStore = defineStore('session', () => {
     sessionCompacting.value = new Map()
     sessionThinking.value = new Map()
     sessionStreaming.value = new Map()
+    sessionLlmRetry.value = new Map()
     sessionPendingApprovals.value = new Map()
     sessionFileChanges.value = new Map()
     sessionQueueMessages.value = new Map()
@@ -1279,6 +1309,12 @@ export const useSessionStore = defineStore('session', () => {
     activeStreaming,
     setStreaming,
     isSessionStreaming,
+    // LLM retry
+    activeLlmRetry,
+    setLlmRetry,
+    clearLlmRetry,
+    clearAllLlmRetry,
+    getLlmRetry,
     // Pending approvals
     sessionPendingApprovals,
     incrementPendingApproval,

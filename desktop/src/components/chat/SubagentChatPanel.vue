@@ -15,6 +15,7 @@
         v-if="displayMessages.length > 0"
         :messages="displayMessages"
         :sending="sending"
+        :session-id="sid"
         :compaction-events="compactionEvents"
         @add-to-command="openWithContent"
       />
@@ -24,6 +25,10 @@
           <span></span>
           <span></span>
           <span></span>
+        </div>
+        <div v-if="typingRetry" class="typing-retry">
+          <span class="typing-retry-spinner"></span>
+          <span>模型服务繁忙（HTTP {{ typingRetry.statusCode }}），正在重试 {{ typingRetry.attempt }}/{{ typingRetry.maxRetries }}，{{ typingRetry.delaySeconds }} 秒后继续…</span>
         </div>
       </div>
 
@@ -132,6 +137,16 @@ const showTypingIndicator = computed(() => {
   return !hasRunningTool
 })
 
+/** 底部重试提示：仅当消息区无 assistant 消息承载重试条时显示（如子代理首轮重试） */
+const typingRetry = computed(() => {
+  const retry = sessionStore.getLlmRetry(sid.value)
+  if (!retry) return null
+  const msgs = displayMessages.value
+  const lastMsg = msgs[msgs.length - 1]
+  if (lastMsg && normalizeMessageRole(lastMsg.role ?? '') === 'assistant') return null
+  return retry
+})
+
 const pendingQuestions = computed(
   () => sessionStore.sessionPendingQuestions.get(sid.value) ?? []
 )
@@ -224,6 +239,12 @@ async function scrollToBottom() {
 
 watch(
   () => displayMessages.value.length,
+  () => { void scrollToBottom() }
+)
+
+// 重试提示出现/更新时滚动到底部（与主会话行为对齐）
+watch(
+  () => sessionStore.getLlmRetry(sid.value)?.attempt ?? 0,
   () => { void scrollToBottom() }
 )
 
@@ -326,6 +347,10 @@ onUnmounted(() => {
 }
 
 .typing-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   padding: 8px 0;
 }
 
@@ -343,6 +368,33 @@ onUnmounted(() => {
 }
 
 .typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+
+.typing-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--aw-warning, #e6a23c);
+  border-radius: var(--aw-radius-sm, 8px);
+  background: color-mix(in srgb, var(--aw-warning, #e6a23c) 10%, transparent);
+  color: var(--aw-warning, #e6a23c);
+  font-size: var(--aw-text-caption, 12px);
+  line-height: 1.5;
+}
+
+.typing-retry-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--aw-warning, #e6a23c) 30%, transparent);
+  border-top-color: var(--aw-warning, #e6a23c);
+  border-radius: 50%;
+  animation: typing-retry-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes typing-retry-spin {
+  to { transform: rotate(360deg); }
+}
 .typing-dots span:nth-child(3) { animation-delay: 0.3s; }
 
 @keyframes bounce {

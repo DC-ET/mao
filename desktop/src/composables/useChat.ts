@@ -648,6 +648,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sessionStore.setStreaming(sid, false)
     sessionStore.setCompacting(sid, false)
     sessionStore.clearAskQuestions(sid)
+    sessionStore.clearLlmRetry(sid)
     sessionStore.updateSessionPhase(sid, 'CANCELLED')
 
     fetchQueue()

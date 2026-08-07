@@ -87,7 +87,7 @@ const STREAM_EVENT_TYPES = new Set([
   'content_delta', 'tool_call_start', 'tool_call_args_delta', 'tool_call_result',
   'thinking_start', 'thinking_end', 'thinking_delta', 'message_end',
   'file_change', 'activity', 'compaction_start', 'compaction_end', 'compaction_marker',
-  'context_window', 'error'
+  'context_window', 'llm_retry', 'error'
 ])
 
 function refreshQueue(sessionId: string) {
@@ -286,6 +286,8 @@ export function useStreamWS() {
       ws!.onclose = () => {
         connected.value = false
         stopHeartbeat()
+        // 断线后内存中的瞬时 LLM 重试状态已不可信，全部清理避免重连后残留过期提示
+        sessionStore.clearAllLlmRetry()
         if (bridgeConnectTimeout) {
           clearTimeout(bridgeConnectTimeout)
           bridgeConnectTimeout = null
@@ -404,6 +406,7 @@ export function useStreamWS() {
   function resetSessionStreamState(sessionId: string) {
     sessionStore.setStreaming(sessionId, false)
     sessionStore.setThinking(sessionId, false)
+    sessionStore.clearLlmRetry(sessionId)
     sessionStore.clearAskQuestions(sessionId)
     clearActiveExecution(sessionId)
   }
@@ -595,13 +598,17 @@ export function useStreamWS() {
         break
 
       case 'content_delta':
-        if (sessionId) sessionStore.appendDelta(sessionId, data.delta)
+        if (sessionId) {
+          sessionStore.appendDelta(sessionId, data.delta)
+          sessionStore.clearLlmRetry(sessionId)
+        }
         break
 
       case 'tool_call_start':
         if (sessionId) {
           sessionStore.setStreaming(sessionId, false)
           sessionStore.appendToolCallStart(sessionId, data)
+          sessionStore.clearLlmRetry(sessionId)
         }
         break
 
@@ -673,6 +680,7 @@ export function useStreamWS() {
           if (terminalPhases.includes(phase)) {
             sessionStore.setStreaming(sessionId, false)
             sessionStore.setThinking(sessionId, false)
+            sessionStore.clearLlmRetry(sessionId)
             sessionStore.clearAskQuestions(sessionId)
             if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED') {
               clearActiveExecution(sessionId)
@@ -720,6 +728,8 @@ export function useStreamWS() {
         if (sessionId) {
           sessionStore.setStreaming(sessionId, false)
           sessionStore.setThinking(sessionId, true)
+          // 重试成功后首个事件可能是 thinking_start，清除过期重试提示
+          sessionStore.clearLlmRetry(sessionId)
         }
         break
 
@@ -727,15 +737,33 @@ export function useStreamWS() {
         if (sessionId) {
           sessionStore.setStreaming(sessionId, false)
           sessionStore.setThinking(sessionId, false)
+          sessionStore.clearLlmRetry(sessionId)
         }
         break
 
       case 'thinking_delta':
-        if (sessionId) sessionStore.appendThinkingDelta(sessionId, data.delta)
+        if (sessionId) {
+          sessionStore.appendThinkingDelta(sessionId, data.delta)
+          sessionStore.clearLlmRetry(sessionId)
+        }
+        break
+
+      case 'llm_retry':
+        if (sessionId && data) {
+          sessionStore.setLlmRetry(sessionId, {
+            statusCode: data.statusCode,
+            attempt: data.attempt,
+            maxRetries: data.maxRetries,
+            delaySeconds: data.delaySeconds
+          })
+        }
         break
 
       case 'message_end':
-        if (sessionId) sessionStore.markMessageComplete(sessionId, data)
+        if (sessionId) {
+          sessionStore.markMessageComplete(sessionId, data)
+          sessionStore.clearLlmRetry(sessionId)
+        }
         break
 
       case 'user_message_saved':

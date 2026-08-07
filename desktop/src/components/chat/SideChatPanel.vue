@@ -18,6 +18,7 @@
         v-if="displayMessages.length > 0"
         :messages="displayMessages"
         :sending="sending"
+        :session-id="hasRealSession ? String(realSessionId) : ''"
         :compaction-events="compactionEvents"
         @add-to-command="openWithContent"
       />
@@ -28,6 +29,10 @@
           <span></span>
           <span></span>
           <span></span>
+        </div>
+        <div v-if="typingRetry" class="typing-retry">
+          <span class="typing-retry-spinner"></span>
+          <span>模型服务繁忙（HTTP {{ typingRetry.statusCode }}），正在重试 {{ typingRetry.attempt }}/{{ typingRetry.maxRetries }}，{{ typingRetry.delaySeconds }} 秒后继续…</span>
         </div>
       </div>
 
@@ -217,6 +222,17 @@ const showTypingIndicator = computed(() => {
   return true
 })
 
+/** 底部重试提示：仅当消息区无 assistant 消息承载重试条时显示（如边路首轮重试） */
+const typingRetry = computed(() => {
+  if (!hasRealSession.value) return null
+  const retry = sessionStore.getLlmRetry(String(realSessionId.value))
+  if (!retry) return null
+  const msgs = displayMessages.value
+  const lastMsg = msgs[msgs.length - 1]
+  if (lastMsg && normalizeMessageRole(lastMsg.role ?? '') === 'assistant') return null
+  return retry
+})
+
 const sidePendingQuestions = computed(() => {
   if (!hasRealSession.value) return []
   return sessionStore.sessionPendingQuestions.get(String(realSessionId.value)) ?? []
@@ -392,6 +408,7 @@ function buildScrollAnchor(): string {
     sending.value,
     showTypingIndicator.value,
     sidePendingQuestions.value.length,
+    sessionStore.getLlmRetry(hasRealSession.value ? String(realSessionId.value) : '') ? 'retry' : '',
   ].join('|')
 }
 
@@ -662,6 +679,10 @@ function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
 }
 
 .typing-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   padding: 12px 0;
 }
 
@@ -680,6 +701,33 @@ function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
 
 .typing-dots span:nth-child(1) { animation-delay: -0.32s; }
 .typing-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+.typing-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--aw-warning, #e6a23c);
+  border-radius: var(--aw-radius-sm, 8px);
+  background: color-mix(in srgb, var(--aw-warning, #e6a23c) 10%, transparent);
+  color: var(--aw-warning, #e6a23c);
+  font-size: var(--aw-text-caption, 12px);
+  line-height: 1.5;
+}
+
+.typing-retry-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--aw-warning, #e6a23c) 30%, transparent);
+  border-top-color: var(--aw-warning, #e6a23c);
+  border-radius: 50%;
+  animation: typing-retry-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes typing-retry-spin {
+  to { transform: rotate(360deg); }
+}
 
 @keyframes typing {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }

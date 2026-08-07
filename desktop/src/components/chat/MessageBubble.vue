@@ -100,6 +100,10 @@
           {{ file.originalName || file.name }}
         </el-tag>
       </div>
+      <div v-if="isAssistantRunning && llmRetry" class="llm-retry-bar">
+        <span class="llm-retry-spinner"></span>
+        <span class="llm-retry-text">模型服务繁忙（HTTP {{ llmRetry.statusCode }}），正在重试 {{ llmRetry.attempt }}/{{ llmRetry.maxRetries }}，{{ llmRetry.delaySeconds }} 秒后继续…</span>
+      </div>
       <div v-if="showStreamIndicator" class="stream-indicator">
         <span class="stream-dot"></span>
         <span class="stream-dot"></span>
@@ -173,13 +177,16 @@ const props = withDefaults(defineProps<{
   isEditing?: boolean
   hideThinking?: boolean
   hideFileChanges?: boolean
+  /** 消息所属会话 ID；用于读取该会话自身的 LLM 重试状态（多会话场景，缺省回退主会话） */
+  sessionId?: string
 }>(), {
   showCopy: true,
   isLast: false,
   canEdit: false,
   isEditing: false,
   hideThinking: false,
-  hideFileChanges: false
+  hideFileChanges: false,
+  sessionId: ''
 })
 
 const emit = defineEmits<{
@@ -218,15 +225,25 @@ const visibleToolCalls = computed(() =>
   props.message.toolCalls?.filter(tc => !HIDDEN_TOOL_NAMES.has(tc.name)) || []
 )
 
-const isAssistantRunning = computed(() =>
-  role.value === 'assistant' && (
-    (props.isLast && (sessionStore.activeStreaming || sessionStore.activeThinking)) ||
-    (props.message.toolCalls?.some(tc => tc.status === 'pending' || tc.status === 'running') ?? false)
-  )
-)
+const isAssistantRunning = computed(() => {
+  if (role.value !== 'assistant') return false
+  if (props.message.toolCalls?.some(tc => tc.status === 'pending' || tc.status === 'running')) return true
+  if (!props.isLast) return false
+  // 按消息所属会话读取流式/思考状态，避免边路/子代理会话重试时漏显
+  return props.sessionId
+    ? (sessionStore.isSessionStreaming(props.sessionId) || sessionStore.isSessionThinking(props.sessionId))
+    : (sessionStore.activeStreaming || sessionStore.activeThinking)
+})
 
 const showStreamIndicator = computed(() =>
   role.value === 'assistant' && props.isLast && sessionStore.activeStreaming
+)
+
+/** 重试状态按消息所属会话读取，避免多会话（边路/子代理）串扰 */
+const llmRetry = computed(() =>
+  props.sessionId
+    ? sessionStore.getLlmRetry(props.sessionId)
+    : sessionStore.activeLlmRetry
 )
 
 const isToolOnly = computed(() =>
@@ -675,6 +692,34 @@ async function copyMessage() {
 @keyframes stream-pulse {
   0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
   40% { opacity: 1; transform: scale(1); }
+}
+
+.llm-retry-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--aw-warning, #e6a23c);
+  border-radius: var(--aw-radius-sm, 8px);
+  background: color-mix(in srgb, var(--aw-warning, #e6a23c) 10%, transparent);
+  color: var(--aw-warning, #e6a23c);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.llm-retry-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--aw-warning, #e6a23c) 30%, transparent);
+  border-top-color: var(--aw-warning, #e6a23c);
+  border-radius: 50%;
+  animation: llm-retry-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes llm-retry-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Edit mode styles */

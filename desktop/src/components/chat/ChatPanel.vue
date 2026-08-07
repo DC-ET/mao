@@ -22,6 +22,7 @@
       <ChatRoundList
         :messages="messages"
         :sending="sending"
+        :session-id="sessionId ?? ''"
         :editing-message-id="editingMessageId"
         :can-edit-message="canEditMessage"
         :compaction-events="sessionStore.activeCompactionEvents"
@@ -36,6 +37,10 @@
           <span></span>
           <span></span>
           <span></span>
+        </div>
+        <div v-if="typingRetry" class="typing-retry">
+          <span class="typing-retry-spinner"></span>
+          <span>模型服务繁忙（HTTP {{ typingRetry.statusCode }}），正在重试 {{ typingRetry.attempt }}/{{ typingRetry.maxRetries }}，{{ typingRetry.delaySeconds }} 秒后继续…</span>
         </div>
       </div>
     </div>
@@ -306,6 +311,19 @@ const showTypingIndicator = computed(() => {
   return true
 })
 
+/**
+ * 底部打字区的重试提示：仅当消息区没有合适的 MessageBubble 承载重试条时显示
+ * （如恢复会话后最后一条消息为 user 的重试场景），避免与消息气泡内的重试条重复。
+ * 首轮重试由占位 assistant 消息 + MessageBubble 承载，此处不重复显示。
+ * 返回 null 时不显示。
+ */
+const typingRetry = computed(() => {
+  if (!sessionStore.activeLlmRetry) return null
+  const lastMsg = messages.value[messages.value.length - 1]
+  if (lastMsg && normalizeMessageRole(lastMsg.role ?? '') === 'assistant') return null
+  return sessionStore.activeLlmRetry
+})
+
 onMounted(async () => {
   const el = messagesContainer.value
   el?.addEventListener('scroll', handleScroll, { passive: true })
@@ -405,6 +423,7 @@ function buildScrollAnchor(): string {
     last?.toolCalls?.map(t => t.status).join(',') || '',
     sessionStore.activeThinking,
     sessionStore.activeStreaming,
+    sessionStore.activeLlmRetry ? 'retry' : '',
     showTypingIndicator.value,
   ].join('|')
 }
@@ -676,6 +695,40 @@ function handleNewTaskAgentChange(id: string | null) {
 @keyframes typing {
   0%, 80%, 100% { transform: scale(0.8); opacity: 0.3; }
   40% { transform: scale(1); opacity: 1; }
+}
+
+.typing-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.typing-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--aw-warning, #e6a23c);
+  border-radius: var(--aw-radius-sm, 8px);
+  background: color-mix(in srgb, var(--aw-warning, #e6a23c) 10%, transparent);
+  color: var(--aw-warning, #e6a23c);
+  font-size: var(--aw-text-caption, 12px);
+  line-height: 1.5;
+}
+
+.typing-retry-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--aw-warning, #e6a23c) 30%, transparent);
+  border-top-color: var(--aw-warning, #e6a23c);
+  border-radius: 50%;
+  animation: typing-retry-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes typing-retry-spin {
+  to { transform: rotate(360deg); }
 }
 
 .compaction-hint {

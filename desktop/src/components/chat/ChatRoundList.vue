@@ -3,6 +3,7 @@
   <template v-for="round in historyRounds" :key="round.userMessage.id">
     <MessageBubble
       :message="round.userMessage"
+      :session-id="sessionId"
       :show-time="true"
       :can-edit="canEditMessage?.(round.userMessage) ?? false"
       :is-editing="editingMessageId === round.userMessage.id"
@@ -31,6 +32,7 @@
           <template v-for="step in round.displaySteps" :key="step.id">
             <MessageBubble
               :message="step"
+              :session-id="sessionId"
               :show-time="false"
               :show-copy="false"
               :hide-file-changes="true"
@@ -55,6 +57,7 @@
       <MessageBubble
         v-if="round.finalReply"
         :message="round.finalReply"
+        :session-id="sessionId"
         :hide-thinking="true"
         :hide-file-changes="true"
       />
@@ -75,6 +78,7 @@
       <MessageBubble
         v-if="round.finalReply"
         :message="round.finalReply"
+        :session-id="sessionId"
         :show-time="true"
         :hide-file-changes="true"
       />
@@ -95,6 +99,7 @@
   <template v-if="activeRound">
     <MessageBubble
       :message="activeRound.userMessage"
+      :session-id="sessionId"
       :show-time="true"
       :can-edit="canEditMessage?.(activeRound.userMessage) ?? false"
       :is-editing="editingMessageId === activeRound.userMessage.id"
@@ -111,6 +116,7 @@
     <template v-for="msg in activeRoundMsgs" :key="msg.id">
       <MessageBubble
         :message="msg"
+        :session-id="sessionId"
         :show-time="false"
         :show-copy="false"
         :hide-file-changes="true"
@@ -130,6 +136,7 @@
     <template v-for="(msg, idx) in messages" :key="msg.id">
       <MessageBubble
         :message="msg"
+        :session-id="sessionId"
         :show-time="msg.role === 'user' || (msg.role === 'assistant' && idx < messages.length - 1)"
         :show-copy="msg.role === 'user'"
         :is-last="idx === messages.length - 1"
@@ -165,6 +172,8 @@ const props = defineProps<{
   editingMessageId?: string | null
   canEditMessage?: (msg: ChatMessage) => boolean
   compactionEvents?: CompactionEvent[]
+  /** 会话 ID，透传给 MessageBubble 以按会话读取重试状态 */
+  sessionId?: string
 }>()
 
 defineEmits<{
