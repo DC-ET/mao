@@ -45,6 +45,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class HarnessService {
 
+    /** 微信通道屏蔽的工具：无交互式提问面板，避免 Agent 阻塞等待回答 */
+    private static final String ASK_USER_QUESTIONS = "ask_user_questions";
+
     private final AgentLoop agentLoop;
     private final ToolRegistry toolRegistry;
     private final SkillLoader skillLoader;
@@ -318,11 +321,10 @@ public class HarnessService {
             }
         }
 
-        // 6. All built-in tools are available to every agent; WeixinChannelTool 仅在微信通道会话注入
-        List<Tool> sessionTools = new java.util.ArrayList<>(toolRegistry.getAllTools());
-        if (!WeixinSessionService.PROJECT_KEY.equals(session.getProjectKey())) {
-            sessionTools.removeIf(t -> t instanceof WeixinChannelTool);
-        }
+        // 6. All built-in tools are available to every agent; WeixinChannelTool 仅在微信通道会话注入。
+        //    微信通道无交互式提问面板（ask_user_questions 依赖 WebSocket 客户端回答），故屏蔽该工具，
+        //    避免 Agent 调用后阻塞等待用户回答直至超时。
+        List<Tool> sessionTools = filterToolsForSession(toolRegistry.getAllTools(), session.getProjectKey());
         context.setTools(sessionTools);
 
         // 6.5 MCP 工具注入（按 Agent 关联的全局服务器 + 用户私有服务器，双模式）
@@ -447,6 +449,24 @@ public class HarnessService {
             return 300;
         }
         return Math.max(maxRounds, 2);
+    }
+
+    /**
+     * 按会话 projectKey 过滤内置工具集：
+     * <ul>
+     *   <li>微信通道会话（projectKey = weixin-bot）：保留 WeixinChannelTool，屏蔽 ask_user_questions
+     *       （微信无交互式提问面板，调用会导致 Agent 阻塞等待直至超时）</li>
+     *   <li>其他会话：移除 WeixinChannelTool（微信通道专属工具）</li>
+     * </ul>
+     */
+    static List<Tool> filterToolsForSession(List<Tool> tools, String projectKey) {
+        List<Tool> result = new java.util.ArrayList<>(tools);
+        if (WeixinSessionService.PROJECT_KEY.equals(projectKey)) {
+            result.removeIf(t -> ASK_USER_QUESTIONS.equals(t.getName()));
+        } else {
+            result.removeIf(t -> t instanceof WeixinChannelTool);
+        }
+        return result;
     }
 
     /**
