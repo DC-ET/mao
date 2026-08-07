@@ -327,6 +327,11 @@ public class AgentLoop {
                     log.error("LLM call failed", t);
                     throw new RuntimeException("LLM call failed: " + t.getMessage(), t);
                 }
+
+                @Override
+                public void onRetry(int statusCode, int attempt, int maxRetries, int delaySeconds) {
+                    listener.onLlmRetry(statusCode, attempt, maxRetries, delaySeconds);
+                }
             }, cancelFlag);
             } catch (RuntimeException e) {
                 if (thinkingEnded.compareAndSet(false, true)) {

@@ -63,7 +63,7 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                     if (attempt > llmRetryConfig.getRateLimitMaxRetries()) {
                         throw buildRetryExhaustedException(response);
                     }
-                    int delaySeconds = resolveRetryDelaySeconds(response);
+                    int delaySeconds = resolveRetryDelaySeconds(response, attempt);
                     log.warn("LLM API transient error ({}), retry {}/{} after {}s, model={}",
                             response.code(), attempt, llmRetryConfig.getRateLimitMaxRetries(),
                             delaySeconds, config.getModelId());
@@ -114,10 +114,17 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                         callback.onError(buildRetryExhaustedException(response));
                         return;
                     }
-                    int delaySeconds = resolveRetryDelaySeconds(response);
+                    int delaySeconds = resolveRetryDelaySeconds(response, attempt);
                     log.warn("LLM API transient error ({}), retry {}/{} after {}s, model={}",
                             response.code(), attempt, llmRetryConfig.getRateLimitMaxRetries(),
                             delaySeconds, config.getModelId());
+                    // 用户在重试判定与睡眠等待之间取消时，直接按取消结束，避免误发重试通知
+                    if (isCancelled(cancelFlag)) {
+                        callback.onError(new RuntimeException("Cancelled by user"));
+                        return;
+                    }
+                    callback.onRetry(response.code(), attempt,
+                            llmRetryConfig.getRateLimitMaxRetries(), delaySeconds);
                     if (!sleepSecondsRespectingCancel(delaySeconds, cancelFlag)) {
                         callback.onError(new RuntimeException("Cancelled by user"));
                         return;
@@ -254,19 +261,26 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         }
     }
 
-    private int resolveRetryDelaySeconds(Response response) {
+    /**
+     * 指数退避计算本次重试等待秒数：delay = min(base * 2^(attempt-1), max)。
+     * 服务端返回 Retry-After 响应头时优先采用，但仍受单次间隔上限约束。
+     */
+    private int resolveRetryDelaySeconds(Response response, int attempt) {
+        int maxDelay = llmRetryConfig.getRateLimitMaxRetryDelaySeconds();
         String retryAfter = response.header("Retry-After");
         if (retryAfter != null && !retryAfter.isBlank()) {
             try {
                 int seconds = Integer.parseInt(retryAfter.trim());
                 if (seconds > 0) {
-                    return seconds;
+                    return Math.min(seconds, maxDelay);
                 }
             } catch (NumberFormatException ignored) {
-                // Retry-After 可能是 HTTP 日期格式，回退到默认等待时间
+                // Retry-After 可能是 HTTP 日期格式，回退到指数退避
             }
         }
-        return llmRetryConfig.getRateLimitRetryDelaySeconds();
+        int baseDelay = llmRetryConfig.getRateLimitRetryDelaySeconds();
+        long backoff = (long) baseDelay * (1L << (attempt - 1));
+        return (int) Math.min(backoff, maxDelay);
     }
 
     private void sleepSeconds(int seconds) {

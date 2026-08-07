@@ -78,7 +78,10 @@ app:
     # LLM API
     llm:
       rate-limit-max-retries: 10
-      rate-limit-retry-delay-seconds: 5
+      # 指数退避基间隔（秒）：第 n 次重试前等待 base * 2^(n-1) 秒
+      rate-limit-retry-delay-seconds: 1
+      # 单次重试间隔上限（秒）
+      rate-limit-max-retry-delay-seconds: 60
 
     # Context Compaction
     compaction:

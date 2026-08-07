@@ -102,6 +102,11 @@ public class CompositeAgentEventListener implements AgentEventListener {
         forEach("onThinkingDelta", l -> l.onThinkingDelta(delta));
     }
 
+    @Override
+    public void onLlmRetry(int statusCode, int attempt, int maxRetries, int delaySeconds) {
+        forEach("onLlmRetry", l -> l.onLlmRetry(statusCode, attempt, maxRetries, delaySeconds));
+    }
+
     private void forEach(String method, ListenerAction action) {
         for (AgentEventListener listener : listeners) {
             try {

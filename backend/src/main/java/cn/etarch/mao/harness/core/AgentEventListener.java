@@ -60,6 +60,15 @@ public interface AgentEventListener {
     /** Agent 思考结束（下一次 LLM 开始输出） */
     default void onThinkingEnd() {}
 
+    /**
+     * LLM 请求瞬时错误（429/5xx）重试中，用于让客户端展示重试进度
+     * @param statusCode 触发重试的 HTTP 状态码
+     * @param attempt 当前第几次尝试
+     * @param maxRetries 最大重试次数
+     * @param delaySeconds 本次重试前等待秒数
+     */
+    default void onLlmRetry(int statusCode, int attempt, int maxRetries, int delaySeconds) {}
+
     /** 工具调用参数增量更新（LLM 流式输出 arguments 碎片时，推送当前完整的 arguments） */
     default void onToolCallArgsDelta(String toolCallId, String arguments) {}
 

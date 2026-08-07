@@ -274,6 +274,16 @@ public class WsStreamingEventListener implements AgentEventListener {
     }
 
     @Override
+    public void onLlmRetry(int statusCode, int attempt, int maxRetries, int delaySeconds) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("statusCode", statusCode);
+        payload.put("attempt", attempt);
+        payload.put("maxRetries", maxRetries);
+        payload.put("delaySeconds", delaySeconds);
+        send("llm_retry", payload);
+    }
+
+    @Override
     public void onThinkingDelta(String delta) {
         send("thinking_delta", Map.of("delta", delta));
     }

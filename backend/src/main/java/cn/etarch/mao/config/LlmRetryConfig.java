@@ -12,6 +12,12 @@ public class LlmRetryConfig {
     /** 瞬时错误（429 限流、5xx 服务端错误，含 524 网关超时）最大重试次数 */
     private int rateLimitMaxRetries = 10;
 
-    /** 瞬时错误每次重试前等待秒数（未提供 Retry-After 响应头时使用） */
-    private int rateLimitRetryDelaySeconds = 5;
+    /**
+     * 指数退避基间隔（秒）：第 n 次重试前等待 base * 2^(n-1) 秒
+     * （第 1 次等 base，第 2 次等 2*base，第 3 次等 4*base，以此类推）
+     */
+    private int rateLimitRetryDelaySeconds = 1;
+
+    /** 单次重试间隔上限（秒），指数退避与 Retry-After 均不超过该值 */
+    private int rateLimitMaxRetryDelaySeconds = 60;
 }
