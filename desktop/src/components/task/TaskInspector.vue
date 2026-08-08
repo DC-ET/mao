@@ -107,8 +107,14 @@
                   @click="handleRepoClick(repo.path)"
                 >
                   <span class="git-repo-name">{{ repo.name }}</span>
-                  <span class="git-repo-branch">{{ repo.branch || 'HEAD' }}</span>
-                  <span class="git-repo-count">{{ repo.changedFileCount }} 变更</span>
+                  <span class="git-repo-meta">
+                    <span class="git-repo-branch">{{ repo.branch || 'HEAD' }}</span>
+                    <span v-if="repo.path === selectedRepoPath && !gitLoading && gitStatus?.isGit" class="git-stat git-repo-stat">
+                      <span class="git-add">+{{ gitStatus.insertions }}</span>
+                      <span class="git-del">-{{ gitStatus.deletions }}</span>
+                    </span>
+                    <span v-else class="git-repo-count">{{ repo.changedFileCount }} 变更</span>
+                  </span>
                 </button>
               </template>
               <span v-else-if="reposLoading" class="git-muted">检测 Git…</span>
@@ -770,7 +776,8 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 .task-workspace-row {
   display: flex;
   align-items: flex-start;
-  gap: 4px;
+  gap: 6px;
+  min-width: 0;
   margin-bottom: 8px;
 }
 
@@ -795,6 +802,7 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 
 .git-summary {
   display: flex;
+  flex: 1;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
@@ -805,8 +813,10 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 
 .git-repo-item {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
   border: none;
   background: transparent;
   padding: 1px 0;
@@ -822,20 +832,39 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 }
 
 .git-repo-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--aw-font-mono);
   color: var(--aw-ink);
-  word-break: break-all;
+}
+
+.git-repo-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .git-repo-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--aw-font-mono);
   color: var(--aw-ink-muted-48);
+}
+
+.git-repo-count,
+.git-repo-stat {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .git-repo-count {
   font-family: var(--aw-font-mono);
   color: var(--aw-ink-muted-48);
-  margin-left: auto;
 }
 
 .git-unavailable-note {
