@@ -32,18 +32,17 @@ public class OutputManager {
      * 逐行读取输出直到遇到 marker 行或超时。
      * marker 行本身不包含在返回的输出中。
      * marker 之后的残留输出（异步/后台任务输出）不会丢弃：落入当前缓冲的部分会一并返回，
-     * 并追加到会话累积日志（sessionLogFile）。
+     * 并追加到会话累积输出文件（outputFile）。
      *
-     * @param reader         输出流读取器
-     * @param marker         结束标记（如 __CMD_DONE_xxx__）
-     * @param timeout        最大等待时间
-     * @param outputFile     本次调用切片输出文件（可为 null，不落盘）
-     * @param sessionLogFile 会话累积日志文件（可为 null；非 null 时全量输出追加写入，支持事后回查）
+     * @param reader     输出流读取器
+     * @param marker     结束标记（如 __CMD_DONE_xxx__）
+     * @param timeout    最大等待时间
+     * @param outputFile 会话累积输出文件（可为 null；非 null 时全量输出追加写入，支持事后回查）
      * @return OutputResult
      */
     public OutputResult readUntilMarker(BufferedReader reader, String marker, Duration timeout,
-                                        Path outputFile, Path sessionLogFile) {
-        return readUntilMarker(reader, marker, timeout, outputFile, sessionLogFile, null);
+                                        Path outputFile) {
+        return readUntilMarker(reader, marker, timeout, outputFile, null);
     }
 
     /**
@@ -54,16 +53,15 @@ public class OutputManager {
      * 通过 {@code alive} 回调检测进程存活：进程死亡即转为快速读模式，
      * 读尽管道残留数据并感知 EOF，立即返回，避免干等长超时。
      *
-     * @param reader         输出流读取器
-     * @param marker         结束标记（如 __CMD_DONE_xxx__）
-     * @param timeout        最大等待时间
-     * @param outputFile     本次调用切片输出文件（可为 null，不落盘）
-     * @param sessionLogFile 会话累积日志文件（可为 null；非 null 时全量输出追加写入，支持事后回查）
-     * @param alive          进程存活检测（可为 null；null 时保持旧的纯超时行为）
+     * @param reader     输出流读取器
+     * @param marker     结束标记（如 __CMD_DONE_xxx__）
+     * @param timeout    最大等待时间
+     * @param outputFile 会话累积输出文件（可为 null；非 null 时全量输出追加写入，支持事后回查）
+     * @param alive      进程存活检测（可为 null；null 时保持旧的纯超时行为）
      * @return OutputResult
      */
     public OutputResult readUntilMarker(BufferedReader reader, String marker, Duration timeout,
-                                        Path outputFile, Path sessionLogFile,
+                                        Path outputFile,
                                         BooleanSupplier alive) {
         List<String> allLines = new StringBuilder() != null ? new ArrayList<>() : new ArrayList<>();
         StringBuilder fullOutput = new StringBuilder();
@@ -146,13 +144,9 @@ public class OutputManager {
                 }
             }
 
-            // 落盘：本次调用切片文件
-            if (outputFile != null && !allLines.isEmpty()) {
+            // 落盘：会话累积输出文件（每次调用追加，供事后回查完整输出）
+            if (outputFile != null && !fullOutput.isEmpty()) {
                 writeToFile(outputFile, fullOutput.toString());
-            }
-            // 落盘：会话累积日志（每次调用追加，供事后回查完整输出）
-            if (sessionLogFile != null && !fullOutput.isEmpty()) {
-                writeToFile(sessionLogFile, fullOutput.toString());
             }
 
             String preview = generatePreview(allLines);
@@ -170,8 +164,7 @@ public class OutputManager {
                     allLines.size(),
                     fullOutput.length(),
                     truncated,
-                    markerFound,
-                    outputFile != null ? outputFile.toString() : null
+                    markerFound
             );
 
         } catch (IOException e) {
@@ -185,10 +178,10 @@ public class OutputManager {
             } else {
                 log.error("Failed to read output", e);
             }
-            return buildPartialResult(allLines, fullOutput, outputFile, sessionLogFile, streamClosed, e);
+            return buildPartialResult(allLines, fullOutput, outputFile, streamClosed, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return new OutputResult("Output reading interrupted", 0, 0, false, false, null);
+            return new OutputResult("Output reading interrupted", 0, 0, false, false);
         }
     }
 
@@ -198,17 +191,14 @@ public class OutputManager {
     }
 
     /**
-     * 读取中断时尽量保留已收集到的输出：落盘切片/会话日志并生成预览，
+     * 读取中断时尽量保留已收集到的输出：落盘会话累积文件并生成预览，
      * 避免并发关闭会话等竞态导致已执行命令的输出全部丢失。
      */
     private OutputResult buildPartialResult(List<String> allLines, StringBuilder fullOutput,
-                                            Path outputFile, Path sessionLogFile,
+                                            Path outputFile,
                                             boolean streamClosed, IOException cause) {
-        if (outputFile != null && !allLines.isEmpty()) {
+        if (outputFile != null && !fullOutput.isEmpty()) {
             writeToFile(outputFile, fullOutput.toString());
-        }
-        if (sessionLogFile != null && !fullOutput.isEmpty()) {
-            writeToFile(sessionLogFile, fullOutput.toString());
         }
 
         String preview = generatePreview(allLines);
@@ -221,15 +211,14 @@ public class OutputManager {
             preview = preview + "\n" + note;
         }
 
-        return new OutputResult(preview, allLines.size(), fullOutput.length(),
-                true, false, outputFile != null ? outputFile.toString() : null);
+        return new OutputResult(preview, allLines.size(), fullOutput.length(), true, false);
     }
 
     /**
      * 格式化工具返回结果
      */
     public String formatToolResult(int exitCode, String sessionId, long elapsedMs,
-                                    OutputResult output, String currentWorkdir, Path sessionLogFile) {
+                                    OutputResult output, String currentWorkdir, Path outputFile) {
         StringBuilder sb = new StringBuilder();
         sb.append("exit_code: ").append(exitCode).append("\n");
         sb.append("session_id: ").append(sessionId).append("\n");
@@ -243,13 +232,10 @@ public class OutputManager {
 
         if (output.truncated()) {
             sb.append("truncated: true\n");
-            if (output.outputFile() != null) {
-                sb.append("output_file: ").append(output.outputFile()).append("\n");
-            }
         }
 
-        if (sessionLogFile != null) {
-            sb.append("session_log: ").append(sessionLogFile).append("\n");
+        if (outputFile != null) {
+            sb.append("output_file: ").append(outputFile).append("\n");
         }
 
         sb.append("---\n");
@@ -309,7 +295,6 @@ public class OutputManager {
             int totalLines,
             int totalChars,
             boolean truncated,
-            boolean markerFound,
-            String outputFile
+            boolean markerFound
     ) {}
 }

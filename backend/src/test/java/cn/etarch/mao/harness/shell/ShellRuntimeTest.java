@@ -41,26 +41,24 @@ class ShellRuntimeTest {
         ReflectionTestUtils.setField(outputManager, "maxPreviewLines", 2);
         ReflectionTestUtils.setField(outputManager, "maxPreviewChars", 20);
         Path outputFile = tempDir.resolve("out").resolve("cmd.out");
-        Path sessionLog = tempDir.resolve("out").resolve("session.out");
 
         OutputManager.OutputResult result = outputManager.readUntilMarker(
                 new BufferedReader(new StringReader("one\ntwo\nthree\n__DONE__\nafter\n")),
                 "__DONE__",
                 Duration.ofSeconds(1),
-                outputFile, sessionLog);
+                outputFile);
 
         assertThat(result.markerFound()).isTrue();
         // marker 之后的残留输出 "after" 不再丢失
         assertThat(result.totalLines()).isEqualTo(4);
         assertThat(result.preview()).contains("three").contains("after").doesNotContain("one");
-        // 切片文件与会话累积日志均包含完整输出（marker 行本身排除）
+        // 会话累积日志包含完整输出（marker 行本身排除）
         assertThat(Files.readString(outputFile)).contains("one").contains("three").contains("after");
-        assertThat(Files.readString(sessionLog)).contains("one").contains("three").contains("after");
-        assertThat(outputManager.formatToolResult(0, "sh-1", 12, result, tempDir.toString(), sessionLog))
+        assertThat(outputManager.formatToolResult(0, "sh-1", 12, result, tempDir.toString(), outputFile))
                 .contains("exit_code: 0")
                 .contains("session_id: sh-1")
                 .contains("current_workdir")
-                .contains("session_log: " + sessionLog);
+                .contains("output_file: " + outputFile);
     }
 
     @Test
@@ -73,7 +71,7 @@ class ShellRuntimeTest {
                 new BufferedReader(new StringReader("unterminated")),
                 "__MISSING__",
                 Duration.ofMillis(1),
-                null, null);
+                null);
         assertThat(timeout.markerFound()).isFalse();
         assertThat(timeout.truncated()).isTrue();
 
@@ -83,7 +81,7 @@ class ShellRuntimeTest {
                 throw new java.io.IOException("boom");
             }
         };
-        assertThat(outputManager.readUntilMarker(broken, "x", Duration.ofSeconds(1), null, null).preview())
+        assertThat(outputManager.readUntilMarker(broken, "x", Duration.ofSeconds(1), null).preview())
                 .contains("Error reading output");
     }
 
@@ -96,7 +94,6 @@ class ShellRuntimeTest {
         assertThat(session.getSessionId()).isEqualTo("sh-test");
         assertThat(session.isAlive()).isTrue();
         assertThat(session.getPid()).isGreaterThan(0);
-        assertThat(session.nextOutputFile().getFileName().toString()).isEqualTo("sh-test_1.out");
         assertThat(manager.getSession("sh-test")).isSameAs(session);
         assertThat(manager.listByConversation(11L)).contains(session);
         assertThat(manager.getActiveSessionCount()).isEqualTo(1);
@@ -216,7 +213,7 @@ class ShellRuntimeTest {
         String exec = tool.execute("""
                 {"command":"echo hello","session_id":"tool-sh","yield_time_ms":2000,"keep_session":true}
                 """, 21L, 7L, tempDir.toString());
-        assertThat(exec).contains("exit_code: 0").contains("hello").contains("session_log: ");
+        assertThat(exec).contains("exit_code: 0").contains("hello").contains("output_file: ");
 
         // keep_session=true 保留会话，list 应能看到 tool-sh
         JsonNode list = objectMapper.readTree(tool.execute("{\"action\":\"list\"}", 21L, 7L, tempDir.toString()));
@@ -228,9 +225,9 @@ class ShellRuntimeTest {
         assertThat(stdin.get("output").asText()).contains("stdin");
         // write_stdin 应返回 completed 信号，告知 Agent 命令是否已执行完
         assertThat(stdin.get("completed").asBoolean()).isTrue();
-        // 回查能力：返回会话累积日志路径，且日志文件真实包含本次输出
-        assertThat(stdin.get("session_log").asText()).isNotBlank();
-        assertThat(Files.readString(Path.of(stdin.get("session_log").asText()))).contains("stdin");
+        // 回查能力：返回会话累积输出文件路径，且日志文件真实包含本次输出
+        assertThat(stdin.get("output_file").asText()).isNotBlank();
+        assertThat(Files.readString(Path.of(stdin.get("output_file").asText()))).contains("stdin");
 
         JsonNode close = objectMapper.readTree(tool.execute("""
                 {"action":"close","session_id":"tool-sh"}

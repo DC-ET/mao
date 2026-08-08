@@ -31,9 +31,6 @@ public class ShellSession implements Closeable {
     private volatile String currentWorkdir;
     private int commandCount = 0;
 
-    // 输出序号，用于生成唯一的输出文件名
-    private int outputSequence = 0;
-
     public ShellSession(String sessionId, Long conversationId,
                         Process process, Path workspaceDir, Path outputFile) {
         this.sessionId = sessionId;
@@ -74,15 +71,6 @@ public class ShellSession implements Closeable {
      */
     public boolean isExpired(Duration maxLifetime) {
         return Duration.between(createdAt, Instant.now()).compareTo(maxLifetime) > 0;
-    }
-
-    /**
-     * 获取下一个输出文件路径
-     */
-    public Path nextOutputFile() {
-        outputSequence++;
-        String fileName = String.format("%s_%d.out", sessionId, outputSequence);
-        return outputFile.getParent().resolve(fileName);
     }
 
     /**
