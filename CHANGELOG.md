@@ -17,6 +17,8 @@
 ## 0.0.26 (2026-08-08)
 
 ### 后端
+- 修复 LLM 调用偶发永久卡死的问题：HTTPS 请求体写入被底层阻塞（SSL 写锁）时，OkHttp 的 readTimeout/writeTimeout 依赖 Okio Watchdog 关闭 Socket，而 `SSLSocketImpl.close()` 需要等待同一把 SSL 写锁，导致 OkHttp 内部超时机制整体失效、Agent 无限等待；现新增应用层硬超时（默认 10 分钟，可配 `app.harness.llm.call-timeout-seconds`），超时后在独立守护线程主动取消请求并报错（不阻塞业务线程），同时为 OkHttp 增加 callTimeout（默认 15 分钟，可配 `app.harness.llm.http-call-timeout-seconds`）兜底；同步调用 `chat` 路径同样受应用层硬超时保护
+- 子代理委派（delegate / delegate_followup）新增整体执行超时（默认 15 分钟，可配 `app.harness.delegate.timeout-seconds`）：子代理 LLM 请求卡死不再无限拖住父 Agent，超时后置位子代理取消标志请求其退出，并给予宽限期（默认 30 秒，可配 `app.harness.delegate.cancel-grace-seconds`）等待其响应取消；宽限期后仍卡死则放弃等待、将子代理标记失败并返回父 Agent
 - 修复对话页任务耗时统计偏差：任务进入终态（完成/失败/取消）时，将会话最后一条消息的 `updated_at` 刷新为任务结束时刻，为前端提供「用户消息发出 → 任务执行结束」的准确耗时依据（此前仅记录消息创建时间）
 - Shell 工具输出文件收敛：移除单次命令的切片输出文件，仅保留会话累积输出文件，并将对外字段 `session_log` 统一命名为 `output_file`（其内容为整个会话从创建起所有命令的完整输出，支持随时回查）
 

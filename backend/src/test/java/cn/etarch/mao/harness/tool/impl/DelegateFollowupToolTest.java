@@ -1,5 +1,6 @@
 package cn.etarch.mao.harness.tool.impl;
 
+import cn.etarch.mao.config.DelegateConfig;
 import cn.etarch.mao.harness.core.AgentExecutionContext;
 import cn.etarch.mao.harness.core.AgentLoop;
 import cn.etarch.mao.harness.core.HarnessService;
@@ -34,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -56,10 +58,11 @@ class DelegateFollowupToolTest {
     private final LocalToolSessionRegistry localToolSessionRegistry = mock(LocalToolSessionRegistry.class);
     private final SubAgentVisibilityService visibilityService = mock(SubAgentVisibilityService.class);
     private final DelegateTool delegateTool = mock(DelegateTool.class);
+    private final DelegateConfig delegateConfig = new DelegateConfig();
     private final DelegateFollowupTool tool = new DelegateFollowupTool(
             definitionRegistry, harnessService, agentLoop, sessionService, sessionMapper,
             messageMapper, sessionCompactionService, subagentExecutionMapper, localToolSessionRegistry,
-            visibilityService, delegateTool, objectMapper);
+            visibilityService, delegateTool, delegateConfig, objectMapper);
 
     @BeforeAll
     static void initMyBatisPlusTableInfo() {
@@ -236,7 +239,8 @@ class DelegateFollowupToolTest {
         collector.onContentDelta("第二轮审查结论：修复到位，无新问题");
         collector.onMessageEnd(ChatUsage.builder()
                 .promptTokens(100).completionTokens(50).totalTokens(150).build());
-        when(visibilityService.executeVisible(any(Session.class), any(AgentExecutionContext.class), anyBoolean()))
+        when(visibilityService.executeVisibleWithTimeout(any(Session.class), any(AgentExecutionContext.class),
+                anyBoolean(), any(AtomicBoolean.class), anyLong(), anyLong()))
                 .thenReturn(new SubAgentVisibilityService.VisibleRunResult(collector, "exec-1"));
         when(subagentExecutionMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(2L, 1L);
 
@@ -294,7 +298,8 @@ class DelegateFollowupToolTest {
         collector.onContentDelta("增量核查通过");
         collector.onMessageEnd(ChatUsage.builder()
                 .promptTokens(50).completionTokens(30).totalTokens(80).build());
-        when(visibilityService.executeVisible(any(Session.class), any(AgentExecutionContext.class), anyBoolean()))
+        when(visibilityService.executeVisibleWithTimeout(any(Session.class), any(AgentExecutionContext.class),
+                anyBoolean(), any(AtomicBoolean.class), anyLong(), anyLong()))
                 .thenReturn(new SubAgentVisibilityService.VisibleRunResult(collector, "exec-1"));
 
         JsonNode result = objectMapper.readTree(tool.execute(
@@ -324,7 +329,8 @@ class DelegateFollowupToolTest {
         when(delegateTool.buildSubContext(any(Session.class), any(AgentDefinition.class)))
                 .thenReturn(new AgentExecutionContext());
         // 子代理执行报错：collector.onError → 失败分支
-        when(visibilityService.executeVisible(any(Session.class), any(AgentExecutionContext.class), anyBoolean()))
+        when(visibilityService.executeVisibleWithTimeout(any(Session.class), any(AgentExecutionContext.class),
+                anyBoolean(), any(AtomicBoolean.class), anyLong(), anyLong()))
                 .thenAnswer(inv -> {
                     SubAgentResultCollector collector = new SubAgentResultCollector();
                     collector.onError(new RuntimeException("boom"));
@@ -363,7 +369,8 @@ class DelegateFollowupToolTest {
         when(agentLoop.registerCancelFlag(100L)).thenReturn(new AtomicBoolean(true));
         when(delegateTool.buildSubContext(any(Session.class), any(AgentDefinition.class)))
                 .thenReturn(new AgentExecutionContext());
-        when(visibilityService.executeVisible(any(Session.class), any(AgentExecutionContext.class), anyBoolean()))
+        when(visibilityService.executeVisibleWithTimeout(any(Session.class), any(AgentExecutionContext.class),
+                anyBoolean(), any(AtomicBoolean.class), anyLong(), anyLong()))
                 .thenReturn(new SubAgentVisibilityService.VisibleRunResult(new SubAgentResultCollector(), "exec-skip"));
         when(subagentExecutionMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(2L);
         Message saved = new Message();
@@ -404,7 +411,8 @@ class DelegateFollowupToolTest {
         collector.onThinkingStart();
         collector.onContentDelta("OK");
         collector.onMessageEnd(ChatUsage.builder().totalTokens(5).build());
-        when(visibilityService.executeVisible(any(Session.class), any(AgentExecutionContext.class), anyBoolean()))
+        when(visibilityService.executeVisibleWithTimeout(any(Session.class), any(AgentExecutionContext.class),
+                anyBoolean(), any(AtomicBoolean.class), anyLong(), anyLong()))
                 .thenReturn(new SubAgentVisibilityService.VisibleRunResult(collector, "exec-null"));
         when(subagentExecutionMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(1L);
 
@@ -433,7 +441,8 @@ class DelegateFollowupToolTest {
         when(delegateTool.buildSubContext(any(Session.class), any(AgentDefinition.class)))
                 .thenReturn(new AgentExecutionContext());
         // skip=false（执行已开始），执行期间子会话被取消 → childFlag 置 true
-        when(visibilityService.executeVisible(any(Session.class), any(AgentExecutionContext.class), anyBoolean()))
+        when(visibilityService.executeVisibleWithTimeout(any(Session.class), any(AgentExecutionContext.class),
+                anyBoolean(), any(AtomicBoolean.class), anyLong(), anyLong()))
                 .thenAnswer(inv -> {
                     childFlag.set(true);
                     return new SubAgentVisibilityService.VisibleRunResult(new SubAgentResultCollector(), "exec-mid");
@@ -466,7 +475,8 @@ class DelegateFollowupToolTest {
         SubagentExecutionMapper sem = mock(SubagentExecutionMapper.class);
         LocalToolSessionRegistry ltsr = mock(LocalToolSessionRegistry.class);
         SubAgentVisibilityService svs = mock(SubAgentVisibilityService.class);
-        DelegateTool realDelegate = new DelegateTool(reg, hs, al, ss, sm, sem, ltsr, svs, objectMapper);
+        DelegateTool realDelegate = new DelegateTool(reg, hs, al, ss, sm, sem, ltsr, svs,
+                new DelegateConfig(), objectMapper);
 
         Tool fakeDelegate = mock(Tool.class);
         when(fakeDelegate.getName()).thenReturn("delegate");

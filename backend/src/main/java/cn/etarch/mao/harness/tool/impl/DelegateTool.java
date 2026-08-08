@@ -1,5 +1,6 @@
 package cn.etarch.mao.harness.tool.impl;
 
+import cn.etarch.mao.config.DelegateConfig;
 import cn.etarch.mao.harness.core.AgentExecutionContext;
 import cn.etarch.mao.harness.core.AgentLoop;
 import cn.etarch.mao.harness.core.HarnessService;
@@ -41,6 +42,7 @@ public class DelegateTool implements Tool {
     private final SubagentExecutionMapper subagentExecutionMapper;
     private final LocalToolSessionRegistry localToolSessionRegistry;
     private final SubAgentVisibilityService visibilityService;
+    private final DelegateConfig delegateConfig;
     private final ObjectMapper objectMapper;
 
     public DelegateTool(AgentDefinitionRegistry definitionRegistry,
@@ -51,6 +53,7 @@ public class DelegateTool implements Tool {
                         SubagentExecutionMapper subagentExecutionMapper,
                         LocalToolSessionRegistry localToolSessionRegistry,
                         SubAgentVisibilityService visibilityService,
+                        DelegateConfig delegateConfig,
                         ObjectMapper objectMapper) {
         this.definitionRegistry = definitionRegistry;
         this.harnessService = harnessService;
@@ -60,6 +63,7 @@ public class DelegateTool implements Tool {
         this.subagentExecutionMapper = subagentExecutionMapper;
         this.localToolSessionRegistry = localToolSessionRegistry;
         this.visibilityService = visibilityService;
+        this.delegateConfig = delegateConfig;
         this.objectMapper = objectMapper;
     }
 
@@ -241,14 +245,18 @@ public class DelegateTool implements Tool {
                 }
             }
 
-            // 7. 同步执行子智能体（WS 流式 + 过程落库 + 结果收集）
+            // 7. 同步执行子智能体（WS 流式 + 过程落库 + 结果收集），带整体超时兜底：
+            //    子代理 LLM 请求卡死（如 SSL 写阻塞导致 OkHttp 超时机制失效）时，
+            //    到达 timeoutSeconds 后请求取消子代理，避免无限拖住父 Agent。
             SubAgentVisibilityService.VisibleRunResult runResult;
             try {
                 boolean skip = childCancel.get();
                 if (skip) {
                     log.info("Skip sub-agent session {}: parent already cancelled", childSession.getId());
                 }
-                runResult = visibilityService.executeVisible(childSession, subContext, skip);
+                runResult = visibilityService.executeVisibleWithTimeout(
+                        childSession, subContext, skip, childCancel,
+                        delegateConfig.getTimeoutSeconds(), delegateConfig.getCancelGraceSeconds());
             } finally {
                 if (cancelFlagRegistered) {
                     agentLoop.removeCancelFlag(childSession.getId());

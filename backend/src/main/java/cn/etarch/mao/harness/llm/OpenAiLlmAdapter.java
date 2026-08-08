@@ -19,6 +19,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -34,6 +36,17 @@ public class OpenAiLlmAdapter implements LlmAdapter {
     private final ObjectMapper objectMapper;
     private final LlmRetryConfig llmRetryConfig;
 
+    /**
+     * 用于异步取消 OkHttp Call 的守护线程池。
+     * 不在业务线程同步 cancel()：SSL 写阻塞时 Socket.close() 会等待同一把 SSL 写锁
+     * （Okio Watchdog 被锁卡住即由此引起），同步取消会把业务线程一并卡死。
+     */
+    private final ExecutorService cancellerExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "llm-http-canceller");
+        t.setDaemon(true);
+        return t;
+    });
+
     public OpenAiLlmAdapter(ObjectMapper objectMapper, LlmRetryConfig llmRetryConfig) {
         this.objectMapper = objectMapper;
         this.llmRetryConfig = llmRetryConfig;
@@ -41,6 +54,10 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.MINUTES)
                 .writeTimeout(30, TimeUnit.SECONDS)
+                // 整个调用（connect + write + 流式读 body）的总预算，兜底各类静默挂起。
+                // 注意其底层仍依赖 Okio Watchdog 关闭 Socket，SSL 锁卡死时可能失效，
+                // 因此 awaitResponse() / chat() 另有应用层硬超时（callTimeoutSeconds）兜底。
+                .callTimeout(llmRetryConfig.getHttpCallTimeoutSeconds(), TimeUnit.SECONDS)
                 // 连接池保活时间设置得比常见网关/负载均衡的空闲超时更短，
                 // 避免复用一条已被中间设备静默断开、但本地看起来仍然存活的"假活"连接
                 // （表现为：进程运行一段时间后偶发卡死在 LLM 请求上，重启即可临时缓解）。
@@ -58,31 +75,64 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
         while (true) {
             attempt++;
-            try (Response response = httpClient.newCall(httpRequest).execute()) {
-                if (isRetryableStatus(response.code())) {
+            Call call = httpClient.newCall(httpRequest);
+            CompletableFuture<Response> responseFuture = new CompletableFuture<>();
+            call.enqueue(new Callback() {
+                @Override
+                public void onFailure(Call c, IOException e) {
+                    responseFuture.completeExceptionally(e);
+                }
+
+                @Override
+                public void onResponse(Call c, Response response) {
+                    responseFuture.complete(response);
+                }
+            });
+
+            // 应用层整体硬超时：OkHttp 内部超时依赖 Okio Watchdog 关闭 Socket，
+            // SSL 写被锁阻塞时会失效，这里到达期限后主动取消并报错
+            Response response;
+            try {
+                response = responseFuture.get(llmRetryConfig.getCallTimeoutSeconds(), TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                log.warn("LLM call timed out after {}s, cancelling: {}",
+                        llmRetryConfig.getCallTimeoutSeconds(), httpRequest.url());
+                cancelInBackground(call);
+                throw new RuntimeException("LLM call timed out after "
+                        + llmRetryConfig.getCallTimeoutSeconds() + "s");
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                throw new RuntimeException("LLM call failed: " + cause.getMessage(), cause);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cancelInBackground(call);
+                throw new RuntimeException("LLM call interrupted", e);
+            }
+
+            try (Response resp = response) {
+                if (isRetryableStatus(resp.code())) {
                     if (attempt > llmRetryConfig.getRateLimitMaxRetries()) {
-                        throw buildRetryExhaustedException(response);
+                        throw buildRetryExhaustedException(resp);
                     }
-                    int delaySeconds = resolveRetryDelaySeconds(response, attempt);
+                    int delaySeconds = resolveRetryDelaySeconds(resp, attempt);
                     log.warn("LLM API transient error ({}), retry {}/{} after {}s, model={}",
-                            response.code(), attempt, llmRetryConfig.getRateLimitMaxRetries(),
+                            resp.code(), attempt, llmRetryConfig.getRateLimitMaxRetries(),
                             delaySeconds, config.getModelId());
                     sleepSeconds(delaySeconds);
                     continue;
                 }
 
-                if (!response.isSuccessful()) {
-                    throw buildHttpException(response);
+                if (!resp.isSuccessful()) {
+                    throw buildHttpException(resp);
                 }
 
-                ResponseBody body = response.body();
+                ResponseBody body = resp.body();
                 if (body == null) {
                     throw new RuntimeException("LLM API returned empty body");
                 }
 
                 String json = body.string();
                 return objectMapper.readValue(json, ChatResponse.class);
-
             } catch (IOException e) {
                 throw new RuntimeException("LLM call failed: " + e.getMessage(), e);
             }
@@ -206,13 +256,20 @@ public class OpenAiLlmAdapter implements LlmAdapter {
     }
 
     /**
-     * 异步发起 HTTP 请求并轮询等待响应，支持取消。
+     * 异步发起 HTTP 请求并轮询等待响应，支持取消与整体硬超时。
      *
-     * @return 响应对象；若已取消或连接失败则返回 null（错误已通过 callback 上报）
+     * <p>整体硬超时（{@code app.harness.llm.call-timeout-seconds}）是最后兜底：
+     * OkHttp 的 readTimeout / writeTimeout / callTimeout 均由 Okio Watchdog 关闭 Socket 实现，
+     * 极端场景（SSL 读写被锁阻塞）下 Watchdog 也会卡住，仅靠内部超时无法终止请求。
+     * 到达期限后这里主动取消请求并上报错误，且取消放在独立守护线程执行，
+     * 避免 Socket.close() 被 SSL 锁阻塞时把当前 Agent 线程一并卡死。</p>
+     *
+     * @return 响应对象；若已取消/超时/连接失败则返回 null（错误已通过 callback 上报）
      */
     private Response awaitResponse(Request httpRequest, AtomicBoolean cancelFlag, StreamCallback callback) {
         Call httpCall = httpClient.newCall(httpRequest);
         CompletableFuture<Response> responseFuture = new CompletableFuture<>();
+        long deadline = System.currentTimeMillis() + llmRetryConfig.getCallTimeoutSeconds() * 1000L;
         httpCall.enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
@@ -232,14 +289,22 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         try {
             while (true) {
                 if (isCancelled(cancelFlag)) {
-                    httpCall.cancel();
+                    cancelInBackground(httpCall);
                     callback.onError(new RuntimeException("Cancelled by user"));
+                    return null;
+                }
+                if (System.currentTimeMillis() >= deadline) {
+                    log.warn("LLM request timed out after {}s, cancelling: {}",
+                            llmRetryConfig.getCallTimeoutSeconds(), httpRequest.url());
+                    cancelInBackground(httpCall);
+                    callback.onError(new RuntimeException("LLM call timed out after "
+                            + llmRetryConfig.getCallTimeoutSeconds() + "s"));
                     return null;
                 }
                 try {
                     return responseFuture.get(100, TimeUnit.MILLISECONDS);
                 } catch (TimeoutException e) {
-                    // poll cancel flag until response arrives
+                    // poll cancel flag / deadline until response arrives
                 } catch (ExecutionException e) {
                     Throwable cause = e.getCause() != null ? e.getCause() : e;
                     if (cause instanceof RuntimeException re) {
@@ -250,7 +315,7 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                     return null;
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    httpCall.cancel();
+                    cancelInBackground(httpCall);
                     callback.onError(new RuntimeException("Cancelled by user"));
                     return null;
                 }
@@ -259,6 +324,21 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             callback.onError(e);
             return null;
         }
+    }
+
+    /**
+     * 在独立守护线程中取消 OkHttp Call。
+     * 不在业务线程同步 cancel()：SSL 写阻塞时 Socket.close() 会等待同一把 SSL 写锁，
+     * 同步取消会把业务线程一并卡死（Okio Watchdog 被锁卡住即由此引起）。
+     */
+    private void cancelInBackground(Call call) {
+        cancellerExecutor.execute(() -> {
+            try {
+                call.cancel();
+            } catch (Throwable t) {
+                log.debug("Failed to cancel LLM HTTP call in background: {}", t.getMessage());
+            }
+        });
     }
 
     /**

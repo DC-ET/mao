@@ -23,6 +23,13 @@ import org.springframework.stereotype.Service;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 子智能体可见性：创建通知、WS 流式、过程消息持久化。
@@ -39,6 +46,16 @@ public class SubAgentVisibilityService {
     private final TaskTerminalService taskTerminalService;
     private final LlmModelMapper llmModelMapper;
     private final HarnessService harnessService;
+
+    /**
+     * 子代理执行线程池（守护线程）。子代理整体执行有超时兜底，
+     * 卡死时父 Agent 在超时后返回失败，不再被同步等待拖住。
+     */
+    private final ExecutorService subagentExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "subagent-executor");
+        t.setDaemon(true);
+        return t;
+    });
 
     public SubAgentVisibilityService(StreamingWsRegistry registry,
                                      ActivityService activityService,
@@ -126,6 +143,60 @@ public class SubAgentVisibilityService {
         }
 
         return new VisibleRunResult(resultCollector, executionId);
+    }
+
+    /**
+     * 带整体超时执行子智能体（见 {@link #executeVisible}）。
+     *
+     * <p>子代理 LLM 请求卡死（如 SSL 写阻塞导致 OkHttp 超时机制失效）时，若不加限制，
+     * 同步等待会无限拖住父 Agent。这里在独立线程执行子代理，到达 {@code timeoutSeconds}
+     * 后置位取消标志请求其退出，再给 {@code cancelGraceSeconds} 宽限期等待其响应取消；
+     * 宽限期后仍卡死则放弃等待并抛出异常（由调用方标记失败返回）。</p>
+     *
+     * @param cancelFlag 子代理取消标志；超时后置位以请求其尽快退出（可为 null）
+     */
+    public VisibleRunResult executeVisibleWithTimeout(Session childSession,
+                                                      AgentExecutionContext subContext,
+                                                      boolean skip,
+                                                      AtomicBoolean cancelFlag,
+                                                      long timeoutSeconds,
+                                                      long cancelGraceSeconds) {
+        CompletableFuture<VisibleRunResult> subFuture = CompletableFuture.supplyAsync(
+                () -> executeVisible(childSession, subContext, skip), subagentExecutor);
+        try {
+            return subFuture.get(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (TimeoutException te) {
+            if (cancelFlag != null) {
+                cancelFlag.set(true);
+            }
+            log.warn("Sub-agent session {} exceeded timeout {}s, requesting cancel",
+                    childSession.getId(), timeoutSeconds);
+            try {
+                return subFuture.get(cancelGraceSeconds, TimeUnit.SECONDS);
+            } catch (TimeoutException te2) {
+                subFuture.cancel(true);
+                throw new RuntimeException("子代理执行超时(>=" + timeoutSeconds
+                        + "s)，已请求取消但未在宽限期(" + cancelGraceSeconds + "s)内退出");
+            } catch (ExecutionException ee2) {
+                Throwable cause = ee2.getCause() != null ? ee2.getCause() : ee2;
+                throw new RuntimeException("子代理执行超时后终止异常: " + cause.getMessage(), cause);
+            } catch (InterruptedException ie2) {
+                Thread.currentThread().interrupt();
+                if (cancelFlag != null) {
+                    cancelFlag.set(true);
+                }
+                throw new RuntimeException("委派执行被中断", ie2);
+            }
+        } catch (ExecutionException ee) {
+            Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
+            throw new RuntimeException("子代理执行失败: " + cause.getMessage(), cause);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            if (cancelFlag != null) {
+                cancelFlag.set(true);
+            }
+            throw new RuntimeException("委派执行被中断", ie);
+        }
     }
 
     /**
