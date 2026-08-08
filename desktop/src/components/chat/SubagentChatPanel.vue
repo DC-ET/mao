@@ -231,14 +231,49 @@ async function fetchMessages() {
   }
 }
 
-async function scrollToBottom() {
-  await nextTick()
-  const el = messagesContainer.value
-  if (el) el.scrollTop = el.scrollHeight
+const userScrolledUp = ref(false)
+const isProgrammaticScroll = ref(false)
+const NEAR_BOTTOM = 80
+
+function scrollToBottom() {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      if (userScrolledUp.value) return
+      const el = messagesContainer.value
+      if (!el) return
+      isProgrammaticScroll.value = true
+      el.scrollTop = el.scrollHeight
+      requestAnimationFrame(() => { isProgrammaticScroll.value = false })
+    })
+  })
 }
 
+function handleScroll() {
+  const el = messagesContainer.value
+  if (!el) return
+  if (isProgrammaticScroll.value) return
+  userScrolledUp.value = el.scrollHeight - el.scrollTop - el.clientHeight > NEAR_BOTTOM
+}
+
+// Markdown 渲染为异步（含代码块高亮），渲染完成后内容高度才最终确定，需再滚动一次
+function handleMarkdownRendered() {
+  if (userScrolledUp.value) return
+  scrollToBottom()
+}
+
+// 执行过程中流式内容持续增长、工具状态变化、打字指示切换等都会影响可见高度，统一驱动自动滚动
 watch(
-  () => displayMessages.value.length,
+  () => {
+    const msgs = displayMessages.value
+    const last = msgs[msgs.length - 1]
+    return [
+      msgs.length,
+      last?.content?.length || 0,
+      last?.toolCalls?.map(t => t.status).join(',') || '',
+      sessionStore.isSessionStreaming(sid.value) ? 's' : '',
+      showTypingIndicator.value,
+    ].join('|')
+  },
   () => { void scrollToBottom() }
 )
 
@@ -259,6 +294,9 @@ watch(
 
 onMounted(async () => {
   subscribe(sid.value)
+  const el = messagesContainer.value
+  el?.addEventListener('scroll', handleScroll, { passive: true })
+  window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
   await Promise.all([loadMeta(), fetchMessages()])
   void scrollToBottom()
 })
@@ -272,6 +310,9 @@ onActivated(() => {
 
 onUnmounted(() => {
   unsubscribe(sid.value)
+  const el = messagesContainer.value
+  el?.removeEventListener('scroll', handleScroll)
+  window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
 })
 </script>
 

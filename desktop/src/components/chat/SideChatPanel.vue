@@ -430,10 +430,17 @@ watch(buildScrollAnchor, () => {
   scrollToBottom()
 }, { flush: 'post' })
 
+// Markdown 渲染为异步（含代码块高亮），渲染完成后内容高度才最终确定，需再校准一次
+function handleMarkdownRendered() {
+  if (userScrolledUp.value) return
+  scrollToBottom()
+}
+
 onMounted(async () => {
   const el = messagesContainer.value
   el?.addEventListener('scroll', handleScroll, { passive: true })
   el?.addEventListener('wheel', handleWheel, { passive: true })
+  window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
 
   if (hasRealSession.value) {
     subscribe(String(realSessionId.value))
@@ -458,6 +465,7 @@ onUnmounted(() => {
   const el = messagesContainer.value
   el?.removeEventListener('scroll', handleScroll)
   el?.removeEventListener('wheel', handleWheel)
+  window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
 
   if (hasRealSession.value) {
     unsubscribe(String(realSessionId.value))

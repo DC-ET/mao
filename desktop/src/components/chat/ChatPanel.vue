@@ -230,6 +230,28 @@ watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 // Guard with `restoring` flag to prevent re-entrant calls
 const restoring = ref(false)
 
+// Markdown 渲染为异步（含代码块高亮），会话恢复后消息内容高度需等渲染完成才最终确定。
+// 若在 restoreSession 完成后只滚动一次，可能因高度未定型而停留在非底部。
+// 因此恢复阶段持续监听渲染完成事件并滚动到底部，直到高度稳定。
+let markdownRenderTimer: ReturnType<typeof setTimeout> | null = null
+function handleMarkdownRendered() {
+  if (!restoring.value) return
+  if (userScrolledUp.value) return
+  scrollToBottom()
+  // 防抖收尾：只要仍有渲染事件持续触发，就重置定时器，直到高度稳定后才结束恢复流程
+  if (markdownRenderTimer) clearTimeout(markdownRenderTimer)
+  markdownRenderTimer = setTimeout(finishMarkdownRestore, 300)
+}
+
+function finishMarkdownRestore() {
+  if (markdownRenderTimer) { clearTimeout(markdownRenderTimer); markdownRenderTimer = null }
+  window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
+  if (!restoring.value) return
+  restoring.value = false
+  scrollToBottom()
+  nextTick(() => chatInputRef.value?.focusInput())
+}
+
 watch(() => sessionStore.activeSessionId, (newSid) => {
   if (restoring.value) return
   if (!newSid) {
@@ -246,10 +268,11 @@ watch(() => sessionStore.activeSessionId, (newSid) => {
   const mode = session?.executionMode || executionMode.value
   const ws = session?.workspace || undefined
   restoreSession(newSid, mode, ws).finally(() => {
-    restoring.value = false
     syncToTaskView()
     scrollToBottom()
-    nextTick(() => chatInputRef.value?.focusInput())
+    window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
+    // 兜底：若没有渲染事件或渲染很快完成，定时收尾结束恢复流程
+    markdownRenderTimer = setTimeout(finishMarkdownRestore, 300)
   })
 })
 
