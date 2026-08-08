@@ -24,12 +24,6 @@
 
         </activity>
 
-        <!-- 后台保活前台服务（dataSync）：任务执行期间保持 WebSocket 连接 -->
-        <service
-            android:name=".WsKeepAliveService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -42,13 +36,7 @@
     </application>
 
     <!-- Permissions -->
-
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- OTA：Android 8+ 安装未知来源应用 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- 后台保活：前台服务 + 唤醒锁 + 通知 -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

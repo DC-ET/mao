@@ -10,7 +10,7 @@ import App from './App.vue'
 import router from './router'
 import { useTheme } from './utils/theme'
 import { initAuthStorage } from './utils/auth-storage'
-import { useAppResumeSync } from './composables/useAppResumeSync'
+import { useForegroundRecovery } from './composables/useForegroundRecovery'
 import './style.css'
 import 'monaco-editor/min/vs/editor/editor.main.css'
 
@@ -50,8 +50,8 @@ async function bootstrap() {
   // Initialize theme after mount
   useTheme()
 
-  // 安卓回前台恢复协调器（recovery 协议 + pendingNavigate）
-  useAppResumeSync().init()
+  // 安卓回前台恢复：检测连接断开 → 静默整页刷新（WebView 卡死由 MainActivity 原生兜底）
+  useForegroundRecovery().init()
 }
 
 bootstrap()

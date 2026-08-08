@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { isAndroidCapacitor } from '../utils/capacitor'
 
 const STORAGE_KEY = 'app_version'
 const CHECK_INTERVAL = 60_000
@@ -8,16 +9,6 @@ const APP_UPDATE_CHECK_INTERVAL = 60_000
 const _apiBase = import.meta.env.VITE_API_BASE_URL || ''  // e.g. https://mao.etarch.cn/api/v1
 const ANDROID_MANIFEST_URL = _apiBase ? _apiBase.replace(/\/api\/v1\/?$/, '/uploads/releases/android-latest.json') : '/uploads/releases/android-latest.json'
 const IGNORED_VERSION_KEY = 'mao_android_ignored_version_code'
-
-/* ---- Capacitor 环境检测（不依赖 @capacitor/core npm 包，直接读运行时注入） ---- */
-function isAndroidCapacitor(): boolean {
-  try {
-    // @ts-ignore Capacitor 7 运行时注入
-    return typeof window !== 'undefined' && !!window.Capacitor?.isNativePlatform?.() && window.Capacitor.getPlatform?.() === 'android'
-  } catch {
-    return false
-  }
-}
 
 /** 旧版内嵌资源包（localhost）；远程加载后与 Web/Electron 一致 */
 function isAndroidCapacitorLocalBundle(): boolean {

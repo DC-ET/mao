@@ -1,20 +1,16 @@
 package cn.etarch.mao.app;
 
-import android.Manifest;
-import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.webkit.WebView;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.ActionBar;
-import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.splashscreen.SplashScreen;
 import androidx.core.view.ViewCompat;
@@ -24,25 +20,31 @@ import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.getcapacitor.BridgeActivity;
 
+/**
+ * 主 Activity（Capacitor 壳）：
+ * - 远程加载 https://mao.etarch.cn，AppUpdatePlugin OTA 升级
+ * - 回前台 WebView 无响应兜底：onStart 延迟探测 evaluateJavascript，超时无回调则自动 reload
+ *   （后台冻结 / 渲染进程异常 / 主线程卡死时，JS 层无法自愈，由原生兜底恢复，无需用户退出重开）
+ */
 public class MainActivity extends BridgeActivity {
+    private static final String TAG = "MaoMain";
     private static final String PREFS = "mao_webview";
     private static final String KEY_ASSET_VERSION = "asset_version_code";
 
-    /** 通知点击跳转携带的会话 ID（冷启动时 Service 尚不存在，由 Service.ensureKeepAlive 消费） */
-    private static volatile long pendingNavigationSessionId = -1;
+    /** 回前台探测：延迟等待 WebView 恢复后再探测 */
+    private static final long RECOVERY_PROBE_DELAY_MS = 2_000;
+    /** 探测超时：无回调判定无响应 */
+    private static final long RECOVERY_PROBE_TIMEOUT_MS = 3_000;
+    /** reload 防抖：10s 内不重复刷新，避免快速前后台切换连环刷新 */
+    private static final long RELOAD_DEBOUNCE_MS = 10_000;
+    /** 冷启动防护：首屏加载（远程 SPA 弱网可能较慢）期间不探测，避免误判无响应而 reload */
+    private static final long COLD_START_GUARD_MS = 10_000;
 
-    /** Android 13+ POST_NOTIFICATIONS 运行时申请 */
-    private ActivityResultLauncher<String> notificationPermissionLauncher;
-
-    /**
-     * 读取并清零待跳转会话 ID。通知冷启动时 Service 尚未创建，sessionId 暂存于此，
-     * 待前端 connect → Service.ensureKeepAlive 时消费（Service 的 registerEventListener 补发机制保证送达）。
-     */
-    public static long consumePendingNavigationSessionId() {
-        long v = pendingNavigationSessionId;
-        pendingNavigationSessionId = -1;
-        return v;
-    }
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private long lastReloadAt = 0;
+    private long firstStartAt = 0;
+    /** 探测进行中：防重复调度 / 重复探测 */
+    private boolean probing = false;
 
     /** 强制显示 TopNav、移除 HTML splash，覆盖升级后可能残留的旧 CSS 缓存。 */
     private static final String FORCE_TOP_NAV_JS =
@@ -70,60 +72,79 @@ public class MainActivity extends BridgeActivity {
         SplashScreen.installSplashScreen(this);
 
         registerPlugin(AppUpdatePlugin.class);
-        registerPlugin(WsBridgePlugin.class);
         super.onCreate(savedInstanceState);
 
         // BridgeActivity 会 setTheme(NoActionBar)；再显式藏掉 ActionBar，杜绝标题「Mao」。
         hideActionBar();
         configureSystemBars();
         configureWebView();
-        registerNotificationPermission();
-        handleIntent(getIntent());
+        firstStartAt = System.currentTimeMillis();
     }
 
-    /** 通知点击冷启动/热启动：提取 sessionId 存 pending，转发给保活服务消费。 */
-    private void handleIntent(Intent intent) {
-        if (intent == null || intent.getLongExtra(AppNotification.EXTRA_SESSION_ID, -1) <= 0) {
-            return;
-        }
-        long sessionId = intent.getLongExtra(AppNotification.EXTRA_SESSION_ID, -1);
-        pendingNavigationSessionId = sessionId;
-        WsKeepAliveService svc = WsKeepAliveService.getInstance();
-        if (svc != null) {
-            svc.notifyPendingNavigate(sessionId);
-        }
-    }
-
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        handleIntent(intent);
-    }
-
-    /** 前后台状态通知保活服务（后台立即转缓冲模式）。 */
+    /** 回前台：延迟探测 WebView 响应性，无响应则自动 reload（WebView 卡死时无需用户退出重开）。 */
     @Override
     public void onStart() {
         super.onStart();
-        WsKeepAliveService.setAppForeground(true);
+        scheduleWebViewRecoveryProbe();
     }
 
+    /** 切后台：取消排定的探测/超时任务并重置探测标志，避免探测在后台触发 reload。 */
     @Override
     public void onStop() {
         super.onStop();
-        WsKeepAliveService.setAppForeground(false);
+        probing = false;
+        handler.removeCallbacksAndMessages(null);
     }
 
-    private void registerNotificationPermission() {
-        notificationPermissionLauncher = registerForActivityResult(
-                new ActivityResultContracts.RequestPermission(),
-                granted -> { /* 拒绝则前台服务仍运行，仅通知可见性受限 */ });
-        // Android 13+（API 33）首次启动请求一次
-        if (Build.VERSION.SDK_INT >= 33
-                && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS);
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        handler.removeCallbacksAndMessages(null);
+    }
+
+    private void scheduleWebViewRecoveryProbe() {
+        if (probing) return; // 已有探测进行中，不重复调度
+        if (bridge == null || bridge.getWebView() == null) return;
+        // 冷启动防护：首屏加载期间不探测（远程 SPA 加载慢，探测回调可能延迟被误判）
+        if (System.currentTimeMillis() - firstStartAt < COLD_START_GUARD_MS) return;
+        WebView webView = bridge.getWebView();
+        handler.postDelayed(() -> probeWebViewAlive(webView), RECOVERY_PROBE_DELAY_MS);
+    }
+
+    /** 探测 WebView 是否响应：evaluateJavascript 3s 内无回调判定无响应。 */
+    private void probeWebViewAlive(WebView webView) {
+        if (probing || isFinishing() || isDestroyed() || webView == null) return;
+        // 页面仍在加载/重载中（progress<100）：跳过本次探测，避免弱网首屏被误判无响应；
+        // 冻结/卡死时 progress 保持 100，仍可正常触发 reload
+        if (webView.getProgress() < 100) return;
+        probing = true;
+        final boolean[] responded = {false};
+        try {
+            webView.evaluateJavascript("1;", value -> responded[0] = true);
+        } catch (Exception e) {
+            // evaluateJavascript 失败（如渲染进程已死）视为无响应，交给下方超时处理
+            Log.w(TAG, "probe evaluateJavascript failed: " + e.getMessage());
         }
+        handler.postDelayed(() -> {
+            probing = false;
+            if (!responded[0] && !isFinishing() && !isDestroyed() && webView != null) {
+                reloadWebView(webView);
+            }
+        }, RECOVERY_PROBE_TIMEOUT_MS);
+    }
+
+    private void reloadWebView(WebView webView) {
+        if (isFinishing() || isDestroyed() || webView == null) return;
+        long now = System.currentTimeMillis();
+        if (now - lastReloadAt < RELOAD_DEBOUNCE_MS) return;
+        lastReloadAt = now;
+        Log.i(TAG, "webview unresponsive, auto reload");
+        webView.reload();
+        // reload 后页面重新加载，onCreate 的注入不会再次执行，重新注入顶部导航修复
+        Runnable inject = () -> webView.evaluateJavascript(FORCE_TOP_NAV_JS, null);
+        webView.post(inject);
+        webView.postDelayed(inject, 300);
+        webView.postDelayed(inject, 1000);
     }
 
     private void hideActionBar() {

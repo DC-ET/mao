@@ -1,5 +1,7 @@
 # 安卓 APP 后台 WebSocket 保活技术方案（修订版 v4）
 
+> ⚠️ **已废弃（2026-08-08）**：本方案描述的原生保活机制（前台服务 / WakeLock / 磁盘缓冲 / recovery 协议 / 终态通知）已按新方案 `docs/android-stability-heat-optimization-design.md`（简化路线）整体删除，相关代码已从仓库移除。本文档仅留作历史设计参考，不再作为实现依据。
+>
 > 状态：已完成三轮评审，v4 按第三轮评审意见修订，达到"可进入详细设计"程度
 > 关联代码：`android/`（原生壳）、`desktop/`（Vue 3 前端）、`backend/`（Java 后端）
 > 适用范围：仅安卓 APP。Web / Electron 桌面端行为保持不变。
