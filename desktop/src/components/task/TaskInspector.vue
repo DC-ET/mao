@@ -108,14 +108,13 @@
                 >
                   <span class="git-repo-name">{{ repo.name }}</span>
                   <span class="git-repo-branch">{{ repo.branch || 'HEAD' }}</span>
-                  <span class="git-stat">
-                    <span class="git-add">+{{ repo.insertions }}</span>
-                    <span class="git-del">-{{ repo.deletions }}</span>
-                  </span>
+                  <span class="git-repo-count">{{ repo.changedFileCount }} 变更</span>
                 </button>
               </template>
               <span v-else-if="reposLoading" class="git-muted">检测 Git…</span>
+              <span v-else-if="unavailableRepos.length > 0" class="git-muted">{{ repos.length }} 个仓库 · {{ unavailableRepos.length }} 个不可用</span>
               <span v-else class="git-clean">{{ repos.length }} 个仓库 · 全部干净</span>
+              <span v-if="unavailableRepos.length > 0 && changedRepos.length > 0" class="git-unavailable-note">{{ unavailableRepos.length }} 个仓库状态不可用</span>
             </template>
             <template v-else>
               <template v-if="gitStatus?.isGit">
@@ -185,7 +184,12 @@
           />
         </el-select>
       </div>
+      <div v-if="selectedRepo?.unavailable" class="git-state">
+        <p>该仓库 Git 状态不可用</p>
+        <button class="git-retry" @click="refreshAll">重试</button>
+      </div>
       <GitChangeList
+        v-else
         :files="gitFiles"
         :loading="gitLoading"
         :error="gitError"
@@ -281,7 +285,9 @@ const {
   repos,
   multiRepoMode,
   changedRepos,
+  unavailableRepos,
   selectedRepoPath,
+  selectedRepo,
   loading: reposLoading,
   error: reposError,
   refresh: refreshRepos,
@@ -349,8 +355,10 @@ function handleRepoSelect(path: string) {
 }
 
 function handleRepoClick(path: string) {
-  selectRepo(path)
-  inspectorActiveTab.value = 'git'
+  // selectRepo 返回是否选中成功：仓库已删除/不在列表时（方案5过期窗口）不切 tab，避免展示与点击目标错位
+  if (selectRepo(path)) {
+    inspectorActiveTab.value = 'git'
+  }
 }
 
 watch([showFileTreeTab, showGitTab], () => {
@@ -364,7 +372,8 @@ watch([showFileTreeTab, showGitTab], () => {
 
 watch(inspectorActiveTab, (tab) => {
   if (tab === 'git') {
-    void refreshAll()
+    // 方案5：切 Tab 只刷新选中仓库明细，不重复扫描仓库列表（挂载/手动/阶段结束才全量）
+    if (gitEnabled.value) void refreshGit()
   }
 })
 
@@ -823,6 +832,17 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   color: var(--aw-ink-muted-48);
 }
 
+.git-repo-count {
+  font-family: var(--aw-font-mono);
+  color: var(--aw-ink-muted-48);
+  margin-left: auto;
+}
+
+.git-unavailable-note {
+  width: 100%;
+  color: var(--aw-ink-muted-48);
+}
+
 .git-repo-select-row {
   display: flex;
   align-items: center;
@@ -862,6 +882,25 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 .git-clean,
 .git-muted {
   color: var(--aw-ink-muted-48);
+}
+
+.git-state {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-caption);
+}
+
+.git-state p {
+  margin: 0 0 8px;
+}
+
+.git-retry {
+  border: none;
+  background: transparent;
+  color: var(--aw-primary);
+  cursor: pointer;
+  font-size: var(--aw-text-caption);
 }
 
 .workspace-copy-btn {

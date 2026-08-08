@@ -24,16 +24,16 @@ export interface GitStatusResult extends GitStatusSummary {
   files: GitChangedFile[]
 }
 
-/** 多仓库工作区中单个 git 仓库的轻量摘要（不含文件明细）。 */
+/** 多仓库工作区中单个 git 仓库的轻量摘要（不含文件明细、不含行数）。 */
 export interface GitRepoSummary {
   /** 仓库目录名（如 project-a） */
   name: string
   /** 相对工作区根的目录路径（一级子目录名） */
   path: string
   branch?: string
-  insertions: number
-  deletions: number
   changedFileCount: number
+  /** 统计失败/超时标记：为 true 时展示「不可用」，避免仓库静默消失。 */
+  unavailable?: boolean
 }
 
 /** 多仓库发现结果：工作区自身是否 git 仓库 + 一级子目录 git 仓库列表。 */

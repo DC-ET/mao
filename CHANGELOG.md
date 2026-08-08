@@ -17,6 +17,7 @@
 ## 0.0.26 (2026-08-08)
 
 ### 后端
+- 多 Git 仓库发现接口性能优化：仓库统计由每仓库 4 次 git 进程（rev-parse + name-status + numstat + ls-files）合并为 **1 条 `git status --porcelain=v2`** 命令（36 仓库从 144 次进程降到 36 次），`parallelStream`（受 CPU 核数钳制）改为固定 8 线程专用池（含停机回收）；stderr 不合并（DISCARD）、stdout 由独立 daemon 线程逐行读取统计（内存 O(1)，超时强杀后管道关闭自动结束，无线程/进程泄漏）；统计失败/超时的仓库返回 `unavailable` 占位而非静默消失；`workspace-git-repos` 不再返回 insertions/deletions（行数统计保留在 Git Tab 明细的 workspace-git-status）；空仓库（无 commit）下 getStatus 分支用 symbolic-ref 兜底、变更统计回退 `--cached` 计入已暂存文件，与发现接口口径一致
 - 新增多 Git 仓库工作区支持：工作区本身不是 git 仓库、但一级子目录中存在多个 git 仓库时，右侧边栏可展示各仓库的 Git 信息。新增 `GET /files/workspace-git-repos` 发现接口（返回工作区是否本身为 git 仓库 + 一级子仓库的目录名/分支/变更统计）；`workspace-git-status` / `workspace-git-diff` 新增可选 `repoPath` 参数，指定仓库相对工作区根的目录名，缺省时行为与之前完全一致（兼容单仓库工作区）；repoPath 仅允许工作区一级子目录名，拒绝 `..`、绝对路径与多级路径，并过路径沙箱校验
 - 修复 LLM 调用偶发永久卡死的问题：HTTPS 请求体写入被底层阻塞（SSL 写锁）时，OkHttp 的 readTimeout/writeTimeout 依赖 Okio Watchdog 关闭 Socket，而 `SSLSocketImpl.close()` 需要等待同一把 SSL 写锁，导致 OkHttp 内部超时机制整体失效、Agent 无限等待；现新增应用层硬超时（默认 10 分钟，可配 `app.harness.llm.call-timeout-seconds`），超时后在独立守护线程主动取消请求并报错（不阻塞业务线程），同时为 OkHttp 增加 callTimeout（默认 15 分钟，可配 `app.harness.llm.http-call-timeout-seconds`）兜底；同步调用 `chat` 路径同样受应用层硬超时保护
 - 子代理委派（delegate / delegate_followup）新增整体执行超时（默认 15 分钟，可配 `app.harness.delegate.timeout-seconds`）：子代理 LLM 请求卡死不再无限拖住父 Agent，超时后置位子代理取消标志请求其退出，并给予宽限期（默认 30 秒，可配 `app.harness.delegate.cancel-grace-seconds`）等待其响应取消；宽限期后仍卡死则放弃等待、将子代理标记失败并返回父 Agent
@@ -24,6 +25,7 @@
 - Shell 工具输出文件收敛：移除单次命令的切片输出文件，仅保留会话累积输出文件，并将对外字段 `session_log` 统一命名为 `output_file`（其内容为整个会话从创建起所有命令的完整输出，支持随时回查）
 
 ### 前端（桌面 / Web / 安卓）
+- 多 Git 仓库工作区加载提速：打开会话的 Git 信息不再受「每仓库 4 次 git 进程」拖累，36 仓库工作区从约 20 秒以上降至秒级；多仓库摘要行不再显示 +N/-Y（改为「目录名 · 分支 · N 变更」，行数统计保留在 Git Tab 明细）；切到 Git Tab 只刷新选中仓库明细、不再重复扫描仓库列表；统计失败/超时的仓库在摘要行与 Git Tab 展示「不可用」提示（附重试），不再静默消失
 - 右侧边栏新增多 Git 仓库工作区展示：工作区本身不是 git 仓库但一级子目录含多个 git 仓库时，Git Tab 工具栏出现仓库下拉（单选，项目名与分支合并显示为「目录名 · 分支」，并缩小下拉字体以适配窄屏），切换即切换该仓库的变更列表与 diff；工作区摘要行逐仓库列出有变更的仓库（目录名 + 分支 + `+X -Y`），全部干净时显示「N 个仓库 · 全部干净」，点击仓库项可直接跳到 Git Tab 并选中该仓库；默认选中第一个有变更的仓库（不记忆上次选择）；工作区本身是 git 仓库时界面与之前完全一致，不出现仓库下拉；diff Tab 在多仓库模式下以「仓库目录/文件路径」区分，避免不同仓库同名文件冲突
 - 修复对话页任务耗时统计偏少的问题：起点由「首个工具步骤的创建时间」改为「用户消息发出时刻」，终点改为「任务结束时刻」（任务终态时由后端刷新最后一条消息的 `updated_at`），覆盖此前漏计的发送后初始化与首次 LLM 思考耗时
 - 修复切换会话后页面停留在非底部的问题：Markdown 渲染为异步（含代码块 Monaco 高亮），会话恢复时仅在 `restoreSession` 完成后滚动一次，会因高度尚未定型而停在非底部；现 Markdown 渲染完成后派发全局 `mao:markdown-rendered` 事件，主会话在恢复阶段持续监听并按 300ms 防抖校准滚动到底部，直到高度稳定
@@ -35,6 +37,7 @@
 - 删除后台保活机制：移除前台服务（dataSync）、WakeLock、OkHttp WebSocket 保活、磁盘事件缓冲与回前台恢复协议等 6 个相关类，移除对应权限声明与 okhttp 依赖，后台不再有任何常驻原生活动，明显降低耗电与发热
 
 ### 桌面 Electron
+- 多 Git 仓库发现性能优化：`git-repos` IPC 每仓库由 4 次 git 进程合并为 1 次 `git status --porcelain=v2`（spawn + readline 逐行统计，内存 O(1)，无输出上限），并发由无上限 Promise.all 改为 8 路 mapLimit；统计失败/超时的仓库返回 `unavailable` 占位，不再静默消失
 - 新增多 Git 仓库工作区支持：新增 `git-repos` IPC（扫描工作区一级子目录中的 git 仓库并返回分支与变更统计）；`git-status` / `git-file-diff` IPC 支持可选 `repoPath` 参数（仅允许工作区一级子目录名，越界路径拒绝），缺省时行为与之前完全一致
 - 新增回前台 WebView 无响应兜底：页面卡死（后台冻结 / 渲染进程异常 / 主线程无响应）时，App 回前台后自动探测并刷新页面，无需用户退出进程重开
 - 取消任务终态系统通知与通知点击跳转会话能力（与保活机制一并移除）

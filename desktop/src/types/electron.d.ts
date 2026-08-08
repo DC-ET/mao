@@ -148,9 +148,8 @@ interface ElectronAPI {
       name: string
       path: string
       branch?: string
-      insertions: number
-      deletions: number
       changedFileCount: number
+      unavailable?: boolean
     }>
     error?: string
   }>

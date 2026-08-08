@@ -5,14 +5,17 @@ import cn.etarch.mao.common.result.ErrorCode;
 import cn.etarch.mao.harness.safety.PathSandbox;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import jakarta.annotation.PreDestroy;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,6 +24,9 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -36,7 +42,18 @@ public class WorkspaceGitService {
     private static final int MAX_DIFF_LINES = 5000;
     private static final int MAX_DIFF_BYTES = 512 * 1024;
 
+    /** 多仓库发现时的仓库统计并发上限：避免大量 git 子进程同时启动耗尽服务器资源。 */
+    private static final int REPO_SCAN_CONCURRENCY = 8;
+
     private final PathSandbox pathSandbox;
+
+    /** 仓库统计专用线程池：固定并发，不受公共 ForkJoinPool（CPU 核数-1）钳制。 */
+    private final ExecutorService repoScanExecutor = Executors.newFixedThreadPool(REPO_SCAN_CONCURRENCY);
+
+    @PreDestroy
+    void shutdownExecutor() {
+        repoScanExecutor.shutdownNow();
+    }
 
     /**
      * 多仓库工作区仓库发现：
@@ -66,76 +83,140 @@ public class WorkspaceGitService {
             }
         }
 
-        List<GitRepoSummaryDTO> repos = repoDirs.parallelStream()
-                .map(this::summarizeRepo)
-                .filter(java.util.Objects::nonNull)
-                .sorted(Comparator.comparing(GitRepoSummaryDTO::getName))
-                .collect(java.util.stream.Collectors.toList());
+        // 有界并发统计：每仓库仅 1 条 git status --porcelain=v2 命令，固定线程池并发
+        List<GitRepoSummaryDTO> repos = new ArrayList<>();
+        if (!repoDirs.isEmpty()) {
+            // Map<repoDir, Future> 关联，避免 RejectedExecutionException 跳过仓库后索引错位
+            Map<Path, Future<GitRepoSummaryDTO>> futures = new LinkedHashMap<>();
+            for (Path dir : repoDirs) {
+                try {
+                    futures.put(dir, repoScanExecutor.submit(() -> summarizeRepo(dir)));
+                } catch (java.util.concurrent.RejectedExecutionException e) {
+                    // 线程池已关闭（应用停机窗口）：记录并跳过该仓库，避免接口 500
+                    log.warn("Repo scan executor rejected task for {}, skip: {}", dir, e.getMessage());
+                }
+            }
+            for (Map.Entry<Path, Future<GitRepoSummaryDTO>> entry : futures.entrySet()) {
+                Path dir = entry.getKey();
+                Future<GitRepoSummaryDTO> future = entry.getValue();
+                GitRepoSummaryDTO summary;
+                try {
+                    // summarizeRepo 内部已有 10s 超时，这里再留 5s 余量兜底，避免请求线程无限阻塞
+                    summary = future.get(GIT_TIMEOUT_SECONDS + 5, TimeUnit.SECONDS);
+                } catch (java.util.concurrent.TimeoutException e) {
+                    // 超时：cancel 该任务，并保留 unavailable 占位（与失败路径一致，仓库不消失）
+                    future.cancel(true);
+                    summary = unavailableRepo(dir);
+                    log.warn("Repo summary timed out for {}, marked unavailable", dir);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    summary = unavailableRepo(dir);
+                } catch (java.util.concurrent.ExecutionException e) {
+                    summary = unavailableRepo(dir);
+                    log.warn("Repo summary failed for {}: {}", dir, e.getMessage());
+                }
+                if (summary != null) repos.add(summary);
+            }
+        }
+        repos.sort(Comparator.comparing(GitRepoSummaryDTO::getName));
         dto.setRepos(repos);
         return dto;
     }
 
+    /** 统计失败的仓库占位：保留条目并标记 unavailable，避免前端静默丢失。 */
+    private static GitRepoSummaryDTO unavailableRepo(Path repoDir) {
+        GitRepoSummaryDTO dto = new GitRepoSummaryDTO();
+        dto.setName(repoDir.getFileName().toString());
+        dto.setPath(repoDir.getFileName().toString());
+        dto.setUnavailable(true);
+        return dto;
+    }
+
     /**
-     * 对单个仓库目录执行轻量统计：分支 + 变更统计（不含文件明细）。
-     * 轻量化要点：untracked 文件只数数量（ls-files 输出行数）、不读取文件内容统计行数，
-     * 避免多仓库并发发现时对大体积 untracked 文件（日志、安装包等）全量读入内存。
+     * 对单个仓库目录执行轻量统计：分支 + 变更文件数（不含文件明细、不含行数）。
+     * 实现要点：
+     * - 单条 `git status --porcelain=v2 --branch -M --untracked-files=all` 同时取分支与变更计数，
+     *   36 仓库只需 36 次 git 进程（此前每仓库 4 次 = 144 次）；
+     * - stdout 由独立 daemon 线程逐行读取统计（内存 O(1)），主线程只做带超时的 waitFor：
+     *   即使 git 卡死/输出超限，超时后 destroyForcibly 关闭管道、读线程随之结束，不占线程池；
+     * - stderr 直接 DISCARD（不合并、不读取），避免 git 警告混入计数，也避免管道缓冲写满死锁；
+     * - 分支取自 `# branch.head`（detached 显示 (detached)，映射为 "HEAD" 与存量 rev-parse 语义一致）；
+     * - 变更文件数 = 非 # 注释行数（tracked 行以 1/2 开头、untracked 行以 ? 开头）；
+     * - 失败/超时返回 unavailable 占位条目，仓库不静默消失。
      */
     private GitRepoSummaryDTO summarizeRepo(Path repoDir) {
+        Process process = null;
         try {
-            String branch = runGitOk(repoDir, "rev-parse", "--abbrev-ref", "HEAD");
+            ProcessBuilder pb = new ProcessBuilder("git", "-c", "core.quotepath=false",
+                    "status", "--porcelain=v2", "--branch", "-M", "--untracked-files=all");
+            pb.directory(repoDir.toFile());
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            process = pb.start();
+            final Process proc = process; // lambda 需 effectively final 引用
 
-            Map<String, GitChangedFileDTO> tracked = new LinkedHashMap<>();
-            String nameStatus = runGitOk(repoDir, "diff", "--name-status", "HEAD");
-            if (nameStatus != null && !nameStatus.isBlank()) {
-                for (String line : nameStatus.split("\n")) {
-                    line = line.trim();
-                    if (line.isEmpty()) continue;
-                    GitChangedFileDTO file = parseNameStatusLine(line);
-                    if (file != null) {
-                        tracked.put(file.getPath(), file);
+            final String[] branchHolder = new String[1];
+            final int[] countHolder = new int[1];
+            Thread reader = new Thread(() -> {
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    int count = 0;
+                    String branch = null;
+                    while ((line = br.readLine()) != null) {
+                        if (line.isEmpty()) continue;
+                        if (line.charAt(0) == '#') {
+                            if (line.startsWith("# branch.head ")) {
+                                String name = line.substring("# branch.head ".length()).trim();
+                                // detached HEAD 时 porcelain 输出 "(detached)"，映射为 "HEAD"
+                                branch = "(detached)".equals(name) ? "HEAD" : name;
+                            }
+                            continue;
+                        }
+                        count++;
                     }
+                    branchHolder[0] = branch;
+                    countHolder[0] = count;
+                } catch (IOException ignored) {
+                    // 进程被超时强杀时管道关闭，忽略
                 }
-            }
+            }, "git-repo-summarize-" + repoDir.getFileName());
+            reader.setDaemon(true);
+            reader.start();
 
-            int insertions = 0;
-            int deletions = 0;
-            String numstat = runGitOk(repoDir, "diff", "--numstat", "HEAD");
-            if (numstat != null && !numstat.isBlank()) {
-                for (String line : numstat.split("\n")) {
-                    line = line.trim();
-                    if (line.isEmpty()) continue;
-                    String[] parts = line.split("\t");
-                    if (parts.length < 3) continue;
-                    String path = parts[parts.length - 1].replace('\\', '/');
-                    if (path.contains(" => ")) {
-                        path = path.substring(path.lastIndexOf(" => ") + 4).trim();
-                    }
-                    GitChangedFileDTO file = tracked.get(path);
-                    if (file == null) continue;
-                    if (!"-".equals(parts[0]) && !"-".equals(parts[1])) {
-                        insertions += parseIntSafe(parts[0]);
-                        deletions += parseIntSafe(parts[1]);
-                    }
-                }
+            boolean finished = process.waitFor(GIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                process.waitFor(5, TimeUnit.SECONDS); // 等待进程退出、管道关闭，读线程随之结束
+                log.warn("git status timed out in {}", repoDir);
+                return unavailableRepo(repoDir);
             }
-
-            int untrackedCount = 0;
-            String untracked = runGitOk(repoDir, "ls-files", "--others", "--exclude-standard");
-            if (untracked != null && !untracked.isBlank()) {
-                untrackedCount = (int) untracked.lines().filter(l -> !l.isBlank()).count();
+            try {
+                reader.join(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            if (process.exitValue() != 0) {
+                log.warn("git status failed in {} (exit {})", repoDir, process.exitValue());
+                return unavailableRepo(repoDir);
             }
 
             GitRepoSummaryDTO dto = new GitRepoSummaryDTO();
             dto.setName(repoDir.getFileName().toString());
             dto.setPath(repoDir.getFileName().toString());
-            dto.setBranch(branch != null ? branch.trim() : null);
-            dto.setInsertions(insertions);
-            dto.setDeletions(deletions);
-            dto.setChangedFileCount(tracked.size() + untrackedCount);
+            dto.setBranch(branchHolder[0]);
+            dto.setChangedFileCount(countHolder[0]);
             return dto;
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.warn("Failed to summarize git repo {}: {}", repoDir, e.getMessage());
-            return null;
+            return unavailableRepo(repoDir);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            // 中断时销毁仍在运行的 git 进程，避免孤儿进程/读线程残留
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            log.warn("Summarize git repo interrupted: {}", repoDir);
+            return unavailableRepo(repoDir);
         }
     }
 
@@ -188,6 +269,11 @@ public class WorkspaceGitService {
         dto.setRepoRoot(repoRoot.toString());
 
         String branch = runGitOk(repoRoot, "rev-parse", "--abbrev-ref", "HEAD");
+        if (branch == null) {
+            // 空仓库（无 commit）时 rev-parse 失败，用 symbolic-ref 取 unborn 分支名，与 getRepos 口径一致
+            String symbolic = runGitOk(repoRoot, "symbolic-ref", "--short", "HEAD");
+            branch = symbolic != null ? symbolic.trim() : null;
+        }
         dto.setBranch(branch != null ? branch.trim() : null);
 
         Map<String, GitChangedFileDTO> files = collectChangedFiles(repoRoot);
@@ -293,6 +379,11 @@ public class WorkspaceGitService {
         Map<String, GitChangedFileDTO> files = new LinkedHashMap<>();
 
         String nameStatus = runGitOk(repoRoot, "diff", "--name-status", "HEAD");
+        if (nameStatus == null && runGitOk(repoRoot, "rev-parse", "--verify", "HEAD") == null) {
+            // 空仓库（无 commit，HEAD 不存在）：diff --name-status HEAD 必然失败，
+            // 回退到 --cached 统计已 staged 的文件，与 getRepos（porcelain 计入 staged）口径一致
+            nameStatus = runGitOk(repoRoot, "diff", "--name-status", "--cached");
+        }
         if (nameStatus != null && !nameStatus.isBlank()) {
             for (String line : nameStatus.split("\n")) {
                 line = line.trim();
@@ -305,6 +396,9 @@ public class WorkspaceGitService {
         }
 
         String numstat = runGitOk(repoRoot, "diff", "--numstat", "HEAD");
+        if (numstat == null && runGitOk(repoRoot, "rev-parse", "--verify", "HEAD") == null) {
+            numstat = runGitOk(repoRoot, "diff", "--numstat", "--cached");
+        }
         if (numstat != null && !numstat.isBlank()) {
             for (String line : numstat.split("\n")) {
                 line = line.trim();
@@ -559,9 +653,9 @@ public class WorkspaceGitService {
         private String name;
         private String path;
         private String branch;
-        private int insertions;
-        private int deletions;
         private int changedFileCount;
+        /** 统计失败/超时标记：为 true 时保留占位条目，前端展示「不可用」，避免仓库静默消失。 */
+        private Boolean unavailable;
     }
 
     @Data

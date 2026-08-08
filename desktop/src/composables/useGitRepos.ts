@@ -22,6 +22,9 @@ export function useGitRepos(provider: Ref<WorkspaceGitProvider | null>) {
   /** 有变更的仓库（摘要行逐仓库展示用）。 */
   const changedRepos = computed(() => repos.value.filter(r => r.changedFileCount > 0))
 
+  /** 统计失败/超时的仓库（保留占位，展示「不可用」而非静默消失）。 */
+  const unavailableRepos = computed(() => repos.value.filter(r => r.unavailable))
+
   const selectedRepo = computed(() => repos.value.find(r => r.path === selectedRepoPath.value) ?? null)
 
   function defaultRepoPath(list: GitRepoSummary[]): string {
@@ -66,10 +69,12 @@ export function useGitRepos(provider: Ref<WorkspaceGitProvider | null>) {
     }
   }
 
-  function selectRepo(path: string) {
+  function selectRepo(path: string): boolean {
     if (repos.value.some(r => r.path === path)) {
       selectedRepoPath.value = path
+      return true
     }
+    return false
   }
 
   watch(provider, () => {
@@ -81,6 +86,7 @@ export function useGitRepos(provider: Ref<WorkspaceGitProvider | null>) {
     isRootGit,
     multiRepoMode,
     changedRepos,
+    unavailableRepos,
     selectedRepoPath,
     selectedRepo,
     loading,

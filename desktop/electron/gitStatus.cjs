@@ -1,4 +1,6 @@
 const { execFile } = require('child_process')
+const { spawn } = require('child_process')
+const readline = require('readline')
 const fs = require('fs')
 const path = require('path')
 
@@ -107,7 +109,12 @@ async function collectChangedFiles(repoRoot) {
   /** @type {Map<string, any>} */
   const files = new Map()
 
-  const nameStatus = await runGitOk(repoRoot, ['diff', '--name-status', 'HEAD'])
+  let nameStatus = await runGitOk(repoRoot, ['diff', '--name-status', 'HEAD'])
+  if (!nameStatus && !(await runGitOk(repoRoot, ['rev-parse', '--verify', 'HEAD']))) {
+    // 空仓库（无 commit，HEAD 不存在）：diff --name-status HEAD 必然失败，
+    // 回退到 --cached 统计已 staged 的文件，与 getRepos（porcelain 计入 staged）口径一致
+    nameStatus = await runGitOk(repoRoot, ['diff', '--name-status', '--cached'])
+  }
   if (nameStatus) {
     for (const raw of nameStatus.split('\n')) {
       const line = raw.trim()
@@ -117,7 +124,10 @@ async function collectChangedFiles(repoRoot) {
     }
   }
 
-  const numstat = await runGitOk(repoRoot, ['diff', '--numstat', 'HEAD'])
+  let numstat = await runGitOk(repoRoot, ['diff', '--numstat', 'HEAD'])
+  if (!numstat && !(await runGitOk(repoRoot, ['rev-parse', '--verify', 'HEAD']))) {
+    numstat = await runGitOk(repoRoot, ['diff', '--numstat', '--cached'])
+  }
   if (numstat) {
     for (const raw of numstat.split('\n')) {
       const line = raw.trim()
@@ -214,7 +224,9 @@ function resolveRepoDir(workspace, repoPath) {
 
 /**
  * Discover first-level git repos under a non-git workspace.
- * Mirrors the backend shape: { isRootGit, repos: [{ name, path, branch, insertions, deletions, changedFileCount }] }.
+ * Mirrors the backend shape: { isRootGit, repos: [{ name, path, branch, changedFileCount }] }.
+ * 性能：每仓库仅 1 条 `git status --porcelain=v2 --branch` 命令（此前 4 条），
+ * 并发上限 8（此前无上限），大量仓库时进程数与峰值资源显著下降。
  * @param {string} workspace
  */
 async function listGitRepos(workspace) {
@@ -246,64 +258,86 @@ async function listGitRepos(workspace) {
     })
     .sort((a, b) => a.localeCompare(b))
 
-  const summaries = await Promise.all(repoDirs.map(async (name) => {
-    const dir = path.join(ws, name)
-    try {
-      const branchOut = await runGitOk(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])
-
-      // 轻量统计：tracked 变更走 name-status + numstat；untracked 只数文件数、不读内容，
-      // 避免多仓库并发发现时对大体积 untracked 文件全量读入内存
-      const tracked = new Map()
-      const nameStatus = await runGitOk(dir, ['diff', '--name-status', 'HEAD'])
-      if (nameStatus) {
-        for (const raw of nameStatus.split('\n')) {
-          const line = raw.trim()
-          if (!line) continue
-          const file = parseNameStatusLine(line)
-          if (file) tracked.set(file.path, file)
-        }
-      }
-
-      let insertions = 0
-      let deletions = 0
-      const numstat = await runGitOk(dir, ['diff', '--numstat', 'HEAD'])
-      if (numstat) {
-        for (const raw of numstat.split('\n')) {
-          const line = raw.trim()
-          if (!line) continue
-          const parts = line.split('\t')
-          if (parts.length < 3) continue
-          let p = parts[parts.length - 1].replace(/\\/g, '/')
-          if (p.includes(' => ')) p = p.slice(p.lastIndexOf(' => ') + 4).trim()
-          const file = tracked.get(p)
-          if (!file) continue
-          if (parts[0] !== '-' && parts[1] !== '-') {
-            insertions += parseInt(parts[0], 10) || 0
-            deletions += parseInt(parts[1], 10) || 0
-          }
-        }
-      }
-
-      const untrackedOut = await runGitOk(dir, ['ls-files', '--others', '--exclude-standard'])
-      const untrackedCount = untrackedOut ? untrackedOut.split('\n').filter((l) => l.trim()).length : 0
-
-      return {
-        name,
-        path: name,
-        branch: branchOut ? branchOut.trim() : undefined,
-        insertions,
-        deletions,
-        changedFileCount: tracked.size + untrackedCount,
-      }
-    } catch (e) {
-      return null
-    }
-  }))
+  const summaries = (await mapLimit(repoDirs, 8, (name) => summarizeRepoDir(name, ws))).filter(Boolean)
 
   return {
     isRootGit: false,
-    repos: summaries.filter(Boolean),
+    repos: summaries,
   }
+}
+
+/**
+ * 对单个仓库目录执行轻量统计：分支 + 变更文件数。
+ * 单条 `git status --porcelain=v2 --branch -M --untracked-files=all`：
+ * - 分支取自 `# branch.head`（detached 时 porcelain 输出 (detached)，映射为 "HEAD" 与存量 rev-parse 语义一致）；
+ * - 变更文件数 = 非 # 注释行数（tracked 行以 1/2 开头、untracked 行以 ? 开头）；
+ * - spawn + readline 逐行统计（内存 O(1)），不依赖完整输出，避免大量变更/untracked 文件时
+ *   输出超限被 Node 杀死（execFile maxBuffer 上限的回归点）；
+ * - 失败/超时返回 unavailable 占位条目，仓库不静默消失。
+ * @param {string} name
+ * @param {string} ws
+ * @returns {Promise<object>}
+ */
+function summarizeRepoDir(name, ws) {
+  const dir = path.join(ws, name)
+  return new Promise((resolve) => {
+    const child = spawn('git', ['-c', 'core.quotepath=false', 'status', '--porcelain=v2', '--branch', '-M', '--untracked-files=all'], { cwd: dir })
+    let branch
+    let changedFileCount = 0
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, GIT_TIMEOUT_MS)
+
+    const rl = readline.createInterface({ input: child.stdout })
+    rl.on('line', (line) => {
+      if (!line) return
+      if (line.startsWith('#')) {
+        if (line.startsWith('# branch.head ')) {
+          const b = line.slice('# branch.head '.length).trim()
+          branch = b === '(detached)' ? 'HEAD' : b
+        }
+        return
+      }
+      changedFileCount++
+    })
+
+    child.stderr.resume() // 不合并 stderr，避免 git 警告混入计数；仅丢弃
+    child.on('error', () => {
+      clearTimeout(timer)
+      resolve({ name, path: name, changedFileCount: 0, unavailable: true })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      if (timedOut || code !== 0) {
+        resolve({ name, path: name, changedFileCount: 0, unavailable: true })
+        return
+      }
+      resolve({ name, path: name, branch, changedFileCount })
+    })
+  })
+}
+
+/**
+ * 有界并发执行异步映射：同时最多 limit 个任务在跑，结果保持输入顺序。
+ * @template T, R
+ * @param {T[]} items
+ * @param {number} limit
+ * @param {(item: T, idx: number, list: T[]) => Promise<R>} fn
+ * @returns {Promise<R[]>}
+ */
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const idx = next++
+      results[idx] = await fn(items[idx], idx, items)
+    }
+  })
+  await Promise.all(workers)
+  return results
 }
 
 /**
@@ -325,7 +359,12 @@ async function getGitStatus(workspace, repoPath) {
     return { isGit: false }
   }
   const repoRoot = path.resolve(repoRootStr.trim())
-  const branchOut = await runGitOk(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  let branchOut = await runGitOk(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  if (!branchOut) {
+    // 空仓库（无 commit）时 rev-parse 失败，用 symbolic-ref 取 unborn 分支名，与 getRepos 口径一致
+    const symbolic = await runGitOk(repoRoot, ['symbolic-ref', '--short', 'HEAD'])
+    branchOut = symbolic
+  }
   const filesMap = await collectChangedFiles(repoRoot)
   const files = Array.from(filesMap.values())
   let insertions = 0
