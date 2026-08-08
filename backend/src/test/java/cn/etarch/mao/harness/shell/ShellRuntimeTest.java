@@ -82,7 +82,7 @@ class ShellRuntimeTest {
             }
         };
         assertThat(outputManager.readUntilMarker(broken, "x", Duration.ofSeconds(1), null).preview())
-                .contains("Error reading output");
+                .contains("读取输出失败");
     }
 
     @Test
