@@ -58,8 +58,11 @@ function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage 
   const stepCount = steps.length
   let durationText = ''
   if (stepCount > 0) {
-    const first = steps[0].createdAt
-    const last = (reply || steps[steps.length - 1]).createdAt
+    // 起点：用户消息发出时刻（服务端保存用户消息的时间，早于首个工具步骤）
+    const first = user.createdAt
+    // 终点：任务结束时刻（任务进入终态时后端会将最后一条消息的 updatedAt 刷新为结束时间）
+    const lastMsg = reply || steps[steps.length - 1]
+    const last = lastMsg.updatedAt || lastMsg.createdAt
     if (first && last) {
       const start = parseDateTime(first)
       const end = parseDateTime(last)

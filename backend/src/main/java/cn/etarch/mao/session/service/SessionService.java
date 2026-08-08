@@ -1025,6 +1025,21 @@ public class SessionService {
         sessionMapper.updateById(session);
     }
 
+    /**
+     * 任务进入终态时刷新最后一条消息的 updated_at 为任务结束时刻，
+     * 供前端按「用户消息发出 → 任务结束」计算本轮任务耗时。
+     */
+    public void markLastMessageFinished(Long sessionId) {
+        Message last = messageMapper.selectOne(new LambdaQueryWrapper<Message>()
+                .eq(Message::getSessionId, sessionId)
+                .orderByDesc(Message::getId)
+                .last("LIMIT 1"));
+        if (last != null) {
+            last.setUpdatedAt(LocalDateTime.now());
+            messageMapper.updateById(last);
+        }
+    }
+
     private boolean isTerminalPhase(String phase) {
         return "IDLE".equals(phase) || "COMPLETED".equals(phase)
             || "FAILED".equals(phase) || "CANCELLED".equals(phase);

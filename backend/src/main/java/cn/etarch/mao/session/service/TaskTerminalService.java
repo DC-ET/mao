@@ -50,6 +50,8 @@ public class TaskTerminalService {
             return;
         }
         sessionService.updatePhase(sessionId, phase);
+        // 记录任务结束时刻到最后一条消息的 updated_at，供前端计算本轮任务耗时
+        sessionService.markLastMessageFinished(sessionId);
         Session session = sessionService.getSession(sessionId);
         Long ownerId = userId != null ? userId : session.getUserId();
 
