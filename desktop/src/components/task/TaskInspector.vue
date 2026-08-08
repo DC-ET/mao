@@ -172,6 +172,7 @@
         <el-select
           :model-value="selectedRepoPath"
           class="git-repo-select"
+          popper-class="git-repo-select-popper"
           placeholder="选择仓库"
           size="small"
           @update:model-value="handleRepoSelect"
@@ -179,11 +180,10 @@
           <el-option
             v-for="repo in repos"
             :key="repo.path"
-            :label="repo.name"
+            :label="`${repo.name} · ${repo.branch || 'HEAD'}`"
             :value="repo.path"
           />
         </el-select>
-        <span class="git-repo-select-branch">{{ selectedRepo?.branch || 'HEAD' }}</span>
       </div>
       <GitChangeList
         :files="gitFiles"
@@ -282,7 +282,6 @@ const {
   multiRepoMode,
   changedRepos,
   selectedRepoPath,
-  selectedRepo,
   loading: reposLoading,
   error: reposError,
   refresh: refreshRepos,
@@ -834,18 +833,16 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 }
 
 .git-repo-select {
-  width: 160px;
-  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
 }
 
-.git-repo-select-branch {
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
-  color: var(--aw-ink-muted-48);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.git-repo-select :deep(.el-select__wrapper) {
+  font-size: 12px;
+}
+
+:global(.git-repo-select-popper .el-select-dropdown__item) {
+  font-size: 12px;
 }
 
 .git-branch {
