@@ -212,21 +212,31 @@ public class FileController {
                 .toString();
     }
 
-    @GetMapping("/workspace-git-status")
-    public Result<WorkspaceGitService.GitStatusDTO> workspaceGitStatus(
+    @GetMapping("/workspace-git-repos")
+    public Result<WorkspaceGitService.GitReposDTO> workspaceGitRepos(
             @AuthenticationPrincipal Long userId,
             @RequestParam Long sessionId) {
         Session session = requireOwnedSession(userId, sessionId);
-        return Result.ok(workspaceGitService.getStatus(session.getWorkspace()));
+        return Result.ok(workspaceGitService.listRepos(session.getWorkspace()));
+    }
+
+    @GetMapping("/workspace-git-status")
+    public Result<WorkspaceGitService.GitStatusDTO> workspaceGitStatus(
+            @AuthenticationPrincipal Long userId,
+            @RequestParam Long sessionId,
+            @RequestParam(required = false) String repoPath) {
+        Session session = requireOwnedSession(userId, sessionId);
+        return Result.ok(workspaceGitService.getStatus(session.getWorkspace(), repoPath));
     }
 
     @GetMapping("/workspace-git-diff")
     public Result<WorkspaceGitService.GitFileDiffDTO> workspaceGitDiff(
             @AuthenticationPrincipal Long userId,
             @RequestParam Long sessionId,
+            @RequestParam(required = false) String repoPath,
             @RequestParam String path) {
         Session session = requireOwnedSession(userId, sessionId);
-        return Result.ok(workspaceGitService.getFileDiff(session.getWorkspace(), path));
+        return Result.ok(workspaceGitService.getFileDiff(session.getWorkspace(), repoPath, path));
     }
 
     @GetMapping("/project-list")

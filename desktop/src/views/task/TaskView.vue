@@ -480,10 +480,10 @@ function handleOpenFile(payload: { path: string; title: string }) {
   openFileTab(payload.path, payload.title)
 }
 
-async function handleOpenGitDiff(file: GitChangedFile) {
+async function handleOpenGitDiff(file: GitChangedFile, repoPath?: string) {
   const provider = gitProvider.value
   if (!provider) return
-  const diff = await provider.getFileDiff(file.path)
+  const diff = await provider.getFileDiff(file.path, repoPath)
   const change: FileChange = {
     path: diff.path,
     type: diff.changeType,
@@ -496,7 +496,13 @@ async function handleOpenGitDiff(file: GitChangedFile) {
       || (diff.truncated ? '内容已截断，仅显示部分文本' : undefined),
   }
   const fileName = diff.path.split(/[/\\]/).pop() || diff.path
-  openDiffTab(change, `${fileName} (Git)`, { source: 'git' })
+  if (repoPath) {
+    // 多仓库模式：path 带仓库前缀，保证 diff tab id / 展示唯一，避免同名文件冲突
+    change.path = `${repoPath}/${diff.path}`
+    openDiffTab(change, `${repoPath} · ${fileName} (Git)`, { source: 'git' })
+  } else {
+    openDiffTab(change, `${fileName} (Git)`, { source: 'git' })
+  }
 }
 
 function handleTodoUpdate() {

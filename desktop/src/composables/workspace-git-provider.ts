@@ -1,10 +1,12 @@
 import { computed, type Ref } from 'vue'
 import { api } from '../api'
-import type { GitFileDiff, GitStatusResult } from '../types/git'
+import type { GitFileDiff, GitReposResult, GitStatusResult } from '../types/git'
 
 export interface WorkspaceGitProvider {
-  getStatus(): Promise<GitStatusResult>
-  getFileDiff(relativePath: string): Promise<GitFileDiff>
+  /** 多仓库发现：工作区自身是否 git 仓库 + 一级子目录 git 仓库列表。 */
+  getRepos(): Promise<GitReposResult>
+  getStatus(repoPath?: string): Promise<GitStatusResult>
+  getFileDiff(relativePath: string, repoPath?: string): Promise<GitFileDiff>
 }
 
 function emptyStatus(error?: string): GitStatusResult {
@@ -58,17 +60,29 @@ function normalizeDiff(data: any, fallbackPath: string): GitFileDiff {
 
 export function createLocalGitProvider(workspace: string): WorkspaceGitProvider {
   return {
-    async getStatus() {
+    async getRepos() {
       try {
-        const data = await window.electronAPI.gitStatus(workspace)
+        const data = await window.electronAPI.gitRepos(workspace)
+        return {
+          isRootGit: !!data?.isRootGit,
+          repos: Array.isArray(data?.repos) ? data.repos : [],
+          error: data?.error,
+        }
+      } catch (e: any) {
+        return { isRootGit: false, repos: [], error: e?.message || '扫描 Git 仓库失败' }
+      }
+    },
+    async getStatus(repoPath?: string) {
+      try {
+        const data = await window.electronAPI.gitStatus(workspace, repoPath)
         return normalizeStatus(data)
       } catch (e: any) {
         return emptyStatus(e?.message || '读取 Git 状态失败')
       }
     },
-    async getFileDiff(relativePath: string) {
+    async getFileDiff(relativePath: string, repoPath?: string) {
       try {
-        const data = await window.electronAPI.gitFileDiff(workspace, relativePath)
+        const data = await window.electronAPI.gitFileDiff(workspace, repoPath, relativePath)
         return normalizeDiff(data, relativePath)
       } catch (e: any) {
         return {
@@ -87,6 +101,9 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
   const numericSessionId = Number(sessionId)
   if (!Number.isFinite(numericSessionId) || numericSessionId <= 0) {
     return {
+      async getRepos() {
+        return { isRootGit: false, repos: [], error: '会话未就绪' }
+      },
       async getStatus() {
         return emptyStatus('会话未就绪')
       },
@@ -103,20 +120,34 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
   }
 
   return {
-    async getStatus() {
+    async getRepos() {
+      try {
+        const { data } = await api.get('/files/workspace-git-repos', {
+          params: { sessionId: numericSessionId },
+        })
+        return {
+          isRootGit: !!data?.isRootGit,
+          repos: Array.isArray(data?.repos) ? data.repos : [],
+          error: data?.error,
+        }
+      } catch (e: any) {
+        return { isRootGit: false, repos: [], error: e?.message || '扫描 Git 仓库失败' }
+      }
+    },
+    async getStatus(repoPath?: string) {
       try {
         const { data } = await api.get('/files/workspace-git-status', {
-          params: { sessionId: numericSessionId },
+          params: { sessionId: numericSessionId, repoPath },
         })
         return normalizeStatus(data)
       } catch (e: any) {
         return emptyStatus(e?.message || '读取 Git 状态失败')
       }
     },
-    async getFileDiff(relativePath: string) {
+    async getFileDiff(relativePath: string, repoPath?: string) {
       try {
         const { data } = await api.get('/files/workspace-git-diff', {
-          params: { sessionId: numericSessionId, path: relativePath },
+          params: { sessionId: numericSessionId, repoPath, path: relativePath },
         })
         return normalizeDiff(data, relativePath)
       } catch (e: any) {

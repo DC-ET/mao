@@ -52,7 +52,7 @@ class WorkspaceGitServiceTest {
     @Test
     @EnabledIf("gitAvailable")
     void cleanRepoReportsZeroChanges() {
-        WorkspaceGitService.GitStatusDTO status = service.getStatus(repo.toString());
+        WorkspaceGitService.GitStatusDTO status = service.getStatus(repo.toString(), null);
         assertThat(status.getIsGit()).isTrue();
         assertThat(status.getBranch()).isNotBlank();
         assertThat(status.getChangedFileCount()).isZero();
@@ -71,7 +71,7 @@ class WorkspaceGitServiceTest {
         run(repo, "git", "commit", "-m", "add gone");
         Files.delete(repo.resolve("gone.txt"));
 
-        WorkspaceGitService.GitStatusDTO status = service.getStatus(repo.toString());
+        WorkspaceGitService.GitStatusDTO status = service.getStatus(repo.toString(), null);
         assertThat(status.getIsGit()).isTrue();
         assertThat(status.getChangedFileCount()).isEqualTo(3);
         assertThat(status.getFiles()).extracting(WorkspaceGitService.GitChangedFileDTO::getPath)
@@ -92,12 +92,12 @@ class WorkspaceGitServiceTest {
                 .filter(f -> "gone.txt".equals(f.getPath())).findFirst().orElseThrow();
         assertThat(deleted.getChangeType()).isEqualTo("DELETED");
 
-        WorkspaceGitService.GitFileDiffDTO diff = service.getFileDiff(repo.toString(), "README.md");
+        WorkspaceGitService.GitFileDiffDTO diff = service.getFileDiff(repo.toString(), null, "README.md");
         assertThat(diff.getBeforeContent()).contains("hello");
         assertThat(diff.getAfterContent()).contains("world");
         assertThat(diff.getChangeType()).isEqualTo("MODIFIED");
 
-        WorkspaceGitService.GitFileDiffDTO newDiff = service.getFileDiff(repo.toString(), "new.txt");
+        WorkspaceGitService.GitFileDiffDTO newDiff = service.getFileDiff(repo.toString(), null, "new.txt");
         assertThat(newDiff.getBeforeContent()).isEmpty();
         assertThat(newDiff.getAfterContent()).contains("line1");
     }
@@ -108,7 +108,7 @@ class WorkspaceGitServiceTest {
         Path plain = tempDir.resolve("plain");
         Files.createDirectories(plain);
         Files.writeString(plain.resolve("a.txt"), "a");
-        WorkspaceGitService.GitStatusDTO status = service.getStatus(plain.toString());
+        WorkspaceGitService.GitStatusDTO status = service.getStatus(plain.toString(), null);
         assertThat(status.getIsGit()).isFalse();
     }
 

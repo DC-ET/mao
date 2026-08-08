@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,11 +38,146 @@ public class WorkspaceGitService {
 
     private final PathSandbox pathSandbox;
 
-    public GitStatusDTO getStatus(String sessionWorkspace) {
+    /**
+     * 多仓库工作区仓库发现：
+     * - 工作区本身是 git 仓库时返回 { isRootGit: true, repos: [] }，前端走现有单仓库逻辑；
+     * - 否则扫描一级子目录中的 git 仓库（目录含 .git 目录或文件），并发执行轻量统计后按目录名排序。
+     */
+    public GitReposDTO listRepos(String sessionWorkspace) {
         Path workspace = pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace);
-        GitStatusDTO dto = new GitStatusDTO();
+        GitReposDTO dto = new GitReposDTO();
 
         String repoRootStr = runGitOk(workspace, "rev-parse", "--show-toplevel");
+        if (repoRootStr != null) {
+            dto.setIsRootGit(true);
+            dto.setRepos(List.of());
+            return dto;
+        }
+
+        dto.setIsRootGit(false);
+        List<Path> repoDirs = new ArrayList<>();
+        if (Files.isDirectory(workspace)) {
+            try (var stream = Files.list(workspace)) {
+                stream.filter(Files::isDirectory)
+                        .filter(dir -> Files.exists(dir.resolve(".git")))
+                        .forEach(repoDirs::add);
+            } catch (IOException e) {
+                log.warn("Failed to list git repos under workspace {}: {}", workspace, e.getMessage());
+            }
+        }
+
+        List<GitRepoSummaryDTO> repos = repoDirs.parallelStream()
+                .map(this::summarizeRepo)
+                .filter(java.util.Objects::nonNull)
+                .sorted(Comparator.comparing(GitRepoSummaryDTO::getName))
+                .collect(java.util.stream.Collectors.toList());
+        dto.setRepos(repos);
+        return dto;
+    }
+
+    /**
+     * 对单个仓库目录执行轻量统计：分支 + 变更统计（不含文件明细）。
+     * 轻量化要点：untracked 文件只数数量（ls-files 输出行数）、不读取文件内容统计行数，
+     * 避免多仓库并发发现时对大体积 untracked 文件（日志、安装包等）全量读入内存。
+     */
+    private GitRepoSummaryDTO summarizeRepo(Path repoDir) {
+        try {
+            String branch = runGitOk(repoDir, "rev-parse", "--abbrev-ref", "HEAD");
+
+            Map<String, GitChangedFileDTO> tracked = new LinkedHashMap<>();
+            String nameStatus = runGitOk(repoDir, "diff", "--name-status", "HEAD");
+            if (nameStatus != null && !nameStatus.isBlank()) {
+                for (String line : nameStatus.split("\n")) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    GitChangedFileDTO file = parseNameStatusLine(line);
+                    if (file != null) {
+                        tracked.put(file.getPath(), file);
+                    }
+                }
+            }
+
+            int insertions = 0;
+            int deletions = 0;
+            String numstat = runGitOk(repoDir, "diff", "--numstat", "HEAD");
+            if (numstat != null && !numstat.isBlank()) {
+                for (String line : numstat.split("\n")) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    String[] parts = line.split("\t");
+                    if (parts.length < 3) continue;
+                    String path = parts[parts.length - 1].replace('\\', '/');
+                    if (path.contains(" => ")) {
+                        path = path.substring(path.lastIndexOf(" => ") + 4).trim();
+                    }
+                    GitChangedFileDTO file = tracked.get(path);
+                    if (file == null) continue;
+                    if (!"-".equals(parts[0]) && !"-".equals(parts[1])) {
+                        insertions += parseIntSafe(parts[0]);
+                        deletions += parseIntSafe(parts[1]);
+                    }
+                }
+            }
+
+            int untrackedCount = 0;
+            String untracked = runGitOk(repoDir, "ls-files", "--others", "--exclude-standard");
+            if (untracked != null && !untracked.isBlank()) {
+                untrackedCount = (int) untracked.lines().filter(l -> !l.isBlank()).count();
+            }
+
+            GitRepoSummaryDTO dto = new GitRepoSummaryDTO();
+            dto.setName(repoDir.getFileName().toString());
+            dto.setPath(repoDir.getFileName().toString());
+            dto.setBranch(branch != null ? branch.trim() : null);
+            dto.setInsertions(insertions);
+            dto.setDeletions(deletions);
+            dto.setChangedFileCount(tracked.size() + untrackedCount);
+            return dto;
+        } catch (Exception e) {
+            log.warn("Failed to summarize git repo {}: {}", repoDir, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 解析可选 repoPath 为仓库执行目录：
+     * - 为空时返回工作区本身（现有单仓库行为）；
+     * - 非空时必须为工作区的一级子目录名，拒绝 ..、绝对路径、多级路径，并过 sandbox 校验。
+     */
+    private Path resolveRepoDir(Path workspace, String repoPath) {
+        if (repoPath == null || repoPath.isBlank()) {
+            return workspace;
+        }
+        String normalized = repoPath.replace('\\', '/').replaceAll("^/+", "").replaceAll("/+$", "");
+        // 仅允许单段目录名：拒绝空、"."、多级路径与 .. 路径段（按段精确匹配，避免误杀 my..repo 之类合法名）
+        if (normalized.isEmpty() || ".".equals(normalized) || normalized.contains("/")
+                || java.util.Arrays.stream(normalized.split("/")).anyMatch(".."::equals)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "路径访问被拒绝");
+        }
+        Path repoDir;
+        try {
+            repoDir = workspace.resolve(normalized).normalize();
+        } catch (RuntimeException e) {
+            // 非法路径字符（如 NUL）统一按拒绝处理，避免 500
+            throw new BusinessException(ErrorCode.FORBIDDEN, "路径访问被拒绝");
+        }
+        if (!repoDir.startsWith(workspace) || !Files.isDirectory(repoDir)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "路径访问被拒绝");
+        }
+        try {
+            pathSandbox.resolve(repoDir.toString(), workspace.toString());
+        } catch (SecurityException e) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "路径访问被拒绝");
+        }
+        return repoDir;
+    }
+
+    public GitStatusDTO getStatus(String sessionWorkspace, String repoPath) {
+        Path workspace = pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace);
+        Path repoDir = resolveRepoDir(workspace, repoPath);
+        GitStatusDTO dto = new GitStatusDTO();
+
+        String repoRootStr = runGitOk(repoDir, "rev-parse", "--show-toplevel");
         if (repoRootStr == null) {
             dto.setIsGit(false);
             return dto;
@@ -68,23 +204,31 @@ public class WorkspaceGitService {
         return dto;
     }
 
-    public GitFileDiffDTO getFileDiff(String sessionWorkspace, String relativePath) {
+    public GitFileDiffDTO getFileDiff(String sessionWorkspace, String repoPath, String relativePath) {
         if (relativePath == null || relativePath.isBlank()) {
             throw new BusinessException(ErrorCode.PARAM_INVALID, "文件路径不能为空");
         }
         String normalized = relativePath.replace('\\', '/').replaceAll("^\\./", "");
-        if (normalized.contains("..")) {
+        // 按路径段精确匹配 ..，避免误杀含 .. 子串的合法文件路径（如 src/a..b.ts）
+        if (java.util.Arrays.stream(normalized.split("/")).anyMatch(".."::equals)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "路径访问被拒绝");
         }
 
         Path workspace = pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace);
-        String repoRootStr = runGitOk(workspace, "rev-parse", "--show-toplevel");
+        Path repoDir = resolveRepoDir(workspace, repoPath);
+        String repoRootStr = runGitOk(repoDir, "rev-parse", "--show-toplevel");
         if (repoRootStr == null) {
             throw new BusinessException(ErrorCode.PARAM_INVALID, "当前工作区不是 Git 仓库");
         }
         Path repoRoot = Path.of(repoRootStr.trim()).toAbsolutePath().normalize();
 
-        Path absolute = repoRoot.resolve(normalized).normalize();
+        Path absolute;
+        try {
+            absolute = repoRoot.resolve(normalized).normalize();
+        } catch (RuntimeException e) {
+            // 非法路径字符（如 NUL）统一按拒绝处理，避免 500
+            throw new BusinessException(ErrorCode.FORBIDDEN, "路径访问被拒绝");
+        }
         if (!absolute.startsWith(repoRoot)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "路径访问被拒绝");
         }
@@ -392,6 +536,33 @@ public class WorkspaceGitService {
     private record TruncateResult(String content, boolean truncated) {}
 
     private record ReadResult(String content, boolean truncated, boolean binary) {}
+
+    @Data
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class GitReposDTO {
+        @JsonProperty("isRootGit")
+        private boolean rootGit;
+        private List<GitRepoSummaryDTO> repos;
+
+        public void setIsRootGit(boolean isRootGit) {
+            this.rootGit = isRootGit;
+        }
+
+        public boolean getIsRootGit() {
+            return rootGit;
+        }
+    }
+
+    @Data
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class GitRepoSummaryDTO {
+        private String name;
+        private String path;
+        private String branch;
+        private int insertions;
+        private int deletions;
+        private int changedFileCount;
+    }
 
     @Data
     @JsonInclude(JsonInclude.Include.NON_NULL)

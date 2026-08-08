@@ -845,7 +845,7 @@ function isGitWorkspace(workspace) {
   return false
 }
 
-const { getGitStatus, getGitFileDiff } = require('./gitStatus.cjs')
+const { getGitStatus, getGitFileDiff, listGitRepos } = require('./gitStatus.cjs')
 
 function loadMainContent() {
   if (process.env.NODE_ENV === 'development') {
@@ -1021,17 +1021,25 @@ ipcMain.handle('get-environment-info', (event, { workspace } = {}) => {
   }
 })
 
-ipcMain.handle('git-status', async (event, { workspace } = {}) => {
+ipcMain.handle('git-repos', async (event, { workspace } = {}) => {
   try {
-    return await getGitStatus(workspace || currentWorkspace)
+    return await listGitRepos(workspace || currentWorkspace)
+  } catch (e) {
+    return { isRootGit: false, repos: [], error: e.message || '扫描 Git 仓库失败' }
+  }
+})
+
+ipcMain.handle('git-status', async (event, { workspace, repoPath } = {}) => {
+  try {
+    return await getGitStatus(workspace || currentWorkspace, repoPath)
   } catch (e) {
     return { isGit: false, error: e.message || '读取 Git 状态失败' }
   }
 })
 
-ipcMain.handle('git-file-diff', async (event, { workspace, path: filePath } = {}) => {
+ipcMain.handle('git-file-diff', async (event, { workspace, repoPath, path: filePath } = {}) => {
   try {
-    return await getGitFileDiff(workspace || currentWorkspace, filePath)
+    return await getGitFileDiff(workspace || currentWorkspace, repoPath, filePath)
   } catch (e) {
     return {
       path: filePath || '',

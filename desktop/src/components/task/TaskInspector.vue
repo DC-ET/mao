@@ -97,16 +97,38 @@
         <div v-if="gitSummaryVisible" class="task-workspace-row git-summary-row">
           <el-icon class="workspace-icon"><Share /></el-icon>
           <span class="git-summary">
-            <template v-if="gitStatus?.isGit">
-              <span class="git-branch">{{ gitStatus.branch || 'HEAD' }}</span>
-              <span v-if="gitStatus.changedFileCount === 0" class="git-clean">工作区干净</span>
-              <span v-else class="git-stat">
-                <span class="git-add">+{{ gitStatus.insertions }}</span>
-                <span class="git-del">-{{ gitStatus.deletions }}</span>
-              </span>
+            <template v-if="multiRepoMode">
+              <template v-if="changedRepos.length > 0">
+                <button
+                  v-for="repo in changedRepos"
+                  :key="repo.path"
+                  class="git-repo-item"
+                  :title="`查看 ${repo.name} 的变更`"
+                  @click="handleRepoClick(repo.path)"
+                >
+                  <span class="git-repo-name">{{ repo.name }}</span>
+                  <span class="git-repo-branch">{{ repo.branch || 'HEAD' }}</span>
+                  <span class="git-stat">
+                    <span class="git-add">+{{ repo.insertions }}</span>
+                    <span class="git-del">-{{ repo.deletions }}</span>
+                  </span>
+                </button>
+              </template>
+              <span v-else-if="reposLoading" class="git-muted">检测 Git…</span>
+              <span v-else class="git-clean">{{ repos.length }} 个仓库 · 全部干净</span>
             </template>
-            <span v-else-if="gitLoading" class="git-muted">检测 Git…</span>
-            <span v-else-if="gitError" class="git-muted">Git 状态不可用</span>
+            <template v-else>
+              <template v-if="gitStatus?.isGit">
+                <span class="git-branch">{{ gitStatus.branch || 'HEAD' }}</span>
+                <span v-if="gitStatus.changedFileCount === 0" class="git-clean">工作区干净</span>
+                <span v-else class="git-stat">
+                  <span class="git-add">+{{ gitStatus.insertions }}</span>
+                  <span class="git-del">-{{ gitStatus.deletions }}</span>
+                </span>
+              </template>
+              <span v-else-if="gitLoading" class="git-muted">检测 Git…</span>
+              <span v-else-if="gitError || reposError" class="git-muted">Git 状态不可用</span>
+            </template>
           </span>
         </div>
       </div>
@@ -146,11 +168,28 @@
     </div>
 
     <div v-if="showGitTab && inspectorActiveTab === 'git'" class="inspector-tab-content git-tab">
+      <div v-if="multiRepoMode" class="git-repo-select-row">
+        <el-select
+          :model-value="selectedRepoPath"
+          class="git-repo-select"
+          placeholder="选择仓库"
+          size="small"
+          @update:model-value="handleRepoSelect"
+        >
+          <el-option
+            v-for="repo in repos"
+            :key="repo.path"
+            :label="repo.name"
+            :value="repo.path"
+          />
+        </el-select>
+        <span class="git-repo-select-branch">{{ selectedRepo?.branch || 'HEAD' }}</span>
+      </div>
       <GitChangeList
         :files="gitFiles"
         :loading="gitLoading"
         :error="gitError"
-        @refresh="refreshGit"
+        @refresh="refreshAll"
         @open-diff="handleOpenGitDiff"
       />
     </div>
@@ -174,6 +213,7 @@ import type { ContextWindowInfo } from '../../types/chat'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import type { WorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import { useGitStatus } from '../../composables/useGitStatus'
+import { useGitRepos } from '../../composables/useGitRepos'
 import { useModelContext } from '../../composables/useModelContext'
 import type { GitChangedFile } from '../../types/git'
 import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
@@ -209,7 +249,7 @@ const emit = defineEmits<{
   'open-subagent': [payload: { childSessionId: number; title: string }]
   'edit-title': [payload: { sideSessionId: number; title: string }]
   'delete-side-task': [sideSessionId: number]
-  'open-git-diff': [file: GitChangedFile]
+  'open-git-diff': [file: GitChangedFile, repoPath?: string]
 }>()
 
 const sessionStore = useSessionStore()
@@ -235,16 +275,51 @@ const showFileTreeTab = computed(() => {
 
 const gitProviderRef = computed(() => props.gitProvider ?? null)
 const gitEnabled = computed(() => !!props.gitProvider)
+
+// 多仓库模式：发现一级子目录 git 仓库 + 维护选中仓库
+const {
+  repos,
+  multiRepoMode,
+  changedRepos,
+  selectedRepoPath,
+  selectedRepo,
+  loading: reposLoading,
+  error: reposError,
+  refresh: refreshRepos,
+  selectRepo,
+} = useGitRepos(gitProviderRef)
+
+// 多仓库模式下按选中仓库包装 provider（单仓库直接透传）
+const statusProviderRef = computed<WorkspaceGitProvider | null>(() => {
+  const p = gitProviderRef.value
+  if (!p) return null
+  if (multiRepoMode.value && selectedRepoPath.value) {
+    return {
+      getRepos: () => p.getRepos(),
+      getStatus: () => p.getStatus(selectedRepoPath.value),
+      getFileDiff: (relativePath: string) => p.getFileDiff(relativePath, selectedRepoPath.value),
+    }
+  }
+  return p
+})
+
 const {
   loading: gitLoading,
   error: gitError,
   status: gitStatus,
   files: gitFiles,
   refresh: refreshGit,
-} = useGitStatus(gitProviderRef, { enabled: gitEnabled })
+} = useGitStatus(statusProviderRef, { enabled: gitEnabled })
+
+// 切换仓库（statusProviderRef 变化）时立即清空旧仓库文件列表：
+// 避免窗口期「新 repoPath + 旧文件路径」打开 diff 导致内容错位，并让列表显示加载占位
+watch(statusProviderRef, () => {
+  gitFiles.value = []
+})
 
 const showGitTab = computed(() => {
   if (!props.gitProvider) return false
+  if (multiRepoMode.value) return true
   if (gitStatus.value?.isGit) return true
   // Confirmed non-git: never show, even during a refresh
   if (gitStatus.value && !gitStatus.value.isGit) return false
@@ -256,10 +331,28 @@ const showTabBar = computed(() => showFileTreeTab.value || showGitTab.value)
 
 const gitSummaryVisible = computed(() => {
   if (!props.gitProvider) return false
+  if (multiRepoMode.value) return true
   if (gitStatus.value?.isGit) return true
   if (gitLoading.value && gitStatus.value === null) return true
+  // 仓库发现 / 状态读取失败时给出可见提示，避免 Git 信息静默消失
+  if (reposError.value || gitError.value) return true
   return false
 })
+
+/** 手动刷新 / 任务阶段结束自动刷新：先刷仓库列表与选中项，再刷选中仓库状态。 */
+async function refreshAll() {
+  await refreshRepos()
+  if (gitEnabled.value) void refreshGit()
+}
+
+function handleRepoSelect(path: string) {
+  selectRepo(path)
+}
+
+function handleRepoClick(path: string) {
+  selectRepo(path)
+  inspectorActiveTab.value = 'git'
+}
 
 watch([showFileTreeTab, showGitTab], () => {
   if (inspectorActiveTab.value === 'filetree' && !showFileTreeTab.value) {
@@ -272,7 +365,7 @@ watch([showFileTreeTab, showGitTab], () => {
 
 watch(inspectorActiveTab, (tab) => {
   if (tab === 'git') {
-    void refreshGit()
+    void refreshAll()
   }
 })
 
@@ -282,7 +375,7 @@ const TERMINAL_GIT_REFRESH_PHASES = new Set(['COMPLETED', 'FAILED', 'CANCELLED',
 watch(() => props.phase, (phase, oldPhase) => {
   if (!oldPhase || !props.gitProvider) return
   if (ACTIVE_GIT_REFRESH_PHASES.has(oldPhase) && TERMINAL_GIT_REFRESH_PHASES.has(phase)) {
-    void refreshGit()
+    void refreshAll()
   }
 })
 
@@ -303,7 +396,7 @@ watch(
       if (!oldPhase) return false
       return ACTIVE_GIT_REFRESH_PHASES.has(oldPhase) && TERMINAL_GIT_REFRESH_PHASES.has(t.phase)
     })
-    if (finished) void refreshGit()
+    if (finished) void refreshAll()
   }
 )
 
@@ -312,7 +405,7 @@ function handleOpenFile(payload: { path: string; title: string }) {
 }
 
 function handleOpenGitDiff(file: GitChangedFile) {
-  emit('open-git-diff', file)
+  emit('open-git-diff', file, multiRepoMode.value ? selectedRepoPath.value : undefined)
 }
 
 function handleOpenSideTask(payload: { sideSessionId: number; title: string }) {
@@ -702,6 +795,59 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   line-height: 18px;
 }
 
+.git-repo-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  padding: 1px 0;
+  cursor: pointer;
+  font-size: var(--aw-text-caption);
+  line-height: 18px;
+  width: 100%;
+  text-align: left;
+}
+
+.git-repo-item:hover .git-repo-name {
+  color: var(--aw-primary);
+}
+
+.git-repo-name {
+  font-family: var(--aw-font-mono);
+  color: var(--aw-ink);
+  word-break: break-all;
+}
+
+.git-repo-branch {
+  font-family: var(--aw-font-mono);
+  color: var(--aw-ink-muted-48);
+}
+
+.git-repo-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--aw-divider-soft);
+  flex-shrink: 0;
+}
+
+.git-repo-select {
+  width: 160px;
+  flex-shrink: 0;
+}
+
+.git-repo-select-branch {
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink-muted-48);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .git-branch {
   font-family: var(--aw-font-mono);
   color: var(--aw-ink);
@@ -822,6 +968,10 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 [data-theme="dark"] .task-inspector {
   background: var(--aw-canvas);
   border-left-color: var(--aw-hairline);
+}
+
+[data-theme="dark"] .git-repo-select-row {
+  border-bottom-color: var(--aw-hairline);
 }
 
 [data-theme="dark"] .inspector-tabs {

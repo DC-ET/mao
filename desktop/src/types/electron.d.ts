@@ -115,7 +115,7 @@ interface ElectronAPI {
     shell: string
     osVersion: string
   }>
-  gitStatus(workspace?: string): Promise<{
+  gitStatus(workspace?: string, repoPath?: string): Promise<{
     isGit: boolean
     repoRoot?: string
     branch?: string
@@ -133,7 +133,7 @@ interface ElectronAPI {
     }>
     error?: string
   }>
-  gitFileDiff(workspace: string | undefined, path: string): Promise<{
+  gitFileDiff(workspace: string | undefined, repoPath: string | undefined, path: string): Promise<{
     path: string
     changeType: string
     beforeContent: string
@@ -141,6 +141,18 @@ interface ElectronAPI {
     truncated?: boolean
     binary?: boolean
     unavailableReason?: string
+  }>
+  gitRepos(workspace?: string): Promise<{
+    isRootGit: boolean
+    repos: Array<{
+      name: string
+      path: string
+      branch?: string
+      insertions: number
+      deletions: number
+      changedFileCount: number
+    }>
+    error?: string
   }>
   checkForUpdate(): Promise<{ skipped?: boolean; reason?: string; updateInfo?: AppUpdateInfo | null }>
   installUpdate(): Promise<{ success: boolean; error?: string }>
