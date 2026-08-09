@@ -17,6 +17,8 @@ const HELP = `用法:
   mao-user pref task-notification get
   mao-user pref task-notification set --enabled true|false [--channel DINGTALK|FEISHU] [--webhook-url <url>]
   mao-user pref task-notification test --channel DINGTALK|FEISHU [--webhook-url <url>]
+  mao-user pref weixin get
+  mao-user pref weixin set --enabled true|false
 `;
 
 const NOTIFICATION_CHANNELS = new Set(['DINGTALK', 'FEISHU']);
@@ -37,7 +39,7 @@ async function handle(ctx) {
     return;
   }
 
-  if (subcommand !== 'task-panel' && subcommand !== 'task-notification') {
+  if (subcommand !== 'task-panel' && subcommand !== 'task-notification' && subcommand !== 'weixin') {
     throw createCliError(`未知 pref 子命令: ${subcommand}\n${HELP}`);
   }
 
@@ -77,6 +79,34 @@ async function handle(ctx) {
     }
     default:
       throw createCliError(`未知 pref task-panel 子命令: ${action}\n${HELP}`);
+  }
+
+  if (subcommand === 'weixin') switch (action) {
+    case 'get': {
+      const result = await request({
+        ...common,
+        method: 'GET',
+        path: '/user-preferences/weixin',
+      });
+      outputResult(result, globals);
+      return;
+    }
+    case 'set': {
+      const enabled = optionalBoolean(flags, 'enabled');
+      if (enabled === undefined) {
+        throw createCliError('缺少必填参数 --enabled（是否启用微信语音回复）');
+      }
+      const result = await request({
+        ...common,
+        method: 'PUT',
+        path: '/user-preferences/weixin',
+        body: { voiceReply: enabled },
+      });
+      outputResult(result, globals);
+      return;
+    }
+    default:
+      throw createCliError(`未知 pref weixin 子命令: ${action}\n${HELP}`);
   }
 
   switch (action) {

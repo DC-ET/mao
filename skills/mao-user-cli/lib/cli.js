@@ -43,7 +43,7 @@ const GLOBAL_HELP = `mao-user-cli — Mao 用户端（桌面端）非对话操�
   file            附件与工作区文件
   oss             OSS STS
   upload-config   上传配置
-  pref            任务面板偏好
+  pref            偏好（任务面板/任务通知/微信语音回复）
   scheduled-task  定时任务列表、详情、更新、删除
   weixin          微信 Bot 绑定与二维码状态
   git             Git 凭证

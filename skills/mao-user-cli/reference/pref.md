@@ -2,7 +2,7 @@
 
 ## 模块职责
 
-读写用户偏好：任务面板（task-panel）分组顺序/折叠分组，以及任务完成通知（task-notification）的启停、渠道与测试。
+读写用户偏好：任务面板（task-panel）分组顺序/折叠分组、任务完成通知（task-notification）的启停/渠道/测试，以及微信语音回复（weixin）开关。
 
 ## 命令选择
 
@@ -13,6 +13,8 @@
 | 读取任务通知 | `pref task-notification get` |
 | 保存任务通知 | `pref task-notification set` |
 | 发送测试通知 | `pref task-notification test` |
+| 读取微信语音回复 | `pref weixin get` |
+| 设置微信语音回复 | `pref weixin set` |
 
 ---
 
@@ -130,4 +132,49 @@ mao-user pref task-notification set --enabled false
 
 ```bash
 mao-user pref task-notification test --channel FEISHU
+```
+
+---
+
+## 命令：mao-user pref weixin get
+
+### 用途
+
+获取当前用户微信语音回复偏好。返回的 `voiceReply` 为生效值：未单独配置时回退全局默认配置（即 `voiceReply` 可能来自服务端全局开关）。
+
+### 参数说明
+
+无。需要鉴权。
+
+### 返回结果
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `voiceReply` | 布尔 | 是否开启微信语音回复（生效值） |
+
+### 示例
+
+```bash
+mao-user pref weixin get --json
+```
+
+---
+
+## 命令：mao-user pref weixin set
+
+### 用途
+
+保存当前用户微信语音回复开关（用户级覆盖全局默认）。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--enabled` | 是 | 布尔 `true/false` | 是否开启微信语音回复 |
+
+### 示例
+
+```bash
+mao-user pref weixin set --enabled true
+mao-user pref weixin set --enabled false
 ```

@@ -11,7 +11,7 @@ description: 用户端（桌面端）非对话操作能力：JWT 登录、Agent/
 
 - 需要登录用户端并缓存 JWT
 - 需要创建/管理 LOCAL 或 CLOUD 会话元数据（标题、置顶、收藏、归档、权限级别）
-- 需要管理个人 Skill、快捷指令、附件、工作区文件、工作区 Git 状态/差异、OSS STS、Git 凭证、任务面板/任务通知偏好
+- 需要管理个人 Skill、快捷指令、附件、工作区文件、工作区 Git 状态/差异、OSS STS、Git 凭证、任务面板/任务通知/微信语音回复偏好
 - 需要下载 LOCAL 模式技能同步包（zip）
 - 需要查询/维护定时任务，或绑定/解绑微信 Bot
 
@@ -83,7 +83,7 @@ npm install . -g
 | 个人指令 | [reference/command.md](reference/command.md) |
 | 附件与工作区 | [reference/file.md](reference/file.md) |
 | OSS / 上传配置 | [reference/oss.md](reference/oss.md) |
-| 任务面板/任务通知偏好 | [reference/pref.md](reference/pref.md) |
+| 任务面板/任务通知/微信语音回复偏好 | [reference/pref.md](reference/pref.md) |
 | Git 凭证 | [reference/git.md](reference/git.md) |
 | 内置工具查询 | [reference/tool.md](reference/tool.md) |
 | 微信 Bot 绑定 | [reference/weixin.md](reference/weixin.md) |
