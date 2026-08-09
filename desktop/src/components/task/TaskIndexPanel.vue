@@ -412,10 +412,11 @@ async function selectSession(session: Session) {
   if (editingSessionId.value === session.id) return
   confirmingDeleteId.value = null
   editingSessionId.value = null
-  sessionStore.setActiveSession(session.id)
   if (session.unread) {
     await sessionStore.markAsRead(session.id)
   }
+  // 活跃会话由 TaskView 在详情及 workspace/executionMode 同步完成后切换，
+  // 避免新 sessionId 短暂搭配旧会话的工作区 provider。
   router.push(`/tasks/${session.id}`)
 }
 

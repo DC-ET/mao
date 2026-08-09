@@ -78,8 +78,16 @@ export function useGitRepos(provider: Ref<WorkspaceGitProvider | null>) {
   }
 
   watch(provider, () => {
+    // provider 代表工作区身份。切换会话时必须同步丢弃旧仓库状态，避免新的
+    // sessionId 与旧 selectedRepoPath 组合成一次越界请求。
+    requestSeq++
+    repos.value = []
+    isRootGit.value = false
+    selectedRepoPath.value = ''
+    loading.value = false
+    error.value = ''
     void refresh()
-  }, { immediate: true })
+  }, { immediate: true, flush: 'sync' })
 
   return {
     repos,
