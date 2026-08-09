@@ -7,8 +7,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 
 /**
@@ -27,7 +25,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class WeixinVoiceReplyService {
 
-    private static final DateTimeFormatter FILE_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+    /** 语音文件固定名称（CDN 上传每次生成独立媒体引用，文件名仅展示用） */
+    private static final String VOICE_FILE_NAME = "语音回复.mp3";
 
     private final WeixinBotConfig weixinBotConfig;
     private final WeixinAccountRepository accountRepository;
@@ -78,10 +77,9 @@ public class WeixinVoiceReplyService {
             }
 
             // 4. 发送文件消息
-            String fileName = "语音回复-" + LocalDateTime.now().format(FILE_TS) + ".mp3";
-            boolean sent = sendService.sendFile(accountId, toUserId, mediaOpt.get(), fileName);
+            boolean sent = sendService.sendFile(accountId, toUserId, mediaOpt.get(), VOICE_FILE_NAME);
             log.info("微信语音回复：{} accountId={}, toUserId={}, fileName={}, mp3Bytes={}",
-                    sent ? "发送成功" : "发送失败", accountId, toUserId, fileName, mp3Bytes.length);
+                    sent ? "发送成功" : "发送失败", accountId, toUserId, VOICE_FILE_NAME, mp3Bytes.length);
             return sent;
         } catch (Exception e) {
             log.warn("微信语音回复异常, accountId={}, toUserId={}: {}", accountId, toUserId, e.getMessage());

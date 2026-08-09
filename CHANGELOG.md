@@ -19,6 +19,7 @@
 ### 后端
 - 微信语音朗读自然度优化：TTS 会忽略换行符，行尾无标点的换行处此前完全不停顿；现语音文本清洗在行尾无句读标点时自动补句号（已有标点不重复），表格行、段落、列表项之间均产生自然停顿
 - 微信语音有序列表朗读条理化：有序列表序号（1. 2. …）此前被剥离导致语音无条理，现保留序号转「1、2、…」格式朗读，条目间层次清晰
+- 微信语音文件名固定为「语音回复.mp3」，不再带时间戳后缀（CDN 上传每次生成独立媒体引用，文件名仅展示用）
 - 新增会话恢复（取消归档）接口 `PUT /sessions/{id}/unarchive`：已归档会话可恢复回主列表
 - LOCAL 模式审批状态服务端化：新增会话级待审批注册表（`ApprovalRegistry`，sessionId → 待审批请求集合），需要审批的工具请求登记后会话进入 `WAITING_APPROVAL`，批准/拒绝/超时/取消后计数归零才条件恢复 `RUNNING`（条件更新不覆盖 `FAILED/CANCELLED/COMPLETED` 终态）；`pendingApprovalCount` 直接来自注册表计数（支持 AgentLoop 并行工具调用的多个并行审批）
 - 会话列表 VO 新增待审批/待回答计数与任务树聚合信号：`pendingApprovalCount` / `pendingQuestionCount` / `treePendingApprovalCount` / `treePendingQuestionCount` / `treeUnread` / `treeRunning` / `treeFailed`（主会话聚合其全部边路任务信号，列表接口一次性批量查询避免 N+1）
