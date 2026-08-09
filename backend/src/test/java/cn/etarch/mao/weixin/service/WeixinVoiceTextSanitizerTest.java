@@ -63,7 +63,7 @@ class WeixinVoiceTextSanitizerTest {
         assertThat(sanitizer.toSpeechText("详见[帮助文档](https://example.com/doc)。"))
                 .isEqualTo("详见帮助文档。");
         assertThat(sanitizer.toSpeechText("![示意图](https://example.com/a.png)如下"))
-                .isEqualTo("示意图如下");
+                .isEqualTo("示意图如下。");
     }
 
     @Test
@@ -77,7 +77,30 @@ class WeixinVoiceTextSanitizerTest {
                 2. 第二步
                 """;
         assertThat(sanitizer.toSpeechText(md))
-                .isEqualTo("标题\n引用内容\n项目甲\n项目乙\n第一步\n第二步");
+                .isEqualTo("标题。\n引用内容。\n项目甲。\n项目乙。\n1、第一步。\n2、第二步。");
+    }
+
+    @Test
+    void orderedListNumbersKeptForClarity() {
+        // 用户样例：有序列表序号需在语音中体现条理
+        String md = """
+                ## 🔍 出牙的信号
+
+                毛毛这个月龄可以留意这些表现：
+
+                1. **流口水明显增多**——嘴巴周围总是湿的
+                2. **喜欢咬东西**——手指、拳头、玩具，啥都往嘴里塞
+                3. **牙龈鼓包**——下牙龈某个地方微微肿起来，摸上去硬硬的
+                4. **情绪烦躁**——莫名哭闹，尤其吃奶时咬奶嘴
+                5. **睡眠变差**——夜里醒来次数变多
+                """;
+        assertThat(sanitizer.toSpeechText(md))
+                .isEqualTo("🔍 出牙的信号。\n\n毛毛这个月龄可以留意这些表现：\n\n"
+                        + "1、流口水明显增多——嘴巴周围总是湿的。\n"
+                        + "2、喜欢咬东西——手指、拳头、玩具，啥都往嘴里塞。\n"
+                        + "3、牙龈鼓包——下牙龈某个地方微微肿起来，摸上去硬硬的。\n"
+                        + "4、情绪烦躁——莫名哭闹，尤其吃奶时咬奶嘴。\n"
+                        + "5、睡眠变差——夜里醒来次数变多。");
     }
 
     @Test
@@ -85,7 +108,7 @@ class WeixinVoiceTextSanitizerTest {
         assertThat(sanitizer.toSpeechText("这是**重点**和*强调*，还有~~删除~~。"))
                 .isEqualTo("这是重点和强调，还有删除。");
         assertThat(sanitizer.toSpeechText("第一行<br>第二行<b>加粗</b>"))
-                .isEqualTo("第一行第二行加粗");
+                .isEqualTo("第一行第二行加粗。");
     }
 
     @Test
@@ -95,7 +118,7 @@ class WeixinVoiceTextSanitizerTest {
                 ---
                 下文
                 """;
-        assertThat(sanitizer.toSpeechText(md)).isEqualTo("上文\n下文");
+        assertThat(sanitizer.toSpeechText(md)).isEqualTo("上文。\n下文。");
     }
 
     @Test
@@ -108,6 +131,24 @@ class WeixinVoiceTextSanitizerTest {
     @Test
     void consecutiveBlankLinesCollapsed() {
         String md = "甲\n\n\n\n乙";
-        assertThat(sanitizer.toSpeechText(md)).isEqualTo("甲\n\n乙");
+        assertThat(sanitizer.toSpeechText(md)).isEqualTo("甲。\n\n乙。");
+    }
+
+    @Test
+    void sentenceEndAddedWhenLineHasNoPunctuation() {
+        // 用户样例：行尾无标点（emoji/文字结尾），换行处 TTS 需有停顿 → 自动补句号
+        String md = """
+                记好了！毛毛 8月8日身高 **65cm**，已录入 ✅
+
+                比上次8月1日的 64cm 又长了 1cm，一周长一厘米，长得真快 🌱
+                """;
+        assertThat(sanitizer.toSpeechText(md))
+                .isEqualTo("记好了！毛毛 8月8日身高 65cm，已录入 ✅。\n\n比上次8月1日的 64cm 又长了 1cm，一周长一厘米，长得真快 🌱。");
+    }
+
+    @Test
+    void sentenceEndNotDuplicatedWhenAlreadyPunctuated() {
+        assertThat(sanitizer.toSpeechText("第一句。\n第二句！\n第三句？"))
+                .isEqualTo("第一句。\n第二句！\n第三句？");
     }
 }

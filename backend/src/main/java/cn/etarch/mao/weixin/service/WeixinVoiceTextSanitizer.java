@@ -26,8 +26,8 @@ public class WeixinVoiceTextSanitizer {
     private static final Pattern QUOTE = Pattern.compile("^\\s*>{1,}\\s?");
     /** 无序列表项：行首 - / * / + */
     private static final Pattern UNORDERED_LIST = Pattern.compile("^\\s*[-*+]\\s+");
-    /** 有序列表项：行首 1. / 1) */
-    private static final Pattern ORDERED_LIST = Pattern.compile("^\\s*\\d{1,3}[.)]\\s+");
+    /** 有序列表项：行首 1. / 1) → 保留序号转「1、」，朗读时体现条理 */
+    private static final Pattern ORDERED_LIST_KEEP = Pattern.compile("^\\s*(\\d{1,3})[.)]\\s+");
     /** 水平线：--- / *** / ___ */
     private static final Pattern HORIZONTAL_RULE = Pattern.compile("^\\s*(?:[-*_]\\s*){3,}$");
     /** 表格分隔行：| --- | :---: | 等（至少一段连字符） */
@@ -45,13 +45,17 @@ public class WeixinVoiceTextSanitizer {
     /** HTML 标签（<br>、<b> 等） */
     private static final Pattern HTML_TAG = Pattern.compile("<[^>]+>");
 
+    /** 行尾已存在的句读标点（含中英文），不重复补句号 */
+    private static final String SENTENCE_END_PUNCT = "。！？；，、：…!?;,:.";
+
     /**
      * 将 Markdown 文本转成适合朗读的纯文本：
      * <ul>
      *   <li>代码块整块移除，行内代码去掉反引号保留内容</li>
      *   <li>表格每行转成「列1：值1，列2：值2」句式，分隔行跳过</li>
      *   <li>图片/链接只保留展示文字，去掉 URL 与语法标记</li>
-     *   <li>标题、引用、列表、水平线、HTML 标签、粗斜体标记全部剥除</li>
+     *   <li>标题、引用、无序列表、水平线、HTML 标签、粗斜体标记剥除；有序列表保留序号转「1、」格式</li>
+     *   <li>行尾无句读标点时补句号：TTS 会忽略换行符，无标点会导致换行处完全不停顿</li>
      *   <li>连续空行与行首行尾空白折叠</li>
      * </ul>
      *
@@ -99,7 +103,7 @@ public class WeixinVoiceTextSanitizer {
             line = HEADING.matcher(line).replaceFirst("");
             line = QUOTE.matcher(line).replaceFirst("");
             line = UNORDERED_LIST.matcher(line).replaceFirst("");
-            line = ORDERED_LIST.matcher(line).replaceFirst("");
+            line = ORDERED_LIST_KEEP.matcher(line).replaceFirst("$1、");
             lines.add(line.trim());
         }
 
@@ -118,11 +122,26 @@ public class WeixinVoiceTextSanitizer {
             cleaned = HTML_TAG.matcher(cleaned).replaceAll("");
             cleaned = cleaned.replaceAll("\\s+", " ").trim();
             if (!cleaned.isBlank()) {
-                sb.append(cleaned).append('\n');
+                sb.append(ensureSentenceEnd(cleaned)).append('\n');
             }
         }
         // 折叠连续空行
         return sb.toString().replaceAll("\\n{3,}", "\n\n").trim();
+    }
+
+    /**
+     * 行尾无句读标点则补句号，让 TTS 在换行处产生自然停顿；
+     * 已以句读标点（含 emoji 前有标点的场景）结尾则原样返回。
+     */
+    private String ensureSentenceEnd(String line) {
+        if (line.isEmpty()) {
+            return line;
+        }
+        char last = line.charAt(line.length() - 1);
+        if (SENTENCE_END_PUNCT.indexOf(last) >= 0) {
+            return line;
+        }
+        return line + "。";
     }
 
     /** 表格行 | a | b | c | → 「a，b，c。」（空单元格忽略） */
