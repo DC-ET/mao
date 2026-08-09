@@ -156,6 +156,7 @@ public class WorkspaceGitService {
 
             final String[] branchHolder = new String[1];
             final int[] countHolder = new int[1];
+            final List<String> untrackedPaths = new ArrayList<>();
             Thread reader = new Thread(() -> {
                 try (BufferedReader br = new BufferedReader(
                         new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
@@ -173,6 +174,9 @@ public class WorkspaceGitService {
                             continue;
                         }
                         count++;
+                        if (line.startsWith("? ")) {
+                            untrackedPaths.add(line.substring(2));
+                        }
                     }
                     branchHolder[0] = branch;
                     countHolder[0] = count;
@@ -205,6 +209,11 @@ public class WorkspaceGitService {
             dto.setPath(repoDir.getFileName().toString());
             dto.setBranch(branchHolder[0]);
             dto.setChangedFileCount(countHolder[0]);
+            if (countHolder[0] > 0) {
+                int[] lineStats = collectRepoLineStats(repoDir, untrackedPaths);
+                dto.setInsertions(lineStats[0]);
+                dto.setDeletions(lineStats[1]);
+            }
             return dto;
         } catch (IOException e) {
             log.warn("Failed to summarize git repo {}: {}", repoDir, e.getMessage());
@@ -218,6 +227,30 @@ public class WorkspaceGitService {
             log.warn("Summarize git repo interrupted: {}", repoDir);
             return unavailableRepo(repoDir);
         }
+    }
+
+    private int[] collectRepoLineStats(Path repoDir, List<String> untrackedPaths) {
+        int insertions = 0;
+        int deletions = 0;
+        String numstat = runGitOk(repoDir, "diff", "--numstat", "HEAD");
+        if (numstat == null && runGitOk(repoDir, "rev-parse", "--verify", "HEAD") == null) {
+            numstat = runGitOk(repoDir, "diff", "--numstat", "--cached");
+        }
+        if (numstat != null) {
+            for (String line : numstat.split("\n")) {
+                String[] parts = line.split("\t");
+                if (parts.length < 3 || "-".equals(parts[0]) || "-".equals(parts[1])) continue;
+                insertions += parseIntSafe(parts[0]);
+                deletions += parseIntSafe(parts[1]);
+            }
+        }
+        for (String relativePath : untrackedPaths) {
+            Path file = repoDir.resolve(relativePath).normalize();
+            if (!file.startsWith(repoDir) || !Files.isRegularFile(file)) continue;
+            ReadResult read = readTextLimited(file);
+            if (!read.binary()) insertions += countLines(read.content());
+        }
+        return new int[]{insertions, deletions};
     }
 
     /**
@@ -654,6 +687,8 @@ public class WorkspaceGitService {
         private String path;
         private String branch;
         private int changedFileCount;
+        private int insertions;
+        private int deletions;
         /** 统计失败/超时标记：为 true 时保留占位条目，前端展示「不可用」，避免仓库静默消失。 */
         private Boolean unavailable;
     }

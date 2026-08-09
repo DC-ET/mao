@@ -14,9 +14,17 @@
 
 ---
 
+## 0.0.27 (2026-08-09)
+
+### 前端（桌面 / Web / 安卓）
+- 修复非 HTTPS（如 `http://IP:端口`）访问时所有复制按钮失效的问题：统一改用复制工具函数 `utils/clipboard.ts`，`navigator.clipboard` 不可用时回退到 `execCommand('copy')` 方案（消息复制、代码块复制、工具调用输入/结果复制、命令描述复制、工作区/文件路径复制）
+
+---
+
 ## 0.0.26 (2026-08-08)
 
 ### 后端
+- 多 Git 仓库发现接口重新提供各仓库的增删行摘要：保留每仓库一次 `git status --porcelain=v2` 的轻量发现，仅对有变更的仓库追加 `git diff --numstat` 统计已跟踪文件，并直接读取未跟踪文本文件计入新增行，接口返回 insertions/deletions 供工作区摘要统一显示 `+N -N`
 - 多 Git 仓库发现接口性能优化：仓库统计由每仓库 4 次 git 进程（rev-parse + name-status + numstat + ls-files）合并为 **1 条 `git status --porcelain=v2`** 命令（36 仓库从 144 次进程降到 36 次），`parallelStream`（受 CPU 核数钳制）改为固定 8 线程专用池（含停机回收）；stderr 不合并（DISCARD）、stdout 由独立 daemon 线程逐行读取统计（内存 O(1)，超时强杀后管道关闭自动结束，无线程/进程泄漏）；统计失败/超时的仓库返回 `unavailable` 占位而非静默消失；`workspace-git-repos` 不再返回 insertions/deletions（行数统计保留在 Git Tab 明细的 workspace-git-status）；空仓库（无 commit）下 getStatus 分支用 symbolic-ref 兜底、变更统计回退 `--cached` 计入已暂存文件，与发现接口口径一致
 - 新增多 Git 仓库工作区支持：工作区本身不是 git 仓库、但一级子目录中存在多个 git 仓库时，右侧边栏可展示各仓库的 Git 信息。新增 `GET /files/workspace-git-repos` 发现接口（返回工作区是否本身为 git 仓库 + 一级子仓库的目录名/分支/变更统计）；`workspace-git-status` / `workspace-git-diff` 新增可选 `repoPath` 参数，指定仓库相对工作区根的目录名，缺省时行为与之前完全一致（兼容单仓库工作区）；repoPath 仅允许工作区一级子目录名，拒绝 `..`、绝对路径与多级路径，并过路径沙箱校验
 - 修复 LLM 调用偶发永久卡死的问题：HTTPS 请求体写入被底层阻塞（SSL 写锁）时，OkHttp 的 readTimeout/writeTimeout 依赖 Okio Watchdog 关闭 Socket，而 `SSLSocketImpl.close()` 需要等待同一把 SSL 写锁，导致 OkHttp 内部超时机制整体失效、Agent 无限等待；现新增应用层硬超时（默认 10 分钟，可配 `app.harness.llm.call-timeout-seconds`），超时后在独立守护线程主动取消请求并报错（不阻塞业务线程），同时为 OkHttp 增加 callTimeout（默认 15 分钟，可配 `app.harness.llm.http-call-timeout-seconds`）兜底；同步调用 `chat` 路径同样受应用层硬超时保护
@@ -25,6 +33,7 @@
 - Shell 工具输出文件收敛：移除单次命令的切片输出文件，仅保留会话累积输出文件，并将对外字段 `session_log` 统一命名为 `output_file`（其内容为整个会话从创建起所有命令的完整输出，支持随时回查）
 
 ### 前端（桌面 / Web / 安卓）
+- 多 Git 工作区摘要中的所有变更仓库统一显示具体 `+N -N`，不再仅当前选中仓库显示行数、其他仓库显示「N 变更」
 - 修复多 Git 工作区切换会话时偶发弹出「路径访问被拒绝」的问题：Git provider 变化时同步清空旧会话的仓库列表与选中路径，避免发出「新 sessionId + 旧 repoPath」的错误请求；会话列表点击不再提前切换全局活跃会话，改由详情与工作区字段加载完成后统一切换，避免新旧会话状态短暂混用
 - 优化窄屏右侧工作区 Git 摘要：仓库名与分支改为分层排版，空间不足时单行省略，不再逐字符断行；当前选中仓库复用已加载的 Git 详情显示具体 `+N -N`，无需增加 Git 命令或接口请求，其他仓库仍显示「N 变更」
 - 多 Git 仓库工作区加载提速：打开会话的 Git 信息不再受「每仓库 4 次 git 进程」拖累，36 仓库工作区从约 20 秒以上降至秒级；多仓库摘要行不再显示 +N/-Y（改为「目录名 · 分支 · N 变更」，行数统计保留在 Git Tab 明细）；切到 Git Tab 只刷新选中仓库明细、不再重复扫描仓库列表；统计失败/超时的仓库在摘要行与 Git Tab 展示「不可用」提示（附重试），不再静默消失
@@ -39,6 +48,7 @@
 - 删除后台保活机制：移除前台服务（dataSync）、WakeLock、OkHttp WebSocket 保活、磁盘事件缓冲与回前台恢复协议等 6 个相关类，移除对应权限声明与 okhttp 依赖，后台不再有任何常驻原生活动，明显降低耗电与发热
 
 ### 桌面 Electron
+- 多 Git 仓库发现结果重新包含各仓库增删行摘要：仅对有变更仓库追加 numstat 统计并计算未跟踪文本文件行数，与云端模式一致支持全部仓库显示 `+N -N`
 - 多 Git 仓库发现性能优化：`git-repos` IPC 每仓库由 4 次 git 进程合并为 1 次 `git status --porcelain=v2`（spawn + readline 逐行统计，内存 O(1)，无输出上限），并发由无上限 Promise.all 改为 8 路 mapLimit；统计失败/超时的仓库返回 `unavailable` 占位，不再静默消失
 - 新增多 Git 仓库工作区支持：新增 `git-repos` IPC（扫描工作区一级子目录中的 git 仓库并返回分支与变更统计）；`git-status` / `git-file-diff` IPC 支持可选 `repoPath` 参数（仅允许工作区一级子目录名，越界路径拒绝），缺省时行为与之前完全一致
 - 新增回前台 WebView 无响应兜底：页面卡死（后台冻结 / 渲染进程异常 / 主线程无响应）时，App 回前台后自动探测并刷新页面，无需用户退出进程重开

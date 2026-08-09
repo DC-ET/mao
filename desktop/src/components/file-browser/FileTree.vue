@@ -60,6 +60,7 @@ import FileTreeNode from './FileTreeNode.vue'
 import FileTreeContextMenu from './FileTreeContextMenu.vue'
 import type { FileNode } from '../../types/file-browser'
 import { resolveWorkspaceFilePath } from '../../utils/workspace-path'
+import { copyText } from '../../utils/clipboard'
 
 const props = defineProps<{
   workspace?: string
@@ -115,12 +116,12 @@ function getAbsolutePath(nodePath: string): string {
 
 function handleCopyAbsolute() {
   if (!ctxMenu.node) return
-  navigator.clipboard.writeText(getAbsolutePath(ctxMenu.node.path))
+  copyText(getAbsolutePath(ctxMenu.node.path))
 }
 
 function handleCopyRelative() {
   if (!ctxMenu.node) return
-  navigator.clipboard.writeText(ctxMenu.node.path)
+  copyText(ctxMenu.node.path)
 }
 
 function handleOpenInFinder() {

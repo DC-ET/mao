@@ -284,6 +284,7 @@ function summarizeRepoDir(name, ws) {
     const child = spawn('git', ['-c', 'core.quotepath=false', 'status', '--porcelain=v2', '--branch', '-M', '--untracked-files=all'], { cwd: dir })
     let branch
     let changedFileCount = 0
+    const untrackedPaths = []
     let timedOut = false
     const timer = setTimeout(() => {
       timedOut = true
@@ -301,6 +302,7 @@ function summarizeRepoDir(name, ws) {
         return
       }
       changedFileCount++
+      if (line.startsWith('? ')) untrackedPaths.push(line.slice(2))
     })
 
     child.stderr.resume() // 不合并 stderr，避免 git 警告混入计数；仅丢弃
@@ -308,13 +310,35 @@ function summarizeRepoDir(name, ws) {
       clearTimeout(timer)
       resolve({ name, path: name, changedFileCount: 0, unavailable: true })
     })
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       clearTimeout(timer)
       if (timedOut || code !== 0) {
         resolve({ name, path: name, changedFileCount: 0, unavailable: true })
         return
       }
-      resolve({ name, path: name, branch, changedFileCount })
+      let insertions = 0
+      let deletions = 0
+      if (changedFileCount > 0) {
+        let numstat = await runGitOk(dir, ['diff', '--numstat', 'HEAD'])
+        if (!numstat && !(await runGitOk(dir, ['rev-parse', '--verify', 'HEAD']))) {
+          numstat = await runGitOk(dir, ['diff', '--numstat', '--cached'])
+        }
+        if (numstat) {
+          for (const line of numstat.split('\n')) {
+            const parts = line.split('\t')
+            if (parts.length < 3 || parts[0] === '-' || parts[1] === '-') continue
+            insertions += parseInt(parts[0], 10) || 0
+            deletions += parseInt(parts[1], 10) || 0
+          }
+        }
+        for (const relativePath of untrackedPaths) {
+          const file = path.resolve(dir, relativePath)
+          if ((!file.startsWith(dir + path.sep) && file !== dir) || !fs.existsSync(file) || !fs.statSync(file).isFile()) continue
+          const read = readTextLimited(file)
+          if (!read.binary) insertions += countLines(read.content)
+        }
+      }
+      resolve({ name, path: name, branch, changedFileCount, insertions, deletions })
     })
   })
 }

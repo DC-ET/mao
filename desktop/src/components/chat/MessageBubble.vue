@@ -166,6 +166,7 @@ import {
 } from '../../composables/useChat'
 import { buildSegmentsFromContentAndTools } from '../../utils/chatMessage'
 import { formatDateTime } from '../../utils/datetime'
+import { copyText } from '../../utils/clipboard'
 import { useSessionStore } from '../../stores/session'
 
 const props = withDefaults(defineProps<{
@@ -358,12 +359,11 @@ let copyTimer: ReturnType<typeof setTimeout> | null = null
 async function copyMessage() {
   const text = props.message.content?.trim()
   if (!text) return
-  try {
-    await navigator.clipboard.writeText(text)
-    copied.value = true
-    if (copyTimer) clearTimeout(copyTimer)
-    copyTimer = setTimeout(() => { copied.value = false }, 1500)
-  } catch {}
+  const ok = await copyText(text)
+  if (!ok) return
+  copied.value = true
+  if (copyTimer) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => { copied.value = false }, 1500)
 }
 </script>
 

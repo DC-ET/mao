@@ -24,7 +24,7 @@ export interface GitStatusResult extends GitStatusSummary {
   files: GitChangedFile[]
 }
 
-/** 多仓库工作区中单个 git 仓库的轻量摘要（不含文件明细、不含行数）。 */
+/** 多仓库工作区中单个 git 仓库的轻量摘要（不含文件明细）。 */
 export interface GitRepoSummary {
   /** 仓库目录名（如 project-a） */
   name: string
@@ -32,6 +32,8 @@ export interface GitRepoSummary {
   path: string
   branch?: string
   changedFileCount: number
+  insertions: number
+  deletions: number
   /** 统计失败/超时标记：为 true 时展示「不可用」，避免仓库静默消失。 */
   unavailable?: boolean
 }

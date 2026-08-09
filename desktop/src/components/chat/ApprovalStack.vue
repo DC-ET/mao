@@ -92,12 +92,9 @@ function displayText(item: ApprovalItem): string {
 }
 
 async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    ElMessage.success('已复制')
-  } catch {
-    ElMessage.error('复制失败')
-  }
+  const ok = await copyToClipboard(text)
+  if (ok) ElMessage.success('已复制')
+  else ElMessage.error('复制失败')
 }
 </script>
 

@@ -109,11 +109,10 @@
                   <span class="git-repo-name">{{ repo.name }}</span>
                   <span class="git-repo-meta">
                     <span class="git-repo-branch">{{ repo.branch || 'HEAD' }}</span>
-                    <span v-if="repo.path === selectedRepoPath && !gitLoading && gitStatus?.isGit" class="git-stat git-repo-stat">
-                      <span class="git-add">+{{ gitStatus.insertions }}</span>
-                      <span class="git-del">-{{ gitStatus.deletions }}</span>
+                    <span class="git-stat git-repo-stat">
+                      <span class="git-add">+{{ repo.insertions }}</span>
+                      <span class="git-del">-{{ repo.deletions }}</span>
                     </span>
-                    <span v-else class="git-repo-count">{{ repo.changedFileCount }} 变更</span>
                   </span>
                 </button>
               </template>
@@ -227,6 +226,7 @@ import { useGitRepos } from '../../composables/useGitRepos'
 import { useModelContext } from '../../composables/useModelContext'
 import type { GitChangedFile } from '../../types/git'
 import { cloudWorkspaceIndicator } from '../../utils/cloud-project'
+import { copyText } from '../../utils/clipboard'
 import { useSessionStore } from '../../stores/session'
 
 const props = defineProps<{
@@ -498,7 +498,7 @@ const workspaceHovered = ref(false)
 
 function copyWorkspace() {
   if (props.workspace) {
-    navigator.clipboard.writeText(props.workspace)
+    copyText(props.workspace)
   }
 }
 

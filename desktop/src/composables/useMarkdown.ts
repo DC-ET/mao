@@ -15,7 +15,7 @@ function encodeCodeForCopy(text: string): string {
   return btoa(unescape(encodeURIComponent(text)))
 }
 
-const COPY_CODE_ONCLICK = "navigator.clipboard.writeText(decodeURIComponent(escape(atob(this.closest('.code-block').dataset.code || ''))))"
+const COPY_CODE_ONCLICK = `(()=>{var t=decodeURIComponent(escape(atob(this.closest('.code-block').dataset.code||'')));if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).catch(function(){copyFallback(t)})}else{copyFallback(t)}function copyFallback(s){var a=document.createElement('textarea');a.value=s;a.style.position='fixed';a.style.top='-9999px';a.style.opacity='0';document.body.appendChild(a);a.select();try{document.execCommand('copy')}catch(e){}document.body.removeChild(a)}})()`
 
 function createMarked(isDark: boolean): Marked {
   const marked = new Marked({ breaks: false })

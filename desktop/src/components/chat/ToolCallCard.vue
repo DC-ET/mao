@@ -62,6 +62,7 @@ import { ElMessage } from 'element-plus'
 import { Select, CloseBold, ArrowDown, CopyDocument } from '@element-plus/icons-vue'
 import type { ToolCall } from '../../composables/useChat'
 import { useSessionStore } from '../../stores/session'
+import { copyText as copyToClipboard } from '../../utils/clipboard'
 
 const props = defineProps<{ toolCall: ToolCall }>()
 
@@ -213,12 +214,9 @@ const truncatedResult = computed(() => {
 })
 
 async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    ElMessage.success('已复制')
-  } catch {
-    ElMessage.error('复制失败')
-  }
+  const ok = await copyToClipboard(text)
+  if (ok) ElMessage.success('已复制')
+  else ElMessage.error('复制失败')
 }
 
 function toggleExpand() {
