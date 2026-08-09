@@ -51,6 +51,7 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
+import { copyText as copyToClipboard } from '../../utils/clipboard'
 
 export interface ApprovalItem {
   requestId: string
