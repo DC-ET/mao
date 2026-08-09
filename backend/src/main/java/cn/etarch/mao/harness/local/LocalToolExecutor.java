@@ -1,5 +1,7 @@
 package cn.etarch.mao.harness.local;
 
+import cn.etarch.mao.harness.approval.ApprovalRegistry;
+import cn.etarch.mao.harness.approval.SessionTreeSignalPublisher;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -18,11 +20,17 @@ import java.util.concurrent.TimeoutException;
 public class LocalToolExecutor {
 
     private final LocalToolSessionRegistry sessionRegistry;
+    private final ApprovalRegistry approvalRegistry;
+    private final SessionTreeSignalPublisher treeSignalPublisher;
     private final long timeoutSeconds;
 
     public LocalToolExecutor(LocalToolSessionRegistry sessionRegistry,
+                             ApprovalRegistry approvalRegistry,
+                             SessionTreeSignalPublisher treeSignalPublisher,
                              @Value("${app.harness.local-tool-timeout-seconds:900}") long timeoutSeconds) {
         this.sessionRegistry = sessionRegistry;
+        this.approvalRegistry = approvalRegistry;
+        this.treeSignalPublisher = treeSignalPublisher;
         this.timeoutSeconds = timeoutSeconds;
     }
 
@@ -44,9 +52,17 @@ public class LocalToolExecutor {
         }
 
         LocalToolSessionRegistry.PendingLocalToolRequest pending = null;
+        boolean approvalRegistered = false;
         try {
             pending = sessionRegistry.sendToolRequest(
                     sessionId, toolName, arguments, workspace, needApproval, dangerReason);
+            // 待审批请求登记（首个请求使会话进入 WAITING_APPROVAL）；统一按会话类型发布任务树信号
+            // 注意：先置 approvalRegistered 再 register，register 抛异常时 finally 也能执行 unregister（no-op 安全）
+            if (needApproval && pending.requestId() != null) {
+                approvalRegistered = true;
+                approvalRegistry.register(sessionId, pending.requestId());
+                treeSignalPublisher.publishForSession(sessionId);
+            }
             return pending.future().get(timeoutSeconds, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
             String timeoutMsg = "Local tool execution timed out after " + timeoutSeconds + " seconds";
@@ -75,6 +91,12 @@ public class LocalToolExecutor {
                     sessionId, toolName, pending != null ? pending.requestId() : null, e);
             failPending(sessionId, pending, "Local tool execution failed: " + e.getMessage());
             return "{\"error\":\"Local tool execution failed: " + escapeJson(e.getMessage()) + "\"}";
+        } finally {
+            // 审批结束（批准/拒绝/超时/异常）：移除待审批请求；计数归零时条件恢复 RUNNING（不覆盖终态）
+            if (approvalRegistered) {
+                approvalRegistry.unregister(sessionId, pending.requestId());
+                treeSignalPublisher.publishForSession(sessionId);
+            }
         }
     }
 

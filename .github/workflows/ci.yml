@@ -30,9 +30,9 @@ jobs:
           java-version: "17"
           cache: maven
 
-      - name: Compile backend
+      - name: Compile and test backend
         working-directory: backend
-        run: mvn -B compile
+        run: mvn -B test
 
   admin:
     name: Admin Build
@@ -78,6 +78,10 @@ jobs:
       - name: Install dependencies
         working-directory: desktop
         run: npm ci
+
+      - name: Run unit tests
+        working-directory: desktop
+        run: npm run test:unit
 
       - name: Build desktop
         working-directory: desktop

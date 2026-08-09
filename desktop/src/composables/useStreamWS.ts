@@ -193,6 +193,10 @@ export function useStreamWS() {
         }
         // Flush skill_sync_done that completed while WS was down (LOCAL skill sync race)
         flushPendingSkillSyncDones()
+        // 聚焦数据已加载过：重连后静默重拉全量 ACTIVE，保证断线期间变化不丢失
+        if (sessionStore.focusLoaded) {
+          void sessionStore.fetchFocusSessions(true)
+        }
         // Start heartbeat with pong timeout detection
         lastPongAt = Date.now()
         heartbeatTimer = setInterval(() => {
@@ -641,6 +645,19 @@ export function useStreamWS() {
           sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
           sessionStore.updateSideTaskPhase(Number(sessionId), data.phase as TaskPhase)
           sessionStore.updateSubagentPhase(Number(sessionId), data.phase as TaskPhase)
+        }
+        break
+
+      case 'session_tree_status':
+        // Side Task 状态变化后，父任务的任务树聚合信号（tree*）实时推送（聚焦模式重排）
+        if (sessionId && data) {
+          sessionStore.updateSessionTreeSignals(String(sessionId), {
+            treePendingApprovalCount: data.treePendingApprovalCount,
+            treePendingQuestionCount: data.treePendingQuestionCount,
+            treeUnread: data.treeUnread,
+            treeRunning: data.treeRunning,
+            treeFailed: data.treeFailed,
+          })
         }
         break
 

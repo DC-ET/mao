@@ -70,4 +70,56 @@ class SessionGroupKeyTest {
         assertTrue(SessionGroupKey.compareSessions(newer, older) < 0);
         assertTrue(SessionGroupKey.compareSessions(older, newer) > 0);
     }
+
+    @Test
+    void compareSessions_archivedIgnoresPhaseAndPin() {
+        // 已归档区按「最近活动时间」倒序：忽略活跃阶段优先与置顶
+        Session failedNewest = new Session();
+        failedNewest.setId(1L);
+        failedNewest.setStatus("ARCHIVED");
+        failedNewest.setPhase("FAILED");
+        failedNewest.setIsPinned(0);
+        failedNewest.setUpdatedAt(java.time.LocalDateTime.of(2026, 8, 9, 10, 0, 0));
+
+        Session pinnedCompleted = new Session();
+        pinnedCompleted.setId(2L);
+        pinnedCompleted.setStatus("ARCHIVED");
+        pinnedCompleted.setPhase("COMPLETED");
+        pinnedCompleted.setIsPinned(1);
+        pinnedCompleted.setUpdatedAt(java.time.LocalDateTime.of(2026, 8, 7, 10, 0, 0));
+
+        Session runningMid = new Session();
+        runningMid.setId(3L);
+        runningMid.setStatus("ARCHIVED");
+        runningMid.setPhase("RUNNING");
+        runningMid.setIsPinned(0);
+        runningMid.setUpdatedAt(java.time.LocalDateTime.of(2026, 8, 8, 10, 0, 0));
+
+        // 期望顺序：failedNewest(8/9) > runningMid(8/8) > pinnedCompleted(8/7)，
+        // 即便 pinnedCompleted 置顶、failedNewest 是失败态也不影响。
+        java.util.List<Session> list = new java.util.ArrayList<>(
+                java.util.List.of(pinnedCompleted, runningMid, failedNewest));
+        list.sort(SessionGroupKey::compareSessions);
+        assertEquals(java.util.List.of(1L, 3L, 2L),
+                list.stream().map(Session::getId).toList());
+    }
+
+    @Test
+    void compareSessions_archivedVsActiveUsesActivePhaseRule() {
+        // 归档与非归档混合比较：归档方参与普通排序（非 ARCHIVED 双方都时走原逻辑）
+        Session active = new Session();
+        active.setId(1L);
+        active.setStatus("ACTIVE");
+        active.setPhase("RUNNING");
+        active.setUpdatedAt(java.time.LocalDateTime.of(2026, 8, 8, 10, 0, 0));
+
+        Session archived = new Session();
+        archived.setId(2L);
+        archived.setStatus("ARCHIVED");
+        archived.setPhase("COMPLETED");
+        archived.setUpdatedAt(java.time.LocalDateTime.of(2026, 8, 9, 10, 0, 0));
+
+        // active RUNNING 优先于 archived COMPLETED（活跃阶段优先仍生效）
+        assertTrue(SessionGroupKey.compareSessions(active, archived) < 0);
+    }
 }

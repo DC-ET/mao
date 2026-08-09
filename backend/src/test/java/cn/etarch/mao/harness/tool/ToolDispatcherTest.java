@@ -1,5 +1,6 @@
 package cn.etarch.mao.harness.tool;
 
+import cn.etarch.mao.harness.approval.SessionTreeSignalPublisher;
 import cn.etarch.mao.harness.llm.LlmModelConfig;
 import cn.etarch.mao.harness.local.LocalToolExecutor;
 import cn.etarch.mao.harness.local.LocalToolSessionRegistry;
@@ -35,6 +36,7 @@ class ToolDispatcherTest {
     private final StreamingWsRegistry streamingWsRegistry = mock(StreamingWsRegistry.class);
     private final AskUserQuestionsRegistry askUserQuestionsRegistry = mock(AskUserQuestionsRegistry.class);
     private final LocalToolSessionRegistry localToolSessionRegistry = mock(LocalToolSessionRegistry.class);
+    private final SessionTreeSignalPublisher treeSignalPublisher = mock(SessionTreeSignalPublisher.class);
     private final ToolDispatcher dispatcher = new ToolDispatcher(
             registry,
             localToolExecutor,
@@ -43,6 +45,7 @@ class ToolDispatcherTest {
             streamingWsRegistry,
             askUserQuestionsRegistry,
             localToolSessionRegistry,
+            treeSignalPublisher,
             new ObjectMapper()
     );
 

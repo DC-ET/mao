@@ -146,6 +146,7 @@
         <h4 class="section-title">边路任务</h4>
         <SideTaskList
           :tasks="sideTasks"
+          :list-mode="listMode"
           @open-side-task="handleOpenSideTask"
           @edit-title="handleEditSideTaskTitle"
           @delete-side-task="handleDeleteSideTask"
@@ -240,6 +241,7 @@ const props = defineProps<{
   executionMode?: string
   sessionId?: string
   fileProvider: WorkspaceFileProvider | null
+  listMode?: 'standard' | 'focus'
   gitProvider?: WorkspaceGitProvider | null
   phase: TaskPhase
   panelCollapsed: boolean

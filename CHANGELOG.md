@@ -19,6 +19,21 @@
 ### 后端
 - 微信语音朗读自然度优化：TTS 会忽略换行符，行尾无标点的换行处此前完全不停顿；现语音文本清洗在行尾无句读标点时自动补句号（已有标点不重复），表格行、段落、列表项之间均产生自然停顿
 - 微信语音有序列表朗读条理化：有序列表序号（1. 2. …）此前被剥离导致语音无条理，现保留序号转「1、2、…」格式朗读，条目间层次清晰
+- 新增会话恢复（取消归档）接口 `PUT /sessions/{id}/unarchive`：已归档会话可恢复回主列表
+- LOCAL 模式审批状态服务端化：新增会话级待审批注册表（`ApprovalRegistry`，sessionId → 待审批请求集合），需要审批的工具请求登记后会话进入 `WAITING_APPROVAL`，批准/拒绝/超时/取消后计数归零才条件恢复 `RUNNING`（条件更新不覆盖 `FAILED/CANCELLED/COMPLETED` 终态）；`pendingApprovalCount` 直接来自注册表计数（支持 AgentLoop 并行工具调用的多个并行审批）
+- 会话列表 VO 新增待审批/待回答计数与任务树聚合信号：`pendingApprovalCount` / `pendingQuestionCount` / `treePendingApprovalCount` / `treePendingQuestionCount` / `treeUnread` / `treeRunning` / `treeFailed`（主会话聚合其全部边路任务信号，列表接口一次性批量查询避免 N+1）
+- 新增 `session_tree_status` WebSocket 事件：边路任务 phase / unread / 审批 / 待回答变化时实时推送父任务的最新任务树聚合信号，前端聚焦模式无需重新拉取列表即可实时重排
+- 已归档列表排序修正：`status=ARCHIVED` 时按 `updated_at DESC, id DESC` 排序（忽略活跃阶段优先与置顶）
+- 边路任务 VO（`/sessions/{id}/side-tasks`）补充 `updatedAt` 与 `pendingApprovalCount` / `pendingQuestionCount` 字段
+
+### 前端（桌面 / Web / 安卓）
+- 任务列表新增右键菜单（桌面右键 / 移动端长按）：编辑标题 / 归档 / 删除；已归档区为 恢复 / 编辑标题 / 删除
+- 新增归档与恢复：任务可归档至面板底部「已归档」折叠区（按最近活动时间倒序），支持恢复回主列表；运行中/待审批任务归档弹出确认提示；归档/恢复不影响已打开的会话
+- 任务面板新增「标准 / 聚焦」模式切换：改用单个图标按钮循环切换以节省窄屏空间；聚焦模式全量平铺所有任务，按 待审批/待回答 > 失败 > 运行中 > 未读 > 空闲 > 已完成 优先级排序（服务端 `tree*` 信号 + 实时事件驱动），列表项采用标题与工作区/状态两行布局；已完成且超过 3 天无更新的任务自动折叠进「历史」区；右侧边路任务列表同步应用优先级排序
+- 会话状态模型重构：会话实体缓存与列表投影（标准/已归档/聚焦）分离，归档当前会话不再破坏聊天面板，聚焦全量拉取不污染标准模式分组分页
+- 引入 vitest 前端单元测试（`npm run test:unit`）并纳入 CI；后端单测（含审批并发）纳入 CI
+
+---
 
 ## 0.0.27 (2026-08-09)
 

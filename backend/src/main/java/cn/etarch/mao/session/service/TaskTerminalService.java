@@ -1,5 +1,6 @@
 package cn.etarch.mao.session.service;
 
+import cn.etarch.mao.harness.approval.SessionTreeSignalPublisher;
 import cn.etarch.mao.notification.task.entity.TaskNotificationDelivery;
 import cn.etarch.mao.notification.task.service.TaskNotificationDeliveryService;
 import cn.etarch.mao.session.entity.Session;
@@ -21,14 +22,17 @@ public class TaskTerminalService {
     private final StreamingWsRegistry registry;
     private final TaskNotificationDeliveryService deliveryService;
     private final Executor notificationExecutor;
+    private final SessionTreeSignalPublisher treeSignalPublisher;
 
     public TaskTerminalService(SessionService sessionService,
                                StreamingWsRegistry registry,
                                TaskNotificationDeliveryService deliveryService,
+                               SessionTreeSignalPublisher treeSignalPublisher,
                                @Qualifier("taskNotificationExecutor") Executor notificationExecutor) {
         this.sessionService = sessionService;
         this.registry = registry;
         this.deliveryService = deliveryService;
+        this.treeSignalPublisher = treeSignalPublisher;
         this.notificationExecutor = notificationExecutor;
     }
 
@@ -73,6 +77,11 @@ public class TaskTerminalService {
                                 delivery.get().getId(), e.getMessage());
                     }
                 }, notificationExecutor);
+
+        // 边路任务进入终态时，重新聚合父任务任务树信号并推送（聚焦模式实时升/降档）
+        if ("SIDE_TASK".equals(session.getSessionType()) && session.getParentSessionId() != null) {
+            treeSignalPublisher.publish(session.getParentSessionId());
+        }
     }
 
     private boolean isTerminalPhase(String phase) {

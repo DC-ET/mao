@@ -1,5 +1,6 @@
 package cn.etarch.mao.harness.tool;
 
+import cn.etarch.mao.harness.approval.SessionTreeSignalPublisher;
 import cn.etarch.mao.harness.llm.LlmModelConfig;
 import cn.etarch.mao.harness.local.LocalToolExecutor;
 import cn.etarch.mao.harness.local.LocalToolSessionRegistry;
@@ -43,6 +44,7 @@ public class ToolDispatcher {
     private final StreamingWsRegistry streamingWsRegistry;
     private final AskUserQuestionsRegistry askUserQuestionsRegistry;
     private final LocalToolSessionRegistry localToolSessionRegistry;
+    private final SessionTreeSignalPublisher treeSignalPublisher;
     private final ObjectMapper objectMapper;
 
     public ToolDispatcher(ToolRegistry toolRegistry,
@@ -52,6 +54,7 @@ public class ToolDispatcher {
                           StreamingWsRegistry streamingWsRegistry,
                           AskUserQuestionsRegistry askUserQuestionsRegistry,
                           LocalToolSessionRegistry localToolSessionRegistry,
+                          SessionTreeSignalPublisher treeSignalPublisher,
                           ObjectMapper objectMapper) {
         this.toolRegistry = toolRegistry;
         this.localToolExecutor = localToolExecutor;
@@ -60,6 +63,7 @@ public class ToolDispatcher {
         this.streamingWsRegistry = streamingWsRegistry;
         this.askUserQuestionsRegistry = askUserQuestionsRegistry;
         this.localToolSessionRegistry = localToolSessionRegistry;
+        this.treeSignalPublisher = treeSignalPublisher;
         this.objectMapper = objectMapper;
     }
 
@@ -220,6 +224,9 @@ public class ToolDispatcher {
         // Register pending question with original content (for re-push on reconnect)
         String requestId = askUserQuestionsRegistry.register(sessionId, questions, metadata);
 
+        // 边路任务出现待回答时，同步刷新父任务任务树信号（聚焦模式置顶）；主会话自身同理
+        treeSignalPublisher.publishForSession(sessionId);
+
         Map<String, Object> data = buildAskUserQuestionsPayload(requestId, questions, metadata);
 
         // Send to client
@@ -234,6 +241,9 @@ public class ToolDispatcher {
             Map<String, Object> cancelData = new java.util.LinkedHashMap<>();
             cancelData.put("requestId", requestId);
             streamingWsRegistry.send(userId, WsEvent.of("ask_user_questions_cancelled", sessionId, cancelData));
+            // 超时 / 取消 / 断连路径：注册表已移除该待回答，需同步重推任务树信号，
+            // 否则 treePendingQuestionCount 快照残留，聚焦模式滞留「待回答」最高优先级
+            treeSignalPublisher.publishForSession(sessionId);
         }
 
         return result;

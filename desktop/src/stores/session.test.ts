@@ -1,0 +1,226 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { setActivePinia, createPinia } from 'pinia'
+import { useSessionStore } from './session'
+import { api } from '../api'
+
+vi.mock('../api', () => ({
+  api: {
+    get: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+    post: vi.fn(),
+  },
+}))
+
+const mockGet = vi.mocked(api.get)
+const mockPut = vi.mocked(api.put)
+
+function makeSession(id: string, overrides: Record<string, any> = {}): any {
+  return {
+    id,
+    agentId: '1',
+    agentName: 'a',
+    title: `t${id}`,
+    executionMode: 'CLOUD',
+    status: 'ACTIVE',
+    phase: 'IDLE',
+    createdAt: '2026-08-01T00:00:00',
+    updatedAt: '2026-08-01T00:00:00',
+    messageCount: 0,
+    elapsedMs: 0,
+    running: false,
+    ...overrides,
+  }
+}
+
+describe('session store 实体/投影模型', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    // 重置 mock（含 mockResolvedValueOnce 队列，避免跨测试串扰）
+    mockGet.mockReset()
+    mockPut.mockReset()
+  })
+
+  it('fetchSessions 填充实体与标准投影；unread 以服务端为准（不保留旧本地 false）', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false, sessions: [makeSession('1', { unread: true })] }] },
+    })
+
+    await store.fetchSessions()
+
+    expect(store.sessions).toHaveLength(1)
+    expect(store.getSessionEntity('1')?.unread).toBe(true)
+  })
+
+  it('聚焦全量拉取不污染标准投影（分页隔离）', async () => {
+    const store = useSessionStore()
+    // 标准模式：每组预览 1 条
+    mockGet.mockResolvedValueOnce({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 5, hasMore: true, sessions: [makeSession('1')] }] },
+    })
+    await store.fetchSessions()
+    expect(store.sessions.map(s => s.id)).toEqual(['1'])
+
+    // 聚焦模式：全量 5 条
+    mockGet.mockResolvedValueOnce({
+      data: [makeSession('1'), makeSession('2'), makeSession('3'), makeSession('4'), makeSession('5')],
+    })
+    await store.fetchFocusSessions()
+
+    // 聚焦投影包含全部 5 条（顺序为动态排序结果）
+    expect(new Set(store.focusedSessions.map(s => s.id))).toEqual(new Set(['1', '2', '3', '4', '5']))
+    // 标准投影保持 1 条（不被聚焦全量污染）
+    expect(store.sessions.map(s => s.id)).toEqual(['1'])
+  })
+
+  it('归档当前打开的会话：实体保留、activeSession 仍存在、标准投影移除', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false, sessions: [makeSession('1')] }] },
+    })
+    await store.fetchSessions()
+    store.setActiveSession('1')
+    mockPut.mockResolvedValueOnce({ data: undefined })
+
+    await store.archiveSession('1')
+
+    expect(store.getSessionEntity('1')?.status).toBe('ARCHIVED')
+    expect(store.activeSession?.id).toBe('1') // 实体保留 → activeSession 仍有效
+    expect(store.sessions.map(s => s.id)).not.toContain('1')
+    expect(store.archivedSessionIds).toContain('1')
+  })
+
+  it('归档 API 失败：本地投影不动（不预移除）', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false, sessions: [makeSession('1')] }] },
+    })
+    await store.fetchSessions()
+    store.setActiveSession('1')
+    mockPut.mockRejectedValueOnce(new Error('network'))
+
+    await store.archiveSession('1')
+
+    expect(store.getSessionEntity('1')?.status).toBe('ACTIVE')
+    expect(store.sessions.map(s => s.id)).toContain('1')
+    expect(store.archivedSessionIds).not.toContain('1')
+  })
+
+  it('恢复归档：从已归档投影移除并静默刷新标准分组', async () => {
+    const store = useSessionStore()
+    mockGet
+      .mockResolvedValueOnce({ data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 0, hasMore: false, sessions: [] }] } })
+      .mockResolvedValueOnce({ data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false, sessions: [makeSession('9')] }] } })
+    await store.fetchSessions()
+    // 先归档再恢复
+    mockPut.mockResolvedValueOnce({ data: undefined }) // archive
+    await store.archiveSession('9')
+    expect(store.archivedSessionIds).toContain('9')
+
+    mockPut.mockResolvedValueOnce({ data: undefined }) // unarchive
+    mockGet.mockResolvedValueOnce({ data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false, sessions: [makeSession('9', { status: 'ACTIVE' })] }] } })
+    await store.unarchiveSession('9')
+
+    expect(store.archivedSessionIds).not.toContain('9')
+    expect(store.getSessionEntity('9')?.status).toBe('ACTIVE')
+    // 恢复后静默刷新了标准分组接口（初始 1 次 + 恢复后 1 次）
+    expect(mockGet.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('updateSession 只更新实体，不把 ARCHIVED 插回标准投影，深链接才进投影', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false, sessions: [makeSession('1')] }] },
+    })
+    await store.fetchSessions()
+
+    // 字段更新（含 status）只写实体，不改变标准投影成员
+    store.updateSession('1', { status: 'ARCHIVED' })
+    store.updateSession('1', { phase: 'COMPLETED' })
+    expect(store.sessions.map(s => s.id)).toEqual(['1'])
+    expect(store.getSessionEntity('1')?.phase).toBe('COMPLETED')
+
+    // 不在列表的会话，无 executionMode 时只进实体缓存，不进投影
+    store.updateSession('99', { phase: 'RUNNING' })
+    expect(store.sessions.map(s => s.id)).not.toContain('99')
+    expect(store.getSessionEntity('99')?.phase).toBe('RUNNING')
+
+    // 深链接（带 executionMode）：进入标准投影头部（原有行为）
+    store.updateSession('100', { executionMode: 'CLOUD', phase: 'IDLE' })
+    expect(store.sessions.map(s => s.id)).toContain('100')
+  })
+
+  it('markAsRead：API 成功后才清本地；失败保留本地未读', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false, sessions: [makeSession('1', { unread: true })] }] },
+    })
+    await store.fetchSessions()
+    expect(store.getSessionEntity('1')?.unread).toBe(true)
+
+    // 失败：本地未读保留
+    mockPut.mockRejectedValueOnce(new Error('network'))
+    await store.markAsRead('1')
+    expect(store.getSessionEntity('1')?.unread).toBe(true)
+
+    // 成功：本地清除
+    mockPut.mockResolvedValueOnce({ data: undefined })
+    await store.markAsRead('1')
+    expect(store.getSessionEntity('1')?.unread).toBe(false)
+  })
+
+  it('session_tree_status 更新父任务实体 tree* 信号', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 1, hasMore: false, sessions: [makeSession('1')] }] },
+    })
+    await store.fetchSessions()
+
+    store.updateSessionTreeSignals('1', { treePendingApprovalCount: 1, treeFailed: true, treeRunning: true })
+
+    expect(store.getSessionEntity('1')?.treePendingApprovalCount).toBe(1)
+    expect(store.getSessionEntity('1')?.treeFailed).toBe(true)
+  })
+
+  it('tree* 信号更新后 focusedSessions 自动重排（无需手动维护 ID 顺序）', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({ data: [makeSession('1'), makeSession('2')] })
+    await store.fetchFocusSessions()
+    // 两个 IDLE 同时间：id DESC → 2 在前
+    expect(store.focusedSessions.map(s => s.id)).toEqual(['2', '1'])
+
+    // 任务 1 的边路失败 → treeFailed=true → 应排到最前
+    store.updateSessionTreeSignals('1', { treeFailed: true, treeRunning: false })
+    expect(store.focusedSessions.map(s => s.id)).toEqual(['1', '2'])
+  })
+
+  it('主会话自身待审批降档：服务端 tree* 快照被实时刷新为 0 后聚焦排序降档', async () => {
+    const store = useSessionStore()
+    // 快照：任务 1 自身待审批（treePendingApprovalCount=1），任务 2 空闲
+    mockGet.mockResolvedValueOnce({ data: [makeSession('1', { treePendingApprovalCount: 1 }), makeSession('2')] })
+    await store.fetchFocusSessions()
+    expect(store.focusedSessions.map(s => s.id)).toEqual(['1', '2']) // 1 在最高优先级
+
+    // 审批结束：后端 publishForSession 推送 tree* 归零 → 实时刷新快照
+    store.updateSessionTreeSignals('1', { treePendingApprovalCount: 0, treeFailed: false, treeRunning: false })
+    expect(store.getSessionEntity('1')?.treePendingApprovalCount).toBe(0)
+    // 归零后按 id DESC：2 在前（两者同为空闲）
+    expect(store.focusedSessions.map(s => s.id)).toEqual(['2', '1'])
+  })
+
+  it('updateSession 深链接加载已归档会话不进标准投影（归档回归）', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({
+      data: { groups: [{ key: 'CLOUD:临时工作区', label: '临时工作区', total: 0, hasMore: false, sessions: [] }] },
+    })
+    await store.fetchSessions()
+
+    store.updateSession('88', { executionMode: 'CLOUD', status: 'ARCHIVED', phase: 'COMPLETED' })
+
+    // 已归档会话只进实体，不进 ACTIVE 标准投影
+    expect(store.sessions.map(s => s.id)).not.toContain('88')
+    expect(store.getSessionEntity('88')?.status).toBe('ARCHIVED')
+  })
+})

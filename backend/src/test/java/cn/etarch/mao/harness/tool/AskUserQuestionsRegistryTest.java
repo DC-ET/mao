@@ -131,4 +131,35 @@ class AskUserQuestionsRegistryTest {
         assertThat(registry.getPendingForSession(7L)).isEmpty();
         assertThat(registry.getPendingForSession(8L)).isEmpty();
     }
+
+    @Test
+    void countPendingBySessionIdsBatchCountsCorrectly() {
+        AskUserQuestionsRegistry registry = new AskUserQuestionsRegistry();
+        registry.register(7L, QUESTIONS, null);
+        registry.register(7L, QUESTIONS, null); // 同一 session 多条
+        registry.register(8L, QUESTIONS, null);
+
+        Map<Long, Integer> counts = registry.countPendingBySessionIds(List.of(7L, 8L, 9L));
+
+        assertThat(counts).containsEntry(7L, 2).containsEntry(8L, 1).doesNotContainKey(9L);
+    }
+
+    @Test
+    void countPendingBySessionIdsIsEmptyForNoInputOrNone() {
+        AskUserQuestionsRegistry registry = new AskUserQuestionsRegistry();
+
+        assertThat(registry.countPendingBySessionIds(null)).isEmpty();
+        assertThat(registry.countPendingBySessionIds(List.of())).isEmpty();
+        assertThat(registry.countPendingBySessionIds(List.of(7L))).isEmpty();
+    }
+
+    @Test
+    void countPendingBySessionIdsReflectsCompletions() {
+        AskUserQuestionsRegistry registry = new AskUserQuestionsRegistry();
+        String r1 = registry.register(7L, QUESTIONS, null);
+
+        registry.complete(7L, r1, "{\"answers\":[]}");
+
+        assertThat(registry.countPendingBySessionIds(List.of(7L))).doesNotContainKey(7L);
+    }
 }

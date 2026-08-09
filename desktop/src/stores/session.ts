@@ -5,6 +5,7 @@ import type { ChatMessage, TodoItem, ContextWindowInfo, CompactionEvent, QueueMe
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil, collectLiveRunningTools, mergeRunningToolsIntoMessages } from '../utils/chatMessage'
 import { nowDateTime } from '../utils/datetime'
 import { cloudGroupKey } from '../utils/cloud-project'
+import { sortByFocusPriority, sessionToFocusCandidate } from '../utils/focusSort'
 
 export type SessionStatus = 'ACTIVE' | 'ARCHIVED'
 
@@ -63,6 +64,15 @@ export interface Session {
   // Sub-agent fields
   parentSessionId?: string
   sessionType?: 'NORMAL' | 'SUBAGENT' | 'SIDE_TASK'
+  // Pending signals (this session only, from server VO)
+  pendingApprovalCount?: number
+  pendingQuestionCount?: number
+  // Task-tree aggregated signals (this session + its side tasks, from server VO)
+  treePendingApprovalCount?: number
+  treePendingQuestionCount?: number
+  treeUnread?: boolean
+  treeRunning?: boolean
+  treeFailed?: boolean
 }
 
 export interface SideTaskItem {
@@ -71,8 +81,12 @@ export interface SideTaskItem {
   modelId?: number
   phase: TaskPhase
   createdAt?: string
+  updatedAt?: string
   /** 边路任务后台完成且父会话未被查看时的未读标记（左侧任务栏青色圆点） */
   unread?: boolean
+  /** 边路任务自身待审批 / 待回答计数（服务端 VO，聚焦排序用） */
+  pendingApprovalCount?: number
+  pendingQuestionCount?: number
 }
 
 export interface SubagentItem {
@@ -128,12 +142,70 @@ function normalizeSession(s: any): Session {
 }
 
 export const useSessionStore = defineStore('session', () => {
-  const sessions = ref<Session[]>([])
+  /**
+   * 会话实体缓存（唯一真相源）。所有字段变更只进这里。
+   * 各列表投影（standard/archived/focus）只存 ID 数组，组件通过 ID 读实体。
+   */
+  const sessionEntities = ref<Map<string, Session>>(new Map())
+  /** 标准模式分组视图投影：ID 顺序 = 服务端分组预览/分页追加顺序 */
+  const standardSessionIds = ref<string[]>([])
+  /** 已归档区投影 */
+  const archivedSessionIds = ref<string[]>([])
+  /** 聚焦模式全量 ACTIVE 主会话投影：成员集合 + 后端基础顺序（排序由 focusedSessions computed 动态派生） */
+  const focusSessionIds = ref<string[]>([])
+
+  /** 兼容旧读取点：标准模式列表 = 投影 ID → 实体（只读 computed） */
+  const sessions = computed<Session[]>(() =>
+    standardSessionIds.value
+      .map(id => sessionEntities.value.get(id))
+      .filter((s): s is Session => !!s)
+  )
+  /** 已归档列表（只读 computed） */
+  const archivedSessions = computed<Session[]>(() =>
+    archivedSessionIds.value
+      .map(id => sessionEntities.value.get(id))
+      .filter((s): s is Session => !!s)
+  )
+  /** 聚焦模式列表：投影成员 + 动态优先级排序（不手动维护 ID 顺序）。
+   *  实时 pending 信号（WebSocket 增量）与服务端 tree* 取并集（max），
+   *  保证主会话待审批 / 待回答在事件到达的瞬间即可升到优先级 0（无需等列表刷新）。 */
+  const focusedSessions = computed<Session[]>(() => {
+    const realtimeApproval = sessionPendingApprovals.value
+    const realtimeQuestions = sessionPendingQuestions.value
+    return sortByFocusPriority(
+      focusSessionIds.value
+        .map(id => sessionEntities.value.get(id))
+        .filter((s): s is Session => !!s)
+        .map(s => ({
+          ...sessionToFocusCandidate(s),
+          pendingApprovalCount: Math.max(
+            s.treePendingApprovalCount ?? s.pendingApprovalCount ?? 0,
+            realtimeApproval.get(String(s.id)) ?? 0
+          ),
+          pendingQuestionCount: Math.max(
+            s.treePendingQuestionCount ?? s.pendingQuestionCount ?? 0,
+            realtimeQuestions.get(String(s.id))?.length ?? 0
+          ),
+        }))
+    )
+      .map(c => sessionEntities.value.get(c.id))
+      .filter((s): s is Session => !!s)
+  })
+
   /** Per-group list metadata from /sessions/groups (and load-more). */
   const groupMeta = ref<Map<string, SessionGroupMeta>>(new Map())
+  /** 已归档区分组元数据（数量徽标等） */
+  const archivedGroupMeta = ref<Map<string, SessionGroupMeta>>(new Map())
   const activeSessionId = ref<string | null>(null)
   const loading = ref(false)
+  const archivedLoading = ref(false)
+  const focusLoading = ref(false)
   const loadingMoreGroups = ref<Set<string>>(new Set())
+  /** 归档/恢复进行中的会话 id（防重复点击并发请求） */
+  const archivingIds = ref<Set<string>>(new Set())
+  /** 已归档区 / 聚焦数据是否已加载过（用于增量刷新与静默重拉判断） */
+  const archivedLoaded = ref(false)
+  const focusLoaded = ref(false)
 
   // Multi-session message cache — keyed by sessionId
   const sessionMessages = ref<Map<string, ChatMessage[]>>(new Map())
@@ -164,9 +236,12 @@ export const useSessionStore = defineStore('session', () => {
   /** parent tool_call_id → child session id（并行 delegate 精确绑定） */
   const delegateToolCallBindings = ref<Map<string, number>>(new Map())
 
-  const activeSession = computed(() =>
-    sessions.value.find(s => String(s.id) === String(activeSessionId.value)) || null
-  )
+  const activeSession = computed(() => {
+    const id = activeSessionId.value
+    if (!id) return null
+    // 从实体缓存查找：归档当前会话后实体保留，activeSession 仍有效（聊天面板不受影响）
+    return sessionEntities.value.get(id) || null
+  })
 
   const activeMessages = computed(() =>
     sessionMessages.value.get(activeSessionId.value ?? '') ?? []
@@ -243,7 +318,7 @@ export const useSessionStore = defineStore('session', () => {
         params: { previewLimit: DEFAULT_GROUP_PREVIEW }
       })
       const groups: any[] = data?.groups || []
-      const incoming: Session[] = []
+      const ids: string[] = []
       const meta = new Map<string, SessionGroupMeta>()
       for (const g of groups) {
         const key = String(g.key)
@@ -253,23 +328,19 @@ export const useSessionStore = defineStore('session', () => {
           hasMore: !!g.hasMore
         })
         for (const s of g.sessions || []) {
-          incoming.push(normalizeSession(s))
+          const normalized = normalizeSession(s)
+          // unread 以服务端为准（服务端 DB 是未读持久化权威；本地已读仅在 markAsRead API 成功后清除）
+          upsertSessionEntity(normalized)
+          ids.push(String(normalized.id))
         }
       }
-
-      // Merge unread from local; refresh resets to group previews (drops prior load-more pages).
-      const merged = incoming.map(s => {
-        const local = sessions.value.find(ls => String(ls.id) === String(s.id))
-        if (!local) return s
-        const m = { ...local, ...s }
-        m.unread = local.unread
-        return m
-      })
-      sessions.value = merged
+      // 刷新即重置为分组预览（丢弃先前 load-more 追加的页）
+      standardSessionIds.value = ids
       groupMeta.value = meta
 
-      for (const s of merged) {
-        if (s.contextTokens && s.contextTokens > 0) {
+      for (const id of ids) {
+        const s = sessionEntities.value.get(id)
+        if (s && s.contextTokens && s.contextTokens > 0) {
           const sid = String(s.id)
           if (!sessionContextWindow.value.has(sid)) {
             sessionContextWindow.value.set(sid, { estimated: s.contextTokens, actual: 0 })
@@ -288,7 +359,10 @@ export const useSessionStore = defineStore('session', () => {
     if (meta && !meta.hasMore) return false
 
     // Capture offset before await for pagination; do not reuse after await for totals.
-    const offset = sessions.value.filter(s => cloudGroupKey(s) === key).length
+    const offset = standardSessionIds.value.filter(id => {
+      const s = sessionEntities.value.get(id)
+      return s && cloudGroupKey(s) === key
+    }).length
     loadingMoreGroups.value = new Set(loadingMoreGroups.value).add(key)
     try {
       const { data } = await api.get('/sessions', {
@@ -303,13 +377,21 @@ export const useSessionStore = defineStore('session', () => {
         return false
       }
 
-      const existingIds = new Set(sessions.value.map(s => String(s.id)))
+      const existingIds = new Set(standardSessionIds.value)
       const appended = items.filter(s => !existingIds.has(String(s.id)))
-      if (appended.length > 0) {
-        sessions.value = [...sessions.value, ...appended]
+      const appendedIds: string[] = []
+      for (const s of appended) {
+        upsertSessionEntity(s)
+        appendedIds.push(String(s.id))
+      }
+      if (appendedIds.length > 0) {
+        standardSessionIds.value = [...standardSessionIds.value, ...appendedIds]
       }
 
-      const loadedAfter = sessions.value.filter(s => cloudGroupKey(s) === key).length
+      const loadedAfter = standardSessionIds.value.filter(id => {
+        const s = sessionEntities.value.get(id)
+        return s && cloudGroupKey(s) === key
+      }).length
       const serverTotal = data?.total
       const nextMeta: SessionGroupMeta = {
         label: meta?.label || key,
@@ -318,7 +400,7 @@ export const useSessionStore = defineStore('session', () => {
       }
       groupMeta.value.set(key, nextMeta)
       groupMeta.value = new Map(groupMeta.value)
-      return appended.length > 0 || !!data?.hasMore
+      return appendedIds.length > 0 || !!data?.hasMore
     } finally {
       const next = new Set(loadingMoreGroups.value)
       next.delete(key)
@@ -348,12 +430,166 @@ export const useSessionStore = defineStore('session', () => {
     groupMeta.value = new Map(groupMeta.value)
   }
 
+  // --- 实体 / 投影模型 ---
+
+  /** 唯一原子更新入口：只写实体，不自动加入任何查询投影（避免污染标准分页等）。 */
+  function upsertSessionEntity(session: Session) {
+    const sid = String(session.id)
+    const normalized = normalizeSession(session)
+    normalized.id = sid
+    if (session.agentId != null) normalized.agentId = normalizeId(session.agentId)
+    sessionEntities.value.set(sid, normalized)
+    sessionEntities.value = new Map(sessionEntities.value)
+  }
+
+  /** 按 id 读取会话实体（不存在返回 undefined）。 */
+  function getSessionEntity(id: string): Session | undefined {
+    return sessionEntities.value.get(String(id))
+  }
+
+  /** 服务端 session_tree_status 事件：更新父任务实体的任务树聚合信号（聚焦模式实时重排）。 */
+  function updateSessionTreeSignals(parentSessionId: string, signals: {
+    treePendingApprovalCount?: number
+    treePendingQuestionCount?: number
+    treeUnread?: boolean
+    treeRunning?: boolean
+    treeFailed?: boolean
+  }) {
+    const sid = String(parentSessionId)
+    const entity = sessionEntities.value.get(sid)
+    if (!entity) return
+    upsertSessionEntity({
+      ...entity,
+      ...(signals.treePendingApprovalCount != null ? { treePendingApprovalCount: signals.treePendingApprovalCount } : {}),
+      ...(signals.treePendingQuestionCount != null ? { treePendingQuestionCount: signals.treePendingQuestionCount } : {}),
+      ...(signals.treeUnread != null ? { treeUnread: signals.treeUnread } : {}),
+      ...(signals.treeRunning != null ? { treeRunning: signals.treeRunning } : {}),
+      ...(signals.treeFailed != null ? { treeFailed: signals.treeFailed } : {}),
+    })
+  }
+
+  function isArchiving(id: string): boolean {
+    return archivingIds.value.has(String(id))
+  }
+
+  /** 归档：API 成功后再移动本地（失败不预移除）；归档当前会话不清空 activeSessionId。 */
+  async function archiveSession(id: string) {
+    const sid = String(id)
+    if (archivingIds.value.has(sid)) return
+    archivingIds.value = new Set(archivingIds.value).add(sid)
+    try {
+      await api.put(`/sessions/${sid}/archive`)
+      const entity = sessionEntities.value.get(sid)
+      if (entity) {
+        upsertSessionEntity({ ...entity, status: 'ARCHIVED' })
+        bumpGroupMetaForSession(entity, -1)
+      }
+      // ACTIVE → ARCHIVED：从标准/聚焦投影移除，加入已归档投影
+      standardSessionIds.value = standardSessionIds.value.filter(x => x !== sid)
+      focusSessionIds.value = focusSessionIds.value.filter(x => x !== sid)
+      if (!archivedSessionIds.value.includes(sid)) {
+        archivedSessionIds.value = [sid, ...archivedSessionIds.value]
+      }
+      // 已归档区已加载过 → 静默刷新以同步服务端顺序与数量
+      if (archivedLoaded.value) {
+        await fetchArchivedSessions(true)
+      }
+    } catch {
+      // API 失败：本地不动，等待下次拉取同步
+    } finally {
+      const next = new Set(archivingIds.value)
+      next.delete(sid)
+      archivingIds.value = next
+    }
+  }
+
+  /** 恢复归档：API 成功后再移动本地，并静默刷新标准分组接口（服务端排序决定插入位置）。 */
+  async function unarchiveSession(id: string) {
+    const sid = String(id)
+    if (archivingIds.value.has(sid)) return
+    archivingIds.value = new Set(archivingIds.value).add(sid)
+    try {
+      await api.put(`/sessions/${sid}/unarchive`)
+      const entity = sessionEntities.value.get(sid)
+      if (entity) {
+        upsertSessionEntity({ ...entity, status: 'ACTIVE' })
+      }
+      // ARCHIVED → ACTIVE：从已归档投影移除；focus 已加载则加入聚焦投影
+      archivedSessionIds.value = archivedSessionIds.value.filter(x => x !== sid)
+      if (focusLoaded.value && !focusSessionIds.value.includes(sid)) {
+        focusSessionIds.value = [sid, ...focusSessionIds.value]
+      }
+      // 恢复后静默刷新标准分组接口（服务端排序 + groupMeta 自动修正）
+      await fetchSessions(true)
+      if (archivedLoaded.value) {
+        await fetchArchivedSessions(true)
+      }
+    } catch {
+      // API 失败：本地不动
+    } finally {
+      const next = new Set(archivingIds.value)
+      next.delete(sid)
+      archivingIds.value = next
+    }
+  }
+
+  /** 已归档区分组列表（status=ARCHIVED）。 */
+  async function fetchArchivedSessions(silent = false) {
+    if (!silent) archivedLoading.value = true
+    try {
+      const { data } = await api.get('/sessions/groups', {
+        params: { previewLimit: 50, status: 'ARCHIVED' }
+      })
+      const groups: any[] = data?.groups || []
+      const ids: string[] = []
+      const meta = new Map<string, SessionGroupMeta>()
+      for (const g of groups) {
+        const key = String(g.key)
+        meta.set(key, {
+          label: g.label || key,
+          total: Number(g.total) || 0,
+          hasMore: !!g.hasMore
+        })
+        for (const s of g.sessions || []) {
+          const normalized = normalizeSession(s)
+          upsertSessionEntity(normalized)
+          ids.push(String(normalized.id))
+        }
+      }
+      archivedSessionIds.value = ids
+      archivedGroupMeta.value = meta
+      archivedLoaded.value = true
+    } finally {
+      archivedLoading.value = false
+    }
+  }
+
+  /** 聚焦模式全量 ACTIVE 主会话（不带 groupKey）。 */
+  async function fetchFocusSessions(silent = false) {
+    if (!silent) focusLoading.value = true
+    try {
+      const { data } = await api.get('/sessions', {
+        params: { status: 'ACTIVE' }
+      })
+      const items: Session[] = Array.isArray(data) ? data.map(normalizeSession) : []
+      const ids: string[] = []
+      for (const s of items) {
+        upsertSessionEntity(s)
+        ids.push(String(s.id))
+      }
+      focusSessionIds.value = ids
+      focusLoaded.value = true
+    } finally {
+      focusLoading.value = false
+    }
+  }
+
   async function fetchSession(id: string) {
     try {
       const { data } = await api.get(`/sessions/${id}`)
       if (data) {
-        const local = sessions.value.find(s => String(s.id) === String(id))
-        updateSession(id, { ...data, id: normalizeId(data.id), agentId: normalizeId(data.agentId), unread: local?.unread })
+        const local = sessionEntities.value.get(String(id))
+        updateSession(id, { ...data, id: normalizeId(data.id), agentId: normalizeId(data.agentId), unread: local?.unread ?? data.unread })
         if (data.contextTokens && data.contextTokens > 0) {
           const sid = normalizeId(data.id)
           if (!sessionContextWindow.value.has(sid)) {
@@ -406,7 +642,10 @@ export const useSessionStore = defineStore('session', () => {
     if (data) {
       data.id = normalizeId(data.id)
       data.agentId = normalizeId(data.agentId)
-      sessions.value.unshift(data)
+      upsertSessionEntity(data)
+      if (!standardSessionIds.value.includes(String(data.id))) {
+        standardSessionIds.value = [String(data.id), ...standardSessionIds.value]
+      }
       bumpGroupMetaForSession(data, 1)
     }
     return data
@@ -442,18 +681,19 @@ export const useSessionStore = defineStore('session', () => {
 
   function updateSession(id: string, updates: Partial<Session>) {
     const sid = String(id)
-    const idx = sessions.value.findIndex(s => String(s.id) === sid)
-    if (idx !== -1) {
-      const next = { ...sessions.value[idx], ...updates, id: normalizeId(updates.id ?? sessions.value[idx].id) }
-      if (updates.agentId != null) {
-        next.agentId = normalizeId(updates.agentId)
+    const existing = sessionEntities.value.get(sid)
+    const next = normalizeSession({ ...(existing ?? { id: sid }), ...updates, id: sid })
+    if (updates.agentId != null) {
+      next.agentId = normalizeId(updates.agentId)
+    }
+    upsertSessionEntity(next)
+    if (!existing && updates.executionMode && next.status !== 'ARCHIVED') {
+      // Deep-link / loadSession for a session outside the current group preview：
+      // 写入标准投影头部（原有行为），并登记分组元数据。已归档会话不进 ACTIVE 投影。
+      if (!standardSessionIds.value.includes(sid)) {
+        standardSessionIds.value = [sid, ...standardSessionIds.value]
       }
-      sessions.value[idx] = next
-    } else if (updates.executionMode) {
-      // Deep-link / loadSession for a session outside the current group preview
-      const inserted = normalizeSession({ id: sid, ...updates })
-      sessions.value.unshift(inserted)
-      const key = cloudGroupKey(inserted)
+      const key = cloudGroupKey(next)
       if (!groupMeta.value.has(key)) {
         groupMeta.value.set(key, { label: key, total: 1, hasMore: false })
         groupMeta.value = new Map(groupMeta.value)
@@ -478,17 +718,8 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function setSideTasks(parentSessionId: string, tasks: SideTaskItem[]) {
-    const key = String(parentSessionId)
-    // 保留本地已读状态（与 fetchSessions 对主会话 unread 的保留逻辑一致）：
-    // 后端 read 请求与 side-tasks 拉取存在竞态，若后端尚未落库已读（或失败），
-    // 直接用后端返回值会覆盖本地已清除的 unread，导致已消除的圆点复活。
-    const existing = sideTaskCache.value.get(key) ?? []
-    const existingById = new Map(existing.map(t => [t.id, t]))
-    const merged = tasks.map(t => {
-      const old = existingById.get(t.id)
-      return old && old.unread === false ? { ...t, unread: false } : t
-    })
-    sideTaskCache.value.set(key, merged)
+    // unread / pending 以服务端为准（服务端 DB 是未读权威；本地已读在 markSideTaskRead API 成功后清除）
+    sideTaskCache.value.set(String(parentSessionId), tasks)
     sideTaskCache.value = new Map(sideTaskCache.value)
   }
 
@@ -671,21 +902,25 @@ export const useSessionStore = defineStore('session', () => {
 
   async function deleteSession(id: string) {
     try {
-      const existing = sessions.value.find(s => String(s.id) === String(id))
+      const existing = sessionEntities.value.get(String(id))
       await api.delete(`/sessions/${id}`)
-      sessions.value = sessions.value.filter(s => String(s.id) !== String(id))
+      const sid = String(id)
+      standardSessionIds.value = standardSessionIds.value.filter(x => x !== sid)
+      archivedSessionIds.value = archivedSessionIds.value.filter(x => x !== sid)
+      focusSessionIds.value = focusSessionIds.value.filter(x => x !== sid)
+      sessionEntities.value.delete(sid)
+      sessionEntities.value = new Map(sessionEntities.value)
       if (existing) {
         bumpGroupMetaForSession(existing, -1)
       }
-      if (activeSessionId.value === String(id)) {
+      if (activeSessionId.value === sid) {
         activeSessionId.value = null
       }
       // 若删除的是持久化的最后查看会话，一并清除，避免下次冷启动恢复一个已删除会话
-      if (getLastSessionId() === String(id)) {
+      if (getLastSessionId() === sid) {
         forgetLastSession()
       }
       // Clean up cached data
-      const sid = String(id)
       sessionMessages.value.delete(sid)
       sessionTodos.value.delete(sid)
       sessionActivities.value.delete(sid)
@@ -700,13 +935,13 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function markAsRead(sessionId: string) {
-    const session = sessions.value.find(s => String(s.id) === String(sessionId))
-    if (session) {
-      session.unread = false
-    }
-    // 只清除父会话自身未读；边路任务未读按 sideSessionId 独立清除（见 markSideTaskRead）
+    // 服务端 DB 是未读持久化权威：API 成功后再清本地；失败保留本地未读（下次拉取同步）
     try {
       await api.put(`/sessions/${sessionId}/read`)
+      const entity = sessionEntities.value.get(String(sessionId))
+      if (entity && entity.unread) {
+        upsertSessionEntity({ ...entity, unread: false })
+      }
     } catch {
       // Silent fail — next fetchSessions will sync
     }
@@ -1185,11 +1420,20 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function reset() {
-    sessions.value = []
+    sessionEntities.value = new Map()
+    standardSessionIds.value = []
+    archivedSessionIds.value = []
+    focusSessionIds.value = []
     groupMeta.value = new Map()
+    archivedGroupMeta.value = new Map()
+    archivedLoaded.value = false
+    focusLoaded.value = false
+    archivingIds.value = new Set()
     loadingMoreGroups.value = new Set()
     activeSessionId.value = null
     loading.value = false
+    archivedLoading.value = false
+    focusLoading.value = false
     sessionMessages.value = new Map()
     sessionTodos.value = new Map()
     sessionActivities.value = new Map()
@@ -1242,6 +1486,25 @@ export const useSessionStore = defineStore('session', () => {
     updateSession,
     updateSessionPhase,
     getSessionPhase,
+    // 实体 / 投影模型（归档 / 聚焦）
+    archivedSessions,
+    focusedSessions,
+    standardSessionIds,
+    archivedSessionIds,
+    focusSessionIds,
+    archivedLoading,
+    focusLoading,
+    archivedGroupMeta,
+    focusLoaded,
+    archivedLoaded,
+    isArchiving,
+    upsertSessionEntity,
+    getSessionEntity,
+    updateSessionTreeSignals,
+    archiveSession,
+    unarchiveSession,
+    fetchArchivedSessions,
+    fetchFocusSessions,
     setSideTasks,
     addSideTask,
     updateSideTaskPhase,

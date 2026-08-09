@@ -114,6 +114,12 @@ public final class SessionGroupKey {
 
     /** Within-group order: active phases first, then pin, then updated_at desc, then id desc. */
     public static int compareSessions(Session a, Session b) {
+        // 已归档区按「最近活动时间」倒序，忽略活跃阶段优先与置顶（归档语义，见技术方案 5.2）
+        boolean aArchived = "ARCHIVED".equals(a.getStatus());
+        boolean bArchived = "ARCHIVED".equals(b.getStatus());
+        if (aArchived && bArchived) {
+            return compareByUpdatedDesc(a, b);
+        }
         boolean aActive = isActivePhase(a.getPhase());
         boolean bActive = isActivePhase(b.getPhase());
         if (aActive != bActive) {
@@ -124,6 +130,11 @@ public final class SessionGroupKey {
         if (aPin != bPin) {
             return Integer.compare(bPin, aPin);
         }
+        return compareByUpdatedDesc(a, b);
+    }
+
+    /** updated_at DESC, id DESC —— 归档区 / 时间并列时的稳定顺序。 */
+    private static int compareByUpdatedDesc(Session a, Session b) {
         if (a.getUpdatedAt() == null && b.getUpdatedAt() == null) {
             // fall through to id
         } else if (a.getUpdatedAt() == null) {

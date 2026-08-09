@@ -4,7 +4,7 @@
       暂无边路任务
     </div>
     <div
-      v-for="task in tasks"
+      v-for="task in sortedTasks"
       :key="task.id"
       class="side-task-item"
       :class="{
@@ -68,12 +68,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, computed } from 'vue'
 import { EditPen, Delete, Check, Close } from '@element-plus/icons-vue'
 import type { SideTaskItem, TaskPhase } from '../../stores/session'
+import { sideTaskToFocusCandidate, sortByFocusPriority } from '../../utils/focusSort'
 
-defineProps<{
+const props = defineProps<{
   tasks?: SideTaskItem[]
+  listMode?: 'standard' | 'focus'
 }>()
 
 const emit = defineEmits<{
@@ -81,6 +83,15 @@ const emit = defineEmits<{
   'edit-title': [payload: { sideSessionId: number; title: string }]
   'delete-side-task': [sideSessionId: number]
 }>()
+
+/** 聚焦模式下按优先级排序（与服务端 tree* 信号无关，右侧使用边路自身字段）；标准模式保持原顺序。 */
+const sortedTasks = computed<SideTaskItem[]>(() => {
+  const list = props.tasks ?? []
+  if (props.listMode !== 'focus') return list
+  return sortByFocusPriority(list.map(sideTaskToFocusCandidate)).map(
+    c => list.find(t => String(t.id) === String(c.id))!
+  )
+})
 
 const editingId = ref<number | null>(null)
 const editingTitle = ref('')

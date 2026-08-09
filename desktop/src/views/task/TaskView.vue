@@ -1,6 +1,13 @@
 <template>
   <div class="task-layout">
-    <TaskIndexPanel :collapsed="panelCollapsed" @toggle="panelCollapsed = !panelCollapsed" @new-task="handleNewTask" @new-task-from-group="handleNewTaskFromGroup" />
+    <TaskIndexPanel
+      :collapsed="panelCollapsed"
+      :list-mode="listMode"
+      @update:list-mode="listMode = $event"
+      @toggle="panelCollapsed = !panelCollapsed"
+      @new-task="handleNewTask"
+      @new-task-from-group="handleNewTaskFromGroup"
+    />
 
     <div class="task-container">
       <CenterTabBar
@@ -37,6 +44,7 @@
       :context-window="inspectorContextWindow"
       :view-type="inspectorViewType"
       :model-id="inspectorModelId"
+      :list-mode="listMode"
       @toggle-panel="toggleRight"
       @todo-update="handleTodoUpdate"
       @rename="handleRename"
@@ -89,6 +97,9 @@ const agentId = ref('')
 const executionMode = ref('CLOUD')
 const initialLoading = ref(true)
 const NEW_TASK_QUERY = 'newTask'
+
+/** 任务面板列表模式（标准分组 / 聚焦平铺）：TaskView 单一事实源，每次挂载默认标准。 */
+const listMode = ref<'standard' | 'focus'>('standard')
 
 // Task state
 const currentPhase = ref<TaskPhase>('IDLE')

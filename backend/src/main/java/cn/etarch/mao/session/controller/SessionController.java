@@ -3,9 +3,12 @@ package cn.etarch.mao.session.controller;
 import cn.etarch.mao.agent.entity.Agent;
 import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.common.result.Result;
+import cn.etarch.mao.harness.approval.ApprovalRegistry;
+import cn.etarch.mao.harness.approval.SessionTreeSignalPublisher;
 import cn.etarch.mao.harness.delegate.entity.SubagentExecution;
 import cn.etarch.mao.harness.delegate.mapper.SubagentExecutionMapper;
 import cn.etarch.mao.harness.safety.PathSandbox;
+import cn.etarch.mao.harness.tool.AskUserQuestionsRegistry;
 import cn.etarch.mao.model.entity.LlmModel;
 import cn.etarch.mao.model.mapper.LlmModelMapper;
 import cn.etarch.mao.session.activity.ActivityService;
@@ -35,6 +38,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -55,6 +59,9 @@ public class SessionController {
     private final PathSandbox pathSandbox;
     private final SubagentExecutionMapper subagentExecutionMapper;
     private final SessionCompactionEventService sessionCompactionEventService;
+    private final ApprovalRegistry approvalRegistry;
+    private final AskUserQuestionsRegistry askUserQuestionsRegistry;
+    private final SessionTreeSignalPublisher treeSignalPublisher;
 
     public SessionController(SessionService sessionService,
                              AgentMapper agentMapper,
@@ -64,7 +71,10 @@ public class SessionController {
                              MessageQueueService messageQueueService,
                              PathSandbox pathSandbox,
                              SubagentExecutionMapper subagentExecutionMapper,
-                             SessionCompactionEventService sessionCompactionEventService) {
+                             SessionCompactionEventService sessionCompactionEventService,
+                             ApprovalRegistry approvalRegistry,
+                             AskUserQuestionsRegistry askUserQuestionsRegistry,
+                             SessionTreeSignalPublisher treeSignalPublisher) {
         this.sessionService = sessionService;
         this.agentMapper = agentMapper;
         this.llmModelMapper = llmModelMapper;
@@ -74,6 +84,9 @@ public class SessionController {
         this.pathSandbox = pathSandbox;
         this.subagentExecutionMapper = subagentExecutionMapper;
         this.sessionCompactionEventService = sessionCompactionEventService;
+        this.approvalRegistry = approvalRegistry;
+        this.askUserQuestionsRegistry = askUserQuestionsRegistry;
+        this.treeSignalPublisher = treeSignalPublisher;
     }
 
     @PostMapping
@@ -85,7 +98,9 @@ public class SessionController {
                 request.getIsGit(), request.getPlatform(), request.getShell(), request.getOsVersion(),
                 request.getModelId(), request.getCloudProjectKey(),
                 request.getWorkspaceMode(), request.getGitCloneUrl(), request.getGitBranch());
-        return Result.ok(toSessionVO(session, batchLoadAgents(List.of(session)), batchLoadModels(List.of(session))));
+        SessionVO vo = toSessionVO(session, batchLoadAgents(List.of(session)), batchLoadModels(List.of(session)));
+        applySingleSessionSignals(vo, session);
+        return Result.ok(vo);
     }
 
     @GetMapping("/cloud-projects")
@@ -133,6 +148,15 @@ public class SessionController {
         Map<Long, Agent> agentMap = batchLoadAgents(previewSessions);
         Map<Long, LlmModel> modelMap = batchLoadModels(previewSessions);
 
+        List<SessionVO> previewVos = previewSessions.stream()
+                .map(s -> toSessionVO(s, agentMap, modelMap))
+                .collect(Collectors.toList());
+        applySessionListSignals(previewSessions, previewVos);
+        Map<Long, SessionVO> voById = new HashMap<>();
+        for (int i = 0; i < previewSessions.size(); i++) {
+            voById.put(previewSessions.get(i).getId(), previewVos.get(i));
+        }
+
         SessionGroupsVO vo = new SessionGroupsVO();
         vo.setGroups(buckets.stream().map(b -> {
             SessionGroupVO g = new SessionGroupVO();
@@ -141,7 +165,7 @@ public class SessionController {
             g.setTotal(b.total());
             g.setHasMore(b.hasMore());
             g.setSessions(b.sessions().stream()
-                    .map(s -> toSessionVO(s, agentMap, modelMap))
+                    .map(s -> voById.get(s.getId()))
                     .collect(Collectors.toList()));
             return g;
         }).collect(Collectors.toList()));
@@ -171,6 +195,7 @@ public class SessionController {
             vo.setItems(page.items().stream()
                     .map(s -> toSessionVO(s, agentMap, modelMap))
                     .collect(Collectors.toList()));
+            applySessionListSignals(page.items(), vo.getItems());
             vo.setTotal(page.total());
             vo.setOffset(page.offset());
             vo.setLimit(page.limit());
@@ -184,6 +209,7 @@ public class SessionController {
         List<SessionVO> voList = sessions.stream()
                 .map(s -> toSessionVO(s, agentMap, modelMap))
                 .collect(Collectors.toList());
+        applySessionListSignals(sessions, voList);
         return Result.ok(voList);
     }
 
@@ -210,7 +236,9 @@ public class SessionController {
         List<Session> single = List.of(session);
         Map<Long, Agent> agentMap = batchLoadAgents(single);
         Map<Long, LlmModel> modelMap = batchLoadModels(single);
-        return Result.ok(toSessionVO(session, agentMap, modelMap));
+        SessionVO vo = toSessionVO(session, agentMap, modelMap);
+        applySingleSessionSignals(vo, session);
+        return Result.ok(vo);
     }
 
     @DeleteMapping("/{id}")
@@ -249,12 +277,28 @@ public class SessionController {
         return Result.ok();
     }
 
+    @PutMapping("/{id}/unarchive")
+    public Result<Void> unarchiveSession(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id) {
+        requireSessionOwner(userId, id);
+        sessionService.unarchiveSession(id);
+        return Result.ok();
+    }
+
     @PutMapping("/{id}/read")
     public Result<Void> markAsRead(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
         requireSessionOwner(userId, id);
         sessionService.markAsRead(id);
+        // 已读变化影响任务树信号：边路任务已读 → 重推其父任务；主会话已读 → 重推自身任务树
+        Session s = sessionService.getSession(id);
+        if ("SIDE_TASK".equals(s.getSessionType()) && s.getParentSessionId() != null) {
+            treeSignalPublisher.publish(s.getParentSessionId());
+        } else {
+            treeSignalPublisher.publish(id);
+        }
         return Result.ok();
     }
 
@@ -282,7 +326,9 @@ public class SessionController {
         Session updated = sessionService.getSession(id);
         Map<Long, Agent> agentMap = batchLoadAgents(List.of(updated));
         Map<Long, LlmModel> modelMap = batchLoadModels(List.of(updated));
-        return Result.ok(toSessionVO(updated, agentMap, modelMap));
+        SessionVO vo = toSessionVO(updated, agentMap, modelMap);
+        applySingleSessionSignals(vo, updated);
+        return Result.ok(vo);
     }
 
     @GetMapping("/dashboard")
@@ -298,10 +344,16 @@ public class SessionController {
         Map<Long, LlmModel> modelMap = batchLoadModels(allSessions);
 
         Map<String, List<SessionVO>> result = new java.util.HashMap<>();
-        result.put("running", grouped.getOrDefault("running", List.of()).stream()
-                .map(s -> toSessionVO(s, agentMap, modelMap)).collect(Collectors.toList()));
-        result.put("recent", grouped.getOrDefault("recent", List.of()).stream()
-                .map(s -> toSessionVO(s, agentMap, modelMap)).collect(Collectors.toList()));
+        List<Session> runningSessions = grouped.getOrDefault("running", List.of());
+        List<Session> recentSessions = grouped.getOrDefault("recent", List.of());
+        List<SessionVO> runningVos = runningSessions.stream()
+                .map(s -> toSessionVO(s, agentMap, modelMap)).collect(Collectors.toList());
+        List<SessionVO> recentVos = recentSessions.stream()
+                .map(s -> toSessionVO(s, agentMap, modelMap)).collect(Collectors.toList());
+        applySessionListSignals(runningSessions, runningVos);
+        applySessionListSignals(recentSessions, recentVos);
+        result.put("running", runningVos);
+        result.put("recent", recentVos);
         return Result.ok(result);
     }
 
@@ -311,6 +363,9 @@ public class SessionController {
             @PathVariable Long id) {
         requireSessionOwner(userId, id);
         List<Session> sideTasks = sessionService.listSideTaskSessions(id, userId);
+        List<Long> sideIds = sideTasks.stream().map(Session::getId).collect(Collectors.toList());
+        Map<Long, Integer> approvalCounts = approvalRegistry.countForSessionIds(sideIds);
+        Map<Long, Integer> questionCounts = askUserQuestionsRegistry.countPendingBySessionIds(sideIds);
         List<SideTaskVO> voList = sideTasks.stream().map(s -> {
             SideTaskVO vo = new SideTaskVO();
             vo.setId(s.getId());
@@ -318,7 +373,10 @@ public class SessionController {
             vo.setModelId(s.getModelId());
             vo.setPhase(s.getPhase() != null ? s.getPhase() : "IDLE");
             vo.setCreatedAt(s.getCreatedAt() != null ? s.getCreatedAt().toString() : null);
+            vo.setUpdatedAt(s.getUpdatedAt() != null ? s.getUpdatedAt().toString() : null);
             vo.setUnread(Integer.valueOf(1).equals(s.getUnread()));
+            vo.setPendingApprovalCount(approvalCounts.getOrDefault(s.getId(), 0));
+            vo.setPendingQuestionCount(questionCounts.getOrDefault(s.getId(), 0));
             return vo;
         }).collect(Collectors.toList());
         return Result.ok(voList);
@@ -610,6 +668,69 @@ public class SessionController {
         return vo;
     }
 
+    // --- 待审批 / 待回答 / 任务树信号填充 ---
+
+    /** 单会话场景（create / get / patch）：查该会话的边路任务并填充自身与树聚合信号。 */
+    private void applySingleSessionSignals(SessionVO vo, Session session) {
+        applySessionListSignals(List.of(session), List.of(vo));
+    }
+
+    /**
+     * 批量填充列表 VO 的 pending 计数与任务树聚合信号（tree*）。
+     * 对本次返回的所有主会话一次性查询边路任务并合并计数，避免逐会话 N+1。
+     */
+    private void applySessionListSignals(List<Session> sessions, List<SessionVO> vos) {
+        if (sessions == null || sessions.isEmpty()) {
+            return;
+        }
+        List<Long> mainIds = sessions.stream().map(Session::getId).collect(Collectors.toList());
+        Map<Long, List<Session>> sidesByParent = sessionService.listSideTasksByParentIds(mainIds).stream()
+                .collect(Collectors.groupingBy(Session::getParentSessionId));
+
+        Set<Long> allIds = new HashSet<>(mainIds);
+        for (List<Session> sides : sidesByParent.values()) {
+            for (Session s : sides) {
+                allIds.add(s.getId());
+            }
+        }
+        Map<Long, Integer> approvalCounts = approvalRegistry.countForSessionIds(allIds);
+        Map<Long, Integer> questionCounts = askUserQuestionsRegistry.countPendingBySessionIds(allIds);
+
+        for (int i = 0; i < sessions.size(); i++) {
+            Session s = sessions.get(i);
+            fillTreeSignals(vos.get(i), s, sidesByParent.getOrDefault(s.getId(), List.of()),
+                    approvalCounts, questionCounts);
+        }
+    }
+
+    private void fillTreeSignals(SessionVO vo, Session main, List<Session> sides,
+                                 Map<Long, Integer> approvalCounts, Map<Long, Integer> questionCounts) {
+        int approval = approvalCounts.getOrDefault(main.getId(), 0);
+        int question = questionCounts.getOrDefault(main.getId(), 0);
+        boolean unread = Integer.valueOf(1).equals(main.getUnread());
+        boolean running = isActivePhase(main.getPhase());
+        boolean failed = "FAILED".equals(main.getPhase());
+        for (Session st : sides) {
+            approval += approvalCounts.getOrDefault(st.getId(), 0);
+            question += questionCounts.getOrDefault(st.getId(), 0);
+            unread |= Integer.valueOf(1).equals(st.getUnread());
+            running |= isActivePhase(st.getPhase());
+            failed |= "FAILED".equals(st.getPhase());
+        }
+        vo.setPendingApprovalCount(approvalCounts.getOrDefault(main.getId(), 0));
+        vo.setPendingQuestionCount(questionCounts.getOrDefault(main.getId(), 0));
+        vo.setTreePendingApprovalCount(approval);
+        vo.setTreePendingQuestionCount(question);
+        vo.setTreeUnread(unread);
+        vo.setTreeRunning(running);
+        vo.setTreeFailed(failed);
+    }
+
+    private static boolean isActivePhase(String phase) {
+        return "RUNNING".equals(phase) || "RESUMING".equals(phase)
+                || "WAITING_APPROVAL".equals(phase) || "CANCELLING".equals(phase);
+    }
+
     private CompactionEventVO toCompactionEventVO(SessionCompactionEvent event) {
         CompactionEventVO vo = new CompactionEventVO();
         vo.setId(event.getId());
@@ -789,6 +910,16 @@ public class SessionController {
         private Long modelId;
         private String modelName;
         private Boolean modelSupportsVision;
+
+        // Pending signals (this session only)
+        private Integer pendingApprovalCount;
+        private Integer pendingQuestionCount;
+        // Task-tree aggregated signals (this session + its side tasks)
+        private Integer treePendingApprovalCount;
+        private Integer treePendingQuestionCount;
+        private Boolean treeUnread;
+        private Boolean treeRunning;
+        private Boolean treeFailed;
     }
 
     @Data
@@ -798,7 +929,10 @@ public class SessionController {
         private Long modelId;
         private String phase;
         private String createdAt;
+        private String updatedAt;
         private Boolean unread;
+        private Integer pendingApprovalCount;
+        private Integer pendingQuestionCount;
     }
 
     @Data

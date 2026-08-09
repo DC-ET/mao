@@ -58,6 +58,8 @@ class StreamingWsHandlerTest {
     private final MessageQueueService messageQueueService = mock(MessageQueueService.class);
     private final LocalToolSessionRegistry localToolSessionRegistry = mock(LocalToolSessionRegistry.class);
     private final AskUserQuestionsRegistry askUserQuestionsRegistry = mock(AskUserQuestionsRegistry.class);
+    private final cn.etarch.mao.harness.approval.SessionTreeSignalPublisher treeSignalPublisher =
+            mock(cn.etarch.mao.harness.approval.SessionTreeSignalPublisher.class);
     private final ActivityService activityService = mock(ActivityService.class);
     private final SessionActivityHeartbeat activityHeartbeat = mock(SessionActivityHeartbeat.class);
     private final SessionTodoMapper sessionTodoMapper = mock(SessionTodoMapper.class);
@@ -76,7 +78,7 @@ class StreamingWsHandlerTest {
     private final CapturingExecutor executor = new CapturingExecutor();
     private final StreamingWsHandler handler = new StreamingWsHandler(
             registry, harnessService, sessionService, taskTerminalService, messageQueueService, localToolSessionRegistry,
-            askUserQuestionsRegistry, activityService, activityHeartbeat, sessionTodoMapper, agentLoop,
+            askUserQuestionsRegistry, treeSignalPublisher, activityService, activityHeartbeat, sessionTodoMapper, agentLoop,
             shellSessionManager, skillSyncService, localSkillRegistry, localAgentsMdRegistry,
             mcpSyncService, mcpClientManager,
             agentMapper, llmModelMapper, jwtService, executor, 60L);

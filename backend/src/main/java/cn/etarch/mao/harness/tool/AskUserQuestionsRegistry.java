@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -114,6 +115,33 @@ public class AskUserQuestionsRegistry {
             if (key.startsWith(prefix)) {
                 String requestId = key.substring(prefix.length());
                 result.add(new PendingQuestion(requestId, entry.questions(), entry.metadata()));
+            }
+        });
+        return result;
+    }
+
+    /**
+     * 批量统计多个 session 的待回答问题数（0/1/多，单问题语义下通常为 0/1）。
+     * 对整个 pending Map 只遍历一次，避免逐 session 调用 getPendingForSession 的 O(n×m)。
+     */
+    public Map<Long, Integer> countPendingBySessionIds(Collection<Long> sessionIds) {
+        Map<Long, Integer> result = new HashMap<>();
+        if (sessionIds == null || sessionIds.isEmpty()) {
+            return result;
+        }
+        java.util.Set<Long> wanted = new java.util.HashSet<>(sessionIds);
+        pending.forEach((key, entry) -> {
+            int colon = key.indexOf(':');
+            if (colon <= 0) {
+                return;
+            }
+            try {
+                Long sid = Long.valueOf(key.substring(0, colon));
+                if (wanted.contains(sid)) {
+                    result.merge(sid, 1, Integer::sum);
+                }
+            } catch (NumberFormatException ignored) {
+                // 非法 key 忽略
             }
         });
         return result;

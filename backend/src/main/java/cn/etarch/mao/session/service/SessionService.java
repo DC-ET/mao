@@ -284,9 +284,14 @@ public class SessionService {
 
         QueryWrapper<Session> qw = baseSessionListQuery(userId, keyword, status);
         SessionGroupKey.applyFilter(qw, groupKey);
-        // Active phases first, then pin, then updated_at — mirrors SessionGroupKey.compareSessions
-        qw.last("ORDER BY CASE WHEN phase IN ('RUNNING','RESUMING','WAITING_APPROVAL') THEN 0 ELSE 1 END, "
-                + "is_pinned DESC, updated_at DESC, id DESC LIMIT " + safeLimit + " OFFSET " + safeOffset);
+        if ("ARCHIVED".equals(status)) {
+            // 已归档区按「最近活动时间」倒序（忽略活跃阶段优先与置顶，见技术方案 5.2）
+            qw.last("ORDER BY updated_at DESC, id DESC LIMIT " + safeLimit + " OFFSET " + safeOffset);
+        } else {
+            // Active phases first, then pin, then updated_at — mirrors SessionGroupKey.compareSessions
+            qw.last("ORDER BY CASE WHEN phase IN ('RUNNING','RESUMING','WAITING_APPROVAL') THEN 0 ELSE 1 END, "
+                    + "is_pinned DESC, updated_at DESC, id DESC LIMIT " + safeLimit + " OFFSET " + safeOffset);
+        }
         List<Session> items = sessionMapper.selectList(qw);
         long totalVal = total != null ? total : 0;
         boolean hasMore = (long) safeOffset + items.size() < totalVal;
@@ -575,6 +580,61 @@ public class SessionService {
         Session session = getSession(id);
         session.setStatus("ARCHIVED");
         sessionMapper.updateById(session);
+    }
+
+    /** 恢复归档：status ARCHIVED → ACTIVE（前端「已归档」区右键「恢复」）。 */
+    public void unarchiveSession(Long id) {
+        Session session = getSession(id);
+        session.setStatus("ACTIVE");
+        sessionMapper.updateById(session);
+    }
+
+    /**
+     * 审批计数归零后恢复运行：仅当会话当前处于 WAITING_APPROVAL 时才原子转换到 RUNNING。
+     * 条件更新失败（已进入 FAILED / CANCELLED / COMPLETED 等终态）时不做任何覆盖，返回 false。
+     */
+    public boolean restoreRunningAfterApproval(Long sessionId) {
+        LambdaUpdateWrapper<Session> uw = new LambdaUpdateWrapper<>();
+        uw.eq(Session::getId, sessionId)
+                .eq(Session::getPhase, "WAITING_APPROVAL")
+                .notIn(Session::getPhase, "FAILED", "CANCELLED", "COMPLETED")
+                .set(Session::getPhase, "RUNNING")
+                .set(Session::getLastActivityAt, LocalDateTime.now());
+        int rows = sessionMapper.update(null, uw);
+        if (rows > 0) {
+            log.debug("Restored session {} from WAITING_APPROVAL to RUNNING", sessionId);
+        }
+        return rows > 0;
+    }
+
+    /**
+     * 首个待审批请求登记时进入 WAITING_APPROVAL：条件更新，仅当会话当前非终态时生效，
+     * 避免与用户取消（CANCELLED）/ 失败（FAILED）等终态并发竞态时被覆盖。
+     */
+    public boolean enterWaitingApproval(Long sessionId) {
+        LambdaUpdateWrapper<Session> uw = new LambdaUpdateWrapper<>();
+        uw.eq(Session::getId, sessionId)
+                .notIn(Session::getPhase, "FAILED", "CANCELLED", "COMPLETED")
+                .set(Session::getPhase, "WAITING_APPROVAL")
+                .set(Session::getLastActivityAt, LocalDateTime.now());
+        int rows = sessionMapper.update(null, uw);
+        if (rows > 0) {
+            log.debug("Session {} entered WAITING_APPROVAL (conditional)", sessionId);
+        }
+        return rows > 0;
+    }
+
+    /**
+     * 批量查询多个主会话的全部有效边路任务（供列表 VO 一次性聚合任务树信号，避免 N+1）。
+     */
+    public List<Session> listSideTasksByParentIds(Collection<Long> parentIds) {
+        if (parentIds == null || parentIds.isEmpty()) {
+            return List.of();
+        }
+        return sessionMapper.selectList(new LambdaQueryWrapper<Session>()
+                .in(Session::getParentSessionId, parentIds)
+                .eq(Session::getSessionType, "SIDE_TASK")
+                .ne(Session::getStatus, "ARCHIVED"));
     }
 
     /**
@@ -1164,13 +1224,15 @@ public class SessionService {
     }
 
     /**
-     * Find sessions stuck in RUNNING or RESUMING beyond the stale threshold.
+     * Find sessions stuck in RUNNING / RESUMING / WAITING_APPROVAL beyond the stale threshold.
+     * WAITING_APPROVAL 纳入：审批 Registry 为内存态，服务重启后审批请求丢失，
+     * 残留的 WAITING_APPROVAL 会话需由 stale sweep 终止为 FAILED，避免永久卡死。
      */
     public List<Session> findStaleRunningSessions() {
         LocalDateTime threshold = LocalDateTime.now().minusMinutes(STALE_MINUTES);
-        log.debug("Finding stale RUNNING/RESUMING sessions older than {}", threshold);
+        log.debug("Finding stale RUNNING/RESUMING/WAITING_APPROVAL sessions older than {}", threshold);
         QueryWrapper<Session> qw = new QueryWrapper<>();
-        qw.in("phase", "RUNNING", "RESUMING")
+        qw.in("phase", "RUNNING", "RESUMING", "WAITING_APPROVAL")
           .and(w -> w.lt("last_activity_at", threshold)
                      .or()
                      .isNull("last_activity_at"));

@@ -1,5 +1,6 @@
 package cn.etarch.mao.session.service;
 
+import cn.etarch.mao.harness.approval.SessionTreeSignalPublisher;
 import cn.etarch.mao.notification.task.entity.TaskNotificationDelivery;
 import cn.etarch.mao.notification.task.service.TaskNotificationDeliveryService;
 import cn.etarch.mao.session.entity.Session;
@@ -21,8 +22,9 @@ class TaskTerminalServiceTest {
     private final SessionService sessionService = mock(SessionService.class);
     private final StreamingWsRegistry registry = mock(StreamingWsRegistry.class);
     private final TaskNotificationDeliveryService deliveryService = mock(TaskNotificationDeliveryService.class);
+    private final SessionTreeSignalPublisher treeSignalPublisher = mock(SessionTreeSignalPublisher.class);
     private final TaskTerminalService service = new TaskTerminalService(
-            sessionService, registry, deliveryService, Runnable::run);
+            sessionService, registry, deliveryService, treeSignalPublisher, Runnable::run);
 
     @Test
     void suppressesWebhookWhenWebSocketWriteSucceeds() {

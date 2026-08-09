@@ -56,6 +56,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
     private final MessageQueueService messageQueueService;
     private final LocalToolSessionRegistry localToolSessionRegistry;
     private final AskUserQuestionsRegistry askUserQuestionsRegistry;
+    private final cn.etarch.mao.harness.approval.SessionTreeSignalPublisher treeSignalPublisher;
     private final ActivityService activityService;
     private final SessionActivityHeartbeat activityHeartbeat;
     private final SessionTodoMapper sessionTodoMapper;
@@ -254,6 +255,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                                MessageQueueService messageQueueService,
                                LocalToolSessionRegistry localToolSessionRegistry,
                                AskUserQuestionsRegistry askUserQuestionsRegistry,
+                               cn.etarch.mao.harness.approval.SessionTreeSignalPublisher treeSignalPublisher,
                                ActivityService activityService,
                                SessionActivityHeartbeat activityHeartbeat,
                                SessionTodoMapper sessionTodoMapper,
@@ -276,6 +278,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         this.messageQueueService = messageQueueService;
         this.localToolSessionRegistry = localToolSessionRegistry;
         this.askUserQuestionsRegistry = askUserQuestionsRegistry;
+        this.treeSignalPublisher = treeSignalPublisher;
         this.activityService = activityService;
         this.activityHeartbeat = activityHeartbeat;
         this.sessionTodoMapper = sessionTodoMapper;
@@ -540,6 +543,10 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 registry.send(userId, WsEvent.of("session_status", sessionId,
                         Map.of("phase", "RUNNING", "executionId", executionId)));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "RUNNING")));
+                // 边路任务后续消息进入运行：重推父任务任务树信号（聚焦模式实时升档）
+                if ("SIDE_TASK".equals(session.getSessionType())) {
+                    treeSignalPublisher.publishIfSideTask(sessionId);
+                }
 
                 // LOCAL mode: sync skills to client workspace before agent execution
                 if ("LOCAL".equals(session.getExecutionMode())) {
@@ -833,6 +840,10 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 registry.send(userId, WsEvent.of("session_status", sessionId,
                         Map.of("phase", "RUNNING", "executionId", executionId)));
                 registry.send(userId, WsEvent.of("session_list_update", sessionId, Map.of("phase", "RUNNING")));
+                // 边路任务后续消息进入运行：重推父任务任务树信号（聚焦模式实时升档）
+                if ("SIDE_TASK".equals(session.getSessionType())) {
+                    treeSignalPublisher.publishIfSideTask(sessionId);
+                }
 
                 // LOCAL mode: sync skills to client workspace before agent execution
                 if ("LOCAL".equals(session.getExecutionMode())) {
@@ -943,6 +954,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         if (completed) {
             registry.send(userId, WsEvent.of("ask_user_questions_cancelled", sessionId,
                     Map.of("requestId", requestId)));
+            // 待回答解除后，按会话类型统一重推任务树信号（边路 → 父任务；主会话 → 自身），聚焦模式降档
+            treeSignalPublisher.publishForSession(sessionId);
         }
     }
 
@@ -1086,6 +1099,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 // 通过标准事件通知执行状态（sessionId = sideSessionId，前端需订阅方可见）
                 registry.send(userId, WsEvent.of("session_status", sideSessionId,
                         Map.of("phase", "RUNNING", "executionId", sideExecutionId)));
+                // 边路任务进入运行：重推父任务任务树信号（聚焦模式实时升档）
+                treeSignalPublisher.publishIfSideTask(sideSessionId);
 
                 // LOCAL 模式：Side Task 使用独立的子会话（MCP 工具缓存按 sessionId 隔离），
                 // 首条消息前必须同步该子会话的 MCP 工具清单，否则模型无法发现/调用 MCP 工具。
