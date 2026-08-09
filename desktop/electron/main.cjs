@@ -846,6 +846,7 @@ function isGitWorkspace(workspace) {
 }
 
 const { getGitStatus, getGitFileDiff, listGitRepos } = require('./gitStatus.cjs')
+const { buildCommitInput, commit: gitCommit, pull: gitPull, push: gitPush } = require('./gitOperations.cjs')
 
 function loadMainContent() {
   if (process.env.NODE_ENV === 'development') {
@@ -1049,6 +1050,22 @@ ipcMain.handle('git-file-diff', async (event, { workspace, repoPath, path: fileP
       unavailableReason: e.message || '读取 Git diff 失败',
     }
   }
+})
+
+ipcMain.handle('git-commit-input', async (_event, { workspace, repoPath } = {}) => {
+  return buildCommitInput(workspace || currentWorkspace, repoPath)
+})
+
+ipcMain.handle('git-commit', async (_event, { workspace, repoPath, message } = {}) => {
+  return gitCommit(workspace || currentWorkspace, repoPath, message)
+})
+
+ipcMain.handle('git-pull', async (_event, { workspace, repoPath } = {}) => {
+  return gitPull(workspace || currentWorkspace, repoPath)
+})
+
+ipcMain.handle('git-push', async (_event, { workspace, repoPath } = {}) => {
+  return gitPush(workspace || currentWorkspace, repoPath)
 })
 
 ipcMain.handle('open-external', async (event, url) => {

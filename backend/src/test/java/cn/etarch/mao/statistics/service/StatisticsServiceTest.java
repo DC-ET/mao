@@ -7,6 +7,7 @@ import cn.etarch.mao.session.mapper.MessageMapper;
 import cn.etarch.mao.session.mapper.SessionMapper;
 import cn.etarch.mao.user.entity.User;
 import cn.etarch.mao.user.mapper.UserMapper;
+import cn.etarch.mao.usage.mapper.LlmUsageMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import org.junit.jupiter.api.Test;
 
@@ -27,8 +28,9 @@ class StatisticsServiceTest {
     private final UserMapper userMapper = mock(UserMapper.class);
     private final SessionMapper sessionMapper = mock(SessionMapper.class);
     private final MessageMapper messageMapper = mock(MessageMapper.class);
+    private final LlmUsageMapper llmUsageMapper = mock(LlmUsageMapper.class);
     private final StatisticsService service = new StatisticsService(
-            agentMapper, modelMapper, userMapper, sessionMapper, messageMapper);
+            agentMapper, modelMapper, userMapper, sessionMapper, messageMapper, llmUsageMapper);
 
     @Test
     void overviewContainsTotalsAndTodayCounts() {
@@ -75,11 +77,20 @@ class StatisticsServiceTest {
     void modelStatsCountsMessagesPerModel() {
         when(modelMapper.selectList(null)).thenReturn(List.of(model(1L, "GPT"), model(2L, "Claude")));
         when(messageMapper.selectCount(any(QueryWrapper.class))).thenReturn(10L, 20L);
+        when(messageMapper.selectTokenCountByModel(1L)).thenReturn(100L);
+        when(messageMapper.selectTokenCountByModel(2L)).thenReturn(200L);
+        when(llmUsageMapper.sumByModelId(1L)).thenReturn(Map.of("callCount", 2L, "promptTokens", 20L,
+                "completionTokens", 10L, "totalTokens", 30L));
+        when(llmUsageMapper.sumByModelId(2L)).thenReturn(Map.of());
 
         List<Map<String, Object>> stats = service.getModelStats();
 
         assertThat(stats).extracting(row -> row.get("modelName")).containsExactly("GPT", "Claude");
         assertThat(stats).extracting(row -> row.get("messageCount")).containsExactly(10L, 20L);
+        assertThat(stats.get(0)).containsEntry("backgroundCallCount", 2L)
+                .containsEntry("messageTokens", 100L).containsEntry("totalTokens", 130L);
+        assertThat(stats.get(1)).containsEntry("backgroundTotalTokens", 0L)
+                .containsEntry("totalTokens", 200L);
     }
 
     @Test

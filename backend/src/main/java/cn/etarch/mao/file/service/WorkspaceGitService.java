@@ -307,7 +307,22 @@ public class WorkspaceGitService {
             String symbolic = runGitOk(repoRoot, "symbolic-ref", "--short", "HEAD");
             branch = symbolic != null ? symbolic.trim() : null;
         }
-        dto.setBranch(branch != null ? branch.trim() : null);
+        String normalizedBranch = branch != null ? branch.trim() : null;
+        boolean detached = "HEAD".equals(normalizedBranch)
+                && runGitOk(repoRoot, "symbolic-ref", "-q", "HEAD") == null;
+        dto.setBranch(normalizedBranch);
+        dto.setDetachedHead(detached);
+        String remoteOutput = runGitOk(repoRoot, "remote");
+        List<String> remotes = remoteOutput == null || remoteOutput.isBlank()
+                ? List.of()
+                : java.util.Arrays.stream(remoteOutput.split("\\n")).map(String::trim)
+                    .filter(s -> !s.isEmpty()).sorted().toList();
+        dto.setRemotes(remotes);
+        dto.setHasRemote(!remotes.isEmpty());
+        if (!detached) {
+            String upstream = runGitOk(repoRoot, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}");
+            dto.setUpstream(upstream != null ? upstream.trim() : null);
+        }
 
         Map<String, GitChangedFileDTO> files = collectChangedFiles(repoRoot);
         int insertions = 0;
@@ -406,6 +421,24 @@ public class WorkspaceGitService {
             diff.setTruncated(true);
         }
         return diff;
+    }
+
+    Path resolveRepository(String sessionWorkspace, String repoPath) {
+        Path workspace = pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace);
+        Path repoDir = resolveRepoDir(workspace, repoPath);
+        String repoRoot = runGitOk(repoDir, "rev-parse", "--show-toplevel");
+        if (repoRoot == null) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "当前工作区不是 Git 仓库");
+        }
+        Path root = Path.of(repoRoot.trim()).toAbsolutePath().normalize();
+        if (!root.startsWith(workspace)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "路径访问被拒绝");
+        }
+        return root;
+    }
+
+    Map<String, GitChangedFileDTO> changedFiles(Path repoRoot) {
+        return collectChangedFiles(repoRoot);
     }
 
     private Map<String, GitChangedFileDTO> collectChangedFiles(Path repoRoot) {
@@ -540,8 +573,9 @@ public class WorkspaceGitService {
     }
 
     private ReadResult readTextLimited(Path file) {
-        try {
-            byte[] bytes = Files.readAllBytes(file);
+        try (InputStream input = Files.newInputStream(file)) {
+            long size = Files.size(file);
+            byte[] bytes = input.readNBytes(MAX_DIFF_BYTES + 1);
             for (byte b : bytes) {
                 if (b == 0) {
                     return new ReadResult("", false, true);
@@ -549,7 +583,7 @@ public class WorkspaceGitService {
             }
             String content = new String(bytes, StandardCharsets.UTF_8);
             TruncateResult trunc = truncateText(content);
-            return new ReadResult(trunc.content(), trunc.truncated(), false);
+            return new ReadResult(trunc.content(), trunc.truncated() || size > bytes.length, false);
         } catch (IOException e) {
             log.warn("Failed to read file for git diff: {}", file, e);
             return new ReadResult("", false, true);
@@ -700,6 +734,10 @@ public class WorkspaceGitService {
         private boolean git;
         private String repoRoot;
         private String branch;
+        private List<String> remotes;
+        private boolean hasRemote;
+        private boolean detachedHead;
+        private String upstream;
         private int insertions;
         private int deletions;
         private int changedFileCount;

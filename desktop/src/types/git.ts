@@ -7,6 +7,10 @@ export interface GitStatusSummary {
   insertions: number
   deletions: number
   changedFileCount: number
+  remotes: string[]
+  hasRemote: boolean
+  detachedHead: boolean
+  upstream?: string
   error?: string
 }
 
@@ -53,6 +57,20 @@ export interface GitFileDiff {
   truncated?: boolean
   binary?: boolean
   unavailableReason?: string
+}
+
+export type GitOperationType = 'commit' | 'pull' | 'push'
+
+export interface GitOperationResult {
+  success: boolean
+  operation: GitOperationType
+  message?: string
+  error?: string
+  branch?: string
+  commitHash?: string
+  commitTitle?: string
+  stashRef?: string
+  conflict?: boolean
 }
 
 export type GitTreeNode =

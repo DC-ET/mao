@@ -29,9 +29,12 @@ public interface MessageMapper extends BaseMapper<Message> {
             "GROUP BY s.user_id")
     List<Map<String, Object>> selectMessageCountsByUser();
 
-    @Select("SELECT model_id AS modelId, COUNT(*) AS messageCount " +
+    @Select("SELECT model_id AS modelId, COUNT(*) AS messageCount, COALESCE(SUM(token_count), 0) AS totalTokens " +
             "FROM message WHERE model_id IS NOT NULL AND deleted = 0 GROUP BY model_id")
     List<Map<String, Object>> selectMessageCountsByModel();
+
+    @Select("SELECT COALESCE(SUM(token_count), 0) FROM message WHERE model_id = #{modelId} AND deleted = 0")
+    Long selectTokenCountByModel(@Param("modelId") Long modelId);
 
     @Select("SELECT a.id AS agentId, a.name AS agentName, " +
             "COUNT(DISTINCT s.id) AS sessionCount, COUNT(m.id) AS messageCount, " +

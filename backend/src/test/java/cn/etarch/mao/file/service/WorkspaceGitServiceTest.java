@@ -56,6 +56,9 @@ class WorkspaceGitServiceTest {
         assertThat(status.getIsGit()).isTrue();
         assertThat(status.getBranch()).isNotBlank();
         assertThat(status.getChangedFileCount()).isZero();
+        assertThat(status.isDetachedHead()).isFalse();
+        assertThat(status.isHasRemote()).isFalse();
+        assertThat(status.getRemotes()).isEmpty();
         assertThat(status.getInsertions()).isZero();
         assertThat(status.getDeletions()).isZero();
         assertThat(status.getFiles()).isEmpty();

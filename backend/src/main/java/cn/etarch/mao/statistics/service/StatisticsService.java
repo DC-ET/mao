@@ -5,6 +5,7 @@ import cn.etarch.mao.model.mapper.LlmModelMapper;
 import cn.etarch.mao.session.mapper.MessageMapper;
 import cn.etarch.mao.session.mapper.SessionMapper;
 import cn.etarch.mao.user.mapper.UserMapper;
+import cn.etarch.mao.usage.mapper.LlmUsageMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ public class StatisticsService {
     private final UserMapper userMapper;
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
+    private final LlmUsageMapper llmUsageMapper;
 
     public Map<String, Object> getOverview() {
         Map<String, Object> overview = new HashMap<>();
@@ -59,9 +61,24 @@ public class StatisticsService {
                     new QueryWrapper<cn.etarch.mao.session.entity.Message>().eq("model_id", model.getId()));
             stat.put("messageCount", messageCount);
 
+            Map<String, Object> background = llmUsageMapper.sumByModelId(model.getId());
+            stat.put("backgroundCallCount", number(background, "callCount"));
+            stat.put("backgroundPromptTokens", number(background, "promptTokens"));
+            stat.put("backgroundCompletionTokens", number(background, "completionTokens"));
+            long messageTokens = Optional.ofNullable(messageMapper.selectTokenCountByModel(model.getId())).orElse(0L);
+            long backgroundTokens = number(background, "totalTokens");
+            stat.put("messageTokens", messageTokens);
+            stat.put("backgroundTotalTokens", backgroundTokens);
+            stat.put("totalTokens", messageTokens + backgroundTokens);
+
             stats.add(stat);
         }
         return stats;
+    }
+
+    private static long number(Map<String, Object> values, String key) {
+        Object value = values != null ? values.get(key) : null;
+        return value instanceof Number number ? number.longValue() : 0L;
     }
 
     public List<Map<String, Object>> getUserStats() {

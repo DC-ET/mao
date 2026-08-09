@@ -4,7 +4,7 @@ const readline = require('readline')
 const fs = require('fs')
 const path = require('path')
 
-const GIT_TIMEOUT_MS = 10_000
+const GIT_TIMEOUT_MS = 60_000
 const MAX_STDOUT_BYTES = 2 * 1024 * 1024
 const MAX_DIFF_LINES = 5000
 const MAX_DIFF_BYTES = 512 * 1024
@@ -14,7 +14,13 @@ function runGit(cwd, args) {
     const child = execFile(
       'git',
       ['-c', 'core.quotepath=false', ...args],
-      { cwd, encoding: 'utf8', maxBuffer: MAX_STDOUT_BYTES, timeout: GIT_TIMEOUT_MS },
+      {
+        cwd,
+        encoding: 'utf8',
+        maxBuffer: MAX_STDOUT_BYTES,
+        timeout: GIT_TIMEOUT_MS,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      },
       (err, stdout) => {
         if (err) {
           resolve({ exitCode: typeof err.code === 'number' ? err.code : 1, stdout: stdout || '' })
@@ -71,12 +77,21 @@ function countLines(content) {
 }
 
 function readTextLimited(filePath) {
+  let fd
   try {
-    const buf = fs.readFileSync(filePath)
-    if (isBinaryBuffer(buf)) return { content: '', truncated: false, binary: true }
-    return { ...truncateText(buf.toString('utf8')), binary: false }
+    const size = fs.statSync(filePath).size
+    const limit = Math.min(size, MAX_DIFF_BYTES + 1)
+    fd = fs.openSync(filePath, 'r')
+    const buf = Buffer.alloc(limit)
+    const bytesRead = fs.readSync(fd, buf, 0, limit, 0)
+    const content = buf.subarray(0, bytesRead)
+    if (isBinaryBuffer(content)) return { content: '', truncated: false, binary: true }
+    const result = truncateText(content.toString('utf8'))
+    return { ...result, truncated: result.truncated || size > bytesRead, binary: false }
   } catch {
     return { content: '', truncated: false, binary: true }
+  } finally {
+    if (fd != null) fs.closeSync(fd)
   }
 }
 
@@ -281,7 +296,10 @@ async function listGitRepos(workspace) {
 function summarizeRepoDir(name, ws) {
   const dir = path.join(ws, name)
   return new Promise((resolve) => {
-    const child = spawn('git', ['-c', 'core.quotepath=false', 'status', '--porcelain=v2', '--branch', '-M', '--untracked-files=all'], { cwd: dir })
+    const child = spawn('git', ['-c', 'core.quotepath=false', 'status', '--porcelain=v2', '--branch', '-M', '--untracked-files=all'], {
+      cwd: dir,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    })
     let branch
     let changedFileCount = 0
     const untrackedPaths = []
@@ -391,6 +409,13 @@ async function getGitStatus(workspace, repoPath) {
   }
   const filesMap = await collectChangedFiles(repoRoot)
   const files = Array.from(filesMap.values())
+  const [remotesOut, upstreamOut, symbolicHead] = await Promise.all([
+    runGitOk(repoRoot, ['remote']),
+    runGitOk(repoRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']),
+    runGitOk(repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
+  ])
+  const remotes = remotesOut ? remotesOut.split(/\r?\n/).map((item) => item.trim()).filter(Boolean) : []
+  const detachedHead = !symbolicHead
   let insertions = 0
   let deletions = 0
   for (const f of files) {
@@ -405,6 +430,10 @@ async function getGitStatus(workspace, repoPath) {
     deletions,
     changedFileCount: files.length,
     files,
+    remotes,
+    hasRemote: remotes.length > 0,
+    detachedHead,
+    upstream: upstreamOut ? upstreamOut.trim() : undefined,
   }
 }
 
@@ -489,7 +518,9 @@ async function getGitFileDiff(workspace, repoPath, relativePath) {
 }
 
 module.exports = {
+  collectChangedFiles,
   getGitStatus,
   getGitFileDiff,
   listGitRepos,
+  resolveRepoDir,
 }

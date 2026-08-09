@@ -7,6 +7,8 @@ import cn.etarch.mao.file.entity.FileEntity;
 import cn.etarch.mao.file.service.FileService;
 import cn.etarch.mao.file.service.WorkspaceBrowseService;
 import cn.etarch.mao.file.service.WorkspaceGitService;
+import cn.etarch.mao.file.service.GitCommitMessageService;
+import cn.etarch.mao.file.service.GitWriteOperationService;
 import cn.etarch.mao.harness.safety.PathSandbox;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.service.SessionService;
@@ -45,6 +47,8 @@ public class FileController {
     private final SessionService sessionService;
     private final WorkspaceBrowseService workspaceBrowseService;
     private final WorkspaceGitService workspaceGitService;
+    private final GitCommitMessageService gitCommitMessageService;
+    private final GitWriteOperationService gitWriteOperationService;
     private final PathSandbox pathSandbox;
     private final UploadProperties uploadProperties;
 
@@ -239,6 +243,42 @@ public class FileController {
         return Result.ok(workspaceGitService.getFileDiff(session.getWorkspace(), repoPath, path));
     }
 
+    @PostMapping("/workspace-git-commit")
+    public Result<GitWriteOperationService.GitOperationResult> workspaceGitCommit(
+            @AuthenticationPrincipal Long userId, @RequestBody GitOperationRequest request) {
+        Session session = requireOwnedSession(userId, request.getSessionId());
+        return Result.ok(gitWriteOperationService.commit(session, request.getRepoPath()));
+    }
+
+    @PostMapping("/workspace-git-pull")
+    public Result<GitWriteOperationService.GitOperationResult> workspaceGitPull(
+            @AuthenticationPrincipal Long userId, @RequestBody GitOperationRequest request) {
+        Session session = requireOwnedSession(userId, request.getSessionId());
+        return Result.ok(gitWriteOperationService.pull(session, request.getRepoPath()));
+    }
+
+    @PostMapping("/workspace-git-push")
+    public Result<GitWriteOperationService.GitOperationResult> workspaceGitPush(
+            @AuthenticationPrincipal Long userId, @RequestBody GitOperationRequest request) {
+        Session session = requireOwnedSession(userId, request.getSessionId());
+        return Result.ok(gitWriteOperationService.push(session, request.getRepoPath()));
+    }
+
+    @PostMapping("/git-commit-message")
+    public Result<GitCommitMessageService.CommitMessage> gitCommitMessage(
+            @AuthenticationPrincipal Long userId, @RequestBody GitCommitMessageRequest request) {
+        Session session = requireOwnedSession(userId, request.getSessionId());
+        return Result.ok(gitCommitMessageService.generate(session, request.getChanges()));
+    }
+
+    @PostMapping("/workspace-git-activity")
+    public Result<Void> workspaceGitActivity(
+            @AuthenticationPrincipal Long userId, @RequestBody LocalActivityRequest request) {
+        Session session = requireOwnedSession(userId, request.getSessionId());
+        gitWriteOperationService.recordLocalActivity(session, request.getResult());
+        return Result.ok();
+    }
+
     @GetMapping("/project-list")
     public Result<Map<String, Object>> listProjectFiles(
             @AuthenticationPrincipal Long userId,
@@ -294,6 +334,24 @@ public class FileController {
             vo.setUrl("/uploads/" + file.getStoredName());
         }
         return vo;
+    }
+
+    @Data
+    public static class GitOperationRequest {
+        private Long sessionId;
+        private String repoPath;
+    }
+
+    @Data
+    public static class GitCommitMessageRequest {
+        private Long sessionId;
+        private GitCommitMessageService.CommitGenerationInput changes;
+    }
+
+    @Data
+    public static class LocalActivityRequest {
+        private Long sessionId;
+        private GitWriteOperationService.LocalGitActivity result;
     }
 
     @Data

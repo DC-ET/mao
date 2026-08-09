@@ -80,6 +80,34 @@ interface AuthTokens {
   refreshToken: string | null
 }
 
+interface GitCommitGenerationInput {
+  files: Array<{
+    path: string
+    changeType: string
+    insertions: number
+    deletions: number
+    binary: boolean
+    sensitive: boolean
+    truncated: boolean
+    diff?: string
+  }>
+  truncated: boolean
+  diffBytes: number
+  error?: string
+}
+
+interface GitOperationResult {
+  success: boolean
+  operation: 'commit' | 'pull' | 'push'
+  message?: string
+  error?: string
+  branch?: string
+  commitHash?: string
+  commitTitle?: string
+  stashRef?: string
+  conflict?: boolean
+}
+
 type RemoveListener = () => void
 
 interface AppUpdateInfo {
@@ -122,6 +150,10 @@ interface ElectronAPI {
     insertions?: number
     deletions?: number
     changedFileCount?: number
+    remotes?: string[]
+    hasRemote?: boolean
+    detachedHead?: boolean
+    upstream?: string
     files?: Array<{
       path: string
       oldPath?: string
@@ -155,6 +187,10 @@ interface ElectronAPI {
     }>
     error?: string
   }>
+  gitCommitInput(workspace?: string, repoPath?: string): Promise<GitCommitGenerationInput>
+  gitCommit(workspace: string | undefined, repoPath: string | undefined, message: string): Promise<GitOperationResult>
+  gitPull(workspace?: string, repoPath?: string): Promise<GitOperationResult>
+  gitPush(workspace?: string, repoPath?: string): Promise<GitOperationResult>
   checkForUpdate(): Promise<{ skipped?: boolean; reason?: string; updateInfo?: AppUpdateInfo | null }>
   installUpdate(): Promise<{ success: boolean; error?: string }>
   onUpdateChecking(callback: (data: { feedUrl?: string }) => void): RemoveListener

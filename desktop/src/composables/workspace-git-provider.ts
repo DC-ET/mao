@@ -1,12 +1,15 @@
 import { computed, type Ref } from 'vue'
 import { api } from '../api'
-import type { GitFileDiff, GitReposResult, GitStatusResult } from '../types/git'
+import type { GitFileDiff, GitOperationResult, GitReposResult, GitStatusResult } from '../types/git'
 
 export interface WorkspaceGitProvider {
   /** 多仓库发现：工作区自身是否 git 仓库 + 一级子目录 git 仓库列表。 */
   getRepos(): Promise<GitReposResult>
   getStatus(repoPath?: string): Promise<GitStatusResult>
   getFileDiff(relativePath: string, repoPath?: string): Promise<GitFileDiff>
+  commit(repoPath?: string): Promise<GitOperationResult>
+  pull(repoPath?: string): Promise<GitOperationResult>
+  push(repoPath?: string): Promise<GitOperationResult>
 }
 
 function emptyStatus(error?: string): GitStatusResult {
@@ -15,6 +18,9 @@ function emptyStatus(error?: string): GitStatusResult {
     insertions: 0,
     deletions: 0,
     changedFileCount: 0,
+    remotes: [],
+    hasRemote: false,
+    detachedHead: false,
     files: [],
     error,
   }
@@ -31,6 +37,10 @@ function normalizeStatus(data: any): GitStatusResult {
     insertions: data.insertions ?? 0,
     deletions: data.deletions ?? 0,
     changedFileCount: data.changedFileCount ?? (data.files?.length ?? 0),
+    remotes: Array.isArray(data.remotes) ? data.remotes : [],
+    hasRemote: !!data.hasRemote,
+    detachedHead: !!data.detachedHead,
+    upstream: data.upstream,
     files: Array.isArray(data.files)
       ? data.files.map((f: any) => ({
           path: f.path,
@@ -58,7 +68,27 @@ function normalizeDiff(data: any, fallbackPath: string): GitFileDiff {
   }
 }
 
-export function createLocalGitProvider(workspace: string): WorkspaceGitProvider {
+function failedOperation(operation: 'commit' | 'pull' | 'push', error: unknown): GitOperationResult {
+  return {
+    success: false,
+    operation,
+    error: error instanceof Error ? error.message : 'Git 操作失败',
+  }
+}
+
+async function recordLocalActivity(sessionId: number, repoPath: string | undefined, result: GitOperationResult, started: number) {
+  try {
+    await api.post('/files/workspace-git-activity', {
+      sessionId,
+      result: { ...result, repoPath, durationMs: Date.now() - started },
+    })
+  } catch {
+    // Git 操作结果不因审计记录失败而改变。
+  }
+}
+
+export function createLocalGitProvider(workspace: string, sessionId: string): WorkspaceGitProvider {
+  const numericSessionId = Number(sessionId)
   return {
     async getRepos() {
       try {
@@ -94,6 +124,45 @@ export function createLocalGitProvider(workspace: string): WorkspaceGitProvider 
         }
       }
     },
+    async commit(repoPath?: string) {
+      const started = Date.now()
+      let result: GitOperationResult
+      try {
+        const changes = await window.electronAPI.gitCommitInput(workspace, repoPath)
+        if (changes.error) return failedOperation('commit', changes.error)
+        const { data } = await api.post('/files/git-commit-message', {
+          sessionId: numericSessionId,
+          changes,
+        })
+        result = await window.electronAPI.gitCommit(workspace, repoPath, data.message)
+      } catch (e) {
+        result = failedOperation('commit', e)
+      }
+      await recordLocalActivity(numericSessionId, repoPath, result, started)
+      return result
+    },
+    async pull(repoPath?: string) {
+      const started = Date.now()
+      let result: GitOperationResult
+      try {
+        result = await window.electronAPI.gitPull(workspace, repoPath)
+      } catch (e) {
+        result = failedOperation('pull', e)
+      }
+      await recordLocalActivity(numericSessionId, repoPath, result, started)
+      return result
+    },
+    async push(repoPath?: string) {
+      const started = Date.now()
+      let result: GitOperationResult
+      try {
+        result = await window.electronAPI.gitPush(workspace, repoPath)
+      } catch (e) {
+        result = failedOperation('push', e)
+      }
+      await recordLocalActivity(numericSessionId, repoPath, result, started)
+      return result
+    },
   }
 }
 
@@ -116,6 +185,9 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
           unavailableReason: '会话未就绪',
         }
       },
+      async commit() { return failedOperation('commit', new Error('会话未就绪')) },
+      async pull() { return failedOperation('pull', new Error('会话未就绪')) },
+      async push() { return failedOperation('push', new Error('会话未就绪')) },
     }
   }
 
@@ -160,6 +232,30 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
         }
       }
     },
+    async commit(repoPath?: string) {
+      try {
+        const { data } = await api.post('/files/workspace-git-commit', { sessionId: numericSessionId, repoPath })
+        return data
+      } catch (e) {
+        return failedOperation('commit', e)
+      }
+    },
+    async pull(repoPath?: string) {
+      try {
+        const { data } = await api.post('/files/workspace-git-pull', { sessionId: numericSessionId, repoPath })
+        return data
+      } catch (e) {
+        return failedOperation('pull', e)
+      }
+    },
+    async push(repoPath?: string) {
+      try {
+        const { data } = await api.post('/files/workspace-git-push', { sessionId: numericSessionId, repoPath })
+        return data
+      } catch (e) {
+        return failedOperation('push', e)
+      }
+    },
   }
 }
 
@@ -176,8 +272,8 @@ export function useWorkspaceGitProvider(
     if (executionMode.value === 'CLOUD' && sessionId.value) {
       return createCloudGitProvider(sessionId.value)
     }
-    if (executionMode.value === 'LOCAL' && workspace.value && canUseLocalGit()) {
-      return createLocalGitProvider(workspace.value)
+    if (executionMode.value === 'LOCAL' && workspace.value && sessionId.value && canUseLocalGit()) {
+      return createLocalGitProvider(workspace.value, sessionId.value)
     }
     return null
   })

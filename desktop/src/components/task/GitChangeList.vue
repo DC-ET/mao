@@ -5,9 +5,32 @@
         变更
         <span v-if="!loading" class="git-count">{{ files.length }}</span>
       </div>
-      <button class="git-refresh-btn" :disabled="loading" title="刷新" @click="$emit('refresh')">
-        <el-icon :size="14" :class="{ spinning: loading }"><Refresh /></el-icon>
-      </button>
+      <div class="git-toolbar-actions">
+        <el-tooltip :content="commitDisabledReason || '提交代码'" placement="top" :show-after="300">
+          <span>
+            <button class="git-action-btn" :disabled="!!commitDisabledReason" aria-label="提交代码" @click="$emit('commit')">
+              <el-icon :size="14" :class="{ spinning: operation === 'commit' }"><Check /></el-icon>
+            </button>
+          </span>
+        </el-tooltip>
+        <el-tooltip :content="syncDisabledReason || '拉取代码'" placement="top" :show-after="300">
+          <span>
+            <button class="git-action-btn" :disabled="!!syncDisabledReason" aria-label="拉取代码" @click="$emit('pull')">
+              <el-icon :size="14" :class="{ spinning: operation === 'pull' }"><Download /></el-icon>
+            </button>
+          </span>
+        </el-tooltip>
+        <el-tooltip :content="syncDisabledReason || '推送代码'" placement="top" :show-after="300">
+          <span>
+            <button class="git-action-btn" :disabled="!!syncDisabledReason" aria-label="推送代码" @click="$emit('push')">
+              <el-icon :size="14" :class="{ spinning: operation === 'push' }"><Upload /></el-icon>
+            </button>
+          </span>
+        </el-tooltip>
+        <button class="git-action-btn" :disabled="loading || !!operation" title="刷新" aria-label="刷新 Git 状态" @click="$emit('refresh')">
+          <el-icon :size="14" :class="{ spinning: loading && !operation }"><Refresh /></el-icon>
+        </button>
+      </div>
     </div>
 
     <div v-if="error" class="git-state git-error">
@@ -34,7 +57,8 @@
 
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
+import { Check, Download, Refresh, Upload } from '@element-plus/icons-vue'
+import { ElTooltip } from 'element-plus'
 import type { GitChangedFile, GitTreeNode } from '../../types/git'
 import GitChangeTreeNode from './GitChangeTreeNode.vue'
 
@@ -42,12 +66,35 @@ const props = defineProps<{
   files: GitChangedFile[]
   loading?: boolean
   error?: string
+  hasRemote?: boolean
+  detachedHead?: boolean
+  operation?: 'commit' | 'pull' | 'push' | null
 }>()
 
 defineEmits<{
   refresh: []
+  commit: []
+  pull: []
+  push: []
   'open-diff': [file: GitChangedFile]
 }>()
+
+const commitDisabledReason = computed(() => {
+  if (props.operation) return 'Git 操作进行中'
+  if (props.loading) return '正在读取 Git 状态'
+  if (props.error) return 'Git 状态不可用'
+  if (props.files.length === 0) return '没有待提交的变更'
+  return ''
+})
+
+const syncDisabledReason = computed(() => {
+  if (props.operation) return 'Git 操作进行中'
+  if (props.loading) return '正在读取 Git 状态'
+  if (props.error) return 'Git 状态不可用'
+  if (props.detachedHead) return 'detached HEAD，请先切换分支'
+  if (!props.hasRemote) return '仓库未配置远端'
+  return ''
+})
 
 /** Paths of collapsed directories (default: all expanded) */
 const collapsed = reactive(new Set<string>())
@@ -214,7 +261,13 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
   letter-spacing: 0;
 }
 
-.git-refresh-btn {
+.git-toolbar-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.git-action-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -227,13 +280,13 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
   cursor: pointer;
 }
 
-.git-refresh-btn:hover:not(:disabled) {
+.git-action-btn:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.06);
   color: var(--aw-primary);
 }
 
-.git-refresh-btn:disabled {
-  opacity: 0.5;
+.git-action-btn:disabled {
+  opacity: 0.38;
   cursor: default;
 }
 
@@ -280,7 +333,7 @@ function buildGitTree(files: GitChangedFile[]): GitTreeNode[] {
   border-bottom-color: var(--aw-hairline);
 }
 
-[data-theme="dark"] .git-refresh-btn:hover:not(:disabled) {
+[data-theme="dark"] .git-action-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
 }
 </style>

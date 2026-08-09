@@ -199,7 +199,13 @@
         :files="gitFiles"
         :loading="gitLoading"
         :error="gitError"
+        :has-remote="gitStatus?.hasRemote"
+        :detached-head="gitStatus?.detachedHead"
+        :operation="gitOperation"
         @refresh="refreshAll"
+        @commit="runGitOperation('commit')"
+        @pull="runGitOperation('pull')"
+        @push="runGitOperation('push')"
         @open-diff="handleOpenGitDiff"
       />
     </div>
@@ -211,7 +217,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import { FolderOpened, DocumentCopy, User, Share } from '@element-plus/icons-vue'
-import { ElTooltip } from 'element-plus'
+import { ElMessage, ElTooltip } from 'element-plus'
 import TodoChecklist from './TodoChecklist.vue'
 import SideTaskList from './SideTaskList.vue'
 import SubagentList from './SubagentList.vue'
@@ -311,6 +317,9 @@ const statusProviderRef = computed<WorkspaceGitProvider | null>(() => {
       getRepos: () => p.getRepos(),
       getStatus: () => p.getStatus(selectedRepoPath.value),
       getFileDiff: (relativePath: string) => p.getFileDiff(relativePath, selectedRepoPath.value),
+      commit: () => p.commit(selectedRepoPath.value),
+      pull: () => p.pull(selectedRepoPath.value),
+      push: () => p.push(selectedRepoPath.value),
     }
   }
   return p
@@ -355,7 +364,32 @@ const gitSummaryVisible = computed(() => {
 /** 手动刷新 / 任务阶段结束自动刷新：先刷仓库列表与选中项，再刷选中仓库状态。 */
 async function refreshAll() {
   await refreshRepos()
-  if (gitEnabled.value) void refreshGit()
+  if (gitEnabled.value) await refreshGit()
+}
+
+const gitOperation = ref<'commit' | 'pull' | 'push' | null>(null)
+
+async function runGitOperation(operation: 'commit' | 'pull' | 'push') {
+  const provider = statusProviderRef.value
+  if (!provider || gitOperation.value) return
+  gitOperation.value = operation
+  try {
+    const result = await provider[operation]()
+    if (result.success) {
+      const message = operation === 'commit' && result.commitHash && result.commitTitle
+        ? `提交成功 ${result.commitHash}：${result.commitTitle}`
+        : result.message || `${operation === 'pull' ? '拉取' : '推送'}成功`
+      ElMessage.success(message)
+    } else {
+      ElMessage.error(result.error || 'Git 操作失败')
+    }
+  } catch (error) {
+    const err = error as Error & { toastShown?: boolean }
+    if (!err.toastShown) ElMessage.error(err.message || 'Git 操作失败')
+  } finally {
+    gitOperation.value = null
+    await refreshAll()
+  }
 }
 
 function handleRepoSelect(path: string) {
