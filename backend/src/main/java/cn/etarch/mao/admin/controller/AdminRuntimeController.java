@@ -34,8 +34,8 @@ public class AdminRuntimeController {
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
 
-    /** 后端重启脚本绝对路径（生产默认 /root/soft/mao/backend/restart.sh）。 */
-    @Value("${app.runtime.restart-script:/root/soft/mao/backend/restart.sh}")
+    /** 后端重启脚本路径：${app.root-dir}/backend/restart.sh。 */
+    @Value("${app.root-dir}/backend/restart.sh")
     private String restartScript;
 
     private final AtomicBoolean restarting = new AtomicBoolean(false);
