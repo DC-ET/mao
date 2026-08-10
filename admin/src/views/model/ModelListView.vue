@@ -90,9 +90,6 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="调用消息" width="100" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
-          <template #default="{ row }">{{ modelStat(row.id).messageCount || 0 }}</template>
-        </el-table-column>
         <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <el-button
@@ -266,7 +263,6 @@ const state = computed(() => tabStates[activeTab.value])
 const isTextTab = computed(() => activeTab.value === 'text')
 
 const loading = ref(false)
-const modelStats = ref<any[]>([])
 const providerOptions = ref<string[]>([])
 const dialogVisible = ref(false)
 const currentModel = ref<any>(null)
@@ -291,20 +287,12 @@ async function fetchModels() {
     if (filters.supportsVision !== undefined) params.supportsVision = filters.supportsVision
     if (filters.isDefault !== undefined) params.isDefault = filters.isDefault
 
-    const [{ data }, summaryRes] = await Promise.all([
-      api.get('/models', { params }),
-      api.get('/admin/analytics/summary')
-    ])
+    const { data } = await api.get('/models', { params })
     tabStates[tab].models = data?.records || []
-    modelStats.value = summaryRes.data?.modelStats || []
     tabStates[tab].total = data?.total || 0
   } finally {
     loading.value = false
   }
-}
-
-function modelStat(id: number) {
-  return modelStats.value.find(stat => stat.modelId === id) || {}
 }
 
 async function fetchProviderOptions() {
