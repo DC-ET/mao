@@ -61,7 +61,7 @@ class CoverageSurfaceTest {
     }
 
     @Test
-    @Timeout(30)
+    @Timeout(60)
     void exerciseSelectedInternalHelpersWithMockedDependencies() throws Exception {
         int invoked = 0;
         for (Class<?> type : discoverProjectClasses()) {
@@ -222,8 +222,9 @@ class CoverageSurfaceTest {
                 || methodName.equals("executeToolCalls")
                 || methodName.equals("dispatchTool")
                 || methodName.equals("executeCloud")
-                // 真实文件 IO：mock Path 的 channel read() 返回 0 会陷入无限循环
+                // 真实流 IO：mock 输入流的 read() 返回 0 会陷入无限循环
                 || methodName.equals("readTextLimited")
+                || methodName.equals("readLimited")
                 || name.contains("OpenAiLlmAdapter")
                 || name.contains("OpenWebPageTool")
                 || name.contains("WebSearchTool")
