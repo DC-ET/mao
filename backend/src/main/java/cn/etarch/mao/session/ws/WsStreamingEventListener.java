@@ -274,9 +274,19 @@ public class WsStreamingEventListener implements AgentEventListener {
     }
 
     @Override
-    public void onLlmRetry(int statusCode, int attempt, int maxRetries, int delaySeconds) {
+    public void onLlmWaiting(String phase, long elapsedSeconds) {
+        send("llm_waiting", Map.of(
+                "phase", phase,
+                "elapsedSeconds", elapsedSeconds
+        ));
+    }
+
+    @Override
+    public void onLlmRetry(String reason, Integer statusCode, int attempt,
+                           int maxRetries, int delaySeconds) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("statusCode", statusCode);
+        payload.put("reason", reason);
+        if (statusCode != null) payload.put("statusCode", statusCode);
         payload.put("attempt", attempt);
         payload.put("maxRetries", maxRetries);
         payload.put("delaySeconds", delaySeconds);

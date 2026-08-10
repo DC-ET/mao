@@ -103,8 +103,14 @@ public class CompositeAgentEventListener implements AgentEventListener {
     }
 
     @Override
-    public void onLlmRetry(int statusCode, int attempt, int maxRetries, int delaySeconds) {
-        forEach("onLlmRetry", l -> l.onLlmRetry(statusCode, attempt, maxRetries, delaySeconds));
+    public void onLlmWaiting(String phase, long elapsedSeconds) {
+        forEach("onLlmWaiting", l -> l.onLlmWaiting(phase, elapsedSeconds));
+    }
+
+    @Override
+    public void onLlmRetry(String reason, Integer statusCode, int attempt,
+                           int maxRetries, int delaySeconds) {
+        forEach("onLlmRetry", l -> l.onLlmRetry(reason, statusCode, attempt, maxRetries, delaySeconds));
     }
 
     private void forEach(String method, ListenerAction action) {

@@ -37,6 +37,7 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -81,6 +82,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
     /** sessionId → current execution id */
     private final ConcurrentHashMap<Long, String> runningExecutionIds = new ConcurrentHashMap<>();
+
+    /** 从接收提交到执行线程收尾期间的单飞占位，避免同一 Session 重复入队等待锁。 */
+    private final Set<Long> executionClaims = ConcurrentHashMap.newKeySet();
 
     /** per-session lock — only one agent execution at a time */
     private final ConcurrentHashMap<Long, Object> sessionLocks = new ConcurrentHashMap<>();
@@ -132,6 +136,29 @@ public class StreamingWsHandler extends TextWebSocketHandler {
 
     private boolean isSessionActive(String phase) {
         return "RUNNING".equals(phase) || "RESUMING".equals(phase) || "WAITING_APPROVAL".equals(phase);
+    }
+
+    private void sendSessionAlreadyRunning(Long userId, Long sessionId) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("code", "session_already_running");
+        data.put("message", "该任务仍在运行，请先停止当前执行后再继续");
+        String executionId = runningExecutionIds.get(sessionId);
+        if (executionId != null) data.put("executionId", executionId);
+        registry.send(userId, WsEvent.of("session_already_running", sessionId, data));
+    }
+
+    private boolean awaitExecutionRelease(Long sessionId, long timeoutMillis) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while ((executionClaims.contains(sessionId) || runningTasks.containsKey(sessionId))
+                && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return !executionClaims.contains(sessionId) && !runningTasks.containsKey(sessionId);
     }
 
     private boolean isSessionCancelled(Long sessionId) {
@@ -448,9 +475,12 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         Session session = requireOwnedSession(userId, sessionId);
         if (session == null) return;
 
-        // Abort any in-flight execution so the new message can take over
-        if (isSessionActive(session.getPhase())) {
-            abortRunningExecution(sessionId, userId);
+        // 普通重复提交快速拒绝，不再取消旧执行或让线程排队等待会话锁。
+        // 队列“立即发送”会显式携带 replaceExecution=true，并在旧执行取消后接管。
+        boolean replacingExecution = data.path("replaceExecution").asBoolean(false);
+        if (!replacingExecution && isSessionActive(session.getPhase())) {
+            sendSessionAlreadyRunning(userId, sessionId);
+            return;
         }
 
         // 若消息携带 modelId（边路任务切换模型后立即发送），先持久化到会话再校验/执行，
@@ -479,10 +509,17 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             }
         }
 
+        boolean claimAlreadyHeld = data.path("executionClaimHeld").asBoolean(false);
+        if (!claimAlreadyHeld && !executionClaims.add(sessionId)) {
+            sendSessionAlreadyRunning(userId, sessionId);
+            return;
+        }
+
         // For LOCAL mode, register userId and verify desktop client is connected
         if ("LOCAL".equals(session.getExecutionMode())) {
             localToolSessionRegistry.setUserForSession(sessionId, userId);
             if (!localToolSessionRegistry.isConnected(sessionId)) {
+                executionClaims.remove(sessionId);
                 registry.send(userId, WsEvent.of("error", sessionId,
                         Map.of("message", "Local client is not connected. Please ensure the desktop app is running.")));
                 return;
@@ -536,6 +573,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         log.info("Session {} executionMode={}, submitting to agentExecutor", sessionId, session.getExecutionMode());
         runningExecutionIds.put(sessionId, executionId);
         Future<?>[] futureRef = new Future<?>[1];
+        try {
         futureRef[0] = agentExecutor.submit(() -> {
             synchronized (sessionLock(sessionId)) {
             try {
@@ -612,6 +650,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 releaseSessionExecutionResources(sessionId);
                 runningTasks.remove(sessionId, futureRef[0]);
                 runningExecutionIds.remove(sessionId, executionId);
+                executionClaims.remove(sessionId);
                 cancelFlags.remove(sessionId);
                 agentLoop.removeCancelFlag(sessionId);
                 activityHeartbeat.clear(sessionId);
@@ -622,6 +661,13 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             }
         });
         runningTasks.put(sessionId, futureRef[0]);
+        } catch (RuntimeException e) {
+            executionClaims.remove(sessionId);
+            runningExecutionIds.remove(sessionId, executionId);
+            cancelFlags.remove(sessionId, cancelFlag);
+            agentLoop.removeCancelFlag(sessionId);
+            throw e;
+        }
     }
 
     /**
@@ -746,9 +792,9 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         Session session = requireOwnedSession(userId, sessionId);
         if (session == null) return;
 
-        // Abort any in-flight execution
         if (isSessionActive(session.getPhase())) {
-            abortRunningExecution(sessionId, userId);
+            sendSessionAlreadyRunning(userId, sessionId);
+            return;
         }
 
         // Validate message is the last user message
@@ -787,10 +833,16 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             }
         }
 
+        if (!executionClaims.add(sessionId)) {
+            sendSessionAlreadyRunning(userId, sessionId);
+            return;
+        }
+
         // For LOCAL mode, verify desktop client is connected
         if ("LOCAL".equals(session.getExecutionMode())) {
             localToolSessionRegistry.setUserForSession(sessionId, userId);
             if (!localToolSessionRegistry.isConnected(sessionId)) {
+                executionClaims.remove(sessionId);
                 registry.send(userId, WsEvent.of("error", sessionId,
                         Map.of("message", "Local client is not connected. Please ensure the desktop app is running.")));
                 return;
@@ -905,6 +957,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 releaseSessionExecutionResources(sessionId);
                 runningTasks.remove(sessionId, futureRef[0]);
                 runningExecutionIds.remove(sessionId, executionId);
+                executionClaims.remove(sessionId);
                 cancelFlags.remove(sessionId);
                 agentLoop.removeCancelFlag(sessionId);
                 activityHeartbeat.clear(sessionId);
@@ -1084,7 +1137,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         registry.send(userId, WsEvent.of("user_message_saved", sideSessionId,
                 Map.of("messageId", savedMessage.getId())));
 
-        // 6. 注册取消标志
+        // 6. 注册单飞占位与取消标志
+        executionClaims.add(sideSessionId);
         AtomicBoolean cancelFlag = agentLoop.registerCancelFlag(sideSessionId);
         cancelFlags.put(sideSessionId, cancelFlag);
         final String sideExecutionId = UUID.randomUUID().toString();
@@ -1137,6 +1191,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 releaseSessionExecutionResources(sideSessionId);
                 runningTasks.remove(sideSessionId, futureRef[0]);
                 runningExecutionIds.remove(sideSessionId, sideExecutionId);
+                executionClaims.remove(sideSessionId);
                 cancelFlags.remove(sideSessionId);
                 agentLoop.removeCancelFlag(sideSessionId);
                 activityHeartbeat.clear(sideSessionId);
@@ -1236,6 +1291,17 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                         sendQueueUpdated(sessionId, userId);
                         return;
                     }
+                    log.info("Insert message for session {} — waiting for cancelled execution to stop", sessionId);
+                    if (!awaitExecutionRelease(sessionId, 30_000L)) {
+                        registry.send(userId, WsEvent.of("error", sessionId,
+                                Map.of("message", "旧任务取消超时，消息仍保留在队列中")));
+                        return;
+                    }
+                    if (!executionClaims.add(sessionId)) {
+                        sendSessionAlreadyRunning(userId, sessionId);
+                        return;
+                    }
+
                     messageQueueService.delete(queueId);
                     sendQueueUpdated(sessionId, userId);
                     String content = item.getContent();
@@ -1287,6 +1353,8 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     syntheticData.put("content", content);
                     syntheticData.put("eventId", eventId);
                     syntheticData.put("clearTodos", false);
+                    syntheticData.put("replaceExecution", true);
+                    syntheticData.put("executionClaimHeld", true);
                     com.fasterxml.jackson.databind.node.ArrayNode imagesArray = objectMapper.createArrayNode();
                     for (String img : imageList) {
                         imagesArray.add(img);
@@ -1301,9 +1369,10 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                     suppressAutoConsumeSend.remove(sessionId);
                     // clearTodos=false: queue "send now" interrupts the running task as a
                     // correction and must preserve the current todo list.
-                    log.info("Insert message for session {} — calling handleSendMessage (preserve todos)", sessionId);
                     handleSendMessage(userId, syntheticRoot, false);
                 } catch (Exception e) {
+                    autoConsumingSessionIds.remove(sessionId);
+                    executionClaims.remove(sessionId);
                     log.error("Failed to insert message for session {}", sessionId, e);
                 } finally {
                     suppressAutoConsumeSend.remove(sessionId);

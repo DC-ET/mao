@@ -11,7 +11,11 @@ import okhttp3.*;
 import okio.BufferedSource;
 import org.springframework.stereotype.Component;
 
+import java.io.EOFException;
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -21,9 +25,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * OpenAI 兼容协议的 LLM 适配器实现
@@ -52,11 +58,10 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         this.llmRetryConfig = llmRetryConfig;
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.MINUTES)
+                // 响应头到达后，连续无响应体/SSE 数据超过该时长即终止。
+                .readTimeout(llmRetryConfig.getStreamIdleTimeoutSeconds(), TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
-                // 整个调用（connect + write + 流式读 body）的总预算，兜底各类静默挂起。
-                // 注意其底层仍依赖 Okio Watchdog 关闭 Socket，SSL 锁卡死时可能失效，
-                // 因此 awaitResponse() / chat() 另有应用层硬超时（callTimeoutSeconds）兜底。
+                // 单次 HTTP 尝试总预算；首包另由 callTimeoutSeconds 独立控制。
                 .callTimeout(llmRetryConfig.getHttpCallTimeoutSeconds(), TimeUnit.SECONDS)
                 // 连接池保活时间设置得比常见网关/负载均衡的空闲超时更短，
                 // 避免复用一条已被中间设备静默断开、但本地看起来仍然存活的"假活"连接
@@ -71,258 +76,286 @@ public class OpenAiLlmAdapter implements LlmAdapter {
     @Override
     public ChatResponse chat(ChatRequest request, LlmModelConfig config) {
         Request httpRequest = buildRequest(request, config, false);
-        int attempt = 0;
-
-        while (true) {
-            attempt++;
-            Call call = httpClient.newCall(httpRequest);
-            CompletableFuture<Response> responseFuture = new CompletableFuture<>();
-            call.enqueue(new Callback() {
-                @Override
-                public void onFailure(Call c, IOException e) {
-                    responseFuture.completeExceptionally(e);
-                }
-
-                @Override
-                public void onResponse(Call c, Response response) {
-                    responseFuture.complete(response);
-                }
-            });
-
-            // 应用层整体硬超时：OkHttp 内部超时依赖 Okio Watchdog 关闭 Socket，
-            // SSL 写被锁阻塞时会失效，这里到达期限后主动取消并报错
-            Response response;
-            try {
-                response = responseFuture.get(llmRetryConfig.getCallTimeoutSeconds(), TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
-                log.warn("LLM call timed out after {}s, cancelling: {}",
-                        llmRetryConfig.getCallTimeoutSeconds(), httpRequest.url());
-                cancelInBackground(call);
-                throw new RuntimeException("LLM call timed out after "
-                        + llmRetryConfig.getCallTimeoutSeconds() + "s");
-            } catch (ExecutionException e) {
-                Throwable cause = e.getCause() != null ? e.getCause() : e;
-                throw new RuntimeException("LLM call failed: " + cause.getMessage(), cause);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                cancelInBackground(call);
-                throw new RuntimeException("LLM call interrupted", e);
-            }
-
-            try (Response resp = response) {
-                if (isRetryableStatus(resp.code())) {
+        long totalStarted = System.nanoTime();
+        for (int attempt = 1; ; attempt++) {
+            long attemptStarted = System.nanoTime();
+            try (Response response = awaitResponse(httpRequest, null, null, config.getModelId(), attempt).response()) {
+                log.info("LLM response headers model={} phase=response_headers attempt={} firstByteMs={} totalMs={}",
+                        config.getModelId(), attempt, elapsedMillis(attemptStarted), elapsedMillis(totalStarted));
+                if (isRetryableStatus(response.code())) {
                     if (attempt > llmRetryConfig.getRateLimitMaxRetries()) {
-                        throw buildRetryExhaustedException(resp);
+                        throw buildRetryExhaustedException(response);
                     }
-                    int delaySeconds = resolveRetryDelaySeconds(resp, attempt);
-                    log.warn("LLM API transient error ({}), retry {}/{} after {}s, model={}",
-                            resp.code(), attempt, llmRetryConfig.getRateLimitMaxRetries(),
-                            delaySeconds, config.getModelId());
+                    int delaySeconds = resolveRetryDelaySeconds(response, attempt);
+                    logRetry(config.getModelId(), "http_status", response.code(), attempt, delaySeconds,
+                            attemptStarted, totalStarted);
                     sleepSeconds(delaySeconds);
                     continue;
                 }
-
-                if (!resp.isSuccessful()) {
-                    throw buildHttpException(resp);
+                if (!response.isSuccessful()) {
+                    throw buildHttpException(response);
                 }
-
-                ResponseBody body = resp.body();
+                ResponseBody body = response.body();
                 if (body == null) {
                     throw new RuntimeException("LLM API returned empty body");
                 }
-
-                String json = body.string();
-                return objectMapper.readValue(json, ChatResponse.class);
-            } catch (IOException e) {
-                throw new RuntimeException("LLM call failed: " + e.getMessage(), e);
+                ChatResponse result = objectMapper.readValue(body.string(), ChatResponse.class);
+                log.info("LLM call complete model={} phase=complete attempt={} firstByteMs={} totalMs={}",
+                        config.getModelId(), attempt, elapsedMillis(attemptStarted), elapsedMillis(totalStarted));
+                return result;
+            } catch (IOException | TimeoutException e) {
+                if (!isRetryableNetworkFailure(e) || attempt > llmRetryConfig.getRateLimitMaxRetries()) {
+                    throw new RuntimeException("LLM call failed: " + networkReason(e), e);
+                }
+                int delaySeconds = resolveRetryDelaySeconds(null, attempt);
+                logRetry(config.getModelId(), networkReason(e), null, attempt, delaySeconds,
+                        attemptStarted, totalStarted);
+                sleepSeconds(delaySeconds);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("LLM call interrupted", e);
             }
         }
     }
 
     @Override
     public void stream(ChatRequest request, LlmModelConfig config, StreamCallback callback, AtomicBoolean cancelFlag) {
-        log.debug("stream: starting, model={}", config.getModelId());
         Request httpRequest = buildRequest(request, config, true);
-        int attempt = 0;
-
-        while (true) {
-            attempt++;
+        long totalStarted = System.nanoTime();
+        for (int attempt = 1; ; attempt++) {
             if (isCancelled(cancelFlag)) {
-                callback.onError(new RuntimeException("Cancelled by user"));
+                callback.onError(cancelledException());
                 return;
             }
-
-            Response response = awaitResponse(httpRequest, cancelFlag, callback);
-            if (response == null) {
-                return;
-            }
-
+            long attemptStarted = System.nanoTime();
+            ResponseAwaitResult awaited;
             try {
-                log.debug("stream: response code={}", response.code());
+                awaited = awaitResponse(httpRequest, cancelFlag, callback, config.getModelId(), attempt);
+            } catch (RuntimeException e) {
+                callback.onError(isCancelled(cancelFlag) ? cancelledException() : e);
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                callback.onError(cancelledException());
+                return;
+            } catch (IOException | TimeoutException e) {
+                if (isCancelled(cancelFlag)) {
+                    callback.onError(cancelledException());
+                    return;
+                }
+                if (!isRetryableNetworkFailure(e) || attempt > llmRetryConfig.getRateLimitMaxRetries()) {
+                    callback.onError(e);
+                    return;
+                }
+                int delaySeconds = resolveRetryDelaySeconds(null, attempt);
+                if (!notifyAndWaitForRetry(callback, cancelFlag, config.getModelId(), networkReason(e),
+                        null, attempt, delaySeconds, attemptStarted, totalStarted)) {
+                    callback.onError(cancelledException());
+                    return;
+                }
+                continue;
+            }
+            try (Response response = awaited.response()) {
+                log.info("LLM response headers model={} phase=response_headers attempt={} firstByteMs={} totalMs={}",
+                        config.getModelId(), attempt, elapsedMillis(attemptStarted), elapsedMillis(totalStarted));
                 if (isRetryableStatus(response.code())) {
                     if (attempt > llmRetryConfig.getRateLimitMaxRetries()) {
                         callback.onError(buildRetryExhaustedException(response));
                         return;
                     }
                     int delaySeconds = resolveRetryDelaySeconds(response, attempt);
-                    log.warn("LLM API transient error ({}), retry {}/{} after {}s, model={}",
-                            response.code(), attempt, llmRetryConfig.getRateLimitMaxRetries(),
-                            delaySeconds, config.getModelId());
-                    // 用户在重试判定与睡眠等待之间取消时，直接按取消结束，避免误发重试通知
-                    if (isCancelled(cancelFlag)) {
-                        callback.onError(new RuntimeException("Cancelled by user"));
-                        return;
-                    }
-                    callback.onRetry(response.code(), attempt,
-                            llmRetryConfig.getRateLimitMaxRetries(), delaySeconds);
-                    if (!sleepSecondsRespectingCancel(delaySeconds, cancelFlag)) {
-                        callback.onError(new RuntimeException("Cancelled by user"));
+                    if (!notifyAndWaitForRetry(callback, cancelFlag, config.getModelId(), "http_status",
+                            response.code(), attempt, delaySeconds, attemptStarted, totalStarted)) {
+                        callback.onError(cancelledException());
                         return;
                     }
                     continue;
                 }
-
                 if (!response.isSuccessful()) {
                     callback.onError(buildHttpException(response));
                     return;
                 }
-
                 ResponseBody body = response.body();
                 if (body == null) {
                     callback.onError(new RuntimeException("LLM API returned empty body"));
                     return;
                 }
-
-                try {
-                    processStreamBody(body, config, callback, cancelFlag);
-                } catch (IOException e) {
-                    if (isCancelled(cancelFlag)) {
-                        log.info("Stream cancelled by user (IO interrupted) for model={}", config.getModelId());
-                        callback.onError(new RuntimeException("Cancelled by user"));
-                    } else {
-                        callback.onError(e);
-                    }
-                }
+                processStreamBody(body, config, callback, cancelFlag, awaited.call());
+                log.info("LLM stream complete model={} phase=complete attempt={} firstByteMs={} totalMs={}",
+                        config.getModelId(), attempt, elapsedMillis(attemptStarted), elapsedMillis(totalStarted));
                 return;
-
-            } finally {
-                response.close();
+            } catch (IOException e) {
+                if (isCancelled(cancelFlag)) {
+                    callback.onError(cancelledException());
+                    return;
+                }
+                if (e instanceof StreamInterruptedAfterOutputException) {
+                    callback.onError(new RuntimeException("模型流式响应已中断，请继续执行", e));
+                    return;
+                }
+                if (!isRetryableNetworkFailure(e) || attempt > llmRetryConfig.getRateLimitMaxRetries()) {
+                    callback.onError(e);
+                    return;
+                }
+                int delaySeconds = resolveRetryDelaySeconds(null, attempt);
+                if (!notifyAndWaitForRetry(callback, cancelFlag, config.getModelId(), networkReason(e),
+                        null, attempt, delaySeconds, attemptStarted, totalStarted)) {
+                    callback.onError(cancelledException());
+                    return;
+                }
             }
         }
     }
 
     private void processStreamBody(ResponseBody body, LlmModelConfig config,
-                                   StreamCallback callback, AtomicBoolean cancelFlag) throws IOException {
+                                   StreamCallback callback, AtomicBoolean cancelFlag,
+                                   Call call) throws IOException {
         ChatUsage.ChatUsageBuilder usageBuilder = ChatUsage.builder();
         BufferedSource source = body.source();
-
-        while (!source.exhausted()) {
-            if (isCancelled(cancelFlag)) {
-                log.info("Stream cancelled by user for model={}", config.getModelId());
-                callback.onError(new RuntimeException("Cancelled by user"));
-                return;
-            }
-
-            String line = source.readUtf8Line();
-            if (line == null) break;
-
-            if (line.startsWith("data: ")) {
-                String data = line.substring(6).trim();
-                if ("[DONE]".equals(data)) {
-                    break;
+        AtomicBoolean readingDone = new AtomicBoolean(false);
+        AtomicLong lastDataNanos = new AtomicLong(System.nanoTime());
+        CompletableFuture.runAsync(() -> {
+            long nextWaiting = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (!readingDone.get()) {
+                if (isCancelled(cancelFlag)) {
+                    cancelInBackground(call);
+                    return;
                 }
-
+                long now = System.nanoTime();
+                if (now >= nextWaiting) {
+                    callback.onWaiting("stream_data", elapsedSeconds(lastDataNanos.get()));
+                    nextWaiting = now + TimeUnit.SECONDS.toNanos(2);
+                }
                 try {
-                    StreamChunk chunk = objectMapper.readValue(data, StreamChunk.class);
-                    if (log.isTraceEnabled()) {
-                        log.trace("SSE chunk parsed: {}", data);
-                    }
-                    callback.onChunk(chunk);
-
-                    JsonNode node = objectMapper.readTree(data);
-                    if (node.has("usage")) {
-                        JsonNode usage = node.get("usage");
-                        usageBuilder.promptTokens(usage.path("prompt_tokens").asInt(0));
-                        usageBuilder.completionTokens(usage.path("completion_tokens").asInt(0));
-                        usageBuilder.totalTokens(usage.path("total_tokens").asInt(0));
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to parse SSE chunk: {}", data, e);
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
                 }
             }
-        }
+        }, cancellerExecutor);
 
-        callback.onComplete(usageBuilder.build());
+        AtomicBoolean emitted = new AtomicBoolean(false);
+        boolean done = false;
+        try {
+            while (!source.exhausted()) {
+                if (isCancelled(cancelFlag)) {
+                    cancelInBackground(call);
+                    throw new IOException("Cancelled by user");
+                }
+
+                String line = source.readUtf8Line();
+                if (line == null) break;
+
+                if (line.startsWith("data: ")) {
+                    lastDataNanos.set(System.nanoTime());
+                    String data = line.substring(6).trim();
+                    if ("[DONE]".equals(data)) {
+                        done = true;
+                        break;
+                    }
+
+                    try {
+                        StreamChunk chunk = objectMapper.readValue(data, StreamChunk.class);
+                        if (log.isTraceEnabled()) {
+                            log.trace("SSE chunk parsed: {}", data);
+                        }
+                        callback.onChunk(chunk);
+                        emitted.set(true);
+
+                        JsonNode node = objectMapper.readTree(data);
+                        if (node.has("usage")) {
+                            JsonNode usage = node.get("usage");
+                            usageBuilder.promptTokens(usage.path("prompt_tokens").asInt(0));
+                            usageBuilder.completionTokens(usage.path("completion_tokens").asInt(0));
+                            usageBuilder.totalTokens(usage.path("total_tokens").asInt(0));
+                        }
+                    } catch (Exception e) {
+                        log.warn("Failed to parse SSE chunk: {}", data, e);
+                    }
+                }
+            }
+            if (!done) {
+                EOFException eof = new EOFException("stream ended before [DONE]");
+                if (emitted.get()) {
+                    throw new StreamInterruptedAfterOutputException(eof);
+                }
+                throw eof;
+            }
+            callback.onComplete(usageBuilder.build());
+        } catch (IOException e) {
+            if (e instanceof StreamInterruptedAfterOutputException) {
+                throw e;
+            }
+            if (emitted.get()) {
+                throw new StreamInterruptedAfterOutputException(e);
+            }
+            throw e;
+        } finally {
+            readingDone.set(true);
+        }
     }
 
-    /**
-     * 异步发起 HTTP 请求并轮询等待响应，支持取消与整体硬超时。
-     *
-     * <p>整体硬超时（{@code app.harness.llm.call-timeout-seconds}）是最后兜底：
-     * OkHttp 的 readTimeout / writeTimeout / callTimeout 均由 Okio Watchdog 关闭 Socket 实现，
-     * 极端场景（SSL 读写被锁阻塞）下 Watchdog 也会卡住，仅靠内部超时无法终止请求。
-     * 到达期限后这里主动取消请求并上报错误，且取消放在独立守护线程执行，
-     * 避免 Socket.close() 被 SSL 锁阻塞时把当前 Agent 线程一并卡死。</p>
-     *
-     * @return 响应对象；若已取消/超时/连接失败则返回 null（错误已通过 callback 上报）
-     */
-    private Response awaitResponse(Request httpRequest, AtomicBoolean cancelFlag, StreamCallback callback) {
+    /** 等待响应头；超时仅覆盖首包阶段，响应头到达后立即解除。 */
+    private ResponseAwaitResult awaitResponse(Request httpRequest, AtomicBoolean cancelFlag,
+                                               StreamCallback callback, String model, int attempt)
+            throws IOException, TimeoutException, InterruptedException {
         Call httpCall = httpClient.newCall(httpRequest);
         CompletableFuture<Response> responseFuture = new CompletableFuture<>();
-        long deadline = System.currentTimeMillis() + llmRetryConfig.getCallTimeoutSeconds() * 1000L;
+        long started = System.nanoTime();
+        long deadline = started + TimeUnit.SECONDS.toNanos(llmRetryConfig.getCallTimeoutSeconds());
+        long nextWaiting = started + TimeUnit.SECONDS.toNanos(1);
         httpCall.enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                if (isCancelled(cancelFlag)) {
-                    responseFuture.completeExceptionally(new RuntimeException("Cancelled by user"));
-                } else {
-                    responseFuture.completeExceptionally(e);
-                }
+                responseFuture.completeExceptionally(e);
             }
 
             @Override
             public void onResponse(Call call, Response response) {
+                // callTimeout 只兜底连接、写入与响应头阶段。收到响应头后清除总调用期限，
+                // 长时间正常流式输出仅由 readTimeout（连续空闲超时）约束。
+                call.timeout().clearTimeout();
                 responseFuture.complete(response);
             }
         });
 
-        try {
-            while (true) {
-                if (isCancelled(cancelFlag)) {
-                    cancelInBackground(httpCall);
-                    callback.onError(new RuntimeException("Cancelled by user"));
-                    return null;
-                }
-                if (System.currentTimeMillis() >= deadline) {
-                    log.warn("LLM request timed out after {}s, cancelling: {}",
-                            llmRetryConfig.getCallTimeoutSeconds(), httpRequest.url());
-                    cancelInBackground(httpCall);
-                    callback.onError(new RuntimeException("LLM call timed out after "
-                            + llmRetryConfig.getCallTimeoutSeconds() + "s"));
-                    return null;
-                }
-                try {
-                    return responseFuture.get(100, TimeUnit.MILLISECONDS);
-                } catch (TimeoutException e) {
-                    // poll cancel flag / deadline until response arrives
-                } catch (ExecutionException e) {
-                    Throwable cause = e.getCause() != null ? e.getCause() : e;
-                    if (cause instanceof RuntimeException re) {
-                        callback.onError(re);
-                    } else {
-                        callback.onError(cause);
-                    }
-                    return null;
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    cancelInBackground(httpCall);
-                    callback.onError(new RuntimeException("Cancelled by user"));
-                    return null;
-                }
+        while (true) {
+            if (isCancelled(cancelFlag)) {
+                cancelInBackground(httpCall);
+                throw cancelledException();
             }
-        } catch (RuntimeException e) {
-            callback.onError(e);
-            return null;
+            long now = System.nanoTime();
+            if (now >= deadline) {
+                cancelInBackground(httpCall);
+                log.warn("LLM timeout model={} phase=response_headers attempt={} firstByteMs={} totalMs={}",
+                        model, attempt, elapsedMillis(started), elapsedMillis(started));
+                throw new TimeoutException("response headers timed out after "
+                        + llmRetryConfig.getCallTimeoutSeconds() + "s");
+            }
+            if (callback != null && now >= nextWaiting) {
+                callback.onWaiting("response_headers", elapsedSeconds(started));
+                nextWaiting = now + TimeUnit.SECONDS.toNanos(2);
+            }
+            try {
+                return new ResponseAwaitResult(responseFuture.get(100, TimeUnit.MILLISECONDS), httpCall);
+            } catch (TimeoutException ignored) {
+                // Poll cancellation, first-byte deadline and waiting events.
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                if (cause instanceof IOException io) throw io;
+                if (cause instanceof RuntimeException re) throw re;
+                throw new IOException(cause);
+            }
+        }
+    }
+
+    private record ResponseAwaitResult(Response response, Call call) {
+    }
+
+    private static final class StreamInterruptedAfterOutputException extends IOException {
+        private StreamInterruptedAfterOutputException(IOException cause) {
+            super("LLM stream interrupted after output started; automatic retry disabled", cause);
         }
     }
 
@@ -347,20 +380,26 @@ public class OpenAiLlmAdapter implements LlmAdapter {
      */
     private int resolveRetryDelaySeconds(Response response, int attempt) {
         int maxDelay = llmRetryConfig.getRateLimitMaxRetryDelaySeconds();
-        String retryAfter = response.header("Retry-After");
-        if (retryAfter != null && !retryAfter.isBlank()) {
-            try {
-                int seconds = Integer.parseInt(retryAfter.trim());
-                if (seconds > 0) {
-                    return Math.min(seconds, maxDelay);
+        if (response != null) {
+            String retryAfter = response.header("Retry-After");
+            if (retryAfter != null && !retryAfter.isBlank()) {
+                try {
+                    int seconds = Integer.parseInt(retryAfter.trim());
+                    if (seconds > 0) {
+                        return Math.min(seconds, maxDelay);
+                    }
+                } catch (NumberFormatException ignored) {
+                    // Retry-After 可能是 HTTP 日期格式，回退到指数退避
                 }
-            } catch (NumberFormatException ignored) {
-                // Retry-After 可能是 HTTP 日期格式，回退到指数退避
             }
         }
         int baseDelay = llmRetryConfig.getRateLimitRetryDelaySeconds();
-        long backoff = (long) baseDelay * (1L << (attempt - 1));
-        return (int) Math.min(backoff, maxDelay);
+        if (baseDelay <= 0 || maxDelay <= 0) return 0;
+        int shift = Math.min(Math.max(attempt - 1, 0), 30);
+        long backoff = Math.min((long) baseDelay * (1L << shift), maxDelay);
+        // 0.5x~1.0x full jitter；delay=0 时不随机，确保测试稳定。
+        long lower = Math.max(1, (backoff + 1) / 2);
+        return (int) ThreadLocalRandom.current().nextLong(lower, backoff + 1);
     }
 
     private void sleepSeconds(int seconds) {
@@ -391,6 +430,67 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             }
         }
         return true;
+    }
+
+    private boolean notifyAndWaitForRetry(StreamCallback callback, AtomicBoolean cancelFlag,
+                                          String model, String reason, Integer statusCode,
+                                          int attempt, int delaySeconds,
+                                          long attemptStarted, long totalStarted) {
+        if (isCancelled(cancelFlag)) return false;
+        logRetry(model, reason, statusCode, attempt, delaySeconds, attemptStarted, totalStarted);
+        callback.onRetry(reason, statusCode, attempt,
+                llmRetryConfig.getRateLimitMaxRetries(), delaySeconds);
+        return sleepSecondsRespectingCancel(delaySeconds, cancelFlag);
+    }
+
+    private void logRetry(String model, String reason, Integer statusCode, int attempt,
+                          int delaySeconds, long attemptStarted, long totalStarted) {
+        log.warn("LLM retry model={} phase=retry reason={} statusCode={} attempt={} maxRetries={} "
+                        + "delaySeconds={} firstByteMs={} totalMs={}",
+                model, reason, statusCode, attempt, llmRetryConfig.getRateLimitMaxRetries(),
+                delaySeconds, elapsedMillis(attemptStarted), elapsedMillis(totalStarted));
+    }
+
+    private boolean isRetryableNetworkFailure(Throwable failure) {
+        Throwable cause = failure;
+        while (cause != null) {
+            if (cause instanceof TimeoutException || cause instanceof SocketTimeoutException
+                    || cause instanceof ConnectException || cause instanceof EOFException
+                    || cause instanceof SocketException || cause instanceof IOException) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
+    }
+
+    private String networkReason(Throwable failure) {
+        Throwable cause = failure;
+        while (cause != null) {
+            if (cause instanceof TimeoutException) return "response_header_timeout";
+            if (cause instanceof SocketTimeoutException) return "stream_idle_timeout";
+            if (cause instanceof ConnectException) return "connect_failure";
+            if (cause instanceof EOFException) return "unexpected_eof";
+            if (cause.getCause() == null) break;
+            cause = cause.getCause();
+        }
+        String message = cause.getMessage();
+        if (message != null && message.toLowerCase(Locale.ROOT).contains("reset")) {
+            return "connection_reset";
+        }
+        return "io_failure";
+    }
+
+    private long elapsedMillis(long startedNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+    }
+
+    private long elapsedSeconds(long startedNanos) {
+        return TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startedNanos);
+    }
+
+    private RuntimeException cancelledException() {
+        return new RuntimeException("Cancelled by user");
     }
 
     private boolean isCancelled(AtomicBoolean cancelFlag) {

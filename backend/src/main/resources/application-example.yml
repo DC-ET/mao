@@ -77,11 +77,18 @@ app:
 
     # LLM API
     llm:
+      # 首次请求失败后最多重试次数（不包含首次调用）
       rate-limit-max-retries: 10
-      # 指数退避基间隔（秒）：第 n 次重试前等待 base * 2^(n-1) 秒
-      rate-limit-retry-delay-seconds: 1
+      # 指数退避基间隔（秒）：第 n 次重试前等待 base * 2^(n-1) 秒，并加入随机抖动
+      rate-limit-retry-delay-seconds: 2
       # 单次重试间隔上限（秒）
-      rate-limit-max-retry-delay-seconds: 60
+      rate-limit-max-retry-delay-seconds: 30
+      # 等待响应头（首包）的应用层硬超时；流式开始后自动解除
+      call-timeout-seconds: 120
+      # 连接、写入与响应头阶段的 OkHttp 单次调用兜底超时
+      http-call-timeout-seconds: 180
+      # 流式开始后连续无 SSE 数据的空闲超时
+      stream-idle-timeout-seconds: 120
 
     # Context Compaction
     compaction:

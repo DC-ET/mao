@@ -329,8 +329,14 @@ public class AgentLoop {
                 }
 
                 @Override
-                public void onRetry(int statusCode, int attempt, int maxRetries, int delaySeconds) {
-                    listener.onLlmRetry(statusCode, attempt, maxRetries, delaySeconds);
+                public void onWaiting(String phase, long elapsedSeconds) {
+                    listener.onLlmWaiting(phase, elapsedSeconds);
+                }
+
+                @Override
+                public void onRetry(String reason, Integer statusCode, int attempt,
+                                    int maxRetries, int delaySeconds) {
+                    listener.onLlmRetry(reason, statusCode, attempt, maxRetries, delaySeconds);
                 }
             }, cancelFlag);
             } catch (RuntimeException e) {

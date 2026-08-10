@@ -28,7 +28,8 @@
         </div>
         <div v-if="typingRetry" class="typing-retry">
           <span class="typing-retry-spinner"></span>
-          <span>模型服务繁忙（HTTP {{ typingRetry.statusCode }}），正在重试 {{ typingRetry.attempt }}/{{ typingRetry.maxRetries }}，{{ typingRetry.delaySeconds }} 秒后继续…</span>
+          <span v-if="typingRetry.attempt">上游响应异常{{ typingRetry.statusCode ? `（HTTP ${typingRetry.statusCode}）` : '' }}，正在第 {{ typingRetry.attempt }}/{{ typingRetry.maxRetries }} 次重试，{{ typingRetry.delaySeconds }} 秒后继续…</span>
+          <span v-else>{{ typingRetry.phase === 'response_headers' ? '正在等待模型响应' : '模型流式响应暂时无新数据' }}（{{ typingRetry.elapsedSeconds }} 秒）…</span>
         </div>
       </div>
 

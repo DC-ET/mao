@@ -114,6 +114,22 @@ class StreamingWsHandlerTest {
     }
 
     @Test
+    void sendMessageRejectsDuplicateWhileSessionIsRunningWithoutPersistingOrSubmitting() throws Exception {
+        when(registry.getUserId(ws)).thenReturn(7L);
+        when(sessionService.getSession(11L)).thenReturn(session("CLOUD", "RUNNING"));
+
+        handler.handleTextMessage(ws, json("""
+                {"type":"send_message","sessionId":11,"data":{"content":"continue"}}
+                """));
+
+        verify(registry).send(eq(7L), argThat(event ->
+                "session_already_running".equals(event.getType())
+                        && "session_already_running".equals(event.getData().get("code"))));
+        verify(sessionService, never()).saveMessage(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(harnessService, never()).executeFromEvent(any(), any(), any(), any());
+    }
+
+    @Test
     void sendMessageRejectsUnsupportedImagesAndDisconnectedLocalClient() throws Exception {
         when(registry.getUserId(ws)).thenReturn(7L);
         Session cloud = session("CLOUD", "IDLE");

@@ -105,12 +105,15 @@ export interface SessionGroupMeta {
   hasMore: boolean
 }
 
-/** LLM 请求瞬时错误（429/5xx）重试进度 */
+/** LLM 等待或可恢复错误重试进度 */
 export interface LlmRetryInfo {
-  statusCode: number
-  attempt: number
-  maxRetries: number
-  delaySeconds: number
+  phase?: 'response_headers' | 'stream_data'
+  elapsedSeconds?: number
+  reason?: string
+  statusCode?: number
+  attempt?: number
+  maxRetries?: number
+  delaySeconds?: number
 }
 
 const DEFAULT_GROUP_PREVIEW = 5

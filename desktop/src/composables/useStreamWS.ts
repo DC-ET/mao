@@ -79,7 +79,7 @@ const STREAM_EVENT_TYPES = new Set([
   'content_delta', 'tool_call_start', 'tool_call_args_delta', 'tool_call_result',
   'thinking_start', 'thinking_end', 'thinking_delta', 'message_end',
   'file_change', 'activity', 'compaction_start', 'compaction_end', 'compaction_marker',
-  'context_window', 'llm_retry', 'error'
+  'context_window', 'llm_waiting', 'llm_retry', 'session_already_running', 'error'
 ])
 
 function refreshQueue(sessionId: string) {
@@ -596,14 +596,34 @@ export function useStreamWS() {
         }
         break
 
+      case 'llm_waiting':
+        if (sessionId && data) {
+          sessionStore.setLlmRetry(sessionId, {
+            phase: data.phase,
+            elapsedSeconds: data.elapsedSeconds
+          })
+        }
+        break
+
       case 'llm_retry':
         if (sessionId && data) {
           sessionStore.setLlmRetry(sessionId, {
+            reason: data.reason,
             statusCode: data.statusCode,
             attempt: data.attempt,
             maxRetries: data.maxRetries,
             delaySeconds: data.delaySeconds
           })
+        }
+        break
+
+      case 'session_already_running':
+        if (sessionId) {
+          const cb = pendingCallbacks.get(sessionId)
+          if (cb) {
+            pendingCallbacks.delete(sessionId)
+            cb.reject?.(new Error(data?.message || '该任务仍在运行'))
+          }
         }
         break
 

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
+import okhttp3.mockwebserver.SocketPolicy;
 import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
@@ -16,6 +17,8 @@ import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -237,6 +240,101 @@ class OpenAiLlmAdapterTest {
     }
 
     @Test
+    void streamRetriesResponseHeaderTimeoutAndReportsWaitingAndRetry() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+            server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"));
+            server.start();
+
+            CapturingCallback callback = new CapturingCallback();
+            adapter(1, 0, 2, 5).stream(request("timeout"), config(server), callback, new AtomicBoolean(false));
+
+            assertThat(callback.error).isNull();
+            assertThat(callback.chunks).hasSize(1);
+            assertThat(callback.waitingPhases).contains("response_headers");
+            assertThat(callback.retryReasons).containsExactly("response_header_timeout");
+            assertThat(server.getRequestCount()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void streamRetries504ThenSucceedsAndReportsStatus() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setResponseCode(504).setBody("gateway timeout"));
+            server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"));
+            server.start();
+
+            CapturingCallback callback = new CapturingCallback();
+            adapter(1, 0).stream(request("504"), config(server), callback, new AtomicBoolean(false));
+
+            assertThat(callback.error).isNull();
+            assertThat(callback.retryReasons).containsExactly("http_status");
+            assertThat(callback.retryStatuses).containsExactly(504);
+        }
+    }
+
+    @Test
+    void streamRetriesWhenIdleTimeoutOccursBeforeAnyOutput() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"late\"}}]}\n\n")
+                    .setBodyDelay(2, TimeUnit.SECONDS));
+            server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"}}]}\n\ndata: [DONE]\n\n"));
+            server.start();
+
+            CapturingCallback callback = new CapturingCallback();
+            adapter(1, 0, 5, 1).stream(request("idle"), config(server), callback, new AtomicBoolean(false));
+
+            assertThat(callback.error).isNull();
+            assertThat(callback.retryReasons).contains("stream_idle_timeout");
+            assertThat(callback.chunks).hasSize(1);
+        }
+    }
+
+    @Test
+    void streamDoesNotRetryAfterVisibleOutputWasEmitted() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"));
+            server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"duplicate\"}}]}\n\ndata: [DONE]\n\n"));
+            server.start();
+
+            CapturingCallback callback = new CapturingCallback();
+            adapter(1, 0, 5, 1).stream(request("partial"), config(server), callback, new AtomicBoolean(false));
+
+            assertThat(callback.error).hasMessageContaining("流式响应已中断");
+            assertThat(callback.retryReasons).isEmpty();
+            assertThat(server.getRequestCount()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void streamCancelsPromptlyWhileWaitingForHeaders() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+            server.start();
+            AtomicBoolean cancel = new AtomicBoolean(false);
+            CapturingCallback callback = new CapturingCallback();
+            Thread worker = new Thread(() -> adapter(0, 0, 20, 20)
+                    .stream(request("cancel-wait"), config(server), callback, cancel));
+            worker.start();
+            assertThat(callback.waiting.await(4, TimeUnit.SECONDS)).isTrue();
+
+            long started = System.nanoTime();
+            cancel.set(true);
+            worker.join(2_000);
+
+            assertThat(worker.isAlive()).isFalse();
+            assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2_000);
+            assertThat(callback.error).hasMessageContaining("Cancelled by user");
+        }
+    }
+
+    @Test
     void chatSerializesSyntheticUserImageParts() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(jsonResponse("{\"id\":\"ok\",\"choices\":[]}"));
@@ -339,9 +437,16 @@ class OpenAiLlmAdapterTest {
     }
 
     private OpenAiLlmAdapter adapter(int maxRetries, int retryDelaySeconds) {
+        return adapter(maxRetries, retryDelaySeconds, 120, 120);
+    }
+
+    private OpenAiLlmAdapter adapter(int maxRetries, int retryDelaySeconds,
+                                     int responseHeaderTimeoutSeconds, int streamIdleTimeoutSeconds) {
         LlmRetryConfig retryConfig = new LlmRetryConfig();
         retryConfig.setRateLimitMaxRetries(maxRetries);
         retryConfig.setRateLimitRetryDelaySeconds(retryDelaySeconds);
+        retryConfig.setCallTimeoutSeconds(responseHeaderTimeoutSeconds);
+        retryConfig.setStreamIdleTimeoutSeconds(streamIdleTimeoutSeconds);
         return new OpenAiLlmAdapter(objectMapper, retryConfig);
     }
 
@@ -381,6 +486,10 @@ class OpenAiLlmAdapterTest {
 
     private static class CapturingCallback implements StreamCallback {
         final List<StreamChunk> chunks = new ArrayList<>();
+        final List<String> waitingPhases = new ArrayList<>();
+        final List<String> retryReasons = new ArrayList<>();
+        final List<Integer> retryStatuses = new ArrayList<>();
+        final CountDownLatch waiting = new CountDownLatch(1);
         ChatUsage usage;
         Throwable error;
 
@@ -397,6 +506,19 @@ class OpenAiLlmAdapterTest {
         @Override
         public void onError(Throwable t) {
             this.error = t;
+        }
+
+        @Override
+        public void onWaiting(String phase, long elapsedSeconds) {
+            waitingPhases.add(phase);
+            waiting.countDown();
+        }
+
+        @Override
+        public void onRetry(String reason, Integer statusCode, int attempt,
+                            int maxRetries, int delaySeconds) {
+            retryReasons.add(reason);
+            if (statusCode != null) retryStatuses.add(statusCode);
         }
     }
 }

@@ -11,15 +11,23 @@ public interface StreamCallback {
 
     void onError(Throwable t);
 
+    /** 等待网络阶段的周期通知。phase 当前为 response_headers 或 stream_data。 */
+    default void onWaiting(String phase, long elapsedSeconds) {
+    }
+
     /**
-     * LLM 请求遇到瞬时错误（429 限流 / 5xx 服务端错误）即将进入重试前回调，
-     * 用于让调用方把重试进度透传给客户端。
-     *
-     * @param statusCode   触发重试的 HTTP 状态码
-     * @param attempt      当前第几次尝试（含首次失败的那次）
-     * @param maxRetries   最大重试次数
-     * @param delaySeconds 本次重试前等待的秒数
+     * LLM 请求遇到可恢复网络错误即将进入重试前回调。
+     * 默认转发到旧重载，兼容已有调用方。
      */
+    default void onRetry(String reason, Integer statusCode, int attempt,
+                         int maxRetries, int delaySeconds) {
+        onRetry(statusCode != null ? statusCode : 0, attempt, maxRetries, delaySeconds);
+    }
+
+    /**
+     * @deprecated 请实现带 reason 的重载；保留用于兼容已有调用方。
+     */
+    @Deprecated
     default void onRetry(int statusCode, int attempt, int maxRetries, int delaySeconds) {
     }
 }
