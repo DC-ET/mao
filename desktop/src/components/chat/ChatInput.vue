@@ -686,7 +686,7 @@ const editor = useEditor({
     },
   },
   onUpdate: ({ editor: ed }) => {
-    editorContent.value = ed.getText()
+    editorContent.value = ed.getText({ blockSeparator: '\n' })
     detectSlashTrigger()
     detectAtTrigger()
     detectAutoComplete()
@@ -879,7 +879,7 @@ function handleSend() {
     ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
     return
   }
-  const text = editor.value.getText().trim()
+  const text = editor.value.getText({ blockSeparator: '\n' }).trim()
   if (!text && pendingFiles.value.length === 0) return
 
   // 检查视觉能力：如果有图片但模型明确不支持视觉，提示用户
@@ -962,7 +962,7 @@ watch(
       }
     } else if (oldMode === 'git') {
       // When switching away from git mode, clear the suggestion text if present
-      const text = editor.value.getText().trim()
+      const text = editor.value.getText({ blockSeparator: '\n' }).trim()
       if (text === GIT_SUGGEST_TEXT) {
         editor.value.commands.clearContent()
         editorContent.value = ''
@@ -1069,6 +1069,10 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+:deep(.rich-editor .ProseMirror p) {
+  margin: 0;
 }
 
 :deep(.rich-editor .ProseMirror p.is-editor-empty:first-child::before) {
