@@ -1037,12 +1037,12 @@ onBeforeUnmount(() => {
 /* Editor area */
 .textarea-area {
   position: relative;
-  padding: 0px 16px;
+  padding: 12px 16px;
 }
 
 .textarea-area.new-task-textarea {
   margin: 0 12px;
-  padding: 0px 14px;
+  padding: 12px 14px;
   background: var(--aw-canvas-parchment);
   border-radius: 12px;
 }

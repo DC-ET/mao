@@ -100,10 +100,9 @@
           {{ file.originalName || file.name }}
         </el-tag>
       </div>
-      <div v-if="isAssistantRunning && llmRetry" class="llm-retry-bar">
+      <div v-if="isAssistantRunning && llmRetry?.attempt" class="llm-retry-bar">
         <span class="llm-retry-spinner"></span>
-        <span v-if="llmRetry.attempt" class="llm-retry-text">上游响应异常{{ llmRetry.statusCode ? `（HTTP ${llmRetry.statusCode}）` : '' }}，正在第 {{ llmRetry.attempt }}/{{ llmRetry.maxRetries }} 次重试，{{ llmRetry.delaySeconds }} 秒后继续…</span>
-        <span v-else class="llm-retry-text">{{ llmRetry.phase === 'response_headers' ? '正在等待模型响应' : '模型流式响应暂时无新数据' }}（{{ llmRetry.elapsedSeconds }} 秒）…</span>
+        <span class="llm-retry-text">上游响应异常{{ llmRetry.statusCode ? `（HTTP ${llmRetry.statusCode}）` : '' }}，正在第 {{ llmRetry.attempt }}/{{ llmRetry.maxRetries }} 次重试，{{ llmRetry.delaySeconds }} 秒后继续…</span>
       </div>
       <div v-if="showStreamIndicator" class="stream-indicator">
         <span class="stream-dot"></span>
