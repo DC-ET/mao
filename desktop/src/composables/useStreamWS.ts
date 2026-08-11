@@ -29,8 +29,8 @@ const connected = ref(false)
 const reconnectDelay = ref(1000)
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
-let lastPongAt = 0
-const PONG_TIMEOUT_MS = 15_000
+let lastServerMessageAt = 0
+const SERVER_SILENCE_TIMEOUT_MS = 30_000
 let intentionalClose = false
 let connectPromise: Promise<void> | null = null
 let isReconnecting = false
@@ -197,11 +197,12 @@ export function useStreamWS() {
         if (sessionStore.focusLoaded) {
           void sessionStore.fetchFocusSessions(true)
         }
-        // Start heartbeat with pong timeout detection
-        lastPongAt = Date.now()
+        // Start heartbeat. Any server message proves the connection is alive; allow enough
+        // time for a delayed pong when the shared outbound queue is busy with stream events.
+        lastServerMessageAt = Date.now()
         heartbeatTimer = setInterval(() => {
           if (ws?.readyState !== WebSocket.OPEN) return
-          if (Date.now() - lastPongAt > PONG_TIMEOUT_MS) {
+          if (Date.now() - lastServerMessageAt > SERVER_SILENCE_TIMEOUT_MS) {
             ws.close()
             return
           }
@@ -211,6 +212,7 @@ export function useStreamWS() {
       }
 
       ws!.onmessage = (event) => {
+        lastServerMessageAt = Date.now()
         let msg: any
         try {
           msg = JSON.parse(event.data)
@@ -380,8 +382,8 @@ export function useStreamWS() {
     send({ type: 'cancel', sessionId: Number(sessionId) })
   }
 
-  function sendAskUserQuestionsResult(sessionId: string, requestId: string, answers: any[]) {
-    send({
+  async function sendAskUserQuestionsResult(sessionId: string, requestId: string, answers: any[]): Promise<boolean> {
+    return sendReliable({
       type: 'ask_user_questions_result',
       sessionId: Number(sessionId),
       data: { requestId, answers }
@@ -442,7 +444,6 @@ export function useStreamWS() {
         break
 
       case 'pong':
-        lastPongAt = Date.now()
         break
 
       case 'content_delta':

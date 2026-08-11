@@ -197,7 +197,7 @@
       </div>
       <div v-if="selectedRepo?.unavailable" class="git-state">
         <p>该仓库 Git 状态不可用</p>
-        <button class="git-retry" @click="refreshAll">重试</button>
+        <button class="git-retry" @click="() => refreshAll()">重试</button>
       </div>
       <GitChangeList
         v-else
@@ -205,7 +205,14 @@
         :loading="gitLoading"
         :error="gitError"
         :has-remote="gitStatus?.hasRemote"
+        :has-head="gitStatus?.hasHead"
         :detached-head="gitStatus?.detachedHead"
+        :upstream="gitStatus?.upstream"
+        :remote-status-available="gitStatus?.remoteStatusAvailable"
+        :remote-status-error="gitStatus?.remoteStatusError"
+        :ahead-count="gitStatus?.aheadCount"
+        :behind-count="gitStatus?.behindCount"
+        :has-commits-to-push="gitStatus?.hasCommitsToPush"
         :operation="gitOperation"
         @refresh="refreshAll"
         @commit="runGitOperation('commit')"
@@ -321,6 +328,7 @@ const statusProviderRef = computed<WorkspaceGitProvider | null>(() => {
     return {
       getRepos: () => p.getRepos(),
       getStatus: () => p.getStatus(selectedRepoPath.value),
+      refreshStatus: () => p.refreshStatus(selectedRepoPath.value),
       getFileDiff: (relativePath: string) => p.getFileDiff(relativePath, selectedRepoPath.value),
       commit: () => p.commit(selectedRepoPath.value),
       pull: () => p.pull(selectedRepoPath.value),
@@ -336,6 +344,7 @@ const {
   status: gitStatus,
   files: gitFiles,
   refresh: refreshGit,
+  refreshRemote: refreshGitRemote,
 } = useGitStatus(statusProviderRef, { enabled: gitEnabled })
 
 // 切换仓库（statusProviderRef 变化）时立即清空旧仓库文件列表：
@@ -367,9 +376,12 @@ const gitSummaryVisible = computed(() => {
 })
 
 /** 手动刷新 / 任务阶段结束自动刷新：先刷仓库列表与选中项，再刷选中仓库状态。 */
-async function refreshAll() {
+async function refreshAll(remote = true) {
   await refreshRepos()
-  if (gitEnabled.value) await refreshGit()
+  if (gitEnabled.value) {
+    if (remote) await refreshGitRemote()
+    else await refreshGit()
+  }
 }
 
 const gitOperation = ref<'commit' | 'pull' | 'push' | null>(null)
@@ -430,7 +442,7 @@ const TERMINAL_GIT_REFRESH_PHASES = new Set(['COMPLETED', 'FAILED', 'CANCELLED',
 watch(() => props.phase, (phase, oldPhase) => {
   if (!oldPhase || !props.gitProvider) return
   if (ACTIVE_GIT_REFRESH_PHASES.has(oldPhase) && TERMINAL_GIT_REFRESH_PHASES.has(phase)) {
-    void refreshAll()
+    void refreshAll(false)
   }
 })
 
@@ -451,7 +463,7 @@ watch(
       if (!oldPhase) return false
       return ACTIVE_GIT_REFRESH_PHASES.has(oldPhase) && TERMINAL_GIT_REFRESH_PHASES.has(t.phase)
     })
-    if (finished) void refreshAll()
+    if (finished) void refreshAll(false)
   }
 )
 

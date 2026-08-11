@@ -611,10 +611,10 @@ function handleStop() {
   sending.value = false
 }
 
-function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
+async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
   if (!hasRealSession.value) return
-  sendAskUserQuestionsResult(String(realSessionId.value), requestId, answers)
-  sessionStore.removeAskQuestion(String(realSessionId.value), requestId)
+  await sendAskUserQuestionsResult(String(realSessionId.value), requestId, answers)
+  // Keep the panel until the server confirms completion with ask_user_questions_cancelled.
 }
 
 // --- 消息队列操作 ---

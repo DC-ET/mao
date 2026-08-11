@@ -319,6 +319,12 @@ const activePendingQuestions = computed(() => sessionStore.activePendingQuestion
 
 const executionError = computed(() => sessionStore.activeExecutionError)
 
+const ACTIVE_PHASES: TaskPhase[] = ['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING']
+const agentRunning = computed(() => {
+  const phase = sessionId.value ? sessionStore.getSessionPhase(sessionId.value) : null
+  return sending.value || (phase != null && ACTIVE_PHASES.includes(phase))
+})
+
 const showTypingIndicator = computed(() => {
   if (initializingWorkspace.value) return false
   if (!agentRunning.value) return false
@@ -491,12 +497,6 @@ watch(buildScrollAnchor, () => {
 // resetting currentPhase.  sending is a single ref shared by all sessions;
 // a non-active session completing can resolve its pendingCallbacks and set
 // sending=false even though the *active* session is still running.
-const ACTIVE_PHASES: TaskPhase[] = ['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING']
-const agentRunning = computed(() => {
-  const phase = sessionId.value ? sessionStore.getSessionPhase(sessionId.value) : null
-  return sending.value || (phase != null && ACTIVE_PHASES.includes(phase))
-})
-
 watch(() => sending.value, (isSending) => {
   if (!sessionStore.activeSessionId) return
   if (isSending) {

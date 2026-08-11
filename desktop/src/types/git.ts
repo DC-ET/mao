@@ -9,8 +9,14 @@ export interface GitStatusSummary {
   changedFileCount: number
   remotes: string[]
   hasRemote: boolean
+  hasHead: boolean
   detachedHead: boolean
   upstream?: string
+  remoteStatusAvailable: boolean
+  remoteStatusError?: string
+  aheadCount?: number
+  behindCount?: number
+  hasCommitsToPush?: boolean
   error?: string
 }
 

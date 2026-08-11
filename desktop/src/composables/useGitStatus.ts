@@ -15,7 +15,7 @@ export function useGitStatus(
   const files = ref<GitChangedFile[]>([])
   let requestSeq = 0
 
-  async function refresh() {
+  async function load(remote: boolean) {
     const p = provider.value
     if (!p) {
       status.value = null
@@ -27,7 +27,7 @@ export function useGitStatus(
     loading.value = true
     error.value = ''
     try {
-      const result = await p.getStatus()
+      const result = remote ? await p.refreshStatus() : await p.getStatus()
       if (seq !== requestSeq) return
       status.value = result
       files.value = result.files || []
@@ -47,6 +47,9 @@ export function useGitStatus(
       }
     }
   }
+
+  const refresh = () => load(false)
+  const refreshRemote = () => load(true)
 
   watch(
     [provider, () => options?.enabled?.value],
@@ -69,5 +72,6 @@ export function useGitStatus(
     status,
     files,
     refresh,
+    refreshRemote,
   }
 }

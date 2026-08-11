@@ -226,6 +226,11 @@ const inspectorSessionId = computed(() => {
   return String(activeTab.value.sideSessionId ?? '')
 })
 
+const sessionTitle = computed(() => {
+  const session = sessionStore.activeSession
+  return session?.summary || session?.title || agentName.value || '新任务'
+})
+
 // 右侧边栏标题：子会话优先取列表缓存 title，缺失回退主会话标题
 const inspectorTitle = computed(() => {
   const sid = activeTab.value.sideSessionId
@@ -392,11 +397,6 @@ watch(inspectorSessionId, (sid) => {
 
 const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef)
 const gitProvider = useWorkspaceGitProvider(executionMode, workspace, activeSessionIdRef)
-
-const sessionTitle = computed(() => {
-  const session = sessionStore.activeSession
-  return session?.summary || session?.title || agentName.value || '新任务'
-})
 
 // Terminal
 const { togglePanel } = useTerminal()

@@ -58,6 +58,10 @@ class WorkspaceGitServiceTest {
         assertThat(status.getChangedFileCount()).isZero();
         assertThat(status.isDetachedHead()).isFalse();
         assertThat(status.isHasRemote()).isFalse();
+        assertThat(status.isHasHead()).isTrue();
+        assertThat(status.isRemoteStatusAvailable()).isFalse();
+        assertThat(status.getAheadCount()).isNull();
+        assertThat(status.getBehindCount()).isNull();
         assertThat(status.getRemotes()).isEmpty();
         assertThat(status.getInsertions()).isZero();
         assertThat(status.getDeletions()).isZero();
@@ -103,6 +107,42 @@ class WorkspaceGitServiceTest {
         WorkspaceGitService.GitFileDiffDTO newDiff = service.getFileDiff(repo.toString(), null, "new.txt");
         assertThat(newDiff.getBeforeContent()).isEmpty();
         assertThat(newDiff.getAfterContent()).contains("line1");
+    }
+
+    @Test
+    @EnabledIf("gitAvailable")
+    void statusUsesLocalUpstreamRefsWithoutFetching() throws Exception {
+        Path remote = tempDir.resolve("remote.git");
+        run(tempDir, "git", "init", "--bare", remote.toString());
+        String branch = runCapture(repo, "git", "rev-parse", "--abbrev-ref", "HEAD").trim();
+        run(repo, "git", "remote", "add", "origin", remote.toString());
+        run(repo, "git", "push", "-u", "origin", branch);
+        Files.writeString(repo.resolve("local.txt"), "local\n");
+        run(repo, "git", "add", "local.txt");
+        run(repo, "git", "commit", "-m", "local");
+
+        WorkspaceGitService.GitStatusDTO status = service.getStatus(repo.toString(), null);
+
+        assertThat(status.getUpstream()).isEqualTo("origin/" + branch);
+        assertThat(status.getAheadCount()).isEqualTo(1);
+        assertThat(status.getBehindCount()).isZero();
+        assertThat(status.isRemoteStatusAvailable()).isFalse();
+        assertThat(status.getRemoteStatusError()).isNull();
+    }
+
+    @Test
+    @EnabledIf("gitAvailable")
+    void unbornRepositoryReportsNoHead() throws Exception {
+        Path unborn = tempDir.resolve("unborn");
+        Files.createDirectories(unborn);
+        run(unborn, "git", "init");
+
+        WorkspaceGitService.GitStatusDTO status = service.getStatus(unborn.toString(), null);
+
+        assertThat(status.getIsGit()).isTrue();
+        assertThat(status.isHasHead()).isFalse();
+        assertThat(status.getAheadCount()).isNull();
+        assertThat(status.getBehindCount()).isNull();
     }
 
     @Test

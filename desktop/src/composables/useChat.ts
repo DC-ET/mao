@@ -955,10 +955,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     switchingSession.value = false
   }
 
-  function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
+  async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
     if (!sessionId.value) return
-    sendAskUserQuestionsResult(sessionId.value, requestId, answers)
-    sessionStore.removeAskQuestion(sessionId.value, requestId)
+    await sendAskUserQuestionsResult(sessionId.value, requestId, answers)
+    // Keep the panel until the server confirms completion with ask_user_questions_cancelled.
   }
 
   function cleanup() {

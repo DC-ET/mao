@@ -11,6 +11,12 @@ const MAX_DIFF_BYTES = 512 * 1024
 
 function runGit(cwd, args) {
   return new Promise((resolve) => {
+    let settled = false
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
     const child = execFile(
       'git',
       ['-c', 'core.quotepath=false', ...args],
@@ -19,18 +25,20 @@ function runGit(cwd, args) {
         encoding: 'utf8',
         maxBuffer: MAX_STDOUT_BYTES,
         timeout: GIT_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       },
-      (err, stdout) => {
-        if (err) {
-          resolve({ exitCode: typeof err.code === 'number' ? err.code : 1, stdout: stdout || '' })
-          return
-        }
-        resolve({ exitCode: 0, stdout: stdout || '' })
+      (err, stdout, stderr) => {
+        finish({
+          exitCode: err ? (typeof err.code === 'number' ? err.code : 1) : 0,
+          stdout: stdout || '',
+          stderr: stderr || '',
+          timedOut: Boolean(err && (err.killed || err.code === 'ETIMEDOUT')),
+        })
       },
     )
-    child.on('error', () => {
-      resolve({ exitCode: 127, stdout: '' })
+    child.on('error', (error) => {
+      finish({ exitCode: 127, stdout: '', stderr: error.message || '', timedOut: false })
     })
   })
 }
@@ -388,17 +396,17 @@ async function mapLimit(items, limit, fn) {
  */
 async function getGitStatus(workspace, repoPath) {
   if (!workspace) {
-    return { isGit: false }
+    return { isGit: false, remoteStatusAvailable: false }
   }
   let cwd
   try {
     cwd = resolveRepoDir(workspace, repoPath)
   } catch (e) {
-    return { isGit: false, error: e.message || '路径无效' }
+    return { isGit: false, remoteStatusAvailable: false, error: e.message || '路径无效' }
   }
   const repoRootStr = await runGitOk(cwd, ['rev-parse', '--show-toplevel'])
   if (!repoRootStr) {
-    return { isGit: false }
+    return { isGit: false, remoteStatusAvailable: false }
   }
   const repoRoot = path.resolve(repoRootStr.trim())
   let branchOut = await runGitOk(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])
@@ -409,10 +417,11 @@ async function getGitStatus(workspace, repoPath) {
   }
   const filesMap = await collectChangedFiles(repoRoot)
   const files = Array.from(filesMap.values())
-  const [remotesOut, upstreamOut, symbolicHead] = await Promise.all([
+  const [remotesOut, upstreamOut, symbolicHead, headOut] = await Promise.all([
     runGitOk(repoRoot, ['remote']),
     runGitOk(repoRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']),
     runGitOk(repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
+    runGitOk(repoRoot, ['rev-parse', '--verify', 'HEAD']),
   ])
   const remotes = remotesOut ? remotesOut.split(/\r?\n/).map((item) => item.trim()).filter(Boolean) : []
   const detachedHead = !symbolicHead
@@ -432,9 +441,94 @@ async function getGitStatus(workspace, repoPath) {
     files,
     remotes,
     hasRemote: remotes.length > 0,
+    hasHead: Boolean(headOut),
     detachedHead,
     upstream: upstreamOut ? upstreamOut.trim() : undefined,
+    remoteStatusAvailable: false,
   }
+}
+
+function sanitizeRemoteError(text) {
+  return String(text || '')
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1***@')
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1***@')
+    .trim()
+    .slice(0, 4000)
+}
+
+function selectFetchRemote(status) {
+  if (status.upstream) {
+    const upstreamRemote = status.remotes
+      .filter((remote) => status.upstream.startsWith(`${remote}/`))
+      .sort((a, b) => b.length - a.length)[0]
+    if (upstreamRemote) return upstreamRemote
+  }
+  if (status.remotes.includes('origin')) return 'origin'
+  if (status.remotes.length === 1) return status.remotes[0]
+  return undefined
+}
+
+/**
+ * Fetch the confirmed remote before calculating divergence from the configured upstream.
+ * Fetch failures preserve the already collected local status.
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ */
+async function refreshGitStatus(workspace, repoPath) {
+  const status = await getGitStatus(workspace, repoPath)
+  if (!status.isGit) return status
+
+  const remote = selectFetchRemote(status)
+  if (!remote) {
+    return {
+      ...status,
+      remoteStatusError: status.remotes.length > 1
+        ? '存在多个远端且无法确认要同步的远端'
+        : '未配置可同步的 Git 远端',
+    }
+  }
+
+  const fetchResult = await runGit(status.repoRoot, ['fetch', '--prune', remote])
+  if (fetchResult.exitCode !== 0) {
+    return {
+      ...status,
+      remoteStatusError: fetchResult.timedOut
+        ? 'Git fetch 超过 60 秒，已终止'
+        : sanitizeRemoteError(fetchResult.stderr || fetchResult.stdout) || 'Git fetch 失败',
+    }
+  }
+
+  const refreshedStatus = await getGitStatus(workspace, repoPath)
+  if (!refreshedStatus.isGit) return refreshedStatus
+
+  if (!refreshedStatus.hasHead) {
+    return { ...refreshedStatus, remoteStatusAvailable: true, hasCommitsToPush: false }
+  }
+  if (!refreshedStatus.upstream) {
+    const remoteBranch = `refs/remotes/${remote}/${refreshedStatus.branch}`
+    const exists = await runGit(refreshedStatus.repoRoot, ['rev-parse', '--verify', '--quiet', remoteBranch])
+    if (exists.exitCode !== 0) {
+      return { ...refreshedStatus, remoteStatusAvailable: true, hasCommitsToPush: true }
+    }
+    const comparison = await runGit(refreshedStatus.repoRoot, ['rev-list', '--left-right', '--count', `HEAD...${remoteBranch}`])
+    const [ahead] = comparison.stdout.trim().split(/\s+/).map((value) => parseInt(value, 10))
+    if (comparison.exitCode !== 0 || !Number.isFinite(ahead)) {
+      return { ...refreshedStatus, remoteStatusError: '读取 Git 远端状态失败' }
+    }
+    return { ...refreshedStatus, remoteStatusAvailable: true, hasCommitsToPush: ahead > 0 }
+  }
+  const divergence = await runGit(refreshedStatus.repoRoot, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])
+  if (divergence.exitCode !== 0) {
+    return {
+      ...refreshedStatus,
+      remoteStatusError: sanitizeRemoteError(divergence.stderr || divergence.stdout) || '读取 Git 远端状态失败',
+    }
+  }
+  const [aheadCount, behindCount] = divergence.stdout.trim().split(/\s+/).map((value) => parseInt(value, 10))
+  if (!Number.isFinite(aheadCount) || !Number.isFinite(behindCount)) {
+    return { ...refreshedStatus, remoteStatusError: '读取 Git 远端状态失败' }
+  }
+  return { ...refreshedStatus, remoteStatusAvailable: true, aheadCount, behindCount, hasCommitsToPush: aheadCount > 0 }
 }
 
 /**
@@ -520,7 +614,10 @@ async function getGitFileDiff(workspace, repoPath, relativePath) {
 module.exports = {
   collectChangedFiles,
   getGitStatus,
+  refreshGitStatus,
   getGitFileDiff,
   listGitRepos,
   resolveRepoDir,
+  sanitizeRemoteError,
+  selectFetchRemote,
 }

@@ -159,9 +159,9 @@ const executionError = computed(
   () => sessionStore.sessionExecutionErrors.get(sid.value) ?? null
 )
 
-function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
-  sendAskUserQuestionsResult(sid.value, requestId, answers)
-  sessionStore.clearAskQuestions(sid.value)
+async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
+  await sendAskUserQuestionsResult(sid.value, requestId, answers)
+  // Keep the panel until the server confirms completion with ask_user_questions_cancelled.
 }
 
 async function loadMeta() {

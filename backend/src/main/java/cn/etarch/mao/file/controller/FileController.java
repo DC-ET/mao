@@ -243,6 +243,13 @@ public class FileController {
         return Result.ok(workspaceGitService.getFileDiff(session.getWorkspace(), repoPath, path));
     }
 
+    @PostMapping("/workspace-git-refresh")
+    public Result<WorkspaceGitService.GitStatusDTO> workspaceGitRefresh(
+            @AuthenticationPrincipal Long userId, @RequestBody GitOperationRequest request) {
+        Session session = requireOwnedSession(userId, request.getSessionId());
+        return Result.ok(gitWriteOperationService.refreshRemoteStatus(session, request.getRepoPath()));
+    }
+
     @PostMapping("/workspace-git-commit")
     public Result<GitWriteOperationService.GitOperationResult> workspaceGitCommit(
             @AuthenticationPrincipal Long userId, @RequestBody GitOperationRequest request) {

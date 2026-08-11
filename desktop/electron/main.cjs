@@ -845,7 +845,7 @@ function isGitWorkspace(workspace) {
   return false
 }
 
-const { getGitStatus, getGitFileDiff, listGitRepos } = require('./gitStatus.cjs')
+const { getGitStatus, refreshGitStatus, getGitFileDiff, listGitRepos } = require('./gitStatus.cjs')
 const { buildCommitInput, commit: gitCommit, pull: gitPull, push: gitPush } = require('./gitOperations.cjs')
 
 function loadMainContent() {
@@ -1034,7 +1034,15 @@ ipcMain.handle('git-status', async (event, { workspace, repoPath } = {}) => {
   try {
     return await getGitStatus(workspace || currentWorkspace, repoPath)
   } catch (e) {
-    return { isGit: false, error: e.message || '读取 Git 状态失败' }
+    return { isGit: false, remoteStatusAvailable: false, error: e.message || '读取 Git 状态失败' }
+  }
+})
+
+ipcMain.handle('git-status-refresh', async (event, { workspace, repoPath } = {}) => {
+  try {
+    return await refreshGitStatus(workspace || currentWorkspace, repoPath)
+  } catch (e) {
+    return { isGit: false, remoteStatusAvailable: false, error: e.message || '刷新 Git 状态失败' }
   }
 })
 

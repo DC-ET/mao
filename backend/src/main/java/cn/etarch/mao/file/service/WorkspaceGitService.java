@@ -312,6 +312,8 @@ public class WorkspaceGitService {
                 && runGitOk(repoRoot, "symbolic-ref", "-q", "HEAD") == null;
         dto.setBranch(normalizedBranch);
         dto.setDetachedHead(detached);
+        dto.setHasHead(runGitOk(repoRoot, "rev-parse", "--verify", "HEAD") != null);
+        dto.setRemoteStatusAvailable(false);
         String remoteOutput = runGitOk(repoRoot, "remote");
         List<String> remotes = remoteOutput == null || remoteOutput.isBlank()
                 ? List.of()
@@ -323,6 +325,7 @@ public class WorkspaceGitService {
             String upstream = runGitOk(repoRoot, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}");
             dto.setUpstream(upstream != null ? upstream.trim() : null);
         }
+        populateAheadBehind(repoRoot, dto);
 
         Map<String, GitChangedFileDTO> files = collectChangedFiles(repoRoot);
         int insertions = 0;
@@ -336,6 +339,28 @@ public class WorkspaceGitService {
         dto.setChangedFileCount(files.size());
         dto.setFiles(new ArrayList<>(files.values()));
         return dto;
+    }
+
+    void populateAheadBehind(Path repoRoot, GitStatusDTO dto) {
+        if (!dto.isHasHead() || dto.getUpstream() == null) {
+            dto.setAheadCount(null);
+            dto.setBehindCount(null);
+            return;
+        }
+        String counts = runGitOk(repoRoot, "rev-list", "--left-right", "--count", "HEAD...@{upstream}");
+        if (counts == null) {
+            dto.setAheadCount(null);
+            dto.setBehindCount(null);
+            return;
+        }
+        String[] parts = counts.trim().split("\\s+");
+        if (parts.length != 2) {
+            dto.setAheadCount(null);
+            dto.setBehindCount(null);
+            return;
+        }
+        dto.setAheadCount(parseIntSafe(parts[0]));
+        dto.setBehindCount(parseIntSafe(parts[1]));
     }
 
     public GitFileDiffDTO getFileDiff(String sessionWorkspace, String repoPath, String relativePath) {
@@ -737,7 +762,13 @@ public class WorkspaceGitService {
         private List<String> remotes;
         private boolean hasRemote;
         private boolean detachedHead;
+        private boolean hasHead;
         private String upstream;
+        private Integer aheadCount;
+        private Integer behindCount;
+        private Boolean hasCommitsToPush;
+        private boolean remoteStatusAvailable;
+        private String remoteStatusError;
         private int insertions;
         private int deletions;
         private int changedFileCount;

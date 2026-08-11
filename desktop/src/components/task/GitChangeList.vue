@@ -13,16 +13,16 @@
             </button>
           </span>
         </el-tooltip>
-        <el-tooltip :content="syncDisabledReason || '拉取代码'" placement="top" :show-after="300">
+        <el-tooltip :content="pullDisabledReason || '拉取代码'" placement="top" :show-after="300">
           <span>
-            <button class="git-action-btn" :disabled="!!syncDisabledReason" aria-label="拉取代码" @click="$emit('pull')">
+            <button class="git-action-btn" :disabled="!!pullDisabledReason" aria-label="拉取代码" @click="$emit('pull')">
               <el-icon :size="14" :class="{ spinning: operation === 'pull' }"><Download /></el-icon>
             </button>
           </span>
         </el-tooltip>
-        <el-tooltip :content="syncDisabledReason || '推送代码'" placement="top" :show-after="300">
+        <el-tooltip :content="pushDisabledReason || '推送代码'" placement="top" :show-after="300">
           <span>
-            <button class="git-action-btn" :disabled="!!syncDisabledReason" aria-label="推送代码" @click="$emit('push')">
+            <button class="git-action-btn" :disabled="!!pushDisabledReason" aria-label="推送代码" @click="$emit('push')">
               <el-icon :size="14" :class="{ spinning: operation === 'push' }"><Upload /></el-icon>
             </button>
           </span>
@@ -67,7 +67,14 @@ const props = defineProps<{
   loading?: boolean
   error?: string
   hasRemote?: boolean
+  hasHead?: boolean
   detachedHead?: boolean
+  upstream?: string
+  remoteStatusAvailable?: boolean
+  remoteStatusError?: string
+  aheadCount?: number
+  behindCount?: number
+  hasCommitsToPush?: boolean
   operation?: 'commit' | 'pull' | 'push' | null
 }>()
 
@@ -87,12 +94,29 @@ const commitDisabledReason = computed(() => {
   return ''
 })
 
-const syncDisabledReason = computed(() => {
+function commonSyncDisabledReason() {
   if (props.operation) return 'Git 操作进行中'
   if (props.loading) return '正在读取 Git 状态'
   if (props.error) return 'Git 状态不可用'
   if (props.detachedHead) return 'detached HEAD，请先切换分支'
   if (!props.hasRemote) return '仓库未配置远端'
+  if (!props.remoteStatusAvailable) return props.remoteStatusError || '请刷新以确认远端状态'
+  return ''
+}
+
+const pullDisabledReason = computed(() => {
+  const common = commonSyncDisabledReason()
+  if (common) return common
+  if (!props.upstream) return '当前分支未配置 upstream'
+  if ((props.behindCount ?? 0) === 0) return '没有可拉取的更新'
+  return ''
+})
+
+const pushDisabledReason = computed(() => {
+  const common = commonSyncDisabledReason()
+  if (common) return common
+  if (!props.hasHead || props.hasCommitsToPush === false) return '没有可推送的提交'
+  if (props.hasCommitsToPush !== true) return '无法确认可推送状态'
   return ''
 })
 

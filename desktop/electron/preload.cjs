@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => ipcRenderer.invoke('get-platform'),
   getEnvironmentInfo: (workspace) => ipcRenderer.invoke('get-environment-info', { workspace }),
   gitStatus: (workspace, repoPath) => ipcRenderer.invoke('git-status', { workspace, repoPath }),
+  refreshGitStatus: (workspace, repoPath) => ipcRenderer.invoke('git-status-refresh', { workspace, repoPath }),
   gitFileDiff: (workspace, repoPath, filePath) => ipcRenderer.invoke('git-file-diff', { workspace, repoPath, path: filePath }),
   gitRepos: (workspace) => ipcRenderer.invoke('git-repos', { workspace }),
   gitCommitInput: (workspace, repoPath) => ipcRenderer.invoke('git-commit-input', { workspace, repoPath }),

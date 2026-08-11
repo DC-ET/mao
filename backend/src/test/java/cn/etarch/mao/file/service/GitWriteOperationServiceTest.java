@@ -3,6 +3,7 @@ package cn.etarch.mao.file.service;
 import cn.etarch.mao.harness.safety.PathSandbox;
 import cn.etarch.mao.harness.runtime.RuntimeDataResolver;
 import cn.etarch.mao.session.activity.ActivityService;
+import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.user.service.GitCredentialService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class GitWriteOperationServiceTest {
     @TempDir Path tempDir;
@@ -97,6 +99,129 @@ class GitWriteOperationServiceTest {
         assertThat(renamed.getPath()).isEqualTo("config.txt");
         assertThat(renamed.isSensitive()).isTrue();
         assertThat(renamed.getDiff()).isNull();
+    }
+
+    @Test
+    @EnabledIf("gitAvailable")
+    void refreshFetchesSelectedRemoteAndReportsAheadBehind() throws Exception {
+        Path remote = tempDir.resolve("remote.git");
+        run(tempDir, "git", "init", "--bare", remote.toString());
+        Path repo = tempDir.resolve("refresh-repo");
+        Files.createDirectories(repo);
+        run(repo, "git", "init");
+        run(repo, "git", "config", "user.name", "Test");
+        run(repo, "git", "config", "user.email", "a@b.c");
+        Files.writeString(repo.resolve("base.txt"), "base\n");
+        run(repo, "git", "add", ".");
+        run(repo, "git", "commit", "-m", "init");
+        String branch = capture(repo, "git", "rev-parse", "--abbrev-ref", "HEAD").trim();
+        run(repo, "git", "remote", "add", "origin", remote.toString());
+        run(repo, "git", "push", "-u", "origin", branch);
+
+        Path other = tempDir.resolve("other");
+        run(tempDir, "git", "clone", remote.toString(), other.toString());
+        run(other, "git", "config", "user.name", "Other");
+        run(other, "git", "config", "user.email", "other@example.com");
+        Files.writeString(other.resolve("remote.txt"), "remote\n");
+        run(other, "git", "add", ".");
+        run(other, "git", "commit", "-m", "remote");
+        run(other, "git", "push");
+
+        GitWriteOperationService service = newService(repo);
+        WorkspaceGitService.GitStatusDTO status = service.refreshRemoteStatus(session(repo), null);
+
+        assertThat(status.isRemoteStatusAvailable()).isTrue();
+        assertThat(status.getRemoteStatusError()).isNull();
+        assertThat(status.getAheadCount()).isZero();
+        assertThat(status.getBehindCount()).isEqualTo(1);
+        assertThat(status.isHasHead()).isTrue();
+    }
+
+    @Test
+    @EnabledIf("gitAvailable")
+    void refreshPrefersUpstreamRemoteOverOrigin() throws Exception {
+        Path upstream = tempDir.resolve("upstream.git");
+        run(tempDir, "git", "init", "--bare", upstream.toString());
+        Path repo = tempDir.resolve("upstream-refresh");
+        Files.createDirectories(repo);
+        run(repo, "git", "init");
+        run(repo, "git", "config", "user.name", "Test");
+        run(repo, "git", "config", "user.email", "a@b.c");
+        Files.writeString(repo.resolve("base.txt"), "base\n");
+        run(repo, "git", "add", ".");
+        run(repo, "git", "commit", "-m", "init");
+        String branch = capture(repo, "git", "rev-parse", "--abbrev-ref", "HEAD").trim();
+        run(repo, "git", "remote", "add", "upstream", upstream.toString());
+        run(repo, "git", "push", "-u", "upstream", branch);
+        run(repo, "git", "remote", "add", "origin", "https://invalid:secret@example.invalid/repo.git");
+
+        WorkspaceGitService.GitStatusDTO status = newService(repo).refreshRemoteStatus(session(repo), null);
+
+        assertThat(status.isRemoteStatusAvailable()).isTrue();
+        assertThat(status.getRemoteStatusError()).isNull();
+    }
+
+    @Test
+    @EnabledIf("gitAvailable")
+    void refreshFailureReturnsLocalStatusAndSanitizedError() throws Exception {
+        Path repo = tempDir.resolve("failed-refresh");
+        Files.createDirectories(repo);
+        run(repo, "git", "init");
+        run(repo, "git", "config", "user.name", "Test");
+        run(repo, "git", "config", "user.email", "a@b.c");
+        Files.writeString(repo.resolve("base.txt"), "base\n");
+        run(repo, "git", "add", ".");
+        run(repo, "git", "commit", "-m", "init");
+        run(repo, "git", "remote", "add", "origin", "https://user:secret@example.invalid/repo.git");
+
+        WorkspaceGitService.GitStatusDTO status = newService(repo).refreshRemoteStatus(session(repo), null);
+
+        assertThat(status.getIsGit()).isTrue();
+        assertThat(status.isRemoteStatusAvailable()).isFalse();
+        assertThat(status.getRemoteStatusError()).isNotBlank().doesNotContain("user:secret");
+    }
+
+    @Test
+    @EnabledIf("gitAvailable")
+    void multipleRemotesWithoutOriginCannotBeConfirmed() throws Exception {
+        Path repo = tempDir.resolve("multi-remote");
+        Files.createDirectories(repo);
+        run(repo, "git", "init");
+        run(repo, "git", "config", "user.name", "Test");
+        run(repo, "git", "config", "user.email", "a@b.c");
+        Files.writeString(repo.resolve("base.txt"), "base\n");
+        run(repo, "git", "add", ".");
+        run(repo, "git", "commit", "-m", "init");
+        run(repo, "git", "remote", "add", "alpha", tempDir.resolve("alpha.git").toString());
+        run(repo, "git", "remote", "add", "beta", tempDir.resolve("beta.git").toString());
+
+        WorkspaceGitService.GitStatusDTO status = newService(repo).refreshRemoteStatus(session(repo), null);
+
+        assertThat(status.isRemoteStatusAvailable()).isFalse();
+        assertThat(status.getRemoteStatusError()).contains("多个远端");
+    }
+
+    private GitWriteOperationService newService(Path repo) {
+        WorkspaceGitService workspace = new WorkspaceGitService(new PathSandbox(tempDir.resolve("refresh-sandbox").toString()));
+        GitCredentialService credentials = mock(GitCredentialService.class);
+        when(credentials.getTokenMapByUser(1L)).thenReturn(Map.of());
+        return new GitWriteOperationService(workspace, mock(GitCommitMessageService.class), credentials,
+                mock(RuntimeDataResolver.class), mock(ActivityService.class), new ObjectMapper());
+    }
+
+    private static Session session(Path repo) {
+        Session session = new Session();
+        session.setId(1L);
+        session.setUserId(1L);
+        session.setWorkspace(repo.toString());
+        return session;
+    }
+
+    private static String capture(Path cwd, String... command) throws Exception {
+        Process p = new ProcessBuilder(command).directory(cwd.toFile()).redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes());
+        if (!p.waitFor(30, TimeUnit.SECONDS) || p.exitValue() != 0) throw new IllegalStateException(out);
+        return out;
     }
 
     private static void run(Path cwd, String... command) throws Exception {

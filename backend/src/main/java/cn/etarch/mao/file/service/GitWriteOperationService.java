@@ -106,6 +106,42 @@ public class GitWriteOperationService {
         });
     }
 
+    /**
+     * 手动刷新远端引用。fetch 失败属于可恢复的状态确认失败，因此始终返回最新本地状态，
+     * 不将远端网络或认证错误升级为 HTTP 请求失败。
+     */
+    public WorkspaceGitService.GitStatusDTO refreshRemoteStatus(Session session, String repoPath) {
+        Path repo = resolveRepository(session, repoPath);
+        ReentrantLock lock = locks.computeIfAbsent(repo, ignored -> new ReentrantLock());
+        if (!lock.tryLock()) throw new BusinessException(ErrorCode.PARAM_INVALID, "Git 操作进行中");
+        try {
+            RemoteState state = remoteState(repo);
+            String remote = selectRefreshRemote(repo, state);
+            if (remote == null) {
+                WorkspaceGitService.GitStatusDTO status = workspaceGitService.getStatus(session.getWorkspace(), repoPath);
+                status.setRemoteStatusAvailable(false);
+                status.setRemoteStatusError(state.remotes().isEmpty()
+                        ? "仓库未配置远端"
+                        : "存在多个远端且没有 origin，无法确认远端状态");
+                return status;
+            }
+
+            GitResult fetch = run(repo, List.of("fetch", "--prune", remote), credentialEnv(session));
+            WorkspaceGitService.GitStatusDTO status = workspaceGitService.getStatus(session.getWorkspace(), repoPath);
+            if (fetch.success()) {
+                status.setRemoteStatusAvailable(true);
+                status.setRemoteStatusError(null);
+                status.setHasCommitsToPush(hasCommitsToPush(repo, status, remote));
+            } else {
+                status.setRemoteStatusAvailable(false);
+                status.setRemoteStatusError(classify(fetch, "远端状态刷新失败"));
+            }
+            return status;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public GitOperationResult pull(Session session, String repoPath) {
         return locked(session, repoPath, "pull", (repo, started) -> {
             RemoteState state = remoteState(repo);
@@ -219,12 +255,7 @@ public class GitWriteOperationService {
     }
 
     private GitOperationResult locked(Session session, String repoPath, String operation, LockedOperation action) {
-        Path repo;
-        try {
-            repo = workspaceGitService.resolveRepository(session.getWorkspace(), repoPath).toRealPath().normalize();
-        } catch (IOException e) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "仓库路径解析失败");
-        }
+        Path repo = resolveRepository(session, repoPath);
         ReentrantLock lock = locks.computeIfAbsent(repo, ignored -> new ReentrantLock());
         if (!lock.tryLock()) throw new BusinessException(ErrorCode.PARAM_INVALID, "Git 操作进行中");
         Instant started = Instant.now();
@@ -259,6 +290,24 @@ public class GitWriteOperationService {
         }
     }
 
+    private Path resolveRepository(Session session, String repoPath) {
+        try {
+            return workspaceGitService.resolveRepository(session.getWorkspace(), repoPath).toRealPath().normalize();
+        } catch (IOException e) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "仓库路径解析失败");
+        }
+    }
+
+    private String selectRefreshRemote(Path repo, RemoteState state) {
+        if (state.upstream() != null) {
+            String upstreamRemote = output(run(repo,
+                    List.of("config", "--get", "branch." + state.branch() + ".remote"), Map.of()));
+            if (upstreamRemote != null && state.remotes().contains(upstreamRemote)) return upstreamRemote;
+        }
+        if (state.remotes().contains("origin")) return "origin";
+        return state.remotes().size() == 1 ? state.remotes().get(0) : null;
+    }
+
     private RemoteState remoteState(Path repo) {
         String branch = output(run(repo, List.of("rev-parse", "--abbrev-ref", "HEAD"), Map.of()));
         boolean detached = "HEAD".equals(branch) && !run(repo, List.of("symbolic-ref", "-q", "HEAD"), Map.of()).success();
@@ -267,6 +316,24 @@ public class GitWriteOperationService {
                 : Arrays.stream(remoteOutput.split("\\n")).map(String::trim).filter(s -> !s.isEmpty()).sorted().toList();
         String upstream = output(run(repo, List.of("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"), Map.of()));
         return new RemoteState(branch, detached, remotes, upstream);
+    }
+
+    private boolean hasCommitsToPush(Path repo, WorkspaceGitService.GitStatusDTO status, String remote) {
+        if (!status.isHasHead()) return false;
+        if (status.getUpstream() != null) return status.getAheadCount() != null && status.getAheadCount() > 0;
+        String branch = status.getBranch();
+        if (branch == null || branch.isBlank()) return false;
+        GitResult remoteBranch = run(repo, List.of("rev-parse", "--verify", "-q", "refs/remotes/" + remote + "/" + branch), Map.of());
+        if (!remoteBranch.success()) return true;
+        GitResult counts = run(repo, List.of("rev-list", "--left-right", "--count", "HEAD...refs/remotes/" + remote + "/" + branch), Map.of());
+        if (!counts.success()) return false;
+        String[] parts = counts.output().trim().split("\\s+");
+        return parts.length == 2 && parseInt(parts[0]) > 0;
+    }
+
+    private static int parseInt(String value) {
+        try { return Integer.parseInt(value); }
+        catch (NumberFormatException e) { return 0; }
     }
 
     private void requirePullPushState(RemoteState state) {

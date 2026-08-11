@@ -96,6 +96,35 @@ interface GitCommitGenerationInput {
   error?: string
 }
 
+interface GitStatusResult {
+  isGit: boolean
+  repoRoot?: string
+  branch?: string
+  insertions?: number
+  deletions?: number
+  changedFileCount?: number
+  remotes?: string[]
+  hasRemote?: boolean
+  hasHead?: boolean
+  detachedHead?: boolean
+  upstream?: string
+  remoteStatusAvailable: boolean
+  remoteStatusError?: string
+  aheadCount?: number
+  behindCount?: number
+  hasCommitsToPush?: boolean
+  files?: Array<{
+    path: string
+    oldPath?: string
+    changeType: string
+    untracked?: boolean
+    insertions?: number
+    deletions?: number
+    binary?: boolean
+  }>
+  error?: string
+}
+
 interface GitOperationResult {
   success: boolean
   operation: 'commit' | 'pull' | 'push'
@@ -143,28 +172,8 @@ interface ElectronAPI {
     shell: string
     osVersion: string
   }>
-  gitStatus(workspace?: string, repoPath?: string): Promise<{
-    isGit: boolean
-    repoRoot?: string
-    branch?: string
-    insertions?: number
-    deletions?: number
-    changedFileCount?: number
-    remotes?: string[]
-    hasRemote?: boolean
-    detachedHead?: boolean
-    upstream?: string
-    files?: Array<{
-      path: string
-      oldPath?: string
-      changeType: string
-      untracked?: boolean
-      insertions?: number
-      deletions?: number
-      binary?: boolean
-    }>
-    error?: string
-  }>
+  gitStatus(workspace?: string, repoPath?: string): Promise<GitStatusResult>
+  refreshGitStatus(workspace?: string, repoPath?: string): Promise<GitStatusResult>
   gitFileDiff(workspace: string | undefined, repoPath: string | undefined, path: string): Promise<{
     path: string
     changeType: string

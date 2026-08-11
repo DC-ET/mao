@@ -4,6 +4,7 @@ const { execFileSync } = require('child_process')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const { getGitStatus, refreshGitStatus } = require('./gitStatus.cjs')
 const {
   MAX_COMMIT_DIFF_BYTES,
   buildCommitInput,
@@ -107,6 +108,89 @@ test('status reports remotes, upstream and detached head', async (t) => {
   git(repo, ['checkout', '--detach'])
   state = await getRemoteState(repo)
   assert.equal(state.detachedHead, true)
+})
+
+function cloneRepo(t, remote) {
+  const repo = tempDir(t)
+  git(repo, ['clone', remote, '.'])
+  git(repo, ['config', 'user.name', 'Test User'])
+  git(repo, ['config', 'user.email', 'test@example.com'])
+  return repo
+}
+
+function commitFile(repo, fileName, content, message) {
+  fs.writeFileSync(path.join(repo, fileName), content)
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-m', message])
+}
+
+function setupTrackedRemote(t) {
+  const remote = createBareRemote(t)
+  const seed = initRepo(t)
+  git(seed, ['remote', 'add', 'origin', remote])
+  git(seed, ['push', '-u', 'origin', 'main'])
+  git(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main'])
+  return { remote, seed, local: cloneRepo(t, remote) }
+}
+
+test('local status stays fast and marks remote state unconfirmed', async (t) => {
+  const { local } = setupTrackedRemote(t)
+  const status = await getGitStatus(local)
+  assert.equal(status.hasHead, true)
+  assert.equal(status.remoteStatusAvailable, false)
+  assert.equal(status.aheadCount, undefined)
+  assert.equal(status.behindCount, undefined)
+})
+
+test('refresh reports synchronized upstream', async (t) => {
+  const { local } = setupTrackedRemote(t)
+  const status = await refreshGitStatus(local)
+  assert.equal(status.remoteStatusAvailable, true, status.remoteStatusError)
+  assert.equal(status.aheadCount, 0)
+  assert.equal(status.behindCount, 0)
+})
+
+test('refresh reports commits ahead of upstream', async (t) => {
+  const { local } = setupTrackedRemote(t)
+  commitFile(local, 'local.txt', 'local\n', 'local update')
+  const status = await refreshGitStatus(local)
+  assert.equal(status.remoteStatusAvailable, true, status.remoteStatusError)
+  assert.equal(status.aheadCount, 1)
+  assert.equal(status.behindCount, 0)
+})
+
+test('refresh fetches and reports commits behind upstream', async (t) => {
+  const { seed, local } = setupTrackedRemote(t)
+  commitFile(seed, 'remote.txt', 'remote\n', 'remote update')
+  git(seed, ['push'])
+  const status = await refreshGitStatus(local)
+  assert.equal(status.remoteStatusAvailable, true, status.remoteStatusError)
+  assert.equal(status.aheadCount, 0)
+  assert.equal(status.behindCount, 1)
+})
+
+test('refresh reports diverged upstream', async (t) => {
+  const { seed, local } = setupTrackedRemote(t)
+  commitFile(local, 'local.txt', 'local\n', 'local update')
+  commitFile(seed, 'remote.txt', 'remote\n', 'remote update')
+  git(seed, ['push'])
+  const status = await refreshGitStatus(local)
+  assert.equal(status.remoteStatusAvailable, true, status.remoteStatusError)
+  assert.equal(status.aheadCount, 1)
+  assert.equal(status.behindCount, 1)
+})
+
+test('refresh fetch failure preserves local status and redacts remote credentials', async (t) => {
+  const repo = initRepo(t)
+  git(repo, ['remote', 'add', 'origin', 'https://alice:super-secret@127.0.0.1:1/private/repo.git'])
+  git(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+  git(repo, ['branch', '--set-upstream-to=origin/main', 'main'])
+  const status = await refreshGitStatus(repo)
+  assert.equal(status.isGit, true)
+  assert.equal(status.hasHead, true)
+  assert.equal(status.remoteStatusAvailable, false)
+  assert.ok(status.remoteStatusError)
+  assert.equal(status.remoteStatusError.includes('super-secret'), false)
 })
 
 test('commit stages all changes, skips hooks and injects identity only for the command', async (t) => {

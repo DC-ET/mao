@@ -6,6 +6,7 @@ export interface WorkspaceGitProvider {
   /** 多仓库发现：工作区自身是否 git 仓库 + 一级子目录 git 仓库列表。 */
   getRepos(): Promise<GitReposResult>
   getStatus(repoPath?: string): Promise<GitStatusResult>
+  refreshStatus(repoPath?: string): Promise<GitStatusResult>
   getFileDiff(relativePath: string, repoPath?: string): Promise<GitFileDiff>
   commit(repoPath?: string): Promise<GitOperationResult>
   pull(repoPath?: string): Promise<GitOperationResult>
@@ -20,7 +21,9 @@ function emptyStatus(error?: string): GitStatusResult {
     changedFileCount: 0,
     remotes: [],
     hasRemote: false,
+    hasHead: false,
     detachedHead: false,
+    remoteStatusAvailable: false,
     files: [],
     error,
   }
@@ -39,8 +42,14 @@ function normalizeStatus(data: any): GitStatusResult {
     changedFileCount: data.changedFileCount ?? (data.files?.length ?? 0),
     remotes: Array.isArray(data.remotes) ? data.remotes : [],
     hasRemote: !!data.hasRemote,
+    hasHead: !!data.hasHead,
     detachedHead: !!data.detachedHead,
     upstream: data.upstream,
+    remoteStatusAvailable: !!data.remoteStatusAvailable,
+    remoteStatusError: data.remoteStatusError,
+    aheadCount: Number.isFinite(data.aheadCount) ? data.aheadCount : undefined,
+    behindCount: Number.isFinite(data.behindCount) ? data.behindCount : undefined,
+    hasCommitsToPush: typeof data.hasCommitsToPush === 'boolean' ? data.hasCommitsToPush : undefined,
     files: Array.isArray(data.files)
       ? data.files.map((f: any) => ({
           path: f.path,
@@ -110,6 +119,13 @@ export function createLocalGitProvider(workspace: string, sessionId: string): Wo
         return emptyStatus(e?.message || '读取 Git 状态失败')
       }
     },
+    async refreshStatus(repoPath?: string) {
+      try {
+        return normalizeStatus(await window.electronAPI.refreshGitStatus(workspace, repoPath))
+      } catch (e: any) {
+        return emptyStatus(e?.message || '刷新 Git 远端状态失败')
+      }
+    },
     async getFileDiff(relativePath: string, repoPath?: string) {
       try {
         const data = await window.electronAPI.gitFileDiff(workspace, repoPath, relativePath)
@@ -176,6 +192,9 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
       async getStatus() {
         return emptyStatus('会话未就绪')
       },
+      async refreshStatus() {
+        return emptyStatus('会话未就绪')
+      },
       async getFileDiff(relativePath: string) {
         return {
           path: relativePath,
@@ -214,6 +233,17 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
         return normalizeStatus(data)
       } catch (e: any) {
         return emptyStatus(e?.message || '读取 Git 状态失败')
+      }
+    },
+    async refreshStatus(repoPath?: string) {
+      try {
+        const { data } = await api.post('/files/workspace-git-refresh', {
+          sessionId: numericSessionId,
+          repoPath,
+        })
+        return normalizeStatus(data)
+      } catch (e: any) {
+        return emptyStatus(e?.message || '刷新 Git 远端状态失败')
       }
     },
     async getFileDiff(relativePath: string, repoPath?: string) {
