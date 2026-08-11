@@ -270,6 +270,40 @@ class ShellRuntimeTest {
     }
 
     @Test
+    void shellSessionToolDoesNotTreatRunningCommandOutputAsWorkdir() throws Exception {
+        ShellSessionManager manager = manager();
+        OutputManager outputManager = new OutputManager();
+        ReflectionTestUtils.setField(outputManager, "maxPreviewLines", 100);
+        ReflectionTestUtils.setField(outputManager, "maxPreviewChars", 1000);
+        GitCredentialService gitCredentialService = mock(GitCredentialService.class);
+        when(gitCredentialService.getTokenMapByUser(7L)).thenReturn(Map.of());
+        ShellSessionTool tool = new ShellSessionTool(
+                objectMapper,
+                new PathSandbox(tempDir.toString()),
+                manager,
+                outputManager,
+                new BackgroundTaskManager(),
+                gitCredentialService,
+                mockJwtService(),
+                mockUserMapper(7L, "tester"));
+
+        String exec = tool.execute("""
+                {"command":"echo 'Compiling sources'; sleep 1","session_id":"slow-sh","yield_time_ms":100,"keep_session":true}
+                """, 51L, 7L, tempDir.toString());
+
+        assertThat(exec).contains("exit_code: -1");
+        assertThat(exec).contains("current_workdir: " + tempDir);
+        assertThat(exec).doesNotContain("current_workdir: Compiling sources");
+
+        JsonNode completed = objectMapper.readTree(tool.execute("""
+                {"action":"write_stdin","session_id":"slow-sh","input":"","yield_time_ms":2000}
+                """, 51L, 7L, tempDir.toString()));
+        assertThat(completed.get("completed").asBoolean()).isTrue();
+        assertThat(completed.get("current_workdir").asText()).isEqualTo(tempDir.toString());
+        manager.close("slow-sh");
+    }
+
+    @Test
     void shellSessionToolReturnsJsonErrorsForInvalidRequests() throws Exception {
         ShellSessionTool tool = new ShellSessionTool(
                 objectMapper,

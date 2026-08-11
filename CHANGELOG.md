@@ -17,6 +17,7 @@
 ## 0.0.29 (2026-08-10)
 
 ### 后端
+- 修复 Shell 命令超过等待时间仍在运行时，后续编译日志被误识别为 `current_workdir` 的问题
 - 管理端运行时重启接口的脚本路径改为基于 `app.root-dir` 定位 `${app.root-dir}/backend/restart.sh`，不再使用写死的生产路径
 - 子代理委派（delegate / delegate_followup）整体执行超时默认值从 15 分钟放宽至 60 分钟（`app.harness.delegate.timeout-seconds` 仍可配置，宽限期 `app.harness.delegate.cancel-grace-seconds` 不变）
 - LLM 流式调用防卡死增强：生产环境响应头超时缩短至 120 秒，网络异常与 HTTP 429/5xx 统一有限重试并加入指数退避抖动；响应头到达后解除首包/总调用期限，改由 120 秒 SSE 连续空闲超时保护，正常长时间流式输出不再被误杀；等待响应头、流式静默与重试阶段新增结构化日志和 WebSocket 状态事件，取消时快速终止底层 HTTP Call

@@ -245,7 +245,11 @@ public class ShellSessionTool implements Tool {
         OutputResult output = executeWithMarker(session, command, Duration.ofMillis(yieldTimeMs));
         long elapsedMs = System.currentTimeMillis() - startTime;
 
-        String currentWorkdir = pwdWithMarker(session);
+        // 命令仍在运行时不能再向同一 shell 写入 pwd：它会排在当前命令之后，
+        // 读取过程反而会消费当前命令的后续输出并把日志末行误判为工作目录。
+        String currentWorkdir = output.markerFound()
+                ? pwdWithMarker(session)
+                : session.getCurrentWorkdir();
 
         String result = outputManager.formatToolResult(
                 output.markerFound() ? 0 : -1,
@@ -322,7 +326,9 @@ public class ShellSessionTool implements Tool {
         String fullMarker = MARKER_PREFIX + marker + MARKER_SUFFIX;
         OutputResult output = outputManager.readUntilMarker(session.getStdout(), fullMarker,
                 Duration.ofMillis(yieldTimeMs), outputFile, session::isAlive);
-        String currentWorkdir = pwdWithMarker(session);
+        String currentWorkdir = output.markerFound()
+                ? pwdWithMarker(session)
+                : session.getCurrentWorkdir();
 
         session.touch();
         return objectMapper.writeValueAsString(Map.of(
