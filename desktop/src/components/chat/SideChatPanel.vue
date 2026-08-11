@@ -61,7 +61,11 @@
 
     <!-- 输入区 -->
     <div class="input-area">
-      <ExecutionErrorBanner :message="executionError" />
+      <ExecutionErrorBanner
+        :message="executionError"
+        :can-continue="!sending"
+        @continue="handleChatSend('继续', [])"
+      />
 
       <div v-if="!hasRealSession && displayMessages.length === 0" class="inherit-bar">
         <el-checkbox v-model="inheritContext" size="small">

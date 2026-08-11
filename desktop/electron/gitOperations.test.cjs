@@ -4,7 +4,7 @@ const { execFileSync } = require('child_process')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { getGitStatus, refreshGitStatus } = require('./gitStatus.cjs')
+const { EXCLUDED_REPO_DIRS, getGitStatus, listGitRepos, refreshGitStatus } = require('./gitStatus.cjs')
 const {
   MAX_COMMIT_DIFF_BYTES,
   buildCommitInput,
@@ -44,6 +44,21 @@ function createBareRemote(t) {
   git(remote, ['init', '--bare'])
   return remote
 }
+
+test('repo discovery excludes tool-managed git directories', async (t) => {
+  const workspace = tempDir(t)
+  for (const name of EXCLUDED_REPO_DIRS) {
+    const dir = path.join(workspace, name)
+    fs.mkdirSync(dir)
+    git(dir, ['init'])
+  }
+  const project = path.join(workspace, 'business-project')
+  fs.mkdirSync(project)
+  git(project, ['init'])
+
+  const result = await listGitRepos(workspace)
+  assert.deepEqual(result.repos.map((repo) => repo.name), ['business-project'])
+})
 
 test('sensitive path rules cover credentials and private keys', () => {
   for (const value of ['.env', '.env.local', 'cert.pem', 'private.key', 'key.p12', 'id_ed25519', 'id_rsa.backup', 'myCredentials.json', 'api-token.txt']) {

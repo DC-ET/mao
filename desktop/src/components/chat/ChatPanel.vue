@@ -74,7 +74,11 @@
       <span>正在整理历史对话，腾出上下文空间…</span>
     </div>
 
-    <ExecutionErrorBanner :message="executionError" />
+    <ExecutionErrorBanner
+      :message="executionError"
+      :can-continue="!agentRunning"
+      @continue="handleSend('继续', [])"
+    />
 
     <ChatInput
       ref="chatInputRef"

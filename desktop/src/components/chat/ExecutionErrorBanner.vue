@@ -5,15 +5,36 @@
       <span class="error-title">执行异常</span>
     </div>
     <pre class="error-message">{{ message }}</pre>
+    <el-button
+      v-if="canContinue && isStreamInterrupted"
+      class="continue-button"
+      type="primary"
+      size="small"
+      @click="emit('continue')"
+    >
+      继续
+    </el-button>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { WarningFilled } from '@element-plus/icons-vue'
 
-defineProps<{
+const props = withDefaults(defineProps<{
   message: string | null
+  canContinue?: boolean
+}>(), {
+  canContinue: false
+})
+
+const emit = defineEmits<{
+  continue: []
 }>()
+
+const isStreamInterrupted = computed(() =>
+  props.message?.includes('模型流式响应已中断，请继续执行') ?? false
+)
 </script>
 
 <style scoped>
@@ -54,5 +75,9 @@ defineProps<{
   color: var(--aw-ink-muted-80);
   max-height: 120px;
   overflow-y: auto;
+}
+
+.continue-button {
+  margin-top: 10px;
 }
 </style>

@@ -15,18 +15,18 @@ function cand(partial: Partial<FocusCandidate>): FocusCandidate {
 }
 
 describe('sortByFocusPriority', () => {
-  it('按六档优先级排序：待审批/待回答 > 失败 > 运行中 > 未读 > 空闲 > 已完成', () => {
+  it('按五档优先级排序：待审批/待回答 > 失败 > 运行中 > 未读 > 空闲/已完成', () => {
     const pendingApproval = cand({ id: 'a', pendingApprovalCount: 1, phase: 'WAITING_APPROVAL' })
     const pendingQuestion = cand({ id: 'b', pendingQuestionCount: 1, phase: 'RUNNING' })
     const failed = cand({ id: 'c', phase: 'FAILED' })
     const running = cand({ id: 'd', phase: 'RUNNING' })
     const unread = cand({ id: 'e', phase: 'IDLE', unread: true })
-    const idle = cand({ id: 'f', phase: 'IDLE' })
-    const completed = cand({ id: 'g', phase: 'COMPLETED' })
+    const idle = cand({ id: 'f', phase: 'IDLE', updatedAt: '2026-08-08T10:00:00' })
+    const completed = cand({ id: 'g', phase: 'COMPLETED', updatedAt: '2026-08-09T10:00:00' })
 
     const sorted = sortByFocusPriority([completed, idle, unread, running, failed, pendingQuestion, pendingApproval])
-    // a（待审批）与 b（待回答）同为权重 0，tie-breaker 按 id DESC → 'b' 在前
-    expect(sorted.map(c => c.id)).toEqual(['b', 'a', 'c', 'd', 'e', 'f', 'g'])
+    // a/b 同为权重 0；空闲/已完成同为权重 4，completed 更新时间较新所以排在 idle 前
+    expect(sorted.map(c => c.id)).toEqual(['b', 'a', 'c', 'd', 'e', 'g', 'f'])
   })
 
   it('WAITING_APPROVAL 同时属待审批与运行中时按待审批（权重 0）', () => {
@@ -135,8 +135,8 @@ describe('适配器', () => {
     const completed = cand({ id: 'c', phase: 'COMPLETED' })
 
     const sorted = sortByFocusPriority([completed, idle, parentRunning, parentFailed])
-    // 失败 > 运行中 > 空闲 > 已完成
-    expect(sorted.map(c => c.id)).toEqual(['p1', 'p2', 'i', 'c'])
+    // 失败 > 运行中 > 空闲/已完成；空闲与已完成同档且时间相同，保留输入稳定顺序
+    expect(sorted.map(c => c.id)).toEqual(['p1', 'p2', 'c', 'i'])
   })
 })
 

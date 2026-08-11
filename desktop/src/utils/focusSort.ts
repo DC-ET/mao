@@ -20,14 +20,14 @@ export interface FocusCandidate {
 
 const RUNNING_PHASES = new Set<TaskPhase>(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
 
-/** 优先级：0=待审批/待回答，1=失败，2=运行中，3=未读，4=空闲，5=已完成（沉底）。 */
+/** 优先级：0=待审批/待回答，1=失败，2=运行中，3=未读，4=空闲/已完成（同档沉底）。 */
 function focusPriority(c: FocusCandidate): number {
   // 先判定待用户处理（待审批/待回答），再判定失败/运行（WAITING_APPROVAL 同时属两者时按待审批）
   if (c.phase === 'WAITING_APPROVAL' || c.pendingApprovalCount > 0 || c.pendingQuestionCount > 0) return 0
   if (c.phase === 'FAILED' || c.treeFailed) return 1
   if (RUNNING_PHASES.has(c.phase) || c.treeRunning) return 2
   if (c.unread) return 3
-  if (c.phase === 'COMPLETED') return 5
+  // 空闲与已完成统一为最低档；同档内按更新时间 DESC、ID DESC 排序
   return 4
 }
 

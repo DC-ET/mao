@@ -88,7 +88,7 @@ app:
       # 连接、写入与响应头阶段的 OkHttp 单次调用兜底超时
       http-call-timeout-seconds: 180
       # 流式开始后连续无 SSE 数据的空闲超时
-      stream-idle-timeout-seconds: 120
+      stream-idle-timeout-seconds: 300
 
     # Context Compaction
     compaction:

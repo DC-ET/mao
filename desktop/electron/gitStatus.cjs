@@ -8,6 +8,10 @@ const GIT_TIMEOUT_MS = 60_000
 const MAX_STDOUT_BYTES = 2 * 1024 * 1024
 const MAX_DIFF_LINES = 5000
 const MAX_DIFF_BYTES = 512 * 1024
+const EXCLUDED_REPO_DIRS = new Set([
+  '.nvm', '.pyenv', '.rbenv', '.nodenv', '.jenv', '.tfenv', '.sdkman',
+  '.oh-my-zsh', '.zprezto', '.zim', '.zinit', '.antigen', '.fzf',
+])
 
 function runGit(cwd, args) {
   return new Promise((resolve) => {
@@ -272,6 +276,7 @@ async function listGitRepos(workspace) {
   const repoDirs = entries
     .filter((e) => e.isDirectory())
     .map((e) => e.name)
+    .filter((name) => !EXCLUDED_REPO_DIRS.has(name))
     .filter((name) => {
       try {
         return fs.existsSync(path.join(ws, name, '.git'))
@@ -612,6 +617,7 @@ async function getGitFileDiff(workspace, repoPath, relativePath) {
 }
 
 module.exports = {
+  EXCLUDED_REPO_DIRS,
   collectChangedFiles,
   getGitStatus,
   refreshGitStatus,

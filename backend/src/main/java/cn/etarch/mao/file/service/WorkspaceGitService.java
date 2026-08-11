@@ -44,6 +44,9 @@ public class WorkspaceGitService {
 
     /** 多仓库发现时的仓库统计并发上限：避免大量 git 子进程同时启动耗尽服务器资源。 */
     private static final int REPO_SCAN_CONCURRENCY = 8;
+    static final java.util.Set<String> EXCLUDED_REPO_DIRS = java.util.Set.of(
+            ".nvm", ".pyenv", ".rbenv", ".nodenv", ".jenv", ".tfenv", ".sdkman",
+            ".oh-my-zsh", ".zprezto", ".zim", ".zinit", ".antigen", ".fzf");
 
     private final PathSandbox pathSandbox;
 
@@ -76,6 +79,7 @@ public class WorkspaceGitService {
         if (Files.isDirectory(workspace)) {
             try (var stream = Files.list(workspace)) {
                 stream.filter(Files::isDirectory)
+                        .filter(dir -> !EXCLUDED_REPO_DIRS.contains(dir.getFileName().toString()))
                         .filter(dir -> Files.exists(dir.resolve(".git")))
                         .forEach(repoDirs::add);
             } catch (IOException e) {

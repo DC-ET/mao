@@ -147,6 +147,27 @@ class WorkspaceGitServiceTest {
 
     @Test
     @EnabledIf("gitAvailable")
+    void repoDiscoveryExcludesToolDirectories() throws Exception {
+        Path workspace = tempDir.resolve("multi");
+        Files.createDirectories(workspace);
+        for (String name : WorkspaceGitService.EXCLUDED_REPO_DIRS) {
+            Path dir = workspace.resolve(name);
+            Files.createDirectories(dir);
+            run(dir, "git", "init");
+        }
+        Path project = workspace.resolve("business-project");
+        Files.createDirectories(project);
+        run(project, "git", "init");
+
+        WorkspaceGitService.GitReposDTO result = service.listRepos(workspace.toString());
+
+        assertThat(result.getIsRootGit()).isFalse();
+        assertThat(result.getRepos()).extracting(WorkspaceGitService.GitRepoSummaryDTO::getName)
+                .containsExactly("business-project");
+    }
+
+    @Test
+    @EnabledIf("gitAvailable")
     void nonGitDirectoryReturnsIsGitFalse() throws IOException {
         Path plain = tempDir.resolve("plain");
         Files.createDirectories(plain);

@@ -56,8 +56,7 @@
    | 1 | 失败 | 出错，用户应知情 |
    | 2 | 运行中 | 在跑，值得留意 |
    | 3 | 有未读 / 新进展 | 后台完成但用户未查看 |
-   | 4 | 空闲 / 长期无活动 | 沉底 |
-   | 5 | 已完成 | 最底部 |
+   | 4 | 空闲 / 已完成 | 同档沉底，档内按最近更新时间倒序 |
 
    - **判定顺序**：先判定待用户处理（待审批/待回答/失败），再判定运行阶段；`WAITING_APPROVAL` 同时属「待审批」与「运行中」时按待审批处理（权重 0）。
    - **稳定排序 tie-breaker**：`priority ASC → updatedAt/createdAt DESC → id DESC`，缺失/非法时间按 0 处理，保证重拉不抖动。
@@ -408,7 +407,7 @@ focusSessionIds: string[]               // 聚焦模式全量 ACTIVE 主会话�
 - `session_tree_status`：Side Task 变化后事件负载正确。
 
 **前端（vitest，纳入 CI）**：
-- `sortByFocusPriority`：六档优先级正确；`WAITING_APPROVAL` 归待审批（权重 0）；tie-breaker（同时间按 id DESC）；缺失 / 非法时间安全处理。
+- `sortByFocusPriority`：五档优先级正确（空闲与已完成同档）；`WAITING_APPROVAL` 归待审批（权重 0）；tie-breaker（同时间按 id DESC）；缺失 / 非法时间安全处理。
 - 历史折叠：恰好 3 天（不折叠）、超过 3 天（折叠）、无 `updatedAt`（按 `createdAt` 兜底）。
 - 状态模型：归档当前打开会话后 `activeSession` 仍存在；`upsertSessionEntity` 只更新实体、不污染查询投影；归档/恢复后实体 + 投影一致。
 - **分页隔离**：标准模式每组 5 条 → 拉取 focus 全量 → 切回标准模式 → `standardSessionIds` 不变 → load-more offset 正确。

@@ -31,5 +31,5 @@ public class LlmRetryConfig {
     private int httpCallTimeoutSeconds = 180;
 
     /** 流式响应连续无任何 SSE 数据的读取超时（秒）。 */
-    private int streamIdleTimeoutSeconds = 120;
+    private int streamIdleTimeoutSeconds = 300;
 }
