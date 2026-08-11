@@ -11,6 +11,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -20,6 +21,28 @@ class GitWriteOperationServiceTest {
     @TempDir Path tempDir;
 
     static boolean gitAvailable() { try { Process p = new ProcessBuilder("git", "--version").start(); return p.waitFor(5, TimeUnit.SECONDS) && p.exitValue() == 0; } catch (Exception e) { return false; } }
+
+    @Test
+    void askpassScriptIsValidAndReturnsConfiguredToken() throws Exception {
+        Path script = tempDir.resolve("git-askpass.sh");
+        Files.writeString(script, GitWriteOperationService.ASKPASS);
+        run(tempDir, "bash", "-n", script.toString());
+
+        ProcessBuilder usernameBuilder = new ProcessBuilder("bash", script.toString(), "Username for 'https://git.acg.team':");
+        usernameBuilder.directory(tempDir.toFile());
+        Process username = usernameBuilder.start();
+        assertThat(new String(username.getInputStream().readAllBytes()).trim()).isEqualTo("oauth2");
+        assertThat(username.waitFor(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(username.exitValue()).isZero();
+
+        ProcessBuilder passwordBuilder = new ProcessBuilder("bash", script.toString(), "Password for 'https://oauth2@git.acg.team':");
+        passwordBuilder.directory(tempDir.toFile());
+        passwordBuilder.environment().putAll(Map.of("GIT_TOKEN_git_acg_team", "secret-token"));
+        Process password = passwordBuilder.start();
+        assertThat(new String(password.getInputStream().readAllBytes()).trim()).isEqualTo("secret-token");
+        assertThat(password.waitFor(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(password.exitValue()).isZero();
+    }
 
     @Test
     void sensitiveFileRulesCoverCredentialsAndKeys() {

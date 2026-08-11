@@ -49,17 +49,27 @@ public class GitWriteOperationService {
             "(^|/)(\\.env($|\\.)|id_(rsa|dsa|ecdsa|ed25519)(\\..*)?$)|\\.(pem|key|p12|pfx)$|(^|/)[^/]*(credential|credentials|secret|secrets|token)[^/]*$",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern CREDENTIAL_URL = Pattern.compile("(?i)(https?://)([^/@\\s]+@)");
-    private static final String ASKPASS = """
+    static final String ASKPASS = """
             #!/bin/bash
-            case "$1" in
-              *sername*) printf '%s\\n' oauth2; exit 0 ;;
-            esac
-            HOST=$(printf '%s' "$1" | sed -n "s/.*https:\\/\\/\\([^/'\"]*\\).*/\\1/p")
-            [ -n "$HOST" ] || exit 1
-            case "$HOST" in *[!A-Za-z0-9.-]*) exit 1 ;; esac
-            VAR="GIT_TOKEN_$(printf '%s' "$HOST" | tr '.-' '__')"
-            VALUE=$(printenv "$VAR")
-            [ -n "$VALUE" ] && printf '%s\\n' "$VALUE"
+            PROMPT="$1"
+            if echo "$PROMPT" | grep -qi 'username'; then
+              echo "oauth2"
+              exit 0
+            fi
+            URL=$(echo "$PROMPT" | sed -n "s/.*'https:\\/\\/\\([^']*\\)'.*/\\1/p")
+            if [ -z "$URL" ]; then
+              URL=$(echo "$PROMPT" | sed -n "s/.*'http:\\/\\/\\([^']*\\)'.*/\\1/p")
+            fi
+            if [ -z "$URL" ]; then
+              exit 1
+            fi
+            HOST="${URL##*@}"
+            HOST="${HOST%%/*}"
+            VARNAME="GIT_TOKEN_$(echo "$HOST" | tr '.-' '__')"
+            VALUE="${!VARNAME}"
+            if [ -n "$VALUE" ]; then
+              echo "$VALUE"
+            fi
             """;
 
     private final WorkspaceGitService workspaceGitService;
