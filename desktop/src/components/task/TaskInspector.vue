@@ -178,7 +178,9 @@
           :model-value="selectedRepoPath"
           class="git-repo-select"
           popper-class="git-repo-select-popper"
-          placeholder="选择仓库"
+          placeholder="搜索或选择仓库"
+          filterable
+          :reserve-keyword="false"
           size="small"
           @update:model-value="handleRepoSelect"
         >
@@ -187,7 +189,10 @@
             :key="repo.path"
             :label="`${repo.name} · ${repo.branch || 'HEAD'}`"
             :value="repo.path"
-          />
+          >
+            <span class="git-repo-option-name">{{ repo.name }}</span>
+            <span class="git-repo-option-branch">{{ repo.branch || 'HEAD' }}</span>
+          </el-option>
         </el-select>
       </div>
       <div v-if="selectedRepo?.unavailable" class="git-state">
@@ -923,11 +928,83 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 }
 
 .git-repo-select :deep(.el-select__wrapper) {
-  font-size: 12px;
+  min-height: 30px;
+  padding: 2px 9px 2px 10px;
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-surface-pearl);
+  box-shadow: 0 0 0 1px var(--aw-hairline) inset;
+  transition: background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.git-repo-select :deep(.el-select__wrapper:hover) {
+  background: var(--aw-surface);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--aw-primary) 35%, var(--aw-hairline)) inset;
+}
+
+.git-repo-select :deep(.el-select__wrapper.is-focused) {
+  background: var(--aw-surface);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--aw-primary) 22%, transparent),
+              0 0 0 1px var(--aw-primary) inset;
+}
+
+.git-repo-select :deep(.el-select__selected-item),
+.git-repo-select :deep(.el-select__input) {
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-fine);
+}
+
+:global(.git-repo-select-popper.el-select__popper) {
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-md);
+  box-shadow: var(--aw-shadow-product);
+  overflow: hidden;
+}
+
+:global(.git-repo-select-popper .el-select-dropdown__list) {
+  padding: 5px;
 }
 
 :global(.git-repo-select-popper .el-select-dropdown__item) {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: var(--aw-text-fine);
+}
+
+:global(.git-repo-select-popper .el-select-dropdown__item.is-hovering) {
+  background: var(--aw-surface-hover);
+}
+
+:global(.git-repo-select-popper .el-select-dropdown__item.is-selected) {
+  background: var(--aw-primary-lighter);
+  color: var(--aw-primary);
+}
+
+:global(.git-repo-option-name) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--aw-font-mono);
+  color: var(--aw-ink);
+}
+
+:global(.git-repo-option-branch) {
+  flex-shrink: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--aw-ink-muted-48);
+  font-family: var(--aw-font-mono);
+}
+
+:global(.git-repo-select-popper .el-select-dropdown__item.is-selected .git-repo-option-name),
+:global(.git-repo-select-popper .el-select-dropdown__item.is-selected .git-repo-option-branch) {
+  color: var(--aw-primary);
 }
 
 .git-branch {

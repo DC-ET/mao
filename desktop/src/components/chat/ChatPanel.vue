@@ -8,7 +8,7 @@
         <el-icon :size="32" class="is-loading"><Loading /></el-icon>
         <p>{{ initializingWorkspaceLabel }}</p>
       </div>
-      <div v-else-if="messages.length === 0 && !sending && !initialLoading" class="empty-state">
+      <div v-else-if="messages.length === 0 && !agentRunning && !initialLoading" class="empty-state">
         <template v-if="!sessionId">
           <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
           <p>我可以帮你做点什么？</p>
@@ -21,7 +21,7 @@
       <!-- 历史轮次 + 当前轮次 -->
       <ChatRoundList
         :messages="messages"
-        :sending="sending"
+        :sending="agentRunning"
         :session-id="sessionId ?? ''"
         :editing-message-id="editingMessageId"
         :can-edit-message="canEditMessage"
@@ -78,7 +78,7 @@
 
     <ChatInput
       ref="chatInputRef"
-      :loading="sending"
+      :loading="agentRunning"
       :initializing-workspace="initializingWorkspace"
       :initializing-workspace-label="initializingWorkspaceLabel"
       :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
@@ -321,7 +321,7 @@ const executionError = computed(() => sessionStore.activeExecutionError)
 
 const showTypingIndicator = computed(() => {
   if (initializingWorkspace.value) return false
-  if (!sending.value) return false
+  if (!agentRunning.value) return false
   if (sessionStore.activeStreaming) return false
   const lastMsg = messages.value[messages.value.length - 1]
   if (!lastMsg) return true
@@ -371,7 +371,7 @@ onUnmounted(() => {
 const editingMessageId = ref<string | null>(null)
 
 function canEditMessage(msg: ChatMessage): boolean {
-  if (sending.value) return false
+  if (agentRunning.value) return false
   if (normalizeMessageRole(msg.role) !== 'user') return false
   const msgs = messages.value
   const lastUserMsg = [...msgs].reverse().find(m => normalizeMessageRole(m.role) === 'user')
@@ -492,6 +492,11 @@ watch(buildScrollAnchor, () => {
 // a non-active session completing can resolve its pendingCallbacks and set
 // sending=false even though the *active* session is still running.
 const ACTIVE_PHASES: TaskPhase[] = ['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING']
+const agentRunning = computed(() => {
+  const phase = sessionId.value ? sessionStore.getSessionPhase(sessionId.value) : null
+  return sending.value || (phase != null && ACTIVE_PHASES.includes(phase))
+})
+
 watch(() => sending.value, (isSending) => {
   if (!sessionStore.activeSessionId) return
   if (isSending) {
