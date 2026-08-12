@@ -49,18 +49,46 @@
           :collapsed="collapsed"
           @toggle="toggleDir"
           @open-diff="(file) => $emit('open-diff', file)"
+          @contextmenu="handleNodeContextmenu"
         />
       </div>
     </div>
+
+    <GitContextMenu
+      :visible="ctxMenu.visible"
+      :x="ctxMenu.x"
+      :y="ctxMenu.y"
+      :show-open-in-finder="executionMode !== 'CLOUD'"
+      :show-download-actions="executionMode === 'CLOUD'"
+      @hide="ctxMenu.visible = false"
+      @copy-absolute="handleCopyAbsolute"
+      @copy-relative="handleCopyRelative"
+      @open-in-finder="handleOpenInFinder"
+      @add-to-chat="handleAddToChat"
+      @download-file="handleDownloadFile"
+    />
+
+    <DownloadLinkDialog
+      :visible="downloadDialog.visible"
+      :url="downloadDialog.url"
+      :file-name="downloadDialog.fileName"
+      @close="downloadDialog.visible = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
 import { Check, Download, Refresh, Upload } from '@element-plus/icons-vue'
-import { ElTooltip } from 'element-plus'
+import { ElTooltip, ElMessage } from 'element-plus'
 import type { GitChangedFile, GitTreeNode } from '../../types/git'
 import GitChangeTreeNode from './GitChangeTreeNode.vue'
+import GitContextMenu from './GitContextMenu.vue'
+import { copyText } from '../../utils/clipboard'
+import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
+import DownloadLinkDialog from '../common/DownloadLinkDialog.vue'
+import { isWechatBrowser } from '../../utils/user-agent'
+import { isAndroidCapacitor } from '../../utils/capacitor'
 
 const props = defineProps<{
   files: GitChangedFile[]
@@ -76,15 +104,109 @@ const props = defineProps<{
   behindCount?: number
   hasCommitsToPush?: boolean
   operation?: 'commit' | 'pull' | 'push' | null
+  executionMode?: string
+  workspace?: string
+  provider?: WorkspaceFileProvider | null
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   refresh: []
   commit: []
   pull: []
   push: []
   'open-diff': [file: GitChangedFile]
+  'add-file-to-chat': [filePath: string]
 }>()
+
+const ctxMenu = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  node: null as GitTreeNode | null,
+})
+
+const downloadDialog = reactive({
+  visible: false,
+  url: '',
+  fileName: '',
+})
+
+function handleNodeContextmenu(payload: { node: GitTreeNode; x: number; y: number }) {
+  ctxMenu.x = payload.x
+  ctxMenu.y = payload.y
+  ctxMenu.node = payload.node
+  ctxMenu.visible = true
+}
+
+function getAbsolutePath(nodePath: string): string {
+  if (!props.workspace) return nodePath
+  // 使用与 FileTree 相同的路径解析逻辑
+  const isAbsolutePath = (filePath: string): boolean => {
+    const normalized = filePath.replace(/\\/g, '/')
+    return /^[a-zA-Z]:/.test(normalized) || normalized.startsWith('/')
+  }
+
+  if (isAbsolutePath(nodePath)) return nodePath
+  const sep = props.workspace.includes('\\') ? '\\' : '/'
+  return props.workspace.replace(/[\\/]+$/, '') + sep + nodePath.replace(/^[\\/]+/, '')
+}
+
+function handleCopyAbsolute() {
+  if (!ctxMenu.node) return
+  const path = ctxMenu.node.kind === 'file' ? ctxMenu.node.file.path : ctxMenu.node.path
+  copyText(getAbsolutePath(path))
+}
+
+function handleCopyRelative() {
+  if (!ctxMenu.node) return
+  const path = ctxMenu.node.kind === 'file' ? ctxMenu.node.file.path : ctxMenu.node.path
+  copyText(path)
+}
+
+function handleOpenInFinder() {
+  if (!ctxMenu.node) return
+  const path = ctxMenu.node.kind === 'file' ? ctxMenu.node.file.path : ctxMenu.node.path
+  const absPath = getAbsolutePath(path)
+  window.electronAPI.showItemInFolder(absPath)
+}
+
+function handleAddToChat() {
+  if (!ctxMenu.node) return
+  const path = ctxMenu.node.kind === 'file' ? ctxMenu.node.file.path : ctxMenu.node.path
+  emit('add-file-to-chat', path)
+}
+
+async function handleDownloadFile() {
+  const node = ctxMenu.node
+  if (!node || node.kind !== 'file') return
+  if (!props.provider?.downloadFile) {
+    ElMessage.warning('当前模式不支持下载')
+    return
+  }
+  try {
+    const result = await props.provider.downloadFile(node.file.path, node.name)
+    if (result.ok) {
+      if ((isWechatBrowser() || isAndroidCapacitor()) && result.url) {
+        // 微信浏览器和安卓 WebView 可能阻止 Blob 自动下载，显示可鉴权的下载链接
+        downloadDialog.url = result.url
+        downloadDialog.fileName = node.name
+        downloadDialog.visible = true
+      } else {
+        ElMessage.success(`已触发下载：${node.name}`)
+      }
+    } else {
+      ElMessage.error(result.error || '下载失败')
+      // 如果有URL，显示下载链接对话框
+      if (result.url) {
+        downloadDialog.url = result.url
+        downloadDialog.fileName = node.name
+        downloadDialog.visible = true
+      }
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '下载失败')
+  }
+}
 
 const commitDisabledReason = computed(() => {
   if (props.operation) return 'Git 操作进行中'

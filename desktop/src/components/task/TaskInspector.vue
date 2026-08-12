@@ -214,11 +214,15 @@
         :behind-count="gitStatus?.behindCount"
         :has-commits-to-push="gitStatus?.hasCommitsToPush"
         :operation="gitOperation"
+        :execution-mode="executionMode"
+        :workspace="workspace"
+        :provider="fileProvider"
         @refresh="refreshAll"
         @commit="runGitOperation('commit')"
         @pull="runGitOperation('pull')"
         @push="runGitOperation('push')"
         @open-diff="handleOpenGitDiff"
+        @add-file-to-chat="$emit('add-file-to-chat', $event)"
       />
     </div>
 

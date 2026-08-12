@@ -48,6 +48,13 @@
       @download-file="handleDownloadFile"
       @download-directory="handleDownloadDirectory"
     />
+
+    <DownloadLinkDialog
+      :visible="downloadDialog.visible"
+      :url="downloadDialog.url"
+      :file-name="downloadDialog.fileName"
+      @close="downloadDialog.visible = false"
+    />
   </div>
 </template>
 
@@ -62,6 +69,9 @@ import FileTreeContextMenu from './FileTreeContextMenu.vue'
 import type { FileNode } from '../../types/file-browser'
 import { resolveWorkspaceFilePath } from '../../utils/workspace-path'
 import { copyText } from '../../utils/clipboard'
+import DownloadLinkDialog from '../common/DownloadLinkDialog.vue'
+import { isWechatBrowser } from '../../utils/user-agent'
+import { isAndroidCapacitor } from '../../utils/capacitor'
 
 const props = defineProps<{
   workspace?: string
@@ -137,6 +147,11 @@ function handleAddToChat() {
 }
 
 const downloading = ref(false)
+const downloadDialog = reactive({
+  visible: false,
+  url: '',
+  fileName: '',
+})
 
 async function handleDownloadFile() {
   const node = ctxMenu.node
@@ -149,9 +164,22 @@ async function handleDownloadFile() {
   try {
     const result = await props.provider.downloadFile(node.path, node.name)
     if (result.ok) {
-      ElMessage.success(`已触发下载：${node.name}`)
+      if ((isWechatBrowser() || isAndroidCapacitor()) && result.url) {
+        // 微信浏览器和安卓 WebView 可能阻止 Blob 自动下载，显示可鉴权的下载链接
+        downloadDialog.url = result.url
+        downloadDialog.fileName = node.name
+        downloadDialog.visible = true
+      } else {
+        ElMessage.success(`已触发下载：${node.name}`)
+      }
     } else {
       ElMessage.error(result.error || '下载失败')
+      // 如果有URL，显示下载链接对话框
+      if (result.url) {
+        downloadDialog.url = result.url
+        downloadDialog.fileName = node.name
+        downloadDialog.visible = true
+      }
     }
   } finally {
     downloading.value = false
@@ -170,9 +198,22 @@ async function handleDownloadDirectory() {
   try {
     const result = await props.provider.downloadDirectory(node.path, `${node.name}.zip`)
     if (result.ok) {
-      ElMessage.success(`已触发下载：${node.name}.zip`)
+      if ((isWechatBrowser() || isAndroidCapacitor()) && result.url) {
+        // 微信浏览器和安卓 WebView 可能阻止 Blob 自动下载，显示可鉴权的下载链接
+        downloadDialog.url = result.url
+        downloadDialog.fileName = `${node.name}.zip`
+        downloadDialog.visible = true
+      } else {
+        ElMessage.success(`已触发下载：${node.name}.zip`)
+      }
     } else {
       ElMessage.error(result.error || '下载失败')
+      // 如果有URL，显示下载链接对话框
+      if (result.url) {
+        downloadDialog.url = result.url
+        downloadDialog.fileName = `${node.name}.zip`
+        downloadDialog.visible = true
+      }
     }
   } finally {
     downloading.value = false

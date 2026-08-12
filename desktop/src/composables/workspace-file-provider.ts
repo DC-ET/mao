@@ -34,6 +34,7 @@ export interface PreviewFileResult {
 export interface DownloadResult {
   ok: boolean
   error?: string
+  url?: string
 }
 
 export interface WorkspaceFileProvider {
@@ -190,20 +191,21 @@ async function downloadWorkspaceResource(
   suggestedName: string,
 ): Promise<DownloadResult> {
   const token = getToken()
-  const url = `${API_BASE}${endpoint}?sessionId=${sessionId}&path=${encodeURIComponent(relativePath)}`
+  const authQuery = token ? `&token=${encodeURIComponent(token)}` : ''
+  const url = `${API_BASE}${endpoint}?sessionId=${sessionId}&path=${encodeURIComponent(relativePath)}${authQuery}`
   try {
     const resp = await fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
     if (!resp.ok) {
-      return { ok: false, error: await extractDownloadError(resp) }
+      return { ok: false, error: await extractDownloadError(resp), url }
     }
     const blob = await resp.blob()
     const fileName = parseDownloadFileName(resp.headers.get('content-disposition')) || suggestedName
     triggerBrowserDownload(blob, fileName)
-    return { ok: true }
+    return { ok: true, url }
   } catch (e: any) {
-    return { ok: false, error: e?.message || '下载失败' }
+    return { ok: false, error: e?.message || '下载失败', url }
   }
 }
 

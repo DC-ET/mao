@@ -6,6 +6,7 @@
       :style="{ paddingLeft: `${8 + depth * 14}px` }"
       :title="rowTitle"
       @click="handleClick"
+      @contextmenu.prevent="handleContextMenu"
     >
       <el-icon v-if="node.kind === 'dir'" class="git-expand">
         <ArrowDown v-if="expanded" />
@@ -46,6 +47,7 @@
         :collapsed="collapsed"
         @toggle="$emit('toggle', $event)"
         @open-diff="$emit('open-diff', $event)"
+        @contextmenu="$emit('contextmenu', $event)"
       />
     </template>
   </div>
@@ -65,6 +67,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggle: [path: string]
   'open-diff': [file: GitChangedFile]
+  'contextmenu': [payload: { node: GitTreeNode; x: number; y: number }]
 }>()
 
 const expanded = computed(() => {
@@ -83,6 +86,14 @@ function handleClick() {
     return
   }
   emit('open-diff', props.node.file)
+}
+
+function handleContextMenu(event: MouseEvent) {
+  emit('contextmenu', {
+    node: props.node,
+    x: event.clientX,
+    y: event.clientY,
+  })
 }
 
 function typeLabel(type: string) {
