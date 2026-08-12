@@ -294,6 +294,38 @@ class OpenAiLlmAdapterTest {
     }
 
     @Test
+    void chatKeepsHttpCallTimeoutAndReportsItsReason() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(jsonResponse("{\"id\":\"late\",\"choices\":[]}")
+                    .setBodyDelay(2, TimeUnit.SECONDS));
+            server.start();
+
+            assertThatThrownBy(() -> adapter(0, 0, 5, 3, 1)
+                    .chat(request("slow-chat"), config(server)))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("http_call_timeout");
+        }
+    }
+
+    @Test
+    void streamIsNotLimitedByNonStreamingHttpCallTimeout() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"late\"}}]}\n\ndata: [DONE]\n\n")
+                    .setBodyDelay(2, TimeUnit.SECONDS));
+            server.start();
+
+            CapturingCallback callback = new CapturingCallback();
+            adapter(0, 0, 5, 3, 1)
+                    .stream(request("long-stream"), config(server), callback, new AtomicBoolean(false));
+
+            assertThat(callback.error).isNull();
+            assertThat(callback.chunks).hasSize(1);
+            assertThat(callback.retryReasons).isEmpty();
+        }
+    }
+
+    @Test
     void streamRetriesWhenIdleTimeoutOccursBeforeAnyOutput() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
@@ -483,11 +515,19 @@ class OpenAiLlmAdapterTest {
 
     private OpenAiLlmAdapter adapter(int maxRetries, int retryDelaySeconds,
                                      int responseHeaderTimeoutSeconds, int streamIdleTimeoutSeconds) {
+        return adapter(maxRetries, retryDelaySeconds, responseHeaderTimeoutSeconds,
+                streamIdleTimeoutSeconds, 180);
+    }
+
+    private OpenAiLlmAdapter adapter(int maxRetries, int retryDelaySeconds,
+                                     int responseHeaderTimeoutSeconds, int streamIdleTimeoutSeconds,
+                                     int httpCallTimeoutSeconds) {
         LlmRetryConfig retryConfig = new LlmRetryConfig();
         retryConfig.setRateLimitMaxRetries(maxRetries);
         retryConfig.setRateLimitRetryDelaySeconds(retryDelaySeconds);
         retryConfig.setCallTimeoutSeconds(responseHeaderTimeoutSeconds);
         retryConfig.setStreamIdleTimeoutSeconds(streamIdleTimeoutSeconds);
+        retryConfig.setHttpCallTimeoutSeconds(httpCallTimeoutSeconds);
         return new OpenAiLlmAdapter(objectMapper, retryConfig);
     }
 

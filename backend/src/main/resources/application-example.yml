@@ -83,9 +83,9 @@ app:
       rate-limit-retry-delay-seconds: 2
       # 单次重试间隔上限（秒）
       rate-limit-max-retry-delay-seconds: 30
-      # 等待响应头（首包）的应用层硬超时；流式开始后自动解除
+      # 等待响应头（首包）的应用层硬超时；流式响应体不受此期限限制
       call-timeout-seconds: 120
-      # 连接、写入与响应头阶段的 OkHttp 单次调用兜底超时
+      # 非流式请求的 OkHttp 单次调用总超时；流式请求不使用总调用超时
       http-call-timeout-seconds: 180
       # 流式开始后连续无 SSE 数据的空闲超时
       stream-idle-timeout-seconds: 300

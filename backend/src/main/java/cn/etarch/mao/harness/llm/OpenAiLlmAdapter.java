@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.net.ConnectException;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
@@ -39,6 +40,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class OpenAiLlmAdapter implements LlmAdapter {
 
     private final OkHttpClient httpClient;
+    private final OkHttpClient streamHttpClient;
     private final ObjectMapper objectMapper;
     private final LlmRetryConfig llmRetryConfig;
 
@@ -58,10 +60,8 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         this.llmRetryConfig = llmRetryConfig;
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
-                // 响应头到达后，连续无响应体/SSE 数据超过该时长即终止。
                 .readTimeout(llmRetryConfig.getStreamIdleTimeoutSeconds(), TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
-                // 单次 HTTP 尝试总预算；首包另由 callTimeoutSeconds 独立控制。
                 .callTimeout(llmRetryConfig.getHttpCallTimeoutSeconds(), TimeUnit.SECONDS)
                 // 连接池保活时间设置得比常见网关/负载均衡的空闲超时更短，
                 // 避免复用一条已被中间设备静默断开、但本地看起来仍然存活的"假活"连接
@@ -71,6 +71,11 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                 .pingInterval(15, TimeUnit.SECONDS)
                 .retryOnConnectionFailure(true)
                 .build();
+        // SSE 生命周期不设总调用期限：响应头由应用层 callTimeoutSeconds 约束，
+        // 响应体仅由 readTimeout 的连续空闲期限约束。
+        this.streamHttpClient = httpClient.newBuilder()
+                .callTimeout(0, TimeUnit.SECONDS)
+                .build();
     }
 
     @Override
@@ -79,7 +84,8 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         long totalStarted = System.nanoTime();
         for (int attempt = 1; ; attempt++) {
             long attemptStarted = System.nanoTime();
-            try (Response response = awaitResponse(httpRequest, null, null, config.getModelId(), attempt).response()) {
+            try (Response response = awaitResponse(httpRequest, false, null, null,
+                    config.getModelId(), attempt).response()) {
                 log.info("LLM response headers model={} phase=response_headers attempt={} firstByteMs={} totalMs={}",
                         config.getModelId(), attempt, elapsedMillis(attemptStarted), elapsedMillis(totalStarted));
                 if (isRetryableStatus(response.code())) {
@@ -130,7 +136,8 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             long attemptStarted = System.nanoTime();
             ResponseAwaitResult awaited;
             try {
-                awaited = awaitResponse(httpRequest, cancelFlag, callback, config.getModelId(), attempt);
+                awaited = awaitResponse(httpRequest, true, cancelFlag, callback,
+                        config.getModelId(), attempt);
             } catch (RuntimeException e) {
                 callback.onError(isCancelled(cancelFlag) ? cancelledException() : e);
                 return;
@@ -312,11 +319,12 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         return false;
     }
 
-    /** 等待响应头；超时仅覆盖首包阶段，响应头到达后立即解除。 */
-    private ResponseAwaitResult awaitResponse(Request httpRequest, AtomicBoolean cancelFlag,
-                                               StreamCallback callback, String model, int attempt)
+    /** 等待响应头；应用层期限仅覆盖首包阶段。 */
+    private ResponseAwaitResult awaitResponse(Request httpRequest, boolean streaming,
+                                               AtomicBoolean cancelFlag, StreamCallback callback,
+                                               String model, int attempt)
             throws IOException, TimeoutException, InterruptedException {
-        Call httpCall = httpClient.newCall(httpRequest);
+        Call httpCall = (streaming ? streamHttpClient : httpClient).newCall(httpRequest);
         CompletableFuture<Response> responseFuture = new CompletableFuture<>();
         long started = System.nanoTime();
         long deadline = started + TimeUnit.SECONDS.toNanos(llmRetryConfig.getCallTimeoutSeconds());
@@ -329,9 +337,6 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
             @Override
             public void onResponse(Call call, Response response) {
-                // callTimeout 只兜底连接、写入与响应头阶段。收到响应头后清除总调用期限，
-                // 长时间正常流式输出仅由 readTimeout（连续空闲超时）约束。
-                call.timeout().clearTimeout();
                 responseFuture.complete(response);
             }
         });
@@ -485,6 +490,8 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         while (cause != null) {
             if (cause instanceof TimeoutException) return "response_header_timeout";
             if (cause instanceof SocketTimeoutException) return "stream_idle_timeout";
+            if (cause instanceof InterruptedIOException
+                    && "timeout".equalsIgnoreCase(cause.getMessage())) return "http_call_timeout";
             if (cause instanceof ConnectException) return "connect_failure";
             if (cause instanceof EOFException) return "unexpected_eof";
             if (cause.getCause() == null) break;

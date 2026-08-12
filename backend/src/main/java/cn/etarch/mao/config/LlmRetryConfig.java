@@ -27,7 +27,7 @@ public class LlmRetryConfig {
      */
     private int callTimeoutSeconds = 120;
 
-    /** OkHttp 单次 HTTP 调用总超时（秒，包含连接、写入和流式读取）。 */
+    /** 非流式请求的 OkHttp 单次 HTTP 调用总超时（秒）。流式请求不使用总调用超时。 */
     private int httpCallTimeoutSeconds = 180;
 
     /** 流式响应连续无任何 SSE 数据的读取超时（秒）。 */
