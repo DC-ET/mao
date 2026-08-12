@@ -47,7 +47,7 @@ class UserCommandServiceTest {
     }
 
     @Test
-    void createValidatesNameAndRejectsDuplicates() {
+    void createValidatesNameAllowsSystemOverrideAndRejectsPersonalDuplicates() {
         when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(null);
         UserCommand created = service.create(7L, "修复_build-1", "content");
 
@@ -58,7 +58,16 @@ class UserCommandServiceTest {
         assertThatThrownBy(() -> service.create(7L, "bad name", "content"))
                 .isInstanceOf(BusinessException.class);
 
-        when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(command(1L, 0L, "dup", "system"));
+        when(mapper.selectOne(any(QueryWrapper.class))).thenAnswer(invocation -> {
+            QueryWrapper<UserCommand> query = invocation.getArgument(0);
+            return query.getParamNameValuePairs().containsValue(UserCommandService.SYSTEM_USER_ID)
+                    ? command(1L, 0L, "system_name", "system content") : null;
+        });
+        UserCommand override = service.create(7L, "system_name", "personal content");
+        assertThat(override.getUserId()).isEqualTo(7L);
+        assertThat(override.getName()).isEqualTo("system_name");
+
+        when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(command(2L, 7L, "dup", "personal"));
         assertThatThrownBy(() -> service.create(7L, "dup", "content"))
                 .isInstanceOf(BusinessException.class);
     }

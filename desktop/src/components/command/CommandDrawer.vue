@@ -8,22 +8,30 @@
     :before-close="handleClose"
   >
     <div class="command-drawer-body">
-      <p class="command-subtitle">创建和管理个人快捷指令。</p>
+      <el-tabs v-model="activeTab" class="command-tabs">
+        <el-tab-pane label="我的指令" name="personal" />
+        <el-tab-pane label="系统指令" name="system" />
+      </el-tabs>
 
-      <button class="create-btn" @click="openCreateDialog">
+      <p class="command-subtitle">
+        {{ activeTab === 'personal' ? '创建和管理个人快捷指令。' : '查看系统预置的只读快捷指令。' }}
+      </p>
+
+      <button v-if="activeTab === 'personal'" class="create-btn" @click="openCreateDialog">
         <el-icon><Plus /></el-icon>
         新建指令
       </button>
 
-      <!-- Command list -->
       <div class="command-list">
         <div v-if="loading" class="command-empty">加载中...</div>
-        <div v-else-if="commands.length === 0" class="command-empty">暂无个人指令</div>
+        <div v-else-if="displayedCommands.length === 0" class="command-empty">
+          {{ activeTab === 'personal' ? '暂无个人指令' : '暂无系统指令' }}
+        </div>
         <div v-else class="command-cards">
-          <div v-for="cmd in commands" :key="cmd.id" class="command-card">
+          <div v-for="cmd in displayedCommands" :key="cmd.id" class="command-card">
             <div class="command-card-header">
               <div class="command-name">{{ cmd.name }}</div>
-              <div class="command-actions">
+              <div v-if="activeTab === 'personal'" class="command-actions">
                 <template v-if="deletingId === cmd.id">
                   <button class="cmd-btn cmd-btn-confirm-delete" @click="confirmDelete(cmd)">
                     <el-icon :size="14"><Check /></el-icon>
@@ -113,6 +121,7 @@ const { visible, prefillContent, clearPrefill } = useCommandDrawer()
 // When opened with prefill content (from chat message "add to command"), auto-open create dialog
 watch(prefillContent, (content) => {
   if (content) {
+    activeTab.value = 'personal'
     isEditing.value = false
     editingId.value = null
     form.value = { name: '', content }
@@ -123,7 +132,10 @@ watch(prefillContent, (content) => {
 })
 
 const loading = ref(false)
+const activeTab = ref<'personal' | 'system'>('personal')
 const commands = ref<CommandItem[]>([])
+const systemCommands = ref<CommandItem[]>([])
+const displayedCommands = computed(() => activeTab.value === 'personal' ? commands.value : systemCommands.value)
 const dialogVisible = ref(false)
 const isEditing = ref(false)
 const editingId = ref<number | null>(null)
@@ -154,11 +166,19 @@ watch(visible, (val) => {
   if (val) fetchCommands()
 })
 
+watch(activeTab, () => {
+  deletingId.value = null
+})
+
 async function fetchCommands() {
   loading.value = true
   try {
-    const { data } = await api.get('/user-commands')
-    commands.value = data || []
+    const [personalResponse, systemResponse] = await Promise.all([
+      api.get('/user-commands'),
+      api.get('/user-commands/system')
+    ])
+    commands.value = personalResponse.data || []
+    systemCommands.value = systemResponse.data || []
   } finally {
     loading.value = false
   }
@@ -230,6 +250,18 @@ function handleClose(done: () => void) {
 <style scoped>
 .command-drawer-body {
   padding: 0 4px;
+}
+
+.command-tabs {
+  margin-bottom: 12px;
+}
+
+.command-tabs :deep(.el-tabs__header) {
+  margin-bottom: 0;
+}
+
+.command-tabs :deep(.el-tabs__item) {
+  font-size: 14px;
 }
 
 .command-subtitle {

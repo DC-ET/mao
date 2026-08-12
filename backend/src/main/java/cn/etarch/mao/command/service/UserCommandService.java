@@ -56,25 +56,23 @@ public class UserCommandService {
     }
 
     public UserCommand getByUserIdAndName(Long userId, String name) {
-        UserCommand personal = userCommandMapper.selectOne(
-                new QueryWrapper<UserCommand>()
-                        .eq("user_id", userId)
-                        .eq("name", name));
-        if (personal != null) {
+        UserCommand personal = getExactByUserIdAndName(userId, name);
+        if (personal != null || userId == SYSTEM_USER_ID) {
             return personal;
         }
+        return getExactByUserIdAndName(SYSTEM_USER_ID, name);
+    }
+
+    private UserCommand getExactByUserIdAndName(Long userId, String name) {
         return userCommandMapper.selectOne(
                 new QueryWrapper<UserCommand>()
-                        .eq("user_id", SYSTEM_USER_ID)
+                        .eq("user_id", userId)
                         .eq("name", name));
     }
 
     public UserCommand create(Long userId, String name, String content) {
         validateName(name);
-        if (getByUserIdAndName(SYSTEM_USER_ID, name) != null) {
-            throw new BusinessException(ErrorCode.COMMAND_NAME_DUPLICATE);
-        }
-        UserCommand existing = getByUserIdAndName(userId, name);
+        UserCommand existing = getExactByUserIdAndName(userId, name);
         if (existing != null) {
             throw new BusinessException(ErrorCode.COMMAND_NAME_DUPLICATE);
         }
@@ -97,7 +95,7 @@ public class UserCommandService {
         }
         if (name != null && !name.equals(command.getName())) {
             validateName(name);
-            UserCommand existing = getByUserIdAndName(userId, name);
+            UserCommand existing = getExactByUserIdAndName(userId, name);
             if (existing != null) {
                 throw new BusinessException(ErrorCode.COMMAND_NAME_DUPLICATE);
             }

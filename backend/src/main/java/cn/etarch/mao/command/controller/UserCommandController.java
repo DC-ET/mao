@@ -25,6 +25,13 @@ public class UserCommandController {
         return Result.ok(voList);
     }
 
+    @GetMapping("/system")
+    public Result<List<UserCommandVO>> listSystem() {
+        List<UserCommandVO> commands = userCommandService.listByUserId(UserCommandService.SYSTEM_USER_ID)
+                .stream().map(this::toVO).toList();
+        return Result.ok(commands);
+    }
+
     @GetMapping("/{id}")
     public Result<UserCommandVO> get(@AuthenticationPrincipal Long userId, @PathVariable Long id) {
         UserCommand command = userCommandService.getByIdAndUserId(id, userId);
