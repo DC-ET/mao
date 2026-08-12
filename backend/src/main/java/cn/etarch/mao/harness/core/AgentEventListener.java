@@ -63,6 +63,9 @@ public interface AgentEventListener {
     /** 等待 LLM 响应头或流式数据，用于让客户端展示当前网络阶段。 */
     default void onLlmWaiting(String phase, long elapsedSeconds) {}
 
+    /** 已输出部分数据的 LLM 流中断重试前，清除本轮不完整输出。 */
+    default void onLlmStreamReset() {}
+
     /** LLM 可恢复错误重试中，用于让客户端展示重试原因与进度。 */
     default void onLlmRetry(String reason, Integer statusCode, int attempt,
                             int maxRetries, int delaySeconds) {}

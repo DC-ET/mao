@@ -108,6 +108,11 @@ public class CompositeAgentEventListener implements AgentEventListener {
     }
 
     @Override
+    public void onLlmStreamReset() {
+        forEach("onLlmStreamReset", AgentEventListener::onLlmStreamReset);
+    }
+
+    @Override
     public void onLlmRetry(String reason, Integer statusCode, int attempt,
                            int maxRetries, int delaySeconds) {
         forEach("onLlmRetry", l -> l.onLlmRetry(reason, statusCode, attempt, maxRetries, delaySeconds));

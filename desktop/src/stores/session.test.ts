@@ -42,6 +42,23 @@ describe('session store 实体/投影模型', () => {
     mockPut.mockReset()
   })
 
+  it('流重置只清空当前临时 assistant，不影响已完成回复', () => {
+    const store = useSessionStore()
+    store.setMessages('1', [{
+      id: 'persisted-1', role: 'assistant', content: '已完成回复', createdAt: '2026-08-01T00:00:00'
+    }])
+
+    store.resetStreamingAssistantMessage('1')
+    expect(store.getMessages('1')[0].content).toBe('已完成回复')
+
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    store.appendDelta('1', '部分输出')
+    store.resetStreamingAssistantMessage('1')
+    expect(store.getMessages('1')[0].content).toBe('已完成回复')
+    expect(store.getMessages('1').at(-1)?.id).toBe(streaming.id)
+    expect(store.getMessages('1').at(-1)?.content).toBe('')
+  })
+
   it('fetchSessions 填充实体与标准投影；unread 以服务端为准（不保留旧本地 false）', async () => {
     const store = useSessionStore()
     mockGet.mockResolvedValueOnce({

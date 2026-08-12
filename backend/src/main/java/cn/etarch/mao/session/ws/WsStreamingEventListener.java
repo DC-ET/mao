@@ -282,6 +282,12 @@ public class WsStreamingEventListener implements AgentEventListener {
     }
 
     @Override
+    public void onLlmStreamReset() {
+        toolCallInfo.clear();
+        send("llm_stream_reset", Map.of());
+    }
+
+    @Override
     public void onLlmRetry(String reason, Integer statusCode, int attempt,
                            int maxRetries, int delaySeconds) {
         Map<String, Object> payload = new LinkedHashMap<>();

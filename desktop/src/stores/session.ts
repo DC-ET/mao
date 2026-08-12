@@ -219,6 +219,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessionCompacting = ref<Map<string, boolean>>(new Map())
   const sessionThinking = ref<Map<string, boolean>>(new Map())
   const sessionStreaming = ref<Map<string, boolean>>(new Map())
+  const streamingAssistantMessageIds = new Map<string, string>()
   const sessionLlmRetry = ref<Map<string, LlmRetryInfo>>(new Map())
   const sessionPendingApprovals = ref<Map<string, number>>(new Map())
   const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
@@ -953,7 +954,9 @@ export const useSessionStore = defineStore('session', () => {
   // --- Message cache actions ---
 
   function setMessages(sessionId: string, messages: ChatMessage[]) {
-    sessionMessages.value.set(String(sessionId), messages)
+    const sid = String(sessionId)
+    streamingAssistantMessageIds.delete(sid)
+    sessionMessages.value.set(sid, messages)
   }
 
   function prependMessages(sessionId: string, messages: ChatMessage[]) {
@@ -999,7 +1002,7 @@ export const useSessionStore = defineStore('session', () => {
     const sid = String(sessionId)
     const list = sessionMessages.value.get(sid) ?? []
     const lastMsg = list[list.length - 1]
-    if (lastMsg?.role === 'assistant') {
+    if (lastMsg?.role === 'assistant' && streamingAssistantMessageIds.get(sid) === String(lastMsg.id)) {
       if (!lastMsg.toolCalls) lastMsg.toolCalls = []
       if (!lastMsg.segments) lastMsg.segments = []
       return lastMsg
@@ -1013,6 +1016,7 @@ export const useSessionStore = defineStore('session', () => {
       toolCalls: [],
       segments: []
     }
+    streamingAssistantMessageIds.set(sid, String(msg.id))
     sessionMessages.value.set(sid, [...list, msg])
     return msg
   }
@@ -1048,6 +1052,21 @@ export const useSessionStore = defineStore('session', () => {
     const lastMsg = ensureStreamingAssistantMessage(sid)
     appendThinkingDeltaUtil(lastMsg, delta)
     const list = sessionMessages.value.get(sid) ?? []
+    sessionMessages.value.set(sid, [...list])
+  }
+
+  function resetStreamingAssistantMessage(sessionId: string) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid) ?? []
+    const lastMsg = list[list.length - 1]
+    if (lastMsg?.role !== 'assistant'
+        || streamingAssistantMessageIds.get(sid) !== String(lastMsg.id)) return
+    lastMsg.content = ''
+    lastMsg.thinkingContent = undefined
+    lastMsg.toolCalls = []
+    lastMsg.segments = []
+    sessionStreaming.value.set(sid, false)
+    sessionThinking.value.set(sid, true)
     sessionMessages.value.set(sid, [...list])
   }
 
@@ -1138,13 +1157,16 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  function markMessageComplete(_sessionId: string, _data: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }) {
+  function markMessageComplete(sessionId: string, _data: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }) {
+    streamingAssistantMessageIds.delete(String(sessionId))
     // Message end — the full assistant message is now persisted server-side
     // Refresh will pick it up via fetchMessages
   }
 
   function clearMessages(sessionId: string) {
-    sessionMessages.value.delete(String(sessionId))
+    const sid = String(sessionId)
+    streamingAssistantMessageIds.delete(sid)
+    sessionMessages.value.delete(sid)
   }
 
   /**
@@ -1542,6 +1564,7 @@ export const useSessionStore = defineStore('session', () => {
     getMessages,
     appendDelta,
     appendThinkingDelta,
+    resetStreamingAssistantMessage,
     appendToolCallStart,
     updateToolCallArgs,
     updateToolCallResult,

@@ -189,13 +189,15 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                     callback.onError(cancelledException());
                     return;
                 }
-                if (e instanceof StreamInterruptedAfterOutputException) {
-                    callback.onError(new RuntimeException("模型流式响应已中断，请继续执行", e));
+                boolean interruptedAfterOutput = e instanceof StreamInterruptedAfterOutputException;
+                if (!isRetryableNetworkFailure(e) || attempt > llmRetryConfig.getRateLimitMaxRetries()) {
+                    callback.onError(interruptedAfterOutput
+                            ? new RuntimeException("模型流式响应已中断，自动重试已耗尽", e)
+                            : e);
                     return;
                 }
-                if (!isRetryableNetworkFailure(e) || attempt > llmRetryConfig.getRateLimitMaxRetries()) {
-                    callback.onError(e);
-                    return;
+                if (interruptedAfterOutput) {
+                    callback.onStreamReset();
                 }
                 int delaySeconds = resolveRetryDelaySeconds(null, attempt);
                 if (!notifyAndWaitForRetry(callback, cancelFlag, config.getModelId(), networkReason(e),
@@ -261,7 +263,9 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                             log.trace("SSE chunk parsed: {}", data);
                         }
                         callback.onChunk(chunk);
-                        emitted.set(true);
+                        if (hasAccumulatedOutput(chunk)) {
+                            emitted.set(true);
+                        }
 
                         JsonNode node = objectMapper.readTree(data);
                         if (node.has("usage")) {
@@ -294,6 +298,18 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         } finally {
             readingDone.set(true);
         }
+    }
+
+    private boolean hasAccumulatedOutput(StreamChunk chunk) {
+        if (chunk.getChoices() == null) return false;
+        for (StreamChunk.DeltaChoice choice : chunk.getChoices()) {
+            StreamChunk.Delta delta = choice.getDelta();
+            if (delta == null) continue;
+            if (delta.getContent() != null && !delta.getContent().isEmpty()) return true;
+            if (delta.getReasoningContent() != null && !delta.getReasoningContent().isEmpty()) return true;
+            if (delta.getToolCalls() != null && !delta.getToolCalls().isEmpty()) return true;
+        }
+        return false;
     }
 
     /** 等待响应头；超时仅覆盖首包阶段，响应头到达后立即解除。 */
@@ -504,10 +520,10 @@ public class OpenAiLlmAdapter implements LlmAdapter {
     }
 
     /**
-     * 瞬时错误判定：429 限流、5xx 服务端错误（含 524 网关超时等）均可重试。
+     * 可重试状态：404、429 限流、5xx 服务端错误（含 524 网关超时等）。
      */
     private boolean isRetryableStatus(int code) {
-        return code == 429 || (code >= 500 && code < 600);
+        return code == 404 || code == 429 || (code >= 500 && code < 600);
     }
 
     private RuntimeException buildHttpException(Response response) {

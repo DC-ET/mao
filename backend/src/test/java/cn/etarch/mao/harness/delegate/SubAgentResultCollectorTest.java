@@ -42,6 +42,26 @@ class SubAgentResultCollectorTest {
     }
 
     @Test
+    void streamResetDiscardsPartialAttempt() {
+        SubAgentResultCollector collector = new SubAgentResultCollector();
+
+        collector.onThinkingDelta("旧思考");
+        collector.onContentDelta("残片");
+        collector.onToolCallStart(ChatRequest.ToolCall.builder()
+                .id("call-old")
+                .function(ChatRequest.FunctionCall.builder().name("read_file").arguments("{}").build())
+                .build());
+
+        collector.onLlmStreamReset();
+        collector.onThinkingDelta("新思考");
+        collector.onContentDelta("完整答案");
+
+        assertThat(collector.getResult()).isEqualTo("完整答案");
+        assertThat(collector.getThinkingContent()).isEqualTo("新思考");
+        assertThat(collector.getToolCallCount()).isZero();
+    }
+
+    @Test
     void toolCallClearsContentEvenWithoutFollowingRound() {
         SubAgentResultCollector collector = new SubAgentResultCollector();
 

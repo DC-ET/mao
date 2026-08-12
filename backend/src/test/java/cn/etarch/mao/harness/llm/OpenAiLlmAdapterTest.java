@@ -259,6 +259,24 @@ class OpenAiLlmAdapterTest {
     }
 
     @Test
+    void streamRetries404ThenSucceedsAndReportsStatus() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setResponseCode(404).setBody("model not ready"));
+            server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"));
+            server.start();
+
+            CapturingCallback callback = new CapturingCallback();
+            adapter(1, 0).stream(request("404"), config(server), callback, new AtomicBoolean(false));
+
+            assertThat(callback.error).isNull();
+            assertThat(callback.retryReasons).containsExactly("http_status");
+            assertThat(callback.retryStatuses).containsExactly(404);
+            assertThat(server.getRequestCount()).isEqualTo(2);
+        }
+    }
+
+    @Test
     void streamRetries504ThenSucceedsAndReportsStatus() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(new MockResponse().setResponseCode(504).setBody("gateway timeout"));
@@ -295,20 +313,43 @@ class OpenAiLlmAdapterTest {
     }
 
     @Test
-    void streamDoesNotRetryAfterVisibleOutputWasEmitted() throws Exception {
+    void streamRetriesWithoutResetAfterMetadataOnlyChunk() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n"));
+            server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"complete\"}}]}\n\ndata: [DONE]\n\n"));
+            server.start();
+
+            CapturingCallback callback = new CapturingCallback();
+            adapter(1, 0, 5, 1).stream(request("metadata"), config(server), callback, new AtomicBoolean(false));
+
+            assertThat(callback.error).isNull();
+            assertThat(callback.streamResetCount).isZero();
+            assertThat(callback.retryReasons).containsExactly("unexpected_eof");
+            assertThat(server.getRequestCount()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void streamRetriesAfterVisibleOutputAndResetsPartialChunks() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
                     .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"));
             server.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream")
-                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"duplicate\"}}]}\n\ndata: [DONE]\n\n"));
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"replacement\"}}]}\n\ndata: [DONE]\n\n"));
             server.start();
 
             CapturingCallback callback = new CapturingCallback();
             adapter(1, 0, 5, 1).stream(request("partial"), config(server), callback, new AtomicBoolean(false));
 
-            assertThat(callback.error).hasMessageContaining("流式响应已中断");
-            assertThat(callback.retryReasons).isEmpty();
-            assertThat(server.getRequestCount()).isEqualTo(1);
+            assertThat(callback.error).isNull();
+            assertThat(callback.streamResetCount).isEqualTo(1);
+            assertThat(callback.retryReasons).containsExactly("unexpected_eof");
+            assertThat(callback.chunks).hasSize(1);
+            assertThat(callback.chunks.get(0).getChoices().get(0).getDelta().getContent())
+                    .isEqualTo("replacement");
+            assertThat(server.getRequestCount()).isEqualTo(2);
         }
     }
 
@@ -492,10 +533,17 @@ class OpenAiLlmAdapterTest {
         final CountDownLatch waiting = new CountDownLatch(1);
         ChatUsage usage;
         Throwable error;
+        int streamResetCount;
 
         @Override
         public void onChunk(StreamChunk chunk) {
             chunks.add(chunk);
+        }
+
+        @Override
+        public void onStreamReset() {
+            streamResetCount++;
+            chunks.clear();
         }
 
         @Override

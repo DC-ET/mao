@@ -38,6 +38,13 @@ public class SubAgentResultCollector implements AgentEventListener {
     }
 
     @Override
+    public void onLlmStreamReset() {
+        contentBuilder.setLength(0);
+        thinkingBuilder.setLength(0);
+        toolCallCount = 0;
+    }
+
+    @Override
     public void onContentDelta(String delta) {
         if (delta != null) {
             contentBuilder.append(delta);

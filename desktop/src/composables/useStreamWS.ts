@@ -79,7 +79,7 @@ const STREAM_EVENT_TYPES = new Set([
   'content_delta', 'tool_call_start', 'tool_call_args_delta', 'tool_call_result',
   'thinking_start', 'thinking_end', 'thinking_delta', 'message_end',
   'file_change', 'activity', 'compaction_start', 'compaction_end', 'compaction_marker',
-  'context_window', 'llm_waiting', 'llm_retry', 'session_already_running', 'error'
+  'context_window', 'llm_waiting', 'llm_stream_reset', 'llm_retry', 'session_already_running', 'error'
 ])
 
 function refreshQueue(sessionId: string) {
@@ -603,6 +603,12 @@ export function useStreamWS() {
             phase: data.phase,
             elapsedSeconds: data.elapsedSeconds
           })
+        }
+        break
+
+      case 'llm_stream_reset':
+        if (sessionId) {
+          sessionStore.resetStreamingAssistantMessage(sessionId)
         }
         break
 

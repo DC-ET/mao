@@ -329,6 +329,16 @@ public class AgentLoop {
                 }
 
                 @Override
+                public void onStreamReset() {
+                    contentBuilder.setLength(0);
+                    thinkingBuilder.setLength(0);
+                    toolCalls.clear();
+                    emittedEarlyStarts.clear();
+                    thinkingEnded.set(false);
+                    listener.onLlmStreamReset();
+                }
+
+                @Override
                 public void onWaiting(String phase, long elapsedSeconds) {
                     listener.onLlmWaiting(phase, elapsedSeconds);
                 }

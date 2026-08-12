@@ -11,6 +11,10 @@ public interface StreamCallback {
 
     void onError(Throwable t);
 
+    /** 已输出部分数据的流中断后，重试前通知调用方丢弃本次不完整输出。 */
+    default void onStreamReset() {
+    }
+
     /** 等待网络阶段的周期通知。phase 当前为 response_headers 或 stream_data。 */
     default void onWaiting(String phase, long elapsedSeconds) {
     }

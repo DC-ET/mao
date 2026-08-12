@@ -90,6 +90,32 @@ class AgentLoopTest {
     }
 
     @Test
+    void executeDiscardsPartialOutputWhenStreamIsRetried() {
+        AgentExecutionContext context = context();
+        AgentEventListener listener = mock(AgentEventListener.class);
+        AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
+        when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
+        when(contextManager.estimateRequestTokens(any())).thenReturn(42);
+        when(backgroundTaskManager.consumeCompletedResults(11L)).thenReturn(Map.of());
+        doAnswer(invocation -> {
+            StreamCallback callback = invocation.getArgument(2);
+            callback.onChunk(contentChunk("old thinking", null));
+            callback.onChunk(contentChunk(null, "partial"));
+            callback.onStreamReset();
+            callback.onChunk(contentChunk("new thinking", null));
+            callback.onChunk(contentChunk(null, "replacement"));
+            callback.onComplete(ChatUsage.builder().promptTokens(10).completionTokens(2).totalTokens(12).build());
+            return null;
+        }).when(llmAdapter).stream(any(), any(), any(), any());
+
+        agentLoop.execute(context, listener, persistence);
+
+        verify(listener).onLlmStreamReset();
+        verify(persistence).onSaveAssistantMessage(
+                eq("replacement"), eq("new thinking"), eq(List.of()), any(ChatUsage.class));
+    }
+
+    @Test
     void executeRunsToolCallThenContinuesToSynthesisRound() {
         AgentExecutionContext context = context();
         AgentEventListener listener = mock(AgentEventListener.class);
