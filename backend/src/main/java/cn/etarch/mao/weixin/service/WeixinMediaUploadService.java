@@ -1,16 +1,17 @@
 package cn.etarch.mao.weixin.service;
 
 import cn.etarch.mao.weixin.config.WeixinBotConfig;
+import cn.etarch.mao.weixin.config.WeixinOkHttpConfig;
 import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.Cipher;
@@ -36,7 +37,6 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class WeixinMediaUploadService {
 
     /** getuploadurl 的媒体类型：1 = IMAGE，3 = FILE，4 = VOICE */
@@ -46,13 +46,17 @@ public class WeixinMediaUploadService {
 
     private final WeixinBotConfig weixinBotConfig;
     private final ObjectMapper objectMapper;
-
-    private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(180, TimeUnit.SECONDS)
-            .build();
+    private final OkHttpClient httpClient;
 
     private final SecureRandom secureRandom = new SecureRandom();
+
+    public WeixinMediaUploadService(WeixinBotConfig weixinBotConfig,
+                                    ObjectMapper objectMapper,
+                                    @Qualifier("weixinHttpClient") OkHttpClient httpClient) {
+        this.weixinBotConfig = weixinBotConfig;
+        this.objectMapper = objectMapper;
+        this.httpClient = httpClient;
+    }
 
     /**
      * 上传后的 CDN 媒体引用，用于 sendmessage 的 voice_item/file_item.media。
@@ -95,9 +99,46 @@ public class WeixinMediaUploadService {
         return uploadMedia(account, toUserId, MEDIA_TYPE_VOICE, plaintext);
     }
 
+    private static final int MAX_RETRIES = 2;
+
     private Optional<CdnMedia> uploadMedia(WeixinChannelAccount account, String toUserId,
                                            int mediaType, byte[] plaintext) {
-        try {
+        Exception lastException = null;
+        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                if (attempt > 0) {
+                    log.info("微信媒体上传重试, accountId={}, attempt={}", account.getAccountId(), attempt);
+                    Thread.sleep(1000L * attempt);
+                }
+                return doUpload(account, toUserId, mediaType, plaintext);
+            } catch (Exception e) {
+                lastException = e;
+                if (!isRetryableNetworkFailure(e)) {
+                    break;
+                }
+            }
+        }
+        log.warn("微信媒体上传失败, accountId={}: {}", account.getAccountId(),
+                lastException != null ? lastException.getMessage() : "unknown");
+        return Optional.empty();
+    }
+
+    private static boolean isRetryableNetworkFailure(Throwable failure) {
+        Throwable cause = failure;
+        while (cause != null) {
+            if (cause instanceof java.net.SocketException
+                    || cause instanceof java.net.ConnectException
+                    || cause instanceof java.io.EOFException
+                    || cause instanceof java.net.SocketTimeoutException) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
+    }
+
+    private Optional<CdnMedia> doUpload(WeixinChannelAccount account, String toUserId,
+                                        int mediaType, byte[] plaintext) throws Exception {
             JsonNode payload = objectMapper.readTree(account.getPayloadJson());
             String botToken = payload.get("token").asText();
             String baseUrl = payload.get("baseUrl").asText();
@@ -137,10 +178,6 @@ public class WeixinMediaUploadService {
                     account.getAccountId(), mediaType, rawsize, ciphertext.length);
             return Optional.of(new CdnMedia(encryptedParam, aesKeyB64, 1,
                     ciphertext.length, rawsize, rawfilemd5));
-        } catch (Exception e) {
-            log.warn("微信媒体上传失败, accountId={}: {}", account.getAccountId(), e.getMessage());
-            return Optional.empty();
-        }
     }
 
     /**

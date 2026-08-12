@@ -3,6 +3,7 @@ package cn.etarch.mao.weixin.service;
 import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.common.result.ErrorCode;
 import cn.etarch.mao.weixin.config.WeixinBotConfig;
+import cn.etarch.mao.weixin.config.WeixinOkHttpConfig;
 import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
 import cn.etarch.mao.weixin.model.QrcodeResponse;
 import cn.etarch.mao.weixin.model.QrcodeStatusResponse;
@@ -35,6 +36,8 @@ public class QrLoginService {
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .callTimeout(35, TimeUnit.SECONDS)
+            .dns(WeixinOkHttpConfig.IPV4_ONLY)
+            .sslSocketFactory(WeixinOkHttpConfig.createSslSocketFactory(), WeixinOkHttpConfig.getDefaultTrustManager())
             .build();
 
     // 查询状态的客户端 - callTimeout 限制整个请求生命周期
@@ -43,6 +46,8 @@ public class QrLoginService {
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(8, TimeUnit.SECONDS)
             .callTimeout(10, TimeUnit.SECONDS)
+            .dns(WeixinOkHttpConfig.IPV4_ONLY)
+            .sslSocketFactory(WeixinOkHttpConfig.createSslSocketFactory(), WeixinOkHttpConfig.getDefaultTrustManager())
             .build();
 
     // 临时存储二维码会话信息: sessionKey -> qrcode

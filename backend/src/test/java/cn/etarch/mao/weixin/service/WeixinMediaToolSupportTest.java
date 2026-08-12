@@ -36,8 +36,9 @@ class WeixinMediaToolSupportTest {
     @BeforeEach
     void setUp() {
         pathSandbox = new PathSandbox(tempDir.toString());
+        okhttp3.OkHttpClient httpClient = new okhttp3.OkHttpClient.Builder().build();
         support = new WeixinMediaToolSupport(accountRepository, contextTokenRepository,
-                pathSandbox, new com.fasterxml.jackson.databind.ObjectMapper());
+                pathSandbox, new com.fasterxml.jackson.databind.ObjectMapper(), httpClient);
     }
 
     private WeixinChannelAccount account(Long userId, String accountId) {

@@ -1,6 +1,7 @@
 package cn.etarch.mao.weixin.service;
 
 import cn.etarch.mao.weixin.config.WeixinBotConfig;
+import cn.etarch.mao.weixin.config.WeixinOkHttpConfig;
 import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,6 +46,8 @@ public class WeixinMonitorService {
                 .connectTimeout(10, TimeUnit.SECONDS)
                 // readTimeout 需大于 longPollTimeoutMs，否则长轮询会提前超时
                 .readTimeout(config.getMonitor().getLongPollTimeoutMs() / 1000 + 15, TimeUnit.SECONDS)
+                .dns(WeixinOkHttpConfig.IPV4_ONLY)
+                .sslSocketFactory(WeixinOkHttpConfig.createSslSocketFactory(), WeixinOkHttpConfig.getDefaultTrustManager())
                 .build();
 
         executor = Executors.newCachedThreadPool(r -> {

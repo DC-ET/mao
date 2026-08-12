@@ -2,14 +2,15 @@ package cn.etarch.mao.weixin.service;
 
 import cn.etarch.mao.harness.safety.PathSandbox;
 import cn.etarch.mao.harness.tool.ImageFileSupport;
+import cn.etarch.mao.weixin.config.WeixinOkHttpConfig;
 import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
 import cn.etarch.mao.weixin.entity.WeixinChannelContextToken;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
@@ -32,18 +33,25 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class WeixinMediaToolSupport {
 
     private final WeixinAccountRepository accountRepository;
     private final ContextTokenRepository contextTokenRepository;
     private final PathSandbox pathSandbox;
     private final ObjectMapper objectMapper;
+    private final OkHttpClient httpClient;
 
-    private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(180, TimeUnit.SECONDS)
-            .build();
+    public WeixinMediaToolSupport(WeixinAccountRepository accountRepository,
+                                  ContextTokenRepository contextTokenRepository,
+                                  PathSandbox pathSandbox,
+                                  ObjectMapper objectMapper,
+                                  @Qualifier("weixinHttpClient") OkHttpClient httpClient) {
+        this.accountRepository = accountRepository;
+        this.contextTokenRepository = contextTokenRepository;
+        this.pathSandbox = pathSandbox;
+        this.objectMapper = objectMapper;
+        this.httpClient = httpClient;
+    }
 
     /** 解析结果：accountId（下行用）+ wxUserId（收件人）+ 账号实体（上传用） */
     public record WechatTarget(String accountId, String wxUserId, WeixinChannelAccount account) {

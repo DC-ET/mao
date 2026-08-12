@@ -3,13 +3,14 @@ package cn.etarch.mao.weixin.service;
 import cn.etarch.mao.harness.tool.ImageFileSupport;
 import cn.etarch.mao.harness.tool.PromptImageResizer;
 import cn.etarch.mao.weixin.config.WeixinBotConfig;
+import cn.etarch.mao.weixin.config.WeixinOkHttpConfig;
 import com.fasterxml.jackson.databind.JsonNode;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.Cipher;
@@ -30,21 +31,19 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class WeixinMediaService {
 
     private final WeixinBotConfig weixinBotConfig;
+    private final OkHttpClient httpClient;
+    private final OkHttpClient fileHttpClient;
 
-    private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .build();
-
-    /** 文件下载专用 client：大文件（≤100MB）读取超时放宽到 180s，与出站上传一致 */
-    private final OkHttpClient fileHttpClient = new OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(180, TimeUnit.SECONDS)
-            .build();
+    public WeixinMediaService(WeixinBotConfig weixinBotConfig,
+                              @Qualifier("weixinHttpClient") OkHttpClient httpClient,
+                              @Qualifier("weixinFileHttpClient") OkHttpClient fileHttpClient) {
+        this.weixinBotConfig = weixinBotConfig;
+        this.httpClient = httpClient;
+        this.fileHttpClient = fileHttpClient;
+    }
 
     public record DownloadedMedia(Path path, String mimeType, String dataUri) {
     }

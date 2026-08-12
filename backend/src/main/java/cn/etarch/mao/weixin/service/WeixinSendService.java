@@ -10,26 +10,32 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import cn.etarch.mao.weixin.entity.WeixinChannelAccount;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class WeixinSendService {
 
     private final WeixinAccountRepository accountRepository;
     private final ContextTokenRepository contextTokenRepository;
     private final ObjectMapper objectMapper;
-    private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-            .build();
+    private final OkHttpClient httpClient;
+
+    public WeixinSendService(WeixinAccountRepository accountRepository,
+                             ContextTokenRepository contextTokenRepository,
+                             ObjectMapper objectMapper,
+                             @Qualifier("weixinHttpClient") OkHttpClient httpClient) {
+        this.accountRepository = accountRepository;
+        this.contextTokenRepository = contextTokenRepository;
+        this.objectMapper = objectMapper;
+        this.httpClient = httpClient;
+    }
 
     /**
      * 发送文本消息
