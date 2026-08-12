@@ -39,6 +39,7 @@
       :show-local-actions="executionMode !== 'CLOUD'"
       :show-download-actions="executionMode === 'CLOUD'"
       :is-directory="ctxMenu.node?.isDirectory ?? false"
+      :show-open-in-finder="executionMode !== 'CLOUD'"
       @hide="ctxMenu.visible = false"
       @copy-absolute="handleCopyAbsolute"
       @copy-relative="handleCopyRelative"
