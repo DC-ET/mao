@@ -117,6 +117,10 @@ onMounted(fetchTasks)
   margin-bottom: 4px;
 }
 
+.task-tabs :deep(.el-tabs__item) {
+  font-size: 14px;
+}
+
 .task-list {
   display: flex;
   flex-direction: column;
