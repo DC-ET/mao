@@ -14,6 +14,44 @@
 
 ---
 
+## 0.0.31 (2026-08-13)
+
+### 管理后台
+- 修复会话阶段 Tag、定时任务开关、角色权限勾选在控制台刷 Element Plus 校验警告的问题（运行中阶段改用 `primary`，完结字段按布尔禁用开关，权限勾选改用 `value`）。
+
+### 前端（桌面 / Web / 安卓）
+- 工具卡片回退文案改为中文名称（如 `edit_file` 显示为「编辑文件」），与分组标题一致。
+- 任务完成后不再立刻用 REST 覆盖待发送队列，避免把刚自动出队的消息又刷回面板。
+- 修复队列自动消费后用户气泡消失：任务结束拉取历史时保留尚未入库响应的尾部用户消息。
+- 修复定时任务触发后当前打开的会话不出现气泡：把 `scheduled` 来源的用户消息按远程入站插入并进入流式。
+
+### 后端
+- 新增 TypeScript 后端（`backend-ts/`，NestJS + Fastify，默认端口 9081），REST / WebSocket / 鉴权密文协议与 Java 对齐，可与 9080 双跑；验收后将 Nginx `/api/`、`/api/ws/` 切到 9081，Java 进程保留作回滚。切流瞬间进行中的 Agent 与 WebSocket 需重连。
+- 修复任务面板偏好接口在 mysql2 将 JSON 列解析为数组后 500 的问题；连接池改为按字符串读取 JSON 列，与 Java 对齐。
+- 修复新会话首条回复完成后状态又回到「运行中」：助手消息落库不再整行回写 session（避免把 COMPLETED 覆盖成 RUNNING），并等待落库完成后再标记终态。
+- 修复新建会话后侧栏 Agent 名称显示为占位「Agent」：创建接口将字符串形式的 agentId 转为数字后再填充 agentName，与 Java / 前端对齐。
+- 修复部分模型流式工具调用每包都带同一 `id` 时，`tool_call_start` 被重复推送、同一工具被拆成多次执行的问题。
+- 修复执行中工具卡片摘要显示原始 JSON：WebSocket 改用与 Java 一致的 ToolResultSummarizer（如「编辑 src/App.vue (+3行 -1行)」）。
+- 修复 CLOUD shell 未注入 `GIT_TOKEN_*` / `GIT_ASKPASS`：创建会话时写入用户 Git 凭据环境变量，与 Java 对齐。
+- 修复 CLOUD shell 会话过期清理未挂定时器：每分钟执行 idle 30 分钟 / 最长 2 小时回收，与 Java `@Scheduled` 对齐。
+- 子代理整体超时改回 3600 秒；超时后置位 cancelFlag 并等待 30 秒宽限，宽限内仍不退出才失败。
+- Agent 执行器按 core=20 / max=100 / queue=200 排队，队列满后再扩到 max，超出则拒绝，与 Java 线程池一致。
+- 启动时校验 `APP_GIT_CREDENTIAL_SECRET`，未配置则拒绝启动。
+- 修复发送图片时 OSS STS 临时凭证生成失败：Aliyun SDK 需传入 `AssumeRoleRequest` 实例，不能传普通对象。
+- 修复子代理（coder/explorer/reviewer）执行报 `buildContext` 空引用：Delegate 工具对 HarnessService / AgentLoop 改为延迟解析，对齐 Java `@Lazy`。
+- 修复 `open_web_page` 抓取超大网页（如微信公众号约 3MB HTML）时因截断后流未结束而误报 timeout；达到上限后立即解析，并跟随 HTTP 重定向。
+- 修复子代理创建后不自动打开 Tab、侧栏不刷新：推送 `subagent_session_created`（含 title），并在执行时挂上 WS 流式监听，与 Java 对齐。
+- 修复刷新后用户消息中的图片不回显：多模态内容按 `image_url` 落库，读取时兼容旧的 `imageUrl` 字段。
+- 修复任务结束后待发送队列不自动消费：出队不再被残留的 RUNNING 状态拦住，崩溃恢复完成后也会继续消费队列。
+- 修复 LOCAL 模式任务启动失败：`SkillSyncService` 补齐 `getRemovedSkillNames`，与 Java 对齐。
+- 修复 LOCAL 模式关联 MCP 后调用模型 400：桌面上报的工具 schema 写入 `inputSchema`，并把 `type: null` 规范成 `object`，避免 DeepSeek 等严格供应商拒绝。
+- 修复 LLM HTTP 4xx 被当成网络失败连着重试：仅对超时/断连等 IO 错误重试，与 Java 对齐。
+- 修复上传本地技能报「No valid skill folders found」：multipart 解析保留 `技能目录/SKILL.md` 路径，与 Java 对齐。
+- 修复定时任务触发后当前打开的会话收不到实时消息：改为走 WebSocket 流式推送（含用户气泡），无需刷新。
+
+### 桌面 Electron
+- LOCAL Skill 同步 zip 改为跟随前端 `VITE_API_BASE_URL` 下载，并把 `localhost` 落到 `127.0.0.1`，避免 Electron 走 IPv6 连不上只监听 IPv4 的 TypeScript 后端。
+
 ## 0.0.30 (2026-08-11)
 
 ### 后端

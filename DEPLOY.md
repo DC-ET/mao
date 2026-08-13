@@ -6,7 +6,8 @@
 
 | 组件 | 部署方式 | 端口 | 域名（示例） |
 |------|---------|------|-------------|
-| Java 后端 | jar + systemd | 9080 | 内网，由 Nginx 反代 |
+| Java 后端 | jar + systemd | 9080 | 内网，由 Nginx 反代（切流前） |
+| TypeScript 后端 | Node + systemd | 9081 | 内网，双跑验收后由 Nginx 切流 |
 | 管理后台 | Nginx 静态文件 | 80/443 | `mao-admin.example.com` |
 | 桌面端 Web | Nginx 静态文件 | 80/443 | `mao.example.com` |
 | MySQL | 自建或云服务 | 3306 | 内网 |
@@ -410,10 +411,56 @@ tail -f /opt/mao/logs/error.log
 sudo systemctl reload nginx
 ```
 
+## 十一、TypeScript 后端双跑与 Nginx 切流
+
+Java 后端继续监听 **9080**，TypeScript 重写版默认监听 **9081**（`MAO_TS_PORT`）。切流前 Nginx 仍指向 9080；两边共用同一 MySQL（TS 默认 `FLYWAY_ENABLED=false`，schema 仍由 Java Flyway 管理）。
+
+### 1. 启动 TS 后端（不停止 Java）
+
+生产目录示例：`/opt/mao/backend-ts/`（含 `dist/`、`config/`、`db/migration/`、`restart.sh`、`.env`）。
+
+```bash
+# 与 Java 相同的密钥，保证已签发 JWT / 库内 AES 密文可继续使用
+export JWT_SECRET=...
+export APP_GIT_CREDENTIAL_SECRET=...
+export MYSQL_USERNAME=...
+export MYSQL_PASSWORD=...
+export MAO_TS_PORT=9081
+export FLYWAY_ENABLED=false
+
+cd /opt/mao/backend-ts
+chmod +x restart.sh
+./restart.sh
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9081/api/swagger-ui.html
+```
+
+管理端运行时重启接口仍为 `GET /v1/admin/runtime/restart`，脚本路径为 `${app.root-dir}/backend-ts/restart.sh`。
+
+### 2. 验收清单（全部通过后再改 Nginx）
+
+- desktop / admin 临时指向 `http://127.0.0.1:9081/api`：登录、会话、发消息、工具、LOCAL（Electron）、管理后台各页
+- 关键 REST JSON 与 Java 金样对比（忽略 `timestamp`）
+- 能解密库中已有 Git / MCP / Webhook 密文，能验证已有 BCrypt，能接受已有 JWT
+
+### 3. 切流
+
+把 `location /api/` 与 `location /api/ws/` 的 `proxy_pass` 从 `http://127.0.0.1:9080` 改为 `http://127.0.0.1:9081`，然后：
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+切流瞬间进行中的 Agent / WebSocket 会断开，用户需重连（与换 Java 进程相同，不做跨进程会话热迁移）。观察期结束前保留 Java 9080 进程；回滚即把 `proxy_pass` 改回 `9080` 并 reload Nginx。
+
+切流后可将 `FLYWAY_ENABLED=true`，由 TS 使用同一套 `db/migration` 与 `flyway_schema_history` 跑迁移。
+
 ### 常见问题
+
 
 | 现象 | 排查 |
 |------|------|
-| 后端启动后立即退出，日志提示 `APP_GIT_CREDENTIAL_SECRET is not configured` | 检查 `/opt/mao/backend/.env` 是否存在且已被 `restart.sh` 加载 |
+| 后端启动后立即退出，日志提示 `APP_GIT_CREDENTIAL_SECRET is not configured` | 检查 `/opt/mao/backend/.env` 或 `/opt/mao/backend-ts/.env` 是否存在且已被对应 `restart.sh` 加载 |
+| TS 后端 9081 起不来 / Nginx 切流后 502 | 确认 Node 进程在 9081 监听；回滚把 `proxy_pass` 改回 `127.0.0.1:9080` 并 reload Nginx，不要重启 Java 除非你有意为之 |
 | HTTPS 私有仓库 clone / push 认证失败 | 确认用户使用 HTTPS 地址，并在桌面端「设置 → Git 凭证」配置对应**完整主机名**的 Token |
 | 提示不支持 SSH 地址 | 将 `git@host:...` 改为 `https://host/...` 格式 |

@@ -57,7 +57,7 @@
               inline-prompt
               active-text="启"
               inactive-text="停"
-              :disabled="row.finished"
+              :disabled="!!row.finished"
               style="margin-right: 8px"
               @change="handleToggleStatus(row)"
             />
@@ -101,7 +101,7 @@ interface ScheduledTask {
   lastExecutionStatus: string | null
   nextFireTime: string | null
   fireCount: number
-  finished: boolean
+  finished: boolean | number
   finishedAt: string | null
   createdAt: string
 }

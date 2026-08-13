@@ -110,9 +110,9 @@ const messageTurns = computed((): MessageTurn[] => {
   return turns
 })
 
-function phaseTagType(phase: string): '' | 'success' | 'danger' | 'warning' | 'info' {
+function phaseTagType(phase: string): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
   switch (phase) {
-    case 'RUNNING': return ''
+    case 'RUNNING': return 'primary'
     case 'COMPLETED': return 'success'
     case 'FAILED': return 'danger'
     case 'CANCELLED': return 'warning'

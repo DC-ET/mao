@@ -1,0 +1,18 @@
+export { registerWeixinBotRoutes, type WeixinBotRouteDeps } from './weixin.routes.js';
+export { attachWebSocket, type AttachWebSocketDeps } from '../session/ws/attach-websocket.js';
+export { QrLoginService } from './qr-login.service.js';
+export { WeixinMonitorService } from './monitor.service.js';
+export { InboundProcessor } from './inbound-processor.js';
+export { AgentWeixinInboundHandler } from './agent-inbound-handler.js';
+export { WeixinSendService } from './send.service.js';
+export { WeixinMediaUploadService } from './media-upload.service.js';
+export { WeixinMediaService } from './media.service.js';
+export { WeixinVoiceCodecService } from './voice-codec.service.js';
+export { WeixinVoiceTextSanitizer } from './voice-text-sanitizer.js';
+export { WeixinVoiceReplyService } from './voice-reply.service.js';
+export { WeixinVoiceSynthesisService } from './voice-synthesis.service.js';
+export { WeixinFileStorageService } from './file-storage.service.js';
+export { WeixinAccountRepository } from './account.repository.js';
+export { ContextTokenRepository } from './context-token.repository.js';
+export { WeixinSessionService } from './session.service.js';
+export { WeixinMediaToolSupport } from './media-tool-support.js';

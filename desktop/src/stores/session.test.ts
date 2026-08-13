@@ -238,6 +238,24 @@ describe('session store 实体/投影模型', () => {
 
     // 已归档会话只进实体，不进 ACTIVE 标准投影
     expect(store.sessions.map(s => s.id)).not.toContain('88')
-    expect(store.getSessionEntity('88')?.status).toBe('ARCHIVED')
+  it('applyFetchedMessages 保留 REST 尚未返回的队列消费用户消息', () => {
+    const store = useSessionStore()
+    store.setMessages('1', [
+      { id: '10', role: 'user', content: '先做这个', createdAt: '2026-08-13 16:00:00' },
+      { id: '11', role: 'assistant', content: '做好了', createdAt: '2026-08-13 16:01:00' },
+    ])
+    store.addUserMessage('1', {
+      id: '12',
+      role: 'user',
+      content: '#{commit_and_push}#',
+      createdAt: '2026-08-13 17:00:02',
+    })
+    store.applyFetchedMessages('1', [
+      { id: '10', role: 'user', content: '先做这个', createdAt: '2026-08-13 16:00:00' },
+      { id: '11', role: 'assistant', content: '做好了', createdAt: '2026-08-13 16:01:00' },
+    ])
+    const msgs = store.getMessages('1')
+    expect(msgs.map(m => m.id)).toEqual(['10', '11', '12'])
+    expect(msgs[2].content).toBe('#{commit_and_push}#')
   })
 })

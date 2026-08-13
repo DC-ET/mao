@@ -1,0 +1,62 @@
+{
+  "name": "mao-server-ts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mao Server TypeScript — protocol-compatible rewrite of the Java backend",
+  "license": "MIT",
+  "scripts": {
+    "start": "node dist/main.js",
+    "start:dev": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@alicloud/sts20150401": "^1.2.0",
+    "@fastify/cors": "^11.0.1",
+    "@fastify/multipart": "^9.0.3",
+    "@fastify/static": "^10.1.2",
+    "@fastify/swagger": "^9.5.1",
+    "@fastify/swagger-ui": "^5.2.3",
+    "@fastify/websocket": "^11.2.0",
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "@mozilla/readability": "^0.6.0",
+    "@nestjs/common": "^11.1.5",
+    "@nestjs/core": "^11.1.5",
+    "@nestjs/platform-fastify": "^11.1.5",
+    "@nestjs/swagger": "^11.2.0",
+    "archiver": "^7.0.1",
+    "bcrypt": "^6.0.0",
+    "croner": "^9.1.0",
+    "fastify": "^5.4.0",
+    "jsdom": "^26.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "ldapts": "^8.0.9",
+    "mime-types": "^3.0.1",
+    "mysql2": "^3.14.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "sharp": "^0.34.3",
+    "turndown": "^7.2.1",
+    "ws": "^8.18.3",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.3",
+    "@types/bcrypt": "^6.0.0",
+    "@types/jsdom": "^21.1.7",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^22.17.0",
+    "@types/turndown": "^5.0.5",
+    "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^3.2.4",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

@@ -275,8 +275,9 @@ watch(
     if (TERMINAL_PHASES.has(phase)) {
       sending.value = false
       if (hasRealSession.value && prevPhase && ACTIVE_PHASES.has(prevPhase)) {
-        fetchMessages()
-        fetchQueue()
+        if (sessionStore.getQueueMessages(String(sid)).length === 0) {
+          fetchMessages()
+        }
       }
     } else if (ACTIVE_PHASES.has(phase)) {
       sending.value = true
@@ -331,7 +332,7 @@ async function fetchMessages() {
     const raw: Array<Record<string, unknown>> = data?.messages || []
     const { messages, allChanges } = mapMessagesWithFileChanges(raw)
     if (messages.length > 0) {
-      sessionStore.setMessages(sid, messages)
+      sessionStore.applyFetchedMessages(sid, messages)
       sessionStore.setFileChanges(sid, allChanges)
     }
     if (Array.isArray(data?.compactionEvents)) {

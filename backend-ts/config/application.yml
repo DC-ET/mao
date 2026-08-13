@@ -1,0 +1,116 @@
+server:
+  port: ${MAO_TS_PORT:9081}
+  servlet:
+    context-path: /api
+
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/mao?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 600000
+  flyway:
+    # Dual-run: keep false so Java owns schema. Set true after Nginx cutover.
+    enabled: ${FLYWAY_ENABLED:false}
+    baseline-on-migrate: true
+    baseline-version: 12
+    validate-on-migrate: false
+    locations: filesystem:db/migration
+
+jwt:
+  secret: ${JWT_SECRET:mao-dev-jwt-secret-change-me-32bytes!!}
+  expiration: 86400000
+  refresh-expiration: 604800000
+  shell-expiration: ${JWT_SHELL_EXPIRATION:7200000}
+
+ldap:
+  enabled: ${LDAP_ENABLED:false}
+  url: ${LDAP_URL:}
+  base-dn: ${LDAP_BASE_DN:}
+  user-dn: ${LDAP_USER_DN:}
+  password: ${LDAP_PASSWORD:}
+  user-search-base: ${LDAP_USER_SEARCH_BASE:ou=users}
+
+feishu:
+  enabled: ${FEISHU_ENABLED:false}
+  app-id: ${FEISHU_APP_ID:}
+  app-secret: ${FEISHU_APP_SECRET:}
+  redirect-uri: ${FEISHU_REDIRECT_URI:http://localhost:9080/api/v1/auth/feishu/callback}
+
+app:
+  root-dir: ${MAO_ROOT_DIR:/opt/mao}
+  git-credential:
+    secret-key: ${APP_GIT_CREDENTIAL_SECRET:}
+  upload:
+    storage-mode: ${UPLOAD_STORAGE_MODE:local}
+    base-url: ${UPLOAD_BASE_URL:}
+  file:
+    upload-dir: ${FILE_UPLOAD_DIR:./uploads}
+    max-size-mb: 50
+  ws:
+    idle-timeout-ms: ${APP_WS_IDLE_TIMEOUT_MS:90000}
+    outbound-queue-capacity: 10000
+  task-notification:
+    secret-key: ${APP_NOTIFICATION_WEBHOOK_SECRET:mao-task-notification-default-key-v1-20260713}
+    worker-delay-ms: ${TASK_NOTIFICATION_WORKER_DELAY_MS:30000}
+    batch-size: ${TASK_NOTIFICATION_BATCH_SIZE:100}
+    max-attempts: ${TASK_NOTIFICATION_MAX_ATTEMPTS:4}
+  harness:
+    workspace-root: ${WORKSPACE_ROOT:./workspace}
+    runtime-dir: ${MAO_ROOT_DIR:/opt/mao}/data/runtime
+    user-home-dir: ${MAO_ROOT_DIR:/opt/mao}/data/users
+    skills-dir: ${SKILLS_DIR:./skills}
+    user-skills-dir: ${USER_SKILLS_DIR:}
+    compaction:
+      enabled: true
+      context-window-tokens: 256000
+      trigger-ratio: 0.8
+      max-summary-tokens: 12000
+      loop-midway-compact: true
+    llm:
+      rate-limit-max-retries: 10
+      rate-limit-retry-delay-seconds: 2
+      rate-limit-max-retry-delay-seconds: 30
+      call-timeout-seconds: 120
+      http-call-timeout-seconds: 180
+      stream-idle-timeout-seconds: 300
+    tavily:
+      api-key: ${TAVILY_API_KEY:}
+      base-url: https://api.tavily.com
+    shell:
+      max-sessions-per-conversation: 30
+      session-idle-timeout-minutes: 30
+      session-max-lifetime-hours: 2
+    delegate:
+      timeout-seconds: 3600
+      cancel-grace-seconds: 30
+  mcp:
+    secret-key: ${APP_MCP_SECRET:mao-mcp-default-secret-change-me}
+    client-timeout-seconds: ${APP_MCP_CLIENT_TIMEOUT_SECONDS:120}
+    sync-timeout-seconds: ${APP_MCP_SYNC_TIMEOUT_SECONDS:60}
+
+weixin:
+  bot:
+    enabled: ${WEIXIN_BOT_ENABLED:false}
+    voice-reply: false
+    silk-encoder-path: /usr/local/bin/silk-encoder
+    ffmpeg-path: ffmpeg
+    voice-max-seconds: 300
+
+oss:
+  region: ${OSS_REGION:}
+  access-key-id: ${OSS_ACCESS_KEY_ID:}
+  access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
+  bucket: ${OSS_BUCKET:}
+  sts:
+    region-id: ${OSS_STS_REGION_ID:}
+    endpoint: ${OSS_STS_ENDPOINT:}
+    access-key-id: ${OSS_STS_ACCESS_KEY_ID:}
+    access-key-secret: ${OSS_STS_ACCESS_KEY_SECRET:}
+    role-arn: ${OSS_STS_ROLE_ARN:}
+    expire: 3600

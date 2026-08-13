@@ -606,7 +606,17 @@ function isUnderLocalRuntime(absolutePath, maoSessionId) {
 
 // ========== Skill sync IPC handler ==========
 
-ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token }) => {
+function preferIpv4Loopback(url) {
+  // Electron/undici 解析 localhost 会先走 ::1；TS 后端 listen 0.0.0.0 只收 IPv4。
+  return String(url || '').replace('://localhost', '://127.0.0.1')
+}
+
+function resolveSkillSyncBaseUrl(apiBase) {
+  const raw = typeof apiBase === 'string' && apiBase.trim() !== '' ? apiBase.trim() : getApiBaseUrl()
+  return preferIpv4Loopback(raw.replace(/\/v1\/?$/, '').replace(/\/$/, ''))
+}
+
+ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token, apiBase }) => {
   if (!sessionId) {
     const err = 'No sessionId provided for skill sync.'
     sendToRenderer('skill-sync-complete', { sessionId, success: false, error: err })
@@ -616,8 +626,8 @@ ipcMain.handle('skill-sync', async (event, { sessionId, syncUrl, token }) => {
     const AdmZip = require('adm-zip')
     const skillsDir = resolveLocalSkillsDir(sessionId)
 
-    const baseUrl = getApiBaseUrl()
-    const fullUrl = `${baseUrl}${syncUrl}`
+    const origin = resolveSkillSyncBaseUrl(apiBase)
+    const fullUrl = preferIpv4Loopback(/^https?:\/\//.test(syncUrl) ? syncUrl : `${origin}${syncUrl}`)
     const headers = token ? { 'Authorization': `Bearer ${token}` } : {}
     const response = await fetch(fullUrl, { method: 'POST', headers })
     if (!response.ok) {
