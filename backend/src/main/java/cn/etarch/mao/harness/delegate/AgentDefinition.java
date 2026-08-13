@@ -21,9 +21,6 @@ public class AgentDefinition {
     /** system prompt 覆盖，null 时继承父 Agent 的 prompt */
     private String systemPromptOverride;
 
-    /** 最大轮次覆盖，null 时继承父 Agent 的设置 */
-    private Integer maxRounds;
-
     /** 工具白名单，null 时表示使用父 Agent 全部工具（排除 delegate） */
     private List<String> allowedToolNames;
 

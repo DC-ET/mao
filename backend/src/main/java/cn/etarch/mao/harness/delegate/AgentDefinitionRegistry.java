@@ -48,7 +48,6 @@ public class AgentDefinitionRegistry {
                         + "请使用可用的工具来搜索和阅读相关资料，然后提供结构化的分析结果。\n"
                         + "输出格式要求：先给出核心结论，再列出支撑证据和关键发现。\n"
                         + "重要：你只负责研究和分析，不要直接修改代码或文件。")
-                .maxRounds(100)
                 .excludedToolNames(List.of("write_file", "edit_file", "ask_user_questions"))
                 .build());
 
@@ -62,7 +61,6 @@ public class AgentDefinitionRegistry {
                         + "请关注：代码质量、安全性、性能、可维护性、错误处理。\n"
                         + "输出格式：按严重程度分类列出问题，每个问题附带具体代码位置和修复建议。\n"
                         + "重要：你只负责审查和建议，不要直接修改代码或文件。")
-                .maxRounds(100)
                 .excludedToolNames(List.of("write_file", "edit_file", "ask_user_questions"))
                 .build());
 
@@ -78,7 +76,6 @@ public class AgentDefinitionRegistry {
                         + "完成后运行相关的编译或测试进行验证，确保改动可用。\n"
                         + "输出格式：先说明你完成的改动（涉及的文件与关键逻辑），再给出验证结果。\n"
                         + "重要：你无法与用户交互，遇到需要决策的分歧时选择最合理的方案并在结果中说明。")
-                .maxRounds(100)
                 .excludedToolNames(List.of("ask_user_questions"))
                 .build());
     }

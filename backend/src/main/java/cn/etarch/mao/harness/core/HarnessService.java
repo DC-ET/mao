@@ -243,7 +243,6 @@ public class HarnessService {
         context.setSystemPrompt(agent.getSystemPrompt());
         context.setExperiences(experienceService.listEnabledContents(agent.getId()));
         context.setAgentName(agent.getName());
-        context.setMaxRounds(resolveMaxRounds(null));
         context.setExecutionMode(executionMode);
         context.setPermissionLevel(session.getPermissionLevel());
         context.setWorkspace(session.getWorkspace());
@@ -436,19 +435,6 @@ public class HarnessService {
         }
 
         return context;
-    }
-
-    /**
-     * Resolve agent max LLM rounds.
-     * 0 or null = unlimited (capped for safety); values &lt; 2 are bumped to 2 so a tool call
-     * can be followed by at least one synthesis round.
-     */
-    public static int resolveMaxRounds(Integer configured) {
-        int maxRounds = configured != null ? configured : 300;
-        if (maxRounds <= 0) {
-            return 300;
-        }
-        return Math.max(maxRounds, 2);
     }
 
     /**

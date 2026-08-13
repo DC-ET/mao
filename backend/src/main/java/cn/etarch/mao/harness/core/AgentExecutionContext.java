@@ -33,7 +33,6 @@ public class AgentExecutionContext {
     private List<String> experiences = new ArrayList<>();
     private String agentName;
     private LlmModelConfig modelConfig;
-    private int maxRounds;
     private String executionMode;
     private String permissionLevel;
     private String workspace;
@@ -165,10 +164,6 @@ public class AgentExecutionContext {
                 .completionTokens(totalUsage.getCompletionTokens() + usage.getCompletionTokens())
                 .totalTokens(totalUsage.getTotalTokens() + usage.getTotalTokens())
                 .build();
-    }
-
-    public boolean hasNextRound() {
-        return currentRound < maxRounds;
     }
 
     public void clearPendingToolCalls() {

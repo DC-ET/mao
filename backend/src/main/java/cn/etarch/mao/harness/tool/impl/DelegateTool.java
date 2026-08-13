@@ -440,7 +440,7 @@ public class DelegateTool implements Tool {
 
     /**
      * 构建子智能体执行上下文。
-     * 复用 HarnessService.buildContext() 获取基础上下文，然后覆盖 system prompt、maxRounds 和工具集。
+     * 复用 HarnessService.buildContext() 获取基础上下文，然后覆盖 system prompt 和工具集。
      * 包内可见：DelegateFollowupTool 复用同一逻辑对既有子会话续跑。
      */
     AgentExecutionContext buildSubContext(Session childSession,
@@ -451,11 +451,6 @@ public class DelegateTool implements Tool {
         // 覆盖 system prompt
         if (definition.getSystemPromptOverride() != null) {
             ctx.setSystemPrompt(definition.getSystemPromptOverride());
-        }
-
-        // 覆盖 maxRounds（经 resolveMaxRounds 规范化，保证下限与 0=安全封顶）
-        if (definition.getMaxRounds() != null) {
-            ctx.setMaxRounds(HarnessService.resolveMaxRounds(definition.getMaxRounds()));
         }
 
         // 设置子智能体名称

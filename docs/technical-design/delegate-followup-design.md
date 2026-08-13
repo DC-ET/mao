@@ -64,7 +64,7 @@
 6. `visibilityService.notifySubagentCreated(...)` 通知前端并 auto-subscribe（带 toolCallId 便于并行委派绑定）；
 7. `buildSubContext(childSession, definition)` 构建子上下文：
    - 复用 `HarnessService.buildContext(childSessionId)`（**自动加载该会话 boundary 之后的全部消息**：USER 任务 + assistant 推理 + 工具调用/结果 + 终稿）；
-   - 覆盖 system prompt（`systemPromptOverride`）、maxRounds（`maxRounds`）、agentName；
+   - 覆盖 system prompt（`systemPromptOverride`）和 agentName；
    - 工具过滤：始终排除 `delegate`（防递归），再按白名单/排除表过滤；清除 skills；
 8. `registerCancelFlag(childId)` 并继承父会话 cancel 标志；
 9. `visibilityService.executeVisible(childSession, subContext, skip)`：置 phase=RUNNING、推送 WS 事件、组合 `WsStreamingEventListener` + `SubAgentResultCollector`，同步执行 `harnessService.executePrepared(...)`（AgentLoop 流式 + 过程落库）；
