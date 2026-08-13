@@ -63,6 +63,7 @@ import { Select, CloseBold, ArrowDown, CopyDocument } from '@element-plus/icons-
 import type { ToolCall } from '../../composables/useChat'
 import { useSessionStore } from '../../stores/session'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
+import { getToolDisplayName } from '../../utils/toolDisplay'
 
 const props = defineProps<{ toolCall: ToolCall }>()
 
@@ -125,11 +126,12 @@ function openSubagentProcess() {
 
 const displaySummary = computed(() => {
   if (props.toolCall.summary) return props.toolCall.summary
+  const displayName = getToolDisplayName(props.toolCall.name)
   if (props.toolCall.argsStreaming && !inputPreview.value) {
-    return `${props.toolCall.name} · 参数加载中...`
+    return `${displayName} · 参数加载中...`
   }
   const preview = inputPreview.value
-  return preview ? `${props.toolCall.name} · ${preview}` : props.toolCall.name
+  return preview ? `${displayName} · ${preview}` : displayName
 })
 
 const inputPreview = computed(() => {
