@@ -106,6 +106,7 @@ const props = defineProps<{
   operation?: 'commit' | 'pull' | 'push' | null
   executionMode?: string
   workspace?: string
+  repoPath?: string
   provider?: WorkspaceFileProvider | null
 }>()
 
@@ -184,7 +185,10 @@ async function handleDownloadFile() {
     return
   }
   try {
-    const result = await props.provider.downloadFile(node.file.path, node.name)
+    const relativePath = props.repoPath
+      ? `${props.repoPath.replace(/[\\/]+$/, '')}/${node.file.path.replace(/^[\\/]+/, '')}`
+      : node.file.path
+    const result = await props.provider.downloadFile(relativePath, node.name)
     if (result.ok) {
       if ((isWechatBrowser() || isAndroidCapacitor()) && result.url) {
         // 微信浏览器和安卓 WebView 可能阻止 Blob 自动下载，显示可鉴权的下载链接

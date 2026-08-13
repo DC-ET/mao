@@ -200,8 +200,16 @@ async function downloadWorkspaceResource(
     if (!resp.ok) {
       return { ok: false, error: await extractDownloadError(resp), url }
     }
+    const disposition = resp.headers.get('content-disposition')
+    const contentType = resp.headers.get('content-type') || ''
+    if (!disposition && contentType.includes('application/json')) {
+      const body = await resp.json()
+      if (body?.code !== undefined && body.code !== 0) {
+        return { ok: false, error: body.message || '下载失败', url }
+      }
+    }
     const blob = await resp.blob()
-    const fileName = parseDownloadFileName(resp.headers.get('content-disposition')) || suggestedName
+    const fileName = parseDownloadFileName(disposition) || suggestedName
     triggerBrowserDownload(blob, fileName)
     return { ok: true, url }
   } catch (e: any) {

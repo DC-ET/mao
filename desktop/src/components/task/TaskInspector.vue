@@ -216,6 +216,7 @@
         :operation="gitOperation"
         :execution-mode="executionMode"
         :workspace="workspace"
+        :repo-path="multiRepoMode ? selectedRepoPath : undefined"
         :provider="fileProvider"
         @refresh="refreshAll"
         @commit="runGitOperation('commit')"
