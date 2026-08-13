@@ -738,6 +738,9 @@ public class SessionController {
         vo.setPrevBoundaryMsgId(event.getPrevBoundaryMsgId());
         vo.setBoundaryMsgId(event.getBoundaryMsgId());
         vo.setCompactedMessageCount(event.getCompactedMessageCount());
+        vo.setPromptTokens(event.getPromptTokens());
+        vo.setCachedTokens(event.getCachedTokens());
+        vo.setCompletionTokens(event.getCompletionTokens());
         vo.setSummaryTokens(event.getSummaryTokens());
         vo.setSavedTokens(event.getSavedTokens());
         vo.setDurationMs(event.getDurationMs());
@@ -960,6 +963,9 @@ public class SessionController {
         private Long prevBoundaryMsgId;
         private Long boundaryMsgId;
         private Integer compactedMessageCount;
+        private Integer promptTokens;
+        private Integer cachedTokens;
+        private Integer completionTokens;
         private Integer summaryTokens;
         private Integer savedTokens;
         private Long durationMs;

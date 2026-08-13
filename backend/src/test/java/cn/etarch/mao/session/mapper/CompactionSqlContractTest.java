@@ -43,6 +43,18 @@ class CompactionSqlContractTest {
     }
 
     @Test
+    void v074AddsNullableCompactionUsageColumns() throws Exception {
+        String resource = "db/migration/V074__add_compaction_cache_usage.sql";
+        try (InputStream stream = getClass().getClassLoader().getResourceAsStream(resource)) {
+            assertThat(stream).isNotNull();
+            String sql = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(sql).contains("`prompt_tokens` INT NULL")
+                    .contains("`cached_tokens` INT NULL")
+                    .contains("`completion_tokens` INT NULL");
+        }
+    }
+
+    @Test
     void v062ClearsLegacyRecordsAndCreatesBoundaryIndex() throws Exception {
         String resource = "db/migration/V062__migrate_compaction_boundary_to_message_id.sql";
         try (InputStream stream = getClass().getClassLoader().getResourceAsStream(resource)) {

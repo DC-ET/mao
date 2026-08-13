@@ -85,6 +85,47 @@ class OpenAiLlmAdapterTest {
     }
 
     @Test
+    void chatParsesNullableCachedTokensAndSendsNoOutputLimit() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(jsonResponse("""
+                    {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,
+                    "prompt_tokens_details":{"cached_tokens":0}}}
+                    """));
+            server.enqueue(jsonResponse("""
+                    {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}
+                    """));
+            server.start();
+            OpenAiLlmAdapter adapter = adapter(0, 0);
+
+            ChatResponse zero = adapter.chat(request("zero"), config(server));
+            ChatResponse missing = adapter.chat(request("missing"), config(server));
+
+            assertThat(zero.getUsage().getPromptTokensDetails().getCachedTokens()).isZero();
+            assertThat(missing.getUsage().getPromptTokensDetails()).isNull();
+            String requestBody = server.takeRequest().getBody().readUtf8();
+            assertThat(requestBody).doesNotContain("max_tokens", "max_completion_tokens");
+            server.takeRequest();
+        }
+    }
+
+    @Test
+    void cancellableChatStopsWaitingForResponse() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+            server.start();
+            AtomicBoolean cancelled = new AtomicBoolean(false);
+            Thread canceller = new Thread(() -> {
+                try { Thread.sleep(200); } catch (InterruptedException ignored) { }
+                cancelled.set(true);
+            });
+            canceller.start();
+            assertThatThrownBy(() -> adapter(0, 0).chat(request("cancel"), config(server), cancelled))
+                    .isInstanceOf(RuntimeException.class).hasMessageContaining("Cancelled by user");
+            canceller.join();
+        }
+    }
+
+    @Test
     void chatIncludesReasoningWhenPresentOnRequest() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(jsonResponse("{\"id\":\"ok\",\"choices\":[]}"));

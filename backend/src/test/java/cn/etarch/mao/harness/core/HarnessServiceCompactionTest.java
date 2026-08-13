@@ -60,6 +60,7 @@ class HarnessServiceCompactionTest {
     @Mock private SessionCompactionService sessionCompactionService;
     @Mock private SessionHistoryLoader sessionHistoryLoader;
     @Mock private SessionCompactionOrchestrator sessionCompactionOrchestrator;
+    @Mock private PromptEngine promptEngine;
     @Mock private ActiveContextCalculator activeContextCalculator;
     @Mock private cn.etarch.mao.harness.mcp.McpClientManager mcpClientManager;
     @Mock private cn.etarch.mao.harness.mcp.local.McpSyncService mcpSyncService;
@@ -96,6 +97,8 @@ class HarnessServiceCompactionTest {
                 .thenReturn(EnvironmentInfoProvider.EnvironmentInfo.builder()
                         .isGit(false).platform("linux").shell("bash").osVersion("Linux").build());
         when(toolRegistry.getAllTools()).thenReturn(List.of());
+        when(promptEngine.buildRequest(any())).thenReturn(
+                ChatRequest.builder().messages(List.of()).stream(true).build());
         when(skillLoader.getAllNames()).thenReturn(List.of());
         when(skillLoader.getAllDocuments()).thenReturn(List.of());
         when(skillSyncService.getUserSkillNames(8L)).thenReturn(List.of());
@@ -111,7 +114,7 @@ class HarnessServiceCompactionTest {
             SessionHistoryLoader.HistorySnapshot history = inv.getArgument(2);
             ctx.getMessages().clear();
             if (summary != null) {
-                ctx.getMessages().add(ChatRequest.Message.builder().role("system").content(summary).build());
+                ctx.getMessages().add(ChatRequest.Message.builder().role("user").content(summary).build());
             }
             for (PersistedChatMessage m : history.persistedMessages()) {
                 ctx.getMessages().add(m.chatMessage());
@@ -131,38 +134,53 @@ class HarnessServiceCompactionTest {
         AgentExecutionContext context = harnessService.buildContext(7L);
 
         assertThat(context.getMessages()).extracting(ChatRequest.Message::getRole)
-                .containsExactly("system", "user");
+                .containsExactly("user", "user");
         assertThat(context.getSessionSummary()).isEqualTo("durable summary");
         verify(sessionService).cleanupIncompleteTailAfterId(7L, 100L);
         verify(sessionHistoryLoader).loadHistoryAfterBoundary(7L, 100L);
         verify(sessionService, never()).getMessages(7L);
         verify(sessionCompactionOrchestrator, never()).compact(
-                any(), any(), any(), any(), any(Boolean.class), any());
+                any(), any(), any(), any(), any(), any(Boolean.class), any());
     }
 
     @Test
-    void buildContextUsesOrchestratorAndKeepsBothCleanups() {
-        when(activeContextCalculator.estimateMessages(anyList())).thenReturn(10);
-        when(activeContextCalculator.estimateText(any())).thenReturn(0);
+    void buildContextUsesOrchestratorAfterPromptPreparation() {
         SessionCompaction original = compaction(1L, 7L, 100L, "old summary");
-        SessionCompaction latest = compaction(1L, 7L, 120L, "new summary");
         when(compactionConfig.isEnabled()).thenReturn(true);
-        when(sessionCompactionService.loadValidated(7L)).thenReturn(original, latest);
+        when(sessionCompactionService.loadValidated(7L)).thenReturn(original);
         when(sessionCompactionService.boundaryOf(original)).thenReturn(100L);
-        when(sessionCompactionService.boundaryOf(latest)).thenReturn(120L);
         when(sessionCompactionOrchestrator.compact(
-                eq(7L), any(), isNull(), any(), eq(false), any()))
+                eq(7L), any(), any(ChatRequest.class), isNull(), any(), eq(false), isNull()))
                 .thenReturn(true);
 
         AgentExecutionContext context = harnessService.buildContext(7L);
 
-        assertThat(context.getSessionSummary()).isEqualTo("new summary");
+        assertThat(context.getSessionSummary()).isEqualTo("old summary");
         verify(sessionCompactionOrchestrator).compact(
-                eq(7L), any(), isNull(), any(), eq(false), any());
-        verify(sessionService, times(2)).cleanupIncompleteTailAfterId(eq(7L), any(Long.class));
+                eq(7L), any(), any(ChatRequest.class), isNull(), any(), eq(false), isNull());
         verify(sessionService).cleanupIncompleteTailAfterId(7L, 100L);
-        verify(sessionService).cleanupIncompleteTailAfterId(7L, 120L);
         verify(sessionService, never()).getMessages(7L);
+    }
+
+    @Test
+    void compactionExceptionRebuildsPreparedRequestFromCurrentContext() {
+        SessionCompaction original = compaction(1L, 7L, 100L, "old summary");
+        when(compactionConfig.isEnabled()).thenReturn(true);
+        when(sessionCompactionService.loadValidated(7L)).thenReturn(original);
+        when(sessionCompactionService.boundaryOf(original)).thenReturn(100L);
+        ChatRequest before = ChatRequest.builder().messages(List.of(
+                ChatRequest.Message.builder().role("user").content("before").build())).stream(true).build();
+        ChatRequest rebuilt = ChatRequest.builder().messages(List.of(
+                ChatRequest.Message.builder().role("user").content("rebuilt").build())).stream(true).build();
+        when(promptEngine.buildRequest(any())).thenReturn(before, rebuilt);
+        when(sessionCompactionOrchestrator.compact(
+                eq(7L), any(), eq(before), isNull(), any(), eq(false), isNull()))
+                .thenThrow(new RuntimeException("post-persist metric failure"));
+
+        AgentExecutionContext context = harnessService.buildContext(7L);
+
+        assertThat(context.getPreparedRequest()).isSameAs(rebuilt);
+        verify(promptEngine, times(2)).buildRequest(any());
     }
 
     @Test

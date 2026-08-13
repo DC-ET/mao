@@ -163,6 +163,7 @@ public class AgentLoop {
     public void execute(AgentExecutionContext context, AgentEventListener listener,
                         MessagePersistenceCallback persistenceCallback) {
         int round = 0;
+
         try {
         // 用于延迟保存：有工具调用时，在 executeToolCalls 之后再保存（summary 已附加）
         final String[] pendingSave = {null}; // [0]=content
@@ -201,8 +202,10 @@ public class AgentLoop {
                 log.info("Injected {} background task results for session {}", bgResults.size(), sessionId);
             }
 
-            // 1. Build Prompt
-            ChatRequest request = promptEngine.buildRequest(context);
+            // 1. Build Prompt；首轮复用 HarnessService 已用于压缩判定的完整请求快照。
+            ChatRequest request = context.getPreparedRequest() != null
+                    ? context.getPreparedRequest() : promptEngine.buildRequest(context);
+            context.setPreparedRequest(null);
 
             // 1.5. Emit active context window before LLM call
             final long preRequestMaxMsgId = context.getSessionId() != null
@@ -400,8 +403,7 @@ public class AgentLoop {
             boolean midLoopAllowed = loopConfig != null
                     && loopConfig.isEnabled() && loopConfig.isLoopMidwayCompact()
                     && persistenceCallback != null
-                    && context.getSessionId() != null
-                    && !context.isMidLoopCompactionExhausted();
+                    && context.getSessionId() != null;
             if (midLoopAllowed) {
                 try {
                     ChatRequest nextRequest = promptEngine.buildRequest(context);
@@ -411,18 +413,20 @@ public class AgentLoop {
                     int effectiveContextWindow = CompactionConfig.resolveEffectiveContextWindow(
                             context.getModelConfig(), loopConfig);
                     if (nextRequestTokens >= effectiveContextWindow * loopConfig.getTriggerRatio()) {
-                        boolean advanced = sessionCompactionOrchestrator.compact(
-                                context.getSessionId(), context, listener, loopConfig,
-                                true, nextRequestTokens);
-                        if (!advanced) {
-                            context.setMidLoopCompactionExhausted(true);
-                            log.info("Mid-loop compaction made no progress for session {}; disabled for this request",
-                                    context.getSessionId());
-                        }
+                        sessionCompactionOrchestrator.compact(
+                                context.getSessionId(), context, nextRequest, listener, loopConfig,
+                                true, cancelFlag);
+                        // CAS conflicts also reload the latest durable context, so always rebuild.
+                        context.setPreparedRequest(promptEngine.buildRequest(context));
                     }
+                } catch (CompactionService.CompactionContextOverflowException
+                         | SessionCompactionOrchestrator.CompactionStateReloadException e) {
+                    throw e;
+                } catch (CompactionService.CompactionCancelledException e) {
+                    if (cancelFlag != null) cancelFlag.set(true);
+                    return;
                 } catch (Exception e) {
-                    context.setMidLoopCompactionExhausted(true);
-                    log.warn("Mid-loop compaction failed, continuing with full history", e);
+                    log.warn("Mid-loop compaction failed, continuing with the original next request", e);
                 }
             }
         }

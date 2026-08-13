@@ -80,12 +80,21 @@ public class OpenAiLlmAdapter implements LlmAdapter {
 
     @Override
     public ChatResponse chat(ChatRequest request, LlmModelConfig config) {
+        return chat(request, config, null);
+    }
+
+    @Override
+    public ChatResponse chat(ChatRequest request, LlmModelConfig config, AtomicBoolean cancelFlag) {
         Request httpRequest = buildRequest(request, config, false);
         long totalStarted = System.nanoTime();
         for (int attempt = 1; ; attempt++) {
+            if (isCancelled(cancelFlag)) throw cancelledException();
             long attemptStarted = System.nanoTime();
-            try (Response response = awaitResponse(httpRequest, false, null, null,
-                    config.getModelId(), attempt).response()) {
+            ResponseAwaitResult awaited = null;
+            try {
+                awaited = awaitResponse(httpRequest, false, cancelFlag, null,
+                        config.getModelId(), attempt);
+                try (Response response = awaited.response()) {
                 log.info("LLM response headers model={} phase=response_headers attempt={} firstByteMs={} totalMs={}",
                         config.getModelId(), attempt, elapsedMillis(attemptStarted), elapsedMillis(totalStarted));
                 if (isRetryableStatus(response.code())) {
@@ -95,7 +104,9 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                     int delaySeconds = resolveRetryDelaySeconds(response, attempt);
                     logRetry(config.getModelId(), "http_status", response.code(), attempt, delaySeconds,
                             attemptStarted, totalStarted);
-                    sleepSeconds(delaySeconds);
+                    if (!sleepSecondsRespectingCancel(delaySeconds, cancelFlag)) {
+                        throw cancelledException();
+                    }
                     continue;
                 }
                 if (!response.isSuccessful()) {
@@ -105,10 +116,12 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                 if (body == null) {
                     throw new RuntimeException("LLM API returned empty body");
                 }
-                ChatResponse result = objectMapper.readValue(body.string(), ChatResponse.class);
+                String responseJson = readBodyRespectingCancel(body, cancelFlag, awaited.call());
+                ChatResponse result = objectMapper.readValue(responseJson, ChatResponse.class);
                 log.info("LLM call complete model={} phase=complete attempt={} firstByteMs={} totalMs={}",
                         config.getModelId(), attempt, elapsedMillis(attemptStarted), elapsedMillis(totalStarted));
                 return result;
+                }
             } catch (IOException | TimeoutException e) {
                 if (!isRetryableNetworkFailure(e) || attempt > llmRetryConfig.getRateLimitMaxRetries()) {
                     throw new RuntimeException("LLM call failed: " + networkReason(e), e);
@@ -116,7 +129,9 @@ public class OpenAiLlmAdapter implements LlmAdapter {
                 int delaySeconds = resolveRetryDelaySeconds(null, attempt);
                 logRetry(config.getModelId(), networkReason(e), null, attempt, delaySeconds,
                         attemptStarted, totalStarted);
-                sleepSeconds(delaySeconds);
+                if (!sleepSecondsRespectingCancel(delaySeconds, cancelFlag)) {
+                    throw cancelledException();
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new RuntimeException("LLM call interrupted", e);
@@ -304,6 +319,32 @@ public class OpenAiLlmAdapter implements LlmAdapter {
             throw e;
         } finally {
             readingDone.set(true);
+        }
+    }
+
+    private String readBodyRespectingCancel(ResponseBody body, AtomicBoolean cancelFlag,
+                                            Call call) throws IOException {
+        AtomicBoolean done = new AtomicBoolean(false);
+        CompletableFuture.runAsync(() -> {
+            while (!done.get()) {
+                if (isCancelled(cancelFlag)) {
+                    cancelInBackground(call);
+                    return;
+                }
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }, cancellerExecutor);
+        try {
+            String json = body.string();
+            if (isCancelled(cancelFlag)) throw cancelledException();
+            return json;
+        } finally {
+            done.set(true);
         }
     }
 

@@ -18,6 +18,9 @@ public class SessionCompactionEventService {
                                          long prevBoundaryMsgId,
                                          long boundaryMsgId,
                                          int compactedMessageCount,
+                                         Integer promptTokens,
+                                         Integer cachedTokens,
+                                         Integer completionTokens,
                                          int summaryTokens,
                                          int savedTokens,
                                          long durationMs,
@@ -28,6 +31,9 @@ public class SessionCompactionEventService {
         event.setPrevBoundaryMsgId(prevBoundaryMsgId);
         event.setBoundaryMsgId(boundaryMsgId);
         event.setCompactedMessageCount(compactedMessageCount);
+        event.setPromptTokens(promptTokens);
+        event.setCachedTokens(cachedTokens);
+        event.setCompletionTokens(completionTokens);
         event.setSummaryTokens(summaryTokens);
         event.setSavedTokens(savedTokens);
         event.setDurationMs(durationMs);

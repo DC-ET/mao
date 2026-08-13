@@ -63,6 +63,7 @@ public class HarnessService {
     private final SessionCompactionService sessionCompactionService;
     private final SessionHistoryLoader sessionHistoryLoader;
     private final SessionCompactionOrchestrator sessionCompactionOrchestrator;
+    private final PromptEngine promptEngine;
     private final ActiveContextCalculator activeContextCalculator;
     private final ObjectMapper objectMapper;
     private final CompactionConfig compactionConfig;
@@ -91,7 +92,7 @@ public class HarnessService {
 
     public void execute(Long sessionId, String userContent, AgentEventListener listener,
                          AtomicBoolean cancelFlag) {
-        AgentExecutionContext context = buildContext(sessionId, listener);
+        AgentExecutionContext context = buildContext(sessionId, listener, cancelFlag);
 
         // User message is already persisted by SessionController before streaming starts.
 
@@ -198,10 +199,15 @@ public class HarnessService {
     }
 
     public AgentExecutionContext buildContext(Long sessionId) {
-        return buildContext(sessionId, null);
+        return buildContext(sessionId, null, null);
     }
 
     private AgentExecutionContext buildContext(Long sessionId, AgentEventListener listener) {
+        return buildContext(sessionId, listener, null);
+    }
+
+    private AgentExecutionContext buildContext(Long sessionId, AgentEventListener listener,
+                                                AtomicBoolean cancelFlag) {
         // 1. Load session
         Session session = sessionMapper.selectById(sessionId);
         if (session == null) {
@@ -234,6 +240,7 @@ public class HarnessService {
         }
 
         AgentExecutionContext context = new AgentExecutionContext();
+        context.setCancelFlag(cancelFlag);
         context.setCurrentTimestamp(java.time.LocalDate.now()
                 .format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE));
         context.setSessionId(sessionId);
@@ -279,46 +286,6 @@ public class HarnessService {
         SessionService.ContextAnchor anchor = sessionService.loadContextAnchor(sessionId);
         context.setLastPromptTokens(anchor.lastPromptTokens());
         context.setContextAnchorMsgId(anchor.contextAnchorMsgId());
-
-        if (effectiveConfig.isEnabled() && !history.persistedMessages().isEmpty()) {
-            try {
-                List<ChatRequest.Message> deltaAfterAnchor = history.persistedMessages().stream()
-                        .filter(m -> m.messageId() != null && m.messageId() > anchor.contextAnchorMsgId())
-                        .map(PersistedChatMessage::chatMessage)
-                        .toList();
-                int measuredActive;
-                if (anchor.isValid()) {
-                    measuredActive = activeContextCalculator.active(
-                            anchor.lastPromptTokens(), anchor.contextAnchorMsgId(),
-                            deltaAfterAnchor, null);
-                } else {
-                    List<ChatRequest.Message> all = history.persistedMessages().stream()
-                            .map(PersistedChatMessage::chatMessage)
-                            .toList();
-                    measuredActive = activeContextCalculator.estimateMessages(all)
-                            + activeContextCalculator.estimateText(summary);
-                }
-                boolean advanced = sessionCompactionOrchestrator.compact(
-                        sessionId, context, listener, effectiveConfig, false, measuredActive);
-                // 请求开始路径后置 cleanup：orchestrator 不调用 cleanup，此处兜底不完整尾部
-                SessionCompaction latest = sessionCompactionService.loadValidated(sessionId);
-                long latestBoundary = sessionCompactionService.boundaryOf(latest);
-                String latestSummary = latest != null ? latest.getSummaryText() : null;
-                sessionService.cleanupIncompleteTailAfterId(sessionId, latestBoundary);
-                SessionHistoryLoader.HistorySnapshot latestHistory =
-                        sessionHistoryLoader.loadHistoryAfterBoundary(sessionId, latestBoundary);
-                sessionHistoryLoader.applyHistory(context, latestSummary, latestHistory);
-                if (advanced) {
-                    // Anchor cleared inside orchestrator; refresh in-memory copy
-                    SessionService.ContextAnchor refreshed = sessionService.loadContextAnchor(sessionId);
-                    context.setLastPromptTokens(refreshed.lastPromptTokens());
-                    context.setContextAnchorMsgId(refreshed.contextAnchorMsgId());
-                    context.setMessagesCoveredByAnchor(-1);
-                }
-            } catch (Exception e) {
-                log.warn("Session compaction failed; continuing with the previously loaded summary and increment", e);
-            }
-        }
 
         // 6. All built-in tools are available to every agent; WeixinChannelTool 仅在微信通道会话注入。
         //    微信通道无交互式提问面板（ask_user_questions 依赖 WebSocket 客户端回答），故屏蔽该工具，
@@ -434,7 +401,34 @@ public class HarnessService {
                     + "。相关 MCP 工具不可用，请勿调用；如需恢复请检查服务器配置后新开会话。");
         }
 
+        // 压缩检查必须发生在工具、MCP、技能和所有临时 system message 都准备完成之后，
+        // 以确保压缩请求是即将发送的正常请求的严格前缀扩展。
+        if (effectiveConfig.isEnabled() && !history.persistedMessages().isEmpty()) {
+            ChatRequest normalRequest = buildNormalRequest(context);
+            try {
+                sessionCompactionOrchestrator.compact(sessionId, context, normalRequest, listener,
+                        effectiveConfig, false, cancelFlag);
+                // Orchestrator may reload a concurrent compaction result even when our CAS did not advance.
+                context.setPreparedRequest(buildNormalRequest(context));
+            } catch (CompactionService.CompactionContextOverflowException
+                     | CompactionService.CompactionCancelledException
+                     | SessionCompactionOrchestrator.CompactionStateReloadException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                // The durable boundary may already have advanced before a post-persist metric/anchor failure.
+                // Rebuild from the current context instead of falling back to the stale pre-compaction snapshot.
+                context.setPreparedRequest(buildNormalRequest(context));
+                log.warn("Session compaction failed; continuing with a request rebuilt from current context", e);
+            }
+        } else {
+            context.setPreparedRequest(buildNormalRequest(context));
+        }
+
         return context;
+    }
+
+    private ChatRequest buildNormalRequest(AgentExecutionContext context) {
+        return promptEngine.buildRequest(context);
     }
 
     /**
@@ -505,32 +499,14 @@ public class HarnessService {
             merged.setEnabled(compactionConfig.isEnabled());
             merged.setContextWindowTokens(compactionConfig.getContextWindowTokens());
             merged.setTriggerRatio(compactionConfig.getTriggerRatio());
-            merged.setRecentTurns(compactionConfig.getRecentTurns());
-            merged.setTargetRatio(compactionConfig.getTargetRatio());
-            merged.setMinRetainedTurns(compactionConfig.getMinRetainedTurns());
             merged.setMaxSummaryTokens(compactionConfig.getMaxSummaryTokens());
-            merged.setMinCompactMessageCount(compactionConfig.getMinCompactMessageCount());
-            merged.setMinNewMessageCount(compactionConfig.getMinNewMessageCount());
-            merged.setMaxCompactionBatchMessages(compactionConfig.getMaxCompactionBatchMessages());
-            merged.setMaxRoundsPerRequest(compactionConfig.getMaxRoundsPerRequest());
             merged.setLoopMidwayCompact(compactionConfig.isLoopMidwayCompact());
-            merged.setLoopRecentToolRounds(compactionConfig.getLoopRecentToolRounds());
-            merged.setLoopMaxCompactionRounds(compactionConfig.getLoopMaxCompactionRounds());
             // Apply agent overrides
             if (compactionNode.has("enabled")) merged.setEnabled(compactionNode.get("enabled").asBoolean());
             if (compactionNode.has("contextWindowTokens")) merged.setContextWindowTokens(compactionNode.get("contextWindowTokens").asInt());
             if (compactionNode.has("triggerRatio")) merged.setTriggerRatio(compactionNode.get("triggerRatio").asDouble());
-            if (compactionNode.has("recentTurns")) merged.setRecentTurns(compactionNode.get("recentTurns").asInt());
-            if (compactionNode.has("targetRatio")) merged.setTargetRatio(compactionNode.get("targetRatio").asDouble());
-            if (compactionNode.has("minRetainedTurns")) merged.setMinRetainedTurns(compactionNode.get("minRetainedTurns").asInt());
             if (compactionNode.has("maxSummaryTokens")) merged.setMaxSummaryTokens(compactionNode.get("maxSummaryTokens").asInt());
-            if (compactionNode.has("minCompactMessageCount")) merged.setMinCompactMessageCount(compactionNode.get("minCompactMessageCount").asInt());
-            if (compactionNode.has("minNewMessageCount")) merged.setMinNewMessageCount(compactionNode.get("minNewMessageCount").asInt());
-            if (compactionNode.has("maxCompactionBatchMessages")) merged.setMaxCompactionBatchMessages(compactionNode.get("maxCompactionBatchMessages").asInt());
-            if (compactionNode.has("maxRoundsPerRequest")) merged.setMaxRoundsPerRequest(compactionNode.get("maxRoundsPerRequest").asInt());
             if (compactionNode.has("loopMidwayCompact")) merged.setLoopMidwayCompact(compactionNode.get("loopMidwayCompact").asBoolean());
-            if (compactionNode.has("loopRecentToolRounds")) merged.setLoopRecentToolRounds(compactionNode.get("loopRecentToolRounds").asInt());
-            if (compactionNode.has("loopMaxCompactionRounds")) merged.setLoopMaxCompactionRounds(compactionNode.get("loopMaxCompactionRounds").asInt());
             return merged;
         } catch (Exception e) {
             log.warn("Failed to parse agent compaction config, using defaults", e);

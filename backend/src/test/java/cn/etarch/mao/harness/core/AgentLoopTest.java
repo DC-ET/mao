@@ -256,15 +256,14 @@ class AgentLoopTest {
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
                 eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");
         when(sessionCompactionOrchestrator.compact(
-                eq(11L), eq(context), eq(listener), any(), eq(true), eq(80)))
+                eq(11L), eq(context), any(ChatRequest.class), eq(listener), any(), eq(true), any()))
                 .thenReturn(true);
         stubToolThenDone();
 
         agentLoop.execute(context, listener, persistence);
 
         verify(sessionCompactionOrchestrator).compact(
-                eq(11L), eq(context), eq(listener), any(), eq(true), eq(80));
-        assertThat(context.isMidLoopCompactionExhausted()).isFalse();
+                eq(11L), eq(context), any(ChatRequest.class), eq(listener), any(), eq(true), any());
     }
 
     @Test
@@ -281,13 +280,12 @@ class AgentLoopTest {
         agentLoop.execute(context, listener, null);
 
         verify(sessionCompactionOrchestrator, never()).compact(
-                any(), any(), any(), any(), any(Boolean.class), any());
+                any(), any(), any(), any(), any(), any(Boolean.class), any());
     }
 
     @Test
-    void midLoopCompactionExhaustsAfterNoProgress() {
+    void midLoopCompactionMayRetryAfterNoProgressOnLaterToolRound() {
         AgentExecutionContext context = contextWithMidLoopConfig(100, 0.5);
-        context.setMaxRounds(4);
         AgentEventListener listener = mock(AgentEventListener.class);
         AgentLoop.MessagePersistenceCallback persistence = mock(AgentLoop.MessagePersistenceCallback.class);
         when(promptEngine.buildRequest(context)).thenReturn(ChatRequest.builder().messages(List.of()).stream(true).build());
@@ -296,26 +294,35 @@ class AgentLoopTest {
         when(toolDispatcher.dispatch(eq("read_file"), anyString(), eq("CLOUD"), eq(11L), eq(7L),
                 eq("/repo"), eq("READ_ONLY"), any(), any())).thenReturn("{\"ok\":true}");
         when(sessionCompactionOrchestrator.compact(
-                eq(11L), eq(context), eq(listener), any(), eq(true), eq(80)))
+                eq(11L), eq(context), any(ChatRequest.class), eq(listener), any(), eq(true), any()))
                 .thenReturn(false);
-        doAnswer(invocation -> {
-            StreamCallback callback = invocation.getArgument(2);
-            callback.onChunk(toolChunk(ChatRequest.ToolCall.builder()
-                    .id("call-" + System.nanoTime())
-                    .function(ChatRequest.FunctionCall.builder()
-                            .name("read_file")
-                            .arguments("{\"path\":\"a\"}")
-                            .build())
-                    .build()));
-            callback.onComplete(ChatUsage.builder().promptTokens(3).completionTokens(2).totalTokens(5).build());
-            return null;
+        doAnswer(new org.mockito.stubbing.Answer<Void>() {
+            private int call;
+
+            @Override
+            public Void answer(org.mockito.invocation.InvocationOnMock invocation) {
+                StreamCallback callback = invocation.getArgument(2);
+                if (call++ < 2) {
+                    callback.onChunk(toolChunk(ChatRequest.ToolCall.builder()
+                            .id("call-" + call)
+                            .function(ChatRequest.FunctionCall.builder()
+                                    .name("read_file")
+                                    .arguments("{\"path\":\"a\"}")
+                                    .build())
+                            .build()));
+                    callback.onComplete(ChatUsage.builder().promptTokens(3).completionTokens(2).totalTokens(5).build());
+                } else {
+                    callback.onChunk(contentChunk(null, "done"));
+                    callback.onComplete(ChatUsage.builder().promptTokens(4).completionTokens(1).totalTokens(5).build());
+                }
+                return null;
+            }
         }).when(llmAdapter).stream(any(), any(), any(), any());
 
         agentLoop.execute(context, listener, persistence);
 
-        verify(sessionCompactionOrchestrator, times(1)).compact(
-                eq(11L), eq(context), eq(listener), any(), eq(true), eq(80));
-        assertThat(context.isMidLoopCompactionExhausted()).isTrue();
+        verify(sessionCompactionOrchestrator, org.mockito.Mockito.atLeastOnce()).compact(
+                eq(11L), eq(context), any(ChatRequest.class), eq(listener), any(), eq(true), any());
     }
 
     @Test
@@ -333,7 +340,7 @@ class AgentLoopTest {
         agentLoop.execute(context, listener, persistence);
 
         verify(sessionCompactionOrchestrator, never()).compact(
-                any(), any(), any(), any(), any(Boolean.class), any());
+                any(), any(), any(), any(), any(), any(Boolean.class), any());
     }
 
     private void stubToolThenDone() {

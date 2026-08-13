@@ -90,28 +90,10 @@ app:
       # 触发阈值：总 token 达窗口该比例时触发压缩。
       # 输入命中缓存时费用很低，只要在上下文窗口内尽量不主动压缩，故阈值较高
       trigger-ratio: 0.8
-      # 压缩后目标水位（窗口占比）：一次压缩后若仍高于该值，继续把保留轮次从最老开始借入压缩
-      target-ratio: 0.25
-      # 初始保留的最近完整 USER 轮次（当前 USER 轮次始终额外保留）
-      recent-turns: 6
-      # 压缩后保底保留的完整 USER 轮次（防止压掉正在执行的任务上下文）
-      min-retained-turns: 2
-      # rolling summary 的 token 上限提示（压缩 prompt 会要求摘要控制在该范围内）
+      # 全量交接正文的软目标，仅写入提示词，不作为 API 输出 token 限制
       max-summary-tokens: 12000
-      # 允许触发压缩的最小可压缩消息数
-      min-compact-message-count: 10
-      # 基于窗口触发时要求的最小新增消息数
-      min-new-message-count: 8
-      # 单批压缩消息数软上限
-      max-compaction-batch-messages: 200
-      # 单次请求内最多连续压缩轮数（仅请求开始压缩）
-      max-rounds-per-request: 30
-      # Loop 中途压缩（复用 session 压缩算法与持久化）
+      # 完整工具轮持久化后允许执行 mid-loop 全量交接压缩
       loop-midway-compact: true
-      # mid-loop 压缩时当前 turn 尾部保留的原始工具轮数
-      loop-recent-tool-rounds: 5
-      # mid-loop 单次压缩最多连续调用压缩 LLM 的次数
-      loop-max-compaction-rounds: 5
 
   # MCP（Model Context Protocol）客户端
   mcp:

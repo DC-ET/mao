@@ -23,6 +23,12 @@ public class SessionCompactionEvent {
 
     private Integer compactedMessageCount;
 
+    private Integer promptTokens;
+
+    private Integer cachedTokens;
+
+    private Integer completionTokens;
+
     private Integer summaryTokens;
 
     private Integer savedTokens;

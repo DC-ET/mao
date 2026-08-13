@@ -68,11 +68,6 @@ public class AgentExecutionContext {
      */
     private List<ChatRequest.Message> ephemeralSystemMessages = new ArrayList<>();
 
-    /**
-     * 本请求内 mid-loop 压缩无进展熔断：任一次未推进边界后置位，本请求内不再尝试。
-     */
-    private boolean midLoopCompactionExhausted = false;
-
     /** 持久化/内存锚点：最近一次真实 prompt_tokens */
     private int lastPromptTokens = 0;
 
@@ -87,6 +82,9 @@ public class AgentExecutionContext {
 
     // 压缩配置（Agent 级覆盖，为 null 时使用全局默认）
     private CompactionConfig compactionConfig;
+
+    /** HarnessService 构造并用于请求开始压缩判定的首轮正常请求。 */
+    private ChatRequest preparedRequest;
 
     // 执行状态
     private List<ChatRequest.ToolCall> pendingToolCalls;

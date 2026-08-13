@@ -13,169 +13,143 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class SessionCompactionOrchestratorTest {
-
-    @Mock private SessionCompactionService sessionCompactionService;
-    @Mock private SessionCompactionEventService sessionCompactionEventService;
-    @Mock private SessionHistoryLoader sessionHistoryLoader;
-    @Mock private ContextManager contextManager;
-    @Mock private cn.etarch.mao.session.service.SessionService sessionService;
-    @Mock private ActiveContextCalculator activeContextCalculator;
-    @InjectMocks private SessionCompactionOrchestrator orchestrator;
+    @Mock SessionCompactionService sessionCompactionService;
+    @Mock SessionCompactionEventService sessionCompactionEventService;
+    @Mock SessionHistoryLoader sessionHistoryLoader;
+    @Mock ContextManager contextManager;
+    @Mock cn.etarch.mao.session.service.SessionService sessionService;
+    @Mock ActiveContextCalculator activeContextCalculator;
+    @Mock PromptEngine promptEngine;
+    @InjectMocks SessionCompactionOrchestrator orchestrator;
 
     @Test
-    void compactPersistsReloadsAndPreservesMessagesListReference() {
-        AgentExecutionContext context = new AgentExecutionContext();
-        context.setSessionId(7L);
-        context.setModelConfig(LlmModelConfig.builder().modelId("gpt-test").build());
-        List<ChatRequest.Message> messagesRef = context.getMessages();
-        messagesRef.add(ChatRequest.Message.builder().role("user").content("old").build());
-
-        SessionCompaction original = compaction(100L, "old");
-        SessionCompaction latest = compaction(120L, "new");
-        when(sessionCompactionService.loadValidated(7L)).thenReturn(original, latest);
-        when(sessionCompactionService.boundaryOf(original)).thenReturn(100L);
+    void successPersistsUsageReloadsAndResetsAnchor() {
+        AgentExecutionContext context = context();
+        ChatRequest beforeRequest = request("before");
+        ChatRequest afterRequest = request("after");
+        SessionCompaction old = compaction(100, "old");
+        SessionCompaction latest = compaction(120, "new");
+        SessionHistoryLoader.HistorySnapshot before = snapshot(101, "current");
+        SessionHistoryLoader.HistorySnapshot after = snapshot(121, "after");
+        when(sessionCompactionService.loadValidated(7L)).thenReturn(old, latest);
+        when(sessionCompactionService.boundaryOf(old)).thenReturn(100L);
         when(sessionCompactionService.boundaryOf(latest)).thenReturn(120L);
-
-        SessionHistoryLoader.HistorySnapshot before = snapshot(
-                List.of(message(101L, "USER", "current")));
-        SessionHistoryLoader.HistorySnapshot after = snapshot(
-                List.of(message(121L, "USER", "retained")));
         when(sessionHistoryLoader.loadHistoryAfterBoundary(7L, 100L)).thenReturn(before);
         when(sessionHistoryLoader.loadHistoryAfterBoundary(7L, 120L)).thenReturn(after);
+        when(contextManager.compactSession(eq(7L), eq(100L), anyList(), anyList(), eq(beforeRequest),
+                any(), any(), any(), any())).thenReturn(result());
+        when(sessionCompactionService.persist(eq(7L), eq(old), eq(100L), eq(120L), eq("snap"),
+                eq("new"), eq(12L), eq(4L), eq("gpt-test"))).thenReturn(true);
+        when(promptEngine.buildRequest(context)).thenReturn(afterRequest);
+        when(activeContextCalculator.estimateRequestTokens(afterRequest)).thenReturn(40);
+        SessionCompactionEvent event = new SessionCompactionEvent(); event.setId(9L);
+        when(sessionCompactionEventService.record(7L, "request_start", 100L, 120L, 1,
+                12, 8, 4, 10, 60, 5L, "gpt-test")).thenReturn(event);
 
-        CompactionService.SessionCompactionResult result =
-                new CompactionService.SessionCompactionResult(
-                        "new", 100L, 120L, "snap", 2, 12, 4, 10, 100, 5);
-        when(contextManager.compactSession(
-                eq(7L), eq(100L), eq("old"), anyList(), anyList(), any(), any(), any(),
-                any(), eq(false), isNull()))
-                .thenReturn(result);
-        when(sessionCompactionService.persist(
-                eq(7L), eq(original), eq(100L), eq(120L), eq("snap"),
-                eq("new"), eq(12L), eq(4L), eq("gpt-test")))
-                .thenReturn(true);
-        SessionCompactionEvent recorded = new SessionCompactionEvent();
-        recorded.setId(9L);
-        when(sessionCompactionEventService.record(
-                eq(7L), eq("request_start"), eq(100L), eq(120L),
-                eq(2), eq(10), eq(100), eq(5L), eq("gpt-test")))
-                .thenReturn(recorded);
-        when(activeContextCalculator.estimateMessages(anyList())).thenReturn(20);
-        when(activeContextCalculator.estimateText(any())).thenReturn(5);
-
-        boolean advanced = orchestrator.compact(7L, context, null, new CompactionConfig(), false, null);
-
-        assertThat(advanced).isTrue();
-        assertThat(context.getMessages()).isSameAs(messagesRef);
-        verify(sessionHistoryLoader).applyHistory(eq(context), eq("new"), eq(after));
-        verify(sessionCompactionEventService).record(
-                eq(7L), eq("request_start"), eq(100L), eq(120L),
-                eq(2), eq(10), eq(100), eq(5L), eq("gpt-test"));
+        assertThat(orchestrator.compact(7L, context, beforeRequest, null,
+                new CompactionConfig(), false, null)).isTrue();
+        verify(sessionHistoryLoader).applyHistory(context, "new", after);
+        verify(sessionCompactionEventService).record(7L, "request_start", 100L, 120L, 1,
+                12, 8, 4, 10, 60, 5L, "gpt-test");
         verify(sessionService).clearContextAnchor(7L);
-        verify(sessionService).updateContextTokens(7L, 25);
+        verify(sessionService).updateContextTokens(7L, 40);
+        assertThat(context.getLastPromptTokens()).isZero();
+        assertThat(context.getContextAnchorMsgId()).isZero();
     }
 
     @Test
-    void compactReturnsFalseWhenResultNullAndDoesNotApply() {
-        AgentExecutionContext context = new AgentExecutionContext();
-        context.setSessionId(7L);
-        SessionCompaction original = compaction(100L, "old");
-        when(sessionCompactionService.loadValidated(7L)).thenReturn(original);
-        when(sessionCompactionService.boundaryOf(original)).thenReturn(100L);
-        when(sessionHistoryLoader.loadHistoryAfterBoundary(7L, 100L))
-                .thenReturn(snapshot(List.of(message(101L, "USER", "current"))));
-        when(contextManager.compactSession(
-                anyLong(), anyLong(), any(), anyList(), anyList(), any(), any(), any(),
-                any(), anyBoolean(), any()))
+    void recoverableFailureDoesNotPersist() {
+        AgentExecutionContext context = context();
+        SessionCompaction old = compaction(100, "old");
+        when(sessionCompactionService.loadValidated(7L)).thenReturn(old);
+        when(sessionCompactionService.boundaryOf(old)).thenReturn(100L);
+        when(sessionHistoryLoader.loadHistoryAfterBoundary(7L, 100L)).thenReturn(snapshot(101, "x"));
+        when(contextManager.compactSession(anyLong(), anyLong(), anyList(), anyList(), any(), any(), any(), any(), any()))
                 .thenReturn(null);
-
-        boolean advanced = orchestrator.compact(
-                7L, context, null, new CompactionConfig(), true, 99999);
-
-        assertThat(advanced).isFalse();
-        verify(sessionCompactionService, never()).persist(
-                anyLong(), any(), anyLong(), anyLong(), any(), any(), anyLong(), anyLong(), any());
-        verify(sessionHistoryLoader, never()).applyHistory(any(), any(), any());
+        assertThat(orchestrator.compact(7L, context, request("before"), null,
+                new CompactionConfig(), true, null)).isFalse();
+        verify(sessionCompactionService, never()).persist(anyLong(), any(), anyLong(), anyLong(), any(), any(), anyLong(), anyLong(), any());
     }
 
     @Test
-    void compactReturnsFalseWhenPersistFailsButStillAppliesReload() {
-        AgentExecutionContext context = new AgentExecutionContext();
-        context.setSessionId(7L);
-        context.setModelConfig(LlmModelConfig.builder().modelId("gpt-test").build());
-
-        SessionCompaction original = compaction(100L, "old");
-        when(sessionCompactionService.loadValidated(7L)).thenReturn(original, original);
-        when(sessionCompactionService.boundaryOf(original)).thenReturn(100L);
-
-        SessionHistoryLoader.HistorySnapshot snap = snapshot(
-                List.of(message(101L, "USER", "current")));
-        when(sessionHistoryLoader.loadHistoryAfterBoundary(7L, 100L)).thenReturn(snap);
-
-        CompactionService.SessionCompactionResult result =
-                new CompactionService.SessionCompactionResult(
-                        "candidate", 100L, 120L, "snap", 2, 12, 4, 10, 100, 5);
-        when(contextManager.compactSession(
-                anyLong(), anyLong(), any(), anyList(), anyList(), any(), any(), any(),
-                any(), anyBoolean(), any()))
-                .thenReturn(result);
-        when(sessionCompactionService.persist(
-                anyLong(), any(), anyLong(), anyLong(), any(), any(), anyLong(), anyLong(), any()))
+    void casFailureReloadsConcurrentResultWithoutEvent() {
+        AgentExecutionContext context = context();
+        SessionCompaction old = compaction(100, "old");
+        SessionCompaction concurrent = compaction(115, "other");
+        when(sessionCompactionService.loadValidated(7L)).thenReturn(old, concurrent);
+        when(sessionCompactionService.boundaryOf(old)).thenReturn(100L);
+        when(sessionCompactionService.boundaryOf(concurrent)).thenReturn(115L);
+        when(sessionHistoryLoader.loadHistoryAfterBoundary(7L, 100L)).thenReturn(snapshot(101, "x"));
+        when(sessionHistoryLoader.loadHistoryAfterBoundary(7L, 115L)).thenReturn(snapshot(116, "y"));
+        when(contextManager.compactSession(anyLong(), anyLong(), anyList(), anyList(), any(), any(), any(), any(), any()))
+                .thenReturn(result());
+        when(sessionCompactionService.persist(anyLong(), any(), anyLong(), anyLong(), any(), any(), anyLong(), anyLong(), any()))
                 .thenReturn(false);
-
-        boolean advanced = orchestrator.compact(7L, context, null, new CompactionConfig(), false, null);
-
-        assertThat(advanced).isFalse();
-        verify(sessionHistoryLoader).applyHistory(eq(context), eq("old"), eq(snap));
-        verify(sessionCompactionEventService, never()).record(
-                anyLong(), any(), anyLong(), anyLong(), anyInt(),
-                anyInt(), anyInt(), anyLong(), any());
+        ChatRequest concurrentRequest = request("concurrent");
+        when(promptEngine.buildRequest(context)).thenReturn(concurrentRequest);
+        when(activeContextCalculator.estimateRequestTokens(concurrentRequest)).thenReturn(30);
+        assertThat(orchestrator.compact(7L, context, request("before"), null,
+                new CompactionConfig(), false, null)).isFalse();
+        verify(sessionHistoryLoader).applyHistory(eq(context), eq("other"), any());
+        verify(sessionService).clearContextAnchor(7L);
+        verify(sessionService).updateContextTokens(7L, 30);
+        assertThat(context.getLastPromptTokens()).isZero();
+        assertThat(context.getContextAnchorMsgId()).isZero();
+        assertThat(context.getMessagesCoveredByAnchor()).isEqualTo(-1);
+        verifyNoInteractions(sessionCompactionEventService);
     }
 
+    @Test
+    void persistSuccessThenReloadFailureStopsInsteadOfUsingOldContext() {
+        AgentExecutionContext context = context();
+        SessionCompaction old = compaction(100, "old");
+        when(sessionCompactionService.loadValidated(7L))
+                .thenReturn(old)
+                .thenThrow(new RuntimeException("db unavailable"));
+        when(sessionCompactionService.boundaryOf(old)).thenReturn(100L);
+        when(sessionHistoryLoader.loadHistoryAfterBoundary(7L, 100L)).thenReturn(snapshot(101, "x"));
+        when(contextManager.compactSession(anyLong(), anyLong(), anyList(), anyList(), any(), any(), any(), any(), any()))
+                .thenReturn(result());
+        when(sessionCompactionService.persist(anyLong(), any(), anyLong(), anyLong(), any(), any(), anyLong(), anyLong(), any()))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> orchestrator.compact(7L, context, request("before"), null,
+                new CompactionConfig(), false, null))
+                .isInstanceOf(SessionCompactionOrchestrator.CompactionStateReloadException.class);
+        assertThat(context.getMessages()).isEmpty();
+        verifyNoInteractions(sessionCompactionEventService);
+    }
+
+    private AgentExecutionContext context() {
+        AgentExecutionContext c = new AgentExecutionContext();
+        c.setSessionId(7L); c.setModelConfig(LlmModelConfig.builder().modelId("gpt-test").build());
+        c.setLastPromptTokens(50); c.setContextAnchorMsgId(100);
+        return c;
+    }
+    private CompactionService.SessionCompactionResult result() {
+        return new CompactionService.SessionCompactionResult("new", 100L, 120L, "snap",
+                1, 12, 8, 4, 10, 0, 100, 5);
+    }
     private SessionCompaction compaction(long boundary, String summary) {
-        SessionCompaction record = new SessionCompaction();
-        record.setSessionId(7L);
-        record.setLastCompactedMsgId(boundary);
-        record.setSummaryText(summary);
-        return record;
+        SessionCompaction c = new SessionCompaction(); c.setSessionId(7L);
+        c.setLastCompactedMsgId(boundary); c.setSummaryText(summary); return c;
     }
-
-    private SessionHistoryLoader.HistorySnapshot snapshot(List<Message> entities) {
-        List<PersistedChatMessage> persisted = new ArrayList<>();
-        List<Long> ids = new ArrayList<>();
-        for (Message m : entities) {
-            ids.add(m.getId());
-            persisted.add(new PersistedChatMessage(m.getId(),
-                    ChatRequest.Message.builder()
-                            .role(m.getRole().toLowerCase())
-                            .content(m.getContent())
-                            .build()));
-        }
-        return new SessionHistoryLoader.HistorySnapshot(ids, entities, persisted);
+    private ChatRequest request(String content) {
+        return ChatRequest.builder().messages(List.of(ChatRequest.Message.builder().role("user").content(content).build())).build();
     }
-
-    private Message message(long id, String role, String content) {
-        Message m = new Message();
-        m.setId(id);
-        m.setRole(role);
-        m.setContent(content);
-        return m;
+    private SessionHistoryLoader.HistorySnapshot snapshot(long id, String content) {
+        Message m = new Message(); m.setId(id); m.setRole("USER"); m.setContent(content);
+        PersistedChatMessage pm = new PersistedChatMessage(id, content,
+                ChatRequest.Message.builder().role("user").content(content).build());
+        return new SessionHistoryLoader.HistorySnapshot(List.of(id), List.of(m), List.of(pm));
     }
 }
