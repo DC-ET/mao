@@ -464,15 +464,6 @@ public class OpenAiLlmAdapter implements LlmAdapter {
         return (int) ThreadLocalRandom.current().nextLong(lower, backoff + 1);
     }
 
-    private void sleepSeconds(int seconds) {
-        try {
-            Thread.sleep(seconds * 1000L);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted while waiting for LLM rate limit retry", e);
-        }
-    }
-
     /**
      * 分段睡眠以便及时响应取消请求。
      *
