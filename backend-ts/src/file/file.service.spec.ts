@@ -269,6 +269,34 @@ describe('GitCommitMessageService', () => {
     expect(usage.record).toHaveBeenCalledTimes(2);
   });
 
+  it('cancelsTheUnderlyingLlmCallWhenCommitMessageGenerationTimesOut', async () => {
+    vi.useFakeTimers();
+    try {
+      let cancelFlag: { get(): boolean } | null | undefined;
+      const adapter = {
+        chat: vi.fn((_request, _config, flag) => {
+          cancelFlag = flag;
+          return new Promise(() => undefined);
+        }),
+      };
+      const service = new GitCommitMessageService(
+        adapter,
+        { resolveModel: vi.fn(async () => ({ id: 9, name: 'test', modelId: 'test' })) },
+        { record: vi.fn() } as unknown as LlmUsageService,
+      );
+      const result = service.generate(
+        { id: 2, userId: 1, modelId: 9 },
+        { files: [{ path: 'src/A.java', changeType: 'MODIFIED', insertions: 1, deletions: 0, diff: 'diff' }], diffBytes: 4 },
+      );
+      const rejection = expect(result).rejects.toThrow(/超时/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await rejection;
+      expect(cancelFlag?.get()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rejectsSensitiveDiffAndOversizeInput', () => {
     const service = new GitCommitMessageService({ chat: vi.fn() }, { resolveModel: vi.fn() }, { record: vi.fn() } as unknown as LlmUsageService);
     expect(() => service.validateInput({
@@ -294,6 +322,7 @@ describe('GitCommitMessageService', () => {
     );
     const request = adapter.chat.mock.calls[0][0];
     expect(request.tools).toEqual([]);
+    expect(request.reasoning).toEqual({ effort: 'none' });
     expect(request.messages).toHaveLength(2);
     expect(String(request.messages[1].content)).toContain('src/A.java');
     expect(String(request.messages[1].content)).toContain('+新增');

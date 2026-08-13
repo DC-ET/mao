@@ -1,5 +1,6 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import { AtomicBoolean } from '../harness/atomic-boolean.js';
 import type { LlmModelRef, Session } from '../session/types.js';
 import { LlmUsageService } from '../usage/llm-usage.service.js';
 
@@ -23,6 +24,7 @@ export interface ChatRequest {
   tools: unknown[];
   stream: boolean;
   temperature: number;
+  reasoning?: { effort: string };
 }
 
 export interface ChatResponse {
@@ -31,7 +33,7 @@ export interface ChatResponse {
 }
 
 export interface LlmAdapter {
-  chat(request: ChatRequest, config: LlmModelConfig): Promise<ChatResponse>;
+  chat(request: ChatRequest, config: LlmModelConfig, cancelFlag?: { get(): boolean } | null): Promise<ChatResponse>;
 }
 
 export interface LlmModelConfig {
@@ -137,11 +139,18 @@ export class GitCommitMessageService {
   }
 
   private async invoke(session: Session, model: LlmModelRef, config: LlmModelConfig, messages: ChatRequest['messages']): Promise<string> {
-    const request: ChatRequest = { messages, tools: [], stream: false, temperature: 0.2 };
+    const request: ChatRequest = {
+      messages,
+      tools: [],
+      stream: false,
+      temperature: 0.2,
+      reasoning: { effort: 'none' },
+    };
     let response: ChatResponse | null = null;
     let success = false;
+    const cancelFlag = new AtomicBoolean(false);
     try {
-      response = await withTimeout(this.llmAdapter.chat(request, config), TIMEOUT_SECONDS * 1000);
+      response = await withTimeout(this.llmAdapter.chat(request, config, cancelFlag), TIMEOUT_SECONDS * 1000, () => cancelFlag.set(true));
       const content = extractContent(response);
       success = true;
       return content;
@@ -218,9 +227,10 @@ function blank(value: string | null | undefined): boolean {
   return value == null || value.trim().length === 0;
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => {
+      onTimeout();
       const err = new Error('timeout');
       err.name = 'TimeoutError';
       reject(err);

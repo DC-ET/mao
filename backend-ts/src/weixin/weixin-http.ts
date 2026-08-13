@@ -4,9 +4,8 @@ import { lookup as dnsLookup } from 'node:dns';
 import { URL } from 'node:url';
 import type { LookupFunction } from 'node:net';
 
-/** OpenSSL name for TLS_RSA_WITH_AES_256_GCM_SHA384 — Weixin CDN requires this RSA-KEX cipher. */
+/** Weixin CDN requires the RSA-KEX cipher AES256-GCM-SHA384. */
 const WEIXIN_CIPHERS = [
-  'TLS_RSA_WITH_AES_256_GCM_SHA384',
   'AES256-GCM-SHA384',
   'ECDHE-RSA-AES256-GCM-SHA384',
   'ECDHE-ECDSA-AES256-GCM-SHA384',

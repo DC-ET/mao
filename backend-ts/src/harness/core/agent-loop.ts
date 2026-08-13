@@ -278,7 +278,7 @@ export class AgentLoop {
 
         if (pendingSaveToolCalls && persistenceCallback) {
           await Promise.resolve(persistenceCallback.onSaveAssistantMessage(
-            pendingSave, pendingThinking, pendingSaveToolCalls, toolResults, pendingSaveUsage,
+            pendingSave, pendingThinking, pendingSaveToolCalls, toolResults, pendingSaveUsage ?? undefined,
           ));
           for (const toolSave of pendingToolSaves) {
             await Promise.resolve(persistenceCallback.onSaveToolMessage(

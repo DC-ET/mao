@@ -280,23 +280,39 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       let settled = false;
       let nextWaiting = started + 1000;
 
+      let connectTimer: NodeJS.Timeout | null = null;
+      const clearConnectTimer = () => {
+        if (connectTimer != null) {
+          clearTimeout(connectTimer);
+          connectTimer = null;
+        }
+      };
       const req = lib.request({
         hostname: url.hostname,
         port: url.port || (url.protocol === 'https:' ? 443 : 80),
         path: url.pathname + url.search,
         method: 'POST',
         headers: { ...headers, 'Content-Length': Buffer.byteLength(payload).toString() },
-        timeout: 30_000,
       }, (res) => {
         if (settled) return;
         settled = true;
+        clearConnectTimer();
         clearInterval(poll);
         resolve({ status: res.statusCode ?? 0, headers: res.headers, body: res, started, req });
+      });
+
+      req.on('socket', (socket) => {
+        if (!socket.connecting) return;
+        connectTimer = setTimeout(() => {
+          abort(Object.assign(new Error('connect timeout'), { name: 'ConnectException' }));
+        }, 30_000);
+        socket.once(url.protocol === 'https:' ? 'secureConnect' : 'connect', clearConnectTimer);
       });
 
       const abort = (err: Error) => {
         if (settled) return;
         settled = true;
+        clearConnectTimer();
         clearInterval(poll);
         req.destroy();
         reject(err);
@@ -324,7 +340,6 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       }, 100);
 
       req.on('error', (err) => abort(err));
-      req.on('timeout', () => abort(Object.assign(new Error('connect timeout'), { name: 'ConnectException' })));
       req.write(payload);
       req.end();
     });

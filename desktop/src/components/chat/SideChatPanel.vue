@@ -275,7 +275,7 @@ watch(
     if (TERMINAL_PHASES.has(phase)) {
       sending.value = false
       if (hasRealSession.value && prevPhase && ACTIVE_PHASES.has(prevPhase)) {
-        if (sessionStore.getQueueMessages(String(sid)).length === 0) {
+        if (sessionStore.getQueueMessages(String(realSessionId.value)).length === 0) {
           fetchMessages()
         }
       }

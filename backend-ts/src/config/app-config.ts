@@ -433,6 +433,12 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.jwt.expiration = n(cfg.jwt.expiration, 86400000);
   cfg.jwt.refreshExpiration = n(cfg.jwt.refreshExpiration, 604800000);
   cfg.jwt.shellExpiration = n(cfg.jwt.shellExpiration, 7200000);
+  cfg.app.harness.maxConcurrentAgents = n(cfg.app.harness.maxConcurrentAgents, 20);
+  cfg.app.harness.agentThreadPoolSize = n(cfg.app.harness.agentThreadPoolSize, 20);
+  cfg.app.harness.agentThreadPoolMax = n(cfg.app.harness.agentThreadPoolMax, 100);
+  cfg.app.harness.agentThreadPoolQueue = n(cfg.app.harness.agentThreadPoolQueue, 200);
+  cfg.app.harness.defaultMaxRounds = n(cfg.app.harness.defaultMaxRounds, 0);
+  cfg.app.harness.defaultContextRounds = n(cfg.app.harness.defaultContextRounds, 0);
   return cfg;
 }
 

@@ -53,6 +53,15 @@ class QueueServer {
     });
   }
 
+  enqueueDelayedHeadersJson(body: string, delayMs: number): void {
+    this.enqueue((_req, res) => {
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(body);
+      }, delayMs);
+    });
+  }
+
   enqueueDelayedSse(body: string, delayMs: number): void {
     this.enqueue((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -311,6 +320,15 @@ describe('OpenAiLlmAdapter', () => {
     expect(callback.error).toBeUndefined();
     expect(callback.retryReasons).toEqual(['http_status']);
     expect(callback.retryStatuses).toEqual([504]);
+  });
+
+  it('chatWaitsForDelayedResponseHeadersWithoutTreatingSocketInactivityAsConnectTimeout', async () => {
+    server = new QueueServer();
+    server.enqueueDelayedHeadersJson('{"id":"delayed","choices":[]}', 200);
+    await server.start();
+    const response = await adapter(0, 0, 2, 3, 3).chat(request('slow-reasoning'), configOf(server));
+    expect(response.id).toBe('delayed');
+    expect(server.requestCount).toBe(1);
   });
 
   it('chatKeepsHttpCallTimeoutAndReportsItsReason', async () => {

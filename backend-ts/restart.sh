@@ -6,8 +6,15 @@ set -euo pipefail
 
 APP_NAME="mao-server-ts"
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="${APP_DIR}/.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$ENV_FILE"
+    set +a
+fi
 PID_FILE="${APP_DIR}/mao-server-ts.pid"
-LOG_DIR="${MAO_LOG_DIR:-/opt/mao/logs}"
+LOG_DIR="${MAO_LOG_DIR:-${APP_DIR}/logs}"
 LOG_FILE="${LOG_DIR}/backend-ts.log"
 PORT="${MAO_TS_PORT:-9081}"
 
@@ -44,13 +51,6 @@ stop() {
 start() {
     echo "Starting $APP_NAME on $PORT..."
     rotate_log
-    ENV_FILE="${APP_DIR}/.env"
-    if [ -f "$ENV_FILE" ]; then
-        set -a
-        # shellcheck source=/dev/null
-        source "$ENV_FILE"
-        set +a
-    fi
     cd "$APP_DIR"
     if [ -f dist/main.js ]; then
         nohup node dist/main.js >> "$LOG_FILE" 2>&1 &

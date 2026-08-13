@@ -1,4 +1,5 @@
-import type { ChatUsage, ContentPart, SessionTodo, ToolCall } from '../../domain/types.js';
+import type { ChatUsage, ContentPart, SessionTodo } from '../../domain/types.js';
+import type { ToolCall } from '../../harness/llm/chat-request.js';
 import type { StreamingWsRegistry } from './streaming-ws-registry.js';
 import { mapToolToType } from '../activity/activity-type-mapper.js';
 import { ToolResultSummarizer } from '../util/tool-result-summarizer.js';
@@ -53,14 +54,16 @@ export class WsStreamingEventListener implements AgentEventListener {
   }
 
   onToolCallStart(toolCall: ToolCall): void {
-    const args = toolCall.function.arguments ?? null;
-    const alreadySent = this.toolCallInfo.has(toolCall.id);
-    this.toolCallInfo.set(toolCall.id, [toolCall.function.name, args]);
+    const toolCallId = toolCall.id ?? '';
+    const toolName = toolCall.function?.name ?? '';
+    const args = toolCall.function?.arguments ?? null;
+    const alreadySent = this.toolCallInfo.has(toolCallId);
+    this.toolCallInfo.set(toolCallId, [toolName, args]);
     if (alreadySent) return;
     this.send('tool_call_start', {
-      tool_call_id: toolCall.id,
-      tool_name: toolCall.function.name,
-      arguments: toolCall.function.arguments ?? '',
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      arguments: toolCall.function?.arguments ?? '',
     });
   }
 
