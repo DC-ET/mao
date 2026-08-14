@@ -86,6 +86,13 @@ public class EditFileTool implements Tool {
                         "error", "缺少必填参数: path, old_string, new_string"
                 ));
             }
+            if (oldString.equals(newString)) {
+                return objectMapper.writeValueAsString(Map.of(
+                        "success", false,
+                        "replacements", 0,
+                        "error", "old_string 与 new_string 完全相同，未执行编辑；请检查并提供实际需要修改的内容"
+                ));
+            }
 
             Path filePath = pathSandbox.resolve(path, workspace);
 

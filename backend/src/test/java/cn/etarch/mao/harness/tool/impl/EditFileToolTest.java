@@ -36,6 +36,20 @@ class EditFileToolTest {
     }
 
     @Test
+    void rejectsIdenticalOldAndNewStringsWithoutEditingFile() throws Exception {
+        Path file = tempDir.resolve("a.txt");
+        Files.writeString(file, "alpha");
+        EditFileTool tool = new EditFileTool(objectMapper, new PathSandbox(tempDir.toString()));
+
+        JsonNode result = execute(tool, Map.of("path", "a.txt", "old_string", "alpha", "new_string", "alpha"));
+
+        assertThat(result.get("success").asBoolean()).isFalse();
+        assertThat(result.get("replacements").asInt()).isZero();
+        assertThat(result.get("error").asText()).contains("完全相同").contains("未执行编辑");
+        assertThat(Files.readString(file)).isEqualTo("alpha");
+    }
+
+    @Test
     void returnsErrorsWhenFileMissingOrNeedleMissing() throws Exception {
         Files.writeString(tempDir.resolve("a.txt"), "alpha");
         EditFileTool tool = new EditFileTool(objectMapper, new PathSandbox(tempDir.toString()));

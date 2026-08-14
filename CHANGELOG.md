@@ -32,6 +32,9 @@
 - LOCAL 工具审批卡片改用服务端 `tool_execute` 的 requestId，便于点「执行」后立刻恢复会话状态。
 
 ### 后端
+- 文件编辑工具遇到完全相同的 `old_string` 与 `new_string` 时不再执行无意义写入，并向 Agent 明确返回参数相同的错误提示。
+- Shell 异步命令提交后立即返回 `session_id` 与 `output_file`，Java 和 TypeScript 后端行为保持一致，便于任务运行期间回查日志。
+- 修复 TypeScript 后端未兼容 Java 的 `/api/uploads/**` 静态资源路径，导致已发布 Electron 客户端检查更新时获取 `latest-mac.yml` 返回 404 的问题。
 - 修复 TypeScript 后端关闭持久 Shell 会话时管道异步触发 `ECONNRESET`，因未处理 Socket `error` 事件导致服务进程退出的问题。
 - 修复 TypeScript 后端并行工具调用参数分片交错时输入丢失或串到其他工具，进而导致工具卡片回退为错误齿轮图标的问题。
 - 修复 TypeScript 后端 LOCAL 审批通过后任务树「待审批」残留：`tool_approval` 立即注销待批请求，并丢弃过期的 `session_tree_status` 异步推送。

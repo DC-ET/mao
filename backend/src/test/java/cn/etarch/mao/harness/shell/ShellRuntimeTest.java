@@ -255,13 +255,15 @@ class ShellRuntimeTest {
         // 手动关闭会话
         tool.execute("{\"action\":\"close\",\"session_id\":\"" + keepTrueSessionId + "\"}", 21L, 7L, tempDir.toString());
 
-        // async 模式：提交后台任务并立即返回（不创建前台会话，与上面的会话计数断言互不干扰）
+        // async 模式：提交后台任务后立即返回任务、会话及日志文件信息
         JsonNode async = objectMapper.readTree(tool.execute("""
                 {"command":"echo async","async":true}
                 """, 21L, 7L, tempDir.toString()));
         assertThat(async.get("async").asBoolean()).isTrue();
         String taskId = async.get("task_id").asText();
         assertThat(taskId).isNotBlank();
+        assertThat(async.get("session_id").asText()).isNotBlank();
+        assertThat(async.get("output_file").asText()).isNotBlank();
 
         // 阻塞等待后台任务真正完成（doExec 返回前会关闭会话并销毁进程），
         // 避免 @TempDir 清理时会话文件/进程仍被占用导致删除失败

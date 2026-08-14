@@ -111,7 +111,13 @@ export class ShellSessionTool extends BaseTool {
         if (!keepSession) this.sessionManager.close(session.sessionId);
         return r.output;
       });
-      return toJson({ async: true, task_id: taskId, session_id: session.sessionId });
+      return toJson({
+        async: true,
+        task_id: taskId,
+        session_id: session.sessionId,
+        output_file: session.outputFile,
+        message: '命令已提交到后台执行。',
+      });
     }
     const result = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs);
     const payload: Record<string, unknown> = {

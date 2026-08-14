@@ -47,6 +47,9 @@ describe('ShellSessionTool', () => {
     const asyncResult = JSON.parse(await tool.execute(JSON.stringify({ command: 'sleep 1', async: true, keep_session: true }), 11, 7, '/tmp'));
     expect(asyncResult.async).toBe(true);
     expect(asyncResult.task_id).toBe('task-1');
+    expect(asyncResult.session_id).toBe('sh-1');
+    expect(asyncResult.output_file).toBe('/tmp/out.log');
+    expect(asyncResult.message).toContain('后台执行');
     const missing = JSON.parse(await tool.execute(JSON.stringify({ action: 'exec' }), 11, null, null));
     expect(missing.error).toContain('command');
     const noSession = JSON.parse(await tool.execute(JSON.stringify({ action: 'write_stdin' }), 11, null, null));

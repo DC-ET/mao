@@ -45,6 +45,13 @@ export class EditFileTool extends BaseTool {
       if (filePathArg == null || oldString == null || newString == null) {
         return toJson({ success: false, replacements: 0, error: '缺少必填参数: path, old_string, new_string' });
       }
+      if (oldString === newString) {
+        return toJson({
+          success: false,
+          replacements: 0,
+          error: 'old_string 与 new_string 完全相同，未执行编辑；请检查并提供实际需要修改的内容',
+        });
+      }
       const filePath = this.pathSandbox.resolve(filePathArg, workspace);
       if (!existsSync(filePath)) {
         return toJson({ success: false, replacements: 0, error: '文件不存在：' + filePathArg });

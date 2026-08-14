@@ -175,6 +175,15 @@ export interface MaoApp {
   close(): Promise<void>;
 }
 
+export async function registerUploadStatic(app: FastifyInstance, uploadDir: string, apiPrefix: string): Promise<void> {
+  await app.register(fastifyStatic, { root: uploadDir, prefix: '/uploads/', decorateReply: false });
+  await app.register(fastifyStatic, {
+    root: uploadDir,
+    prefix: `${apiPrefix.replace(/\/$/, '')}/uploads/`,
+    decorateReply: false,
+  });
+}
+
 export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: FastifyInstance): Promise<MaoApp> {
   assertGitCredentialSecret(cfg.app.gitCredential.secretKey);
   runFlywayIfEnabled(cfg);
@@ -192,9 +201,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     maxAge: 3600,
   });
   await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024, files: 500 } });
+  const apiPrefix = cfg.server.servlet.contextPath || '/api';
   const uploadDir = resolve(expandHome(cfg.app.file.uploadDir));
   mkdirSync(uploadDir, { recursive: true });
-  await app.register(fastifyStatic, { root: uploadDir, prefix: '/uploads/', decorateReply: false });
+  await registerUploadStatic(app, uploadDir, apiPrefix);
   await app.register(swagger, {
     openapi: { info: { title: 'Mao API', version: '0.1.0' } },
   });
@@ -579,7 +589,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const adminAnalytics = new AdminAnalyticsService(statisticsService, new AdminAnalyticsDbStore(db));
   const mcpValidator = new McpServerValidatorImpl(new MysqlMcpServerLookup(db));
 
-  const apiPrefix = cfg.server.servlet.contextPath || '/api';
   await app.register(async (api) => {
     api.get('/swagger-ui.html', async (_req, reply) => reply.redirect(`${apiPrefix}/swagger-ui`));
     api.get('/v3/api-docs', async (_req, reply) => {

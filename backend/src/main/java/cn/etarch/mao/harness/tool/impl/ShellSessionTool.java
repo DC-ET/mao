@@ -206,11 +206,16 @@ public class ShellSessionTool implements Tool {
         boolean isAsync = args.has("async") && args.get("async").asBoolean();
         boolean keepSession = args.has("keep_session") && args.get("keep_session").asBoolean();
 
-        // async 模式：提交后台任务，立即返回（按 conversation/session 隔离，避免跨会话串扰）
+        // async 模式：先创建会话以便立即返回日志路径，再提交后台任务
         if (isAsync) {
+            Map<String, String> domainTokenMap = gitCredentialService.getTokenMapByUser(userId);
+            ShellSession session = sessionManager.getOrCreate(
+                    conversationId, sessionId, userId, workspace, domainTokenMap);
+            String asyncSessionId = session.getSessionId();
             String taskId = backgroundTaskManager.submit(conversationId, () -> {
                 try {
-                    return doExec(command, sessionId, conversationId, userId, workspace, workdir, yieldTimeMs, keepSession);
+                    return doExec(command, asyncSessionId, conversationId, userId, workspace,
+                            workdir, yieldTimeMs, keepSession);
                 } catch (Exception e) {
                     return errorJson("异步执行失败：" + e.getMessage());
                 }
@@ -218,6 +223,8 @@ public class ShellSessionTool implements Tool {
             return objectMapper.writeValueAsString(Map.of(
                     "async", true,
                     "task_id", taskId,
+                    "session_id", asyncSessionId,
+                    "output_file", session.getOutputFile().toString(),
                     "message", "命令已提交到后台执行。"
             ));
         }

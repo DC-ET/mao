@@ -137,6 +137,20 @@ describe('EditFileTool', () => {
     expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('alpha\nnew\nbeta\nnew\n');
   });
 
+  it('rejectsIdenticalOldAndNewStringsWithoutEditingFile', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'a.txt'), 'alpha');
+    const tool = new EditFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      path: 'a.txt', old_string: 'alpha', new_string: 'alpha',
+    })));
+    expect(result.success).toBe(false);
+    expect(result.replacements).toBe(0);
+    expect(result.error).toContain('完全相同');
+    expect(result.error).toContain('未执行编辑');
+    expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('alpha');
+  });
+
   it('returnsErrorsWhenFileMissingOrNeedleMissing', async () => {
     const dir = await tmp();
     writeFileSync(join(dir, 'a.txt'), 'alpha');
