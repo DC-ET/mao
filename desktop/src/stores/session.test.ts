@@ -260,4 +260,38 @@ describe('session store 实体/投影模型', () => {
     expect(msgs.map(m => m.id)).toEqual(['10', '11', '12'])
     expect(msgs[2].content).toBe('#{commit_and_push}#')
   })
+
+  it('applyFetchedMessages 完成后用落库消息替换临时流式助手消息', () => {
+    const store = useSessionStore()
+    store.setMessages('1', [
+      { id: '10', role: 'user', content: '处理任务', createdAt: '2026-08-13 16:00:00' },
+    ])
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    streaming.content = '过程中的文字和最终回复'
+    streaming.toolCalls = [{ id: 'call-1', name: 'read_file', status: 'success', isExpanded: false, argsStreaming: false }]
+
+    store.applyFetchedMessages('1', [
+      { id: '10', role: 'user', content: '处理任务', createdAt: '2026-08-13 16:00:00' },
+      { id: '11', role: 'assistant', content: '过程中的文字', createdAt: '2026-08-13 16:00:01', toolCalls: [{ id: 'call-1', name: 'read_file', status: 'success', isExpanded: false, argsStreaming: false }] },
+      { id: '12', role: 'assistant', content: '最终回复', createdAt: '2026-08-13 16:00:02' },
+    ])
+
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['10', '11', '12'])
+    expect(store.getMessages('1').filter(m => m.content === '最终回复')).toHaveLength(1)
+  })
+
+  it('applyFetchedMessages 执行中可保留临时流式助手消息', () => {
+    const store = useSessionStore()
+    store.setMessages('1', [
+      { id: '10', role: 'user', content: '处理任务', createdAt: '2026-08-13 16:00:00' },
+    ])
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    streaming.content = '仍在执行'
+
+    store.applyFetchedMessages('1', [
+      { id: '10', role: 'user', content: '处理任务', createdAt: '2026-08-13 16:00:00' },
+    ], { preserveStreamingAssistant: true })
+
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['10', streaming.id])
+  })
 })

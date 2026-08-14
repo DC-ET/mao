@@ -25,8 +25,11 @@
 - 任务完成后不再立刻用 REST 覆盖待发送队列，避免把刚自动出队的消息又刷回面板。
 - 修复队列自动消费后用户气泡消失：任务结束拉取历史时保留尚未入库响应的尾部用户消息。
 - 修复定时任务触发后当前打开的会话不出现气泡：把 `scheduled` 来源的用户消息按远程入站插入并进入流式。
+- 修复 TypeScript 后端任务完成后执行过程展开时重复最终回复，以及折叠标题出现但过程仍平铺在外的问题。
 
 ### 后端
+- TypeScript 后端统一输出带 ISO 时间的单行 JSON 日志，覆盖业务日志、Harness、Nest 启动日志与 Fastify 请求日志。
+- 修复 TypeScript 后端 OSS STS SDK 的 ESM 构造器解析，并让开发启动脚本加载 `backend-ts/.env`，恢复对话图片上传。
 - 修复 TypeScript 后端 Git 提交信息生成过慢：该轻量摘要场景显式关闭深度思考，避免兼容供应商在省略参数时默认启用重推理；同时修正 Node LLM 建连超时语义，并在超时后取消底层请求。
 - 新增 TypeScript 后端（`backend-ts/`，NestJS + Fastify，默认端口 9081），REST / WebSocket / 鉴权密文协议与 Java 对齐，可与 9080 双跑；验收后将 Nginx `/api/`、`/api/ws/` 切到 9081，Java 进程保留作回滚。切流瞬间进行中的 Agent 与 WebSocket 需重连。
 - 修复任务面板偏好接口在 mysql2 将 JSON 列解析为数组后 500 的问题；连接池改为按字符串读取 JSON 列，与 Java 对齐。

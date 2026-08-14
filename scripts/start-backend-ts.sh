@@ -15,6 +15,12 @@ fi
 
 echo "启动 TypeScript 后端 (9081)..."
 cd "$PROJECT_DIR/backend-ts"
+if [ -f .env ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source .env
+    set +a
+fi
 export MAO_TS_PORT="${MAO_TS_PORT:-9081}"
 nohup npm run start:dev > "$LOG_DIR/backend-ts.out" 2>&1 &
 echo $! > "$PID_FILE"

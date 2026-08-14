@@ -4,15 +4,19 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { AppModule } from './app.module.js';
 import { loadConfig } from './config/app-config.js';
 import { createMaoApp } from './create-app.js';
+import { fastifyLoggerOptions, installStructuredConsole, StructuredNestLogger } from './common/structured-logger.js';
+
+installStructuredConsole();
 
 async function bootstrap(): Promise<void> {
   const cfg = loadConfig();
   const adapter = new FastifyAdapter({
-    logger: true,
+    logger: fastifyLoggerOptions,
     bodyLimit: 52 * 1024 * 1024,
   });
   const nestApp = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {
     bodyParser: false,
+    logger: new StructuredNestLogger(),
   });
   const fastify = nestApp.getHttpAdapter().getInstance();
   const mao = await createMaoApp(cfg, fastify as never);

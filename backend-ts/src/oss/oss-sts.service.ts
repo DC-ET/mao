@@ -113,11 +113,24 @@ export async function createAliyunAssumeRoleClient(sts: OssStsConfig['sts']): Pr
   type StsCtor = new (config: Record<string, unknown>) => StsClient;
   type AssumeRoleRequestCtor = new (map: Record<string, unknown>) => unknown;
   const loaded = await import('@alicloud/sts20150401') as unknown as {
-    default?: StsCtor & { AssumeRoleRequest?: AssumeRoleRequestCtor };
+    default?: StsCtor | {
+      default?: StsCtor;
+      AssumeRoleRequest?: AssumeRoleRequestCtor;
+    };
+    Client?: StsCtor;
     AssumeRoleRequest?: AssumeRoleRequestCtor;
   };
-  const Sts20150401 = (loaded.default ?? loaded) as StsCtor;
-  const AssumeRoleRequest = loaded.AssumeRoleRequest ?? loaded.default?.AssumeRoleRequest;
+  const defaultExport = loaded.default;
+  const Sts20150401 = (
+    typeof defaultExport === 'function'
+      ? defaultExport
+      : defaultExport?.default ?? loaded.Client
+  );
+  const AssumeRoleRequest = loaded.AssumeRoleRequest
+    ?? (typeof defaultExport === 'object' ? defaultExport.AssumeRoleRequest : undefined);
+  if (typeof Sts20150401 !== 'function') {
+    throw new Error('Aliyun STS SDK 未导出 Client');
+  }
   if (typeof AssumeRoleRequest !== 'function') {
     throw new Error('Aliyun STS SDK 未导出 AssumeRoleRequest');
   }

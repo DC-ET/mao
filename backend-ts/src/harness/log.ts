@@ -1,4 +1,5 @@
-export function harnessLog(level: 'debug' | 'info' | 'warn' | 'error', message: string, ...args: unknown[]): void {
-  const fn = level === 'debug' ? console.debug : level === 'info' ? console.info : level === 'warn' ? console.warn : console.error;
-  fn(`[harness] ${message}`, ...args);
+import { writeStructuredLog, type LogLevel } from '../common/structured-logger.js';
+
+export function harnessLog(level: LogLevel, message: string, ...args: unknown[]): void {
+  writeStructuredLog(level, message, { module: 'harness' }, ...args);
 }

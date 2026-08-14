@@ -136,7 +136,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const nextMessages = running.length > 0
         ? mergeRunningToolsIntoMessages(messages, running)
         : messages
-      sessionStore.applyFetchedMessages(sid, nextMessages)
+      sessionStore.applyFetchedMessages(sid, nextMessages, {
+        preserveStreamingAssistant: Boolean(options?.preserveRunningTools),
+      })
       sessionStore.setFileChanges(sid, allChanges)
       if (Array.isArray(data?.compactionEvents)) {
         sessionStore.setCompactionEvents(sid, mapCompactionEvents(data.compactionEvents))

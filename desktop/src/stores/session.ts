@@ -963,14 +963,23 @@ export const useSessionStore = defineStore('session', () => {
    * REST 历史覆盖缓存时，保留尚未出现在响应里的尾部消息
    *（队列自动消费刚写入的用户消息、以及正在流式输出的助手气泡）。
    */
-  function applyFetchedMessages(sessionId: string, messages: ChatMessage[]) {
+  function applyFetchedMessages(
+    sessionId: string,
+    messages: ChatMessage[],
+    options?: { preserveStreamingAssistant?: boolean },
+  ) {
     const sid = String(sessionId)
     const local = sessionMessages.value.get(sid) ?? []
     const fetchedIds = new Set(messages.map(m => String(m.id)))
     const tail: ChatMessage[] = []
     for (let i = local.length - 1; i >= 0; i--) {
-      if (fetchedIds.has(String(local[i].id))) break
-      tail.unshift(local[i])
+      const message = local[i]
+      if (fetchedIds.has(String(message.id))) break
+      const isStreamingAssistant = message.role === 'assistant'
+        && streamingAssistantMessageIds.get(sid) === String(message.id)
+      if (message.role !== 'assistant' || (options?.preserveStreamingAssistant && isStreamingAssistant)) {
+        tail.unshift(message)
+      }
     }
     const prevStreamingId = streamingAssistantMessageIds.get(sid)
     sessionMessages.value.set(sid, tail.length > 0 ? [...messages, ...tail] : messages)
