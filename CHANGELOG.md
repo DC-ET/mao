@@ -32,6 +32,8 @@
 - LOCAL 工具审批卡片改用服务端 `tool_execute` 的 requestId，便于点「执行」后立刻恢复会话状态。
 
 ### 后端
+- 修复 TypeScript 后端关闭持久 Shell 会话时管道异步触发 `ECONNRESET`，因未处理 Socket `error` 事件导致服务进程退出的问题。
+- 修复 TypeScript 后端并行工具调用参数分片交错时输入丢失或串到其他工具，进而导致工具卡片回退为错误齿轮图标的问题。
 - 修复 TypeScript 后端 LOCAL 审批通过后任务树「待审批」残留：`tool_approval` 立即注销待批请求，并丢弃过期的 `session_tree_status` 异步推送。
 - TypeScript 后端统一输出带 ISO 时间的单行 JSON 日志，覆盖业务日志、Harness、Nest 启动日志与 Fastify 请求日志。
 - 修复 TypeScript 后端 OSS STS SDK 的 ESM 构造器解析，并让开发启动脚本加载 `backend-ts/.env`，恢复对话图片上传。

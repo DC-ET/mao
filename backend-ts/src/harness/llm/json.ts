@@ -91,6 +91,7 @@ function parseToolCalls(raw: unknown): ToolCall[] | undefined {
     const o = (item ?? {}) as Record<string, unknown>;
     const fn = (o.function ?? {}) as Record<string, unknown>;
     return {
+      index: o.index == null ? undefined : Number(o.index),
       id: o.id == null || o.id === '' ? undefined : String(o.id),
       type: o.type as string | undefined,
       function: {

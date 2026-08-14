@@ -449,24 +449,27 @@ export class AgentLoop {
     listener: AgentEventListener,
     emittedEarlyStarts: Set<string>,
   ): ToolCall | null {
-    const target = this.findMergeTarget(existing, delta);
-    if (target) {
-      this.applyToolCallDelta(target, delta);
+    let merged = this.findMergeTarget(existing, delta);
+    if (merged) {
+      this.applyToolCallDelta(merged, delta);
     } else if (delta.id) {
       existing.push(delta);
+      merged = delta;
     }
-    const merged = existing.length > 0 ? existing[existing.length - 1] : null;
     // JS Set.add() returns the Set (always truthy); Java HashSet.add returns boolean.
     if (merged?.id && merged.function?.name && !emittedEarlyStarts.has(merged.id)) {
       emittedEarlyStarts.add(merged.id);
       listener.onToolCallStart(merged);
     }
-    return merged;
+    return merged ?? null;
   }
 
   private findMergeTarget(existing: ToolCall[], delta: ToolCall): ToolCall | undefined {
     if (delta.id) {
       return existing.find((tc) => tc.id === delta.id);
+    }
+    if (delta.index != null) {
+      return existing.find((tc) => tc.index === delta.index) ?? existing[delta.index];
     }
     return existing.length > 0 ? existing[existing.length - 1] : undefined;
   }

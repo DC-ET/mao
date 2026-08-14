@@ -29,6 +29,20 @@ describe('ShellSessionManager', () => {
     expect(session.isAlive()).toBe(false);
   });
 
+  it('ignores asynchronous pipe errors after closing a shell session', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(11, 'sh-reset', 7, dir, {});
+
+    manager.close('sh-reset');
+
+    expect(() => session.process.stdin.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))).not.toThrow();
+    expect(() => session.process.stdout.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))).not.toThrow();
+  });
+
   it('injects GIT_TOKEN env vars and GIT_ASKPASS for user credentials', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
     mkdirSync(join(dir, 'runtime'), { recursive: true });

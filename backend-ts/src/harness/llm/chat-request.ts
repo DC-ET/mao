@@ -31,6 +31,7 @@ export interface FunctionCall {
 }
 
 export interface ToolCall {
+  index?: number;
   id?: string;
   type?: string;
   function?: FunctionCall;

@@ -23,6 +23,16 @@ export class ShellSession {
     this.currentWorkdir = workspaceDir;
     this.process.stdout.setEncoding('utf8');
     this.process.stderr.setEncoding('utf8');
+    this.process.stdin.on('error', (error) => this.handleProcessError('stdin', error));
+    this.process.stdout.on('error', (error) => this.handleProcessError('stdout', error));
+    this.process.stderr.on('error', (error) => this.handleProcessError('stderr', error));
+    this.process.on('error', (error) => this.handleProcessError('process', error));
+  }
+
+  private handleProcessError(source: string, error: Error): void {
+    if (this.alive) {
+      harnessLog('warn', `Shell session ${this.sessionId} ${source} error: ${error.message}`);
+    }
   }
 
   touch(): void {

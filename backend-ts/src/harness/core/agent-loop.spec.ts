@@ -67,6 +67,7 @@ describe('AgentLoop', () => {
       onContentDelta: vi.fn(),
       onToolCallStart: vi.fn(),
       onToolCallResult: vi.fn(),
+      onToolCallArgsDelta: vi.fn(),
       onMessageEnd: vi.fn(),
       onError: vi.fn(),
       onThinkingDelta: vi.fn(),
@@ -287,6 +288,48 @@ describe('AgentLoop', () => {
       ctx.tools,
     );
     expect(p.onSaveAssistantMessage.mock.calls[0][2]).toHaveLength(1);
+  });
+
+  it('keeps interleaved tool-call argument chunks bound to their index', async () => {
+    const ctx = context();
+    ctx.tools = [namedTool('shell'), namedTool('read_file')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatch.mockResolvedValue('{"ok":true}');
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ === 0) {
+        callback.onChunk(toolChunk({
+          index: 0,
+          id: 'call-shell',
+          function: { name: 'shell', arguments: '{"command":' },
+        }));
+        callback.onChunk(toolChunk({
+          index: 1,
+          id: 'call-read',
+          function: { name: 'read_file', arguments: '{"path":"a.ts"}' },
+        }));
+        callback.onChunk(toolChunk({
+          index: 0,
+          function: { arguments: '"pwd"}' },
+        }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(l.onToolCallArgsDelta).toHaveBeenCalledWith('call-shell', '{"command":"pwd"}');
+    expect(l.onToolCallArgsDelta).toHaveBeenCalledWith('call-read', '{"path":"a.ts"}');
+    expect(toolDispatcher.dispatch).toHaveBeenCalledWith(
+      'shell', '{"command":"pwd"}', 'CLOUD', 11, 7, '/repo', 'READ_ONLY', undefined, ctx.tools,
+    );
   });
 
   it('executeStripsImageDataUriFromPersistedToolMessage', async () => {
