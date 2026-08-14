@@ -406,6 +406,15 @@ export function useStreamWS() {
     send({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, direction } })
   }
 
+  async function sendToolApproval(sessionId: string, requestId: string, approved: boolean): Promise<boolean> {
+    return sendReliable({
+      type: 'tool_approval',
+      sessionId: Number(sessionId),
+      requestId,
+      approved
+    })
+  }
+
   async function createSideSession(
     parentSessionId: string,
     content: string,
@@ -909,6 +918,7 @@ export function useStreamWS() {
     insertMessage,
     deleteQueueMessage,
     reorderQueueMessage,
+    sendToolApproval,
     createSideSession,
     pendingCallbacks,
     setActiveExecution,

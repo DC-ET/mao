@@ -9,6 +9,8 @@ function isRunningPhase(phase: string | null | undefined): boolean {
 }
 
 export class SessionTreeSignalPublisher {
+  private readonly publishEpoch = new Map<number, number>();
+
   constructor(
     private readonly sessionMapper?: SessionRepository,
     private readonly approvalRegistry?: ApprovalRegistry,
@@ -16,39 +18,42 @@ export class SessionTreeSignalPublisher {
     private readonly streamingWsRegistry?: StreamingWsRegistry,
   ) {}
 
-  publishIfSideTask(sessionId: number | null | undefined): void {
-    if (sessionId == null || !this.sessionMapper) return;
-    void this.sessionMapper.selectById(sessionId).then((s) => {
+  publishIfSideTask(sessionId: number | null | undefined): Promise<void> {
+    if (sessionId == null || !this.sessionMapper) return Promise.resolve();
+    return this.sessionMapper.selectById(sessionId).then((s) => {
       if (s == null || s.sessionType !== 'SIDE_TASK' || s.parentSessionId == null) return;
-      this.publish(s.parentSessionId);
+      return this.publish(s.parentSessionId);
     }).catch(() => undefined);
   }
 
-  publishForSession(sessionId: number | null | undefined): void {
-    if (sessionId == null || !this.sessionMapper) return;
-    void this.sessionMapper.selectById(sessionId).then((s) => {
+  publishForSession(sessionId: number | null | undefined): Promise<void> {
+    if (sessionId == null || !this.sessionMapper) return Promise.resolve();
+    return this.sessionMapper.selectById(sessionId).then((s) => {
       if (s == null) return;
       if (s.sessionType === 'SIDE_TASK' && s.parentSessionId != null) {
-        this.publish(s.parentSessionId);
-      } else {
-        this.publish(sessionId);
+        return this.publish(s.parentSessionId);
       }
+      return this.publish(sessionId);
     }).catch(() => undefined);
   }
 
-  publish(parentSessionId: number): void {
+  publish(parentSessionId: number): Promise<void> {
     if (!this.sessionMapper || !this.approvalRegistry || !this.askUserQuestionsRegistry || !this.streamingWsRegistry) {
-      return;
+      return Promise.resolve();
     }
-    void this.publishAsync(parentSessionId).catch((e) => {
+    const epoch = (this.publishEpoch.get(parentSessionId) ?? 0) + 1;
+    this.publishEpoch.set(parentSessionId, epoch);
+    return this.publishAsync(parentSessionId, epoch).catch((e) => {
       console.warn(`Failed to publish session_tree_status for ${parentSessionId}: ${(e as Error).message}`);
     });
   }
 
-  private async publishAsync(parentSessionId: number): Promise<void> {
+  private async publishAsync(parentSessionId: number, epoch: number): Promise<void> {
     const parent = await this.sessionMapper!.selectById(parentSessionId);
     if (parent == null || parent.userId == null) return;
+    if (this.publishEpoch.get(parentSessionId) !== epoch) return;
     const sides = await this.sessionMapper!.listSideTasks(parentSessionId);
+    if (this.publishEpoch.get(parentSessionId) !== epoch) return;
     const allIds = [parentSessionId, ...sides.map((st) => st.id!).filter((id) => id != null)];
     const approvalCounts = this.approvalRegistry!.countForSessionIds(allIds);
     const questionCounts = this.askUserQuestionsRegistry!.countPendingBySessionIds(allIds);
@@ -67,6 +72,7 @@ export class SessionTreeSignalPublisher {
       failed = failed || st.phase === 'FAILED';
     }
 
+    if (this.publishEpoch.get(parentSessionId) !== epoch) return;
     this.streamingWsRegistry!.send(parent.userId, wsEvent('session_tree_status', parentSessionId, {
       treePendingApprovalCount: approval,
       treePendingQuestionCount: question,

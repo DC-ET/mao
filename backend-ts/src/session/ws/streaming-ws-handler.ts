@@ -52,7 +52,10 @@ export interface WsHandlerDeps {
   };
   treeSignalPublisher: {
     publishIfSideTask(sessionId: number): void;
-    publishForSession(sessionId: number): void;
+    publishForSession(sessionId: number): void | Promise<void>;
+  };
+  approvalRegistry: {
+    unregister(sessionId: number | null, requestId: string | null): void | Promise<void>;
   };
   activityService: WsListenerDeps['activityService'];
   activityHeartbeat: { touch(sessionId: number): void; clear(sessionId: number): void };
@@ -166,6 +169,7 @@ export class StreamingWsHandler {
       case 'mcp_tools_report': await this.handleMcpToolsReport(userId, root); break;
       case 'tool_result': await this.handleToolResult(userId, root); break;
       case 'tool_error': await this.handleToolError(userId, root); break;
+      case 'tool_approval': await this.handleToolApproval(userId, root); break;
       case 'ask_user_questions_result': await this.handleAskUserQuestionsResult(userId, root); break;
       case 'create_side_session': await this.handleCreateSideSession(userId, root); break;
       case 'cancel_side_task': await this.handleCancelSideTask(userId, root); break;
@@ -436,6 +440,16 @@ export class StreamingWsHandler {
     if (sessionId == null || requestId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
     this.deps.localToolSessionRegistry.completeToolRequest(sessionId, requestId, result);
+  }
+
+  /** LOCAL 审批卡片点「执行/拒绝」后立即恢复 RUNNING，不必等命令真正跑完。 */
+  private async handleToolApproval(userId: number, root: Record<string, unknown>): Promise<void> {
+    const sessionId = this.getLong(root, 'sessionId');
+    const requestId = typeof root.requestId === 'string' ? root.requestId : null;
+    if (sessionId == null || requestId == null) return;
+    if (!(await this.requireOwnedSession(userId, sessionId))) return;
+    await Promise.resolve(this.deps.approvalRegistry.unregister(sessionId, requestId));
+    await Promise.resolve(this.deps.treeSignalPublisher.publishForSession(sessionId));
   }
 
   private async handleToolError(userId: number, root: Record<string, unknown>): Promise<void> {

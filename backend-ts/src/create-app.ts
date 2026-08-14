@@ -551,6 +551,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     localToolSessionRegistry: localToolSessions,
     askUserQuestionsRegistry,
     treeSignalPublisher,
+    approvalRegistry,
     activityService,
     activityHeartbeat,
     sessionTodoMapper: todoMapper,

@@ -70,6 +70,10 @@ export function useToolApprovals() {
     if (requestId && isElectron) {
       await (window as any).electronAPI.respondToolApproval(requestId, approved)
     }
+    if (item?.sessionId) {
+      const { sendToolApproval } = useStreamWS()
+      await sendToolApproval(item.sessionId, requestId, approved)
+    }
   }
 
   function clearPendingApprovals() {

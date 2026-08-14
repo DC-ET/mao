@@ -535,9 +535,9 @@ async function checkForAppUpdate() {
   return updateCheckPromise
 }
 
-function requestToolApproval(toolName, description, sessionId, dangerReason) {
+function requestToolApproval(toolName, description, sessionId, dangerReason, backendRequestId) {
   return new Promise((resolve) => {
-    const requestId = `approval_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+    const requestId = backendRequestId || `approval_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 
     pendingApprovals.set(requestId, (approved) => {
       pendingApprovals.delete(requestId)
@@ -551,9 +551,9 @@ function requestToolApproval(toolName, description, sessionId, dangerReason) {
 }
 
 /** Persist shell reuse / write_stdin must re-check approval — first approve must not unlock later commands. */
-async function ensureShellApproval(needApproval, description, sessionId, dangerReason) {
+async function ensureShellApproval(needApproval, description, sessionId, dangerReason, backendRequestId) {
   if (!needApproval) return true
-  return requestToolApproval('shell', description, sessionId, dangerReason)
+  return requestToolApproval('shell', description, sessionId, dangerReason, backendRequestId)
 }
 
 ipcMain.handle('tool-approval-response', (event, { requestId, approved }) => {
@@ -1559,16 +1559,16 @@ ipcMain.handle('mcp-close', async (event, { sessionId }) => {
 
 // ========== Tool execution via Streaming WS ==========
 
-async function executeToolByName(toolName, parsedArgs, sessionId, workspace, needApproval, dangerReason) {
+async function executeToolByName(toolName, parsedArgs, sessionId, workspace, needApproval, dangerReason, requestId) {
   switch (toolName) {
     case 'shell':
-      return await handleShellFromWebSocket(parsedArgs, sessionId, workspace, needApproval, dangerReason)
+      return await handleShellFromWebSocket(parsedArgs, sessionId, workspace, needApproval, dangerReason, requestId)
     case 'read_file':
       return await handleLocalReadFile(parsedArgs, workspace, sessionId)
     case 'write_file':
-      return await handleLocalWriteFile(parsedArgs, workspace, sessionId, needApproval)
+      return await handleLocalWriteFile(parsedArgs, workspace, sessionId, needApproval, requestId)
     case 'edit_file':
-      return await handleLocalEditFile(parsedArgs, workspace, sessionId, needApproval)
+      return await handleLocalEditFile(parsedArgs, workspace, sessionId, needApproval, requestId)
     case 'glob_search':
       return await handleLocalGlobSearch(parsedArgs, workspace, sessionId)
     case 'grep_search':
@@ -1576,18 +1576,18 @@ async function executeToolByName(toolName, parsedArgs, sessionId, workspace, nee
     default: {
       const mcp = parseMcpToolName(toolName)
       if (mcp) {
-        return await handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApproval, dangerReason)
+        return await handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApproval, dangerReason, requestId)
       }
       return { error: `Unknown tool: ${toolName}` }
     }
   }
 }
 
-async function handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApproval, dangerReason) {
+async function handleMcpToolFromWebSocket(mcp, parsedArgs, sessionId, needApproval, dangerReason, requestId) {
   // 与 shell/write_file 等一致：needApproval 时先征求用户审批再执行
   if (needApproval) {
     const description = `调用 MCP 工具 ${mcp.serverName}.${mcp.toolName}`
-    const approved = await requestToolApproval(`mcp:${mcp.serverName}`, description, sessionId, dangerReason)
+    const approved = await requestToolApproval(`mcp:${mcp.serverName}`, description, sessionId, dangerReason, requestId)
     if (!approved) {
       return { error: 'User denied MCP tool execution.' }
     }
@@ -1618,7 +1618,7 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
   }
 
   try {
-    const result = await executeToolByName(toolName, parsedArgs, sessionId, effectiveWorkspace, !!needApproval, dangerReason)
+    const result = await executeToolByName(toolName, parsedArgs, sessionId, effectiveWorkspace, !!needApproval, dangerReason, requestId)
     return { requestId, result: JSON.stringify(result), error: null }
   } catch (e) {
     console.error(`Tool ${toolName} execution failed:`, e)
@@ -1703,7 +1703,7 @@ function readUntilMarker(process, marker, timeoutMs) {
   })
 }
 
-async function handleShellFromWebSocket(args, sessionId, workspace, needApproval, dangerReason) {
+async function handleShellFromWebSocket(args, sessionId, workspace, needApproval, dangerReason, requestId) {
   const { action, command, session_id, workdir, input } = args
   let resolvedWorkdir = workspace
   if (workdir && workdir !== '.') {
@@ -1734,7 +1734,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
       return { error: `Session not found: ${session_id}` }
     }
     const stdinDescription = input != null ? String(input) : ''
-    const approved = await ensureShellApproval(needApproval, stdinDescription, sessionId, dangerReason)
+    const approved = await ensureShellApproval(needApproval, stdinDescription, sessionId, dangerReason, requestId)
     if (!approved) {
       return { error: 'User denied command execution.', session_id }
     }
@@ -1756,7 +1756,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
   // 复用已有会话 — 每次 command 仍按 needApproval 审批，避免一次批准后任意执行
   if (session_id && shellSessions.has(session_id)) {
     const session = shellSessions.get(session_id)
-    const approved = await ensureShellApproval(needApproval, command, sessionId, dangerReason)
+    const approved = await ensureShellApproval(needApproval, command, sessionId, dangerReason, requestId)
     if (!approved) {
       return { exit_code: -1, session_id, output: 'User denied command execution.' }
     }
@@ -1780,7 +1780,7 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
 
   // 新会话或一次性执行 — 根据后端下发的 needApproval 决定是否需要审批
   {
-    const approved = await ensureShellApproval(needApproval, command, sessionId, dangerReason)
+    const approved = await ensureShellApproval(needApproval, command, sessionId, dangerReason, requestId)
     if (!approved) {
       return { exit_code: -1, output: 'User denied command execution.' }
     }
@@ -1972,9 +1972,9 @@ async function handleLocalReadFile(args, workspace, maoSessionId) {
   }
 }
 
-async function handleLocalWriteFile(args, workspace, sessionId, needApproval) {
+async function handleLocalWriteFile(args, workspace, sessionId, needApproval, requestId) {
   if (needApproval) {
-    const approved = await requestToolApproval('write_file', args.path, sessionId)
+    const approved = await requestToolApproval('write_file', args.path, sessionId, null, requestId)
     if (!approved) {
       return { success: false, error: 'User denied file write.' }
     }
@@ -2011,9 +2011,9 @@ async function handleLocalWriteFile(args, workspace, sessionId, needApproval) {
   }
 }
 
-async function handleLocalEditFile(args, workspace, sessionId, needApproval) {
+async function handleLocalEditFile(args, workspace, sessionId, needApproval, requestId) {
   if (needApproval) {
-    const approved = await requestToolApproval('edit_file', args.path, sessionId)
+    const approved = await requestToolApproval('edit_file', args.path, sessionId, null, requestId)
     if (!approved) {
       return { success: false, error: 'User denied file edit.' }
     }

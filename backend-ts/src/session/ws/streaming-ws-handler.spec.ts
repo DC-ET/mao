@@ -57,6 +57,7 @@ describe('StreamingWsHandler', () => {
     failAllForSession: vi.fn(), getPendingForSession: vi.fn(() => []), complete: vi.fn(),
   };
   const treeSignalPublisher = { publishIfSideTask: vi.fn(), publishForSession: vi.fn() };
+  const approvalRegistry = { unregister: vi.fn() };
   const activityService = { record: vi.fn() };
   const activityHeartbeat = { touch: vi.fn(), clear: vi.fn() };
   const sessionTodoMapper = { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) };
@@ -80,7 +81,7 @@ describe('StreamingWsHandler', () => {
 
   const handler = new StreamingWsHandler({
     registry, harnessService, sessionService, taskTerminalService, messageQueueService,
-    localToolSessionRegistry, askUserQuestionsRegistry, treeSignalPublisher, activityService,
+    localToolSessionRegistry, askUserQuestionsRegistry, treeSignalPublisher, approvalRegistry, activityService,
     activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
     localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
     llmModelMapper, jwtService, agentExecutor: (fn) => executor.submit(fn), mcpSyncTimeoutSeconds: 60,
@@ -162,6 +163,7 @@ describe('StreamingWsHandler', () => {
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'reorder_queue_message', sessionId: 11, data: { queueId: 4, direction: 'up' } }));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'tool_result', sessionId: 11, requestId: 'req', result: 'ok' }));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'tool_error', sessionId: 11, requestId: 'req', error: 'bad' }));
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'tool_approval', sessionId: 11, requestId: 'req', approved: true }));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'ask_user_questions_result', sessionId: 11, data: { requestId: 'q', answers: [{ id: 'a' }] } }));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'ping' }));
     expect(registry.subscribe).toHaveBeenCalledWith(7, 11);
@@ -171,6 +173,8 @@ describe('StreamingWsHandler', () => {
     expect(messageQueueService.reorder).toHaveBeenCalledWith(4, 'up');
     expect(localToolSessionRegistry.completeToolRequest).toHaveBeenCalledWith(11, 'req', 'ok');
     expect(localToolSessionRegistry.completeToolRequestError).toHaveBeenCalledWith(11, 'req', 'bad');
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req');
+    expect(treeSignalPublisher.publishForSession).toHaveBeenCalledWith(11);
     expect(askUserQuestionsRegistry.complete).toHaveBeenCalledWith(11, 'q', '{"answers": [{"id":"a"}]}');
   });
 

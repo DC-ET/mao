@@ -30,7 +30,7 @@ export class LocalToolExecutor {
       if (needApproval && pending.requestId != null && sessionId != null) {
         approvalRegistered = true;
         await Promise.resolve(this.approvalRegistry.register(sessionId, pending.requestId));
-        this.treeSignalPublisher.publishForSession(sessionId);
+        await Promise.resolve(this.treeSignalPublisher.publishForSession(sessionId));
       }
       return await Promise.race([
         pending.future,
@@ -49,7 +49,7 @@ export class LocalToolExecutor {
     } finally {
       if (approvalRegistered && pending?.requestId && sessionId != null) {
         await Promise.resolve(this.approvalRegistry.unregister(sessionId, pending.requestId));
-        this.treeSignalPublisher.publishForSession(sessionId);
+        await Promise.resolve(this.treeSignalPublisher.publishForSession(sessionId));
       }
     }
   }
