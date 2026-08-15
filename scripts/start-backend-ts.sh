@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start the TypeScript backend on 9081 (dual-run alongside Java 9080).
+# Start the TypeScript backend on 9081 (schema owner; dual-run alongside Java 9080).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"

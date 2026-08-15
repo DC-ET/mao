@@ -15,8 +15,8 @@ spring:
       idle-timeout: 300000
       max-lifetime: 600000
   flyway:
-    # Dual-run: keep false so Java owns schema. Set true after Nginx cutover.
-    enabled: ${FLYWAY_ENABLED:false}
+    # Schema owner after cutover. Java should set SPRING_FLYWAY_ENABLED=false.
+    enabled: ${FLYWAY_ENABLED:true}
     baseline-on-migrate: true
     baseline-version: 12
     validate-on-migrate: false

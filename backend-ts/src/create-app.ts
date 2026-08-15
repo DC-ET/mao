@@ -190,7 +190,7 @@ export async function registerUploadStatic(app: FastifyInstance, uploadDir: stri
 
 export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: FastifyInstance): Promise<MaoApp> {
   assertGitCredentialSecret(cfg.app.gitCredential.secretKey);
-  runFlywayIfEnabled(cfg);
+  await runFlywayIfEnabled(cfg);
   const pool = createPool(cfg);
   const db = new Db(pool);
   const app = existing ?? Fastify({ logger: true, bodyLimit: 52 * 1024 * 1024 });

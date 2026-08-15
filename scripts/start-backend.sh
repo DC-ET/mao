@@ -15,6 +15,7 @@ fi
 
 echo "启动后端服务..."
 cd "$PROJECT_DIR/backend"
+export SPRING_FLYWAY_ENABLED="${SPRING_FLYWAY_ENABLED:-true}"
 nohup mvn spring-boot:run > "$LOG_DIR/backend.out" 2>&1 &
 echo $! > "$PID_FILE"
 echo "后端服务已启动 (PID: $!, 日志: $LOG_DIR/backend.out)"

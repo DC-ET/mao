@@ -40,6 +40,7 @@
 - 修复子代理恢复未校验抢占结果，多实例下同一子代理可能被并发恢复的问题。
 - 修复 CLOUD 技能同步只比对技能目录顶层修改时间，仅改动嵌套文件时不触发同步的问题。
 - 修复 `read_file` 对以换行结尾的文件多算一行，以及本地工具错误信息被二次转义的问题。
+- 数据库 schema 迁移改由 TypeScript 后端启动时执行（共用原 Flyway SQL 与 `flyway_schema_history`）；Java 默认不再跑迁移，可用 `SPRING_FLYWAY_ENABLED=true` 临时打开。
 
 ---
 

@@ -130,7 +130,7 @@ chmod 600 /opt/mao/backend/.env
 | `LDAP_ENABLED` | 否 | LDAP 登录开关，默认 `false` |
 | `LDAP_URL` | 否 | LDAP 服务地址；仅当 `LDAP_ENABLED=true` 且该值非空时启用 LDAP 登录 |
 
-> 首次启动时 Flyway 自动执行迁移并创建默认管理员 `admin` / `admin123`，**登录后请立即改密**。LLM API Key 在管理后台「模型管理」中配置。
+> 首次启动时由 **TypeScript 后端**执行 Flyway 迁移并创建默认管理员 `admin` / `admin123`，**登录后请立即改密**。LLM API Key 在管理后台「模型管理」中配置。Java 回滚进程请保持 `SPRING_FLYWAY_ENABLED=false`（默认），避免与 TS 双跑抢写 schema。
 >
 > **Git 凭证加密密钥轮换**：更换 `APP_GIT_CREDENTIAL_SECRET` 前，需用旧密钥解密、新密钥重新加密所有 `user_git_credential` 表中的 Token，否则已存凭证无法使用。
 >
@@ -413,7 +413,9 @@ sudo systemctl reload nginx
 
 ## 十一、TypeScript 后端双跑与 Nginx 切流
 
-Java 后端继续监听 **9080**，TypeScript 重写版默认监听 **9081**（`MAO_TS_PORT`）。切流前 Nginx 仍指向 9080；两边共用同一 MySQL（TS 默认 `FLYWAY_ENABLED=false`，schema 仍由 Java Flyway 管理）。
+Java 后端继续监听 **9080**，TypeScript 重写版默认监听 **9081**（`MAO_TS_PORT`）。切流前 Nginx 仍指向 9080；两边共用同一 MySQL。**schema 由 TypeScript 后端 Flyway 管理**（`FLYWAY_ENABLED` 默认 `true`）；Java 默认 `SPRING_FLYWAY_ENABLED=false`。
+
+部署 TS 时必须带上 SQL 文件：`backend-ts/db/migration/`（仓库内是指向 Java 资源目录的符号链接；生产请复制真实 `.sql`，不要依赖 Java 源码路径）。
 
 ### 1. 启动 TS 后端（不停止 Java）
 
@@ -426,7 +428,7 @@ export APP_GIT_CREDENTIAL_SECRET=...
 export MYSQL_USERNAME=...
 export MYSQL_PASSWORD=...
 export MAO_TS_PORT=9081
-export FLYWAY_ENABLED=false
+export FLYWAY_ENABLED=true
 
 cd /opt/mao/backend-ts
 chmod +x restart.sh
@@ -435,6 +437,8 @@ curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9081/api/swagger-ui.html
 ```
 
 管理端运行时重启接口仍为 `GET /v1/admin/runtime/restart`，脚本路径为 `${app.root-dir}/backend-ts/restart.sh`。
+
+Java 回滚进程若仍在 9080 运行，请确认未设置 `SPRING_FLYWAY_ENABLED=true`，以免与 TS 同时 migrate。
 
 ### 2. 验收清单（全部通过后再改 Nginx）
 
@@ -451,9 +455,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-切流瞬间进行中的 Agent / WebSocket 会断开，用户需重连（与换 Java 进程相同，不做跨进程会话热迁移）。观察期结束前保留 Java 9080 进程；回滚即把 `proxy_pass` 改回 `9080` 并 reload Nginx。
-
-切流后可将 `FLYWAY_ENABLED=true`，由 TS 使用同一套 `db/migration` 与 `flyway_schema_history` 跑迁移。
+切流瞬间进行中的 Agent / WebSocket 会断开，用户需重连（与换 Java 进程相同，不做跨进程会话热迁移）。观察期结束前保留 Java 9080 进程；回滚即把 `proxy_pass` 改回 `9080` 并 reload Nginx。回滚期间若改由 Java 跑迁移，再设 `SPRING_FLYWAY_ENABLED=true` 并重启 Java。
 
 ### 常见问题
 

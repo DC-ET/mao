@@ -225,12 +225,12 @@ cp backend/src/main/resources/application-example.yml \
 ```bash
 cd backend
 mvn clean install
-mvn spring-boot:run
+SPRING_FLYWAY_ENABLED=true mvn spring-boot:run
 ```
 
 服务地址：`http://localhost:9080`  
 Swagger UI：`http://localhost:9080/api/swagger-ui.html`  
-Flyway 会在首次启动时自动建表并写入初始数据。
+数据库迁移默认由 TypeScript 后端在启动时执行。若只跑 Java，需设置 `SPRING_FLYWAY_ENABLED=true`（`./scripts/start-backend.sh` 已默认打开）。Docker Compose 中的 Java 后端同样会执行 Flyway。
 
 #### 3. 配置 LLM 模型
 

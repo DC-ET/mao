@@ -11,17 +11,38 @@ describe('app-config', () => {
 
   it('loads defaults and respects MAO_TS_PORT', () => {
     resetConfigCache();
-    const prev = process.env.MAO_TS_PORT;
+    const prevPort = process.env.MAO_TS_PORT;
+    const prevFlyway = process.env.FLYWAY_ENABLED;
     process.env.MAO_TS_PORT = '9081';
+    process.env.FLYWAY_ENABLED = 'true';
     const cfg = loadConfig();
     expect(cfg.server.port).toBe(9081);
     expect(cfg.server.servlet.contextPath).toBe('/api');
-    expect(cfg.spring.flyway.enabled).toBe(false);
+    expect(cfg.spring.flyway.enabled).toBe(true);
     expect(cfg.jwt.expiration).toBe(86400000);
-    if (prev === undefined) {
+    if (prevPort === undefined) {
       delete process.env.MAO_TS_PORT;
     } else {
-      process.env.MAO_TS_PORT = prev;
+      process.env.MAO_TS_PORT = prevPort;
+    }
+    if (prevFlyway === undefined) {
+      delete process.env.FLYWAY_ENABLED;
+    } else {
+      process.env.FLYWAY_ENABLED = prevFlyway;
+    }
+    resetConfigCache();
+  });
+
+  it('FLYWAY_ENABLED=false disables schema migrate', () => {
+    resetConfigCache();
+    const prev = process.env.FLYWAY_ENABLED;
+    process.env.FLYWAY_ENABLED = 'false';
+    const cfg = loadConfig();
+    expect(cfg.spring.flyway.enabled).toBe(false);
+    if (prev === undefined) {
+      delete process.env.FLYWAY_ENABLED;
+    } else {
+      process.env.FLYWAY_ENABLED = prev;
     }
     resetConfigCache();
   });

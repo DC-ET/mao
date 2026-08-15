@@ -15,6 +15,7 @@ COPY --from=build /build/backend-ts/node_modules ./node_modules
 COPY --from=build /build/backend-ts/dist ./dist
 COPY --from=build /build/backend-ts/config ./config
 COPY --from=build /build/backend-ts/db ./db
+COPY backend/src/main/resources/db/migration ./db/migration
 COPY backend-ts/restart.sh ./restart.sh
 RUN chmod +x ./restart.sh \
     && mkdir -p /opt/mao/data/workspace /opt/mao/data/skills /opt/mao/data/userskills /opt/mao/data/uploads /opt/mao/data/runtime

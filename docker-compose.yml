@@ -31,6 +31,7 @@ services:
       APP_GIT_CREDENTIAL_SECRET: ${APP_GIT_CREDENTIAL_SECRET:-docker-dev-git-credential-secret}
       APP_NOTIFICATION_WEBHOOK_SECRET: ${APP_NOTIFICATION_WEBHOOK_SECRET:-mao-task-notification-default-key-v1-20260713}
       UPLOAD_BASE_URL: ${UPLOAD_BASE_URL:-http://localhost:5201/api}
+      SPRING_FLYWAY_ENABLED: "true"
     volumes:
       - mao_data:/opt/mao/data
     ports:

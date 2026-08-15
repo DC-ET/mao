@@ -23,9 +23,9 @@ spring:
   profiles:
     active: local # copy from application-example.yml to application-local.yml
 
-  # Flyway
+  # Flyway — schema owner is TypeScript backend. Re-enable with SPRING_FLYWAY_ENABLED=true.
   flyway:
-    enabled: true
+    enabled: ${SPRING_FLYWAY_ENABLED:false}
     baseline-on-migrate: true
     baseline-version: 12
     validate-on-migrate: false

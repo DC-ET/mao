@@ -177,7 +177,7 @@ const DEFAULTS: AppConfig = {
       },
     },
     flyway: {
-      enabled: false,
+      enabled: true,
       baselineOnMigrate: true,
       baselineVersion: '12',
       validateOnMigrate: false,
@@ -419,7 +419,7 @@ function coerceTypes(cfg: AppConfig): AppConfig {
     return d;
   };
   cfg.server.port = n(process.env.MAO_TS_PORT ?? cfg.server.port, 9081);
-  cfg.spring.flyway.enabled = b(cfg.spring.flyway.enabled, false);
+  cfg.spring.flyway.enabled = b(process.env.FLYWAY_ENABLED ?? cfg.spring.flyway.enabled, true);
   cfg.ldap.enabled = b(cfg.ldap.enabled, false);
   cfg.feishu.enabled = b(cfg.feishu.enabled, false);
   cfg.jwt.expiration = n(cfg.jwt.expiration, 86400000);

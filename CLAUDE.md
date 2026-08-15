@@ -86,7 +86,7 @@ CI（`.github/workflows/ci.yml`）仅做后端 `mvn compile` 与前端 build，�
 
 **拦截器**：`AuditInterceptor` + `PermissionInterceptor`（`@RequirePermission`），作用于 `/v1/**`（排除 `/v1/auth/**` 和 `/ws/**`）。
 
-**数据库**：MySQL 8 + Flyway，迁移脚本在 `backend/src/main/resources/db/migration/`。
+**数据库**：MySQL 8 + Flyway。迁移脚本仍在 `backend/src/main/resources/db/migration/`（`backend-ts/db/migration` 为符号链接）。**启动时由 TypeScript 后端执行迁移**（`FLYWAY_ENABLED`，默认 true）；Java 默认 `SPRING_FLYWAY_ENABLED=false`，避免双跑抢写。
 
 ### 前端
 
@@ -159,7 +159,7 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 |------|------|
 | 发版说明 | 根 `CHANGELOG.md` + `scripts/changelog-extract.sh` |
 | 新增 REST API | 对应领域包下的 `entity` / `mapper` / `service` / `controller` |
-| 数据库变更 | `backend/src/main/resources/db/migration/V0xx__*.sql` |
+| 数据库变更 | `backend/src/main/resources/db/migration/V0xx__*.sql`（TS 启动执行；勿再依赖 Java Flyway） |
 | 新增内置工具 | `harness/tool/impl/` 实现 `Tool` 接口并标注 `@Component` |
 | 技能扩展 | `harness/skill/`；外部目录默认 `/opt/mao/data/skills` |
 | Agent 运行逻辑 | `harness/core/`（`AgentLoop`、`HarnessService`） |
