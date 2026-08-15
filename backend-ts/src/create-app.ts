@@ -476,6 +476,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     outputManager,
     backgroundTaskManager: backgroundTasks,
     gitCredentialService: gitLookup,
+    jwtService: jwt,
+    shellUserLookup: { findById: (id: number) => userRepo.findById(id) },
     tavily: cfg.app.harness.tavily,
     webPage: cfg.app.harness.webPage,
     imageModelLookup: modelService,

@@ -66,6 +66,14 @@ export class ShellSession {
   close(): void {
     if (!this.alive) return;
     this.alive = false;
+    // 杀掉整个进程组而非仅 bash：若 bash 退出而后代（如 gradle）残留，
+    // 管道不会 EOF，readUntilMarker 会一直空等。
+    const pid = this.process.pid;
+    if (pid != null) {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch { /* group already gone */ }
+    }
     try {
       this.process.kill('SIGKILL');
     } catch { /* ignore */ }
@@ -91,7 +99,12 @@ export interface OutputResult {
   truncated: boolean;
   completed: boolean;
   elapsedMs: number;
+  /** 命令的 `$?`，仅当调用方在 marker 后回显了退出码时可用。 */
+  exitCode: number | null;
 }
+
+/** 匹配紧跟在 marker 之后被回显的 `$?`。 */
+const EXIT_STATUS_PATTERN = /^[ \t]*(-?\d+)[ \t]*\r?\n?/;
 
 export class OutputManager {
   constructor(
@@ -152,9 +165,15 @@ export class OutputManager {
     });
 
     const idx = full.indexOf(marker);
+    let exitCode: number | null = null;
     if (idx >= 0) {
       completed = true;
-      const after = full.slice(idx + marker.length);
+      let after = full.slice(idx + marker.length);
+      const status = EXIT_STATUS_PATTERN.exec(after);
+      if (status) {
+        exitCode = Number(status[1]);
+        after = after.slice(status[0].length);
+      }
       full = full.slice(0, idx);
       if (after) session.appendLeftover(after.replace(/^\r?\n/, ''));
     }
@@ -164,6 +183,7 @@ export class OutputManager {
       truncated: preview.truncated,
       completed,
       elapsedMs: Date.now() - start,
+      exitCode,
     };
   }
 
@@ -318,6 +338,8 @@ export class ShellSessionManager {
       cwd: workDir,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      // 独立进程组，close() 才能一次性回收 bash 的所有后代进程
+      detached: true,
     });
     if (child.stderr && child.stdout) {
       child.stderr.pipe(child.stdout as unknown as NodeJS.WritableStream);

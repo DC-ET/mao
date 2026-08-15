@@ -180,6 +180,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     let emitted = false;
     let done = false;
     let buffer = '';
+    // fatal：截断的 UTF-8 必须报错，静默降级为 U+FFFD 会让被截断的流看起来正常完成
     const decoder = new TextDecoder('utf-8', { fatal: true });
     let lastData = Date.now();
     const idleMs = this.retry.streamIdleTimeoutSeconds * 1000;
@@ -201,6 +202,30 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       }
     }, 100);
 
+    /** 处理一整行 SSE；返回 true 表示读到了 [DONE]。 */
+    const handleLine = (line: string): boolean => {
+      if (!line.startsWith('data: ')) return false;
+      lastData = Date.now();
+      const data = line.slice(6).trim();
+      if (data === '[DONE]') return true;
+      try {
+        const parsed = JSON.parse(data) as unknown;
+        const streamChunk = parseStreamChunk(parsed);
+        callback.onChunk(streamChunk);
+        if (hasAccumulatedOutput(streamChunk)) emitted = true;
+        const u = parseUsageFromSse(parsed);
+        if (u) {
+          usage.promptTokens = u.promptTokens;
+          usage.completionTokens = u.completionTokens;
+          usage.totalTokens = u.totalTokens;
+          usage.promptTokensDetails = u.promptTokensDetails;
+        }
+      } catch (e) {
+        harnessLog('warn', `Failed to parse SSE chunk: ${data}`, e);
+      }
+      return false;
+    };
+
     try {
       for await (const chunk of body) {
         if (idleTimedOut) throw idleTimedOut;
@@ -211,32 +236,19 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() ?? '';
         for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          lastData = Date.now();
-          const data = line.slice(6).trim();
-          if (data === '[DONE]') {
+          if (handleLine(line)) {
             done = true;
             break;
-          }
-          try {
-            const parsed = JSON.parse(data) as unknown;
-            const streamChunk = parseStreamChunk(parsed);
-            callback.onChunk(streamChunk);
-            if (hasAccumulatedOutput(streamChunk)) emitted = true;
-            const u = parseUsageFromSse(parsed);
-            if (u) {
-              usage.promptTokens = u.promptTokens;
-              usage.completionTokens = u.completionTokens;
-              usage.totalTokens = u.totalTokens;
-              usage.promptTokensDetails = u.promptTokensDetails;
-            }
-          } catch (e) {
-            harnessLog('warn', `Failed to parse SSE chunk: ${data}`, e);
           }
         }
         if (done) break;
       }
       buffer += decoder.decode();
+      // 上游可能不以换行结尾，残留在 buffer 里的最后一行同样是有效事件
+      if (!done && buffer.trim() !== '') {
+        if (handleLine(buffer)) done = true;
+        buffer = '';
+      }
       if (idleTimedOut) throw idleTimedOut;
       if (!done) {
         const eof = Object.assign(new Error('stream ended before [DONE]'), { name: 'EOFException' });

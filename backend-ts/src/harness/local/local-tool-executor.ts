@@ -25,6 +25,7 @@ export class LocalToolExecutor {
     }
     let pending: { requestId: string | null; future: Promise<string> } | null = null;
     let approvalRegistered = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       pending = await this.sessionRegistry.sendToolRequest(sessionId, toolName, argumentsJson, workspace, needApproval, dangerReason);
       if (needApproval && pending.requestId != null && sessionId != null) {
@@ -34,7 +35,9 @@ export class LocalToolExecutor {
       }
       return await Promise.race([
         pending.future,
-        new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), this.timeoutSeconds * 1000)),
+        new Promise<string>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('timeout')), this.timeoutSeconds * 1000);
+        }),
       ]);
     } catch (e) {
       const err = e as Error;
@@ -45,8 +48,10 @@ export class LocalToolExecutor {
       }
       const msg = 'Local tool execution failed: ' + err.message;
       this.failPending(sessionId, pending, msg);
-      return JSON.stringify({ error: escapeJson(msg) });
+      return JSON.stringify({ error: msg });
     } finally {
+      // 不清理定时器的话，工具早已返回，事件循环仍会被挂住最长 timeoutSeconds
+      if (timer) clearTimeout(timer);
       if (approvalRegistered && pending?.requestId && sessionId != null) {
         await Promise.resolve(this.approvalRegistry.unregister(sessionId, pending.requestId));
         await Promise.resolve(this.treeSignalPublisher.publishForSession(sessionId));
@@ -63,9 +68,4 @@ export class LocalToolExecutor {
       this.sessionRegistry.completeToolRequestError(sessionId, pending.requestId, error);
     }
   }
-}
-
-function escapeJson(value: string | null | undefined): string {
-  if (value == null) return '';
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }

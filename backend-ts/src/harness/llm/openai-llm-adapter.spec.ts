@@ -337,6 +337,32 @@ describe('OpenAiLlmAdapter', () => {
     expect(callback.chunks[0]?.choices?.[0]?.delta?.content).not.toContain('\uFFFD');
   });
 
+  it('streamParsesFinalLineWithoutTrailingNewline', async () => {
+    server = new QueueServer();
+    server.enqueueSse('data: {"choices":[{"delta":{"content":"hi"}}]}\ndata: [DONE]');
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter(0, 0).stream(request('tail'), configOf(server), callback, { get: () => false });
+
+    expect(callback.error).toBeUndefined();
+    expect(callback.usage).toBeDefined();
+    expect(callback.chunks[0]?.choices?.[0]?.delta?.content).toBe('hi');
+  });
+
+  it('streamParsesFinalDataLineWithoutTrailingNewline', async () => {
+    server = new QueueServer();
+    server.enqueueSse('data: [DONE]\ndata: {"choices":[{"delta":{"content":"tail"}}]}');
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter(0, 0).stream(request('tail2'), configOf(server), callback, { get: () => false });
+
+    // [DONE] 先到，剩余残行不应再被解析
+    expect(callback.error).toBeUndefined();
+    expect(callback.chunks).toHaveLength(0);
+  });
+
   it('streamRejectsIncompleteUtf8AtEndOfBody', async () => {
     server = new QueueServer();
     const validSse = Buffer.from('data: [DONE]\n\n', 'utf8');

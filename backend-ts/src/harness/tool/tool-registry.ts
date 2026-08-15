@@ -24,7 +24,7 @@ import { WriteFileTool } from './impl/write-file-tool.js';
 import { EditFileTool } from './impl/edit-file-tool.js';
 import { GlobSearchTool } from './impl/glob-search-tool.js';
 import { GrepSearchTool } from './impl/grep-search-tool.js';
-import { ShellSessionTool } from './impl/shell-session-tool.js';
+import { ShellSessionTool, type ShellTokenIssuer, type ShellUserLookup } from './impl/shell-session-tool.js';
 import { WebSearchTool } from './impl/web-search-tool.js';
 import { OpenWebPageTool } from './impl/open-web-page-tool.js';
 import { GenerateImageTool } from './impl/generate-image-tool.js';
@@ -46,6 +46,8 @@ export interface DefaultToolRegistryDeps {
   outputManager: OutputManager;
   backgroundTaskManager: BackgroundTaskManager;
   gitCredentialService?: GitCredentialLookup | null;
+  jwtService?: ShellTokenIssuer | null;
+  shellUserLookup?: ShellUserLookup | null;
   tavily: TavilyConfig;
   webPage: WebPageConfig;
   imageModelLookup: ImageModelLookup;
@@ -84,6 +86,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new ShellSessionTool(
       deps.pathSandbox, deps.shellSessionManager, deps.outputManager,
       deps.backgroundTaskManager, deps.gitCredentialService,
+      deps.jwtService, deps.shellUserLookup,
     ),
     new WebSearchTool(deps.tavily),
     new OpenWebPageTool(deps.webPage),

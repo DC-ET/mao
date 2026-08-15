@@ -35,6 +35,26 @@ describe('ReadFileTool', () => {
     expect(result.total_lines).toBe(4);
   });
 
+  it('does not count a trailing newline as an extra line', async () => {
+    const dir = await tmp();
+    const tool = new ReadFileTool(new PathSandbox(dir));
+    writeFileSync(join(dir, 'trailing.txt'), 'one\ntwo\n');
+    expect(JSON.parse(await tool.execute(JSON.stringify({ path: 'trailing.txt' }))).total_lines).toBe(2);
+    writeFileSync(join(dir, 'blank-tail.txt'), 'one\n\n');
+    expect(JSON.parse(await tool.execute(JSON.stringify({ path: 'blank-tail.txt' }))).total_lines).toBe(2);
+    writeFileSync(join(dir, 'empty.txt'), '');
+    expect(JSON.parse(await tool.execute(JSON.stringify({ path: 'empty.txt' }))).total_lines).toBe(0);
+  });
+
+  it('normalizes CRLF line endings', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'crlf.txt'), 'one\r\ntwo\r\n');
+    const tool = new ReadFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'crlf.txt' })));
+    expect(result.total_lines).toBe(2);
+    expect(result.content).toBe('one\ntwo');
+  });
+
   it('returnsFriendlyErrorsForMissingPathMissingFileAndDirectories', async () => {
     const dir = await tmp();
     mkdirSync(join(dir, 'dir'));

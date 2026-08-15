@@ -64,7 +64,7 @@ export class ReadFileTool extends BaseTool {
       }
       const offset = args && 'offset' in args ? Math.max(0, asInt(args.offset, 0)) : 0;
       const limit = args && 'limit' in args ? Math.max(0, asInt(args.limit, Number.MAX_SAFE_INTEGER)) : Number.MAX_SAFE_INTEGER;
-      const allLines = readFileSync(filePath, 'utf8').split(/\n/);
+      const allLines = splitLines(readFileSync(filePath, 'utf8'));
       const totalLines = allLines.length;
       const from = Math.min(offset, totalLines);
       const to = Math.min(from + limit, totalLines);
@@ -129,6 +129,14 @@ export class ReadFileTool extends BaseTool {
       data_uri: resized.toDataUri(),
     });
   }
+}
+
+/** 按行终止符切分，末尾换行不产生空行（与 Java Files.lines 一致）。 */
+function splitLines(raw: string): string[] {
+  if (raw === '') return [];
+  const lines = raw.split(/\r\n|\r|\n/);
+  if (lines[lines.length - 1] === '') lines.pop();
+  return lines;
 }
 
 function extractPath(args: Record<string, unknown> | null): string | null {

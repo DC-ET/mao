@@ -34,6 +34,20 @@ describe('LocalToolExecutor', () => {
     expect(registry.completeToolRequestError).not.toHaveBeenCalled();
   });
 
+  it('returns a failure message that survives a JSON round trip', async () => {
+    const registry = {
+      isConnected: vi.fn().mockResolvedValue(true),
+      sendToolRequest: vi.fn().mockResolvedValue({
+        requestId: 'req-1',
+        future: Promise.reject(new Error('client said "no such \\path"')),
+      }),
+      completeToolRequestError: vi.fn(),
+    } as unknown as LocalToolSessionRegistry;
+    const raw = await executor(registry, 900).execute(7, 'shell', '{}', 'workspace', false, null);
+    const parsed = JSON.parse(raw) as { error: string };
+    expect(parsed.error).toBe('Local tool execution failed: client said "no such \\path"');
+  });
+
   it('registersAndUnregistersApprovalForApprovalRequests', async () => {
     vi.clearAllMocks();
     const registry = {

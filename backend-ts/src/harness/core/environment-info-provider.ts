@@ -28,7 +28,8 @@ export class EnvironmentInfoProvider {
   async fromSessionOrDetect(session: Session): Promise<EnvironmentInfo> {
     if (session.executionMode?.toUpperCase() === 'LOCAL') {
       return {
-        isGit: session.isGit === true || session.isGit === 1,
+        // 保留 null：未知与"不是 git 仓库"在 prompt 里是两种不同表述
+        isGit: session.isGit == null ? null : session.isGit === true || session.isGit === 1,
         platform: session.platform,
         shell: session.shellPath,
         osVersion: session.osVersion,

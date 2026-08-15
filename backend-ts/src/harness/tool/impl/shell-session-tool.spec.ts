@@ -65,3 +65,83 @@ describe('ShellSessionTool', () => {
     expect(result.error).toContain('blocked');
   });
 });
+
+describe('ShellSessionTool marker and environment handling', () => {
+  function harness(readResult: Partial<{ output: string; truncated: boolean; completed: boolean; exitCode: number | null }> = {}) {
+    const shellSession = {
+      sessionId: 'sh-1',
+      writeStdin: vi.fn(),
+      incrementCommandCount: vi.fn(),
+      touch: vi.fn(),
+      setCurrentWorkdir: vi.fn(),
+      currentWorkdir: '/tmp',
+      outputFile: '/tmp/out.log',
+      isAlive: () => true,
+    };
+    const sessionManager = {
+      getOrCreate: vi.fn(() => shellSession),
+      getSession: vi.fn(() => shellSession),
+      close: vi.fn(),
+      listByConversation: vi.fn(() => [shellSession]),
+    };
+    const outputManager = {
+      readUntilMarker: vi.fn(async () => ({
+        output: 'hello\n', truncated: false, completed: true, exitCode: null, ...readResult,
+      })),
+    };
+    const tool = new ShellSessionTool(
+      { resolve: vi.fn((p: string) => p) } as never,
+      sessionManager as never,
+      outputManager as never,
+      { submit: vi.fn(() => 'task-1') } as never,
+      null,
+      { generateShellToken: vi.fn(() => 'jwt-to"ken') },
+      { findById: vi.fn(async () => ({ username: 'alice' })) },
+    );
+    const written = () => shellSession.writeStdin.mock.calls.map((c) => String(c[0])).join('');
+    return { tool, shellSession, sessionManager, outputManager, written };
+  }
+
+  it('appends a completion marker to write_stdin so it does not wait for the timeout', async () => {
+    const { tool, written } = harness();
+    const result = JSON.parse(await tool.execute(
+      JSON.stringify({ action: 'write_stdin', session_id: 'sh-1', input: 'y' }), 11, 7, '/tmp',
+    ));
+    expect(written()).toMatch(/y\necho __CMD_DONE_[0-9a-f]+__ \$\?\n/);
+    expect(result.completed).toBe(true);
+  });
+
+  it('reports the real exit code and falls back to -1 when the marker never arrives', async () => {
+    const failed = harness({ exitCode: 7 });
+    const withCode = JSON.parse(await failed.tool.execute(JSON.stringify({ command: 'false' }), 11, 7, '/tmp'));
+    expect(withCode.exit_code).toBe(7);
+
+    const timedOut = harness({ completed: false, exitCode: null });
+    const noMarker = JSON.parse(await timedOut.tool.execute(JSON.stringify({ command: 'sleep 99' }), 11, 7, '/tmp'));
+    expect(noMarker.exit_code).toBe(-1);
+  });
+
+  it('cds into workdir so a reused session does not run in the wrong directory', async () => {
+    const { tool, written } = harness();
+    await tool.execute(JSON.stringify({ command: 'ls', session_id: 'sh-1', workdir: '/tmp/sub' }), 11, 7, '/tmp');
+    expect(written()).toContain("cd '/tmp/sub'");
+  });
+
+  it('exports a freshly signed MAO_TOKEN before every command', async () => {
+    const { tool, written } = harness();
+    await tool.execute(JSON.stringify({ command: 'mao-admin-cli whoami' }), 11, 7, '/tmp');
+    const script = written();
+    expect(script).toContain(`export MAO_TOKEN='jwt-to"ken'`);
+    expect(script.indexOf('export MAO_TOKEN')).toBeLessThan(script.indexOf('mao-admin-cli'));
+  });
+
+  it('refreshes current_workdir from pwd once the command completes', async () => {
+    const { tool, shellSession, outputManager } = harness();
+    outputManager.readUntilMarker
+      .mockImplementationOnce(async () => ({ output: 'done\n', truncated: false, completed: true, exitCode: 0 }))
+      .mockImplementationOnce(async () => ({ output: '/tmp/sub\n', truncated: false, completed: true, exitCode: null }));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'cd sub' }), 11, 7, '/tmp'));
+    expect(result.current_workdir).toBe('/tmp/sub');
+    expect(shellSession.setCurrentWorkdir).toHaveBeenCalledWith('/tmp/sub');
+  });
+});

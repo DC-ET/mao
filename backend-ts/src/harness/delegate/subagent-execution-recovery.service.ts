@@ -1,3 +1,4 @@
+import { nowSql } from '../../common/datetime.js';
 import type { SubagentExecution } from '../../session/types.js';
 import type { AgentLoop } from '../core/agent-loop.js';
 import type { Message, SessionCompactionService, SessionMapper, SessionService } from '../deps.js';
@@ -44,7 +45,11 @@ export class SubagentExecutionRecoveryService {
       await this.fail(execution, `子代理恢复失败：未知的子代理类型 ${execution.agentType ?? ''}`);
       return;
     }
-    await this.executionMapper.claimRecovering(execution.id);
+    // 抢占失败说明已有其他实例在恢复该 execution，或它已被交付/终结
+    if (!(await this.executionMapper.claimRecovering(execution.id))) {
+      harnessLog('info', `subagent_recovery_skip executionId=${execution.id} reason=claim_lost`);
+      return;
+    }
     harnessLog('info', `subagent_recovery_start executionId=${execution.id} parent=${execution.parentSessionId} child=${child.id} invocation=${execution.invocationType ?? 'legacy'}`);
     try {
       const existingFinal = await this.findPersistedFinal(execution);
@@ -169,16 +174,13 @@ function terminalStatus(metadata: string | null | undefined): 'COMPLETED' | 'FAI
 }
 
 function startedDeadline(startedAt: string | null | undefined, timeoutSeconds: number): number {
-  const started = startedAt ? new Date(startedAt.replace(' ', 'T') + 'Z').getTime() : Date.now();
+  // started_at 由 MySQL 以服务器本地时间写入，按本地时间解析（不能补 'Z'）
+  const started = startedAt ? new Date(startedAt.replace(' ', 'T')).getTime() : Date.now();
   return (Number.isFinite(started) ? started : Date.now()) + timeoutSeconds * 1000;
 }
 
 function isTerminal(phase: string | null | undefined): boolean {
   return phase === 'COMPLETED' || phase === 'FAILED' || phase === 'CANCELLED';
-}
-
-function nowSql(): string {
-  return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
 function sleep(ms: number): Promise<void> {

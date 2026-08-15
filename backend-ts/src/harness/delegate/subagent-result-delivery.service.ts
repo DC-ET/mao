@@ -1,3 +1,4 @@
+import { nowSql } from '../../common/datetime.js';
 import type { Db } from '../../db/db.js';
 import type { Message, Session, SubagentExecution } from '../../session/types.js';
 import { harnessLog } from '../log.js';
@@ -170,8 +171,4 @@ export class SubagentResultDeliveryService {
       await tx.execute(`UPDATE message SET deleted = 1 WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
     }
   }
-}
-
-function nowSql(): string {
-  return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }

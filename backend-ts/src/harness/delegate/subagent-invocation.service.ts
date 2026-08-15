@@ -1,3 +1,4 @@
+import { nowSql } from '../../common/datetime.js';
 import type { Db } from '../../db/db.js';
 import type { SubagentExecution } from '../../session/types.js';
 import type { Session } from '../deps.js';
@@ -94,8 +95,4 @@ function userMessage(sessionId: number, content: string): Record<string, unknown
     sourceSessionId: null,
     deleted: 0,
   };
-}
-
-function nowSql(): string {
-  return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }

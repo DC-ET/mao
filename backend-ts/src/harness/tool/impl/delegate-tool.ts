@@ -1,4 +1,5 @@
 import { BaseTool } from '../tool.js';
+import { nowSql } from '../../../common/datetime.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import type { AgentDefinitionRegistry } from '../../delegate/agent-definition-registry.js';
 import type { HarnessService } from '../../core/harness-service.js';
@@ -511,10 +512,6 @@ export class DelegateFollowupTool extends BaseTool {
       await this.subagentExecutionMapper.updateById(execution.id, execution);
     }
   }
-}
-
-function nowSql(): string {
-  return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
 function isTerminalPhase(phase: string): boolean {

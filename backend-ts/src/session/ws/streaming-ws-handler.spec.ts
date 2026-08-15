@@ -118,6 +118,34 @@ describe('StreamingWsHandler', () => {
     expect(harnessService.executeFromEvent).not.toHaveBeenCalled();
   });
 
+  it('releases the execution claim when the agent executor rejects the task', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-reject');
+    messageQueueService.listPending.mockResolvedValue([]);
+    const submit = vi.spyOn(executor, 'submit').mockImplementationOnce(() => {
+      throw new Error('Agent executor rejected: active=100 queued=200');
+    });
+
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'send_message', sessionId: 11, data: { content: 'busy' } }));
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'error',
+      data: expect.objectContaining({ message: '服务器繁忙，请稍后重试' }),
+    }));
+    expect(agentLoop.removeCancelFlag).toHaveBeenCalledWith(11);
+
+    // 占位已回滚：同一会话必须还能重新发起执行
+    registry.send.mockClear();
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'send_message', sessionId: 11, data: { content: 'retry' } }));
+    expect(registry.send).not.toHaveBeenCalledWith(7, expect.objectContaining({ type: 'session_already_running' }));
+    expect(submit).toHaveBeenCalledTimes(2);
+    submit.mockRestore();
+    // 让重试的执行跑完，否则 claim 会残留到后续用例
+    await executor.runAll();
+  });
+
   it('sendMessageRejectsUnsupportedImagesAndDisconnectedLocalClient', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);

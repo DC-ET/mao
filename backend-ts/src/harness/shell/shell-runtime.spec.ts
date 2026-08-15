@@ -62,6 +62,50 @@ describe('ShellSessionManager', () => {
     manager.close('sh-git');
   });
 
+  it('captures the command exit code and keeps it out of the next read', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(13, 'sh-exit', 7, dir, {});
+    const output = new OutputManager();
+
+    session.writeStdin('bash -c "exit 3"\necho __M1__ $?\n');
+    const failed = await output.readUntilMarker(session, '__M1__', 5000);
+    expect(failed.completed).toBe(true);
+    expect(failed.exitCode).toBe(3);
+
+    session.writeStdin('echo second\necho __M2__ $?\n');
+    const ok = await output.readUntilMarker(session, '__M2__', 5000);
+    expect(ok.exitCode).toBe(0);
+    // 上一条命令回显的退出码不能残留到下一次读取
+    expect(ok.output.trim()).toBe('second');
+    manager.close('sh-exit');
+  });
+
+  it('kills the whole process group when a session closes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(14, 'sh-tree', 7, dir, {});
+    const output = new OutputManager();
+
+    session.writeStdin('sleep 300 & echo $!\necho __M__ $?\n');
+    const started = await output.readUntilMarker(session, '__M__', 5000);
+    const childPid = Number(started.output.trim().split('\n').pop());
+    expect(childPid).toBeGreaterThan(0);
+    expect(() => process.kill(childPid, 0)).not.toThrow();
+
+    manager.close('sh-tree');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(() => process.kill(childPid, 0)).toThrow();
+  });
+
   it('shellSessionManagerEnforcesLimitsAndCleanup', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
     const manager = new ShellSessionManager(

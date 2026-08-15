@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { nowSql } from '../../common/datetime.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
 import { harnessLog } from '../log.js';
 import { boolish, llmModelToConfig, wsEvent } from '../deps.js';
@@ -551,10 +552,6 @@ export class HarnessService {
     if (modelId != null) return this.llmModelMapper.selectById(modelId);
     return this.llmModelMapper.selectDefault ? this.llmModelMapper.selectDefault() : null;
   }
-}
-
-function nowSql(): string {
-  return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
 function hasText(value: string | null | undefined): boolean {

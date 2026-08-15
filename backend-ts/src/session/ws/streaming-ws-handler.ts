@@ -155,6 +155,14 @@ export class StreamingWsHandler {
     }
     const type = typeof root.type === 'string' ? root.type : null;
     if (!type) return;
+    try {
+      await this.dispatch(userId, type, root);
+    } catch (e) {
+      console.error(`WS handler failed for type=${type} userId=${userId}`, e);
+    }
+  }
+
+  private async dispatch(userId: number, type: string, root: Record<string, unknown>): Promise<void> {
     switch (type) {
       case 'subscribe': await this.handleSubscribe(userId, root); break;
       case 'unsubscribe': this.handleUnsubscribe(userId, root); break;
@@ -283,10 +291,37 @@ export class StreamingWsHandler {
     const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
     this.cancelFlags.set(sessionId, flag);
     this.runningExecutionIds.set(sessionId, resolvedEventId);
+    this.submitExecution(sessionId, userId, resolvedEventId, (futureRef) =>
+      this.runExecution(session, userId, sessionId, resolvedEventId, flag, clearTodos, futureRef));
+  }
+
+  /**
+   * 提交 Agent 执行。线程池拒绝时必须回滚占位，否则该会话会被永久判定为
+   * "already running"，后续所有发送都无法启动。
+   */
+  private submitExecution(
+    sessionId: number,
+    userId: number,
+    executionId: string,
+    run: (futureRef: { current: unknown }) => Promise<void>,
+  ): void {
     const futureRef = { current: null as unknown };
-    const future = this.deps.agentExecutor(() => this.runExecution(session, userId, sessionId, resolvedEventId, flag, clearTodos, futureRef));
-    futureRef.current = future;
-    this.runningTasks.set(sessionId, future);
+    try {
+      const future = this.deps.agentExecutor(() => run(futureRef));
+      futureRef.current = future;
+      this.runningTasks.set(sessionId, future);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`Failed to submit agent execution for session ${sessionId}: ${message}`);
+      this.executionClaims.delete(sessionId);
+      this.autoConsumingSessionIds.delete(sessionId);
+      this.runningExecutionIds.delete(sessionId);
+      this.cancelFlags.delete(sessionId);
+      this.deps.agentLoop.removeCancelFlag(sessionId);
+      this.deps.registry.send(userId, wsEvent('error', sessionId, {
+        message: '服务器繁忙，请稍后重试', executionId,
+      }));
+    }
   }
 
   private async runExecution(
@@ -436,10 +471,8 @@ export class StreamingWsHandler {
     const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
     this.cancelFlags.set(sessionId, flag);
     this.runningExecutionIds.set(sessionId, resolvedEventId);
-    const futureRef = { current: null as unknown };
-    const future = this.deps.agentExecutor(() => this.runExecution(session, userId, sessionId, resolvedEventId, flag, true, futureRef));
-    futureRef.current = future;
-    this.runningTasks.set(sessionId, future);
+    this.submitExecution(sessionId, userId, resolvedEventId, (futureRef) =>
+      this.runExecution(session, userId, sessionId, resolvedEventId, flag, true, futureRef));
   }
 
   private async handleToolResult(userId: number, root: Record<string, unknown>): Promise<void> {

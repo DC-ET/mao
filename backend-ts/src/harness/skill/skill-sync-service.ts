@@ -187,9 +187,18 @@ export class SkillSyncService {
   }
 }
 
+/** 取整棵目录树的最大 mtime：只改嵌套文件时顶层目录 mtime 不变，仅看顶层会漏掉同步。 */
 function getLastModified(folder: string): number {
   try {
-    return statSync(folder).mtimeMs;
+    const stat = statSync(folder);
+    if (!stat.isDirectory()) return stat.mtimeMs;
+    let latest = stat.mtimeMs;
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      const child = path.join(folder, entry.name);
+      const childMtime = entry.isDirectory() ? getLastModified(child) : statSync(child).mtimeMs;
+      if (childMtime > latest) latest = childMtime;
+    }
+    return latest;
   } catch {
     return 0;
   }
