@@ -5,6 +5,7 @@ import cn.etarch.mao.agent.mapper.AgentMapper;
 import cn.etarch.mao.agent.service.AgentExperienceService;
 import cn.etarch.mao.common.exception.BusinessException;
 import cn.etarch.mao.common.result.ErrorCode;
+import cn.etarch.mao.harness.delegate.SubagentRoundPersistenceService;
 import cn.etarch.mao.harness.llm.ChatRequest;
 import cn.etarch.mao.harness.llm.ChatUsage;
 import cn.etarch.mao.harness.llm.LlmModelConfig;
@@ -62,6 +63,7 @@ public class HarnessService {
     private final SessionService sessionService;
     private final SessionCompactionService sessionCompactionService;
     private final SessionHistoryLoader sessionHistoryLoader;
+    private final SubagentRoundPersistenceService subagentRoundPersistenceService;
     private final SessionCompactionOrchestrator sessionCompactionOrchestrator;
     private final PromptEngine promptEngine;
     private final ActiveContextCalculator activeContextCalculator;
@@ -127,6 +129,21 @@ public class HarnessService {
             }
 
             @Override
+            public void onSaveToolRound(String content, String thinkingContent,
+                                        List<ChatRequest.ToolCall> toolCalls,
+                                        Map<String, String> toolResults,
+                                        List<AgentLoop.ToolMessageSave> toolMessages,
+                                        ChatUsage usage) {
+                int tokenCount = usage != null ? usage.getTotalTokens() : 0;
+                Long modelId = context.getModelConfig() != null ? context.getModelConfig().getId() : null;
+                Message savedMsg = subagentRoundPersistenceService.persistToolRound(
+                        sessionId, content, thinkingContent, toolCalls, toolMessages, tokenCount, modelId);
+                if (toolResults != null && !toolResults.isEmpty()) {
+                    saveFileChanges(savedMsg.getId(), sessionId, toolCalls, toolResults);
+                }
+            }
+
+            @Override
             public void onSaveToolMessage(String toolCallId, String content) {
                 onSaveToolMessage(toolCallId, content, null);
             }
@@ -169,9 +186,27 @@ public class HarnessService {
                 }
                 int tokenCount = usage != null ? usage.getTotalTokens() : 0;
                 Long modelId = context.getModelConfig() != null ? context.getModelConfig().getId() : null;
-                Message savedMsg = sessionService.saveMessage(targetSessionId, "ASSISTANT",
-                        content, thinkingContent, null, toolCallsJson, tokenCount, modelId);
+                Message savedMsg = toolCallsJson == null
+                        ? subagentRoundPersistenceService.persistAssistant(
+                                targetSessionId, content, thinkingContent, tokenCount, modelId)
+                        : sessionService.saveMessage(targetSessionId, "ASSISTANT",
+                                content, thinkingContent, null, toolCallsJson, tokenCount, modelId);
                 if (toolCalls != null && !toolCalls.isEmpty() && toolResults != null && !toolResults.isEmpty()) {
+                    saveFileChanges(savedMsg.getId(), targetSessionId, toolCalls, toolResults);
+                }
+            }
+
+            @Override
+            public void onSaveToolRound(String content, String thinkingContent,
+                                        List<ChatRequest.ToolCall> toolCalls,
+                                        Map<String, String> toolResults,
+                                        List<AgentLoop.ToolMessageSave> toolMessages,
+                                        ChatUsage usage) {
+                int tokenCount = usage != null ? usage.getTotalTokens() : 0;
+                Long modelId = context.getModelConfig() != null ? context.getModelConfig().getId() : null;
+                Message savedMsg = subagentRoundPersistenceService.persistToolRound(
+                        targetSessionId, content, thinkingContent, toolCalls, toolMessages, tokenCount, modelId);
+                if (toolResults != null && !toolResults.isEmpty()) {
                     saveFileChanges(savedMsg.getId(), targetSessionId, toolCalls, toolResults);
                 }
             }

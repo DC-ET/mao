@@ -900,9 +900,7 @@ public class SessionService {
     }
 
     public int cleanupIncompleteTailAfterId(Long sessionId, Long afterMessageId) {
-        List<Message> messages = MessageHistoryNormalizer.normalizeEntities(
-                getMessagesAfterId(sessionId, afterMessageId), objectMapper);
-        return cleanupIncompleteTail(sessionId, messages);
+        return cleanupIncompleteTail(sessionId, getMessagesAfterId(sessionId, afterMessageId));
     }
 
     private int cleanupIncompleteTail(Long sessionId, List<Message> messages) {

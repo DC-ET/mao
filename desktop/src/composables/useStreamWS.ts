@@ -678,6 +678,7 @@ export function useStreamWS() {
       case 'session_snapshot':
         // Session was already running when we subscribed — sync phase so client can show correct UI
         if (sessionId && data?.phase) {
+          if (data.executionId) setActiveExecution(sessionId, data.executionId)
           sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
           sessionStore.updateSideTaskPhase(Number(sessionId), data.phase as TaskPhase)
           sessionStore.updateSubagentPhase(Number(sessionId), data.phase as TaskPhase)

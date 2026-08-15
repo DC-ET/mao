@@ -15,6 +15,7 @@ import type { AgentDefinitionRegistry } from '../delegate/agent-definition-regis
 import type { HarnessService } from '../core/harness-service.js';
 import type { AgentLoop } from '../core/agent-loop.js';
 import type { SubagentExecutionMapper } from '../delegate/subagent-execution.mapper.js';
+import type { SubagentInvocationService } from '../delegate/subagent-invocation.service.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
 import type { SubAgentVisibilityService } from '../delegate/subagent-visibility-service.js';
 import { AskUserQuestionsTool } from './impl/ask-user-questions-tool.js';
@@ -57,24 +58,21 @@ export interface DefaultToolRegistryDeps {
   harnessService: HarnessService;
   agentLoop: AgentLoop;
   subagentExecutionMapper: SubagentExecutionMapper;
+  subagentInvocationService?: SubagentInvocationService;
   localToolSessionRegistry: LocalToolSessionRegistry;
   visibilityService: SubAgentVisibilityService;
   messageMapper: MessageMapper;
   sessionCompactionService: SessionCompactionService;
-  delegateTimeoutSeconds?: number;
-  delegateCancelGraceSeconds?: number;
 }
 
 /** Instantiates and registers all 22 built-in tools (mirrors Spring Tool bean auto-registration). */
 export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRegistry {
-  const timeout = deps.delegateTimeoutSeconds ?? 3600;
-  const grace = deps.delegateCancelGraceSeconds ?? 30;
   const harnessService = lazyRef(() => deps.harnessService);
   const agentLoop = lazyRef(() => deps.agentLoop);
   const delegate = new DelegateTool(
     deps.definitionRegistry, harnessService, agentLoop, deps.sessionService,
     deps.sessionMapper, deps.subagentExecutionMapper, deps.localToolSessionRegistry,
-    deps.visibilityService, timeout, grace,
+    deps.visibilityService, deps.subagentInvocationService,
   );
   return new ToolRegistry([
     new AskUserQuestionsTool(),
@@ -105,7 +103,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       deps.definitionRegistry, harnessService, agentLoop, deps.sessionService,
       deps.sessionMapper, deps.messageMapper, deps.sessionCompactionService,
       deps.subagentExecutionMapper, deps.localToolSessionRegistry, deps.visibilityService,
-      delegate, timeout, grace,
+      delegate, deps.subagentInvocationService,
     ),
   ]);
 }

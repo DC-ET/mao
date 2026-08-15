@@ -60,6 +60,7 @@ export class WsStreamingEventListener implements AgentEventListener {
     const args = toolCall.function?.arguments ?? null;
     const alreadySent = this.toolCallInfo.has(toolCallId);
     this.toolCallInfo.set(toolCallId, [toolName, args]);
+    this.deps.registry.trackActiveToolCall(this.sessionId, this.executionId, toolCallId, toolName, args ?? '');
     if (alreadySent) return;
     this.send('tool_call_start', {
       tool_call_id: toolCallId,
@@ -69,6 +70,7 @@ export class WsStreamingEventListener implements AgentEventListener {
   }
 
   onToolCallResult(toolCallId: string, result: string): void {
+    this.deps.registry.completeActiveToolCall(this.sessionId, toolCallId);
     const info = this.toolCallInfo.get(toolCallId);
     this.toolCallInfo.delete(toolCallId);
     const toolName = info?.[0] ?? null;
@@ -133,7 +135,11 @@ export class WsStreamingEventListener implements AgentEventListener {
   onThinkingEnd(): void { this.send('thinking_end', {}); }
   onThinkingDelta(delta: string): void { this.send('thinking_delta', { delta }); }
   onLlmWaiting(phase: string, elapsedSeconds: number): void { this.send('llm_waiting', { phase, elapsedSeconds }); }
-  onLlmStreamReset(): void { this.toolCallInfo.clear(); this.send('llm_stream_reset', {}); }
+  onLlmStreamReset(): void {
+    this.toolCallInfo.clear();
+    this.deps.registry.clearActiveToolCalls(this.sessionId);
+    this.send('llm_stream_reset', {});
+  }
   onLlmRetry(reason: string, statusCode: number | null, attempt: number, maxRetries: number, delaySeconds: number): void {
     const payload: Record<string, unknown> = { reason, attempt, maxRetries, delaySeconds };
     if (statusCode != null) payload.statusCode = statusCode;
@@ -142,6 +148,7 @@ export class WsStreamingEventListener implements AgentEventListener {
   onToolCallArgsDelta(toolCallId: string, argumentsDelta: string): void {
     const info = this.toolCallInfo.get(toolCallId);
     if (info) info[1] = argumentsDelta;
+    this.deps.registry.updateActiveToolCallArguments(this.sessionId, toolCallId, argumentsDelta);
     this.send('tool_call_args_delta', { tool_call_id: toolCallId, arguments: argumentsDelta });
   }
 

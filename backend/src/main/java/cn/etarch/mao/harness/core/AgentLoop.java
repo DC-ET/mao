@@ -154,6 +154,17 @@ public class AgentLoop {
                                              Map<String, String> toolResults, ChatUsage usage) {
             onSaveAssistantMessage(content, thinkingContent, toolCalls, usage);
         }
+
+        default void onSaveToolRound(String content, String thinkingContent,
+                                     List<ChatRequest.ToolCall> toolCalls,
+                                     Map<String, String> toolResults,
+                                     List<ToolMessageSave> toolMessages,
+                                     ChatUsage usage) {
+            onSaveAssistantMessage(content, thinkingContent, toolCalls, toolResults, usage);
+            for (ToolMessageSave toolMessage : toolMessages) {
+                onSaveToolMessage(toolMessage.toolCallId(), toolMessage.content(), toolMessage.metadataJson());
+            }
+        }
     }
 
     public void execute(AgentExecutionContext context, AgentEventListener listener) {
@@ -378,12 +389,9 @@ public class AgentLoop {
 
             // 4.1 先保存 assistant，再保存 tool 结果，保证 DB 顺序满足 LLM API 要求
             if (pendingSaveToolCalls[0] != null && persistenceCallback != null) {
-                persistenceCallback.onSaveAssistantMessage(pendingSave[0], pendingThinking[0],
-                        pendingSaveToolCalls[0], toolResults, pendingSaveUsage[0]);
-                for (ToolMessageSave toolSave : pendingToolSaves) {
-                    persistenceCallback.onSaveToolMessage(
-                            toolSave.toolCallId(), toolSave.content(), toolSave.metadataJson());
-                }
+                persistenceCallback.onSaveToolRound(pendingSave[0], pendingThinking[0],
+                        pendingSaveToolCalls[0], toolResults, List.copyOf(pendingToolSaves),
+                        pendingSaveUsage[0]);
                 pendingSave[0] = null;
                 pendingThinking[0] = null;
                 pendingSaveUsage[0] = null;
@@ -470,7 +478,7 @@ public class AgentLoop {
                 request);
     }
 
-    private record ToolMessageSave(String toolCallId, String content, String metadataJson) {}
+    public record ToolMessageSave(String toolCallId, String content, String metadataJson) {}
 
     /**
      * 回滚当前轮次写入内存的 assistant+tool 消息（用户中断时尚未持久化）。

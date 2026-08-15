@@ -151,10 +151,10 @@ class AgentLoopTest {
         agentLoop.execute(context, listener, persistence);
 
         ArgumentCaptor<Map<String, String>> resultsCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(persistence).onSaveAssistantMessage(eq(""), eq(null), any(), resultsCaptor.capture(), any(ChatUsage.class));
+        verify(persistence).onSaveToolRound(eq(""), eq(null), any(), resultsCaptor.capture(), any(),
+                any(ChatUsage.class));
         assertThat(resultsCaptor.getValue()).containsKey("call-1");
-        verify(persistence).onSaveToolMessage(eq("call-1"),
-                eq("{\"ok\":true,\"_private_diff\":{\"diff_mode\":\"PATCH\"}}"), eq(null));
+        verify(persistence, never()).onSaveToolMessage(eq("call-1"), anyString(), any());
         verify(persistence).onSaveAssistantMessage(eq("done"), eq(null), eq(List.of()), any(ChatUsage.class));
         verify(listener, times(2)).onToolCallStart(any(ChatRequest.ToolCall.class));
         verify(listener).onToolCallResult(eq("call-1"), anyString());
@@ -201,8 +201,12 @@ class AgentLoopTest {
 
         agentLoop.execute(context, listener, persistence);
 
-        verify(persistence).onSaveToolMessage(eq("call-img"), org.mockito.ArgumentMatchers.argThat(content ->
-                content.contains("图片读取成功") && !content.contains("data_uri")), org.mockito.ArgumentMatchers.contains("data_uri"));
+        ArgumentCaptor<List<AgentLoop.ToolMessageSave>> saves = ArgumentCaptor.forClass(List.class);
+        verify(persistence).onSaveToolRound(any(), any(), any(), any(), saves.capture(), any());
+        assertThat(saves.getValue()).singleElement().satisfies(save -> {
+            assertThat(save.content()).contains("图片读取成功").doesNotContain("data_uri");
+            assertThat(save.metadataJson()).contains("data_uri");
+        });
         assertThat(context.getToolAttachments()).containsKey("call-img");
         assertThat(context.getToolAttachments().get("call-img").getDataUri()).startsWith("data:image/png;base64,");
     }

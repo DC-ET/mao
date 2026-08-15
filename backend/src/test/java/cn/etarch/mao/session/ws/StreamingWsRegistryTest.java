@@ -46,6 +46,21 @@ class StreamingWsRegistryTest {
     }
 
     @Test
+    void snapshotsActiveToolCallsUntilCompletion() {
+        registry.trackActiveToolCall(10L, "exec-1", "call-1", "shell", "{\"command\":\"npm test\"}");
+        registry.updateActiveToolCallArguments(10L, "call-1", "{\"command\":\"npm run test\"}");
+
+        var snapshots = registry.getActiveToolCalls(10L);
+        assertEquals(1, snapshots.size());
+        assertEquals("call-1", snapshots.get(0).get("tool_call_id"));
+        assertEquals("{\"command\":\"npm run test\"}", snapshots.get(0).get("arguments"));
+        assertEquals("exec-1", snapshots.get(0).get("executionId"));
+
+        registry.completeActiveToolCall(10L, "call-1");
+        assertTrue(registry.getActiveToolCalls(10L).isEmpty());
+    }
+
+    @Test
     void reportsFailureWhenAllWritesFail() throws Exception {
         WebSocketSession session = mock(WebSocketSession.class);
         when(session.getId()).thenReturn("ws-2");

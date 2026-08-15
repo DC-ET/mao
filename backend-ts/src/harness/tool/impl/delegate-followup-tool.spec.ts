@@ -23,6 +23,7 @@ describe('DelegateFollowupTool', () => {
   } as unknown as AgentLoop & Record<string, ReturnType<typeof vi.fn>>;
   const sessionService = {
     saveMessage: vi.fn(),
+    getMessagesAfterId: vi.fn(),
     cleanupIncompleteTailAfterId: vi.fn(),
   } as unknown as SessionService & Record<string, ReturnType<typeof vi.fn>>;
   const sessionMapper = {
@@ -52,7 +53,7 @@ describe('DelegateFollowupTool', () => {
   } as unknown as LocalToolSessionRegistry;
   const visibilityService = {
     ensureSubscribed: vi.fn(),
-    executeVisibleWithTimeout: vi.fn(),
+    executeVisible: vi.fn(),
     finishSubagent: vi.fn(),
   } as unknown as SubAgentVisibilityService & Record<string, ReturnType<typeof vi.fn>>;
   const delegateTool = { buildSubContext: vi.fn() } as unknown as DelegateTool & { buildSubContext: ReturnType<typeof vi.fn> };
@@ -60,7 +61,7 @@ describe('DelegateFollowupTool', () => {
   const tool = new DelegateFollowupTool(
     definitionRegistry, harnessService, agentLoop, sessionService, sessionMapper,
     messageMapper, sessionCompactionService, subagentExecutionMapper, localToolSessionRegistry,
-    visibilityService, delegateTool, 600,
+    visibilityService, delegateTool,
   );
 
   beforeEach(() => {
@@ -163,10 +164,13 @@ describe('DelegateFollowupTool', () => {
     collector.onThinkingStart();
     collector.onContentDelta('第二轮审查结论：修复到位，无新问题');
     collector.onMessageEnd({ promptTokens: 100, completionTokens: 50, totalTokens: 150 });
-    visibilityService.executeVisibleWithTimeout.mockResolvedValue({ collector, executionId: 'exec-1' });
+    visibilityService.executeVisible.mockResolvedValue({ collector, executionId: 'exec-1' });
     subagentExecutionMapper.countByChildSessionId.mockResolvedValue(2);
     subagentExecutionMapper.countCompletedByChildSessionId.mockResolvedValue(1);
     sessionService.saveMessage.mockResolvedValue({ id: 9 });
+    sessionService.getMessagesAfterId.mockResolvedValue([
+      { id: 10, role: 'ASSISTANT', content: '第二轮审查结论：修复到位，无新问题', toolCalls: null },
+    ]);
     messageMapper.selectLast.mockResolvedValue(null);
 
     const result = JSON.parse(await tool.execute(
@@ -223,7 +227,7 @@ describe('DelegateTool', () => {
     };
     const sessionService = {
       createSession: vi.fn(async () => ({ id: 200, userId: 7 })),
-      saveMessage: vi.fn(),
+      saveMessage: vi.fn(async () => ({ id: 300 })),
     };
     const sessionMapper = {
       selectById: vi.fn(async () => ({ id: 1, userId: 7, agentId: 3, executionMode: 'CLOUD', workspace: '/w' })),
@@ -236,7 +240,7 @@ describe('DelegateTool', () => {
     collector.onMessageEnd({ promptTokens: 1, completionTokens: 1, totalTokens: 2 });
     const visibilityService = {
       notifySubagentCreated: vi.fn(),
-      executeVisibleWithTimeout: vi.fn(async () => ({ collector, executionId: 'e1' })),
+      executeVisible: vi.fn(async () => ({ collector, executionId: 'e1' })),
       finishSubagent: vi.fn(),
     };
     const tool = new DelegateTool(

@@ -9,6 +9,7 @@ import type {
 import type { AgentLoop } from './agent-loop.js';
 import type { HarnessService } from './harness-service.js';
 import type { SessionTodoMapper } from '../todo/session-todo.mapper.js';
+import type { SubagentRecoveryCoordinator } from '../delegate/subagent-recovery-coordinator.js';
 
 export class CrashRecoveryRunner {
   constructor(
@@ -26,17 +27,23 @@ export class CrashRecoveryRunner {
       submit: (fn) => { void fn(); },
     },
     private readonly onExecutionFinished?: (sessionId: number, userId: number) => Promise<void>,
+    private readonly subagentCoordinator?: SubagentRecoveryCoordinator,
   ) {}
 
   async run(): Promise<void> {
-    const stale = this.sessionMapper.selectByPhase
-      ? await this.sessionMapper.selectByPhase('RUNNING')
-      : [];
+    const blocked = this.subagentCoordinator
+      ? await this.subagentCoordinator.schedule((session) => this.recoverSession(session))
+      : new Set<number>();
+    const running = this.sessionMapper.selectByPhase ? await this.sessionMapper.selectByPhase('RUNNING') : [];
+    const resuming = this.sessionMapper.selectByPhase ? await this.sessionMapper.selectByPhase('RESUMING') : [];
+    const stale = [...running, ...resuming].filter((session, index, all) =>
+      session.sessionType !== 'SUBAGENT'
+      && session.id != null
+      && !blocked.has(session.id)
+      && all.findIndex((item) => item.id === session.id) === index);
     if (stale.length === 0) return;
     harnessLog('warn', `Found ${stale.length} sessions stuck in RUNNING after restart, initiating recovery`);
-    for (const session of stale) {
-      this.agentExecutor.submit(() => this.recoverSession(session));
-    }
+    for (const session of stale) this.agentExecutor.submit(() => this.recoverSession(session));
   }
 
   private async recoverSession(session: Session): Promise<void> {
@@ -49,7 +56,7 @@ export class CrashRecoveryRunner {
         harnessLog('info', `Session ${sessionId}: cleaned up ${deleted} incomplete tail messages`);
       }
       await this.sessionService.updatePhase(sessionId, 'RESUMING');
-      this.notifyClient(userId, sessionId, 'RESUMING');
+      this.notifyClient(userId, sessionId, 'RUNNING');
       const cancelFlag = this.agentLoop.registerCancelFlag(sessionId);
       const { WsStreamingEventListener } = await import('../../session/ws/ws-streaming-event-listener.js');
       const listener = new WsStreamingEventListener({

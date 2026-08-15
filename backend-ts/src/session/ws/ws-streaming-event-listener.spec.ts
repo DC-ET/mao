@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { WsStreamingEventListener, contentParts } from './ws-streaming-event-listener.js';
 
 function makeListener() {
-  const registry = { send: vi.fn() };
+  const registry = {
+    send: vi.fn(),
+    trackActiveToolCall: vi.fn(),
+    updateActiveToolCallArguments: vi.fn(),
+    completeActiveToolCall: vi.fn(),
+    clearActiveToolCalls: vi.fn(),
+  };
   const activityService = { record: vi.fn(async () => ({ id: 42 })) };
   const activityHeartbeat = { touch: vi.fn() };
   const sessionTodoMapper = { selectBySessionId: vi.fn(async () => [{ id: 1, content: 'todo', status: 'pending' }]) };

@@ -119,6 +119,10 @@ export interface CompactionEventVO {
   createdAt?: string | null;
 }
 
+export function visiblePhase(phase: string | null | undefined): string {
+  return phase === 'RESUMING' ? 'RUNNING' : phase ?? 'IDLE';
+}
+
 export function toSessionVO(session: Session, agentMap: Map<number, { name: string }>, modelMap: Map<number, LlmModelRef>): SessionVO {
   const vo: SessionVO = {
     id: session.id,
@@ -134,13 +138,13 @@ export function toSessionVO(session: Session, agentMap: Map<number, { name: stri
     osVersion: session.osVersion,
     createdAt: javaLocalDateTimeString(session.createdAt),
     updatedAt: javaLocalDateTimeString(session.updatedAt),
-    phase: session.phase != null ? session.phase : 'IDLE',
+    phase: visiblePhase(session.phase),
     summary: session.summary,
     elapsedMs: session.elapsedMs != null ? session.elapsedMs : 0,
     projectKey: session.projectKey,
     contextTokens: session.contextTokens,
     permissionLevel: session.permissionLevel,
-    running: session.phase === 'RUNNING' || session.phase === 'WAITING_APPROVAL',
+    running: session.phase === 'RUNNING' || session.phase === 'RESUMING' || session.phase === 'WAITING_APPROVAL',
     unread: session.unread === 1,
   };
   if (session.isGit != null) {
@@ -182,7 +186,7 @@ export function toAdminSessionVO(
     title: session.title,
     status: session.status,
     executionMode: session.executionMode,
-    phase: session.phase != null ? session.phase : 'IDLE',
+    phase: visiblePhase(session.phase),
     elapsedMs: session.elapsedMs != null ? session.elapsedMs : 0,
     projectKey: session.projectKey,
     workspace: session.workspace,

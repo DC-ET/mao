@@ -1,6 +1,5 @@
 package cn.etarch.mao.harness.tool.impl;
 
-import cn.etarch.mao.config.DelegateConfig;
 import cn.etarch.mao.harness.core.AgentExecutionContext;
 import cn.etarch.mao.harness.core.AgentLoop;
 import cn.etarch.mao.harness.core.HarnessService;
@@ -8,6 +7,7 @@ import cn.etarch.mao.harness.delegate.AgentDefinition;
 import cn.etarch.mao.harness.delegate.AgentDefinitionRegistry;
 import cn.etarch.mao.harness.delegate.SubAgentResultCollector;
 import cn.etarch.mao.harness.delegate.SubAgentVisibilityService;
+import cn.etarch.mao.harness.delegate.SubagentExecutionLifecycleService;
 import cn.etarch.mao.harness.delegate.entity.SubagentExecution;
 import cn.etarch.mao.harness.delegate.mapper.SubagentExecutionMapper;
 import cn.etarch.mao.harness.local.LocalToolSessionRegistry;
@@ -19,6 +19,7 @@ import cn.etarch.mao.session.service.SessionService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
@@ -42,7 +43,7 @@ public class DelegateTool implements Tool {
     private final SubagentExecutionMapper subagentExecutionMapper;
     private final LocalToolSessionRegistry localToolSessionRegistry;
     private final SubAgentVisibilityService visibilityService;
-    private final DelegateConfig delegateConfig;
+    private final SubagentExecutionLifecycleService lifecycleService;
     private final ObjectMapper objectMapper;
 
     public DelegateTool(AgentDefinitionRegistry definitionRegistry,
@@ -53,7 +54,6 @@ public class DelegateTool implements Tool {
                         SubagentExecutionMapper subagentExecutionMapper,
                         LocalToolSessionRegistry localToolSessionRegistry,
                         SubAgentVisibilityService visibilityService,
-                        DelegateConfig delegateConfig,
                         ObjectMapper objectMapper) {
         this.definitionRegistry = definitionRegistry;
         this.harnessService = harnessService;
@@ -63,7 +63,30 @@ public class DelegateTool implements Tool {
         this.subagentExecutionMapper = subagentExecutionMapper;
         this.localToolSessionRegistry = localToolSessionRegistry;
         this.visibilityService = visibilityService;
-        this.delegateConfig = delegateConfig;
+        this.objectMapper = objectMapper;
+        this.lifecycleService = null;
+    }
+
+    @Autowired
+    public DelegateTool(AgentDefinitionRegistry definitionRegistry,
+                        @Lazy HarnessService harnessService,
+                        @Lazy AgentLoop agentLoop,
+                        SessionService sessionService,
+                        SessionMapper sessionMapper,
+                        SubagentExecutionMapper subagentExecutionMapper,
+                        LocalToolSessionRegistry localToolSessionRegistry,
+                        SubAgentVisibilityService visibilityService,
+                        SubagentExecutionLifecycleService lifecycleService,
+                        ObjectMapper objectMapper) {
+        this.definitionRegistry = definitionRegistry;
+        this.harnessService = harnessService;
+        this.agentLoop = agentLoop;
+        this.sessionService = sessionService;
+        this.sessionMapper = sessionMapper;
+        this.subagentExecutionMapper = subagentExecutionMapper;
+        this.localToolSessionRegistry = localToolSessionRegistry;
+        this.visibilityService = visibilityService;
+        this.lifecycleService = lifecycleService;
         this.objectMapper = objectMapper;
     }
 
@@ -189,22 +212,23 @@ public class DelegateTool implements Tool {
             // 3. 创建子会话（此后任意异常都必须收尾，避免永久 RUNNING）
             String childTitle = "子代理(" + agentType + "): "
                     + (task.length() > 40 ? task.substring(0, 40) + "..." : task);
-            childSession = sessionService.createSession(
-                    parentSession.getUserId(),
-                    parentSession.getAgentId(),
-                    childTitle,
-                    parentSession.getExecutionMode(),
-                    parentSession.getWorkspace(),
-                    parentSession.getPermissionLevel(),
-                    parentSession.getIsGit(),
-                    parentSession.getPlatform(),
-                    parentSession.getShellPath(),
-                    parentSession.getOsVersion(),
-                    parentSession.getModelId());
-            childSession.setParentSessionId(sessionId);
-            childSession.setSessionType("SUBAGENT");
-            childSession.setPhase(null);
-            sessionMapper.updateById(childSession);
+            if (lifecycleService != null) {
+                SubagentExecutionLifecycleService.CreatedDelegate created = lifecycleService.createDelegate(
+                        parentSession, agentType, task, childTitle, ToolCallContext.getToolCallId());
+                childSession = created.childSession();
+                execution = created.execution();
+            } else {
+                childSession = sessionService.createSession(
+                        parentSession.getUserId(), parentSession.getAgentId(), childTitle,
+                        parentSession.getExecutionMode(), parentSession.getWorkspace(),
+                        parentSession.getPermissionLevel(), parentSession.getIsGit(),
+                        parentSession.getPlatform(), parentSession.getShellPath(),
+                        parentSession.getOsVersion(), parentSession.getModelId());
+                childSession.setParentSessionId(sessionId);
+                childSession.setSessionType("SUBAGENT");
+                childSession.setPhase(null);
+                sessionMapper.updateById(childSession);
+            }
 
             log.info("Created sub-agent session {} (type={}) for parent session {}",
                     childSession.getId(), agentType, sessionId);
@@ -215,19 +239,24 @@ public class DelegateTool implements Tool {
                 localRegistered = true;
             }
 
-            // 4. 创建审计记录
-            execution = new SubagentExecution();
-            execution.setParentSessionId(sessionId);
-            execution.setChildSessionId(childSession.getId());
-            execution.setAgentType(agentType);
-            execution.setTaskDescription(task);
-            execution.setStatus("RUNNING");
-            execution.setStartedAt(LocalDateTime.now());
-            subagentExecutionMapper.insert(execution);
-
-            // 5. 保存初始 USER 消息到子会话
-            sessionService.saveMessage(childSession.getId(), "USER", task,
-                    null, null, null, 0, null);
+            // Legacy constructor remains available for focused unit tests; Spring uses the transactional lifecycle.
+            if (execution == null) {
+                execution = new SubagentExecution();
+                execution.setParentSessionId(sessionId);
+                execution.setChildSessionId(childSession.getId());
+                execution.setAgentType(agentType);
+                execution.setInvocationType("DELEGATE");
+                execution.setParentToolCallId(ToolCallContext.getToolCallId());
+                execution.setDeliveryStatus("PENDING");
+                execution.setTaskDescription(task);
+                execution.setStatus("RUNNING");
+                execution.setStartedAt(LocalDateTime.now());
+                subagentExecutionMapper.insert(execution);
+                cn.etarch.mao.session.entity.Message startMessage = sessionService.saveMessage(
+                        childSession.getId(), "USER", task, null, null, null, 0, null);
+                execution.setExecutionStartMessageId(startMessage != null ? startMessage.getId() : null);
+                subagentExecutionMapper.updateById(execution);
+            }
 
             // 5.5 通知前端并 auto-subscribe（在执行前，避免丢首包；携带 toolCallId 便于并行委派精确绑定）
             visibilityService.notifySubagentCreated(
@@ -245,18 +274,14 @@ public class DelegateTool implements Tool {
                 }
             }
 
-            // 7. 同步执行子智能体（WS 流式 + 过程落库 + 结果收集），带整体超时兜底：
-            //    子代理 LLM 请求卡死（如 SSL 写阻塞导致 OkHttp 超时机制失效）时，
-            //    到达 timeoutSeconds 后请求取消子代理，避免无限拖住父 Agent。
+            // 7. 同步执行子智能体（WS 流式 + 过程落库 + 结果收集），直到完成或被取消。
             SubAgentVisibilityService.VisibleRunResult runResult;
             try {
                 boolean skip = childCancel.get();
                 if (skip) {
                     log.info("Skip sub-agent session {}: parent already cancelled", childSession.getId());
                 }
-                runResult = visibilityService.executeVisibleWithTimeout(
-                        childSession, subContext, skip, childCancel,
-                        delegateConfig.getTimeoutSeconds(), delegateConfig.getCancelGraceSeconds());
+                runResult = visibilityService.executeVisible(childSession, subContext, skip, childCancel);
             } finally {
                 if (cancelFlagRegistered) {
                     agentLoop.removeCancelFlag(childSession.getId());
@@ -317,7 +342,8 @@ public class DelegateTool implements Tool {
                 sessionService.saveMessage(childSession.getId(), "ASSISTANT", resultText,
                         null, null, null, 0,
                         subContext.getModelConfig() != null
-                                ? subContext.getModelConfig().getId() : null);
+                                ? subContext.getModelConfig().getId() : null,
+                        "{\"subagentTerminalStatus\":\"FAILED\"}");
 
                 markExecutionTerminal(execution, "FAILED", resultText, subContext.getCurrentRound(),
                         resultCollector);
@@ -431,9 +457,19 @@ public class DelegateTool implements Tool {
         if (rounds != null) {
             execution.setTotalRounds(rounds);
         }
-        if (collector != null && collector.getTotalUsage() != null) {
-            execution.setTotalPromptTokens(collector.getTotalUsage().getPromptTokens());
-            execution.setTotalCompletionTokens(collector.getTotalUsage().getCompletionTokens());
+        if (collector != null) {
+            execution.setTotalToolCalls(collector.getToolCallCount());
+            if (collector.getTotalUsage() != null) {
+                execution.setTotalPromptTokens(collector.getTotalUsage().getPromptTokens());
+                execution.setTotalCompletionTokens(collector.getTotalUsage().getCompletionTokens());
+            }
+        }
+        if (execution.getExecutionStartMessageId() != null) {
+            sessionService.getMessagesAfterId(execution.getChildSessionId(), execution.getExecutionStartMessageId())
+                    .stream().filter(message -> "ASSISTANT".equals(message.getRole())
+                            && (message.getToolCalls() == null || message.getToolCalls().isBlank()))
+                    .reduce((first, second) -> second)
+                    .ifPresent(message -> execution.setFinalMessageId(message.getId()));
         }
         subagentExecutionMapper.updateById(execution);
     }
@@ -443,7 +479,7 @@ public class DelegateTool implements Tool {
      * 复用 HarnessService.buildContext() 获取基础上下文，然后覆盖 system prompt 和工具集。
      * 包内可见：DelegateFollowupTool 复用同一逻辑对既有子会话续跑。
      */
-    AgentExecutionContext buildSubContext(Session childSession,
+    public AgentExecutionContext buildSubContext(Session childSession,
                                           AgentDefinition definition) {
         // 复用 HarnessService 构建基础上下文（含模型配置、环境信息等）
         AgentExecutionContext ctx = harnessService.buildContext(childSession.getId());

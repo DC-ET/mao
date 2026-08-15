@@ -48,8 +48,7 @@ public class SubAgentVisibilityService {
     private final HarnessService harnessService;
 
     /**
-     * 子代理执行线程池（守护线程）。子代理整体执行有超时兜底，
-     * 卡死时父 Agent 在超时后返回失败，不再被同步等待拖住。
+     * 子代理执行线程池（守护线程）。
      */
     private final ExecutorService subagentExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "subagent-executor");
@@ -146,47 +145,17 @@ public class SubAgentVisibilityService {
     }
 
     /**
-     * 带整体超时执行子智能体（见 {@link #executeVisible}）。
-     *
-     * <p>子代理 LLM 请求卡死（如 SSL 写阻塞导致 OkHttp 超时机制失效）时，若不加限制，
-     * 同步等待会无限拖住父 Agent。这里在独立线程执行子代理，到达 {@code timeoutSeconds}
-     * 后置位取消标志请求其退出，再给 {@code cancelGraceSeconds} 宽限期等待其响应取消；
-     * 宽限期后仍卡死则放弃等待并抛出异常（由调用方标记失败返回）。</p>
-     *
-     * @param cancelFlag 子代理取消标志；超时后置位以请求其尽快退出（可为 null）
+     * 执行子智能体并等待其完成。子代理仅由父会话取消或用户主动取消，
+     * 不再受固定运行时长限制。
      */
-    public VisibleRunResult executeVisibleWithTimeout(Session childSession,
-                                                      AgentExecutionContext subContext,
-                                                      boolean skip,
-                                                      AtomicBoolean cancelFlag,
-                                                      long timeoutSeconds,
-                                                      long cancelGraceSeconds) {
+    public VisibleRunResult executeVisible(Session childSession,
+                                            AgentExecutionContext subContext,
+                                            boolean skip,
+                                            AtomicBoolean cancelFlag) {
         CompletableFuture<VisibleRunResult> subFuture = CompletableFuture.supplyAsync(
                 () -> executeVisible(childSession, subContext, skip), subagentExecutor);
         try {
-            return subFuture.get(timeoutSeconds, TimeUnit.SECONDS);
-        } catch (TimeoutException te) {
-            if (cancelFlag != null) {
-                cancelFlag.set(true);
-            }
-            log.warn("Sub-agent session {} exceeded timeout {}s, requesting cancel",
-                    childSession.getId(), timeoutSeconds);
-            try {
-                return subFuture.get(cancelGraceSeconds, TimeUnit.SECONDS);
-            } catch (TimeoutException te2) {
-                subFuture.cancel(true);
-                throw new RuntimeException("子代理执行超时(>=" + timeoutSeconds
-                        + "s)，已请求取消但未在宽限期(" + cancelGraceSeconds + "s)内退出");
-            } catch (ExecutionException ee2) {
-                Throwable cause = ee2.getCause() != null ? ee2.getCause() : ee2;
-                throw new RuntimeException("子代理执行超时后终止异常: " + cause.getMessage(), cause);
-            } catch (InterruptedException ie2) {
-                Thread.currentThread().interrupt();
-                if (cancelFlag != null) {
-                    cancelFlag.set(true);
-                }
-                throw new RuntimeException("委派执行被中断", ie2);
-            }
+            return subFuture.get();
         } catch (ExecutionException ee) {
             Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
             throw new RuntimeException("子代理执行失败: " + cause.getMessage(), cause);
@@ -196,6 +165,37 @@ public class SubAgentVisibilityService {
                 cancelFlag.set(true);
             }
             throw new RuntimeException("委派执行被中断", ie);
+        }
+    }
+
+    public VisibleRunResult executeVisibleWithTimeout(Session childSession,
+                                                       AgentExecutionContext subContext,
+                                                       boolean skip,
+                                                       AtomicBoolean cancelFlag,
+                                                       long timeoutSeconds,
+                                                       long cancelGraceSeconds) {
+        CompletableFuture<VisibleRunResult> future = CompletableFuture.supplyAsync(
+                () -> executeVisible(childSession, subContext, skip), subagentExecutor);
+        try {
+            return future.get(Math.max(1, timeoutSeconds), TimeUnit.SECONDS);
+        } catch (TimeoutException timeout) {
+            if (cancelFlag != null) cancelFlag.set(true);
+            try {
+                return future.get(Math.max(1, cancelGraceSeconds), TimeUnit.SECONDS);
+            } catch (TimeoutException graceTimeout) {
+                throw new IllegalStateException("子代理执行超时，取消宽限期内未退出", graceTimeout);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("委派执行被中断", interrupted);
+            } catch (ExecutionException execution) {
+                throw new IllegalStateException("子代理执行失败", execution.getCause());
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            if (cancelFlag != null) cancelFlag.set(true);
+            throw new IllegalStateException("委派执行被中断", interrupted);
+        } catch (ExecutionException execution) {
+            throw new IllegalStateException("子代理执行失败", execution.getCause());
         }
     }
 

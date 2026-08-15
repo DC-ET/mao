@@ -35,6 +35,20 @@ describe('StreamingWsRegistry', () => {
     expect(result.successCount).toBe(1);
   });
 
+  it('snapshots active tool calls until completion', () => {
+    registry.trackActiveToolCall(10, 'exec-1', 'call-1', 'shell', '{"command":"npm test"}');
+    registry.updateActiveToolCallArguments(10, 'call-1', '{"command":"npm run test"}');
+
+    expect(registry.getActiveToolCalls(10)).toEqual([expect.objectContaining({
+      tool_call_id: 'call-1',
+      arguments: '{"command":"npm run test"}',
+      executionId: 'exec-1',
+    })]);
+
+    registry.completeActiveToolCall(10, 'call-1');
+    expect(registry.getActiveToolCalls(10)).toEqual([]);
+  });
+
   it('reportsFailureWhenAllWritesFail', async () => {
     const session = mockSocket('ws-2', () => { throw new Error('closed'); });
     registry.register(session, 1, 'electron');

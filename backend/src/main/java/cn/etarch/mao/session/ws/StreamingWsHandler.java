@@ -269,6 +269,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
         }
         runningTasks.remove(sessionId);
         runningExecutionIds.remove(sessionId);
+        registry.clearActiveToolCalls(sessionId);
         // 注意：不要在此移除 cancel flag —— AgentLoop 线程可能还阻塞在工具执行中，
         // 需要保留 flag 使其从阻塞中恢复后能感知取消并停止后续轮次。
         // 清理由执行线程的 finally 块完成（cancelFlags.remove / agentLoop.removeCancelFlag）。
@@ -421,9 +422,15 @@ public class StreamingWsHandler extends TextWebSocketHandler {
             localToolSessionRegistry.setUserForSession(sessionId, userId);
         }
         if (active) {
-            registry.send(userId, WsEvent.of("session_snapshot", sessionId, Map.of(
-                    "phase", s.getPhase()
-            )));
+            String executionId = runningExecutionIds.get(sessionId);
+            Map<String, Object> snapshot = new LinkedHashMap<>();
+            snapshot.put("phase", s.getPhase());
+            if (executionId != null) snapshot.put("executionId", executionId);
+            registry.send(userId, WsEvent.of("session_snapshot", sessionId, snapshot));
+
+            for (Map<String, Object> toolCall : registry.getActiveToolCalls(sessionId)) {
+                registry.send(userId, WsEvent.of("tool_call_start", sessionId, toolCall));
+            }
 
             // Re-push pending ask_user_questions so the client can restore the question panel
             // after a WebSocket reconnect or page refresh. Reuses the original requestId,
@@ -648,6 +655,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 } catch (Exception ignored) {}
             } finally {
                 releaseSessionExecutionResources(sessionId);
+                registry.clearActiveToolCalls(sessionId);
                 runningTasks.remove(sessionId, futureRef[0]);
                 runningExecutionIds.remove(sessionId, executionId);
                 executionClaims.remove(sessionId);
@@ -955,6 +963,7 @@ public class StreamingWsHandler extends TextWebSocketHandler {
                 } catch (Exception ignored) {}
             } finally {
                 releaseSessionExecutionResources(sessionId);
+                registry.clearActiveToolCalls(sessionId);
                 runningTasks.remove(sessionId, futureRef[0]);
                 runningExecutionIds.remove(sessionId, executionId);
                 executionClaims.remove(sessionId);

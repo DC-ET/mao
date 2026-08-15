@@ -30,9 +30,17 @@ export interface MessagePersistenceCallback {
     usage?: ChatUsage,
   ): void | Promise<void>;
   onSaveToolMessage(toolCallId: string, content: string, metadataJson?: string | null): void | Promise<void>;
+  onSaveToolRound?(
+    content: string | null | undefined,
+    thinkingContent: string | null | undefined,
+    toolCalls: ToolCall[],
+    toolMessages: ToolMessageSave[],
+    toolResults: Record<string, string>,
+    usage?: ChatUsage,
+  ): void | Promise<void>;
 }
 
-interface ToolMessageSave {
+export interface ToolMessageSave {
   toolCallId: string;
   content: string;
   metadataJson: string | null;
@@ -279,13 +287,20 @@ export class AgentLoop {
         }
 
         if (pendingSaveToolCalls && persistenceCallback) {
-          await Promise.resolve(persistenceCallback.onSaveAssistantMessage(
-            pendingSave, pendingThinking, pendingSaveToolCalls, toolResults, pendingSaveUsage ?? undefined,
-          ));
-          for (const toolSave of pendingToolSaves) {
-            await Promise.resolve(persistenceCallback.onSaveToolMessage(
-              toolSave.toolCallId, toolSave.content, toolSave.metadataJson,
+          if (persistenceCallback.onSaveToolRound) {
+            await Promise.resolve(persistenceCallback.onSaveToolRound(
+              pendingSave, pendingThinking, pendingSaveToolCalls, pendingToolSaves,
+              toolResults, pendingSaveUsage ?? undefined,
             ));
+          } else {
+            await Promise.resolve(persistenceCallback.onSaveAssistantMessage(
+              pendingSave, pendingThinking, pendingSaveToolCalls, toolResults, pendingSaveUsage ?? undefined,
+            ));
+            for (const toolSave of pendingToolSaves) {
+              await Promise.resolve(persistenceCallback.onSaveToolMessage(
+                toolSave.toolCallId, toolSave.content, toolSave.metadataJson,
+              ));
+            }
           }
           pendingSave = null;
           pendingThinking = null;

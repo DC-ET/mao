@@ -10,6 +10,8 @@ import type { SubAgentVisibilityService } from '../../delegate/subagent-visibili
 import type { SubAgentResultCollector } from '../../delegate/subagent-result-collector.js';
 import type { SubagentExecution } from '../../../session/types.js';
 import { harnessLog } from '../../log.js';
+import { ToolCallContext } from '../tool-call-context.js';
+import type { SubagentInvocationService } from '../../delegate/subagent-invocation.service.js';
 
 export class DelegateTool extends BaseTool {
   constructor(
@@ -21,8 +23,7 @@ export class DelegateTool extends BaseTool {
     private readonly subagentExecutionMapper: SubagentExecutionMapper,
     private readonly localToolSessionRegistry: LocalToolSessionRegistry,
     private readonly visibilityService: SubAgentVisibilityService,
-    private readonly timeoutSeconds = 3600,
-    private readonly cancelGraceSeconds = 30,
+    private readonly invocationService?: SubagentInvocationService,
   ) { super(); }
 
   getName(): string { return 'delegate'; }
@@ -74,32 +75,42 @@ export class DelegateTool extends BaseTool {
       }
       const parentSession = sessionId != null ? await this.sessionMapper.selectById(sessionId) : null;
       if (!parentSession) return toJson({ error: '父会话不存在: ' + sessionId });
-      if (!this.sessionService.createSession) return errorJson('createSession 不可用');
+      const toolCallId = ToolCallContext.getToolCallId()
+        ?? (this.invocationService ? null : `legacy_delegate_${Date.now()}`);
+      if (!toolCallId) return errorJson('缺少父工具调用 ID');
       const childTitle = '子代理(' + agentType + '): ' + (task.length > 40 ? task.slice(0, 40) + '...' : task);
-      const childSession = await this.sessionService.createSession(
-        parentSession.userId, parentSession.agentId, childTitle,
-        parentSession.executionMode, parentSession.workspace, parentSession.permissionLevel,
-        parentSession.isGit, parentSession.platform, parentSession.shellPath, parentSession.osVersion,
-        parentSession.modelId,
-      );
-      childSession.parentSessionId = sessionId;
-      childSession.sessionType = 'SUBAGENT';
-      childSession.phase = null;
-      await this.sessionMapper.updateById?.(childSession);
+      let childSession: Session;
+      let execution: SubagentExecution;
+      if (this.invocationService) {
+        ({ child: childSession, execution } = await this.invocationService.createDelegate(
+          parentSession, agentType, task, childTitle, toolCallId,
+        ));
+      } else {
+        if (!this.sessionService.createSession) return errorJson('createSession 不可用');
+        childSession = await this.sessionService.createSession(
+          parentSession.userId, parentSession.agentId, childTitle,
+          parentSession.executionMode, parentSession.workspace, parentSession.permissionLevel,
+          parentSession.isGit, parentSession.platform, parentSession.shellPath, parentSession.osVersion,
+          parentSession.modelId,
+        );
+        childSession.parentSessionId = sessionId;
+        childSession.sessionType = 'SUBAGENT';
+        childSession.phase = null;
+        await this.sessionMapper.updateById?.(childSession);
+        execution = {
+          parentSessionId: sessionId, childSessionId: childSession.id, agentType,
+          invocationType: 'DELEGATE', parentToolCallId: toolCallId, deliveryStatus: 'PENDING',
+          taskDescription: task, status: 'RUNNING', startedAt: nowSql(),
+        };
+        await this.subagentExecutionMapper.insert(execution);
+        const start = await this.sessionService.saveMessage(childSession.id!, 'USER', task, null, null, null, 0, null);
+        execution.executionStartMessageId = start.id;
+        if (execution.id != null) await this.subagentExecutionMapper.updateById(execution.id, { executionStartMessageId: start.id });
+      }
       if (parentSession.executionMode?.toUpperCase() === 'LOCAL' && parentSession.userId != null) {
         this.localToolSessionRegistry.setUserForSession(childSession.id!, parentSession.userId);
       }
-      const execution: SubagentExecution = {
-        parentSessionId: sessionId,
-        childSessionId: childSession.id,
-        agentType,
-        taskDescription: task,
-        status: 'RUNNING',
-        startedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      };
-      await this.subagentExecutionMapper.insert(execution);
-      await this.sessionService.saveMessage(childSession.id!, 'USER', task, null, null, null, 0, null);
-      this.visibilityService.notifySubagentCreated(parentSession, childSession, agentType, task);
+      this.visibilityService.notifySubagentCreated(parentSession, childSession, agentType, task, toolCallId);
       const subContext = await this.buildSubContext(childSession, definition);
       const parentCancel = this.agentLoop.getCancelFlag(sessionId!);
       const childCancel = this.agentLoop.registerCancelFlag(childSession.id!);
@@ -109,10 +120,8 @@ export class DelegateTool extends BaseTool {
       }
       let runResult;
       try {
-        runResult = await this.visibilityService.executeVisibleWithTimeout(
-          childSession, subContext, childCancel.get(), childCancel,
-          this.timeoutSeconds,
-          this.cancelGraceSeconds,
+        runResult = await this.visibilityService.executeVisible(
+          childSession, subContext, childCancel.get(),
         );
       } finally {
         if (!childCancel.get()) {
@@ -139,14 +148,18 @@ export class DelegateTool extends BaseTool {
       } else {
         resultText = '子代理执行失败: ' + ((collector.error as Error)?.message ?? '子代理执行异常');
         terminalPhase = 'FAILED';
-        await this.sessionService.saveMessage(childSession.id!, 'ASSISTANT', resultText, null, null, null, 0, subContext.modelConfig?.id ?? null);
+        await this.sessionService.saveMessage(
+          childSession.id!, 'ASSISTANT', resultText, null, null, null, 0,
+          subContext.modelConfig?.id ?? null, JSON.stringify({ subagentTerminalStatus: 'FAILED' }),
+        );
       }
       if (execution.id != null) {
         await this.subagentExecutionMapper.updateById(execution.id, {
           status: terminalPhase, result: resultText, totalRounds: subContext.currentRound,
           totalPromptTokens: collector.totalUsage?.promptTokens ?? 0,
           totalCompletionTokens: collector.totalUsage?.completionTokens ?? 0,
-          completedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+          totalToolCalls: collector.toolCallCount,
+          completedAt: nowSql(),
         });
       }
       await this.visibilityService.finishSubagent(childSession.id!, parentSession.userId, terminalPhase, runResult.executionId);
@@ -201,8 +214,7 @@ export class DelegateFollowupTool extends BaseTool {
     private readonly localToolSessionRegistry: LocalToolSessionRegistry,
     private readonly visibilityService: SubAgentVisibilityService,
     private readonly delegateTool: DelegateTool,
-    private readonly timeoutSeconds = 3600,
-    private readonly cancelGraceSeconds = 30,
+    private readonly invocationService?: SubagentInvocationService,
   ) { super(); }
 
   getName(): string { return 'delegate_followup'; }
@@ -301,13 +313,9 @@ export class DelegateFollowupTool extends BaseTool {
       if (!definition) return toJson({ error: '未知的子代理类型: ' + agentType });
 
       originalPhase = childSession.phase ?? null;
-      const claimedRows = this.sessionMapper.claimRunningIfIdle
-        ? await this.sessionMapper.claimRunningIfIdle(childSessionId)
-        : 0;
-      if (claimedRows === 0) {
-        return toJson({ error: '子代理会话 ' + childSessionId + ' 正在执行中，无法追问' });
-      }
-      claimed = true;
+      const toolCallId = ToolCallContext.getToolCallId()
+        ?? (this.invocationService ? null : `legacy_delegate_${Date.now()}`);
+      if (!toolCallId) return errorJson('缺少父工具调用 ID');
 
       const compactionRecord = await this.sessionCompactionService.loadValidated(childSessionId);
       const boundary = this.sessionCompactionService.boundaryOf(compactionRecord);
@@ -320,17 +328,29 @@ export class DelegateFollowupTool extends BaseTool {
         harnessLog('info', `Removed orphan USER message ${lastMsg.id} before follow-up of sub-agent session ${childSessionId}`);
       }
 
-      const savedUserMessage = await this.sessionService.saveMessage(childSessionId, 'USER', task, null, null, null, 0, null);
-
-      execution = {
-        parentSessionId: sessionId,
-        childSessionId,
-        agentType,
-        taskDescription: task,
-        status: 'RUNNING',
-        startedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      };
-      await this.subagentExecutionMapper.insert(execution);
+      let savedUserMessage: { id?: number } | null = null;
+      if (this.invocationService) {
+        const created = await this.invocationService.createFollowup(
+          parentSession, childSessionId, agentType, task, toolCallId,
+        );
+        if (!created) return toJson({ error: '子代理会话 ' + childSessionId + ' 正在执行中，无法追问' });
+        childSession = created.child;
+        execution = created.execution;
+        savedUserMessage = { id: execution.executionStartMessageId ?? undefined };
+      } else {
+        const claimedRows = this.sessionMapper.claimRunningIfIdle
+          ? await this.sessionMapper.claimRunningIfIdle(childSessionId) : 0;
+        if (claimedRows === 0) return toJson({ error: '子代理会话 ' + childSessionId + ' 正在执行中，无法追问' });
+        savedUserMessage = await this.sessionService.saveMessage(childSessionId, 'USER', task, null, null, null, 0, null);
+        execution = {
+          parentSessionId: sessionId, childSessionId, agentType,
+          invocationType: 'FOLLOWUP', parentToolCallId: toolCallId, deliveryStatus: 'PENDING',
+          executionStartMessageId: savedUserMessage.id, taskDescription: task,
+          status: 'RUNNING', startedAt: nowSql(),
+        };
+        await this.subagentExecutionMapper.insert(execution);
+      }
+      claimed = true;
 
       if (parentSession.executionMode?.toUpperCase() === 'LOCAL' && parentSession.userId != null) {
         this.localToolSessionRegistry.setUserForSession(childSessionId, parentSession.userId);
@@ -353,11 +373,7 @@ export class DelegateFollowupTool extends BaseTool {
         if (skip) {
           harnessLog('info', `Skip follow-up of sub-agent session ${childSessionId}: parent already cancelled`);
         }
-        runResult = await this.visibilityService.executeVisibleWithTimeout(
-          childSession, subContext, skip, childCancel,
-          this.timeoutSeconds,
-          this.cancelGraceSeconds,
-        );
+        runResult = await this.visibilityService.executeVisible(childSession, subContext, skip);
       } finally {
         if (cancelFlagRegistered && !childCancel.get()) {
           this.agentLoop.removeCancelFlag(childSessionId);
@@ -407,7 +423,8 @@ export class DelegateFollowupTool extends BaseTool {
         resultText = '子代理执行失败: ' + errorMsg;
         terminalPhase = 'FAILED';
         await this.sessionService.saveMessage(
-          childSessionId, 'ASSISTANT', resultText, null, null, null, 0, subContext.modelConfig?.id ?? null,
+          childSessionId, 'ASSISTANT', resultText, null, null, null, 0,
+          subContext.modelConfig?.id ?? null, JSON.stringify({ subagentTerminalStatus: 'FAILED' }),
         );
         await this.markExecutionTerminal(execution, 'FAILED', resultText, subContext.currentRound, resultCollector);
       }
@@ -476,16 +493,28 @@ export class DelegateFollowupTool extends BaseTool {
   ): Promise<void> {
     execution.status = status;
     execution.result = truncate(resultText, 65000);
-    execution.completedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    execution.completedAt = nowSql();
     if (rounds != null) execution.totalRounds = rounds;
+    if (collector) execution.totalToolCalls = collector.toolCallCount;
     if (collector?.totalUsage) {
       execution.totalPromptTokens = collector.totalUsage.promptTokens;
       execution.totalCompletionTokens = collector.totalUsage.completionTokens;
+    }
+    if (execution.executionStartMessageId != null) {
+      const messages = await this.sessionService.getMessagesAfterId(
+        execution.childSessionId!, execution.executionStartMessageId,
+      );
+      execution.finalMessageId = [...messages].reverse()
+        .find((message) => message.role === 'ASSISTANT' && !message.toolCalls)?.id ?? null;
     }
     if (execution.id != null) {
       await this.subagentExecutionMapper.updateById(execution.id, execution);
     }
   }
+}
+
+function nowSql(): string {
+  return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
 function isTerminalPhase(phase: string): boolean {

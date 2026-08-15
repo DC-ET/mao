@@ -9,6 +9,10 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -60,6 +64,10 @@ public class StreamingWsRegistry {
 
     /** userId → set of subscribed sessionIds */
     private final ConcurrentHashMap<Long, Set<Long>> userSubscriptions = new ConcurrentHashMap<>();
+
+    /** sessionId → active tool calls that have started but not completed */
+    private final ConcurrentHashMap<Long, ConcurrentHashMap<String, Map<String, Object>>> activeToolCalls =
+            new ConcurrentHashMap<>();
 
     public StreamingWsRegistry(
             @Value("${app.ws.outbound-queue-capacity:10000}") int outboundQueueCapacity) {
@@ -119,6 +127,49 @@ public class StreamingWsRegistry {
     public boolean isSubscribed(Long userId, Long sessionId) {
         Set<Long> subs = userSubscriptions.get(userId);
         return subs != null && subs.contains(sessionId);
+    }
+
+    public void trackActiveToolCall(Long sessionId, String executionId, String toolCallId,
+                                    String toolName, String arguments) {
+        if (sessionId == null || toolCallId == null || toolCallId.isBlank()) return;
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("tool_call_id", toolCallId);
+        snapshot.put("tool_name", toolName != null ? toolName : "");
+        snapshot.put("arguments", arguments != null ? arguments : "");
+        if (executionId != null) snapshot.put("executionId", executionId);
+        activeToolCalls.computeIfAbsent(sessionId, ignored -> new ConcurrentHashMap<>())
+                .put(toolCallId, snapshot);
+    }
+
+    public void updateActiveToolCallArguments(Long sessionId, String toolCallId, String arguments) {
+        ConcurrentHashMap<String, Map<String, Object>> calls = activeToolCalls.get(sessionId);
+        if (calls == null) return;
+        calls.computeIfPresent(toolCallId, (ignored, current) -> {
+            Map<String, Object> updated = new LinkedHashMap<>(current);
+            updated.put("arguments", arguments != null ? arguments : "");
+            return updated;
+        });
+    }
+
+    public void completeActiveToolCall(Long sessionId, String toolCallId) {
+        ConcurrentHashMap<String, Map<String, Object>> calls = activeToolCalls.get(sessionId);
+        if (calls == null) return;
+        calls.remove(toolCallId);
+        if (calls.isEmpty()) activeToolCalls.remove(sessionId, calls);
+    }
+
+    public List<Map<String, Object>> getActiveToolCalls(Long sessionId) {
+        ConcurrentHashMap<String, Map<String, Object>> calls = activeToolCalls.get(sessionId);
+        if (calls == null || calls.isEmpty()) return List.of();
+        List<Map<String, Object>> snapshots = new ArrayList<>();
+        for (Map<String, Object> call : calls.values()) {
+            snapshots.add(new LinkedHashMap<>(call));
+        }
+        return snapshots;
+    }
+
+    public void clearActiveToolCalls(Long sessionId) {
+        if (sessionId != null) activeToolCalls.remove(sessionId);
     }
 
     /**

@@ -8,7 +8,8 @@ import type {
   StreamingWsRegistry, TaskTerminalService, ActivityService,
 } from '../deps.js';
 import type { AgentEventListener } from './agent-event-listener.js';
-import { AgentLoop, type MessagePersistenceCallback } from './agent-loop.js';
+import { AgentLoop, type MessagePersistenceCallback, type ToolMessageSave } from './agent-loop.js';
+import type { Db } from '../../db/db.js';
 import { AgentExecutionContext } from './agent-execution-context.js';
 import { CompactionConfig } from './compaction-config.js';
 import type { EnvironmentInfoProvider } from './environment-info-provider.js';
@@ -59,6 +60,7 @@ export class HarnessService {
     private readonly activeContextCalculator: ActiveContextCalculator,
     private readonly compactionConfig: CompactionConfig,
     private readonly environmentInfoProvider: EnvironmentInfoProvider,
+    private readonly db?: Db | null,
     private readonly mcpClientManager?: McpClientManager | null,
     private readonly mcpSyncService?: McpSyncService | null,
   ) {}
@@ -96,6 +98,11 @@ export class HarnessService {
       onSaveToolMessage: (toolCallId: string, content: string, metadataJson?: string | null) => {
         return this.sessionService.saveMessage(targetSessionId, 'TOOL', content, null, toolCallId, null, 0, null, metadataJson).then(() => undefined);
       },
+      onSaveToolRound: this.db ? (
+        content, thinkingContent, toolCalls, toolMessages, toolResults, usage,
+      ) => this.persistToolRound(
+        targetSessionId, context, content, thinkingContent, toolCalls, toolMessages, toolResults, usage,
+      ) : undefined,
     };
   }
 
@@ -125,10 +132,116 @@ export class HarnessService {
     }
     const tokenCount = resolvedUsage?.totalTokens ?? 0;
     const modelId = context.modelConfig?.id ?? null;
-    const savedMsg = await this.sessionService.saveMessage(
-      targetSessionId, 'ASSISTANT', content ?? null, thinkingContent, null, toolCallsJson, tokenCount, modelId);
+    const savedMsg = toolCallsJson == null && this.db
+      ? await this.persistFinalAssistant(targetSessionId, content, thinkingContent, tokenCount, modelId)
+      : await this.sessionService.saveMessage(
+        targetSessionId, 'ASSISTANT', content ?? null, thinkingContent, null, toolCallsJson, tokenCount, modelId);
     if (toolCalls && toolCalls.length > 0 && Object.keys(toolResults).length > 0) {
       await this.saveFileChanges(savedMsg.id!, targetSessionId, toolCalls, toolResults);
+    }
+  }
+
+  private async persistFinalAssistant(
+    targetSessionId: number,
+    content: string | null | undefined,
+    thinkingContent: string | null | undefined,
+    tokenCount: number,
+    modelId: number | null,
+  ): Promise<{ id?: number }> {
+    if (!this.db) throw new Error('Database is required for final assistant persistence');
+    return this.db.transaction(async (tx) => {
+      const id = await tx.insert('message', {
+        sessionId: targetSessionId,
+        role: 'ASSISTANT',
+        content: content ?? null,
+        thinkingContent: thinkingContent ?? null,
+        toolCallId: null,
+        toolCalls: null,
+        tokenCount,
+        modelId,
+        metadata: null,
+        sourceSessionId: null,
+        deleted: 0,
+      });
+      await tx.execute(
+        `UPDATE subagent_execution SET final_message_id = ?
+         WHERE child_session_id = ? AND status IN ('RUNNING', 'RECOVERING')
+         ORDER BY id DESC LIMIT 1`,
+        [id, targetSessionId],
+      );
+      await tx.execute('UPDATE session SET updated_at = ? WHERE id = ?', [nowSql(), targetSessionId]);
+      return { id };
+    });
+  }
+
+  private async persistToolRound(
+    targetSessionId: number,
+    context: AgentExecutionContext,
+    content: string | null | undefined,
+    thinkingContent: string | null | undefined,
+    toolCalls: ToolCall[],
+    toolMessages: ToolMessageSave[],
+    toolResults: Record<string, string>,
+    usage?: ChatUsage,
+  ): Promise<void> {
+    if (!this.db) throw new Error('Database is required for tool round persistence');
+    const toolCallsJson = JSON.stringify(toolCalls);
+    const toolCallIds = toolCalls.map((call) => call.id).filter((id): id is string => Boolean(id));
+    const assistantId = await this.db.transaction(async (tx) => {
+      const id = await tx.insert('message', {
+        sessionId: targetSessionId,
+        role: 'ASSISTANT',
+        content: content ?? null,
+        thinkingContent: thinkingContent ?? null,
+        toolCallId: null,
+        toolCalls: toolCallsJson,
+        tokenCount: usage?.totalTokens ?? 0,
+        modelId: context.modelConfig?.id ?? null,
+        metadata: null,
+        sourceSessionId: null,
+        deleted: 0,
+      });
+      const toolMessageIds = new Map<string, number>();
+      for (const tool of toolMessages) {
+        toolMessageIds.set(tool.toolCallId, await tx.insert('message', {
+          sessionId: targetSessionId,
+          role: 'TOOL',
+          content: tool.content,
+          thinkingContent: null,
+          toolCallId: tool.toolCallId,
+          toolCalls: null,
+          tokenCount: 0,
+          modelId: null,
+          metadata: tool.metadataJson,
+          sourceSessionId: null,
+          deleted: 0,
+        }));
+      }
+      if (toolCallIds.length > 0) {
+        const placeholders = toolCallIds.map(() => '?').join(',');
+        const rows = await tx.query<{ id: number; parentToolCallId: string }>(
+          `SELECT id, parent_tool_call_id FROM subagent_execution
+           WHERE parent_session_id = ? AND delivery_status = 'PENDING'
+             AND parent_tool_call_id IN (${placeholders}) FOR UPDATE`,
+          [targetSessionId, ...toolCallIds],
+        );
+        const now = nowSql();
+        for (const execution of rows) {
+          const toolMessageId = toolMessageIds.get(execution.parentToolCallId);
+          if (toolMessageId == null) continue;
+          await tx.execute(
+            `UPDATE subagent_execution SET delivery_status = 'DELIVERED',
+             parent_result_delivered_at = ?, parent_assistant_message_id = ?, parent_tool_message_id = ?
+             WHERE id = ? AND delivery_status = 'PENDING'`,
+            [now, id, toolMessageId, execution.id],
+          );
+        }
+      }
+      await tx.execute('UPDATE session SET updated_at = ? WHERE id = ?', [nowSql(), targetSessionId]);
+      return id;
+    });
+    if (Object.keys(toolResults).length > 0) {
+      await this.saveFileChanges(assistantId, targetSessionId, toolCalls, toolResults);
     }
   }
 
@@ -437,6 +550,10 @@ export class HarnessService {
     if (modelId != null) return this.llmModelMapper.selectById(modelId);
     return this.llmModelMapper.selectDefault ? this.llmModelMapper.selectDefault() : null;
   }
+}
+
+function nowSql(): string {
+  return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
 function hasText(value: string | null | undefined): boolean {

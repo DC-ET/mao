@@ -129,7 +129,12 @@ async function handleDelete(queueId: string) {
     await ElMessageBox.confirm(
       '确定删除这条待发送消息吗？删除后无法恢复。',
       '确认删除',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        customClass: 'queue-delete-message-box'
+      }
     )
     emit('delete', queueId)
   } catch {
@@ -279,5 +284,46 @@ async function handleDelete(queueId: string) {
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
   flex-shrink: 0;
+}
+
+:global(.queue-delete-message-box) {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  padding: 18px 20px 16px;
+}
+
+:global(.queue-delete-message-box .el-message-box__header) {
+  padding: 0 28px 12px 0;
+}
+
+:global(.queue-delete-message-box .el-message-box__title) {
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+:global(.queue-delete-message-box .el-message-box__content) {
+  padding: 4px 0 16px;
+}
+
+:global(.queue-delete-message-box .el-message-box__status) {
+  font-size: 22px !important;
+}
+
+:global(.queue-delete-message-box .el-message-box__message p) {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+:global(.queue-delete-message-box .el-message-box__btns) {
+  padding: 0;
+  gap: 8px;
+}
+
+:global(.queue-delete-message-box .el-message-box__btns .el-button) {
+  min-width: 72px;
+  height: 34px;
+  padding: 0 16px;
+  font-size: 14px;
+  border-radius: 8px;
 }
 </style>

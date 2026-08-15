@@ -35,7 +35,7 @@ describe('StreamingWsHandler', () => {
   const registry = {
     getUserId: vi.fn(), send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
-    sendToLocalClients: vi.fn(),
+    sendToLocalClients: vi.fn(), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
   };
   const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executeSideFirstMessage: vi.fn() };
   const sessionService = {

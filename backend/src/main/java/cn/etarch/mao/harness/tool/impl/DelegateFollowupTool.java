@@ -1,6 +1,5 @@
 package cn.etarch.mao.harness.tool.impl;
 
-import cn.etarch.mao.config.DelegateConfig;
 import cn.etarch.mao.harness.core.AgentExecutionContext;
 import cn.etarch.mao.harness.core.AgentLoop;
 import cn.etarch.mao.harness.core.HarnessService;
@@ -12,6 +11,7 @@ import cn.etarch.mao.harness.delegate.entity.SubagentExecution;
 import cn.etarch.mao.harness.delegate.mapper.SubagentExecutionMapper;
 import cn.etarch.mao.harness.local.LocalToolSessionRegistry;
 import cn.etarch.mao.harness.tool.Tool;
+import cn.etarch.mao.harness.tool.ToolCallContext;
 import cn.etarch.mao.session.entity.Message;
 import cn.etarch.mao.session.entity.Session;
 import cn.etarch.mao.session.entity.SessionCompaction;
@@ -53,7 +53,6 @@ public class DelegateFollowupTool implements Tool {
     private final LocalToolSessionRegistry localToolSessionRegistry;
     private final SubAgentVisibilityService visibilityService;
     private final DelegateTool delegateTool;
-    private final DelegateConfig delegateConfig;
     private final ObjectMapper objectMapper;
 
     public DelegateFollowupTool(AgentDefinitionRegistry definitionRegistry,
@@ -67,7 +66,6 @@ public class DelegateFollowupTool implements Tool {
                                 LocalToolSessionRegistry localToolSessionRegistry,
                                 SubAgentVisibilityService visibilityService,
                                 @Lazy DelegateTool delegateTool,
-                                DelegateConfig delegateConfig,
                                 ObjectMapper objectMapper) {
         this.definitionRegistry = definitionRegistry;
         this.harnessService = harnessService;
@@ -80,7 +78,6 @@ public class DelegateFollowupTool implements Tool {
         this.localToolSessionRegistry = localToolSessionRegistry;
         this.visibilityService = visibilityService;
         this.delegateTool = delegateTool;
-        this.delegateConfig = delegateConfig;
         this.objectMapper = objectMapper;
     }
 
@@ -282,6 +279,10 @@ public class DelegateFollowupTool implements Tool {
             execution.setParentSessionId(sessionId);
             execution.setChildSessionId(childSessionId);
             execution.setAgentType(agentType);
+            execution.setInvocationType("FOLLOWUP");
+            execution.setParentToolCallId(ToolCallContext.getToolCallId());
+            execution.setDeliveryStatus("PENDING");
+            execution.setExecutionStartMessageId(savedUserMessage != null ? savedUserMessage.getId() : null);
             execution.setTaskDescription(task);
             execution.setStatus("RUNNING");
             execution.setStartedAt(LocalDateTime.now());
@@ -310,18 +311,14 @@ public class DelegateFollowupTool implements Tool {
                 }
             }
 
-            // 12. 同步执行子智能体（WS 流式 + 过程落库 + 结果收集），带整体超时兜底：
-            //     子代理 LLM 请求卡死（如 SSL 写阻塞导致 OkHttp 超时机制失效）时，
-            //     到达 timeoutSeconds 后请求取消子代理，避免无限拖住父 Agent。
+            // 12. 同步执行子智能体（WS 流式 + 过程落库 + 结果收集），直到完成或被取消。
             SubAgentVisibilityService.VisibleRunResult runResult;
             boolean skip = childCancel.get();
             try {
                 if (skip) {
                     log.info("Skip follow-up of sub-agent session {}: parent already cancelled", childSessionId);
                 }
-                runResult = visibilityService.executeVisibleWithTimeout(
-                        childSession, subContext, skip, childCancel,
-                        delegateConfig.getTimeoutSeconds(), delegateConfig.getCancelGraceSeconds());
+                runResult = visibilityService.executeVisible(childSession, subContext, skip, childCancel);
             } finally {
                 if (cancelFlagRegistered) {
                     agentLoop.removeCancelFlag(childSessionId);
@@ -400,7 +397,8 @@ public class DelegateFollowupTool implements Tool {
                 sessionService.saveMessage(childSessionId, "ASSISTANT", resultText,
                         null, null, null, 0,
                         subContext.getModelConfig() != null
-                                ? subContext.getModelConfig().getId() : null);
+                                ? subContext.getModelConfig().getId() : null,
+                        "{\"subagentTerminalStatus\":\"FAILED\"}");
                 markExecutionTerminal(execution, "FAILED", resultText, subContext.getCurrentRound(),
                         resultCollector);
             }
@@ -540,9 +538,19 @@ public class DelegateFollowupTool implements Tool {
         if (rounds != null) {
             execution.setTotalRounds(rounds);
         }
-        if (collector != null && collector.getTotalUsage() != null) {
-            execution.setTotalPromptTokens(collector.getTotalUsage().getPromptTokens());
-            execution.setTotalCompletionTokens(collector.getTotalUsage().getCompletionTokens());
+        if (collector != null) {
+            execution.setTotalToolCalls(collector.getToolCallCount());
+            if (collector.getTotalUsage() != null) {
+                execution.setTotalPromptTokens(collector.getTotalUsage().getPromptTokens());
+                execution.setTotalCompletionTokens(collector.getTotalUsage().getCompletionTokens());
+            }
+        }
+        if (execution.getExecutionStartMessageId() != null) {
+            sessionService.getMessagesAfterId(execution.getChildSessionId(), execution.getExecutionStartMessageId())
+                    .stream().filter(message -> "ASSISTANT".equals(message.getRole())
+                            && (message.getToolCalls() == null || message.getToolCalls().isBlank()))
+                    .reduce((first, second) -> second)
+                    .ifPresent(message -> execution.setFinalMessageId(message.getId()));
         }
         subagentExecutionMapper.updateById(execution);
     }

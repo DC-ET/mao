@@ -81,6 +81,8 @@ public class WsStreamingEventListener implements AgentEventListener {
                 toolCall.getFunction().getName(),
                 args
         });
+        registry.trackActiveToolCall(sessionId, executionId, toolCall.getId(),
+                toolCall.getFunction().getName(), args);
         send("tool_call_start", Map.of(
                 "tool_call_id", toolCall.getId(),
                 "tool_name", toolCall.getFunction().getName(),
@@ -91,6 +93,7 @@ public class WsStreamingEventListener implements AgentEventListener {
 
     @Override
     public void onToolCallResult(String toolCallId, String result) {
+        registry.completeActiveToolCall(sessionId, toolCallId);
         String[] info = toolCallInfo.remove(toolCallId);
         String toolName = info != null ? info[0] : null;
         String arguments = info != null ? info[1] : null;
@@ -284,6 +287,7 @@ public class WsStreamingEventListener implements AgentEventListener {
     @Override
     public void onLlmStreamReset() {
         toolCallInfo.clear();
+        registry.clearActiveToolCalls(sessionId);
         send("llm_stream_reset", Map.of());
     }
 
@@ -306,6 +310,7 @@ public class WsStreamingEventListener implements AgentEventListener {
 
     @Override
     public void onToolCallArgsDelta(String toolCallId, String arguments) {
+        registry.updateActiveToolCallArguments(sessionId, toolCallId, arguments);
         send("tool_call_args_delta", Map.of(
                 "tool_call_id", toolCallId,
                 "arguments", arguments

@@ -114,10 +114,6 @@ export interface AppConfig {
         sessionMaxLifetimeHours: number;
         output: { maxPreviewLines: number; maxPreviewChars: number };
       };
-      delegate: {
-        timeoutSeconds: number;
-        cancelGraceSeconds: number;
-      };
     };
     mcp: {
       secretKey: string;
@@ -272,10 +268,6 @@ const DEFAULTS: AppConfig = {
         sessionIdleTimeoutMinutes: 30,
         sessionMaxLifetimeHours: 2,
         output: { maxPreviewLines: 100, maxPreviewChars: 10000 },
-      },
-      delegate: {
-        timeoutSeconds: 3600,
-        cancelGraceSeconds: 30,
       },
     },
     mcp: {

@@ -39,6 +39,7 @@ export class StreamingWsRegistry {
   private readonly sessionToUser = new Map<string, number>();
   private readonly sessionToClientType = new Map<string, string>();
   private readonly userSubscriptions = new Map<number, Set<number>>();
+  private readonly activeToolCalls = new Map<number, Map<string, Record<string, unknown>>>();
 
   constructor(outboundQueueCapacity = 10000) {
     this.capacity = outboundQueueCapacity;
@@ -100,6 +101,41 @@ export class StreamingWsRegistry {
 
   isSubscribed(userId: number, sessionId: number): boolean {
     return this.userSubscriptions.get(userId)?.has(sessionId) ?? false;
+  }
+
+  trackActiveToolCall(sessionId: number, executionId: string, toolCallId: string, toolName: string, args: string): void {
+    if (!toolCallId) return;
+    let calls = this.activeToolCalls.get(sessionId);
+    if (!calls) {
+      calls = new Map();
+      this.activeToolCalls.set(sessionId, calls);
+    }
+    calls.set(toolCallId, {
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      arguments: args,
+      executionId,
+    });
+  }
+
+  updateActiveToolCallArguments(sessionId: number, toolCallId: string, args: string): void {
+    const call = this.activeToolCalls.get(sessionId)?.get(toolCallId);
+    if (call) call.arguments = args;
+  }
+
+  completeActiveToolCall(sessionId: number, toolCallId: string): void {
+    const calls = this.activeToolCalls.get(sessionId);
+    if (!calls) return;
+    calls.delete(toolCallId);
+    if (calls.size === 0) this.activeToolCalls.delete(sessionId);
+  }
+
+  getActiveToolCalls(sessionId: number): Array<Record<string, unknown>> {
+    return [...(this.activeToolCalls.get(sessionId)?.values() ?? [])].map((call) => ({ ...call }));
+  }
+
+  clearActiveToolCalls(sessionId: number): void {
+    this.activeToolCalls.delete(sessionId);
   }
 
   send(userId: number, event: WsEvent): void {

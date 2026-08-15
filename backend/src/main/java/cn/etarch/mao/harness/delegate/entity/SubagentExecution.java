@@ -19,6 +19,24 @@ public class SubagentExecution {
     /** 子代理类型，如 researcher / reviewer */
     private String agentType;
 
+    /** DELEGATE / FOLLOWUP */
+    private String invocationType;
+
+    private String parentToolCallId;
+
+    /** PENDING / DELIVERED / SUPPRESSED / LEGACY */
+    private String deliveryStatus;
+
+    private LocalDateTime parentResultDeliveredAt;
+
+    private Long parentAssistantMessageId;
+
+    private Long parentToolMessageId;
+
+    private Long executionStartMessageId;
+
+    private Long finalMessageId;
+
     private String taskDescription;
 
     private String result;
@@ -31,6 +49,8 @@ public class SubagentExecution {
     private Integer totalPromptTokens;
 
     private Integer totalCompletionTokens;
+
+    private Integer totalToolCalls;
 
     private LocalDateTime startedAt;
 

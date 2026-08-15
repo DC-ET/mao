@@ -136,6 +136,10 @@ import { LocalToolExecutor } from './harness/local/local-tool-executor.js';
 import { AgentDefinitionRegistry } from './harness/delegate/agent-definition-registry.js';
 import { SubagentExecutionMapper } from './harness/delegate/subagent-execution.mapper.js';
 import { SubAgentVisibilityService } from './harness/delegate/subagent-visibility-service.js';
+import { SubagentInvocationService } from './harness/delegate/subagent-invocation.service.js';
+import { SubagentResultDeliveryService } from './harness/delegate/subagent-result-delivery.service.js';
+import { SubagentExecutionRecoveryService } from './harness/delegate/subagent-execution-recovery.service.js';
+import { SubagentRecoveryCoordinator } from './harness/delegate/subagent-recovery-coordinator.js';
 import { lazyRef } from './common/lazy-ref.js';
 import { ApprovalRegistry } from './harness/approval/approval-registry.js';
 import { SessionTreeSignalPublisher } from './harness/approval/session-tree-signal-publisher.js';
@@ -405,6 +409,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const localToolSessions = new LocalToolSessionRegistry(wsRegistry, sessionMap);
   const definitionRegistry = new AgentDefinitionRegistry();
   const subagentMapper = new SubagentExecutionMapper(db);
+  const subagentInvocation = new SubagentInvocationService(db);
+  const subagentResultDelivery = new SubagentResultDeliveryService(db);
   const askUserQuestionsRegistry = new AskUserQuestionsRegistry();
   const approvalRegistry = new ApprovalRegistry(sessionSvc, sessionMap, wsRegistry);
   const treeSignalPublisher = new SessionTreeSignalPublisher(
@@ -482,12 +488,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     get harnessService() { return holder.harness!; },
     get agentLoop() { return holder.loop!; },
     subagentExecutionMapper: subagentMapper,
+    subagentInvocationService: subagentInvocation,
     localToolSessionRegistry: localToolSessions,
     visibilityService: visibility,
     messageMapper: messageRepo as never,
     sessionCompactionService: compactionSvc,
-    delegateTimeoutSeconds: cfg.app.harness.delegate?.timeoutSeconds ?? 3600,
-    delegateCancelGraceSeconds: cfg.app.harness.delegate?.cancelGraceSeconds ?? 30,
   });
 
   const toolDispatcher = new ToolDispatcher(
@@ -503,7 +508,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     agentLoop, toolRegistry, skillLoader, skillSync, localSkills, localAgentsMd,
     sessionMap, agentRepo as never, experienceService, modelRepo as never, fileChangeRepo as never,
     sessionSvc, compactionSvc, historyLoader, orchestrator,
-    promptEngine, activeContext, compactionConfig, envInfo, mcpClient, mcpSync,
+    promptEngine, activeContext, compactionConfig, envInfo, db, mcpClient, mcpSync,
   );
   holder.harness = harness;
 
@@ -703,10 +708,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const staleSweep = new StaleSessionSweepScheduler(sessionService, wsHandler);
   staleSweep.start();
   shellManager.startCleanup();
+  const delegateTool = toolRegistry.getTool('delegate');
+  const subagentExecutionRecovery = new SubagentExecutionRecoveryService(
+    subagentMapper, sessionMap, sessionSvc, compactionSvc, definitionRegistry,
+    delegateTool as never, agentLoop, visibility, localToolSessions,
+  );
+  const subagentCoordinator = new SubagentRecoveryCoordinator(
+    subagentMapper, subagentExecutionRecovery, subagentResultDelivery,
+    sessionMap, sessionSvc, compactionSvc, agentExecutor,
+  );
   const crash = new CrashRecoveryRunner(
     sessionMap, sessionSvc, taskTerminal, harness, agentLoop, wsRegistry,
     activityService as never, activityHeartbeat, todoMapper, modelRepo as never, agentExecutor,
     (sessionId, userId) => wsHandler.autoConsumeQueue(sessionId, userId),
+    subagentCoordinator,
   );
   void crash.run().catch((e) => console.error('Crash recovery failed', e));
 

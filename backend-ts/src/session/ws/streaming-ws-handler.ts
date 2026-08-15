@@ -186,6 +186,7 @@ export class StreamingWsHandler {
     }
     this.runningTasks.delete(sessionId);
     this.runningExecutionIds.delete(sessionId);
+    this.deps.registry.clearActiveToolCalls(sessionId);
     this.deps.activityHeartbeat.clear(sessionId);
   }
 
@@ -200,7 +201,14 @@ export class StreamingWsHandler {
       this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
     }
     if (active) {
-      this.deps.registry.send(userId, wsEvent('session_snapshot', sessionId, { phase: s.phase }));
+      const executionId = this.runningExecutionIds.get(sessionId);
+      this.deps.registry.send(userId, wsEvent('session_snapshot', sessionId, {
+        phase: s.phase === 'RESUMING' ? 'RUNNING' : s.phase,
+        ...(executionId ? { executionId } : {}),
+      }));
+      for (const toolCall of this.deps.registry.getActiveToolCalls(sessionId)) {
+        this.deps.registry.send(userId, wsEvent('tool_call_start', sessionId, toolCall));
+      }
       for (const pq of this.deps.askUserQuestionsRegistry.getPendingForSession(sessionId)) {
         const payload: Record<string, unknown> = { requestId: pq.requestId, questions: pq.questions ?? [] };
         if (pq.metadata != null) payload.metadata = pq.metadata;
@@ -325,6 +333,7 @@ export class StreamingWsHandler {
         } catch (e) {
           console.warn(`Failed to release execution resources for session ${sessionId}`, e);
         }
+        this.deps.registry.clearActiveToolCalls(sessionId);
         if (this.runningTasks.get(sessionId) === futureRef.current) this.runningTasks.delete(sessionId);
         if (this.runningExecutionIds.get(sessionId) === executionId) this.runningExecutionIds.delete(sessionId);
         this.executionClaims.delete(sessionId);
@@ -564,6 +573,7 @@ export class StreamingWsHandler {
           } catch (e) {
             console.warn(`Failed to release execution resources for session ${sideSessionId}`, e);
           }
+          this.deps.registry.clearActiveToolCalls(sideSessionId);
           if (this.runningTasks.get(sideSessionId) === futureRef.current) this.runningTasks.delete(sideSessionId);
           if (this.runningExecutionIds.get(sideSessionId) === sideExecutionId) this.runningExecutionIds.delete(sideSessionId);
           this.executionClaims.delete(sideSessionId);

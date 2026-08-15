@@ -69,13 +69,10 @@ export class SubAgentVisibilityService {
     this.deps.registry.subscribe(userId, childSessionId);
   }
 
-  async executeVisibleWithTimeout(
+  async executeVisible(
     childSession: Session,
     subContext: AgentExecutionContext,
     skip: boolean,
-    childCancel: { get(): boolean; set(v: boolean): void } | null | undefined,
-    timeoutSeconds = 3600,
-    cancelGraceSeconds = 30,
   ): Promise<VisibleRunResult> {
     const collector = new SubAgentResultCollector();
     const executionId = crypto.randomUUID();
@@ -84,34 +81,36 @@ export class SubAgentVisibilityService {
       return { collector, executionId };
     }
 
-    const runPromise = this.executeVisible(childSession, subContext, collector, executionId).then(
-      () => 'ok' as const,
-      (e: unknown) => {
-        collector.onError(e);
-        return 'error' as const;
-      },
-    );
-
-    const first = await Promise.race([
-      runPromise,
-      sleep(timeoutSeconds * 1000).then(() => 'timeout' as const),
-    ]);
-    if (first !== 'timeout') {
-      return { collector, executionId };
+    try {
+      await this.runVisible(childSession, subContext, collector, executionId);
+    } catch (error) {
+      collector.onError(error);
     }
+    return { collector, executionId };
+  }
+
+  async executeVisibleWithTimeout(
+    childSession: Session,
+    subContext: AgentExecutionContext,
+    skip: boolean,
+    childCancel: { set(value: boolean): void } | null | undefined,
+    timeoutSeconds: number,
+    cancelGraceSeconds: number,
+  ): Promise<VisibleRunResult> {
+    const run = this.executeVisible(childSession, subContext, skip);
+    const first = await Promise.race([
+      run.then((result) => ({ type: 'done' as const, result })),
+      sleep(timeoutSeconds * 1000).then(() => ({ type: 'timeout' as const })),
+    ]);
+    if (first.type === 'done') return first.result;
 
     childCancel?.set(true);
-    harnessLog('warn', `Sub-agent session ${childSession.id} exceeded timeout ${timeoutSeconds}s, requesting cancel`);
     const second = await Promise.race([
-      runPromise,
-      sleep(cancelGraceSeconds * 1000).then(() => 'grace-timeout' as const),
+      run.then((result) => ({ type: 'done' as const, result })),
+      sleep(cancelGraceSeconds * 1000).then(() => ({ type: 'timeout' as const })),
     ]);
-    if (second !== 'grace-timeout') {
-      return { collector, executionId };
-    }
-    throw new Error(
-      `子代理执行超时(>=${timeoutSeconds}s)，已请求取消但未在宽限期(${cancelGraceSeconds}s)内退出`,
-    );
+    if (second.type === 'done') return second.result;
+    throw new Error(`子代理执行超时，取消宽限期(${cancelGraceSeconds}s)内未退出`);
   }
 
   async finishSubagent(
@@ -137,7 +136,7 @@ export class SubAgentVisibilityService {
     }
   }
 
-  private async executeVisible(
+  private async runVisible(
     childSession: Session,
     subContext: AgentExecutionContext,
     collector: SubAgentResultCollector,
