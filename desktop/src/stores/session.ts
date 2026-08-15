@@ -713,6 +713,22 @@ export const useSessionStore = defineStore('session', () => {
     })
   }
 
+  /** 合并请求期间可能已被 WS 更新的会话快照，避免迟到的 REST 响应覆盖实时 phase。 */
+  function updateSessionFromSnapshot(id: string, snapshot: Partial<Session>, phaseAtRequest?: TaskPhase) {
+    const sid = String(id)
+    const current = sessionEntities.value.get(sid)
+    const livePhase = sessionPhases.value.get(sid)
+    const phaseChangedWhileFetching = phaseAtRequest !== undefined
+      && current?.phase !== undefined
+      && current.phase !== phaseAtRequest
+    if (livePhase || phaseChangedWhileFetching) {
+      const phase = livePhase ?? current!.phase
+      updateSession(id, { ...snapshot, phase, running: ACTIVE_PHASES.has(phase) })
+      return
+    }
+    updateSession(id, snapshot)
+  }
+
   function getSessionPhase(id: string): TaskPhase | null {
     const sid = String(id)
     const cached = sessionPhases.value.get(sid)
@@ -970,14 +986,21 @@ export const useSessionStore = defineStore('session', () => {
   ) {
     const sid = String(sessionId)
     const local = sessionMessages.value.get(sid) ?? []
+    const localIds = new Set(local.map(m => String(m.id)))
     const fetchedIds = new Set(messages.map(m => String(m.id)))
+    const newlyFetchedUsers = messages.filter(m => m.role === 'user' && !localIds.has(String(m.id)))
     const tail: ChatMessage[] = []
     for (let i = local.length - 1; i >= 0; i--) {
       const message = local[i]
       if (fetchedIds.has(String(message.id))) break
       const isStreamingAssistant = message.role === 'assistant'
         && streamingAssistantMessageIds.get(sid) === String(message.id)
-      if (message.role !== 'assistant' || (options?.preserveStreamingAssistant && isStreamingAssistant)) {
+      const isReplacedOptimisticUser = message.role === 'user'
+        && String(message.id).startsWith('msg_')
+        && newlyFetchedUsers.some(fetched => fetched.content === message.content
+          && JSON.stringify(fetched.images ?? []) === JSON.stringify(message.images ?? []))
+      if (!isReplacedOptimisticUser
+        && (message.role !== 'assistant' || (options?.preserveStreamingAssistant && isStreamingAssistant))) {
         tail.unshift(message)
       }
     }
@@ -1541,6 +1564,7 @@ export const useSessionStore = defineStore('session', () => {
     forgetLastSession,
     updateSession,
     updateSessionPhase,
+    updateSessionFromSnapshot,
     getSessionPhase,
     // 实体 / 投影模型（归档 / 聚焦）
     archivedSessions,

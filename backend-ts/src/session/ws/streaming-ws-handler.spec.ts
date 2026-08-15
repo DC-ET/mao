@@ -134,6 +134,37 @@ describe('StreamingWsHandler', () => {
     expect(localToolSessionRegistry.setUserForSession).toHaveBeenCalledWith(12, 7);
   });
 
+  it('editAndResendRejectsInvalidImagesBeforeTruncatingHistory', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.getMessages.mockResolvedValue([message(3, 'USER')]);
+    llmModelMapper.selectDefault.mockResolvedValue({ supportsVision: 0 });
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'edit_and_resend', sessionId: 11, messageId: 3, content: 'edited', images: ['img'],
+    }));
+    expect(sessionService.editMessageAndTruncate).not.toHaveBeenCalled();
+    expect(harnessService.prepareMessage).not.toHaveBeenCalled();
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'error', data: expect.objectContaining({ message: '当前模型不支持图片输入，请切换支持视觉的模型' }),
+    }));
+  });
+
+  it('editAndResendRejectsTooManyImagesBeforeTruncatingHistory', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.getMessages.mockResolvedValue([message(3, 'USER')]);
+    llmModelMapper.selectDefault.mockResolvedValue({ supportsVision: 1 });
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'edit_and_resend', sessionId: 11, messageId: 3, content: 'edited', images: Array(11).fill('img'),
+    }));
+    expect(sessionService.editMessageAndTruncate).not.toHaveBeenCalled();
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'error', data: expect.objectContaining({ message: '单条消息最多支持 10 张图片' }),
+    }));
+  });
+
   it('editAndResendValidatesLastUserMessageAndRunsExecution', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);

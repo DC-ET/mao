@@ -180,6 +180,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     let emitted = false;
     let done = false;
     let buffer = '';
+    const decoder = new TextDecoder('utf-8', { fatal: true });
     let lastData = Date.now();
     const idleMs = this.retry.streamIdleTimeoutSeconds * 1000;
 
@@ -206,7 +207,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         if (this.isCancelled(cancelFlag)) {
           throw new Error('Cancelled by user');
         }
-        buffer += chunk.toString('utf8');
+        buffer += decoder.decode(chunk as Uint8Array, { stream: true });
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() ?? '';
         for (const line of lines) {
@@ -235,6 +236,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         }
         if (done) break;
       }
+      buffer += decoder.decode();
       if (idleTimedOut) throw idleTimedOut;
       if (!done) {
         const eof = Object.assign(new Error('stream ended before [DONE]'), { name: 'EOFException' });

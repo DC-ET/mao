@@ -169,6 +169,30 @@ describe('session store 实体/投影模型', () => {
     expect(store.sessions.map(s => s.id)).toContain('100')
   })
 
+  it('迟到的 REST 快照不覆盖请求期间 WebSocket 更新的 phase', () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+    const phaseAtRequest = store.getSessionEntity('1')?.phase
+
+    store.updateSessionPhase('1', 'RUNNING')
+    store.updateSessionFromSnapshot('1', makeSession('1', { title: '详情已加载', phase: 'IDLE', running: false }), phaseAtRequest)
+
+    expect(store.getSessionEntity('1')?.title).toBe('详情已加载')
+    expect(store.getSessionEntity('1')?.phase).toBe('RUNNING')
+    expect(store.getSessionEntity('1')?.running).toBe(true)
+  })
+
+  it('REST 请求期间 phase 未变化时正常采用快照状态', () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1'))
+    const phaseAtRequest = store.getSessionEntity('1')?.phase
+
+    store.updateSessionFromSnapshot('1', makeSession('1', { phase: 'RUNNING', running: true }), phaseAtRequest)
+
+    expect(store.getSessionEntity('1')?.phase).toBe('RUNNING')
+    expect(store.getSessionEntity('1')?.running).toBe(true)
+  })
+
   it('markAsRead：API 成功后才清本地；失败保留本地未读', async () => {
     const store = useSessionStore()
     mockGet.mockResolvedValueOnce({
@@ -259,6 +283,31 @@ describe('session store 实体/投影模型', () => {
     const msgs = store.getMessages('1')
     expect(msgs.map(m => m.id)).toEqual(['10', '11', '12'])
     expect(msgs[2].content).toBe('#{commit_and_push}#')
+  })
+
+  it('applyFetchedMessages 用落库用户消息替换尚未收到保存确认的乐观消息', () => {
+    const store = useSessionStore()
+    store.setMessages('1', [
+      { id: '10', role: 'user', content: '上一轮', createdAt: '2026-08-13 16:00:00' },
+      { id: '11', role: 'assistant', content: '上一轮回复', createdAt: '2026-08-13 16:01:00' },
+    ])
+    store.addUserMessage('1', {
+      id: 'msg_1755075600000_user',
+      role: 'user',
+      content: 'deploy_desktop',
+      createdAt: '2026-08-13 17:00:00',
+    })
+    store.ensureStreamingAssistantMessage('1').content = '部署完成'
+
+    store.applyFetchedMessages('1', [
+      { id: '10', role: 'user', content: '上一轮', createdAt: '2026-08-13 16:00:00' },
+      { id: '11', role: 'assistant', content: '上一轮回复', createdAt: '2026-08-13 16:01:00' },
+      { id: '12', role: 'user', content: 'deploy_desktop', createdAt: '2026-08-13 17:00:00' },
+      { id: '13', role: 'assistant', content: '部署完成', createdAt: '2026-08-13 17:01:00' },
+    ])
+
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['10', '11', '12', '13'])
+    expect(store.getMessages('1').filter(m => m.content === 'deploy_desktop')).toHaveLength(1)
   })
 
   it('applyFetchedMessages 完成后用落库消息替换临时流式助手消息', () => {

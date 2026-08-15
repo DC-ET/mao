@@ -34,6 +34,22 @@ class QueueServer {
     });
   }
 
+  enqueueChunkedSse(chunks: Buffer[]): void {
+    this.enqueue((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.flushHeaders();
+      const writeNext = (index: number) => {
+        if (index >= chunks.length) {
+          res.end();
+          return;
+        }
+        res.write(chunks[index]);
+        setTimeout(() => writeNext(index + 1), 10);
+      };
+      writeNext(0);
+    });
+  }
+
   enqueueBytes(bytes: Buffer, contentType: string, status = 200): void {
     this.enqueue((_req, res) => {
       res.writeHead(status, { 'Content-Type': contentType });
@@ -296,6 +312,43 @@ describe('OpenAiLlmAdapter', () => {
     const cancelled = new CapturingCallback();
     await adapter(0, 0).stream(request('cancel'), configOf(server), cancelled, { get: () => true });
     expect((cancelled.error as Error).message).toContain('Cancelled by user');
+  });
+
+  it('streamDecodesUtf8CharactersSplitAcrossBufferChunks', async () => {
+    server = new QueueServer();
+    const sse = Buffer.from(
+      'data: {"choices":[{"delta":{"content":"你好"}}]}\n\ndata: [DONE]\n\n',
+      'utf8',
+    );
+    const character = Buffer.from('好', 'utf8');
+    const characterStart = sse.indexOf(character);
+    expect(characterStart).toBeGreaterThanOrEqual(0);
+    server.enqueueChunkedSse([
+      sse.subarray(0, characterStart + 1),
+      sse.subarray(characterStart + 1),
+    ]);
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter(0, 0).stream(request('utf8'), configOf(server), callback, { get: () => false });
+
+    expect(callback.error).toBeUndefined();
+    expect(callback.chunks[0]?.choices?.[0]?.delta?.content).toBe('你好');
+    expect(callback.chunks[0]?.choices?.[0]?.delta?.content).not.toContain('\uFFFD');
+  });
+
+  it('streamRejectsIncompleteUtf8AtEndOfBody', async () => {
+    server = new QueueServer();
+    const validSse = Buffer.from('data: [DONE]\n\n', 'utf8');
+    server.enqueueChunkedSse([Buffer.concat([validSse, Buffer.from([0xe4])])]);
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter(0, 0).stream(request('invalid-utf8'), configOf(server), callback, { get: () => false });
+
+    expect(callback.usage).toBeUndefined();
+    expect(callback.error).toBeInstanceOf(TypeError);
+    expect((callback.error as Error).message).toMatch(/encoded data|UTF-8/i);
   });
 
   it('streamRetries404ThenSucceedsAndReportsStatus', async () => {

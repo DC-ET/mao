@@ -389,12 +389,6 @@ export class StreamingWsHandler {
       this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '只能编辑最后一条用户消息' }));
       return;
     }
-    try {
-      await this.deps.sessionService.editMessageAndTruncate(messageId, content, images);
-    } catch (e) {
-      this.deps.registry.send(userId, wsEvent('error', sessionId, { message: `编辑消息失败: ${e instanceof Error ? e.message : String(e)}` }));
-      return;
-    }
     if (images.length > 0) {
       const model = await this.resolveSessionModel(session);
       if (!model || model.supportsVision !== 1) {
@@ -405,6 +399,12 @@ export class StreamingWsHandler {
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '单条消息最多支持 10 张图片' }));
         return;
       }
+    }
+    try {
+      await this.deps.sessionService.editMessageAndTruncate(messageId, content, images);
+    } catch (e) {
+      this.deps.registry.send(userId, wsEvent('error', sessionId, { message: `编辑消息失败: ${e instanceof Error ? e.message : String(e)}` }));
+      return;
     }
     if (this.executionClaims.has(sessionId)) {
       this.sendSessionAlreadyRunning(userId, sessionId);

@@ -44,10 +44,11 @@ describe('WsStreamingEventListener', () => {
     listener.onToolCallStart({ id: 'tc-w', function: { name: 'write_file', arguments: '{"path":' } } as never);
     listener.onToolCallArgsDelta('tc-w', '{"path":"/a.ts"}');
     listener.onToolCallStart({ id: 'tc-w', function: { name: 'write_file', arguments: '{"path":"/a.ts"}' } } as never);
-    const starts = vi.mocked(registry.send).mock.calls
-      .map((c) => c[1] as { type: string })
-      .filter((e) => e.type === 'tool_call_start');
+    listener.onToolCallResult('tc-w', '{"success":true,"bytes_written":12}');
+    const events = vi.mocked(registry.send).mock.calls.map((c) => c[1] as { type: string; data?: { summary?: string } });
+    const starts = events.filter((e) => e.type === 'tool_call_start');
     expect(starts).toHaveLength(1);
+    expect(events.find((e) => e.type === 'tool_call_result')?.data?.summary).toBe('写入 /a.ts (12B)');
   });
 
   it('strips private diff records file change and todos', async () => {
@@ -77,6 +78,38 @@ describe('WsStreamingEventListener', () => {
     expect(types).toContain('todo_updated');
     expect(types).toContain('activity');
     expect(types).toContain('llm_stream_reset');
+  });
+
+  it('sanitizes image results with the shared processor and preserves preview only', () => {
+    const { listener, registry } = makeListener();
+    listener.onToolCallStart({ id: 'tc-img', function: { name: 'read_file', arguments: '{"path":"p.png"}' } } as never);
+    listener.onToolCallResult('tc-img', JSON.stringify({
+      media_type: 'image', mime: 'image/png', path: 'p.png', data_uri: 'data:image/png;base64,abc',
+    }));
+    const resultEvent = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'tool_call_result');
+    expect(resultEvent?.data?.result).not.toContain('data:image/png;base64,abc');
+    expect(resultEvent?.data?.preview).toEqual({
+      media_type: 'image', mime: 'image/png', data_uri: 'data:image/png;base64,abc',
+    });
+  });
+
+  it('replaces unsupported image results with a vision error', () => {
+    const { listener, registry } = makeListener();
+    const unsupported = new WsStreamingEventListener(
+      { registry, activityService: { record: vi.fn(async () => ({ id: 1 })) }, activityHeartbeat: { touch: vi.fn() },
+        sessionTodoMapper: { selectBySessionId: vi.fn(async () => []) }, sessionService: { updateContextTokens: vi.fn(async () => undefined) } } as never,
+      11, 7, 'exec-1', false,
+    );
+    unsupported.onToolCallStart({ id: 'tc-img', function: { name: 'read_file', arguments: '{"path":"p.png"}' } } as never);
+    unsupported.onToolCallResult('tc-img', JSON.stringify({ media_type: 'image', path: 'p.png', data_uri: 'data:image/png;base64,abc' }));
+    const resultEvent = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'tool_call_result');
+    expect(resultEvent?.data?.result).toContain('当前模型不支持图片输入');
+    expect(resultEvent?.data?.result).not.toContain('data:image/png;base64,abc');
+    expect(resultEvent?.data?.preview).toBeUndefined();
   });
 
   it('summarizes edit_file result instead of dumping raw json', () => {

@@ -46,7 +46,7 @@ export class SubAgentResultCollector implements AgentEventListener {
   }
 
   getResult(): string {
-    return this.contentBuilder.join('');
+    return this.contentBuilder.join('').trim();
   }
 
   getThinkingContent(): string | null {

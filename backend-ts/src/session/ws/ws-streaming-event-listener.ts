@@ -3,6 +3,7 @@ import type { ToolCall } from '../../harness/llm/chat-request.js';
 import type { StreamingWsRegistry } from './streaming-ws-registry.js';
 import { mapToolToType } from '../activity/activity-type-mapper.js';
 import { ToolResultSummarizer } from '../util/tool-result-summarizer.js';
+import { ToolImageResultProcessor } from '../../harness/tool/tool-image-result-processor.js';
 import { wsEvent } from './ws-event.js';
 
 export interface AgentEventListener {
@@ -73,13 +74,9 @@ export class WsStreamingEventListener implements AgentEventListener {
     const toolName = info?.[0] ?? null;
     const argumentsJson = info?.[1] ?? null;
     const publicResult = stripPrivateDiff(result);
-    let displayResult = publicResult;
-    let preview: Record<string, unknown> | null = null;
-    const processed = processImageResult(publicResult, this.supportsVision);
-    if (processed) {
-      displayResult = processed.sanitizedContent;
-      preview = processed.preview;
-    }
+    const processed = ToolImageResultProcessor.process(publicResult, this.supportsVision);
+    const displayResult = processed.sanitizedContent ?? publicResult;
+    const preview = processed.preview;
     const isError = isErrorResult(displayResult);
     const summary = ToolResultSummarizer.summarize(toolName, argumentsJson, displayResult);
     const data: Record<string, unknown> = {
@@ -202,16 +199,6 @@ function stripPrivateDiff(result: string): string {
     }
   } catch { /* ignore */ }
   return result;
-}
-
-function processImageResult(result: string, _supportsVision: boolean): { sanitizedContent: string; preview: Record<string, unknown> } | null {
-  try {
-    const node = JSON.parse(result) as Record<string, unknown>;
-    if (node.type === 'image' || node.mimeType?.toString().startsWith('image/')) {
-      return { sanitizedContent: result, preview: { type: 'image' } };
-    }
-  } catch { /* ignore */ }
-  return null;
 }
 
 function isErrorResult(result: string | null): boolean {

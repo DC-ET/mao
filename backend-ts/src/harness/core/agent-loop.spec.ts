@@ -232,7 +232,11 @@ describe('AgentLoop', () => {
     expect(p.onSaveAssistantMessage.mock.calls[0][3]).toEqual(expect.objectContaining({ 'call-1': expect.any(String) }));
     expect(p.onSaveToolMessage).toHaveBeenCalledWith('call-1', '{"ok":true,"_private_diff":{"diff_mode":"PATCH"}}', null);
     expect(p.onSaveAssistantMessage).toHaveBeenCalledWith('done', null, [], expect.anything());
-    expect(l.onToolCallStart).toHaveBeenCalledTimes(1);
+    expect(l.onToolCallStart).toHaveBeenCalledTimes(2);
+    expect(l.onToolCallStart).toHaveBeenLastCalledWith(expect.objectContaining({
+      id: 'call-1',
+      function: expect.objectContaining({ arguments: '{"path":"a"}' }),
+    }));
     expect(l.onToolCallResult).toHaveBeenCalledWith('call-1', expect.any(String));
     expect(ctx.messages.map((m) => m.role)).toEqual(expect.arrayContaining(['assistant', 'tool', 'assistant']));
   });
@@ -270,10 +274,10 @@ describe('AgentLoop', () => {
 
     await agentLoop.execute(ctx, l, p);
 
-    expect(l.onToolCallStart).toHaveBeenCalledTimes(1);
-    expect(l.onToolCallStart.mock.calls[0][0]).toEqual(expect.objectContaining({
+    expect(l.onToolCallStart).toHaveBeenCalledTimes(2);
+    expect(l.onToolCallStart).toHaveBeenLastCalledWith(expect.objectContaining({
       id: 'call_80eb756f08f94773b4f97c60',
-      function: expect.objectContaining({ name: 'write_file' }),
+      function: expect.objectContaining({ name: 'write_file', arguments: '{"path":"a.html","content":"x"}' }),
     }));
     expect(toolDispatcher.dispatch).toHaveBeenCalledTimes(1);
     expect(toolDispatcher.dispatch).toHaveBeenCalledWith(
@@ -288,6 +292,40 @@ describe('AgentLoop', () => {
       ctx.tools,
     );
     expect(p.onSaveAssistantMessage.mock.calls[0][2]).toHaveLength(1);
+    expect(p.onSaveAssistantMessage.mock.calls[0][2][0]).toEqual(expect.objectContaining({
+      id: 'call_80eb756f08f94773b4f97c60',
+      summary: '写入 a.html',
+    }));
+  });
+
+  it('does not process or persist parallel tool results after cancellation wins the race', async () => {
+    const ctx = context();
+    ctx.tools = [namedTool('read_file'), namedTool('shell')];
+    const l = listener();
+    const p = persistence();
+    const cancelFlag = agentLoop.registerCancelFlag(11);
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    let dispatchCount = 0;
+    toolDispatcher.dispatch.mockImplementation(async () => {
+      dispatchCount++;
+      if (dispatchCount === 2) cancelFlag.set(true);
+      return dispatchCount === 1 ? '{"total_lines":2}' : '{"exit_code":0}';
+    });
+    llmAdapter.stream.mockImplementationOnce(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      callback.onChunk(toolChunk({ id: 'call-read', index: 0, function: { name: 'read_file', arguments: '{"path":"a"}' } }));
+      callback.onChunk(toolChunk({ id: 'call-shell', index: 1, function: { name: 'shell', arguments: '{"command":"pwd"}' } }));
+      callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(l.onToolCallResult).not.toHaveBeenCalled();
+    expect(p.onSaveAssistantMessage).not.toHaveBeenCalled();
+    expect(p.onSaveToolMessage).not.toHaveBeenCalled();
+    expect(ctx.messages.some((m) => m.role === 'assistant' || m.role === 'tool')).toBe(false);
+    expect(l.onMessageEnd).toHaveBeenCalledTimes(1);
   });
 
   it('keeps interleaved tool-call argument chunks bound to their index', async () => {
@@ -327,6 +365,16 @@ describe('AgentLoop', () => {
 
     expect(l.onToolCallArgsDelta).toHaveBeenCalledWith('call-shell', '{"command":"pwd"}');
     expect(l.onToolCallArgsDelta).toHaveBeenCalledWith('call-read', '{"path":"a.ts"}');
+    expect(l.onToolCallStart).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'call-shell',
+      function: expect.objectContaining({ arguments: '{"command":"pwd"}' }),
+    }));
+    expect(l.onToolCallStart).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'call-read',
+      function: expect.objectContaining({ arguments: '{"path":"a.ts"}' }),
+    }));
+    expect(vi.mocked(l.onToolCallStart).mock.calls.filter(([tc]) => tc.id === 'call-shell')).toHaveLength(2);
+    expect(vi.mocked(l.onToolCallStart).mock.calls.filter(([tc]) => tc.id === 'call-read')).toHaveLength(2);
     expect(toolDispatcher.dispatch).toHaveBeenCalledWith(
       'shell', '{"command":"pwd"}', 'CLOUD', 11, 7, '/repo', 'READ_ONLY', undefined, ctx.tools,
     );
@@ -359,6 +407,11 @@ describe('AgentLoop', () => {
     await agentLoop.execute(ctx, l, p);
 
     const save = p.onSaveToolMessage.mock.calls[0];
+    const persistedAssistantToolCalls = p.onSaveAssistantMessage.mock.calls[0][2] as ToolCall[];
+    expect(persistedAssistantToolCalls[0]).toEqual(expect.objectContaining({
+      id: 'call-img',
+      summary: '读取 a.png (图片)',
+    }));
     expect(save[0]).toBe('call-img');
     expect(save[1]).toContain('图片读取成功');
     expect(save[1]).not.toContain('data_uri');

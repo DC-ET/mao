@@ -16,6 +16,7 @@ import { FileChangeDiffUtil } from '../tool/file-change-diff-util.js';
 import { ToolCallContext } from '../tool/tool-call-context.js';
 import type { ToolDispatcher } from '../tool/tool-dispatcher.js';
 import { ToolImageResultProcessor } from '../tool/tool-image-result-processor.js';
+import { ToolResultSummarizer } from '../../session/util/tool-result-summarizer.js';
 import type { Tool } from '../tool/tool.js';
 import type { ShellSessionManager } from '../shell/shell-session-manager.js';
 import type { McpClientManager } from '../mcp/mcp-client-manager.js';
@@ -206,7 +207,8 @@ export class AgentLoop {
               }
               if (toolCalls.length > 0) {
                 for (const tc of toolCalls) {
-                  if (tc.id && emittedEarlyStarts.has(tc.id)) continue;
+                  // 与 Java 版一致：流结束时用完整参数刷新监听器缓存。
+                  // 监听器会去重 start 事件，但摘要器随后需要这里的最终 arguments。
                   listener.onToolCallStart(tc);
                 }
                 context.pendingToolCalls = toolCalls;
@@ -395,6 +397,9 @@ export class AgentLoop {
       const rawResult = await runOne(tc);
       const toolSave = this.processToolResult(rawResult, tc, context);
       if (cancelFlag?.get()) return;
+      tc.summary = ToolResultSummarizer.summarize(
+        tc.function?.name ?? '', tc.function?.arguments ?? '', toolSave.content,
+      ) ?? undefined;
       if (tc.id) toolResults[tc.id] = rawResult;
       context.addToolResult(tc.id!, toolSave.content);
       listener.onToolCallResult(tc.id!, rawResult);
@@ -403,10 +408,14 @@ export class AgentLoop {
     }
 
     const results = await Promise.all(pendingCalls.map((tc) => runOne(tc)));
+    if (cancelFlag?.get()) return;
     for (let i = 0; i < pendingCalls.length; i++) {
       const tc = pendingCalls[i];
       const rawResult = results[i];
       const toolSave = this.processToolResult(rawResult, tc, context);
+      tc.summary = ToolResultSummarizer.summarize(
+        tc.function?.name ?? '', tc.function?.arguments ?? '', toolSave.content,
+      ) ?? undefined;
       if (tc.id) toolResults[tc.id] = rawResult;
       context.addToolResult(tc.id!, toolSave.content);
       listener.onToolCallResult(tc.id!, rawResult);
