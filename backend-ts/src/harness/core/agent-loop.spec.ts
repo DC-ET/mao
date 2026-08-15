@@ -15,6 +15,7 @@ import type { ShellSessionManager } from '../shell/shell-session-manager.js';
 import type { SessionService } from '../deps.js';
 import type { McpClientManager } from '../mcp/mcp-client-manager.js';
 import type { Tool } from '../tool/tool.js';
+import { ToolCallContext } from '../tool/tool-call-context.js';
 
 describe('AgentLoop', () => {
   const llmAdapter = { stream: vi.fn(), chat: vi.fn() } as unknown as LlmAdapter & { stream: ReturnType<typeof vi.fn> };
@@ -296,6 +297,31 @@ describe('AgentLoop', () => {
       id: 'call_80eb756f08f94773b4f97c60',
       summary: '写入 a.html',
     }));
+  });
+
+  it('keeps parallel tool_call_id isolated after awaits', async () => {
+    const ctx = context();
+    ctx.tools = [namedTool('read_file'), namedTool('shell')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    const seen: string[] = [];
+    toolDispatcher.dispatch.mockImplementation(async (name: string) => {
+      await new Promise((r) => setTimeout(r, name === 'read_file' ? 25 : 5));
+      seen.push(`${name}:${ToolCallContext.getToolCallId() ?? ''}`);
+      return '{"ok":true}';
+    });
+    llmAdapter.stream.mockImplementationOnce(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      callback.onChunk(toolChunk({ id: 'call-read', index: 0, function: { name: 'read_file', arguments: '{"path":"a"}' } }));
+      callback.onChunk(toolChunk({ id: 'call-shell', index: 1, function: { name: 'shell', arguments: '{"command":"pwd"}' } }));
+      callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(seen.sort()).toEqual(['read_file:call-read', 'shell:call-shell']);
   });
 
   it('does not process or persist parallel tool results after cancellation wins the race', async () => {

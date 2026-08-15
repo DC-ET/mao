@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../../common/business-exception.js';
+import { shanghaiYmd } from '../../common/json.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { AgentExecutionContext } from './agent-execution-context.js';
 import { CompactionConfig } from './compaction-config.js';
@@ -251,6 +252,7 @@ describe('HarnessService.buildContext and execute', () => {
     expect(toolRegistry.getAllTools).toHaveBeenCalled();
     expect(ctx.lastPromptTokens).toBe(11);
     expect(ctx.compactionConfig?.maxSummaryTokens).toBe(8000);
+    expect(ctx.currentTimestamp).toBe(shanghaiYmd());
   });
 
   it('buildContextMergesAllSkillsWhenAgentSkillNamesNullAndLocalUnsynced', async () => {

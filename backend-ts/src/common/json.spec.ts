@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDateTime, mpPage, omitNull, toJacksonJson } from './json.js';
+import { formatDateTime, mpPage, omitNull, shanghaiYmd, toJacksonJson } from './json.js';
 
 describe('json', () => {
   it('omits null fields like Jackson NON_NULL', () => {
@@ -10,6 +10,11 @@ describe('json', () => {
   it('formats dates in Asia/Shanghai', () => {
     const date = new Date('2026-08-13T05:00:00.000Z');
     expect(formatDateTime(date)).toBe('2026-08-13 13:00:00');
+  });
+
+  it('shanghaiYmd uses Asia/Shanghai calendar day not UTC', () => {
+    expect(shanghaiYmd(new Date('2026-08-14T16:00:00.000Z'))).toBe('2026-08-15');
+    expect(shanghaiYmd(new Date('2026-08-14T15:59:00.000Z'))).toBe('2026-08-14');
   });
 
   it('serializes MyBatis-Plus page shape', () => {

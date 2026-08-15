@@ -32,6 +32,7 @@ import type { McpClientManager } from '../mcp/mcp-client-manager.js';
 import type { McpSyncService } from '../mcp/local/mcp-sync-service.js';
 import { McpToolAdapter } from '../mcp/mcp-tool-adapter.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
+import { shanghaiYmd } from '../../common/json.js';
 import { BusinessException } from '../../common/business-exception.js';
 import { ErrorCode } from '../../common/error-code.js';
 import type { ChatRequest, ChatUsage, ToolCall } from '../llm/chat-request.js';
@@ -271,7 +272,7 @@ export class HarnessService {
 
     const context = new AgentExecutionContext();
     context.cancelFlag = cancelFlag;
-    context.currentTimestamp = new Date().toISOString().slice(0, 10);
+    context.currentTimestamp = shanghaiYmd();
     context.sessionId = sessionId;
     context.userId = session.userId;
     context.agentId = agent.id;

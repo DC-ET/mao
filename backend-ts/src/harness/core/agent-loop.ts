@@ -397,14 +397,9 @@ export class AgentLoop {
     toolResults: Record<string, string>,
     cancelFlag: AtomicBoolean | null,
   ): Promise<void> {
-    const runOne = async (tc: ToolCall): Promise<string> => {
-      try {
-        ToolCallContext.setToolCallId(tc.id);
-        return await Promise.resolve(this.dispatchTool(tc.function?.name ?? '', tc.function?.arguments ?? '', context));
-      } finally {
-        ToolCallContext.clear();
-      }
-    };
+    const runOne = (tc: ToolCall): Promise<string> => ToolCallContext.run(tc.id, () =>
+      Promise.resolve(this.dispatchTool(tc.function?.name ?? '', tc.function?.arguments ?? '', context)),
+    );
 
     if (pendingCalls.length === 1) {
       if (cancelFlag?.get()) return;
