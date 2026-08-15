@@ -1,5 +1,5 @@
 #!/bin/bash
-# Restart the TypeScript backend (Node on 9081). Used by GET /v1/admin/runtime/restart.
+# Restart the TypeScript backend (Node on 9080). Used by GET /v1/admin/runtime/restart.
 # Deploy this file to ${app.root-dir}/backend-ts/restart.sh (default /opt/mao/backend-ts/restart.sh).
 
 set -euo pipefail
@@ -16,7 +16,7 @@ fi
 PID_FILE="${APP_DIR}/mao-server-ts.pid"
 LOG_DIR="${MAO_LOG_DIR:-${APP_DIR}/logs}"
 LOG_FILE="${LOG_DIR}/backend-ts.log"
-PORT="${MAO_TS_PORT:-9081}"
+PORT="${MAO_TS_PORT:-9080}"
 
 mkdir -p "$LOG_DIR"
 

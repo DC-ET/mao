@@ -12,9 +12,8 @@
 
 ### 前置依赖
 
-- JDK 17+
-- Maven 3.8+
-- Node.js 18+
+- Node.js 22+
+- npm 10+
 - MySQL 8.x
 
 ### 后端
@@ -23,15 +22,14 @@
 # 1. 创建数据库
 mysql -e "CREATE DATABASE mao CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
-# 2. 复制并编辑本地配置
-cp backend/src/main/resources/application-example.yml \
-   backend/src/main/resources/application-local.yml
-# 修改 MySQL、JWT_SECRET 等
+# 2. 复制并编辑环境配置（可选，不复制则使用内置默认值）
+cp backend-ts/.env.example backend-ts/.env
+# 修改 MYSQL_URL、JWT_SECRET 等
 
-# 3. 确保 application.yml 中 spring.profiles.active 为 local
-
-# 4. 启动（Flyway 自动执行迁移）
-cd backend && mvn spring-boot:run
+# 3. 安装依赖并启动（Flyway 启动时自动执行迁移）
+cd backend-ts
+npm install
+npm run start:dev    # 开发模式（tsx 热重载），监听 9080
 ```
 
 ### 前端
@@ -61,7 +59,7 @@ npm test
 ## Pull Request
 
 1. Fork 仓库并创建特性分支
-2. 确保 `cd backend && mvn compile` 与 `cd admin && npm run build` 通过
+2. 确保 `cd backend-ts && npm run build` 与 `cd admin && npm run build` 通过
 3. 如涉及用户可见行为变更，在 PR 描述中说明
 4. 等待维护者 Review
 

@@ -160,7 +160,7 @@ export interface AppConfig {
 
 const DEFAULTS: AppConfig = {
   server: {
-    port: 9081,
+    port: 9080,
     servlet: { contextPath: '/api' },
   },
   spring: {
@@ -418,7 +418,7 @@ function coerceTypes(cfg: AppConfig): AppConfig {
     if (typeof v === 'string') return v === 'true' || v === '1';
     return d;
   };
-  cfg.server.port = n(process.env.MAO_TS_PORT ?? cfg.server.port, 9081);
+  cfg.server.port = n(process.env.MAO_TS_PORT ?? cfg.server.port, 9080);
   cfg.spring.flyway.enabled = b(process.env.FLYWAY_ENABLED ?? cfg.spring.flyway.enabled, true);
   cfg.ldap.enabled = b(cfg.ldap.enabled, false);
   cfg.feishu.enabled = b(cfg.feishu.enabled, false);

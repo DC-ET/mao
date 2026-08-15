@@ -1,5 +1,5 @@
 server:
-  port: ${MAO_TS_PORT:9081}
+  port: ${MAO_TS_PORT:9080}
   servlet:
     context-path: /api
 
@@ -15,7 +15,7 @@ spring:
       idle-timeout: 300000
       max-lifetime: 600000
   flyway:
-    # Schema owner after cutover. Java should set SPRING_FLYWAY_ENABLED=false.
+    # Schema owner: TypeScript backend runs migrations on startup.
     enabled: ${FLYWAY_ENABLED:true}
     baseline-on-migrate: true
     baseline-version: 12

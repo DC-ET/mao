@@ -81,8 +81,6 @@ export function resolveMigrationDir(cwd = process.cwd(), locations = 'filesystem
   const candidates = [
     resolve(cwd, loc),
     resolve(here, '../../db/migration'),
-    resolve(cwd, '../backend/src/main/resources/db/migration'),
-    resolve(here, '../../../backend/src/main/resources/db/migration'),
   ];
   for (const dir of candidates) {
     if (hasSqlFiles(dir)) {
@@ -320,8 +318,8 @@ async function connectFlywayDb(cfg: AppConfig): Promise<{ db: FlywayDb; close: (
 }
 
 /**
- * Schema owner after Nginx cutover: TypeScript backend.
- * Uses the same SQL files and flyway_schema_history as Java Flyway.
+ * Schema owner: TypeScript backend.
+ * Uses the SQL files in db/migration and the shared flyway_schema_history table.
  */
 export async function runFlywayIfEnabled(
   cfg: AppConfig,

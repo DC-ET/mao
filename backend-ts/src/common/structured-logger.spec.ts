@@ -16,7 +16,7 @@ describe('structured logger', () => {
   it('writes one JSON line with an ISO time and uppercase level', () => {
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
-    writeStructuredLog('info', 'started', { module: 'test' }, { port: 9081 });
+    writeStructuredLog('info', 'started', { module: 'test' }, { port: 9080 });
 
     expect(write).toHaveBeenCalledOnce();
     const output = String(write.mock.calls[0]?.[0]);
@@ -25,7 +25,7 @@ describe('structured logger', () => {
     const record = JSON.parse(output) as Record<string, unknown>;
     expect(record.level).toBe('INFO');
     expect(record.module).toBe('test');
-    expect(record.message).toBe('started { port: 9081 }');
+    expect(record.message).toBe('started { port: 9080 }');
     expect(record.time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     expect(Number.isNaN(Date.parse(String(record.time)))).toBe(false);
   });

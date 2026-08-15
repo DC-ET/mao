@@ -14,6 +14,16 @@
 
 ---
 
+## 0.0.33 (2026-08-15)
+
+### 后端
+- **移除 Java 版后端**（`backend/`、`pom.xml`、Maven 构建、`Dockerfile.backend` 与 CI 中的 `mvn test`），由 TypeScript 版后端完全替代。
+- TypeScript 后端默认监听端口由 9081 改为 **9080**（`MAO_TS_PORT` 可覆盖），与既有 Nginx 反代 / 前端默认地址保持一致；Flyway 迁移脚本迁入 `backend-ts/db/migration/`，后端启动时自动执行。
+- 本地/服务器启停脚本统一为 `scripts/start-backend.sh` / `stop-backend.sh` / `restart-backend.sh`（原 Java 版脚本删除，`*-backend-ts.sh` 更名为无后缀版），PID 文件统一为 `.backend.pid`。
+- 部署说明与配置模板更新：见 [DEPLOY.md](DEPLOY.md) 与 `backend-ts/.env.example`（原 Java `application-example.yml` 随源码移除）。
+
+---
+
 ## 0.0.32 (2026-08-15)
 
 ### 前端（桌面 / Web / 安卓）

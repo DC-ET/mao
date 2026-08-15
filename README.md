@@ -81,7 +81,7 @@ flowchart TB
         Android["安卓 APP<br/>Capacitor · CLOUD"]
     end
 
-    subgraph backend["后端 · Spring Boot :9080"]
+    subgraph backend["后端 · TypeScript :9080"]
         API["REST API /api/v1"]
         WS["WebSocket /api/ws/stream"]
         Harness["Agent Harness<br/>Think-Act-Observe"]
@@ -144,17 +144,18 @@ flowchart TB
 
 | 组件 | 技术 |
 |------|------|
-| 语言 | Java 17 |
-| 框架 | Spring Boot 3.5.14 |
-| ORM | MyBatis-Plus 3.5.6 |
-| 数据库 | MySQL 8.x |
-| 认证 | Spring Security + JWT |
+| 语言 | TypeScript（Node.js 22+） |
+| 框架 | NestJS 11 + Fastify |
+| 数据访问 | mysql2（SQL 手写仓储） |
+| 数据库 | MySQL 8.x + Flyway（启动时自动迁移） |
+| 认证 | JWT（jsonwebtoken） |
 | 认证方式 | 本地密码 / LDAP（可选）/ 飞书 SSO（可选） |
-| LLM 通信 | OkHttp + OpenAI 兼容协议（SSE 拉流） |
-| 客户端通信 | WebSocket（`/api/ws/stream`） |
+| LLM 通信 | fetch / SSE 拉流（OpenAI 兼容协议） |
+| 客户端通信 | WebSocket（`/api/ws/stream`，@fastify/websocket） |
 | 对象存储 | 本地文件系统 / 阿里云 OSS（可选） |
-| API 文档 | SpringDoc OpenAPI 2.8.6 |
-| 构建工具 | Maven |
+| API 文档 | @fastify/swagger-ui（`/api/swagger-ui.html`） |
+| 构建工具 | npm + tsc / tsx（开发） |
+| 测试 | Vitest |
 
 ### 前端（管理后台 & 桌面端 & 安卓）
 
@@ -200,9 +201,8 @@ docker compose logs -f backend
 
 #### 环境要求
 
-- JDK 17+
-- Maven 3.8+
-- Node.js 18+
+- Node.js 22+
+- npm 10+
 - MySQL 8.x
 
 #### 1. 初始化数据库与配置
@@ -211,26 +211,23 @@ docker compose logs -f backend
 # 创建数据库
 mysql -e "CREATE DATABASE mao CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
-# 复制配置模板并编辑
-cp backend/src/main/resources/application-example.yml \
-   backend/src/main/resources/application-local.yml
+# 复制环境配置模板并编辑（可选，不复制则使用代码内置默认值）
+cp backend-ts/.env.example backend-ts/.env
 ```
 
-编辑 `application-local.yml`，至少配置 MySQL。生产环境请设置环境变量 `JWT_SECRET`。
-
-确保 `application.yml` 中 `spring.profiles.active` 指向你的本地 profile（通常为 `local`）。
+编辑 `backend-ts/.env`，至少配置 `MYSQL_URL` / `MYSQL_USERNAME` / `MYSQL_PASSWORD`。生产环境请设置 `JWT_SECRET`。
 
 #### 2. 启动后端
 
 ```bash
-cd backend
-mvn clean install
-SPRING_FLYWAY_ENABLED=true mvn spring-boot:run
+cd backend-ts
+npm install
+npm run start:dev    # 开发模式（tsx 热重载）
 ```
 
 服务地址：`http://localhost:9080`  
 Swagger UI：`http://localhost:9080/api/swagger-ui.html`  
-数据库迁移默认由 TypeScript 后端在启动时执行。若只跑 Java，需设置 `SPRING_FLYWAY_ENABLED=true`（`./scripts/start-backend.sh` 已默认打开）。Docker Compose 中的 Java 后端同样会执行 Flyway。
+数据库迁移（Flyway）由后端在启动时自动执行（`FLYWAY_ENABLED`，默认 true），迁移脚本位于 `backend-ts/db/migration/`。
 
 #### 3. 配置 LLM 模型
 
@@ -288,11 +285,11 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 | `TAVILY_API_KEY` | Tavily 搜索（可选） |
 | `LDAP_ENABLED` / `LDAP_URL` 等 | LDAP 认证（可选，`LDAP_ENABLED` 默认 `false`） |
 | `FEISHU_ENABLED` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_REDIRECT_URI` | 飞书 OAuth（可选，`FEISHU_ENABLED` 默认 `false`），`FEISHU_REDIRECT_URI` 必须是后端公网回调地址，如 `https://your-domain/api/v1/auth/feishu/callback` |
-| `WEIXIN_BOT_ENABLED` / `WEIXIN_BOT_MONITOR_ENABLED` 等 | 微信 Bot 通道（可选，默认开启；详见 `application-example.yml`） |
+| `WEIXIN_BOT_ENABLED` / `WEIXIN_BOT_MONITOR_ENABLED` 等 | 微信 Bot 通道（可选，默认开启；详见 `backend-ts/.env.example`） |
 | `TASK_NOTIFICATION_WORKER_DELAY_MS` / `TASK_NOTIFICATION_BATCH_SIZE` / `TASK_NOTIFICATION_MAX_ATTEMPTS` | 任务通知投递调度参数 |
 | `OSS_*` | 阿里云 OSS（可选） |
 
-完整配置项请参考 [application-example.yml](backend/src/main/resources/application-example.yml)。
+完整配置项请参考 [backend-ts/.env.example](backend-ts/.env.example) 与 [backend-ts/config/application.yml](backend-ts/config/application.yml)。
 
 ### 前端
 
@@ -322,9 +319,8 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 详细步骤见 [DEPLOY.md](DEPLOY.md)。
 
 ```bash
-# 后端打包
-cd backend && mvn clean package -DskipTests
-# 产物：backend/target/mao-server.jar
+# 后端打包（产物：backend-ts/dist/）
+cd backend-ts && npm ci && npm run build
 
 # 前端打包
 cd admin && npm run build
@@ -335,7 +331,7 @@ cd desktop && npm run build
 
 | 组件 | 部署方式 | 说明 |
 |------|---------|------|
-| Java 后端 | jar + systemd | 端口 9080 |
+| TypeScript 后端 | Node.js + systemd / pm2 / restart.sh | 端口 9080，监听 `/api` 上下文 |
 | 管理后台 | Nginx 静态文件 | 如 `mao-admin.example.com` |
 | 桌面端 Web | Nginx 静态文件 | 如 `mao.example.com` |
 | MySQL | 自建或云服务 | 内网访问 |
@@ -424,7 +420,7 @@ CI 在每次 push / PR 时执行后端编译与前端构建（见 [`.github/work
 
 ```bash
 # 后端单元测试
-cd backend && mvn test
+cd backend-ts && npm test
 
 # 端到端测试（需先启动 backend、admin、desktop）
 npm test
@@ -438,7 +434,7 @@ npm run test:desktop
 
 - **Bug / 功能建议** — 提交 [GitHub Issue](https://github.com/DC-ET/mao/issues)
 - **安全漏洞** — 请参阅 [SECURITY.md](SECURITY.md)，勿公开披露
-- **提交 PR 前** — 确保 `cd backend && mvn compile` 与相关前端 `npm run build` 通过
+- **提交 PR 前** — 确保 `cd backend-ts && npm run build` 与相关前端 `npm run build` 通过
 
 ## 文档
 
