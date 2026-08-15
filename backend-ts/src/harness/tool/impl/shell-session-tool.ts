@@ -90,7 +90,7 @@ export class ShellSessionTool extends BaseTool {
       if (action.trim() === '') action = 'exec';
       switch (action) {
         case 'exec': return await this.handleExec(args, sessionId, userId, workspace);
-        case 'write_stdin': return await this.handleWriteStdin(args, sessionId);
+        case 'write_stdin': return await this.handleWriteStdin(args, sessionId, userId);
         case 'close': return this.handleClose(args, sessionId);
         case 'list': return this.handleList(sessionId);
         default: return errorJson('未知动作：' + action);
@@ -156,12 +156,14 @@ export class ShellSessionTool extends BaseTool {
     return toJson(payload);
   }
 
-  private async handleWriteStdin(args: Record<string, unknown>, conversationId: number | null): Promise<string> {
+  private async handleWriteStdin(args: Record<string, unknown>, conversationId: number | null, userId: number | null): Promise<string> {
     const shellId = asText(args.session_id);
     const input = asText(args.input) ?? '';
     if (!shellId) return errorJson('write_stdin 必须提供 session_id');
     const session = this.sessionManager.getSession(shellId);
     if (!session) return errorJson('会话不存在或已关闭：' + shellId);
+    // 与 exec 一致：持久会话的 env 不会自动更新，写命令前重新注入短效 MAO_TOKEN
+    await this.injectMaoToken(session, userId);
     const yieldTimeMs = args.yield_time_ms != null ? asInt(args.yield_time_ms, 5000) : 5000;
     // 输入本身不带结束标记，必须额外回显 marker，否则只能空等到超时
     const marker = this.newMarker();

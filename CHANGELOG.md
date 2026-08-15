@@ -21,6 +21,7 @@
 - TypeScript 后端默认监听端口由 9081 改为 **9080**（`MAO_TS_PORT` 可覆盖），与既有 Nginx 反代 / 前端默认地址保持一致；Flyway 迁移脚本迁入 `backend-ts/db/migration/`，后端启动时自动执行。
 - 本地/服务器启停脚本统一为 `scripts/start-backend.sh` / `stop-backend.sh` / `restart-backend.sh`（原 Java 版脚本删除，`*-backend-ts.sh` 更名为无后缀版），PID 文件统一为 `.backend.pid`。
 - 部署说明与配置模板更新：见 [DEPLOY.md](DEPLOY.md) 与 `backend-ts/.env.example`（原 Java `application-example.yml` 随源码移除）。
+- 修复云端 shell 持久会话通过 `write_stdin` 执行命令时不注入 `MAO_TOKEN` 的问题：现在与 `exec` 一致，每次写入命令前都刷新注入短效令牌，避免 `mao-user` / `mao-admin` CLI 在复用会话时出现未登录（401）。
 
 ---
 

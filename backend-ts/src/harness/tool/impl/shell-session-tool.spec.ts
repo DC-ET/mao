@@ -135,6 +135,16 @@ describe('ShellSessionTool marker and environment handling', () => {
     expect(script.indexOf('export MAO_TOKEN')).toBeLessThan(script.indexOf('mao-admin-cli'));
   });
 
+  it('injects a fresh MAO_TOKEN before write_stdin commands on a reused session', async () => {
+    const { tool, written } = harness();
+    await tool.execute(
+      JSON.stringify({ action: 'write_stdin', session_id: 'sh-1', input: 'mao-user pref weixin get' }), 11, 7, '/tmp',
+    );
+    const script = written();
+    expect(script).toContain(`export MAO_TOKEN='jwt-to"ken'`);
+    expect(script.indexOf('export MAO_TOKEN')).toBeLessThan(script.indexOf('mao-user'));
+  });
+
   it('refreshes current_workdir from pwd once the command completes', async () => {
     const { tool, shellSession, outputManager } = harness();
     outputManager.readUntilMarker

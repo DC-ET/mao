@@ -99,7 +99,19 @@ function request(options) {
 
           if (parsed && typeof parsed === 'object' && 'code' in parsed) {
             if (parsed.code !== 0) {
-              const err = new Error(parsed.message || `业务错误 code=${parsed.code}`);
+              if (res.statusCode === 401) {
+                const err = new Error(
+                  `未登录或登录已过期（HTTP 401）：${parsed.message || '未登录或登录已过期'}\n`
+                  + `  云端/微信场景：请确认 MAO_TOKEN 已注入（echo \${MAO_TOKEN:+injected}），必要时重开 shell 会话；\n`
+                  + `  本地/手动终端：请执行 auth login 或 auth refresh。`
+                );
+                err.exitCode = 1;
+                err.code = parsed.code;
+                err.result = parsed;
+                reject(err);
+                return;
+              }
+              const err = new Error(`${parsed.message || `业务错误 code=${parsed.code}`}（可用 --raw 查看完整响应）`);
               err.exitCode = 1;
               err.code = parsed.code;
               err.result = parsed;
@@ -111,9 +123,19 @@ function request(options) {
           }
 
           if (res.statusCode >= 400) {
-            const err = new Error(
-              (parsed && parsed.message) || `HTTP ${res.statusCode}: ${text.slice(0, 200)}`
-            );
+            const detail = (parsed && parsed.message) || `HTTP ${res.statusCode}: ${text.slice(0, 200)}`;
+            if (res.statusCode === 401) {
+              const err = new Error(
+                `未登录或登录已过期（HTTP 401）：${detail}\n`
+                + `  云端/微信场景：请确认 MAO_TOKEN 已注入（echo \${MAO_TOKEN:+injected}），必要时重开 shell 会话；\n`
+                + `  本地/手动终端：请执行 auth login 或 auth refresh。`
+              );
+              err.exitCode = 1;
+              err.statusCode = res.statusCode;
+              reject(err);
+              return;
+            }
+            const err = new Error(detail);
             err.exitCode = 1;
             err.statusCode = res.statusCode;
             reject(err);
@@ -133,7 +155,8 @@ function request(options) {
     });
 
     req.on('error', (e) => {
-      const err = new Error(`网络错误: ${e.message}`);
+      const cause = e.cause?.message ? `（${e.cause.message}）` : '';
+      const err = new Error(`网络错误: ${e.message}${cause}`);
       err.exitCode = 1;
       reject(err);
     });
