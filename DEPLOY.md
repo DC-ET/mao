@@ -138,6 +138,7 @@ UPLOAD_BASE_URL=https://mao.example.com/api
 FILE_UPLOAD_DIR=/opt/mao-data/uploads
 WORKSPACE_ROOT=/opt/mao-data/workspace
 MAO_RUNTIME_DIR=/opt/mao-data/runtime
+MAO_USER_HOME_DIR=/opt/mao-data/users
 SKILLS_DIR=/opt/mao-data/skills
 USER_SKILLS_DIR=/opt/mao-data/userskills
 EOF
@@ -159,6 +160,7 @@ chmod 600 /opt/mao/backend-ts/.env
 | `UPLOAD_STORAGE_MODE` | 否 | `local`（默认）或 `oss` |
 | `UPLOAD_BASE_URL` | local 模式建议设 | 上传文件的公网访问前缀，如 `https://mao.example.com/api` |
 | `MAO_RUNTIME_DIR` | 否 | 运行时状态目录（蓝绿 `deploy.lock`、会话 runtime 等），默认 `/opt/mao-data/runtime` |
+| `MAO_USER_HOME_DIR` | 否 | CLOUD 模式用户 HOME 目录（npm/pip 缓存等），默认 `/opt/mao-data/users` |
 | `MAO_BLUE_GREEN_DRAIN_SEC` | 否 | 蓝绿切换后延迟停止旧实例秒数，默认 `300` |
 | `MAO_NGINX_UPSTREAM_CONF` | 否 | Nginx upstream 文件路径，默认 `/etc/nginx/conf.d/mao-upstream.conf` |
 | `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录 |

@@ -223,7 +223,7 @@ const DEFAULTS: AppConfig = {
     harness: {
       workspaceRoot: './workspace',
       runtimeDir: '/opt/mao-data/runtime',
-      userHomeDir: '/opt/mao/data/users',
+      userHomeDir: '/opt/mao-data/users',
       maxConcurrentAgents: 20,
       agentThreadPoolSize: 20,
       agentThreadPoolMax: 100,
@@ -421,6 +421,9 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.server.port = n(process.env.MAO_TS_PORT ?? cfg.server.port, 9080);
   if (process.env.MAO_RUNTIME_DIR) {
     cfg.app.harness.runtimeDir = process.env.MAO_RUNTIME_DIR;
+  }
+  if (process.env.MAO_USER_HOME_DIR) {
+    cfg.app.harness.userHomeDir = process.env.MAO_USER_HOME_DIR;
   }
   cfg.spring.flyway.enabled = b(process.env.FLYWAY_ENABLED ?? cfg.spring.flyway.enabled, true);
   cfg.ldap.enabled = b(cfg.ldap.enabled, false);
