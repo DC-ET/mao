@@ -1,5 +1,6 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
+import type { NotificationChannel, Result, TaskNotificationPreference } from '@mao/contracts'
 import { useLoginDialog } from '../composables/useLoginDialog'
 import { getRefreshToken, getToken, setTokens } from '../utils/auth-storage'
 import type { SessionSearchItem } from '../types/chat'
@@ -31,8 +32,12 @@ export async function doRefreshToken(): Promise<string> {
   if (!refreshToken) throw new Error('No refresh token')
 
   const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
-  const resp = await axios.post(`${baseURL}/auth/refresh`, { refreshToken })
+  const resp = await axios.post<Result<{ accessToken: string; refreshToken: string }>>(
+    `${baseURL}/auth/refresh`,
+    { refreshToken }
+  )
   const { data } = resp.data
+  if (!data) throw new Error('Refresh failed: empty data')
 
   await setTokens(data.accessToken, data.refreshToken)
   return data.accessToken
@@ -150,14 +155,7 @@ export async function deleteGitCredential(id: number): Promise<void> {
   await api.delete(`/user/git-credentials/${id}`)
 }
 
-export type NotificationChannel = 'DINGTALK' | 'FEISHU'
-
-export interface TaskNotificationPreference {
-  enabled: boolean
-  channel: NotificationChannel | null
-  webhookConfigured: boolean
-  maskedWebhook: string | null
-}
+export type { NotificationChannel, TaskNotificationPreference }
 
 export async function getTaskNotificationPreference(): Promise<TaskNotificationPreference> {
   const { data } = await api.get('/user-preferences/task-notification')

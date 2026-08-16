@@ -1,3 +1,6 @@
+import type { QuickCommandItem, QuickCommandsVO } from '@mao/contracts';
+export type { QuickCommandItem, QuickCommandsVO };
+
 export interface UserCommand {
   id?: number;
   userId: number;
@@ -34,15 +37,4 @@ export interface SkillCatalog {
 
 export interface UserSkillCatalog {
   getUserSkillDocuments(userId: number): Promise<SkillDocument[]> | SkillDocument[];
-}
-
-export interface QuickCommandItem {
-  type: string;
-  name: string;
-  description: string;
-}
-
-export interface QuickCommandsVO {
-  skills: QuickCommandItem[];
-  commands: QuickCommandItem[];
 }

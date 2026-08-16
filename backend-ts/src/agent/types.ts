@@ -1,3 +1,6 @@
+import type { ExperienceVO, AgentVO } from '@mao/contracts';
+export type { ExperienceVO, AgentVO };
+
 export interface Agent {
   id?: number;
   name: string;
@@ -34,28 +37,6 @@ export interface ExperienceInput {
   content?: string | null;
   sortOrder?: number | null;
   enabled?: boolean | null;
-}
-
-export interface ExperienceVO {
-  id?: number;
-  content?: string;
-  sortOrder?: number | null;
-  enabled?: boolean;
-}
-
-export interface AgentVO {
-  id?: number;
-  name?: string;
-  description?: string | null;
-  systemPrompt?: string;
-  creatorId?: number | null;
-  creatorName?: string | null;
-  isDefault?: boolean;
-  tags?: string[];
-  skillNames?: string[];
-  mcpServerIds?: number[];
-  experiences?: ExperienceVO[];
-  createdAt?: string | null;
 }
 
 export interface AgentRepository {

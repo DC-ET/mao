@@ -232,7 +232,7 @@ async function handleJump(item: SessionSearchItem) {
   }
 }
 
-function formatRelativeTime(value?: string): string {
+function formatRelativeTime(value?: string | null): string {
   if (!value) return ''
   const t = new Date(value).getTime()
   if (Number.isNaN(t)) return ''

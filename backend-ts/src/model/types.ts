@@ -1,3 +1,6 @@
+import type { ModelVO, ModelPageResult, ModelListFilter } from '@mao/contracts';
+export type { ModelVO, ModelPageResult, ModelListFilter };
+
 export interface LlmModel {
   id?: number;
   name: string;
@@ -15,21 +18,6 @@ export interface LlmModel {
   updatedAt?: string | null;
 }
 
-export interface ModelVO {
-  id?: number;
-  name?: string;
-  provider?: string | null;
-  baseUrl?: string;
-  apiKey?: string;
-  modelId?: string;
-  modelType?: string | null;
-  contextWindowTokens?: number | null;
-  supportsVision?: boolean;
-  isDefault?: boolean;
-  status?: number | null;
-  createdAt?: string | null;
-}
-
 export interface ModelTestResult {
   connectivity: boolean;
   midSystemMessage?: boolean;
@@ -44,22 +32,6 @@ export interface ModelTestResult {
   audioSampleRate?: number | null;
   audioDurationMs?: number | null;
   audioVoice?: string | null;
-}
-
-export interface ModelPageResult {
-  records: ModelVO[];
-  total: number;
-  page: number;
-  size: number;
-}
-
-export interface ModelListFilter {
-  keyword?: string | null;
-  provider?: string | null;
-  status?: number | null;
-  supportsVision?: number | null;
-  isDefault?: number | null;
-  modelType?: string | null;
 }
 
 export interface LlmModelRepository {

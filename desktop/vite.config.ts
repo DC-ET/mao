@@ -29,6 +29,11 @@ export default defineConfig({
   ],
   // 绝对路径，供 Nginx 部署；/tasks/:id 刷新时避免资源 404
   base: '/',
+  resolve: {
+    alias: {
+      '@mao/contracts': path.resolve(__dirname, '../shared/contracts/src'),
+    },
+  },
   server: {
     port: 5201
   }

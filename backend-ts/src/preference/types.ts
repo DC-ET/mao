@@ -1,3 +1,6 @@
+import type { WeixinPreferenceVO, TaskPanelPreferenceState } from '@mao/contracts';
+export type { WeixinPreferenceVO, TaskPanelPreferenceState };
+
 export interface UserWeixinPreference {
   userId: number;
   voiceReply?: number | null;
@@ -11,15 +14,6 @@ export interface UserTaskPanelPreference {
   collapsedGroups?: string | string[] | null;
   createdAt?: string | null;
   updatedAt?: string | null;
-}
-
-export interface TaskPanelPreferenceState {
-  groupOrder: string[];
-  collapsedGroups: string[];
-}
-
-export interface WeixinPreferenceVO {
-  voiceReply?: boolean;
 }
 
 export interface UserWeixinPreferenceRepository {

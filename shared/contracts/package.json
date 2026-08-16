@@ -1,0 +1,12 @@
+{
+  "name": "@mao/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mao 前后端共享的类型契约（纯 interface / type / enum，不含运行时代码与装饰器）",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts"
+    }
+  }
+}

@@ -1,3 +1,5 @@
+import type { MessageSearchItem } from '@mao/contracts'
+
 export interface ToolCall {
   id: string
   name: string
@@ -123,14 +125,5 @@ export function normalizeMessageRole(role: string): ChatMessage['role'] {
 }
 
 // --- 会话消息搜索 ---
-
-export interface SessionSearchItem {
-  id: number
-  title: string
-  sessionType: 'NORMAL' | 'SIDE_TASK'
-  parentSessionId: number | null
-  updatedAt?: string
-  phase: string
-  agentName?: string
-  snippet?: string
-}
+// 契约来自共享包 @mao/contracts；前端历史命名 SessionSearchItem 与后端 MessageSearchItem 结构一致。
+export type SessionSearchItem = MessageSearchItem

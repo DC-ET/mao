@@ -1,3 +1,6 @@
+import type { MessageSearchItem } from '@mao/contracts';
+export type { MessageSearchItem };
+
 export interface Session {
   id?: number;
   userId: number;
@@ -229,17 +232,6 @@ export interface AskUserQuestionsRegistry {
 
 export interface SessionTreeSignalPublisher {
   publish(sessionId: number): void;
-}
-
-export interface MessageSearchItem {
-  id: number;
-  title?: string | null;
-  sessionType?: string | null;
-  parentSessionId?: number | null;
-  updatedAt?: string | null;
-  phase?: string | null;
-  agentName?: string | null;
-  snippet?: string | null;
 }
 
 export interface SessionGroupBucket {

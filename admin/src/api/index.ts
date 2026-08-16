@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import type { Result } from '@mao/contracts'
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
@@ -26,12 +27,13 @@ api.interceptors.request.use(
 // Response interceptor - handle errors
 api.interceptors.response.use(
   (response) => {
-    const { data } = response
+    // 后端统一响应 Result<T>（契约来自 @mao/contracts）
+    const data = response.data as Result<unknown>
     if (data.code !== 0) {
       ElMessage.error(data.message || '请求失败')
       return Promise.reject(new Error(data.message))
     }
-    return data
+    return response.data
   },
   (error) => {
     if (error.response) {

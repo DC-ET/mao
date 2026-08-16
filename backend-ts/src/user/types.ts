@@ -40,23 +40,8 @@ export interface RolePermission {
   permissionId: number;
 }
 
-export interface UserInfoVO {
-  id?: number;
-  username?: string;
-  displayName?: string | null;
-  email?: string | null;
-  avatarUrl?: string | null;
-  authSource?: string;
-  permissions?: string[];
-  isAdmin?: boolean;
-}
-
-export interface LoginVO {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-  user: UserInfoVO;
-}
+import type { UserInfoVO, LoginVO } from '@mao/contracts';
+export type { UserInfoVO, LoginVO };
 
 export interface PasswordHasher {
   hash(raw: string): Promise<string>;

@@ -1,9 +1,7 @@
-export interface Result<T> {
-  code: number;
-  message: string;
-  data?: T;
-  timestamp: number;
-}
+// Result<T> 类型契约来自共享包 @mao/contracts（前端同样消费，保证前后端一致）
+import type { Result } from '@mao/contracts';
+
+export type { Result };
 
 export function ok<T>(data?: T): Result<T> {
   const result: Result<T> = {

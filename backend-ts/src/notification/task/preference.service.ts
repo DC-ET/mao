@@ -33,7 +33,7 @@ export class TaskNotificationPreferenceService {
     }
     return {
       enabled: row.enabled === 1,
-      channel: row.channel ?? null,
+      channel: row.channel != null ? parseNotificationChannel(row.channel) : null,
       webhookConfigured: configured,
       maskedWebhook: masked,
     };

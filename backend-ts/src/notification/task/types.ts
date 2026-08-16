@@ -1,7 +1,9 @@
 import { BusinessException } from '../../common/business-exception.js';
 import { ErrorCode } from '../../common/error-code.js';
 
-export type NotificationChannel = 'DINGTALK' | 'FEISHU';
+import type { NotificationChannel, TaskNotificationPreference } from '@mao/contracts';
+export type { NotificationChannel, TaskNotificationPreference };
+export type PreferenceView = TaskNotificationPreference;
 
 export const DeliveryStatus = {
   WAITING_WS: 'WAITING_WS',
@@ -53,13 +55,6 @@ export interface TaskNotificationDelivery {
   sentAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
-}
-
-export interface PreferenceView {
-  enabled: boolean;
-  channel: string | null;
-  webhookConfigured: boolean;
-  maskedWebhook: string | null;
 }
 
 export interface WebhookSendResult {
