@@ -1,14 +1,22 @@
 package cn.etarch.mao.app;
 
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.webkit.WebView;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
 
 import androidx.appcompat.app.ActionBar;
 import androidx.core.graphics.Insets;
@@ -39,12 +47,21 @@ public class MainActivity extends BridgeActivity {
     private static final long RELOAD_DEBOUNCE_MS = 10_000;
     /** 冷启动防护：首屏加载（远程 SPA 弱网可能较慢）期间不探测，避免误判无响应而 reload */
     private static final long COLD_START_GUARD_MS = 10_000;
+    /** 冷启动弱网提示：超过该时间仍未加载完成时展示重试入口 */
+    private static final long LOADING_TIMEOUT_MS = 8_000;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long lastReloadAt = 0;
     private long firstStartAt = 0;
     /** 探测进行中：防重复调度 / 重复探测 */
     private boolean probing = false;
+    private FrameLayout loadingOverlay;
+    private TextView loadingTitle;
+    private TextView loadingMessage;
+    private ProgressBar loadingProgress;
+    private Button loadingRetryButton;
+    private boolean firstPageLoaded = false;
+    private int loadingAttempt = 0;
 
     /** 强制显示 TopNav、移除 HTML splash，覆盖升级后可能残留的旧 CSS 缓存。 */
     private static final String FORCE_TOP_NAV_JS =
@@ -78,6 +95,7 @@ public class MainActivity extends BridgeActivity {
         hideActionBar();
         configureSystemBars();
         configureWebView();
+        showLoadingOverlay();
         firstStartAt = System.currentTimeMillis();
     }
 
@@ -85,6 +103,11 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onStart() {
         super.onStart();
+        if (!firstPageLoaded && bridge != null && bridge.getWebView() != null && loadingOverlay != null) {
+            loadingAttempt++;
+            scheduleLoadingTimeout(bridge.getWebView(), loadingAttempt);
+            watchInitialPageLoad(bridge.getWebView(), loadingAttempt);
+        }
         scheduleWebViewRecoveryProbe();
     }
 
@@ -139,12 +162,146 @@ public class MainActivity extends BridgeActivity {
         if (now - lastReloadAt < RELOAD_DEBOUNCE_MS) return;
         lastReloadAt = now;
         Log.i(TAG, "webview unresponsive, auto reload");
+        firstPageLoaded = false;
+        showLoadingOverlay();
         webView.reload();
         // reload 后页面重新加载，onCreate 的注入不会再次执行，重新注入顶部导航修复
         Runnable inject = () -> webView.evaluateJavascript(FORCE_TOP_NAV_JS, null);
         webView.post(inject);
         webView.postDelayed(inject, 300);
         webView.postDelayed(inject, 1000);
+    }
+
+    private void showLoadingOverlay() {
+        if (bridge == null || bridge.getWebView() == null) return;
+        WebView webView = bridge.getWebView();
+        if (loadingOverlay == null) {
+            loadingOverlay = new FrameLayout(this);
+            loadingOverlay.setBackgroundColor(Color.parseColor("#f5f5f7"));
+            loadingOverlay.setClickable(true);
+
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            content.setGravity(Gravity.CENTER);
+            int horizontalPadding = dp(32);
+            content.setPadding(horizontalPadding, 0, horizontalPadding, 0);
+
+            TextView brand = new TextView(this);
+            brand.setText("Mao");
+            brand.setTextColor(Color.parseColor("#111827"));
+            brand.setTextSize(28);
+            brand.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            brand.setGravity(Gravity.CENTER);
+            content.addView(brand, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            loadingTitle = new TextView(this);
+            loadingTitle.setText("正在连接 Mao");
+            loadingTitle.setTextColor(Color.parseColor("#374151"));
+            loadingTitle.setTextSize(16);
+            loadingTitle.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            titleParams.topMargin = dp(16);
+            content.addView(loadingTitle, titleParams);
+
+            loadingMessage = new TextView(this);
+            loadingMessage.setText("网络较慢时可能需要多等一会儿");
+            loadingMessage.setTextColor(Color.parseColor("#6b7280"));
+            loadingMessage.setTextSize(13);
+            loadingMessage.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            messageParams.topMargin = dp(8);
+            content.addView(loadingMessage, messageParams);
+
+            loadingProgress = new ProgressBar(this);
+            LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(36), dp(36));
+            progressParams.topMargin = dp(24);
+            content.addView(loadingProgress, progressParams);
+
+            loadingRetryButton = new Button(this);
+            loadingRetryButton.setText("重新连接");
+            loadingRetryButton.setAllCaps(false);
+            loadingRetryButton.setTextColor(Color.WHITE);
+            GradientDrawable retryBg = new GradientDrawable();
+            retryBg.setColor(Color.parseColor("#2563eb"));
+            retryBg.setCornerRadius(dp(20));
+            loadingRetryButton.setBackground(retryBg);
+            loadingRetryButton.setPadding(dp(18), 0, dp(18), 0);
+            loadingRetryButton.setVisibility(View.GONE);
+            loadingRetryButton.setOnClickListener(v -> {
+                firstPageLoaded = false;
+                loadingTitle.setText("正在重新连接 Mao");
+                loadingMessage.setText("请保持网络连接，马上回来");
+                loadingProgress.setVisibility(View.VISIBLE);
+                loadingRetryButton.setVisibility(View.GONE);
+                webView.reload();
+                loadingAttempt++;
+                scheduleLoadingTimeout(webView, loadingAttempt);
+                watchInitialPageLoad(webView, loadingAttempt);
+            });
+            LinearLayout.LayoutParams retryParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(40));
+            retryParams.topMargin = dp(24);
+            content.addView(loadingRetryButton, retryParams);
+
+            loadingOverlay.addView(content, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Gravity.CENTER));
+        }
+
+        ViewGroup root = findViewById(android.R.id.content);
+        if (root != null && loadingOverlay.getParent() == null) {
+            root.addView(loadingOverlay, new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        loadingOverlay.bringToFront();
+        loadingOverlay.setVisibility(View.VISIBLE);
+        loadingTitle.setText("正在连接 Mao");
+        loadingMessage.setText("网络较慢时可能需要多等一会儿");
+        loadingProgress.setVisibility(View.VISIBLE);
+        loadingRetryButton.setVisibility(View.GONE);
+        loadingAttempt++;
+        scheduleLoadingTimeout(webView, loadingAttempt);
+        watchInitialPageLoad(webView, loadingAttempt);
+    }
+
+    private void watchInitialPageLoad(WebView webView, int attempt) {
+        handler.postDelayed(() -> {
+            if (attempt != loadingAttempt || firstPageLoaded || isFinishing() || isDestroyed() || webView == null) return;
+            if (webView.getProgress() >= 100) {
+                firstPageLoaded = true;
+                hideLoadingOverlay();
+                return;
+            }
+            watchInitialPageLoad(webView, attempt);
+        }, 250);
+    }
+
+    private void scheduleLoadingTimeout(WebView webView, int attempt) {
+        handler.postDelayed(() -> {
+            if (attempt != loadingAttempt || firstPageLoaded || isFinishing() || isDestroyed() || webView == null) return;
+            loadingTitle.setText("连接有点慢");
+            loadingMessage.setText("请检查网络后重试，或继续等待页面加载");
+            loadingProgress.setVisibility(View.GONE);
+            loadingRetryButton.setVisibility(View.VISIBLE);
+        }, LOADING_TIMEOUT_MS);
+    }
+
+    private void hideLoadingOverlay() {
+        if (loadingOverlay != null) {
+            loadingOverlay.setVisibility(View.GONE);
+        }
+    }
+
+    private int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
     private void hideActionBar() {
