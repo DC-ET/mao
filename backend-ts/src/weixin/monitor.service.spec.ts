@@ -75,4 +75,41 @@ describe('WeixinMonitorService', () => {
     monitor.stopMonitor('acc-2');
     monitor.shutdown();
   });
+
+  it('processesEveryMessageInBatch', async () => {
+    const account = {
+      id: 4, accountId: 'acc-3', enabled: 1,
+      payloadJson: JSON.stringify({ token: 't', baseUrl: 'https://ilink.test' }),
+      getUpdatesBuf: '',
+    };
+    let calls = 0;
+    const accountRepository = {
+      findByAccountId: vi.fn(async () => {
+        if (calls > 0) return { ...account, enabled: 0 };
+        return account;
+      }),
+      findAllEnabled: vi.fn(async () => []),
+      updateGetUpdatesBuf: vi.fn(async () => { calls++; }),
+      disableAccount: vi.fn(),
+    };
+    const inboundProcessor = { processInboundMessage: vi.fn(async () => {}) };
+    const http: WeixinHttpClient = {
+      request: vi.fn(async () => ({
+        status: 200,
+        headers: {},
+        body: Buffer.from(JSON.stringify({
+          ret: 0, errcode: 0, get_updates_buf: 'b',
+          msgs: [{ from_user_id: 'wx-1' }, { from_user_id: 'wx-1' }, { from_user_id: 'wx-1' }],
+        })),
+        header: () => undefined,
+      })),
+    };
+    const monitor = new WeixinMonitorService(DEFAULT_WEIXIN_BOT_CONFIG, accountRepository as never, inboundProcessor as never, http);
+    monitor.startMonitor('acc-3');
+    await vi.waitFor(() => {
+      expect(inboundProcessor.processInboundMessage).toHaveBeenCalledTimes(3);
+    });
+    monitor.stopMonitor('acc-3');
+    monitor.shutdown();
+  });
 });

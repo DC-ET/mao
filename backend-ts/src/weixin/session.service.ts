@@ -24,6 +24,8 @@ export interface WeixinSettingLookup {
 export class WeixinSessionService {
   static readonly PROJECT_KEY = WEIXIN_PROJECT_KEY;
 
+  private readonly userLocks = new Map<number, Promise<void>>();
+
   constructor(
     private readonly sessionService: SessionService,
     private readonly sessionRepo: SessionRepository,
@@ -33,44 +35,61 @@ export class WeixinSessionService {
   ) {}
 
   async getOrCreateWeixinSession(userId: number): Promise<Session> {
-    const agent = await this.resolveWeixinAgent();
-    const modelId = await this.resolveWeixinModelId();
-    const existingSession = await this.findExistingWeixinSession(userId);
-    if (existingSession != null) {
-      let changed = false;
-      if (agent.id !== existingSession.agentId) {
-        console.info(`微信会话切换 Agent, userId=${userId}, sessionId=${existingSession.id}, oldAgentId=${existingSession.agentId}, newAgentId=${agent.id}`);
-        existingSession.agentId = agent.id;
-        changed = true;
+    return this.withUserLock(userId, async () => {
+      const agent = await this.resolveWeixinAgent();
+      const modelId = await this.resolveWeixinModelId();
+      const existingSession = await this.findExistingWeixinSession(userId);
+      if (existingSession != null) {
+        let changed = false;
+        if (agent.id !== existingSession.agentId) {
+          console.info(`微信会话切换 Agent, userId=${userId}, sessionId=${existingSession.id}, oldAgentId=${existingSession.agentId}, newAgentId=${agent.id}`);
+          existingSession.agentId = agent.id;
+          changed = true;
+        }
+        if (modelId !== existingSession.modelId) {
+          console.info(`微信会话切换模型, userId=${userId}, sessionId=${existingSession.id}, oldModelId=${existingSession.modelId}, newModelId=${modelId}`);
+          existingSession.modelId = modelId;
+          changed = true;
+        }
+        if (changed) {
+          await this.sessionRepo.updateById(existingSession);
+        }
+        return existingSession;
       }
-      if (modelId !== existingSession.modelId) {
-        console.info(`微信会话切换模型, userId=${userId}, sessionId=${existingSession.id}, oldModelId=${existingSession.modelId}, newModelId=${modelId}`);
-        existingSession.modelId = modelId;
-        changed = true;
-      }
-      if (changed) {
-        await this.sessionRepo.updateById(existingSession);
-      }
-      return existingSession;
+      console.info(`创建新的微信Bot会话, userId=${userId}, agentId=${agent.id}, modelId=${modelId}`);
+      return this.sessionService.createSession(
+        userId,
+        agent.id!,
+        '微信Bot会话',
+        'CLOUD',
+        null,
+        'FULL',
+        false,
+        'linux',
+        '/bin/bash',
+        'Linux',
+        modelId,
+        WEIXIN_PROJECT_KEY,
+        'new',
+        null,
+        null,
+      );
+    });
+  }
+
+  /** 同一 userId 的会话创建串行化，避免批内消息并发触发时重复创建会话。 */
+  private async withUserLock<T>(userId: number, fn: () => Promise<T>): Promise<T> {
+    const prev = this.userLocks.get(userId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((r) => { release = r; });
+    this.userLocks.set(userId, prev.then(() => current));
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.userLocks.get(userId) === current) this.userLocks.delete(userId);
     }
-    console.info(`创建新的微信Bot会话, userId=${userId}, agentId=${agent.id}, modelId=${modelId}`);
-    return this.sessionService.createSession(
-      userId,
-      agent.id!,
-      '微信Bot会话',
-      'CLOUD',
-      null,
-      'FULL',
-      false,
-      'linux',
-      '/bin/bash',
-      'Linux',
-      modelId,
-      WEIXIN_PROJECT_KEY,
-      'new',
-      null,
-      null,
-    );
   }
 
   private findExistingWeixinSession(userId: number): Promise<Session | null> {

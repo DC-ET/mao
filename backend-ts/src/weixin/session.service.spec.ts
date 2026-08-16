@@ -70,6 +70,39 @@ describe('WeixinSessionService', () => {
     );
   });
 
+  it('concurrentGetOrCreateForSameUserCreatesOnlyOneSession', async () => {
+    sessionService.createSession.mockClear();
+    sessionRepo.findActiveByUserAndProjectKey.mockClear();
+    systemSettingService.getValue.mockImplementation(async (key: string) => {
+      if (key === WEIXIN_AGENT_ID_KEY) return '5';
+      if (key === WEIXIN_MODEL_ID_KEY) return '3';
+      return '';
+    });
+    agentService.getAgent.mockResolvedValue({ id: 5, name: 'agent-5' });
+    modelService.getModel.mockResolvedValue({ id: 3, name: 'model-3' });
+
+    const created = { id: 2, userId: 1 };
+    let sessionCreated = false;
+    sessionRepo.findActiveByUserAndProjectKey.mockImplementation(async () => (
+      sessionCreated ? created : null
+    ));
+    let releaseCreate!: () => void;
+    const createGate = new Promise<void>((r) => { releaseCreate = r; });
+    sessionService.createSession.mockImplementation(async () => {
+      await createGate;
+      sessionCreated = true;
+      return created;
+    });
+
+    const p1 = service.getOrCreateWeixinSession(1);
+    const p2 = service.getOrCreateWeixinSession(1);
+    releaseCreate();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.id).toBe(2);
+    expect(r2.id).toBe(2);
+    expect(sessionService.createSession).toHaveBeenCalledTimes(1);
+  });
+
   it('resolveWeixinAgentFallsBackToDefaultWhenUnset', async () => {
     systemSettingService.getValue.mockResolvedValue('');
     agentService.requireDefaultAgent.mockResolvedValue({ id: 99, name: 'default' });

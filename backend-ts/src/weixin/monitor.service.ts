@@ -95,11 +95,14 @@ export class WeixinMonitorService {
         }
         if (result.messages.length > 0) {
           console.info(`收到${result.messages.length}条微信消息, accountId=${accountId}`);
-          for (const message of result.messages) {
-            try {
-              await this.inboundProcessor.processInboundMessage(accountId, message);
-            } catch (e) {
-              console.error(`处理单条消息异常, accountId=${accountId}`, e);
+          // 并发触发批内消息：后一条消息可以在前一条 Agent 执行期间重入 handler，
+          // 触发「更新消息取代/纠偏」逻辑（只回复最新一条），串行 await 会让纠偏永远失效。
+          const settled = await Promise.allSettled(
+            result.messages.map((message) => this.inboundProcessor.processInboundMessage(accountId, message)),
+          );
+          for (const s of settled) {
+            if (s.status === 'rejected') {
+              console.error(`处理单条消息异常, accountId=${accountId}`, s.reason);
             }
           }
         }
