@@ -341,6 +341,31 @@ describe('session store 实体/投影模型', () => {
     expect(store.getMessages('1').filter(m => m.content === 'deploy_desktop')).toHaveLength(1)
   })
 
+  it('applyFetchedMessages 用落库消息替换边路任务的乐观用户消息', () => {
+    const store = useSessionStore()
+    store.setMessages('side-1', [
+      { id: '20', role: 'user', content: '上一轮', createdAt: '2026-08-16 10:00:00' },
+      { id: '21', role: 'assistant', content: '上一轮回复', createdAt: '2026-08-16 10:01:00' },
+    ])
+    store.addUserMessage('side-1', {
+      id: 'side_user_1786850982000',
+      role: 'user',
+      content: 'code_review',
+      createdAt: '2026-08-16 11:29:42',
+    })
+    store.ensureStreamingAssistantMessage('side-1').content = '审查完成'
+
+    store.applyFetchedMessages('side-1', [
+      { id: '20', role: 'user', content: '上一轮', createdAt: '2026-08-16 10:00:00' },
+      { id: '21', role: 'assistant', content: '上一轮回复', createdAt: '2026-08-16 10:01:00' },
+      { id: '22', role: 'user', content: 'code_review', createdAt: '2026-08-16 11:29:42' },
+      { id: '23', role: 'assistant', content: '审查完成', createdAt: '2026-08-16 11:36:28' },
+    ])
+
+    expect(store.getMessages('side-1').map(m => m.id)).toEqual(['20', '21', '22', '23'])
+    expect(store.getMessages('side-1').filter(m => m.content === 'code_review')).toHaveLength(1)
+  })
+
   it('applyFetchedMessages 完成后用落库消息替换临时流式助手消息', () => {
     const store = useSessionStore()
     store.setMessages('1', [

@@ -996,7 +996,7 @@ export const useSessionStore = defineStore('session', () => {
       const isStreamingAssistant = message.role === 'assistant'
         && streamingAssistantMessageIds.get(sid) === String(message.id)
       const isReplacedOptimisticUser = message.role === 'user'
-        && String(message.id).startsWith('msg_')
+        && (String(message.id).startsWith('msg_') || String(message.id).startsWith('side_user_'))
         && newlyFetchedUsers.some(fetched => fetched.content === message.content
           && JSON.stringify(fetched.images ?? []) === JSON.stringify(message.images ?? []))
       if (!isReplacedOptimisticUser
