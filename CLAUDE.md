@@ -9,6 +9,13 @@
 - **Agent 严禁擅自重启服务器上的 Mao 后端服务**（包括但不限于执行 `./scripts/restart-all.sh`、`./scripts/stop-all.sh` + 启动命令、`npm run start:dev`、`./restart.sh`、kill 后端进程等）。后端服务的重启必须由用户自己完成，Agent 不得代劳。
 - 尤其注意：**在修复一个问题后，不要习惯性地自动重启后端服务**，这是明令禁止的。修复完成后只需告知用户需要重启后端即可，重启动作交给用户执行。
 
+## ⚠️ 部署目录（极易踩坑）
+
+- **服务器上真实部署目录是 `/opt/mao`，不是会话工作区 `/opt/mao-data/workspace/...`**。当前会话的「工作目录」是一个云端隔离/临时目录，二者是**不同的 git 检出**。
+- 涉及**真实环境部署**的操作（`git pull`、`scripts/deploy-desktop.sh`、`scripts/deploy-admin.sh`、`npm run build` 产物落地、`restart-backend.sh` 等）**一律在 `/opt/mao` 下执行**，绝不能误用会话工作区路径。
+- 涉及**真实环境 git** 的同步（pull/status/log）也必须指向 `/opt/mao`；会话工作区里的 git 提交/推送只负责「产出代码并推到远端」，之后需回到 `/opt/mao` 拉取并构建部署。
+- 判断「改代码」还是「改部署」时，先确认：改代码在会话工作区（提交 + 推送到 `origin/main`）；改/部署线上环境在 `/opt/mao`（`git pull` + 构建）。二者不要混用。
+
 ## 发版与 CHANGELOG
 
 根目录 [`CHANGELOG.md`](CHANGELOG.md) 是**项目级唯一发版说明**。改动 `backend-ts/`、`admin/`、`desktop/`、`android/` 且**对用户或运维可见**时，Agent 应在同一任务中更新 CHANGELOG（勿留到发版时才补）。
