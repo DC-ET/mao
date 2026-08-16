@@ -6,7 +6,7 @@
 
 | 组件 | 部署方式 | 端口 | 域名（示例） |
 |------|---------|------|-------------|
-| Java 后端 | jar + systemd | 9080 | 内网，由 Nginx 反代 |
+| TypeScript 后端 | Node.js + restart.sh | 9080 | 内网，由 Nginx 反代 |
 | 管理后台 | Nginx 静态文件 | 80/443 | `mao-admin.example.com` |
 | 桌面端 Web | Nginx 静态文件 | 80/443 | `mao.example.com` |
 | MySQL | 自建或云服务 | 3306 | 内网 |
@@ -16,9 +16,9 @@
 ## 一、服务器环境准备
 
 ```bash
-# 安装 Java 17
-sudo apt update
-sudo apt install -y openjdk-17-jdk
+# 安装 Node.js 22（推荐使用 NodeSource 或 nvm）
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
 
 # 安装 Nginx
 sudo apt install -y nginx
@@ -27,7 +27,8 @@ sudo apt install -y nginx
 sudo apt install -y git
 
 # 验证
-java -version
+node -v
+npm -v
 nginx -v
 git --version
 ```
@@ -41,10 +42,9 @@ git --version
 ## 二、目录结构
 
 ```bash
-mkdir -p /opt/mao/backend
+mkdir -p /opt/mao/backend-ts
 mkdir -p /opt/mao/admin
 mkdir -p /opt/mao/desktop
-mkdir -p /opt/mao/logs
 mkdir -p /opt/mao/data/workspace
 mkdir -p /opt/mao/data/skills
 mkdir -p /opt/mao/data/userskills
@@ -53,83 +53,75 @@ mkdir -p /opt/mao/data/uploads
 
 ## 三、后端部署
 
-### 1. 打包 jar
+### 1. 构建产物
 
 ```bash
 # 本地执行
-cd backend
-mvn clean package -DskipTests
+cd backend-ts
+npm ci
+npm run build
 
-# 上传到服务器
-scp target/mao-server.jar root@<SERVER_IP>:/opt/mao/backend/
+# 上传到服务器（dist 为编译产物；db 为迁移脚本；config 为默认配置；restart.sh 为启停脚本）
+scp -r dist config db root@<SERVER_IP>:/opt/mao/backend-ts/
+scp package.json package-lock.json restart.sh root@<SERVER_IP>:/opt/mao/backend-ts/
 ```
 
-### 2. 配置文件
+> `db/migration/` 为 Flyway SQL 迁移脚本（仓库内为真实目录），**必须随后端一起部署**，首次启动时由后端自动执行。
 
-在服务器创建 `/opt/mao/backend/application-prod.yml`：
+### 2. 依赖与配置
 
-```yaml
-spring:
-  datasource:
-    url: jdbc:mysql://<DB_HOST>:3306/mao?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username: <DB_USER>
-    password: <DB_PASSWORD>
-    driver-class-name: com.mysql.cj.jdbc.Driver
+在服务器 `/opt/mao/backend-ts/` 安装生产依赖：
 
-jwt:
-  secret: ${JWT_SECRET}
-  # CLOUD shell 工具注入的临时 JWT 有效期（毫秒），默认 2 小时；可用 JWT_SHELL_EXPIRATION 覆盖
-  shell-expiration: ${JWT_SHELL_EXPIRATION:7200000}
-
-app:
-  git-credential:
-    secret-key: ${APP_GIT_CREDENTIAL_SECRET}
-  task-notification:
-    secret-key: ${APP_NOTIFICATION_WEBHOOK_SECRET}
-  harness:
-    workspace-root: /opt/mao/data/workspace
-    skills-dir: /opt/mao/data/skills
-    user-skills-dir: /opt/mao/data/userskills
-  upload:
-    storage-mode: ${UPLOAD_STORAGE_MODE:local}
-    base-url: ${UPLOAD_BASE_URL:https://mao.example.com/api}
-  file:
-    upload-dir: /opt/mao/data/uploads
-
-# 禁用 LDAP（如不需要）
-ldap:
-  enabled: ${LDAP_ENABLED:false}
-  url: ${LDAP_URL:}
+```bash
+cd /opt/mao/backend-ts
+npm ci --omit=dev
 ```
 
-创建 `/opt/mao/backend/.env`（**勿提交到 Git**，权限建议 `chmod 600`）：
+创建 `/opt/mao/backend-ts/.env`（**勿提交到 Git**，权限建议 `chmod 600`），模板见仓库 `backend-ts/.env.example`：
 
 ```bash
 # 生成随机密钥
 JWT_SECRET=$(openssl rand -base64 32)
 APP_GIT_CREDENTIAL_SECRET=$(openssl rand -base64 32)
 APP_NOTIFICATION_WEBHOOK_SECRET=$(openssl rand -base64 32)
+APP_MCP_SECRET=$(openssl rand -base64 32)
 
-cat > /opt/mao/backend/.env <<EOF
+cat > /opt/mao/backend-ts/.env <<EOF
+MAO_TS_PORT=9080
+MAO_ROOT_DIR=/opt/mao
+FLYWAY_ENABLED=true
+MYSQL_URL='jdbc:mysql://<DB_HOST>:3306/mao?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&allowMultiQueries=true'
+MYSQL_USERNAME=<DB_USER>
+MYSQL_PASSWORD=<DB_PASSWORD>
 JWT_SECRET=${JWT_SECRET}
 APP_GIT_CREDENTIAL_SECRET=${APP_GIT_CREDENTIAL_SECRET}
 APP_NOTIFICATION_WEBHOOK_SECRET=${APP_NOTIFICATION_WEBHOOK_SECRET}
+APP_MCP_SECRET=${APP_MCP_SECRET}
+UPLOAD_STORAGE_MODE=local
+UPLOAD_BASE_URL=https://mao.example.com/api
+FILE_UPLOAD_DIR=/opt/mao/data/uploads
+WORKSPACE_ROOT=/opt/mao/data/workspace
+SKILLS_DIR=/opt/mao/data/skills
+USER_SKILLS_DIR=/opt/mao/data/userskills
 EOF
-chmod 600 /opt/mao/backend/.env
+chmod 600 /opt/mao/backend-ts/.env
 ```
 
 | 变量 | 必需 | 说明 |
 |------|------|------|
+| `MAO_TS_PORT` | 否 | 监听端口，默认 `9080`（Java 版后端移除后由 TS 后端接管） |
+| `FLYWAY_ENABLED` | 否 | 启动时是否执行 Flyway 数据库迁移，默认 `true` |
+| `MYSQL_URL` / `MYSQL_USERNAME` / `MYSQL_PASSWORD` | **是** | MySQL 连接配置 |
 | `JWT_SECRET` | **是** | JWT 签名密钥，生产环境必须设置，禁止使用默认值 |
 | `JWT_SHELL_EXPIRATION` | 否 | CLOUD shell 临时 JWT 有效期（毫秒），默认 `7200000`（2 小时） |
 | `APP_GIT_CREDENTIAL_SECRET` | **是** | 用户 Git Access Token 的 AES 加密密钥；未配置时后端**拒绝启动** |
 | `APP_NOTIFICATION_WEBHOOK_SECRET` | 否 | 用户任务通知 Webhook 的 AES-GCM 加密密钥；未配置时使用应用默认密钥，生产环境建议覆盖 |
+| `APP_MCP_SECRET` | 否 | MCP 服务器环境变量加密密钥；使用 MCP 功能时建议设置 |
 | `UPLOAD_STORAGE_MODE` | 否 | `local`（默认）或 `oss` |
 | `UPLOAD_BASE_URL` | local 模式建议设 | 上传文件的公网访问前缀，如 `https://mao.example.com/api` |
-| `LDAP_ENABLED` | 否 | LDAP 登录开关，默认 `false` |
-| `LDAP_URL` | 否 | LDAP 服务地址；仅当 `LDAP_ENABLED=true` 且该值非空时启用 LDAP 登录 |
+| `LDAP_ENABLED` / `LDAP_URL` | 否 | LDAP 登录开关，默认 `false` |
 
-> 首次启动时 Flyway 自动执行迁移并创建默认管理员 `admin` / `admin123`，**登录后请立即改密**。LLM API Key 在管理后台「模型管理」中配置。
+> 首次启动时后端执行 Flyway 迁移并创建默认管理员 `admin` / `admin123`，**登录后请立即改密**。LLM API Key 在管理后台「模型管理」中配置。
 >
 > **Git 凭证加密密钥轮换**：更换 `APP_GIT_CREDENTIAL_SECRET` 前，需用旧密钥解密、新密钥重新加密所有 `user_git_credential` 表中的 Token，否则已存凭证无法使用。
 >
@@ -137,82 +129,18 @@ chmod 600 /opt/mao/backend/.env
 
 ### 3. 启动脚本
 
-创建 `/opt/mao/backend/restart.sh`：
+使用仓库自带的 `backend-ts/restart.sh`（已上传至 `/opt/mao/backend-ts/restart.sh`）：
 
 ```bash
-#!/bin/bash
-
-APP_NAME="mao-server"
-APP_JAR="/opt/mao/backend/mao-server.jar"
-PID_FILE="/opt/mao/backend/mao-server.pid"
-LOG_DIR="/opt/mao/logs"
-LOG_FILE="$LOG_DIR/app.log"
-
-mkdir -p "$LOG_DIR"
-
-rotate_log() {
-    if [ -f "$LOG_FILE" ]; then
-        local size=$(stat -c%s "$LOG_FILE" 2>/dev/null)
-        local max_bytes=$((100 * 1024 * 1024))
-        if [ "$size" -gt "$max_bytes" ] 2>/dev/null; then
-            mv "$LOG_FILE" "$LOG_FILE.$(date +%Y%m%d%H%M%S)"
-            ls -t "$LOG_FILE".* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null
-        fi
-    fi
-}
-
-stop() {
-    if [ -f "$PID_FILE" ]; then
-        PID=$(cat "$PID_FILE")
-        if ps -p $PID > /dev/null 2>&1; then
-            echo "Stopping $APP_NAME (PID: $PID)..."
-            kill $PID
-            sleep 3
-            if ps -p $PID > /dev/null 2>&1; then
-                kill -9 $PID
-            fi
-        fi
-        rm -f "$PID_FILE"
-    fi
-    pkill -f "$APP_JAR" 2>/dev/null
-}
-
-start() {
-    echo "Starting $APP_NAME..."
-    rotate_log
-
-    ENV_FILE="/opt/mao/backend/.env"
-    if [ -f "$ENV_FILE" ]; then
-        set -a
-        # shellcheck source=/dev/null
-        source "$ENV_FILE"
-        set +a
-    else
-        echo "Warning: $ENV_FILE not found. JWT_SECRET and APP_GIT_CREDENTIAL_SECRET must be set."
-    fi
-
-    nohup java -jar "$APP_JAR" \
-        --spring.profiles.active=prod \
-        --spring.config.additional-location=file:/opt/mao/backend/application-prod.yml \
-        --ldap.enabled=false \
-        --ldap.url="" >> "$LOG_FILE" 2>&1 &
-    echo $! > "$PID_FILE"
-    echo "Started (PID: $(cat $PID_FILE))"
-    echo "Log: tail -f $LOG_FILE"
-}
-
-stop
-start
+chmod +x /opt/mao/backend-ts/restart.sh
 ```
 
-```bash
-chmod +x /opt/mao/backend/restart.sh
-```
+脚本行为：读取同目录 `.env` → 停旧进程（按 PID 文件与端口）→ 以 `node dist/main.js` 启动（无 dist 时回退 `npx tsx src/main.ts`）→ 日志轮转（>100MB 自动归档，保留 5 份）。
 
 ### 4. 启动服务
 
 ```bash
-cd /opt/mao/backend
+cd /opt/mao/backend-ts
 ./restart.sh
 ```
 
@@ -222,7 +150,7 @@ cd /opt/mao/backend
 # 健康检查（Swagger UI）
 curl -s -o /dev/null -w "%{http_code}" http://localhost:9080/api/swagger-ui.html
 # 期望返回 200；若启动失败，查看日志中是否提示 APP_GIT_CREDENTIAL_SECRET 未配置
-tail -50 /opt/mao/logs/error.log
+tail -50 /opt/mao/backend-ts/logs/backend-ts.log
 ```
 
 ## 四、前端部署
@@ -399,21 +327,35 @@ Electron 壳已接入自动更新。默认检查地址为 `https://mao.etarch.cn
 
 ```bash
 # 后端重启
-/opt/mao/backend/restart.sh
+/opt/mao/backend-ts/restart.sh
 
 # 查看后端日志
-tail -f /opt/mao/logs/info.log
-tail -f /opt/mao/logs/warn.log
-tail -f /opt/mao/logs/error.log
+tail -f /opt/mao/backend-ts/logs/backend-ts.log
 
 # Nginx 重载
 sudo systemctl reload nginx
 ```
 
-### 常见问题
+## 十一、后端升级
+
+```bash
+# 在服务器拉取新代码并构建（或本地构建后 scp 上传 dist/）
+cd /opt/mao/backend-ts
+# 更新源码后：
+npm ci && npm run build
+# 若新增/变更迁移脚本，一并更新 db/migration/
+./restart.sh
+```
+
+管理端运行时重启接口为 `GET /v1/admin/runtime/restart`，脚本路径为 `${app.root-dir}/backend-ts/restart.sh`（默认 `/opt/mao/backend-ts/restart.sh`）。
+
+> **数据库迁移**：`FLYWAY_ENABLED` 默认 `true`，后端每次启动时自动执行 `db/migration/` 下未应用的迁移。升级期间请勿多实例同时启动后端（避免并发迁移）。
+
+## 常见问题
 
 | 现象 | 排查 |
 |------|------|
-| 后端启动后立即退出，日志提示 `APP_GIT_CREDENTIAL_SECRET is not configured` | 检查 `/opt/mao/backend/.env` 是否存在且已被 `restart.sh` 加载 |
+| 后端启动后立即退出，日志提示 `APP_GIT_CREDENTIAL_SECRET is not configured` | 检查 `/opt/mao/backend-ts/.env` 是否存在且已被 `restart.sh` 加载 |
+| 后端起不来 / Nginx 502 | 确认 Node 进程监听 9080（`ss -tlnp \| grep 9080`）、`.env` 中 `MYSQL_*` 配置正确、`db/migration/` 已随部署带上 |
 | HTTPS 私有仓库 clone / push 认证失败 | 确认用户使用 HTTPS 地址，并在桌面端「设置 → Git 凭证」配置对应**完整主机名**的 Token |
 | 提示不支持 SSH 地址 | 将 `git@host:...` 改为 `https://host/...` 格式 |

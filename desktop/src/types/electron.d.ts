@@ -230,7 +230,7 @@ interface ElectronAPI {
   removeToolApprovalDismissListener(): void
   respondToolApproval(requestId: string, approved: boolean): Promise<void>
 
-  skillSync(sessionId: number, syncUrl: string, token: string, workspace: string): Promise<any>
+  skillSync(sessionId: number, syncUrl: string, token: string, workspace: string, apiBase?: string): Promise<any>
   onSkillSyncComplete(callback: (data: any) => void): void
   removeSkillSyncCompleteListener(): void
 

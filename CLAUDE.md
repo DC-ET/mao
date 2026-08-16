@@ -6,16 +6,16 @@
 
 ## ⚠️ 重要禁令
 
-- **Agent 严禁擅自重启服务器上的 Mao 后端服务**（包括但不限于执行 `./scripts/restart-all.sh`、`./scripts/stop-all.sh` + 启动命令、`mvn spring-boot:run`、kill 后端进程等）。后端服务的重启必须由用户自己完成，Agent 不得代劳。
+- **Agent 严禁擅自重启服务器上的 Mao 后端服务**（包括但不限于执行 `./scripts/restart-all.sh`、`./scripts/stop-all.sh` + 启动命令、`npm run start:dev`、`./restart.sh`、kill 后端进程等）。后端服务的重启必须由用户自己完成，Agent 不得代劳。
 - 尤其注意：**在修复一个问题后，不要习惯性地自动重启后端服务**，这是明令禁止的。修复完成后只需告知用户需要重启后端即可，重启动作交给用户执行。
 
 ## 发版与 CHANGELOG
 
-根目录 [`CHANGELOG.md`](CHANGELOG.md) 是**项目级唯一发版说明**。改动 `backend/`、`admin/`、`desktop/`、`android/` 且**对用户或运维可见**时，Agent 应在同一任务中更新 CHANGELOG（勿留到发版时才补）。
+根目录 [`CHANGELOG.md`](CHANGELOG.md) 是**项目级唯一发版说明**。改动 `backend-ts/`、`admin/`、`desktop/`、`android/` 且**对用户或运维可见**时，Agent 应在同一任务中更新 CHANGELOG（勿留到发版时才补）。
 
 | 改动目录 | 写入小节 |
 |---------|---------|
-| `backend/` | `### 后端` |
+| `backend-ts/` | `### 后端` |
 | `admin/` | `### 管理后台` |
 | `desktop/`（Web / 共用 UI） | `### 前端（桌面 / Web / 安卓）` |
 | `desktop/electron/`（壳、LOCAL、自动更新） | `### 桌面 Electron` |
@@ -36,10 +36,11 @@
 ## 常用命令
 
 ```bash
-# 后端
-cd backend && mvn compile              # 编译检查
-cd backend && mvn test                 # 单元测试（backend/src/test/）
-cd backend && mvn package -DskipTests  # 打包（backend/target/mao-server.jar），禁止擅自重启服务
+# 后端（TypeScript，backend-ts/）
+cd backend-ts && npm run build        # 编译检查（tsc）
+cd backend-ts && npm test             # 单元测试（Vitest，backend-ts/src/）
+cd backend-ts && npm run start:dev    # 开发模式（tsx 热重载），禁止擅自重启服务
+cd backend-ts && npm run build        # 打包（backend-ts/dist/）
 
 # 管理后台
 bash scripts/deploy-admin.sh # 构建并部署（rsync --delete 自动清理历史构建文件），无需重启服务
@@ -56,25 +57,25 @@ cd android && bash build-apk.sh --dry-run    # 仅构建不发布
 cd android && bash build-apk.sh --version 0.0.x  # 手动指定 versionName
 ```
 
-CI（`.github/workflows/ci.yml`）仅做后端 `mvn compile` 与前端 build，不跑单测和 Playwright。
+CI（`.github/workflows/ci.yml`）执行 backend-ts 的 `npm run build` 与 `npm test`，以及 admin / desktop 前端 build，不跑 Playwright。
 
 ## 架构概览
 
-四端：Java 后端 + Vue 管理后台 (`admin/`) + Electron/Web 桌面端 (`desktop/`) + 安卓 APP (`android/`，Capacitor WebView 壳)。
+四端：TypeScript 后端（NestJS + Fastify）+ Vue 管理后台 (`admin/`) + Electron/Web 桌面端 (`desktop/`) + 安卓 APP (`android/`，Capacitor WebView 壳)。
 
 ### 后端
 
-端口 9080，API 前缀 `/api/v1/`，统一响应 `Result<T>`（`code=0` 成功）。领域模块遵循 `entity → mapper → service → controller`。
+端口 9080，API 前缀 `/api/v1/`，统一响应 `Result<T>`（`code=0` 成功）。领域模块遵循 `routes → service → repository`。
 
-**核心引擎 `harness/`**（Think-Act-Observe 循环）：
+**核心引擎 `harness/`**（Think-Act-Observe 循环，`backend-ts/src/harness/`）：
 
 | 组件 | 职责 |
 |------|------|
 | `AgentLoop` | 主循环：构建 prompt → LLM 流式调用 → 工具执行 → 循环 |
 | `PromptEngine` | 上下文 → `ChatRequest` |
 | `ContextManager` / `CompactionService` | 消息历史与 token 感知压缩 |
-| `ToolDispatcher` → `ToolRegistry` | 工具路由；内置工具在 `harness/tool/impl/`，Spring Bean 自动注册 |
-| `LlmAdapter` / `OpenAiLlmAdapter` | OpenAI 兼容协议，OkHttp SSE |
+| `ToolDispatcher` → `ToolRegistry` | 工具路由；内置工具在 `harness/tool/impl/` |
+| `LlmAdapter` / `OpenAiLlmAdapter` | OpenAI 兼容协议，SSE 拉流 |
 | `LocalToolExecutor` | LOCAL 模式：经 WebSocket 委托桌面端执行 |
 | `HarnessService` | 会话级 Agent 运行编排 |
 | `DelegateTool` + `harness/delegate/` | Subagent 委托执行 |
@@ -84,9 +85,9 @@ CI（`.github/workflows/ci.yml`）仅做后端 `mvn compile` 与前端 build，�
 
 **WebSocket** `/api/ws/stream`：`StreamingWsHandler` 处理双向流。常见事件：`content_delta`、`tool_call_start/result`、`session_status`、`context_window`、`compaction_start/end`、`thinking_start/end`、`skill_sync_required`、`tool_execute`。
 
-**拦截器**：`AuditInterceptor` + `PermissionInterceptor`（`@RequirePermission`），作用于 `/v1/**`（排除 `/v1/auth/**` 和 `/ws/**`）。
+**拦截器**：`AuditInterceptor` + `PermissionInterceptor`，作用于 `/v1/**`（排除 `/v1/auth/**` 和 `/ws/**`）。
 
-**数据库**：MySQL 8 + Flyway，迁移脚本在 `backend/src/main/resources/db/migration/`。
+**数据库**：MySQL 8 + Flyway。迁移脚本在 `backend-ts/db/migration/`。**启动时由 TypeScript 后端执行迁移**（`FLYWAY_ENABLED`，默认 true）。
 
 ### 前端
 
@@ -147,7 +148,7 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 
 ## 代码规范
 
-**后端**：Java 17 + Lombok（`@Data`、`@Slf4j`、`@RequiredArgsConstructor`）；MyBatis-Plus 下划线转驼峰、逻辑删除（`deleted`）；表名/列名 snake_case，BIGINT 自增主键，`created_at`/`updated_at`；用户可见 API / 行为改动记入 `CHANGELOG.md` 的 `### 后端`。
+**后端**：TypeScript（Node.js 22+）；NestJS 11 + Fastify，模块按领域组织（`src/<domain>/` 下 `*.routes.ts` / `*.service.ts` / `*.repository.ts` / `*.spec.ts`）；表名/列名 snake_case，BIGINT 自增主键，`created_at`/`updated_at`；用户可见 API / 行为改动记入 `CHANGELOG.md` 的 `### 后端`。
 
 **前端**：Vue 3 Composition API + `<script setup>`；Pinia 用函数式 `defineStore`；TypeScript 严格模式；无 ESLint/Prettier，类型检查靠 `vue-tsc`；用户可见改动记入 `CHANGELOG.md` 对应小节；`desktop/package.json` 版本由 `scripts/changelog-extract.sh sync-desktop` 从 CHANGELOG 同步，勿手改。
 
@@ -158,13 +159,13 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 | 目标 | 位置 |
 |------|------|
 | 发版说明 | 根 `CHANGELOG.md` + `scripts/changelog-extract.sh` |
-| 新增 REST API | 对应领域包下的 `entity` / `mapper` / `service` / `controller` |
-| 数据库变更 | `backend/src/main/resources/db/migration/V0xx__*.sql` |
-| 新增内置工具 | `harness/tool/impl/` 实现 `Tool` 接口并标注 `@Component` |
-| 技能扩展 | `harness/skill/`；外部目录默认 `/opt/mao/data/skills` |
-| Agent 运行逻辑 | `harness/core/`（`AgentLoop`、`HarnessService`） |
+| 新增 REST API | `backend-ts/src/<domain>/` 下的 `*.routes.ts` / `*.service.ts` / `*.repository.ts` |
+| 数据库变更 | `backend-ts/db/migration/V0xx__*.sql`（TS 启动时执行） |
+| 新增内置工具 | `backend-ts/src/harness/tool/impl/` 实现 `Tool` 接口并注册 |
+| 技能扩展 | `backend-ts/src/harness/skill/`；外部目录默认 `/opt/mao/data/skills` |
+| Agent 运行逻辑 | `backend-ts/src/harness/core/`（`AgentLoop`、`HarnessService`） |
 | 流式通信 | 后端 `session/ws/StreamingWsHandler`；前端 `useStreamWS` |
-| 权限控制 | `@RequirePermission` + `permission/` 模块 |
+| 权限控制 | `@RequirePermission`（`permission/` 模块） |
 | 管理后台页面 | `admin/src/views/` + `admin/src/router/index.ts` |
 | 桌面端 UI | `desktop/src/components/`、`desktop/src/views/` |
 | 安卓壳 / 系统栏 / WebView | `android/android/app/.../MainActivity.java`、`capacitor.config.json` |
@@ -178,7 +179,7 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 
 | 类型 | 命令 | 说明 |
 |------|------|------|
-| 后端单测 | `cd backend && mvn test` | 用例在 `backend/src/test/` |
+| 后端单测 | `cd backend-ts && npm test` | Vitest，用例在 `backend-ts/src/`（`*.spec.ts`） |
 | 前端 E2E | 根目录 `npm test` | Playwright，配置 `tests/playwright.config.ts` |
 | 用例源码 | `tests/admin.spec.ts`、`tests/desktop.spec.ts` | 以文件为准，勿依赖固定用例数 |
 

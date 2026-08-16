@@ -75,8 +75,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('tool-approval-response', { requestId, approved }),
 
   // Skill sync — renderer triggers, main process downloads & extracts zip
-  skillSync: (sessionId, syncUrl, token, workspace) =>
-    ipcRenderer.invoke('skill-sync', { sessionId, syncUrl, token, workspace }),
+  skillSync: (sessionId, syncUrl, token, workspace, apiBase) =>
+    ipcRenderer.invoke('skill-sync', { sessionId, syncUrl, token, workspace, apiBase }),
   onSkillSyncComplete: (callback) => {
     ipcRenderer.on('skill-sync-complete', (event, data) => callback(data))
   },

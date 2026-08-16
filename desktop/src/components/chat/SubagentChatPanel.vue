@@ -60,7 +60,12 @@ import { useStreamWS } from '../../composables/useStreamWS'
 import { useToolApprovals } from '../../composables/useChat'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { api } from '../../api'
-import { mapMessagesWithFileChanges, mapCompactionEvents } from '../../utils/chatMessage'
+import {
+  collectLiveRunningTools,
+  mapMessagesWithFileChanges,
+  mapCompactionEvents,
+  mergeRunningToolsIntoMessages,
+} from '../../utils/chatMessage'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
 import ChatRoundList from './ChatRoundList.vue'
@@ -80,6 +85,7 @@ const { openWithContent } = useCommandDrawer()
 
 const messagesContainer = ref<HTMLElement | null>(null)
 const agentType = ref(props.agentType || '')
+const historyLoaded = ref(false)
 
 const sid = computed(() => String(props.childSessionId))
 
@@ -204,8 +210,8 @@ function shouldPreserveLiveStream(msgs: ReturnType<typeof sessionStore.getMessag
 async function fetchMessages() {
   try {
     const existing = sessionStore.getMessages(sid.value)
-    // 已有真实流式输出时不要覆盖；乐观 USER 占位不跳过（对齐「打开时拉历史防丢字」）
-    if (shouldPreserveLiveStream(existing)) return
+    // 首次打开必须回补历史；后续激活已有真实流式输出时才跳过，避免重复覆盖。
+    if (historyLoaded.value && shouldPreserveLiveStream(existing)) return
 
     const { data } = await api.get(`/sessions/${props.childSessionId}/messages`, {
       params: { roundLimit: 50 },
@@ -214,14 +220,11 @@ async function fetchMessages() {
     const { messages, allChanges } = mapMessagesWithFileChanges(raw)
     if (messages.length === 0) return
 
-    // await 期间可能已开始流式，再判断一次
-    const current = sessionStore.getMessages(sid.value)
-    if (shouldPreserveLiveStream(current)) {
-      // 本地仍只有乐观占位时上面不会进来；若已有流式则保留本地
-      return
-    }
-
-    sessionStore.setMessages(sid.value, messages)
+    // 请求期间可能已收到实时工具事件：以历史为基线，并把仍在运行的工具合并回来。
+    const liveRunningTools = collectLiveRunningTools(sessionStore.getMessages(sid.value))
+    const mergedMessages = mergeRunningToolsIntoMessages(messages, liveRunningTools)
+    sessionStore.setMessages(sid.value, mergedMessages)
+    historyLoaded.value = true
     sessionStore.setFileChanges(sid.value, allChanges)
     if (Array.isArray(data?.compactionEvents)) {
       sessionStore.setCompactionEvents(sid.value, mapCompactionEvents(data.compactionEvents))

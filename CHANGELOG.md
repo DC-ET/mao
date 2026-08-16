@@ -14,6 +14,101 @@
 
 ---
 
+## 0.0.33 (2026-08-15)
+
+### 后端
+- **移除 Java 版后端**（`backend/`、`pom.xml`、Maven 构建、`Dockerfile.backend` 与 CI 中的 `mvn test`），由 TypeScript 版后端完全替代。
+- TypeScript 后端默认监听端口由 9081 改为 **9080**（`MAO_TS_PORT` 可覆盖），与既有 Nginx 反代 / 前端默认地址保持一致；Flyway 迁移脚本迁入 `backend-ts/db/migration/`，后端启动时自动执行。
+- 本地/服务器启停脚本统一为 `scripts/start-backend.sh` / `stop-backend.sh` / `restart-backend.sh`（原 Java 版脚本删除，`*-backend-ts.sh` 更名为无后缀版），PID 文件统一为 `.backend.pid`。
+- 部署说明与配置模板更新：见 [DEPLOY.md](DEPLOY.md) 与 `backend-ts/.env.example`（原 Java `application-example.yml` 随源码移除）。
+- 修复云端 shell 持久会话通过 `write_stdin` 执行命令时不注入 `MAO_TOKEN` 的问题：现在与 `exec` 一致，每次写入命令前都刷新注入短效令牌，避免 `mao-user` / `mao-admin` CLI 在复用会话时出现未登录（401）。
+
+---
+
+## 0.0.32 (2026-08-15)
+
+### 前端（桌面 / Web / 安卓）
+- 缩小待发送队列消息删除确认框的标题、正文与操作按钮，改善移动端显示比例。
+- 修复任务执行工具期间刷新页面后，进度中缺少当前正在调用工具的问题；重连订阅时恢复运行中工具及其最新参数。
+- 「我的技能」抽屉新增「系统技能」页签，展示系统预置 Skills（仅可查看详情），与个人上传技能区分展示。
+- 修复新建会话开始执行后左侧任务圆点偶尔仍显示空闲：防止迟到的会话详情响应覆盖 WebSocket 实时运行状态。
+- 修复任务完成后偶尔在最终回复下方重复展示本轮用户消息：历史刷新时用落库消息替换对应的本地乐观消息。
+- 修复刷新后切换多个运行中子代理时，后打开的子代理缺少用户消息和部分工具摘要：首次打开始终回补完整历史，并保留请求期间到达的运行中工具状态。
+
+### 后端
+- 修复 TypeScript 后端并行工具调用时 `tool_call_id` 串到其他工具：改为 `AsyncLocalStorage.run` 隔离，避免并行 `delegate` 绑错父工具或报缺少调用 ID。
+- 修复 TypeScript 后端系统提示「当前日期」使用 UTC：改为 `Asia/Shanghai` 日历日，与定时任务时区一致。
+- 取消 `delegate` / `delegate_followup` 子代理的固定运行时长限制，改为持续运行直至完成或被主动取消。
+- 修复子代理执行期间重启后端后父任务重复委派的问题：恢复原子会话与 execution，幂等回填委派结果后再继续父任务。
+- 修复 shell `write_stdin` 不回显结束标记导致交互式命令必定空等到超时的问题，现在输入后立即返回。
+- 修复 CLOUD shell 未注入 `MAO_TOKEN`，`mao-*-cli` 在云端会话中无法鉴权的问题。
+- shell 执行结果补回 `exit_code`，命令失败或超时不再显示为成功；退出码也不再泄漏进下一条命令的输出。
+- 修复复用已有 shell 会话时 `workdir` 参数被忽略、`current_workdir` 始终停留在初始目录的问题。
+- shell 会话关闭时改为回收整个进程组，避免 bash 退出后 gradle 等后代进程残留。
+- 修复流式响应末行未以换行结尾时最后一个 SSE 事件被丢弃，导致整轮请求重试并重复输出的问题。
+- 修复会话与子代理时间戳按 UTC 落库比服务器本地时间早 8 小时，造成会话列表排序错乱的问题。
+- 修复 Agent 线程池打满被拒绝时执行占位未回滚，导致该会话此后一直提示「任务仍在运行」的问题。
+- 修复子代理恢复未校验抢占结果，多实例下同一子代理可能被并发恢复的问题。
+- 修复 CLOUD 技能同步只比对技能目录顶层修改时间，仅改动嵌套文件时不触发同步的问题。
+- 修复 `read_file` 对以换行结尾的文件多算一行，以及本地工具错误信息被二次转义的问题。
+- 数据库 schema 迁移改由 TypeScript 后端启动时执行（共用原 Flyway SQL 与 `flyway_schema_history`）；Java 默认不再跑迁移，可用 `SPRING_FLYWAY_ENABLED=true` 临时打开。
+
+---
+
+## 0.0.31 (2026-08-13)
+
+### 管理后台
+- 修复会话阶段 Tag、定时任务开关、角色权限勾选在控制台刷 Element Plus 校验警告的问题（运行中阶段改用 `primary`，完结字段按布尔禁用开关，权限勾选改用 `value`）。
+
+### 前端（桌面 / Web / 安卓）
+- 修复 LOCAL 模式点击命令「执行」后任务仍停在待审批：审批卡片使用后端 requestId，点执行/拒绝后立刻通知服务端退出 WAITING_APPROVAL。
+- 修复右侧边栏 Git 提交在自动生成提交信息超过 30 秒时被前端提前判定为超时的问题。
+- 工具卡片回退文案改为中文名称（如 `edit_file` 显示为「编辑文件」），与分组标题一致。
+- 任务完成后不再立刻用 REST 覆盖待发送队列，避免把刚自动出队的消息又刷回面板。
+- 修复队列自动消费后用户气泡消失：任务结束拉取历史时保留尚未入库响应的尾部用户消息。
+- 修复定时任务触发后当前打开的会话不出现气泡：把 `scheduled` 来源的用户消息按远程入站插入并进入流式。
+- 修复 TypeScript 后端任务完成后执行过程展开时重复最终回复，以及折叠标题出现但过程仍平铺在外的问题。
+
+### 桌面 Electron
+- LOCAL 工具审批卡片改用服务端 `tool_execute` 的 requestId，便于点「执行」后立刻恢复会话状态。
+
+### 后端
+- 修复 TypeScript 后端工具参数流式传输结束后未刷新完整参数，导致 Shell、文件等工具卡片摘要退化为通用名称的问题。
+- 文件编辑工具遇到完全相同的 `old_string` 与 `new_string` 时不再执行无意义写入，并向 Agent 明确返回参数相同的错误提示。
+- Shell 异步命令提交后立即返回 `session_id` 与 `output_file`，Java 和 TypeScript 后端行为保持一致，便于任务运行期间回查日志。
+- 修复 TypeScript 后端未兼容 Java 的 `/api/uploads/**` 静态资源路径，导致已发布 Electron 客户端检查更新时获取 `latest-mac.yml` 返回 404 的问题。
+- 修复 TypeScript 后端关闭持久 Shell 会话时管道异步触发 `ECONNRESET`，因未处理 Socket `error` 事件导致服务进程退出的问题。
+- 修复 TypeScript 后端并行工具调用参数分片交错时输入丢失或串到其他工具，进而导致工具卡片回退为错误齿轮图标的问题。
+- 修复 TypeScript 后端 LOCAL 审批通过后任务树「待审批」残留：`tool_approval` 立即注销待批请求，并丢弃过期的 `session_tree_status` 异步推送。
+- TypeScript 后端统一输出带 ISO 时间的单行 JSON 日志，覆盖业务日志、Harness、Nest 启动日志与 Fastify 请求日志。
+- 修复 TypeScript 后端 OSS STS SDK 的 ESM 构造器解析，并让开发启动脚本加载 `backend-ts/.env`，恢复对话图片上传。
+- 修复 TypeScript 后端 Git 提交信息生成过慢：该轻量摘要场景显式关闭深度思考，避免兼容供应商在省略参数时默认启用重推理；同时修正 Node LLM 建连超时语义，并在超时后取消底层请求。
+- 新增 TypeScript 后端（`backend-ts/`，NestJS + Fastify，默认端口 9081），REST / WebSocket / 鉴权密文协议与 Java 对齐，可与 9080 双跑；验收后将 Nginx `/api/`、`/api/ws/` 切到 9081，Java 进程保留作回滚。切流瞬间进行中的 Agent 与 WebSocket 需重连。
+- 修复任务面板偏好接口在 mysql2 将 JSON 列解析为数组后 500 的问题；连接池改为按字符串读取 JSON 列，与 Java 对齐。
+- 修复新会话首条回复完成后状态又回到「运行中」：助手消息落库不再整行回写 session（避免把 COMPLETED 覆盖成 RUNNING），并等待落库完成后再标记终态。
+- 修复新建会话后侧栏 Agent 名称显示为占位「Agent」：创建接口将字符串形式的 agentId 转为数字后再填充 agentName，与 Java / 前端对齐。
+- 修复部分模型流式工具调用每包都带同一 `id` 时，`tool_call_start` 被重复推送、同一工具被拆成多次执行的问题。
+- 修复执行中工具卡片摘要显示原始 JSON：WebSocket 改用与 Java 一致的 ToolResultSummarizer（如「编辑 src/App.vue (+3行 -1行)」）。
+- 修复 CLOUD shell 未注入 `GIT_TOKEN_*` / `GIT_ASKPASS`：创建会话时写入用户 Git 凭据环境变量，与 Java 对齐。
+- 修复 CLOUD shell 会话过期清理未挂定时器：每分钟执行 idle 30 分钟 / 最长 2 小时回收，与 Java `@Scheduled` 对齐。
+- 子代理整体超时改回 3600 秒；超时后置位 cancelFlag 并等待 30 秒宽限，宽限内仍不退出才失败。
+- Agent 执行器按 core=20 / max=100 / queue=200 排队，队列满后再扩到 max，超出则拒绝，与 Java 线程池一致。
+- 启动时校验 `APP_GIT_CREDENTIAL_SECRET`，未配置则拒绝启动。
+- 修复发送图片时 OSS STS 临时凭证生成失败：Aliyun SDK 需传入 `AssumeRoleRequest` 实例，不能传普通对象。
+- 修复子代理（coder/explorer/reviewer）执行报 `buildContext` 空引用：Delegate 工具对 HarnessService / AgentLoop 改为延迟解析，对齐 Java `@Lazy`。
+- 修复 `open_web_page` 抓取超大网页（如微信公众号约 3MB HTML）时因截断后流未结束而误报 timeout；达到上限后立即解析，并跟随 HTTP 重定向。
+- 修复子代理创建后不自动打开 Tab、侧栏不刷新：推送 `subagent_session_created`（含 title），并在执行时挂上 WS 流式监听，与 Java 对齐。
+- 修复刷新后用户消息中的图片不回显：多模态内容按 `image_url` 落库，读取时兼容旧的 `imageUrl` 字段。
+- 修复任务结束后待发送队列不自动消费：出队不再被残留的 RUNNING 状态拦住，崩溃恢复完成后也会继续消费队列。
+- 修复 LOCAL 模式任务启动失败：`SkillSyncService` 补齐 `getRemovedSkillNames`，与 Java 对齐。
+- 修复 LOCAL 模式关联 MCP 后调用模型 400：桌面上报的工具 schema 写入 `inputSchema`，并把 `type: null` 规范成 `object`，避免 DeepSeek 等严格供应商拒绝。
+- 修复 LLM HTTP 4xx 被当成网络失败连着重试：仅对超时/断连等 IO 错误重试，与 Java 对齐。
+- 修复上传本地技能报「No valid skill folders found」：multipart 解析保留 `技能目录/SKILL.md` 路径，与 Java 对齐。
+- 修复定时任务触发后当前打开的会话收不到实时消息：改为走 WebSocket 流式推送（含用户气泡），无需刷新。
+
+### 桌面 Electron
+- LOCAL Skill 同步 zip 改为跟随前端 `VITE_API_BASE_URL` 下载，并把 `localhost` 落到 `127.0.0.1`，避免 Electron 走 IPv6 连不上只监听 IPv4 的 TypeScript 后端。
+
 ## 0.0.30 (2026-08-11)
 
 ### 后端

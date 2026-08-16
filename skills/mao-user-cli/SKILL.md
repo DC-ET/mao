@@ -32,6 +32,22 @@ npm install . -g
 
 推荐流程：先直接调用 CLI → 若 `command not found` 则执行上述安装 → 安装后立即重试原命令。全局安装因权限失败时，可用 `node bin/mao-user-cli.js ...` 从本目录直接运行。
 
+### 版本不匹配自愈（重装 CLI）
+
+CLI 已存在但行为与本文档不符时，通常是全局安装的是**旧版本**（可能来自其他会话目录），**由 Agent 重新安装并重试原命令**，禁止让用户手动处理。典型信号：
+
+- 执行 SKILL.md 中存在的命令却报 `未知模块` / `未知子命令`（如 `pref weixin`、`quick-command` 等较新命令）
+- 参数、输出格式与 reference 文档描述不一致
+- 错误文案与本文档说明不符（如 401 无场景化指引，说明是旧版 CLI）
+
+```bash
+# 在本 Skill 目录下执行，强制覆盖全局链接
+npm install . -g
+which mao-user   # 确认指向本 Skill 目录的 bin，而不是其他 runtime 会话目录
+```
+
+重装后立即重试原命令。若 `which` 仍指向旧路径（链接未被覆盖），直接用 `node bin/mao-user-cli.js ...` 从本目录运行兜底。
+
 要求：Node.js >= 18。零 npm 运行时依赖。命令名：`mao-user` 或 `mao-user-cli`。
 
 ## 鉴权与 baseUrl
@@ -42,6 +58,14 @@ npm install . -g
 - Token 来源优先级：`--token` > `MAO_TOKEN` > `~/.mao/auth.json`（与 mao-admin-cli 共用）
 - Refresh：`MAO_REFRESH_TOKEN` 或缓存中的 `refreshToken`
 - 缓存结构：`{ accessToken, refreshToken, expiresIn, user, savedAt }`（只存 JWT，不存密码）
+
+### 云端 / 微信通道自动免登录
+
+Agent 在**云端工作区**或**微信通道**通过 `shell` 工具执行本 CLI 时，后端已按当前会话用户自动签发短效 `MAO_TOKEN` 并注入环境变量（`export MAO_TOKEN=...`），**无需执行 `auth login`**，直接调用即可。每次 `shell` 的 `exec` / `write_stdin` 前都会刷新注入，持久会话无需手动刷新。
+
+- 判断是否已注入：`echo ${MAO_TOKEN:+injected}` 或 `mao-user auth whoami`
+- 若返回 401 / 未登录：优先确认 `MAO_TOKEN` 是否注入；未注入属于 shell 环境异常（可重开会话），不要盲目执行 `auth login`
+- 仅**本地终端 / 手动操作**等无注入场景才需要 `auth login`
 
 ## 全局选项
 
@@ -94,5 +118,7 @@ npm install . -g
 
 - 缺少必填参数：CLI 直接报错退出
 - HTTP 非 2xx 或业务 `code!==0`：打印错误并以非零码退出
-- 未登录：先执行 `auth login` 或传入 `--token`
+- 未登录（HTTP 401）：CLI 会输出场景化指引——云端/微信场景先确认 `MAO_TOKEN` 是否注入（`echo ${MAO_TOKEN:+injected}`），必要时重开 shell 会话；本地终端执行 `auth login` 或 `auth refresh`
+- 网络错误：CLI 会附带底层原因（连接拒绝 / 超时 / DNS），据此判断是 baseUrl 配错还是网络不可达
+- 业务错误：提示可用 `--raw` 查看完整响应
 - 二进制接口（下载 / sync-package）：以文件是否写出判断成功

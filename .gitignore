@@ -1,13 +1,6 @@
 # Dependencies
 node_modules/
 
-# Java / Maven
-backend/target/
-*.class
-*.jar
-*.war
-*.ear
-
 # IDE
 .idea/
 *.iml
@@ -40,6 +33,9 @@ desktop/release/
 .sso_token.txt
 .account.json
 
+# Android Gradle wrapper jar（由 npx cap 生成）
+android/android/gradle/wrapper/gradle-wrapper.jar
+
 # Runtime PID files
 *.pid
 
@@ -48,9 +44,6 @@ desktop/release/
 
 .claude/
 .cursor/
-application-prod.yml
-application-local.yml
-application-*.yml
 
 # Local deploy script
 deploy_local.sh

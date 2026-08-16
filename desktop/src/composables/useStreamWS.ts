@@ -406,6 +406,15 @@ export function useStreamWS() {
     send({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, direction } })
   }
 
+  async function sendToolApproval(sessionId: string, requestId: string, approved: boolean): Promise<boolean> {
+    return sendReliable({
+      type: 'tool_approval',
+      sessionId: Number(sessionId),
+      requestId,
+      approved
+    })
+  }
+
   async function createSideSession(
     parentSessionId: string,
     content: string,
@@ -645,7 +654,7 @@ export function useStreamWS() {
         // Desktop send: update optimistic temp ID.
         // Weixin/remote: append the inbound user message so open sessions stream live.
         if (sessionId && data?.messageId) {
-          if (data.source === 'weixin') {
+          if (data.source === 'weixin' || data.source === 'scheduled') {
             sessionStore.addUserMessage(sessionId, {
               id: String(data.messageId),
               role: 'user',
@@ -669,6 +678,7 @@ export function useStreamWS() {
       case 'session_snapshot':
         // Session was already running when we subscribed — sync phase so client can show correct UI
         if (sessionId && data?.phase) {
+          if (data.executionId) setActiveExecution(sessionId, data.executionId)
           sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
           sessionStore.updateSideTaskPhase(Number(sessionId), data.phase as TaskPhase)
           sessionStore.updateSubagentPhase(Number(sessionId), data.phase as TaskPhase)
@@ -725,7 +735,9 @@ export function useStreamWS() {
         const workspace = data?.workspace
         if (sessionId && syncUrl && isElectronClient()) {
           const token = getToken() || ''
-          ;(window as any).electronAPI.skillSync?.(Number(sessionId), syncUrl, token, workspace || '')
+          const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1')
+            .replace(/\/v1\/?$/, '')
+          ;(window as any).electronAPI.skillSync?.(Number(sessionId), syncUrl, token, workspace || '', apiBase)
         } else {
           console.warn('[skill-sync] cannot sync:', { sessionId, syncUrl, hasElectronAPI: isElectronClient() })
         }
@@ -862,7 +874,7 @@ export function useStreamWS() {
           sessionStore.addUserMessage(sessionId, {
             id: String(data.messageId),
             role: 'user',
-            content: data.content || '',
+            content: typeof data.content === 'string' ? data.content : '',
             createdAt: nowDateTime(),
             images: data.images && data.images.length > 0 ? data.images : undefined
           })
@@ -907,6 +919,7 @@ export function useStreamWS() {
     insertMessage,
     deleteQueueMessage,
     reorderQueueMessage,
+    sendToolApproval,
     createSideSession,
     pendingCallbacks,
     setActiveExecution,

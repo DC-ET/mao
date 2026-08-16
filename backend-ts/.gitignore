@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+.env
+config/application-local.yml
+*.log
+*.pid

@@ -70,6 +70,10 @@ export function useToolApprovals() {
     if (requestId && isElectron) {
       await (window as any).electronAPI.respondToolApproval(requestId, approved)
     }
+    if (item?.sessionId) {
+      const { sendToolApproval } = useStreamWS()
+      await sendToolApproval(item.sessionId, requestId, approved)
+    }
   }
 
   function clearPendingApprovals() {
@@ -136,7 +140,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const nextMessages = running.length > 0
         ? mergeRunningToolsIntoMessages(messages, running)
         : messages
-      sessionStore.setMessages(sid, nextMessages)
+      sessionStore.applyFetchedMessages(sid, nextMessages, {
+        preserveStreamingAssistant: Boolean(options?.preserveRunningTools),
+      })
       sessionStore.setFileChanges(sid, allChanges)
       if (Array.isArray(data?.compactionEvents)) {
         sessionStore.setCompactionEvents(sid, mapCompactionEvents(data.compactionEvents))
@@ -384,8 +390,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       if (sessionId.value) {
         sessionStore.fetchSession(sessionId.value)
         // Re-fetch messages so that the API-structured messages replace the
-        // live-streamed single-message, enabling round-based collapse in UI
-        fetchMessages()
+        // live-streamed single-message, enabling round-based collapse in UI.
+        // Skip when the queue will auto-consume next — REST 会与刚写入的用户消息竞态。
+        if (sessionStore.getQueueMessages(sessionId.value).length === 0) {
+          fetchMessages()
+        }
       }
     } catch (error: any) {
       sending.value = false
@@ -736,7 +745,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Refresh session
       if (sessionId.value) {
         sessionStore.fetchSession(sessionId.value)
-        fetchMessages()
+        if (sessionStore.getQueueMessages(sessionId.value).length === 0) {
+          fetchMessages()
+        }
       }
     } catch (error: any) {
       sending.value = false
@@ -776,8 +787,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
       if (sessionId.value) {
         sessionStore.fetchSession(sessionId.value)
-        fetchMessages()
-        fetchQueue()
+        if (sessionStore.getQueueMessages(sessionId.value).length === 0) {
+          fetchMessages()
+        }
       }
     } else if (phase === 'RUNNING' || phase === 'WAITING_APPROVAL') {
       // Auto-sync sending state (covers queue auto-consume case)

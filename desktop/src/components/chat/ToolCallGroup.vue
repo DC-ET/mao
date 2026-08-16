@@ -46,35 +46,36 @@ import {
   Tools,
 } from '@element-plus/icons-vue'
 import type { ToolCall } from '../../composables/useChat'
+import { getToolDisplayName } from '../../utils/toolDisplay'
 import ToolCallCard from './ToolCallCard.vue'
 
 const props = defineProps<{ toolCalls: ToolCall[] }>()
 
 const isExpanded = ref(false)
 
-const toolDisplayMap: Record<string, { label: string; icon: Component }> = {
-  glob_search: { label: '搜索文件', icon: FolderOpened },
-  grep_search: { label: '搜索内容', icon: Search },
-  read_file: { label: '读取文件', icon: Document },
-  write_file: { label: '写入文件', icon: DocumentAdd },
-  edit_file: { label: '编辑文件', icon: EditPen },
-  shell: { label: '执行命令', icon: Monitor },
-  ask_user_questions: { label: '询问用户', icon: ChatLineRound },
-  task_create: { label: '创建任务', icon: CirclePlus },
-  task_update: { label: '更新任务', icon: Refresh },
-  task_list: { label: '查询任务', icon: List },
-  task_delete: { label: '删除任务', icon: Delete },
-  delegate: { label: '委派子代理', icon: Connection },
-  delegate_followup: { label: '追问子代理', icon: Connection },
-  web_search: { label: '网页搜索', icon: Search },
-  open_web_page: { label: '打开网页', icon: Link },
-  generate_image: { label: '生成图片', icon: Picture },
-  send_wechat_image: { label: '发送微信图片', icon: Picture },
-  send_wechat_file: { label: '发送微信文件', icon: Document },
-  create_scheduled_task: { label: '创建定时任务', icon: Calendar },
-  update_scheduled_task: { label: '更新定时任务', icon: Timer },
-  delete_scheduled_task: { label: '删除定时任务', icon: Delete },
-  list_scheduled_tasks: { label: '查询定时任务', icon: List },
+const toolIconMap: Record<string, Component> = {
+  glob_search: FolderOpened,
+  grep_search: Search,
+  read_file: Document,
+  write_file: DocumentAdd,
+  edit_file: EditPen,
+  shell: Monitor,
+  ask_user_questions: ChatLineRound,
+  task_create: CirclePlus,
+  task_update: Refresh,
+  task_list: List,
+  task_delete: Delete,
+  delegate: Connection,
+  delegate_followup: Connection,
+  web_search: Search,
+  open_web_page: Link,
+  generate_image: Picture,
+  send_wechat_image: Picture,
+  send_wechat_file: Document,
+  create_scheduled_task: Calendar,
+  update_scheduled_task: Timer,
+  delete_scheduled_task: Delete,
+  list_scheduled_tasks: List,
 }
 
 const hasRunning = computed(() =>
@@ -83,7 +84,7 @@ const hasRunning = computed(() =>
 
 const groupIcon = computed<Component>(() => {
   const primaryTool = props.toolCalls[0]
-  return primaryTool ? toolDisplayMap[primaryTool.name]?.icon ?? Tools : Tools
+  return primaryTool ? toolIconMap[primaryTool.name] ?? Tools : Tools
 })
 
 const groupSummary = computed(() => {
@@ -105,10 +106,6 @@ const groupSummary = computed(() => {
 
   return `${parts.join('、')}`
 })
-
-function getToolDisplayName(name: string): string {
-  return toolDisplayMap[name]?.label ?? name
-}
 
 function toggleExpand() {
   isExpanded.value = !isExpanded.value

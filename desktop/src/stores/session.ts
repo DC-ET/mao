@@ -713,6 +713,22 @@ export const useSessionStore = defineStore('session', () => {
     })
   }
 
+  /** 合并请求期间可能已被 WS 更新的会话快照，避免迟到的 REST 响应覆盖实时 phase。 */
+  function updateSessionFromSnapshot(id: string, snapshot: Partial<Session>, phaseAtRequest?: TaskPhase) {
+    const sid = String(id)
+    const current = sessionEntities.value.get(sid)
+    const livePhase = sessionPhases.value.get(sid)
+    const phaseChangedWhileFetching = phaseAtRequest !== undefined
+      && current?.phase !== undefined
+      && current.phase !== phaseAtRequest
+    if (livePhase || phaseChangedWhileFetching) {
+      const phase = livePhase ?? current!.phase
+      updateSession(id, { ...snapshot, phase, running: ACTIVE_PHASES.has(phase) })
+      return
+    }
+    updateSession(id, snapshot)
+  }
+
   function getSessionPhase(id: string): TaskPhase | null {
     const sid = String(id)
     const cached = sessionPhases.value.get(sid)
@@ -957,6 +973,44 @@ export const useSessionStore = defineStore('session', () => {
     const sid = String(sessionId)
     streamingAssistantMessageIds.delete(sid)
     sessionMessages.value.set(sid, messages)
+  }
+
+  /**
+   * REST 历史覆盖缓存时，保留尚未出现在响应里的尾部消息
+   *（队列自动消费刚写入的用户消息、以及正在流式输出的助手气泡）。
+   */
+  function applyFetchedMessages(
+    sessionId: string,
+    messages: ChatMessage[],
+    options?: { preserveStreamingAssistant?: boolean },
+  ) {
+    const sid = String(sessionId)
+    const local = sessionMessages.value.get(sid) ?? []
+    const localIds = new Set(local.map(m => String(m.id)))
+    const fetchedIds = new Set(messages.map(m => String(m.id)))
+    const newlyFetchedUsers = messages.filter(m => m.role === 'user' && !localIds.has(String(m.id)))
+    const tail: ChatMessage[] = []
+    for (let i = local.length - 1; i >= 0; i--) {
+      const message = local[i]
+      if (fetchedIds.has(String(message.id))) break
+      const isStreamingAssistant = message.role === 'assistant'
+        && streamingAssistantMessageIds.get(sid) === String(message.id)
+      const isReplacedOptimisticUser = message.role === 'user'
+        && String(message.id).startsWith('msg_')
+        && newlyFetchedUsers.some(fetched => fetched.content === message.content
+          && JSON.stringify(fetched.images ?? []) === JSON.stringify(message.images ?? []))
+      if (!isReplacedOptimisticUser
+        && (message.role !== 'assistant' || (options?.preserveStreamingAssistant && isStreamingAssistant))) {
+        tail.unshift(message)
+      }
+    }
+    const prevStreamingId = streamingAssistantMessageIds.get(sid)
+    sessionMessages.value.set(sid, tail.length > 0 ? [...messages, ...tail] : messages)
+    if (prevStreamingId && tail.some(m => String(m.id) === prevStreamingId)) {
+      streamingAssistantMessageIds.set(sid, prevStreamingId)
+    } else {
+      streamingAssistantMessageIds.delete(sid)
+    }
   }
 
   function prependMessages(sessionId: string, messages: ChatMessage[]) {
@@ -1510,6 +1564,7 @@ export const useSessionStore = defineStore('session', () => {
     forgetLastSession,
     updateSession,
     updateSessionPhase,
+    updateSessionFromSnapshot,
     getSessionPhase,
     // 实体 / 投影模型（归档 / 聚焦）
     archivedSessions,
@@ -1553,6 +1608,7 @@ export const useSessionStore = defineStore('session', () => {
     markAsRead,
     // Message cache
     setMessages,
+    applyFetchedMessages,
     prependMessages,
     setMessagePageState,
     setLoadingOlderMessages,

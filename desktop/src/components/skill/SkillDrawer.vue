@@ -37,6 +37,45 @@
       </div>
 
       <el-tabs v-model="activeTab" class="skill-tabs">
+        <el-tab-pane label="系统技能" name="system">
+          <div class="system-skills-hint">
+            系统预置技能，对所有用户生效，仅可查看详情。
+          </div>
+
+          <div class="skill-list">
+            <div v-if="systemLoading" class="skill-empty">加载中...</div>
+            <div v-else-if="systemSkills.length === 0" class="skill-empty">暂无系统技能</div>
+            <div v-else class="skill-cards">
+              <el-tooltip
+                v-for="skill in systemSkills"
+                :key="skill.name"
+                :content="skill.description || '暂无描述'"
+                placement="left"
+                :show-after="300"
+              >
+                <div class="skill-card">
+                  <div class="skill-card-header">
+                    <div class="skill-name">
+                      <span class="skill-name-text">{{ skill.name }}</span>
+                      <el-tag size="small" type="info" class="system-tag">系统</el-tag>
+                    </div>
+                    <div class="skill-actions">
+                      <el-tooltip content="查看内容" :show-after="300" placement="top">
+                        <button class="skill-btn" @click="handleViewSystem(skill)">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                          </svg>
+                        </button>
+                      </el-tooltip>
+                    </div>
+                  </div>
+                  <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
+                </div>
+              </el-tooltip>
+            </div>
+          </div>
+        </el-tab-pane>
+
         <el-tab-pane label="已上传" name="uploaded">
           <div class="skill-list">
             <div v-if="loading" class="skill-empty">加载中...</div>
@@ -223,7 +262,9 @@ const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.listLo
 const activeTab = ref('uploaded')
 const loading = ref(false)
 const localLoading = ref(false)
+const systemLoading = ref(false)
 const skills = ref<SkillDoc[]>([])
+const systemSkills = ref<SkillDoc[]>([])
 const localSkills = ref<LocalSkillDoc[]>([])
 const localSkillsDir = ref('')
 const localError = ref('')
@@ -255,7 +296,7 @@ watch(visible, (val) => {
 })
 
 async function fetchAll() {
-  await Promise.all([fetchSkills(), fetchLocalSkills()])
+  await Promise.all([fetchSkills(), fetchSystemSkills(), fetchLocalSkills()])
 }
 
 async function fetchSkills() {
@@ -265,6 +306,16 @@ async function fetchSkills() {
     skills.value = data || []
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchSystemSkills() {
+  systemLoading.value = true
+  try {
+    const { data } = await api.get('/skill-docs')
+    systemSkills.value = data || []
+  } finally {
+    systemLoading.value = false
   }
 }
 
@@ -293,6 +344,16 @@ async function fetchLocalSkills() {
 async function handleViewUploaded(skill: SkillDoc) {
   try {
     const { data } = await api.get(`/user-skills/${skill.name}`)
+    currentDoc.value = data
+    detailVisible.value = true
+  } catch {
+    // Error handled by interceptor
+  }
+}
+
+async function handleViewSystem(skill: SkillDoc) {
+  try {
+    const { data } = await api.get(`/skill-docs/${skill.name}`)
     currentDoc.value = data
     detailVisible.value = true
   } catch {
@@ -599,6 +660,13 @@ async function uploadFiles(files: File[], options?: { refreshLocal?: boolean; si
   transform: translateY(-1px) scale(0.9);
 }
 
+.system-skills-hint {
+  font-size: 12px;
+  color: var(--aw-ink-muted);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
 .local-skills-hint {
   font-size: 12px;
   color: var(--aw-ink-muted);
@@ -692,6 +760,14 @@ async function uploadFiles(files: File[], options?: { refreshLocal?: boolean; si
 }
 
 .skill-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.skill-name-text {
   font-size: 13px;
   font-weight: 600;
   color: var(--aw-ink);
@@ -699,7 +775,12 @@ async function uploadFiles(files: File[], options?: { refreshLocal?: boolean; si
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
+}
+
+.system-tag {
+  flex-shrink: 0;
+  transform: scale(0.88);
+  transform-origin: left center;
 }
 
 .skill-actions {

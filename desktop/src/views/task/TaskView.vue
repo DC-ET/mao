@@ -758,6 +758,7 @@ function getRouteWatchState() {
 
 async function loadSession(sid: string) {
   newTaskAgentId.value = null
+  const phaseAtRequest = sessionStore.getSessionEntity(sid)?.phase
 
   try {
     const { data } = await api.get(`/sessions/${sid}`)
@@ -767,8 +768,9 @@ async function loadSession(sid: string) {
       if (existing?.title && existing.title !== '未命名会话') {
         data.title = existing.title
       }
-      // Update store BEFORE setActiveSession so ChatPanel's watcher reads correct data
-      sessionStore.updateSession(sid, data)
+      // Update store BEFORE setActiveSession so ChatPanel's watcher reads correct data.
+      // Keep a newer WS phase when this REST request started before the transition.
+      sessionStore.updateSessionFromSnapshot(sid, data, phaseAtRequest)
       const normalizedAgentId = String(data.agentId)
       // Set shared refs — ChatPanel reads these for useChat
       agentId.value = normalizedAgentId

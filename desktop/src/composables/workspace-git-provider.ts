@@ -149,7 +149,7 @@ export function createLocalGitProvider(workspace: string, sessionId: string): Wo
         const { data } = await api.post('/files/git-commit-message', {
           sessionId: numericSessionId,
           changes,
-        })
+        }, { timeout: 150_000 })
         result = await window.electronAPI.gitCommit(workspace, repoPath, data.message)
       } catch (e) {
         result = failedOperation('commit', e)
@@ -264,7 +264,11 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
     },
     async commit(repoPath?: string) {
       try {
-        const { data } = await api.post('/files/workspace-git-commit', { sessionId: numericSessionId, repoPath })
+        const { data } = await api.post(
+          '/files/workspace-git-commit',
+          { sessionId: numericSessionId, repoPath },
+          { timeout: 150_000 },
+        )
         return data
       } catch (e) {
         return failedOperation('commit', e)

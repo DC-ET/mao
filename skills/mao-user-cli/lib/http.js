@@ -67,7 +67,8 @@ async function request(options) {
     if (err.name === 'AbortError') {
       throw createCliError(`请求超时（${timeoutMs}ms）: ${url.toString()}`);
     }
-    throw createCliError(`网络请求失败: ${err.message}`);
+    const cause = err.cause?.message ? `（${err.cause.message}）` : '';
+    throw createCliError(`网络请求失败: ${err.message}${cause}`);
   } finally {
     clearTimeout(timer);
   }
@@ -79,6 +80,13 @@ async function request(options) {
         detail = await response.text();
       } catch {
         // ignore
+      }
+      if (response.status === 401) {
+        throw createCliError(
+          `未登录或登录已过期（HTTP 401）：${detail || response.statusText}\n`
+          + `  云端/微信场景：请确认 MAO_TOKEN 已注入（echo \${MAO_TOKEN:+injected}），必要时重开 shell 会话；\n`
+          + `  本地/手动终端：请执行 auth login 或 auth refresh。`
+        );
       }
       throw createCliError(`HTTP ${response.status}: ${detail || response.statusText}`);
     }
@@ -105,12 +113,19 @@ async function request(options) {
 
   if (!response.ok) {
     const msg = json?.message || response.statusText || '请求失败';
+    if (response.status === 401) {
+      throw createCliError(
+        `未登录或登录已过期（HTTP 401）：${msg}\n`
+        + `  云端/微信场景：请确认 MAO_TOKEN 已注入（echo \${MAO_TOKEN:+injected}），必要时重开 shell 会话；\n`
+        + `  本地/手动终端：请执行 auth login 或 auth refresh。`
+      );
+    }
     throw createCliError(`HTTP ${response.status}: ${msg}`);
   }
 
   if (json && typeof json === 'object' && Object.prototype.hasOwnProperty.call(json, 'code')) {
     if (json.code !== 0) {
-      throw createCliError(`业务错误 code=${json.code}: ${json.message || '未知错误'}`);
+      throw createCliError(`业务错误 code=${json.code}: ${json.message || '未知错误'}（可用 --raw 查看完整响应）`);
     }
   }
 

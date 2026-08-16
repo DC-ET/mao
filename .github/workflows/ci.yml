@@ -16,23 +16,31 @@ permissions:
 
 jobs:
   backend:
-    name: Backend Compile
+    name: Backend TS Test
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK
-        uses: actions/setup-java@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          distribution: temurin
-          java-version: "17"
-          cache: maven
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend-ts/package-lock.json
 
-      - name: Compile and test backend
-        working-directory: backend
-        run: mvn -B test
+      - name: Install dependencies
+        working-directory: backend-ts
+        run: npm ci
+
+      - name: Build backend-ts
+        working-directory: backend-ts
+        run: npm run build
+
+      - name: Test backend-ts
+        working-directory: backend-ts
+        run: npm test
 
   admin:
     name: Admin Build

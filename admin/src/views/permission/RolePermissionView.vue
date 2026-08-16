@@ -45,7 +45,7 @@
               <el-checkbox
                 v-for="permission in permissions"
                 :key="permission.id"
-                :label="permission.id"
+                :value="permission.id"
                 border
               >
                 <span>{{ permission.name }}</span>

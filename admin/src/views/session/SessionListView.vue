@@ -202,9 +202,9 @@ const phaseMetrics = computed(() => [
   { label: '失败/取消(当前页)', value: sessions.value.filter(s => ['FAILED', 'CANCELLED'].includes(s.phase)).length }
 ])
 
-function phaseTagType(phase: string): '' | 'success' | 'danger' | 'warning' | 'info' {
+function phaseTagType(phase: string): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
   switch (phase) {
-    case 'RUNNING': return ''
+    case 'RUNNING': return 'primary'
     case 'COMPLETED': return 'success'
     case 'FAILED': return 'danger'
     case 'CANCELLED': return 'warning'
