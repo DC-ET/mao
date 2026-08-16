@@ -132,7 +132,7 @@ Mao 客户端目前支持两种访问形态：
 ### 4.4 release 签名
 
 1. `keytool -genkeypair` 生成 `mao-release.keystore`，alias 与密码单独记录；
-2. keystore 存放于服务器安全目录（如 `/root/soft/mao/keystore/`），**禁止入 git**（加入 `.gitignore`）；
+2. keystore 存放于服务器安全目录（如 `/opt/mao/keystore/`），**禁止入 git**（加入 `.gitignore`）；
 3. 在 `android/` 工程 `gradle.properties` 中通过环境变量注入签名配置（keystore 路径、密码不写入代码库）。
 
 ### 4.5 构建 APK（仅原生壳变更时）

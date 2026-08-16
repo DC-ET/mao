@@ -143,7 +143,7 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 **环境与签名**：
 
 - JDK 21（`JAVA_HOME` 默认 `/usr/lib/jvm/java-21-openjdk-amd64`）、`ANDROID_HOME`（默认 `/opt/android-sdk`）、minSdk 24 / targetSdk 35
-- 签名凭据：环境变量 `MAO_KEYSTORE_*`，或 `/root/soft/mao/keystore/keystore-credentials.env`；**keystore / 凭据严禁入 git**
+- 签名凭据：环境变量 `MAO_KEYSTORE_*`，或 `/opt/mao/keystore/keystore-credentials.env`；**keystore / 凭据严禁入 git**
 - 发版前先更新根目录 `CHANGELOG.md` 顶部版本条目（versionCode 由脚本按已发布 APK 自增）
 
 **明确不做**：LOCAL 能力、工具审批、系统推送、移动端布局重构、上架应用商店、改后端/admin。

@@ -13,7 +13,7 @@
 # 环境要求：
 #   - ANDROID_HOME 已设置
 #   - MAO_KEYSTORE_PATH / MAO_KEYSTORE_PASSWORD / MAO_KEY_ALIAS / MAO_KEY_PASSWORD
-#     已设置或写在 /root/soft/mao/keystore/keystore-credentials.env
+#     已设置或写在 /opt/mao/keystore/keystore-credentials.env
 #
 # 产出：
 #   - APK:   /opt/mao-data/uploads/releases/mao-android-<version>.apk
@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---- 加载签名凭据 ----
-CRED_FILE="/root/soft/mao/keystore/keystore-credentials.env"
+CRED_FILE="/opt/mao/keystore/keystore-credentials.env"
 if [ -f "$CRED_FILE" ]; then
   set -a
   # shellcheck disable=SC1090

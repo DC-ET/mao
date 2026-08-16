@@ -47,3 +47,6 @@ android/android/gradle/wrapper/gradle-wrapper.jar
 
 # Local deploy script
 deploy_local.sh
+
+# Android 签名 keystore 与凭据（严禁入 git）
+/keystore/
