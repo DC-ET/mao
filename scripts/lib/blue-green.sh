@@ -152,11 +152,10 @@ bg_start_port() {
   cd "$app_dir"
   export MAO_TS_PORT="$port"
   if [ -f dist/main.js ]; then
-    nohup node dist/main.js >> "$log_file" 2>&1 &
+    (exec 9>&-; nohup node dist/main.js >> "$log_file" 2>&1 & echo $! > "$pid_file")
   else
-    nohup npx tsx src/main.ts >> "$log_file" 2>&1 &
+    (exec 9>&-; nohup npx tsx src/main.ts >> "$log_file" 2>&1 & echo $! > "$pid_file")
   fi
-  echo $! > "$pid_file"
   echo "Started on port ${port} (PID: $(cat "$pid_file"))"
 }
 
