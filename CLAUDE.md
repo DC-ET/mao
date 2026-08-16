@@ -134,7 +134,7 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 
 1. `npx cap copy/update android`（同步 `web-stub` 与 `capacitor.config.json`）
 2. `gradlew assembleRelease`（`-PMAO_VERSION_CODE` / `-PMAO_VERSION_NAME`）
-3. 发布到 `/root/soft/mao/data/uploads/releases/`：`mao-android-<name>-<code>.apk` + `android-latest.json`
+3. 发布到 `/opt/mao-data/uploads/releases/`：`mao-android-<name>-<code>.apk` + `android-latest.json`
 
 **前端发版**：与 Web/Electron 相同——`desktop` 构建部署到 Nginx，安卓用户顶栏刷新或等 `version.json` 提示即可。
 

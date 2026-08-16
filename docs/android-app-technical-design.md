@@ -9,7 +9,7 @@
 Mao 客户端目前支持两种访问形态：
 
 - **桌面客户端**：Electron 壳（`desktop/electron/`），支持 LOCAL 模式（在用户本机执行终端、git、文件读写等工具）与 CLOUD 模式（工具在服务端执行）；
-- **Web 访问**：同一套 Vue 3 前端通过 Nginx 部署（`/root/soft/mao/desktop`），浏览器访问时自动降级为 CLOUD 模式。
+- **Web 访问**：同一套 Vue 3 前端通过 Nginx 部署（`/opt/mao/desktop/dist`），浏览器访问时自动降级为 CLOUD 模式。
 
 现状痛点：移动场景（通勤、外出）下用户只能用手机浏览器访问 Web 端，体验差（无桌面图标、无独立应用、入口不便）。需求方希望产出一个**安卓 APP**，让用户像使用原生应用一样打开 Mao 客户端。
 
@@ -139,7 +139,7 @@ Mao 客户端目前支持两种访问形态：
 
 1. 一键脚本 `android/build-apk.sh`：`cap sync` → `gradlew assembleRelease` → 发布 APK + `android-latest.json`；
 2. 产物 `android/app/build/outputs/apk/release/app-release.apk`；
-3. 复制到 `/root/soft/mao/data/uploads/releases/mao-android-<versionName>-<code>.apk`。
+3. 复制到 `/opt/mao-data/uploads/releases/mao-android-<versionName>-<code>.apk`。
 
 ### 4.6 验证与分发
 

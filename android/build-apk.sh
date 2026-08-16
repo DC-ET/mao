@@ -16,8 +16,8 @@
 #     已设置或写在 /root/soft/mao/keystore/keystore-credentials.env
 #
 # 产出：
-#   - APK:   /root/soft/mao/data/uploads/releases/mao-android-<version>.apk
-#   - JSON:  /root/soft/mao/data/uploads/releases/android-latest.json
+#   - APK:   /opt/mao-data/uploads/releases/mao-android-<version>.apk
+#   - JSON:  /opt/mao-data/uploads/releases/android-latest.json
 # =============================================================================
 set -euo pipefail
 
@@ -25,7 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ANDROID_DIR="$SCRIPT_DIR"
 ANDROID_APP="$ANDROID_DIR/android/app"
-RELEASES_DIR="/root/soft/mao/data/uploads/releases"
+RELEASES_DIR="/opt/mao-data/uploads/releases"
 CHANGELOG_EXTRACT="$PROJECT_ROOT/scripts/changelog-extract.sh"
 CHANGELOG_FILE="$PROJECT_ROOT/CHANGELOG.md"
 

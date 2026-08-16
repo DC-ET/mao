@@ -156,7 +156,7 @@
    - `cd desktop && npm run build`（构建产物，验证通过）。
 5. **手测**：按第 8 节清单执行。
 6. **CHANGELOG**：根 `CHANGELOG.md` 在当前版本（或新增版本）的 `### 前端（桌面 / Web / 安卓）` 下追加条目（见第 9 节）。
-7. **部署**：`cd desktop && npm run build && cp -r dist/* /root/soft/mao/desktop/`（后端零改动，无需重启后端服务）。
+7. **部署**：`cd desktop && npm run build && cd /opt/mao/desktop && npm run build`（后端零改动，无需重启后端服务）。
 
 ## 7. 落地清单
 

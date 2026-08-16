@@ -7,16 +7,50 @@
 | 组件 | 部署方式 | 端口 | 域名（示例） |
 |------|---------|------|-------------|
 | TypeScript 后端 | Node.js + restart.sh | 9080 | 内网，由 Nginx 反代 |
-| 管理后台 | Nginx 静态文件 | 80/443 | `mao-admin.example.com` |
-| 桌面端 Web | Nginx 静态文件 | 80/443 | `mao.example.com` |
+| 管理后台 | Nginx 静态文件（仓库内 `admin/dist/`） | 80/443 | `mao-admin.example.com` |
+| 桌面端 Web | Nginx 静态文件（仓库内 `desktop/dist/`） | 80/443 | `mao.example.com` |
 | MySQL | 自建或云服务 | 3306 | 内网 |
 
 下文中的 `mao.example.com`、`mao-admin.example.com` 请替换为你自己的域名。
 
+## 目录结构
+
+源码与运行数据分离：
+
+```
+/opt/mao/                     # git 仓库（源码 + dist/node_modules/.env，均被 gitignore）
+├── admin/dist/               # 管理后台构建产物 — Nginx root 指向此处
+├── desktop/dist/             # 桌面端 Web 构建产物 — Nginx root 指向此处
+├── backend-ts/
+│   ├── dist/                 # 后端编译产物（node dist/main.js）
+│   ├── node_modules/
+│   ├── .env                  # 生产配置（chmod 600，勿提交 Git）
+│   ├── restart.sh
+│   ├── logs/
+│   └── db/migration/         # Flyway 迁移脚本
+└── scripts/
+    ├── deploy-admin.sh       # 构建管理后台（原地部署，无需 rsync）
+    └── deploy-desktop.sh     # 构建桌面端（原地部署，无需 rsync）
+
+/opt/mao-data/                # 运行时数据（仓库外，与代码隔离）
+├── workspace/                # Agent 工作区
+├── skills/                   # 平台技能
+├── userskills/               # 用户技能
+├── uploads/                  # 本地上传与 APK OTA（releases/）
+├── users/
+└── runtime/
+```
+
+首次部署时创建运行数据目录：
+
+```bash
+mkdir -p /opt/mao-data/{workspace,skills,userskills,uploads,users,runtime}
+```
+
 ## 一、服务器环境准备
 
 ```bash
-# 安装 Node.js 22（推荐使用 NodeSource 或 nvm）
+# 安装 Node.js 22+（推荐使用 NodeSource 或 nvm）
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs
 
@@ -27,7 +61,7 @@ sudo apt install -y nginx
 sudo apt install -y git
 
 # 验证
-node -v
+node -v    # >= 22
 npm -v
 nginx -v
 git --version
@@ -39,43 +73,44 @@ git --version
 >
 > **仅支持 HTTPS 地址**（如 `https://git.example.com/xx/xxx.git`），不支持 SSH 格式（`git@host:...`）。私有仓库需在桌面端「设置 → Git 凭证」中按**完整主机名**配置 Personal Access Token（例如 `git.example.com`，不是 `example.com`），系统会自动用于 clone 及 Shell 内的 git 操作。
 
-## 二、目录结构
+## 二、首次部署
+
+### 1. 克隆仓库
 
 ```bash
-mkdir -p /opt/mao/backend-ts
-mkdir -p /opt/mao/admin
-mkdir -p /opt/mao/desktop
-mkdir -p /opt/mao/data/workspace
-mkdir -p /opt/mao/data/skills
-mkdir -p /opt/mao/data/userskills
-mkdir -p /opt/mao/data/uploads
+git clone git@gitee.com:yangjiayi/agent-workbench-mimo.git /opt/mao
+# 或 git clone git@github.com:DC-ET/mao.git /opt/mao
+
+cd /opt/mao && git checkout main
 ```
 
-## 三、后端部署
-
-### 1. 构建产物
+### 2. 三端构建
 
 ```bash
-# 本地执行
-cd backend-ts
+# 后端
+cd /opt/mao/backend-ts
 npm ci
 npm run build
 
-# 上传到服务器（dist 为编译产物；db 为迁移脚本；config 为默认配置；restart.sh 为启停脚本）
-scp -r dist config db root@<SERVER_IP>:/opt/mao/backend-ts/
-scp package.json package-lock.json restart.sh root@<SERVER_IP>:/opt/mao/backend-ts/
+# 管理后台
+cd /opt/mao/admin
+npm ci
+npm run build
+
+# 桌面端（部署前确认 desktop/.env.production 中 VITE_API_BASE_URL 为实际域名）
+cd /opt/mao/desktop
+npm ci
+npm run build
 ```
 
-> `db/migration/` 为 Flyway SQL 迁移脚本（仓库内为真实目录），**必须随后端一起部署**，首次启动时由后端自动执行。
-
-### 2. 依赖与配置
-
-在服务器 `/opt/mao/backend-ts/` 安装生产依赖：
+也可使用脚本（等价于上述 `npm run build`，Nginx 已指向仓库内 `dist/`，构建完即生效）：
 
 ```bash
-cd /opt/mao/backend-ts
-npm ci --omit=dev
+bash /opt/mao/scripts/deploy-admin.sh
+bash /opt/mao/scripts/deploy-desktop.sh
 ```
+
+### 3. 后端配置
 
 创建 `/opt/mao/backend-ts/.env`（**勿提交到 Git**，权限建议 `chmod 600`），模板见仓库 `backend-ts/.env.example`：
 
@@ -89,6 +124,7 @@ APP_MCP_SECRET=$(openssl rand -base64 32)
 cat > /opt/mao/backend-ts/.env <<EOF
 MAO_TS_PORT=9080
 MAO_ROOT_DIR=/opt/mao
+MAO_LOG_DIR=/opt/mao/backend-ts/logs
 FLYWAY_ENABLED=true
 MYSQL_URL='jdbc:mysql://<DB_HOST>:3306/mao?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&allowMultiQueries=true'
 MYSQL_USERNAME=<DB_USER>
@@ -99,17 +135,19 @@ APP_NOTIFICATION_WEBHOOK_SECRET=${APP_NOTIFICATION_WEBHOOK_SECRET}
 APP_MCP_SECRET=${APP_MCP_SECRET}
 UPLOAD_STORAGE_MODE=local
 UPLOAD_BASE_URL=https://mao.example.com/api
-FILE_UPLOAD_DIR=/opt/mao/data/uploads
-WORKSPACE_ROOT=/opt/mao/data/workspace
-SKILLS_DIR=/opt/mao/data/skills
-USER_SKILLS_DIR=/opt/mao/data/userskills
+FILE_UPLOAD_DIR=/opt/mao-data/uploads
+WORKSPACE_ROOT=/opt/mao-data/workspace
+SKILLS_DIR=/opt/mao-data/skills
+USER_SKILLS_DIR=/opt/mao-data/userskills
 EOF
 chmod 600 /opt/mao/backend-ts/.env
 ```
 
 | 变量 | 必需 | 说明 |
 |------|------|------|
-| `MAO_TS_PORT` | 否 | 监听端口，默认 `9080`（Java 版后端移除后由 TS 后端接管） |
+| `MAO_TS_PORT` | 否 | 监听端口，默认 `9080` |
+| `MAO_ROOT_DIR` | 否 | 仓库根目录，默认 `/opt/mao` |
+| `MAO_LOG_DIR` | 否 | 后端日志目录，默认 `/opt/mao/backend-ts/logs` |
 | `FLYWAY_ENABLED` | 否 | 启动时是否执行 Flyway 数据库迁移，默认 `true` |
 | `MYSQL_URL` / `MYSQL_USERNAME` / `MYSQL_PASSWORD` | **是** | MySQL 连接配置 |
 | `JWT_SECRET` | **是** | JWT 签名密钥，生产环境必须设置，禁止使用默认值 |
@@ -119,6 +157,9 @@ chmod 600 /opt/mao/backend-ts/.env
 | `APP_MCP_SECRET` | 否 | MCP 服务器环境变量加密密钥；使用 MCP 功能时建议设置 |
 | `UPLOAD_STORAGE_MODE` | 否 | `local`（默认）或 `oss` |
 | `UPLOAD_BASE_URL` | local 模式建议设 | 上传文件的公网访问前缀，如 `https://mao.example.com/api` |
+| `WORKSPACE_ROOT` | **是** | Agent 工作区根目录，如 `/opt/mao-data/workspace` |
+| `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录 |
+| `FILE_UPLOAD_DIR` | **是** | 本地上传目录，如 `/opt/mao-data/uploads` |
 | `LDAP_ENABLED` / `LDAP_URL` | 否 | LDAP 登录开关，默认 `false` |
 
 > 首次启动时后端执行 Flyway 迁移并创建默认管理员 `admin` / `admin123`，**登录后请立即改密**。LLM API Key 在管理后台「模型管理」中配置。
@@ -127,59 +168,35 @@ chmod 600 /opt/mao/backend-ts/.env
 >
 > **通知 Webhook 密钥轮换**：更换 `APP_NOTIFICATION_WEBHOOK_SECRET` 前，需用旧密钥解密、新密钥重新加密通知偏好及未完成投递记录中的 Webhook，否则通知配置无法继续使用。
 
-### 3. 启动脚本
-
-使用仓库自带的 `backend-ts/restart.sh`（已上传至 `/opt/mao/backend-ts/restart.sh`）：
+### 4. 启动后端
 
 ```bash
 chmod +x /opt/mao/backend-ts/restart.sh
+/opt/mao/backend-ts/restart.sh
 ```
 
-脚本行为：读取同目录 `.env` → 停旧进程（按 PID 文件与端口）→ 以 `node dist/main.js` 启动（无 dist 时回退 `npx tsx src/main.ts`）→ 日志轮转（>100MB 自动归档，保留 5 份）。
-
-### 4. 启动服务
-
-```bash
-cd /opt/mao/backend-ts
-./restart.sh
-```
+`restart.sh` 行为：读取同目录 `.env` → 停旧进程（按 PID 文件与端口）→ 以 `node dist/main.js` 启动 → 日志轮转（>100MB 自动归档，保留 5 份）。
 
 验证：
 
 ```bash
-# 健康检查（Swagger UI）
-curl -s -o /dev/null -w "%{http_code}" http://localhost:9080/api/swagger-ui.html
-# 期望返回 200；若启动失败，查看日志中是否提示 APP_GIT_CREDENTIAL_SECRET 未配置
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:9080/api/swagger-ui.html
 tail -50 /opt/mao/backend-ts/logs/backend-ts.log
 ```
 
-## 四、前端部署
+## 三、Nginx 配置
 
-部署前请将 `desktop/.env.production` 中的 `VITE_API_BASE_URL` 改为你的实际域名。
+前端采用**原地部署**：Nginx root 直接指向仓库内 `dist/`，构建完成即生效，无需 rsync 到独立目录。
 
-### 1. 管理后台
+upstream 定义（`/etc/nginx/conf.d/mao-upstream.conf`）：
 
-```bash
-cd admin
-npm install
-npm run build
-scp -r dist/* root@<SERVER_IP>:/opt/mao/admin/
+```nginx
+upstream mao_backend {
+    server 127.0.0.1:9080;
+}
 ```
 
-### 2. 桌面端 Web
-
-```bash
-cd desktop
-npm install
-npm run build
-scp -r dist/* root@<SERVER_IP>:/opt/mao/desktop/
-```
-
-## 五、Nginx 配置
-
-### 管理后台 — mao-admin.conf
-
-创建 `/etc/nginx/conf.d/mao-admin.conf`：
+### 管理后台 — maoadmin.conf
 
 ```nginx
 server {
@@ -189,38 +206,29 @@ server {
     client_max_body_size 50m;
 
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        root /opt/mao/admin;
+        root /opt/mao/admin/dist;
         expires 7d;
         add_header Cache-Control "public, immutable";
     }
 
     location / {
-        root /opt/mao/admin;
+        root /opt/mao/admin/dist;
         index index.html;
         try_files $uri $uri/ /index.html;
     }
 
     location /api/ {
-        proxy_pass http://127.0.0.1:9080;
+        proxy_pass http://mao_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300s;
     }
-
-    # 本地上传文件（local 模式）
-    location /uploads/ {
-        alias /opt/mao/data/uploads/;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
 }
 ```
 
 ### 桌面端 Web — mao.conf
-
-创建 `/etc/nginx/conf.d/mao.conf`：
 
 ```nginx
 server {
@@ -229,20 +237,27 @@ server {
 
     client_max_body_size 50m;
 
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        root /opt/mao/desktop;
+    location ~* \.(js|mjs|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        root /opt/mao/desktop/dist;
         expires 7d;
         add_header Cache-Control "public, immutable";
     }
 
     location / {
-        root /opt/mao/desktop;
+        root /opt/mao/desktop/dist;
         index index.html;
         try_files $uri $uri/ /index.html;
     }
 
+    location ^~ /uploads/ {
+        alias /opt/mao-data/uploads/;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+        add_header Access-Control-Allow-Origin "*" always;
+    }
+
     location /api/ {
-        proxy_pass http://127.0.0.1:9080;
+        proxy_pass http://mao_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -250,15 +265,9 @@ server {
         proxy_read_timeout 300s;
     }
 
-    location /uploads/ {
-        alias /opt/mao/data/uploads/;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
-
     # WebSocket 流式对话
     location /api/ws/ {
-        proxy_pass http://127.0.0.1:9080;
+        proxy_pass http://mao_backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -271,23 +280,20 @@ server {
 }
 ```
 
-### 重载 Nginx
+重载：
 
 ```bash
-sudo nginx -t
-sudo systemctl reload nginx
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## 六、HTTPS（推荐）
-
-使用 certbot 申请 Let's Encrypt 证书：
+## 四、HTTPS（推荐）
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d mao.example.com -d mao-admin.example.com
 ```
 
-## 七、防火墙 / 安全组
+## 五、防火墙 / 安全组
 
 | 协议 | 端口 | 源 | 说明 |
 |------|------|-----|------|
@@ -297,21 +303,61 @@ sudo certbot --nginx -d mao.example.com -d mao-admin.example.com
 
 后端 9080、MySQL 建议仅内网访问，不对外开放。
 
-## 八、Electron 桌面端（可选）
+## 六、日常升级
 
-仓库**仅提供 Electron 源码**，不提供官方签名安装包。如需桌面端 LOCAL 模式工具执行：
+在服务器 `/opt/mao` 拉取代码后，按改动范围构建。**`.env` 已被 gitignore，拉代码不会覆盖生产配置。**
+
+```bash
+cd /opt/mao
+git pull origin main
+```
+
+| 改动范围 | 命令 | 是否重启后端 |
+|---------|------|-------------|
+| 仅 `admin/` | `bash scripts/deploy-admin.sh` | 否，刷新页面 |
+| 仅 `desktop/` | `bash scripts/deploy-desktop.sh` | 否，刷新页面 |
+| `backend-ts/`（含 API、DB 迁移） | `cd backend-ts && npm ci && npm run build && ./restart.sh` | **是** |
+| 安卓原生壳 | 更新 `CHANGELOG.md` 后 `cd android && bash build-apk.sh` | 否 |
+
+**前后端同时改动**时：
+
+```bash
+cd /opt/mao && git pull
+bash scripts/deploy-admin.sh
+bash scripts/deploy-desktop.sh
+cd backend-ts && npm ci && npm run build && ./restart.sh
+```
+
+> **数据库迁移**：`FLYWAY_ENABLED` 默认 `true`，后端每次启动时自动执行 `db/migration/` 下未应用的迁移。升级期间请勿多实例同时启动后端（避免并发迁移）。
+>
+> 管理端也可通过 `GET /v1/admin/runtime/restart` 触发重启，脚本路径为 `${MAO_ROOT_DIR}/backend-ts/restart.sh`。
+
+## 七、Electron 桌面端（可选）
+
+仓库**仅提供 Electron 源码**，不提供官方签名安装包。如需桌面端 LOCAL 模式工具执行，在**开发机**上：
 
 ```bash
 cd desktop
 # 修改 .env.production 指向你的部署域名
-npm install
+npm ci
 npm run build
 npm run dist
 ```
 
 产物在 `desktop/release/` 目录。代码签名与内部分发需自行处理。
 
-Electron 壳已接入自动更新。默认检查地址为 `https://mao.etarch.cn/api/uploads/releases/`；私有部署请修改 `desktop/package.json` 的 `build.publish[0].url` 后再打包。发布新版本时提升 `desktop/package.json` 的 `version`，执行 `npm run build && npm run dist`，并将 `desktop/release/` 中的安装包、`.blockmap` 与 `latest*.yml` 上传到该目录。macOS 自动更新需要签名后的 zip 产物，正式分发建议 notarize；Windows 建议签名安装包。
+Electron 壳已接入自动更新。默认检查地址为 `https://mao.example.com/uploads/releases/`；私有部署请修改 `desktop/package.json` 的 `build.publish[0].url` 后再打包。
+
+## 八、安卓 APP（可选）
+
+Capacitor 壳远程加载桌面端 Web，前端改动走第六节 Web 部署即可；仅原生壳变更时需：
+
+```bash
+cd /opt/mao/android
+bash build-apk.sh
+```
+
+APK 发布到 `/opt/mao-data/uploads/releases/`。签名凭据可通过环境变量 `MAO_KEYSTORE_*` 或 keystore 凭据文件配置。
 
 ## 九、访问地址（示例）
 
@@ -334,28 +380,18 @@ tail -f /opt/mao/backend-ts/logs/backend-ts.log
 
 # Nginx 重载
 sudo systemctl reload nginx
+
+# 检查后端进程
+ss -tlnp | grep 9080
 ```
-
-## 十一、后端升级
-
-```bash
-# 在服务器拉取新代码并构建（或本地构建后 scp 上传 dist/）
-cd /opt/mao/backend-ts
-# 更新源码后：
-npm ci && npm run build
-# 若新增/变更迁移脚本，一并更新 db/migration/
-./restart.sh
-```
-
-管理端运行时重启接口为 `GET /v1/admin/runtime/restart`，脚本路径为 `${app.root-dir}/backend-ts/restart.sh`（默认 `/opt/mao/backend-ts/restart.sh`）。
-
-> **数据库迁移**：`FLYWAY_ENABLED` 默认 `true`，后端每次启动时自动执行 `db/migration/` 下未应用的迁移。升级期间请勿多实例同时启动后端（避免并发迁移）。
 
 ## 常见问题
 
 | 现象 | 排查 |
 |------|------|
 | 后端启动后立即退出，日志提示 `APP_GIT_CREDENTIAL_SECRET is not configured` | 检查 `/opt/mao/backend-ts/.env` 是否存在且已被 `restart.sh` 加载 |
-| 后端起不来 / Nginx 502 | 确认 Node 进程监听 9080（`ss -tlnp \| grep 9080`）、`.env` 中 `MYSQL_*` 配置正确、`db/migration/` 已随部署带上 |
+| 后端起不来 / Nginx 502 | 确认 Node 进程监听 9080（`ss -tlnp \| grep 9080`）、`.env` 中 `MYSQL_*` 配置正确 |
+| 前端 404 / 旧页面 | 确认 Nginx root 指向 `/opt/mao/admin/dist` 或 `/opt/mao/desktop/dist`，且已执行 `npm run build` |
+| 历史会话工作区文件找不到 | 确认 `WORKSPACE_ROOT=/opt/mao-data/workspace`，且 `session.workspace` 路径前缀一致 |
 | HTTPS 私有仓库 clone / push 认证失败 | 确认用户使用 HTTPS 地址，并在桌面端「设置 → Git 凭证」配置对应**完整主机名**的 Token |
 | 提示不支持 SSH 地址 | 将 `git@host:...` 改为 `https://host/...` 格式 |

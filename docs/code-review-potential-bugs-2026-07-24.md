@@ -1,7 +1,7 @@
 # 代码审查报告：潜在 Bug / 逻辑错误
 
 - **审查日期**：2026-07-24
-- **仓库路径**：`/root/soft/mao/data/workspace/2/projects/mao`
+- **仓库路径**：`/opt/mao`
 - **审查范围**：后端 harness 核心循环与工具执行（CLOUD/LOCAL）、WebSocket 流式通信与会话状态、认证/权限、会话压缩相关路径、Delegate/Subagent、Skill 同步、桌面端 Electron 本地工具与审批、桌面端 composables（`useStreamWS` / `useChat`）、管理后台权限路由对照。本次**仅审查、未修复**。
 - **审查方法**：分模块阅读关键源码（`Grep` / `Read` / 交叉对照 REST 与 WS、CLOUD 与 LOCAL、父会话与子会话路径），以可定位的代码逻辑作为证据；排除纯风格与无证据猜测。
 

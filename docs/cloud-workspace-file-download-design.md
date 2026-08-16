@@ -187,7 +187,7 @@ public ResponseEntity<Resource> downloadWorkspaceDirectory(
 ### 5.3 部署方式
 
 - 后端：用户重启 Mao 后端服务后生效（**Agent 不执行重启**，重启由用户完成）；
-- 前端：`cd desktop && npm run build && cp -r dist/* /root/soft/mao/desktop/`，部署 Nginx 后 Web / Electron / 安卓刷新即生效。
+- 前端：`cd desktop && npm run build && cd /opt/mao/desktop && npm run build`，部署 Nginx 后 Web / Electron / 安卓刷新即生效。
 
 ## 六、风险与边界
 
