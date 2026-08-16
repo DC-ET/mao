@@ -137,6 +137,7 @@ UPLOAD_STORAGE_MODE=local
 UPLOAD_BASE_URL=https://mao.example.com/api
 FILE_UPLOAD_DIR=/opt/mao-data/uploads
 WORKSPACE_ROOT=/opt/mao-data/workspace
+MAO_RUNTIME_DIR=/opt/mao-data/runtime
 SKILLS_DIR=/opt/mao-data/skills
 USER_SKILLS_DIR=/opt/mao-data/userskills
 EOF
@@ -157,7 +158,9 @@ chmod 600 /opt/mao/backend-ts/.env
 | `APP_MCP_SECRET` | 否 | MCP 服务器环境变量加密密钥；使用 MCP 功能时建议设置 |
 | `UPLOAD_STORAGE_MODE` | 否 | `local`（默认）或 `oss` |
 | `UPLOAD_BASE_URL` | local 模式建议设 | 上传文件的公网访问前缀，如 `https://mao.example.com/api` |
-| `WORKSPACE_ROOT` | **是** | Agent 工作区根目录，如 `/opt/mao-data/workspace` |
+| `MAO_RUNTIME_DIR` | 否 | 运行时状态目录（蓝绿 `deploy.lock`、会话 runtime 等），默认 `/opt/mao-data/runtime` |
+| `MAO_BLUE_GREEN_DRAIN_SEC` | 否 | 蓝绿切换后延迟停止旧实例秒数，默认 `300` |
+| `MAO_NGINX_UPSTREAM_CONF` | 否 | Nginx upstream 文件路径，默认 `/etc/nginx/conf.d/mao-upstream.conf` |
 | `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录 |
 | `FILE_UPLOAD_DIR` | **是** | 本地上传目录，如 `/opt/mao-data/uploads` |
 | `LDAP_ENABLED` / `LDAP_URL` | 否 | LDAP 登录开关，默认 `false` |
@@ -175,26 +178,45 @@ chmod +x /opt/mao/backend-ts/restart.sh
 /opt/mao/backend-ts/restart.sh
 ```
 
-`restart.sh` 行为：读取同目录 `.env` → 停旧进程（按 PID 文件与端口）→ 以 `node dist/main.js` 启动 → 日志轮转（>100MB 自动归档，保留 5 份）。
+`restart.sh` 行为（**蓝绿部署**）：
+
+1. 在备用端口（9080 ↔ 9081）启动新实例并等待健康检查（`/api/swagger-ui.html`）
+2. 切换 Nginx `upstream mao_backend` 到新端口
+3. 立即返回成功（Shell / 管理端 API 不必等待旧实例退出）
+4. 默认 **5 分钟后**异步停止旧端口进程（`MAO_BLUE_GREEN_DRAIN_SEC` 可覆盖）
+
+状态文件目录默认 `/opt/mao-data/runtime/`（`MAO_RUNTIME_DIR`）：
+
+| 文件 | 说明 |
+|------|------|
+| `active-backend-port` | 当前对外端口 |
+| `deploy.lock` | 蓝绿部署元数据（供崩溃恢复协调） |
+| `deploy.flock` | 部署互斥锁 |
+
+日志：按端口分文件 `logs/backend-ts-9080.log` / `backend-ts-9081.log`；排水日志 `logs/blue-green-drain.log`。
 
 验证：
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:9080/api/swagger-ui.html
-tail -50 /opt/mao/backend-ts/logs/backend-ts.log
+# 或当前 active 端口（见 /opt/mao-data/runtime/active-backend-port）
+cat /opt/mao-data/runtime/active-backend-port
+tail -50 /opt/mao/backend-ts/logs/backend-ts-*.log
 ```
 
 ## 三、Nginx 配置
 
 前端采用**原地部署**：Nginx root 直接指向仓库内 `dist/`，构建完成即生效，无需 rsync 到独立目录。
 
-upstream 定义（`/etc/nginx/conf.d/mao-upstream.conf`）：
+upstream 定义（`/etc/nginx/conf.d/mao-upstream.conf`）。蓝绿部署时由 `restart.sh` 自动改写 `server` 端口；初始安装可指向 9080：
 
 ```nginx
 upstream mao_backend {
     server 127.0.0.1:9080;
 }
 ```
+
+> 9080 / 9081 均仅本机监听，不对外开放；对外流量始终经 Nginx 443/80。
 
 ### 管理后台 — maoadmin.conf
 
@@ -301,7 +323,7 @@ sudo certbot --nginx -d mao.example.com -d mao-admin.example.com
 | TCP | 80 | 0.0.0.0/0 | HTTP |
 | TCP | 443 | 0.0.0.0/0 | HTTPS |
 
-后端 9080、MySQL 建议仅内网访问，不对外开放。
+后端 9080、9081、MySQL 建议仅内网访问，不对外开放。
 
 ## 六、日常升级
 

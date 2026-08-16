@@ -10,6 +10,7 @@ describe('CrashRecoveryRunner', () => {
       { selectByPhase: vi.fn(async () => []) } as never,
       {} as never, {} as never, {} as never, {} as never,
       {} as never, {} as never, {} as never, {} as never, {} as never,
+      '/tmp/mao-runtime-test',
     );
     await runner.run();
   });
@@ -40,6 +41,7 @@ describe('CrashRecoveryRunner', () => {
       activityHeartbeat as never,
       { selectBySessionId: vi.fn(async () => []) } as never,
       llm as never,
+      '/tmp/mao-runtime-test',
       { submit: (fn) => { submitted.push(fn); } },
     );
     await runner.run();

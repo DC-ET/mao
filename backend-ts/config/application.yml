@@ -62,7 +62,7 @@ app:
     max-attempts: ${TASK_NOTIFICATION_MAX_ATTEMPTS:4}
   harness:
     workspace-root: ${WORKSPACE_ROOT:./workspace}
-    runtime-dir: ${MAO_ROOT_DIR:/opt/mao}/data/runtime
+    runtime-dir: ${MAO_RUNTIME_DIR:/opt/mao-data/runtime}
     user-home-dir: ${MAO_ROOT_DIR:/opt/mao}/data/users
     max-concurrent-agents: ${MAX_CONCURRENT_AGENTS:20}
     agent-thread-pool-size: ${AGENT_THREAD_POOL_SIZE:20}

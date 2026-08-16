@@ -739,7 +739,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
   const crash = new CrashRecoveryRunner(
     sessionMap, sessionSvc, taskTerminal, harness, agentLoop, wsRegistry,
-    activityService as never, activityHeartbeat, todoMapper, modelRepo as never, agentExecutor,
+    activityService as never, activityHeartbeat, todoMapper, modelRepo as never,
+    cfg.app.harness.runtimeDir,
+    agentExecutor,
     (sessionId, userId) => wsHandler.autoConsumeQueue(sessionId, userId),
     subagentCoordinator,
   );

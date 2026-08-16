@@ -10,8 +10,16 @@ import type { AgentLoop } from './agent-loop.js';
 import type { HarnessService } from './harness-service.js';
 import type { SessionTodoMapper } from '../todo/session-todo.mapper.js';
 import type { SubagentRecoveryCoordinator } from '../delegate/subagent-recovery-coordinator.js';
+import {
+  deployDrainSec,
+  isRecentDeployLock,
+  isSessionActiveDuringDeploy,
+  readDeployLock,
+} from './deploy-lock.js';
 
 export class CrashRecoveryRunner {
+  private deferredTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(
     private readonly sessionMapper: SessionMapper,
     private readonly sessionService: SessionService,
@@ -23,6 +31,7 @@ export class CrashRecoveryRunner {
     private readonly activityHeartbeat: SessionActivityHeartbeat,
     private readonly sessionTodoMapper: SessionTodoMapper,
     private readonly llmModelMapper: LlmModelMapper,
+    private readonly runtimeDir: string,
     private readonly agentExecutor: { submit(fn: () => Promise<void>): void } = {
       submit: (fn) => { void fn(); },
     },
@@ -31,19 +40,65 @@ export class CrashRecoveryRunner {
   ) {}
 
   async run(): Promise<void> {
+    await this.runPass(false);
+  }
+
+  private async runPass(deferred: boolean): Promise<void> {
     const blocked = this.subagentCoordinator
       ? await this.subagentCoordinator.schedule((session) => this.recoverSession(session))
       : new Set<number>();
     const running = this.sessionMapper.selectByPhase ? await this.sessionMapper.selectByPhase('RUNNING') : [];
     const resuming = this.sessionMapper.selectByPhase ? await this.sessionMapper.selectByPhase('RESUMING') : [];
-    const stale = [...running, ...resuming].filter((session, index, all) =>
+    const candidates = [...running, ...resuming].filter((session, index, all) =>
       session.sessionType !== 'SUBAGENT'
       && session.id != null
       && !blocked.has(session.id)
       && all.findIndex((item) => item.id === session.id) === index);
-    if (stale.length === 0) return;
-    harnessLog('warn', `Found ${stale.length} sessions stuck in RUNNING after restart, initiating recovery`);
-    for (const session of stale) this.agentExecutor.submit(() => this.recoverSession(session));
+
+    const deployLock = readDeployLock(this.runtimeDir);
+    const skipDeployActive = !deferred && isRecentDeployLock(deployLock);
+    const { recover, skipped } = this.partitionForDeploy(candidates, skipDeployActive, deployLock);
+
+    if (skipped.length > 0) {
+      harnessLog(
+        'info',
+        `Skipping crash recovery for ${skipped.length} session(s) still active on draining instance during blue-green deploy`,
+      );
+      if (!deferred && deployLock != null) {
+        this.scheduleDeferredRecovery(deployDrainSec(deployLock));
+      }
+    }
+
+    if (recover.length === 0) return;
+    const label = deferred ? 'deferred' : 'initial';
+    harnessLog('warn', `Found ${recover.length} sessions stuck in RUNNING after restart, initiating ${label} recovery`);
+    for (const session of recover) this.agentExecutor.submit(() => this.recoverSession(session));
+  }
+
+  private partitionForDeploy(
+    candidates: Session[],
+    skipDeployActive: boolean,
+    deployLock: ReturnType<typeof readDeployLock>,
+  ): { recover: Session[]; skipped: Session[] } {
+    if (!skipDeployActive || deployLock == null) {
+      return { recover: candidates, skipped: [] };
+    }
+    const recover: Session[] = [];
+    const skipped: Session[] = [];
+    for (const session of candidates) {
+      if (isSessionActiveDuringDeploy(session, deployLock)) skipped.push(session);
+      else recover.push(session);
+    }
+    return { recover, skipped };
+  }
+
+  private scheduleDeferredRecovery(delaySec: number): void {
+    if (this.deferredTimer != null) return;
+    harnessLog('info', `Scheduling deferred crash recovery in ${delaySec}s after blue-green drain`);
+    this.deferredTimer = setTimeout(() => {
+      this.deferredTimer = null;
+      void this.runPass(true).catch((e) => harnessLog('error', 'Deferred crash recovery failed', e));
+    }, delaySec * 1000);
   }
 
   private async recoverSession(session: Session): Promise<void> {

@@ -18,6 +18,7 @@ export interface Session {
   osVersion?: string | null;
   phase?: string | null;
   title?: string | null;
+  lastActivityAt?: string | null;
   lastPromptTokens?: number | null;
   contextAnchorMsgId?: number | null;
 }
