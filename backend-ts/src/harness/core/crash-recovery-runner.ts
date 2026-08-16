@@ -15,6 +15,7 @@ import {
   isRecentDeployLock,
   isSessionActiveDuringDeploy,
   readDeployLock,
+  shouldDeferAllRecoveryDuringDeploy,
 } from './deploy-lock.js';
 
 export class CrashRecoveryRunner {
@@ -56,10 +57,21 @@ export class CrashRecoveryRunner {
       && all.findIndex((item) => item.id === session.id) === index);
 
     const deployLock = readDeployLock(this.runtimeDir);
+    const deferAll = !deferred && shouldDeferAllRecoveryDuringDeploy(deployLock);
     const skipDeployActive = !deferred && isRecentDeployLock(deployLock);
-    const { recover, skipped } = this.partitionForDeploy(candidates, skipDeployActive, deployLock);
+    const { recover, skipped } = deferAll
+      ? { recover: [], skipped: candidates }
+      : this.partitionForDeploy(candidates, skipDeployActive, deployLock);
 
-    if (skipped.length > 0) {
+    if (deferAll && candidates.length > 0) {
+      harnessLog(
+        'info',
+        `Deferring crash recovery for ${candidates.length} session(s) during blue-green deploy (status=${deployLock?.status})`,
+      );
+      if (deployLock != null) {
+        this.scheduleDeferredRecovery(deployDrainSec(deployLock));
+      }
+    } else if (skipped.length > 0) {
       harnessLog(
         'info',
         `Skipping crash recovery for ${skipped.length} session(s) still active on draining instance during blue-green deploy`,

@@ -10,6 +10,7 @@ set -euo pipefail
 : "${MAO_BLUE_GREEN_DRAIN_SEC:=300}"
 : "${MAO_BLUE_GREEN_HEALTH_RETRIES:=60}"
 : "${MAO_BLUE_GREEN_HEALTH_INTERVAL_SEC:=1}"
+: "${MAO_BLUE_GREEN_STALE_LOCK_SEC:=600}"
 
 bg_active_port_file() {
   echo "${MAO_RUNTIME_DIR}/active-backend-port"
@@ -83,6 +84,20 @@ bg_write_deploy_lock() {
 EOF
 }
 
+bg_clear_stale_deploy_lock() {
+  local lock_file
+  lock_file="$(bg_deploy_lock_file)"
+  [ -f "$lock_file" ] || return 0
+  local started_at now age
+  started_at=$(python3 -c "import json; print(json.load(open('${lock_file}')).get('startedAt',0))" 2>/dev/null || echo 0)
+  now=$(date +%s)
+  age=$((now - started_at))
+  if [ "$age" -gt "$MAO_BLUE_GREEN_STALE_LOCK_SEC" ]; then
+    echo "WARN: clearing stale deploy.lock (age=${age}s)"
+    rm -f "$lock_file"
+  fi
+}
+
 bg_rotate_log() {
   local log_file="$1"
   if [ -f "$log_file" ]; then
@@ -133,6 +148,7 @@ bg_migrate_legacy_pid() {
   fi
 }
 
+# Start backend without inheriting deploy flock or other stray FDs from the parent shell.
 bg_start_port() {
   local app_dir="$1"
   local port="$2"
@@ -152,10 +168,12 @@ bg_start_port() {
   cd "$app_dir"
   export MAO_TS_PORT="$port"
   if [ -f dist/main.js ]; then
-    (exec 9>&-; nohup node dist/main.js >> "$log_file" 2>&1 & echo $! > "$pid_file")
+    setsid nohup node dist/main.js >> "$log_file" 2>&1 </dev/null &
   else
-    (exec 9>&-; nohup npx tsx src/main.ts >> "$log_file" 2>&1 & echo $! > "$pid_file")
+    setsid nohup npx tsx src/main.ts >> "$log_file" 2>&1 </dev/null &
   fi
+  echo $! > "$pid_file"
+  disown 2>/dev/null || true
   echo "Started on port ${port} (PID: $(cat "$pid_file"))"
 }
 
@@ -212,11 +230,17 @@ sleep ${drain}
 export BG_LIB_PATH="${BG_LIB_PATH}"
 # shellcheck source=/dev/null
 source "\$BG_LIB_PATH"
+active="\$(bg_read_active_port)"
+if [ "\$active" != "${new_port}" ]; then
+  echo "Skip drain stop on ${old_port}: active port is \$active (expected ${new_port})"
+  exit 0
+fi
 bg_stop_port "${app_dir}" "${old_port}"
 bg_write_deploy_lock \$(date +%s) "${old_port}" "${new_port}" "drained"
 EOS
   chmod +x "$script"
-  nohup bash "$script" >> "${log_dir}/blue-green-drain.log" 2>&1 &
+  setsid nohup bash "$script" >> "${log_dir}/blue-green-drain.log" 2>&1 </dev/null &
+  disown 2>/dev/null || true
   echo "Scheduled stop of old instance on port ${old_port} in ${drain}s (log: ${log_dir}/blue-green-drain.log)"
 }
 
@@ -226,11 +250,14 @@ bg_deploy() {
   local app_dir="$1"
   BG_LIB_PATH="${BG_LIB_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/blue-green.sh}"
   bg_ensure_runtime_dir
+  bg_clear_stale_deploy_lock
 
   local flock_file="${MAO_RUNTIME_DIR}/deploy.flock"
+  # Short-lived mutex only — must release before starting Node (FD inheritance bug).
   exec 9>"$flock_file"
   if ! flock -n 9; then
     echo "Another blue-green deploy is already in progress" >&2
+    echo "If this is stale, remove ${flock_file} after confirming no restart.sh is running." >&2
     exit 1
   fi
 
@@ -257,6 +284,9 @@ bg_deploy() {
   started_at=$(date +%s)
   bg_write_deploy_lock "$started_at" "$current_port" "$new_port" "starting"
 
+  # Release flock before any long-running / child backend process.
+  exec 9>&-
+
   if bg_port_in_use "$current_port"; then
     echo "Current active port: ${current_port}"
     echo "Deploying new instance on port: ${new_port}"
@@ -280,6 +310,7 @@ bg_deploy() {
     bg_start_port "$app_dir" "$current_port" "$log_dir"
     if ! bg_wait_healthy "$current_port"; then
       bg_stop_port "$app_dir" "$current_port"
+      bg_write_deploy_lock "$started_at" "$current_port" "$current_port" "failed"
       exit 1
     fi
     bg_switch_nginx_upstream "$current_port" || true

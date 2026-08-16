@@ -26,6 +26,7 @@
 - 后台子代理产生的文件变更归集到主会话的完成通知卡片上。
 - **蓝绿部署**：`backend-ts/restart.sh` 在 9080/9081 间交替启动新实例、健康检查后切换 Nginx upstream，默认 5 分钟后异步停止旧实例；避免 Agent 自部署时会话被硬中断后陷入无限重启循环。
 - 崩溃恢复在蓝绿切换期间跳过仍在旧实例上活跃的会话，排水结束后再做延迟恢复。
+- 修复蓝绿部署 `deploy.flock` 被新启动的 Node 进程继承导致后续重启永久报「deploy already in progress」；部署互斥锁改为启动新实例前释放，排水脚本在 upstream 已回切时不再误杀当前实例。
 - 用户 HOME 目录默认改为 `/opt/mao-data/users`（`MAO_USER_HOME_DIR`），与 `MAO_RUNTIME_DIR` 等数据路径统一，避免误写入仓库旁 `/opt/mao/data/`。
 
 ### 前端（桌面 / Web / 安卓）

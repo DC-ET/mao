@@ -4,6 +4,7 @@ import {
   isSessionActiveDuringDeploy,
   parseSqlDateTime,
   readDeployLock,
+  shouldDeferAllRecoveryDuringDeploy,
 } from './deploy-lock.js';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -47,5 +48,12 @@ describe('deploy-lock', () => {
     const now = 1_700_000_000;
     expect(isRecentDeployLock({ startedAt: now - 60, oldPort: 9080, newPort: 9081, status: 'switched' }, now)).toBe(true);
     expect(isRecentDeployLock({ startedAt: now - 3600, oldPort: 9080, newPort: 9081, status: 'drained' }, now)).toBe(false);
+  });
+
+  it('defers all recovery while deploy is in flight', () => {
+    const now = 1_700_000_100;
+    const lock = { startedAt: now - 30, oldPort: 9080, newPort: 9081, status: 'starting' };
+    expect(shouldDeferAllRecoveryDuringDeploy(lock, now)).toBe(true);
+    expect(shouldDeferAllRecoveryDuringDeploy({ ...lock, status: 'drained' }, now)).toBe(false);
   });
 });

@@ -63,3 +63,11 @@ export function deployDrainSec(lock: DeployLock | null): number {
   if (lock?.drainSec != null && lock.drainSec > 0) return lock.drainSec;
   return 300;
 }
+
+const IN_FLIGHT_DEPLOY_STATUSES = new Set(['starting', 'switched']);
+
+/** During blue-green deploy, new instances must not recover any RUNNING sessions. */
+export function shouldDeferAllRecoveryDuringDeploy(lock: DeployLock | null, nowSec = Math.floor(Date.now() / 1000)): boolean {
+  if (lock == null || !isRecentDeployLock(lock, nowSec)) return false;
+  return IN_FLIGHT_DEPLOY_STATUSES.has(lock.status);
+}
