@@ -4,11 +4,6 @@
 
 > 当前项目处于初版开发阶段，重构代码时无需考虑存量数据与向后兼容。
 
-## ⚠️ 重要禁令
-
-- **Agent 严禁擅自重启服务器上的 Mao 后端服务**（包括但不限于执行 `./scripts/restart-all.sh`、`./scripts/stop-all.sh` + 启动命令、`npm run start:dev`、`./restart.sh`、kill 后端进程等）。后端服务的重启必须由用户自己完成，Agent 不得代劳。
-- 尤其注意：**在修复一个问题后，不要习惯性地自动重启后端服务**，这是明令禁止的。修复完成后只需告知用户需要重启后端即可，重启动作交给用户执行。
-
 ## ⚠️ 部署目录（极易踩坑）
 
 - **服务器上真实部署目录是 `/opt/mao`，不是会话工作区 `/opt/mao-data/workspace/...`**。当前会话的「工作目录」是一个云端隔离/临时目录，二者是**不同的 git 检出**。
@@ -46,7 +41,7 @@
 # 后端（TypeScript，backend-ts/）
 cd backend-ts && npm run build        # 编译检查（tsc）
 cd backend-ts && npm test             # 单元测试（Vitest，backend-ts/src/）
-cd backend-ts && npm run start:dev    # 开发模式（tsx 热重载），禁止擅自重启服务
+cd backend-ts && npm run start:dev    # 开发模式（tsx 热重载）
 cd backend-ts && npm run build        # 打包（backend-ts/dist/）
 
 # 管理后台
