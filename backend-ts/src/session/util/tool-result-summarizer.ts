@@ -111,6 +111,14 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeDelegate('委派子代理', result);
     case 'delegate_followup':
       return summarizeDelegate('追问子代理', result);
+    case 'spawn_subagent':
+      return summarizeSpawnSubagent(argumentsJson, result);
+    case 'check_subagent':
+      return summarizeCheckSubagent(argumentsJson, result);
+    case 'cancel_subagent':
+      return summarizeCancelSubagent(argumentsJson, result);
+    case 'wait_subagents':
+      return summarizeWaitSubagents(result);
     case 'web_search':
       return summarizeWebSearch(argumentsJson, result);
     case 'open_web_page':
@@ -409,6 +417,51 @@ function summarizeDelegate(label: string, result: string | null | undefined): st
   if (has(node, 'error')) return `${label}${childId} (错误)`;
   if (node.success === true) return `${label}${childId} (成功)`;
   return `${label}${childId}`;
+}
+
+function summarizeSpawnSubagent(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const agentType = extractJsonString(argumentsJson, 'agent_type');
+  const label = agentType ? `启动后台子代理 (${agentType})` : '启动后台子代理';
+  if (result == null) return label;
+  const node = asObj(parseJson(result));
+  if (!node) return label;
+  const taskId = has(node, 'task_id') ? ` #${String(node.task_id)}` : '';
+  if (has(node, 'error')) return `${label}${taskId} (错误)`;
+  if (node.success === true) return `${label}${taskId} (运行中)`;
+  return `${label}${taskId}`;
+}
+
+function summarizeCheckSubagent(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const taskId = extractJsonInteger(argumentsJson, 'task_id');
+  if (result == null) return taskId != null ? `查看后台子代理 #${taskId}` : '查看后台子代理';
+  const node = asObj(parseJson(result));
+  if (!node) return taskId != null ? `查看后台子代理 #${taskId}` : '查看后台子代理';
+  if (has(node, 'error')) return taskId != null ? `查看后台子代理 #${taskId} (错误)` : '查看后台子代理 (错误)';
+  const list = Array.isArray(node.background_subagents) ? node.background_subagents : null;
+  if (list) return `后台子代理进度 (${list.length} 个任务)`;
+  const status = has(node, 'status') ? String(node.status) : null;
+  if (taskId != null && status) return `后台子代理 #${taskId}: ${status}`;
+  return taskId != null ? `查看后台子代理 #${taskId}` : '查看后台子代理';
+}
+
+function summarizeCancelSubagent(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const taskId = extractJsonInteger(argumentsJson, 'task_id');
+  const label = taskId != null ? `取消后台子代理 #${taskId}` : '取消后台子代理';
+  if (result == null) return label;
+  const node = asObj(parseJson(result));
+  if (!node) return label;
+  if (has(node, 'error')) return `${label} (错误)`;
+  if (node.cancelled === true || node.success === true) return `${label} (已取消)`;
+  return label;
+}
+
+function summarizeWaitSubagents(result: string | null | undefined): string {
+  if (result == null) return '等待后台子代理';
+  const node = asObj(parseJson(result));
+  if (!node) return '等待后台子代理';
+  if (has(node, 'error')) return '等待后台子代理 (错误)';
+  const completed = has(node, 'completed') ? Number(node.completed) : (Array.isArray(node.results) ? node.results.length : 0);
+  return `后台子代理已完成 (${completed} 个结果)`;
 }
 
 export const ToolResultSummarizer = { summarize };

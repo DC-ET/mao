@@ -186,6 +186,11 @@ describe('ToolResultSummarizer', () => {
   it('summarizesQuestionAndWebTools', () => {
     expect(ToolResultSummarizer.summarize('ask_user_questions', '{}', '{"answers":[{},{}]}')).toBe('向用户提问 (2 个问题已回答)');
     expect(ToolResultSummarizer.summarize('ask_user_questions', '{}', '{"error":"timeout"}')).toBe('向用户提问 (超时或取消)');
+    expect(ToolResultSummarizer.summarize('spawn_subagent', '{"agent_type":"researcher"}', '{"success":true,"task_id":193,"status":"RUNNING"}')).toBe('启动后台子代理 (researcher) #193 (运行中)');
+    expect(ToolResultSummarizer.summarize('check_subagent', '{}', '{"background_subagents":[{},{}]}')).toBe('后台子代理进度 (2 个任务)');
+    expect(ToolResultSummarizer.summarize('check_subagent', '{"task_id":193}', '{"status":"COMPLETED"}')).toBe('后台子代理 #193: COMPLETED');
+    expect(ToolResultSummarizer.summarize('cancel_subagent', '{"task_id":193}', '{"success":true}')).toBe('取消后台子代理 #193 (已取消)');
+    expect(ToolResultSummarizer.summarize('wait_subagents', '{}', '{"completed":3,"results":[]}')).toBe('后台子代理已完成 (3 个结果)');
     expect(ToolResultSummarizer.summarize('web_search', '{"query":"OpenAI Codex testing"}', '{"total_results":8}')).toBe('搜索 OpenAI Codex testing (8 条结果)');
     expect(ToolResultSummarizer.summarize('open_web_page', '{"url":"https://example.com/a/b"}', '{"title":"Example","truncated":true}')).toBe('打开网页 Example (内容已截断)');
   });
