@@ -138,6 +138,7 @@ import { SubagentExecutionMapper } from './harness/delegate/subagent-execution.m
 import { SubAgentVisibilityService } from './harness/delegate/subagent-visibility-service.js';
 import { SubagentInvocationService } from './harness/delegate/subagent-invocation.service.js';
 import { SubagentResultDeliveryService } from './harness/delegate/subagent-result-delivery.service.js';
+import { BackgroundSubagentManager } from './harness/delegate/background-subagent-manager.js';
 import { SubagentExecutionRecoveryService } from './harness/delegate/subagent-execution-recovery.service.js';
 import { SubagentRecoveryCoordinator } from './harness/delegate/subagent-recovery-coordinator.js';
 import { lazyRef } from './common/lazy-ref.js';
@@ -410,7 +411,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const definitionRegistry = new AgentDefinitionRegistry();
   const subagentMapper = new SubagentExecutionMapper(db);
   const subagentInvocation = new SubagentInvocationService(db);
-  const subagentResultDelivery = new SubagentResultDeliveryService(db);
+  const subagentResultDelivery = new SubagentResultDeliveryService(db, fileChangeRepo as never);
   const askUserQuestionsRegistry = new AskUserQuestionsRegistry();
   const approvalRegistry = new ApprovalRegistry(sessionSvc, sessionMap, wsRegistry);
   const treeSignalPublisher = new SessionTreeSignalPublisher(
@@ -450,6 +451,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     taskTerminalService: taskTerminal,
     llmModelLookup: modelRepo,
     harnessService: lazyRef(() => holder.harness!),
+  });
+
+  const backgroundSubagentManager = new BackgroundSubagentManager({
+    definitionRegistry,
+    harnessService: () => holder.harness!,
+    agentLoop: () => holder.loop!,
+    sessionMapper: sessionMap,
+    sessionService: sessionSvc,
+    subagentExecutionMapper: subagentMapper,
+    subagentInvocationService: subagentInvocation,
+    localToolSessionRegistry: localToolSessions,
+    visibilityService: visibility,
+    agentExecutor,
+    fileChangeRepo: fileChangeRepo as never,
   });
 
   const scheduledService = new ScheduledTaskService(
@@ -493,6 +508,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     subagentInvocationService: subagentInvocation,
     localToolSessionRegistry: localToolSessions,
     visibilityService: visibility,
+    backgroundSubagentManager,
     messageMapper: messageRepo as never,
     sessionCompactionService: compactionSvc,
   });
@@ -504,6 +520,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const agentLoop = new AgentLoop(
     llmAdapter, promptEngine, contextManager, toolDispatcher, backgroundTasks,
     shellManager, activityHeartbeat, sessionSvc, orchestrator, activeContext, mcpClient,
+    () => backgroundSubagentManager,
   );
   holder.loop = agentLoop;
   const harness = new HarnessService(
@@ -573,6 +590,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     activityHeartbeat,
     sessionTodoMapper: todoMapper,
     agentLoop,
+    backgroundSubagentManager,
     shellSessionManager: shellManager,
     skillSyncService: skillSync,
     localSkillRegistry: localSkills,

@@ -18,6 +18,10 @@ import type { SubagentExecutionMapper } from '../delegate/subagent-execution.map
 import type { SubagentInvocationService } from '../delegate/subagent-invocation.service.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
 import type { SubAgentVisibilityService } from '../delegate/subagent-visibility-service.js';
+import type { BackgroundSubagentManager } from '../delegate/background-subagent-manager.js';
+import {
+  CancelSubagentTool, CheckSubagentTool, SpawnSubagentTool, WaitSubagentsTool,
+} from './impl/background-subagent-tools.js';
 import { AskUserQuestionsTool } from './impl/ask-user-questions-tool.js';
 import { ReadFileTool } from './impl/read-file-tool.js';
 import { WriteFileTool } from './impl/write-file-tool.js';
@@ -63,6 +67,7 @@ export interface DefaultToolRegistryDeps {
   subagentInvocationService?: SubagentInvocationService;
   localToolSessionRegistry: LocalToolSessionRegistry;
   visibilityService: SubAgentVisibilityService;
+  backgroundSubagentManager: BackgroundSubagentManager;
   messageMapper: MessageMapper;
   sessionCompactionService: SessionCompactionService;
 }
@@ -101,6 +106,10 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new DeleteScheduledTaskTool(deps.scheduledTaskService),
     new SendWechatImageTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
     new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
+    new SpawnSubagentTool(deps.backgroundSubagentManager),
+    new CheckSubagentTool(deps.backgroundSubagentManager),
+    new CancelSubagentTool(deps.backgroundSubagentManager),
+    new WaitSubagentsTool(deps.backgroundSubagentManager, agentLoop),
     delegate,
     new DelegateFollowupTool(
       deps.definitionRegistry, harnessService, agentLoop, deps.sessionService,

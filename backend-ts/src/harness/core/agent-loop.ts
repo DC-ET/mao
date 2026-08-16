@@ -5,6 +5,7 @@ import type { AgentEventListener } from './agent-event-listener.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
 import type { ActiveContextCalculator } from './active-context-calculator.js';
 import type { BackgroundTaskManager } from './background-task-manager.js';
+import type { BackgroundSubagentManager } from '../delegate/background-subagent-manager.js';
 import { CompactionConfig } from './compaction-config.js';
 import { CompactionCancelledException, CompactionContextOverflowException } from './compaction-service.js';
 import type { ContextManager } from './context-manager.js';
@@ -61,6 +62,7 @@ export class AgentLoop {
     private readonly sessionCompactionOrchestrator: SessionCompactionOrchestrator,
     private readonly activeContextCalculator: ActiveContextCalculator,
     private readonly mcpClientManager: McpClientManager,
+    private readonly backgroundSubagentManager?: (() => BackgroundSubagentManager | null | undefined) | null,
   ) {}
 
   registerCancelFlag(sessionId: number): AtomicBoolean {
@@ -150,6 +152,22 @@ export class AgentLoop {
           }
           sb += '</后台任务结果>';
           context.addSystemMessage(sb);
+        }
+
+        const bgSubagentManager = this.backgroundSubagentManager?.();
+        const bgSubagentResults = bgSubagentManager
+          ? await bgSubagentManager.consumeResults(sessionId ?? null)
+          : {};
+        if (Object.keys(bgSubagentResults).length > 0) {
+          let sb = '<后台子代理结果>\n';
+          for (const [taskId, result] of Object.entries(bgSubagentResults)) {
+            sb += `任务 ${taskId}：${result}\n`;
+          }
+          sb += '</后台子代理结果>';
+          context.addSystemMessage(sb);
+          // 结果已注入，必须丢弃可能由上一轮 mid-loop compaction 预构建的请求，
+          // 否则本轮会命中旧请求而忽略刚注入的后台结果。
+          context.preparedRequest = null;
         }
 
         const request = context.preparedRequest ?? await this.promptEngine.buildRequest(context);
@@ -268,7 +286,19 @@ export class AgentLoop {
         }
 
         const pendingCalls = context.pendingToolCalls;
-        if (!pendingCalls || pendingCalls.length === 0) break;
+        if (!pendingCalls || pendingCalls.length === 0) {
+          const bgSubagentManager = this.backgroundSubagentManager?.();
+          if (bgSubagentManager?.hasRunning(sessionId ?? null) || bgSubagentManager?.hasPendingResults(sessionId ?? null)) {
+            await bgSubagentManager.waitForAll(sessionId ?? null, cancelFlag ?? null);
+            if (await this.isCancelled(context)) {
+              cancelFlag?.set(true);
+              return;
+            }
+            context.clearPendingToolCalls();
+            continue;
+          }
+          break;
+        }
 
         const toolResults: Record<string, string> = {};
         const pendingToolSaves: ToolMessageSave[] = [];
@@ -350,6 +380,7 @@ export class AgentLoop {
         this.cancelFlags.delete(sessionId);
         this.shellSessionManager.closeByConversation(sessionId);
         this.mcpClientManager.closeSession(sessionId);
+        this.backgroundSubagentManager?.()?.clearResults(sessionId);
       }
     }
   }

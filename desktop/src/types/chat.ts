@@ -56,6 +56,7 @@ export interface ChatMessage {
   segments?: MessageSegment[]
   durationMs?: number
   fileChanges?: FileChange[]
+  metadata?: Record<string, unknown>
 }
 
 export interface TodoItem {

@@ -342,7 +342,8 @@ export function mapApiMessagesToChat(raw: Array<Record<string, unknown>>): ChatM
       updatedAt: m.updatedAt ? formatDateTime(String(m.updatedAt)) : undefined,
       images: images.length > 0 ? images : undefined,
       toolCalls,
-      segments
+      segments,
+      metadata: parseMessageMetadata(m.metadata)
     })
   }
 
@@ -379,4 +380,23 @@ function inferToolStatus(result: string): ToolCall['status'] {
   }
   if (text.startsWith('Tool execution failed')) return 'error'
   return 'success'
+}
+
+/** 解析后端消息 metadata（可能是 JSON 字符串或对象）为前端可读结构。 */
+function parseMessageMetadata(raw: unknown): Record<string, unknown> | undefined {
+  if (raw == null) return undefined
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw)
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
 }

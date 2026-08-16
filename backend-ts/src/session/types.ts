@@ -145,7 +145,7 @@ export interface SubagentExecution {
   parentSessionId?: number | null;
   childSessionId?: number | null;
   agentType?: string | null;
-  invocationType?: 'DELEGATE' | 'FOLLOWUP' | null;
+  invocationType?: 'DELEGATE' | 'FOLLOWUP' | 'BACKGROUND' | null;
   parentToolCallId?: string | null;
   deliveryStatus?: 'PENDING' | 'DELIVERED' | 'SUPPRESSED' | 'LEGACY' | null;
   parentResultDeliveredAt?: string | null;

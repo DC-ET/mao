@@ -16,6 +16,7 @@ const ASK_USER_QUESTIONS = 'ask_user_questions';
 const MCP_TOOL_PREFIX = 'mcp__';
 const SERVER_ONLY_TOOLS = new Set([
   'task_create', 'task_update', 'task_list', 'task_delete', 'delegate', 'delegate_followup',
+  'spawn_subagent', 'check_subagent', 'cancel_subagent', 'wait_subagents',
   'web_search', 'open_web_page', 'generate_image',
   'send_wechat_image', 'send_wechat_file',
 ]);

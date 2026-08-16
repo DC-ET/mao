@@ -10,6 +10,23 @@ export class SubagentInvocationService {
   async createDelegate(
     parent: Session, agentType: string, task: string, title: string, parentToolCallId: string,
   ): Promise<{ child: Session; execution: SubagentExecution }> {
+    return this.create(parent, agentType, task, title, parentToolCallId, 'DELEGATE');
+  }
+
+  async createBackground(
+    parent: Session, agentType: string, task: string, title: string, parentToolCallId: string,
+  ): Promise<{ child: Session; execution: SubagentExecution }> {
+    return this.create(parent, agentType, task, title, parentToolCallId, 'BACKGROUND');
+  }
+
+  private async create(
+    parent: Session,
+    agentType: string,
+    task: string,
+    title: string,
+    parentToolCallId: string,
+    invocationType: SubagentExecution['invocationType'],
+  ): Promise<{ child: Session; execution: SubagentExecution }> {
     return this.db.transaction(async (tx) => {
       const child: Session = {
         userId: parent.userId,
@@ -33,7 +50,7 @@ export class SubagentInvocationService {
         parentSessionId: parent.id,
         childSessionId: child.id,
         agentType,
-        invocationType: 'DELEGATE',
+        invocationType,
         parentToolCallId,
         deliveryStatus: 'PENDING',
         taskDescription: task,

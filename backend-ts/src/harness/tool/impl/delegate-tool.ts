@@ -13,6 +13,7 @@ import type { SubagentExecution } from '../../../session/types.js';
 import { harnessLog } from '../../log.js';
 import { ToolCallContext } from '../tool-call-context.js';
 import type { SubagentInvocationService } from '../../delegate/subagent-invocation.service.js';
+import { BACKGROUND_SUBAGENT_TOOLS } from '../../delegate/background-subagent-manager.js';
 
 export class DelegateTool extends BaseTool {
   constructor(
@@ -189,7 +190,7 @@ export class DelegateTool extends BaseTool {
     const ctx = await this.harnessService.buildContext(childSession.id!);
     if (definition.systemPromptOverride) ctx.systemPrompt = definition.systemPromptOverride;
     ctx.agentName = definition.name + '-agent';
-    const excluded = new Set(['delegate', 'delegate_followup', ...(definition.excludedToolNames ?? [])]);
+    const excluded = new Set(['delegate', 'delegate_followup', ...BACKGROUND_SUBAGENT_TOOLS, ...(definition.excludedToolNames ?? [])]);
     const allowed = definition.allowedToolNames;
     ctx.tools = ctx.tools.filter((t) => {
       if (excluded.has(t.getName())) return false;

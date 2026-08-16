@@ -5,6 +5,17 @@
         <span class="message-time">{{ formatDateTime(message.createdAt) }}</span>
       </div>
 
+      <!-- 后台子代理完成通知卡片 -->
+      <button
+        v-if="backgroundCompletion"
+        class="bg-subagent-card"
+        :class="`bg-${backgroundCompletion.status}`"
+        @click="openBackgroundSubagent"
+      >
+        <span class="bg-subagent-dot"></span>
+        <span class="bg-subagent-label">{{ backgroundCompletionLabel }}</span>
+      </button>
+
       <!-- 用户消息：正常态 -->
       <div v-if="role === 'user' && !isEditing" class="message-text user-text" :class="{ collapsed: isUserLong && userCollapsed }">
         <div v-if="message.images && message.images.length > 0 && !isEditing" class="message-images">
@@ -149,7 +160,7 @@ async function ensureCommandContent() {
 </script>
 
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick, inject } from 'vue'
 import { Document, CopyDocument, Edit, Check, Close, Plus } from '@element-plus/icons-vue'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import ToolCallGroup from './ToolCallGroup.vue'
@@ -219,6 +230,35 @@ function handleConfirm() {
 
 const sessionStore = useSessionStore()
 const role = computed(() => normalizeMessageRole(props.message.role))
+
+interface BackgroundCompletionMeta {
+  childSessionId?: number
+  executionId?: number
+  status?: string
+  agentType?: string
+}
+
+const backgroundCompletion = computed<BackgroundCompletionMeta | null>(() => {
+  const node = props.message.metadata?.backgroundSubagentCompletion
+  if (!node || typeof node !== 'object') return null
+  return node as BackgroundCompletionMeta
+})
+
+const backgroundCompletionLabel = computed(() => {
+  const b = backgroundCompletion.value
+  if (!b) return ''
+  const status = b.status === 'COMPLETED' ? '已完成' : b.status === 'FAILED' ? '执行失败' : b.status === 'CANCELLED' ? '已取消' : (b.status || '已完成')
+  return `后台子代理（${b.agentType || '子代理'}）${status} · 点击查看详情`
+})
+
+const openSubagent = inject<(payload: { childSessionId: number; title?: string }) => void>('openSubagent', () => {})
+
+function openBackgroundSubagent() {
+  const b = backgroundCompletion.value
+  if (b?.childSessionId != null && openSubagent) {
+    openSubagent({ childSessionId: b.childSessionId, title: '后台子代理' })
+  }
+}
 
 const HIDDEN_TOOL_NAMES = new Set(['todo', 'task_list', 'task_create', 'task_update', 'task_delete'])
 
@@ -396,6 +436,42 @@ async function copyMessage() {
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
   letter-spacing: -0.12px;
+}
+
+.bg-subagent-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-surface-pearl, var(--aw-canvas-parchment));
+  color: var(--aw-ink);
+  cursor: pointer;
+  font-size: var(--aw-text-fine);
+  line-height: 1.5;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.bg-subagent-card:hover {
+  border-color: var(--aw-primary);
+}
+
+.bg-subagent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--aw-success);
+  flex-shrink: 0;
+}
+
+.bg-subagent-card.bg-FAILED .bg-subagent-dot {
+  background: var(--aw-danger);
+}
+
+.bg-subagent-card.bg-CANCELLED .bg-subagent-dot {
+  background: var(--aw-ink-muted-48);
 }
 
 .message-text {

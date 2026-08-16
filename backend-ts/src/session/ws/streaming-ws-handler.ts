@@ -68,6 +68,9 @@ export interface WsHandlerDeps {
     removeCancelFlag(sessionId: number): void;
     requestCancel(sessionId: number): void;
   };
+  backgroundSubagentManager?: {
+    cancelAllForParent(parentSessionId: number): Promise<void>;
+  };
   shellSessionManager: { closeByConversation(sessionId: number): void };
   skillSyncService: {
     syncToSession(agent: Agent, userId: number, sessionId: number): Promise<void>;
@@ -921,6 +924,7 @@ export class StreamingWsHandler {
 
   private async abortSubagentChildren(parentSessionId: number): Promise<void> {
     try {
+      await this.deps.backgroundSubagentManager?.cancelAllForParent(parentSessionId);
       const children = await this.deps.sessionService.listSubagentSessions(parentSessionId);
       for (const child of children) {
         if (child.id == null) continue;

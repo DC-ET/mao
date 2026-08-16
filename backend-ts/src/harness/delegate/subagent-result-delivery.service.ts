@@ -1,14 +1,22 @@
 import { nowSql } from '../../common/datetime.js';
 import type { Db } from '../../db/db.js';
-import type { Message, Session, SubagentExecution } from '../../session/types.js';
+import type { FileChange, Message, Session, SubagentExecution } from '../../session/types.js';
 import { harnessLog } from '../log.js';
 import { SubagentExecutionMapper } from './subagent-execution.mapper.js';
 import { SubagentRecoveryResultFactory } from './subagent-recovery-result-factory.js';
 
 const TERMINAL_PHASES = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
+export interface BackgroundFileChangeRepo {
+  listBySession(sessionId: number): Promise<FileChange[]>;
+  insert(change: FileChange): Promise<number>;
+}
+
 export class SubagentResultDeliveryService {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly fileChangeRepo?: BackgroundFileChangeRepo,
+  ) {}
 
   async inferLegacyFields(execution: SubagentExecution): Promise<SubagentExecution> {
     if (execution.id == null || execution.childSessionId == null) return execution;
@@ -49,6 +57,9 @@ export class SubagentResultDeliveryService {
         return 'SUPPRESSED';
       }
       execution = await this.inferLocked(tx, mapper, execution);
+      if (execution.invocationType === 'BACKGROUND') {
+        return this.deliverBackground(tx, mapper, execution, parentSessionId);
+      }
       const toolCallId = execution.parentToolCallId!;
       const existing = await this.findMessagePair(tx, parentSessionId, toolCallId);
       let assistantId = existing.assistant?.id ?? null;
@@ -100,6 +111,71 @@ export class SubagentResultDeliveryService {
       harnessLog('info', `subagent_result_delivered executionId=${executionId} parent=${execution.parentSessionId} toolCallId=${toolCallId}`);
       return 'DELIVERED';
     });
+  }
+
+  private async deliverBackground(
+    tx: Db,
+    mapper: SubagentExecutionMapper,
+    execution: SubagentExecution,
+    parentSessionId: number,
+  ): Promise<'DELIVERED' | 'SUPPRESSED'> {
+    const summary = truncate(execution.result ?? '', 2000);
+    const content = `后台子代理（${execution.agentType ?? ''}）${backgroundStatusLabel(execution.status ?? '')}：${summary}`;
+    const metadata = JSON.stringify({
+      backgroundSubagentCompletion: {
+        childSessionId: execution.childSessionId,
+        executionId: execution.id,
+        status: execution.status,
+        agentType: execution.agentType ?? null,
+      },
+    });
+    const assistantId = await tx.insert('message', {
+      sessionId: parentSessionId,
+      role: 'ASSISTANT',
+      content,
+      thinkingContent: null,
+      toolCallId: null,
+      toolCalls: null,
+      tokenCount: 0,
+      modelId: null,
+      metadata,
+      sourceSessionId: execution.childSessionId,
+      deleted: 0,
+    });
+    if (this.fileChangeRepo && execution.childSessionId != null) {
+      await this.copyFileChanges(execution.childSessionId, assistantId, parentSessionId);
+    }
+    const now = nowSql();
+    await mapper.updateById(execution.id!, {
+      deliveryStatus: 'DELIVERED',
+      parentResultDeliveredAt: now,
+      parentAssistantMessageId: assistantId,
+    });
+    await tx.execute('UPDATE session SET updated_at = ? WHERE id = ?', [now, parentSessionId]);
+    harnessLog('info', `background_subagent_result_delivered executionId=${execution.id} parent=${parentSessionId}`);
+    return 'DELIVERED';
+  }
+
+  private async copyFileChanges(
+    childSessionId: number,
+    noticeMessageId: number,
+    parentSessionId: number,
+  ): Promise<void> {
+    const repo = this.fileChangeRepo;
+    if (!repo) return;
+    try {
+      const changes = await repo.listBySession(childSessionId);
+      for (const change of changes) {
+        await repo.insert({
+          ...change,
+          id: undefined,
+          messageId: noticeMessageId,
+          sessionId: parentSessionId,
+        });
+      }
+    } catch (e) {
+      harnessLog('warn', `Failed to aggregate file changes for recovered background subagent ${childSessionId}: ${(e as Error).message}`);
+    }
   }
 
   async suppressForParent(parentSessionId: number): Promise<void> {
@@ -171,4 +247,16 @@ export class SubagentResultDeliveryService {
       await tx.execute(`UPDATE message SET deleted = 1 WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
     }
   }
+}
+
+function truncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen) + '...';
+}
+
+function backgroundStatusLabel(status: string): string {
+  if (status === 'COMPLETED') return '已完成';
+  if (status === 'FAILED') return '执行失败';
+  if (status === 'CANCELLED') return '已取消';
+  return status;
 }
