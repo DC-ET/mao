@@ -235,6 +235,8 @@ const props = withDefaults(defineProps<{
   gitBranch?: string
   cloudProjects?: CloudProject[]
   waitingForSave?: boolean
+  /** 注册到「添加到聊天」的输入框 key：主会话默认 'chat'，边路任务传 tabId（如 'side:123'） */
+  registerKey?: string
 }>(), {
   disabled: false,
   loading: false,
@@ -253,6 +255,7 @@ const props = withDefaults(defineProps<{
   gitBranch: '',
   cloudProjects: () => [],
   waitingForSave: false,
+  registerKey: 'chat',
   // 视觉能力 tri-state：true=支持 / false=不支持 / undefined=未知（不拦截，交给后端校验）。
   // 必须显式声明，否则 Boolean 类型 props 未传时会被 Vue 强制为 false，导致发送被误拦截。
   modelSupportsVision: undefined,
@@ -278,7 +281,8 @@ const isElectronClient = typeof window !== 'undefined' && !!(window as any).elec
 const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
 
 // Register with parent for file tree context menu "add to chat"
-const registerChatInput = inject<(handle: { insertFileReference: (filePath: string) => void }) => void>('registerChatInput', () => {})
+const registerChatInput = inject<(key: string, handle: { insertFileReference: (filePath: string) => void }) => void>('registerChatInput', () => {})
+const unregisterChatInput = inject<(key: string) => void>('unregisterChatInput', () => {})
 
 // ===== State =====
 const pendingFiles = ref<File[]>([])
@@ -1006,12 +1010,13 @@ function clearInput() {
 }
 
 onMounted(() => {
-  registerChatInput({ insertFileReference })
+  registerChatInput(props.registerKey, { insertFileReference })
 })
 
 defineExpose({ focusInput, insertFileReference, clearInput })
 
 onBeforeUnmount(() => {
+  unregisterChatInput(props.registerKey)
   filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
   filePreviewUrls.value = []
   editor.value?.destroy()

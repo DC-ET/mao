@@ -75,6 +75,7 @@
 
       <ChatInput
         ref="chatInputRef"
+        :register-key="tabId"
         :loading="sending"
         :waiting-for-save="waitingForSave"
         :workspace="parentWorkspace"

@@ -167,18 +167,35 @@ provide('syncChatState', syncChatState)
 provide('chatFocusInput', chatFocusInput)
 
 // Chat input registration for file tree context menu
+// 按 tab 维度注册输入框 handle：主会话 key='chat'，边路任务 key=tabId（如 'side:123'）。
+// CenterTabContainer 用 KeepAlive 缓存全部面板，主会话与各边路任务的 ChatInput 同时挂载，
+// 若用单例覆盖式注册，后挂载的边路任务会把主会话 handle 顶掉，导致「添加到聊天」插错对话框。
 interface ChatInputHandle {
   insertFileReference: (filePath: string) => void
 }
-const chatInputHandle = ref<ChatInputHandle | null>(null)
-function registerChatInput(handle: ChatInputHandle) {
-  chatInputHandle.value = handle
+const chatInputHandles = ref<Record<string, ChatInputHandle>>({})
+function registerChatInput(key: string, handle: ChatInputHandle) {
+  chatInputHandles.value = { ...chatInputHandles.value, [key]: handle }
+}
+function unregisterChatInput(key: string) {
+  const next = { ...chatInputHandles.value }
+  delete next[key]
+  chatInputHandles.value = next
 }
 provide('registerChatInput', registerChatInput)
+provide('unregisterChatInput', unregisterChatInput)
 
 function handleAddFileToChat(filePath: string) {
+  // 优先插入当前激活 tab 的输入框（主会话 / 边路任务）
+  const tabId = activeTabId.value
+  const handle = chatInputHandles.value[tabId]
+  if (handle) {
+    nextTick(() => handle.insertFileReference(filePath))
+    return
+  }
+  // 当前 tab 无输入框（文件 / Diff / 子代理只读）：回退主会话
   activateTab('chat')
-  nextTick(() => chatInputHandle.value?.insertFileReference(filePath))
+  nextTick(() => chatInputHandles.value['chat']?.insertFileReference(filePath))
 }
 
 // Center tabs
