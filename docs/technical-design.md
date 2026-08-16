@@ -62,7 +62,6 @@
 | 数据库 | MySQL 8.x | 主数据存储 |
 | 对象存储 | MinIO | 文件存储（私有化） |
 | 反向代理 | Nginx | 负载均衡 + HTTPS 终结 |
-| 容器化 | Docker + Docker Compose | 私有化部署 |
 | 日志 | SLF4J + Logback | 应用日志，可选接 ELK |
 
 ---
@@ -195,13 +194,6 @@ mao/
 │   │   ├── api/
 │   │   └── utils/
 │   └── resources/                  # 应用图标等资源
-│
-├── docker/                         # Docker 部署配置
-│   ├── docker-compose.yml
-│   ├── backend.Dockerfile
-│   ├── admin.Dockerfile
-│   └── nginx/
-│       └── nginx.conf
 │
 └── docs/                           # 文档
     ├── requirement.md
@@ -1041,57 +1033,6 @@ User ──▶ UserRole ──▶ Role ──▶ RolePermission ──▶ Permis
 │  │  MCP Server (外部工具服务)                               │  │
 │  └───────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
-```
-
-### 7.2 Docker Compose 编排
-
-```yaml
-# docker/docker-compose.yml (简化示意)
-version: '3.8'
-services:
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "443:443"
-      - "80:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - ./admin/dist:/usr/share/nginx/html/admin
-    depends_on:
-      - backend
-
-  backend:
-    build:
-      context: ../backend
-      dockerfile: ../docker/backend.Dockerfile
-    environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - DB_HOST=mysql
-    depends_on:
-      - mysql
-
-  mysql:
-    image: mysql:8.0
-    environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MYSQL_DATABASE: workbench
-    volumes:
-      - mysql_data:/var/lib/mysql
-    ports:
-      - "3306:3306"
-
-  minio:
-    image: minio/minio
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-
-volumes:
-  mysql_data:
-  minio_data:
 ```
 
 ---

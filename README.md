@@ -14,7 +14,6 @@
 
 <p align="center">
   <a href="#快速开始">快速开始</a> ·
-  <a href="#docker-compose推荐试用">Docker</a> ·
   <a href="USER_GUIDE.md">用户手册</a> ·
   <a href="#mao-与-codex-有什么区别">与 Codex 对比</a> ·
   <a href="#架构">架构</a> ·
@@ -67,7 +66,7 @@ Mao 面向个人开发者与各类团队，提供可私有化部署的 AI Agent 
 | 工具执行 | 云端 Sandbox 为主 | **CLOUD**（服务端）与 **LOCAL**（本机 Electron）可切换；LOCAL 支持工具审批 |
 | Agent 管理 | 单一助手体验为主 | 多 Agent 配置、Skill 绑定、会话与用量统计 |
 | 协作能力 | 异步后台任务、多 worktree 并行等（产品持续演进） | Side Task 并行子会话、子代理委派、定时任务 |
-| 上手成本 | 注册即用 | 需自行部署（Docker Compose 或手动安装） |
+| 上手成本 | 注册即用 | 需自行部署（手动安装） |
 
 **一句话概括**：若你需要开箱即用、与 OpenAI 生态深度集成的个人/小团队工程助手，选 Codex；若你需要可私有化部署、自选模型、本地工具执行边界，并统一管理多个 Agent（个人自用或团队协作均可），选 Mao。
 
@@ -169,33 +168,6 @@ flowchart TB
 | 安卓 APP | Capacitor 7（复用 `desktop/` 前端，仅 CLOUD） |
 
 ## 快速开始
-
-### Docker Compose（推荐试用）
-
-仅需安装 [Docker](https://docs.docker.com/get-docker/) 与 Docker Compose，无需本地 JDK / Node / MySQL。
-
-```bash
-# 可选：自定义密钥（复制 .env.docker.example 为 .env）
-cp .env.docker.example .env
-
-# 构建并启动 MySQL + 后端 + 管理后台 + 桌面端 Web
-docker compose up -d --build
-
-# 查看启动日志（首次构建较慢，后端需等待 Flyway 迁移完成）
-docker compose logs -f backend
-```
-
-| 服务 | 地址 |
-|------|------|
-| 管理后台 | http://localhost:5200 |
-| 桌面端 Web | http://localhost:5201 |
-| 后端 API / Swagger | http://localhost:9080/api/swagger-ui.html |
-
-默认账号：`admin` / `admin123`。启动后登录管理后台，在「模型管理」中配置真实 LLM API Key 即可对话。日常使用与功能说明见 **[用户手册](USER_GUIDE.md)**。
-
-> **说明**：Docker 镜像提供 **CLOUD 模式** Web 体验（浏览器访问桌面端）。**LOCAL 模式**（Electron 本地工具执行）仍需按下方步骤本地构建 `desktop` 并运行 `npm run dev:electron`。
-
-停止服务：`docker compose down`（加 `-v` 可清除数据卷）。
 
 ### 本地开发（手动）
 
