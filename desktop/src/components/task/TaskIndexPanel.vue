@@ -619,7 +619,9 @@ function focusStatusLabel(session: Session): string {
     sessionStore.sessionPendingQuestions?.get(String(session.id))?.length ?? 0
   )
   const sides = sessionStore.getSideTasks(String(session.id))
-  const runningSide = sides.find(t => SIDE_ACTIVE_PHASES.has(t.phase))
+  const runningSide = session.treeRunning === false
+    ? undefined
+    : sides.find(t => SIDE_ACTIVE_PHASES.has(t.phase))
   const failedSide = sides.find(t => t.phase === 'FAILED')
   if (approval > 0) return `待审批${approval > 1 ? ` ×${approval}` : ''}`
   if (question > 0) return '待回答'
@@ -647,9 +649,12 @@ function focusStatusClass(session: Session): string {
     sessionStore.sessionPendingQuestions?.get(String(session.id))?.length ?? 0
   )
   const sides = sessionStore.getSideTasks(String(session.id))
+  const hasRunningSide = session.treeRunning === false
+    ? false
+    : sides.some(t => SIDE_ACTIVE_PHASES.has(t.phase))
   if (approval > 0 || question > 0) return 'status-waiting'
   if (session.phase === 'FAILED' || session.treeFailed || sides.some(t => t.phase === 'FAILED')) return 'status-failed'
-  if (session.phase === 'RUNNING' || session.phase === 'RESUMING' || session.phase === 'WAITING_APPROVAL' || session.treeRunning || sides.some(t => SIDE_ACTIVE_PHASES.has(t.phase))) return 'status-running'
+  if (session.phase === 'RUNNING' || session.phase === 'RESUMING' || session.phase === 'WAITING_APPROVAL' || session.treeRunning || hasRunningSide) return 'status-running'
   if (session.phase === 'COMPLETED') return 'status-completed'
   return ''
 }
@@ -851,6 +856,8 @@ function formatGroupLabel(key: string): string {
 const SIDE_ACTIVE_PHASES = new Set<TaskPhase>(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
 
 function hasActiveSideTask(sessionId: string): boolean {
+  const session = sessionStore.getSessionEntity(String(sessionId))
+  if (session?.treeRunning === false) return false
   return sessionStore.getSideTasks(String(sessionId)).some(t => SIDE_ACTIVE_PHASES.has(t.phase))
 }
 
@@ -873,7 +880,10 @@ function effectivePhaseClass(session: Session): string {
   const sides = sessionStore.getSideTasks(String(session.id))
   if (sides.some(t => t.phase === 'WAITING_APPROVAL')) return 'waiting'
   if (session.treeFailed || sides.some(t => t.phase === 'FAILED')) return 'failed'
-  if (session.treeRunning || sides.some(t => SIDE_ACTIVE_PHASES.has(t.phase))) return 'running'
+  const hasRunningSide = session.treeRunning === false
+    ? false
+    : sides.some(t => SIDE_ACTIVE_PHASES.has(t.phase))
+  if (session.treeRunning || hasRunningSide) return 'running'
   return phaseClass(session.phase)
 }
 
