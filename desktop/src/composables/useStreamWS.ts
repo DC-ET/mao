@@ -562,7 +562,12 @@ export function useStreamWS() {
         break
 
       case 'session_list_update':
-        if (sessionId) sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
+        if (sessionId) {
+          const phase = data.phase as TaskPhase
+          sessionStore.updateSessionPhase(sessionId, phase)
+          sessionStore.updateSideTaskPhase(Number(sessionId), phase)
+          sessionStore.updateSubagentPhase(Number(sessionId), phase)
+        }
         break
 
       case 'context_window':
