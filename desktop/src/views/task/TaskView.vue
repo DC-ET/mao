@@ -54,6 +54,7 @@
       @open-subagent="handleOpenSubagent"
       @edit-title="handleEditSideTaskTitle"
       @delete-side-task="handleDeleteSideTask"
+      @promote-side-task="handlePromoteSideTask"
       @open-git-diff="handleOpenGitDiff"
     />
   </div>
@@ -294,18 +295,15 @@ const inspectorContextWindow = computed(() => {
   return sessionStore.getContextWindow(String(sid)) ?? contextWindow.value
 })
 
-// 右侧边栏上下文占比分母：token 与模型必须来自同一会话。
-// 子会话有自身 contextWindow 时用自身 modelId；上下文缺失时 token 回退主会话，模型一并回退主会话，避免「主会话 token / 子会话模型上限」错配。
+// 右侧边栏模型：子会话优先使用自己的 modelId，避免上下文是否已回填影响模型解析。
 const inspectorModelId = computed<number | undefined>(() => {
   if (inspectorViewType.value === 'chat') return undefined
   const sid = activeTab.value.sideSessionId
   if (sid == null || sid <= 0) return undefined
-  const hasOwnContext = sessionStore.getContextWindow(String(sid)) != null
-  if (!hasOwnContext) return sessionStore.activeSession?.modelId
   if (inspectorViewType.value === 'side_task') {
-    return sideTasks.value.find(t => t.id === sid)?.modelId
+    return sideTasks.value.find(t => t.id === sid)?.modelId ?? sessionStore.activeSession?.modelId
   }
-  return subagents.value.find(sa => sa.id === sid)?.modelId
+  return subagents.value.find(sa => sa.id === sid)?.modelId ?? sessionStore.activeSession?.modelId
 })
 
 /**
@@ -595,6 +593,25 @@ async function handleDeleteSideTask(sideSessionId: number) {
   )
   if (tab) closeTab(tab.id)
   sessionStore.removeSideTask(parentSessionId, sideSessionId)
+}
+
+async function handlePromoteSideTask(sideSessionId: number) {
+  const parentSessionId = activeSessionIdRef.value || ''
+  const ok = window.confirm('升级后会创建一个新的主会话，并从当前主会话的边路任务列表中移除该边路任务。是否继续？')
+  if (!ok) return
+  try {
+    const { data } = await api.post(`/sessions/${sideSessionId}/promote-side-task`)
+    const tab = tabs.value.find(t =>
+      t.type === 'side_task' && (t.sideSessionId === sideSessionId || t.id === 'side:' + sideSessionId)
+    )
+    if (tab) closeTab(tab.id)
+    sessionStore.removeSideTask(parentSessionId, sideSessionId)
+    if (data?.id != null) {
+      await router.push(`/tasks/${data.id}`)
+    }
+  } catch (e) {
+    console.warn('[side-task] Failed to promote side task:', e)
+  }
 }
 
 type NewTaskDefaults = {
