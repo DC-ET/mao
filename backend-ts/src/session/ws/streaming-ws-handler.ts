@@ -189,18 +189,6 @@ export class StreamingWsHandler {
     }
   }
 
-  terminateStaleSession(sessionId: number, userId: number | null): void {
-    this.abortRunningExecution(sessionId, userId ?? 0, true);
-    void this.deps.taskTerminalService.finishExecution(sessionId, userId ?? 0, 'FAILED', randomUUID(), '任务因长时间无响应已自动终止');
-    if (userId != null) {
-      this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '任务因长时间无响应已自动终止' }));
-    }
-    this.runningTasks.delete(sessionId);
-    this.runningExecutionIds.delete(sessionId);
-    this.deps.registry.clearActiveToolCalls(sessionId);
-    this.deps.activityHeartbeat.clear(sessionId);
-  }
-
   private async handleSubscribe(userId: number, root: Record<string, unknown>): Promise<void> {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;

@@ -113,4 +113,3 @@ export interface McpServerRow {
 }
 
 export const WEIXIN_PROJECT_KEY = 'weixin-bot';
-export const SESSION_STALE_MINUTES = 60;

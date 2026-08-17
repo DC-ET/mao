@@ -76,7 +76,6 @@ import { registerSessionRoutes } from './session/session.routes.js';
 import { registerAdminSessionRoutes } from './session/admin-session.routes.js';
 import { SessionActivityHeartbeat } from './session/session-activity-heartbeat.js';
 import { TaskTerminalService } from './session/task-terminal.service.js';
-import { StaleSessionSweepScheduler } from './session/stale-session-sweep.js';
 import { EnvironmentInfoProvider } from './harness/core/environment-info-provider.js';
 import { FileEntityRepository, FileService } from './file/file.service.js';
 import { WorkspaceBrowseService } from './file/workspace-browse.service.js';
@@ -725,8 +724,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
   deliveryScheduler.start();
   weixinMonitor.start();
-  const staleSweep = new StaleSessionSweepScheduler(sessionService, wsHandler);
-  staleSweep.start();
   shellManager.startCleanup();
   const subagentExecutionRecovery = new SubagentExecutionRecoveryService(
     subagentMapper, sessionMap, sessionSvc, compactionSvc, definitionRegistry,
@@ -752,7 +749,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     async close() {
       scheduler.stop();
       deliveryScheduler.stop();
-      staleSweep.stop();
       shellManager.stopCleanup();
       weixinMonitor.shutdown();
       weixinInboundHandler.shutdown();

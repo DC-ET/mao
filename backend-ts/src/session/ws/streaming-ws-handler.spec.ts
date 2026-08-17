@@ -407,7 +407,6 @@ describe('StreamingWsHandler', () => {
       servers: [{ connected: true, name: 'fs', tools: [{ name: 'read', description: 'd', schema: {} }] }],
     }));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel_side_task', sideSessionId: 11 }));
-    handler.terminateStaleSession(11, 7);
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'unknown_type' }));
     await handler.handleTextMessage(ws, 'not-json');
   });

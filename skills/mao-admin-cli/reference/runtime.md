@@ -2,14 +2,13 @@
 
 ## 用途
 
-查看运行相关会话列表，以及会话陈旧阈值（分钟）。
+查看运行相关会话列表。
 
 ## 命令选择
 
 | 场景 | 命令 |
 |------|------|
 | 运行态会话列表 | `runtime sessions` |
-| 陈旧判定阈值 | `runtime stale-threshold` |
 
 与 `session list` 的区别：未传 `--phase` 时，服务端默认聚焦  
 `RUNNING,RESUMING,WAITING_APPROVAL,FAILED,CANCELLED`。
@@ -32,16 +31,6 @@
 ```bash
 mao-admin runtime sessions --page 1 --size 20
 mao-admin runtime sessions --phase RUNNING --execution-mode LOCAL
-```
-
-## 命令：runtime stale-threshold
-
-无参数。`GET /admin/runtime/stale-threshold`
-
-成功 `data` 形如 `{ "staleMinutes": <number> }`。结合会话 `lastActivityAt` 判断是否陈旧。
-
-```bash
-mao-admin runtime stale-threshold
 ```
 
 ## 成功失败判断

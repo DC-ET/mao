@@ -8,7 +8,6 @@ import { sendJson } from '../common/http-error.js';
 import { ok } from '../common/result.js';
 import type { JwtService } from '../crypto/jwt.service.js';
 import type { PasswordHasher, UserRepository } from '../user/types.js';
-import { SESSION_STALE_MINUTES } from '../domain/types.js';
 import type { AdminAnalyticsService } from './admin-analytics.service.js';
 
 export interface AdminSessionLister {
@@ -78,11 +77,6 @@ export function registerAdminRuntimeRoutes(app: FastifyInstance, deps: AdminRout
       q.status,
     );
     sendJson(reply, 200, ok(result));
-  });
-
-  app.get('/v1/admin/runtime/stale-threshold', async (req, reply) => {
-    requireUserId(req, deps.jwt);
-    sendJson(reply, 200, ok({ staleMinutes: SESSION_STALE_MINUTES }));
   });
 
   app.get('/v1/admin/runtime/restart', async (req, reply) => {

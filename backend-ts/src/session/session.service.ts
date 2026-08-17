@@ -31,7 +31,6 @@ import { GitUrlParser } from './util/git-url-parser.js';
 import { TitleGenerator } from './util/title-generator.js';
 import { toStoredContentJson } from './session-vo.js';
 
-const STALE_MINUTES = 60;
 const SEARCH_RESULT_LIMIT = 20;
 const SEARCH_KEYWORD_MAX_LENGTH = 100;
 const SNIPPET_CONTEXT_CHARS = 25;
@@ -39,10 +38,6 @@ const SNIPPET_MAX_LENGTH = 80;
 
 export class SessionService {
   static readonly SEARCH_RESULT_LIMIT = SEARCH_RESULT_LIMIT;
-
-  static getStaleMinutes(): number {
-    return STALE_MINUTES;
-  }
 
   constructor(
     private readonly sessionRepo: SessionRepository,
@@ -884,16 +879,6 @@ export class SessionService {
     await this.sessionRepo.updateFields(sessionId, { lastActivityAt: nowSql() });
   }
 
-  findStaleRunningSessions(): Promise<Session[]> {
-    const threshold = new Date(Date.now() - STALE_MINUTES * 60_000);
-    const ts = `${threshold.getFullYear()}-${pad(threshold.getMonth() + 1)}-${pad(threshold.getDate())} ${pad(threshold.getHours())}:${pad(threshold.getMinutes())}:${pad(threshold.getSeconds())}`;
-    return this.sessionRepo.list(
-      `phase IN ('RUNNING', 'RESUMING', 'WAITING_APPROVAL') AND (last_activity_at < ? OR last_activity_at IS NULL)`,
-      [ts],
-      '',
-    );
-  }
-
   private ensureWorkspaceDirectory(path: string): void {
     try {
       mkdirSync(path, { recursive: true });
@@ -1012,10 +997,6 @@ function isTerminalPhase(phase: string | null | undefined): boolean {
 
 function toIso(sql: string): string {
   return sql.includes('T') ? sql : sql.replace(' ', 'T');
-}
-
-function pad(n: number): string {
-  return String(n).padStart(2, '0');
 }
 
 function parseToolCallsJson(json: string): Array<{ id?: string }> {

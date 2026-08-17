@@ -10,7 +10,6 @@ function help() {
 
 命令:
   mao-admin runtime sessions [--page] [--size] [--user-id] [--agent-id] [--execution-mode] [--phase] [--keyword] [--status]
-  mao-admin runtime stale-threshold
 `;
 }
 
@@ -23,11 +22,6 @@ async function run(ctx, subcommand, _rest, flags) {
   switch (subcommand) {
     case 'sessions': {
       const result = await get(ctx, '/admin/runtime/sessions', listQuery(flags));
-      emitResult(result, { raw: ctx.raw });
-      return;
-    }
-    case 'stale-threshold': {
-      const result = await get(ctx, '/admin/runtime/stale-threshold');
       emitResult(result, { raw: ctx.raw });
       return;
     }

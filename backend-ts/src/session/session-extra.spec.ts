@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
 import { SessionService } from './session.service.js';
 import { SessionActivityHeartbeat } from './session-activity-heartbeat.js';
-import { StaleSessionSweepScheduler } from './stale-session-sweep.js';
 import { TaskTerminalService } from './task-terminal.service.js';
 import { GitOperationService, injectHttpsToken, maskToken } from './git-operation.service.js';
 
@@ -114,7 +113,6 @@ describe('SessionService extra', () => {
     expect(await service.enterWaitingApproval(11)).toBe(true);
     await service.listSessions(7);
     await service.listSessionsForDashboard(7);
-    await service.findStaleRunningSessions();
     await service.deleteSession(11);
     expect(sessionRepo.logicalDelete).toHaveBeenCalled();
   });
@@ -203,22 +201,6 @@ describe('SessionActivityHeartbeat', () => {
     expect(sessionService.touchLastActivity).toHaveBeenCalledTimes(1);
     hb.clear(1);
     hb.clear(null);
-  });
-});
-
-describe('StaleSessionSweepScheduler', () => {
-  it('terminates stale sessions and ignores empty', async () => {
-    const sessionService = {
-      findStaleRunningSessions: vi.fn(async () => [{ id: 4, userId: 7 }]),
-    };
-    const handler = { terminateStaleSession: vi.fn() };
-    const sweep = new StaleSessionSweepScheduler(sessionService as never, handler as never);
-    await sweep.sweepStaleRunningSessions();
-    expect(handler.terminateStaleSession).toHaveBeenCalledWith(4, 7);
-    sessionService.findStaleRunningSessions.mockResolvedValue([]);
-    await sweep.sweepStaleRunningSessions();
-    sweep.start();
-    sweep.stop();
   });
 });
 
