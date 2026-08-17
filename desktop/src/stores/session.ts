@@ -1274,6 +1274,28 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  function finishInterruptedStreamingMessage(sessionId: string) {
+    const sid = String(sessionId)
+    const liveId = streamingAssistantMessageIds.get(sid)
+    if (!liveId) return
+    const list = sessionMessages.value.get(sid) ?? []
+    const msg = list.find(m => String(m.id) === liveId)
+    if (msg?.toolCalls?.length) {
+      for (const call of msg.toolCalls) {
+        if (call.status === 'running' || call.status === 'pending') {
+          call.status = 'error'
+          call.argsStreaming = false
+          call.summary = call.summary || '已被新的纠偏中断'
+          call.result = call.result || '已被新的纠偏中断'
+        }
+      }
+      sessionMessages.value.set(sid, [...list])
+    }
+    streamingAssistantMessageIds.delete(sid)
+    sessionStreaming.value.set(sid, false)
+    sessionThinking.value.set(sid, false)
+  }
+
   function markMessageComplete(sessionId: string, _data: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }) {
     streamingAssistantMessageIds.delete(String(sessionId))
     // Message end — the full assistant message is now persisted server-side
@@ -1692,6 +1714,7 @@ export const useSessionStore = defineStore('session', () => {
     appendToolCallStart,
     updateToolCallArgs,
     updateToolCallResult,
+    finishInterruptedStreamingMessage,
     markMessageComplete,
     clearMessages,
     truncateMessagesAfter,

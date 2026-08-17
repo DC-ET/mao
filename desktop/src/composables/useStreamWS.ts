@@ -520,6 +520,10 @@ export function useStreamWS() {
           }
 
           if (terminalPhases.includes(phase) && isStaleExecution(sessionId, data)) {
+            sessionStore.finishInterruptedStreamingMessage(sessionId)
+            sessionStore.updateSessionPhase(sessionId, phase, startedAt)
+            sessionStore.updateSideTaskPhase(Number(sessionId), phase, startedAt)
+            sessionStore.updateSubagentPhase(Number(sessionId), phase)
             break
           }
 
