@@ -226,6 +226,7 @@ bg_schedule_stop_old() {
   cat > "$script" <<EOS
 #!/bin/bash
 set -euo pipefail
+echo "[\$(date -Iseconds)] drain: will stop port ${old_port} in ${drain}s if active stays ${new_port}"
 sleep ${drain}
 export BG_LIB_PATH="${BG_LIB_PATH}"
 # shellcheck source=/dev/null
@@ -307,6 +308,10 @@ bg_deploy() {
     echo "Blue-green deploy complete: traffic on ${new_port}, old instance on ${current_port} draining"
   else
     echo "No backend listening on ${current_port}; starting fresh on ${current_port}"
+    if bg_port_in_use "$new_port"; then
+      echo "Stopping orphan instance on alternate port ${new_port} (active port ${current_port} was down)"
+      bg_stop_port "$app_dir" "$new_port"
+    fi
     bg_start_port "$app_dir" "$current_port" "$log_dir"
     if ! bg_wait_healthy "$current_port"; then
       bg_stop_port "$app_dir" "$current_port"
