@@ -6,6 +6,7 @@ import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { AgentExecutionContext } from './agent-execution-context.js';
 import { PromptEngine } from './prompt-engine.js';
 import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
+import * as harnessLogModule from '../log.js';
 import type { Tool } from '../tool/tool.js';
 
 function tool(name: string): Tool {
@@ -113,6 +114,7 @@ describe('PromptEngine', () => {
   });
 
   it('keepsUnknownSkillAndCommandMarkers', async () => {
+    const logSpy = vi.spyOn(harnessLogModule, 'harnessLog').mockImplementation(() => undefined);
     const engine = new PromptEngine(
       { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
       { getWorkspaceRoot: () => '/ws' } as never,
@@ -122,10 +124,14 @@ describe('PromptEngine', () => {
     );
     const context = new AgentExecutionContext();
     context.userId = 1;
-    context.messages = [{ role: 'user', content: '${missing}$ #{nope}#' }];
+    context.messages = [{ role: 'user', content: '${missing}$ ${label}$ #{nope}#' }];
     const request = await engine.buildRequest(context);
-    expect(request.messages[1].content).toBe('${missing}$ #{nope}#');
+    expect(request.messages[1].content).toBe('${missing}$ ${label}$ #{nope}#');
     expect(request.reasoning).toBeUndefined();
+    expect(logSpy).toHaveBeenCalledWith('warn', 'Skill not found for marker: ${missing}$');
+    expect(logSpy).not.toHaveBeenCalledWith('warn', 'Skill not found for marker: ${label}$');
+    expect(logSpy).toHaveBeenCalledWith('warn', 'Command not found for marker: #{nope}#');
+    logSpy.mockRestore();
   });
 });
 void mkdirSync;

@@ -37,6 +37,10 @@ const SKILL_PATTERN = /\$\{([^}]+)\}\$/g;
 const COMMAND_PATTERN = /#\{([^}]+)\}#/g;
 const FILE_REF_PATTERN = /@\{([^}]+)\}@/g;
 const AGENTS_MD_MAX_LINES = 200;
+
+function isBenignTemplatePlaceholderName(name: string): boolean {
+  return name === 'label';
+}
 const AGENTS_MD_TRUNCATED_HINT = '\n> 当前仅展示前200行规则，读取AGENTS.md文件以了解更多规则。\n';
 
 const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
@@ -81,7 +85,9 @@ export class PromptEngine {
           || this.hasLocalUnsyncedSkill(skillName, context)) {
           return '/' + skillName;
         }
-        harnessLog('warn', `Skill not found for marker: \${${skillName}}$`);
+        if (!isBenignTemplatePlaceholderName(skillName)) {
+          harnessLog('warn', `Skill not found for marker: ${match}`);
+        }
         return match;
       });
       const commandMatches = [...replaced.matchAll(COMMAND_PATTERN)];
