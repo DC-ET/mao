@@ -781,6 +781,29 @@ export const useSessionStore = defineStore('session', () => {
     sideTaskCache.value = new Map(sideTaskCache.value)
   }
 
+  async function refreshSideTasks(parentSessionId: string) {
+    try {
+      const { data } = await api.get(`/sessions/${parentSessionId}/side-tasks`)
+      const items: SideTaskItem[] = Array.isArray(data)
+        ? data.map((st: any) => ({
+            id: st.id,
+            title: st.title || '任务',
+            modelId: st.modelId,
+            phase: (st.phase || 'IDLE') as TaskPhase,
+            createdAt: st.createdAt,
+            updatedAt: st.updatedAt,
+            startedAt: st.startedAt,
+            unread: st.unread,
+            pendingApprovalCount: st.pendingApprovalCount,
+            pendingQuestionCount: st.pendingQuestionCount,
+          }))
+        : []
+      setSideTasks(parentSessionId, items)
+    } catch {
+      // 保留现有缓存，等待下次会话切换或列表刷新同步
+    }
+  }
+
   function addSideTask(parentSessionId: string, task: SideTaskItem) {
     const key = String(parentSessionId)
     const list = sideTaskCache.value.get(key) ?? []
@@ -1629,6 +1652,7 @@ export const useSessionStore = defineStore('session', () => {
     fetchArchivedSessions,
     fetchFocusSessions,
     setSideTasks,
+    refreshSideTasks,
     addSideTask,
     updateSideTaskPhase,
     updateSideTaskUnread,

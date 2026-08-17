@@ -704,6 +704,10 @@ export function useStreamWS() {
             treeRunning: data.treeRunning,
             treeFailed: data.treeFailed,
           })
+          if (data.treeRunning === false) {
+            void sessionStore.fetchSession(String(sessionId))
+            void sessionStore.refreshSideTasks(String(sessionId))
+          }
         }
         break
 
