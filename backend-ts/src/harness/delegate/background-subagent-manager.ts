@@ -272,7 +272,9 @@ export class BackgroundSubagentManager {
   private async snapshot(taskId: number): Promise<BackgroundProgress | null> {
     const execution = await this.deps.subagentExecutionMapper.findById(taskId);
     if (!execution) return null;
-    const recentOutput = await this.recentOutput(execution.childSessionId ?? null);
+    const recentOutput = isTerminal(execution.status)
+      ? truncate(execution.result ?? '', 2000) || null
+      : await this.recentOutput(execution.childSessionId ?? null);
     return {
       taskId,
       childSessionId: execution.childSessionId ?? null,
