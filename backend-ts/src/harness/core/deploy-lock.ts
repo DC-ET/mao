@@ -61,7 +61,7 @@ export function isSessionActiveDuringDeploy(
 
 export function deployDrainSec(lock: DeployLock | null): number {
   if (lock?.drainSec != null && lock.drainSec > 0) return lock.drainSec;
-  return 300;
+  return 60;
 }
 
 const IN_FLIGHT_DEPLOY_STATUSES = new Set(['starting', 'switched']);
