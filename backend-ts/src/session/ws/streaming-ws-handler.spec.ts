@@ -274,6 +274,7 @@ describe('StreamingWsHandler', () => {
     registry.getUserId.mockReturnValue(7);
     const parent = session('CLOUD', 'IDLE');
     parent.workspace = '/repo';
+    parent.projectKey = 'repo';
     sessionService.getSession.mockResolvedValue(parent);
     sessionService.generateTitleFromUserMessage.mockResolvedValue('Side work');
     sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
@@ -282,7 +283,12 @@ describe('StreamingWsHandler', () => {
       type: 'create_side_session', sessionId: 11, data: { content: 'side work', inheritContext: true, modelId: 9 },
     }));
     await executor.runAll();
-    expect(sessionService.save).toHaveBeenCalled();
+    expect(sessionService.save).toHaveBeenCalledWith(expect.objectContaining({
+      workspace: '/repo',
+      projectKey: 'repo',
+      parentSessionId: 11,
+      sessionType: 'SIDE_TASK',
+    }));
     expect(sessionService.saveMessage).toHaveBeenCalledWith(13, 'USER', 'side work', null, null, null, 0, null);
     expect(harnessService.executeSideFirstMessage).toHaveBeenCalled();
   });

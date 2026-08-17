@@ -443,7 +443,7 @@ export class SessionService {
         phase: 'IDLE',
         summary: source.summary,
         elapsedMs: 0,
-        projectKey: source.projectKey,
+        projectKey: source.projectKey ?? SessionService.deriveProjectKey(source.workspace),
         contextTokens: null,
         lastPromptTokens: null,
         unread: 0,

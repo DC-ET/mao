@@ -157,7 +157,27 @@ describe('SessionService archive', () => {
     expect(promoted.id).toBe(99);
     expect(promoted.sessionType).toBe('NORMAL');
     expect(promoted.parentSessionId).toBeNull();
+    expect(promoted.projectKey).toBe('demo');
     expect(sessionRepo.transaction).toHaveBeenCalled();
+  });
+
+  it('derivesProjectKeyWhenPromotingLegacySideTaskWithoutProjectKey', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.findById).mockResolvedValue({
+      id: 20,
+      userId: 7,
+      title: '旧边路任务',
+      sessionType: 'SIDE_TASK',
+      phase: 'COMPLETED',
+      executionMode: 'CLOUD',
+      workspace: '/opt/mao-data/workspace/7/projects/mao',
+      projectKey: null,
+    });
+    vi.mocked(sessionRepo.list).mockResolvedValue([]);
+
+    const promoted = await service.promoteSideTaskToMainSession(20, 7);
+
+    expect(promoted.projectKey).toBe('mao');
   });
 
   it('rejectsRunningSideTaskPromotion', async () => {

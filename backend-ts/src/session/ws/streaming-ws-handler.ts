@@ -542,7 +542,7 @@ export class StreamingWsHandler {
     }
     const sideSession: Session = {
       userId, agentId: parentSession.agentId, executionMode: parentSession.executionMode,
-      workspace: parentSession.workspace, permissionLevel: parentSession.permissionLevel,
+      workspace: parentSession.workspace, projectKey: parentSession.projectKey, permissionLevel: parentSession.permissionLevel,
       modelId: resolvedModelId ?? undefined, isGit: parentSession.isGit, platform: parentSession.platform,
       shellPath: parentSession.shellPath, osVersion: parentSession.osVersion, status: 'ACTIVE',
       parentSessionId, sessionType: 'SIDE_TASK',

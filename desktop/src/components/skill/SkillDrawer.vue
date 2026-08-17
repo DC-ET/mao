@@ -90,7 +90,9 @@
               >
                 <div class="skill-card">
                   <div class="skill-card-header">
-                    <div class="skill-name">{{ skill.name }}</div>
+                    <div class="skill-name">
+                      <span class="skill-name-text">{{ skill.name }}</span>
+                    </div>
                     <div class="skill-actions">
                       <template v-if="deletingName === skill.name">
                         <button class="skill-btn skill-btn-confirm-delete" @click="confirmDelete(skill)">
@@ -179,7 +181,9 @@
               >
                 <div class="skill-card">
                   <div class="skill-card-header">
-                    <div class="skill-name">{{ skill.name }}</div>
+                    <div class="skill-name">
+                      <span class="skill-name-text">{{ skill.name }}</span>
+                    </div>
                     <div class="skill-actions">
                       <el-tooltip content="查看内容" :show-after="300" placement="top">
                         <button class="skill-btn" @click="handleViewLocal(skill)">

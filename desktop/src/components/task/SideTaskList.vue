@@ -12,6 +12,7 @@
         'confirming-delete': confirmingDeleteId === task.id
       }"
       @click="handleClick(task)"
+      @contextmenu.prevent="openContextMenu($event, task)"
     >
       <div class="side-task-item-main">
         <span class="side-task-phase-dot" :class="phaseClass(task.phase)"></span>
@@ -46,38 +47,31 @@
             <el-icon :size="13"><Close /></el-icon>
           </button>
         </template>
-        <template v-else>
-          <button
-            class="action-btn action-promote"
-            :disabled="!canPromote(task)"
-            @click.stop="promote(task)"
-            title="升级为主会话"
-          >
-            主
-          </button>
-          <button
-            class="action-btn action-edit"
-            @click.stop="startEdit(task)"
-            title="编辑标题"
-          >
-            <el-icon :size="13"><EditPen /></el-icon>
-          </button>
-          <button
-            class="action-btn action-delete"
-            @click.stop="startDelete(task)"
-            title="删除"
-          >
-            <el-icon :size="13"><Delete /></el-icon>
-          </button>
-        </template>
+        <template v-else></template>
       </div>
     </div>
+    <Teleport to="body">
+      <div
+        v-if="contextMenu.visible"
+        class="side-task-context-menu"
+        :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+        @click.stop
+      >
+        <div
+          class="context-menu-item"
+          :class="{ disabled: !selectedTask || !canPromote(selectedTask) }"
+          @click="menuPromote"
+        >升级为主会话</div>
+        <div class="context-menu-item" @click="menuEditTitle">编辑标题</div>
+        <div class="context-menu-item danger" @click="menuDelete">删除</div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, computed } from 'vue'
-import { EditPen, Delete, Check, Close } from '@element-plus/icons-vue'
+import { ref, nextTick, computed, reactive, onMounted, onUnmounted } from 'vue'
+import { Check, Close } from '@element-plus/icons-vue'
 import type { SideTaskItem, TaskPhase } from '../../stores/session'
 import { sideTaskToFocusCandidate, sortByFocusPriority } from '../../utils/focusSort'
 
@@ -105,6 +99,17 @@ const sortedTasks = computed<SideTaskItem[]>(() => {
 const editingId = ref<number | null>(null)
 const editingTitle = ref('')
 const confirmingDeleteId = ref<number | null>(null)
+
+const contextMenu = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  taskId: null as number | null,
+})
+
+const selectedTask = computed(() =>
+  sortedTasks.value.find(task => task.id === contextMenu.taskId) ?? null
+)
 
 function phaseClass(phase: TaskPhase) {
   switch (phase) {
@@ -152,8 +157,43 @@ function formatElapsed(time?: string) {
 
 function handleClick(task: SideTaskItem) {
   if (editingId.value === task.id || confirmingDeleteId.value === task.id) return
+  closeContextMenu()
   confirmingDeleteId.value = null
   emit('open-side-task', { sideSessionId: task.id, title: task.title || '任务' })
+}
+
+function openContextMenu(e: MouseEvent, task: SideTaskItem) {
+  if (editingId.value === task.id || confirmingDeleteId.value === task.id) return
+  const menuWidth = 150
+  const menuHeight = 112
+  const x = Math.min(e.clientX, window.innerWidth - menuWidth - 8)
+  const y = Math.min(e.clientY, window.innerHeight - menuHeight - 8)
+  contextMenu.taskId = task.id
+  contextMenu.x = Math.max(4, x)
+  contextMenu.y = Math.max(4, y)
+  contextMenu.visible = true
+}
+
+function closeContextMenu() {
+  contextMenu.visible = false
+}
+
+function menuPromote() {
+  const task = selectedTask.value
+  closeContextMenu()
+  if (task) promote(task)
+}
+
+function menuEditTitle() {
+  const task = selectedTask.value
+  closeContextMenu()
+  if (task) startEdit(task)
+}
+
+function menuDelete() {
+  const task = selectedTask.value
+  closeContextMenu()
+  if (task) startDelete(task)
 }
 
 function startEdit(task: SideTaskItem) {
@@ -218,6 +258,18 @@ function promote(task: SideTaskItem) {
   confirmingDeleteId.value = null
   emit('promote-side-task', task.id)
 }
+
+onMounted(() => {
+  window.addEventListener('click', closeContextMenu)
+  window.addEventListener('resize', closeContextMenu)
+  window.addEventListener('scroll', closeContextMenu, true)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeContextMenu)
+  window.removeEventListener('resize', closeContextMenu)
+  window.removeEventListener('scroll', closeContextMenu, true)
+})
 </script>
 
 <style scoped>
@@ -316,7 +368,6 @@ function promote(task: SideTaskItem) {
   transition: opacity 0.15s;
 }
 
-.side-task-item:hover .side-task-item-meta,
 .side-task-item.editing .side-task-item-meta,
 .side-task-item.confirming-delete .side-task-item-meta {
   opacity: 0;
@@ -343,7 +394,6 @@ function promote(task: SideTaskItem) {
   transition: opacity 0.15s;
 }
 
-.side-task-item:hover .side-task-item-actions,
 .side-task-item.editing .side-task-item-actions,
 .side-task-item.confirming-delete .side-task-item-actions {
   opacity: 1;
@@ -402,6 +452,45 @@ function promote(task: SideTaskItem) {
 .action-cancel:hover {
   background: #f3f4f6;
   color: var(--aw-ink);
+}
+
+.side-task-context-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 142px;
+  padding: 6px;
+  background: var(--aw-surface-card);
+  border: 1px solid var(--aw-border-subtle);
+  border-radius: var(--aw-radius-sm);
+  box-shadow: var(--aw-shadow-popover);
+}
+
+.context-menu-item {
+  padding: 7px 10px;
+  border-radius: var(--aw-radius-xs);
+  color: var(--aw-ink);
+  font-size: var(--aw-text-caption);
+  line-height: 1.2;
+  cursor: pointer;
+  user-select: none;
+}
+
+.context-menu-item:hover {
+  background: var(--aw-surface-pearl);
+}
+
+.context-menu-item.danger {
+  color: var(--aw-danger);
+}
+
+.context-menu-item.disabled {
+  color: var(--aw-ink-muted-48);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.context-menu-item.disabled:hover {
+  background: transparent;
 }
 
 [data-theme="dark"] .side-task-item:hover {
