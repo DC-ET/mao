@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatRequest, ChatResponse, ChatUsage, LlmAdapter, LlmModelConfig } from '../llm/chat-request.js';
+import type { ChatMessage, ChatRequest, ChatUsage, LlmAdapter, LlmModelConfig, ToolCall } from '../llm/chat-request.js';
 import type { AgentEventListener } from './agent-event-listener.js';
 import { CompactionConfig } from './compaction-config.js';
 import type { PersistedChatMessage } from './persisted-chat-message.js';
@@ -81,14 +81,14 @@ export class CompactionService {
     harnessLog('info', `Session handoff compaction triggered: sessionId=${sessionId}, messages=${messages.length}`);
 
     try {
-      let handoff = await this.invokeAndValidate(compactionRequest, modelConfig, cancelFlag);
+      let handoff = await this.invokeAndValidate(compactionRequest, modelConfig, cancelFlag, listener);
       if (handoff == null) {
         const retryRequest = this.deriveRequest(compactionRequest, this.correctionInstruction());
         const retryTokens = this.tokenEstimator.estimateRequestTokens(retryRequest);
         if (retryTokens >= effectiveWindow) {
           throw new CompactionContextOverflowException(retryTokens, effectiveWindow);
         }
-        handoff = await this.invokeAndValidate(retryRequest, modelConfig, cancelFlag);
+        handoff = await this.invokeAndValidate(retryRequest, modelConfig, cancelFlag, listener);
       }
       if (handoff == null) {
         harnessLog('warn', `Session handoff compaction failed semantic contract after one correction: sessionId=${sessionId}`);
@@ -115,7 +115,7 @@ export class CompactionService {
       messages,
       tools: source.tools,
       temperature: source.temperature,
-      stream: false,
+      stream: true,
       reasoning: source.reasoning,
       audio: source.audio,
     };
@@ -125,27 +125,52 @@ export class CompactionService {
     request: ChatRequest,
     modelConfig: LlmModelConfig,
     cancelFlag: { get(): boolean } | null,
+    listener: AgentEventListener | null,
   ): Promise<ValidatedHandoff | null> {
     this.checkCancelled(cancelFlag);
     try {
-      const response: ChatResponse = await this.llmAdapter.chat(request, modelConfig, cancelFlag);
+      const content: string[] = [];
+      const toolCalls: ToolCall[] = [];
+      let usage: ChatUsage | undefined;
+      let streamError: unknown;
+      await this.llmAdapter.stream(request, modelConfig, {
+        onChunk: (chunk) => {
+          for (const choice of chunk.choices ?? []) {
+            const delta = choice.delta;
+            if (!delta) continue;
+            if (delta.content) content.push(delta.content);
+            if (delta.toolCalls) toolCalls.push(...delta.toolCalls);
+          }
+        },
+        onComplete: (u) => {
+          usage = u;
+        },
+        onError: (t) => {
+          streamError = t;
+        },
+        onStreamReset: () => {
+          content.length = 0;
+          toolCalls.length = 0;
+          usage = undefined;
+        },
+        onWaiting: (phase, elapsedSeconds) => listener?.onLlmWaiting?.(phase, elapsedSeconds),
+        onRetry: (reason, statusCode, attempt, maxRetries, delaySeconds) => {
+          listener?.onLlmRetry?.(reason, statusCode, attempt, maxRetries, delaySeconds);
+        },
+      }, cancelFlag);
+      if (streamError) throw streamError;
       this.checkCancelled(cancelFlag);
-      if (!response?.choices?.length || !response.choices[0]?.message) {
-        harnessLog('warn', 'Compaction response is missing choices/message');
+      if (toolCalls.length > 0) {
+        harnessLog('warn', `Compaction response attempted ${toolCalls.length} tool call(s); ignored`);
         return null;
       }
-      const message = response.choices[0].message;
-      if (message.toolCalls && message.toolCalls.length > 0) {
-        harnessLog('warn', `Compaction response attempted ${message.toolCalls.length} tool call(s); ignored`);
-        return null;
-      }
-      const content = TokenEstimator.contentToString(message.content);
-      if (content == null) return null;
-      const matcher = content.match(HANDOFF_PATTERN);
+      const raw = content.join('');
+      if (raw === '') return null;
+      const matcher = raw.match(HANDOFF_PATTERN);
       if (!matcher) return null;
       const text = matcher[1].trim();
       if (text === '') return null;
-      return { text, usage: response.usage };
+      return { text, usage };
     } catch (e) {
       if (e instanceof CompactionCancelledException) throw e;
       if (this.isCancelled(cancelFlag) || (e instanceof Error && e.message.includes('Cancelled by user'))) {

@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatRequest, ChatResponse, ChatUsage, LlmAdapter } from '../llm/chat-request.js';
+import type { ChatRequest, ChatUsage, LlmAdapter, StreamCallback, StreamChunk } from '../llm/chat-request.js';
 import { CompactionCancelledException, CompactionContextOverflowException, CompactionService } from './compaction-service.js';
 import { CompactionConfig } from './compaction-config.js';
 import { PersistedChatMessage } from './persisted-chat-message.js';
 import type { TokenEstimator } from './token-estimator.js';
 
 describe('CompactionService', () => {
-  const llmAdapter = { chat: vi.fn(), stream: vi.fn() } as unknown as LlmAdapter & { chat: ReturnType<typeof vi.fn> };
+  const llmAdapter = {
+    chat: vi.fn(),
+    stream: vi.fn(),
+  } as unknown as LlmAdapter & { chat: ReturnType<typeof vi.fn>; stream: ReturnType<typeof vi.fn> };
   const tokenEstimator = {
     estimateRequestTokens: vi.fn(),
     estimateMessages: vi.fn(),
@@ -59,12 +62,19 @@ describe('CompactionService', () => {
     };
   }
 
-  function successRaw(content: string, u?: ChatUsage | null): ChatResponse {
-    return { usage: u ?? undefined, choices: [{ message: { role: 'assistant', content } }] };
+  function chunk(content: string): StreamChunk {
+    return { choices: [{ delta: { content } }] };
   }
 
-  function success(text: string, u?: ChatUsage | null): ChatResponse {
-    return successRaw(`<handoff>${text}</handoff>`, u);
+  function streamRaw(content: string, u: ChatUsage = usage(0, null, 0)): void {
+    llmAdapter.stream.mockImplementationOnce(async (_request: ChatRequest, _model: unknown, callback: StreamCallback) => {
+      callback.onChunk(chunk(content));
+      callback.onComplete(u);
+    });
+  }
+
+  function streamHandoff(text: string, u?: ChatUsage): void {
+    streamRaw(`<handoff>${text}</handoff>`, u);
   }
 
   it('belowThresholdDoesNotCallLlm', async () => {
@@ -72,26 +82,28 @@ describe('CompactionService', () => {
     const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null);
     expect(result).toBeNull();
     expect(llmAdapter.chat).not.toHaveBeenCalled();
+    expect(llmAdapter.stream).not.toHaveBeenCalled();
   });
 
-  it('derivesStrictPrefixWithoutMutatingNormalRequest', async () => {
+  it('derivesStrictPrefixWithoutMutatingNormalRequestAndUsesStream', async () => {
     const normal = normalRequest();
     const originalMessages = [...(normal.messages ?? [])];
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(900);
     tokenEstimator.estimateMessages.mockReturnValue(30);
-    llmAdapter.chat.mockResolvedValue(success('交接正文', usage(100, 80, 10)));
+    streamHandoff('交接正文', usage(100, 80, 10));
 
     const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normal, model, config(), null, null);
 
-    expect(llmAdapter.chat).toHaveBeenCalledOnce();
-    const derived = llmAdapter.chat.mock.calls[0][0] as ChatRequest;
+    expect(llmAdapter.chat).not.toHaveBeenCalled();
+    expect(llmAdapter.stream).toHaveBeenCalledOnce();
+    const derived = llmAdapter.stream.mock.calls[0][0] as ChatRequest;
     expect(derived.messages?.slice(0, originalMessages.length)).toEqual(originalMessages);
     expect(derived.messages).toHaveLength(originalMessages.length + 1);
     expect(derived.messages?.[derived.messages.length - 1].role).toBe('user');
     expect(derived.tools).toBe(normal.tools);
     expect(derived.reasoning).toBe(normal.reasoning);
     expect(derived.temperature).toBe(0.2);
-    expect(derived.stream).toBe(false);
+    expect(derived.stream).toBe(true);
     expect(normal.messages).toEqual(originalMessages);
     expect(normal.stream).toBe(true);
     expect(result?.summaryText).toBe('交接正文');
@@ -102,15 +114,16 @@ describe('CompactionService', () => {
   it('toolCallOrInvalidHandoffRetriesOnceWithoutFailedAssistant', async () => {
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(900).mockReturnValueOnce(950);
     tokenEstimator.estimateMessages.mockReturnValue(20);
-    const invalid: ChatResponse = {
-      choices: [{ message: { role: 'assistant', content: 'bad', toolCalls: [{ id: 'x' }] } }],
-    };
-    llmAdapter.chat.mockResolvedValueOnce(invalid).mockResolvedValueOnce(success('fixed', usage(12, 0, 4)));
+    llmAdapter.stream.mockImplementationOnce(async (_request: ChatRequest, _model: unknown, callback: StreamCallback) => {
+      callback.onChunk({ choices: [{ delta: { content: 'bad', toolCalls: [{ id: 'x' }] } }] });
+      callback.onComplete(usage(1, null, 1));
+    });
+    streamHandoff('fixed', usage(12, 0, 4));
 
     const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null);
 
-    expect(llmAdapter.chat).toHaveBeenCalledTimes(2);
-    const retry = llmAdapter.chat.mock.calls[1][0] as ChatRequest;
+    expect(llmAdapter.stream).toHaveBeenCalledTimes(2);
+    const retry = llmAdapter.stream.mock.calls[1][0] as ChatRequest;
     expect(retry.messages).toHaveLength((normalRequest().messages?.length ?? 0) + 2);
     expect(retry.messages?.some((m) => m.role === 'assistant' && m.content === 'bad')).toBe(false);
     expect(result?.promptTokens).toBe(12);
@@ -120,10 +133,11 @@ describe('CompactionService', () => {
 
   it('secondSemanticFailureIsRecoverable', async () => {
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(900).mockReturnValueOnce(950);
-    llmAdapter.chat.mockResolvedValueOnce(successRaw('missing')).mockResolvedValueOnce(successRaw('<handoff> </handoff>'));
+    streamRaw('missing');
+    streamRaw('<handoff> </handoff>');
     const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null);
     expect(result).toBeNull();
-    expect(llmAdapter.chat).toHaveBeenCalledTimes(2);
+    expect(llmAdapter.stream).toHaveBeenCalledTimes(2);
   });
 
   it('compactionRequestAtWindowFailsBeforeLlm', async () => {
@@ -134,11 +148,12 @@ describe('CompactionService', () => {
     await expect(service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null))
       .rejects.toThrow(/1000 tokens|新建会话/);
     expect(llmAdapter.chat).not.toHaveBeenCalled();
+    expect(llmAdapter.stream).not.toHaveBeenCalled();
   });
 
   it('rejectsIncompletePhysicalPrefixAndSupportsCancel', async () => {
     tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(900);
-    llmAdapter.chat.mockResolvedValue(success('ok', usage(1, null, 1)));
+    streamHandoff('ok', usage(1, null, 1));
     const incomplete = await service.compactSession(
       7, 0, [pm(1, 'user', 'q'), pm(3, 'tool', 'r')], [1, 2, 3], normalRequest(), model, config(), null, null,
     );
