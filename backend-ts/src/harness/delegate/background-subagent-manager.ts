@@ -162,12 +162,20 @@ export class BackgroundSubagentManager {
   async waitForAll(
     parentSessionId: number | null | undefined,
     cancelFlag?: AtomicBoolean | null,
-  ): Promise<void> {
-    if (parentSessionId == null) return;
+    timeoutMs?: number | null,
+  ): Promise<{ completed: boolean; timedOut: boolean }> {
+    if (parentSessionId == null) return { completed: true, timedOut: false };
+    const deadline = timeoutMs != null ? Date.now() + timeoutMs : null;
     while (true) {
-      if (cancelFlag?.get()) return;
-      if (!this.hasRunning(parentSessionId)) return;
-      await sleep(300);
+      if (cancelFlag?.get()) return { completed: false, timedOut: false };
+      if (!this.hasRunning(parentSessionId)) return { completed: true, timedOut: false };
+      if (deadline != null) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return { completed: false, timedOut: true };
+        await sleep(Math.min(300, remaining));
+      } else {
+        await sleep(300);
+      }
     }
   }
 

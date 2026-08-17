@@ -158,23 +158,46 @@ export class CancelSubagentTool extends BaseTool {
   }
 }
 
+const DEFAULT_WAIT_SUBAGENTS_TIMEOUT_SECONDS = 30 * 60;
+
 export class WaitSubagentsTool extends BaseTool {
   constructor(private readonly manager: BackgroundSubagentManager) { super(); }
 
   getName(): string { return 'wait_subagents'; }
   getDescription(): string {
-    return '等待当前会话全部后台子代理结束，返回汇总结果。主代理在主线完成时会自动挂起等待，一般无需主动调用。';
+    return '等待当前会话全部后台子代理结束，返回汇总结果。默认最多等待 30 分钟；超时会返回当前运行状态，由主代理决定继续等待、取消或执行其他操作。';
   }
-  getInputSchema(): Record<string, unknown> { return { type: 'object', properties: {} }; }
+  getInputSchema(): Record<string, unknown> {
+    return {
+      type: 'object',
+      properties: {
+        timeout_seconds: { type: 'number', description: '最多等待秒数，默认 1800（30 分钟）；超时后工具返回当前子代理状态而不继续阻塞。' },
+      },
+    };
+  }
   getOutputSchema(): Record<string, unknown> { return { type: 'object' }; }
 
-  protected async executeWithSession(_argumentsJson: string, sessionId: number | null): Promise<string> {
+  protected async executeWithSession(argumentsJson: string, sessionId: number | null): Promise<string> {
     if (sessionId == null) return errorJson('缺少会话 ID');
-    await this.manager.waitForAll(sessionId, null);
+    const args = parseObject(argumentsJson);
+    const rawTimeoutSeconds = args && args.timeout_seconds != null ? args.timeout_seconds : DEFAULT_WAIT_SUBAGENTS_TIMEOUT_SECONDS;
+    const timeoutSeconds = Number(rawTimeoutSeconds);
+    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 0) return errorJson('参数 timeout_seconds 必须是非负数字');
+
+    const waitResult = await this.manager.waitForAll(sessionId, null, timeoutSeconds * 1000);
     const results = await this.manager.consumeResults(sessionId);
     const list = Object.values(results).map((raw) => {
       try { return JSON.parse(raw) as unknown; } catch { return raw; }
     });
-    return toJson({ completed: list.length, results: list });
+    const response: Record<string, unknown> = {
+      completed: list.length,
+      results: list,
+      timed_out: waitResult.timedOut,
+      all_completed: waitResult.completed,
+    };
+    if (waitResult.timedOut) {
+      response.background_subagents = await this.manager.progress(sessionId, null);
+    }
+    return toJson(response);
   }
 }
