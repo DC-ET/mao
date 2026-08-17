@@ -23,6 +23,11 @@
         @add-to-command="openWithContent"
       />
 
+      <div v-if="sideCompacting" class="compaction-hint" role="status">
+        <span class="compaction-spinner" aria-hidden="true"></span>
+        <span>正在整理历史对话，腾出上下文空间…</span>
+      </div>
+
       <!-- 流式输出指示器 -->
       <div v-if="showTypingIndicator" class="typing-indicator">
         <div class="typing-dots">
@@ -209,6 +214,11 @@ const displayMessages = computed(() => {
 const compactionEvents = computed(() => {
   if (!hasRealSession.value) return []
   return sessionStore.getCompactionEvents(String(realSessionId.value))
+})
+
+const sideCompacting = computed(() => {
+  if (!hasRealSession.value) return false
+  return sessionStore.isSessionCompacting(String(realSessionId.value))
 })
 
 const showTypingIndicator = computed(() => {
@@ -740,6 +750,33 @@ function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
 }
 
 @keyframes typing-retry-spin {
+  to { transform: rotate(360deg); }
+}
+
+.compaction-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 6px 12px;
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink-muted-48);
+  background: var(--aw-canvas-parchment);
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+}
+
+.compaction-spinner {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(0, 102, 204, 0.2);
+  border-top-color: var(--aw-primary);
+  border-radius: 50%;
+  animation: compaction-spin 0.8s linear infinite;
+}
+
+@keyframes compaction-spin {
   to { transform: rotate(360deg); }
 }
 

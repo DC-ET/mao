@@ -1394,6 +1394,10 @@ export const useSessionStore = defineStore('session', () => {
     return sessionLlmRetry.value.get(String(sessionId)) ?? null
   }
 
+  function isSessionCompacting(sessionId: string): boolean {
+    return sessionCompacting.value.get(String(sessionId)) ?? false
+  }
+
   function isSessionThinking(sessionId: string): boolean {
     return sessionThinking.value.get(String(sessionId)) ?? false
   }
@@ -1677,6 +1681,7 @@ export const useSessionStore = defineStore('session', () => {
     // Compaction
     activeCompacting,
     setCompacting,
+    isSessionCompacting,
     setCompactionEvents,
     addCompactionEvent,
     getCompactionEvents: (sessionId: string) =>
