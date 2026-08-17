@@ -1,6 +1,5 @@
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
-import type { AgentLoop } from '../../core/agent-loop.js';
 import type { BackgroundSubagentManager } from '../../delegate/background-subagent-manager.js';
 import { ToolCallContext } from '../tool-call-context.js';
 
@@ -160,10 +159,7 @@ export class CancelSubagentTool extends BaseTool {
 }
 
 export class WaitSubagentsTool extends BaseTool {
-  constructor(
-    private readonly manager: BackgroundSubagentManager,
-    private readonly agentLoop: AgentLoop,
-  ) { super(); }
+  constructor(private readonly manager: BackgroundSubagentManager) { super(); }
 
   getName(): string { return 'wait_subagents'; }
   getDescription(): string {
@@ -174,8 +170,7 @@ export class WaitSubagentsTool extends BaseTool {
 
   protected async executeWithSession(_argumentsJson: string, sessionId: number | null): Promise<string> {
     if (sessionId == null) return errorJson('缺少会话 ID');
-    const cancelFlag = this.agentLoop.getCancelFlag(sessionId);
-    await this.manager.waitForAll(sessionId, cancelFlag);
+    await this.manager.waitForAll(sessionId, null);
     const results = await this.manager.consumeResults(sessionId);
     const list = Object.values(results).map((raw) => {
       try { return JSON.parse(raw) as unknown; } catch { return raw; }

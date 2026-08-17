@@ -101,7 +101,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new SubagentFollowupTool(deps.backgroundSubagentManager),
     new CheckSubagentTool(deps.backgroundSubagentManager),
     new CancelSubagentTool(deps.backgroundSubagentManager),
-    new WaitSubagentsTool(deps.backgroundSubagentManager, deps.agentLoop),
+    new WaitSubagentsTool(deps.backgroundSubagentManager),
   ]);
 }
 
