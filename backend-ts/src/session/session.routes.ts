@@ -238,6 +238,17 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     return sendOk(reply);
   });
 
+  app.post('/v1/sessions/:id/promote-side-task', async (request, reply) => {
+    const userId = requireUserId(request);
+    const source = await requireSessionOwner(userId, pathId(request));
+    const promoted = await sessionService.promoteSideTaskToMainSession(source.id!, userId);
+    const vos = await enrichSessions([promoted]);
+    if (source.parentSessionId != null) {
+      treeSignalPublisher.publish(source.parentSessionId);
+    }
+    return sendOk(reply, vos[0]);
+  });
+
   app.put('/v1/sessions/:id/pin', async (request, reply) => {
     const userId = requireUserId(request);
     await requireSessionOwner(userId, pathId(request));

@@ -48,6 +48,14 @@
         </template>
         <template v-else>
           <button
+            class="action-btn action-promote"
+            :disabled="!canPromote(task)"
+            @click.stop="promote(task)"
+            title="升级为主会话"
+          >
+            主
+          </button>
+          <button
             class="action-btn action-edit"
             @click.stop="startEdit(task)"
             title="编辑标题"
@@ -82,6 +90,7 @@ const emit = defineEmits<{
   'open-side-task': [payload: { sideSessionId: number; title: string }]
   'edit-title': [payload: { sideSessionId: number; title: string }]
   'delete-side-task': [sideSessionId: number]
+  'promote-side-task': [sideSessionId: number]
 }>()
 
 /** 聚焦模式下按优先级排序（与服务端 tree* 信号无关，右侧使用边路自身字段）；标准模式保持原顺序。 */
@@ -197,6 +206,17 @@ function cancelDelete() {
 function confirmDelete(task: SideTaskItem) {
   confirmingDeleteId.value = null
   emit('delete-side-task', task.id)
+}
+
+function canPromote(task: SideTaskItem) {
+  return !['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'].includes(task.phase)
+}
+
+function promote(task: SideTaskItem) {
+  if (!canPromote(task)) return
+  editingId.value = null
+  confirmingDeleteId.value = null
+  emit('promote-side-task', task.id)
 }
 </script>
 
@@ -341,6 +361,23 @@ function confirmDelete(task: SideTaskItem) {
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
   color: var(--aw-ink-muted-48);
+}
+
+.action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.action-promote {
+  width: auto;
+  min-width: 22px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+
+.action-promote:not(:disabled):hover {
+  background: #f3f4f6;
+  color: var(--aw-primary);
 }
 
 .action-delete:hover {

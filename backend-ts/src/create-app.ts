@@ -293,6 +293,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const sessionCompactionEventService = new SessionCompactionEventService(new SessionCompactionEventRepository(db));
   const envInfo = new EnvironmentInfoProvider();
   const gitOps = new GitOperationService(gitLookup);
+  const todoMapper = new SessionTodoMapper(db);
+  const todoRepo = new SessionTodoRepository(db);
   const sessionService = new SessionService(
     sessionRepo, messageRepo, fileChangeRepo,
     {
@@ -301,7 +303,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       requireDefaultAgent: () => agentService.requireDefaultAgent() as never,
       listOptions: async () => (await agentRepo.selectList()).map((a) => ({ id: a.id!, name: a.name })),
     },
-    pathSandbox, envInfo, commandService, gitOps, sessionCompactionService, sessionCompactionEventService,
+    pathSandbox, envInfo, commandService, gitOps, sessionCompactionService, sessionCompactionEventService, todoRepo,
   );
   const sessionSvc = sessionService as never;
   const sessionMap = sessionRepo as never;
@@ -309,8 +311,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const activityService = new ActivityService(new SessionActivityRepository(db));
   const messageQueueService = new MessageQueueService(new MessageQueueRepository(db));
-  const todoMapper = new SessionTodoMapper(db);
-  const todoRepo = new SessionTodoRepository(db);
   const subagentExecutionRepo = new SubagentExecutionRepository(db);
   const activityHeartbeat = new SessionActivityHeartbeat(sessionService);
 

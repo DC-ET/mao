@@ -25,26 +25,71 @@ function makeService() {
     updateWhere: vi.fn(),
     selectMessageSearchCandidates: vi.fn(),
     list: vi.fn(),
+    insert: vi.fn(async (s: Session) => { s.id = 99; return 99; }),
+    lockActiveSessionById: vi.fn(),
+    logicalDelete: vi.fn(),
+    transaction: vi.fn(async (fn: (db: unknown) => Promise<unknown>) => {
+      let messageId = 199;
+      const txDb = {
+        insert: vi.fn(async (table: string, data: Record<string, unknown>) => {
+          if (table === 'session') return 99;
+          if (table === 'message') {
+            data.id = messageId;
+            return messageId++;
+          }
+          return 299;
+        }),
+        queryOne: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM `session`')) {
+            return vi.mocked(sessionRepo.findById).getMockImplementation()?.(20) ?? null;
+          }
+          return null;
+        }),
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM `message`')) {
+            return [
+              { id: 1, sessionId: 20, role: 'USER', content: '检查一下' },
+              { id: 2, sessionId: 20, role: 'ASSISTANT', content: '完成' },
+            ];
+          }
+          if (sql.includes('FROM `session`')) return vi.mocked(sessionRepo.list).getMockImplementation()?.('', [], '') ?? [];
+          if (sql.includes('message_file_change')) return [];
+          if (sql.includes('session_todo')) return [];
+          return [];
+        }),
+        execute: vi.fn(async () => ({ affectedRows: 1 })),
+      };
+      return fn(txDb);
+    }),
   } as unknown as SessionRepository;
   const messageRepo = {
     selectMessagesForSearch: vi.fn(),
+    listBySession: vi.fn(async () => []),
+    insert: vi.fn(async (m: Message) => { m.id = 199; return 199; }),
+    logicalDeleteBySession: vi.fn(),
   } as unknown as MessageRepository;
   const agentLookup = {
     findByIds: vi.fn().mockResolvedValue([]),
   } as unknown as AgentLookup;
+  const fileChangeRepo = {
+    listBySession: vi.fn(async () => []),
+    insert: vi.fn(),
+  } as unknown as FileChangeRepository;
+  const sessionCompactionService = { deleteBySessionId: vi.fn() } as unknown as SessionCompactionService;
+  const sessionCompactionEventService = { deleteBySessionId: vi.fn() } as unknown as SessionCompactionEventService;
   const service = new SessionService(
     sessionRepo,
     messageRepo,
-    {} as FileChangeRepository,
+    fileChangeRepo,
     agentLookup,
     {} as PathSandbox,
     {} as EnvironmentInfoProvider,
     {} as UserCommandLookup,
     {} as GitOperationService,
-    {} as SessionCompactionService,
-    {} as SessionCompactionEventService,
+    sessionCompactionService,
+    sessionCompactionEventService,
   );
-  return { service, sessionRepo, messageRepo, agentLookup };
+  return { service, sessionRepo, messageRepo, fileChangeRepo, agentLookup };
 }
 
 describe('SessionService archive', () => {
@@ -88,6 +133,45 @@ describe('SessionService archive', () => {
     const { service } = makeService();
     expect(await service.listSideTasksByParentIds(null)).toEqual([]);
     expect(await service.listSideTasksByParentIds([])).toEqual([]);
+  });
+
+  it('promotesSideTaskToNormalSessionAndCopiesMessages', async () => {
+    const { service, sessionRepo, messageRepo } = makeService();
+    vi.mocked(sessionRepo.findById).mockResolvedValue({
+      id: 20,
+      userId: 7,
+      title: '边路检查',
+      sessionType: 'SIDE_TASK',
+      phase: 'COMPLETED',
+      agentId: 9,
+      executionMode: 'CLOUD',
+      workspace: '/tmp/w',
+      permissionLevel: 'READ_WRITE',
+      modelId: 3,
+      projectKey: 'demo',
+    });
+    vi.mocked(sessionRepo.list).mockResolvedValue([]);
+
+    const promoted = await service.promoteSideTaskToMainSession(20, 7);
+
+    expect(promoted.id).toBe(99);
+    expect(promoted.sessionType).toBe('NORMAL');
+    expect(promoted.parentSessionId).toBeNull();
+    expect(sessionRepo.transaction).toHaveBeenCalled();
+  });
+
+  it('rejectsRunningSideTaskPromotion', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.findById).mockResolvedValue({ id: 20, userId: 7, sessionType: 'SIDE_TASK', phase: 'RUNNING' });
+    await expect(service.promoteSideTaskToMainSession(20, 7)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+  });
+
+  it('rejectsSideTaskPromotionWhenChildSessionExists', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.findById).mockResolvedValue({ id: 20, userId: 7, sessionType: 'SIDE_TASK', phase: 'COMPLETED' });
+    vi.mocked(sessionRepo.list).mockResolvedValue([{ id: 30, userId: 7, parentSessionId: 20, sessionType: 'SUBAGENT' }]);
+    await expect(service.promoteSideTaskToMainSession(20, 7)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    expect(sessionRepo.insert).not.toHaveBeenCalled();
   });
 });
 

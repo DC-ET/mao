@@ -30,6 +30,22 @@ export class SessionActivityRepository {
 export class SessionTodoRepository {
   constructor(private readonly db: Db) {}
 
+  async insert(todo: SessionTodo): Promise<number> {
+    const id = await this.db.insert('session_todo', {
+      sessionId: todo.sessionId,
+      content: todo.content ?? '',
+      description: todo.description ?? '',
+      activeForm: todo.activeForm ?? '',
+      status: todo.status ?? 'pending',
+      sortOrder: todo.sortOrder ?? 0,
+      owner: todo.owner ?? null,
+      claimedAt: todo.claimedAt ?? null,
+      blockedBy: todo.blockedBy ?? null,
+    });
+    todo.id = id;
+    return id;
+  }
+
   listBySession(sessionId: number): Promise<SessionTodo[]> {
     return this.db.query<SessionTodo>(
       `SELECT * FROM session_todo WHERE session_id = ? AND ${notDeleted()} ORDER BY sort_order ASC, id ASC`,

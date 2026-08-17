@@ -55,6 +55,7 @@ describe('session and admin routes', () => {
       listSubagentSessionsWithSideTasks: vi.fn(async () => []),
       listSideTasksByParentIds: vi.fn(async () => []),
       deleteSession: vi.fn(),
+      promoteSideTaskToMainSession: vi.fn(async () => session({ id: 2, sessionType: 'NORMAL', parentSessionId: null })),
       togglePin: vi.fn(),
       toggleFavorite: vi.fn(),
       archiveSession: vi.fn(),
@@ -132,6 +133,7 @@ describe('session and admin routes', () => {
     expect(projects.body.data[0].isGit).toBe(true);
     expect((await json('GET', '/v1/sessions/1')).body.data.id).toBe(1);
     expect((await json('DELETE', '/v1/sessions/1')).body.code).toBe(0);
+    expect((await json('POST', '/v1/sessions/1/promote-side-task')).body.data.id).toBe(2);
     expect((await json('PUT', '/v1/sessions/1/pin')).body.code).toBe(0);
     expect((await json('PUT', '/v1/sessions/1/favorite')).body.code).toBe(0);
     expect((await json('PUT', '/v1/sessions/1/archive')).body.code).toBe(0);

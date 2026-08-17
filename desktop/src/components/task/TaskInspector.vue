@@ -150,6 +150,7 @@
           @open-side-task="handleOpenSideTask"
           @edit-title="handleEditSideTaskTitle"
           @delete-side-task="handleDeleteSideTask"
+          @promote-side-task="handlePromoteSideTask"
         />
       </div>
 
@@ -284,6 +285,7 @@ const emit = defineEmits<{
   'open-subagent': [payload: { childSessionId: number; title: string }]
   'edit-title': [payload: { sideSessionId: number; title: string }]
   'delete-side-task': [sideSessionId: number]
+  'promote-side-task': [sideSessionId: number]
   'open-git-diff': [file: GitChangedFile, repoPath?: string]
 }>()
 
@@ -494,6 +496,10 @@ function handleEditSideTaskTitle(payload: { sideSessionId: number; title: string
 
 function handleDeleteSideTask(sideSessionId: number) {
   emit('delete-side-task', sideSessionId)
+}
+
+function handlePromoteSideTask(sideSessionId: number) {
+  emit('promote-side-task', sideSessionId)
 }
 
 const editing = ref(false)

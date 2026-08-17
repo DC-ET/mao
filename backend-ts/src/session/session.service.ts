@@ -12,7 +12,8 @@ import { fromString as permissionFromString } from './permission-level.js';
 import type { GitOperationService } from './git-operation.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
-import type { FileChangeRepository, MessageRepository, SessionRepository } from './session.repository.js';
+import { FileChangeRepository, MessageRepository, SessionRepository } from './session.repository.js';
+import { SessionTodoRepository } from './activity.repository.js';
 import type {
   AgentLookup,
   AgentRef,
@@ -24,6 +25,7 @@ import type {
   Session,
   SessionGroupBucket,
   SessionGroupPage,
+  SessionTodo,
   UserCommandLookup,
 } from './types.js';
 import { SessionGroupKey } from './util/session-group-key.js';
@@ -50,6 +52,7 @@ export class SessionService {
     private readonly gitOperationService: GitOperationService,
     private readonly sessionCompactionService: SessionCompactionService,
     private readonly sessionCompactionEventService: SessionCompactionEventService,
+    private readonly todoRepo?: SessionTodoRepository,
   ) {}
 
   async createSession(
@@ -391,6 +394,128 @@ export class SessionService {
     await this.sessionCompactionEventService.deleteBySessionId(id);
     await this.messageRepo.logicalDeleteBySession(id);
     await this.sessionRepo.logicalDelete(id);
+  }
+
+  async promoteSideTaskToMainSession(sideSessionId: number, userId: number): Promise<Session> {
+    return this.sessionRepo.transaction(async (tx) => {
+      const txSessionRepo = new SessionRepository(tx);
+      const txMessageRepo = new MessageRepository(tx);
+      const txFileChangeRepo = new FileChangeRepository(tx);
+      const txTodoRepo = new SessionTodoRepository(tx);
+
+      const source = await txSessionRepo.findByIdForUpdate(sideSessionId);
+      if (source == null) {
+        throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+      }
+      if (source.userId !== userId) {
+        throw new BusinessException(ErrorCode.FORBIDDEN, '无权操作该会话');
+      }
+      if (source.sessionType !== 'SIDE_TASK') {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '只有边路任务可以升级为主会话');
+      }
+      if (source.phase === 'RUNNING' || source.phase === 'WAITING_APPROVAL' || source.phase === 'RESUMING' || source.phase === 'CANCELLING') {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '边路任务运行中，无法升级为主会话');
+      }
+      const childSessions = await txSessionRepo.list(
+        `parent_session_id = ? AND status <> 'ARCHIVED'`,
+        [sideSessionId],
+        'LIMIT 1',
+      );
+      if (childSessions.length > 0) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '边路任务存在子会话，无法升级为主会话');
+      }
+
+      const target: Session = {
+        userId,
+        agentId: source.agentId,
+        title: source.title ?? '未命名会话',
+        status: 'ACTIVE',
+        isPinned: 0,
+        isFavorite: 0,
+        executionMode: source.executionMode,
+        workspace: source.workspace,
+        permissionLevel: source.permissionLevel,
+        modelId: source.modelId,
+        isGit: source.isGit,
+        platform: source.platform,
+        shellPath: source.shellPath,
+        osVersion: source.osVersion,
+        phase: 'IDLE',
+        summary: source.summary,
+        elapsedMs: 0,
+        projectKey: source.projectKey,
+        contextTokens: null,
+        lastPromptTokens: null,
+        unread: 0,
+        parentSessionId: null,
+        sessionType: 'NORMAL',
+      };
+      await txSessionRepo.insert(target);
+      const targetId = target.id!;
+
+      const messages = await txMessageRepo.listBySession(sideSessionId);
+      const messageIdMap = new Map<number, number>();
+      for (const m of messages) {
+        const copy: Message = {
+          sessionId: targetId,
+          role: m.role,
+          content: m.content,
+          thinkingContent: m.thinkingContent,
+          toolCallId: m.toolCallId,
+          toolCalls: m.toolCalls,
+          tokenCount: m.tokenCount,
+          modelId: m.modelId,
+          metadata: m.metadata,
+          sourceSessionId: m.sourceSessionId ?? sideSessionId,
+        };
+        await txMessageRepo.insert(copy);
+        if (m.id != null && copy.id != null) messageIdMap.set(m.id, copy.id);
+      }
+
+      const fileChanges = await txFileChangeRepo.listBySession(sideSessionId);
+      for (const change of fileChanges) {
+        if (change.messageId == null) continue;
+        const mappedMessageId = messageIdMap.get(change.messageId);
+        if (mappedMessageId == null) continue;
+        await txFileChangeRepo.insert({
+          messageId: mappedMessageId,
+          sessionId: targetId,
+          filePath: change.filePath,
+          changeType: change.changeType,
+          linesAdded: change.linesAdded,
+          linesDeleted: change.linesDeleted,
+          diffMode: change.diffMode,
+          beforeContent: change.beforeContent,
+          afterContent: change.afterContent,
+          patchContent: change.patchContent,
+          patchTruncated: change.patchTruncated,
+          diffUnavailableReason: change.diffUnavailableReason,
+        });
+      }
+
+      if (this.todoRepo != null) {
+        const todos = await txTodoRepo.listBySession(sideSessionId);
+        for (const todo of todos) {
+          await txTodoRepo.insert({
+            sessionId: targetId,
+            content: todo.content,
+            description: todo.description,
+            activeForm: todo.activeForm,
+            status: todo.status,
+            sortOrder: todo.sortOrder,
+            owner: todo.owner,
+            claimedAt: todo.claimedAt,
+            blockedBy: todo.blockedBy,
+          } as SessionTodo);
+        }
+      }
+
+      await tx.execute('DELETE FROM session_compaction WHERE session_id = ?', [sideSessionId]);
+      await tx.execute('DELETE FROM session_compaction_event WHERE session_id = ?', [sideSessionId]);
+      await txMessageRepo.logicalDeleteBySession(sideSessionId);
+      await txSessionRepo.logicalDelete(sideSessionId);
+      return target;
+    });
   }
 
   async searchSessionsByUserMessage(userId: number, keyword: string | null | undefined): Promise<MessageSearchItem[]> {

@@ -6,8 +6,16 @@ import type { FileChange, Message, Session } from './types.js';
 export class SessionRepository {
   constructor(private readonly db: Db) {}
 
+  transaction<T>(fn: (db: Db) => Promise<T>): Promise<T> {
+    return this.db.transaction(fn);
+  }
+
   findById(id: number): Promise<Session | null> {
     return this.db.queryOne<Session>(`SELECT * FROM \`session\` WHERE id = ? AND ${notDeleted()}`, [id]);
+  }
+
+  findByIdForUpdate(id: number): Promise<Session | null> {
+    return this.db.queryOne<Session>(`SELECT * FROM \`session\` WHERE id = ? AND ${notDeleted()} FOR UPDATE`, [id]);
   }
 
   selectById(id: number): Promise<Session | null> {
