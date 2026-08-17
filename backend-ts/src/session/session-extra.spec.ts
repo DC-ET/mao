@@ -222,6 +222,51 @@ describe('TaskTerminalService', () => {
     await svc.finishExecution(1, 7, 'COMPLETED', 'exec-2');
     await expect(svc.finishExecution(1, 7, 'RUNNING', 'x')).rejects.toThrow(/Unsupported/);
   });
+
+  it('publishes tree signals for the completing session itself (main task)', async () => {
+    const sessionService = {
+      getSession: vi.fn(async () => ({ id: 1, userId: 7, phase: 'RUNNING', sessionType: 'NORMAL' })),
+      updatePhase: vi.fn(),
+      updateRuntimeStatus: vi.fn(),
+      markLastMessageFinished: vi.fn(),
+    };
+    const registry = { send: vi.fn(), sendWithResult: vi.fn(async () => ({ delivered: true })) };
+    const delivery = { prepare: vi.fn(async () => ({ id: 9 })), resolveWebSocket: vi.fn() };
+    const tree = { publish: vi.fn() };
+    const svc = new TaskTerminalService(sessionService as never, registry as never, delivery as never, tree as never);
+    await svc.finishExecution(1, 7, 'COMPLETED', 'exec-1');
+    expect(tree.publish).toHaveBeenCalledWith(1);
+  });
+
+  it('publishes tree signals for the parent when a side task finishes', async () => {
+    const sessionService = {
+      getSession: vi.fn(async () => ({ id: 2, userId: 7, phase: 'RUNNING', sessionType: 'SIDE_TASK', parentSessionId: 1 })),
+      updatePhase: vi.fn(),
+      updateRuntimeStatus: vi.fn(),
+      markLastMessageFinished: vi.fn(),
+    };
+    const registry = { send: vi.fn(), sendWithResult: vi.fn(async () => ({ delivered: true })) };
+    const delivery = { prepare: vi.fn(async () => ({ id: 9 })), resolveWebSocket: vi.fn() };
+    const tree = { publish: vi.fn() };
+    const svc = new TaskTerminalService(sessionService as never, registry as never, delivery as never, tree as never);
+    await svc.finishExecution(2, 7, 'COMPLETED', 'exec-1');
+    expect(tree.publish).toHaveBeenCalledWith(1);
+  });
+
+  it('does not publish tree signals for subagent completion', async () => {
+    const sessionService = {
+      getSession: vi.fn(async () => ({ id: 3, userId: 7, phase: 'RUNNING', sessionType: 'SUBAGENT', parentSessionId: 1 })),
+      updatePhase: vi.fn(),
+      updateRuntimeStatus: vi.fn(),
+      markLastMessageFinished: vi.fn(),
+    };
+    const registry = { send: vi.fn(), sendWithResult: vi.fn(async () => ({ delivered: true })) };
+    const delivery = { prepare: vi.fn(async () => ({ id: 9 })), resolveWebSocket: vi.fn() };
+    const tree = { publish: vi.fn() };
+    const svc = new TaskTerminalService(sessionService as never, registry as never, delivery as never, tree as never);
+    await svc.finishExecution(3, 7, 'COMPLETED', 'exec-1');
+    expect(tree.publish).not.toHaveBeenCalled();
+  });
 });
 
 describe('GitOperationService helpers', () => {

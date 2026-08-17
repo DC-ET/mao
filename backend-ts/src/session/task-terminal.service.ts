@@ -67,6 +67,10 @@ export class TaskTerminalService {
 
     if (session.sessionType === 'SIDE_TASK' && session.parentSessionId != null) {
       this.treeSignalPublisher.publish(session.parentSessionId);
+    } else if (session.sessionType !== 'SUBAGENT') {
+      // 主任务自身进入终态时也要重算并下发 treeRunning，否则前端列表里的
+      // treeRunning 会停留在旧值（true），导致蓝色“执行中”圆点不转绿。
+      this.treeSignalPublisher.publish(sessionId);
     }
   }
 
