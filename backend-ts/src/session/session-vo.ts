@@ -32,6 +32,7 @@ export interface SessionVO {
   osVersion?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  startedAt?: string | null;
   phase?: string;
   summary?: string | null;
   elapsedMs?: number;
@@ -139,6 +140,7 @@ export function toSessionVO(session: Session, agentMap: Map<number, { name: stri
     osVersion: session.osVersion,
     createdAt: javaLocalDateTimeString(session.createdAt),
     updatedAt: javaLocalDateTimeString(session.updatedAt),
+    startedAt: javaLocalDateTimeString(session.startedAt),
     phase: visiblePhase(session.phase),
     summary: session.summary,
     elapsedMs: session.elapsedMs != null ? session.elapsedMs : 0,

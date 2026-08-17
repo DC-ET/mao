@@ -618,15 +618,20 @@ function focusStatusLabel(session: Session): string {
     session.treePendingQuestionCount ?? session.pendingQuestionCount ?? 0,
     sessionStore.sessionPendingQuestions?.get(String(session.id))?.length ?? 0
   )
+  const sides = sessionStore.getSideTasks(String(session.id))
+  const runningSide = sides.find(t => SIDE_ACTIVE_PHASES.has(t.phase))
+  const failedSide = sides.find(t => t.phase === 'FAILED')
   if (approval > 0) return `待审批${approval > 1 ? ` ×${approval}` : ''}`
   if (question > 0) return '待回答'
-  if (session.phase === 'FAILED' || session.treeFailed) return '已失败'
-  if (session.phase === 'RUNNING' || session.treeRunning) return `运行中 ${formatElapsed(session)}`
+  if (session.phase === 'FAILED' || failedSide || session.treeFailed) return '已失败'
+  if (session.phase === 'RUNNING') return `运行中 ${formatDurationSince(session.startedAt || session.updatedAt || session.createdAt)}`
+  if (session.phase === 'RESUMING') return '恢复中'
+  if (session.phase === 'WAITING_APPROVAL') return '待审批'
+  if (session.phase === 'CANCELLING') return '取消中'
+  if (runningSide) return `运行中 ${formatDurationSince(runningSide.startedAt || runningSide.updatedAt || runningSide.createdAt)}`
+  if (session.treeRunning) return `运行中 ${formatDurationSince(session.updatedAt || session.createdAt)}`
   switch (session.phase) {
-    case 'RESUMING': return '恢复中'
-    case 'WAITING_APPROVAL': return '待审批'
-    case 'CANCELLING': return '取消中'
-    case 'COMPLETED': return `${formatElapsed(session)}前完成`
+    case 'COMPLETED': return `${formatRelativeSince(session.updatedAt || session.createdAt)}前完成`
     case 'CANCELLED': return '已取消'
     default: return '空闲'
   }
@@ -641,9 +646,10 @@ function focusStatusClass(session: Session): string {
     session.treePendingQuestionCount ?? session.pendingQuestionCount ?? 0,
     sessionStore.sessionPendingQuestions?.get(String(session.id))?.length ?? 0
   )
+  const sides = sessionStore.getSideTasks(String(session.id))
   if (approval > 0 || question > 0) return 'status-waiting'
-  if (session.phase === 'FAILED' || session.treeFailed) return 'status-failed'
-  if (session.phase === 'RUNNING' || session.phase === 'RESUMING' || session.phase === 'WAITING_APPROVAL' || session.treeRunning) return 'status-running'
+  if (session.phase === 'FAILED' || session.treeFailed || sides.some(t => t.phase === 'FAILED')) return 'status-failed'
+  if (session.phase === 'RUNNING' || session.phase === 'RESUMING' || session.phase === 'WAITING_APPROVAL' || session.treeRunning || sides.some(t => SIDE_ACTIVE_PHASES.has(t.phase))) return 'status-running'
   if (session.phase === 'COMPLETED') return 'status-completed'
   return ''
 }
@@ -866,15 +872,28 @@ function effectivePhaseClass(session: Session): string {
   if (session.running) return phaseClass(session.phase)
   const sides = sessionStore.getSideTasks(String(session.id))
   if (sides.some(t => t.phase === 'WAITING_APPROVAL')) return 'waiting'
-  if (sides.some(t => SIDE_ACTIVE_PHASES.has(t.phase))) return 'running'
+  if (session.treeFailed || sides.some(t => t.phase === 'FAILED')) return 'failed'
+  if (session.treeRunning || sides.some(t => SIDE_ACTIVE_PHASES.has(t.phase))) return 'running'
   return phaseClass(session.phase)
 }
 
 function formatElapsed(session: Session) {
-  if (!session.createdAt) return ''
+  return formatRelativeSince(session.createdAt)
+}
+
+function formatDurationSince(time?: string) {
+  return formatTimeDiff(time)
+}
+
+function formatRelativeSince(time?: string) {
+  return formatTimeDiff(time)
+}
+
+function formatTimeDiff(time?: string) {
+  if (!time) return ''
   const now = Date.now()
-  const created = new Date(session.createdAt).getTime()
-  const diffMs = now - created
+  const t = new Date(time).getTime()
+  const diffMs = now - t
   if (diffMs < 0) return ''
 
   const seconds = Math.floor(diffMs / 1000)

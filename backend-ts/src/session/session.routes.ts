@@ -311,6 +311,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       phase: s.phase != null ? s.phase : 'IDLE',
       createdAt: javaLocalDateTimeString(s.createdAt),
       updatedAt: javaLocalDateTimeString(s.updatedAt),
+      startedAt: javaLocalDateTimeString(s.startedAt),
       unread: s.unread === 1,
       pendingApprovalCount: approvalCounts.get(s.id!) ?? 0,
       pendingQuestionCount: questionCounts.get(s.id!) ?? 0,

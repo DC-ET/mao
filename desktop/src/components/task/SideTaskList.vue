@@ -27,7 +27,7 @@
         <span v-else class="side-task-title">{{ task.title || '任务' }}</span>
       </div>
       <div class="side-task-item-meta">
-        <span class="side-task-elapsed">{{ formatElapsed(task.createdAt) }}</span>
+        <span class="side-task-elapsed">{{ taskStatusLabel(task) }}</span>
       </div>
       <div class="side-task-item-actions">
         <template v-if="confirmingDeleteId === task.id">
@@ -107,11 +107,24 @@ function phaseClass(phase: TaskPhase) {
   }
 }
 
-function formatElapsed(createdAt?: string) {
-  if (!createdAt) return ''
+function taskStatusLabel(task: SideTaskItem) {
+  switch (task.phase) {
+    case 'RUNNING': return `运行中 ${formatElapsed(task.startedAt || task.updatedAt || task.createdAt)}`
+    case 'RESUMING': return '恢复中'
+    case 'WAITING_APPROVAL': return '待审批'
+    case 'CANCELLING': return '取消中'
+    case 'COMPLETED': return `${formatElapsed(task.updatedAt || task.createdAt)}前完成`
+    case 'FAILED': return '已失败'
+    case 'CANCELLED': return '已取消'
+    default: return formatElapsed(task.createdAt)
+  }
+}
+
+function formatElapsed(time?: string) {
+  if (!time) return ''
   const now = Date.now()
-  const created = new Date(createdAt).getTime()
-  const diffMs = now - created
+  const t = new Date(time).getTime()
+  const diffMs = now - t
   if (diffMs < 0) return ''
 
   const seconds = Math.floor(diffMs / 1000)

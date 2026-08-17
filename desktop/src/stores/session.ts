@@ -41,6 +41,7 @@ export interface Session {
   status: SessionStatus
   createdAt: string
   updatedAt: string
+  startedAt?: string
   messageCount: number
   // Task fields
   phase: TaskPhase
@@ -93,6 +94,7 @@ export interface SideTaskItem {
   phase: TaskPhase
   createdAt?: string
   updatedAt?: string
+  startedAt?: string
   /** 边路任务后台完成且父会话未被查看时的未读标记（左侧任务栏青色圆点） */
   unread?: boolean
   /** 边路任务自身待审批 / 待回答计数（服务端 VO，聚焦排序用） */
@@ -740,11 +742,12 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  function updateSessionPhase(id: string, phase: TaskPhase) {
+  function updateSessionPhase(id: string, phase: TaskPhase, startedAt?: string) {
     sessionPhases.value.set(String(id), phase)
     updateSession(id, {
       phase,
-      running: ACTIVE_PHASES.has(phase)
+      running: ACTIVE_PHASES.has(phase),
+      ...(startedAt ? { startedAt } : {})
     })
   }
 
@@ -786,11 +789,12 @@ export const useSessionStore = defineStore('session', () => {
     sideTaskCache.value = new Map(sideTaskCache.value)
   }
 
-  function updateSideTaskPhase(sideSessionId: number, phase: TaskPhase) {
+  function updateSideTaskPhase(sideSessionId: number, phase: TaskPhase, startedAt?: string) {
     for (const [, list] of sideTaskCache.value) {
       const item = list.find(t => t.id === sideSessionId)
       if (item) {
         item.phase = phase
+        if (startedAt) item.startedAt = startedAt
         sideTaskCache.value = new Map(sideTaskCache.value)
         break
       }

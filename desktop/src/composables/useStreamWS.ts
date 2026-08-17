@@ -512,6 +512,7 @@ export function useStreamWS() {
           if (phase === 'RUNNING' && data.executionId) {
             setActiveExecution(sessionId, data.executionId)
           }
+          const startedAt = phase === 'RUNNING' ? new Date().toISOString() : undefined
 
           // Ignore stale CANCELLING after local optimistic cancel
           if (phase === 'CANCELLING' && !activeExecutionIds.has(sessionId)) {
@@ -522,8 +523,8 @@ export function useStreamWS() {
             break
           }
 
-          sessionStore.updateSessionPhase(sessionId, phase)
-          sessionStore.updateSideTaskPhase(Number(sessionId), phase)
+          sessionStore.updateSessionPhase(sessionId, phase, startedAt)
+          sessionStore.updateSideTaskPhase(Number(sessionId), phase, startedAt)
           sessionStore.updateSubagentPhase(Number(sessionId), phase)
           // Sync unread state — skip for active session (user is already viewing)
           if (data.unread !== undefined) {
@@ -680,9 +681,11 @@ export function useStreamWS() {
         // Session was already running when we subscribed — sync phase so client can show correct UI
         if (sessionId && data?.phase) {
           if (data.executionId) setActiveExecution(sessionId, data.executionId)
-          sessionStore.updateSessionPhase(sessionId, data.phase as TaskPhase)
-          sessionStore.updateSideTaskPhase(Number(sessionId), data.phase as TaskPhase)
-          sessionStore.updateSubagentPhase(Number(sessionId), data.phase as TaskPhase)
+          const phase = data.phase as TaskPhase
+          const startedAt = phase === 'RUNNING' ? new Date().toISOString() : undefined
+          sessionStore.updateSessionPhase(sessionId, phase, startedAt)
+          sessionStore.updateSideTaskPhase(Number(sessionId), phase, startedAt)
+          sessionStore.updateSubagentPhase(Number(sessionId), phase)
         }
         break
 
