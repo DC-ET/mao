@@ -11,12 +11,12 @@ export class SpawnSubagentTool extends BaseTool {
   getDescription(): string {
     return '在后台启动一个子代理执行任务，立即返回任务句柄，主代理可继续主线工作。'
       + '适用于：可并行、无强依赖的分支工作；主代理无需立即等待结果。'
-      + '完成后子代理会主动汇报结果。不要用于需要立即拿到结果的强依赖任务（请用 delegate）。';
+      + '完成后子代理会主动汇报结果。';
   }
   getToolPrompt(): string {
     return '## 后台子代理\n\n'
-      + '使用 `spawn_subagent` 在后台派发子代理，返回 `task_id`，主代理继续执行主线。\n'
-      + '配套工具：`check_subagent` 查看进度、`cancel_subagent` 取消、`wait_subagents` 等待全部完成。\n'
+      + '使用 `spawn_subagent` 在后台派发子代理，返回 `task_id` 和 `child_session_id`，主代理继续执行主线。\n'
+      + '配套工具：`subagent_followup` 追问/纠偏、`check_subagent` 查看进度、`cancel_subagent` 取消、`wait_subagents` 等待全部完成。\n'
       + '注意：后台子代理无法与用户交互，也不能再派生后台子代理。\n'
       + '主代理在主线完成时若仍有后台子代理运行，会自动挂起等待，无需手动等待。';
   }
@@ -48,6 +48,56 @@ export class SpawnSubagentTool extends BaseTool {
       task_id: result.taskId,
       child_session_id: result.childSessionId,
       status: 'RUNNING',
+    });
+  }
+}
+
+export class SubagentFollowupTool extends BaseTool {
+  constructor(private readonly manager: BackgroundSubagentManager) { super(); }
+
+  getName(): string { return 'subagent_followup'; }
+  getDescription(): string {
+    return '对既有后台子代理会话发起追问。若子代理正在运行，本调用会被理解为纠偏：中断当前执行，追加纠偏消息，并启动新的后台执行。';
+  }
+  getToolPrompt(): string {
+    return '## 子代理追问与纠偏\n\n'
+      + '使用 `subagent_followup` 对 `spawn_subagent` 返回的 `child_session_id` 发起追问。\n'
+      + '如果子代理已完成或空闲，会复用其历史上下文启动一轮新的后台追问。\n'
+      + '如果子代理正在运行，本次追问会作为纠偏：系统会中断当前执行，追加纠偏消息，再启动新的后台执行。\n'
+      + '`subagent_followup` 立即返回新的 `task_id`，后续使用 `check_subagent` 或 `wait_subagents` 获取结果。';
+  }
+  getInputSchema(): Record<string, unknown> {
+    return {
+      type: 'object',
+      properties: {
+        child_session_id: { type: 'integer', description: '要追问或纠偏的子代理会话 ID，来自 spawn_subagent 或 subagent_followup 返回值' },
+        task: { type: 'string', description: '追问或纠偏消息。应说明最新目标、修正内容和期望输出。' },
+      },
+      required: ['child_session_id', 'task'],
+    };
+  }
+  getOutputSchema(): Record<string, unknown> { return { type: 'object' }; }
+
+  protected async executeWithSession(argumentsJson: string, sessionId: number | null): Promise<string> {
+    const args = parseObject(argumentsJson);
+    if (!args) return errorJson('无效的JSON参数');
+    if (sessionId == null) return errorJson('缺少会话 ID');
+    const rawChildSessionId = args.child_session_id;
+    const childSessionId = rawChildSessionId != null ? Number(rawChildSessionId) : null;
+    const task = asText(args.task);
+    if (childSessionId == null || !Number.isInteger(childSessionId) || !task) {
+      return errorJson('缺少必填参数: child_session_id, task');
+    }
+    const toolCallId = ToolCallContext.getToolCallId();
+    if (!toolCallId) return errorJson('缺少父工具调用 ID');
+    const result = await this.manager.followup(sessionId, childSessionId, task, toolCallId);
+    if (!result.ok) return errorJson(result.error ?? '创建子代理追问任务失败');
+    return toJson({
+      success: true,
+      task_id: result.taskId,
+      child_session_id: result.childSessionId,
+      status: 'RUNNING',
+      corrected: result.corrected === true,
     });
   }
 }

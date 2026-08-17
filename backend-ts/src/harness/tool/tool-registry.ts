@@ -20,7 +20,7 @@ import type { LocalToolSessionRegistry } from '../local/local-tool-session-regis
 import type { SubAgentVisibilityService } from '../delegate/subagent-visibility-service.js';
 import type { BackgroundSubagentManager } from '../delegate/background-subagent-manager.js';
 import {
-  CancelSubagentTool, CheckSubagentTool, SpawnSubagentTool, WaitSubagentsTool,
+  CancelSubagentTool, CheckSubagentTool, SpawnSubagentTool, SubagentFollowupTool, WaitSubagentsTool,
 } from './impl/background-subagent-tools.js';
 import { AskUserQuestionsTool } from './impl/ask-user-questions-tool.js';
 import { ReadFileTool } from './impl/read-file-tool.js';
@@ -37,8 +37,6 @@ import {
   CreateScheduledTaskTool, DeleteScheduledTaskTool, ListScheduledTasksTool, UpdateScheduledTaskTool,
 } from './impl/scheduled-task-tools.js';
 import { SendWechatFileTool, SendWechatImageTool } from './impl/wechat-tools.js';
-import { DelegateFollowupTool, DelegateTool } from './impl/delegate-tool.js';
-import { lazyRef } from '../../common/lazy-ref.js';
 
 export interface DefaultToolRegistryDeps {
   pathSandbox: PathSandbox;
@@ -74,13 +72,6 @@ export interface DefaultToolRegistryDeps {
 
 /** Instantiates and registers all 22 built-in tools (mirrors Spring Tool bean auto-registration). */
 export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRegistry {
-  const harnessService = lazyRef(() => deps.harnessService);
-  const agentLoop = lazyRef(() => deps.agentLoop);
-  const delegate = new DelegateTool(
-    deps.definitionRegistry, harnessService, agentLoop, deps.sessionService,
-    deps.sessionMapper, deps.subagentExecutionMapper, deps.localToolSessionRegistry,
-    deps.visibilityService, deps.subagentInvocationService,
-  );
   return new ToolRegistry([
     new AskUserQuestionsTool(),
     new ReadFileTool(deps.pathSandbox),
@@ -107,16 +98,10 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new SendWechatImageTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
     new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
     new SpawnSubagentTool(deps.backgroundSubagentManager),
+    new SubagentFollowupTool(deps.backgroundSubagentManager),
     new CheckSubagentTool(deps.backgroundSubagentManager),
     new CancelSubagentTool(deps.backgroundSubagentManager),
-    new WaitSubagentsTool(deps.backgroundSubagentManager, agentLoop),
-    delegate,
-    new DelegateFollowupTool(
-      deps.definitionRegistry, harnessService, agentLoop, deps.sessionService,
-      deps.sessionMapper, deps.messageMapper, deps.sessionCompactionService,
-      deps.subagentExecutionMapper, deps.localToolSessionRegistry, deps.visibilityService,
-      delegate, deps.subagentInvocationService,
-    ),
+    new WaitSubagentsTool(deps.backgroundSubagentManager, deps.agentLoop),
   ]);
 }
 

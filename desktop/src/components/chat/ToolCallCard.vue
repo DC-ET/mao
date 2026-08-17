@@ -79,7 +79,7 @@ watch(
   }
 )
 
-const isDelegate = computed(() => props.toolCall.name === 'delegate' || props.toolCall.name === 'delegate_followup')
+const isDelegate = computed(() => ['delegate', 'delegate_followup', 'spawn_subagent', 'subagent_followup'].includes(props.toolCall.name))
 
 const childSessionId = computed(() => {
   const result = props.toolCall.result

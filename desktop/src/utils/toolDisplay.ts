@@ -13,6 +13,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   delegate: '委派子代理',
   delegate_followup: '追问子代理',
   spawn_subagent: '启动后台子代理',
+  subagent_followup: '追问后台子代理',
   check_subagent: '查看后台子代理',
   cancel_subagent: '取消后台子代理',
   wait_subagents: '等待后台子代理',

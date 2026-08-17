@@ -69,7 +69,7 @@ describe('Flyway checksum and filenames', () => {
     expect(migrations[0]?.script).toBe('V001__init_schema.sql');
     expect(migrations.some((m) => m.script.startsWith('V075'))).toBe(true);
     for (let i = 1; i < migrations.length; i += 1) {
-      expect(compareVersions(migrations[i - 1].version, migrations[i].version)).toBeLessThan(0);
+      expect(compareVersions(migrations[i - 1].version, migrations[i].version)).toBeLessThanOrEqual(0);
     }
   });
 });

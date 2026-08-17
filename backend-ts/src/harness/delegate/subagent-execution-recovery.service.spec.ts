@@ -17,16 +17,16 @@ function harness(claimed: boolean) {
   };
   const compactionService = { loadValidated: vi.fn(async () => null), boundaryOf: vi.fn(() => 0) };
   const definitionRegistry = { getDefinition: vi.fn(() => ({ name: 'coder' })) };
-  const delegateTool = { buildSubContext: vi.fn(async () => ({ currentRound: 0 })) };
+  const buildSubContext = vi.fn(async () => ({ currentRound: 0 }));
   const agentLoop = { registerCancelFlag: vi.fn(() => ({ get: () => false })), removeCancelFlag: vi.fn() };
   const visibilityService = { executeVisibleWithTimeout: vi.fn(), finishSubagent: vi.fn(async () => undefined) };
   const localRegistry = { isConnected: vi.fn(async () => true), setUserForSession: vi.fn(), removeSession: vi.fn() };
   const service = new SubagentExecutionRecoveryService(
     executionMapper as never, sessionMapper as never, sessionService as never,
-    compactionService as never, definitionRegistry as never, delegateTool as never,
+    compactionService as never, definitionRegistry as never, buildSubContext as never,
     agentLoop as never, visibilityService as never, localRegistry as never,
   );
-  return { service, executionMapper, sessionService, delegateTool, visibilityService };
+  return { service, executionMapper, sessionService, buildSubContext, visibilityService };
 }
 
 const execution = {
@@ -36,16 +36,16 @@ const execution = {
 
 describe('SubagentExecutionRecoveryService', () => {
   it('stops when another instance already claimed the execution', async () => {
-    const { service, executionMapper, delegateTool, sessionService } = harness(false);
+    const { service, executionMapper, buildSubContext, sessionService } = harness(false);
     await service.recover(execution as never);
     expect(executionMapper.claimRecovering).toHaveBeenCalledWith(55);
-    expect(delegateTool.buildSubContext).not.toHaveBeenCalled();
+    expect(buildSubContext).not.toHaveBeenCalled();
     expect(sessionService.updatePhase).not.toHaveBeenCalled();
   });
 
   it('proceeds past the claim when it wins', async () => {
-    const { service, delegateTool } = harness(true);
+    const { service, buildSubContext } = harness(true);
     await service.recover(execution as never);
-    expect(delegateTool.buildSubContext).toHaveBeenCalled();
+    expect(buildSubContext).toHaveBeenCalled();
   });
 });

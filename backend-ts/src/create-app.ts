@@ -728,10 +728,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const staleSweep = new StaleSessionSweepScheduler(sessionService, wsHandler);
   staleSweep.start();
   shellManager.startCleanup();
-  const delegateTool = toolRegistry.getTool('delegate');
   const subagentExecutionRecovery = new SubagentExecutionRecoveryService(
     subagentMapper, sessionMap, sessionSvc, compactionSvc, definitionRegistry,
-    delegateTool as never, agentLoop, visibility, localToolSessions,
+    (childSession, definition) => backgroundSubagentManager.buildSubContext(childSession, definition),
+    agentLoop, visibility, localToolSessions,
   );
   const subagentCoordinator = new SubagentRecoveryCoordinator(
     subagentMapper, subagentExecutionRecovery, subagentResultDelivery,

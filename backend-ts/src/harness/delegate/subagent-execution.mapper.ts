@@ -54,6 +54,13 @@ export class SubagentExecutionMapper {
     );
   }
 
+  findRunningByChildSessionId(childSessionId: number): Promise<SubagentExecution | null> {
+    return this.db.queryOne<SubagentExecution>(
+      "SELECT * FROM subagent_execution WHERE child_session_id = ? AND status IN ('RUNNING', 'RECOVERING') ORDER BY id DESC LIMIT 1",
+      [childSessionId],
+    );
+  }
+
   countByChildSessionId(childSessionId: number): Promise<number> {
     return this.db.queryOne<{ c: number }>(
       'SELECT COUNT(*) AS c FROM subagent_execution WHERE child_session_id = ?',

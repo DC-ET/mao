@@ -1,11 +1,11 @@
 import { nowSql } from '../../common/datetime.js';
 import type { SubagentExecution } from '../../session/types.js';
 import type { AgentLoop } from '../core/agent-loop.js';
-import type { Message, SessionCompactionService, SessionMapper, SessionService } from '../deps.js';
+import type { Message, Session, SessionCompactionService, SessionMapper, SessionService } from '../deps.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
 import { harnessLog } from '../log.js';
-import type { DelegateTool } from '../tool/impl/delegate-tool.js';
-import type { AgentDefinitionRegistry } from './agent-definition-registry.js';
+import type { AgentExecutionContext } from '../core/agent-execution-context.js';
+import type { AgentDefinition, AgentDefinitionRegistry } from './agent-definition-registry.js';
 import type { SubagentExecutionMapper } from './subagent-execution.mapper.js';
 import type { SubAgentVisibilityService } from './subagent-visibility-service.js';
 
@@ -16,7 +16,7 @@ export class SubagentExecutionRecoveryService {
     private readonly sessionService: SessionService,
     private readonly compactionService: SessionCompactionService,
     private readonly definitionRegistry: AgentDefinitionRegistry,
-    private readonly delegateTool: DelegateTool,
+    private readonly buildSubContext: (childSession: Session, definition: AgentDefinition) => Promise<AgentExecutionContext>,
     private readonly agentLoop: AgentLoop,
     private readonly visibilityService: SubAgentVisibilityService,
     private readonly localRegistry: LocalToolSessionRegistry,
@@ -66,21 +66,21 @@ export class SubagentExecutionRecoveryService {
       const boundary = this.compactionService.boundaryOf(compaction);
       await this.sessionService.cleanupIncompleteTailAfterId?.(child.id!, boundary);
       await this.sessionService.updatePhase(child.id!, 'RESUMING');
-      const context = await this.delegateTool.buildSubContext(child, definition);
+      const context = await this.buildSubContext(child, definition);
       const cancel = this.agentLoop.registerCancelFlag(child.id!);
       context.cancelFlag = cancel;
-      const isBackground = execution.invocationType === 'BACKGROUND';
+      const isAsyncSubagentExecution = execution.invocationType === 'BACKGROUND' || execution.invocationType === 'FOLLOWUP';
       if (child.executionMode?.toUpperCase() === 'LOCAL') {
         if (parent.userId != null) {
           this.localRegistry.setUserForSession(parent.id!, parent.userId);
           this.localRegistry.setUserForSession(child.id!, parent.userId);
         }
-        const connected = isBackground
+        const connected = isAsyncSubagentExecution
           ? await this.waitForLocalNoDeadline(child.id!, cancel)
           : await this.waitForLocal(child.id!, startedDeadline(execution.startedAt, this.timeoutSeconds), cancel);
         if (!connected) throw new Error('子代理恢复失败：LOCAL 客户端未在恢复超时内连接');
       }
-      const run = isBackground
+      const run = isAsyncSubagentExecution
         ? await this.visibilityService.executeVisible(child, context, false)
         : await (async () => {
           const deadline = startedDeadline(execution.startedAt, this.timeoutSeconds);

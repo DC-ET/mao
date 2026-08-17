@@ -69,6 +69,17 @@ export class SubagentInvocationService {
   async createFollowup(
     parent: Session, childSessionId: number, agentType: string, task: string, parentToolCallId: string,
   ): Promise<{ child: Session; execution: SubagentExecution } | null> {
+    return this.createFollowupWithOptions(parent, childSessionId, agentType, task, parentToolCallId);
+  }
+
+  async createFollowupWithOptions(
+    parent: Session,
+    childSessionId: number,
+    agentType: string,
+    task: string,
+    parentToolCallId: string,
+    beforeUserMessage?: string | null,
+  ): Promise<{ child: Session; execution: SubagentExecution } | null> {
     return this.db.transaction(async (tx) => {
       const child = await tx.queryOne<Session>(
         'SELECT * FROM session WHERE id = ? AND deleted = 0 FOR UPDATE', [childSessionId],
@@ -77,6 +88,9 @@ export class SubagentInvocationService {
       if (child.phase === 'RUNNING' || child.phase === 'RESUMING') return null;
       await tx.execute("UPDATE session SET phase = 'RUNNING' WHERE id = ?", [childSessionId]);
       child.phase = 'RUNNING';
+      if (beforeUserMessage && beforeUserMessage.trim() !== '') {
+        await tx.insert('message', assistantMessage(childSessionId, beforeUserMessage));
+      }
       const execution: SubagentExecution = {
         parentSessionId: parent.id,
         childSessionId,
@@ -99,16 +113,24 @@ export class SubagentInvocationService {
 }
 
 function userMessage(sessionId: number, content: string): Record<string, unknown> {
+  return message(sessionId, 'USER', content, null);
+}
+
+function assistantMessage(sessionId: number, content: string): Record<string, unknown> {
+  return message(sessionId, 'ASSISTANT', content, JSON.stringify({ subagentCorrectionInterrupted: true }));
+}
+
+function message(sessionId: number, role: string, content: string, metadata: string | null): Record<string, unknown> {
   return {
     sessionId,
-    role: 'USER',
+    role,
     content,
     thinkingContent: null,
     toolCallId: null,
     toolCalls: null,
     tokenCount: 0,
     modelId: null,
-    metadata: null,
+    metadata,
     sourceSessionId: null,
     deleted: 0,
   };

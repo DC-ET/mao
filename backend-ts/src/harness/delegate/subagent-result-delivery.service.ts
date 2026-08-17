@@ -57,7 +57,7 @@ export class SubagentResultDeliveryService {
         return 'SUPPRESSED';
       }
       execution = await this.inferLocked(tx, mapper, execution);
-      if (execution.invocationType === 'BACKGROUND') {
+      if (execution.invocationType === 'BACKGROUND' || execution.invocationType === 'FOLLOWUP') {
         return this.deliverBackground(tx, mapper, execution, parentSessionId);
       }
       const toolCallId = execution.parentToolCallId!;
@@ -76,7 +76,7 @@ export class SubagentResultDeliveryService {
             id: toolCallId,
             type: 'function',
             function: {
-              name: execution.invocationType === 'FOLLOWUP' ? 'delegate_followup' : 'delegate',
+              name: 'delegate',
               arguments: JSON.stringify(SubagentRecoveryResultFactory.invocationArguments(execution)),
             },
           }]),

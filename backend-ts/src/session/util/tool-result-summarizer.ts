@@ -113,6 +113,8 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeDelegate('追问子代理', result);
     case 'spawn_subagent':
       return summarizeSpawnSubagent(argumentsJson, result);
+    case 'subagent_followup':
+      return summarizeSubagentFollowup(result);
     case 'check_subagent':
       return summarizeCheckSubagent(argumentsJson, result);
     case 'cancel_subagent':
@@ -428,6 +430,17 @@ function summarizeSpawnSubagent(argumentsJson: string | null | undefined, result
   const taskId = has(node, 'task_id') ? ` #${String(node.task_id)}` : '';
   if (has(node, 'error')) return `${label}${taskId} (错误)`;
   if (node.success === true) return `${label}${taskId} (运行中)`;
+  return `${label}${taskId}`;
+}
+
+function summarizeSubagentFollowup(result: string | null | undefined): string {
+  const label = '追问后台子代理';
+  if (result == null) return label;
+  const node = asObj(parseJson(result));
+  if (!node) return label;
+  const taskId = has(node, 'task_id') ? ` #${String(node.task_id)}` : '';
+  if (has(node, 'error')) return `${label}${taskId} (错误)`;
+  if (node.success === true) return `${label}${taskId}${node.corrected === true ? ' (纠偏运行中)' : ' (运行中)'}`;
   return `${label}${taskId}`;
 }
 

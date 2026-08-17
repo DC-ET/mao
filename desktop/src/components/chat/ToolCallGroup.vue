@@ -68,6 +68,7 @@ const toolIconMap: Record<string, Component> = {
   delegate: Connection,
   delegate_followup: Connection,
   spawn_subagent: Connection,
+  subagent_followup: Connection,
   check_subagent: Search,
   cancel_subagent: Delete,
   wait_subagents: Timer,

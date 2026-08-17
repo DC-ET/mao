@@ -164,7 +164,7 @@ export class PromptEngine {
       }
     }
     sb += this.toolBehaviorHints(context);
-    sb += this.delegateToolHints(context);
+    sb += this.subagentToolHints(context);
     sb += this.weixinMediaToolHints(context);
     sb += this.workspaceRules(context, effectiveWorkspace);
     return sb;
@@ -256,34 +256,33 @@ export class PromptEngine {
       + '不要等多个任务都做完后再批量标记完成。\n\n';
   }
 
-  private delegateToolHints(context: AgentExecutionContext): string {
+  private subagentToolHints(context: AgentExecutionContext): string {
     const tools = context.tools ?? [];
-    const hasDelegate = tools.some((t) => t.getName() === 'delegate');
-    const hasFollowup = tools.some((t) => t.getName() === 'delegate_followup');
-    if (!hasDelegate && !hasFollowup) return '';
+    const hasSpawn = tools.some((t) => t.getName() === 'spawn_subagent');
+    const hasFollowup = tools.some((t) => t.getName() === 'subagent_followup');
+    if (!hasSpawn && !hasFollowup) return '';
     let sb = '';
-    if (hasDelegate) {
+    if (hasSpawn) {
       sb += '## 子代理委派\n\n'
-        + '你可以使用 `delegate` 工具将子任务委派给专用子代理。子代理拥有独立会话，完成后将结果返回给你。\n\n'
+        + '你可以使用 `spawn_subagent` 工具在后台启动专用子代理。子代理拥有独立会话，工具会立即返回 `task_id` 与 `child_session_id`。\n\n'
         + '**使用原则：**\n'
-        + '1. 只有当子任务足够独立、复杂度适中时才委派\n'
+        + '1. 只有当子任务足够独立、可并行推进时才派发\n'
         + '2. 任务描述要具体，包含明确目标、输入数据和期望输出格式\n'
-        + '3. 子代理无法与用户交互，不要委派需要用户确认的任务\n'
-        + '4. 收到子代理结果后，请分析并整合到你的回答中\n'
-        + '5. 对于有依赖关系的子任务，请串行委派\n\n';
+        + '3. 子代理无法与用户交互，不要派发需要用户确认的任务\n'
+        + '4. 后续使用 `check_subagent` 查看进度，或使用 `wait_subagents` 等待全部后台子代理结束\n\n';
     }
     if (hasFollowup) {
-      sb += '## 子代理追问\n\n'
-        + '你可以使用 `delegate_followup` 工具对**既有子代理会话**发起追问（续查），复用其历史上下文做增量核查。\n\n'
+      sb += '## 子代理追问 / 纠偏\n\n'
+        + '你可以使用 `subagent_followup` 对既有子代理会话发起追问，复用其历史上下文。\n\n'
         + '**适用场景：**\n'
-        + '1. 子代理（如审查）返回结果后，你按其结论修复了问题，需要同一子代理核查修复情况并继续审查\n'
-        + '2. 需要基于上次结论增量推进（如审查 → 修复 → 再审查闭环），而不是重新新建子代理全量分析\n\n'
+        + '1. 子代理空闲时：追加追问消息并启动新的后台执行\n'
+        + '2. 子代理运行中时：该工具会被解释为纠偏，中断当前执行并以新的纠偏消息重新启动后台执行\n\n'
         + '**使用步骤：**\n'
-        + '1. 从历史工具结果中取目标子代理的 `child_session_id`（`delegate` 返回的字段）\n'
-        + '2. 在 `task` 中说明上次结论、本次修复内容与核查重点，调用 `delegate_followup`\n\n'
+        + '1. 从 `spawn_subagent` 或上一次 `subagent_followup` 结果中取 `child_session_id`\n'
+        + '2. 在 `task` 中说明追问或纠偏内容，调用 `subagent_followup`\n\n'
         + '**注意：**\n'
-        + '1. 追问会让子代理保留上次全部上下文，聚焦增量核查，避免让它重新全量扫描\n'
-        + '2. 全新任务请使用 `delegate` 新建子代理，不要追问无关子代理\n\n';
+        + '1. `subagent_followup` 立即返回新的 `task_id`，后续通过 `check_subagent` 或 `wait_subagents` 获取结果\n'
+        + '2. 全新任务请使用 `spawn_subagent` 新建子代理，不要追问无关子代理\n\n';
     }
     return sb;
   }

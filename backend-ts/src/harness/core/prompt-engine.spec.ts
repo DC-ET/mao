@@ -60,7 +60,7 @@ describe('PromptEngine', () => {
     context.availableSkillNames = ['java', 'mine'];
     context.availableSkillDocs.set('java', { name: 'java', description: 'Java skill' });
     context.availableSkillDocs.set('mine', { name: 'mine', description: 'user skill' });
-    context.tools = [tool('read_file'), tool('task_create'), tool('delegate'), tool('delegate_followup')];
+    context.tools = [tool('read_file'), tool('task_create'), tool('spawn_subagent'), tool('subagent_followup')];
     context.modelConfig = { modelId: 'gpt-5', id: 1 };
     context.messages = [
       { role: 'user', content: 'use ${java}$ and #{review}# and @{src/App.ts}@' },
@@ -70,7 +70,7 @@ describe('PromptEngine', () => {
     expect(request.stream).toBe(true);
     expect(request.reasoning).toEqual({ effort: 'high' });
     expect(request.tools?.map((t) => t.function.name)).toEqual(
-      expect.arrayContaining(['read_file', 'task_create', 'delegate', 'delegate_followup']),
+      expect.arrayContaining(['read_file', 'task_create', 'spawn_subagent', 'subagent_followup']),
     );
     const system = request.messages[0].content as string;
     expect(system).toContain('You are Mao');
@@ -81,7 +81,7 @@ describe('PromptEngine', () => {
     expect(system).toContain('**java**');
     expect(system).toContain('任务管理');
     expect(system).toContain('子代理委派');
-    expect(system).toContain('子代理追问');
+    expect(system).toContain('子代理追问 / 纠偏');
     expect(system).toContain('rule-one');
     const user = request.messages[1].content as string;
     expect(user).toContain('/java');

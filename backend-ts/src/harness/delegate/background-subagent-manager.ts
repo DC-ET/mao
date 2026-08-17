@@ -15,6 +15,7 @@ import type { SubAgentVisibilityService } from './subagent-visibility-service.js
 
 export const BACKGROUND_SUBAGENT_TOOLS = [
   'spawn_subagent',
+  'subagent_followup',
   'check_subagent',
   'cancel_subagent',
   'wait_subagents',
@@ -91,26 +92,54 @@ export class BackgroundSubagentManager {
       return { ok: false, error: '后台子代理执行记录创建失败' };
     }
 
-    this.trackRunning(execution.parentSessionId!, execution.id);
     this.deps.visibilityService.notifySubagentCreated(parentSession, child, agentType, task, parentToolCallId);
-    if (parentSession.executionMode?.toUpperCase() === 'LOCAL' && parentSession.userId != null) {
-      this.deps.localToolSessionRegistry.setUserForSession(child.id, parentSession.userId);
-    }
-
-    try {
-      this.deps.agentExecutor.submit(() => this.runBackground(execution, child, definition));
-    } catch (e) {
-      this.untrackRunning(execution.parentSessionId!, execution.id);
-      await this.deps.subagentExecutionMapper.updateById(execution.id, {
-        status: 'FAILED',
-        result: '后台子代理执行提交失败: ' + ((e as Error)?.message ?? 'agent executor rejected'),
-        deliveryStatus: 'SUPPRESSED',
-        completedAt: nowSql(),
-      });
-      return { ok: false, error: '后台子代理执行提交失败，请稍后重试' };
-    }
+    const submitted = await this.submitExecution(parentSession, child, execution, definition);
+    if (!submitted.ok) return submitted;
 
     return { ok: true, taskId: execution.id, childSessionId: child.id };
+  }
+
+  async followup(
+    parentSessionId: number,
+    childSessionId: number,
+    task: string,
+    parentToolCallId: string,
+  ): Promise<BackgroundSpawnResult & { corrected?: boolean }> {
+    const parentSession = await this.deps.sessionMapper.selectById(parentSessionId);
+    if (!parentSession) return { ok: false, error: '父会话不存在: ' + parentSessionId };
+    const childSession = await this.deps.sessionMapper.selectById(childSessionId);
+    if (!childSession) return { ok: false, error: '子代理会话不存在: ' + childSessionId };
+    if (childSession.sessionType !== 'SUBAGENT') {
+      return { ok: false, error: '会话 ' + childSessionId + ' 不是子代理会话，无法追问' };
+    }
+    if (childSession.parentSessionId !== parentSessionId) {
+      return { ok: false, error: '子代理会话 ' + childSessionId + ' 不属于当前会话，无法追问' };
+    }
+    const agentType = await this.resolveAgentType(childSessionId);
+    if (!agentType) return { ok: false, error: '子代理会话 ' + childSessionId + ' 无执行记录，无法追问' };
+    const definition = this.deps.definitionRegistry.getDefinition(agentType);
+    if (!definition) return { ok: false, error: '未知的子代理类型: ' + agentType };
+
+    const running = await this.deps.subagentExecutionMapper.findRunningByChildSessionId(childSessionId);
+    let corrected = false;
+    let correctionNotice: string | null = null;
+    if (running != null) {
+      if (running.parentSessionId !== parentSessionId) {
+        return { ok: false, error: '运行中的子代理执行不属于当前会话，无法纠偏' };
+      }
+      const interrupted = await this.interruptRunningForCorrection(running, childSession);
+      if (!interrupted.ok) return interrupted;
+      corrected = true;
+      correctionNotice = '上一轮子代理执行已因新的追问/纠偏消息中断，以下是新的纠偏要求。';
+    }
+
+    const created = await this.deps.subagentInvocationService.createFollowupWithOptions(
+      parentSession, childSessionId, agentType, task, parentToolCallId, correctionNotice,
+    );
+    if (!created) return { ok: false, error: '子代理会话 ' + childSessionId + ' 正在执行中，无法追问' };
+    const submitted = await this.submitExecution(parentSession, created.child, created.execution, definition);
+    if (!submitted.ok) return submitted;
+    return { ok: true, taskId: created.execution.id, childSessionId, corrected };
   }
 
   hasRunning(parentSessionId: number | null | undefined): boolean {
@@ -157,13 +186,13 @@ export class BackgroundSubagentManager {
   async progress(parentSessionId: number, taskId: number | null): Promise<BackgroundProgress[] | BackgroundProgress | null> {
     if (taskId != null) {
       const execution = await this.deps.subagentExecutionMapper.findById(taskId);
-      if (!execution || execution.parentSessionId !== parentSessionId || execution.invocationType !== 'BACKGROUND') {
+      if (!execution || execution.parentSessionId !== parentSessionId || !isAsyncInvocation(execution.invocationType)) {
         return null;
       }
       return this.snapshot(taskId);
     }
     const executions = await this.deps.subagentExecutionMapper.listByParent(parentSessionId);
-    const backgrounds = executions.filter((e) => e.invocationType === 'BACKGROUND');
+    const backgrounds = executions.filter((e) => isAsyncInvocation(e.invocationType));
     const result: BackgroundProgress[] = [];
     for (const execution of backgrounds) {
       if (execution.id == null) continue;
@@ -175,7 +204,7 @@ export class BackgroundSubagentManager {
 
   async cancel(parentSessionId: number, taskId: number): Promise<Record<string, unknown>> {
     const execution = await this.deps.subagentExecutionMapper.findById(taskId);
-    if (!execution || execution.parentSessionId !== parentSessionId || execution.invocationType !== 'BACKGROUND') {
+    if (!execution || execution.parentSessionId !== parentSessionId || !isAsyncInvocation(execution.invocationType)) {
       return { success: false, error: '后台子代理不存在或不属于当前会话: ' + taskId };
     }
     if (isTerminal(execution.status)) {
@@ -208,7 +237,7 @@ export class BackgroundSubagentManager {
 
   async cancelAllForParent(parentSessionId: number): Promise<void> {
     const executions = await this.deps.subagentExecutionMapper.listByParent(parentSessionId);
-    const backgrounds = executions.filter((e) => e.invocationType === 'BACKGROUND' && !isTerminal(e.status));
+    const backgrounds = executions.filter((e) => isAsyncInvocation(e.invocationType) && !isTerminal(e.status));
     for (const execution of backgrounds) {
       if (execution.childSessionId != null) {
         const loop = this.deps.agentLoop();
@@ -273,6 +302,77 @@ export class BackgroundSubagentManager {
       await sleep(300);
     }
     return false;
+  }
+
+  private async waitTerminalAndUntracked(taskId: number, parentSessionId: number | null | undefined, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const execution = await this.deps.subagentExecutionMapper.findById(taskId);
+      const terminal = !execution || isTerminal(execution.status);
+      const tracked = parentSessionId != null && this.runningByParent.get(parentSessionId)?.has(taskId) === true;
+      if (terminal && !tracked) return true;
+      await sleep(300);
+    }
+    return false;
+  }
+
+  private async resolveAgentType(childSessionId: number): Promise<string | null> {
+    const row = await this.deps.subagentExecutionMapper.findByChildSessionId(childSessionId);
+    return row?.agentType ?? null;
+  }
+
+  private async submitExecution(
+    parentSession: Session,
+    child: Session,
+    execution: SubagentExecution,
+    definition: AgentDefinition,
+  ): Promise<BackgroundSpawnResult> {
+    if (execution.id == null || child.id == null || execution.parentSessionId == null) {
+      return { ok: false, error: '后台子代理执行记录创建失败' };
+    }
+    this.trackRunning(execution.parentSessionId, execution.id);
+    if (parentSession.executionMode?.toUpperCase() === 'LOCAL' && parentSession.userId != null) {
+      this.deps.localToolSessionRegistry.setUserForSession(child.id, parentSession.userId);
+    }
+    try {
+      this.deps.agentExecutor.submit(() => this.runBackground(execution, child, definition));
+      return { ok: true, taskId: execution.id, childSessionId: child.id };
+    } catch (e) {
+      this.untrackRunning(execution.parentSessionId, execution.id);
+      await this.deps.subagentExecutionMapper.updateById(execution.id, {
+        status: 'FAILED',
+        result: '后台子代理执行提交失败: ' + ((e as Error)?.message ?? 'agent executor rejected'),
+        deliveryStatus: 'SUPPRESSED',
+        completedAt: nowSql(),
+      });
+      await this.deps.visibilityService.finishSubagent(child.id, child.userId, 'FAILED', '');
+      return { ok: false, error: '后台子代理执行提交失败，请稍后重试' };
+    }
+  }
+
+  private async interruptRunningForCorrection(
+    execution: SubagentExecution,
+    childSession: Session,
+  ): Promise<BackgroundSpawnResult> {
+    if (execution.id == null || execution.childSessionId == null) {
+      return { ok: false, error: '运行中的子代理执行记录缺少 ID' };
+    }
+    await this.deps.subagentExecutionMapper.updateById(execution.id, { deliveryStatus: 'SUPPRESSED' });
+    const loop = this.deps.agentLoop();
+    const flag = loop.getCancelFlag(execution.childSessionId) ?? loop.registerCancelFlag(execution.childSessionId);
+    flag.set(true);
+    const settled = await this.waitTerminalAndUntracked(execution.id, execution.parentSessionId, 30_000);
+    if (!settled) {
+      await this.deps.subagentExecutionMapper.updateById(execution.id, { deliveryStatus: 'PENDING' });
+      return { ok: false, error: '纠偏请求已发出，但子代理未在 30 秒内结束，未创建新的追问任务' };
+    }
+    await this.deps.subagentExecutionMapper.updateById(execution.id, {
+      status: 'CANCELLED',
+      result: '后台子代理因纠偏中断',
+      deliveryStatus: 'SUPPRESSED',
+      completedAt: nowSql(),
+    });
+    return { ok: true, taskId: execution.id, childSessionId: execution.childSessionId };
   }
 
   private trackRunning(parentSessionId: number, executionId: number): void {
@@ -422,7 +522,15 @@ export class BackgroundSubagentManager {
     const parentId = execution.parentSessionId!;
     if (execution.id == null) return;
     const latest = await this.deps.subagentExecutionMapper.findById(execution.id);
-    if (latest?.deliveryStatus === 'SUPPRESSED') return;
+    if (latest?.deliveryStatus === 'SUPPRESSED') {
+      if (latest.status === 'CANCELLED') {
+        await this.deps.subagentExecutionMapper.updateById(execution.id, {
+          result: latest.result ?? resultText,
+          completedAt: latest.completedAt ?? nowSql(),
+        });
+      }
+      return;
+    }
     const parent = await this.deps.sessionMapper.selectById(parentId);
     if (!parent || isTerminal(parent.phase)) {
       await this.deps.subagentExecutionMapper.updateById(execution.id, { deliveryStatus: 'SUPPRESSED' });
@@ -584,6 +692,10 @@ export class BackgroundSubagentManager {
 
 function isTerminal(status: string | null | undefined): boolean {
   return status === 'COMPLETED' || status === 'FAILED' || status === 'CANCELLED';
+}
+
+function isAsyncInvocation(invocationType: string | null | undefined): boolean {
+  return invocationType === 'BACKGROUND' || invocationType === 'FOLLOWUP';
 }
 
 function statusLabel(status: string): string {

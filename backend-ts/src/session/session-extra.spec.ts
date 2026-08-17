@@ -227,6 +227,7 @@ describe('TaskTerminalService', () => {
     const sessionService = {
       getSession: vi.fn(async () => ({ id: 1, userId: 7, phase: 'RUNNING' })),
       updatePhase: vi.fn(),
+      updateRuntimeStatus: vi.fn(),
       markLastMessageFinished: vi.fn(),
     };
     const registry = { send: vi.fn(), sendWithResult: vi.fn(async () => ({ delivered: true })) };
