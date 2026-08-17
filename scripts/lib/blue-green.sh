@@ -216,18 +216,15 @@ EOF
   echo "Nginx upstream switched to port ${port}"
 }
 
-bg_schedule_stop_old() {
+bg_write_drain_script() {
   local app_dir="$1"
   local old_port="$2"
   local new_port="$3"
-  local drain="$4"
-  local log_dir="$5"
-  local script="${MAO_RUNTIME_DIR}/stop-old-backend.sh"
+  local script="$4"
   cat > "$script" <<EOS
 #!/bin/bash
 set -euo pipefail
-echo "[\$(date -Iseconds)] drain: will stop port ${old_port} in ${drain}s if active stays ${new_port}"
-sleep ${drain}
+echo "[\$(date -Iseconds)] drain: stopping port ${old_port} if active stays ${new_port}"
 export BG_LIB_PATH="${BG_LIB_PATH}"
 # shellcheck source=/dev/null
 source "\$BG_LIB_PATH"
@@ -240,9 +237,79 @@ bg_stop_port "${app_dir}" "${old_port}"
 bg_write_deploy_lock \$(date +%s) "${old_port}" "${new_port}" "drained"
 EOS
   chmod +x "$script"
-  setsid nohup bash "$script" >> "${log_dir}/blue-green-drain.log" 2>&1 </dev/null &
+}
+
+# Schedule drain via systemd timer (survives cloud shell session teardown).
+bg_schedule_drain_systemd() {
+  local unit="$1"
+  local drain="$2"
+  local script="$3"
+  local drain_log="$4"
+  command -v systemd-run >/dev/null 2>&1 || return 1
+  systemd-run \
+    --on-active="${drain}s" \
+    --unit="$unit" \
+    --collect \
+    --property="StandardOutput=append:${drain_log}" \
+    --property="StandardError=append:${drain_log}" \
+    bash "$script" >/dev/null 2>&1
+}
+
+# Fallback: atd queue (also independent of caller process tree).
+bg_schedule_drain_at() {
+  local drain="$1"
+  local script="$2"
+  local drain_log="$3"
+  local wrapper="${MAO_RUNTIME_DIR}/stop-old-backend-at.sh"
+  command -v at >/dev/null 2>&1 || return 1
+  if ! systemctl is-active atd >/dev/null 2>&1 && ! pgrep -x atd >/dev/null 2>&1; then
+    return 1
+  fi
+  cat > "$wrapper" <<EOS
+#!/bin/bash
+set -euo pipefail
+sleep ${drain}
+bash "${script}"
+EOS
+  chmod +x "$wrapper"
+  echo "bash ${wrapper} >> ${drain_log} 2>&1" | at now >/dev/null 2>&1
+}
+
+# Last resort: nohup sleep (may be killed when restart.sh runs inside cloud shell).
+bg_schedule_drain_nohup() {
+  local drain="$1"
+  local script="$2"
+  local drain_log="$3"
+  setsid nohup bash -c "sleep ${drain}; exec bash '${script}'" >> "${drain_log}" 2>&1 </dev/null &
   disown 2>/dev/null || true
-  echo "Scheduled stop of old instance on port ${old_port} in ${drain}s (log: ${log_dir}/blue-green-drain.log)"
+}
+
+bg_schedule_stop_old() {
+  local app_dir="$1"
+  local old_port="$2"
+  local new_port="$3"
+  local drain="$4"
+  local log_dir="$5"
+  local drain_log="${log_dir}/blue-green-drain.log"
+  local script="${MAO_RUNTIME_DIR}/stop-old-backend.sh"
+  local unit="mao-backend-drain-${old_port}-$(date +%s)"
+  local scheduler="nohup"
+
+  mkdir -p "$log_dir"
+  bg_write_drain_script "$app_dir" "$old_port" "$new_port" "$script"
+  {
+    echo "[$(date -Iseconds)] drain: scheduled stop port ${old_port} in ${drain}s if active stays ${new_port}"
+  } >> "$drain_log"
+
+  if bg_schedule_drain_systemd "$unit" "$drain" "$script" "$drain_log"; then
+    scheduler="systemd"
+  elif bg_schedule_drain_at "$drain" "$script" "$drain_log"; then
+    scheduler="at"
+  else
+    bg_schedule_drain_nohup "$drain" "$script" "$drain_log"
+  fi
+
+  echo "Scheduled stop of old instance on port ${old_port} in ${drain}s via ${scheduler} (log: ${drain_log})"
 }
 
 # Main entry: blue-green deploy for backend-ts directory.

@@ -185,7 +185,7 @@ chmod +x /opt/mao/backend-ts/restart.sh
 1. 在备用端口（9080 ↔ 9081）启动新实例并等待健康检查（`/api/swagger-ui.html`）
 2. 切换 Nginx `upstream mao_backend` 到新端口
 3. 立即返回成功（Shell / 管理端 API 不必等待旧实例退出）
-4. 默认 **1 分钟后**异步停止旧端口进程（`MAO_BLUE_GREEN_DRAIN_SEC` 可覆盖）
+4. 默认 **1 分钟后**异步停止旧端口进程（`MAO_BLUE_GREEN_DRAIN_SEC` 可覆盖）；排水优先由 `systemd-run --on-active` 调度，不依赖 `restart.sh` 调用方的进程树（Agent 云端 shell 部署亦可靠）
 
 状态文件目录默认 `/opt/mao-data/runtime/`（`MAO_RUNTIME_DIR`）：
 
