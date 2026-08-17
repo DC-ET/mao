@@ -36,7 +36,10 @@ export interface WsListenerDeps {
   };
   activityHeartbeat: { touch(sessionId: number): void };
   sessionTodoMapper: { selectBySessionId(sessionId: number): Promise<SessionTodo[]> };
-  sessionService: { updateContextTokens(sessionId: number, tokens: number): Promise<void> };
+  sessionService: {
+    updateContextTokens(sessionId: number, tokens: number): Promise<void>;
+    updateRuntimeStatus?(sessionId: number, runtimeStatus: unknown | null): Promise<void>;
+  };
 }
 
 export class WsStreamingEventListener implements AgentEventListener {
@@ -105,11 +108,13 @@ export class WsStreamingEventListener implements AgentEventListener {
       completion_tokens: usage.completionTokens,
       total_tokens: usage.totalTokens,
     });
+    this.persistRuntimeStatus(null);
   }
 
   onError(t: unknown): void {
     const message = t instanceof Error ? t.message : 'Agent 执行异常';
     this.send('error', { message: message || 'Agent 执行异常' });
+    this.persistRuntimeStatus(null);
   }
 
   onContextWindow(estimatedTokens: number, actualTokens: number): void {
@@ -118,11 +123,14 @@ export class WsStreamingEventListener implements AgentEventListener {
   }
 
   onCompactionStart(type: string, messageCount: number, estimatedTokens: number): void {
-    this.send('compaction_start', { type, messageCount, estimatedTokens });
+    const data = { type, messageCount, estimatedTokens };
+    this.send('compaction_start', data);
+    this.persistRuntimeStatus({ compacting: data });
   }
 
   onCompactionEnd(type: string, summaryTokens: number, savedTokens: number, durationMs: number): void {
     this.send('compaction_end', { type, summaryTokens, savedTokens, durationMs });
+    this.persistRuntimeStatus(null);
   }
 
   onCompactionPersisted(eventId: number, triggerMode: string, prevBoundaryMsgId: number, boundaryMsgId: number, compactedMessageCount: number, summaryTokens: number, savedTokens: number, durationMs: number): void {
@@ -134,7 +142,11 @@ export class WsStreamingEventListener implements AgentEventListener {
   onThinkingStart(): void { this.send('thinking_start', {}); }
   onThinkingEnd(): void { this.send('thinking_end', {}); }
   onThinkingDelta(delta: string): void { this.send('thinking_delta', { delta }); }
-  onLlmWaiting(phase: string, elapsedSeconds: number): void { this.send('llm_waiting', { phase, elapsedSeconds }); }
+  onLlmWaiting(phase: string, elapsedSeconds: number): void {
+    const payload = { phase, elapsedSeconds };
+    this.send('llm_waiting', payload);
+    this.persistRuntimeStatus({ llmWaiting: payload });
+  }
   onLlmStreamReset(): void {
     this.toolCallInfo.clear();
     this.deps.registry.clearActiveToolCalls(this.sessionId);
@@ -144,6 +156,7 @@ export class WsStreamingEventListener implements AgentEventListener {
     const payload: Record<string, unknown> = { reason, attempt, maxRetries, delaySeconds };
     if (statusCode != null) payload.statusCode = statusCode;
     this.send('llm_retry', payload);
+    this.persistRuntimeStatus({ llmRetry: payload });
   }
   onToolCallArgsDelta(toolCallId: string, argumentsDelta: string): void {
     const info = this.toolCallInfo.get(toolCallId);
@@ -155,6 +168,10 @@ export class WsStreamingEventListener implements AgentEventListener {
   private send(type: string, data: Record<string, unknown>): void {
     this.deps.activityHeartbeat.touch(this.sessionId);
     this.deps.registry.send(this.userId, wsEvent(type, this.sessionId, { ...data, executionId: this.executionId }));
+  }
+
+  private persistRuntimeStatus(runtimeStatus: unknown | null): void {
+    void this.deps.sessionService.updateRuntimeStatus?.(this.sessionId, runtimeStatus).catch(() => {});
   }
 
   private async recordActivity(toolName: string | null, argumentsJson: string | null, summary: string | null, isError: boolean): Promise<void> {

@@ -146,8 +146,10 @@ export interface StreamCallback {
   onRetry?(reason: string, statusCode: number | null, attempt: number, maxRetries: number, delaySeconds: number): void;
 }
 
+export type ChatCallback = Pick<StreamCallback, 'onWaiting' | 'onRetry'>;
+
 export interface LlmAdapter {
-  chat(request: ChatRequest, config: LlmModelConfig, cancelFlag?: { get(): boolean } | null): Promise<ChatResponse>;
+  chat(request: ChatRequest, config: LlmModelConfig, cancelFlag?: { get(): boolean } | null, callback?: ChatCallback | null): Promise<ChatResponse>;
   stream(
     request: ChatRequest,
     config: LlmModelConfig,

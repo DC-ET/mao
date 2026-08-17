@@ -538,6 +538,7 @@ export function useStreamWS() {
           if (terminalPhases.includes(phase)) {
             sessionStore.setStreaming(sessionId, false)
             sessionStore.setThinking(sessionId, false)
+            sessionStore.setCompacting(sessionId, false)
             sessionStore.clearLlmRetry(sessionId)
             sessionStore.clearAskQuestions(sessionId)
             if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED') {

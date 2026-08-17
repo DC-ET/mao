@@ -30,6 +30,7 @@ export interface Session {
   unread?: number | null;
   parentSessionId?: number | null;
   sessionType?: string | null;
+  runtimeStatusJson?: string | null;
   deleted?: number;
   createdAt?: string | null;
   updatedAt?: string | null;

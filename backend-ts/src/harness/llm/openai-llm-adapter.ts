@@ -6,6 +6,7 @@ import { ImageFileSupport } from '../tool/image-file-support.js';
 import { PromptImageResizer } from '../tool/prompt-image-resizer.js';
 import { harnessLog } from '../log.js';
 import type {
+  ChatCallback,
   ChatMessage,
   ChatRequest,
   ChatResponse,
@@ -45,6 +46,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     request: ChatRequest,
     config: LlmModelConfig,
     cancelFlag?: { get(): boolean } | null,
+    callback?: ChatCallback | null,
   ): Promise<ChatResponse> {
     const payload = await this.buildRequestBody(request, config, false);
     const totalStarted = process.hrtime.bigint();
@@ -52,7 +54,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       if (this.isCancelled(cancelFlag)) throw this.cancelledException();
       const attemptStarted = process.hrtime.bigint();
       try {
-        const awaited = await this.awaitResponse(payload, config, false, cancelFlag, null, config.modelId ?? '', attempt);
+        const awaited = await this.awaitResponse(payload, config, false, cancelFlag, callback ?? null, config.modelId ?? '', attempt);
         harnessLog('info', `LLM response headers model=${config.modelId} phase=response_headers attempt=${attempt}`);
         if (this.isRetryableStatus(awaited.status)) {
           if (attempt > this.retry.rateLimitMaxRetries) {
@@ -61,6 +63,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
           }
           const delaySeconds = this.resolveRetryDelaySeconds(awaited.headers, attempt);
           this.logRetry(config.modelId, 'http_status', awaited.status, attempt, delaySeconds, attemptStarted, totalStarted);
+          callback?.onRetry?.('http_status', awaited.status, attempt, this.retry.rateLimitMaxRetries, delaySeconds);
           awaited.body.resume();
           if (!(await this.sleepSecondsRespectingCancel(delaySeconds, cancelFlag))) {
             throw this.cancelledException();
@@ -83,7 +86,9 @@ export class OpenAiLlmAdapter implements LlmAdapter {
           throw new Error(`LLM call failed: ${this.networkReason(e)}`, { cause: e });
         }
         const delaySeconds = this.resolveRetryDelaySeconds(null, attempt);
-        this.logRetry(config.modelId, this.networkReason(e), null, attempt, delaySeconds, attemptStarted, totalStarted);
+        const reason = this.networkReason(e);
+        this.logRetry(config.modelId, reason, null, attempt, delaySeconds, attemptStarted, totalStarted);
+        callback?.onRetry?.(reason, null, attempt, this.retry.rateLimitMaxRetries, delaySeconds);
         if (!(await this.sleepSecondsRespectingCancel(delaySeconds, cancelFlag))) {
           throw this.cancelledException();
         }
@@ -272,7 +277,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     config: LlmModelConfig,
     streaming: boolean,
     cancelFlag: { get(): boolean } | null | undefined,
-    callback: StreamCallback | null,
+    callback: Pick<StreamCallback, 'onWaiting'> | null,
     model: string,
     attempt: number,
   ): Promise<HttpResult> {

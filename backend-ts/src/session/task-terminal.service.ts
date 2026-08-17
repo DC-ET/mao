@@ -37,6 +37,7 @@ export class TaskTerminalService {
       );
       return;
     }
+    await this.sessionService.updateRuntimeStatus(sessionId, null);
     await this.sessionService.updatePhase(sessionId, phase);
     await this.sessionService.markLastMessageFinished(sessionId);
     const session = await this.sessionService.getSession(sessionId);

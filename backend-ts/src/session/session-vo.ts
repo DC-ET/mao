@@ -51,6 +51,7 @@ export interface SessionVO {
   treeUnread?: boolean;
   treeRunning?: boolean;
   treeFailed?: boolean;
+  runtimeStatus?: unknown;
 }
 
 export interface AdminSessionVO {
@@ -155,6 +156,13 @@ export function toSessionVO(session: Session, agentMap: Map<number, { name: stri
       vo.steps = JSON.parse(session.stepsJson);
     } catch (e) {
       console.warn(`Failed to parse steps_json for session ${session.id}`, e);
+    }
+  }
+  if (session.runtimeStatusJson != null && session.runtimeStatusJson.trim().length > 0) {
+    try {
+      vo.runtimeStatus = JSON.parse(session.runtimeStatusJson);
+    } catch (e) {
+      console.warn(`Failed to parse runtime_status_json for session ${session.id}`, e);
     }
   }
   const agent = idMapGet(agentMap, session.agentId);

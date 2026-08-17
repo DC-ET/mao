@@ -73,6 +73,17 @@ export interface Session {
   treeUnread?: boolean
   treeRunning?: boolean
   treeFailed?: boolean
+  runtimeStatus?: SessionRuntimeStatus
+}
+
+export interface SessionRuntimeStatus {
+  compacting?: {
+    type?: string
+    messageCount?: number
+    estimatedTokens?: number
+  }
+  llmWaiting?: LlmRetryInfo
+  llmRetry?: LlmRetryInfo
 }
 
 export interface SideTaskItem {
@@ -315,6 +326,24 @@ export const useSessionStore = defineStore('session', () => {
     return sessions.value.filter(s => s.agentId === agentId)
   }
 
+  function applyRuntimeStatus(session: Session) {
+    const sid = String(session.id)
+    const status = session.runtimeStatus
+    if (!session.running || !status) {
+      setCompacting(sid, false)
+      clearLlmRetry(sid)
+      return
+    }
+    setCompacting(sid, Boolean(status.compacting))
+    if (status.llmRetry) {
+      setLlmRetry(sid, status.llmRetry)
+    } else if (status.llmWaiting) {
+      setLlmRetry(sid, status.llmWaiting)
+    } else {
+      clearLlmRetry(sid)
+    }
+  }
+
   async function fetchSessions(silent = false) {
     if (!silent) loading.value = true
     try {
@@ -335,6 +364,7 @@ export const useSessionStore = defineStore('session', () => {
           const normalized = normalizeSession(s)
           // unread 以服务端为准（服务端 DB 是未读持久化权威；本地已读仅在 markAsRead API 成功后清除）
           upsertSessionEntity(normalized)
+          applyRuntimeStatus(normalized)
           ids.push(String(normalized.id))
         }
       }
@@ -386,6 +416,7 @@ export const useSessionStore = defineStore('session', () => {
       const appendedIds: string[] = []
       for (const s of appended) {
         upsertSessionEntity(s)
+        applyRuntimeStatus(s)
         appendedIds.push(String(s.id))
       }
       if (appendedIds.length > 0) {
@@ -557,6 +588,7 @@ export const useSessionStore = defineStore('session', () => {
         for (const s of g.sessions || []) {
           const normalized = normalizeSession(s)
           upsertSessionEntity(normalized)
+          applyRuntimeStatus(normalized)
           ids.push(String(normalized.id))
         }
       }
@@ -579,6 +611,7 @@ export const useSessionStore = defineStore('session', () => {
       const ids: string[] = []
       for (const s of items) {
         upsertSessionEntity(s)
+        applyRuntimeStatus(s)
         ids.push(String(s.id))
       }
       focusSessionIds.value = ids
@@ -593,7 +626,9 @@ export const useSessionStore = defineStore('session', () => {
       const { data } = await api.get(`/sessions/${id}`)
       if (data) {
         const local = sessionEntities.value.get(String(id))
-        updateSession(id, { ...data, id: normalizeId(data.id), agentId: normalizeId(data.agentId), unread: local?.unread ?? data.unread })
+        const normalized = normalizeSession({ ...data, unread: local?.unread ?? data.unread })
+        updateSession(id, normalized)
+        applyRuntimeStatus(normalized)
         if (data.contextTokens && data.contextTokens > 0) {
           const sid = normalizeId(data.id)
           if (!sessionContextWindow.value.has(sid)) {

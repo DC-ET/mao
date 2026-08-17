@@ -832,6 +832,12 @@ export class SessionService {
     await this.sessionRepo.updateFields(sessionId, { contextTokens });
   }
 
+  async updateRuntimeStatus(sessionId: number, runtimeStatus: unknown | null): Promise<void> {
+    await this.sessionRepo.updateFields(sessionId, {
+      runtimeStatusJson: runtimeStatus == null ? null : JSON.stringify(runtimeStatus),
+    });
+  }
+
   async updateContextAnchor(sessionId: number, lastPromptTokens: number, contextAnchorMsgId: number): Promise<void> {
     await this.sessionRepo.updateFields(sessionId, {
       lastPromptTokens,
