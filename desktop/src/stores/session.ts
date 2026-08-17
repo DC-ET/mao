@@ -824,8 +824,8 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  function updateSideTaskUnread(sideSessionId: number, unread: boolean) {
-    for (const [, list] of sideTaskCache.value) {
+  function updateSideTaskUnread(sideSessionId: number, unread: boolean): string | null {
+    for (const [parentSessionId, list] of sideTaskCache.value) {
       const item = list.find(t => t.id === sideSessionId)
       if (item) {
         if (unread && viewingSideTaskId.value === sideSessionId) {
@@ -835,9 +835,10 @@ export const useSessionStore = defineStore('session', () => {
           item.unread = unread
         }
         sideTaskCache.value = new Map(sideTaskCache.value)
-        break
+        return parentSessionId
       }
     }
+    return null
   }
 
   /** 用户切换查看的边路任务（由 useCenterTabs 在 Tab 激活时维护）。 */

@@ -533,7 +533,17 @@ export function useStreamWS() {
             } else {
               sessionStore.updateSession(sessionId, { unread: data.unread })
               // 边路任务会话不在主列表：unread 单独落到 SideTask 缓存（左侧任务栏圆点）
-              sessionStore.updateSideTaskUnread(Number(sessionId), data.unread)
+              const parentSessionId = sessionStore.updateSideTaskUnread(Number(sessionId), data.unread)
+              if (data.unread === true) {
+                const currentPhase = sessionStore.getSessionPhase(sessionId)
+                if (currentPhase === 'RUNNING' || currentPhase === 'RESUMING' || currentPhase === 'WAITING_APPROVAL' || currentPhase === 'CANCELLING') {
+                  void sessionStore.fetchSession(sessionId)
+                }
+                if (parentSessionId) {
+                  void sessionStore.fetchSession(parentSessionId)
+                  void sessionStore.refreshSideTasks(parentSessionId)
+                }
+              }
             }
           }
           if (terminalPhases.includes(phase)) {
