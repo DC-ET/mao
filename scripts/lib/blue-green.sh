@@ -7,7 +7,7 @@ set -euo pipefail
 : "${MAO_BLUE_GREEN_PORT_B:=9081}"
 : "${MAO_RUNTIME_DIR:=/opt/mao-data/runtime}"
 : "${MAO_NGINX_UPSTREAM_CONF:=/etc/nginx/conf.d/mao-upstream.conf}"
-: "${MAO_BLUE_GREEN_DRAIN_SEC:=300}"
+: "${MAO_BLUE_GREEN_DRAIN_SEC:=60}"
 : "${MAO_BLUE_GREEN_HEALTH_RETRIES:=60}"
 : "${MAO_BLUE_GREEN_HEALTH_INTERVAL_SEC:=1}"
 : "${MAO_BLUE_GREEN_STALE_LOCK_SEC:=600}"

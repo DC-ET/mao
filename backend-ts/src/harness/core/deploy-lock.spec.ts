@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deployDrainSec,
   isRecentDeployLock,
   isSessionActiveDuringDeploy,
   parseSqlDateTime,
@@ -42,6 +43,12 @@ describe('deploy-lock', () => {
     expect(isSessionActiveDuringDeploy({ lastActivityAt: activeAt }, lockFromSql)).toBe(true);
     const staleAt = '2026-08-16 15:28:00';
     expect(isSessionActiveDuringDeploy({ lastActivityAt: staleAt }, lockFromSql)).toBe(false);
+  });
+
+  it('defaults drain seconds when lock omits drainSec', () => {
+    expect(deployDrainSec(null)).toBe(60);
+    expect(deployDrainSec({ startedAt: 1, oldPort: 9080, newPort: 9081, status: 'switched' })).toBe(60);
+    expect(deployDrainSec({ startedAt: 1, oldPort: 9080, newPort: 9081, status: 'switched', drainSec: 120 })).toBe(120);
   });
 
   it('detects recent deploy lock', () => {

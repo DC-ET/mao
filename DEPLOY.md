@@ -161,7 +161,7 @@ chmod 600 /opt/mao/backend-ts/.env
 | `UPLOAD_BASE_URL` | local 模式建议设 | 上传文件的公网访问前缀，如 `https://mao.example.com/api` |
 | `MAO_RUNTIME_DIR` | 否 | 运行时状态目录（蓝绿 `deploy.lock`、会话 runtime 等），默认 `/opt/mao-data/runtime` |
 | `MAO_USER_HOME_DIR` | 否 | CLOUD 模式用户 HOME 目录（npm/pip 缓存等），默认 `/opt/mao-data/users` |
-| `MAO_BLUE_GREEN_DRAIN_SEC` | 否 | 蓝绿切换后延迟停止旧实例秒数，默认 `300` |
+| `MAO_BLUE_GREEN_DRAIN_SEC` | 否 | 蓝绿切换后延迟停止旧实例秒数，默认 `60` |
 | `MAO_NGINX_UPSTREAM_CONF` | 否 | Nginx upstream 文件路径，默认 `/etc/nginx/conf.d/mao-upstream.conf` |
 | `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录 |
 | `FILE_UPLOAD_DIR` | **是** | 本地上传目录，如 `/opt/mao-data/uploads` |
@@ -185,7 +185,7 @@ chmod +x /opt/mao/backend-ts/restart.sh
 1. 在备用端口（9080 ↔ 9081）启动新实例并等待健康检查（`/api/swagger-ui.html`）
 2. 切换 Nginx `upstream mao_backend` 到新端口
 3. 立即返回成功（Shell / 管理端 API 不必等待旧实例退出）
-4. 默认 **5 分钟后**异步停止旧端口进程（`MAO_BLUE_GREEN_DRAIN_SEC` 可覆盖）
+4. 默认 **1 分钟后**异步停止旧端口进程（`MAO_BLUE_GREEN_DRAIN_SEC` 可覆盖）
 
 状态文件目录默认 `/opt/mao-data/runtime/`（`MAO_RUNTIME_DIR`）：
 
