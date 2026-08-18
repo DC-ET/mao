@@ -37,11 +37,12 @@ describe('StreamingWsHandler', () => {
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
     sendToLocalClients: vi.fn(), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
   };
+  const titleService = { scheduleForFirstUserMessage: vi.fn() };
   const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executeSideFirstMessage: vi.fn() };
   const sessionService = {
     getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), updateField: vi.fn(),
     updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
-    generateTitleFromUserMessage: vi.fn(), listSubagentSessions: vi.fn(async () => []),
+    listSubagentSessions: vi.fn(async () => []),
     cleanupIncompleteTail: vi.fn(async () => 0), updateContextTokens: vi.fn(),
   };
   const taskTerminalService = { finishExecution: vi.fn() };
@@ -80,7 +81,7 @@ describe('StreamingWsHandler', () => {
   const ws: WsSocket = { id: 'ws-1', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
 
   const handler = new StreamingWsHandler({
-    registry, harnessService, sessionService, taskTerminalService, messageQueueService,
+    registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
     localToolSessionRegistry, askUserQuestionsRegistry, treeSignalPublisher, approvalRegistry, activityService,
     activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
     localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
@@ -96,6 +97,7 @@ describe('StreamingWsHandler', () => {
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'send_message', sessionId: 11, data: { content: 'hello', eventId: 'event-1' } }));
     await executor.runAll();
     expect(sessionService.saveMessage).toHaveBeenCalled();
+    expect(titleService.scheduleForFirstUserMessage).toHaveBeenCalledWith(11, 99, 'hello');
     expect(registry.subscribe).toHaveBeenCalledWith(7, 11);
     expect(skillSyncService.syncToSession).toHaveBeenCalled();
     expect(harnessService.executeFromEvent).toHaveBeenCalled();
@@ -276,7 +278,6 @@ describe('StreamingWsHandler', () => {
     parent.workspace = '/repo';
     parent.projectKey = 'repo';
     sessionService.getSession.mockResolvedValue(parent);
-    sessionService.generateTitleFromUserMessage.mockResolvedValue('Side work');
     sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
     sessionService.save.mockImplementation(async (s: Session) => { s.id = 13; });
     await handler.handleTextMessage(ws, JSON.stringify({
@@ -290,6 +291,12 @@ describe('StreamingWsHandler', () => {
       sessionType: 'SIDE_TASK',
     }));
     expect(sessionService.saveMessage).toHaveBeenCalledWith(13, 'USER', 'side work', null, null, null, 0, null);
+    expect(titleService.scheduleForFirstUserMessage).toHaveBeenCalledWith(13, 99, 'side work');
+    const createdCallOrder = vi.mocked(registry.send).mock.invocationCallOrder.find((_, index) => {
+      const event = vi.mocked(registry.send).mock.calls[index]?.[1] as WsEvent;
+      return event.type === 'side_session_created';
+    });
+    expect(createdCallOrder).toBeLessThan(titleService.scheduleForFirstUserMessage.mock.invocationCallOrder[0]);
     expect(harnessService.executeSideFirstMessage).toHaveBeenCalled();
   });
 
@@ -436,6 +443,7 @@ describe('StreamingWsHandler', () => {
       sessionId: 11,
       data: expect.objectContaining({ source: 'scheduled', messageId: 88, content: '定时检查' }),
     }));
+    expect(titleService.scheduleForFirstUserMessage).toHaveBeenCalledWith(11, 88, '定时检查');
     expect(registry.subscribe).toHaveBeenCalledWith(7, 11);
     expect(harnessService.executeFromEvent).toHaveBeenCalled();
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'COMPLETED', 'sched-1');

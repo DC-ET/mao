@@ -1,6 +1,7 @@
 const MAX_TITLE_LENGTH = 50;
 const SKILL_PATTERN = /\$\{([^}]+)\}\$/g;
 const COMMAND_PATTERN = /#\{([^}]+)\}#/g;
+const FILE_REFERENCE_PATTERN = /@\{[^}]+\}@/g;
 
 export function preprocessForTitle(text: string | null | undefined, commandContentMap: Map<string, string> | Record<string, string> | null): string | null | undefined {
   if (text == null || text.trim().length === 0) {
@@ -15,6 +16,7 @@ export function preprocessForTitle(text: string | null | undefined, commandConte
   }
 
   result = result.replace(SKILL_PATTERN, '');
+  result = result.replace(FILE_REFERENCE_PATTERN, '');
 
   const map = toMap(commandContentMap);
   if (map.size > 0) {

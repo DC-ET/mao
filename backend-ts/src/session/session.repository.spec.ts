@@ -33,6 +33,11 @@ describe('SessionRepository', () => {
     expect(await repo.updateWhere({}, 'id=?', [1])).toBe(0);
     expect(await repo.updateWhere({ phase: 'RUNNING' }, 'id=?', [1])).toBe(1);
     expect(await repo.claimRunningIfIdle(42)).toBe(1);
+    expect(await repo.updateTitleIfPlaceholder(42, 'NORMAL', '未命名会话', '新标题', '2026-08-18 12:00:00')).toBe(1);
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining("session_type = ? AND (title = ? OR title IS NULL OR TRIM(title) = '')"),
+      expect.arrayContaining(['新标题', '2026-08-18 12:00:00', 42, 'NORMAL', '未命名会话']),
+    );
     await repo.logicalDelete(42);
     db.queryOne.mockResolvedValueOnce({ cnt: 7 });
     expect(await repo.count('user_id=?', [1])).toBe(7);
@@ -61,6 +66,10 @@ describe('MessageRepository', () => {
     expect(await repo.selectMaxMessageId(1)).toBe(9);
     db.queryOne.mockResolvedValueOnce(null);
     expect(await repo.selectMaxMessageId(1)).toBe(0);
+    db.queryOne.mockResolvedValueOnce({ id: 1 });
+    expect(await repo.hasEarlierUserMessage(1, 3)).toBe(true);
+    db.queryOne.mockResolvedValueOnce(null);
+    expect(await repo.hasEarlierUserMessage(1, 3)).toBe(false);
     await repo.selectUserStarts(1, 10, 5);
     await repo.selectUserStarts(1, null, 5);
     await repo.selectRange(1, 1, 10);

@@ -5,6 +5,7 @@ import { getToken } from '../utils/auth-storage'
 import { nowDateTime } from '../utils/datetime'
 import { mapCompactionEvents } from '../utils/chatMessage'
 import { isAndroidCapacitor } from '../utils/capacitor'
+import { updateSideTaskTabTitleFor } from './useCenterTabs'
 
 /// <reference types="vite/client" />
 
@@ -503,6 +504,17 @@ export function useStreamWS() {
             patchTruncated: Boolean(data.patch_truncated),
             diffUnavailableReason: data.diff_unavailable_reason
           })
+        }
+        break
+
+      case 'session_title_updated':
+        if (sessionId && typeof data?.title === 'string') {
+          sessionStore.updateSession(sessionId, { title: data.title })
+          if (data.sessionType === 'SIDE_TASK' && data.parentSessionId != null) {
+            const parentSessionId = String(data.parentSessionId)
+            sessionStore.updateSideTaskTitle(parentSessionId, Number(sessionId), data.title)
+            updateSideTaskTabTitleFor(parentSessionId, Number(sessionId), data.title)
+          }
         }
         break
 

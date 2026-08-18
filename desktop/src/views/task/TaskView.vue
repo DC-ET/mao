@@ -77,7 +77,6 @@ import type { GitChangedFile } from '../../types/git'
 import type { FileChange } from '../../types/chat'
 import { getToken } from '../../utils/auth-storage'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
-import { deriveSessionTitle } from '../../utils/sessionTitle'
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
 import TaskInspector from '../../components/task/TaskInspector.vue'
@@ -424,21 +423,13 @@ function handleTerminalShortcut(e: KeyboardEvent) {
 }
 
 // Handle side_session_created window event (from useStreamWS)
-async function handleSideSessionCreated(e: Event) {
+function handleSideSessionCreated(e: Event) {
   const detail = (e as CustomEvent).detail
   if (!detail || !detail.sideSessionId) return
 
-  let title = detail.title || '任务'
+  const title = detail.title || '任务'
   for (const tab of tabs.value) {
     if (tab.type !== 'side_task' || (tab.sideSessionId !== undefined && tab.sideSessionId > 0)) continue
-
-    const placeholderMsgs = sessionStore.getMessages(tab.id)
-    const firstUser = placeholderMsgs.find(m => m.role === 'user')
-    const sourceText = firstUser?.content || detail.title || ''
-    title = tab.title && tab.title !== '任务'
-      ? tab.title
-      : await deriveSessionTitle(sourceText)
-
     updateSideTaskTab(tab.id, detail.sideSessionId, title)
     break
   }
@@ -848,11 +839,7 @@ async function loadSession(sid: string) {
       : []
     sessionStore.setSideTasks(sid, items)
     if (items.length > 0) {
-      const resolved = await Promise.all(items.map(async (st) => ({
-        id: st.id,
-        title: await deriveSessionTitle(st.title || '任务'),
-      })))
-      restoreSideTaskTabs(sid, resolved)
+      restoreSideTaskTabs(sid, items.map((st) => ({ id: st.id, title: st.title || '任务' })))
     }
   } catch (e) {
     console.warn('[side-task] Failed to restore side task tabs:', e)

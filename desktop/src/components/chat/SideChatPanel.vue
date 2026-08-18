@@ -106,14 +106,12 @@ import { useStreamWS } from '../../composables/useStreamWS'
 import { api } from '../../api'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
 import { mapMessagesWithFileChanges, mapCompactionEvents } from '../../utils/chatMessage'
-import { deriveSessionTitle } from '../../utils/sessionTitle'
 import { generateUUID } from '../../utils/uuid'
 import { collectLocalUnsyncedSkills } from '../../utils/localSkills'
 import { collectAgentsMdContent } from '../../utils/agentsMd'
 import { nowDateTime } from '../../utils/datetime'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
-import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useToolApprovals } from '../../composables/useChat'
 import { uploadImages } from '../../utils/imageUpload'
@@ -138,8 +136,6 @@ const { createSideSession, sendMessage, cancel, subscribe, unsubscribe, sendAskU
 const { openWithContent } = useCommandDrawer()
 const { pendingApprovals, confirmApproval } = useToolApprovals()
 
-const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { updateSideTaskTab } = useCenterTabs(activeSessionIdRef)
 
 const parentExecutionMode = inject<Ref<string>>('executionMode', ref('CLOUD'))
 const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
@@ -555,11 +551,6 @@ async function handleChatSend(text: string, files: File[]) {
       images: imageUrls.length > 0 ? imageUrls : undefined,
     })
     sessionStore.ensureStreamingAssistantMessage(placeholderCacheKey.value)
-
-    const titleSource = trimmed || (imageUrls.length > 0 ? '图片消息' : '')
-    void deriveSessionTitle(titleSource).then(title => {
-      updateSideTaskTab(props.tabId, props.sideSessionId, title)
-    })
 
     const parentSessionId = sessionStore.activeSessionId
     if (!parentSessionId) {

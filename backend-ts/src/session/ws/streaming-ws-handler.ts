@@ -7,6 +7,9 @@ import { wsEvent } from './ws-event.js';
 
 export interface WsHandlerDeps {
   registry: StreamingWsRegistry;
+  titleService: {
+    scheduleForFirstUserMessage(sessionId: number, messageId: number | null | undefined, content: unknown): void;
+  };
   harnessService: {
     prepareMessage(sessionId: number, content: unknown): Promise<string> | string;
     executeFromEvent(sessionId: number, eventId: string, listener: AgentEventListener, cancelFlag: { get(): boolean; set(v: boolean): void }): Promise<void>;
@@ -21,7 +24,6 @@ export interface WsHandlerDeps {
     getMessages(sessionId: number): Promise<Message[]>;
     editMessageAndTruncate(messageId: number, content: string, images: string[]): Promise<Message>;
     save(session: Session): Promise<void>;
-    generateTitleFromUserMessage(userId: number, content: string): Promise<string | null>;
     listSubagentSessions(parentId: number): Promise<Session[]>;
     cleanupIncompleteTail(sessionId: number): Promise<number>;
     updateContextTokens(sessionId: number, tokens: number): Promise<void>;
@@ -275,6 +277,7 @@ export class StreamingWsHandler {
     const messageContent: unknown = images.length === 0 ? content : contentParts(content, images);
     if (!isAutoConsume) {
       const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
+      this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
       this.deps.registry.send(userId, wsEvent('user_message_saved', sessionId, { tempEventId: eventId ?? '', messageId: savedMessage.id }));
     }
     const resolvedEventId = eventId && eventId.trim() !== '' ? eventId : await this.deps.harnessService.prepareMessage(sessionId, messageContent);
@@ -382,6 +385,7 @@ export class StreamingWsHandler {
     savedMessage: Message,
   ): Promise<void> {
     const sessionId = session.id!;
+    this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, savedMessage.content ?? '');
     if (session.executionMode === 'LOCAL') {
       this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
       if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
@@ -551,13 +555,8 @@ export class StreamingWsHandler {
       workspace: parentSession.workspace, projectKey: parentSession.projectKey, permissionLevel: parentSession.permissionLevel,
       modelId: resolvedModelId ?? undefined, isGit: parentSession.isGit, platform: parentSession.platform,
       shellPath: parentSession.shellPath, osVersion: parentSession.osVersion, status: 'ACTIVE',
-      parentSessionId, sessionType: 'SIDE_TASK',
+      parentSessionId, sessionType: 'SIDE_TASK', title: '任务',
     };
-    let titleBody = await this.deps.sessionService.generateTitleFromUserMessage(userId, content);
-    if (!titleBody || titleBody.trim() === '') {
-      titleBody = content && content.trim() !== '' ? (content.length > 30 ? `${content.slice(0, 30)}...` : content) : '图片消息';
-    }
-    sideSession.title = titleBody;
     await this.deps.sessionService.save(sideSession);
     const sideSessionId = sideSession.id!;
     if (sideSession.executionMode === 'LOCAL') {
@@ -565,10 +564,10 @@ export class StreamingWsHandler {
       this.deps.localSkillRegistry.report(sideSessionId, this.parseLocalSkills(data.localSkills));
       this.deps.localAgentsMdRegistry.report(sideSessionId, typeof data.agentsMdContent === 'string' ? data.agentsMdContent : null);
     }
-    const savedMessage = images.length === 0
-      ? await this.deps.sessionService.saveMessage(sideSessionId, 'USER', content, null, null, null, 0, null)
-      : await this.deps.sessionService.saveMessage(sideSessionId, 'USER', contentParts(content, images), null, null, null, 0, null);
+    const messageContent = images.length === 0 ? content : contentParts(content, images);
+    const savedMessage = await this.deps.sessionService.saveMessage(sideSessionId, 'USER', messageContent, null, null, null, 0, null);
     this.deps.registry.send(userId, wsEvent('side_session_created', parentSessionId, { sideSessionId, title: sideSession.title }));
+    this.deps.titleService.scheduleForFirstUserMessage(sideSessionId, savedMessage.id, messageContent);
     this.deps.registry.send(userId, wsEvent('user_message_saved', sideSessionId, { messageId: savedMessage.id }));
     this.executionClaims.add(sideSessionId);
     const flag = this.deps.agentLoop.registerCancelFlag(sideSessionId);
@@ -682,6 +681,7 @@ export class StreamingWsHandler {
           }
           const messageContent: unknown = imageList.length === 0 ? content : contentParts(content, imageList);
           const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
+          this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
           const consumed: Record<string, unknown> = { messageId: String(savedMessage.id), content };
           if (imageList.length > 0) consumed.images = imageList;
           this.deps.registry.send(userId, wsEvent('queue_message_consumed', sessionId, consumed));
@@ -762,6 +762,7 @@ export class StreamingWsHandler {
       }
       const messageContent: unknown = imageList.length === 0 ? content : contentParts(content, imageList);
       const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
+      this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
       const consumed: Record<string, unknown> = { messageId: String(savedMessage.id), content };
       if (imageList.length > 0) consumed.images = imageList;
       this.deps.registry.send(userId, wsEvent('queue_message_consumed', sessionId, consumed));

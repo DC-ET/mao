@@ -38,6 +38,22 @@ export function openSideTaskTabFor(parentSessionId: string, sideSessionId: numbe
   sessionTabsMap.value = new Map(sessionTabsMap.value)
 }
 
+function findSideTaskTab(state: SessionTabState, sideSessionId: number) {
+  const id = 'side:' + sideSessionId
+  return state.tabs.find(t =>
+    t.type === 'side_task' && (t.id === id || t.sideSessionId === sideSessionId)
+  )
+}
+
+export function updateSideTaskTabTitleFor(parentSessionId: string, sideSessionId: number, title: string) {
+  const state = sessionTabsMap.value.get(String(parentSessionId))
+  if (!state) return
+  const tab = findSideTaskTab(state, sideSessionId)
+  if (!tab) return
+  tab.title = normalizeSideTaskTitle(title)
+  sessionTabsMap.value = new Map(sessionTabsMap.value)
+}
+
 // 仅注册一次：激活边路任务 Tab 时清除该边路任务的未读标记（按 sideSessionId 独立已读）
 let sideTaskReadWatchRegistered = false
 
@@ -144,13 +160,6 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     state.tabs.push(newTab)
     state.activeTabId = id
     notifyTabsChanged()
-  }
-
-  function findSideTaskTab(state: SessionTabState, sideSessionId: number) {
-    const id = 'side:' + sideSessionId
-    return state.tabs.find(t =>
-      t.type === 'side_task' && (t.id === id || t.sideSessionId === sideSessionId)
-    )
   }
 
   function findSubagentTab(state: SessionTabState, childSessionId: number) {

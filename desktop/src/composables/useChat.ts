@@ -18,7 +18,6 @@ export type {
 export { normalizeMessageRole }
 
 import { uploadImages } from '../utils/imageUpload'
-import { deriveSessionTitle } from '../utils/sessionTitle'
 import { generateUUID } from '../utils/uuid'
 import { validateHttpsGitUrl } from '../utils/cloud-project'
 import { nowDateTime } from '../utils/datetime'
@@ -321,19 +320,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       sessionStore.clearTodos(sid)
       sessionStore.clearExecutionError(sid)
 
-      // Update session title from first user message (when title is still the default)
-      const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
-      if (currentSession && (!currentSession.title || currentSession.title === '未命名会话')) {
-        let derivedTitle = '任务'
-        if (text) {
-          derivedTitle = await deriveSessionTitle(text)
-        } else if (imageUrls.length > 0) {
-          derivedTitle = '图片消息'
-        }
-        sessionStore.updateSession(sid, { title: derivedTitle })
-        api.patch(`/sessions/${sid}`, { title: derivedTitle }).catch(() => {})
-      }
-
       // Add user message to store
       sessionStore.addUserMessage(sid, {
         id: `msg_${Date.now()}_user`,
@@ -514,19 +500,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Clear previous turn's todos / execution error banner
       sessionStore.clearTodos(sid)
       sessionStore.clearExecutionError(sid)
-
-      // Update session title from first user message (when title is still the default)
-      const currentSession = sessionStore.sessions.find(s => String(s.id) === String(sid))
-      if (currentSession && (!currentSession.title || currentSession.title === '未命名会话')) {
-        let derivedTitle = '任务'
-        if (text) {
-          derivedTitle = await deriveSessionTitle(text)
-        } else if (imageUrls.length > 0) {
-          derivedTitle = '图片消息'
-        }
-        sessionStore.updateSession(sid, { title: derivedTitle })
-        api.patch(`/sessions/${sid}`, { title: derivedTitle }).catch(() => {})
-      }
 
       // Add user message to store
       sessionStore.addUserMessage(sid, {

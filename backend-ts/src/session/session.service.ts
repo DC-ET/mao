@@ -30,7 +30,6 @@ import type {
 } from './types.js';
 import { SessionGroupKey } from './util/session-group-key.js';
 import { GitUrlParser } from './util/git-url-parser.js';
-import { TitleGenerator } from './util/title-generator.js';
 import { toStoredContentJson } from './session-vo.js';
 
 const SEARCH_RESULT_LIMIT = 20;
@@ -48,7 +47,7 @@ export class SessionService {
     private readonly agentLookup: AgentLookup,
     private readonly pathSandbox: PathSandbox,
     private readonly environmentInfoProvider: EnvironmentInfoProvider,
-    private readonly userCommandService: UserCommandLookup,
+    _userCommandService: UserCommandLookup,
     private readonly gitOperationService: GitOperationService,
     private readonly sessionCompactionService: SessionCompactionService,
     private readonly sessionCompactionEventService: SessionCompactionEventService,
@@ -724,35 +723,9 @@ export class SessionService {
 
     const session = await this.sessionRepo.findById(sessionId);
     if (session != null) {
-      const fields: Record<string, unknown> = { updatedAt: nowSql() };
-      if (role === 'USER' && session.sessionType !== 'SUBAGENT' && session.sessionType !== 'SIDE_TASK') {
-        if (session.title != null && (session.title === '未命名会话' || session.title.trim().length === 0)) {
-          const rawText = typeof content === 'string' ? content : extractTextFromContent(content);
-          const textForTitle = await this.preprocessForTitle(rawText, session.userId);
-          const autoTitle = TitleGenerator.generate(textForTitle);
-          if (autoTitle != null) {
-            fields.title = autoTitle;
-          }
-        }
-      }
-      await this.sessionRepo.updateFields(sessionId, fields);
+      await this.sessionRepo.updateFields(sessionId, { updatedAt: nowSql() });
     }
     return message;
-  }
-
-  async generateTitleFromUserMessage(userId: number, content: string): Promise<string | null> {
-    const textForTitle = await this.preprocessForTitle(content, userId);
-    return TitleGenerator.generate(textForTitle);
-  }
-
-  private async preprocessForTitle(text: string | null | undefined, userId: number | null): Promise<string | null | undefined> {
-    if (text == null) return null;
-    let cmdContentMap: Record<string, string> = {};
-    if (text.includes('#{') && userId != null) {
-      const cmds = await this.userCommandService.listAvailableForUser(userId);
-      cmdContentMap = Object.fromEntries(cmds.map((c) => [c.name, c.content]));
-    }
-    return TitleGenerator.preprocessForTitle(text, cmdContentMap);
   }
 
   async getMessages(sessionId: number): Promise<Message[]> {
@@ -1097,23 +1070,6 @@ function buildEditContent(text: string | null, images: string[] | null): string 
   } catch {
     return text;
   }
-}
-
-function extractTextFromContent(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    let sb = '';
-    for (const item of content) {
-      if (item && typeof item === 'object') {
-        const map = item as Record<string, unknown>;
-        if (map.type === 'text' && map.text != null) {
-          sb += String(map.text);
-        }
-      }
-    }
-    return sb;
-  }
-  return content != null ? String(content) : '';
 }
 
 function isTerminalPhase(phase: string | null | undefined): boolean {

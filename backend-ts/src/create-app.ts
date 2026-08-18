@@ -68,6 +68,7 @@ import { SessionCompactionService } from './session/session-compaction.service.j
 import { SessionCompactionEventService } from './session/session-compaction-event.service.js';
 import { GitOperationService } from './session/git-operation.service.js';
 import { SessionService } from './session/session.service.js';
+import { SessionTitleService } from './session/session-title.service.js';
 import { ActivityService } from './session/activity.service.js';
 import { SessionActivityRepository, SessionTodoRepository, SubagentExecutionRepository } from './session/activity.repository.js';
 import { MessageQueueService } from './session/message-queue.service.js';
@@ -530,6 +531,19 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
   holder.harness = harness;
 
+  const sessionTitleService = new SessionTitleService(
+    sessionRepo,
+    messageRepo,
+    commandService,
+    llmAdapter,
+    {
+      selectById: (id: number) => modelRepo.findById(id),
+      selectDefault: () => modelRepo.findDefault(),
+    },
+    wsRegistry,
+    (fn) => agentExecutor.submit(fn),
+  );
+
   const usageService = new LlmUsageService(new LlmUsageRepository(db));
   const gitCommitMsg = new GitCommitMessageService(llmAdapter as never, harness as never, usageService);
   const gitWrite = new GitWriteOperationService(
@@ -577,6 +591,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const wsHandler = new StreamingWsHandler({
     registry: wsRegistry,
+    titleService: sessionTitleService,
     harnessService: harness,
     sessionService,
     taskTerminalService: taskTerminal,

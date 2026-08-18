@@ -150,6 +150,20 @@ export class SessionRepository {
     );
   }
 
+  updateTitleIfPlaceholder(
+    sessionId: number,
+    sessionType: string,
+    placeholder: string,
+    title: string,
+    updatedAt: string,
+  ): Promise<number> {
+    return this.updateWhere(
+      { title, updatedAt },
+      "id = ? AND session_type = ? AND (title = ? OR title IS NULL OR TRIM(title) = '') AND deleted = 0",
+      [sessionId, sessionType, placeholder],
+    );
+  }
+
   async logicalDelete(id: number): Promise<void> {
     await this.db.execute(`UPDATE \`session\` SET deleted = 1 WHERE id = ? AND ${notDeleted()}`, [id]);
   }
@@ -281,6 +295,14 @@ export class MessageRepository {
       [sessionId],
     );
     return Number(row?.mx ?? 0);
+  }
+
+  async hasEarlierUserMessage(sessionId: number, messageId: number): Promise<boolean> {
+    const row = await this.db.queryOne<{ id: number }>(
+      `SELECT id FROM \`message\` WHERE session_id = ? AND role = 'USER' AND id < ? AND ${notDeleted()} LIMIT 1`,
+      [sessionId, messageId],
+    );
+    return row != null;
   }
 
   selectUserStarts(sessionId: number, beforeId: number | null, limit: number): Promise<Message[]> {
