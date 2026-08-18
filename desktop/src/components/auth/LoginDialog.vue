@@ -71,7 +71,7 @@
         plain
         @click="startFeishuLogin"
       >
-        飞书扫码登录
+        飞书登录
       </el-button>
     </el-form>
 
@@ -105,7 +105,6 @@ import { useLoginDialog } from '../../composables/useLoginDialog'
 import { getToken } from '../../utils/auth-storage'
 
 type LoginMode = 'password' | 'feishu'
-type ToastError = Error & { toastShown?: boolean }
 
 const authStore = useAuthStore()
 const { visible, close, notifySuccess } = useLoginDialog()
@@ -129,6 +128,7 @@ const formRules: FormRules = {
 
 let pollTimer: number | null = null
 let polling = false
+let feishuState = ''
 
 onMounted(() => {
   void authStore.fetchAuthFeatures().catch(() => {
@@ -163,26 +163,34 @@ async function handleLogin() {
 async function startFeishuLogin() {
   if (!authStore.features.feishuEnabled) return
   mode.value = 'feishu'
-  clearPollTimer()
-  qrDataUrl.value = ''
-  feishuAuthUrl.value = ''
-  feishuState.value = ''
-  feishuStatusText.value = '正在生成二维码'
+  feishuStatusText.value = '正在打开飞书授权页面…'
   feishuLoading.value = true
 
   try {
     const qr = await authStore.startFeishuLogin()
-    feishuAuthUrl.value = qr.authUrl || qr.qrCodeUrl
-    feishuState.value = qr.state
-    qrDataUrl.value = await QRCode.toDataURL(qr.qrCodeUrl || qr.authUrl, {
-      width: 220,
-      margin: 1
-    })
-    feishuStatusText.value = '请使用飞书扫码确认登录'
-    startPolling(qr.pollInterval || 2)
+    const authUrl = qr.authUrl || qr.qrCodeUrl
+    feishuState = qr.state
+
+    if (window.electronAPI?.openFeishuAuthWindow) {
+      // Electron: 内嵌窗口打开飞书授权页
+      feishuStatusText.value = '请在打开的飞书授权窗口中完成登录'
+      const result = await window.electronAPI.openFeishuAuthWindow(authUrl)
+      if (result.state) {
+        feishuStatusText.value = '登录成功，正在获取用户信息…'
+        await pollFeishuResult(feishuState)
+      } else {
+        feishuStatusText.value = '授权窗口已关闭'
+        backToPasswordLogin()
+      }
+    } else {
+      // Web: 新窗口打开飞书授权页
+      feishuStatusText.value = '请在打开的飞书授权页面中完成登录'
+      window.open(authUrl, '_blank')
+      startPolling(qr.pollInterval || 2)
+    }
   } catch (error) {
-    feishuStatusText.value = '二维码生成失败'
-    showError(error, '飞书二维码生成失败')
+    feishuStatusText.value = '飞书登录启动失败'
+    showError(error, '飞书登录启动失败')
   } finally {
     feishuLoading.value = false
   }
@@ -190,17 +198,16 @@ async function startFeishuLogin() {
 
 function startPolling(intervalSeconds: number) {
   clearPollTimer()
-  void checkFeishuStatus()
   pollTimer = window.setInterval(() => {
     void checkFeishuStatus()
   }, Math.max(1, intervalSeconds) * 1000)
 }
 
 async function checkFeishuStatus() {
-  if (!feishuState.value || polling) return
+  if (!feishuState || polling) return
   polling = true
   try {
-    const result = await authStore.pollFeishuLogin(feishuState.value)
+    const result = await authStore.pollFeishuLogin(feishuState)
     if (result.status === 'PENDING') {
       feishuStatusText.value = '等待飞书确认'
       return
@@ -208,7 +215,7 @@ async function checkFeishuStatus() {
     clearPollTimer()
     if (result.status === 'SUCCESS') {
       feishuStatusText.value = '登录成功'
-      resetFeishuLogin()
+      feishuState = ''
       notifySuccess()
       return
     }
@@ -222,36 +229,52 @@ async function checkFeishuStatus() {
   }
 }
 
-async function openFeishuInBrowser() {
-  if (!feishuAuthUrl.value) return
-  if (window.electronAPI?.openExternal) {
-    await window.electronAPI.openExternal(feishuAuthUrl.value)
-    return
+async function pollFeishuResult(state: string) {
+  // Wait for the server-side callback to complete, then poll for result
+  await new Promise(resolve => setTimeout(resolve, 1500))
+  let attempts = 0
+  const maxAttempts = 30
+  while (attempts < maxAttempts) {
+    attempts++
+    try {
+      const result = await authStore.pollFeishuLogin(state)
+      if (result.status === 'SUCCESS') {
+        feishuStatusText.value = '登录成功'
+        notifySuccess()
+        return
+      }
+      if (result.status === 'FAILED' || result.status === 'EXPIRED') {
+        feishuStatusText.value = result.message || statusText(result.status)
+        showError(new Error(feishuStatusText.value), '飞书登录失败')
+        backToPasswordLogin()
+        return
+      }
+    } catch {
+      // continue polling
+    }
+    await new Promise(resolve => setTimeout(resolve, 2000))
   }
-  window.open(feishuAuthUrl.value, '_blank')
+  feishuStatusText.value = '登录超时'
+  backToPasswordLogin()
 }
 
 function backToPasswordLogin() {
-  resetFeishuLogin()
+  clearPollTimer()
   mode.value = 'password'
+  feishuState = ''
+  feishuStatusText.value = ''
 }
 
 function handleClose() {
   if (!getToken()) {
     ElMessage.warning('需登录才能使用完整功能')
   }
-  resetFeishuLogin()
-  close()
-}
-
-function resetFeishuLogin() {
   clearPollTimer()
-  polling = false
+  feishuState = ''
   feishuLoading.value = false
-  qrDataUrl.value = ''
-  feishuAuthUrl.value = ''
-  feishuState.value = ''
-  feishuStatusText.value = '请使用飞书扫码确认登录'
+  feishuStatusText.value = ''
+  mode.value = 'password'
+  close()
 }
 
 function clearPollTimer() {
@@ -259,6 +282,7 @@ function clearPollTimer() {
     window.clearInterval(pollTimer)
     pollTimer = null
   }
+  polling = false
 }
 
 function statusText(status: string) {
@@ -268,12 +292,12 @@ function statusText(status: string) {
 }
 
 function showError(error: unknown, fallback: string) {
-  if ((error as ToastError | undefined)?.toastShown) return
+  if ((error as { toastShown?: boolean } | undefined)?.toastShown) return
   ElMessage.error(error instanceof Error ? error.message : fallback)
 }
 
 onBeforeUnmount(() => {
-  resetFeishuLogin()
+  clearPollTimer()
 })
 </script>
 
@@ -369,30 +393,8 @@ onBeforeUnmount(() => {
   gap: 18px;
 }
 
-.qr-frame {
-  width: 232px;
-  height: 232px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--aw-border);
-  border-radius: var(--aw-radius-lg);
-  background: #fff;
-}
-
-.qr-image {
-  width: 220px;
-  height: 220px;
-  display: block;
-}
-
-.qr-loading {
-  color: var(--aw-muted);
-  animation: spin 1s linear infinite;
-}
-
-.qr-empty {
-  color: var(--aw-muted);
+.feishu-icon {
+  color: var(--aw-ink-secondary, #6b7280);
 }
 
 .feishu-status {
@@ -415,12 +417,6 @@ onBeforeUnmount(() => {
 
 .password-entry {
   padding: 0;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 </style>
 
