@@ -78,7 +78,10 @@
                 <el-icon><Setting /></el-icon>
                 设置
               </el-dropdown-item>
-              <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+              <el-dropdown-item command="logout">
+                <el-icon><SwitchButton /></el-icon>
+                退出登录
+              </el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -93,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, Sunrise, Moon, Refresh, Setting, Sunny, User } from '@element-plus/icons-vue'
+import { ArrowLeft, Sunrise, Moon, Refresh, Setting, Sunny, SwitchButton, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
