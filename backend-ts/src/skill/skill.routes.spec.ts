@@ -34,6 +34,9 @@ describe('skill routes', () => {
       sessionService: {
         getSession: vi.fn(async () => ({ id: 1, userId: 7, agentId: 9 })),
       } as unknown as SessionService,
+      agentService: {
+        removeSkillNameFromAll: vi.fn(async () => 0),
+      } as never,
       agentLookup: {
         findById: vi.fn(async () => ({ id: 9, name: 'A' })),
       } as unknown as AgentLookup,
@@ -69,6 +72,9 @@ describe('skill routes', () => {
       sessionService: {
         getSession: vi.fn(async () => ({ id: 1, userId: 7, agentId: 9 })),
       } as unknown as SessionService,
+      agentService: {
+        removeSkillNameFromAll: vi.fn(async () => 0),
+      } as never,
       agentLookup: {
         findById: vi.fn(async () => ({ id: 9, name: 'A' })),
       } as unknown as AgentLookup,

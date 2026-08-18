@@ -703,7 +703,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerOssRoutes(api, { ossStsService: ossSts });
     registerSkillRoutes(api, {
       userSkillService, skillDocService, skillSyncService: skillSync,
-      sessionService, agentLookup: {
+      sessionService, agentService,
+      agentLookup: {
         findById: (id: number) => agentRepo.findById(id),
         findByIds: (ids: number[]) => agentRepo.findByIds(ids),
         requireDefaultAgent: () => agentService.requireDefaultAgent(),

@@ -47,6 +47,7 @@ export interface AgentRepository {
   updateById(agent: Agent): Promise<void>;
   deleteById(id: number): Promise<void>;
   clearDefaultFlag(): Promise<void>;
+  removeSkillName(skillName: string): Promise<number>;
 }
 
 export interface AgentTagRepository {

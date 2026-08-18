@@ -11,6 +11,7 @@ import type { AgentLookup } from '../session/types.js';
 import type { SessionService } from '../session/session.service.js';
 import type { SkillDocService } from './skill-doc.service.js';
 import type { UploadedSkillFile, UserSkillService } from './user-skill.service.js';
+import type { AgentService } from '../agent/agent.service.js';
 
 export interface SkillRouteDeps {
   userSkillService: UserSkillService;
@@ -18,6 +19,7 @@ export interface SkillRouteDeps {
   skillSyncService: SkillSyncService;
   sessionService: SessionService;
   agentLookup: AgentLookup;
+  agentService: AgentService;
 }
 
 export function registerUserSkillRoutes(app: FastifyInstance, deps: Pick<SkillRouteDeps, 'userSkillService'>): void {
@@ -48,8 +50,8 @@ export function registerUserSkillRoutes(app: FastifyInstance, deps: Pick<SkillRo
   });
 }
 
-export function registerSkillDocRoutes(app: FastifyInstance, deps: Pick<SkillRouteDeps, 'skillDocService'>): void {
-  const { skillDocService } = deps;
+export function registerSkillDocRoutes(app: FastifyInstance, deps: Pick<SkillRouteDeps, 'skillDocService' | 'agentService'>): void {
+  const { skillDocService, agentService } = deps;
 
   app.get('/v1/skill-docs', async (request, reply) => {
     requireUserId(request);
@@ -71,7 +73,14 @@ export function registerSkillDocRoutes(app: FastifyInstance, deps: Pick<SkillRou
 
   app.delete('/v1/skill-docs/:name', async (request, reply) => {
     requireUserId(request);
-    const result = skillDocService.deleteSkill(pathParam(request, 'name'));
+    const skillName = pathParam(request, 'name');
+    const result = skillDocService.deleteSkill(skillName);
+    if (result.code === 0) {
+      const affected = await agentService.removeSkillNameFromAll(skillName);
+      if (affected > 0) {
+        console.info(`Cleaned up skillName '${skillName}' from ${affected} agent(s)`);
+      }
+    }
     return sendJson(reply, 200, result.code === 0 ? ok(null) : result);
   });
 }

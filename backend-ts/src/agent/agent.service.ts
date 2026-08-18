@@ -133,6 +133,10 @@ export class AgentService {
     await this.agentRepo.deleteById(id);
   }
 
+  async removeSkillNameFromAll(skillName: string): Promise<number> {
+    return this.agentRepo.removeSkillName(skillName);
+  }
+
   getAgentTags(agentId: number): Promise<AgentTag[]> {
     return this.tagRepo.listByAgentId(agentId);
   }

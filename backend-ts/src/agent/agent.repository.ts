@@ -87,6 +87,31 @@ export class MysqlAgentRepository implements AgentRepository {
   async clearDefaultFlag(): Promise<void> {
     await this.db.execute(`UPDATE agent SET is_default = 0 WHERE is_default = 1 AND ${notDeleted()}`);
   }
+
+  async removeSkillName(skillName: string): Promise<number> {
+    // 从所有 agent 的 skillNames JSON 数组中移除指定 skillName
+    // 如果移除后数组为空，则置为 NULL
+    const raw = await this.db.query<{ id: number; skillNames: string | null }>(
+      `SELECT id, skillNames FROM agent WHERE skillNames IS NOT NULL AND ${notDeleted()}`,
+    );
+    let affected = 0;
+    for (const row of raw) {
+      if (row.skillNames == null) continue;
+      try {
+        const names: string[] = JSON.parse(row.skillNames);
+        const idx = names.indexOf(skillName);
+        if (idx === -1) continue;
+        names.splice(idx, 1);
+        const newVal = names.length === 0 ? null : JSON.stringify(names);
+        await this.db.updateById('agent', row.id, { skillNames: newVal });
+        affected++;
+      } catch {
+        // 跳过解析失败的记录
+        continue;
+      }
+    }
+    return affected;
+  }
 }
 
 export class MysqlAgentTagRepository implements AgentTagRepository {

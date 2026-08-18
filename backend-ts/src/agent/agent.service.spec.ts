@@ -22,6 +22,7 @@ describe('AgentService', () => {
     updateById: vi.fn(),
     deleteById: vi.fn(),
     clearDefaultFlag: vi.fn(),
+    removeSkillName: vi.fn(),
   };
   const tagRepo: AgentTagRepository = {
     listByAgentId: vi.fn(),
