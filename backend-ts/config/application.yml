@@ -102,7 +102,7 @@ app:
 
 weixin:
   bot:
-    enabled: ${WEIXIN_BOT_ENABLED:false}
+    enabled: ${WEIXIN_BOT_ENABLED:true}
     voice-reply: false
     silk-encoder-path: /usr/local/bin/silk-encoder
     ffmpeg-path: ffmpeg

@@ -34,6 +34,17 @@ describe('QrLoginService', () => {
     await expect(service.getQrcodeStatus('invalid-key')).rejects.toThrow(/无效的会话Key/);
   });
 
+  it('saveBindingCredentialsThrowsWhenDisabled', async () => {
+    const disabled = new QrLoginService(
+      { ...config, enabled: false },
+      accountRepository as unknown as WeixinAccountRepository,
+      monitorService as unknown as WeixinMonitorService,
+    );
+    await expect(disabled.saveBindingCredentials(1, 'test-token', 'https://test.com', 'user123'))
+      .rejects.toThrow(/微信Bot功能未启用/);
+    expect(monitorService.startMonitor).not.toHaveBeenCalled();
+  });
+
   it('saveBindingCredentialsCreatesNewAccount', async () => {
     accountRepository.findByUserId.mockResolvedValue(null);
     await service.saveBindingCredentials(1, 'test-token', 'https://test.com', 'user123');

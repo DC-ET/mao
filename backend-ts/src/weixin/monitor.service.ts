@@ -55,6 +55,10 @@ export class WeixinMonitorService {
   }
 
   startMonitor(accountId: string): void {
+    if (!this.config.enabled || !this.config.monitor.enabled) {
+      console.info('微信Bot监控未启用');
+      return;
+    }
     if (this.activeMonitors.has(accountId)) {
       console.debug(`账号监控已在运行, accountId=${accountId}`);
       return;

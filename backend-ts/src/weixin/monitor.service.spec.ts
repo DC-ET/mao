@@ -4,6 +4,19 @@ import { DEFAULT_WEIXIN_BOT_CONFIG } from './types.js';
 import type { WeixinHttpClient } from './weixin-http.js';
 
 describe('WeixinMonitorService', () => {
+  it('doesNotStartMonitorWhenDisabled', () => {
+    const accountRepository = { findAllEnabled: vi.fn() };
+    const monitor = new WeixinMonitorService(
+      { ...DEFAULT_WEIXIN_BOT_CONFIG, enabled: false },
+      accountRepository as never,
+      {} as never,
+    );
+
+    monitor.startMonitor('acc-disabled');
+
+    expect((monitor as unknown as { activeMonitors: Map<string, unknown> }).activeMonitors).toHaveLength(0);
+  });
+
   it('disablesAccountWhenSessionExpired', async () => {
     const account = {
       id: 9, accountId: 'acc-1', enabled: 1,

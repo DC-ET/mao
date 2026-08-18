@@ -257,7 +257,7 @@ npm run dev:electron  # Electron 模式（LOCAL 工具执行）
 | `TAVILY_API_KEY` | Tavily 搜索（可选） |
 | `LDAP_ENABLED` / `LDAP_URL` 等 | LDAP 认证（可选，`LDAP_ENABLED` 默认 `false`） |
 | `FEISHU_ENABLED` / `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_REDIRECT_URI` | 飞书 OAuth（可选，`FEISHU_ENABLED` 默认 `false`），`FEISHU_REDIRECT_URI` 必须是后端公网回调地址，如 `https://your-domain/api/v1/auth/feishu/callback` |
-| `WEIXIN_BOT_ENABLED` / `WEIXIN_BOT_MONITOR_ENABLED` 等 | 微信 Bot 通道（可选，默认开启；详见 `backend-ts/.env.example`） |
+| `WEIXIN_BOT_ENABLED` / `WEIXIN_BOT_MONITOR_ENABLED` 等 | 微信 Bot 通道（默认开启；详见 `backend-ts/.env.example`） |
 | `TASK_NOTIFICATION_WORKER_DELAY_MS` / `TASK_NOTIFICATION_BATCH_SIZE` / `TASK_NOTIFICATION_MAX_ATTEMPTS` | 任务通知投递调度参数 |
 | `OSS_*` | 阿里云 OSS（可选） |
 

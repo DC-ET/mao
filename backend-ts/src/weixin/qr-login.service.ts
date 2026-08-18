@@ -102,6 +102,9 @@ export class QrLoginService {
   }
 
   async saveBindingCredentials(userId: number, botToken: string, baseUrl: string, ilinkUserId: string): Promise<void> {
+    if (!this.config.enabled) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '微信Bot功能未启用');
+    }
     const accountId = `user_${userId}`;
     const payload = {
       token: botToken,
