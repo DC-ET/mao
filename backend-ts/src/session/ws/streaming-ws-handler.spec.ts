@@ -348,6 +348,12 @@ describe('StreamingWsHandler', () => {
     expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
       type: 'ask_user_questions_cancelled', data: expect.objectContaining({ requestId: 'q' }),
     }));
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'session_status', sessionId: 11, data: expect.objectContaining({ phase: 'RUNNING' }),
+    }));
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'session_list_update', sessionId: 11, data: { phase: 'RUNNING' },
+    }));
   });
 
   it('connectionRejectsForgedOrInvalidJwt', async () => {

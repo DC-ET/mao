@@ -155,6 +155,7 @@ export function appendToolCallStart(msg: ChatMessage, call: ToolCall) {
   if (!msg.segments) msg.segments = []
   const existing = msg.toolCalls.find(c => c.id === call.id)
   if (existing) {
+    if (call.name && (!existing.name || existing.name === 'tool')) existing.name = call.name
     if (call.input) existing.input = call.input
     if (call.status === 'running' || call.status === 'pending') {
       existing.status = call.status

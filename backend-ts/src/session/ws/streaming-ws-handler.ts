@@ -505,7 +505,13 @@ export class StreamingWsHandler {
     const resultJson = `{"answers": ${answersJson}}`;
     const completed = this.deps.askUserQuestionsRegistry.complete(sessionId, requestId, resultJson);
     if (completed) {
+      const executionId = this.runningExecutionIds.get(sessionId);
       this.deps.registry.send(userId, wsEvent('ask_user_questions_cancelled', sessionId, { requestId }));
+      this.deps.registry.send(userId, wsEvent('session_status', sessionId, {
+        phase: 'RUNNING',
+        ...(executionId ? { executionId } : {}),
+      }));
+      this.deps.registry.send(userId, wsEvent('session_list_update', sessionId, { phase: 'RUNNING' }));
       this.deps.treeSignalPublisher.publishForSession(sessionId);
     }
   }

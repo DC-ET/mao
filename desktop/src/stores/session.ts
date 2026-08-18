@@ -1226,6 +1226,7 @@ export const useSessionStore = defineStore('session', () => {
 
   function updateToolCallResult(sessionId: string, data: {
     tool_call_id: string
+    tool_name?: string
     result: string
     status?: string
     summary?: string
@@ -1243,7 +1244,7 @@ export const useSessionStore = defineStore('session', () => {
       }
       call = {
         id: data.tool_call_id,
-        name: 'tool',
+        name: data.tool_name || 'tool',
         status: 'running',
         isExpanded: false,
         argsStreaming: false
@@ -1252,6 +1253,7 @@ export const useSessionStore = defineStore('session', () => {
       if (!lastMsg.segments) lastMsg.segments = []
       lastMsg.segments.push({ type: 'tool', callId: data.tool_call_id })
     }
+    if (data.tool_name && (!call.name || call.name === 'tool')) call.name = data.tool_name
     call.result = data.result
     call.status = (data.status as any) || 'success'
     call.isExpanded = false

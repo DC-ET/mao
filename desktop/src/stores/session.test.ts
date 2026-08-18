@@ -60,6 +60,40 @@ describe('session store 实体/投影模型', () => {
     expect(store.getMessages('1').at(-1)?.content).toBe('')
   })
 
+  it('工具结果缺少对应开始事件时仍使用结果携带的工具名', () => {
+    const store = useSessionStore()
+
+    store.updateToolCallResult('1', {
+      tool_call_id: 'call-read',
+      tool_name: 'read_file',
+      result: '{"content":"ok"}',
+      status: 'success',
+    })
+
+    expect(store.getMessages('1').at(-1)?.toolCalls).toEqual([
+      expect.objectContaining({ id: 'call-read', name: 'read_file', status: 'success' }),
+    ])
+  })
+
+  it('迟到的工具开始事件会纠正旧版结果事件创建的通用占位名', () => {
+    const store = useSessionStore()
+
+    store.updateToolCallResult('1', {
+      tool_call_id: 'call-read',
+      result: '{"content":"ok"}',
+      status: 'success',
+    })
+    store.appendToolCallStart('1', {
+      tool_call_id: 'call-read',
+      tool_name: 'read_file',
+      arguments: '{"path":"README.md"}',
+    })
+
+    expect(store.getMessages('1').at(-1)?.toolCalls).toEqual([
+      expect.objectContaining({ id: 'call-read', name: 'read_file', input: { path: 'README.md' } }),
+    ])
+  })
+
   it('fetchSessions 填充实体与标准投影；unread 以服务端为准（不保留旧本地 false）', async () => {
     const store = useSessionStore()
     mockGet.mockResolvedValueOnce({

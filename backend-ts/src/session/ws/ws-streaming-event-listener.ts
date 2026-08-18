@@ -89,6 +89,7 @@ export class WsStreamingEventListener implements AgentEventListener {
       result: displayResult,
       status: isError ? 'error' : 'success',
     };
+    if (toolName) data.tool_name = toolName;
     if (preview) data.preview = preview;
     if (summary) data.summary = summary;
     this.send('tool_call_result', data);

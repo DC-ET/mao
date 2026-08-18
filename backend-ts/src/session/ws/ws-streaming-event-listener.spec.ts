@@ -51,10 +51,11 @@ describe('WsStreamingEventListener', () => {
     listener.onToolCallArgsDelta('tc-w', '{"path":"/a.ts"}');
     listener.onToolCallStart({ id: 'tc-w', function: { name: 'write_file', arguments: '{"path":"/a.ts"}' } } as never);
     listener.onToolCallResult('tc-w', '{"success":true,"bytes_written":12}');
-    const events = vi.mocked(registry.send).mock.calls.map((c) => c[1] as { type: string; data?: { summary?: string } });
+    const events = vi.mocked(registry.send).mock.calls.map((c) => c[1] as { type: string; data?: { summary?: string; tool_name?: string } });
     const starts = events.filter((e) => e.type === 'tool_call_start');
     expect(starts).toHaveLength(1);
     expect(events.find((e) => e.type === 'tool_call_result')?.data?.summary).toBe('写入 /a.ts (12B)');
+    expect(events.find((e) => e.type === 'tool_call_result')?.data?.tool_name).toBe('write_file');
   });
 
   it('strips private diff records file change and todos', async () => {
