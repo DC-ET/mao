@@ -201,12 +201,14 @@ export class StreamingWsHandler {
     if (s.executionMode === 'LOCAL' && active) {
       this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
     }
+    // 订阅既是流式事件通道，也是客户端断线后的状态校准点。即使任务已结束，
+    // 也必须回传终态，避免完成事件恰好在断线期间丢失后界面永久停在“执行中”。
+    const executionId = this.runningExecutionIds.get(sessionId);
+    this.deps.registry.send(userId, wsEvent('session_snapshot', sessionId, {
+      phase: s.phase === 'RESUMING' ? 'RUNNING' : s.phase,
+      ...(executionId ? { executionId } : {}),
+    }));
     if (active) {
-      const executionId = this.runningExecutionIds.get(sessionId);
-      this.deps.registry.send(userId, wsEvent('session_snapshot', sessionId, {
-        phase: s.phase === 'RESUMING' ? 'RUNNING' : s.phase,
-        ...(executionId ? { executionId } : {}),
-      }));
       for (const toolCall of this.deps.registry.getActiveToolCalls(sessionId)) {
         this.deps.registry.send(userId, wsEvent('tool_call_start', sessionId, toolCall));
       }

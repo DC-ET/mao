@@ -107,6 +107,19 @@ describe('StreamingWsHandler', () => {
     expect(agentLoop.removeCancelFlag).toHaveBeenCalledWith(11);
   });
 
+  it('subscribe sends a terminal snapshot so reconnecting clients can reconcile missed completion', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'COMPLETED'));
+
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+
+    expect(registry.subscribe).toHaveBeenCalledWith(7, 11);
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'session_snapshot', sessionId: 11, data: { phase: 'COMPLETED' },
+    }));
+  });
+
   it('sendMessageRejectsDuplicateWhileSessionIsRunningWithoutPersistingOrSubmitting', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);

@@ -156,9 +156,10 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
 export class MysqlSessionModelRepository implements SessionModelRepository {
   constructor(private readonly db: Db) {}
 
+  /** 模型迁移不属于会话活动，保留 updated_at 以免扰乱会话列表排序。 */
   async reassignModelId(fromId: number, toId: number | null): Promise<void> {
     await this.db.execute(
-      `UPDATE session SET model_id = ? WHERE model_id = ? AND ${notDeleted()}`,
+      `UPDATE session SET model_id = ?, updated_at = updated_at WHERE model_id = ? AND ${notDeleted()}`,
       [toId, fromId],
     );
   }
