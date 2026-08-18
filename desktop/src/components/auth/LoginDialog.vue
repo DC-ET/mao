@@ -76,31 +76,16 @@
     </el-form>
 
     <div v-else class="feishu-panel">
-      <div class="qr-frame">
-        <el-icon v-if="feishuLoading" class="qr-loading" :size="32"><Loading /></el-icon>
-        <img
-          v-else-if="qrDataUrl"
-          :src="qrDataUrl"
-          alt="飞书登录二维码"
-          class="qr-image"
-        />
-        <el-icon v-else class="qr-empty" :size="36"><Warning /></el-icon>
-      </div>
+      <el-icon class="feishu-icon" :size="48"><Connection /></el-icon>
       <p class="feishu-status">{{ feishuStatusText }}</p>
       <div class="feishu-actions">
         <el-button
           size="large"
-          :disabled="!feishuAuthUrl"
-          @click="openFeishuInBrowser"
-        >
-          浏览器打开
-        </el-button>
-        <el-button
-          size="large"
+          type="primary"
           :loading="feishuLoading"
           @click="startFeishuLogin"
         >
-          刷新
+          飞书登录
         </el-button>
       </div>
       <el-button class="password-entry" link @click="backToPasswordLogin">
@@ -114,7 +99,6 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules, InputInstance } from 'element-plus'
-import QRCode from 'qrcode'
 import { useAuthStore } from '../../stores/auth'
 import appIcon from '../../assets/app-icon-small.png'
 import { useLoginDialog } from '../../composables/useLoginDialog'
@@ -129,10 +113,7 @@ const { visible, close, notifySuccess } = useLoginDialog()
 const mode = ref<LoginMode>('password')
 const passwordLoading = ref(false)
 const feishuLoading = ref(false)
-const qrDataUrl = ref('')
-const feishuAuthUrl = ref('')
-const feishuState = ref('')
-const feishuStatusText = ref('请使用飞书扫码确认登录')
+const feishuStatusText = ref('')
 const formRef = ref<FormInstance>()
 const usernameInputRef = ref<InputInstance>()
 const passwordInputRef = ref<InputInstance>()

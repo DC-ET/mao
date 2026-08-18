@@ -714,9 +714,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerAnalyticsRoutes(api, { analytics: analyticsService, jwt });
     registerStatisticsRoutes(api, { statistics: statisticsService, jwt });
     const adminDeps = {
-      jwt, analytics: adminAnalytics, userRepo, passwordHasher: hasher,
-      rootDir: cfg.app.rootDir,
-      restartScript: resolve(cfg.app.rootDir, 'backend-ts/restart.sh'),
+      jwt, analytics: adminAnalytics,
       sessionLister: sessionService as never,
     };
     registerAdminAnalyticsRoutes(api, adminDeps);

@@ -1,13 +1,8 @@
-import { spawn } from 'node:child_process';
-import { existsSync, accessSync, constants } from 'node:fs';
-import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { BusinessException } from '../common/business-exception.js';
 import { requireUserId } from '../common/auth.js';
 import { sendJson } from '../common/http-error.js';
 import { ok } from '../common/result.js';
 import type { JwtService } from '../crypto/jwt.service.js';
-import type { PasswordHasher, UserRepository } from '../user/types.js';
 import type { AdminAnalyticsService } from './admin-analytics.service.js';
 
 export interface AdminSessionLister {
@@ -27,14 +22,7 @@ export interface AdminRouteDeps {
   jwt: JwtService;
   analytics: AdminAnalyticsService;
   sessionLister?: AdminSessionLister;
-  userRepo: UserRepository;
-  passwordHasher: PasswordHasher;
-  rootDir: string;
-  restartScript?: string;
 }
-
-const ADMIN_USERNAME = 'admin';
-let restarting = false;
 
 export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRouteDeps): void {
   app.get('/v1/admin/analytics/summary', async (req, reply) => {
@@ -79,60 +67,4 @@ export function registerAdminRuntimeRoutes(app: FastifyInstance, deps: AdminRout
     sendJson(reply, 200, ok(result));
   });
 
-  app.get('/v1/admin/runtime/restart', async (req, reply) => {
-    const key = (req.query as { key?: string }).key ?? '';
-    await assertAdminPasswordKey(key, deps);
-    const script = resolve(deps.restartScript ?? `${deps.rootDir}/backend-ts/restart.sh`);
-    if (!existsSync(script)) {
-      throw new BusinessException(500, `重启脚本不存在: ${script}`);
-    }
-    try {
-      accessSync(script, constants.X_OK);
-    } catch {
-      throw new BusinessException(500, `重启脚本不可执行: ${script}`);
-    }
-    if (restarting) {
-      throw new BusinessException(409, '重启已在进行中');
-    }
-    restarting = true;
-    console.warn(`Backend restart triggered via key auth, script=${script}`);
-    setTimeout(() => {
-      try {
-        const child = spawn('setsid', [script], {
-          detached: true,
-          stdio: ['ignore', 'ignore', 'ignore'],
-        });
-        child.unref();
-        console.info(`Restart script launched: ${script}`);
-      } catch (e) {
-        restarting = false;
-        console.error(`Failed to launch restart script ${script}`, e);
-      }
-    }, 800);
-    sendJson(reply, 200, ok({
-      accepted: true,
-      message: '重启指令已接受，服务即将重启',
-      script,
-    }));
-  });
-}
-
-async function assertAdminPasswordKey(key: string, deps: AdminRouteDeps): Promise<void> {
-  if (!key || key.trim() === '') {
-    throw new BusinessException(401, 'key 无效');
-  }
-  const admin = await deps.userRepo.findByUsername(ADMIN_USERNAME);
-  if (!admin || !admin.passwordHash) {
-    throw new BusinessException(500, 'admin 用户不存在或未设置本地密码');
-  }
-  if (admin.status != null && admin.status === 0) {
-    throw new BusinessException(403, 'admin 账号已禁用');
-  }
-  if (!(await deps.passwordHasher.matches(key, admin.passwordHash))) {
-    throw new BusinessException(401, 'key 无效');
-  }
-}
-
-export function resetRestartingFlag(): void {
-  restarting = false;
 }

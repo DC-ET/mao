@@ -1097,6 +1097,57 @@ ipcMain.handle('open-external', async (event, url) => {
   await shell.openExternal(parsed.toString())
 })
 
+ipcMain.handle('open-feishu-auth-window', async (event, authUrl) => {
+  return new Promise((resolve) => {
+    const authWindow = new BrowserWindow({
+      width: 800,
+      height: 700,
+      title: '飞书登录',
+      autoHideMenuBar: true,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+      },
+    })
+
+    authWindow.loadURL(authUrl)
+
+    let resolved = false
+    const CALLBACK_PATH = '/api/v1/auth/feishu/callback'
+
+    function checkUrl(url) {
+      if (resolved) return
+      try {
+        const parsed = new URL(url)
+        if (parsed.pathname === CALLBACK_PATH) {
+          resolved = true
+          const state = parsed.searchParams.get('state') || ''
+          // Short delay for the server to finish processing the callback
+          setTimeout(() => {
+            if (!authWindow.isDestroyed()) {
+              authWindow.close()
+            }
+            resolve({ state })
+          }, 500)
+        }
+      } catch {
+        // ignore invalid URLs
+      }
+    }
+
+    authWindow.webContents.on('did-navigate', (_, url) => checkUrl(url))
+    authWindow.webContents.on('did-navigate-in-page', (_, url) => checkUrl(url))
+
+    authWindow.on('closed', () => {
+      if (!resolved) {
+        resolved = true
+        resolve({ state: '' })
+      }
+    })
+  })
+})
+
 ipcMain.handle('select-directory', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],

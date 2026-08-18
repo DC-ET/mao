@@ -1,6 +1,6 @@
 #!/bin/bash
 # Blue-green restart for the TypeScript backend (9080 <-> 9081).
-# Used by GET /v1/admin/runtime/restart and manual deploys.
+# Used by manual deploys.
 # Deploy to ${app.root-dir}/backend-ts/restart.sh (default /opt/mao/backend-ts/restart.sh).
 
 set -euo pipefail

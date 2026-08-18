@@ -8,9 +8,6 @@ export function isPublicPath(method: string, rawUrl: string): boolean {
   if (PUBLIC_PREFIXES.some((p) => path.startsWith(p))) {
     return true;
   }
-  if (method === 'GET' && path.startsWith('/v1/admin/runtime/restart')) {
-    return true;
-  }
   if ((method === 'GET' || method === 'HEAD') && path.startsWith('/uploads/')) {
     return true;
   }
