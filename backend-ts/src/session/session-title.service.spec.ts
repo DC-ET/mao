@@ -23,6 +23,10 @@ function makeService(overrides: Record<string, unknown> = {}) {
     selectById: vi.fn(async () => ({ id: 3, name: 'model', modelId: 'model' })),
     selectDefault: vi.fn(async () => ({ id: 9, name: 'default', modelId: 'default' })),
   };
+  const settings = {
+    getValue: vi.fn(async () => ''),
+    ...overrides.settings as object,
+  };
   const registry = { send: vi.fn() };
   const tasks: Array<() => void | Promise<void>> = [];
   const executor = vi.fn((fn: () => void | Promise<void>) => tasks.push(fn));
@@ -32,10 +36,11 @@ function makeService(overrides: Record<string, unknown> = {}) {
     userCommands as never,
     llm as never,
     models as never,
+    settings as never,
     registry as never,
     executor,
   );
-  return { service, sessionRepo, messageRepo, userCommands, llm, models, registry, executor, tasks };
+  return { service, sessionRepo, messageRepo, userCommands, llm, models, settings, registry, executor, tasks };
 }
 
 describe('cleanModelTitle', () => {
@@ -69,7 +74,7 @@ describe('SessionTitleService', () => {
       stream: false,
       temperature: 0.2,
       reasoning: { effort: 'none' },
-    }), expect.objectContaining({ id: 3 }), expect.anything());
+    }), expect.objectContaining({ id: 9 }), expect.anything());
     expect(ctx.sessionRepo.updateTitleIfPlaceholder).toHaveBeenCalledWith(
       11, 'NORMAL', '未命名会话', '排查登录接口超时', expect.any(String),
     );
@@ -78,6 +83,24 @@ describe('SessionTitleService', () => {
       sessionId: 11,
       data: { title: '排查登录接口超时', parentSessionId: null, sessionType: 'NORMAL' },
     }));
+  });
+
+  it('uses the configured title model when session.titleModelId is set', async () => {
+    const ctx = makeService({ settings: { getValue: vi.fn(async () => '3') } });
+    await ctx.service.generateAndApply(11, 21, '请排查登录超时');
+    expect(ctx.settings.getValue).toHaveBeenCalledWith('session.titleModelId');
+    expect(ctx.models.selectById).toHaveBeenCalledWith(3);
+    expect(ctx.models.selectDefault).not.toHaveBeenCalled();
+    expect(ctx.llm.chat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 3 }), expect.anything());
+  });
+
+  it('falls back to the default model when the configured title model is missing', async () => {
+    const ctx = makeService({ settings: { getValue: vi.fn(async () => '999') } });
+    ctx.models.selectById.mockResolvedValue(null);
+    await ctx.service.generateAndApply(11, 21, '请排查登录超时');
+    expect(ctx.models.selectById).toHaveBeenCalledWith(999);
+    expect(ctx.models.selectDefault).toHaveBeenCalled();
+    expect(ctx.llm.chat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 9 }), expect.anything());
   });
 
   it('preprocesses commands, skills and file references before invoking the model', async () => {
@@ -90,23 +113,24 @@ describe('SessionTitleService', () => {
   it('continues with raw command markers when command lookup fails', async () => {
     const ctx = makeService();
     ctx.userCommands.listAvailableForUser.mockRejectedValue(new Error('database unavailable'));
-    ctx.models.selectById.mockResolvedValue(null);
+    ctx.models.selectDefault.mockResolvedValue(null);
     await ctx.service.generateAndApply(11, 21, '${review}$ #{fix}# @{secret.ts}@');
     expect(ctx.sessionRepo.updateTitleIfPlaceholder).toHaveBeenCalledWith(
       11, 'NORMAL', '未命名会话', '#{fix}#', expect.any(String),
     );
   });
 
-  it('uses the default model when the session has no model', async () => {
-    const ctx = makeService({ sessionRepo: { findById: vi.fn(async () => ({ id: 11, userId: 7, title: '未命名会话', sessionType: 'NORMAL' })) } });
+  it('uses the default model when no title model is configured', async () => {
+    const ctx = makeService();
     await ctx.service.generateAndApply(11, 21, 'hello');
+    expect(ctx.settings.getValue).toHaveBeenCalledWith('session.titleModelId');
     expect(ctx.models.selectDefault).toHaveBeenCalled();
     expect(ctx.models.selectById).not.toHaveBeenCalled();
   });
 
   it('falls back to the preprocessed prefix when model resolution or output fails', async () => {
     const ctx = makeService();
-    ctx.models.selectById.mockResolvedValue(null);
+    ctx.models.selectDefault.mockResolvedValue(null);
     await ctx.service.generateAndApply(11, 21, '  fallback title  ');
     expect(ctx.sessionRepo.updateTitleIfPlaceholder).toHaveBeenCalledWith(
       11, 'NORMAL', '未命名会话', 'fallback title', expect.any(String),

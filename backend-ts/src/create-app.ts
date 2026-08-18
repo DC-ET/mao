@@ -540,6 +540,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       selectById: (id: number) => modelRepo.findById(id),
       selectDefault: () => modelRepo.findDefault(),
     },
+    { getValue: (key: string) => settingService.getValue(key) },
     wsRegistry,
     (fn) => agentExecutor.submit(fn),
   );

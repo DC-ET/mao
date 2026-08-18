@@ -1,10 +1,12 @@
 import type { LlmModel } from '../domain/types.js';
 import type { Session, UserCommandLookup } from './types.js';
 import { AtomicBoolean } from '../harness/atomic-boolean.js';
+import { hasText } from '../common/case.js';
 import { llmModelToConfig } from '../harness/deps.js';
 import type { ChatResponse, LlmAdapter } from '../harness/llm/chat-request.js';
 import { nowSql } from '../common/datetime.js';
 import type { MessageRepository, SessionRepository } from './session.repository.js';
+import { SESSION_TITLE_MODEL_ID_KEY } from '../settings/settings.service.js';
 import { TitleGenerator } from './util/title-generator.js';
 import { wsEvent } from './ws/ws-event.js';
 
@@ -31,6 +33,10 @@ interface ModelLookup {
   selectDefault(): Promise<LlmModel | null>;
 }
 
+interface SettingLookup {
+  getValue(key: string): Promise<string | null>;
+}
+
 export class SessionTitleService {
   constructor(
     private readonly sessionRepo: SessionRepository,
@@ -38,6 +44,7 @@ export class SessionTitleService {
     private readonly userCommandService: UserCommandLookup,
     private readonly llmAdapter: LlmAdapter,
     private readonly modelLookup: ModelLookup,
+    private readonly settingLookup: SettingLookup,
     private readonly registry: TitleRegistry,
     private readonly executor: (fn: () => void | Promise<void>) => unknown,
   ) {}
@@ -69,9 +76,7 @@ export class SessionTitleService {
         return;
       }
 
-      const model = session.modelId != null
-        ? await this.modelLookup.selectById(session.modelId)
-        : await this.modelLookup.selectDefault();
+      const model = await this.resolveTitleModel();
       modelId = model?.id ?? null;
 
       let title: string | null = null;
@@ -96,6 +101,21 @@ export class SessionTitleService {
     } catch (error) {
       console.warn(`[session-title] failed sessionId=${sessionId} modelId=${modelId ?? 'null'} durationMs=${Date.now() - startedAt}: ${errorMessage(error)}`);
     }
+  }
+
+  private async resolveTitleModel(): Promise<LlmModel | null> {
+    const configured = await this.settingLookup.getValue(SESSION_TITLE_MODEL_ID_KEY);
+    if (hasText(configured)) {
+      const parsed = Number(configured!.trim());
+      if (Number.isSafeInteger(parsed)) {
+        const model = await this.modelLookup.selectById(parsed);
+        if (model) return model;
+        console.warn(`[session-title] configured title model ${configured} not found, fallback to default`);
+      } else {
+        console.warn(`[session-title] invalid title model config: ${configured}, fallback to default`);
+      }
+    }
+    return this.modelLookup.selectDefault();
   }
 
   private isEligible(session: Session): boolean {

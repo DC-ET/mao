@@ -26,7 +26,7 @@
                   {{ row.value === 'true' ? '已启用' : '未启用' }}
                 </el-tag>
                 <span v-else-if="row.settingKey === 'weixin.agentId'">{{ formatWeixinAgent(row.value) }}</span>
-                <span v-else-if="row.settingKey === 'weixin.modelId'">{{ formatWeixinModel(row.value) }}</span>
+                <span v-else-if="row.settingKey === 'weixin.modelId' || row.settingKey === 'session.titleModelId'">{{ formatModelSetting(row.value) }}</span>
                 <span v-else>{{ row.value }}</span>
               </template>
             </el-table-column>
@@ -69,7 +69,7 @@
             />
           </el-select>
           <el-select
-            v-else-if="currentSetting?.settingKey === 'weixin.modelId'"
+            v-else-if="currentSetting?.settingKey === 'weixin.modelId' || currentSetting?.settingKey === 'session.titleModelId'"
             v-model="settingValue"
             clearable
             filterable
@@ -108,7 +108,8 @@ import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
-const WEIXIN_SELECT_KEYS = new Set(['weixin.agentId', 'weixin.modelId'])
+const SELECT_KEYS = new Set(['weixin.agentId', 'weixin.modelId', 'session.titleModelId'])
+const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId'])
 
 const loading = ref(false)
 const settings = ref<any[]>([])
@@ -196,7 +197,7 @@ function formatWeixinAgent(value: string | null | undefined) {
   return agent ? `${agent.name}（ID: ${value}）` : `Agent ID: ${value}`
 }
 
-function formatWeixinModel(value: string | null | undefined) {
+function formatModelSetting(value: string | null | undefined) {
   if (!value) return '未设置（使用默认模型）'
   const model = models.value.find(m => String(m.id) === String(value))
   return model ? `${model.name}（ID: ${value}）` : `模型 ID: ${value}`
@@ -207,7 +208,7 @@ async function handleEdit(row: any) {
   if (row.settingKey === 'weixin.agentId' && agents.value.length === 0) {
     await fetchAgents()
   }
-  if (row.settingKey === 'weixin.modelId' && models.value.length === 0) {
+  if (MODEL_SELECT_KEYS.has(row.settingKey) && models.value.length === 0) {
     await fetchModels()
   }
   if (isBooleanSetting(row.settingKey)) {
@@ -220,7 +221,7 @@ async function handleEdit(row: any) {
 
 async function saveSetting() {
   if (!currentSetting.value || saving.value) return
-  const value = WEIXIN_SELECT_KEYS.has(currentSetting.value.settingKey)
+  const value = SELECT_KEYS.has(currentSetting.value.settingKey)
     ? (settingValue.value || '')
     : settingValue.value
   saving.value = true

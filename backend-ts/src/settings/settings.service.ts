@@ -5,10 +5,12 @@ import type { AgentLookup, ModelLookup, SettingsRuntimeConfig, SystemSetting, Sy
 
 export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
+export const SESSION_TITLE_MODEL_ID_KEY = 'session.titleModelId';
 
 export class SystemSettingService {
   static readonly WEIXIN_AGENT_ID_KEY = WEIXIN_AGENT_ID_KEY;
   static readonly WEIXIN_MODEL_ID_KEY = WEIXIN_MODEL_ID_KEY;
+  static readonly SESSION_TITLE_MODEL_ID_KEY = SESSION_TITLE_MODEL_ID_KEY;
 
   constructor(
     private readonly settingRepo: SystemSettingRepository,
@@ -75,13 +77,13 @@ export class SystemSettingService {
       }
       return;
     }
-    if (key === WEIXIN_MODEL_ID_KEY) {
+    if (key === WEIXIN_MODEL_ID_KEY || key === SESSION_TITLE_MODEL_ID_KEY) {
       if (!hasText(value)) {
         return;
       }
       const parsed = parseLongId(value!.trim());
       if (parsed == null) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, '微信模型配置必须是有效的模型 ID');
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '模型配置必须是有效的模型 ID');
       }
       const model = await this.modelLookup.findById(parsed);
       if (!model) {

@@ -90,6 +90,27 @@ describe('SystemSettingService', () => {
     expect(updated.value).toBe('8');
   });
 
+  it('updateAllowsEmptyTitleModelId', async () => {
+    const row = setting(SystemSettingService.SESSION_TITLE_MODEL_ID_KEY, '会话', 1);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row);
+    const updated = await service().update(SystemSettingService.SESSION_TITLE_MODEL_ID_KEY, '');
+    expect(updated.value).toBe('');
+  });
+
+  it('updateValidatesTitleModelExists', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting(SystemSettingService.SESSION_TITLE_MODEL_ID_KEY, '会话', 1));
+    vi.mocked(modelLookup.findById).mockResolvedValue(null);
+    await expect(service().update(SystemSettingService.SESSION_TITLE_MODEL_ID_KEY, '8')).rejects.toThrow(/模型不存在/);
+  });
+
+  it('updateAcceptsValidTitleModelId', async () => {
+    const row = setting(SystemSettingService.SESSION_TITLE_MODEL_ID_KEY, '会话', 1);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row);
+    vi.mocked(modelLookup.findById).mockResolvedValue({ id: 8 });
+    const updated = await service().update(SystemSettingService.SESSION_TITLE_MODEL_ID_KEY, '8');
+    expect(updated.value).toBe('8');
+  });
+
   it('listShowsLdapEnabledOnlyWhenSwitchAndUrlArePresent', async () => {
     const ldapSetting = setting('auth.ldap.enabled', '认证', 0);
     vi.mocked(mapper.list).mockResolvedValue([ldapSetting]);
