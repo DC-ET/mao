@@ -68,8 +68,8 @@
     <div class="input-area">
       <ExecutionErrorBanner
         :message="executionError"
-        :can-continue="!sending"
-        @continue="handleChatSend('继续', [])"
+        :can-retry="!sending && hasRealSession"
+        @retry="handleRetryExecution"
       />
 
       <div v-if="!hasRealSession && displayMessages.length === 0" class="inherit-bar">
@@ -132,7 +132,7 @@ const props = defineProps<{
 }>()
 
 const sessionStore = useSessionStore()
-const { createSideSession, sendMessage, cancel, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, onMessageSaved, offMessageSaved } = useStreamWS()
+const { createSideSession, sendMessage, cancel, retryExecution, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, onMessageSaved, offMessageSaved } = useStreamWS()
 const { openWithContent } = useCommandDrawer()
 const { pendingApprovals, confirmApproval } = useToolApprovals()
 
@@ -616,6 +616,15 @@ function handleStop() {
     cancel(String(sid))
   }
   sending.value = false
+}
+
+function handleRetryExecution() {
+  const sid = realSessionId.value
+  if (sid <= 0) return
+  sending.value = true
+  sessionStore.clearExecutionError(String(sid))
+  retryExecution(String(sid))
+  sessionStore.ensureStreamingAssistantMessage(String(sid))
 }
 
 async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {

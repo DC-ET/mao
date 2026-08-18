@@ -6,35 +6,28 @@
     </div>
     <pre class="error-message">{{ message }}</pre>
     <el-button
-      v-if="canContinue && isStreamInterrupted"
-      class="continue-button"
+      v-if="canRetry"
+      class="retry-button"
       type="primary"
       size="small"
-      @click="emit('continue')"
+      @click="emit('retry')"
     >
-      继续
+      重试
     </el-button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import { WarningFilled } from '@element-plus/icons-vue'
 
-const props = withDefaults(defineProps<{
+defineProps<{
   message: string | null
-  canContinue?: boolean
-}>(), {
-  canContinue: false
-})
-
-const emit = defineEmits<{
-  continue: []
+  canRetry?: boolean
 }>()
 
-const isStreamInterrupted = computed(() =>
-  props.message?.includes('模型流式响应已中断，请继续执行') ?? false
-)
+const emit = defineEmits<{
+  retry: []
+}>()
 </script>
 
 <style scoped>
@@ -77,7 +70,7 @@ const isStreamInterrupted = computed(() =>
   overflow-y: auto;
 }
 
-.continue-button {
+.retry-button {
   margin-top: 10px;
 }
 </style>

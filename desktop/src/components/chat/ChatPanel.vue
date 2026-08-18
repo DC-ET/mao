@@ -76,8 +76,8 @@
 
     <ExecutionErrorBanner
       :message="executionError"
-      :can-continue="!agentRunning"
-      @continue="handleSend('继续', [])"
+      :can-retry="!agentRunning"
+      @retry="handleRetry"
     />
 
     <ChatInput
@@ -191,6 +191,7 @@ const {
   isActive,
   editAndResend,
   stopExecution,
+  retryExecution,
   loadOlderMessages,
   newSession,
   restoreSession,
@@ -587,6 +588,10 @@ async function handleSend(text: string, files: File[]) {
 
 function handleStop() {
   stopExecution()
+}
+
+function handleRetry() {
+  retryExecution()
 }
 
 async function handleModelSwitch(modelId: number) {

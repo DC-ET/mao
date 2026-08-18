@@ -186,6 +186,7 @@ export class StreamingWsHandler {
       case 'ask_user_questions_result': await this.handleAskUserQuestionsResult(userId, root); break;
       case 'create_side_session': await this.handleCreateSideSession(userId, root); break;
       case 'cancel_side_task': await this.handleCancelSideTask(userId, root); break;
+      case 'retry_execution': await this.handleRetryExecution(userId, root); break;
       case 'ping': this.deps.registry.send(userId, wsEvent('pong', null, {})); break;
       default: break;
     }
@@ -626,6 +627,101 @@ export class StreamingWsHandler {
     const executionId = this.runningExecutionIds.get(sideSessionId) ?? '';
     this.abortRunningExecution(sideSessionId, userId);
     await this.finishCancelledSession(sideSessionId, userId, executionId);
+  }
+
+  /**
+   * 处理用户点击「重试」按钮的请求。
+   * 以宕机恢复语义重新执行：清理未完成尾巴消息 → 基于已有会话历史续跑，不插入新 user message。
+   */
+  private async handleRetryExecution(userId: number, root: Record<string, unknown>): Promise<void> {
+    const sessionId = this.getLong(root, 'sessionId');
+    if (sessionId == null) return;
+    const session = await this.requireOwnedSession(userId, sessionId);
+    if (!session) return;
+    // 只有终态（FAILED）且没有正在运行的其他执行时才能重试
+    if (!this.isTerminalPhase(session.phase)) {
+      this.deps.registry.send(userId, wsEvent('error', sessionId, {
+        message: '任务尚未结束，无法重试',
+      }));
+      return;
+    }
+    if (this.executionClaims.has(sessionId)) {
+      this.sendSessionAlreadyRunning(userId, sessionId);
+      return;
+    }
+    this.executionClaims.add(sessionId);
+    // 防御性订阅，确保客户端能收到流式事件
+    this.deps.registry.subscribe(userId, sessionId);
+    // LOCAL 模式：注册会话到用户映射并检查桌面端连接
+    if (session.executionMode === 'LOCAL') {
+      this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
+      if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
+        this.executionClaims.delete(sessionId);
+        this.deps.registry.send(userId, wsEvent('error', sessionId, {
+          message: 'Local client is not connected. Please ensure the desktop app is running.',
+        }));
+        return;
+      }
+      // 注意：不重新同步 skills — 复用已有会话上下文（有意为之）
+    }
+    // 清理未完成尾巴消息（与 CrashRecoveryRunner 一致）
+    const deleted = await this.deps.sessionService.cleanupIncompleteTail(sessionId);
+    if (deleted > 0) {
+      console.info(`Session ${sessionId}: cleaned up ${deleted} incomplete tail messages before retry`);
+    }
+    // 置为 RESUMING 状态
+    await this.deps.sessionService.updatePhase(sessionId, 'RESUMING');
+    this.deps.registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RESUMING' }));
+    // 分配新的 executionId
+    const executionId = randomUUID();
+    const cancelFlag = this.deps.agentLoop.registerCancelFlag(sessionId);
+    this.cancelFlags.set(sessionId, cancelFlag);
+    this.runningExecutionIds.set(sessionId, executionId);
+    // 清除残留的 tool calls 和 ask questions 状态
+    this.deps.registry.clearActiveToolCalls(sessionId);
+    this.deps.askUserQuestionsRegistry.failAllForSession(sessionId);
+    this.submitExecution(sessionId, userId, executionId, (futureRef) =>
+      this.runRetryExecution(session, userId, sessionId, executionId, cancelFlag, futureRef));
+  }
+
+  private async runRetryExecution(
+    session: Session, userId: number, sessionId: number, executionId: string,
+    cancelFlag: { get(): boolean; set(v: boolean): void }, futureRef: { current: unknown },
+  ): Promise<void> {
+    await this.withLock(this.sessionLocks, sessionId, async () => {
+      try {
+        await this.deps.sessionService.updatePhase(sessionId, 'RUNNING');
+        this.deps.registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RUNNING', executionId }));
+        this.deps.registry.send(userId, wsEvent('session_list_update', sessionId, { phase: 'RUNNING' }));
+        if (session.sessionType === 'SIDE_TASK') this.deps.treeSignalPublisher.publishIfSideTask(sessionId);
+        // 不重新同步 skills/todos — 复用已有会话上下文
+        const listener = new WsStreamingEventListener(
+          { registry: this.deps.registry, activityService: this.deps.activityService, activityHeartbeat: this.deps.activityHeartbeat, sessionTodoMapper: this.deps.sessionTodoMapper, sessionService: this.deps.sessionService },
+          sessionId, userId, executionId, await this.resolveSupportsVision(session),
+        );
+        await this.deps.harnessService.executeFromEvent(sessionId, executionId, listener, cancelFlag);
+        if (cancelFlag.get()) await this.finishCancelledSession(sessionId, userId, executionId);
+        else await this.finishCompletedSession(sessionId, userId, executionId);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Agent 重试执行异常';
+        this.deps.registry.send(userId, wsEvent('error', sessionId, { message, executionId }));
+        await this.finishFailedSession(sessionId, userId, executionId, message);
+      } finally {
+        try {
+          this.releaseSessionExecutionResources(sessionId);
+        } catch (e) {
+          console.warn(`Failed to release execution resources for session ${sessionId}`, e);
+        }
+        this.deps.registry.clearActiveToolCalls(sessionId);
+        if (this.runningTasks.get(sessionId) === futureRef.current) this.runningTasks.delete(sessionId);
+        if (this.runningExecutionIds.get(sessionId) === executionId) this.runningExecutionIds.delete(sessionId);
+        this.executionClaims.delete(sessionId);
+        this.cancelFlags.delete(sessionId);
+        this.deps.agentLoop.removeCancelFlag(sessionId);
+        this.deps.activityHeartbeat.clear(sessionId);
+        await this.autoConsumeQueue(sessionId, userId);
+      }
+    });
   }
 
   private async handleCancel(userId: number, root: Record<string, unknown>): Promise<void> {

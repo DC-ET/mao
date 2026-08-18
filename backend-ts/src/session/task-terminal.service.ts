@@ -37,7 +37,12 @@ export class TaskTerminalService {
       );
       return;
     }
-    await this.sessionService.updateRuntimeStatus(sessionId, null);
+    // FAILED 时将错误信息持久化到 runtimeStatusJson，刷新后前端可恢复
+    if (phase === 'FAILED' && failureReason != null && failureReason.trim().length > 0) {
+      await this.sessionService.updateRuntimeStatus(sessionId, { executionError: failureReason });
+    } else {
+      await this.sessionService.updateRuntimeStatus(sessionId, null);
+    }
     await this.sessionService.updatePhase(sessionId, phase);
     await this.sessionService.markLastMessageFinished(sessionId);
     const session = await this.sessionService.getSession(sessionId);

@@ -46,7 +46,11 @@
     />
 
     <div class="readonly-footer">
-      <ExecutionErrorBanner :message="executionError" />
+      <ExecutionErrorBanner
+      :message="executionError"
+      :can-retry="!sending && !retrying"
+      @retry="handleRetryExecution"
+    />
       <p class="readonly-hint">子代理由主会话委派，不可在此追问或单独停止。可在主会话点击停止以取消。</p>
     </div>
   </div>
@@ -79,13 +83,14 @@ const props = defineProps<{
 }>()
 
 const sessionStore = useSessionStore()
-const { subscribe, unsubscribe, sendAskUserQuestionsResult } = useStreamWS()
+const { subscribe, unsubscribe, retryExecution, sendAskUserQuestionsResult } = useStreamWS()
 const { pendingApprovals, confirmApproval } = useToolApprovals()
 const { openWithContent } = useCommandDrawer()
 
 const messagesContainer = ref<HTMLElement | null>(null)
 const agentType = ref(props.agentType || '')
 const historyLoaded = ref(false)
+const retrying = ref(false)
 
 const sid = computed(() => String(props.childSessionId))
 
@@ -164,6 +169,14 @@ const pendingApprovalsForSession = computed(() =>
 const executionError = computed(
   () => sessionStore.sessionExecutionErrors.get(sid.value) ?? null
 )
+
+function handleRetryExecution() {
+  if (retrying.value) return
+  retrying.value = true
+  sessionStore.clearExecutionError(sid.value)
+  retryExecution(sid.value)
+  sessionStore.ensureStreamingAssistantMessage(sid.value)
+}
 
 async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
   await sendAskUserQuestionsResult(sid.value, requestId, answers)
@@ -291,6 +304,10 @@ watch(
   (p, prev) => {
     if (p && TERMINAL_PHASES.has(p) && prev && ACTIVE_PHASES.has(prev)) {
       void fetchMessages()
+    }
+    // 重试后 phase 变为 RUNNING 时重置 retrying 状态
+    if (p === 'RUNNING' || p === 'WAITING_APPROVAL') {
+      retrying.value = false
     }
   }
 )

@@ -94,7 +94,7 @@ const FILE_REF_PATTERN = /@\{([^}]+)\}@/g
 
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
-  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks, setActiveExecution, clearActiveExecution, onMessageSaved, offMessageSaved } = useStreamWS()
+  const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, retryExecution: wsRetryExecution, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks, setActiveExecution, clearActiveExecution, onMessageSaved, offMessageSaved } = useStreamWS()
   const { pendingApprovals, confirmApproval, clearPendingApprovals } = useToolApprovals()
 
   const sending = ref(false)
@@ -642,6 +642,18 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
   }
 
+  async function retryExecution() {
+    const sid = sessionId.value
+    if (!sid) return
+    sending.value = true
+    // 清理前端错误状态
+    sessionStore.clearExecutionError(sid)
+    // 发送重试消息（宕机恢复语义）
+    wsRetryExecution(sid)
+    // 确保 assistant 占位消息存在以便流式输出
+    sessionStore.ensureStreamingAssistantMessage(sid)
+  }
+
   /**
    * 编辑最后一条用户消息并重新发送
    */
@@ -976,6 +988,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sendMessageWithQueue,
     editAndResend,
     stopExecution,
+    retryExecution,
     fetchMessages,
     loadOlderMessages,
     newSession,

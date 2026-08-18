@@ -85,6 +85,8 @@ export interface SessionRuntimeStatus {
   }
   llmWaiting?: LlmRetryInfo
   llmRetry?: LlmRetryInfo
+  /** FAILED 时持久化的错误信息，刷新后恢复 */
+  executionError?: string
 }
 
 export interface SideTaskItem {
@@ -334,6 +336,10 @@ export const useSessionStore = defineStore('session', () => {
     if (!session.running || !status) {
       setCompacting(sid, false)
       clearLlmRetry(sid)
+      // FAILED 且 runtimeStatus 中持久化了 executionError 时恢复错误状态
+      if (session.phase === 'FAILED' && status?.executionError) {
+        setExecutionError(sid, status.executionError)
+      }
       return
     }
     setCompacting(sid, Boolean(status.compacting))

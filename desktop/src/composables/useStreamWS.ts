@@ -385,6 +385,10 @@ export function useStreamWS() {
     send({ type: 'cancel', sessionId: Number(sessionId) })
   }
 
+  function retryExecution(sessionId: string) {
+    send({ type: 'retry_execution', sessionId: Number(sessionId), data: {} })
+  }
+
   async function sendAskUserQuestionsResult(sessionId: string, requestId: string, answers: any[]): Promise<boolean> {
     return sendReliable({
       type: 'ask_user_questions_result',
@@ -963,6 +967,7 @@ export function useStreamWS() {
     sendMessage,
     sendEditMessage,
     cancel,
+    retryExecution,
     sendAskUserQuestionsResult,
     enqueueMessage,
     insertMessage,
