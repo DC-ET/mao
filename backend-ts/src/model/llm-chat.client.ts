@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { LlmChatClient, LlmChatRequest, LlmChatResponse, LlmModelConfig } from './types.js';
 
 export interface OpenAiChatClientOptions {
@@ -36,6 +37,12 @@ export class OpenAiChatClient implements LlmChatClient {
       headers['User-Agent'] = 'codex_cli_rs/0.146.0 (Linux 6.1.0; x86_64) xterm-256color';
       headers.originator = 'codex_cli_rs';
       headers['x-codex-window-id'] = '019e9e6a-e81e-7442-bac0-d3bc42cc1b45';
+    }
+    if (config.modelId.toLowerCase().includes('claude')) {
+      headers['User-Agent'] = 'claude-cli/999.0.0-restored (external, cli)';
+      headers['x-app'] = 'cli';
+      headers['X-Claude-Code-Session-Id'] = randomUUID();
+      headers['x-client-request-id'] = randomUUID();
     }
 
     const controller = new AbortController();
