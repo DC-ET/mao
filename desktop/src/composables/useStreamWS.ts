@@ -335,8 +335,10 @@ export function useStreamWS() {
 
   function subscribe(sessionId: string | null) {
     if (sessionId) {
-      subscribedSessionIds.add(String(sessionId))
-      send({ type: 'subscribe', sessionId: Number(sessionId) })
+      const sid = String(sessionId)
+      if (subscribedSessionIds.has(sid)) return
+      subscribedSessionIds.add(sid)
+      send({ type: 'subscribe', sessionId: Number(sid) })
     }
   }
 
