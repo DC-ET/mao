@@ -181,15 +181,15 @@ const updateTooltip = computed(() => {
 function goBackFromSettings() {
   const active = sessionStore.activeSession
   if (active) {
-    router.push(`/tasks/${active.id}`)
+    window.location.href = `/tasks/${active.id}`
     return
   }
   const latest = sessionStore.sessions[0]
   if (latest) {
-    router.push(`/tasks/${latest.id}`)
+    window.location.href = `/tasks/${latest.id}`
     return
   }
-  router.push('/')
+  window.location.href = '/'
 }
 
 onMounted(() => {

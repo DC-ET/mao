@@ -35,24 +35,22 @@
 
 <script setup lang="ts">
 import { ArrowLeft } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 
-const router = useRouter()
 const sessionStore = useSessionStore()
 
 function goBack() {
   const active = sessionStore.activeSession
   if (active) {
-    router.push(`/tasks/${active.id}`)
+    window.location.href = `/tasks/${active.id}`
     return
   }
   const latest = sessionStore.sessions[0]
   if (latest) {
-    router.push(`/tasks/${latest.id}`)
+    window.location.href = `/tasks/${latest.id}`
     return
   }
-  router.push('/')
+  window.location.href = '/'
 }
 </script>
 
