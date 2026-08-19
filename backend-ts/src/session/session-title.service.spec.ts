@@ -74,6 +74,8 @@ describe('SessionTitleService', () => {
       stream: false,
       temperature: 0.2,
       reasoning: { effort: 'none' },
+      thinking: { type: 'disabled' },
+      enableThinking: false,
     }), expect.objectContaining({ id: 9 }), expect.anything());
     expect(ctx.sessionRepo.updateTitleIfPlaceholder).toHaveBeenCalledWith(
       11, 'NORMAL', '未命名会话', '排查登录接口超时', expect.any(String),

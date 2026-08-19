@@ -232,6 +232,20 @@ describe('OpenAiLlmAdapter', () => {
     expect(server.bodies[0]).toContain('"reasoning":{"effort":"high"}');
   });
 
+  it('chatIncludesThinkingDisableFieldsWhenPresentOnRequest', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"ok","choices":[]}');
+    await server.start();
+    await adapter(0, 0).chat({
+      messages: [{ role: 'user', content: 'hello' }],
+      reasoning: { effort: 'none' },
+      thinking: { type: 'disabled' },
+      enableThinking: false,
+    }, configOf(server));
+    expect(server.bodies[0]).toContain('"thinking":{"type":"disabled"}');
+    expect(server.bodies[0]).toContain('"enable_thinking":false');
+  });
+
   it('chatRetries429And5xxAndThrowsAfterRetriesExhausted', async () => {
     server = new QueueServer();
     server.enqueueJson('slow down', 429, { 'Retry-After': 'bad' });

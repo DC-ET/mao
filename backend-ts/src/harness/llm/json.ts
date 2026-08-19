@@ -81,6 +81,8 @@ export function serializeChatRequest(request: ChatRequest, modelId: string, stre
     }));
   }
   if (request.reasoning != null) body.reasoning = request.reasoning;
+  if (request.thinking != null) body.thinking = request.thinking;
+  if (request.enableThinking != null) body.enable_thinking = request.enableThinking;
   if (request.audio != null && Object.keys(request.audio).length > 0) body.audio = request.audio;
   return body;
 }

@@ -161,6 +161,8 @@ export class SessionTitleService {
           stream: false,
           temperature: 0.2,
           reasoning: { effort: 'none' },
+          thinking: { type: 'disabled' },
+          enableThinking: false,
         }, llmModelToConfig(model), cancelFlag),
         timeout,
       ]);

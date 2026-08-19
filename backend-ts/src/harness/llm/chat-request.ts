@@ -2,6 +2,10 @@ export interface ChatReasoning {
   effort?: string;
 }
 
+export interface ChatThinking {
+  type?: string;
+}
+
 export interface ChatAudio {
   data?: string;
   format?: string;
@@ -58,6 +62,8 @@ export interface ChatRequest {
   temperature?: number;
   stream?: boolean;
   reasoning?: ChatReasoning;
+  thinking?: ChatThinking;
+  enableThinking?: boolean;
   audio?: Record<string, unknown>;
 }
 
