@@ -103,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onActivated } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
@@ -171,8 +171,8 @@ async function fetchSettings() {
   try {
     const [{ data }] = await Promise.all([
       api.get('/system-settings'),
-      agents.value.length ? Promise.resolve(null) : fetchAgents(),
-      models.value.length ? Promise.resolve(null) : fetchModels()
+      fetchAgents(),
+      fetchModels()
     ])
     settings.value = data || []
     if (!activeCategory.value || !categories.value.includes(activeCategory.value)) {
@@ -205,10 +205,10 @@ function formatModelSetting(value: string | null | undefined) {
 
 async function handleEdit(row: any) {
   currentSetting.value = row
-  if (row.settingKey === 'weixin.agentId' && agents.value.length === 0) {
+  if (row.settingKey === 'weixin.agentId') {
     await fetchAgents()
   }
-  if (MODEL_SELECT_KEYS.has(row.settingKey) && models.value.length === 0) {
+  if (MODEL_SELECT_KEYS.has(row.settingKey)) {
     await fetchModels()
   }
   if (isBooleanSetting(row.settingKey)) {
@@ -235,7 +235,7 @@ async function saveSetting() {
   }
 }
 
-onMounted(async () => {
+onActivated(async () => {
   await Promise.all([fetchAgents(), fetchModels()])
   await fetchSettings()
 })
