@@ -232,8 +232,8 @@ watch(sending, () => syncToTaskView())
 watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 
 // Session restore — ChatPanel watches sessionStore.activeSessionId
-// Guard with `restoring` flag to prevent re-entrant calls
 const restoring = ref(false)
+let restoreGeneration = 0
 
 // Markdown 渲染为异步（含代码块高亮），会话恢复后消息内容高度需等渲染完成才最终确定。
 // 若在 restoreSession 完成后只滚动一次，可能因高度未定型而停留在非底部。
@@ -258,7 +258,7 @@ function finishMarkdownRestore() {
 }
 
 watch(() => sessionStore.activeSessionId, (newSid) => {
-  if (restoring.value) return
+  const generation = ++restoreGeneration
   if (!newSid) {
     if (sessionId.value) {
       cleanup()
@@ -273,6 +273,7 @@ watch(() => sessionStore.activeSessionId, (newSid) => {
   const mode = session?.executionMode || executionMode.value
   const ws = session?.workspace || undefined
   restoreSession(newSid, mode, ws).finally(() => {
+    if (generation !== restoreGeneration) return
     syncToTaskView()
     scrollToBottom()
     window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
@@ -562,9 +563,11 @@ async function handleSend(text: string, files: File[]) {
 
   // Agent 运行中走队列，不阻塞输入框
   if (isActive.value) {
-    await sendMessageWithQueue(text, files)
-    chatInputRef.value?.clearInput()
-    nextTick(scrollToBottomSmooth)
+    const sent = await sendMessageWithQueue(text, files)
+    if (sent) {
+      chatInputRef.value?.clearInput()
+      nextTick(scrollToBottomSmooth)
+    }
     return
   }
 

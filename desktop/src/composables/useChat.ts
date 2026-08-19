@@ -92,6 +92,17 @@ export function useToolApprovals() {
 
 const FILE_REF_PATTERN = /@\{([^}]+)\}@/g
 
+export function isCurrentChatSession(
+  localSessionId: string | null,
+  activeSessionId: string | null,
+  expectedSessionId: string | null,
+  switching: boolean
+): boolean {
+  return !switching
+    && localSessionId === expectedSessionId
+    && activeSessionId === expectedSessionId
+}
+
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
   const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, retryExecution: wsRetryExecution, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, insertMessage: wsInsertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, pendingCallbacks, setActiveExecution, clearActiveExecution, onMessageSaved, offMessageSaved } = useStreamWS()
@@ -111,6 +122,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const cloudProjects = ref<Array<{ name: string; path: string; isGit: boolean }>>([])
   const agentName = ref('Agent')
   const startedAt = ref<string | null>(null)
+  let restoreGeneration = 0
 
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
 
@@ -228,8 +240,40 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     return '正在创建任务...'
   }
 
+  function syncMissingSessionFromStore() {
+    if (sessionId.value || !sessionStore.activeSessionId) return
+    sessionId.value = sessionStore.activeSessionId
+    const active = sessionStore.activeSession
+    if (active) {
+      agentId.value = String(active.agentId)
+      if (active.workspace) workspace.value = active.workspace
+      if (active.agentName) agentName.value = active.agentName
+    }
+  }
+
+  function requireCurrentSession(expectedSessionId: string | null): boolean {
+    if (switchingSession.value) {
+      ElMessage.warning('会话正在切换，请稍后重试')
+      return false
+    }
+    if (isCurrentChatSession(
+      sessionId.value,
+      sessionStore.activeSessionId,
+      expectedSessionId,
+      switchingSession.value
+    )) return true
+    ElMessage.warning('会话已切换，请重新发送')
+    return false
+  }
+
   async function sendMessage(text: string, files?: File[]) {
     if ((!text && (!files || files.length === 0)) || sending.value) return
+    syncMissingSessionFromStore()
+    const targetSessionId = sessionStore.activeSessionId
+    if (sessionId.value !== targetSessionId) {
+      ElMessage.warning('会话已切换，请重新发送')
+      return
+    }
 
     sending.value = true
     startedAt.value = new Date().toISOString()
@@ -247,16 +291,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Ensure WS connection is established
       await connect()
 
-      // Defensive fallback: if sessionId is lost (e.g. after returning from settings),
-      // recover from the store's activeSessionId before creating a new session
-      if (!sessionId.value && sessionStore.activeSessionId) {
-        sessionId.value = sessionStore.activeSessionId
-        const active = sessionStore.activeSession
-        if (active) {
-          agentId.value = String(active.agentId)
-          if (active.workspace) workspace.value = active.workspace
-          if (active.agentName) agentName.value = active.agentName
-        }
+      if (!requireCurrentSession(targetSessionId)) {
+        sending.value = false
+        return
       }
 
       // Create session if needed
@@ -300,6 +337,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
             executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? (gitBranch.value || undefined) : undefined
           )
           sessionId.value = sessionData.id
+          sessionStore.setActiveSession(sessionData.id)
           if (sessionData.workspace) {
             workspace.value = sessionData.workspace
           }
@@ -313,6 +351,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
 
       const sid = sessionId.value!
+      const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
+      const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
+      if (!requireCurrentSession(sid)) {
+        sending.value = false
+        return false
+      }
+
       // Track which session is sending (set AFTER session creation so ID is correct)
       sendingSessionId.value = sid
 
@@ -355,8 +400,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Send message via WS
       const eventId = generateUUID()
       setActiveExecution(sid, eventId)
-      const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
-      const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
       wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills, agentsMdContent)
 
       // Wait for completion (session_status reaches COMPLETED/FAILED)
@@ -411,6 +454,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
    */
   async function sendMessageAndWaitForSave(text: string, files?: File[]): Promise<boolean> {
     if ((!text && (!files || files.length === 0)) || sending.value) return false
+    syncMissingSessionFromStore()
+    const targetSessionId = sessionStore.activeSessionId
+    if (sessionId.value !== targetSessionId) {
+      ElMessage.warning('会话已切换，请重新发送')
+      return false
+    }
 
     sending.value = true
     startedAt.value = new Date().toISOString()
@@ -428,16 +477,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Ensure WS connection is established
       await connect()
 
-      // Defensive fallback: if sessionId is lost (e.g. after returning from settings),
-      // recover from the store's activeSessionId before creating a new session
-      if (!sessionId.value && sessionStore.activeSessionId) {
-        sessionId.value = sessionStore.activeSessionId
-        const active = sessionStore.activeSession
-        if (active) {
-          agentId.value = String(active.agentId)
-          if (active.workspace) workspace.value = active.workspace
-          if (active.agentName) agentName.value = active.agentName
-        }
+      if (!requireCurrentSession(targetSessionId)) {
+        sending.value = false
+        return false
       }
 
       // Create session if needed
@@ -481,6 +523,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
             executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? (gitBranch.value || undefined) : undefined
           )
           sessionId.value = sessionData.id
+          sessionStore.setActiveSession(sessionData.id)
           if (sessionData.workspace) {
             workspace.value = sessionData.workspace
           }
@@ -494,6 +537,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
 
       const sid = sessionId.value!
+      const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
+      const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
+      if (!requireCurrentSession(sid)) {
+        sending.value = false
+        return false
+      }
+
       // Track which session is sending (set AFTER session creation so ID is correct)
       sendingSessionId.value = sid
 
@@ -536,8 +586,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Send message via WS
       const eventId = generateUUID()
       setActiveExecution(sid, eventId)
-      const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
-      const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
       wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills, agentsMdContent)
 
       // 等待消息保存确认后立即返回，解锁输入框；Agent 在后台继续执行
@@ -658,7 +706,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
    * 编辑最后一条用户消息并重新发送
    */
   async function editAndResend(messageId: string, newContent: string, images: string[] = []) {
-    if (!sessionId.value) return
+    const sid = sessionId.value
+    if (!sid || !requireCurrentSession(sid)) return
 
     // 校验状态
     if (sending.value) {
@@ -666,10 +715,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       return
     }
 
-    sessionStore.clearExecutionError(sessionId.value)
+    sessionStore.clearExecutionError(sid)
 
     // 校验是否是最后一条用户消息
-    const msgs = sessionStore.getMessages(sessionId.value)
+    const msgs = sessionStore.getMessages(sid)
     const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user')
     if (!lastUserMsg || String(lastUserMsg.id) !== String(messageId)) {
       ElMessage.warning('只能编辑最后一条用户消息')
@@ -680,9 +729,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     const imagesToSend = images.length > 0 ? images : (lastUserMsg.images ?? [])
 
     // 乐观更新：截断后续消息，更新编辑内容
-    sessionStore.truncateMessagesAfter(sessionId.value, messageId)
+    sessionStore.truncateMessagesAfter(sid, messageId)
     sessionStore.updateMessageContent(
-      sessionId.value,
+      sid,
       messageId,
       newContent,
       imagesToSend.length > 0 ? imagesToSend : undefined
@@ -697,7 +746,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       toolCalls: [],
       segments: []
     }
-    sessionStore.appendMessage(sessionId.value, placeholderMsg)
+    sessionStore.appendMessage(sid, placeholderMsg)
 
     sending.value = true
     startedAt.value = new Date().toISOString()
@@ -706,17 +755,19 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Ensure WS connection is established
       await connect()
 
-      // Subscribe to this session's events
-      subscribe(sessionId.value)
-
       // 通过 WS 发送编辑请求
       const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
       const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
-      sendEditMessage(sessionId.value, newContent, messageId, imagesToSend, localSkills, agentsMdContent)
+      if (!requireCurrentSession(sid)) {
+        sending.value = false
+        return
+      }
+      subscribe(sid)
+      sendEditMessage(sid, newContent, messageId, imagesToSend, localSkills, agentsMdContent)
 
       // Wait for completion
       await new Promise<void>((resolve, reject) => {
-        pendingCallbacks.set(sessionId.value!, { resolve, reject })
+        pendingCallbacks.set(sid, { resolve, reject })
       })
 
       sending.value = false
@@ -803,20 +854,24 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     return phase === 'RUNNING' || phase === 'WAITING_APPROVAL'
   })
 
-  async function sendMessageWithQueue(text: string, files: File[]) {
+  async function sendMessageWithQueue(text: string, files: File[]): Promise<boolean> {
     if (isActive.value) {
-      await enqueueMessage(text, files)
-    } else {
-      await sendMessage(text, files)
+      return enqueueMessage(text, files)
     }
+    await sendMessage(text, files)
+    return true
   }
 
-  async function enqueueMessage(text: string, files: File[]) {
-    if (sessionId.value) sessionStore.clearExecutionError(sessionId.value)
+  async function enqueueMessage(text: string, files: File[]): Promise<boolean> {
+    const sid = sessionId.value
+    if (!sid || !requireCurrentSession(sid)) return false
+    sessionStore.clearExecutionError(sid)
     const imageUrls = files.length > 0 ? await uploadChatImages(files) : []
     await connect()
+    if (!requireCurrentSession(sid)) return false
     const eventId = generateUUID()
-    wsEnqueueMessage(sessionId.value || '', text, eventId, imageUrls)
+    wsEnqueueMessage(sid, text, eventId, imageUrls)
+    return true
   }
 
   async function insertQueueMessage(queueId: string) {
@@ -864,6 +919,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   }
 
   async function restoreSession(sessionIdVal: string, mode: string, initialWorkspace?: string) {
+    const generation = ++restoreGeneration
     // Suppress phase watcher during session switch to prevent stale phase
     // from resetting sending/cancelling state
     switchingSession.value = true
@@ -948,8 +1004,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     fetchTodos()
     fetchQueue()
 
-    // Resume phase watcher after session switch is complete
-    switchingSession.value = false
+    // Resume phase watcher only after the latest session switch is complete
+    if (generation === restoreGeneration) {
+      switchingSession.value = false
+    }
   }
 
   async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]) {
