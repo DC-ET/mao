@@ -1,8 +1,10 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { AtomicBoolean } from '../harness/atomic-boolean.js';
+import { hasText } from '../common/case.js';
 import type { LlmModelRef, Session } from '../session/types.js';
 import { LlmUsageService } from '../usage/llm-usage.service.js';
+import { GIT_COMMIT_MESSAGE_MODEL_ID_KEY } from '../settings/settings.service.js';
 
 export const MAX_DIFF_BYTES = 200 * 1024;
 export const MAX_FILES = 5000;
@@ -25,6 +27,8 @@ export interface ChatRequest {
   stream: boolean;
   temperature: number;
   reasoning?: { effort: string };
+  thinking?: { type: string };
+  enableThinking?: boolean;
 }
 
 export interface ChatResponse {
@@ -49,6 +53,10 @@ export interface LlmModelConfig {
 
 export interface HarnessModelResolver {
   resolveModel(modelId: number | null | undefined): Promise<LlmModelRef | null> | LlmModelRef | null;
+}
+
+export interface SettingLookup {
+  getValue(key: string): Promise<string | null>;
 }
 
 export interface CommitFile {
@@ -81,11 +89,12 @@ export class GitCommitMessageService {
     private readonly llmAdapter: LlmAdapter,
     private readonly harnessService: HarnessModelResolver,
     private readonly usageService: LlmUsageService,
+    private readonly settingLookup: SettingLookup,
   ) {}
 
   async generate(session: Session, input: CommitGenerationInput): Promise<CommitMessage> {
     this.validateInput(input);
-    const model = await this.harnessService.resolveModel(session.modelId);
+    const model = await this.resolveCommitModel();
     if (model == null) throw new BusinessException(ErrorCode.MODEL_NOT_FOUND);
     const config = toConfig(model);
     const userPrompt = this.serialize(input);
@@ -145,6 +154,8 @@ export class GitCommitMessageService {
       stream: false,
       temperature: 0.2,
       reasoning: { effort: 'none' },
+      thinking: { type: 'disabled' },
+      enableThinking: false,
     };
     let response: ChatResponse | null = null;
     let success = false;
@@ -166,6 +177,21 @@ export class GitCommitMessageService {
         response?.usage ?? null, success,
       );
     }
+  }
+
+  private async resolveCommitModel(): Promise<LlmModelRef | null> {
+    const configured = await this.settingLookup.getValue(GIT_COMMIT_MESSAGE_MODEL_ID_KEY);
+    if (hasText(configured)) {
+      const parsed = Number(configured!.trim());
+      if (Number.isSafeInteger(parsed)) {
+        const model = await this.harnessService.resolveModel(parsed);
+        if (model) return model;
+        console.warn(`[git-commit] configured commit message model ${configured} not found, fallback to default`);
+      } else {
+        console.warn(`[git-commit] invalid commit message model config: ${configured}, fallback to default`);
+      }
+    }
+    return this.harnessService.resolveModel(null);
   }
 
   private serialize(input: CommitGenerationInput): string {

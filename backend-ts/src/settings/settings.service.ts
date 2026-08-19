@@ -6,11 +6,13 @@ import type { AgentLookup, ModelLookup, SettingsRuntimeConfig, SystemSetting, Sy
 export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
 export const SESSION_TITLE_MODEL_ID_KEY = 'session.titleModelId';
+export const GIT_COMMIT_MESSAGE_MODEL_ID_KEY = 'git.commitMessageModelId';
 
 export class SystemSettingService {
   static readonly WEIXIN_AGENT_ID_KEY = WEIXIN_AGENT_ID_KEY;
   static readonly WEIXIN_MODEL_ID_KEY = WEIXIN_MODEL_ID_KEY;
   static readonly SESSION_TITLE_MODEL_ID_KEY = SESSION_TITLE_MODEL_ID_KEY;
+  static readonly GIT_COMMIT_MESSAGE_MODEL_ID_KEY = GIT_COMMIT_MESSAGE_MODEL_ID_KEY;
 
   constructor(
     private readonly settingRepo: SystemSettingRepository,
@@ -77,7 +79,7 @@ export class SystemSettingService {
       }
       return;
     }
-    if (key === WEIXIN_MODEL_ID_KEY || key === SESSION_TITLE_MODEL_ID_KEY) {
+    if (key === WEIXIN_MODEL_ID_KEY || key === SESSION_TITLE_MODEL_ID_KEY || key === GIT_COMMIT_MESSAGE_MODEL_ID_KEY) {
       if (!hasText(value)) {
         return;
       }

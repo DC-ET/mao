@@ -546,7 +546,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
 
   const usageService = new LlmUsageService(new LlmUsageRepository(db));
-  const gitCommitMsg = new GitCommitMessageService(llmAdapter as never, harness as never, usageService);
+  const gitCommitMsg = new GitCommitMessageService(llmAdapter as never, harness as never, usageService, { getValue: (key: string) => settingService.getValue(key) });
   const gitWrite = new GitWriteOperationService(
     workspaceGit, gitCommitMsg, gitLookup, runtimeResolver, activityService,
   );

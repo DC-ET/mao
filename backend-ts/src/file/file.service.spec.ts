@@ -259,7 +259,7 @@ describe('GitCommitMessageService', () => {
       }),
     };
     const harness = { resolveModel: vi.fn(async () => ({ id: 9, name: 'test', modelId: 'test' })) };
-    const service = new GitCommitMessageService(adapter, harness, usage);
+    const service = new GitCommitMessageService(adapter, harness, usage, { getValue: vi.fn(async () => '') });
     const result = await service.generate(
       { id: 2, userId: 1, modelId: 9 },
       { files: [{ path: 'src/A.java', changeType: 'MODIFIED', insertions: 1, deletions: 0, diff: 'diff' }], diffBytes: 4 },
@@ -283,6 +283,7 @@ describe('GitCommitMessageService', () => {
         adapter,
         { resolveModel: vi.fn(async () => ({ id: 9, name: 'test', modelId: 'test' })) },
         { record: vi.fn() } as unknown as LlmUsageService,
+        { getValue: vi.fn(async () => '') },
       );
       const result = service.generate(
         { id: 2, userId: 1, modelId: 9 },
@@ -298,7 +299,7 @@ describe('GitCommitMessageService', () => {
   });
 
   it('rejectsSensitiveDiffAndOversizeInput', () => {
-    const service = new GitCommitMessageService({ chat: vi.fn() }, { resolveModel: vi.fn() }, { record: vi.fn() } as unknown as LlmUsageService);
+    const service = new GitCommitMessageService({ chat: vi.fn() }, { resolveModel: vi.fn() }, { record: vi.fn() } as unknown as LlmUsageService, { getValue: vi.fn(async () => '') });
     expect(() => service.validateInput({
       files: [{ path: '.env', changeType: 'MODIFIED', insertions: 1, deletions: 0, diff: 'password=x', sensitive: true }],
       diffBytes: Buffer.byteLength('password=x'),
@@ -315,6 +316,7 @@ describe('GitCommitMessageService', () => {
       adapter,
       { resolveModel: vi.fn(async () => ({ id: 9, name: 'test', modelId: 'test' })) },
       { record: vi.fn() } as unknown as LlmUsageService,
+      { getValue: vi.fn(async () => '') },
     );
     await service.generate(
       { id: 2, userId: 1, modelId: 9 },
@@ -323,6 +325,8 @@ describe('GitCommitMessageService', () => {
     const request = adapter.chat.mock.calls[0][0];
     expect(request.tools).toEqual([]);
     expect(request.reasoning).toEqual({ effort: 'none' });
+    expect(request.thinking).toEqual({ type: 'disabled' });
+    expect(request.enableThinking).toBe(false);
     expect(request.messages).toHaveLength(2);
     expect(String(request.messages[1].content)).toContain('src/A.java');
     expect(String(request.messages[1].content)).toContain('+新增');

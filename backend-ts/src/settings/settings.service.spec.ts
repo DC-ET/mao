@@ -111,6 +111,27 @@ describe('SystemSettingService', () => {
     expect(updated.value).toBe('8');
   });
 
+  it('updateAllowsEmptyGitCommitMessageModelId', async () => {
+    const row = setting(SystemSettingService.GIT_COMMIT_MESSAGE_MODEL_ID_KEY, '代码', 1);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row);
+    const updated = await service().update(SystemSettingService.GIT_COMMIT_MESSAGE_MODEL_ID_KEY, '');
+    expect(updated.value).toBe('');
+  });
+
+  it('updateValidatesGitCommitMessageModelExists', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting(SystemSettingService.GIT_COMMIT_MESSAGE_MODEL_ID_KEY, '代码', 1));
+    vi.mocked(modelLookup.findById).mockResolvedValue(null);
+    await expect(service().update(SystemSettingService.GIT_COMMIT_MESSAGE_MODEL_ID_KEY, '8')).rejects.toThrow(/模型不存在/);
+  });
+
+  it('updateAcceptsValidGitCommitMessageModelId', async () => {
+    const row = setting(SystemSettingService.GIT_COMMIT_MESSAGE_MODEL_ID_KEY, '代码', 1);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row);
+    vi.mocked(modelLookup.findById).mockResolvedValue({ id: 8 });
+    const updated = await service().update(SystemSettingService.GIT_COMMIT_MESSAGE_MODEL_ID_KEY, '8');
+    expect(updated.value).toBe('8');
+  });
+
   it('listShowsLdapEnabledOnlyWhenSwitchAndUrlArePresent', async () => {
     const ldapSetting = setting('auth.ldap.enabled', '认证', 0);
     vi.mocked(mapper.list).mockResolvedValue([ldapSetting]);

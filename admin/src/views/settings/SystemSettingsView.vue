@@ -26,7 +26,7 @@
                   {{ row.value === 'true' ? '已启用' : '未启用' }}
                 </el-tag>
                 <span v-else-if="row.settingKey === 'weixin.agentId'">{{ formatWeixinAgent(row.value) }}</span>
-                <span v-else-if="row.settingKey === 'weixin.modelId' || row.settingKey === 'session.titleModelId'">{{ formatModelSetting(row.value) }}</span>
+                <span v-else-if="row.settingKey === 'weixin.modelId' || row.settingKey === 'session.titleModelId' || row.settingKey === 'git.commitMessageModelId'">{{ formatModelSetting(row.value) }}</span>
                 <span v-else>{{ row.value }}</span>
               </template>
             </el-table-column>
@@ -69,7 +69,7 @@
             />
           </el-select>
           <el-select
-            v-else-if="currentSetting?.settingKey === 'weixin.modelId' || currentSetting?.settingKey === 'session.titleModelId'"
+            v-else-if="currentSetting?.settingKey === 'weixin.modelId' || currentSetting?.settingKey === 'session.titleModelId' || currentSetting?.settingKey === 'git.commitMessageModelId'"
             v-model="settingValue"
             clearable
             filterable
@@ -108,8 +108,8 @@ import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
-const SELECT_KEYS = new Set(['weixin.agentId', 'weixin.modelId', 'session.titleModelId'])
-const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId'])
+const SELECT_KEYS = new Set(['weixin.agentId', 'weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId'])
+const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId'])
 
 const loading = ref(false)
 const settings = ref<any[]>([])
