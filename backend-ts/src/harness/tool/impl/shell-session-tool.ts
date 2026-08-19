@@ -195,7 +195,7 @@ export class ShellSessionTool extends BaseTool {
     try {
       const marker = this.newMarker();
       session.writeStdin('pwd\necho ' + marker + '\n');
-      const pwd = await this.outputManager.readUntilMarker(session, marker, WORKDIR_TIMEOUT_MS);
+      const pwd = await this.outputManager.readUntilMarker(session, marker, WORKDIR_TIMEOUT_MS, false);
       if (pwd.completed) {
         const lines = pwd.output.split('\n').map((l) => l.trim()).filter((l) => l !== '');
         const last = lines[lines.length - 1];

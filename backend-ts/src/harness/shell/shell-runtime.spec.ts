@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -60,6 +60,25 @@ describe('ShellSessionManager', () => {
     expect(lines[1]).toContain('git-askpass.sh');
     expect(lines[2]).toBe('0');
     manager.close('sh-git');
+  });
+
+  it('captures stderr in the response and output file without persisting protocol markers', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(13, 'sh-stderr', 7, dir, {});
+    const output = new OutputManager();
+
+    session.writeStdin("printf 'validation failed\\n' >&2; false\necho __STDERR__ $?\n");
+    const failed = await output.readUntilMarker(session, '__STDERR__', 5000);
+
+    expect(failed.output).toBe('validation failed\n');
+    expect(failed.exitCode).toBe(1);
+    expect(readFileSync(session.outputFile, 'utf8')).toBe('validation failed\n');
+    manager.close('sh-stderr');
   });
 
   it('captures the command exit code and keeps it out of the next read', async () => {

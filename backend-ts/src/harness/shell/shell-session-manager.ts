@@ -116,17 +116,29 @@ export class OutputManager {
     session: ShellSession,
     marker: string,
     timeoutMs: number,
+    persistOutput = true,
   ): Promise<OutputResult> {
     const start = Date.now();
     const deadline = start + timeoutMs;
     let full = session.drainChunk();
+    let persistedUntil = 0;
     let completed = false;
 
+    const persistVisibleOutput = (final = false) => {
+      if (!persistOutput) return;
+      const markerIndex = full.indexOf(marker);
+      const visibleEnd = markerIndex >= 0
+        ? markerIndex
+        : final ? full.length : Math.max(0, full.length - marker.length + 1);
+      if (visibleEnd <= persistedUntil) return;
+      try {
+        appendFileSync(session.outputFile, full.slice(persistedUntil, visibleEnd));
+        persistedUntil = visibleEnd;
+      } catch { /* ignore */ }
+    };
     const consume = (chunk: string) => {
       full += chunk;
-      try {
-        appendFileSync(session.outputFile, chunk);
-      } catch { /* ignore */ }
+      persistVisibleOutput();
     };
 
     if (full.includes(marker)) completed = true;
@@ -164,6 +176,7 @@ export class OutputManager {
       }, 50);
     });
 
+    persistVisibleOutput(true);
     const idx = full.indexOf(marker);
     let exitCode: number | null = null;
     if (idx >= 0) {
@@ -334,16 +347,13 @@ export class ShellSessionManager {
     if (domainTokenMap && Object.keys(domainTokenMap).length > 0) {
       this.configureGitCredentials(env, uid, conversationId, domainTokenMap);
     }
-    const child = spawn('bash', ['--norc', '--noprofile'], {
+    const child = spawn('bash', ['-c', 'exec 2>&1; exec bash --norc --noprofile'], {
       cwd: workDir,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
       // 独立进程组，close() 才能一次性回收 bash 的所有后代进程
       detached: true,
     });
-    if (child.stderr && child.stdout) {
-      child.stderr.pipe(child.stdout as unknown as NodeJS.WritableStream);
-    }
     return new ShellSession(shellSessionId, conversationId, child, workDir, outputFile);
   }
 
