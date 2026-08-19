@@ -28,6 +28,10 @@ export class RuntimeDataResolver {
     return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'shellOutput');
   }
 
+  resolveIncomingDir(userId: number, sessionId: number): string {
+    return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'incoming');
+  }
+
   resolveGitAskpassScript(userId: number, sessionId: number): string {
     return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'git-askpass.sh');
   }

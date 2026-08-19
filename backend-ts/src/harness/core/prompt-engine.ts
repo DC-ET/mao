@@ -152,6 +152,7 @@ export class PromptEngine {
       sb += '如需精确到时分秒的时间，请使用 shell 执行 `date` 命令获取。\n\n';
     }
     sb += TOOL_USAGE_GUIDANCE + '\n';
+    sb += this.incomingFileHint(context, effectiveWorkspace);
     const skillNames = context.availableSkillNames;
     if (skillNames && skillNames.length > 0) {
       const catalog = this.buildSkillCatalog(context);
@@ -233,6 +234,22 @@ export class PromptEngine {
       + '不要默认归因于用户本地电脑，也不要要求用户在本地手动执行命令来规避异常，除非用户明确要求或任务确实需要本地操作。\n'
       + '文件类工具（`read_file`、`write_file`、`edit_file`、`glob_search`、`grep_search`）的路径参数不支持以 `~` 开头；'
       + '请使用工作区相对路径，或平台提供的绝对路径（如会话 runtime 目录、用户数据目录）。\n\n';
+  }
+
+  /** 上传文件引用（@{绝对路径}@）说明：告知 Agent 如何理解并使用用户上传到 runtime 的文件。 */
+  private incomingFileHint(context: AgentExecutionContext, effectiveWorkspace: string): string {
+    if (context.executionMode?.toUpperCase() === 'LOCAL' || context.userId == null || context.sessionId == null) {
+      return '';
+    }
+    const incomingDir = this.runtimeDataResolver.resolveIncomingDir(context.userId, context.sessionId);
+    return '## 用户上传的文件\n\n'
+      + '用户可以通过输入框上传任意类型的文件，文件上传后保存在服务端临时目录（如下），并由系统将其引用（`@{绝对路径}@`）写入消息正文。\n'
+      + `- 上传目录：\`${incomingDir}\`\n`
+      + '当用户消息中出现 `@{/绝对/路径/文件}@` 形式的引用时，它指向已上传的临时文件：\n'
+      + '1. 该引用为**绝对路径**（以 `/` 开头），与工作区相对路径不同，请直接按绝对路径使用读文件/文件信息等工具读取。\n'
+      + '2. 文件类型不固定：可能是文档、PDF、代码、压缩包、音视频、图片等。请先探测并判断内容（如压缩包先解压，PDF/文档按文本或解析工具读取，图片若模型支持视觉可结合图片分析）。\n'
+      + '3. 该文件是用户交给你的任务材料，请根据任务需要自行决定如何读取、加工与产出；如需要可以将其复制到工作区供后续引用。\n'
+      + `4. 会话工作区内以 \`mao-runtime-\` 前缀命名的目录/文件是运行期临时产物，会话删除时会一并清理，请不要将其作为交付物。\n\n`;
   }
 
   private buildToolDefinitions(context: AgentExecutionContext): ToolDefinition[] {

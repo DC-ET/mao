@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, statSync, unlinkSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 import { lookup as mimeLookup } from 'mime-types';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import '@fastify/multipart';
@@ -10,6 +10,7 @@ import { bodyOf, pathId, queryOptInt, queryOptStr } from '../common/request.js';
 import { fail } from '../common/result.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
+import type { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 import type { Session } from '../session/types.js';
 import type { SessionService } from '../session/session.service.js';
 import type { FileEntity, FileService } from './file.service.js';
@@ -27,6 +28,7 @@ export interface FileRouteDeps {
   gitWriteOperationService: GitWriteOperationService;
   pathSandbox: PathSandbox;
   uploadBaseUrl?: string | null;
+  runtimeDataResolver?: RuntimeDataResolver;
 }
 
 export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): void {
@@ -48,9 +50,13 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
 
   function toVO(file: FileEntity) {
     const baseUrl = deps.uploadBaseUrl;
-    const url = baseUrl != null && baseUrl.length > 0
-      ? `${baseUrl}/uploads/${file.storedName}`
-      : `/uploads/${file.storedName}`;
+    const isIncoming = file.filePath != null && file.filePath.indexOf(`${sep}incoming${sep}`) >= 0;
+    // incoming 文件位于 runtime 目录而非静态 uploads 目录，静态 url 不可达，改用下载端点
+    const url = isIncoming
+      ? `/v1/files/${file.id}/download`
+      : (baseUrl != null && baseUrl.length > 0
+        ? `${baseUrl}/uploads/${file.storedName}`
+        : `/uploads/${file.storedName}`);
     return {
       id: file.id,
       originalName: file.originalName,
@@ -61,6 +67,31 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       url,
     };
   }
+
+  app.post('/v1/files/upload-incoming', async (request, reply) => {
+    const userId = requireUserId(request);
+    const { file, sessionId } = await readUpload(request);
+    if (sessionId == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '缺少必要参数: sessionId');
+    }
+    const session = await sessionService.getSession(sessionId);
+    if (session.userId !== userId) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '无权访问该会话');
+    }
+    if (session.executionMode === 'LOCAL') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '本地模式不支持服务端文件上传');
+    }
+    const runtimeResolver = deps.runtimeDataResolver;
+    if (runtimeResolver == null) {
+      throw new BusinessException(5000, 'runtime 文件服务不可用');
+    }
+    const incomingDir = runtimeResolver.resolveIncomingDir(userId, sessionId);
+    const entity = await fileService.uploadIncomingFile(
+      file.buffer, file.filename, file.mimetype, userId, sessionId, incomingDir,
+    );
+    const absPath = resolve(incomingDir, entity.storedName);
+    return sendOk(reply, { ...toVO(entity), absolutePath: absPath });
+  });
 
   app.post('/v1/files/upload', async (request, reply) => {
     const userId = requireUserId(request);
@@ -224,30 +255,43 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
   });
 
   app.get('/v1/files/:id/download', async (request, reply) => {
-    requireUserId(request);
+    const userId = requireUserId(request);
     const file = await fileService.getFile(pathId(request));
     if (file == null) {
       return reply.status(404).send();
     }
+    requireFileOwner(file, userId);
     const filePath = await fileService.getFilePath(file.id!);
     return sendFile(reply, filePath, file.originalName, file.mimeType ?? 'application/octet-stream', file.fileSize, 'attachment');
   });
 
   app.get('/v1/files/:id/preview', async (request, reply) => {
-    requireUserId(request);
+    const userId = requireUserId(request);
     const file = await fileService.getFile(pathId(request));
     if (file == null) {
       return reply.status(404).send();
     }
+    requireFileOwner(file, userId);
     const filePath = await fileService.getFilePath(file.id!);
     return sendFile(reply, filePath, file.originalName, file.mimeType ?? 'application/octet-stream', file.fileSize, 'inline');
   });
 
   app.delete('/v1/files/:id', async (request, reply) => {
-    requireUserId(request);
+    const userId = requireUserId(request);
+    const file = await fileService.getFile(pathId(request));
+    if (file != null) {
+      requireFileOwner(file, userId);
+    }
     await fileService.deleteFile(pathId(request));
     return sendOk(reply);
   });
+}
+
+/** 校验文件归属：仅允许上传者本人访问（下载/预览/删除）。 */
+function requireFileOwner(file: FileEntity, userId: number): void {
+  if (file.uploaderId != null && file.uploaderId !== userId) {
+    throw new BusinessException(ErrorCode.FORBIDDEN, '无权访问该文件');
+  }
 }
 
 function requireQueryLong(request: FastifyRequest, name: string): number {

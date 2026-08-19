@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, existsSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
@@ -36,6 +36,8 @@ const SEARCH_RESULT_LIMIT = 20;
 const SEARCH_KEYWORD_MAX_LENGTH = 100;
 const SNIPPET_CONTEXT_CHARS = 25;
 const SNIPPET_MAX_LENGTH = 80;
+/** 写入会话工作区的 runtime 临时目录/文件前缀，会话删除时一并清理。 */
+const RUNTIME_WORKSPACE_PREFIX = 'mao-runtime-';
 
 export class SessionService {
   static readonly SEARCH_RESULT_LIMIT = SEARCH_RESULT_LIMIT;
@@ -52,6 +54,8 @@ export class SessionService {
     private readonly sessionCompactionService: SessionCompactionService,
     private readonly sessionCompactionEventService: SessionCompactionEventService,
     private readonly todoRepo?: SessionTodoRepository,
+    /** 会话删除时清理 runtime 目录（含上传的 incoming 文件）的回调，可选。 */
+    private readonly cleanupRuntimeDir?: (userId: number, sessionId: number) => void,
   ) {}
 
   async createSession(
@@ -388,11 +392,41 @@ export class SessionService {
   }
 
   async deleteSession(id: number): Promise<void> {
+    const session = await this.sessionRepo.findById(id);
     await this.sessionRepo.lockActiveSessionById(id);
     await this.sessionCompactionService.deleteBySessionId(id);
     await this.sessionCompactionEventService.deleteBySessionId(id);
     await this.messageRepo.logicalDeleteBySession(id);
     await this.sessionRepo.logicalDelete(id);
+    // 文件清理失败不影响会话删除本身（记录日志即可）
+    if (session != null) {
+      try {
+        this.cleanupRuntimeDir?.(session.userId, id);
+      } catch (e) {
+        console.error(`Failed to clean runtime incoming dir for session ${id}`, e);
+      }
+      if (session.workspace != null && session.workspace.trim() !== '') {
+        this.deleteRuntimeWorkspaceFiles(session.workspace);
+      }
+    }
+  }
+
+  /**
+   * 删除会话工作区内残留的 runtime 临时文件（写入工作区时以 `mao-runtime-` 前缀存放）。
+   * 仅删除该前缀命中的目录/文件，不影响用户项目文件。
+   */
+  private deleteRuntimeWorkspaceFiles(workspace: string): void {
+    try {
+      const root = this.pathSandbox.getEffectiveWorkspaceRoot(workspace);
+      if (!existsSync(root) || !statSync(root).isDirectory()) return;
+      for (const entry of readdirSync(root, { withFileTypes: true })) {
+        if (entry.name.startsWith(RUNTIME_WORKSPACE_PREFIX)) {
+          rmSync(resolve(root, entry.name), { recursive: true, force: true });
+        }
+      }
+    } catch (e) {
+      console.error(`Failed to clean runtime workspace files in ${workspace}`, e);
+    }
   }
 
   async promoteSideTaskToMainSession(sideSessionId: number, userId: number): Promise<Session> {

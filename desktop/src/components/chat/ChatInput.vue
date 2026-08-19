@@ -92,7 +92,14 @@
     </div>
 
     <!-- Editor area -->
-    <div class="textarea-area" :class="{ 'new-task-textarea': isNewTask }">
+    <div
+      class="textarea-area"
+      :class="{ 'new-task-textarea': isNewTask, 'is-dragging-file': draggingFile }"
+      @dragover.prevent="handleDragOver"
+      @dragenter.prevent="handleDragEnter"
+      @dragleave="handleDragLeave"
+      @drop.prevent="handleDropFiles"
+    >
       <QuickCommandPanel
         ref="quickCommandPanelRef"
         :visible="panelVisible"
@@ -118,6 +125,7 @@
     <div v-if="pendingFiles.length > 0" class="pending-files">
       <div v-for="(file, idx) in pendingFiles" :key="idx" class="pending-file">
         <img v-if="filePreviewUrls[idx]" :src="filePreviewUrls[idx]" class="file-preview-img" />
+        <el-icon v-else-if="uploadingFiles[idx]" class="is-loading"><Loading /></el-icon>
         <el-icon v-else><Document /></el-icon>
         <span class="file-name">{{ file.name }}</span>
         <el-icon class="remove-file" :class="{ disabled: disabled }" @click="!disabled && removeFile(idx)"><Close /></el-icon>
@@ -127,8 +135,8 @@
     <!-- Bottom toolbar -->
     <div class="toolbar">
       <div class="toolbar-left">
-        <label class="add-btn" title="上传图片" :class="{ disabled: disabled }">
-          <input type="file" multiple accept="image/*" :disabled="disabled" @change="handleFileSelect" style="display: none" />
+        <label class="add-btn" title="上传图片或文件" :class="{ disabled: disabled }">
+          <input type="file" multiple :accept="''" :disabled="disabled" @change="handleFileSelect" style="display: none" />
           <el-icon :size="16"><Plus /></el-icon>
         </label>
         <div class="workspace-indicator" :class="{ 'has-workspace': !!workspace || executionMode === 'CLOUD', 'cloud-mode': executionMode === 'CLOUD' }" @click="executionMode !== 'CLOUD' && openWorkspace()">
@@ -212,6 +220,7 @@ import type { Agent } from '../../stores/agent'
 import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
 import { useSessionStore, type CloudProject } from '../../stores/session'
 import { api } from '../../api'
+import { uploadChatFile } from '../../utils/chatFileUpload'
 import { cloudWorkspaceIndicator, extractGitRepoSlug, isHttpsGitUrl } from '../../utils/cloud-project'
 
 const props = withDefaults(defineProps<{
@@ -237,6 +246,8 @@ const props = withDefaults(defineProps<{
   waitingForSave?: boolean
   /** 注册到「添加到聊天」的输入框 key：主会话默认 'chat'，边路任务传 tabId（如 'side:123'） */
   registerKey?: string
+  /** 目标会话 ID（用于上传文件到对应会话的 runtime incoming 目录）；主会话可不传（内部取 activeSessionId） */
+  targetSessionId?: string
 }>(), {
   disabled: false,
   loading: false,
@@ -256,6 +267,7 @@ const props = withDefaults(defineProps<{
   cloudProjects: () => [],
   waitingForSave: false,
   registerKey: 'chat',
+  targetSessionId: '',
   // 视觉能力 tri-state：true=支持 / false=不支持 / undefined=未知（不拦截，交给后端校验）。
   // 必须显式声明，否则 Boolean 类型 props 未传时会被 Vue 强制为 false，导致发送被误拦截。
   modelSupportsVision: undefined,
@@ -287,6 +299,8 @@ const unregisterChatInput = inject<(key: string) => void>('unregisterChatInput',
 // ===== State =====
 const pendingFiles = ref<File[]>([])
 const filePreviewUrls = ref<string[]>([])
+const uploadingFiles = ref<boolean[]>([])
+const draggingFile = ref(false)
 const editorContent = ref('')
 
 // Quick command state
@@ -557,24 +571,29 @@ const editor = useEditor({
       if (props.disabled) return true
       const items = event.clipboardData?.items
       if (items) {
+        let handledFile = false
         for (const item of Array.from(items)) {
           if (item.type.startsWith('image/')) {
+            const file = item.getAsFile()
+            if (!file) continue
             if (pendingFiles.value.length >= 10) {
               ElMessage.warning('最多上传 10 张图片')
               break
             }
-            const file = item.getAsFile()
-            if (!file) continue
             if (file.size > 10 * 1024 * 1024) {
               ElMessage.warning('粘贴的图片超过 10MB 限制')
               continue
             }
-            const idx = pendingFiles.value.length
-            pendingFiles.value.push(file)
-            filePreviewUrls.value[idx] = URL.createObjectURL(file)
-            return true
+            addPendingImage(file)
+            handledFile = true
+          } else if (item.kind === 'file') {
+            const file = item.getAsFile()
+            if (!file) continue
+            void uploadFileToRuntime(file)
+            handledFile = true
           }
         }
+        if (handledFile) return true
       }
       // Handle text paste — convert @{...}@, ${...}$, #{...}# patterns to editor nodes
       const text = event.clipboardData?.getData('text/plain')
@@ -842,57 +861,182 @@ function detectAtTrigger() {
 
 // ===== File handling =====
 
+/** 解析本次上传文件所需的目标会话 ID。 */
+function resolveSessionId(): string | null {
+  if (props.targetSessionId && props.targetSessionId.trim() !== '') {
+    return props.targetSessionId.trim()
+  }
+  const sid = sessionStore.activeSessionId
+  return sid && sid.trim() !== '' ? sid : null
+}
+
 function handleFileSelect(event: Event) {
   if (props.disabled) return
   const input = event.target as HTMLInputElement
   if (input.files) {
     for (const file of Array.from(input.files)) {
-      if (pendingFiles.value.length >= 10) {
-        ElMessage.warning('最多上传 10 张图片')
-        break
-      }
-      if (file.size > 10 * 1024 * 1024) {
-        ElMessage.warning(`图片 ${file.name} 超过 10MB 限制`)
-        continue
-      }
-      const idx = pendingFiles.value.length
-      pendingFiles.value.push(file)
       if (file.type.startsWith('image/')) {
-        filePreviewUrls.value[idx] = URL.createObjectURL(file)
+        addPendingImage(file)
       } else {
-        filePreviewUrls.value[idx] = ''
+        void uploadFileToRuntime(file)
       }
     }
   }
   input.value = ''
 }
 
-function removeFile(index: number) {
-  if (filePreviewUrls.value[index]) {
-    URL.revokeObjectURL(filePreviewUrls.value[index])
+function addPendingImage(file: File) {
+  if (pendingFiles.value.length >= 10) {
+    ElMessage.warning('最多上传 10 张图片')
+    return
   }
-  pendingFiles.value.splice(index, 1)
-  filePreviewUrls.value.splice(index, 1)
+  if (file.size > 10 * 1024 * 1024) {
+    ElMessage.warning(`图片 ${file.name} 超过 10MB 限制`)
+    return
+  }
+  const idx = pendingFiles.value.length
+  pendingFiles.value.push(file)
+  filePreviewUrls.value[idx] = URL.createObjectURL(file)
+  uploadingFiles.value[idx] = false
+}
+
+/** 上传文件至 runtime incoming，成功后插入文件引用节点（@{absolutePath}@）。 */
+async function uploadFileToRuntime(file: File) {
+  if (props.executionMode === 'LOCAL') {
+    ElMessage.warning('本地模式不支持文件上传，请使用 @ 引用工作区文件')
+    return
+  }
+  const sessionId = resolveSessionId()
+  if (sessionId == null) {
+    ElMessage.error('请先创建会话后再上传文件')
+    return
+  }
+  if (file.size === 0) {
+    ElMessage.error(`文件 ${file.name} 为空`)
+    return
+  }
+
+  // 以 File 对象引用定位，避免并发 splice/删除导致索引错位
+  const idx = pendingFiles.value.length
+  pendingFiles.value.push(file)
+  uploadingFiles.value[idx] = true
+  filePreviewUrls.value[idx] = ''
+  const findSelf = () => pendingFiles.value.indexOf(file)
+  try {
+    const uploaded = await uploadChatFile(file, sessionId)
+    // 上传期间条目可能已被用户移除（文件对象已不在列表中），则不插入引用
+    const pos = findSelf()
+    if (pos < 0) return
+    if (!uploaded || !uploaded.absolutePath) {
+      removePendingFileAt(pos)
+      ElMessage.error(`文件 ${file.name} 上传失败`)
+      return
+    }
+    uploadingFiles.value[pos] = false
+    // 输入区被禁用（如 Agent 运行中）时编辑器不可用，引用节点无法插入；
+    // 此时移除条目并提示，避免文件静默丢失成孤儿
+    if (props.disabled || !editor.value) {
+      removePendingFileAt(pos)
+      ElMessage.warning(`文件 ${file.name} 已上传，但输入框不可用，未添加到消息中`)
+      return
+    }
+    insertFileReferenceAt(uploaded.absolutePath)
+  } catch {
+    const pos = findSelf()
+    if (pos < 0) return
+    removePendingFileAt(pos)
+    ElMessage.error(`文件 ${file.name} 上传失败`)
+  }
+}
+
+/** 移除指定下标的待发条目（图片或上传失败的文件）。 */
+function removePendingFileAt(idx: number) {
+  if (filePreviewUrls.value[idx]) {
+    URL.revokeObjectURL(filePreviewUrls.value[idx])
+  }
+  pendingFiles.value.splice(idx, 1)
+  filePreviewUrls.value.splice(idx, 1)
+  uploadingFiles.value.splice(idx, 1)
+}
+
+/** 在光标处插入文件引用节点。 */
+function insertFileReferenceAt(filePath: string) {
+  if (!editor.value || props.disabled) return
+  const docPos = editor.value.state.selection.from
+  const node = editor.value.state.schema.nodes.fileReference?.create({ filePath })
+  if (!node) return
+  let tr = editor.value.state.tr.insert(docPos, node)
+  tr = tr.insert(docPos + node.nodeSize, editor.value.state.schema.text(' '))
+  tr = tr.setSelection(TextSelection.near(tr.doc.resolve(docPos + node.nodeSize + 1)))
+  editor.value.view.dispatch(tr)
+  editor.value.commands.focus()
+}
+
+function removeFile(index: number) {
+  removePendingFileAt(index)
+}
+
+// ===== Drag & drop file upload =====
+
+function handleDragOver() {
+  if (props.disabled) return
+  draggingFile.value = true
+}
+
+function handleDragEnter() {
+  if (props.disabled) return
+  draggingFile.value = true
+}
+
+function handleDragLeave(e: DragEvent) {
+  if (props.disabled) return
+  // 仅在真正离开输入区时取消高亮，避免子元素进出闪烁
+  if (e.target === e.currentTarget) {
+    draggingFile.value = false
+  }
+}
+
+function handleDropFiles(e: DragEvent) {
+  if (props.disabled) return
+  draggingFile.value = false
+  const files = e.dataTransfer?.files
+  if (!files || files.length === 0) return
+  for (const file of Array.from(files)) {
+    if (file.type.startsWith('image/')) {
+      addPendingImage(file)
+    } else {
+      void uploadFileToRuntime(file)
+    }
+  }
 }
 
 // ===== Send =====
 
-function handleSend() {
+async function handleSend() {
   if (props.disabled || !canSend.value || !editor.value) return
   if (props.executionMode === 'LOCAL' && !isElectronClient) {
     ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
     return
   }
+
+  // 若有文件正在上传，等待其完成后再发送，避免引用节点缺失
+  if (uploadingFiles.value.some(Boolean)) {
+    ElMessage.info('文件上传中，请稍候…')
+    return
+  }
+
+  // 图片之外的「文件」已通过节点文本随正文发送；此处仅保留图片待上传
+  const imageFiles = pendingFiles.value.filter((f) => f.type.startsWith('image/'))
   const text = editor.value.getText({ blockSeparator: '\n' }).trim()
-  if (!text && pendingFiles.value.length === 0) return
+  if (!text && imageFiles.length === 0) return
 
   // 检查视觉能力：如果有图片但模型明确不支持视觉，提示用户
-  if (pendingFiles.value.length > 0 && props.modelSupportsVision === false) {
+  if (imageFiles.length > 0 && props.modelSupportsVision === false) {
     ElMessage.warning('当前模型不支持图片输入，请切换到支持视觉的模型')
     return
   }
 
-  emit('send', text, [...pendingFiles.value])
+  emit('send', text, imageFiles)
 
   // 不立即清空输入框，等待消息保存确认
   // 清空操作将由父组件在收到消息保存确认后调用 clearInput 方法执行
@@ -1007,6 +1151,7 @@ function clearInput() {
   filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
   pendingFiles.value = []
   filePreviewUrls.value = []
+  uploadingFiles.value = []
 }
 
 onMounted(() => {
@@ -1043,6 +1188,12 @@ onBeforeUnmount(() => {
 .textarea-area {
   position: relative;
   padding: 12px 16px;
+}
+
+.textarea-area.is-dragging-file {
+  outline: 2px dashed var(--aw-primary);
+  outline-offset: -8px;
+  border-radius: 0;
 }
 
 .textarea-area.new-task-textarea {

@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
-import { FileEntityRepository, FileService } from './file.service.js';
+import { FileEntityRepository, FileService, type FileEntity } from './file.service.js';
 import { WorkspaceBrowseService } from './workspace-browse.service.js';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { isSensitive, envVarNameForDomain, ASKPASS } from './git-write-operation.service.js';
@@ -57,6 +57,68 @@ describe('FileService', () => {
     vi.mocked(repo.findById).mockResolvedValue(null);
     await expect(service.getFilePath(404)).rejects.toBeInstanceOf(BusinessException);
     await service.deleteFile(404);
+  });
+
+  it('uploadIncomingFileSavesToIncomingDirAndRejectsOversized', async () => {
+    const { dir, service } = await setup();
+    const incomingDir = join(dir, 'runtime', '7', '11', 'incoming');
+    const saved = await service.uploadIncomingFile(Buffer.from('abc'), 'doc.pdf', 'application/pdf', 7, 11, incomingDir);
+    expect(saved.sessionId).toBe(11);
+    expect(saved.storedName.endsWith('.pdf')).toBe(true);
+    expect(saved.filePath.startsWith(incomingDir)).toBe(true);
+    expect(existsSync(saved.filePath)).toBe(true);
+    expect(readFileSync(saved.filePath, 'utf8')).toBe('abc');
+
+    await expect(
+      service.uploadIncomingFile(Buffer.alloc(2 * 1024 * 1024), 'big.bin', 'application/octet-stream', 7, 11, incomingDir),
+    ).rejects.toBeInstanceOf(BusinessException);
+  });
+
+  it('uploadIncomingFileStripsPathTraversalFromFilename', async () => {
+    const { dir, service } = await setup();
+    const incomingDir = join(dir, 'runtime', '7', '11', 'incoming');
+    // 文件名内嵌路径分隔符时，storedName 必须只含安全字符，落盘仍位于 incoming 内
+    const saved = await service.uploadIncomingFile(
+      Buffer.from('x'), '../../evil.txt', 'text/plain', 7, 11, incomingDir,
+    );
+    expect(saved.storedName).toMatch(/^[0-9a-f-]+\.txt$/);
+    expect(saved.filePath).toBe(join(incomingDir, saved.storedName));
+    expect(existsSync(saved.filePath)).toBe(true);
+    expect(saved.filePath.includes('..')).toBe(false);
+  });
+
+  it('sanitizeHandlesUrlEncodedTraversalAndKeepsNormalNames', async () => {
+    const { dir, service } = await setup();
+    const incomingDir = join(dir, 'runtime', '7', '12', 'incoming');
+    // URL 编码穿越变体：文件名不能拼出可逃逸的 storedName，且正常名字（含 %2e 字面量）不被破坏
+    const evil = await service.uploadIncomingFile(
+      Buffer.from('x'), '..%2F..%2Fevil.txt', 'text/plain', 7, 12, incomingDir,
+    );
+    expect(evil.storedName).toMatch(/^[0-9a-f-]+\.txt$/);
+    expect(evil.filePath).toBe(join(incomingDir, evil.storedName));
+
+    const normal = await service.uploadIncomingFile(
+      Buffer.from('y'), '100%2e5.xlsx', 'application/octet-stream', 7, 12, incomingDir,
+    );
+    expect(normal.originalName).toBe('100.5.xlsx');
+    expect(normal.storedName.endsWith('.xlsx')).toBe(true);
+  });
+
+  it('listFilesFiltersOutIncomingUploads', async () => {
+    const { repo, service } = await setup();
+    vi.mocked(repo.list).mockResolvedValue([
+      {
+        id: 1, originalName: 'a.txt', storedName: 'a.txt', filePath: '/uploads/a.txt', fileSize: 1, uploaderId: 7,
+      },
+      {
+        id: 2, originalName: 'b.pdf', storedName: 'b.pdf',
+        filePath: join(service.uploadDir === '' ? '' : '/runtime', '7', '11', 'incoming', 'b.pdf'),
+        fileSize: 2, uploaderId: 7,
+      },
+    ] as unknown as FileEntity[]);
+    const files = await service.listFiles(7, 11);
+    expect(files).toHaveLength(1);
+    expect(files[0].originalName).toBe('a.txt');
   });
 
   it('uploadInfersImageMimeAndExtensionFromMagicBytes', async () => {

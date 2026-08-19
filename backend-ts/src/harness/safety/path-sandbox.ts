@@ -15,6 +15,7 @@ export class PathSandbox {
     }
   }
 
+  /** 允许解析到显式登记的额外根（如会话 runtime incoming 目录），须位于该根之下。 */
   addAllowedRoot(root: string): void {
     this.allowedRoots.add(path.resolve(root));
   }

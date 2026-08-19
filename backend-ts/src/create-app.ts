@@ -4,7 +4,7 @@ import fastifyStatic from '@fastify/static';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fail } from './common/result.js';
 import { sendJson, handleError } from './common/http-error.js';
@@ -286,6 +286,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const taskPanelPref = new UserTaskPanelPreferenceService(new MysqlUserTaskPanelPreferenceRepository(db));
 
   const pathSandbox = new PathSandbox(cfg.app.harness.workspaceRoot);
+  const runtimeRoot = cfg.app.harness.runtimeDir;
+  // 放行 runtime 目录，使 Agent 工具（读文件/Shell/Grep/Glob 等）可访问会话 runtime 下的上传文件。
+  pathSandbox.addAllowedRoot(runtimeRoot);
   const sessionRepo = new SessionRepository(db);
   const messageRepo = new MessageRepository(db);
   const fileChangeRepo = new FileChangeRepository(db);
@@ -305,6 +308,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       listOptions: async () => (await agentRepo.selectList()).map((a) => ({ id: a.id!, name: a.name })),
     },
     pathSandbox, envInfo, commandService, gitOps, sessionCompactionService, sessionCompactionEventService, todoRepo,
+    runtimeSessionCleanup(runtimeRoot),
   );
   const sessionSvc = sessionService as never;
   const sessionMap = sessionRepo as never;
@@ -700,6 +704,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       fileService, sessionService, workspaceBrowseService: workspaceBrowse,
       workspaceGitService: workspaceGit, gitCommitMessageService: gitCommitMsg,
       gitWriteOperationService: gitWrite, pathSandbox, uploadBaseUrl: cfg.app.upload.baseUrl,
+      runtimeDataResolver: runtimeResolver,
     });
     registerOssRoutes(api, { ossStsService: ossSts });
     registerSkillRoutes(api, {
@@ -778,4 +783,18 @@ function expandHome(v: string): string {
   if (v.startsWith('$HOME')) return v.replace(/^\$HOME/, process.env.HOME ?? '');
   if (v.startsWith('~/')) return resolve(process.env.HOME ?? '', v.slice(2));
   return v;
+}
+
+/** 会话删除时清理该会话 runtime 目录（incoming 上传、skills 同步副本、shell 输出等临时数据）。 */
+function runtimeSessionCleanup(runtimeRoot: string): (userId: number, sessionId: number) => void {
+  return (userId: number, sessionId: number): void => {
+    try {
+      const sessionDir = resolve(runtimeRoot, String(userId), String(sessionId));
+      if (existsSync(sessionDir)) {
+        rmSync(sessionDir, { recursive: true, force: true });
+      }
+    } catch (e) {
+      console.error(`Failed to clean runtime dir for session ${sessionId}`, e);
+    }
+  };
 }

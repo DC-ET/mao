@@ -81,6 +81,7 @@
       <ChatInput
         ref="chatInputRef"
         :register-key="tabId"
+        :target-session-id="hasRealSession ? String(realSessionId) : ''"
         :loading="sending"
         :waiting-for-save="waitingForSave"
         :workspace="parentWorkspace"
