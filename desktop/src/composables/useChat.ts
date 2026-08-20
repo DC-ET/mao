@@ -397,6 +397,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       if (resolvedText.includes('@{') && workspace.value) {
         FILE_REF_PATTERN.lastIndex = 0
         resolvedText = resolvedText.replace(FILE_REF_PATTERN, (_, relPath) => {
+          // Skip absolute paths (e.g. runtime incoming files uploaded via uploadPendingFiles)
+          if (relPath.startsWith('/')) return `@{${relPath}}@`
           const absPath = workspace.value.replace(/\/$/, '') + '/' + relPath.replace(/^\//, '')
           return `@{${absPath}}@`
         })
@@ -587,6 +589,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       if (resolvedText.includes('@{') && workspace.value) {
         FILE_REF_PATTERN.lastIndex = 0
         resolvedText = resolvedText.replace(FILE_REF_PATTERN, (_, relPath) => {
+          // Skip absolute paths (e.g. runtime incoming files uploaded via uploadPendingFiles)
+          if (relPath.startsWith('/')) return `@{${relPath}}@`
           const absPath = workspace.value.replace(/\/$/, '') + '/' + relPath.replace(/^\//, '')
           return `@{${absPath}}@`
         })
