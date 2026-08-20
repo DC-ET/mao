@@ -3,7 +3,7 @@
 > 版本: v0.3（可落地版） | 更新时间: 2026-08-20
 > 状态: Phase 1/2（CLOUD）与 Phase 3（LOCAL）已落地
 > 定位: 对齐 `cursor-agent` 的无 GUI 终端对话式 Agent 客户端，对接 mao 后端（`backend-ts`）
-> 关联文档: [technical-design.md](./technical-design.md)、[android-app-technical-design.md](./android-app-technical-design.md)、[local-tool-ws-merge.md](./local-tool-ws-merge.md)、[shell-session-design.md](./shell-session-design.md)、[shell-unification-design.md](./shell-unification-design.md)、[mao-agent-cli-ux-design.md](./mao-agent-cli-ux-design.md)（交互体验专项）、[skills/mao-user-cli](../skills/mao-user-cli/SKILL.md)
+> 关联文档: [technical-design.md](./technical-design.md)、[android-app-technical-design.md](./android-app-technical-design.md)、[local-tool-ws-merge.md](./local-tool-ws-merge.md)、[shell-session-design.md](./shell-session-design.md)、[shell-unification-design.md](./shell-unification-design.md)、[mao-agent-cli-ux-design.md](./mao-agent-cli-ux-design.md)（交互体验专项）、[skills/mao-cli](../skills/mao-cli/SKILL.md)
 
 ---
 
@@ -40,7 +40,7 @@ v0.1 草案的整体判断（复用协议、不改后端、CLOUD 优先、五端
 ### 1.1 背景
 
 - mao 现有三类交互客户端（`admin` / `desktop` / `android`）均依赖浏览器或 WebView 渲染，无法在**纯终端环境**（SSH、容器、CI/CD、tmux、无显示服务器）中使用。
-- 已有 `skills/mao-user-cli` 明确**只覆盖非对话 REST 操作**，其 `cli.js:59-60` 直接声明「明确不支持：消息发送、消息队列写操作、WebSocket Agent 运行、edit_and_resend」。终端场景下驱动 Agent 真正对话执行任务，目前完全空白。
+- 已有 `skills/mao-cli` 明确**只覆盖非对话 REST 操作**（用户端元数据 + 管理端运维），其帮助文本直接声明「明确不支持：消息发送、消息队列写操作、WebSocket Agent 运行」。终端场景下驱动 Agent 真正对话执行任务，目前完全空白。
 - 业界对标 `cursor-agent`：无 GUI 终端 Agent CLI，支持交互式会话、`--print` 一次性打印、`--output-format text|json|stream-json`、`--resume`/`ls` 会话管理等，广泛用于本地终端与 CI 流水线。
 
 ### 1.2 目标
@@ -48,7 +48,7 @@ v0.1 草案的整体判断（复用协议、不改后端、CLOUD 优先、五端
 1. 提供命令 `mao-agent`，在终端完成**创建/恢复会话 → 发送消息 → 观察流式输出 → 拿到最终结果**的闭环。
 2. 支持三种运行形态：交互式 REPL（默认）、打印模式（`-p`）、结构化输出（`--output-format json|stream-json`）。
 3. 复用现有后端协议与鉴权体系。**Phase 1 不需要任何后端改动即可上线**；`client=cli` 识别与 LOCAL 支持是后续阶段的独立小改动（§13）。
-4. 复用 `~/.mao/auth.json`，与 `mao-user-cli` / `mao-admin-cli` 共享登录态。
+4. 复用 `~/.mao/auth.json`，与 `mao-cli` 共享登录态。
 5. 面向人机双重使用者：人类交互使用；脚本 / CI / 上层 Agent 通过打印模式与 JSON 输出编排使用。
 
 ### 1.3 非目标（首版明确不做）
@@ -57,7 +57,7 @@ v0.1 草案的整体判断（复用协议、不改后端、CLOUD 优先、五端
 - 不重新设计后端协议；只做「协议的第 N 个消费者」。
 - 不做飞书扫码登录（终端无便捷二维码交互通道）。
 - 不做 Side Task / 多会话并行 / MCP 上报 / 多模态图片输入（Phase 4）。
-- **不做会话元数据管理子命令**（`sessions rm/archive/pin`、`agents`、`models`、`config`）——这些 `mao-user-cli` 已稳定提供，重复实现只增维护面。CLI 帮助文本中直接引导到 `mao-user`。
+- **不做会话元数据管理子命令**（`sessions rm/archive/pin`、`agents`、`models`、`config`）——这些 `mao-cli` 已稳定提供，重复实现只增维护面。CLI 帮助文本中直接引导到 `mao`。
 - 不做单文件二进制分发与 `mao-agent update` 自更新（无需求驱动，Phase 4 再评估）。
 
 ### 1.4 与现有客户端的关系
@@ -67,11 +67,10 @@ v0.1 草案的整体判断（复用协议、不改后端、CLOUD 优先、五端
 | `desktop`（Electron/Web） | 主力图形对话客户端 | 是 | 是（CLOUD/LOCAL） | `electron` / `browser` |
 | `android` | 远程加载 desktop 前端的原生壳 | 是 | 是（仅 CLOUD） | `android` |
 | `admin` | 运维管理后台 | 否 | 否 | 无 WS |
-| `skills/mao-user-cli` | 非对话 REST 运维 CLI | 否 | 否 | 无 WS |
-| `skills/mao-admin-cli` | 管理后台等效 CLI | 否 | 否 | 无 WS |
+| `skills/mao-cli` | 用户端与管理端统一 REST 运维 CLI | 否 | 否 | 无 WS |
 | **`mao-agent`（agent-cli/）** | **无 GUI 终端对话式客户端** | **是** | **是（CLOUD）** | `cli` |
 
-`mao-agent` 与 `mao-user-cli` **互补而非替代**：前者补齐「驱动 Agent 对话执行」的 WebSocket 能力空白，后者继续做非对话元数据操作，两者共用 `~/.mao/auth.json`。
+`mao-agent` 与 `mao-cli` **互补而非替代**：前者补齐「驱动 Agent 对话执行」的 WebSocket 能力空白，后者继续做非对话元数据与管理运维，两者共用 `~/.mao/auth.json`。
 
 ---
 
@@ -227,9 +226,9 @@ mao-agent --help / --version
 会话归档、删除、置顶、Agent/模型列表等元数据操作**不在本 CLI 范围**，`--help` 末尾固定提示：
 
 ```
-会话与元数据管理请使用 mao-user CLI，例如：
-  mao-user session list --json
-  mao-user agent list
+会话与元数据管理请使用 mao CLI，例如：
+  mao session list --json
+  mao agent list
 ```
 
 ### 4.2 全局选项（首版）
@@ -250,7 +249,7 @@ mao-agent --help / --version
 | `--if-running <wait\|cancel\|fail>` | resume 时会话仍在跑的策略，默认 `wait` |
 | `--on-question <ask\|fail>` | 遇到 `ask_user_questions`：TTY 下默认 `ask`，非 TTY 下默认 `fail` |
 | `--max-duration <sec>` | 单次任务墙钟上限，超时发 `cancel` 后退出码 124；默认无上限 |
-| `--timeout-ms <n>` | 单次 **REST** 请求超时，默认 30000（与 `mao-user-cli` 一致） |
+| `--timeout-ms <n>` | 单次 **REST** 请求超时，默认 30000（与 `mao-cli` 一致） |
 | `--base-url <url>` | API 根地址（到 `/api` 为止，不含 `/v1`） |
 | `--token <jwt>` | 一次性覆盖本地 token |
 | `--no-color` / `--color` | 强制禁用 / 强制启用颜色（`NO_COLOR` 等价于 `--no-color`） |
@@ -272,11 +271,11 @@ mao-agent --help / --version
 | 变量 | 说明 |
 |---|---|
 | `MAO_AGENT_BASE_URL` | API 根地址，默认 `https://mao.etarch.cn/api` |
-| `MAO_TOKEN` / `MAO_REFRESH_TOKEN` | 与 `mao-user-cli` 同名，云端工作区 / 微信 shell 场景由后端自动注入 |
+| `MAO_TOKEN` / `MAO_REFRESH_TOKEN` | 与 `mao-cli` 同名，云端工作区 / 微信 shell 场景由后端自动注入 |
 | `MAO_AGENT_OUTPUT_FORMAT` | 默认输出格式 |
 | `NO_COLOR` | 标准约定，禁用颜色 |
 
-> **baseUrl 口径差异（易踩坑）**：`mao-user-cli` 的 `MAO_USER_BASE_URL` 默认值**含 `/v1`**（`https://mao.etarch.cn/api/v1`），而 mao-agent 需要同时拼 REST(`/v1/...`) 和 WS(`/ws/stream`)，因此 `MAO_AGENT_BASE_URL` 定义为**到 `/api` 为止**。解析时做归一化：若用户传入的地址以 `/v1` 结尾则剥掉，避免复制粘贴 `mao-user-cli` 配置后拼出 `/api/v1/v1/...`。
+> **baseUrl 口径差异（易踩坑）**：`mao-cli` 的 `MAO_BASE_URL` 默认值**含 `/v1`**（`https://mao.etarch.cn/api/v1`），而 mao-agent 需要同时拼 REST(`/v1/...`) 和 WS(`/ws/stream`)，因此 `MAO_AGENT_BASE_URL` 定义为**到 `/api` 为止**。解析时做归一化：若用户传入的地址以 `/v1` 结尾则剥掉，避免复制粘贴 `mao-cli` 配置后拼出 `/api/v1/v1/...`。
 
 ### 4.4 交互式 REPL
 
@@ -363,7 +362,7 @@ mao-agent --help / --version
 
 ### 5.2 Token 存储与刷新
 
-- 复用 `~/.mao/auth.json`，结构与 `mao-user-cli` 完全一致：`{ accessToken, refreshToken, expiresIn, user, savedAt }`，文件 `0600`，目录 `0700`。
+- 复用 `~/.mao/auth.json`，结构与 `mao-cli` 完全一致：`{ accessToken, refreshToken, expiresIn, user, savedAt }`，文件 `0600`，目录 `0700`。
 - 解析优先级：`--token` > `MAO_TOKEN` 环境变量 > `~/.mao/auth.json`（兼容旧名 `MAO_USER_TOKEN` / `MAO_ADMIN_TOKEN`）。
 - **WS 的 token 特殊性**（已修正 v0.1 的误述）：
   1. accessToken 走 URL query，握手失败会得到 `close(1003)`。因此**建连前**若判断 accessToken 剩余有效期 < 5 分钟或已过期，先 `POST /v1/auth/refresh`。
@@ -898,7 +897,7 @@ agent-cli/
 可直接消费：`Result` / `LoginVO` / `UserInfoVO` / `AgentVO` / `ModelVO`。
 **必须自建**：`SessionVO` / `MessagePage` / `CreateSessionRequest` / 全部 WS 事件类型。自建类型文件头部注释指明对齐来源（`backend-ts/src/session/session-vo.ts`、`backend-ts/src/session/ws/`），稳定后再评估反向贡献回 contracts。
 
-### 12.4 与 desktop / mao-user-cli 的复用策略
+### 12.4 与 desktop / mao-cli 的复用策略
 
 - **不共享运行时代码，只对齐语义**。`useStreamWS.ts` 的 984 行里约 490 行绑定 Pinia，直接抽公共包需要改动 desktop 的核心通信层，在 CLI 尚未验证的阶段风险收益不划算。做法：CLI 重写约 300 行协议核心，并在 `ws-client.spec.ts` 里把心跳 5 s / 静默 30 s / 退避 1→30 s 这些常量断言固化；desktop 侧改这些数值时由 code review 保证同步。**Phase 2 结束后**若两边确实稳定，再评估抽 `shared/ws-protocol`。
 - **`auth-store` 完全对齐**：同一 `~/.mao/auth.json`、同一优先级、同一错误文案风格，各自维护一份实现（TS vs JS）。注意 desktop Electron 用的是 `userData/auth.json` 且字段名是 `{ token, refreshToken }`，与 CLI 的 `{ accessToken, ... }` 不同，不要混淆。
@@ -1125,4 +1124,4 @@ $ echo $?
 
 - Cursor CLI 官方文档：`--print` / `--output-format` / `--resume` / `ls` 等形态取自 `cursor-agent`（[output-format 参考](https://cursor.com/docs/cli/reference/output-format)）。
 - 内部文档：[local-tool-ws-merge.md](./local-tool-ws-merge.md)、[shell-session-design.md](./shell-session-design.md)、[shell-unification-design.md](./shell-unification-design.md)、[android-app-technical-design.md](./android-app-technical-design.md)（第四端接入范例）。
-- 内部代码（本文档所有事实的来源）：`backend-ts/src/session/ws/`（`streaming-ws-handler.ts`、`streaming-ws-registry.ts`、`attach-websocket.ts`、`ws-event.ts`）、`backend-ts/src/harness/tool/tool-dispatcher.ts`、`backend-ts/src/harness/tool/ask-user-questions-registry.ts`、`backend-ts/src/harness/approval/approval-registry.ts`、`backend-ts/src/session/session.service.ts`、`backend-ts/src/session/session.routes.ts`、`backend-ts/src/session/task-terminal.service.ts`、`backend-ts/src/auth/auth.service.ts`、`desktop/src/composables/useStreamWS.ts`、`desktop/src/composables/useChat.ts`、`desktop/electron/localShell.cjs`、`skills/mao-user-cli/lib/`、`shared/contracts/src/`。
+- 内部代码（本文档所有事实的来源）：`backend-ts/src/session/ws/`（`streaming-ws-handler.ts`、`streaming-ws-registry.ts`、`attach-websocket.ts`、`ws-event.ts`）、`backend-ts/src/harness/tool/tool-dispatcher.ts`、`backend-ts/src/harness/tool/ask-user-questions-registry.ts`、`backend-ts/src/harness/approval/approval-registry.ts`、`backend-ts/src/session/session.service.ts`、`backend-ts/src/session/session.routes.ts`、`backend-ts/src/session/task-terminal.service.ts`、`backend-ts/src/auth/auth.service.ts`、`desktop/src/composables/useStreamWS.ts`、`desktop/src/composables/useChat.ts`、`desktop/electron/localShell.cjs`、`skills/mao-cli/lib/`、`shared/contracts/src/`。

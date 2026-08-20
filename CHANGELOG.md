@@ -43,7 +43,7 @@
 - 新增第五端 `mao-agent`（`agent-cli/`）：终端对话式 Agent 客户端。支持交互式 REPL、`-p` 打印模式、`text|json|stream-json` 输出、`login/logout/status/ls/resume/--continue`，以及 `ask_user_questions` 交互（打印模式 `--on-question=fail` 会先发 `cancel`）。
 - 事件按 sessionId / executionId 本地过滤，避免 desktop 其它会话的终态让 `-p` 误退出；重连后按 `tool_call_id` / `requestId` 去重。
 - `--permission-level` 仅写入会话记录：CLOUD 下不产生工具审批。
-- 与 `mao-user-cli` 共用 `~/.mao/auth.json`；`MAO_AGENT_BASE_URL` 到 `/api` 为止（自动剥掉误粘贴的 `/v1`）。
+- 与 `mao-cli` 共用 `~/.mao/auth.json`；`MAO_AGENT_BASE_URL` 到 `/api` 为止（自动剥掉误粘贴的 `/v1`）。
 - 修复 REPL：上下文占用把 token 数当成百分比显示成 `13936%`；状态栏 `\r` 会擦掉正在流式输出的回复；执行中未暂停输入导致第二行把第一轮 `executionId` 冲掉。
 - 支持 LOCAL 模式（`--local`）：本机执行 shell / 读写文件 / glob / grep，复用 `localShell.cjs`；工作区信任、默认拒绝清单、`--yolo` / `--approve-rule` / TTY 审批；拒绝时同时发 `tool_approval` 与 `tool_error`。非 TTY 默认 `--on-approval=fail`（退出码 4）。技能 zip 同步与 MCP stdio/HTTP 代理已接通。
 - 支持一条命令安装：`curl -fsSL https://raw.githubusercontent.com/DC-ET/mao/main/scripts/install-mao-agent.sh | bash`（Node.js ≥ 20）。包内自带 `vendor/localShell.cjs`，不必再克隆完整仓库。
@@ -53,6 +53,11 @@
 - 交互 REPL 改走备用屏（`DECSET 1049`）：顶栏固定、对话在中间滚动、底栏输入框钉底，不再和 bash 提示符叠在每一行上；用户消息改为整行深灰块，输入框提示「继续对话」。
 - 修复交互态状态栏：排队/斜杠提示不再粘在 spinner 同一行；状态行按终端宽度截断避免换行残留；半行等待不再用换行把旧状态推进历史；无流式增量时回退打印终态文本，仍为空则显示「(无文本回复)」。执行中粘贴或一次写入整句（含中文）会正确入队，不再被当成无效按键丢掉。
 - 修复 REPL 底栏输入框把对话「吃掉」的问题：改用 DEC 存/恢复光标（`ESC 7/8`）并与正文同一路输出，等待 LLM 时仍能看到上方的用户消息、工具卡片和流式回复。
+
+### 终端 CLI（mao-cli）
+- 将 `mao-user-cli` 与 `mao-admin-cli` 合并为统一的 `mao` / `mao-cli`，并移除这两个旧 Skill 目录。默认请求 `https://mao.etarch.cn/api/v1`，JWT 仍缓存在 `~/.mao/auth.json`。个人会话用 `session`，全站检索用 `admin-session`；个人技能用 `skill`，全局技能用 `skill-docs`。旧命令名 `mao-user` / `mao-admin` 仍可用（`mao-admin session/skill` 会自动映射到管理端模块）。
+- **Skill 升级为产品知识库与代理入口**：`skills/mao-cli` 收录项目说明、安装/部署/配置、管理后台/桌面/Electron/安卓/mao-agent 手册与排障；可独立分发。仓库 `README.md`、`USER_GUIDE.md`、`DEPLOY.md` 等改为引用 mao-cli 正文。
+- 新增 MCP REST CLI：`mao mcp`（偏好、`/me` 用户级 MCP、全局 CRUD/测试），见 `reference/mcp.md`。
 
 ---
 

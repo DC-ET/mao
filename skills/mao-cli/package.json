@@ -1,0 +1,29 @@
+{
+  "name": "mao-cli",
+  "version": "2.0.0",
+  "description": "Mao 用户端与管理后台统一命令行工具",
+  "type": "commonjs",
+  "bin": {
+    "mao": "bin/mao-cli.js",
+    "mao-cli": "bin/mao-cli.js",
+    "mao-user": "bin/mao-cli.js",
+    "mao-user-cli": "bin/mao-cli.js",
+    "mao-admin": "bin/mao-cli.js",
+    "mao-admin-cli": "bin/mao-cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "SKILL.md",
+    "business_process.md",
+    "reference/"
+  ],
+  "keywords": [
+    "mao",
+    "cli"
+  ],
+  "license": "UNLICENSED"
+}

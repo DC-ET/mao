@@ -409,7 +409,7 @@ LOCAL 模式选项:
 
 环境变量:
   MAO_AGENT_BASE_URL                 默认 ${DEFAULT_BASE_URL}
-  MAO_TOKEN / MAO_REFRESH_TOKEN      与 mao-user-cli 同名
+  MAO_TOKEN / MAO_REFRESH_TOKEN      与 mao-cli 同名
   MAO_AGENT_OUTPUT_FORMAT            默认输出格式
   NO_COLOR                           禁用颜色
 
@@ -432,8 +432,8 @@ permissionLevel:
 CLOUD 下 --permission-level 不限制写文件；真要限权请使用工具集受限的 Agent。
 LOCAL 工作区信任写入 ~/.mao/agent-cli/config.json 的 trustedWorkspaces，--yolo 不能豁免。
 
-会话与元数据管理请使用 mao-user CLI，例如：
-  mao-user session list --json
-  mao-user agent list
+会话与元数据管理请使用 mao CLI，例如：
+  mao session list --json
+  mao agent list
 `;
 
