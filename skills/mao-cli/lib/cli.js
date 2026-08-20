@@ -26,6 +26,7 @@ const runtime = require('./commands/runtime');
 const analytics = require('./commands/analytics');
 const audit = require('./commands/audit');
 const settings = require('./commands/settings');
+const mcp = require('./commands/mcp');
 
 const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
 
@@ -57,6 +58,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   weixin          微信 Bot 绑定与二维码状态
   git             Git 凭证
   tool            内置工具查询
+  mcp             MCP 偏好与用户级 / 全局服务器
 
 管理端模块:
   user            用户管理
@@ -139,6 +141,7 @@ const MODULES = {
   analytics,
   audit,
   settings,
+  mcp,
 };
 
 const ADMIN_COMPAT = {

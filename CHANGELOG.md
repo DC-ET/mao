@@ -52,6 +52,8 @@
 
 ### 终端 CLI（mao-cli）
 - 将 `mao-user-cli` 与 `mao-admin-cli` 合并为统一的 `mao` / `mao-cli`，并移除这两个旧 Skill 目录。默认请求 `https://mao.etarch.cn/api/v1`，JWT 仍缓存在 `~/.mao/auth.json`。个人会话用 `session`，全站检索用 `admin-session`；个人技能用 `skill`，全局技能用 `skill-docs`。旧命令名 `mao-user` / `mao-admin` 仍可用（`mao-admin session/skill` 会自动映射到管理端模块）。
+- **Skill 升级为产品知识库与代理入口**：`skills/mao-cli` 收录项目说明、安装/部署/配置、管理后台/桌面/Electron/安卓/mao-agent 手册与排障；可独立分发。仓库 `README.md`、`USER_GUIDE.md`、`DEPLOY.md` 等改为引用 mao-cli 正文。
+- 新增 MCP REST CLI：`mao mcp`（偏好、`/me` 用户级 MCP、全局 CRUD/测试），见 `reference/mcp.md`。
 
 ---
 

@@ -4,8 +4,8 @@
 
 ## 开始之前
 
-- 阅读 [README.md](README.md) 了解架构与快速开始
-- 阅读 [DEPLOY.md](DEPLOY.md) 了解生产部署
+- 产品说明、部署与使用问答： [skills/mao-cli/SKILL.md](skills/mao-cli/SKILL.md)
+- 本地开发安装： [skills/mao-cli/reference/install.md](skills/mao-cli/reference/install.md)
 - 许可证为 [MIT](LICENSE)
 
 ## 开发环境
