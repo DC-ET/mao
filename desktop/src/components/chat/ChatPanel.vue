@@ -550,7 +550,7 @@ watch(sessionId, (newSid) => {
   }
 })
 
-async function handleSend(text: string, files: File[]) {
+async function handleSend(text: string, files: File[], pendingUploads?: File[]) {
   if (isNewTaskMode.value) {
     if (!newTaskAgentId.value) return
     agentId.value = newTaskAgentId.value
@@ -563,7 +563,7 @@ async function handleSend(text: string, files: File[]) {
 
   // Agent 运行中走队列，不阻塞输入框
   if (isActive.value) {
-    const sent = await sendMessageWithQueue(text, files)
+    const sent = await sendMessageWithQueue(text, files, pendingUploads)
     if (sent) {
       chatInputRef.value?.clearInput()
       nextTick(scrollToBottomSmooth)
@@ -575,7 +575,7 @@ async function handleSend(text: string, files: File[]) {
   const generation = ++sendGeneration
   waitingForSave.value = true
   try {
-    const saved = await sendMessageAndWaitForSave(text, files)
+    const saved = await sendMessageAndWaitForSave(text, files, pendingUploads)
     // 若 KeepAlive 切回已作废本轮 UI，勿清空用户可能已重新编辑的输入
     if (saved && generation === sendGeneration) {
       chatInputRef.value?.clearInput()

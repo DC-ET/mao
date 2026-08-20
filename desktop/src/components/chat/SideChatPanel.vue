@@ -81,7 +81,6 @@
       <ChatInput
         ref="chatInputRef"
         :register-key="tabId"
-        :target-session-id="hasRealSession ? String(realSessionId) : ''"
         :loading="sending"
         :waiting-for-save="waitingForSave"
         :workspace="parentWorkspace"
@@ -116,6 +115,7 @@ import type { QuestionAnswer } from '../../types/chat'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useToolApprovals } from '../../composables/useChat'
 import { uploadImages } from '../../utils/imageUpload'
+import { uploadPendingFiles } from '../../utils/chatFileUpload'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QuestionPanel from './QuestionPanel.vue'
@@ -496,9 +496,9 @@ function handleModelSwitch(modelId: number) {
   }
 }
 
-async function handleChatSend(text: string, files: File[]) {
+async function handleChatSend(text: string, files: File[], pendingUploads?: File[]) {
   const trimmed = text.trim()
-  if (!trimmed && (!files || files.length === 0)) return
+  if (!trimmed && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) return
 
   if (hasRealSession.value) {
     sessionStore.clearExecutionError(String(realSessionId.value))
@@ -511,9 +511,15 @@ async function handleChatSend(text: string, files: File[]) {
   // If user attached images but all uploads failed, do not send a text-only message by mistake.
   if (files.length > 0 && imageUrls.length === 0) return
 
+  // Upload non-image files to runtime incoming (uses parent session ID for first side send)
+  let resolvedText = trimmed
+  if (pendingUploads && pendingUploads.length > 0 && uploadSessionId) {
+    resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, uploadSessionId)
+  }
+
   // 边路任务正在执行中：将消息加入队列（不受 sending 状态阻塞）
   if (hasRealSession.value && isSideActive.value) {
-    enqueueMessage(String(realSessionId.value), trimmed, generateUUID(), imageUrls)
+    enqueueMessage(String(realSessionId.value), resolvedText, generateUUID(), imageUrls)
     chatInputRef.value?.clearInput()
     return
   }
@@ -547,7 +553,7 @@ async function handleChatSend(text: string, files: File[]) {
     sessionStore.addUserMessage(placeholderCacheKey.value, {
       id: 'side_user_' + Date.now(),
       role: 'user',
-      content: trimmed,
+      content: resolvedText,
       createdAt: nowDateTime(),
       images: imageUrls.length > 0 ? imageUrls : undefined,
     })
@@ -562,7 +568,7 @@ async function handleChatSend(text: string, files: File[]) {
 
     createSideSession(
       parentSessionId,
-      trimmed,
+      resolvedText,
       inheritContext.value,
       currentModelId.value,
       localSkills,
@@ -576,12 +582,12 @@ async function handleChatSend(text: string, files: File[]) {
     sessionStore.addUserMessage(sid, {
       id: 'side_user_' + Date.now(),
       role: 'user',
-      content: trimmed,
+      content: resolvedText,
       createdAt: nowDateTime(),
       images: imageUrls.length > 0 ? imageUrls : undefined,
     })
     sessionStore.ensureStreamingAssistantMessage(sid)
-    sendMessage(sid, trimmed, generateUUID(), imageUrls, localSkills, agentsMdContent, currentModelId.value)
+    sendMessage(sid, resolvedText, generateUUID(), imageUrls, localSkills, agentsMdContent, currentModelId.value)
     sending.value = true
   }
 

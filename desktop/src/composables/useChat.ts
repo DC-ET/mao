@@ -18,6 +18,7 @@ export type {
 export { normalizeMessageRole }
 
 import { uploadImages } from '../utils/imageUpload'
+import { uploadPendingFiles } from '../utils/chatFileUpload'
 import { generateUUID } from '../utils/uuid'
 import { validateHttpsGitUrl } from '../utils/cloud-project'
 import { nowDateTime } from '../utils/datetime'
@@ -266,8 +267,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     return false
   }
 
-  async function sendMessage(text: string, files?: File[]) {
-    if ((!text && (!files || files.length === 0)) || sending.value) return
+  async function sendMessage(text: string, files?: File[], pendingUploads?: File[]) {
+    if ((!text && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) || sending.value) return
     syncMissingSessionFromStore()
     const targetSessionId = sessionStore.activeSessionId
     if (sessionId.value !== targetSessionId) {
@@ -351,6 +352,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
 
       const sid = sessionId.value!
+      // Upload non-image files to runtime incoming now that session exists
+      let resolvedText = text || ''
+      if (pendingUploads && pendingUploads.length > 0) {
+        resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, sid)
+      }
       const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
       const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
       if (!requireCurrentSession(sid)) {
@@ -369,7 +375,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       sessionStore.addUserMessage(sid, {
         id: `msg_${Date.now()}_user`,
         role: 'user',
-        content: text,
+        content: resolvedText,
         createdAt: nowDateTime(),
         images: imageUrls.length > 0 ? imageUrls : undefined
       })
@@ -388,7 +394,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       subscribe(sid)
 
       // Resolve file reference relative paths to absolute paths
-      let resolvedText = text || ''
       if (resolvedText.includes('@{') && workspace.value) {
         FILE_REF_PATTERN.lastIndex = 0
         resolvedText = resolvedText.replace(FILE_REF_PATTERN, (_, relPath) => {
@@ -452,8 +457,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
    * 发送消息并等待消息保存确认
    * @returns true 表示消息已发出（可清空输入框）；false 表示发送失败（保留输入以便重试）
    */
-  async function sendMessageAndWaitForSave(text: string, files?: File[]): Promise<boolean> {
-    if ((!text && (!files || files.length === 0)) || sending.value) return false
+  async function sendMessageAndWaitForSave(text: string, files?: File[], pendingUploads?: File[]): Promise<boolean> {
+    if ((!text && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) || sending.value) return false
     syncMissingSessionFromStore()
     const targetSessionId = sessionStore.activeSessionId
     if (sessionId.value !== targetSessionId) {
@@ -537,6 +542,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
 
       const sid = sessionId.value!
+      // Upload non-image files to runtime incoming now that session exists
+      let resolvedText = text || ''
+      if (pendingUploads && pendingUploads.length > 0) {
+        resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, sid)
+      }
       const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
       const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
       if (!requireCurrentSession(sid)) {
@@ -555,7 +565,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       sessionStore.addUserMessage(sid, {
         id: `msg_${Date.now()}_user`,
         role: 'user',
-        content: text,
+        content: resolvedText,
         createdAt: nowDateTime(),
         images: imageUrls.length > 0 ? imageUrls : undefined
       })
@@ -574,7 +584,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       subscribe(sid)
 
       // Resolve file reference relative paths to absolute paths
-      let resolvedText = text || ''
       if (resolvedText.includes('@{') && workspace.value) {
         FILE_REF_PATTERN.lastIndex = 0
         resolvedText = resolvedText.replace(FILE_REF_PATTERN, (_, relPath) => {
@@ -854,23 +863,27 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     return phase === 'RUNNING' || phase === 'WAITING_APPROVAL'
   })
 
-  async function sendMessageWithQueue(text: string, files: File[]): Promise<boolean> {
+  async function sendMessageWithQueue(text: string, files: File[], pendingUploads?: File[]): Promise<boolean> {
     if (isActive.value) {
-      return enqueueMessage(text, files)
+      return enqueueMessage(text, files, pendingUploads)
     }
-    await sendMessage(text, files)
+    await sendMessage(text, files, pendingUploads)
     return true
   }
 
-  async function enqueueMessage(text: string, files: File[]): Promise<boolean> {
+  async function enqueueMessage(text: string, files: File[], pendingUploads?: File[]): Promise<boolean> {
     const sid = sessionId.value
     if (!sid || !requireCurrentSession(sid)) return false
     sessionStore.clearExecutionError(sid)
     const imageUrls = files.length > 0 ? await uploadChatImages(files) : []
+    let resolvedText = text
+    if (pendingUploads && pendingUploads.length > 0) {
+      resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, sid)
+    }
     await connect()
     if (!requireCurrentSession(sid)) return false
     const eventId = generateUUID()
-    wsEnqueueMessage(sid, text, eventId, imageUrls)
+    wsEnqueueMessage(sid, resolvedText, eventId, imageUrls)
     return true
   }
 
