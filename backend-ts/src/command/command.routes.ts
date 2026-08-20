@@ -96,7 +96,7 @@ export function registerQuickCommandRoutes(app: FastifyInstance, deps: QuickComm
   app.get('/v1/quick-commands', async (request, reply) => {
     const userId = requireUserId(request);
     const agentId = queryOptInt(request, 'agentId');
-    let agentSkillNames: string[] | null = null;
+    let agentSkillNames: string[] = [];
     if (agentId != null) {
       agentSkillNames = await resolveAgentSkillNames(agentService, agentId);
     }
@@ -105,7 +105,7 @@ export function registerQuickCommandRoutes(app: FastifyInstance, deps: QuickComm
     const seenNames = new Set<string>();
 
     for (const doc of await Promise.resolve(skillLoader.getAllDocuments())) {
-      if (agentSkillNames != null && !agentSkillNames.includes(doc.name)) {
+      if (agentSkillNames.length > 0 && !agentSkillNames.includes(doc.name)) {
         continue;
       }
       if (!seenNames.has(doc.name)) {
@@ -148,16 +148,16 @@ export function registerCommandRoutes(
   }
 }
 
-async function resolveAgentSkillNames(agentService: AgentService, agentId: number): Promise<string[] | null> {
+async function resolveAgentSkillNames(agentService: AgentService, agentId: number): Promise<string[]> {
   try {
     const agent = await agentService.getAgent(agentId);
     if (hasText(agent.skillNames)) {
       return JSON.parse(agent.skillNames!) as string[];
     }
   } catch {
-    // Failed to resolve skill names for agent — load all skills.
+    // Failed to resolve skill names for agent.
   }
-  return null;
+  return [];
 }
 
 function toVO(command: UserCommand): UserCommandVO {

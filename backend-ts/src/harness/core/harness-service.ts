@@ -354,11 +354,6 @@ export class HarnessService {
           mergedSkillNames.push(name);
         }
       }
-    } else {
-      for (const name of this.skillLoader.getAllNames()) {
-        syncableNames.add(name);
-        mergedSkillNames.push(name);
-      }
     }
     for (const userSkill of userSkillNames) {
       if (!mergedSkillNames.includes(userSkill)) mergedSkillNames.push(userSkill);

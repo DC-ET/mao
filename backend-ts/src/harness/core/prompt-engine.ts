@@ -183,9 +183,8 @@ export class PromptEngine {
   }
 
   private buildSkillCatalog(context: AgentExecutionContext): string | null {
-    let names = context.availableSkillNames;
-    if (!names || names.length === 0) names = this.skillLoader.getAllNames();
-    if (names.length === 0) return null;
+    const names = context.availableSkillNames;
+    if (!names || names.length === 0) return null;
     const isLocal = context.executionMode?.toUpperCase() === 'LOCAL';
     const userId = context.userId;
     const sessionId = context.sessionId;

@@ -26,8 +26,8 @@ describe('SkillSyncService', () => {
     expect(svc.getUserSkillNames(7)).toEqual(['mine']);
     expect(svc.getUserSkillDocuments(7)[0].name).toBe('mine');
     expect(svc.resolveSkillNames({ skillNames: '["java"]' } as never)).toEqual(['java']);
-    expect(svc.resolveSkillNames({ skillNames: '' } as never)).toEqual(['java']);
-    expect(svc.resolveSkillNames({ skillNames: '{' } as never)).toEqual(['java']);
+    expect(svc.resolveSkillNames({ skillNames: '' } as never)).toEqual([]);
+    expect(svc.resolveSkillNames({ skillNames: '{' } as never)).toEqual([]);
     await svc.syncToSession({ id: 2, name: 'a', systemPrompt: 'p' }, null, 9);
   });
 

@@ -255,7 +255,7 @@ describe('HarnessService.buildContext and execute', () => {
     expect(ctx.currentTimestamp).toBe(shanghaiYmd());
   });
 
-  it('buildContextMergesAllSkillsWhenAgentSkillNamesNullAndLocalUnsynced', async () => {
+  it('buildContextDoesNotLoadSystemSkillsWhenAgentSkillNamesNull', async () => {
     const { service, agentMapper, localSkills, localAgentsMd, sessionMapper } = makeHarness();
     agentMapper.selectById.mockResolvedValue({
       id: 2, name: 'Coder', systemPrompt: 'p', skillNames: null,
@@ -268,7 +268,10 @@ describe('HarnessService.buildContext and execute', () => {
     const ctx = await service.buildContext(10);
     expect(ctx.executionMode).toBe('LOCAL');
     expect(ctx.agentsMdContent).toBe('# local agents');
-    expect(ctx.availableSkillNames).toEqual(expect.arrayContaining(['java', 'python', 'mine', 'desktop-only']));
+    // skillNames is null — no system skills loaded; only user skills and local unsynced skills
+    expect(ctx.availableSkillNames).toEqual(expect.arrayContaining(['mine', 'desktop-only']));
+    expect(ctx.availableSkillNames).not.toContain('java');
+    expect(ctx.availableSkillNames).not.toContain('python');
     expect(ctx.tools.map((t) => t.getName())).not.toContain('ask_user_questions');
     expect(ctx.tools.map((t) => t.getName())).toContain('send_wechat_image');
   });

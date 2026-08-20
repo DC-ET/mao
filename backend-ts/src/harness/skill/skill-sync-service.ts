@@ -119,12 +119,12 @@ export class SkillSyncService {
 
   resolveSkillNames(agent: Agent): string[] {
     const raw = agent.skillNames ?? agent.skills;
-    if (!raw || raw.trim() === '') return this.skillLoader.getAllNames();
+    if (!raw || raw.trim() === '') return [];
     try {
       const parsed = JSON.parse(raw) as string[];
-      return Array.isArray(parsed) ? parsed : this.skillLoader.getAllNames();
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
-      return this.skillLoader.getAllNames();
+      return [];
     }
   }
 
