@@ -1127,6 +1127,7 @@ export class StreamingWsHandler {
   private normalizeClient(client: string | undefined): string {
     if (client?.toLowerCase() === 'electron') return 'electron';
     if (client?.toLowerCase() === 'android') return 'android';
+    if (client?.toLowerCase() === 'cli') return 'cli';
     return 'browser';
   }
 

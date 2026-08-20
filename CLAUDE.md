@@ -22,6 +22,7 @@
 | `desktop/`（Web / 共用 UI） | `### 前端（桌面 / Web / 安卓）` |
 | `desktop/electron/`（壳、LOCAL、自动更新） | `### 桌面 Electron` |
 | `android/android/app/`（Capacitor 壳、OTA 原生） | `### 安卓原生` |
+| `agent-cli/` | `### 终端 CLI（mao-agent）` |
 
 **写法**：
 - 在文件顶部当前版本的 `## x.y.z (日期)` 下追加条目；尚无该版本则新建一节。
@@ -57,13 +58,19 @@ cd desktop && npm run dist # 由用户自行运行打包 electron 程序
 cd android && bash build-apk.sh              # 一键：构建前端 → cap sync → assembleRelease → 发布
 cd android && bash build-apk.sh --dry-run    # 仅构建不发布
 cd android && bash build-apk.sh --version 0.0.x  # 手动指定 versionName
+
+# 终端 CLI（mao-agent）
+curl -fsSL https://raw.githubusercontent.com/DC-ET/mao/main/scripts/install-mao-agent.sh | bash
+cd agent-cli && npm ci && npm run build && npm test
+bash scripts/agent-cli-e2e.sh   # 离线单测 + 可选真实后端验收（需 MAO_AGENT_E2E_USER/PASS）
+cd agent-cli && npm link        # 开发时安装 mao-agent 命令
 ```
 
-CI（`.github/workflows/ci.yml`）执行 backend-ts 的 `npm run build` 与 `npm test`，以及 admin / desktop 前端 build，不跑 Playwright。
+CI（`.github/workflows/ci.yml`）执行 backend-ts 的 `npm run build` 与 `npm test`，admin / desktop 前端 build，以及 `agent-cli` 的 `npm ci && npm run build && npm test`，不跑 Playwright。
 
 ## 架构概览
 
-四端：TypeScript 后端（NestJS + Fastify）+ Vue 管理后台 (`admin/`) + Electron/Web 桌面端 (`desktop/`) + 安卓 APP (`android/`，Capacitor WebView 壳)。
+五端：TypeScript 后端（NestJS + Fastify）+ Vue 管理后台 (`admin/`) + Electron/Web 桌面端 (`desktop/`) + 安卓 APP (`android/`，Capacitor WebView 壳) + 终端 Agent CLI (`agent-cli/`，`mao-agent` 命令)。
 
 ### 后端
 
@@ -174,6 +181,7 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 | 安卓 OTA 原生下载安装 | `AppUpdatePlugin.java` + `desktop/.../useVersionCheck.ts` |
 | 安卓发版（仅原生壳） | 更新根 `CHANGELOG.md` 的 `### 安卓原生` → `cd android && bash build-apk.sh` |
 | 安卓前端更新 | 与 Web 相同：部署 `desktop/dist` → 用户刷新 / `version.json` 提示 |
+| 终端 CLI（mao-agent） | `agent-cli/`；发版说明写入 `### 终端 CLI（mao-agent）` |
 
 设计文档索引见 `docs/technical-design.md`、`docs/android-app-technical-design.md` 及 `docs/` 下各专题文档。
 
@@ -182,6 +190,7 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 | 类型 | 命令 | 说明 |
 |------|------|------|
 | 后端单测 | `cd backend-ts && npm test` | Vitest，用例在 `backend-ts/src/`（`*.spec.ts`） |
+| 终端 CLI 单测 | `cd agent-cli && npm test` | Vitest，用例在 `agent-cli/test/` |
 | 前端 E2E | 根目录 `npm test` | Playwright，配置 `tests/playwright.config.ts` |
 | 用例源码 | `tests/admin.spec.ts`、`tests/desktop.spec.ts` | 以文件为准，勿依赖固定用例数 |
 

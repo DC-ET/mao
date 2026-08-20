@@ -9,6 +9,7 @@
 - **安卓原生** — Capacitor 壳、系统栏、OTA 插件等
 - **桌面 Electron** — Electron 壳、本地工具、自动更新等
 - **管理后台** — admin 专用改动
+- **终端 CLI（mao-agent）** — `agent-cli/` 终端对话客户端
 
 发版前在顶部新增 `## 版本 (日期)` 条目；前端部署 Web 后安卓/Electron 刷新即可；仅安卓原生壳变更时 `cd android && bash build-apk.sh`。
 
@@ -25,6 +26,7 @@
 - 文件下载/预览/删除接口补充属主校验：仅上传者本人可访问，防止跨用户枚举 file id 访问他人上传的文件。
 - 会话删除的数据库删除不再被文件清理失败吞掉异常：数据库删除失败会正常上报，文件清理失败仅记日志，不影响会话删除结果。
 - LOCAL 模式 `shell` 的 `async` 现在先确认桌面端已连接并完成命令下发（会话已存在），再把等待输出提交到后台任务；未连接时立即返回与同步路径相同的错误，不再误报「已提交」。
+- WebSocket `client=cli` 不再被静默归一为 `browser`，服务端日志可区分终端 CLI 流量；`cli` 与 `electron` 一样可作为 LOCAL 本机执行端（`tool_execute` / 技能与 MCP 同步会投递给 CLI）。
 
 ### 前端（桌面 / Web / 安卓）
 - 聊天输入框「+」按钮支持上传任意文件（图片仍走原有多模态链路）：选择/拖拽/粘贴文件后暂存为待发条目，发送消息时自动上传到服务端 runtime 目录，并将文件引用（`@{绝对路径}@`）追加到消息正文中。新会话无需先创建会话即可上传文件。
@@ -33,6 +35,15 @@
 ### 桌面 Electron
 - 本地模式 shell 对齐云端能力：默认一次性会话（`keep_session` 才保留）、合并 stderr、回传真实 `exit_code`、复用会话时执行 `cd` 并刷新 `current_workdir`、默认等待 5 分钟、关闭时回收整个进程组、`write_stdin` 也会刷新 `MAO_TOKEN`、输出全程落盘，并按空闲 30 分钟 / 最长 2 小时清理过期会话。
 - 本地 shell 的 `async` 会先创建会话并写入命令再返回 `session_id`；兼容旧参数 `timeout`（秒）映射为等待上限。
+
+### 终端 CLI（mao-agent）
+- 新增第五端 `mao-agent`（`agent-cli/`）：终端对话式 Agent 客户端。支持交互式 REPL、`-p` 打印模式、`text|json|stream-json` 输出、`login/logout/status/ls/resume/--continue`，以及 `ask_user_questions` 交互（打印模式 `--on-question=fail` 会先发 `cancel`）。
+- 事件按 sessionId / executionId 本地过滤，避免 desktop 其它会话的终态让 `-p` 误退出；重连后按 `tool_call_id` / `requestId` 去重。
+- `--permission-level` 仅写入会话记录：CLOUD 下不产生工具审批。
+- 与 `mao-user-cli` 共用 `~/.mao/auth.json`；`MAO_AGENT_BASE_URL` 到 `/api` 为止（自动剥掉误粘贴的 `/v1`）。
+- 修复 REPL：上下文占用把 token 数当成百分比显示成 `13936%`；状态栏 `\r` 会擦掉正在流式输出的回复；执行中未暂停输入导致第二行把第一轮 `executionId` 冲掉。
+- 支持 LOCAL 模式（`--local`）：本机执行 shell / 读写文件 / glob / grep，复用 `localShell.cjs`；工作区信任、默认拒绝清单、`--yolo` / `--approve-rule` / TTY 审批；拒绝时同时发 `tool_approval` 与 `tool_error`。非 TTY 默认 `--on-approval=fail`（退出码 4）。技能 zip 同步与 MCP stdio/HTTP 代理已接通。
+- 支持一条命令安装：`curl -fsSL https://raw.githubusercontent.com/DC-ET/mao/main/scripts/install-mao-agent.sh | bash`（Node.js ≥ 20）。包内自带 `vendor/localShell.cjs`，不必再克隆完整仓库。
 
 ---
 

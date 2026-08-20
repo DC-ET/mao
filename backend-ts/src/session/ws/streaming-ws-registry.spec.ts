@@ -56,4 +56,24 @@ describe('StreamingWsRegistry', () => {
     expect(result.failureCount).toBe(1);
     expect(result.successCount).toBe(0);
   });
+
+  it('treats cli as a distinct client type and a local executor', async () => {
+    const send = vi.fn();
+    const session = mockSocket('ws-cli', send);
+    registry.register(session, 3, 'cli');
+    expect(registry.hasLocalClientConnection(3)).toBe(true);
+    registry.sendToLocalClients(3, wsEvent('tool_execute', 10, { requestId: 'r' }));
+    expect(send).toHaveBeenCalled();
+    const delivered = await registry.sendWithResult(3, wsEvent('session_status', 10, { phase: 'COMPLETED' }));
+    expect(delivered.successCount).toBe(1);
+  });
+
+  it('does not treat browser as a local executor', async () => {
+    const send = vi.fn();
+    const session = mockSocket('ws-browser', send);
+    registry.register(session, 4, 'browser');
+    expect(registry.hasLocalClientConnection(4)).toBe(false);
+    registry.sendToLocalClients(4, wsEvent('tool_execute', 10, { requestId: 'r' }));
+    expect(send).not.toHaveBeenCalled();
+  });
 });

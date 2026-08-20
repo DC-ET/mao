@@ -27,7 +27,7 @@
 
 Mao 面向个人开发者与各类团队，提供可私有化部署的 AI Agent 管理与协作平台。许多用户已经在用各类智能体工具，但配置分散、权限难管、调用难以追溯——Mao 把 Agent、模型、用户与审计集中在一处，既适合个人自用，也方便在团队内统一管理。
 
-平台内置完整的 Agent 运行引擎（Think-Act-Observe 循环），支持流式对话、工具调用、MCP 外部工具、技能扩展、上下文压缩、定时任务与子任务协作；既可由服务端执行工具（CLOUD），也可通过 Electron 桌面端在本地执行（LOCAL），兼顾安全边界与开发效率。客户端覆盖管理后台、桌面端（Web / Electron）与安卓 APP（Capacitor，CLOUD 模式）。数据与模型密钥留在你自己的环境里，不依赖第三方托管。
+平台内置完整的 Agent 运行引擎（Think-Act-Observe 循环），支持流式对话、工具调用、MCP 外部工具、技能扩展、上下文压缩、定时任务与子任务协作；既可由服务端执行工具（CLOUD），也可通过 Electron 桌面端在本地执行（LOCAL），兼顾安全边界与开发效率。客户端覆盖管理后台、桌面端（Web / Electron）、安卓 APP（Capacitor，CLOUD 模式）与终端 CLI（`mao-agent`，CLOUD 模式）。数据与模型密钥留在你自己的环境里，不依赖第三方托管。
 
 > **开源说明**：本项目采用 [MIT 许可证](LICENSE)，仅提供源码与自部署文档，不提供官方托管服务。LLM 需在管理后台自行配置 API Key；桌面端提供 Electron 源码，需自行构建。当前界面语言为中文。
 
@@ -45,7 +45,7 @@ Mao 面向个人开发者与各类团队，提供可私有化部署的 AI Agent 
 | 权限与审计 | RBAC 角色权限 + 管理类 API 操作审计 |
 | 工具执行 | **CLOUD**（服务端）与 **LOCAL**（桌面端 Electron）双模式，LOCAL 支持工具审批 |
 | Agent 引擎 | 内置 Harness 运行时，非仅 LLM 网关或对话壳 |
-| 客户端 | 管理后台 + 桌面端（Web / Electron）+ 安卓 APP（Capacitor，CLOUD） |
+| 客户端 | 管理后台 + 桌面端（Web / Electron）+ 安卓 APP（Capacitor，CLOUD）+ 终端 CLI（mao-agent，CLOUD） |
 | 任务协作 | 主任务、Side Task、子代理委派、定时任务与完成通知 |
 | 扩展 | 文件系统 Skill + MCP 外部工具 + 内置工具（Shell / 文件 / 搜索 / 文生图 / 定时任务等） |
 | 认证集成 | 本地账号 / LDAP / 飞书 SSO（可选） |
@@ -60,7 +60,7 @@ Mao 面向个人开发者与各类团队，提供可私有化部署的 AI Agent 
 |------|--------------|-----|
 | 产品形态 | 商业 SaaS，绑定 ChatGPT 订阅 | 开源（MIT），可私有化自托管 |
 | 数据与密钥 | 由 OpenAI 云端托管 | 数据、工作区、API Key 留在本地或内网 |
-| 使用入口 | App / CLI / IDE / Web 等多端统一 | 管理后台 + 桌面端（Web / Electron）+ 安卓 APP |
+| 使用入口 | App / CLI / IDE / Web 等多端统一 | 管理后台 + 桌面端（Web / Electron）+ 安卓 APP + 终端 CLI |
 | 模型选择 | OpenAI 体系 | 任意 OpenAI 兼容 API，多模型可配置 |
 | 权限与审计 | 面向个人与小团队效率 | RBAC 角色权限、操作审计、LDAP / 飞书 SSO |
 | 工具执行 | 云端 Sandbox 为主 | **CLOUD**（服务端）与 **LOCAL**（本机 Electron）可切换；LOCAL 支持工具审批 |
@@ -78,6 +78,7 @@ flowchart TB
         Admin["管理后台<br/>Vue 3 · :5200"]
         Desktop["桌面端<br/>Electron / Web · :5201"]
         Android["安卓 APP<br/>Capacitor · CLOUD"]
+        Cli["mao-agent CLI<br/>终端 · CLOUD"]
     end
 
     subgraph backend["后端 · TypeScript :9080"]
@@ -104,8 +105,10 @@ flowchart TB
     Admin --> API
     Desktop --> API
     Android --> API
+    Cli --> API
     Desktop <-->|流式对话| WS
     Android <-->|流式对话| WS
+    Cli <-->|流式对话| WS
     WS --> Harness
     Harness --> Tools
     Tools -->|CLOUD| MCP
@@ -135,7 +138,7 @@ flowchart TB
 - **WebSocket 流式对话** — 实时双向通信，支持消息持久化、Token 用量追踪、上下文窗口占比与压缩状态提示
 - **可选微信通道** — 桌面端扫码绑定微信 Bot 后，可在微信中与指定 Agent 对话；支持语音回复、图片/文件发送；定时任务结果可回传微信
 - **内置操作 Skill** — 仓库提供 `mao-user-cli` / `mao-admin-cli`，便于 Agent 通过用户端或管理端 REST API 完成非对话运维操作
-- **多端架构** — 管理后台 + Electron / Web 桌面端 + 安卓 APP（Capacitor WebView，仅 CLOUD）
+- **多端架构** — 管理后台 + Electron / Web 桌面端 + 安卓 APP（Capacitor WebView，仅 CLOUD）+ 终端 CLI（`mao-agent`，CLOUD / LOCAL）
 
 ## 技术栈
 
@@ -168,6 +171,18 @@ flowchart TB
 | 安卓 APP | Capacitor 7（复用 `desktop/` 前端，仅 CLOUD） |
 
 ## 快速开始
+
+### 终端 CLI（一条命令）
+
+只需对话、不部署整套平台时：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DC-ET/mao/main/scripts/install-mao-agent.sh | bash
+mao-agent login
+mao-agent
+```
+
+需要 Node.js ≥ 20。默认对接 `https://mao.etarch.cn/api`，可用 `MAO_AGENT_BASE_URL` 指向你自己的后端。本机执行工具加 `--local`。说明见 [agent-cli/README.md](agent-cli/README.md)。
 
 ### 本地开发（手动）
 
@@ -426,6 +441,8 @@ npm run test:desktop
 | [docs/loop-compaction-reuse-session-design.md](docs/loop-compaction-reuse-session-design.md) | Loop 中途压缩复用会话策略 |
 | [docs/mcp-integration-technical-design.md](docs/mcp-integration-technical-design.md) | MCP 协议集成技术方案 |
 | [docs/android-app-technical-design.md](docs/android-app-technical-design.md) | 安卓 APP（Capacitor）技术方案 |
+| [docs/mao-agent-cli-technical-design.md](docs/mao-agent-cli-technical-design.md) | 终端 Agent CLI（mao-agent）技术方案 |
+| [agent-cli/README.md](agent-cli/README.md) | mao-agent CLI 使用说明 |
 | [docs/weixin-bot-integration-technical-design.md](docs/weixin-bot-integration-technical-design.md) | 微信 Bot 通道技术方案（可选能力） |
 | [CHANGELOG.md](CHANGELOG.md) | 项目发版说明（安卓 OTA / 桌面版本同步） |
 | [skills/mao-user-cli/SKILL.md](skills/mao-user-cli/SKILL.md) | 用户端 REST 操作 Skill / CLI |

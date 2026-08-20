@@ -9,6 +9,9 @@ export interface WsSocket {
 
 export const WS_OPEN = 1;
 
+/** 能作为 LOCAL 模式本机执行端的 WS client 类型。 */
+export const LOCAL_CAPABLE_CLIENTS = new Set(['electron', 'cli']);
+
 export interface WsDeliveryResult {
   targetCount: number;
   successCount: number;
@@ -179,7 +182,7 @@ export class StreamingWsRegistry {
   hasLocalClientConnection(userId: number): boolean {
     const sessions = this.userSessions.get(userId);
     return sessions != null && [...sessions].some(
-      (s) => s.readyState === WS_OPEN && this.sessionToClientType.get(s.id) === 'electron',
+      (s) => s.readyState === WS_OPEN && LOCAL_CAPABLE_CLIENTS.has(this.sessionToClientType.get(s.id) ?? ''),
     );
   }
 
@@ -225,7 +228,7 @@ export class StreamingWsRegistry {
     }
     const targets = item.target === 'ALL'
       ? [...sessions]
-      : [...sessions].filter((s) => this.sessionToClientType.get(s.id) === 'electron');
+      : [...sessions].filter((s) => LOCAL_CAPABLE_CLIENTS.has(this.sessionToClientType.get(s.id) ?? ''));
     if (targets.length === 0) {
       this.completeResult(item, 0, 0, 0);
       return;
@@ -265,6 +268,7 @@ export class StreamingWsRegistry {
   private normalizeClientType(clientType: string | null | undefined): string {
     if (clientType?.toLowerCase() === 'electron') return 'electron';
     if (clientType?.toLowerCase() === 'android') return 'android';
+    if (clientType?.toLowerCase() === 'cli') return 'cli';
     return 'browser';
   }
 }

@@ -386,6 +386,14 @@ describe('StreamingWsHandler', () => {
     expect(jwtService.getUserIdFromToken).not.toHaveBeenCalled();
   });
 
+  it('keeps client=cli instead of silently mapping to browser', async () => {
+    vi.clearAllMocks();
+    jwtService.validateToken.mockReturnValue(true);
+    jwtService.getUserIdFromToken.mockReturnValue(7);
+    await handler.afterConnectionEstablished(ws, { token: 'ok', client: 'cli' });
+    expect(registry.register).toHaveBeenCalledWith(ws, 7, 'cli');
+  });
+
   it('autoConsumesQueuedMessageAfterExecutionCompletes', async () => {
     vi.useFakeTimers();
     vi.clearAllMocks();

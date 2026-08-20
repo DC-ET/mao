@@ -1,7 +1,7 @@
 # mao-agent（终端 Agent CLI）功能设计与技术方案
 
-> 版本: v0.2（可落地版） | 更新时间: 2026-08-20
-> 状态: **Phase 1–3 已实现并验收**（Phase 4 高级能力按需排期）
+> 版本: v0.3（可落地版） | 更新时间: 2026-08-20
+> 状态: Phase 1/2（CLOUD）与 Phase 3（LOCAL）已落地
 > 定位: 对齐 `cursor-agent` 的无 GUI 终端对话式 Agent 客户端，对接 mao 后端（`backend-ts`）
 > 关联文档: [technical-design.md](./technical-design.md)、[android-app-technical-design.md](./android-app-technical-design.md)、[local-tool-ws-merge.md](./local-tool-ws-merge.md)、[shell-session-design.md](./shell-session-design.md)、[shell-unification-design.md](./shell-unification-design.md)、[skills/mao-user-cli](../skills/mao-user-cli/SKILL.md)
 
@@ -906,10 +906,11 @@ agent-cli/
 
 ### 12.5 分发与发版
 
-1. 仓库内 `agent-cli/`，运维机器 `git pull && cd agent-cli && npm ci && npm run build && npm link`。
-2. 需要时发布到私有 registry（`npm i -g @mao/agent-cli`）。
-3. CHANGELOG：在根 `CHANGELOG.md` 新增小节 **`### 终端 CLI（mao-agent）`**，并在 `CLAUDE.md` / `AGENTS.md` 的「改动目录 → 写入小节」表格里补一行 `agent-cli/` → `### 终端 CLI（mao-agent）`。
-4. CI：在 `.github/workflows/ci.yml` 增加 `agent-cli` 的 `npm ci && npm run build && npm test`（与 backend-ts 同级），否则新端会长期脱离 CI 保护。
+1. 用户一条命令安装：`curl -fsSL https://raw.githubusercontent.com/DC-ET/mao/main/scripts/install-mao-agent.sh | bash`（sparse clone `agent-cli/` 后 `npm install -g .`）。包内 `vendor/localShell.cjs` 与 desktop 保持同步，独立安装即可跑 LOCAL。
+2. 仓库内开发：`cd agent-cli && npm ci && npm run build && npm link`。
+3. 需要时发布到 npm（`npm i -g mao-agent`）。
+4. CHANGELOG：在根 `CHANGELOG.md` 新增小节 **`### 终端 CLI（mao-agent）`**。
+5. CI：`agent-cli` 的 `npm ci && npm run build && npm test`，并 `cmp` vendor 的 `localShell.cjs`。
 
 ### 12.6 CI 集成示例
 
