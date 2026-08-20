@@ -85,6 +85,24 @@ describe('file tools', () => {
     expect(handleReadFile({ path: 'a.txt' }, dir, sessionId).content).toBe('hello\nmao');
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  it('rejects ambiguous edit_file matches unless replace_all is set', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-files-'));
+    const sessionId = 100;
+    handleWriteFile({ path: 'dup.txt', content: 'old\nmiddle\nold\n' }, dir, sessionId);
+    const rejected = handleEditFile({ path: 'dup.txt', old_string: 'old', new_string: 'new' }, dir, sessionId);
+    expect(rejected.success).toBe(false);
+    expect(rejected.occurrences).toBe(2);
+    expect(rejected.occurrence_lines).toEqual([1, 3]);
+    expect(handleReadFile({ path: 'dup.txt' }, dir, sessionId).content).toBe('old\nmiddle\nold\n');
+    const replaced = handleEditFile({
+      path: 'dup.txt', old_string: 'old', new_string: 'new', replace_all: true,
+    }, dir, sessionId);
+    expect(replaced.success).toBe(true);
+    expect(replaced.replacements).toBe(2);
+    expect(handleReadFile({ path: 'dup.txt' }, dir, sessionId).content).toBe('new\nmiddle\nnew\n');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe('search tools', () => {

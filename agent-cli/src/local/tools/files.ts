@@ -134,6 +134,86 @@ export function handleWriteFile(args: Record<string, unknown>, workspace: string
   }
 }
 
+function asBool(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return value !== 0;
+  if (typeof value === 'string') {
+    const s = value.trim().toLowerCase();
+    if (s === 'true' || s === '1' || s === 'yes') return true;
+    if (s === 'false' || s === '0' || s === 'no' || s === '') return false;
+  }
+  return fallback;
+}
+
+function lineAtIndex(content: string, index: number): { lineNumber: number; lineText: string } {
+  let lineNumber = 1;
+  let lineStart = 0;
+  for (let i = 0; i < index; i++) {
+    if (content[i] === '\n') {
+      lineNumber++;
+      lineStart = i + 1;
+    }
+  }
+  let lineEnd = content.indexOf('\n', index);
+  if (lineEnd === -1) lineEnd = content.length;
+  let lineText = content.slice(lineStart, lineEnd);
+  if (lineText.endsWith('\r')) lineText = lineText.slice(0, -1);
+  return { lineNumber, lineText };
+}
+
+function applyEditMatch(content: string, oldString: string, newString: string, replaceAll: boolean): {
+  ok: boolean;
+  updated?: string;
+  replacements: number;
+  error?: string;
+  occurrences?: number;
+  occurrence_lines?: number[];
+} {
+  if (oldString === '') {
+    return { ok: false, replacements: 0, error: 'old_string 不能为空' };
+  }
+  const starts: number[] = [];
+  let idx = 0;
+  while (idx < content.length) {
+    const found = content.indexOf(oldString, idx);
+    if (found === -1) break;
+    starts.push(found);
+    idx = found + oldString.length;
+  }
+  const count = starts.length;
+  if (count === 0) {
+    return { ok: false, replacements: 0, error: '文件中未找到 old_string' };
+  }
+  if (count > 1 && !replaceAll) {
+    const maxLines = 20;
+    const maxPreviews = 8;
+    const occurrenceLines = starts.slice(0, maxLines).map((start) => lineAtIndex(content, start).lineNumber);
+    const previewCount = Math.min(maxPreviews, starts.length);
+    const previews: string[] = [];
+    for (let i = 0; i < previewCount; i++) {
+      const { lineNumber, lineText } = lineAtIndex(content, starts[i]);
+      const preview = lineText.length > 120 ? `${lineText.slice(0, 120)}…` : lineText;
+      previews.push(`  第 ${lineNumber} 行: ${preview}`);
+    }
+    const listed = count > maxLines ? `（仅列出前 ${maxLines} 处）` : '';
+    return {
+      ok: false,
+      replacements: 0,
+      occurrences: count,
+      occurrence_lines: occurrenceLines,
+      error: `old_string 在文件中出现 ${count} 次，默认只替换唯一匹配，未执行编辑。`
+        + '请在 old_string 中补充更多上下文使其只出现一次，或传入 replace_all=true 以替换全部出现。'
+        + `出现位置（行号从 1 起）${listed}：\n`
+        + previews.join('\n'),
+    };
+  }
+  return {
+    ok: true,
+    updated: content.split(oldString).join(newString),
+    replacements: count,
+  };
+}
+
 export function handleEditFile(args: Record<string, unknown>, workspace: string | undefined, sessionId: number): Record<string, unknown> {
   try {
     const filePath = extractFilePath(args);
@@ -143,20 +223,26 @@ export function handleEditFile(args: Record<string, unknown>, workspace: string 
     if (!oldStr) return { success: false, error: '缺少 old_string' };
     const resolvedPath = resolveWorkspacePath(filePath, workspace, sessionId);
     const content = fs.readFileSync(resolvedPath, 'utf-8');
-    const count = content.split(oldStr).length - 1;
-    if (count === 0) return { success: false, error: 'old_string not found in file' };
-    const updated = content.split(oldStr).join(newStr);
-    fs.writeFileSync(resolvedPath, updated, 'utf-8');
+    const match = applyEditMatch(content, oldStr, newStr, asBool(args.replace_all));
+    if (!match.ok) {
+      return {
+        success: false,
+        replacements: 0,
+        error: match.error,
+        ...(match.occurrences != null ? { occurrences: match.occurrences, occurrence_lines: match.occurrence_lines } : {}),
+      };
+    }
+    fs.writeFileSync(resolvedPath, match.updated!, 'utf-8');
     const oldLines = oldStr.split('\n').length;
     const newLines = newStr.split('\n').length;
     return {
       success: true,
-      replacements: count,
+      replacements: match.replacements,
       file_change: {
         path: filePath,
         type: 'MODIFIED',
-        lines_added: newLines * count,
-        lines_deleted: oldLines * count,
+        lines_added: newLines * match.replacements,
+        lines_deleted: oldLines * match.replacements,
       },
     };
   } catch (e) {

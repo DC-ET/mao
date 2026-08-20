@@ -18,6 +18,7 @@
 ## 0.0.38 (2026-08-20)
 
 ### 后端
+- `edit_file` 默认只替换 `old_string` 的唯一匹配；出现多次时拒绝写入并返回出现次数与行号，避免短匹配误伤其它重复片段。确需全量替换时传入 `replace_all=true`。
 - LLM 上游 DNS 解析失败（`ENOTFOUND` / `EAI_AGAIN`）现在与连接失败一样进入自动重试；重试耗尽后会向客户端发送可恢复的执行错误。
 - 新增聊天输入区任意文件上传：`POST /v1/files/upload-incoming` 将文件保存到会话 runtime 临时目录（`runtime/{userId}/{sessionId}/incoming/`），返回绝对路径供 Agent 引用；会话删除时级联清理该 runtime 目录，并清理会话工作区内 `mao-runtime-` 前缀的临时产物（不影响用户项目文件）。
 - 工具路径沙箱放行会话 runtime 目录，Agent 的读文件 / Shell / 搜索等工具可直接访问用户上传到 runtime 的临时文件。
@@ -33,10 +34,12 @@
 - 本地模式（LOCAL）下隐藏文件上传入口（提示使用 @ 引用工作区文件）。
 
 ### 桌面 Electron
+- 本地 `edit_file` 与云端对齐：默认唯一匹配，出现多次时拒绝写入；`replace_all=true` 才替换全部出现。
 - 本地模式 shell 对齐云端能力：默认一次性会话（`keep_session` 才保留）、合并 stderr、回传真实 `exit_code`、复用会话时执行 `cd` 并刷新 `current_workdir`、默认等待 5 分钟、关闭时回收整个进程组、`write_stdin` 也会刷新 `MAO_TOKEN`、输出全程落盘，并按空闲 30 分钟 / 最长 2 小时清理过期会话。
 - 本地 shell 的 `async` 会先创建会话并写入命令再返回 `session_id`；兼容旧参数 `timeout`（秒）映射为等待上限。
 
 ### 终端 CLI（mao-agent）
+- 本地 `edit_file` 与云端对齐：默认唯一匹配，出现多次时拒绝写入；`replace_all=true` 才替换全部出现。
 - 新增第五端 `mao-agent`（`agent-cli/`）：终端对话式 Agent 客户端。支持交互式 REPL、`-p` 打印模式、`text|json|stream-json` 输出、`login/logout/status/ls/resume/--continue`，以及 `ask_user_questions` 交互（打印模式 `--on-question=fail` 会先发 `cancel`）。
 - 事件按 sessionId / executionId 本地过滤，避免 desktop 其它会话的终态让 `-p` 误退出；重连后按 `tool_call_id` / `requestId` 去重。
 - `--permission-level` 仅写入会话记录：CLOUD 下不产生工具审批。

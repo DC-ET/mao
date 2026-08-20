@@ -30,6 +30,17 @@ export function asInt(value: unknown, fallback = 0): number {
   return fallback;
 }
 
+export function asBool(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return value !== 0;
+  if (typeof value === 'string') {
+    const s = value.trim().toLowerCase();
+    if (s === 'true' || s === '1' || s === 'yes') return true;
+    if (s === 'false' || s === '0' || s === 'no' || s === '') return false;
+  }
+  return fallback;
+}
+
 export function errorJson(message: string): string {
   return toJson({ error: message });
 }

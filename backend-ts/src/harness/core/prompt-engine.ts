@@ -23,7 +23,7 @@ const WEIXIN_DEFAULT_EXPERIENCES = [
 const TOOL_USAGE_GUIDANCE = `# 使用你的工具
  - 当提供相关专用工具时，不要使用shell运行命令。使用专用工具可以让用户更好地理解和审查你的工作。这对协助用户至关重要：
   - 要读取文件，使用read_file而不是cat、head、tail或sed
-  - 要编辑文件，使用edit_file而不是sed或awk
+  - 要编辑文件，使用edit_file而不是sed或awk。edit_file 默认只替换唯一一处；若 old_string 出现多次会失败并返回行号，请补充上下文使匹配唯一，或显式传入 replace_all=true
   - 要创建文件，使用write_file而不是带heredoc的cat或echo重定向
   - 要搜索文件，使用glob_search而不是find或ls
   - 要搜索文件内容，使用grep_search而不是grep或rg

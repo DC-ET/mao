@@ -143,18 +143,74 @@ describe('WriteFileTool', () => {
 });
 
 describe('EditFileTool', () => {
-  it('replacesAllOccurrencesAndReportsDiffPayload', async () => {
+  it('replacesAUniqueMatchAndReportsDiffPayload', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'a.txt'), 'alpha\nold\nbeta\n');
+    const tool = new EditFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      path: 'a.txt', old_string: 'old', new_string: 'new',
+    })));
+    expect(result.success).toBe(true);
+    expect(result.replacements).toBe(1);
+    expect(result.file_change.lines_added).toBe(1);
+    expect(result[PRIVATE_DIFF_FIELD]).toBeTruthy();
+    expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('alpha\nnew\nbeta\n');
+  });
+
+  it('rejectsAmbiguousMatchWithoutReplaceAllAndLeavesFileUnchanged', async () => {
     const dir = await tmp();
     writeFileSync(join(dir, 'a.txt'), 'alpha\nold\nbeta\nold\n');
     const tool = new EditFileTool(new PathSandbox(dir));
     const result = JSON.parse(await tool.execute(JSON.stringify({
       path: 'a.txt', old_string: 'old', new_string: 'new',
     })));
+    expect(result.success).toBe(false);
+    expect(result.replacements).toBe(0);
+    expect(result.occurrences).toBe(2);
+    expect(result.occurrence_lines).toEqual([2, 4]);
+    expect(result.error).toContain('出现 2 次');
+    expect(result.error).toContain('replace_all=true');
+    expect(result.error).toContain('第 2 行');
+    expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('alpha\nold\nbeta\nold\n');
+  });
+
+  it('replacesAllOccurrencesWhenReplaceAllIsTrue', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'a.txt'), 'alpha\nold\nbeta\nold\n');
+    const tool = new EditFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      path: 'a.txt', old_string: 'old', new_string: 'new', replace_all: true,
+    })));
     expect(result.success).toBe(true);
     expect(result.replacements).toBe(2);
     expect(result.file_change.lines_added).toBe(2);
     expect(result[PRIVATE_DIFF_FIELD]).toBeTruthy();
     expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('alpha\nnew\nbeta\nnew\n');
+  });
+
+  it('acceptsReplaceAllAsStringTrue', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'a.txt'), 'old old');
+    const tool = new EditFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      path: 'a.txt', old_string: 'old', new_string: 'new', replace_all: 'true',
+    })));
+    expect(result.success).toBe(true);
+    expect(result.replacements).toBe(2);
+    expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('new new');
+  });
+
+  it('truncatesLongOccurrencePreviewInAmbiguousError', async () => {
+    const dir = await tmp();
+    const long = `prefix-${'x'.repeat(200)}`;
+    writeFileSync(join(dir, 'a.txt'), `${long}\n${long}`);
+    const tool = new EditFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      path: 'a.txt', old_string: 'prefix-', new_string: 'p-',
+    })));
+    expect(result.success).toBe(false);
+    expect(result.occurrences).toBe(2);
+    expect(result.error).toContain('…');
   });
 
   it('rejectsIdenticalOldAndNewStringsWithoutEditingFile', async () => {
@@ -181,10 +237,15 @@ describe('EditFileTool', () => {
     const missingNeedle = JSON.parse(await tool.execute(JSON.stringify({
       path: 'a.txt', old_string: 'x', new_string: 'y',
     })));
+    const emptyNeedle = JSON.parse(await tool.execute(JSON.stringify({
+      path: 'a.txt', old_string: '', new_string: 'y',
+    })));
     expect(missingFile.success).toBe(false);
     expect(missingFile.error).toContain('文件不存在');
     expect(missingNeedle.success).toBe(false);
     expect(missingNeedle.error).toContain('未找到');
+    expect(emptyNeedle.success).toBe(false);
+    expect(emptyNeedle.error).toContain('不能为空');
   });
 });
 
