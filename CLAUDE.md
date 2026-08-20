@@ -23,6 +23,8 @@
 | `desktop/electron/`（壳、LOCAL、自动更新） | `### 桌面 Electron` |
 | `android/android/app/`（Capacitor 壳、OTA 原生） | `### 安卓原生` |
 | `agent-cli/` | `### 终端 CLI（mao-agent）` |
+| `skills/mao-cli/` | `### 终端 CLI（mao-cli）` |
+| `skills/mao-cli/` | `### 终端 CLI（mao-cli）` |
 
 **写法**：
 - 在文件顶部当前版本的 `## x.y.z (日期)` 下追加条目；尚无该版本则新建一节。
@@ -182,6 +184,8 @@ Side Task（并行子会话）涉及后端 `HarnessService` / `StreamingWsHandle
 | 安卓发版（仅原生壳） | 更新根 `CHANGELOG.md` 的 `### 安卓原生` → `cd android && bash build-apk.sh` |
 | 安卓前端更新 | 与 Web 相同：部署 `desktop/dist` → 用户刷新 / `version.json` 提示 |
 | 终端 CLI（mao-agent） | `agent-cli/`；发版说明写入 `### 终端 CLI（mao-agent）` |
+| 终端 REST CLI（mao-cli） | `skills/mao-cli/`；发版说明写入 `### 终端 CLI（mao-cli）` |
+| 终端 REST CLI（mao-cli） | `skills/mao-cli/`；发版说明写入 `### 终端 CLI（mao-cli）` |
 
 设计文档索引见 `docs/technical-design.md`、`docs/android-app-technical-design.md` 及 `docs/` 下各专题文档。
 

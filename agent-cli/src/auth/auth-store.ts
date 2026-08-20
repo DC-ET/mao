@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { UserInfoVO } from '../rest/types';
 
-/** 与 mao-user-cli 共用同一套 JWT 缓存。 */
+/** 与 mao-cli 共用同一套 JWT 缓存。 */
 export const AUTH_DIR = path.join(os.homedir(), '.mao');
 export const AUTH_FILE = path.join(AUTH_DIR, 'auth.json');
 

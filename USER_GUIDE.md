@@ -13,7 +13,7 @@ Mao 是一个企业自托管的 AI Agent 管理与协作平台。平台由三部
 | 管理后台 | 平台管理员 | 管理用户、角色权限、模型、Agent、Skills、会话、审计与系统配置 |
 | 桌面端 Web | 普通用户 | 在浏览器中创建任务、与 Agent 对话、使用云端工作区、查看任务与设置 |
 | Electron 桌面端 | 普通用户 / 研发用户 | 在本地模式下使用 Agent 访问本机目录、执行本地工具和命令 |
-| 内置 CLI Skill | Agent / 运维用户 | 通过 `mao-user-cli`、`mao-admin-cli` 调用 REST API 做非对话配置与诊断 |
+| 内置 CLI Skill | Agent / 运维用户 | 通过 `mao-cli` 调用 REST API 做非对话配置、诊断与管理运维 |
 
 除桌面端对话外，用户也可在桌面端设置中绑定微信 Bot，通过微信与平台 Agent 对话（工具在云端执行）。该能力为可选扩展，不影响桌面端主流程。
 
@@ -542,11 +542,11 @@ Agent 可以根据用户要求创建定时任务，例如“每天早上 9 点�
 - 使用的模型由 `weixin.modelId` 决定；未配置时使用默认模型。
 - 解绑后将无法继续通过微信对话。
 
-### 4.18 个人 Skill 与用户端 CLI
+### 4.18 个人 Skill 与 REST CLI
 
 普通用户可以在桌面端上传个人 Skill，用于补充自己的领域知识、工作流说明或工具使用规范。个人 Skill 与系统 Skill 同名时，个人 Skill 会覆盖同名系统 Skill。
 
-仓库还提供面向 Agent 的用户端 CLI Skill：[skills/mao-user-cli](skills/mao-user-cli/SKILL.md)。它适合让 Agent 通过 REST API 完成非对话操作，例如：
+仓库还提供面向 Agent 的统一 REST CLI Skill：[skills/mao-cli](skills/mao-cli/SKILL.md)。它适合让 Agent 通过 REST API 完成非对话操作，例如：
 
 - 登录、刷新 token、查询当前用户。
 - 查询 Agent、模型、会话元数据。
@@ -555,8 +555,9 @@ Agent 可以根据用户要求创建定时任务，例如“每天早上 9 点�
 - 查询和维护定时任务。
 - 绑定或解绑微信 Bot。
 - 读取和保存任务面板/任务通知偏好。
+- 管理用户/角色、模型配置、全局 Skill、系统设置、会话监控与审计。
 
-边界：`mao-user-cli` 不发送对话、不写入消息队列、不连接 WebSocket 运行 Agent。管理端用户/角色/模型等治理操作应使用 [skills/mao-admin-cli](skills/mao-admin-cli/SKILL.md) 或管理后台。
+边界：`mao-cli` 不发送对话、不写入消息队列、不连接 WebSocket 运行 Agent。对话执行请用 `mao-agent`。
 
 ## 5. 权限档位与工具审批
 
@@ -909,7 +910,7 @@ Git 凭证用于 CLOUD 云端模式克隆私有仓库，以及在云端 Shell �
 - 如需微信通道，已配置默认 Agent 或 `weixin.agentId`，并完成一次扫码绑定与对话验证。
 - 如需定时任务，已验证任务创建、暂停、删除和一次真实触发。
 - 如需任务通知，已配置 Webhook 加密密钥并完成钉钉/飞书测试通知。
-- 如需 Agent 操作 REST API，已验证 `skills/mao-user-cli` 或 `skills/mao-admin-cli` 的安装与权限边界。
+- 如需 Agent 操作 REST API，已验证 `skills/mao-cli` 的安装与权限边界。
 - 已确认审计日志可查看。
 - 已向用户说明安全审批和使用边界。
 

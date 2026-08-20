@@ -43,10 +43,13 @@
 - 新增第五端 `mao-agent`（`agent-cli/`）：终端对话式 Agent 客户端。支持交互式 REPL、`-p` 打印模式、`text|json|stream-json` 输出、`login/logout/status/ls/resume/--continue`，以及 `ask_user_questions` 交互（打印模式 `--on-question=fail` 会先发 `cancel`）。
 - 事件按 sessionId / executionId 本地过滤，避免 desktop 其它会话的终态让 `-p` 误退出；重连后按 `tool_call_id` / `requestId` 去重。
 - `--permission-level` 仅写入会话记录：CLOUD 下不产生工具审批。
-- 与 `mao-user-cli` 共用 `~/.mao/auth.json`；`MAO_AGENT_BASE_URL` 到 `/api` 为止（自动剥掉误粘贴的 `/v1`）。
+- 与 `mao-cli` 共用 `~/.mao/auth.json`；`MAO_AGENT_BASE_URL` 到 `/api` 为止（自动剥掉误粘贴的 `/v1`）。
 - 修复 REPL：上下文占用把 token 数当成百分比显示成 `13936%`；状态栏 `\r` 会擦掉正在流式输出的回复；执行中未暂停输入导致第二行把第一轮 `executionId` 冲掉。
 - 支持 LOCAL 模式（`--local`）：本机执行 shell / 读写文件 / glob / grep，复用 `localShell.cjs`；工作区信任、默认拒绝清单、`--yolo` / `--approve-rule` / TTY 审批；拒绝时同时发 `tool_approval` 与 `tool_error`。非 TTY 默认 `--on-approval=fail`（退出码 4）。技能 zip 同步与 MCP stdio/HTTP 代理已接通。
 - 支持一条命令安装：`curl -fsSL https://raw.githubusercontent.com/DC-ET/mao/main/scripts/install-mao-agent.sh | bash`（Node.js ≥ 20）。包内自带 `vendor/localShell.cjs`，不必再克隆完整仓库。
+
+### 终端 CLI（mao-cli）
+- 将 `mao-user-cli` 与 `mao-admin-cli` 合并为统一的 `mao` / `mao-cli`，并移除这两个旧 Skill 目录。默认请求 `https://mao.etarch.cn/api/v1`，JWT 仍缓存在 `~/.mao/auth.json`。个人会话用 `session`，全站检索用 `admin-session`；个人技能用 `skill`，全局技能用 `skill-docs`。旧命令名 `mao-user` / `mao-admin` 仍可用（`mao-admin session/skill` 会自动映射到管理端模块）。
 
 ---
 

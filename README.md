@@ -137,7 +137,7 @@ flowchart TB
 - **工作区体验** — 云端工作区支持新建、复用与 HTTPS Git 初始化；桌面端可查看文件树、文件内容与 Git 状态/单文件差异
 - **WebSocket 流式对话** — 实时双向通信，支持消息持久化、Token 用量追踪、上下文窗口占比与压缩状态提示
 - **可选微信通道** — 桌面端扫码绑定微信 Bot 后，可在微信中与指定 Agent 对话；支持语音回复、图片/文件发送；定时任务结果可回传微信
-- **内置操作 Skill** — 仓库提供 `mao-user-cli` / `mao-admin-cli`，便于 Agent 通过用户端或管理端 REST API 完成非对话运维操作
+- **内置操作 Skill** — 仓库提供 `mao-cli`，便于 Agent 通过统一 REST CLI 完成用户端与管理端的非对话运维操作
 - **多端架构** — 管理后台 + Electron / Web 桌面端 + 安卓 APP（Capacitor WebView，仅 CLOUD）+ 终端 CLI（`mao-agent`，CLOUD / LOCAL）
 
 ## 技术栈
@@ -445,8 +445,7 @@ npm run test:desktop
 | [agent-cli/README.md](agent-cli/README.md) | mao-agent CLI 使用说明 |
 | [docs/weixin-bot-integration-technical-design.md](docs/weixin-bot-integration-technical-design.md) | 微信 Bot 通道技术方案（可选能力） |
 | [CHANGELOG.md](CHANGELOG.md) | 项目发版说明（安卓 OTA / 桌面版本同步） |
-| [skills/mao-user-cli/SKILL.md](skills/mao-user-cli/SKILL.md) | 用户端 REST 操作 Skill / CLI |
-| [skills/mao-admin-cli/SKILL.md](skills/mao-admin-cli/SKILL.md) | 管理端 REST 操作 Skill / CLI |
+| [skills/mao-cli/SKILL.md](skills/mao-cli/SKILL.md) | 用户端与管理端统一 REST 操作 Skill / CLI |
 | [CLAUDE.md](CLAUDE.md) | 维护者 / AI 辅助开发指引 |
 
 ## 许可证

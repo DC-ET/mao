@@ -2,7 +2,7 @@
 
 无 GUI 终端对话式 Agent 客户端，对接 mao 后端 REST + WebSocket（`/api/ws/stream`）。支持 **CLOUD**（工具在服务端工作区）与 **LOCAL**（`--local`，工具在本机执行）。
 
-与 `mao-user-cli` 互补：本工具覆盖「驱动 Agent 对话」；会话归档 / Agent / 模型等元数据请继续用 `mao-user`。两者共用 `~/.mao/auth.json`。
+与 `mao-cli` 互补：本工具覆盖「驱动 Agent 对话」；会话归档 / Agent / 模型等元数据请继续用 `mao`。两者共用 `~/.mao/auth.json`。
 
 ## 安装
 
