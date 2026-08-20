@@ -9,6 +9,7 @@ import type { LocalToolSessionRegistry } from '../local/local-tool-session-regis
 import type { SessionMapper, StreamingWsRegistry } from '../deps.js';
 import type { SessionTreeSignalPublisher } from '../approval/session-tree-signal-publisher.js';
 import type { LlmAdapter } from '../llm/chat-request.js';
+import { BackgroundTaskManager } from '../core/background-task-manager.js';
 
 function mockTool(name: string): Tool & { execute: ReturnType<typeof vi.fn> } {
   return {
@@ -39,7 +40,11 @@ describe('ToolDispatcher', () => {
   } as unknown as AskUserQuestionsRegistry & { register: ReturnType<typeof vi.fn>; waitForAnswer: ReturnType<typeof vi.fn> };
   const localToolSessionRegistry = {
     getUserIdForSession: vi.fn(),
-  } as unknown as LocalToolSessionRegistry & { getUserIdForSession: ReturnType<typeof vi.fn> };
+    isConnected: vi.fn(),
+  } as unknown as LocalToolSessionRegistry & {
+    getUserIdForSession: ReturnType<typeof vi.fn>;
+    isConnected: ReturnType<typeof vi.fn>;
+  };
   const treeSignalPublisher = { publishForSession: vi.fn() } as unknown as SessionTreeSignalPublisher;
   const dispatcher = new ToolDispatcher(
     registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
@@ -54,6 +59,8 @@ describe('ToolDispatcher', () => {
     askUserQuestionsRegistry.register.mockReset();
     askUserQuestionsRegistry.waitForAnswer.mockReset();
     localToolSessionRegistry.getUserIdForSession.mockReset();
+    localToolSessionRegistry.isConnected.mockReset();
+    localToolSessionRegistry.isConnected.mockResolvedValue(true);
     cloudTool.execute.mockReset();
     serverTool.execute.mockReset();
     mcpTool.execute.mockReset();
@@ -159,6 +166,100 @@ describe('ToolDispatcher', () => {
     const result = await dispatcher.dispatch('mcp__filesystem__write_file', '{}', 'LOCAL', 7, 'workspace', 'FULL', null);
     expect(result).toBe('executed');
     expect(localToolExecutor.execute).toHaveBeenCalledWith(7, 'mcp__filesystem__write_file', '{}', 'workspace', false, null);
+  });
+
+  it('localShellAsyncStartsOnDesktopThenWaitsInBackground', async () => {
+    const backgroundTasks = new BackgroundTaskManager();
+    const asyncDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher, backgroundTasks,
+    );
+    localToolExecutor.execute
+      .mockResolvedValueOnce(JSON.stringify({
+        async: true,
+        session_id: 'sh-started',
+        output_file: '~/.mao/runtime/7/shellOutput/sh-started.out',
+        message: '命令已提交到后台执行。',
+      }))
+      .mockResolvedValueOnce('{"exit_code":0,"output":"done"}');
+    const raw = await asyncDispatcher.dispatch(
+      'shell', '{"command":"sleep 1","async":true}', 'LOCAL', 7, 'workspace', 'FULL', null,
+    );
+    const result = JSON.parse(raw) as {
+      async: boolean; task_id: string; session_id: string; output_file: string; message: string;
+    };
+    expect(result.async).toBe(true);
+    expect(result.task_id).toMatch(/^bg-/);
+    expect(result.session_id).toBe('sh-started');
+    expect(result.output_file).toBe('~/.mao/runtime/7/shellOutput/sh-started.out');
+    expect(result.message).toContain('后台执行');
+    expect(localToolExecutor.execute).toHaveBeenNthCalledWith(
+      1, 7, 'shell', '{"command":"sleep 1","async":true}', 'workspace', false, null,
+    );
+    await vi.waitFor(() => expect(localToolExecutor.execute).toHaveBeenCalledTimes(2));
+    expect(localToolExecutor.execute).toHaveBeenNthCalledWith(
+      2, 7, 'shell', JSON.stringify({ action: 'await_async', session_id: 'sh-started' }), 'workspace', false, null,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const consumed = await backgroundTasks.consumeCompletedResults(7);
+    expect(consumed[result.task_id]).toBe('{"exit_code":0,"output":"done"}');
+  });
+
+  it('localShellAsyncReturnsSyncErrorWhenDesktopIsDisconnected', async () => {
+    const backgroundTasks = new BackgroundTaskManager();
+    const asyncDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher, backgroundTasks,
+    );
+    localToolSessionRegistry.isConnected.mockResolvedValue(false);
+    const raw = await asyncDispatcher.dispatch(
+      'shell', '{"command":"sleep 1","async":true}', 'LOCAL', 7, 'workspace', 'FULL', null,
+    );
+    expect(JSON.parse(raw).error).toContain('Local client is not connected');
+    expect(JSON.parse(raw).async).toBeUndefined();
+    expect(localToolExecutor.execute).not.toHaveBeenCalled();
+    expect(await backgroundTasks.consumeCompletedResults(7)).toEqual({});
+  });
+
+  it('localShellAsyncFallsBackToSyncResultWhenDesktopIgnoresAsync', async () => {
+    const backgroundTasks = new BackgroundTaskManager();
+    const asyncDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher, backgroundTasks,
+    );
+    localToolExecutor.execute.mockResolvedValue('{"exit_code":0,"output":"done"}');
+    const raw = await asyncDispatcher.dispatch(
+      'shell', '{"command":"echo hi","async":true}', 'LOCAL', 7, 'workspace', 'FULL', null,
+    );
+    expect(raw).toBe('{"exit_code":0,"output":"done"}');
+    expect(localToolExecutor.execute).toHaveBeenCalledTimes(1);
+    expect(await backgroundTasks.consumeCompletedResults(7)).toEqual({});
+  });
+
+  it('localShellAsyncKeepsProvidedSessionIdAndIgnoresNonExecActions', async () => {
+    const backgroundTasks = new BackgroundTaskManager();
+    const asyncDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher, backgroundTasks,
+    );
+    localToolExecutor.execute
+      .mockResolvedValueOnce(JSON.stringify({
+        async: true, session_id: 'sh-keep', output_file: 'out.out', message: '命令已提交到后台执行。',
+      }))
+      .mockResolvedValueOnce('{"exit_code":0}');
+    const execRaw = await asyncDispatcher.dispatch(
+      'shell', '{"command":"ls","async":true,"session_id":"sh-keep"}', 'LOCAL', 7, 'workspace', 'FULL', null,
+    );
+    expect(JSON.parse(execRaw).session_id).toBe('sh-keep');
+    expect(localToolExecutor.execute.mock.calls[0][2]).toContain('"session_id":"sh-keep"');
+
+    localToolExecutor.execute.mockClear();
+    localToolExecutor.execute.mockResolvedValue('{"sessions":[]}');
+    const listRaw = await asyncDispatcher.dispatch(
+      'shell', '{"action":"list","async":true}', 'LOCAL', 7, 'workspace', 'FULL', null,
+    );
+    expect(JSON.parse(listRaw).async).toBeUndefined();
+    expect(localToolExecutor.execute).toHaveBeenCalledWith(7, 'shell', '{"action":"list","async":true}', 'workspace', false, null);
   });
 
   it('cloudModeMcpToolExecutesViaSessionToolsWhenNotInGlobalRegistry', async () => {

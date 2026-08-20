@@ -10,7 +10,7 @@
     "build": "vue-tsc -b && vite build",
     "dist": "electron-builder",
     "preview": "vite preview",
-    "test:unit": "vitest run && node --test electron/gitOperations.test.cjs",
+    "test:unit": "vitest run && node --test electron/gitOperations.test.cjs electron/localShell.test.cjs",
     "test:unit:watch": "vitest",
     "postinstall": "node ./node_modules/@electron/rebuild/lib/cli.js -f -w node-pty"
   },

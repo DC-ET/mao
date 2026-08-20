@@ -11,6 +11,8 @@ import type { Tool } from './tool.js';
 import { callTool } from './tool.js';
 import type { ToolRegistry } from './tool-registry.js';
 import { permissionLevelFromString, type PermissionLevel } from './permission-level.js';
+import type { BackgroundTaskManager } from '../core/background-task-manager.js';
+import { parseObject } from './json.js';
 
 const ASK_USER_QUESTIONS = 'ask_user_questions';
 const MCP_TOOL_PREFIX = 'mcp__';
@@ -39,6 +41,7 @@ export class ToolDispatcher {
     private readonly askUserQuestionsRegistry: AskUserQuestionsRegistry,
     private readonly localToolSessionRegistry: LocalToolSessionRegistry,
     private readonly treeSignalPublisher: SessionTreeSignalPublisher,
+    private readonly backgroundTaskManager?: BackgroundTaskManager | null,
   ) {}
 
   /**
@@ -104,6 +107,11 @@ export class ToolDispatcher {
       }
       const level = permissionLevelFromString(latest);
       const decision = await this.shouldRequireApproval(toolName, level, argumentsJson, modelConfig);
+      if (toolName === 'shell' && this.backgroundTaskManager && isLocalShellAsyncExec(argumentsJson)) {
+        return this.dispatchLocalShellAsync(
+          argumentsJson, sessionId, workspace, decision.needApproval, decision.dangerReason,
+        );
+      }
       return this.localToolExecutor.execute(sessionId, toolName, argumentsJson, workspace, decision.needApproval, decision.dangerReason);
     }
 
@@ -183,4 +191,51 @@ export class ToolDispatcher {
   private isWriteOrShellTool(toolName: string): boolean {
     return toolName === 'shell' || WRITE_TOOLS.has(toolName);
   }
+
+  /**
+   * 对齐云端：先把命令下发到已连接的桌面端（会话已创建、stdin 已写入），
+   * 再把「等待输出」提交到后台任务。未连接时与同步路径一样立即报错。
+   */
+  private async dispatchLocalShellAsync(
+    argumentsJson: string,
+    sessionId: number | null,
+    workspace: string | null,
+    needApproval: boolean,
+    dangerReason: string | null,
+  ): Promise<string> {
+    if (!(await this.localToolSessionRegistry.isConnected(sessionId))) {
+      return JSON.stringify({
+        error: 'Local client is not connected. Please ensure the desktop app is running and connected.',
+      });
+    }
+    const startResult = await this.localToolExecutor.execute(
+      sessionId, 'shell', argumentsJson, workspace, needApproval, dangerReason,
+    );
+    const parsed = parseObject(startResult);
+    if (!parsed || parsed.error || parsed.async !== true || typeof parsed.session_id !== 'string' || parsed.session_id.trim() === '') {
+      return startResult;
+    }
+    const shellId = parsed.session_id;
+    const taskId = this.backgroundTaskManager!.submit(sessionId, () =>
+      this.localToolExecutor.execute(
+        sessionId, 'shell', JSON.stringify({ action: 'await_async', session_id: shellId }),
+        workspace, false, null,
+      ),
+    );
+    return JSON.stringify({
+      async: true,
+      task_id: taskId,
+      session_id: shellId,
+      output_file: parsed.output_file ?? null,
+      message: typeof parsed.message === 'string' ? parsed.message : '命令已提交到后台执行。',
+    });
+  }
+}
+
+function isLocalShellAsyncExec(argumentsJson: string): boolean {
+  const args = parseObject(argumentsJson || '{}');
+  if (!args || args.async !== true) return false;
+  let action = typeof args.action === 'string' ? args.action : 'exec';
+  if (action.trim() === '') action = 'exec';
+  return action === 'exec';
 }

@@ -6,6 +6,7 @@ const path = require('path')
 const os = require('os')
 const { autoUpdater } = require('electron-updater')
 const { TerminalManager } = require('./terminalManager.cjs')
+const { createLocalShellRuntime, shellSingleQuote } = require('./localShell.cjs')
 const promptImageResizer = require('./promptImageResizer.cjs')
 
 
@@ -15,8 +16,6 @@ let mainWindow = null
 let currentWorkspace = ''
 /** @type {Map<string, (approved: boolean) => void>} */
 const pendingApprovals = new Map()
-/** @type {Map<string, {process: import('child_process').ChildProcess, cwd: string}>} */
-const shellSessions = new Map()
 const terminalManager = new TerminalManager()
 terminalManager.setEnvProvider(buildShellEnv)
 
@@ -236,13 +235,6 @@ async function resolveUserPath() {
 }
 
 /**
- * Single-quote a value for safe use in bash (JWT 等敏感值禁止未转义写入).
- */
-function shellSingleQuote(value) {
-  return "'" + String(value).replace(/'/g, "'\\''") + "'"
-}
-
-/**
  * Build environment with user's full PATH and current MAO_TOKEN from local auth store.
  */
 async function buildShellEnv() {
@@ -266,12 +258,12 @@ async function buildShellEnv() {
  * 持久 bash 会话的 env 在 spawn 后不会自动更新；每次执行命令前重新 export。
  */
 function refreshMaoTokenInShellSession(session) {
-  if (!session?.process?.stdin) return
+  if (!session?.writeStdin) return
   const { token } = readAuthStore()
   if (token) {
-    session.process.stdin.write('export MAO_TOKEN=' + shellSingleQuote(token) + '\n')
+    session.writeStdin('export MAO_TOKEN=' + shellSingleQuote(token) + '\n')
   } else {
-    session.process.stdin.write('unset MAO_TOKEN\n')
+    session.writeStdin('unset MAO_TOKEN\n')
   }
 }
 
@@ -589,6 +581,18 @@ function resolveLocalShellOutputDir(sessionId) {
 function formatLocalRuntimePath(sessionId, ...segments) {
   return ['~/.mao/runtime', String(sessionId), ...segments].join('/')
 }
+
+const localShell = createLocalShellRuntime({
+  buildEnv: buildShellEnv,
+  refreshToken: refreshMaoTokenInShellSession,
+  resolveOutput: (maoSessionId, shellId) => {
+    const fileName = `${shellId}.out`
+    return {
+      absPath: path.join(resolveLocalShellOutputDir(maoSessionId || 0), fileName),
+      displayPath: formatLocalRuntimePath(maoSessionId || 0, 'shellOutput', fileName),
+    }
+  },
+})
 
 function expandHomePath(filePath) {
   if (!filePath) return filePath
@@ -932,6 +936,8 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   terminalManager.killAll()
+  localShell.closeAll()
+  localShell.stopCleanup()
   // 关闭全部 MCP 连接（stdio 子进程 / HTTP 会话）
   const sessionIds = Array.from(mcpClients.keys())
   sessionIds.forEach((sid) => {
@@ -1677,224 +1683,12 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
   }
 })
 
-const crypto = require('crypto')
-const MARKER_PREFIX = '__CMD_DONE_'
-const MARKER_SUFFIX = '__'
-const MAX_PREVIEW_LINES = 100
-const MAX_PREVIEW_CHARS = 10000
-
-function generateMarker() {
-  return crypto.randomBytes(4).toString('hex')
-}
-
-function truncateAndSave(fullOutput, maoSessionId, shellSessionId) {
-  const lines = fullOutput.split('\n')
-  const truncated = lines.length > MAX_PREVIEW_LINES || fullOutput.length > MAX_PREVIEW_CHARS
-
-  const startIdx = Math.max(0, lines.length - MAX_PREVIEW_LINES)
-  let preview = lines.slice(startIdx).join('\n')
-  if (preview.length > MAX_PREVIEW_CHARS) {
-    preview = preview.substring(preview.length - MAX_PREVIEW_CHARS)
-  }
-
-  let outputFile = null
-  if (maoSessionId && shellSessionId && truncated) {
-    try {
-      const outputDir = resolveLocalShellOutputDir(maoSessionId)
-      fs.mkdirSync(outputDir, { recursive: true })
-      const seq = Date.now()
-      const fileName = `${shellSessionId}_${seq}.out`
-      fs.writeFileSync(path.join(outputDir, fileName), fullOutput, 'utf-8')
-      outputFile = formatLocalRuntimePath(maoSessionId, 'shellOutput', fileName)
-    } catch (e) {
-      console.error('[shell] Failed to write output file:', e.message)
-    }
-  }
-
-  return { preview: preview.trim(), truncated, output_file: outputFile }
-}
-
-/**
- * 用 marker 机制读取 shell 进程输出，直到看到 marker 或超时
- */
-function readUntilMarker(process, marker, timeoutMs) {
-  return new Promise((resolve) => {
-    let output = ''
-    let resolved = false
-    const fullMarker = MARKER_PREFIX + marker + MARKER_SUFFIX
-
-    const onData = (data) => {
-      output += data.toString()
-      if (output.includes(fullMarker)) {
-        finish(false)
-      }
-    }
-
-    const timer = setTimeout(() => {
-      finish(true)
-    }, timeoutMs)
-
-    function finish(timedOut) {
-      if (resolved) return
-      resolved = true
-      clearTimeout(timer)
-      process.stdout.removeListener('data', onData)
-
-      // 移除 marker 行及之后的内容
-      const markerIdx = output.indexOf(fullMarker)
-      const cleanOutput = markerIdx >= 0 ? output.substring(0, markerIdx) : output
-
-      resolve({
-        output: cleanOutput.trim(),
-        truncated: timedOut
-      })
-    }
-
-    process.stdout.on('data', onData)
-  })
-}
-
 async function handleShellFromWebSocket(args, sessionId, workspace, needApproval, dangerReason, requestId) {
-  const { action, command, session_id, workdir, input } = args
-  let resolvedWorkdir = workspace
-  if (workdir && workdir !== '.') {
-    resolvedWorkdir = path.isAbsolute(workdir) ? workdir : path.join(workspace || process.cwd(), workdir)
-  }
-
-  if (action === 'close') {
-    const session = shellSessions.get(session_id)
-    if (session) {
-      session.process.kill()
-      shellSessions.delete(session_id)
-    }
-    return { session_id, status: 'closed' }
-  }
-
-  if (action === 'list') {
-    const sessions = Array.from(shellSessions.entries()).map(([id, s]) => ({
-      session_id: id,
-      current_workdir: s.cwd,
-      command_count: s.commandCount || 0
-    }))
-    return { sessions, count: sessions.length }
-  }
-
-  if (action === 'write_stdin') {
-    const session = shellSessions.get(session_id)
-    if (!session) {
-      return { error: `Session not found: ${session_id}` }
-    }
-    const stdinDescription = input != null ? String(input) : ''
-    const approved = await ensureShellApproval(needApproval, stdinDescription, sessionId, dangerReason, requestId)
-    if (!approved) {
-      return { error: 'User denied command execution.', session_id }
-    }
-    const marker = generateMarker()
-    session.process.stdin.write(input + '\n')
-    session.process.stdin.write('echo ' + MARKER_PREFIX + marker + MARKER_SUFFIX + '\n')
-    const result = await readUntilMarker(session.process, marker, args.yield_time_ms || 5000)
-    session.lastActiveAt = Date.now()
-    const saved = truncateAndSave(result.output, sessionId, session_id)
-    return {
-      session_id,
-      current_workdir: session.cwd,
-      output: saved.preview,
-      truncated: saved.truncated || result.truncated,
-      ...(saved.output_file ? { output_file: saved.output_file } : {})
-    }
-  }
-
-  // 复用已有会话 — 每次 command 仍按 needApproval 审批，避免一次批准后任意执行
-  if (session_id && shellSessions.has(session_id)) {
-    const session = shellSessions.get(session_id)
-    const approved = await ensureShellApproval(needApproval, command, sessionId, dangerReason, requestId)
-    if (!approved) {
-      return { exit_code: -1, session_id, output: 'User denied command execution.' }
-    }
-    refreshMaoTokenInShellSession(session)
-    const marker = generateMarker()
-    session.process.stdin.write(command + '\n')
-    session.process.stdin.write('echo ' + MARKER_PREFIX + marker + MARKER_SUFFIX + '\n')
-    const result = await readUntilMarker(session.process, marker, args.yield_time_ms || 10000)
-    session.lastActiveAt = Date.now()
-    session.commandCount = (session.commandCount || 0) + 1
-    const saved = truncateAndSave(result.output, sessionId, session_id)
-    return {
-      exit_code: 0,
-      session_id,
-      current_workdir: session.cwd,
-      output: saved.preview,
-      truncated: saved.truncated || result.truncated,
-      ...(saved.output_file ? { output_file: saved.output_file } : {})
-    }
-  }
-
-  // 新会话或一次性执行 — 根据后端下发的 needApproval 决定是否需要审批
-  {
-    const approved = await ensureShellApproval(needApproval, command, sessionId, dangerReason, requestId)
-    if (!approved) {
-      return { exit_code: -1, output: 'User denied command execution.' }
-    }
-  }
-
-  // 创建持久化会话
-  if (session_id) {
-    const bashProcess = spawn('bash', ['--norc', '--noprofile'], {
-      cwd: resolvedWorkdir || undefined,
-      env: await buildShellEnv()
-    })
-    shellSessions.set(session_id, {
-      process: bashProcess,
-      cwd: resolvedWorkdir || '',
-      commandCount: 0,
-      createdAt: Date.now(),
-      lastActiveAt: Date.now()
-    })
-
-    const marker = generateMarker()
-    bashProcess.stdin.write(command + '\n')
-    bashProcess.stdin.write('echo ' + MARKER_PREFIX + marker + MARKER_SUFFIX + '\n')
-    const result = await readUntilMarker(bashProcess, marker, args.yield_time_ms || 10000)
-    const session = shellSessions.get(session_id)
-    session.lastActiveAt = Date.now()
-    session.commandCount = 1
-    const saved = truncateAndSave(result.output, sessionId, session_id)
-    return {
-      exit_code: 0,
-      session_id,
-      current_workdir: resolvedWorkdir || '',
-      output: saved.preview,
-      truncated: saved.truncated || result.truncated,
-      ...(saved.output_file ? { output_file: saved.output_file } : {})
-    }
-  }
-
-  // 无 session_id，一次性执行
-  const execEnv = await buildShellEnv()
-  return new Promise((resolve) => {
-    const options = {
-      timeout: (args.timeout || 60) * 1000,
-      maxBuffer: 1024 * 1024 * 5,
-      env: execEnv
-    }
-    if (resolvedWorkdir) options.cwd = resolvedWorkdir
-
-    exec(command, options, (error, stdout, stderr) => {
-      if (error && error.killed) {
-        resolve({ exit_code: -1, output: `Command timed out after ${args.timeout || 60}s` })
-      } else {
-        const fullOutput = (stdout || '') + (stderr ? '\n' + stderr : '')
-        const saved = truncateAndSave(fullOutput, sessionId, 'local')
-        resolve({
-          exit_code: error ? error.code || 1 : 0,
-          session_id: 'local',
-          current_workdir: resolvedWorkdir || '',
-          output: saved.preview,
-          truncated: saved.truncated,
-          ...(saved.output_file ? { output_file: saved.output_file } : {})
-        })
-      }
-    })
+  return localShell.handle(args, {
+    conversationId: sessionId,
+    workspace,
+    needApproval,
+    approve: (description) => ensureShellApproval(needApproval, description, sessionId, dangerReason, requestId),
   })
 }
 
