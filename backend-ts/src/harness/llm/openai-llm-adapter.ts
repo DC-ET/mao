@@ -516,6 +516,8 @@ export class OpenAiLlmAdapter implements LlmAdapter {
           || (cause as NodeJS.ErrnoException).code === 'ETIMEDOUT'
           || (cause as NodeJS.ErrnoException).code === 'ECONNRESET'
           || (cause as NodeJS.ErrnoException).code === 'ECONNREFUSED'
+          || (cause as NodeJS.ErrnoException).code === 'ENOTFOUND'
+          || (cause as NodeJS.ErrnoException).code === 'EAI_AGAIN'
           || (cause as NodeJS.ErrnoException).code === 'http_call_timeout'
           || cause instanceof StreamInterruptedAfterOutputException
           || msg.includes('stream ended before [DONE]')
@@ -540,6 +542,8 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         if (cause.name === 'TimeoutError' || (cause as NodeJS.ErrnoException).code === 'ETIMEDOUT') return 'stream_idle_timeout';
         if (cause.name === 'InterruptedIOException' || (cause as NodeJS.ErrnoException).code === 'http_call_timeout') return 'http_call_timeout';
         if (cause.name === 'ConnectException') return 'connect_failure';
+        if ((cause as NodeJS.ErrnoException).code === 'ENOTFOUND') return 'dns_lookup_failure';
+        if ((cause as NodeJS.ErrnoException).code === 'EAI_AGAIN') return 'dns_temporary_failure';
         if (cause.name === 'EOFException' || cause.message.includes('stream ended before [DONE]')) return 'unexpected_eof';
         if (cause.cause == null) break;
         cause = cause.cause;

@@ -17,6 +17,7 @@
 ## 0.0.38 (2026-08-20)
 
 ### 后端
+- LLM 上游 DNS 解析失败（`ENOTFOUND` / `EAI_AGAIN`）现在与连接失败一样进入自动重试；重试耗尽后会向客户端发送可恢复的执行错误。
 - 新增聊天输入区任意文件上传：`POST /v1/files/upload-incoming` 将文件保存到会话 runtime 临时目录（`runtime/{userId}/{sessionId}/incoming/`），返回绝对路径供 Agent 引用；会话删除时级联清理该 runtime 目录，并清理会话工作区内 `mao-runtime-` 前缀的临时产物（不影响用户项目文件）。
 - 工具路径沙箱放行会话 runtime 目录，Agent 的读文件 / Shell / 搜索等工具可直接访问用户上传到 runtime 的临时文件。
 - 系统提示补充「用户上传的文件」说明：`@{绝对路径}@` 引用指向 runtime 临时文件（非工作区相对路径），文件类型不固定，由 Agent 自行探测与处理。
