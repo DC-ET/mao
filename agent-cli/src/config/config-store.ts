@@ -11,6 +11,12 @@ export interface AgentCliConfigFile {
   outputFormat?: OutputFormat;
   lastSessionId?: number | null;
   trustedWorkspaces?: string[];
+  ui?: {
+    verboseTools?: boolean;
+    showTurnDividers?: boolean;
+    asciiOnly?: boolean;
+    queuedInput?: boolean;
+  };
 }
 
 export const CONFIG_DIR = path.join(os.homedir(), '.mao', 'agent-cli');
@@ -69,6 +75,13 @@ export function rememberLastSession(sessionId: number): void {
   saveUserConfig({ lastSessionId: sessionId });
 }
 
+export interface ResolvedUi {
+  verboseTools: boolean;
+  showTurnDividers: boolean;
+  asciiOnly: boolean;
+  queuedInput: boolean;
+}
+
 export interface ResolvedConfig {
   baseUrl: string;
   defaultAgentId?: number;
@@ -76,6 +89,7 @@ export interface ResolvedConfig {
   permissionLevel: PermissionLevel;
   outputFormat: OutputFormat;
   lastSessionId?: number;
+  ui: ResolvedUi;
 }
 
 /**
@@ -85,11 +99,15 @@ export function resolveConfig(cli: {
   baseUrl?: string;
   permissionLevel?: PermissionLevel;
   outputFormat?: OutputFormat;
+  verboseTools?: boolean;
+  asciiOnly?: boolean;
+  queuedInput?: boolean;
 }): ResolvedConfig {
   const user = loadUserConfig();
   const project = findProjectConfig() ?? {};
   const envBase = process.env.MAO_AGENT_BASE_URL;
   const envFormat = process.env.MAO_AGENT_OUTPUT_FORMAT as OutputFormat | undefined;
+  const envVerbose = process.env.MAO_AGENT_VERBOSE === '1' || process.env.MAO_AGENT_VERBOSE === 'true';
   const baseUrl = cli.baseUrl || envBase || project.baseUrl || user.baseUrl || DEFAULT_BASE_URL;
   return {
     baseUrl,
@@ -98,6 +116,12 @@ export function resolveConfig(cli: {
     permissionLevel: cli.permissionLevel || project.permissionLevel || user.permissionLevel || 'READ_WRITE',
     outputFormat: cli.outputFormat || envFormat || project.outputFormat || user.outputFormat || 'text',
     lastSessionId: user.lastSessionId ?? undefined,
+    ui: {
+      verboseTools: cli.verboseTools ?? envVerbose ?? user.ui?.verboseTools ?? false,
+      showTurnDividers: user.ui?.showTurnDividers ?? true,
+      asciiOnly: cli.asciiOnly ?? user.ui?.asciiOnly ?? false,
+      queuedInput: cli.queuedInput ?? user.ui?.queuedInput ?? true,
+    },
   };
 }
 

@@ -1,7 +1,7 @@
 export function shouldUseColor(opts: { colorFlag?: boolean; printMode: boolean; stdoutIsTty: boolean }): boolean {
-  if (process.env.NO_COLOR) return false;
   if (opts.colorFlag === false) return false;
   if (opts.colorFlag === true) return true;
+  if (process.env.NO_COLOR) return false;
   if (opts.printMode) return false;
   return opts.stdoutIsTty;
 }
@@ -55,4 +55,33 @@ export function truncate(text: string, maxChars = 2000, maxLines = 20): string {
   let sliced = lines.length > maxLines ? lines.slice(0, maxLines).join('\n') + '\n…' : text;
   if (sliced.length > maxChars) sliced = sliced.slice(0, maxChars) + '…';
   return sliced;
+}
+
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI_RE, '');
+}
+
+/** 按列宽估算占用的可视行数（忽略颜色码）。 */
+export function countVisualRows(text: string, columns: number): number {
+  if (!text) return 0;
+  const cols = Math.max(1, columns);
+  const lines = stripAnsi(text).split('\n');
+  let rows = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const isTrailingEmpty = i === lines.length - 1 && lines[i] === '' && text.endsWith('\n');
+    if (isTrailingEmpty) continue;
+    const width = [...lines[i]].length;
+    rows += Math.max(1, Math.ceil(width / cols) || 1);
+  }
+  return rows;
+}
+
+/** 从当前光标位置回到这段文本开头需要上移的行数。 */
+export function countRewindRows(text: string, columns: number): number {
+  const rows = countVisualRows(text, columns);
+  if (!text) return 0;
+  if (!text.endsWith('\n')) return Math.max(0, rows - 1);
+  return rows;
 }

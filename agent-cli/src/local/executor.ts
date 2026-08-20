@@ -8,13 +8,15 @@ import { createCliShellRuntime, type LocalShellRuntime } from './tools/shell';
 import { McpManager, parseMcpToolName, type McpServerSpec } from './tools/mcp';
 import { syncSkills } from './skills';
 
+export type ApprovalChoice = 'allow' | 'deny' | 'always';
+
 export interface LocalExecutorOptions {
   ws: WsClient;
   getToken: () => Promise<string | null>;
   baseUrl: string;
   workspace: string;
   policy: ApprovalPolicy;
-  askApproval?: (prompt: string) => Promise<boolean>;
+  askApproval?: (req: ApprovalRequest, reason: string) => Promise<ApprovalChoice>;
   onApprovalDenied?: () => void;
 }
 
@@ -114,9 +116,14 @@ export class LocalExecutor {
       return;
     }
     if (decision.action === 'ask') {
-      const ok = await (this.opts.askApproval ?? defaultAsk)(formatApprovalPrompt(req, decision.reason));
+      const choice = this.opts.askApproval
+        ? await this.opts.askApproval(req, decision.reason)
+        : (await defaultAsk(formatApprovalPrompt(req, decision.reason)) ? 'allow' : 'deny');
+      if (choice === 'always') {
+        this.opts.policy.approveRules.push(`${req.toolName}:*`);
+      }
       await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
-      if (!ok) {
+      if (choice === 'deny') {
         await this.failTool(sessionId, requestId, '用户拒绝执行该工具');
         this.opts.onApprovalDenied?.();
         return;

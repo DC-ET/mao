@@ -1,8 +1,11 @@
-import readline from 'node:readline';
 import type { AskAnswer, AskQuestion } from '../ws/event-types';
 import type { SessionRunner } from '../session/session-runner';
 import type { ReplRenderer } from '../render/repl-renderer';
 import { formatContextPercent } from '../util/context';
+import { InputController } from '../ui/input-controller';
+import { formatWelcomeHints } from '../ui/welcome';
+import { completeSlash } from '../ui/slash-complete';
+import { copyToClipboard } from '../ui/clipboard';
 
 export interface ReplOptions {
   runner: SessionRunner;
@@ -11,6 +14,12 @@ export interface ReplOptions {
   resolveModel: (spec: string) => Promise<number>;
   onExit: () => Promise<void>;
   firstPrompt?: string;
+  queuedInput?: boolean;
+  asciiOnly?: boolean;
+  welcomeLines?: string[];
+  historyLines?: string[];
+  onInputReady?: (input: InputController) => void;
+  modelNames?: string[];
 }
 
 const SLASH_HELP = `斜杠命令（本地拦截，不发给 Agent）:
@@ -19,11 +28,19 @@ const SLASH_HELP = `斜杠命令（本地拦截，不发给 Agent）:
   /todo                打印当前 Todo 快照
   /context             打印最近一次 context_window 用量
   /session             打印当前 sessionId、Agent、模型、workspace
+  /verbose             切换工具输出详细度
+  /queue               查看已排队的下一条；/queue clear 清空
+  /clear               清屏（不删除服务端历史）
+  /copy                复制上一回合回复到剪贴板
+  /agent               如何换 Agent（需新开进程）
   /help                帮助
   /exit  /quit         退出（Ctrl+D 等效）
 
+斜杠命令支持 Tab 补全；/model 可补全模型名。
+
 多行输入：以 \\ 结尾续行；未闭合的 \`\`\` 代码块自动续行。
-Ctrl+C：有任务在跑时第一次发 cancel；无任务或 2 秒内连按两次则退出。
+执行中可继续输入，回车后进入队列，本轮结束后自动发送。
+Ctrl+C：有任务在跑时取消（并清空队列）；收尾中再按一次退出。无任务时连按两次退出。
 `;
 
 function fenceOpen(text: string): boolean {
@@ -32,148 +49,256 @@ function fenceOpen(text: string): boolean {
 }
 
 export async function runRepl(opts: ReplOptions): Promise<void> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
+  const queuedInput = opts.queuedInput !== false;
+  let closing = false;
+  let draining = false;
+  let buffer = '';
+  let lastSigint = 0;
+  let cancelHint: ReturnType<typeof setTimeout> | null = null;
+  let input: InputController;
+  let resolveClosed: () => void = () => undefined;
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
   });
-  const prompt = () => {
-    opts.renderer.clearTransient?.();
-    rl.setPrompt('› ');
-    rl.prompt();
+
+  const writeErr = (s: string) => process.stderr.write(s.endsWith('\n') ? s : `${s}\n`);
+
+  const clearCancelHint = () => {
+    if (cancelHint) {
+      clearTimeout(cancelHint);
+      cancelHint = null;
+    }
   };
 
-  let lastSigint = 0;
-  let buffer = '';
-  let closing = false;
-  let inputLocked = false;
+  const armCancelHint = () => {
+    clearCancelHint();
+    cancelHint = setTimeout(() => {
+      if (opts.runner.isRunning()) {
+        writeErr('仍在收尾，可再等或再次 Ctrl+C 退出进程。');
+      }
+    }, 8000);
+  };
 
-  const handleLine = async (line: string) => {
-    const trimmed = line.replace(/\s+$/, '');
-    if (trimmed.endsWith('\\') && !fenceOpen(buffer + trimmed.slice(0, -1))) {
-      buffer += trimmed.slice(0, -1) + '\n';
-      rl.setPrompt('… ');
-      rl.prompt();
+  const printWelcome = () => {
+    for (const line of opts.welcomeLines ?? []) writeErr(line);
+    if (!opts.welcomeLines?.length) writeErr(formatWelcomeHints());
+    if (opts.historyLines && opts.historyLines.length > 0) {
+      writeErr('── 最近对话 ──');
+      for (const line of opts.historyLines) writeErr(line);
+      writeErr('──────────────');
+    }
+  };
+
+  const requestExit = async () => {
+    if (closing) return;
+    closing = true;
+    clearCancelHint();
+    await input.stop();
+    await opts.onExit();
+    resolveClosed();
+  };
+
+  const handleCancel = () => {
+    if (closing) return;
+    if (opts.runner.isRunning()) {
+      if (opts.runner.cancelledByUser) {
+        closing = true;
+        void requestExit();
+        return;
+      }
+      input.queue.clear();
+      input.clearDraft();
+      opts.renderer.setDraft('');
+      void opts.runner.cancel();
+      writeErr('已发送 cancel，等待任务结束…');
+      armCancelHint();
       return;
     }
-    buffer += (buffer ? '\n' : '') + line;
+    const now = Date.now();
+    if (now - lastSigint < 2000) {
+      void requestExit();
+      return;
+    }
+    lastSigint = now;
+    writeErr('再次 Ctrl+C 退出，或输入 /exit。');
+    input.prompt();
+  };
+
+  const runOne = async (text: string) => {
+    draining = true;
+    opts.renderer.clearTransient();
+    input.setRunning(true);
+    opts.renderer.startRound();
+    try {
+      await opts.runner.runPrompt(text, opts.modelId);
+    } catch (err) {
+      writeErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      clearCancelHint();
+      input.setRunning(false);
+      draining = false;
+    }
+  };
+
+  const handleSubmit = async (raw: string) => {
+    const trimmed = raw.replace(/\s+$/, '');
+    if (trimmed.endsWith('\\') && !fenceOpen(buffer + trimmed.slice(0, -1))) {
+      buffer += trimmed.slice(0, -1) + '\n';
+      input.setContinuationPrompt();
+      return;
+    }
+    buffer += (buffer ? '\n' : '') + raw;
     if (fenceOpen(buffer)) {
-      rl.setPrompt('… ');
-      rl.prompt();
+      input.setContinuationPrompt();
       return;
     }
     const text = buffer.trim();
     buffer = '';
     if (!text) {
-      if (!inputLocked) prompt();
+      if (!opts.runner.isRunning() && !draining) input.prompt();
       return;
     }
     if (text.startsWith('/')) {
-      const handled = await handleSlash(text, opts, rl);
+      const handled = await handleSlash(text, opts, input, writeErr);
       if (handled === 'exit') {
-        closing = true;
-        rl.close();
+        await requestExit();
         return;
       }
-      if (!inputLocked) prompt();
+      if (!opts.runner.isRunning() && !draining && !closing) input.prompt();
       return;
     }
-    if (inputLocked || opts.runner.isRunning()) {
-      process.stderr.write('当前任务仍在执行，请等待结束或 /cancel。\n');
-      return;
-    }
-    inputLocked = true;
-    rl.pause();
-    opts.renderer.startRound();
-    try {
-      await opts.runner.runPrompt(text, opts.modelId);
-    } catch (err) {
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    } finally {
-      inputLocked = false;
-      if (!closing) {
-        rl.resume();
-        prompt();
+    if (opts.runner.isRunning() || draining) {
+      if (!queuedInput) {
+        writeErr('上一条还在跑。请等待结束或 /cancel。');
+        return;
       }
+      const n = input.queue.push(text);
+      writeErr(`已排队（第 ${n} 条）。/queue 查看，Ctrl+C 清空。`);
+      return;
     }
+    await runOne(text);
+    while (!closing && input.queue.length > 0) {
+      const next = input.queue.shift();
+      if (!next) break;
+      if (next.startsWith('/')) {
+        const handled = await handleSlash(next, opts, input, writeErr);
+        if (handled === 'exit') {
+          await requestExit();
+          return;
+        }
+        continue;
+      }
+      await runOne(next);
+    }
+    if (!closing) input.prompt();
   };
 
-  rl.on('line', (line) => {
-    void handleLine(line);
+  input = new InputController({
+    onLine: (line) => handleSubmit(line),
+    onCancel: () => handleCancel(),
+    onExit: () => {
+      if (!closing) void requestExit();
+    },
+    onDraftChange: (draft) => opts.renderer.setDraft(draft),
+    completer: (line) => completeSlash(line, { models: opts.modelNames }),
   });
-  rl.on('close', () => {
-    if (!closing) void opts.onExit();
-  });
-  rl.on('SIGINT', () => {
-    const now = Date.now();
-    if (opts.runner.isRunning()) {
-      void opts.runner.cancel();
-      process.stderr.write('\n已发送 cancel，等待任务结束…\n');
-      lastSigint = now;
-      return;
-    }
-    if (now - lastSigint < 2000) {
-      closing = true;
-      rl.close();
-      void opts.onExit();
-      return;
-    }
-    lastSigint = now;
-    process.stderr.write('\n再次 Ctrl+C 退出，或输入 /exit。\n');
-    prompt();
-  });
+  opts.onInputReady?.(input);
+
+  printWelcome();
+  input.start();
 
   if (opts.firstPrompt) {
-    inputLocked = true;
-    rl.pause();
-    opts.renderer.startRound();
-    try {
-      if (opts.runner.snapshotIsActive) {
-        process.stderr.write('该会话仍在执行，先续接当前输出…\n');
+    if (opts.runner.snapshotIsActive) {
+      writeErr('该会话仍在执行，先续接当前输出…');
+      input.setRunning(true);
+      try {
         await opts.runner.waitForCurrentRun();
+      } catch (err) {
+        writeErr(err instanceof Error ? err.message : String(err));
+      } finally {
+        input.setRunning(false);
       }
-      await opts.runner.runPrompt(opts.firstPrompt, opts.modelId);
-    } catch (err) {
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    } finally {
-      inputLocked = false;
-      rl.resume();
     }
+    await handleSubmit(opts.firstPrompt);
   } else if (opts.runner.snapshotIsActive) {
-    process.stderr.write('该会话仍在执行，续接当前输出。可用 /cancel 中止。\n');
-    inputLocked = true;
-    rl.pause();
+    writeErr('该会话仍在执行，续接当前输出。可用 /cancel 中止。');
+    input.setRunning(true);
     try {
       await opts.runner.waitForCurrentRun();
     } catch (err) {
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      writeErr(err instanceof Error ? err.message : String(err));
     } finally {
-      inputLocked = false;
-      rl.resume();
+      input.setRunning(false);
     }
+    if (!closing) input.prompt();
+  } else {
+    input.prompt();
   }
 
-  prompt();
-  await new Promise<void>((resolve) => {
-    rl.on('close', () => resolve());
-  });
-  if (!closing) await opts.onExit();
+  await closed;
 }
 
-async function handleSlash(text: string, opts: ReplOptions, _rl: readline.Interface): Promise<'exit' | void> {
+async function handleSlash(
+  text: string,
+  opts: ReplOptions,
+  input: InputController,
+  writeErr: (s: string) => void,
+): Promise<'exit' | void> {
   const [cmd, ...rest] = text.slice(1).split(/\s+/);
   const arg = rest.join(' ').trim();
   switch (cmd) {
     case 'exit':
     case 'quit':
-      await opts.onExit();
+      if (opts.runner.isRunning()) await opts.runner.cancel();
       return 'exit';
     case 'help':
       process.stdout.write(SLASH_HELP);
       return;
     case 'cancel':
       await opts.runner.cancel();
+      input.queue.clear();
       process.stdout.write('已发送 cancel。\n');
+      return;
+    case 'clear':
+      process.stdout.write('\x1b[2J\x1b[H');
+      for (const line of opts.welcomeLines ?? []) process.stderr.write(`${line}\n`);
+      return;
+    case 'verbose': {
+      const next = !opts.renderer.getVerboseTools();
+      opts.renderer.setVerboseTools(next);
+      process.stdout.write(next ? '已打开工具详细输出。\n' : '已折叠工具输出。\n');
+      return;
+    }
+    case 'queue': {
+      if (arg === 'clear') {
+        input.queue.clear();
+        process.stdout.write('已清空队列。\n');
+        return;
+      }
+      const items = input.queue.list();
+      if (items.length === 0) {
+        process.stdout.write('(队列为空)\n');
+        return;
+      }
+      items.forEach((q, i) => process.stdout.write(`${i + 1}. ${q}\n`));
+      return;
+    }
+    case 'copy': {
+      const text = opts.renderer.getLastAssistantText().trim();
+      if (!text) {
+        process.stdout.write('没有可复制的回复。\n');
+        return;
+      }
+      const ok = await copyToClipboard(text);
+      if (ok) process.stdout.write('已复制上一回合回复。\n');
+      else {
+        process.stdout.write('本机没有剪贴板命令（pbcopy / wl-copy / xclip），上一回合回复如下：\n');
+        process.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
+      }
+      return;
+    }
+    case 'agent':
+      process.stdout.write('换 Agent 请新开进程: mao-agent --agent <id|name>\n当前进程只绑定一个会话。\n');
       return;
     case 'todo': {
       const todos = opts.runner.getTodos();
@@ -190,9 +315,11 @@ async function handleSlash(text: string, opts: ReplOptions, _rl: readline.Interf
       const ctx = opts.runner.getContext();
       const s = opts.runner.getSession();
       const pct = formatContextPercent(ctx.estimated, ctx.actual, s?.contextWindowTokens ?? undefined);
+      const hint = pct && Number.parseInt(pct, 10) >= 80 ? '  接近上限时可新开会话。' : '';
       process.stdout.write(
         `context_window estimated=${ctx.estimated ?? '-'} actual=${ctx.actual ?? '-'}` +
           (pct ? ` (${pct})` : '') +
+          hint +
           '\n',
       );
       return;
@@ -201,7 +328,8 @@ async function handleSlash(text: string, opts: ReplOptions, _rl: readline.Interf
       const s = opts.runner.getSession();
       process.stdout.write(
         `sessionId=${s?.id ?? '-'}  agent=${s?.agentName ?? s?.agentId ?? '-'}  model=${s?.modelName ?? s?.modelId ?? '-'}` +
-          `  workspace=${s?.workspace ?? '-'}  phase=${s?.phase ?? '-'}\n`,
+          `  workspace=${s?.workspace ?? '-'}  phase=${s?.phase ?? '-'}\n` +
+          '换会话: mao-agent resume | mao-agent ls\n',
       );
       return;
     }
@@ -217,12 +345,14 @@ async function handleSlash(text: string, opts: ReplOptions, _rl: readline.Interf
       return;
     }
     default:
-      process.stderr.write(`未知斜杠命令: /${cmd}（输入 /help）\n`);
+      writeErr(`未知命令 /${cmd}。输入 /help 查看列表。`);
   }
 }
 
+/** 无 InputController 时的降级（打印模式不应走到这里）。 */
 export async function askQuestionsInTty(questions: AskQuestion[]): Promise<AskAnswer[]> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+  const { createInterface } = await import('node:readline');
+  const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
   const question = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
   const answers: AskAnswer[] = [];
   try {
@@ -253,24 +383,4 @@ export async function askQuestionsInTty(questions: AskQuestion[]): Promise<AskAn
   return answers;
 }
 
-export function promptHidden(query: string): Promise<string> {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    if (process.stdin.isTTY) {
-      const stdin = process.stdin as NodeJS.ReadStream;
-      const onData = (char: Buffer) => {
-        const c = char.toString('utf8');
-        if (c === '\n' || c === '\r' || c === '\u0004') {
-          stdin.removeListener('data', onData);
-        } else {
-          // swallow
-        }
-      };
-      stdin.on('data', onData);
-    }
-    rl.question(query, (answer) => {
-      rl.close();
-      resolve(answer);
-    });
-  });
-}
+export { promptHidden } from '../ui/hidden-prompt';

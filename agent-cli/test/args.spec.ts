@@ -63,4 +63,11 @@ describe('parseCliConfig', () => {
     expect(cfg.print).toBe(true);
     expect(cfg.prompt).toBe('hello');
   });
+
+  it('parses ux flags', () => {
+    const cfg = parseCliConfig(['--ascii', '--verbose-tools', '--no-queue'], tty);
+    expect(cfg.asciiOnly).toBe(true);
+    expect(cfg.verboseTools).toBe(true);
+    expect(cfg.queuedInput).toBe(false);
+  });
 });

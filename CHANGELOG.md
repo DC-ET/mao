@@ -44,6 +44,8 @@
 - 修复 REPL：上下文占用把 token 数当成百分比显示成 `13936%`；状态栏 `\r` 会擦掉正在流式输出的回复；执行中未暂停输入导致第二行把第一轮 `executionId` 冲掉。
 - 支持 LOCAL 模式（`--local`）：本机执行 shell / 读写文件 / glob / grep，复用 `localShell.cjs`；工作区信任、默认拒绝清单、`--yolo` / `--approve-rule` / TTY 审批；拒绝时同时发 `tool_approval` 与 `tool_error`。非 TTY 默认 `--on-approval=fail`（退出码 4）。技能 zip 同步与 MCP stdio/HTTP 代理已接通。
 - 支持一条命令安装：`curl -fsSL https://raw.githubusercontent.com/DC-ET/mao/main/scripts/install-mao-agent.sh | bash`（Node.js ≥ 20）。包内自带 `vendor/localShell.cjs`，不必再克隆完整仓库。
+- 交互体验：启动即显示会话身份与最短帮助；流式输出时状态栏仍可见（半行输出时钉在底行）；执行中可预输入下一条（回车排队）；工具输出默认折叠（`/verbose` 展开）；`ask_user_questions` 与 LOCAL 审批改为同一输入通道上的模态（方向键 / y n a）；登录密码无回显；`ls` / resume 显示相对时间与可读摘要。`--no-queue` / `--ascii` / `--verbose-tools` 可覆盖。
+- REPL 润色：流式正文不再半截渲染 Markdown，回合/工具边界再整段着色；斜杠命令支持 Tab 补全（`/model` 可补全模型名）；状态栏显示 `Todo 2/5`；新增 `/copy` 复制上一回合回复；resume 历史摘要按角色对齐。
 
 ---
 

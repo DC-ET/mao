@@ -4,7 +4,7 @@ import { rememberLastSession, resolveConfig, type ResolvedConfig } from '../conf
 import type { RestClient } from '../rest/rest-client';
 import type { CreateSessionRequest, SessionVO } from '../rest/types';
 import { WsClient } from '../ws/ws-client';
-import { SessionRunner, exitCodeFor, pickLatestSession, resolveAgent, resolveModelId, summarizeMessages } from '../session/session-runner';
+import { SessionRunner, exitCodeFor, pickLatestSession, resolveAgent, resolveModelId } from '../session/session-runner';
 import { ReplRenderer } from '../render/repl-renderer';
 import { TextRenderer } from '../render/text-renderer';
 import { JsonRenderer } from '../render/json-renderer';
@@ -22,6 +22,11 @@ import { addTrustedWorkspace, isWorkspaceTrusted, workspaceExists } from '../loc
 import { collectLocalUnsyncedSkills, readAgentsMd } from '../local/local-skills';
 import { buildOsVersion, detectShell, isGitWorkspace } from '../local/paths';
 import type { ApprovalPolicy } from '../local/approval';
+import type { InputController } from '../ui/input-controller';
+import { askQuestionsWithController } from '../ui/modal-ask';
+import { askApprovalWithController } from '../ui/modal-approval';
+import { formatHistorySummary, formatSessionBanner, formatWelcomeHints } from '../ui/welcome';
+import { pickSymbols } from '../ui/symbols';
 
 export interface ChatContext {
   rest: RestClient;
@@ -61,13 +66,15 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
 
   const modelId = await resolveModelId(rest, cfg.model, resolved.defaultModelId);
   let contextWindowTokens = resolveContextWindowTokens(session, undefined, modelId);
-  if (!(session.contextWindowTokens != null && session.contextWindowTokens > 0)) {
-    try {
-      const models = await rest.listActiveModels();
+  let modelNames: string[] = [];
+  try {
+    const models = await rest.listActiveModels();
+    modelNames = models.flatMap((m) => [m.name, m.modelId].filter((n): n is string => Boolean(n)));
+    if (!(session.contextWindowTokens != null && session.contextWindowTokens > 0)) {
       contextWindowTokens = resolveContextWindowTokens(session, models, modelId);
-    } catch {
-      // 沿用默认 256000
     }
+  } catch {
+    // 沿用默认窗口；Tab 补全没有模型名
   }
 
   const replUi = new ReplRenderer({
@@ -79,6 +86,9 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     modelName: session.modelName,
     executionMode: session.executionMode ?? 'CLOUD',
     contextWindowTokens,
+    verboseTools: resolved.ui.verboseTools,
+    asciiOnly: resolved.ui.asciiOnly,
+    showTurnDividers: resolved.ui.showTurnDividers,
   });
   const renderers: Renderer[] = [];
   if (cfg.traceFile) renderers.push(new TraceRenderer(cfg.traceFile));
@@ -104,7 +114,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     localCapable: localMode,
     debug: cfg.debug ? (m, extra) => logger.debug(m, extra) : undefined,
     onConsecutiveReconnectFailures: (n) => {
-      logger.warn(`WebSocket 连续重连失败 ${n} 次，请检查网络或重新 login。`);
+      logger.warn(`连不上服务器（已重试 ${n} 次）。检查网络，或 mao-agent login 后重试。`);
     },
   });
   const localWorkspace = path.resolve(session.workspace || cfg.workspace || process.cwd());
@@ -118,12 +128,14 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
 
   let localExecutor: LocalExecutor | undefined;
   const runnerHolder: { current?: SessionRunner } = {};
+  const inputHolder: { current?: InputController } = {};
+  const symbols = pickSymbols(resolved.ui.asciiOnly);
   if (localMode) {
     const policy: ApprovalPolicy = {
       yolo: cfg.yolo,
       force: cfg.force,
       onApproval: cfg.onApproval,
-      approveRules: cfg.approveRules,
+      approveRules: [...cfg.approveRules],
       strictDangerCheck: cfg.strictDangerCheck,
       iKnowWhatImDoing: cfg.iKnowWhatImDoing,
       stdoutIsTty: cfg.stdoutIsTty,
@@ -134,6 +146,12 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       baseUrl: normalizeBaseUrl(resolved.baseUrl),
       workspace: localWorkspace,
       policy,
+      askApproval: cfg.onApproval === 'ask' && cfg.stdoutIsTty && !cfg.print
+        ? async (req, reason) => {
+            if (inputHolder.current) return askApprovalWithController(inputHolder.current, req, reason, symbols);
+            return (await fallbackAskApproval(req, reason)) ? 'allow' : 'deny';
+          }
+        : undefined,
       onApprovalDenied: () => runnerHolder.current?.markApprovalDenied(),
     });
   }
@@ -146,7 +164,10 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     ifRunning: cfg.ifRunning,
     onQuestion: cfg.onQuestion,
     askHandler: cfg.onQuestion === 'ask' && cfg.stdoutIsTty
-      ? async (_id, questions) => askQuestionsInTty(questions)
+      ? async (_id, questions) => {
+          if (inputHolder.current) return askQuestionsWithController(inputHolder.current, questions, symbols);
+          return askQuestionsInTty(questions);
+        }
       : undefined,
     maxDurationSec: cfg.maxDurationSec,
     includeToolIo: cfg.includeToolIo,
@@ -169,14 +190,15 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       setTimeout(() => process.exit(EXIT.CANCELLED), 5000);
     }
   };
-  process.on('SIGINT', onSig);
   process.on('SIGTERM', onSig);
+  if (cfg.print) process.on('SIGINT', onSig);
 
   try {
     await runner.attach(session);
 
+    let historyLines: string[] = [];
     if (!cfg.print && (cfg.replayFull || cfg.resumeSessionId || cfg.continueLast || cfg.command === 'resume')) {
-      await replayHistory(rest, session.id!, cfg.replayFull, renderer);
+      historyLines = await loadHistory(rest, session.id!, cfg.replayFull);
     }
 
     if (cfg.print) {
@@ -194,6 +216,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       });
     }
 
+    const resumed = Boolean(cfg.resumeSessionId || cfg.continueLast || cfg.command === 'resume');
     await runRepl({
       runner,
       renderer: replUi,
@@ -217,10 +240,18 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
         await runner.shutdown();
       },
       firstPrompt: cfg.prompt || undefined,
+      queuedInput: resolved.ui.queuedInput,
+      asciiOnly: resolved.ui.asciiOnly,
+      welcomeLines: [formatSessionBanner(session, { resumed }), formatWelcomeHints()],
+      historyLines,
+      modelNames,
+      onInputReady: (input) => {
+        inputHolder.current = input;
+      },
     });
     return 0;
   } finally {
-    process.off('SIGINT', onSig);
+    if (cfg.print) process.off('SIGINT', onSig);
     process.off('SIGTERM', onSig);
   }
 }
@@ -237,7 +268,7 @@ async function resolveTargetSession(ctx: ChatContext): Promise<SessionVO> {
   if (cfg.resumeSessionId === 'latest' || cfg.command === 'resume') {
     const list = await rest.listSessions({ status: 'ACTIVE' });
     const latest = pickLatestSession(list);
-    if (!latest) throw new CliError('没有可恢复的 ACTIVE 会话');
+    if (!latest) throw new CliError('没有可恢复的会话。直接运行 mao-agent 新建一个。');
     return latest;
   }
   if (cfg.continueLast) {
@@ -250,7 +281,7 @@ async function resolveTargetSession(ctx: ChatContext): Promise<SessionVO> {
     }
     const list = await rest.listSessions({ status: 'ACTIVE' });
     const latest = pickLatestSession(list);
-    if (!latest) throw new CliError('没有可继续的会话');
+    if (!latest) throw new CliError('没有可继续的会话。直接运行 mao-agent 新建一个。');
     return latest;
   }
 
@@ -278,12 +309,6 @@ async function resolveTargetSession(ctx: ChatContext): Promise<SessionVO> {
     req.isGit = isGitWorkspace(workspace);
   }
   const session = await rest.createSession(req);
-  const name = session.agentName || agent.name || 'Agent';
-  const model = session.modelName || String(session.modelId ?? '');
-  const mode = local ? 'LOCAL' : 'CLOUD';
-  if (!cfg.print) {
-    process.stderr.write(`✔ 新建会话 #${session.id}（Agent: ${name} · Model: ${model} · ${mode}${local ? ` · ${workspace}` : ''}）\n`);
-  }
   return session;
 }
 
@@ -294,14 +319,17 @@ async function ensureWorkspaceTrusted(workspace: string, canPrompt: boolean): Pr
   if (isWorkspaceTrusted(workspace)) return;
   if (!canPrompt) {
     throw new CliError(
-      `工作区未信任: ${workspace}。请先在交互终端运行 mao-agent --local，或把该路径写入 ~/.mao/agent-cli/config.json 的 trustedWorkspaces。`,
+      `已拦截：工作区未信任\n  目录: ${workspace}\n  下一步: 先在交互终端运行 mao-agent --local 并输入 y，或把该路径写入 ~/.mao/agent-cli/config.json 的 trustedWorkspaces。`,
       EXIT.APPROVAL,
     );
   }
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
   try {
     const answer = await new Promise<string>((resolve) => {
-      rl.question(`此工作区尚未信任:\n  ${workspace}\n允许本机 Agent 在该目录执行 shell / 写文件？[y/N] `, resolve);
+      rl.question(
+        `此工作区尚未信任:\n  ${workspace}\n允许本机 Agent 在该目录执行命令与写文件？[y/N] `,
+        resolve,
+      );
     });
     if (!/^\s*y(es)?\s*$/i.test(answer)) {
       throw new CliError('已拒绝信任该工作区', EXIT.APPROVAL);
@@ -313,11 +341,19 @@ async function ensureWorkspaceTrusted(workspace: string, canPrompt: boolean): Pr
   }
 }
 
-async function replayHistory(rest: RestClient, sessionId: number, full: boolean, _renderer: Renderer): Promise<void> {
+async function loadHistory(rest: RestClient, sessionId: number, full: boolean): Promise<string[]> {
   const page = await rest.listMessages(sessionId, { roundLimit: full ? 50 : 3 });
-  const lines = summarizeMessages(page.messages ?? [], full);
-  if (lines.length === 0) return;
-  process.stderr.write('── 历史摘要 ──\n');
-  for (const line of lines) process.stderr.write(line + '\n');
-  process.stderr.write('──────────────\n');
+  return formatHistorySummary(page.messages ?? [], full);
+}
+
+async function fallbackAskApproval(req: { toolName: string; description: string }, reason: string): Promise<boolean> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+  try {
+    const answer = await new Promise<string>((resolve) => {
+      rl.question(`${reason}\n⚠ 需要批准 · ${req.toolName}\n  ${req.description}\n[y] 允许  [n] 拒绝\n> `, resolve);
+    });
+    return /^\s*y(es)?\s*$/i.test(answer);
+  } finally {
+    rl.close();
+  }
 }

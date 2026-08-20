@@ -200,7 +200,7 @@ describe('SessionRunner', () => {
     const p = runner.runPrompt('hello');
     await Promise.resolve();
     expect(runner.isRunning()).toBe(true);
-    await expect(runner.runPrompt('???')).rejects.toThrow(/仍在执行/);
+    await expect(runner.runPrompt('???')).rejects.toThrow(/上一条还在跑/);
     const eid = (ws.sent.find((m) => (m as { type: string }).type === 'send_message') as { data: { eventId: string } }).data.eventId;
     terminal(ws, eid);
     expect((await p).status).toBe('COMPLETED');

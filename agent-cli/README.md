@@ -15,9 +15,11 @@ curl -fsSL https://raw.githubusercontent.com/DC-ET/mao/main/scripts/install-mao-
 装好后：
 
 ```bash
-mao-agent login
-mao-agent
+mao-agent login          # 密码无回显
+mao-agent                # 进入交互式 REPL；启动时会显示会话身份与 /help 提示
 ```
+
+交互式 REPL 里：执行中可继续输入下一条（回车进入队列）；`/cancel` 或 Ctrl+C 取消当前任务；Agent 提问与 LOCAL 审批占用同一输入通道（方向键 / y n a）。斜杠命令支持 Tab 补全；`/copy` 复制上一回合回复。打印模式（`-p`）行为不变。
 
 开发者在完整仓库里：
 
@@ -81,4 +83,4 @@ LOCAL 审批门禁：工作区信任 → 默认拒绝清单 → `--approve-rule`
 
 Token 有效期：accessToken 24h，refreshToken 7 天；后端无 API Key。长期 CI 需要轮换 `MAO_TOKEN`。
 
-设计文档：[docs/mao-agent-cli-technical-design.md](../docs/mao-agent-cli-technical-design.md)
+设计文档：[docs/mao-agent-cli-technical-design.md](../docs/mao-agent-cli-technical-design.md)、[交互体验](../docs/mao-agent-cli-ux-design.md)
