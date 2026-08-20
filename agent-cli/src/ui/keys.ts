@@ -34,3 +34,27 @@ export function parseKey(data: string | Buffer): ParsedKey {
   if (s.length === 1 && s >= ' ') return { name: 'char', char: s, raw: s };
   return { name: 'other', raw: s };
 }
+
+/** 把一次 data 突发（粘贴 / PTY 整段写入）拆成逐键，避免 length>1 被当成 other 丢掉。 */
+export function parseKeys(data: string | Buffer): ParsedKey[] {
+  const s = typeof data === 'string' ? data : data.toString('utf8');
+  const keys: ParsedKey[] = [];
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] === '\u001b') {
+      const arrow = s.slice(i, i + 3);
+      if (arrow === '\u001b[A' || arrow === '\u001b[B' || arrow === '\u001bOA' || arrow === '\u001bOB') {
+        keys.push(parseKey(arrow));
+        i += 3;
+        continue;
+      }
+      keys.push(parseKey('\u001b'));
+      i += 1;
+      continue;
+    }
+    const ch = String.fromCodePoint(s.codePointAt(i) ?? 32);
+    keys.push(parseKey(ch));
+    i += ch.length;
+  }
+  return keys;
+}

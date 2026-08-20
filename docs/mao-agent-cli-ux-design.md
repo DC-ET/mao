@@ -154,18 +154,19 @@ Agent 提问时进入模态面板，选完后回到同一 `›`。
 ### 5.3 工具块（默认折叠）
 
 ```
-▸ shell  npm test
-  exit 0 · 12.4s · 展开: /tool last
+⏺ shell  npm test
+  ⎿  exit 0 · 12.4s
 ```
 
-- 默认：一行 start + 一行结果摘要（截断 120 字 / 3 行）。
-- `/verbose` 或环境 `MAO_AGENT_VERBOSE=1`：恢复接近现状的多行预览。
+- 默认：Claude Code / Codex 式 `⏺` 标题 + `⎿` 一行摘要（截断）。
+- `/verbose` 或环境 `MAO_AGENT_VERBOSE=1`：多行预览。
 - `file_change` 归入回合末汇总，中途只 dim 一行路径。
+- 用户回合整行深灰块回显（底栏输入框提交后写入 transcript，避免和 readline 双份）。
 
 ### 5.4 颜色与符号
 
 - 保持现有 ANSI 色板（cyan 工具、dim 次要、red 错误、yellow 系统）。
-- **减少 emoji 依赖**：保留 `▸`/`✔`/`✖`/`⚠` 等符号；思考可用 `…` 或 `thinking`，避免在无 emoji 字体终端变成方框。提供 `--ascii` 强制纯 ASCII。
+- **减少 emoji 依赖**：工具用 `⏺`/`⎿`，输入用 `❯`；`--ascii` 退回 `*` / `|` / `>`。保留 `✔`/`✖`/`⚠`。
 - 遵守 `NO_COLOR` / `--color` / 非 TTY 规则（已有）。
 
 ### 5.5 Markdown
@@ -434,7 +435,9 @@ CLI 覆盖：`--verbose-tools`、`--ascii`、`--no-queue`。
 - 斜杠 Tab 补全（含 `/model` 模型名、`/queue clear`）
 - Todo 在状态区一行 live 摘要（`Todo 2/5`）
 - `/copy` 复制上一回合回复（无剪贴板命令时回落到打印）
-- 底行状态方案 B：半行流式时用光标保存/恢复把状态钉在最后一行；无 `rows` 时回退方案 A 换行停靠
+- 底栏 Composer（备用屏 + 顶栏固定 + 滚动区 + 圆角输入框），对齐 Cursor Agent / Claude Code 的「对话在上、输入钉底」；高度不够时回退 readline。
+- 用户回合整行深灰块回显（底栏输入框提交后写入 transcript，避免和 readline 双份）。
+- 底行状态方案 B：半行流式时用光标保存/恢复把状态钉在最后一行；无 `rows` 时不在正文行 `\r`，避免擦掉回复（不再用换行把旧状态推进历史）。
 - resume 摘要按角色对齐排版
 
 ### U3 — 可选评估（结论：不做）
@@ -445,7 +448,7 @@ CLI 覆盖：`--verbose-tools`、`--ascii`、`--no-queue`。
 
 ## 10. 手工验收清单
 
-- [ ] `mao-agent` 冷启动 ≤3 行引导 + `›`
+- [ ] `mao-agent` 冷启动 ≤3 行引导 + 底栏 `❯` 输入框
 - [ ] 发送长回复：状态秒数持续更新
 - [ ] 执行中输入第二句并回车：显示已排队；结束后自动发送
 - [ ] 执行中 Ctrl+C：取消且队列清空

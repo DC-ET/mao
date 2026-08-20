@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseKey } from '../src/ui/keys';
+import { parseKey, parseKeys } from '../src/ui/keys';
 import { PromptQueue } from '../src/ui/prompt-queue';
 import { formatRelativeTime } from '../src/ui/relative-time';
 import { formatHistorySummary, formatSessionBanner } from '../src/ui/welcome';
 import { completeSlash } from '../src/ui/slash-complete';
 import { formatTodoSummary } from '../src/ui/todo-summary';
+import { formatToolStart, formatUserBlock, formatUserTurn, summarizeToolArgs } from '../src/ui/box';
+import { Composer } from '../src/ui/composer';
 import { countRewindRows, countVisualRows, createAnsi, renderMarkdownLite } from '../src/util/ansi';
 
 describe('parseKey', () => {
@@ -16,6 +18,15 @@ describe('parseKey', () => {
     expect(parseKey('3')).toEqual({ name: 'digit', digit: 3, raw: '3' });
     expect(parseKey('\t').name).toBe('tab');
     expect(parseKey('\u0003').name).toBe('ctrl-c');
+  });
+
+  it('splits pasted / burst input into per-key events', () => {
+    const keys = parseKeys('bbbbbb\r');
+    expect(keys.filter((k) => k.name === 'char')).toHaveLength(6);
+    expect(keys.at(-1)?.name).toBe('enter');
+    const zh = parseKeys('队列成功\r');
+    expect(zh.filter((k) => k.name === 'char').map((k) => k.raw).join('')).toBe('队列成功');
+    expect(zh.at(-1)?.name).toBe('enter');
   });
 });
 
@@ -59,8 +70,8 @@ describe('welcome / history', () => {
       { role: 'user', content: '帮我改登录页\n第二行' },
       { role: 'assistant', content: '已改 TopNav', toolCalls: [{ name: 'edit_file' }, { name: 'edit_file' }] },
     ], false);
-    expect(lines[0]).toMatch(/你\s+帮我改登录页/);
-    expect(lines[1]).toContain('Agent');
+    expect(lines[0]).toMatch(/❯\s+帮我改登录页/);
+    expect(lines[1]).toMatch(/⏺/);
     expect(lines[1]).toContain('edit_file×2');
   });
 });
@@ -107,5 +118,67 @@ describe('visual rows / markdown lite', () => {
     const ansi = createAnsi(true);
     expect(renderMarkdownLite('**ab', ansi)).toBe('**ab');
     expect(renderMarkdownLite('**ab**', ansi)).toContain('\x1b[1mab\x1b[0m');
+  });
+});
+
+describe('tool / user cards', () => {
+  it('summarizes json tool args', () => {
+    expect(summarizeToolArgs('{"command":"ls -la"}')).toBe('ls -la');
+    expect(summarizeToolArgs('{"path":"README.md"}')).toBe('README.md');
+  });
+
+  it('formats user and tool lines', () => {
+    expect(formatUserTurn('hello', {})).toBe('❯ hello');
+    const block = formatUserBlock('hello', { cols: 20 });
+    expect(block.trim()).toBe('hello');
+    expect(block.length).toBe(20);
+    expect(formatToolStart('shell', 'ls', {})).toContain('⏺ shell');
+  });
+});
+
+describe('composer', () => {
+  it('draws a boxed idle prompt', () => {
+    const c = new Composer({
+      write: () => undefined,
+      rows: () => 24,
+      columns: () => 40,
+      dim: (s) => s,
+      cyan: (s) => s,
+      frames: ['⠋'],
+      getMeta: () => '氛围编程 · CLOUD',
+    });
+    const lines = c.renderLines();
+    expect(lines[0]).toMatch(/^╭─+╮$/);
+    expect(lines[1]).toContain('→');
+    expect(lines[1]).toContain('继续对话');
+    expect(lines[2]).toMatch(/^╰─+╯$/);
+    expect(lines[3]).toContain('氛围编程');
+  });
+
+  it('paints the box with DEC save/restore so transcript cursor is kept', () => {
+    let out = '';
+    const c = new Composer({
+      write: (s) => { out += s; },
+      rows: () => 24,
+      columns: () => 40,
+      dim: (s) => s,
+      cyan: (s) => s,
+      frames: ['⠋'],
+      getMeta: () => 'meta',
+    });
+    expect(c.tryStart()).toBe(true);
+    try {
+      c.setIdle('hello');
+      expect(out).toContain('\x1b[?1049h');
+      expect(out).toContain('\x1b[2J');
+      expect(out).toContain('\x1b7');
+      expect(out).toContain('\x1b8');
+      expect(out).not.toMatch(/\x1b\[s/);
+      c.sealHeader(2);
+      expect(out).toMatch(/\x1b\[3;\d+r/);
+    } finally {
+      c.stop();
+    }
+    expect(out).toContain('\x1b[?1049l');
   });
 });

@@ -19,6 +19,8 @@ export function createAnsi(enabled: boolean) {
     red: wrap('31'),
     magenta: wrap('35'),
     gray: wrap('90'),
+    /** 用户消息整行底：接近 Cursor Agent 的深灰块。 */
+    bgBlock: (s: string) => (enabled ? `\x1b[48;5;236m\x1b[37m${s}\x1b[0m` : s),
     clearLine: enabled ? '\r\x1b[K' : '',
   };
 }

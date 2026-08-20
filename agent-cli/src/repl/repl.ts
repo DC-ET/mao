@@ -61,7 +61,9 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     resolveClosed = resolve;
   });
 
-  const writeErr = (s: string) => process.stderr.write(s.endsWith('\n') ? s : `${s}\n`);
+  const writeErr = (s: string) => {
+    opts.renderer.announce(s);
+  };
 
   const clearCancelHint = () => {
     if (cancelHint) {
@@ -80,12 +82,11 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
   };
 
   const printWelcome = () => {
-    for (const line of opts.welcomeLines ?? []) writeErr(line);
-    if (!opts.welcomeLines?.length) writeErr(formatWelcomeHints());
+    const header = opts.welcomeLines?.length ? opts.welcomeLines : [formatWelcomeHints()];
+    opts.renderer.printHeader(header);
     if (opts.historyLines && opts.historyLines.length > 0) {
-      writeErr('── 最近对话 ──');
+      writeErr('');
       for (const line of opts.historyLines) writeErr(line);
-      writeErr('──────────────');
     }
   };
 
@@ -128,6 +129,7 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     draining = true;
     opts.renderer.clearTransient();
     input.setRunning(true);
+    if (!input.echoesSubmit) opts.renderer.noteUser(text);
     opts.renderer.startRound();
     try {
       await opts.runner.runPrompt(text, opts.modelId);
@@ -159,7 +161,7 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
       return;
     }
     if (text.startsWith('/')) {
-      const handled = await handleSlash(text, opts, input, writeErr);
+      const handled = await handleSlash(text, opts, input, writeErr, printWelcome);
       if (handled === 'exit') {
         await requestExit();
         return;
@@ -181,7 +183,7 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
       const next = input.queue.shift();
       if (!next) break;
       if (next.startsWith('/')) {
-        const handled = await handleSlash(next, opts, input, writeErr);
+        const handled = await handleSlash(next, opts, input, writeErr, printWelcome);
         if (handled === 'exit') {
           await requestExit();
           return;
@@ -201,11 +203,12 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     },
     onDraftChange: (draft) => opts.renderer.setDraft(draft),
     completer: (line) => completeSlash(line, { models: opts.modelNames }),
+    composer: opts.renderer.getComposer(),
   });
   opts.onInputReady?.(input);
 
-  printWelcome();
   input.start();
+  printWelcome();
 
   if (opts.firstPrompt) {
     if (opts.runner.snapshotIsActive) {
@@ -243,6 +246,7 @@ async function handleSlash(
   opts: ReplOptions,
   input: InputController,
   writeErr: (s: string) => void,
+  printWelcome: () => void,
 ): Promise<'exit' | void> {
   const [cmd, ...rest] = text.slice(1).split(/\s+/);
   const arg = rest.join(' ').trim();
@@ -252,63 +256,70 @@ async function handleSlash(
       if (opts.runner.isRunning()) await opts.runner.cancel();
       return 'exit';
     case 'help':
-      process.stdout.write(SLASH_HELP);
+      writeErr(SLASH_HELP);
       return;
     case 'cancel':
       await opts.runner.cancel();
       input.queue.clear();
-      process.stdout.write('已发送 cancel。\n');
+      writeErr('已发送 cancel。');
       return;
-    case 'clear':
-      process.stdout.write('\x1b[2J\x1b[H');
-      for (const line of opts.welcomeLines ?? []) process.stderr.write(`${line}\n`);
+    case 'clear': {
+      opts.renderer.clearTransient();
+      const composer = opts.renderer.getComposer();
+      if (composer?.isActive()) {
+        composer.wipe();
+        printWelcome();
+        composer.refresh();
+      } else {
+        process.stdout.write('\x1b[2J\x1b[H');
+        for (const line of opts.welcomeLines ?? []) writeErr(line);
+      }
       return;
+    }
     case 'verbose': {
       const next = !opts.renderer.getVerboseTools();
       opts.renderer.setVerboseTools(next);
-      process.stdout.write(next ? '已打开工具详细输出。\n' : '已折叠工具输出。\n');
+      writeErr(next ? '已打开工具详细输出。' : '已折叠工具输出。');
       return;
     }
     case 'queue': {
       if (arg === 'clear') {
         input.queue.clear();
-        process.stdout.write('已清空队列。\n');
+        writeErr('已清空队列。');
         return;
       }
       const items = input.queue.list();
       if (items.length === 0) {
-        process.stdout.write('(队列为空)\n');
+        writeErr('(队列为空)');
         return;
       }
-      items.forEach((q, i) => process.stdout.write(`${i + 1}. ${q}\n`));
+      writeErr(items.map((q, i) => `${i + 1}. ${q}`).join('\n'));
       return;
     }
     case 'copy': {
       const text = opts.renderer.getLastAssistantText().trim();
       if (!text) {
-        process.stdout.write('没有可复制的回复。\n');
+        writeErr('没有可复制的回复。');
         return;
       }
       const ok = await copyToClipboard(text);
-      if (ok) process.stdout.write('已复制上一回合回复。\n');
+      if (ok) writeErr('已复制上一回合回复。');
       else {
-        process.stdout.write('本机没有剪贴板命令（pbcopy / wl-copy / xclip），上一回合回复如下：\n');
-        process.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
+        writeErr('本机没有剪贴板命令（pbcopy / wl-copy / xclip），上一回合回复如下：');
+        writeErr(text);
       }
       return;
     }
     case 'agent':
-      process.stdout.write('换 Agent 请新开进程: mao-agent --agent <id|name>\n当前进程只绑定一个会话。\n');
+      writeErr('换 Agent 请新开进程: mao-agent --agent <id|name>\n当前进程只绑定一个会话。');
       return;
     case 'todo': {
       const todos = opts.runner.getTodos();
       if (todos.length === 0) {
-        process.stdout.write('(暂无 Todo)\n');
+        writeErr('(暂无 Todo)');
         return;
       }
-      for (const t of todos) {
-        process.stdout.write(`- [${t.status ?? ' '}] ${t.content ?? ''}\n`);
-      }
+      writeErr(todos.map((t) => `- [${t.status ?? ' '}] ${t.content ?? ''}`).join('\n'));
       return;
     }
     case 'context': {
@@ -316,32 +327,31 @@ async function handleSlash(
       const s = opts.runner.getSession();
       const pct = formatContextPercent(ctx.estimated, ctx.actual, s?.contextWindowTokens ?? undefined);
       const hint = pct && Number.parseInt(pct, 10) >= 80 ? '  接近上限时可新开会话。' : '';
-      process.stdout.write(
+      writeErr(
         `context_window estimated=${ctx.estimated ?? '-'} actual=${ctx.actual ?? '-'}` +
           (pct ? ` (${pct})` : '') +
-          hint +
-          '\n',
+          hint,
       );
       return;
     }
     case 'session': {
       const s = opts.runner.getSession();
-      process.stdout.write(
+      writeErr(
         `sessionId=${s?.id ?? '-'}  agent=${s?.agentName ?? s?.agentId ?? '-'}  model=${s?.modelName ?? s?.modelId ?? '-'}` +
           `  workspace=${s?.workspace ?? '-'}  phase=${s?.phase ?? '-'}\n` +
-          '换会话: mao-agent resume | mao-agent ls\n',
+          '换会话: mao-agent resume | mao-agent ls',
       );
       return;
     }
     case 'model': {
       if (!arg) {
         const s = opts.runner.getSession();
-        process.stdout.write(`当前模型: ${s?.modelName ?? s?.modelId ?? '-'}\n`);
+        writeErr(`当前模型: ${s?.modelName ?? s?.modelId ?? '-'}`);
         return;
       }
       const id = await opts.resolveModel(arg);
       opts.modelId = id;
-      process.stdout.write(`下一条消息将切换到模型 id=${id}（会持久写库）。\n`);
+      writeErr(`下一条消息将切换到模型 id=${id}（会持久写库）。`);
       return;
     }
     default:

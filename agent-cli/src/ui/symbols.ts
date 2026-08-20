@@ -1,5 +1,6 @@
 export interface UiSymbols {
   tool: string;
+  toolTail: string;
   ok: string;
   err: string;
   warn: string;
@@ -9,7 +10,8 @@ export interface UiSymbols {
 }
 
 export const UNICODE_SYMBOLS: UiSymbols = {
-  tool: '▸',
+  tool: '⏺',
+  toolTail: '⎿',
   ok: '✔',
   err: '✖',
   warn: '⚠',
@@ -19,7 +21,8 @@ export const UNICODE_SYMBOLS: UiSymbols = {
 };
 
 export const ASCII_SYMBOLS: UiSymbols = {
-  tool: '>',
+  tool: '*',
+  toolTail: '|',
   ok: '+',
   err: 'x',
   warn: '!',

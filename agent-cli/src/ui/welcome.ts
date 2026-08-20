@@ -20,30 +20,26 @@ export function formatSessionBanner(
 }
 
 export function formatWelcomeHints(): string {
-  return '输入消息开始。常用: /help  /session  /model。Ctrl+C 取消当前任务。';
+  return '输入消息开始 · /help  /session  /model · Ctrl+C 取消';
 }
 
 export function formatHistorySummary(messages: MessageVO[], full: boolean): string[] {
   const lines: string[] = [];
   for (const m of messages) {
     const role = m.role ?? '?';
-    const label = role === 'user' ? '你' : role === 'assistant' ? 'Agent' : role;
     const content = (m.content ?? '').replace(/\s+/g, ' ').trim();
     if (full) {
-      lines.push(`  ${padRole(label)}${m.content ?? ''}`);
+      const mark = role === 'user' ? '❯' : '⏺';
+      lines.push(`${mark} ${m.content ?? ''}`);
       continue;
     }
     const first = content.split('\n')[0]?.slice(0, 72) ?? '';
     const counts = toolCounts(m.toolCalls);
     const tools = counts ? `  · ${counts}` : '';
-    lines.push(`  ${padRole(label)}${first}${tools}`);
+    if (role === 'user') lines.push(`❯ ${first}`);
+    else lines.push(`⏺ ${first}${tools}`);
   }
   return lines;
-}
-
-function padRole(label: string): string {
-  const pad = label === '你' ? '    ' : ' ';
-  return `${label}${pad} `;
 }
 
 function toolCounts(toolCalls: unknown): string {
