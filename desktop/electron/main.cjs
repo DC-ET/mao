@@ -193,6 +193,106 @@ function buildFileChangeDiff(filePath, beforeContent, afterContent) {
   }
 }
 
+function asBoolArg(value, fallback = false) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return value !== 0
+  if (typeof value === 'string') {
+    const s = value.trim().toLowerCase()
+    if (s === 'true' || s === '1' || s === 'yes') return true
+    if (s === 'false' || s === '0' || s === 'no' || s === '') return false
+  }
+  return fallback
+}
+
+function lineAtIndex(content, index) {
+  let lineNumber = 1
+  let lineStart = 0
+  for (let i = 0; i < index; i++) {
+    if (content[i] === '\n') {
+      lineNumber++
+      lineStart = i + 1
+    }
+  }
+  let lineEnd = content.indexOf('\n', index)
+  if (lineEnd === -1) lineEnd = content.length
+  let lineText = content.slice(lineStart, lineEnd)
+  if (lineText.endsWith('\r')) lineText = lineText.slice(0, -1)
+  return { lineNumber, lineText }
+}
+
+function applyEditMatch(content, oldString, newString, replaceAll) {
+  if (oldString === '') {
+    return { ok: false, replacements: 0, error: 'old_string 不能为空' }
+  }
+  const starts = []
+  let idx = 0
+  while (idx < content.length) {
+    const found = content.indexOf(oldString, idx)
+    if (found === -1) break
+    starts.push(found)
+    idx = found + oldString.length
+  }
+  const count = starts.length
+  if (count === 0) {
+    return { ok: false, replacements: 0, error: '文件中未找到 old_string' }
+  }
+  if (count > 1 && !replaceAll) {
+    const maxLines = 20
+    const maxPreviews = 8
+    const occurrenceLines = starts.slice(0, maxLines).map((start) => lineAtIndex(content, start).lineNumber)
+    const previewCount = Math.min(maxPreviews, starts.length)
+    const previews = []
+    for (let i = 0; i < previewCount; i++) {
+      const { lineNumber, lineText } = lineAtIndex(content, starts[i])
+      const preview = lineText.length > 120 ? lineText.slice(0, 120) + '…' : lineText
+      previews.push(`  第 ${lineNumber} 行: ${preview}`)
+    }
+    const listed = count > maxLines ? `（仅列出前 ${maxLines} 处）` : ''
+    return {
+      ok: false,
+      replacements: 0,
+      occurrences: count,
+      occurrence_lines: occurrenceLines,
+      error: `old_string 在文件中出现 ${count} 次，默认只替换唯一匹配，未执行编辑。`
+        + '请在 old_string 中补充更多上下文使其只出现一次，或传入 replace_all=true 以替换全部出现。'
+        + `出现位置（行号从 1 起）${listed}：\n`
+        + previews.join('\n')
+    }
+  }
+  return {
+    ok: true,
+    updated: content.split(oldString).join(newString),
+    replacements: count
+  }
+}
+
+function writeEditedFile(resolvedPath, filePathArg, oldString, newString, replaceAll) {
+  const content = fs.readFileSync(resolvedPath, 'utf-8')
+  const match = applyEditMatch(content, oldString ?? '', newString ?? '', replaceAll)
+  if (!match.ok) {
+    const out = { success: false, replacements: 0, error: match.error }
+    if (match.occurrences != null) {
+      out.occurrences = match.occurrences
+      out.occurrence_lines = match.occurrence_lines
+    }
+    return out
+  }
+  fs.writeFileSync(resolvedPath, match.updated, 'utf-8')
+  const oldLines = String(oldString ?? '').split('\n').length
+  const newLines = String(newString ?? '').split('\n').length
+  return {
+    success: true,
+    replacements: match.replacements,
+    file_change: {
+      path: filePathArg,
+      type: 'MODIFIED',
+      lines_added: newLines * match.replacements,
+      lines_deleted: oldLines * match.replacements
+    },
+    [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(filePathArg, content, match.updated)
+  }
+}
+
 /**
  * Get the full user PATH by executing a login shell.
  * macOS GUI apps don't load shell configs, so we need to manually resolve the PATH
@@ -1279,33 +1379,19 @@ ipcMain.handle('local-write-file', async (event, { path: filePath, content }) =>
   }
 })
 
-ipcMain.handle('local-edit-file', async (event, { path: filePath, old_string, new_string }) => {
+ipcMain.handle('local-edit-file', async (event, { path: filePath, old_string, new_string, replace_all }) => {
   const approved = await requestToolApproval('edit_file', filePath)
   if (!approved) {
     return { success: false, error: 'User denied file edit.' }
   }
   try {
-    const resolvedPath = resolveWorkspacePath(filePath)
-    const content = fs.readFileSync(resolvedPath, 'utf-8')
-    const count = content.split(old_string).length - 1
-    if (count === 0) {
-      return { success: false, error: 'old_string not found in file' }
-    }
-    const updated = content.replaceAll(old_string, new_string)
-    fs.writeFileSync(resolvedPath, updated, 'utf-8')
-    const oldLines = old_string.split('\n').length
-    const newLines = new_string.split('\n').length
-    return {
-      success: true,
-      replacements: count,
-      file_change: {
-        path: filePath,
-        type: 'MODIFIED',
-        lines_added: newLines * count,
-        lines_deleted: oldLines * count
-      },
-      [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(filePath, content, updated)
-    }
+    return writeEditedFile(
+      resolveWorkspacePath(filePath),
+      filePath,
+      old_string,
+      new_string,
+      asBoolArg(replace_all),
+    )
   } catch (e) {
     return { error: e.message }
   }
@@ -1865,27 +1951,13 @@ async function handleLocalEditFile(args, workspace, sessionId, needApproval, req
   }
   try {
     const resolvedPath = resolveWorkspacePath(args.path, workspace, sessionId)
-    const content = fs.readFileSync(resolvedPath, 'utf-8')
-    const count = content.split(args.old_string).length - 1
-    if (count === 0) return { success: false, error: 'old_string not found in file' }
-    const updated = content.replaceAll(args.old_string, args.new_string)
-    fs.writeFileSync(resolvedPath, updated, 'utf-8')
-    // Compute file change stats
-    const oldLines = args.old_string.split('\n').length
-    const newLines = args.new_string.split('\n').length
-    const linesAdded = newLines * count
-    const linesDeleted = oldLines * count
-    return {
-      success: true,
-      replacements: count,
-      file_change: {
-        path: args.path,
-        type: 'MODIFIED',
-        lines_added: linesAdded,
-        lines_deleted: linesDeleted
-      },
-      [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(args.path, content, updated)
-    }
+    return writeEditedFile(
+      resolvedPath,
+      args.path,
+      args.old_string,
+      args.new_string,
+      asBoolArg(args.replace_all),
+    )
   } catch (e) {
     return { error: e.message }
   }
