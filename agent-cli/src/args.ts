@@ -58,6 +58,9 @@ export interface CliConfig {
   includeToolIo: boolean;
   replayFull: boolean;
   streamPartialOutput: boolean;
+  verboseTools?: boolean;
+  asciiOnly?: boolean;
+  queuedInput?: boolean;
   local: boolean;
   yolo: boolean;
   force: boolean;
@@ -333,6 +336,9 @@ export function parseCliConfig(
     includeToolIo: hasFlag(flags, 'include-tool-io'),
     replayFull: hasFlag(flags, 'replay-full'),
     streamPartialOutput: hasFlag(flags, 'stream-partial-output'),
+    verboseTools: hasFlag(flags, 'verbose-tools') ? true : undefined,
+    asciiOnly: hasFlag(flags, 'ascii') ? true : undefined,
+    queuedInput: hasFlag(flags, 'no-queue') ? false : undefined,
     local,
     yolo: hasFlag(flags, 'yolo'),
     force: hasFlag(flags, 'force', 'f'),
@@ -389,6 +395,9 @@ export const HELP_TEXT = `mao-agent CLI — 无 GUI 终端对话式 Agent 客户
   --include-tool-io                  json 输出里带上 toolCalls[].arguments / result
   --replay-full                      resume 时完整打印历史消息，默认只打印最后 3 轮精简摘要
   --stream-partial-output            配合 stream-json 逐 delta 输出
+  --verbose-tools                    交互模式展开工具输出（默认折叠）
+  --ascii                            状态符号改用纯 ASCII（无 emoji / 宽字符）
+  --no-queue                         执行中禁止预输入下一条消息
 
 LOCAL 模式选项:
   --local                            本机执行工具（executionMode=LOCAL）

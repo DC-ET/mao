@@ -1,7 +1,12 @@
 import type { RestClient } from '../rest/rest-client';
 import type { SessionVO } from '../rest/types';
+import { formatRelativeTime } from '../ui/relative-time';
 
-export async function cmdLs(rest: RestClient, json: boolean): Promise<void> {
+export async function cmdLs(
+  rest: RestClient,
+  json: boolean,
+  opts: { lastSessionId?: number } = {},
+): Promise<void> {
   const sessions = await rest.listSessions({ status: 'ACTIVE' });
   const sorted = [...sessions].sort((a, b) => {
     const ta = Date.parse(a.updatedAt ?? '') || 0;
@@ -14,21 +19,22 @@ export async function cmdLs(rest: RestClient, json: boolean): Promise<void> {
     return;
   }
   if (sorted.length === 0) {
-    process.stdout.write('(没有可恢复的 ACTIVE 会话)\n');
+    process.stdout.write('没有可恢复的会话。直接运行 mao-agent 新建一个。\n');
     return;
   }
   const width = Math.max(...sorted.map((s) => String(s.id ?? '').length), 2);
   for (const s of sorted) {
-    process.stdout.write(`${formatRow(s, width)}\n`);
+    process.stdout.write(`${formatRow(s, width, opts.lastSessionId)}\n`);
   }
 }
 
-function formatRow(s: SessionVO, width: number): string {
+function formatRow(s: SessionVO, width: number, lastSessionId?: number): string {
   const id = String(s.id ?? '').padStart(width);
   const pin = s.isPinned ? '*' : ' ';
+  const last = s.id != null && s.id === lastSessionId ? 'last' : '    ';
   const phase = (s.phase ?? 'IDLE').padEnd(10);
   const agent = (s.agentName ?? '').slice(0, 16).padEnd(16);
-  const title = (s.title ?? '未命名会话').replace(/\s+/g, ' ').slice(0, 48);
-  const updated = s.updatedAt ?? '';
-  return `${pin}${id}  ${phase}  ${agent}  ${title}  ${updated}`;
+  const title = (s.title ?? '未命名会话').replace(/\s+/g, ' ').slice(0, 40);
+  const updated = formatRelativeTime(s.updatedAt) || (s.updatedAt ?? '');
+  return `${pin}${id}  ${last}  ${phase}  ${agent}  ${title}  ${updated}`;
 }

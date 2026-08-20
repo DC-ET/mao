@@ -124,7 +124,7 @@ export class SessionRunner {
 
   async runPrompt(content: string, modelId?: number): Promise<RunResult> {
     if (this.busy) {
-      throw new CliError('当前任务仍在执行，请等待结束或 /cancel');
+      throw new CliError('上一条还在跑。请等待结束或 /cancel。');
     }
     this.busy = true;
     try {

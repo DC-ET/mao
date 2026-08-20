@@ -59,7 +59,10 @@ export function evaluateApproval(req: ApprovalRequest, policy: ApprovalPolicy): 
   if (isMutating(req.toolName) && !trust.isWorkspaceTrusted(req.workspace)) {
     return {
       action: 'deny',
-      reason: `工作区未信任：${req.workspace ?? '(空)'}。请在交互终端先运行 mao-agent --local 并确认信任，或把该目录写入 ~/.mao/agent-cli/config.json 的 trustedWorkspaces。--yolo 不能豁免此项。`,
+      reason:
+        `已拦截：工作区未信任\n` +
+        `  目录: ${req.workspace ?? '(空)'}\n` +
+        `  下一步: 在本目录运行 mao-agent --local 并输入 y，或把该路径写入 ~/.mao/agent-cli/config.json 的 trustedWorkspaces。--yolo 不能豁免此项。`,
       exitApproval: true,
     };
   }
@@ -69,7 +72,9 @@ export function evaluateApproval(req: ApprovalRequest, policy: ApprovalPolicy): 
   if (denied && !policy.iKnowWhatImDoing) {
     return {
       action: 'deny',
-      reason: `默认拒绝清单命中（${denied.reason}）。如确需执行请显式传入 --i-know-what-im-doing。`,
+      reason:
+        `已拦截：默认拒绝清单（${denied.reason}）\n` +
+        `  如确需执行请显式传入 --i-know-what-im-doing。`,
       exitApproval: true,
     };
   }

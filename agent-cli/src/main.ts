@@ -53,6 +53,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     baseUrl: cfg.baseUrl,
     permissionLevel: cfg.permissionLevel,
     outputFormat: cfg.outputFormat,
+    verboseTools: cfg.verboseTools,
+    asciiOnly: cfg.asciiOnly,
+    queuedInput: cfg.queuedInput,
   });
   if (!cfg.baseUrl) cfg.baseUrl = resolved.baseUrl;
   const baseUrl = normalizeBaseUrl(cfg.baseUrl || resolved.baseUrl || DEFAULT_BASE_URL);
@@ -92,7 +95,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         cmdStatus({ baseUrl, cliToken: cfg.token });
         return 0;
       case 'ls':
-        await cmdLs(rest, cfg.outputFormat === 'json' || cfg.outputFormat === 'stream-json');
+        await cmdLs(rest, cfg.outputFormat === 'json' || cfg.outputFormat === 'stream-json', {
+          lastSessionId: resolved.lastSessionId,
+        });
         return 0;
       case 'resume':
       case 'chat':
