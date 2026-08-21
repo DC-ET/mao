@@ -28,7 +28,6 @@ interface CreateAgentRequest {
   name?: string;
   description?: string | null;
   systemPrompt?: string;
-  tags?: string[];
   skillNames?: string[];
   mcpServerIds?: number[];
   experiences?: ExperienceVO[];
@@ -41,7 +40,6 @@ interface UpdateAgentRequest {
   systemPrompt?: string | null;
   skillNames?: string[] | null;
   mcpServerIds?: number[] | null;
-  tags?: string[] | null;
   experiences?: ExperienceVO[] | null;
   isDefault?: number | null;
 }
@@ -84,7 +82,6 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.name!,
       body.description,
       body.systemPrompt!,
-      body.tags,
       body.skillNames,
       mcpServerIds,
       toExperienceInputs(body.experiences),
@@ -104,7 +101,6 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.systemPrompt,
       body.skillNames,
       mcpServerIds,
-      body.tags,
       toExperienceInputs(body.experiences),
       body.isDefault,
     );
@@ -186,9 +182,6 @@ async function toVO(agent: Agent, agentService: AgentService, userRepo: UserRepo
       vo.creatorName = creator.displayName;
     }
   }
-
-  const tags = await agentService.getAgentTags(agent.id!);
-  vo.tags = tags.map((t) => t.tag);
 
   if (agent.skillNames != null) {
     try {

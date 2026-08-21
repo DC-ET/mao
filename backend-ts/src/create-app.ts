@@ -32,7 +32,7 @@ import {
 } from './permission/permission.repository.js';
 import { PermissionService } from './permission/permission.service.js';
 import { registerPermissionRoutes } from './permission/permission.routes.js';
-import { MysqlAgentExperienceRepository, MysqlAgentRepository, MysqlAgentTagRepository } from './agent/agent.repository.js';
+import { MysqlAgentExperienceRepository, MysqlAgentRepository } from './agent/agent.repository.js';
 import { AgentExperienceService } from './agent/agent-experience.service.js';
 import { AgentService } from './agent/agent.service.js';
 import { registerAgentRoutes } from './agent/agent.routes.js';
@@ -260,7 +260,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const agentRepo = new MysqlAgentRepository(db);
   const experienceService = new AgentExperienceService(new MysqlAgentExperienceRepository(db));
-  const agentService = new AgentService(agentRepo, new MysqlAgentTagRepository(db), experienceService);
+  const agentService = new AgentService(agentRepo, experienceService);
   const modelRepo = new MysqlLlmModelRepository(db);
   const modelService = new ModelService(
     modelRepo,

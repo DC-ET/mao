@@ -16,12 +16,6 @@ export interface Agent {
   updatedAt?: string | null;
 }
 
-export interface AgentTag {
-  id?: number;
-  agentId: number;
-  tag: string;
-}
-
 export interface AgentExperience {
   id?: number;
   agentId: number;
@@ -48,12 +42,6 @@ export interface AgentRepository {
   deleteById(id: number): Promise<void>;
   clearDefaultFlag(): Promise<void>;
   removeSkillName(skillName: string): Promise<number>;
-}
-
-export interface AgentTagRepository {
-  listByAgentId(agentId: number): Promise<AgentTag[]>;
-  insert(tag: AgentTag): Promise<number>;
-  deleteByAgentId(agentId: number): Promise<void>;
 }
 
 export interface AgentExperienceRepository {

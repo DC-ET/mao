@@ -7,7 +7,6 @@ export interface Agent {
   id: string
   name: string
   description: string
-  tags: string[]
   executionMode: string
   isDefault?: boolean
 }

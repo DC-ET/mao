@@ -17,7 +17,6 @@ export interface AgentVO {
   creatorId?: number | null;
   creatorName?: string | null;
   isDefault?: boolean;
-  tags?: string[];
   skillNames?: string[];
   mcpServerIds?: number[];
   experiences?: ExperienceVO[];

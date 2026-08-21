@@ -4,7 +4,7 @@ import { ErrorCode } from '../common/error-code.js';
 import { AgentService } from './agent.service.js';
 import type { AgentExperienceService } from './agent-experience.service.js';
 import { experienceInputOf } from './agent-experience.service.js';
-import type { Agent, AgentRepository, AgentTag, AgentTagRepository } from './types.js';
+import type { Agent, AgentRepository } from './types.js';
 
 function agent(id: number, name: string, isDefault: number): Agent {
   return { id, name, systemPrompt: 'p', isDefault };
@@ -24,17 +24,12 @@ describe('AgentService', () => {
     clearDefaultFlag: vi.fn(),
     removeSkillName: vi.fn(),
   };
-  const tagRepo: AgentTagRepository = {
-    listByAgentId: vi.fn(),
-    insert: vi.fn(),
-    deleteByAgentId: vi.fn(),
-  };
   const experienceService = {
     syncExperiences: vi.fn(),
     deleteByAgentId: vi.fn(),
     listByAgentId: vi.fn(),
   } as unknown as AgentExperienceService;
-  const service = new AgentService(agentRepo, tagRepo, experienceService);
+  const service = new AgentService(agentRepo, experienceService);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -44,16 +39,13 @@ describe('AgentService', () => {
     });
   });
 
-  it('listsGetsCreatesUpdatesDeletesAndLoadsTags', async () => {
+  it('listsGetsCreatesUpdatesDeletes', async () => {
     const existing = agent(1, 'old', 0);
-    const tag: AgentTag = { agentId: 1, tag: 'java' };
     vi.mocked(agentRepo.selectList).mockResolvedValue([existing]);
     vi.mocked(agentRepo.findById).mockResolvedValue(existing);
-    vi.mocked(tagRepo.listByAgentId).mockResolvedValue([tag]);
 
     expect(await service.listAgents(7, 'old')).toEqual([existing]);
     expect(await service.getAgent(1)).toBe(existing);
-    expect(await service.getAgentTags(1)).toEqual([tag]);
 
     const experiences = [experienceInputOf(null, 'tip', 0, true)];
     const created = await service.createAgent(
@@ -61,7 +53,6 @@ describe('AgentService', () => {
       'coder',
       'desc',
       'prompt',
-      ['java', 'spring'],
       ['skill-a'],
       [10, 20],
       experiences,
@@ -72,7 +63,6 @@ describe('AgentService', () => {
     expect(created.mcpServerIds).toContain('10');
     expect(created.isDefault).toBe(1);
     expect(agentRepo.insert).toHaveBeenCalledWith(created);
-    expect(tagRepo.insert).toHaveBeenCalledTimes(2);
     expect(experienceService.syncExperiences).toHaveBeenCalledWith(created.id, experiences);
 
     const updated = await service.updateAgent(
@@ -82,7 +72,6 @@ describe('AgentService', () => {
       'new prompt',
       [],
       [],
-      ['backend'],
       experiences,
       0,
     );
@@ -90,7 +79,6 @@ describe('AgentService', () => {
     expect(updated.skillNames).toBeNull();
     expect(updated.isDefault).toBe(0);
     expect(agentRepo.updateById).toHaveBeenCalledWith(existing);
-    expect(tagRepo.deleteByAgentId).toHaveBeenCalledWith(1);
     expect(experienceService.syncExperiences).toHaveBeenCalledWith(1, experiences);
 
     await service.deleteAgent(1);

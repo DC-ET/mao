@@ -28,7 +28,6 @@ describe('CRUD routes', () => {
       createAgent: vi.fn(async () => agent),
       updateAgent: vi.fn(async () => agent),
       deleteAgent: vi.fn(),
-      getAgentTags: vi.fn(async () => [{ tag: 't' }]),
       getAgentExperiences: vi.fn(async () => [{ id: 1, content: 'c', sortOrder: 0, enabled: 1 }]),
     };
     const experienceService = {

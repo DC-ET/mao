@@ -96,17 +96,6 @@
         </el-select>
         <div class="form-hint">该 Agent 的会话可调用所选 MCP 服务器暴露的工具；建议关联不超过 10 台以避免工具清单膨胀。</div>
       </el-form-item>
-      <el-form-item label="标签" prop="tags">
-        <el-select
-          v-model="form.tags"
-          multiple
-          filterable
-          allow-create
-          default-first-option
-          placeholder="输入标签后回车确认"
-          style="width: 100%"
-        />
-      </el-form-item>
       <el-form-item label="默认 Agent">
         <el-switch v-model="form.isDefault" />
         <span class="form-hint">开启后，新建会话未指定 Agent 时将使用该智能体</span>
@@ -169,7 +158,6 @@ const form = reactive({
   systemPrompt: '',
   skillNames: [] as string[],
   mcpServerIds: [] as number[],
-  tags: [] as string[],
   experiences: [] as ExperienceFormItem[],
   isDefault: false
 })
@@ -202,7 +190,6 @@ function resetForm() {
     systemPrompt: '',
     skillNames: [],
     mcpServerIds: [],
-    tags: [],
     experiences: [],
     isDefault: false
   })
@@ -262,7 +249,6 @@ watch(() => props.visible, async (val) => {
       systemPrompt: props.agentData.systemPrompt || '',
       skillNames: props.agentData.skillNames || [],
       mcpServerIds: props.agentData.mcpServerIds || [],
-      tags: props.agentData.tags || [],
       experiences: mapExperiences(props.agentData.experiences, props.mode === 'edit'),
       isDefault: props.mode === 'copy' ? false : !!props.agentData.isDefault
     })
@@ -295,7 +281,6 @@ async function handleSubmit() {
     systemPrompt: form.systemPrompt,
     skillNames: form.skillNames,
     mcpServerIds: form.mcpServerIds,
-    tags: form.tags,
     isDefault: form.isDefault ? 1 : 0,
     experiences: form.experiences.map((item, index) => ({
       id: isEdit.value ? item.id ?? null : null,

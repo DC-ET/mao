@@ -5,8 +5,6 @@ import type {
   AgentExperience,
   AgentExperienceRepository,
   AgentRepository,
-  AgentTag,
-  AgentTagRepository,
 } from './types.js';
 
 export class MysqlAgentRepository implements AgentRepository {
@@ -111,24 +109,6 @@ export class MysqlAgentRepository implements AgentRepository {
       }
     }
     return affected;
-  }
-}
-
-export class MysqlAgentTagRepository implements AgentTagRepository {
-  constructor(private readonly db: Db) {}
-
-  listByAgentId(agentId: number): Promise<AgentTag[]> {
-    return this.db.query<AgentTag>('SELECT * FROM agent_tag WHERE agent_id = ? ORDER BY id ASC', [agentId]);
-  }
-
-  async insert(tag: AgentTag): Promise<number> {
-    const id = await this.db.insert('agent_tag', { agentId: tag.agentId, tag: tag.tag });
-    tag.id = id;
-    return id;
-  }
-
-  async deleteByAgentId(agentId: number): Promise<void> {
-    await this.db.execute('DELETE FROM agent_tag WHERE agent_id = ?', [agentId]);
   }
 }
 

@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   MysqlAgentExperienceRepository,
   MysqlAgentRepository,
-  MysqlAgentTagRepository,
 } from './agent.repository.js';
 import { MysqlUserRepository } from '../user/user.repository.js';
 import { MysqlLlmModelRepository } from '../model/model.repository.js';
@@ -24,7 +23,7 @@ function mockDb(queryOne: unknown = { id: 1 }, query: unknown[] = [{ id: 1 }]) {
 }
 
 describe('MysqlAgentRepository', () => {
-  it('covers list find insert update delete and tags experiences', async () => {
+  it('covers list find insert update delete and experiences', async () => {
     const db = mockDb();
     const repo = new MysqlAgentRepository(db as never);
     await repo.selectList();
@@ -40,11 +39,6 @@ describe('MysqlAgentRepository', () => {
     await repo.updateById({ name: 'a', systemPrompt: 'p' } as never);
     await repo.deleteById(5);
     await repo.clearDefaultFlag();
-
-    const tags = new MysqlAgentTagRepository(db as never);
-    await tags.listByAgentId(1);
-    await tags.insert({ agentId: 1, tag: 't' });
-    await tags.deleteByAgentId(1);
 
     const exp = new MysqlAgentExperienceRepository(db as never);
     await exp.listByAgentId(1);

@@ -21,11 +21,6 @@
             @clear="handleSearch"
           />
         </el-form-item>
-        <el-form-item label="标签">
-          <el-select v-model="tagFilter" placeholder="全部标签" clearable style="width: 150px" @change="handleTagFilterChange">
-            <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
-          </el-select>
-        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
         </el-form-item>
@@ -44,16 +39,6 @@
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-        <el-table-column label="标签" min-width="180" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
-          <template #default="{ row }">
-            <el-tag
-              v-for="tag in row.tags"
-              :key="tag"
-              size="small"
-              class="tag-item"
-            >{{ tag }}</el-tag>
-          </template>
-        </el-table-column>
         <el-table-column label="Skills" width="110" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">{{ row.skillNames?.length || 0 }}</template>
         </el-table-column>
@@ -103,7 +88,6 @@ import AgentFormDialog from './AgentFormDialog.vue'
 const loading = ref(false)
 const allAgents = ref<any[]>([])
 const searchQuery = ref('')
-const tagFilter = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
@@ -123,29 +107,15 @@ async function fetchAgents() {
   }
 }
 
-const tagOptions = computed(() => {
-  const tags = new Set<string>()
-  allAgents.value.forEach(agent => (agent.tags || []).forEach((tag: string) => tags.add(tag)))
-  return Array.from(tags)
-})
-
-// Filter by tag on the full dataset, then paginate client-side
 const filteredAgents = computed(() => {
-  const list = tagFilter.value
-    ? allAgents.value.filter(agent => (agent.tags || []).includes(tagFilter.value))
-    : allAgents.value
-  total.value = list.length
+  total.value = allAgents.value.length
   const start = (currentPage.value - 1) * pageSize.value
-  return list.slice(start, start + pageSize.value)
+  return allAgents.value.slice(start, start + pageSize.value)
 })
 
 function handleSearch() {
   currentPage.value = 1
   fetchAgents()
-}
-
-function handleTagFilterChange() {
-  currentPage.value = 1
 }
 
 function handleSizeChange() {
@@ -207,10 +177,5 @@ onMounted(fetchAgents)
 .pagination {
   margin-top: 20px;
   justify-content: flex-end;
-}
-
-.tag-item {
-  margin-right: 4px;
-  margin-bottom: 2px;
 }
 </style>
