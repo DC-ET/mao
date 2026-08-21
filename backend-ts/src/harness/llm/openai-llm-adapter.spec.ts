@@ -232,6 +232,23 @@ describe('OpenAiLlmAdapter', () => {
     expect(server.bodies[0]).toContain('"reasoning":{"effort":"high"}');
   });
 
+  it('chatParsesOpenRouterReasoningFields', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"gen-1","model":"stealth/ox-alpha","choices":[{"index":0,"message":{"role":"assistant","content":"答案","reasoning":"思考过程","reasoning_details":[{"type":"reasoning.text","text":"思考过程","format":"unknown","index":0}]},"finish_reason":"stop"}]}');
+    await server.start();
+    const response = await adapter(0, 0).chat(request('hello'), configOf(server));
+    expect(response.choices?.[0]?.message?.reasoningContent).toBe('思考过程');
+    expect(response.choices?.[0]?.message?.content).toBe('答案');
+  });
+
+  it('chatParsesDeepSeekReasoningContentField', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"gen-2","choices":[{"index":0,"message":{"role":"assistant","content":"答案","reasoning_content":"思考过程"},"finish_reason":"stop"}]}');
+    await server.start();
+    const response = await adapter(0, 0).chat(request('hello'), configOf(server));
+    expect(response.choices?.[0]?.message?.reasoningContent).toBe('思考过程');
+  });
+
   it('chatIncludesThinkingDisableFieldsWhenPresentOnRequest', async () => {
     server = new QueueServer();
     server.enqueueJson('{"id":"ok","choices":[]}');
@@ -487,6 +504,25 @@ describe('OpenAiLlmAdapter', () => {
     expect(callback.chunks).toHaveLength(1);
     expect(callback.chunks[0]?.choices?.[0]?.delta?.content).toBe('review complete');
     expect(callback.usage).toBeDefined();
+  });
+
+  it('streamParsesOpenRouterReasoningDelta', async () => {
+    server = new QueueServer();
+    // OpenRouter 风格：思考阶段走 delta.reasoning / delta.reasoning_details，答案阶段走 delta.content
+    server.enqueueSse(
+      'data: {"choices":[{"delta":{"role":"assistant","content":"","reasoning":"思考","reasoning_details":[{"type":"reasoning.text","text":"思考","format":"unknown","index":0}]}}]}\n\n'
+      + 'data: {"choices":[{"delta":{"content":"答案"}}]}\n\n'
+      + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+      + 'data: [DONE]\n\n',
+    );
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(0, 0).stream(request('reasoning-delta'), configOf(server), callback, { get: () => false });
+    expect(callback.error).toBeUndefined();
+    const reasoning = callback.chunks.map((c) => c.choices?.[0]?.delta?.reasoningContent ?? '').join('');
+    const content = callback.chunks.map((c) => c.choices?.[0]?.delta?.content ?? '').join('');
+    expect(reasoning).toBe('思考');
+    expect(content).toBe('答案');
   });
 
   it('streamReportsFriendlyErrorWhenThinkingTruncatedRetriesExhausted', async () => {

@@ -15,6 +15,11 @@
 
 ---
 
+## 0.0.42 (2026-08-21)
+
+### 后端
+- 兼容 OpenRouter 风格思考字段：LLM 响应解析现支持 `reasoning` / `reasoning_details`（含流式 `delta.reasoning`），归一化到内部思考通道，修复部分模型（如 `stealth/ox-alpha`）执行任务时思考过程不显示的问题。
+
 ## 0.0.41 (2026-08-21)
 
 ### 终端 CLI（mao-agent）

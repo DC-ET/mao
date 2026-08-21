@@ -132,7 +132,23 @@ function parseMessage(raw: unknown): ChatMessage | undefined {
     toolCallId: (raw.tool_call_id ?? raw.toolCallId) as string | undefined,
     toolCalls: parseToolCalls(raw.tool_calls ?? raw.toolCalls),
     audio: raw.audio as ChatMessage['audio'],
+    reasoningContent: normalizeReasoning(raw.reasoning ?? raw.reasoning_content ?? raw.reasoningContent),
   };
+}
+
+// 兼容 OpenRouter 风格思考字段：reasoning 为字符串，reasoning_details 为结构化分片数组
+function normalizeReasoning(raw: unknown): string | undefined {
+  if (typeof raw === 'string') return raw === '' ? undefined : raw;
+  if (!Array.isArray(raw)) return undefined;
+  const text = raw
+    .map((item) => {
+      if (typeof item === 'string') return item;
+      if (isPlainObject(item)) return item.text;
+      return undefined;
+    })
+    .filter((t): t is string => typeof t === 'string')
+    .join('');
+  return text === '' ? undefined : text;
 }
 
 function parseUsage(raw: unknown): ChatUsage | undefined {
@@ -185,7 +201,7 @@ export function parseStreamChunk(raw: unknown): StreamChunk {
               role: delta.role as string | undefined,
               content: delta.content as string | undefined,
               toolCalls: parseToolCalls(delta.tool_calls ?? delta.toolCalls),
-              reasoningContent: (delta.reasoning_content ?? delta.reasoningContent) as string | undefined,
+              reasoningContent: normalizeReasoning(delta.reasoning ?? delta.reasoning_content ?? delta.reasoningContent),
             }
           : undefined,
       };

@@ -54,6 +54,7 @@ export interface ChatMessage {
   toolCallId?: string;
   toolCalls?: ToolCall[];
   audio?: ChatAudio;
+  reasoningContent?: string;
 }
 
 export interface ChatRequest {
