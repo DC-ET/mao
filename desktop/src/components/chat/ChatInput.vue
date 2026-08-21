@@ -1108,7 +1108,29 @@ onMounted(() => {
   registerChatInput(props.registerKey, { insertFileReference })
 })
 
-defineExpose({ focusInput, insertFileReference, clearInput })
+/** 输入框是否有未发送内容（文本或附件），供队列消息撤回前检查草稿冲突。 */
+function hasDraft(): boolean {
+  return editorContent.value.trim().length > 0 || pendingFiles.value.length > 0
+}
+
+/** 撤回回填：清空当前内容后写入文本与图片附件（图片需已完成 URL→File 转换）。 */
+function restoreContent(text: string, files: File[]) {
+  clearInput()
+  if (text) {
+    const escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+    editor.value?.commands.setContent(`<p>${escaped.replace(/\n/g, '<br>')}</p>`)
+    editorContent.value = text
+  }
+  for (const file of files) {
+    addPendingImage(file)
+  }
+}
+
+defineExpose({ focusInput, insertFileReference, clearInput, hasDraft, restoreContent })
 
 onBeforeUnmount(() => {
   unregisterChatInput(props.registerKey)

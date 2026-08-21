@@ -22,6 +22,13 @@
         </div>
         <div class="queue-item-actions">
           <button
+            class="action-btn"
+            title="编辑"
+            @click="emit('edit', msg)"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          </button>
+          <button
             v-if="index > 0"
             class="action-btn"
             title="上移"
@@ -68,6 +75,7 @@
 import { ref, computed, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { useSessionStore } from '../../stores/session'
+import type { QueueMessage } from '../../types/chat'
 
 const props = defineProps<{
   /** 可选：指定会话 ID，用于非活跃会话（如边路任务）的队列消息 */
@@ -75,6 +83,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  edit: [msg: QueueMessage]
   insert: [queueId: string]
   delete: [queueId: string]
   reorder: [queueId: string, direction: 'up' | 'down']

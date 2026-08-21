@@ -46,6 +46,7 @@
     </div>
 
     <QueuePanel
+      @edit="handleQueueEdit"
       @insert="insertQueueMessage"
       @delete="deleteQueueMessage"
       @reorder="(id, dir) => reorderQueueMessage(id, dir)"
@@ -125,6 +126,9 @@ import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { api } from '../../api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { fetchImagesAsFiles } from '../../utils/file'
+import type { QueueMessage } from '../../types/chat'
 import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QueuePanel from './QueuePanel.vue'
@@ -403,6 +407,34 @@ async function confirmEdit(messageId: string, newContent: string) {
   userScrolledUp.value = false
   await editAndResend(messageId, newContent)
   nextTick(scrollToBottomSmooth)
+}
+
+// --- 队列消息撤回编辑 ---
+
+async function handleQueueEdit(msg: QueueMessage) {
+  if (chatInputRef.value?.hasDraft()) {
+    try {
+      await ElMessageBox.confirm('输入框已有未发送内容，撤回将覆盖，是否继续？', '编辑队列消息', {
+        confirmButtonText: '覆盖并编辑',
+        cancelButtonText: '取消',
+        type: 'warning',
+      })
+    } catch {
+      return
+    }
+  }
+  let files: File[] = []
+  if (msg.images && msg.images.length > 0) {
+    try {
+      files = await fetchImagesAsFiles(msg.images)
+    } catch {
+      ElMessage.error('图片获取失败，已取消编辑')
+      return
+    }
+  }
+  await deleteQueueMessage(msg.id)
+  chatInputRef.value?.restoreContent(msg.content, files)
+  nextTick(() => chatInputRef.value?.focusInput())
 }
 
 // Auto-scroll

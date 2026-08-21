@@ -53,6 +53,7 @@
     <QueuePanel
       v-if="hasRealSession"
       :session-id="String(realSessionId)"
+      @edit="handleQueueEdit"
       @insert="insertQueueMessage"
       @delete="deleteQueueMessage"
       @reorder="(id, dir) => reorderQueueMessage(id, dir)"
@@ -122,6 +123,9 @@ import QuestionPanel from './QuestionPanel.vue'
 import QueuePanel from './QueuePanel.vue'
 import ApprovalStack from './ApprovalStack.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { fetchImagesAsFiles } from '../../utils/file'
+import type { QueueMessage } from '../../types/chat'
 
 const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 
@@ -655,6 +659,34 @@ function deleteQueueMessage(queueId: string) {
 function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
   if (!hasRealSession.value) return
   wsReorderQueueMessage(String(realSessionId.value), queueId, direction)
+}
+
+// --- 队列消息撤回编辑 ---
+
+async function handleQueueEdit(msg: QueueMessage) {
+  if (chatInputRef.value?.hasDraft()) {
+    try {
+      await ElMessageBox.confirm('输入框已有未发送内容，撤回将覆盖，是否继续？', '编辑队列消息', {
+        confirmButtonText: '覆盖并编辑',
+        cancelButtonText: '取消',
+        type: 'warning',
+      })
+    } catch {
+      return
+    }
+  }
+  let files: File[] = []
+  if (msg.images && msg.images.length > 0) {
+    try {
+      files = await fetchImagesAsFiles(msg.images)
+    } catch {
+      ElMessage.error('图片获取失败，已取消编辑')
+      return
+    }
+  }
+  await deleteQueueMessage(msg.id)
+  chatInputRef.value?.restoreContent(msg.content, files)
+  nextTick(() => chatInputRef.value?.focusInput())
 }
 </script>
 
