@@ -73,8 +73,8 @@ export class SubAgentVisibilityService {
     childSession: Session,
     subContext: AgentExecutionContext,
     skip: boolean,
+    collector: SubAgentResultCollector = new SubAgentResultCollector(),
   ): Promise<VisibleRunResult> {
-    const collector = new SubAgentResultCollector();
     const executionId = crypto.randomUUID();
     if (skip) {
       collector.completed = true;

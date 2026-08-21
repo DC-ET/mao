@@ -8,7 +8,7 @@ import type { Session, SessionMapper, SessionService } from '../deps.js';
 import { harnessLog } from '../log.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './agent-definition-registry.js';
-import type { SubAgentResultCollector } from './subagent-result-collector.js';
+import { SubAgentResultCollector } from './subagent-result-collector.js';
 import type { SubagentExecutionMapper } from './subagent-execution.mapper.js';
 import type { SubagentInvocationService } from './subagent-invocation.service.js';
 import type { SubAgentVisibilityService } from './subagent-visibility-service.js';
@@ -45,6 +45,11 @@ interface BackgroundResultEntry {
   resultJson: string;
 }
 
+interface RunningExecutionRefs {
+  context: AgentExecutionContext;
+  collector: SubAgentResultCollector;
+}
+
 export interface BackgroundSubagentManagerDeps {
   definitionRegistry: AgentDefinitionRegistry;
   harnessService: () => HarnessService;
@@ -65,6 +70,7 @@ export interface BackgroundSubagentManagerDeps {
 export class BackgroundSubagentManager {
   private readonly runningByParent = new Map<number, Set<number>>();
   private readonly resultsByParent = new Map<number, BackgroundResultEntry[]>();
+  private readonly runningRefsByTask = new Map<number, RunningExecutionRefs>();
 
   constructor(private readonly deps: BackgroundSubagentManagerDeps) {}
 
@@ -272,18 +278,21 @@ export class BackgroundSubagentManager {
   private async snapshot(taskId: number): Promise<BackgroundProgress | null> {
     const execution = await this.deps.subagentExecutionMapper.findById(taskId);
     if (!execution) return null;
-    const recentOutput = isTerminal(execution.status)
+    const terminal = isTerminal(execution.status);
+    const recentOutput = terminal
       ? truncate(execution.result ?? '', 2000) || null
       : await this.recentOutput(execution.childSessionId ?? null);
+    // 运行中优先读内存实时引用（context/collector），DB 里的统计值要到终态才落库
+    const refs = terminal ? undefined : this.runningRefsByTask.get(taskId);
     return {
       taskId,
       childSessionId: execution.childSessionId ?? null,
       agentType: execution.agentType ?? null,
       status: execution.status ?? null,
-      totalRounds: execution.totalRounds ?? null,
-      totalToolCalls: execution.totalToolCalls ?? null,
-      totalPromptTokens: execution.totalPromptTokens ?? null,
-      totalCompletionTokens: execution.totalCompletionTokens ?? null,
+      totalRounds: refs ? refs.context.currentRound : execution.totalRounds ?? null,
+      totalToolCalls: refs ? refs.collector.toolCallCount : execution.totalToolCalls ?? null,
+      totalPromptTokens: refs ? refs.collector.totalUsage?.promptTokens ?? 0 : execution.totalPromptTokens ?? null,
+      totalCompletionTokens: refs ? refs.collector.totalUsage?.completionTokens ?? 0 : execution.totalCompletionTokens ?? null,
       recentOutput,
     };
   }
@@ -435,15 +444,19 @@ export class BackgroundSubagentManager {
         if (parentCancel.get()) childCancel.set(true);
       }
 
+      const collector = new SubAgentResultCollector();
+      if (execution.id != null) {
+        this.runningRefsByTask.set(execution.id, { context: subContext, collector });
+      }
+
       let runResult;
       try {
-        runResult = await this.deps.visibilityService.executeVisible(childSession, subContext, childCancel.get());
+        runResult = await this.deps.visibilityService.executeVisible(childSession, subContext, childCancel.get(), collector);
       } finally {
         loop.removeCancelFlag(childSessionId);
         this.deps.localToolSessionRegistry.removeSession?.(childSessionId);
       }
 
-      const collector = runResult.collector;
       runExecutionId = runResult.executionId;
       const cancelled = childCancel.get() || parentCancel?.get() === true;
       let resultText: string;
@@ -487,6 +500,7 @@ export class BackgroundSubagentManager {
       const message = '后台子代理执行失败: ' + ((e as Error)?.message ?? '子代理执行异常');
       await this.failExecution(execution, childSession, message, runExecutionId);
     } finally {
+      if (execution.id != null) this.runningRefsByTask.delete(execution.id);
       this.untrackRunning(parentSessionId, execution.id ?? -1);
       this.deps.agentLoop().removeCancelFlag(childSessionId);
     }

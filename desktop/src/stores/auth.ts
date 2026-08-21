@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api } from '../api'
 import { useSessionStore } from './session'
+import { useDraftStore } from './draft'
 import { useStreamWS } from '../composables/useStreamWS'
 import { clearTokens, getToken, setTokens } from '../utils/auth-storage'
 
@@ -85,6 +86,7 @@ export const useAuthStore = defineStore('auth', () => {
       await clearTokens()
       useStreamWS().disconnect()
       useSessionStore().reset()
+      useDraftStore().reset()
     }
   }
 

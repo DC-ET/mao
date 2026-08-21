@@ -82,6 +82,7 @@
       <ChatInput
         ref="chatInputRef"
         :register-key="tabId"
+        :draft-key="tabId"
         :loading="sending"
         :waiting-for-save="waitingForSave"
         :workspace="parentWorkspace"
@@ -103,6 +104,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, inject, type Ref } from 'vue'
 import { Opportunity, Loading } from '@element-plus/icons-vue'
 import { useSessionStore } from '../../stores/session'
+import { useDraftStore } from '../../stores/draft'
 import { useStreamWS } from '../../composables/useStreamWS'
 import { api } from '../../api'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
@@ -137,6 +139,7 @@ const props = defineProps<{
 }>()
 
 const sessionStore = useSessionStore()
+const draftStore = useDraftStore()
 const { createSideSession, sendMessage, cancel, retryExecution, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, onMessageSaved, offMessageSaved } = useStreamWS()
 const { openWithContent } = useCommandDrawer()
 const { pendingApprovals, confirmApproval } = useToolApprovals()
@@ -524,6 +527,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
   // 边路任务正在执行中：将消息加入队列（不受 sending 状态阻塞）
   if (hasRealSession.value && isSideActive.value) {
     enqueueMessage(String(realSessionId.value), resolvedText, generateUUID(), imageUrls)
+    draftStore.clearDraft(props.tabId)
     chatInputRef.value?.clearInput()
     return
   }
@@ -597,6 +601,8 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
 
   // 等待消息保存确认：仅在保存成功时清空输入（与主会话 ChatPanel 一致）；
   // 超时/卸载只解锁 waitingForSave，保留草稿以便重试。
+  // 发送前捕获 tabId：等待期间 tab 可能被关闭/晋升，保存成功后必须清掉对应草稿槽位。
+  const draftKeyAtSend = props.tabId
   let settled = false
   let saveTimeoutId: ReturnType<typeof setTimeout>
   const finishWaiting = (clearInput: boolean) => {
@@ -608,6 +614,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
     offMessageSaved(callbackId)
     waitingForSave.value = false
     if (clearInput) {
+      draftStore.clearDraft(draftKeyAtSend)
       chatInputRef.value?.clearInput()
     }
   }

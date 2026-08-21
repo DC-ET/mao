@@ -101,6 +101,7 @@
       :git-branch="isNewTaskMode ? newTaskGitBranch : ''"
       :cloud-projects="isNewTaskMode ? newTaskCloudProjects : []"
       :waiting-for-save="waitingForSave"
+      :draft-key="currentDraftKey"
       @send="handleSend"
       @stop="handleStop"
       @update:permission-level="handlePermissionLevelChange"
@@ -125,6 +126,7 @@ import { useChat, normalizeMessageRole, type ChatMessage } from '../../composabl
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
+import { useDraftStore } from '../../stores/draft'
 import { api } from '../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchImagesAsFiles } from '../../utils/file'
@@ -169,6 +171,7 @@ const openSideTask = inject<(() => void) | undefined>('openSideTask', undefined)
 
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
+const draftStore = useDraftStore()
 const router = useRouter()
 const { openWithContent } = useCommandDrawer()
 
@@ -297,6 +300,15 @@ watch(isNewTaskMode, (enabled) => {
 })
 
 const currentSession = computed(() => sessionStore.activeSession)
+
+/**
+ * 当前草稿绑定键：新建任务共用 'new'，已有会话按会话 ID 隔离。
+ * 加载过渡期（无 activeSessionId 且非新建任务）返回 null，输入框跳过存取。
+ */
+const currentDraftKey = computed<string | null>(() => {
+  if (isNewTaskMode.value) return 'new'
+  return sessionStore.activeSessionId ? `s:${sessionStore.activeSessionId}` : null
+})
 
 const currentModelSupportsVision = computed(() => {
   if (isNewTaskMode.value) {
@@ -593,11 +605,18 @@ async function handleSend(text: string, files: File[], pendingUploads?: File[]) 
   }
   userScrolledUp.value = false
 
+  // 发送前捕获草稿键：等待保存期间用户可能切走会话，
+  // 无论 UI 是否被作废，已发出的草稿槽位都必须清除
+  const draftKeyAtSend = currentDraftKey.value
+
   // Agent 运行中走队列，不阻塞输入框
   if (isActive.value) {
+    const generation = ++sendGeneration
     const sent = await sendMessageWithQueue(text, files, pendingUploads)
     if (sent) {
-      chatInputRef.value?.clearInput()
+      if (draftKeyAtSend) draftStore.clearDraft(draftKeyAtSend)
+      // await 期间用户可能已切走会话：仅当 UI 未被作废时才清空当前输入框
+      if (generation === sendGeneration) chatInputRef.value?.clearInput()
       nextTick(scrollToBottomSmooth)
     }
     return
@@ -608,9 +627,22 @@ async function handleSend(text: string, files: File[], pendingUploads?: File[]) 
   waitingForSave.value = true
   try {
     const saved = await sendMessageAndWaitForSave(text, files, pendingUploads)
+    if (saved && draftKeyAtSend) draftStore.clearDraft(draftKeyAtSend)
     // 若 KeepAlive 切回已作废本轮 UI，勿清空用户可能已重新编辑的输入
     if (saved && generation === sendGeneration) {
       chatInputRef.value?.clearInput()
+    }
+    // 新建任务首发失败：createSession 成功已跳转新会话，键切换时草稿被存入 'new' 槽位、
+    // 编辑器被清空。失败需回填到当前输入框，避免用户误以为内容丢失。
+    // 输入框已有内容（用户切回新建任务时草稿已自动恢复/重新输入）则跳过，防止覆盖。
+    if (!saved && generation === sendGeneration && draftKeyAtSend === 'new') {
+      const entry = draftStore.getDraft('new')
+      if (entry && !chatInputRef.value?.hasDraft()) {
+        // 回填时按文件类型重建预览 URL，旧 blob URL 不再使用，先释放
+        entry.filePreviewUrls.forEach(url => { if (url) URL.revokeObjectURL(url) })
+        draftStore.clearDraft('new')
+        chatInputRef.value?.restoreContent(entry.text, entry.files)
+      }
     }
   } finally {
     if (generation === sendGeneration) {

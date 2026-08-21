@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api'
+import { useDraftStore } from './draft'
 import type { ChatMessage, TodoItem, ContextWindowInfo, CompactionEvent, QueueMessage, FileChange, PendingQuestion } from '../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil, collectLiveRunningTools, mergeRunningToolsIntoMessages } from '../utils/chatMessage'
 import { nowDateTime } from '../utils/datetime'
@@ -1018,6 +1019,7 @@ export const useSessionStore = defineStore('session', () => {
       sessionQueueMessages.value.delete(sid)
       sessionFileChanges.value.delete(sid)
       clearMessagePageState(sid)
+      useDraftStore().clearDraft(`s:${sid}`)
     } catch {
       // ignore
     }

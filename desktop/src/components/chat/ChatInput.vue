@@ -219,6 +219,7 @@ import { FileReferenceNode } from './tiptap/FileReferenceNode'
 import type { Agent } from '../../stores/agent'
 import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
 import { useSessionStore, type CloudProject } from '../../stores/session'
+import { useDraftStore, type DraftEntry } from '../../stores/draft'
 import { api } from '../../api'
 import { cloudWorkspaceIndicator, extractGitRepoSlug, isHttpsGitUrl } from '../../utils/cloud-project'
 
@@ -245,6 +246,8 @@ const props = withDefaults(defineProps<{
   waitingForSave?: boolean
   /** 注册到「添加到聊天」的输入框 key：主会话默认 'chat'，边路任务传 tabId（如 'side:123'） */
   registerKey?: string
+  /** 草稿绑定键：主会话 's:{id}' / 新建任务 'new' / 边路任务 tabId；null 表示暂不绑定（加载过渡期） */
+  draftKey?: string | null
 }>(), {
   disabled: false,
   loading: false,
@@ -264,6 +267,7 @@ const props = withDefaults(defineProps<{
   cloudProjects: () => [],
   waitingForSave: false,
   registerKey: 'chat',
+  draftKey: null,
   // 视觉能力 tri-state：true=支持 / false=不支持 / undefined=未知（不拦截，交给后端校验）。
   // 必须显式声明，否则 Boolean 类型 props 未传时会被 Vue 强制为 false，导致发送被误拦截。
   modelSupportsVision: undefined,
@@ -293,6 +297,7 @@ const registerChatInput = inject<(key: string, handle: { insertFileReference: (f
 const unregisterChatInput = inject<(key: string) => void>('unregisterChatInput', () => {})
 
 // ===== State =====
+const draftStore = useDraftStore()
 const pendingFiles = ref<File[]>([])
 const filePreviewUrls = ref<string[]>([])
 const uploadingFiles = ref<boolean[]>([])
@@ -712,6 +717,51 @@ const editor = useEditor({
   },
 })
 
+// ===== Draft (per-session input draft) =====
+
+function buildCurrentDraft(): DraftEntry {
+  return {
+    html: editor.value?.getHTML() ?? '',
+    text: editorContent.value,
+    files: [...pendingFiles.value],
+    filePreviewUrls: [...filePreviewUrls.value],
+  }
+}
+
+/** 将当前输入内容写入草稿槽位；key 为空或已被显式清除时跳过 */
+function saveDraft(key?: string | null) {
+  if (!key || draftStore.isCleared(key)) return
+  draftStore.setDraft(key, buildCurrentDraft())
+}
+
+/**
+ * 恢复指定键的草稿；无草稿则清空编辑器与待发列表。
+ * 恢复的文件都是本地已选定的 File，不存在上传中状态。
+ */
+function restoreDraft(key?: string | null) {
+  if (!editor.value) return
+  const d = key ? draftStore.getDraft(key) : undefined
+  if (d) {
+    editor.value.commands.setContent(d.html || '')
+    editorContent.value = d.text
+    // 浅拷贝隔离 store 快照：移除待发文件时的 splice/revoke 不影响草稿槽位
+    pendingFiles.value = [...d.files]
+    filePreviewUrls.value = [...d.filePreviewUrls]
+  } else {
+    editor.value.commands.clearContent()
+    editorContent.value = ''
+    pendingFiles.value = []
+    filePreviewUrls.value = []
+  }
+  uploadingFiles.value = pendingFiles.value.map(() => false)
+}
+
+watch(() => props.draftKey, (newKey, oldKey) => {
+  // 先保存旧键内容，再恢复新键草稿
+  saveDraft(oldKey)
+  restoreDraft(newKey)
+})
+
 // ===== Slash trigger detection =====
 
 function detectSlashTrigger() {
@@ -1102,10 +1152,13 @@ function clearInput() {
   pendingFiles.value = []
   filePreviewUrls.value = []
   uploadingFiles.value = []
+  // 发送成功清空输入时同步清除对应草稿
+  if (props.draftKey) draftStore.clearDraft(props.draftKey)
 }
 
 onMounted(() => {
   registerChatInput(props.registerKey, { insertFileReference })
+  restoreDraft(props.draftKey)
 })
 
 /** 输入框是否有未发送内容（文本或附件），供队列消息撤回前检查草稿冲突。 */
@@ -1113,7 +1166,7 @@ function hasDraft(): boolean {
   return editorContent.value.trim().length > 0 || pendingFiles.value.length > 0
 }
 
-/** 撤回回填：清空当前内容后写入文本与图片附件（图片需已完成 URL→File 转换）。 */
+/** 撤回回填：清空当前内容后写入文本与附件（图片重建预览 URL，非图片文件直接加入待发列表）。 */
 function restoreContent(text: string, files: File[]) {
   clearInput()
   if (text) {
@@ -1126,7 +1179,11 @@ function restoreContent(text: string, files: File[]) {
     editorContent.value = text
   }
   for (const file of files) {
-    addPendingImage(file)
+    if (file.type.startsWith('image/')) {
+      addPendingImage(file)
+    } else {
+      addPendingFile(file)
+    }
   }
 }
 
@@ -1134,7 +1191,13 @@ defineExpose({ focusInput, insertFileReference, clearInput, hasDraft, restoreCon
 
 onBeforeUnmount(() => {
   unregisterChatInput(props.registerKey)
-  filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
+  // 兜底保存当前草稿（覆盖 KeepAlive 淘汰 / 路由离开）
+  saveDraft(props.draftKey)
+  const entry = props.draftKey ? draftStore.getDraft(props.draftKey) : undefined
+  // 预览 URL 所有权已随草稿转移：仍有草稿条目时不 revoke，避免切回后预览失效
+  if (!entry) {
+    filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
+  }
   filePreviewUrls.value = []
   editor.value?.destroy()
 })

@@ -67,6 +67,7 @@ import { useStreamWS } from '../../composables/useStreamWS'
 import { useLoginDialog } from '../../composables/useLoginDialog'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase, type SubagentItem } from '../../stores/session'
+import { useDraftStore } from '../../stores/draft'
 import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useTerminal } from '../../composables/useTerminal'
 import { useCenterTabs } from '../../composables/useCenterTabs'
@@ -87,6 +88,7 @@ const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
+const draftStore = useDraftStore()
 const { connect } = useStreamWS()
 const { loginVersion } = useLoginDialog()
 const { loadPrefs } = useTaskPanelPrefs()
@@ -582,7 +584,10 @@ async function handleDeleteSideTask(sideSessionId: number) {
   const tab = tabs.value.find(t =>
     t.type === 'side_task' && (t.sideSessionId === sideSessionId || t.id === 'side:' + sideSessionId)
   )
-  if (tab) closeTab(tab.id)
+  if (tab) {
+    closeTab(tab.id)
+    draftStore.clearDraft(tab.id)
+  }
   sessionStore.removeSideTask(parentSessionId, sideSessionId)
 }
 
@@ -595,7 +600,10 @@ async function handlePromoteSideTask(sideSessionId: number) {
     const tab = tabs.value.find(t =>
       t.type === 'side_task' && (t.sideSessionId === sideSessionId || t.id === 'side:' + sideSessionId)
     )
-    if (tab) closeTab(tab.id)
+    if (tab) {
+      closeTab(tab.id)
+      draftStore.clearDraft(tab.id)
+    }
     sessionStore.removeSideTask(parentSessionId, sideSessionId)
     if (data?.id != null) {
       await router.push(`/tasks/${data.id}`)
