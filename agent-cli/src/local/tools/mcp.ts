@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { getCliVersion } from '../../util/version';
 
 export interface McpServerSpec {
   name: string;
@@ -105,7 +106,7 @@ async function connectStdio(server: McpServerSpec): Promise<{ conn: McpConn; too
   await rpc(conn, 'initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
-    clientInfo: { name: 'mao-agent', version: '0.1.0' },
+    clientInfo: { name: 'mao-agent', version: getCliVersion() },
   }, MCP_TIMEOUT_MS);
   notify(conn, 'notifications/initialized', {});
   const listed = await rpc(conn, 'tools/list', {}, MCP_TIMEOUT_MS) as { tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> };
@@ -129,7 +130,7 @@ async function connectHttp(server: McpServerSpec): Promise<McpToolDef[]> {
       params: {
         protocolVersion: '2024-11-05',
         capabilities: {},
-        clientInfo: { name: 'mao-agent', version: '0.1.0' },
+        clientInfo: { name: 'mao-agent', version: getCliVersion() },
       },
     }),
   });

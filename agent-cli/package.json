@@ -1,6 +1,6 @@
 {
   "name": "mao-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "mao-agent — 无 GUI 终端对话式 Agent 客户端（CLOUD / LOCAL）",
   "bin": {
     "mao-agent": "bin/mao-agent.js"

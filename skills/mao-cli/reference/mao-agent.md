@@ -12,6 +12,13 @@
 curl -fsSL https://raw.githubusercontent.com/DC-ET/mao/main/scripts/install-mao-agent.sh | bash
 ```
 
+升级（等价于重跑安装脚本；`--check` 仅检查远端是否有新版本）：
+
+```bash
+mao-agent update            # 拉取最新源码并重装
+mao-agent update --check    # 只检查，不安装
+```
+
 ```bash
 mao-agent login          # 密码无回显
 mao-agent                # 交互 REPL（CLOUD）

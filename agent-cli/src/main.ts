@@ -11,6 +11,7 @@ import { cmdLogout } from './commands/logout';
 import { cmdStatus } from './commands/status';
 import { cmdLs } from './commands/ls';
 import { cmdChat } from './commands/chat';
+import { cmdUpdate } from './commands/update';
 
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return '';
@@ -93,6 +94,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         return 0;
       case 'status':
         cmdStatus({ baseUrl, cliToken: cfg.token });
+        return 0;
+      case 'update':
+        await cmdUpdate({
+          ref: cfg.updateRef,
+          repo: cfg.updateRepo,
+          srcDir: cfg.updateSrcDir,
+          check: cfg.updateCheck,
+        });
         return 0;
       case 'ls':
         await cmdLs(rest, cfg.outputFormat === 'json' || cfg.outputFormat === 'stream-json', {

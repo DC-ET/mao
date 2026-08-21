@@ -5,7 +5,16 @@ export type IfRunning = 'wait' | 'cancel' | 'fail';
 export type OnQuestion = 'ask' | 'fail';
 export type OnApproval = 'ask' | 'fail';
 export type PermissionLevel = 'READ_ONLY' | 'READ_WRITE' | 'SMART' | 'FULL';
-export type CommandName = 'login' | 'logout' | 'status' | 'ls' | 'resume' | 'chat' | 'help' | 'version';
+export type CommandName =
+  | 'login'
+  | 'logout'
+  | 'status'
+  | 'ls'
+  | 'resume'
+  | 'chat'
+  | 'update'
+  | 'help'
+  | 'version';
 
 export const LOCAL_APPROVAL_FLAGS = [
   'yolo',
@@ -71,6 +80,10 @@ export interface CliConfig {
   iKnowWhatImDoing: boolean;
   username?: string;
   password?: string;
+  updateRef?: string;
+  updateRepo?: string;
+  updateSrcDir?: string;
+  updateCheck: boolean;
   help: boolean;
   version: boolean;
   stdoutIsTty: boolean;
@@ -242,7 +255,7 @@ export function parseCliConfig(
   let rest = positionals;
   if (help && positionals.length === 0) command = 'help';
   else if (version && positionals.length === 0) command = 'version';
-  else if (first === 'login' || first === 'logout' || first === 'status' || first === 'ls' || first === 'resume' || first === 'help') {
+  else if (first === 'login' || first === 'logout' || first === 'status' || first === 'ls' || first === 'resume' || first === 'update' || first === 'help') {
     command = first;
     rest = positionals.slice(1);
   }
@@ -349,6 +362,10 @@ export function parseCliConfig(
     iKnowWhatImDoing: hasFlag(flags, 'i-know-what-im-doing'),
     username: optionalString(flags, 'username'),
     password: optionalString(flags, 'password'),
+    updateRef: optionalString(flags, 'ref'),
+    updateRepo: optionalString(flags, 'repo'),
+    updateSrcDir: optionalString(flags, 'src-dir'),
+    updateCheck: hasFlag(flags, 'check'),
     help,
     version,
     stdoutIsTty,
@@ -367,6 +384,8 @@ export const HELP_TEXT = `mao-agent CLI — 无 GUI 终端对话式 Agent 客户
   mao-agent login                    用户名密码登录，写入 ~/.mao/auth.json
   mao-agent logout                   清除本地登录态
   mao-agent status                   当前登录用户 / token 剩余有效期 / baseUrl / CLI 版本
+  mao-agent update [--check] [--ref <ref>] [--repo <url>]
+                                     拉取最新源码并重装（复用安装脚本逻辑）；--check 仅检查新版本
   mao-agent --help / --version
 
 全局选项:
