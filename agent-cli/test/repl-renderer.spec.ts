@@ -238,7 +238,7 @@ describe('ReplRenderer', () => {
       renderer.printHeader(['mao-agent #1', '输入消息开始']);
       renderer.noteUser('hello');
       const out = stdout();
-      expect(out).toContain('\x1b[?1049h');
+      expect(out).not.toContain('\x1b[?1049h');
       expect(out).toMatch(/\x1b\[3;\d+r/);
       expect(out).toContain('\x1b[48;5;236m');
       expect(out).toContain('hello');

@@ -43,7 +43,8 @@ export class Composer {
 
   tryStart(): boolean {
     if ((this.opts.rows() || 0) < MIN_ROWS) return false;
-    this.opts.write('\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l');
+    // 不进入备用屏（alt screen），留在主屏缓冲，终端原生 scrollback 可保留历史对话。
+    this.opts.write('\x1b[2J\x1b[H\x1b[?25l');
     this.active = true;
     this.mode = 'idle';
     this.draft = '';
@@ -76,7 +77,7 @@ export class Composer {
       clearInterval(this.timer);
       this.timer = null;
     }
-    this.opts.write('\x1b[r\x1b[?25h\x1b[?1049l');
+    this.opts.write('\x1b[r\x1b[?25h');
     this.active = false;
   }
 

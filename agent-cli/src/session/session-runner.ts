@@ -538,6 +538,10 @@ export class SessionRunner {
       return;
     }
     const answers = await this.opts.askHandler(requestId, questions);
+    if (answers === 'cancelled') {
+      // 服务端已取消问答：静默收尾，不置 questionFailedFlag、不发 cancel/result
+      return;
+    }
     if (answers === 'fail') {
       this.questionFailedFlag = true;
       this.opts.ws.send({ type: 'cancel', sessionId: this.sessionId });

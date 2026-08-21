@@ -1,15 +1,15 @@
 import type { AskAnswer, AskQuestion } from '../ws/event-types';
 import type { SessionRunner } from '../session/session-runner';
-import type { ReplRenderer } from '../render/repl-renderer';
+import type { InkTuiRenderer } from '../tui/ink-renderer';
+import type { InkTuiHandle } from '../tui/types';
+import { PromptQueue } from '../ui/prompt-queue';
 import { formatContextPercent } from '../util/context';
-import { InputController } from '../ui/input-controller';
-import { formatWelcomeHints } from '../ui/welcome';
-import { completeSlash } from '../ui/slash-complete';
 import { copyToClipboard } from '../ui/clipboard';
 
 export interface ReplOptions {
   runner: SessionRunner;
-  renderer: ReplRenderer;
+  renderer: InkTuiRenderer;
+  tuiHandle: InkTuiHandle;
   modelId?: number;
   resolveModel: (spec: string) => Promise<number>;
   onExit: () => Promise<void>;
@@ -18,7 +18,7 @@ export interface ReplOptions {
   asciiOnly?: boolean;
   welcomeLines?: string[];
   historyLines?: string[];
-  onInputReady?: (input: InputController) => void;
+  onInputReady?: () => void;
   modelNames?: string[];
 }
 
@@ -55,11 +55,7 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
   let buffer = '';
   let lastSigint = 0;
   let cancelHint: ReturnType<typeof setTimeout> | null = null;
-  let input: InputController;
-  let resolveClosed: () => void = () => undefined;
-  const closed = new Promise<void>((resolve) => {
-    resolveClosed = resolve;
-  });
+  const queue = new PromptQueue();
 
   const writeErr = (s: string) => {
     opts.renderer.announce(s);
@@ -81,35 +77,23 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     }, 8000);
   };
 
-  const printWelcome = () => {
-    const header = opts.welcomeLines?.length ? opts.welcomeLines : [formatWelcomeHints()];
-    opts.renderer.printHeader(header);
-    if (opts.historyLines && opts.historyLines.length > 0) {
-      writeErr('');
-      for (const line of opts.historyLines) writeErr(line);
-    }
-  };
-
   const requestExit = async () => {
     if (closing) return;
     closing = true;
     clearCancelHint();
-    await input.stop();
     await opts.onExit();
-    resolveClosed();
+    opts.tuiHandle.unmount();
   };
 
   const handleCancel = () => {
     if (closing) return;
     if (opts.runner.isRunning()) {
       if (opts.runner.cancelledByUser) {
-        closing = true;
+        // 已发过 cancel 且仍在收尾：再次 Ctrl+C 强制退出（requestExit 内部置 closing）
         void requestExit();
         return;
       }
-      input.queue.clear();
-      input.clearDraft();
-      opts.renderer.setDraft('');
+      queue.clear();
       void opts.runner.cancel();
       writeErr('已发送 cancel，等待任务结束…');
       armCancelHint();
@@ -122,14 +106,12 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     }
     lastSigint = now;
     writeErr('再次 Ctrl+C 退出，或输入 /exit。');
-    input.prompt();
   };
 
   const runOne = async (text: string) => {
     draining = true;
     opts.renderer.clearTransient();
-    input.setRunning(true);
-    if (!input.echoesSubmit) opts.renderer.noteUser(text);
+    opts.renderer.noteUser(text);
     opts.renderer.startRound();
     try {
       await opts.runner.runPrompt(text, opts.modelId);
@@ -137,7 +119,6 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
       writeErr(err instanceof Error ? err.message : String(err));
     } finally {
       clearCancelHint();
-      input.setRunning(false);
       draining = false;
     }
   };
@@ -146,27 +127,26 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     const trimmed = raw.replace(/\s+$/, '');
     if (trimmed.endsWith('\\') && !fenceOpen(buffer + trimmed.slice(0, -1))) {
       buffer += trimmed.slice(0, -1) + '\n';
-      input.setContinuationPrompt();
+      opts.tuiHandle.setContinuation(true);
       return;
     }
     buffer += (buffer ? '\n' : '') + raw;
     if (fenceOpen(buffer)) {
-      input.setContinuationPrompt();
+      opts.tuiHandle.setContinuation(true);
       return;
     }
     const text = buffer.trim();
     buffer = '';
+    opts.tuiHandle.setContinuation(false);
     if (!text) {
-      if (!opts.runner.isRunning() && !draining) input.prompt();
       return;
     }
     if (text.startsWith('/')) {
-      const handled = await handleSlash(text, opts, input, writeErr, printWelcome);
+      const handled = await handleSlash(text, opts, queue, writeErr);
       if (handled === 'exit') {
         await requestExit();
         return;
       }
-      if (!opts.runner.isRunning() && !draining && !closing) input.prompt();
       return;
     }
     if (opts.runner.isRunning() || draining) {
@@ -174,16 +154,16 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
         writeErr('上一条还在跑。请等待结束或 /cancel。');
         return;
       }
-      const n = input.queue.push(text);
+      const n = queue.push(text);
       writeErr(`已排队（第 ${n} 条）。/queue 查看，Ctrl+C 清空。`);
       return;
     }
     await runOne(text);
-    while (!closing && input.queue.length > 0) {
-      const next = input.queue.shift();
+    while (!closing && queue.length > 0) {
+      const next = queue.shift();
       if (!next) break;
       if (next.startsWith('/')) {
-        const handled = await handleSlash(next, opts, input, writeErr, printWelcome);
+        const handled = await handleSlash(next, opts, queue, writeErr);
         if (handled === 'exit') {
           await requestExit();
           return;
@@ -192,61 +172,66 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
       }
       await runOne(next);
     }
-    if (!closing) input.prompt();
   };
 
-  input = new InputController({
-    onLine: (line) => handleSubmit(line),
-    onCancel: () => handleCancel(),
-    onExit: () => {
-      if (!closing) void requestExit();
+  // Wire up input callbacks to the renderer
+  opts.renderer.setInputHandlers({
+    onSubmit: (text: string) => {
+      void handleSubmit(text).catch((err) => {
+        writeErr(err instanceof Error ? err.message : String(err));
+      });
     },
-    onDraftChange: (draft) => opts.renderer.setDraft(draft),
-    completer: (line) => completeSlash(line, { models: opts.modelNames }),
-    composer: opts.renderer.getComposer(),
+    onCancel: () => handleCancel(),
+    onExit: () => { if (!closing) void requestExit(); },
+    onAskResponse: (requestId: string, answers: AskAnswer[] | 'fail' | 'cancelled') => {
+      opts.tuiHandle.setModal(null);
+      // 用户 fail / 服务端 cancelled 都走 resolveAsk；cancelled 由 handleQuestions 静默收尾
+      opts.renderer.resolveAsk(requestId, answers);
+    },
+    onApprovalResponse: (choice: 'allow' | 'deny' | 'always') => {
+      // 通过 resolveApproval 关闭 modal 并 resolve requestApproval 的 Promise，
+      // LocalExecutor 会继续处理 allow/deny/always。
+      opts.renderer.resolveApproval(choice);
+    },
   });
-  opts.onInputReady?.(input);
 
-  input.start();
-  printWelcome();
+  opts.onInputReady?.();
 
   if (opts.firstPrompt) {
     if (opts.runner.snapshotIsActive) {
       writeErr('该会话仍在执行，先续接当前输出…');
-      input.setRunning(true);
       try {
         await opts.runner.waitForCurrentRun();
       } catch (err) {
         writeErr(err instanceof Error ? err.message : String(err));
-      } finally {
-        input.setRunning(false);
       }
     }
     await handleSubmit(opts.firstPrompt);
   } else if (opts.runner.snapshotIsActive) {
     writeErr('该会话仍在执行，续接当前输出。可用 /cancel 中止。');
-    input.setRunning(true);
     try {
       await opts.runner.waitForCurrentRun();
     } catch (err) {
       writeErr(err instanceof Error ? err.message : String(err));
-    } finally {
-      input.setRunning(false);
     }
-    if (!closing) input.prompt();
-  } else {
-    input.prompt();
   }
 
-  await closed;
+  // Keep the promise alive until closing
+  return new Promise<void>((resolve) => {
+    const check = setInterval(() => {
+      if (closing) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 200);
+  });
 }
 
 async function handleSlash(
   text: string,
   opts: ReplOptions,
-  input: InputController,
+  queue: PromptQueue,
   writeErr: (s: string) => void,
-  printWelcome: () => void,
 ): Promise<'exit' | void> {
   const [cmd, ...rest] = text.slice(1).split(/\s+/);
   const arg = rest.join(' ').trim();
@@ -260,20 +245,11 @@ async function handleSlash(
       return;
     case 'cancel':
       await opts.runner.cancel();
-      input.queue.clear();
+      queue.clear();
       writeErr('已发送 cancel。');
       return;
     case 'clear': {
-      opts.renderer.clearTransient();
-      const composer = opts.renderer.getComposer();
-      if (composer?.isActive()) {
-        composer.wipe();
-        printWelcome();
-        composer.refresh();
-      } else {
-        process.stdout.write('\x1b[2J\x1b[H');
-        for (const line of opts.welcomeLines ?? []) writeErr(line);
-      }
+      opts.tuiHandle.clearAll();
       return;
     }
     case 'verbose': {
@@ -284,11 +260,11 @@ async function handleSlash(
     }
     case 'queue': {
       if (arg === 'clear') {
-        input.queue.clear();
+        queue.clear();
         writeErr('已清空队列。');
         return;
       }
-      const items = input.queue.list();
+      const items = queue.list();
       if (items.length === 0) {
         writeErr('(队列为空)');
         return;
@@ -297,16 +273,16 @@ async function handleSlash(
       return;
     }
     case 'copy': {
-      const text = opts.renderer.getLastAssistantText().trim();
-      if (!text) {
+      const copyText = opts.renderer.getLastAssistantText().trim();
+      if (!copyText) {
         writeErr('没有可复制的回复。');
         return;
       }
-      const ok = await copyToClipboard(text);
+      const ok = await copyToClipboard(copyText);
       if (ok) writeErr('已复制上一回合回复。');
       else {
         writeErr('本机没有剪贴板命令（pbcopy / wl-copy / xclip），上一回合回复如下：');
-        writeErr(text);
+        writeErr(copyText);
       }
       return;
     }
@@ -359,7 +335,7 @@ async function handleSlash(
   }
 }
 
-/** 无 InputController 时的降级（打印模式不应走到这里）。 */
+/** No-interactive fallback for ask_user_questions (print mode). */
 export async function askQuestionsInTty(questions: AskQuestion[]): Promise<AskAnswer[]> {
   const { createInterface } = await import('node:readline');
   const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });

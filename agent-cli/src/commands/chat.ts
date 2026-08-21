@@ -5,7 +5,6 @@ import type { RestClient } from '../rest/rest-client';
 import type { CreateSessionRequest, SessionVO } from '../rest/types';
 import { WsClient } from '../ws/ws-client';
 import { SessionRunner, exitCodeFor, pickLatestSession, resolveAgent, resolveModelId } from '../session/session-runner';
-import { ReplRenderer } from '../render/repl-renderer';
 import { TextRenderer } from '../render/text-renderer';
 import { JsonRenderer } from '../render/json-renderer';
 import type { Renderer, RunResult } from '../render/types';
@@ -22,11 +21,8 @@ import { addTrustedWorkspace, isWorkspaceTrusted, workspaceExists } from '../loc
 import { collectLocalUnsyncedSkills, readAgentsMd } from '../local/local-skills';
 import { buildOsVersion, detectShell, isGitWorkspace } from '../local/paths';
 import type { ApprovalPolicy } from '../local/approval';
-import type { InputController } from '../ui/input-controller';
-import { askQuestionsWithController } from '../ui/modal-ask';
-import { askApprovalWithController } from '../ui/modal-approval';
 import { formatHistorySummary, formatSessionBanner, formatWelcomeHints } from '../ui/welcome';
-import { pickSymbols } from '../ui/symbols';
+import { InkTuiRenderer } from '../tui/ink-renderer';
 
 export interface ChatContext {
   rest: RestClient;
@@ -77,35 +73,11 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     // 沿用默认窗口；Tab 补全没有模型名
   }
 
-  const replUi = new ReplRenderer({
-    printMode: cfg.print,
-    thinking: cfg.thinking,
-    stdoutIsTty: cfg.stdoutIsTty,
-    colorFlag: cfg.colorFlag,
-    agentName: session.agentName,
-    modelName: session.modelName,
-    executionMode: session.executionMode ?? 'CLOUD',
-    contextWindowTokens,
-    verboseTools: resolved.ui.verboseTools,
-    asciiOnly: resolved.ui.asciiOnly,
-    showTurnDividers: resolved.ui.showTurnDividers,
-  });
-  const renderers: Renderer[] = [];
-  if (cfg.traceFile) renderers.push(new TraceRenderer(cfg.traceFile));
-  if (cfg.print) {
-    if (cfg.outputFormat === 'text') renderers.push(new TextRenderer());
-    else {
-      renderers.push(new JsonRenderer({
-        stream: cfg.outputFormat === 'stream-json',
-        streamPartial: cfg.streamPartialOutput,
-        includeToolIo: cfg.includeToolIo,
-        stderr: (s) => process.stderr.write(s),
-      }));
-    }
-  } else {
-    renderers.push(replUi);
-  }
-  const renderer = new MultiRenderer(renderers);
+  let localExecutor: LocalExecutor | undefined;
+  let inkRenderer: InkTuiRenderer | undefined;
+  const runnerHolder: { current?: SessionRunner } = {};
+  const tuiHolder: { ink?: InkTuiRenderer } = {};
+  const tuiHandleHolder: { handle?: import('../tui/types').InkTuiHandle } = {};
 
   const localMode = session.executionMode === 'LOCAL' || (cfg.local && session.executionMode !== 'CLOUD');
   const ws = new WsClient({
@@ -123,13 +95,24 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
   }
   if (localMode) {
     await ensureWorkspaceTrusted(localWorkspace, cfg.stdoutIsTty && !cfg.print);
-    replUi.setMeta({ executionMode: 'LOCAL' });
   }
 
-  let localExecutor: LocalExecutor | undefined;
-  const runnerHolder: { current?: SessionRunner } = {};
-  const inputHolder: { current?: InputController } = {};
-  const symbols = pickSymbols(resolved.ui.asciiOnly);
+  // 事件渲染链：trace（可选）+ 打印模式 renderer；交互模式会在 attach 前追加 inkRenderer
+  const renderers: Renderer[] = [];
+  if (cfg.traceFile) renderers.push(new TraceRenderer(cfg.traceFile));
+  if (cfg.print) {
+    if (cfg.outputFormat === 'text') renderers.push(new TextRenderer());
+    else {
+      renderers.push(new JsonRenderer({
+        stream: cfg.outputFormat === 'stream-json',
+        streamPartial: cfg.streamPartialOutput,
+        includeToolIo: cfg.includeToolIo,
+        stderr: (s) => process.stderr.write(s),
+      }));
+    }
+  }
+  const renderer = new MultiRenderer(renderers);
+
   if (localMode) {
     const policy: ApprovalPolicy = {
       yolo: cfg.yolo,
@@ -146,9 +129,13 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       baseUrl: normalizeBaseUrl(resolved.baseUrl),
       workspace: localWorkspace,
       policy,
-      askApproval: cfg.onApproval === 'ask' && cfg.stdoutIsTty && !cfg.print
+      askApproval: cfg.onApproval === 'ask' && cfg.stdoutIsTty
         ? async (req, reason) => {
-            if (inputHolder.current) return askApprovalWithController(inputHolder.current, req, reason, symbols);
+            if (!cfg.print && tuiHolder.ink) {
+              // 交互模式：通过 Ink approval modal 收集选择
+              return tuiHolder.ink.requestApproval(req, reason);
+            }
+            // 打印模式 / 无 Ink：退化为 readline
             return (await fallbackAskApproval(req, reason)) ? 'allow' : 'deny';
           }
         : undefined,
@@ -164,8 +151,15 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     ifRunning: cfg.ifRunning,
     onQuestion: cfg.onQuestion,
     askHandler: cfg.onQuestion === 'ask' && cfg.stdoutIsTty
-      ? async (_id, questions) => {
-          if (inputHolder.current) return askQuestionsWithController(inputHolder.current, questions, symbols);
+      ? async (requestId, questions) => {
+          if (!cfg.print && tuiHolder.ink) {
+            // 交互模式：ask_user_questions 事件由 InkTuiRenderer 弹出 modal，
+            // 通过 setAskResolver 注册的 resolver 等待用户回答。
+            return new Promise<import('../ws/event-types').AskAnswer[] | 'fail' | 'cancelled'>((resolve) => {
+              tuiHolder.ink!.setAskResolver(requestId, resolve);
+            });
+          }
+          // 打印模式 / 无 Ink：退化到 readline 逐题提问
           return askQuestionsInTty(questions);
         }
       : undefined,
@@ -194,11 +188,37 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
   if (cfg.print) process.on('SIGINT', onSig);
 
   try {
+    // 交互模式：先创建并挂载 Ink renderer，确保 attach 期间（订阅会话快照 /
+    // 重放 ask_user_questions）askHandler/审批回调能访问到 tuiHolder.ink。
+    const resumed = Boolean(cfg.resumeSessionId || cfg.continueLast || cfg.command === 'resume');
+    if (!cfg.print) {
+      inkRenderer = new InkTuiRenderer({
+        agentName: session.agentName,
+        modelName: session.modelName,
+        executionMode: localMode ? 'LOCAL' : (session.executionMode ?? 'CLOUD'),
+        contextWindowTokens,
+        verboseTools: resolved.ui.verboseTools,
+        asciiOnly: resolved.ui.asciiOnly,
+        welcomeLines: [formatSessionBanner(session, { resumed }), formatWelcomeHints()],
+        historyLines: [],
+        modelNames,
+      });
+      tuiHolder.ink = inkRenderer;
+      // SessionRunner 事件 → MultiRenderer（TraceRenderer + inkRenderer），
+      // 保证 --trace-file 在交互模式仍记录完整执行事件，同时 Ink 正常渲染。
+      (runner as unknown as { opts: { renderer: Renderer } }).opts.renderer =
+        new MultiRenderer([...renderers, inkRenderer]);
+      tuiHandleHolder.handle = inkRenderer.mount();
+    }
+
     await runner.attach(session);
 
     let historyLines: string[] = [];
     if (!cfg.print && (cfg.replayFull || cfg.resumeSessionId || cfg.continueLast || cfg.command === 'resume')) {
       historyLines = await loadHistory(rest, session.id!, cfg.replayFull);
+      if (inkRenderer && historyLines.length > 0) {
+        inkRenderer.setHistoryLines(historyLines);
+      }
     }
 
     if (cfg.print) {
@@ -216,10 +236,14 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       });
     }
 
-    const resumed = Boolean(cfg.resumeSessionId || cfg.continueLast || cfg.command === 'resume');
+    const resumed2 = Boolean(cfg.resumeSessionId || cfg.continueLast || cfg.command === 'resume');
+
+    const tuiHandle = tuiHandleHolder.handle!;
+
     await runRepl({
       runner,
-      renderer: replUi,
+      renderer: inkRenderer!,
+      tuiHandle,
       modelId,
       resolveModel: async (spec) => {
         const id = await resolveModelId(rest, spec);
@@ -227,7 +251,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
         try {
           const models = await rest.listActiveModels();
           const found = models.find((m) => Number(m.id) === Number(id));
-          replUi.setMeta({
+          inkRenderer!.setMeta({
             modelName: found?.name || spec,
             contextWindowTokens: found?.contextWindowTokens ?? undefined,
           });
@@ -242,12 +266,9 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       firstPrompt: cfg.prompt || undefined,
       queuedInput: resolved.ui.queuedInput,
       asciiOnly: resolved.ui.asciiOnly,
-      welcomeLines: [formatSessionBanner(session, { resumed }), formatWelcomeHints()],
+      welcomeLines: [formatSessionBanner(session, { resumed: resumed2 }), formatWelcomeHints()],
       historyLines,
       modelNames,
-      onInputReady: (input) => {
-        inputHolder.current = input;
-      },
     });
     return 0;
   } finally {

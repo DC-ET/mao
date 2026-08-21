@@ -169,7 +169,7 @@ describe('composer', () => {
     expect(c.tryStart()).toBe(true);
     try {
       c.setIdle('hello');
-      expect(out).toContain('\x1b[?1049h');
+      expect(out).not.toContain('\x1b[?1049h');
       expect(out).toContain('\x1b[2J');
       expect(out).toContain('\x1b7');
       expect(out).toContain('\x1b8');
@@ -179,6 +179,6 @@ describe('composer', () => {
     } finally {
       c.stop();
     }
-    expect(out).toContain('\x1b[?1049l');
+    expect(out).not.toContain('\x1b[?1049l');
   });
 });

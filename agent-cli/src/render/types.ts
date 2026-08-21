@@ -70,4 +70,4 @@ export interface Renderer {
   clearTransient?(): void;
 }
 
-export type AskHandler = (requestId: string, questions: AskQuestion[]) => Promise<AskAnswer[] | 'fail'>;
+export type AskHandler = (requestId: string, questions: AskQuestion[]) => Promise<AskAnswer[] | 'fail' | 'cancelled'>;
