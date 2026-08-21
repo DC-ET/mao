@@ -21,9 +21,29 @@ const originalConsole = {
 
 let consoleInstalled = false;
 
+const LOG_TIME_ZONE = 'Asia/Shanghai';
+
+const logTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: LOG_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  fractionalSecondDigits: 3,
+  hour12: false,
+});
+
+export function formatLogTime(date: Date = new Date()): string {
+  const parts = Object.fromEntries(logTimeFormatter.formatToParts(date).map((part) => [part.type, part.value]));
+  const hour = parts.hour === '24' ? '00' : parts.hour;
+  return `${parts.year}-${parts.month}-${parts.day}T${hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond}+08:00`;
+}
+
 export function writeStructuredLog(level: LogLevel, message: unknown, fields: LogFields = {}, ...args: unknown[]): void {
   const record: Record<string, unknown> = {
-    time: new Date().toISOString(),
+    time: formatLogTime(),
     level: level.toUpperCase(),
     message: formatMessage(message, args),
   };
@@ -90,7 +110,7 @@ export class StructuredNestLogger implements LoggerService {
 export const fastifyLoggerOptions: PinoLoggerOptions = {
   level: process.env.LOG_LEVEL ?? 'info',
   messageKey: 'message',
-  timestamp: () => `,"time":"${new Date().toISOString()}"`,
+  timestamp: () => `,"time":"${formatLogTime()}"`,
   formatters: {
     level(label: string) {
       return { level: label.toUpperCase() };

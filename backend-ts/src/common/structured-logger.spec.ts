@@ -26,7 +26,7 @@ describe('structured logger', () => {
     expect(record.level).toBe('INFO');
     expect(record.module).toBe('test');
     expect(record.message).toBe('started { port: 9080 }');
-    expect(record.time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(record.time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00$/);
     expect(Number.isNaN(Date.parse(String(record.time)))).toBe(false);
   });
 
@@ -53,7 +53,7 @@ describe('structured logger', () => {
 
   it('configures Fastify timestamps as ISO strings and levels as uppercase', () => {
     expect(fastifyLoggerOptions.messageKey).toBe('message');
-    expect(fastifyLoggerOptions.timestamp?.()).toMatch(/^,"time":"\d{4}-\d{2}-\d{2}T.*Z"$/);
+    expect(fastifyLoggerOptions.timestamp?.()).toMatch(/^,"time":"\d{4}-\d{2}-\d{2}T.*\+08:00"$/);
     expect(fastifyLoggerOptions.formatters?.level?.('info', 30)).toEqual({ level: 'INFO' });
   });
 });
