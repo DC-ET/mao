@@ -3,7 +3,7 @@ import { parseKey, parseKeys } from '../src/ui/keys';
 import { PromptQueue } from '../src/ui/prompt-queue';
 import { formatRelativeTime } from '../src/ui/relative-time';
 import { formatHistorySummary, formatSessionBanner } from '../src/ui/welcome';
-import { completeSlash } from '../src/ui/slash-complete';
+import { completeSlash, slashPalette } from '../src/ui/slash-complete';
 import { formatTodoSummary } from '../src/ui/todo-summary';
 import { formatToolStart, formatUserBlock, formatUserTurn, summarizeToolArgs } from '../src/ui/box';
 import { Composer } from '../src/ui/composer';
@@ -93,6 +93,23 @@ describe('completeSlash', () => {
   it('completes /queue clear', () => {
     const [hits] = completeSlash('/queue c');
     expect(hits).toEqual(['clear']);
+  });
+});
+
+describe('slashPalette', () => {
+  it('lists commands when typing /', () => {
+    const picks = slashPalette('/');
+    expect(picks.some((p) => p.label === '/help')).toBe(true);
+    expect(picks.find((p) => p.label === '/model')?.submit).toBe(false);
+    expect(picks.find((p) => p.label === '/help')?.submit).toBe(true);
+  });
+
+  it('filters by prefix and offers models', () => {
+    expect(slashPalette('/he').map((p) => p.label)).toEqual(['/help']);
+    const models = slashPalette('/model ', { models: ['gpt-4o', 'mimo'] });
+    expect(models[0]).toMatchObject({ value: '/model', submit: true });
+    expect(models.map((p) => p.label)).toContain('gpt-4o');
+    expect(slashPalette('/model gp', { models: ['gpt-4o', 'mimo'] }).map((p) => p.value)).toEqual(['/model gpt-4o']);
   });
 });
 
