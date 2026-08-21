@@ -92,7 +92,7 @@ export class MysqlAgentRepository implements AgentRepository {
     // 从所有 agent 的 skillNames JSON 数组中移除指定 skillName
     // 如果移除后数组为空，则置为 NULL
     const raw = await this.db.query<{ id: number; skillNames: string | null }>(
-      `SELECT id, skillNames FROM agent WHERE skillNames IS NOT NULL AND ${notDeleted()}`,
+      `SELECT id, skill_names AS skillNames FROM agent WHERE skill_names IS NOT NULL AND ${notDeleted()}`,
     );
     let affected = 0;
     for (const row of raw) {

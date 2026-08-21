@@ -76,9 +76,13 @@ export function registerSkillDocRoutes(app: FastifyInstance, deps: Pick<SkillRou
     const skillName = pathParam(request, 'name');
     const result = skillDocService.deleteSkill(skillName);
     if (result.code === 0) {
-      const affected = await agentService.removeSkillNameFromAll(skillName);
-      if (affected > 0) {
-        console.info(`Cleaned up skillName '${skillName}' from ${affected} agent(s)`);
+      try {
+        const affected = await agentService.removeSkillNameFromAll(skillName);
+        if (affected > 0) {
+          console.info(`Cleaned up skillName '${skillName}' from ${affected} agent(s)`);
+        }
+      } catch (e) {
+        console.error(`Failed to clean up skillName '${skillName}' from agents: ${(e as Error).message}`);
       }
     }
     return sendJson(reply, 200, result.code === 0 ? ok(null) : result);
