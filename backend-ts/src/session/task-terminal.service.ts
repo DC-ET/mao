@@ -6,6 +6,7 @@ import { wsEvent } from './ws/ws-event.js';
 import type { SessionTreeSignalPublisher } from '../harness/approval/session-tree-signal-publisher.js';
 import type { TaskNotificationDeliveryService } from '../notification/task/delivery.service.js';
 import type { TaskNotificationDelivery } from '../notification/task/types.js';
+import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 
 const TERMINAL = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
@@ -48,7 +49,8 @@ export class TaskTerminalService {
     const session = await this.sessionService.getSession(sessionId);
     const ownerId = userId ?? session.userId;
 
-    const statusData: Record<string, unknown> = { phase, unread: true };
+    // 微信通道会话由定时任务等机器触发，终态不计未读，与 updatePhase 的 DB 写入保持一致
+    const statusData: Record<string, unknown> = { phase, unread: session.projectKey !== WEIXIN_PROJECT_KEY };
     if (executionId != null && executionId.trim() !== '') {
       statusData.executionId = executionId;
     }

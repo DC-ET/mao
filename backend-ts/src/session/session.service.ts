@@ -31,6 +31,7 @@ import type {
 import { SessionGroupKey } from './util/session-group-key.js';
 import { GitUrlParser } from './util/git-url-parser.js';
 import { toStoredContentJson } from './session-vo.js';
+import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
 
 const SEARCH_RESULT_LIMIT = 20;
 const SEARCH_KEYWORD_MAX_LENGTH = 100;
@@ -911,7 +912,8 @@ export class SessionService {
         fields.elapsedMs = (session.elapsedMs != null ? session.elapsedMs : 0) + Math.max(0, elapsed);
         fields.startedAt = null;
       }
-      if (!isTerminalPhase(oldPhase) && isTerminalPhase(phase)) {
+      // 微信通道会话由定时任务等机器触发，终态不计未读，避免聚焦模式被无人工关注的会话置顶
+      if (!isTerminalPhase(oldPhase) && isTerminalPhase(phase) && session.projectKey !== WEIXIN_PROJECT_KEY) {
         fields.unread = 1;
       }
     }

@@ -117,6 +117,17 @@ describe('SessionService extra', () => {
     expect(sessionRepo.logicalDelete).toHaveBeenCalled();
   });
 
+  it('updatePhase terminal sets unread except for weixin channel sessions', async () => {
+    const { service, sessionRepo } = makeService();
+    sessionRepo.findById.mockResolvedValue({ id: 11, userId: 7, phase: 'RUNNING', startedAt: null });
+    await service.updatePhase(11, 'COMPLETED');
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, expect.objectContaining({ unread: 1 }));
+
+    sessionRepo.findById.mockResolvedValue({ id: 12, userId: 7, phase: 'RUNNING', startedAt: null, projectKey: 'weixin-bot' });
+    await service.updatePhase(12, 'COMPLETED');
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(12, expect.not.objectContaining({ unread: expect.anything() }));
+  });
+
   it('createSessionThrowsWhenAgentMissing', async () => {
     const { service, agentLookup } = makeService();
     agentLookup.findById.mockResolvedValue(null);
@@ -266,6 +277,40 @@ describe('TaskTerminalService', () => {
     const svc = new TaskTerminalService(sessionService as never, registry as never, delivery as never, tree as never);
     await svc.finishExecution(3, 7, 'COMPLETED', 'exec-1');
     expect(tree.publish).not.toHaveBeenCalled();
+  });
+
+  it('weixin channel terminal push carries unread=false', async () => {
+    const sessionService = {
+      getSession: vi.fn(async () => ({ id: 647, userId: 7, phase: 'RUNNING', sessionType: 'NORMAL', projectKey: 'weixin-bot' })),
+      updatePhase: vi.fn(),
+      updateRuntimeStatus: vi.fn(),
+      markLastMessageFinished: vi.fn(),
+    };
+    const registry = { send: vi.fn(), sendWithResult: vi.fn(async () => ({ delivered: true })) };
+    const delivery = { prepare: vi.fn(async () => null), resolveWebSocket: vi.fn() };
+    const tree = { publish: vi.fn() };
+    const svc = new TaskTerminalService(sessionService as never, registry as never, delivery as never, tree as never);
+    await svc.finishExecution(647, 7, 'COMPLETED', 'exec-1');
+    expect(registry.sendWithResult).toHaveBeenCalledWith(7, expect.objectContaining({
+      data: expect.objectContaining({ unread: false }),
+    }));
+  });
+
+  it('non-weixin channel terminal push keeps unread=true', async () => {
+    const sessionService = {
+      getSession: vi.fn(async () => ({ id: 1, userId: 7, phase: 'RUNNING', sessionType: 'NORMAL', projectKey: 'demo' })),
+      updatePhase: vi.fn(),
+      updateRuntimeStatus: vi.fn(),
+      markLastMessageFinished: vi.fn(),
+    };
+    const registry = { send: vi.fn(), sendWithResult: vi.fn(async () => ({ delivered: true })) };
+    const delivery = { prepare: vi.fn(async () => null), resolveWebSocket: vi.fn() };
+    const tree = { publish: vi.fn() };
+    const svc = new TaskTerminalService(sessionService as never, registry as never, delivery as never, tree as never);
+    await svc.finishExecution(1, 7, 'COMPLETED', 'exec-1');
+    expect(registry.sendWithResult).toHaveBeenCalledWith(7, expect.objectContaining({
+      data: expect.objectContaining({ unread: true }),
+    }));
   });
 });
 
