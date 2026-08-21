@@ -393,6 +393,12 @@ export class SessionService {
 
   async deleteSession(id: number): Promise<void> {
     const session = await this.sessionRepo.findById(id);
+    if (session != null && (
+      session.phase === 'RUNNING' || session.phase === 'WAITING_APPROVAL'
+      || session.phase === 'RESUMING' || session.phase === 'CANCELLING'
+    )) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '会话运行中，无法删除');
+    }
     await this.sessionRepo.lockActiveSessionById(id);
     await this.sessionCompactionService.deleteBySessionId(id);
     await this.sessionCompactionEventService.deleteBySessionId(id);
@@ -870,12 +876,15 @@ export class SessionService {
     return totalCount;
   }
 
-  async editMessageAndTruncate(messageId: number, newContent: string | null, images: string[] | null): Promise<Message> {
+  async editMessageAndTruncate(sessionId: number, messageId: number, newContent: string | null, images: string[] | null): Promise<Message> {
     const message = await this.messageRepo.findById(messageId);
     if (message == null || message.role !== 'USER') {
       throw new Error('只能编辑用户消息');
     }
-    await this.sessionRepo.lockActiveSessionById(message.sessionId);
+    if (message.sessionId !== sessionId) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '无权操作该消息');
+    }
+    await this.sessionRepo.lockActiveSessionById(sessionId);
     const compaction = await this.sessionCompactionService.loadValidated(message.sessionId);
     if (compaction != null && messageId <= this.sessionCompactionService.boundaryOf(compaction)) {
       throw new BusinessException(ErrorCode.MESSAGE_ALREADY_COMPACTED);

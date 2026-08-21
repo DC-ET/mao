@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fail } from '../common/result.js';
 import { parseSkillMdContent, validateSkillMd } from '../harness/skill/skill-md.js';
 
@@ -60,7 +60,9 @@ export class UserSkillService {
   }
 
   getUserSkill(userId: number, name: string): SkillResult<SkillDocDetailVO> {
-    const skillFolder = join(this.getUserSkillsDir(userId), name);
+    const resolved = this.resolveUserSkillFolder(userId, name);
+    if ('code' in resolved) return resolved;
+    const skillFolder = resolved.folder;
     const skillMd = join(skillFolder, 'SKILL.md');
     if (!existsSync(skillMd) || !statSync(skillMd).isFile()) {
       return fail(404, `Skill not found: ${name}`);
@@ -161,7 +163,9 @@ export class UserSkillService {
   }
 
   deleteUserSkill(userId: number, name: string): SkillResult<null> {
-    const skillFolder = join(this.getUserSkillsDir(userId), name);
+    const resolved = this.resolveUserSkillFolder(userId, name);
+    if ('code' in resolved) return resolved;
+    const skillFolder = resolved.folder;
     if (!existsSync(skillFolder) || !statSync(skillFolder).isDirectory()) {
       return fail(404, `Skill not found: ${name}`);
     }
@@ -177,6 +181,18 @@ export class UserSkillService {
 
   getUserSkillsDir(userId: number): string {
     return resolve(this.userSkillsDir, String(userId));
+  }
+
+  private resolveUserSkillFolder(userId: number, name: string): SkillResult<never> | { folder: string } {
+    if (!name || name.includes('/') || name.includes('\\') || name.includes('..') || name.startsWith('.')) {
+      return fail(400, `Invalid skill name: ${name}`);
+    }
+    const userDir = this.getUserSkillsDir(userId);
+    const skillFolder = resolve(userDir, name);
+    if (skillFolder !== userDir && !skillFolder.startsWith(userDir + sep)) {
+      return fail(400, `Invalid skill name: ${name}`);
+    }
+    return { folder: skillFolder };
   }
 }
 

@@ -67,6 +67,9 @@ function makeService() {
     listBySession: vi.fn(async () => []),
     insert: vi.fn(async (m: Message) => { m.id = 199; return 199; }),
     logicalDeleteBySession: vi.fn(),
+    findById: vi.fn(),
+    logicalDeleteAfter: vi.fn(),
+    updateById: vi.fn(),
   } as unknown as MessageRepository;
   const agentLookup = {
     findByIds: vi.fn().mockResolvedValue([]),
@@ -192,6 +195,19 @@ describe('SessionService archive', () => {
     vi.mocked(sessionRepo.list).mockResolvedValue([{ id: 30, userId: 7, parentSessionId: 20, sessionType: 'SUBAGENT' }]);
     await expect(service.promoteSideTaskToMainSession(20, 7)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
     expect(sessionRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('rejectsDeleteWhenSessionRunning', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.findById).mockResolvedValue({ id: 11, userId: 7, phase: 'RUNNING' });
+    await expect(service.deleteSession(11)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    expect(sessionRepo.logicalDelete).not.toHaveBeenCalled();
+  });
+
+  it('rejectsEditMessageFromOtherSession', async () => {
+    const { service, messageRepo } = makeService();
+    vi.mocked(messageRepo.findById).mockResolvedValue({ id: 3, sessionId: 99, role: 'USER', content: 'old' });
+    await expect(service.editMessageAndTruncate(11, 3, 'new', null)).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
   });
 });
 

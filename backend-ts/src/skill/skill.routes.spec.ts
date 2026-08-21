@@ -55,6 +55,34 @@ describe('skill routes', () => {
     await app.close();
   });
 
+  it('rejectsSyncPackageForForeignSession', async () => {
+    const skillsDir = await mkdtemp(join(tmpdir(), 'mao-sdoc-'));
+    const userDir = await mkdtemp(join(tmpdir(), 'mao-user-s-'));
+    const loader = new SkillLoader(new PathSandbox(skillsDir), skillsDir, 1);
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => { req.userId = 7; done(); });
+    registerSkillRoutes(app, {
+      userSkillService: new UserSkillService(userDir),
+      skillDocService: new SkillDocService(loader),
+      skillSyncService: {
+        writeSyncZip: vi.fn(async (_a, _s, out) => { out.end(); }),
+      } as unknown as SkillSyncService,
+      sessionService: {
+        getSession: vi.fn(async () => ({ id: 1, userId: 99, agentId: 9 })),
+      } as unknown as SessionService,
+      agentService: {
+        removeSkillNameFromAll: vi.fn(async () => 0),
+      } as never,
+      agentLookup: {
+        findById: vi.fn(async () => ({ id: 9, name: 'A' })),
+      } as unknown as AgentLookup,
+    });
+    const zip = await app.inject({ method: 'POST', url: '/v1/skills/sync-package?sessionId=1' });
+    expect(zip.statusCode).toBe(403);
+    await app.close();
+  });
+
   it('uploadKeepsSkillFolderPathFromMultipartFilename', async () => {
     const skillsDir = await mkdtemp(join(tmpdir(), 'mao-sdoc-'));
     const userDir = await mkdtemp(join(tmpdir(), 'mao-user-s-'));

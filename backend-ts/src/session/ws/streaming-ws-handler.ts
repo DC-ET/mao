@@ -22,7 +22,7 @@ export interface WsHandlerDeps {
     updateField(sessionId: number, field: string, value: unknown): Promise<void>;
     updateModelId(sessionId: number, modelId: number): Promise<void>;
     getMessages(sessionId: number): Promise<Message[]>;
-    editMessageAndTruncate(messageId: number, content: string, images: string[]): Promise<Message>;
+    editMessageAndTruncate(sessionId: number, messageId: number, content: string, images: string[]): Promise<Message>;
     save(session: Session): Promise<void>;
     listSubagentSessions(parentId: number): Promise<Session[]>;
     cleanupIncompleteTail(sessionId: number): Promise<number>;
@@ -443,7 +443,7 @@ export class StreamingWsHandler {
       }
     }
     try {
-      await this.deps.sessionService.editMessageAndTruncate(messageId, content, images);
+      await this.deps.sessionService.editMessageAndTruncate(sessionId, messageId, content, images);
     } catch (e) {
       this.deps.registry.send(userId, wsEvent('error', sessionId, { message: `编辑消息失败: ${e instanceof Error ? e.message : String(e)}` }));
       return;

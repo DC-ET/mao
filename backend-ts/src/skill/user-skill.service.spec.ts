@@ -50,6 +50,8 @@ describe('UserSkillService', () => {
     expect(service.listUserSkills(7)).toEqual([]);
     expect(service.getUserSkill(7, 'missing').code).toBe(404);
     expect(service.deleteUserSkill(7, 'missing').code).toBe(404);
+    expect(service.getUserSkill(7, '../outside').code).toBe(400);
+    expect(service.deleteUserSkill(7, '../../..').code).toBe(400);
     expect(service.uploadUserSkill(7, null).code).toBe(400);
     expect(service.uploadUserSkill(7, []).code).toBe(400);
     expect(service.uploadUserSkill(7, [{ originalFilename: 'SKILL.md', buffer: Buffer.from('x') }]).code).toBe(400);

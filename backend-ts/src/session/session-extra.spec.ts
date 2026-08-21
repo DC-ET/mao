@@ -178,7 +178,7 @@ describe('SessionService extra', () => {
     expect(await service.cleanupIncompleteTailAfterId(11, 0)).toBe(0);
 
     messageRepo.findById.mockResolvedValue({ id: 3, sessionId: 11, role: 'USER', content: 'old' });
-    await service.editMessageAndTruncate(3, 'new', ['img']);
+    await service.editMessageAndTruncate(11, 3, 'new', ['img']);
     expect(messageRepo.logicalDeleteAfter).toHaveBeenCalled();
     sessionRepo.findById.mockResolvedValue({ id: 11, phase: 'WAITING_APPROVAL' });
     expect(await service.restoreRunningAfterApproval(11)).toBe(true);

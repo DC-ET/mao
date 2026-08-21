@@ -218,7 +218,7 @@ describe('StreamingWsHandler', () => {
     messageQueueService.listPending.mockResolvedValue([]);
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'edit_and_resend', sessionId: 11, messageId: 3, content: 'edited' }));
     await executor.runAll();
-    expect(sessionService.editMessageAndTruncate).toHaveBeenCalledWith(3, 'edited', []);
+    expect(sessionService.editMessageAndTruncate).toHaveBeenCalledWith(11, 3, 'edited', []);
     expect(harnessService.executeFromEvent).toHaveBeenCalled();
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'COMPLETED', 'edit-event');
   });

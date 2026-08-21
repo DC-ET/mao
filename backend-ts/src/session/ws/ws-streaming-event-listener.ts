@@ -3,6 +3,7 @@ import type { ToolCall } from '../../harness/llm/chat-request.js';
 import type { StreamingWsRegistry } from './streaming-ws-registry.js';
 import { mapToolToType } from '../activity/activity-type-mapper.js';
 import { ToolResultSummarizer } from '../util/tool-result-summarizer.js';
+import { FileChangeDiffUtil } from '../../harness/tool/file-change-diff-util.js';
 import { ToolImageResultProcessor } from '../../harness/tool/tool-image-result-processor.js';
 import { wsEvent } from './ws-event.js';
 
@@ -27,7 +28,6 @@ export interface AgentEventListener {
 
 const TASK_TOOLS = new Set(['task_create', 'task_update', 'task_delete', 'task_list']);
 const FILE_TOOLS = new Set(['write_file', 'edit_file']);
-const PRIVATE_DIFF_FIELD = '_private_diff';
 
 export interface WsListenerDeps {
   registry: StreamingWsRegistry;
@@ -78,7 +78,7 @@ export class WsStreamingEventListener implements AgentEventListener {
     this.toolCallInfo.delete(toolCallId);
     const toolName = info?.[0] ?? null;
     const argumentsJson = info?.[1] ?? null;
-    const publicResult = stripPrivateDiff(result);
+    const publicResult = FileChangeDiffUtil.stripPrivateDiff(result) ?? result;
     const processed = ToolImageResultProcessor.process(publicResult, this.supportsVision);
     const displayResult = processed.sanitizedContent ?? publicResult;
     const preview = processed.preview;
@@ -203,7 +203,7 @@ export class WsStreamingEventListener implements AgentEventListener {
         const changeData: Record<string, unknown> = {
           path: fc.path, type: fc.type, lines_added: fc.lines_added, lines_deleted: fc.lines_deleted, tool_call_id: toolCallId,
         };
-        const diff = resultNode[PRIVATE_DIFF_FIELD] as Record<string, unknown> | undefined;
+        const diff = resultNode[FileChangeDiffUtil.PRIVATE_DIFF_FIELD] as Record<string, unknown> | undefined;
         if (diff && typeof diff === 'object') {
           for (const key of ['diff_mode', 'before_content', 'after_content', 'patch_content', 'patch_truncated', 'diff_unavailable_reason']) {
             if (diff[key] != null) changeData[key] = diff[key];
@@ -213,17 +213,6 @@ export class WsStreamingEventListener implements AgentEventListener {
       }
     } catch { /* ignore */ }
   }
-}
-
-function stripPrivateDiff(result: string): string {
-  try {
-    const node = JSON.parse(result) as Record<string, unknown>;
-    if (PRIVATE_DIFF_FIELD in node) {
-      delete node[PRIVATE_DIFF_FIELD];
-      return JSON.stringify(node);
-    }
-  } catch { /* ignore */ }
-  return result;
 }
 
 function isErrorResult(result: string | null): boolean {

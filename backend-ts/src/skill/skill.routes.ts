@@ -87,12 +87,15 @@ export function registerSkillDocRoutes(app: FastifyInstance, deps: Pick<SkillRou
 
 export function registerSkillSyncRoutes(app: FastifyInstance, deps: Pick<SkillRouteDeps, 'skillSyncService' | 'sessionService' | 'agentLookup'>): void {
   app.post('/v1/skills/sync-package', async (request, reply) => {
-    requireUserId(request);
+    const userId = requireUserId(request);
     const sessionId = queryOptInt(request, 'sessionId');
     if (sessionId == null) {
       throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
     }
     const session = await deps.sessionService.getSession(sessionId);
+    if (session.userId !== userId) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '无权访问该会话');
+    }
     const agent = session.agentId != null ? await deps.agentLookup.findById(session.agentId) : null;
     if (agent == null) {
       throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);

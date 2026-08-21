@@ -383,7 +383,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     await requireSessionOwner(userId, sessionId);
     const body = bodyOf<{ content?: string | null; images?: string[] | null }>(request);
     const edited = await sessionService.editMessageAndTruncate(
-      pathId(request, 'messageId'), body.content ?? null, body.images ?? null,
+      sessionId, pathId(request, 'messageId'), body.content ?? null, body.images ?? null,
     );
     return sendOk(reply, toMessageVO(edited));
   });

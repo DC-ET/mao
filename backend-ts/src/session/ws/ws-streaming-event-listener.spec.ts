@@ -64,7 +64,7 @@ describe('WsStreamingEventListener', () => {
     listener.onToolCallResult('tc-w', JSON.stringify({
       success: true,
       file_change: { path: '/a.ts', type: 'created', lines_added: 2, lines_deleted: 0 },
-      _private_diff: { diff_mode: 'full', before_content: '', after_content: 'x' },
+      file_change_diff: { diff_mode: 'SNAPSHOT', before_content: '', after_content: 'x' },
     }));
     listener.onToolCallStart({ id: 'tc-t', function: { name: 'task_create', arguments: '{}' } } as never);
     listener.onToolCallResult('tc-t', JSON.stringify({ ok: true }));
@@ -78,9 +78,16 @@ describe('WsStreamingEventListener', () => {
     await vi.waitFor(() => expect(sessionTodoMapper.selectBySessionId).toHaveBeenCalled());
     const types = vi.mocked(registry.send).mock.calls.map((c) => (c[1] as { type: string }).type);
     const resultEvents = vi.mocked(registry.send).mock.calls
-      .map((c) => c[1] as { type: string; data?: { summary?: string } })
+      .map((c) => c[1] as { type: string; data?: { summary?: string; result?: string } })
       .filter((e) => e.type === 'tool_call_result');
     expect(resultEvents[0]?.data?.summary).toBe('写入 /a.ts (+2行 -0行)');
+    expect(resultEvents[0]?.data?.result).not.toContain('file_change_diff');
+    expect(resultEvents[0]?.data?.result).not.toContain('"after_content":"x"');
+    const fileChange = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'file_change');
+    expect(fileChange?.data?.diff_mode).toBe('SNAPSHOT');
+    expect(fileChange?.data?.after_content).toBe('x');
     expect(types).toContain('file_change');
     expect(types).toContain('todo_updated');
     expect(types).toContain('activity');

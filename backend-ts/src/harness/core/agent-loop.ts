@@ -13,6 +13,8 @@ import type { PromptEngine } from './prompt-engine.js';
 import type { SessionCompactionOrchestrator } from './session-compaction-orchestrator.js';
 import { CompactionStateReloadException } from './session-compaction-orchestrator.js';
 import type { SessionActivityHeartbeat, SessionService } from '../deps.js';
+import { BusinessException } from '../../common/business-exception.js';
+import { ErrorCode } from '../../common/error-code.js';
 import { FileChangeDiffUtil } from '../tool/file-change-diff-util.js';
 import { ToolCallContext } from '../tool/tool-call-context.js';
 import type { ToolDispatcher } from '../tool/tool-dispatcher.js';
@@ -104,7 +106,10 @@ export class AgentLoop {
       const session = await this.sessionService.getSession(sessionId);
       const phase = session?.phase;
       return phase === 'FAILED' || phase === 'CANCELLED';
-    } catch {
+    } catch (e) {
+      if (e instanceof BusinessException && e.code === ErrorCode.SESSION_NOT_FOUND.code) {
+        return true;
+      }
       return false;
     }
   }
