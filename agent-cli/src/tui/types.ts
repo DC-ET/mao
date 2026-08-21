@@ -1,10 +1,28 @@
 import type { CliEvent, RunResult } from '../render/types';
 import type { AskAnswer, AskQuestion, TodoItem } from '../ws/event-types';
 
+/** Structured transcript pieces frozen into <Static> after a turn completes. */
+export type TranscriptItem =
+  | { kind: 'welcome'; lines: string[] }
+  | { kind: 'history'; lines: string[] }
+  | { kind: 'user'; text: string }
+  | { kind: 'assistant'; text: string }
+  | { kind: 'tool'; name: string; args?: string; result?: string }
+  | { kind: 'status'; text: string; tone?: 'ok' | 'err' | 'warn' | 'dim' }
+  | { kind: 'sys'; text: string };
+
 /** A completed round of conversation, frozen for <Static> rendering. */
 export interface StaticRound {
   id: string;
-  lines: string[];
+  items: TranscriptItem[];
+}
+
+export interface FooterMeta {
+  agentName: string;
+  modelName: string;
+  executionMode: string;
+  contextPct?: string;
+  todo?: string;
 }
 
 /** Live (in-progress) content that updates in real-time. */
@@ -17,6 +35,8 @@ export interface LiveState {
   warnings: string[];
   /** 即时提示（/help、/cancel 确认、排队提示等），实时渲染在输入区上方。 */
   announce: string[];
+  /** 本轮用户消息，finish 后写入 Static。 */
+  userText?: string;
   todos: TodoItem[];
   contextPct?: string;
   spinnerFrame: number;
@@ -52,7 +72,7 @@ export interface TuiAppProps {
   modal: ModalState;
   draft: string;
   continuation: boolean;
-  meta: string;
+  footer: FooterMeta;
   verboseTools: boolean;
   historyLines: string[];
   welcomeLines: string[];

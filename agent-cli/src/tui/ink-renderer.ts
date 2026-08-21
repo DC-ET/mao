@@ -1,13 +1,11 @@
 import type { CliEvent, RunResult, Renderer } from '../render/types';
-import type { StaticRound, ToolCallDisplay, ModalState, InkTuiHandle } from './types';
+import type { StaticRound, ToolCallDisplay, ModalState, InkTuiHandle, FooterMeta, TuiAppProps, TranscriptItem } from './types';
 import type { AskAnswer } from '../ws/event-types';
-import { createAnsi, shouldUseColor, renderMarkdownLite, truncate } from '../util/ansi';
+import { createAnsi, shouldUseColor, truncate } from '../util/ansi';
 import { pickSymbols, type UiSymbols } from '../ui/symbols';
-import { formatToolStart, formatToolResult, formatUserBlock, summarizeToolArgs } from '../ui/box';
 import { formatTodoSummary } from '../ui/todo-summary';
 import { formatContextPercent } from '../util/context';
 import { randomUUID } from '../util/uuid';
-import type { TuiAppProps } from './types';
 
 export interface InputHandlers {
   onSubmit: (text: string) => void;
@@ -50,6 +48,7 @@ export class InkTuiRenderer implements Renderer {
   private announceBuffer: string[] = [];
   /** 实时渲染在输入区上方的即时提示（/help、/cancel 确认、排队提示等）。 */
   private liveAnnounce: string[] = [];
+  private pendingUser = '';
   private draft = '';
   private continuation = false;
   private modal: ModalState = null;
@@ -103,6 +102,7 @@ export class InkTuiRenderer implements Renderer {
   /** Mount the Ink app and return the handle. */
   mount(): InkTuiHandle {
     const { createTuiApp } = require('./app') as typeof import('./app');
+    this.staticRounds = this.seedChrome();
     const props = this.buildProps();
     this.handle = createTuiApp(props);
     this.startSpinner();
@@ -156,12 +156,13 @@ export class InkTuiRenderer implements Renderer {
       clearAll: () => {
         // 真实清屏：清终端 + 重置内部状态（Ink 下一帧会重绘欢迎区）
         process.stdout.write('\x1b[2J\x1b[H');
-        this.staticRounds = [];
+        this.staticRounds = this.seedChrome(true);
         this.historyLines = [];
         this.liveToolCalls = [];
         this.liveError = undefined;
         this.liveWarnings = [];
         this.liveAnnounce = [];
+        this.pendingUser = '';
         this.liveRunning = false;
         this.liveStatus = '';
         this.segmentRaw = '';
@@ -177,7 +178,6 @@ export class InkTuiRenderer implements Renderer {
   }
 
   private buildProps(): TuiAppProps {
-    const meta = this.metaBits();
     return {
       staticRounds: this.staticRounds,
       live: {
@@ -188,6 +188,7 @@ export class InkTuiRenderer implements Renderer {
         error: this.liveError,
         warnings: this.liveWarnings,
         announce: this.liveAnnounce,
+        userText: this.pendingUser || undefined,
         todos: this.todos,
         contextPct: this.contextPct,
         spinnerFrame: this.spinnerFrame,
@@ -195,7 +196,7 @@ export class InkTuiRenderer implements Renderer {
       modal: this.modal,
       draft: this.draft,
       continuation: this.continuation,
-      meta,
+      footer: this.footerMeta(),
       verboseTools: this.verboseToolsFlag,
       historyLines: this.historyLines,
       welcomeLines: this.welcomeLines,
@@ -255,14 +256,32 @@ export class InkTuiRenderer implements Renderer {
 
   setHistoryLines(lines: string[]): void {
     this.historyLines = [...lines];
+    if (lines.length === 0) {
+      this.flush();
+      return;
+    }
+    const without = this.staticRounds.filter((r) => r.id !== 'history' && !r.id.startsWith('history-'));
+    const welcomeIdx = without.findIndex((r) => r.id === 'welcome' || r.id.startsWith('welcome-'));
+    const historyRound = { id: `history-${Date.now()}`, items: [{ kind: 'history' as const, lines }] };
+    const next = [...without];
+    next.splice(Math.max(welcomeIdx + 1, 0), 0, historyRound);
+    this.staticRounds = next;
     this.flush();
   }
 
-  private metaBits(): string {
-    const ctx = this.contextPct ? ` · ${this.contextPct}` : '';
-    const todo = formatTodoSummary(this.todos);
-    const todoBit = todo ? ` · ${todo}` : '';
-    return `${this.agentName} · ${this.modelName} · ${this.executionMode}${ctx}${todoBit}`;
+  private seedChrome(freshId = false): StaticRound[] {
+    const id = freshId ? `welcome-${Date.now()}` : 'welcome';
+    return [{ id, items: [{ kind: 'welcome', lines: this.welcomeLines }] }];
+  }
+
+  private footerMeta(): FooterMeta {
+    return {
+      agentName: this.agentName,
+      modelName: this.modelName,
+      executionMode: this.executionMode,
+      contextPct: this.contextPct,
+      todo: formatTodoSummary(this.todos),
+    };
   }
 
   private flush(): void {
@@ -420,66 +439,59 @@ export class InkTuiRenderer implements Renderer {
   }
 
   finish(result: RunResult): void {
-    // Build the static round for this completed turn
-    const lines: string[] = [];
+    const items: TranscriptItem[] = [];
 
-    // Add any announce buffer lines
+    if (this.pendingUser) {
+      items.push({ kind: 'user', text: this.pendingUser });
+    }
+    this.pendingUser = '';
+
     for (const line of this.announceBuffer) {
-      lines.push(line);
+      if (line) items.push({ kind: 'sys', text: line });
     }
     this.announceBuffer = [];
 
-    // Add tool calls
     for (const tc of result.toolCalls) {
-      const args = summarizeToolArgs(tc.arguments);
-      const shown = this.verboseToolsFlag ? truncate(args, 200, 1) : truncate(args, 72, 1);
-      lines.push(formatToolStart(tc.toolName, shown, { ascii: this.asciiOnly, paint: (s) => this.ansi.cyan(s) }));
       const summary = tc.result ?? '';
-      if (this.verboseToolsFlag) {
-        const extra = summary ? truncate(summary, 2000, 20) : (tc.status || 'ok');
-        for (const line of extra.split('\n')) {
-          lines.push(this.ansi.dim(`    ${this.symbols.toolTail}  ${line}`));
-        }
-      } else {
-        const extra = summary ? truncate(summary.replace(/\s+/g, ' '), 100, 1) : (tc.status || 'ok');
-        lines.push(formatToolResult(extra, { ascii: this.asciiOnly, paint: (s) => this.ansi.dim(s) }));
-      }
+      const extra = this.verboseToolsFlag
+        ? (summary ? truncate(summary, 2000, 20) : (tc.status || 'ok'))
+        : (summary ? truncate(summary.replace(/\s+/g, ' '), 100, 1) : (tc.status || 'ok'));
+      items.push({ kind: 'tool', name: tc.toolName, args: tc.arguments, result: extra });
     }
 
-    // Add assistant text
     const fallback = (result.result || '').trim();
     const text = this.roundText || fallback;
     if (text) {
-      const rendered = this.ansi.enabled ? renderMarkdownLite(text, this.ansi) : text;
-      lines.push(rendered);
+      items.push({ kind: 'assistant', text });
     } else if (result.toolCalls.length === 0 && result.fileChanges.length === 0) {
-      lines.push(this.ansi.dim('(无文本回复)'));
+      items.push({ kind: 'sys', text: '(无文本回复)' });
     }
 
-    // Add file changes
     if (result.fileChanges.length > 0) {
       const add = result.fileChanges.reduce((s, f) => s + f.linesAdded, 0);
       const del = result.fileChanges.reduce((s, f) => s + f.linesDeleted, 0);
-      lines.push(this.ansi.dim(`  ${result.fileChanges.length} files  +${add}  -${del}`));
+      items.push({ kind: 'sys', text: `  ${result.fileChanges.length} files  +${add}  -${del}` });
     }
 
-    // Add footer
     const sec = Math.round(result.durationMs / 1000);
     const ctx = this.contextPct ? ` · ${this.contextPct}` : '';
     const todo = formatTodoSummary(this.todos);
     const todoBit = todo ? ` · ${todo}` : '';
     const tools = result.toolCalls.length > 0 ? ` · ${result.toolCalls.length} tool${result.toolCalls.length > 1 ? 's' : ''}` : '';
+    const tone: 'ok' | 'err' | 'warn' =
+      result.status === 'COMPLETED' ? 'ok'
+        : result.status === 'CANCELLED' ? 'warn'
+          : 'err';
     const label =
       result.status === 'COMPLETED' ? `${this.symbols.ok}`
         : result.status === 'CANCELLED' ? `${this.symbols.warn} 已取消`
           : `${this.symbols.err} ${result.status}`;
-    lines.push(this.ansi.dim(`  ${label}  ${sec}s${ctx}${todoBit}${tools}`));
+    items.push({ kind: 'status', text: `  ${label}  ${sec}s${ctx}${todoBit}${tools}`, tone });
 
-    const round: StaticRound = { id: result.executionId || randomUUID(), lines };
+    const round: StaticRound = { id: result.executionId || randomUUID(), items };
     this.staticRounds = [...this.staticRounds, round];
     this.lastRoundText = this.roundText || result.result || '';
 
-    // Reset live state
     this.liveRunning = false;
     this.liveStatus = '';
     this.segmentRaw = '';
@@ -537,14 +549,8 @@ export class InkTuiRenderer implements Renderer {
   }
 
   noteUser(text: string): void {
-    const card = formatUserBlock(text, {
-      cols: 80,
-      paint: (s) => this.ansi.bgBlock(s),
-    });
-    this.announceBuffer.push(card);
-    this.announceBuffer.push('');
-    this.pushLiveAnnounce(card);
-    this.pushLiveAnnounce('');
+    this.pendingUser = text;
+    this.flush();
   }
 
   private pushLiveAnnounce(line: string): void {

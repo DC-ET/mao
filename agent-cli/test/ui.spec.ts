@@ -8,6 +8,7 @@ import { formatTodoSummary } from '../src/ui/todo-summary';
 import { formatToolStart, formatUserBlock, formatUserTurn, summarizeToolArgs } from '../src/ui/box';
 import { Composer } from '../src/ui/composer';
 import { countRewindRows, countVisualRows, createAnsi, renderMarkdownLite } from '../src/util/ansi';
+import { consumeMarkdownLines, splitInline } from '../src/tui/markdown-parse';
 
 describe('parseKey', () => {
   it('parses arrows, enter, esc, digits', () => {
@@ -118,6 +119,24 @@ describe('visual rows / markdown lite', () => {
     const ansi = createAnsi(true);
     expect(renderMarkdownLite('**ab', ansi)).toBe('**ab');
     expect(renderMarkdownLite('**ab**', ansi)).toContain('\x1b[1mab\x1b[0m');
+  });
+});
+
+describe('markdown-parse', () => {
+  it('classifies headings, lists, fences and tables', () => {
+    const lines = consumeMarkdownLines('# Title\n- item `x`\n| a | b |\n```\ncode\n```\n');
+    expect(lines.map((l) => l.kind)).toEqual(['heading', 'list', 'table', 'fence', 'code', 'fence', 'empty']);
+    expect(lines[0].text).toBe('Title');
+    expect(lines[0].level).toBe(1);
+  });
+
+  it('splits bold and inline code', () => {
+    expect(splitInline('a **b** and `c`')).toEqual([
+      { style: 'plain', text: 'a ' },
+      { style: 'bold', text: 'b' },
+      { style: 'plain', text: ' and ' },
+      { style: 'code', text: 'c' },
+    ]);
   });
 });
 

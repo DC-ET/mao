@@ -7,6 +7,7 @@ const HISTORY_MAX = 50;
 export interface InkInputProps {
   enabled: boolean;
   continuation: boolean;
+  asciiOnly?: boolean;
   modelNames?: string[];
   onSubmit: (text: string) => void;
   onCancel: () => void;
@@ -19,7 +20,7 @@ export interface InkInputProps {
  * Uses Ink's useInput hook to capture keystrokes and manage draft state.
  */
 export function InkInput(props: InkInputProps): React.ReactElement {
-  const { enabled, continuation, modelNames, onSubmit, onCancel, onExit, onDraftChange } = props;
+  const { enabled, continuation, asciiOnly, modelNames, onSubmit, onCancel, onExit, onDraftChange } = props;
   const [draft, setDraft] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
@@ -148,17 +149,19 @@ export function InkInput(props: InkInputProps): React.ReactElement {
   // 续行缓冲是否可见：显示已缓冲的续行内容（首行之后以「… 」前缀呈现）
   const buffered = bufferRef.current;
   const isCont = continuation || cont;
+  const mark = isCont ? (asciiOnly ? '... ' : '… ') : (asciiOnly ? '> ' : '❯ ');
+  const dots = asciiOnly ? '... ' : '… ';
   return (
     <Box flexDirection="column">
-      {completionHint.length > 0 && (
+      {completionHint.length > 0 ? (
         <Text dimColor>{completionHint.join('  ')}</Text>
-      )}
-      {buffered ? (
-        <Text dimColor>{buffered.split('\n').filter(Boolean).map((l) => `… ${l}`).join('\n')}</Text>
       ) : null}
-      <Box>
-        <Text color="cyan" bold>{isCont ? '… ' : '❯ '}</Text>
-        <Text>{draft || (isCont ? '' : '继续对话，或输入 /help')}</Text>
+      {buffered ? (
+        <Text dimColor>{buffered.split('\n').filter(Boolean).map((l) => `${dots}${l}`).join('\n')}</Text>
+      ) : null}
+      <Box borderStyle="round" borderColor={enabled ? 'cyan' : 'gray'} paddingX={1}>
+        <Text color="cyan" bold>{mark}</Text>
+        {draft ? <Text>{draft}</Text> : (isCont ? null : <Text dimColor>继续对话，或输入 /help</Text>)}
       </Box>
     </Box>
   );
