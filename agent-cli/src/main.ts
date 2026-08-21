@@ -15,11 +15,36 @@ import { cmdUpdate } from './commands/update';
 
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return '';
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks).toString('utf8').trim();
+  return await new Promise<string>((resolve) => {
+    const chunks: Buffer[] = [];
+    const done = (s: string) => {
+      cleanup();
+      resolve(s);
+    };
+    // 非交互 shell（如 Agent 的持久 shell）会保持 stdin 打开且永不 EOF，无限等待会挂死；
+    // 2s 内没有任何字节则视为没有管道输入。
+    let timer = setTimeout(() => done(Buffer.concat(chunks).toString('utf8').trim()), 2000);
+    const onData = (chunk: Buffer) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      // EOF 后 end/close 会触发；收到数据后仍继续等 EOF，最多再等 2s
+      clearTimeout(timer);
+      timer = setTimeout(() => done(Buffer.concat(chunks).toString('utf8').trim()), 2000);
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      process.stdin.removeListener('data', onData);
+      process.stdin.removeListener('end', onEnd);
+      process.stdin.removeListener('close', onClose);
+      process.stdin.removeListener('error', onError);
+    };
+    const onEnd = () => done(Buffer.concat(chunks).toString('utf8').trim());
+    const onClose = () => done(Buffer.concat(chunks).toString('utf8').trim());
+    const onError = () => done(Buffer.concat(chunks).toString('utf8').trim());
+    process.stdin.on('data', onData);
+    process.stdin.once('end', onEnd);
+    process.stdin.once('close', onClose);
+    process.stdin.once('error', onError);
+  });
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
@@ -43,7 +68,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   cleanupRuntimeDir();
 
-  if (!cfg.stdinIsTty) {
+  if (!cfg.stdinIsTty && cfg.consumesPipedPrompt) {
     const piped = await readStdin();
     if (piped) {
       cfg.prompt = cfg.prompt ? `${cfg.prompt}\n${piped}` : piped;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCliConfig, PHASE3_FLAGS } from '../src/args';
+import { parseCliConfig, PHASE3_FLAGS, consumesPipedPrompt } from '../src/args';
 import { CliError } from '../src/util/exit-codes';
 
 const tty = { stdoutIsTty: true, stdinIsTty: true };
@@ -69,5 +69,22 @@ describe('parseCliConfig', () => {
     expect(cfg.asciiOnly).toBe(true);
     expect(cfg.verboseTools).toBe(true);
     expect(cfg.queuedInput).toBe(false);
+  });
+});
+
+describe('consumesPipedPrompt', () => {
+  it('chat consumes piped prompt, subcommands do not', () => {
+    expect(consumesPipedPrompt('chat')).toBe(true);
+    expect(consumesPipedPrompt('status')).toBe(false);
+    expect(consumesPipedPrompt('update')).toBe(false);
+    expect(consumesPipedPrompt('ls')).toBe(false);
+    expect(consumesPipedPrompt('resume')).toBe(false);
+  });
+
+  it('config reflects it: chat true (timeout-guarded), subcommands false', () => {
+    expect(parseCliConfig([], tty).consumesPipedPrompt).toBe(true);
+    expect(parseCliConfig(['-p', 'hi'], tty).consumesPipedPrompt).toBe(true);
+    expect(parseCliConfig(['status'], tty).consumesPipedPrompt).toBe(false);
+    expect(parseCliConfig(['update'], tty).consumesPipedPrompt).toBe(false);
   });
 });

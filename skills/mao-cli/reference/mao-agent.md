@@ -19,6 +19,8 @@ mao-agent update            # 拉取最新源码并重装
 mao-agent update --check    # 只检查，不安装
 ```
 
+**在 Agent / 持久 shell 中运行**：`update`、`status`、`ls`、`resume` 等子命令不读 stdin，可直接运行不会挂起；只有 chat（裸调用 / `-p`）在非 TTY 下读管道提示词，2s 内无输入自动跳过。
+
 ```bash
 mao-agent login          # 密码无回显
 mao-agent                # 交互 REPL（CLOUD）

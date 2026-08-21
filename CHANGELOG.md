@@ -19,6 +19,7 @@
 
 ### 终端 CLI（mao-agent）
 - 新增 `mao-agent update` 自更新命令：复用安装脚本逻辑（git 拉取 `~/.mao/agent-cli/src` → 构建 → 全局重装）；`--check` 仅检查远端新版本；支持 `--ref` / `--repo` 指定分支与仓库源。MCP clientInfo 版本改为随包版本。
+- 修复非 TTY 环境下所有命令无条件读 stdin 导致挂起的问题（Agent 持久 shell 中 `mao-agent update --check` 等子命令会卡死）：子命令不再读 stdin；chat 命令保留管道提示词输入并加 2s 空闲超时兜底。
 
 ## 0.0.40 (2026-08-21)
 

@@ -86,6 +86,7 @@ export interface CliConfig {
   updateCheck: boolean;
   help: boolean;
   version: boolean;
+  consumesPipedPrompt: boolean;
   stdoutIsTty: boolean;
   stdinIsTty: boolean;
 }
@@ -166,6 +167,16 @@ function hasFlag(flags: Record<string, string | boolean>, ...names: string[]): b
     const v = flags[n];
     return v === true || v === 'true' || v === '1';
   });
+}
+
+/**
+ * 该命令是否消费管道提示词（决定非 TTY 下是否读 stdin）。
+ * chat（裸调用、-p、带 prompt 参数）支持管道输入；子命令不读 stdin，
+ * 否则在保持 stdin 打开的环境（Agent 持久 shell、CI）里会无限挂起。
+ * chat 读 stdin 有 2s 空闲超时兜底（见 main.ts readStdin）。
+ */
+export function consumesPipedPrompt(command: CommandName): boolean {
+  return command === 'chat';
 }
 
 export function normalizeBaseUrl(raw: string): string {
@@ -368,6 +379,7 @@ export function parseCliConfig(
     updateCheck: hasFlag(flags, 'check'),
     help,
     version,
+    consumesPipedPrompt: consumesPipedPrompt(command),
     stdoutIsTty,
     stdinIsTty,
   };
@@ -431,6 +443,8 @@ LOCAL 模式选项:
   MAO_TOKEN / MAO_REFRESH_TOKEN      与 mao-cli 同名
   MAO_AGENT_OUTPUT_FORMAT            默认输出格式
   NO_COLOR                           禁用颜色
+
+stdin: chat 命令（裸调用 / -p / 带 prompt）在非 TTY 下读取管道提示词，2s 内无输入则跳过；子命令不读 stdin，可安全在 Agent 持久 shell 中运行。
 
 退出码:
   0   任务成功（COMPLETED）
