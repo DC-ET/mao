@@ -76,4 +76,29 @@ describe('SubAgentVisibilityService', () => {
     expect(result.collector.error).toBeUndefined();
     expect(d.harnessService.executePrepared).toHaveBeenCalledOnce();
   });
+
+  it('forwards execution errors to the WS listener for frontend retry UI', async () => {
+    const d = deps({
+      harnessService: {
+        executePrepared: vi.fn(async () => {
+          throw new Error('模型思考被输出上限截断，自动重试已耗尽，请重试');
+        }),
+      },
+    });
+    const service = new SubAgentVisibilityService(d);
+    const result = await service.executeVisible(
+      { id: 42, userId: 7, modelId: 3 },
+      new AgentExecutionContext(),
+      false,
+    );
+    // collector 记录错误，供上层判定 FAILED
+    expect((result.collector.error as Error).message).toContain('模型思考被输出上限截断');
+    // WS 端收到 error 事件，前端据此显示异常提示与重试按钮
+    const errorEvent = vi.mocked(d.registry.send).mock.calls.find(
+      (c) => (c[1] as { type?: string })?.type === 'error',
+    );
+    expect(errorEvent).toBeDefined();
+    const payload = errorEvent![1] as { data?: { message?: string } };
+    expect(payload.data?.message).toContain('模型思考被输出上限截断');
+  });
 });

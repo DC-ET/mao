@@ -160,7 +160,14 @@ export class SubAgentVisibilityService {
       await this.resolveSupportsVision(childSession),
     );
     const composite = CompositeAgentEventListener.of(wsListener, collector);
-    await this.deps.harnessService.executePrepared(subContext, composite);
+    try {
+      await this.deps.harnessService.executePrepared(subContext, composite);
+    } catch (e) {
+      // 执行异常（如 LLM 重试耗尽）必须让 WS 端也收到 error 事件，
+      // 前端子代理面板据此显示异常提示与重试按钮；collector 同时记录错误供上层判定 FAILED。
+      composite.onError(e);
+      throw e;
+    }
   }
 
   private async resolveSupportsVision(session: Session): Promise<boolean> {

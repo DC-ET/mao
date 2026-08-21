@@ -32,6 +32,15 @@ class StreamInterruptedAfterOutputException extends Error {
   }
 }
 
+/** 推理模型思考被输出长度上限截断（finish_reason=length 且无正式 content / tool calls），
+ *  该轮只有思考没有回答，按可重试异常处理，重试前丢弃思考过程。 */
+class StreamThinkingTruncatedException extends Error {
+  constructor() {
+    super('Model thinking truncated by output limit (finish_reason=length without content)');
+    this.name = 'StreamThinkingTruncatedException';
+  }
+}
+
 interface HttpResult {
   status: number;
   headers: http.IncomingHttpHeaders;
@@ -158,14 +167,18 @@ export class OpenAiLlmAdapter implements LlmAdapter {
           callback.onError(this.cancelledException());
           return;
         }
-        const interruptedAfterOutput = e instanceof StreamInterruptedAfterOutputException;
+        const truncated = e instanceof StreamInterruptedAfterOutputException
+          || e instanceof StreamThinkingTruncatedException;
         if (!this.isRetryableNetworkFailure(e) || attempt > this.retry.rateLimitMaxRetries) {
-          callback.onError(interruptedAfterOutput
-            ? new Error('模型流式响应已中断，自动重试已耗尽', { cause: e })
+          callback.onError(truncated
+            ? new Error(e instanceof StreamThinkingTruncatedException
+              ? '模型思考被输出上限截断，自动重试已耗尽，请重试'
+              : '模型流式响应已中断，自动重试已耗尽', { cause: e })
             : e);
           return;
         }
-        if (interruptedAfterOutput) {
+        if (truncated) {
+          // 丢弃被截断的思考过程，下一轮从干净状态重新生成
           callback.onStreamReset?.();
         }
         const delaySeconds = this.resolveRetryDelaySeconds(null, attempt);
@@ -186,6 +199,9 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     let emitted = false;
     let done = false;
     let buffer = '';
+    let finishReason: string | null = null;
+    let hasContentOutput = false;
+    let hasToolCallOutput = false;
     // fatal：截断的 UTF-8 必须报错，静默降级为 U+FFFD 会让被截断的流看起来正常完成
     const decoder = new TextDecoder('utf-8', { fatal: true });
     let lastData = Date.now();
@@ -217,6 +233,12 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       try {
         const parsed = JSON.parse(data) as unknown;
         const streamChunk = parseStreamChunk(parsed);
+        for (const choice of streamChunk.choices ?? []) {
+          if (choice.finishReason) finishReason = choice.finishReason;
+          const delta = choice.delta;
+          if (delta?.content) hasContentOutput = true;
+          if (delta?.toolCalls && delta.toolCalls.length > 0) hasToolCallOutput = true;
+        }
         callback.onChunk(streamChunk);
         if (hasAccumulatedOutput(streamChunk)) emitted = true;
         const u = parseUsageFromSse(parsed);
@@ -261,10 +283,14 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         if (emitted) throw new StreamInterruptedAfterOutputException(eof);
         throw eof;
       }
+      // 推理模型思考被输出上限截断：只有思考没有正式回答，丢弃该轮并按可重试异常处理
+      if (finishReason === 'length' && !hasContentOutput && !hasToolCallOutput) {
+        throw new StreamThinkingTruncatedException();
+      }
       callback.onComplete(usage);
     } catch (e) {
       if (idleTimedOut) throw idleTimedOut;
-      if (e instanceof StreamInterruptedAfterOutputException) throw e;
+      if (e instanceof StreamInterruptedAfterOutputException || e instanceof StreamThinkingTruncatedException) throw e;
       if (emitted) throw new StreamInterruptedAfterOutputException(e);
       throw e;
     } finally {
@@ -520,6 +546,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
           || (cause as NodeJS.ErrnoException).code === 'EAI_AGAIN'
           || (cause as NodeJS.ErrnoException).code === 'http_call_timeout'
           || cause instanceof StreamInterruptedAfterOutputException
+          || cause instanceof StreamThinkingTruncatedException
           || msg.includes('stream ended before [DONE]')
           || msg.includes('timeout')
           || msg.includes('ECONNRESET')
@@ -545,6 +572,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         if ((cause as NodeJS.ErrnoException).code === 'ENOTFOUND') return 'dns_lookup_failure';
         if ((cause as NodeJS.ErrnoException).code === 'EAI_AGAIN') return 'dns_temporary_failure';
         if (cause.name === 'EOFException' || cause.message.includes('stream ended before [DONE]')) return 'unexpected_eof';
+        if (cause instanceof StreamThinkingTruncatedException) return 'thinking_truncated';
         if (cause.cause == null) break;
         cause = cause.cause;
         continue;

@@ -468,6 +468,60 @@ describe('OpenAiLlmAdapter', () => {
     expect(server.requestCount).toBe(2);
   }, 10_000);
 
+  it('streamRetriesThinkingTruncatedAndSucceedsWithFreshOutput', async () => {
+    server = new QueueServer();
+    // 第 1 次：只有 thinking（reasoning_content），finish_reason=length，思考被截断
+    server.enqueueSse(
+      'data: {"choices":[{"delta":{"reasoning_content":"let me think deeply about this very long analysis..."}}]}\n\n'
+      + 'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n'
+      + 'data: [DONE]\n\n',
+    );
+    // 第 2 次：正常输出 content
+    server.enqueueSse('data: {"choices":[{"delta":{"content":"review complete"}}]}\n\ndata: [DONE]\n\n');
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(1, 0).stream(request('truncated-thinking'), configOf(server), callback, { get: () => false });
+    expect(callback.error).toBeUndefined();
+    expect(callback.retryReasons).toContain('thinking_truncated');
+    expect(callback.streamResetCount).toBe(1);
+    expect(callback.chunks).toHaveLength(1);
+    expect(callback.chunks[0]?.choices?.[0]?.delta?.content).toBe('review complete');
+    expect(callback.usage).toBeDefined();
+  });
+
+  it('streamReportsFriendlyErrorWhenThinkingTruncatedRetriesExhausted', async () => {
+    server = new QueueServer();
+    const truncatedSse =
+      'data: {"choices":[{"delta":{"reasoning_content":"thinking..."}}]}\n\n'
+      + 'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n'
+      + 'data: [DONE]\n\n';
+    server.enqueueSse(truncatedSse);
+    server.enqueueSse(truncatedSse);
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(1, 0).stream(request('truncated-exhausted'), configOf(server), callback, { get: () => false });
+    expect(callback.usage).toBeUndefined();
+    expect((callback.error as Error).message).toContain('模型思考被输出上限截断，自动重试已耗尽，请重试');
+    expect(server.requestCount).toBe(2);
+  });
+
+  it('streamDoesNotTreatContentTruncationAsThinkingTruncation', async () => {
+    server = new QueueServer();
+    // finish_reason=length 但有正式 content：属于内容截断，按正常流完成
+    server.enqueueSse(
+      'data: {"choices":[{"delta":{"content":"partial answer"}}]}\n\n'
+      + 'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n'
+      + 'data: [DONE]\n\n',
+    );
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(0, 0).stream(request('content-truncated'), configOf(server), callback, { get: () => false });
+    expect(callback.error).toBeUndefined();
+    expect(callback.usage).toBeDefined();
+    expect(callback.retryReasons).toEqual([]);
+    expect(server.requestCount).toBe(1);
+  });
+
   it('streamRetriesAfterVisibleOutputAndResetsPartialChunks', async () => {
     server = new QueueServer();
     server.enqueueSse('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n');
