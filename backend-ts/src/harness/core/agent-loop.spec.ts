@@ -541,4 +541,50 @@ describe('AgentLoop', () => {
     await agentLoop.execute(ctx, l, p);
     expect(sessionCompactionOrchestrator.compact).not.toHaveBeenCalled();
   });
+
+  it('retriesOnEmptyLlmResponseAndSucceedsOnSecondAttempt', async () => {
+    const ctx = context();
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    stubActiveContext(42);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      call++;
+      if (call === 1) {
+        // 第 1 次：空响应（无 content、无 tool_calls）
+        callback.onComplete({ promptTokens: 10, completionTokens: 0, totalTokens: 10 });
+      } else {
+        // 第 2 次：正常响应
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 10, completionTokens: 2, totalTokens: 12 });
+      }
+    });
+    await agentLoop.execute(ctx, l, p);
+    expect(l.onMessageEnd).toHaveBeenCalled();
+    expect(l.onError).not.toHaveBeenCalled();
+    expect(call).toBe(2);
+    // 第 2 次调用的消息中应包含系统提示注入
+    expect(promptEngine.buildRequest).toHaveBeenCalled();
+    const secondCallMessages = promptEngine.buildRequest.mock.calls[0][0]?.messages;
+    const systemMsg = secondCallMessages?.find((m: { role: string }) => m.role === 'system');
+    expect(systemMsg?.content).toContain('上一轮模型未产生有效输出');
+  });
+
+  it('throwsFriendlyErrorAfterThreeConsecutiveEmptyResponses', async () => {
+    const ctx = context();
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    stubActiveContext(42);
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      call++;
+      callback.onComplete({ promptTokens: 10, completionTokens: 0, totalTokens: 10 });
+    });
+    await expect(agentLoop.execute(ctx, l, p)).rejects.toThrow('LLM 连续返回空响应，自动重试已耗尽，请重试');
+    expect(call).toBe(3);
+  });
 });

@@ -130,6 +130,7 @@ export class AgentLoop {
     persistenceCallback?: MessagePersistenceCallback | null,
   ): Promise<void> {
     let round = 0;
+    let emptyResponseCount = 0;
     try {
       let pendingSave: string | null = null;
       let pendingThinking: string | null = null;
@@ -185,6 +186,7 @@ export class AgentLoop {
         listener.onContextWindow?.(estimatedTokens, context.lastPromptTokens > 0 ? context.lastPromptTokens : 0);
 
         const currentRound = round;
+        let emptyResponseEncountered = false;
         const thinkingEnded = { v: false };
         const emittedEarlyStarts = new Set<string>();
         listener.onThinkingStart?.();
@@ -256,6 +258,23 @@ export class AgentLoop {
                   pendingSaveUsage = usage;
                   pendingSaveToolCalls = toolCalls;
                 }
+              } else {
+                // LLM 返回了空响应（无 content、无 tool_calls，可能有思考或无思考）。
+                // 不静默退出，而是注入系统提示让模型继续，最多重试 3 次。
+                emptyResponseCount++;
+                harnessLog('warn',
+                  `Agent loop round ${currentRound} for session ${sessionId}: empty LLM response`
+                  + ` (thinking=${thinkingContent?.length ?? 0} chars, retry=${emptyResponseCount}/3)`,
+                );
+                if (emptyResponseCount >= 3) {
+                  throw new Error(
+                    'LLM 连续返回空响应，自动重试已耗尽，请重试',
+                  );
+                }
+                context.addSystemMessage(
+                  '<系统提示：上一轮模型未产生有效输出，请继续完成当前任务。>',
+                );
+                emptyResponseEncountered = true;
               }
             },
             onError: (t: unknown) => {
@@ -292,6 +311,11 @@ export class AgentLoop {
 
         const pendingCalls = context.pendingToolCalls;
         if (!pendingCalls || pendingCalls.length === 0) {
+          if (emptyResponseEncountered) {
+            // 空响应已注入系统提示，继续下一轮让模型重新回答
+            context.clearPendingToolCalls();
+            continue;
+          }
           const bgSubagentManager = this.backgroundSubagentManager?.();
           if (bgSubagentManager?.hasRunning(sessionId ?? null) || bgSubagentManager?.hasPendingResults(sessionId ?? null)) {
             await bgSubagentManager.waitForAll(sessionId ?? null, cancelFlag ?? null);
