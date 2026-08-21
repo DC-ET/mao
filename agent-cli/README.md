@@ -16,4 +16,4 @@ npm link   # 本地安装 mao-agent 命令
 
 一条命令安装脚本：`scripts/install-mao-agent.sh`（发布用）。
 
-设计文档（维护者）：[docs/mao-agent-cli-technical-design.md](../docs/mao-agent-cli-technical-design.md)、[docs/mao-agent-cli-ux-design.md](../docs/mao-agent-cli-ux-design.md)
+设计文档（维护者）：[docs/plan/mao-agent-cli-technical-design.md](../docs/plan/mao-agent-cli-technical-design.md)、[docs/plan/mao-agent-cli-ux-design.md](../docs/plan/mao-agent-cli-ux-design.md)

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 每次对话注入系统提示，保持极简；细节读链出文档/源码，勿在此扩写。
-搭建/环境/部署：README.md、DEPLOY.md。产品/使用问答：skills/mao-cli/SKILL.md。细案：docs/（technical-design.md、android-app-technical-design.md）。初版：重构不考虑存量数据与兼容。
+搭建/环境/部署：README.md、DEPLOY.md。产品/使用问答：skills/mao-cli/SKILL.md。细案：docs/plan/（technical-design.md、android-app-technical-design.md）。初版：重构不考虑存量数据与兼容。
 
 ## 部署坑
 线上目录是 `/opt/mao`，不是会话工作区 `/opt/mao-data/workspace/...`（两套 git 检出）。改代码：工作区提交并推 origin/main。部署/线上 git：一律在 `/opt/mao` 跑 pull、scripts/deploy-{admin,desktop}.sh、构建、restart-backend.sh。勿混用。

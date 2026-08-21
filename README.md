@@ -2,7 +2,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <p align="center">
-  <img src="docs/logo.png" alt="Mao Logo" width="96" />
+  <img src="docs/assets/logo.png" alt="Mao Logo" width="96" />
 </p>
 
 <h1 align="center">Mao</h1>
@@ -31,7 +31,7 @@ Mao 提供可私有化部署的 AI Agent 管理与协作：内置 Think-Act-Obse
 ## 客户端预览
 
 <p align="center">
-  <img src="docs/client.png" alt="Mao 桌面客户端页面样图" width="960" />
+  <img src="docs/assets/client.png" alt="Mao 桌面客户端页面样图" width="960" />
 </p>
 
 ## 产品文档（mao-cli 知识库）
@@ -101,7 +101,7 @@ cd agent-cli && npm test
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献与开发指引 |
 | [SECURITY.md](SECURITY.md) | 安全策略 |
 | [CHANGELOG.md](CHANGELOG.md) | 发版说明 |
-| [docs/technical-design.md](docs/technical-design.md) | 技术设计（维护者） |
+| [docs/plan/technical-design.md](docs/plan/technical-design.md) | 技术设计（维护者） |
 | [docs/](docs/) | 各专题设计稿 |
 | [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | AI 辅助开发指引 |
 | [agent-cli/README.md](agent-cli/README.md) | mao-agent 开发者说明 |

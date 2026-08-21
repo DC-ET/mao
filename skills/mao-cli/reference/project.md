@@ -9,7 +9,7 @@ Mao 是个人与企业都适用的**可私有化部署 AI Agent 管理与协作�
 - **界面语言**：中文
 - **风险提示**：尚未经企业级生产充分验证，部署前请自行评估
 
-Logo 与客户端预览图见 GitHub 仓库 `docs/logo.png`、`docs/client.png`。
+Logo 与客户端预览图见 GitHub 仓库 `docs/assets/logo.png`、`docs/assets/client.png`。
 
 ## 为什么选择 Mao
 
