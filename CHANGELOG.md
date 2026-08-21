@@ -19,6 +19,7 @@
 
 ### 后端
 - 修复管理后台删除 Skill 报「服务内部错误」的问题：清理 agent 关联技能名的 SQL 误用了驼峰列名 `skillNames`（实际列为 `skill_names`），导致删除必然 500；同时清理失败不再阻断删除本身。
+- 清理 `llm_model` 表历史遗留字段 `max_tokens`、`temperature_max`（代码零引用），启动时 Flyway 自动删除。
 
 ### 终端 CLI（mao-agent）
 - 交互 TUI 视觉分层：会话欢迎圆角卡片、用户消息 `❯` 前缀、工具 `⏺`/`⎿`、Markdown 标题/代码着色；底部圆角输入框（占位符弱化）与按模式着色的状态栏（LOCAL 黄色 / CLOUD 蓝色）。
