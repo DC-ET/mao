@@ -814,6 +814,10 @@ async function loadSession(sid: string) {
       workspace.value = data.workspace || ''
       // Trigger ChatPanel watcher AFTER store and refs are updated
       sessionStore.setActiveSession(sid)
+      // 用户正在查看此会话：清除后端未读标记，避免页面刷新后仍显示未读圆点
+      if (data.unread) {
+        void sessionStore.markAsRead(sid)
+      }
       // workspace and agentName will be synced from ChatPanel's useChat
       await agentStore.fetchAgent(normalizedAgentId)
       lastViewedSession.value = {
