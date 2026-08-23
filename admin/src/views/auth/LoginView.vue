@@ -25,6 +25,9 @@
           />
         </el-form-item>
         <el-form-item>
+          <el-checkbox v-model="rememberMe">记住密码</el-checkbox>
+        </el-form-item>
+        <el-form-item>
           <el-button
             type="primary"
             native-type="submit"
@@ -49,9 +52,10 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const loading = ref(false)
+const rememberMe = ref(localStorage.getItem('rememberMe') === '1')
 const form = ref({
-  username: '',
-  password: ''
+  username: localStorage.getItem('rememberedUsername') ?? '',
+  password: localStorage.getItem('rememberedPassword') ?? ''
 })
 
 async function handleLogin() {
@@ -63,6 +67,15 @@ async function handleLogin() {
   loading.value = true
   try {
     await authStore.login(form.value.username, form.value.password)
+    if (rememberMe.value) {
+      localStorage.setItem('rememberMe', '1')
+      localStorage.setItem('rememberedUsername', form.value.username)
+      localStorage.setItem('rememberedPassword', btoa(unescape(encodeURIComponent(form.value.password))))
+    } else {
+      localStorage.removeItem('rememberMe')
+      localStorage.removeItem('rememberedUsername')
+      localStorage.removeItem('rememberedPassword')
+    }
     router.push('/')
   } catch {
     // Error handled by interceptor
