@@ -249,6 +249,8 @@ export class AgentLoop {
               const content = contentBuilder.join('');
               const thinkingContent = thinkingBuilder.length > 0 ? thinkingBuilder.join('') : null;
               if (content !== '' || toolCalls.length > 0) {
+                // 收到有效输出即复位计数，保证"连续 3 次空响应"语义
+                emptyResponseCount = 0;
                 context.addAssistantMessage(content, toolCalls);
                 if (toolCalls.length === 0 && persistenceCallback) {
                   afterStream.push(Promise.resolve(persistenceCallback.onSaveAssistantMessage(content, thinkingContent, toolCalls, usage)));

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
@@ -256,7 +257,8 @@ export class ShellSessionManager {
       throw new Error(`Maximum number of shell sessions (${this.maxSessionsPerConversation}) reached for conversation ${conversationId}. Close existing sessions first.`);
     }
     if (!shellSessionId) {
-      shellSessionId = `sh-${conversationId}-${Date.now()}`;
+      // 毫秒时间戳在并行工具调用下会同毫秒撞车，追加随机段保证唯一
+      shellSessionId = `sh-${conversationId}-${Date.now()}-${randomUUID().replace(/-/g, '').slice(0, 8)}`;
     }
     const session = this.createSession(shellSessionId, conversationId, userId, workspace, domainTokenMap);
     this.sessions.set(shellSessionId, session);

@@ -357,6 +357,14 @@ export class MessageRepository {
     );
   }
 
+  /** 按 id 单调序取最后一条用户消息，不受 created_at 时钟偏移影响。 */
+  selectLastUserMessage(sessionId: number): Promise<Message | null> {
+    return this.db.queryOne<Message>(
+      `SELECT * FROM \`message\` WHERE session_id = ? AND role = 'USER' AND ${notDeleted()} ORDER BY id DESC LIMIT 1`,
+      [sessionId],
+    );
+  }
+
   async deleteFromId(sessionId: number, fromId: number): Promise<void> {
     await this.db.execute(
       `UPDATE \`message\` SET deleted = 1 WHERE session_id = ? AND id >= ? AND ${notDeleted()}`,

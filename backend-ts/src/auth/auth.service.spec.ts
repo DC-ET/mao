@@ -24,6 +24,7 @@ describe('AuthService', () => {
     generateToken: vi.fn(() => 'access'),
     generateRefreshToken: vi.fn(() => 'refresh'),
     validateToken: vi.fn(),
+    getTokenType: vi.fn(() => 'refresh'),
     getUserIdFromToken: vi.fn(),
     getUsernameFromToken: vi.fn(),
   } as unknown as JwtService;

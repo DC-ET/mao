@@ -44,6 +44,7 @@ describe('StreamingWsHandler', () => {
     updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
     listSubagentSessions: vi.fn(async () => []),
     cleanupIncompleteTail: vi.fn(async () => 0), updateContextTokens: vi.fn(),
+    getLastUserMessage: vi.fn(async () => message(3, 'USER')),
   };
   const taskTerminalService = { finishExecution: vi.fn() };
   const messageQueueService = {
@@ -77,7 +78,7 @@ describe('StreamingWsHandler', () => {
   const mcpClientManager = { closeSession: vi.fn() };
   const agentMapper = { selectById: vi.fn(async () => ({ id: 5, name: 'Coder' })) };
   const llmModelMapper = { selectById: vi.fn(), selectDefault: vi.fn() };
-  const jwtService = { validateToken: vi.fn(), getUserIdFromToken: vi.fn() };
+  const jwtService = { validateToken: vi.fn(), validateAccessToken: vi.fn(() => true), getUserIdFromToken: vi.fn() };
   const ws: WsSocket = { id: 'ws-1', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
 
   const handler = new StreamingWsHandler({
@@ -379,6 +380,7 @@ describe('StreamingWsHandler', () => {
   it('connectionRejectsForgedOrInvalidJwt', async () => {
     vi.clearAllMocks();
     jwtService.validateToken.mockReturnValue(false);
+    jwtService.validateAccessToken.mockReturnValue(false);
     const connected: WsSocket = { id: 'ws-x', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
     await handler.afterConnectionEstablished(connected, { token: 'forged', client: 'browser' });
     expect(connected.close).toHaveBeenCalled();
@@ -389,6 +391,7 @@ describe('StreamingWsHandler', () => {
   it('keeps client=cli instead of silently mapping to browser', async () => {
     vi.clearAllMocks();
     jwtService.validateToken.mockReturnValue(true);
+    jwtService.validateAccessToken.mockReturnValue(true);
     jwtService.getUserIdFromToken.mockReturnValue(7);
     await handler.afterConnectionEstablished(ws, { token: 'ok', client: 'cli' });
     expect(registry.register).toHaveBeenCalledWith(ws, 7, 'cli');

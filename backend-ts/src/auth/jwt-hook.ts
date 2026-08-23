@@ -28,7 +28,7 @@ export function resolveToken(request: FastifyRequest): string | null {
 
 export function authenticateRequest(request: FastifyRequest, jwt: JwtService): number | null {
   const token = resolveToken(request);
-  if (!token || !jwt.validateToken(token)) {
+  if (!token || !jwt.validateAccessToken(token)) {
     return null;
   }
   return jwt.getUserIdFromToken(token);

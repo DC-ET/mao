@@ -77,7 +77,9 @@ export class GrepSearchTool extends BaseTool {
     pattern: string, scope: SearchScope, workspaceRoot: string, glob: string | null,
     ignoreCase: boolean, contextLines: number, maxOutputChars: number,
   ): { matches: Record<string, unknown>[]; totalMatches: number; truncated: boolean } {
-    const cmd = ['rg', '--line-number', '--no-heading'];
+    // --json 输出为结构化事件（match/context 行各自带 path/line_number/lines），
+    // 规避按冒号切分时路径含 ":" 解析错乱、以及上下文行被误计为匹配行的问题
+    const cmd = ['rg', '--json'];
     if (ignoreCase) cmd.push('--ignore-case');
     if (contextLines > 0) cmd.push('--context', String(contextLines));
     if (glob) cmd.push('--glob', glob);
@@ -90,56 +92,34 @@ export class GrepSearchTool extends BaseTool {
     let charsUsed = 0;
     let truncated = false;
     for (const line of (spawned.stdout ?? '').split('\n')) {
-      if (!line) continue;
-      if (charsUsed + line.length + 1 > maxOutputChars) {
+      if (!line || !line.startsWith('{')) continue;
+      let event: { type?: string; data?: { path?: { text?: string }; line_number?: number; lines?: { text?: string } } };
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (event.type !== 'match' && event.type !== 'context') continue;
+      const d = event.data;
+      if (!d?.path?.text || d.line_number == null) continue;
+      // 去掉行文本自带的结尾换行
+      const content = (d.lines?.text ?? '').replace(/\r?\n$/, '');
+      const entry: Record<string, unknown> = {
+        file: scope.outputFilePath(d.path.text, workspaceRoot),
+        line: d.line_number,
+        content,
+      };
+      if (event.type === 'context') entry.contextual = true;
+      const entrySize = JSON.stringify(entry).length + d.path.text.length + content.length;
+      if (charsUsed + entrySize > maxOutputChars) {
         truncated = true;
         break;
       }
-      const match = this.parseRgLine(line, scope, workspaceRoot);
-      if (match) {
-        matches.push(match);
-        totalMatches++;
-        charsUsed += line.length + 1;
-      }
+      matches.push(entry);
+      charsUsed += entrySize;
+      if (event.type === 'match') totalMatches++;
     }
-    if (!truncated) truncated = totalMatches > 0 && charsUsed >= maxOutputChars;
     return { matches, totalMatches, truncated };
-  }
-
-  private parseRgLine(line: string, scope: SearchScope, workspaceRoot: string): Record<string, unknown> | null {
-    if (scope.isSingleFile()) return this.parseRgSingleFileLine(line, scope, workspaceRoot);
-    let firstColon = line.indexOf(':');
-    if (firstColon < 0) return null;
-    let secondColon = line.indexOf(':', firstColon + 1);
-    if (secondColon < 0) return null;
-    let filePath = line.slice(0, firstColon);
-    let lineNumStr = line.slice(firstColon + 1, secondColon);
-    let content = line.slice(secondColon + 1);
-    let lineNum = Number(lineNumStr);
-    if (!Number.isFinite(lineNum)) {
-      const firstDash = line.indexOf('-');
-      if (firstDash < 0) return null;
-      const secondDash = line.indexOf('-', firstDash + 1);
-      if (secondDash < 0) return null;
-      filePath = line.slice(0, firstDash);
-      lineNumStr = line.slice(firstDash + 1, secondDash);
-      content = line.slice(secondDash + 1);
-      lineNum = Number(lineNumStr);
-      if (!Number.isFinite(lineNum)) return null;
-    }
-    return { file: scope.outputFilePath(filePath, workspaceRoot), line: lineNum, content };
-  }
-
-  private parseRgSingleFileLine(line: string, scope: SearchScope, workspaceRoot: string): Record<string, unknown> | null {
-    const colon = line.indexOf(':');
-    const dash = line.indexOf('-');
-    let sepIdx: number;
-    if (colon > 0 && (dash < 0 || colon < dash)) sepIdx = colon;
-    else if (dash > 0) sepIdx = dash;
-    else return null;
-    const lineNum = Number(line.slice(0, sepIdx));
-    if (!Number.isFinite(lineNum)) return null;
-    return { file: scope.outputFilePath('', workspaceRoot), line: lineNum, content: line.slice(sepIdx + 1) };
   }
 
   private searchWithJs(

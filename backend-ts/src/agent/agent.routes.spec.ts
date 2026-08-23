@@ -100,7 +100,11 @@ describe('CRUD routes', () => {
       isAdmin: vi.fn(async () => true),
       getUserPermissionCodes: vi.fn(async () => ['user:read']),
     };
-    const jwt = { getUserIdFromToken: vi.fn(() => 7), validateToken: vi.fn(() => true) };
+    const jwt = {
+      getUserIdFromToken: vi.fn(() => 7),
+      validateToken: vi.fn(() => true),
+      validateAccessToken: vi.fn(() => true),
+    };
     const analytics = { summary: vi.fn(async () => ({ overview: {} })) };
     const mcpServerService = {
       listEnabled: vi.fn(async () => [{ id: 1, name: 's', status: 'ENABLED' }]),

@@ -22,6 +22,7 @@ export interface WsHandlerDeps {
     updateField(sessionId: number, field: string, value: unknown): Promise<void>;
     updateModelId(sessionId: number, modelId: number): Promise<void>;
     getMessages(sessionId: number): Promise<Message[]>;
+    getLastUserMessage(sessionId: number): Promise<Message | null>;
     editMessageAndTruncate(sessionId: number, messageId: number, content: string, images: string[]): Promise<Message>;
     save(session: Session): Promise<void>;
     listSubagentSessions(parentId: number): Promise<Session[]>;
@@ -425,8 +426,9 @@ export class StreamingWsHandler {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
     }
-    const messages = await this.deps.sessionService.getMessages(sessionId);
-    const lastUser = [...messages].reverse().find((m) => m.role === 'USER');
+    // 按 id 单调序定位最后一条用户消息：created_at 在跨节点时钟偏移下可能乱序，
+    // 误判目标会导致 editMessageAndTruncate 逻辑删除大量无辜消息
+    const lastUser = await this.deps.sessionService.getLastUserMessage(sessionId);
     if (!lastUser || lastUser.id !== messageId) {
       this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '只能编辑最后一条用户消息' }));
       return;
@@ -845,14 +847,15 @@ export class StreamingWsHandler {
       const queue = await this.deps.messageQueueService.listPending(sessionId);
       if (queue.length === 0) return;
       if (this.suppressAutoConsumeSend.has(sessionId)) return;
-      const head = await this.deps.messageQueueService.dequeue(sessionId);
-      if (!head) return;
-      await this.sendQueueUpdated(sessionId, userId);
+      // 先查占用再出队：若会话仍被占用则原位保留队头，
+      // 避免先 dequeue 再 enqueue 把队头消息搬到队尾破坏 FIFO
       if (this.executionClaims.has(sessionId) || this.runningTasks.has(sessionId)) {
-        await this.deps.messageQueueService.enqueue(sessionId, head.userId!, head.content ?? '', head.images ?? null);
         await this.sendQueueUpdated(sessionId, userId);
         return;
       }
+      const head = await this.deps.messageQueueService.dequeue(sessionId);
+      if (!head) return;
+      await this.sendQueueUpdated(sessionId, userId);
       const content = head.content ?? '';
       let imageList: string[] = [];
       if (head.images) {
@@ -1117,7 +1120,8 @@ export class StreamingWsHandler {
   private parseUserIdFromToken(token: string | undefined): number | null {
     if (!token) return null;
     try {
-      if (!this.deps.jwtService.validateToken(token)) return null;
+      // WS 与 REST 同权：接受 access/shell，拒绝 refresh token 充当连接凭据
+      if (!this.deps.jwtService.validateAccessToken(token)) return null;
       return this.deps.jwtService.getUserIdFromToken(token);
     } catch {
       return null;

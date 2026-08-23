@@ -992,6 +992,11 @@ export class SessionService {
     return this.messageRepo.selectMaxMessageId(sessionId);
   }
 
+  /** 按 id 单调序取最后一条用户消息，不受 created_at 时钟偏移影响。 */
+  getLastUserMessage(sessionId: number): Promise<Message | null> {
+    return this.messageRepo.selectLastUserMessage(sessionId);
+  }
+
   async loadContextAnchor(sessionId: number): Promise<ContextAnchor> {
     const session = await this.getSession(sessionId);
     return {

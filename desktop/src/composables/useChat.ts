@@ -93,6 +93,22 @@ export function useToolApprovals() {
 
 const FILE_REF_PATTERN = /@\{([^}]+)\}@/g
 
+/**
+ * 把消息中的文件引用相对路径改写为工作区绝对路径。
+ * 必须在乐观 UI 插入与 WS 发送之前对同一份文本执行，
+ * 保证用户气泡展示的内容与服务端实际收到/持久化的一致。
+ */
+export function resolveFileRefPaths(text: string, workspace: string): string {
+  if (!text.includes('@{') || !workspace) return text
+  FILE_REF_PATTERN.lastIndex = 0
+  return text.replace(FILE_REF_PATTERN, (_, relPath: string) => {
+    // Skip absolute paths (e.g. runtime incoming files uploaded via uploadPendingFiles)
+    if (relPath.startsWith('/')) return `@{${relPath}}@`
+    const absPath = workspace.replace(/\/$/, '') + '/' + relPath.replace(/^\//, '')
+    return `@{${absPath}}@`
+  })
+}
+
 export function isCurrentChatSession(
   localSessionId: string | null,
   activeSessionId: string | null,
@@ -357,6 +373,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       if (pendingUploads && pendingUploads.length > 0) {
         resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, sid)
       }
+      // Resolve file reference relative paths to absolute paths — before both
+      // the optimistic UI insert and the WS send so they stay consistent
+      resolvedText = resolveFileRefPaths(resolvedText, workspace.value)
       const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
       const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
       if (!requireCurrentSession(sid)) {
@@ -393,16 +412,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Subscribe to this session's events
       subscribe(sid)
 
-      // Resolve file reference relative paths to absolute paths
-      if (resolvedText.includes('@{') && workspace.value) {
-        FILE_REF_PATTERN.lastIndex = 0
-        resolvedText = resolvedText.replace(FILE_REF_PATTERN, (_, relPath) => {
-          // Skip absolute paths (e.g. runtime incoming files uploaded via uploadPendingFiles)
-          if (relPath.startsWith('/')) return `@{${relPath}}@`
-          const absPath = workspace.value.replace(/\/$/, '') + '/' + relPath.replace(/^\//, '')
-          return `@{${absPath}}@`
-        })
-      }
 
       // Send message via WS
       const eventId = generateUUID()
@@ -549,6 +558,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       if (pendingUploads && pendingUploads.length > 0) {
         resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, sid)
       }
+      // Resolve file reference relative paths to absolute paths — before both
+      // the optimistic UI insert and the WS send so they stay consistent
+      resolvedText = resolveFileRefPaths(resolvedText, workspace.value)
       const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
       const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
       if (!requireCurrentSession(sid)) {
@@ -585,16 +597,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Subscribe to this session's events
       subscribe(sid)
 
-      // Resolve file reference relative paths to absolute paths
-      if (resolvedText.includes('@{') && workspace.value) {
-        FILE_REF_PATTERN.lastIndex = 0
-        resolvedText = resolvedText.replace(FILE_REF_PATTERN, (_, relPath) => {
-          // Skip absolute paths (e.g. runtime incoming files uploaded via uploadPendingFiles)
-          if (relPath.startsWith('/')) return `@{${relPath}}@`
-          const absPath = workspace.value.replace(/\/$/, '') + '/' + relPath.replace(/^\//, '')
-          return `@{${absPath}}@`
-        })
-      }
 
       // Send message via WS
       const eventId = generateUUID()

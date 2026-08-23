@@ -91,14 +91,18 @@ export class PromptEngine {
         return match;
       });
       const commandMatches = [...replaced.matchAll(COMMAND_PATTERN)];
-      for (const m of commandMatches) {
+      // 单遍从后向前替换：String.replace(string, ...) 只换第一处，且前向替换会让
+      // 后续匹配的索引在内容展开后失配（同名标记或展开内容含 #{...}# 时错乱）
+      for (let ci = commandMatches.length - 1; ci >= 0; ci--) {
+        const m = commandMatches[ci];
+        if (m.index == null) continue;
         const commandName = m[1];
         let command: { content?: string } | null = null;
         if (userId != null) {
           command = await this.userCommandService.getByUserIdAndName(userId, commandName);
         }
         if (command?.content != null) {
-          replaced = replaced.replace(m[0], command.content);
+          replaced = replaced.slice(0, m.index) + command.content + replaced.slice(m.index + m[0].length);
         } else {
           harnessLog('warn', `Command not found for marker: #{${commandName}}#`);
         }

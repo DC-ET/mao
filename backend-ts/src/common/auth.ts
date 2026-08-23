@@ -14,7 +14,7 @@ export function extractBearerToken(request: FastifyRequest): string | null {
 
 export function requireUserId(request: FastifyRequest, jwt: JwtService): number {
   const token = extractBearerToken(request);
-  if (!hasText(token) || !jwt.validateToken(token!)) {
+  if (!hasText(token) || !jwt.validateAccessToken(token!)) {
     throw new BusinessException(ErrorCode.UNAUTHORIZED);
   }
   return jwt.getUserIdFromToken(token!);

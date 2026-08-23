@@ -100,6 +100,8 @@ async function withSessionLock<T>(sessionId: number, fn: () => Promise<T>): Prom
 }
 
 export class ScheduledTaskService {
+  /** 正在排队/执行中的任务 id → 计数，防止锁等待期间重复触发连环补发。 */
+  private readonly inFlight = new Set<number>();
   constructor(
     private readonly store: ScheduledTaskStore,
     private readonly sessionService: ScheduleSessionService,
@@ -180,62 +182,83 @@ export class ScheduledTaskService {
   }
 
   async executeTask(task: ScheduledTask): Promise<void> {
-    task.nextFireTime = this.calculateNextFireTime(task.cronExpression!);
-    await this.store.updateById(task);
-    const executionId = randomUUID();
-    const userId = task.userId!;
-    this.agentExecutor(() => withSessionLock(task.sessionId!, async () => {
-      try {
-        const session = await this.sessionService.getSession(task.sessionId!);
-        if (session == null) {
-          await this.markTaskResult(task, 'FAILED');
-          return;
-        }
-        const phase = session.phase;
-        if (phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL') {
-          await this.messageQueueService.enqueue(task.sessionId!, userId, task.prompt!, null);
-          await this.markTaskResult(task, 'QUEUED');
-          return;
-        }
-        await this.sessionService.updatePhase(task.sessionId!, 'RUNNING');
-        let savedMessage: Message;
+    // 在飞守卫：锁排队期间同一任务再次到期时直接跳过本次触发（nextFireTime 已推进，
+    // 下个周期会正常调度），避免连环补发与 fireCount 竞态覆盖
+    if (task.id != null && this.inFlight.has(task.id)) {
+      return;
+    }
+    if (task.id != null) this.inFlight.add(task.id);
+    try {
+      task.nextFireTime = this.calculateNextFireTime(task.cronExpression!);
+      await this.store.updateById(task);
+      const executionId = randomUUID();
+      const userId = task.userId!;
+      this.agentExecutor(() => withSessionLock(task.sessionId!, async () => {
         try {
-          savedMessage = await this.sessionService.saveMessage(task.sessionId!, 'USER', task.prompt, null, null, null, 0, null);
-        } catch {
-          await this.sessionService.updatePhase(task.sessionId!, 'IDLE');
+          // 拿到锁后重读最新任务状态，排队期间可能已被更新/暂停/删除
+          const latest = task.id != null ? await this.store.selectById(task.id) : null;
+          if (latest != null) {
+            task.name = latest.name;
+            task.prompt = latest.prompt ?? task.prompt;
+            task.cronExpression = latest.cronExpression;
+            task.status = latest.status;
+          }
+          if (task.status != null && task.status !== 'ACTIVE') {
+            return;
+          }
+          const session = await this.sessionService.getSession(task.sessionId!);
+          if (session == null) {
+            await this.markTaskResult(task, 'FAILED');
+            return;
+          }
+          const phase = session.phase;
+          if (phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL') {
+            await this.messageQueueService.enqueue(task.sessionId!, userId, task.prompt!, null);
+            await this.markTaskResult(task, 'QUEUED');
+            return;
+          }
+          await this.sessionService.updatePhase(task.sessionId!, 'RUNNING');
+          let savedMessage: Message;
+          try {
+            savedMessage = await this.sessionService.saveMessage(task.sessionId!, 'USER', task.prompt, null, null, null, 0, null);
+          } catch {
+            await this.sessionService.updatePhase(task.sessionId!, 'IDLE');
+            await this.markTaskResult(task, 'FAILED');
+            return;
+          }
+          if (this.liveExecution != null) {
+            await this.liveExecution(session, userId, executionId, savedMessage);
+          } else {
+            await this.harnessService.executeFromEvent(task.sessionId!, executionId, {
+              onContentDelta() {},
+              onToolCallStart() {},
+              onToolCallResult() {},
+              onMessageEnd() {},
+              onError() {},
+            });
+            await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'COMPLETED', executionId);
+          }
+          await this.markTaskResult(task, 'COMPLETED');
+          await this.sendWeixinReplyIfApplicable(task.sessionId!, userId);
+        } catch (e) {
+          try {
+            await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'FAILED', executionId,
+              e instanceof Error ? e.message : String(e));
+          } catch { /* ignore */ }
           await this.markTaskResult(task, 'FAILED');
-          return;
+        } finally {
+          task.lastFireTime = formatDateTime(new Date());
+          task.fireCount = (task.fireCount ?? 0) + 1;
+          if (task.lastExecutionStatus !== 'QUEUED' && this.calculateNextFireTime(task.cronExpression!) == null) {
+            task.finished = 1;
+            task.finishedAt = formatDateTime(new Date());
+          }
+          await this.store.updateById(task);
         }
-        if (this.liveExecution != null) {
-          await this.liveExecution(session, userId, executionId, savedMessage);
-        } else {
-          await this.harnessService.executeFromEvent(task.sessionId!, executionId, {
-            onContentDelta() {},
-            onToolCallStart() {},
-            onToolCallResult() {},
-            onMessageEnd() {},
-            onError() {},
-          });
-          await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'COMPLETED', executionId);
-        }
-        await this.markTaskResult(task, 'COMPLETED');
-        await this.sendWeixinReplyIfApplicable(task.sessionId!, userId);
-      } catch (e) {
-        try {
-          await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'FAILED', executionId,
-            e instanceof Error ? e.message : String(e));
-        } catch { /* ignore */ }
-        await this.markTaskResult(task, 'FAILED');
-      } finally {
-        task.lastFireTime = formatDateTime(new Date());
-        task.fireCount = (task.fireCount ?? 0) + 1;
-        if (task.lastExecutionStatus !== 'QUEUED' && this.calculateNextFireTime(task.cronExpression!) == null) {
-          task.finished = 1;
-          task.finishedAt = formatDateTime(new Date());
-        }
-        await this.store.updateById(task);
-      }
-    }));
+      }));
+    } finally {
+      if (task.id != null) this.inFlight.delete(task.id);
+    }
   }
 
   calculateNextFireTime(cronExpression: string): string | null {

@@ -40,7 +40,8 @@ export class AuthService {
   }
 
   async refreshToken(refreshToken: string): Promise<LoginVO> {
-    if (!this.jwtService.validateToken(refreshToken)) {
+    if (!this.jwtService.validateToken(refreshToken)
+      || this.jwtService.getTokenType(refreshToken) !== 'refresh') {
       throw new BusinessException(ErrorCode.TOKEN_EXPIRED);
     }
     const userId = this.jwtService.getUserIdFromToken(refreshToken);
