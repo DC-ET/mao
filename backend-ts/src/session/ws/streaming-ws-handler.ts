@@ -35,6 +35,7 @@ export interface WsHandlerDeps {
   messageQueueService: {
     listPending(sessionId: number): Promise<MessageQueueItem[]>;
     enqueue(sessionId: number, userId: number, content: string, images: string | null): Promise<void>;
+    enqueueHead(sessionId: number, userId: number, content: string, images: string | null): Promise<void>;
     dequeue(sessionId: number): Promise<MessageQueueItem | null>;
     getById(id: number): Promise<MessageQueueItem | null>;
     delete(id: number): Promise<void>;
@@ -232,12 +233,21 @@ export class StreamingWsHandler {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
     const data = (root.data ?? {}) as Record<string, unknown>;
-    if (typeof data.content !== 'string') return;
+    // claimAlreadyHeld=true 表示调用方（auto-consume）已在出队前占位会话，
+    // 本方法内任何未进入执行的失败出口都必须释放占位，否则会话永久卡死
+    const claimAlreadyHeld = data.executionClaimHeld === true;
+    if (typeof data.content !== 'string') {
+      if (claimAlreadyHeld) this.executionClaims.delete(sessionId);
+      return;
+    }
     const content = data.content;
     const eventId = typeof data.eventId === 'string' ? data.eventId : null;
     const images = Array.isArray(data.images) ? data.images.map(String) : [];
     const session = await this.requireOwnedSession(userId, sessionId);
-    if (!session) return;
+    if (!session) {
+      if (claimAlreadyHeld) this.executionClaims.delete(sessionId);
+      return;
+    }
     const replacingExecution = data.replaceExecution === true;
     const isAutoConsume = this.autoConsumingSessionIds.delete(sessionId);
     if (!replacingExecution && !isAutoConsume && this.isSessionActive(session.phase)) {
@@ -254,15 +264,16 @@ export class StreamingWsHandler {
     if (images.length > 0) {
       const model = await this.resolveSessionModel(session);
       if (!model || model.supportsVision !== 1) {
+        if (claimAlreadyHeld) this.executionClaims.delete(sessionId);
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '当前模型不支持图片输入，请切换支持视觉的模型' }));
         return;
       }
       if (images.length > 10) {
-        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '单条消息最多支持 10 张图片' }));
+        if (claimAlreadyHeld) this.executionClaims.delete(sessionId);
+        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '单条消息最多支持 10 张图片', }));
         return;
       }
     }
-    const claimAlreadyHeld = data.executionClaimHeld === true;
     if (!claimAlreadyHeld && this.executionClaims.has(sessionId)) {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
@@ -853,8 +864,14 @@ export class StreamingWsHandler {
         await this.sendQueueUpdated(sessionId, userId);
         return;
       }
+      // 原子占位后再出队：占位与出队之间无 await，手动 send_message 无法插队。
+      // 若不占位，出队与延迟执行之间可能被手动发送抢占，导致消息被消费却永不执行。
+      this.executionClaims.add(sessionId);
       const head = await this.deps.messageQueueService.dequeue(sessionId);
-      if (!head) return;
+      if (!head) {
+        this.executionClaims.delete(sessionId);
+        return;
+      }
       await this.sendQueueUpdated(sessionId, userId);
       const content = head.content ?? '';
       let imageList: string[] = [];
@@ -868,12 +885,22 @@ export class StreamingWsHandler {
       if (imageList.length > 0) consumed.images = imageList;
       this.deps.registry.send(userId, wsEvent('queue_message_consumed', sessionId, consumed));
       this.autoConsumingSessionIds.add(sessionId);
-      this.deps.agentExecutor(async () => {
-        await new Promise((r) => setTimeout(r, 500));
-        await this.handleSendMessage(userId, { sessionId, data: { content, eventId: randomUUID(), images: imageList } }, true);
-      });
+      try {
+        this.deps.agentExecutor(async () => {
+          await new Promise((r) => setTimeout(r, 500));
+          await this.handleSendMessage(userId, { sessionId, data: { content, eventId: randomUUID(), images: imageList, executionClaimHeld: true } }, true);
+        });
+      } catch (submitErr) {
+        // 提交被拒时释放占位并回补队列，避免消息已出队却永不执行
+        this.executionClaims.delete(sessionId);
+        this.autoConsumingSessionIds.delete(sessionId);
+        await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, head.images ?? null);
+        throw submitErr;
+      }
     } catch (e) {
       console.error(`Failed to auto-consume queue for session ${sessionId}`, e);
+      this.executionClaims.delete(sessionId);
+      this.autoConsumingSessionIds.delete(sessionId);
     }
   }
 

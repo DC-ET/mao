@@ -166,8 +166,21 @@ function handleSizeChange() {
   fetchSessions()
 }
 
-onMounted(fetchSessions)
-onActivated(fetchSessions)
+// keep-alive 下首次挂载 onMounted 与 onActivated 同时触发，跳过首次避免重复请求
+let activatedOnce = false
+onMounted(() => {
+  if (!activatedOnce) {
+    activatedOnce = true
+    fetchSessions()
+  }
+})
+onActivated(() => {
+  if (!activatedOnce) {
+    activatedOnce = true
+    return
+  }
+  fetchSessions()
+})
 </script>
 
 <style scoped>

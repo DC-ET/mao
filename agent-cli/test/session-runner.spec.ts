@@ -115,14 +115,19 @@ describe('SessionRunner', () => {
     expect((await p).status).toBe('CANCELLED');
   });
 
-  it('REPL session_already_running abandons the send', async () => {
+  it('REPL session_already_running waits for the busy run and resends input', async () => {
     const { ws, renderer, runner } = await attached({ printMode: false });
     const p = runner.runPrompt('x');
     await Promise.resolve();
-    ws.emit({ type: 'session_already_running', sessionId: 11, data: { code: 'session_already_running', message: 'busy' } });
+    ws.emit({ type: 'session_already_running', sessionId: 11, data: { code: 'session_already_running', message: 'busy', executionId: 'other-eid' } });
+    await new Promise((r) => setTimeout(r, 10));
+    // 占用会话的执行结束，CLI 应自动重发此前被拒的输入
+    terminal(ws, 'other-eid', 'COMPLETED');
     const result = await p;
-    expect(result.status).toBe('ALREADY_RUNNING');
+    expect(result.status).toBe('COMPLETED');
     expect(renderer.events.some((e) => e.type === 'session_already_running')).toBe(true);
+    const sends = ws.sent.filter((m) => (m as { type: string }).type === 'send_message');
+    expect(sends.length).toBe(2);
   });
 
   it('ask_user_questions fail path sends cancel (must not just exit)', async () => {

@@ -201,6 +201,8 @@ export function useStreamWS() {
         // Start heartbeat. Any server message proves the connection is alive; allow enough
         // time for a delayed pong when the shared outbound queue is busy with stream events.
         lastServerMessageAt = Date.now()
+        // 先清理可能残留的上一代心跳定时器（旧连接迟到事件或未触发 onclose 的场景）
+        stopHeartbeat()
         heartbeatTimer = setInterval(() => {
           if (ws?.readyState !== WebSocket.OPEN) return
           if (Date.now() - lastServerMessageAt > SERVER_SILENCE_TIMEOUT_MS) {
@@ -213,6 +215,7 @@ export function useStreamWS() {
       }
 
       ws!.onmessage = (event) => {
+        if (event.target !== ws) return
         lastServerMessageAt = Date.now()
         let msg: any
         try {
@@ -223,7 +226,13 @@ export function useStreamWS() {
         routeEvent(msg)
       }
 
-      ws!.onclose = () => {
+      // 只处理当前活跃连接的关闭事件：重连后旧 socket 的迟到 onclose
+      // 不能清掉新连接的心跳/状态，也不能再排一次多余重连
+      ws!.onclose = (event) => {
+        if (event.target !== ws) {
+          initialConnect = false
+          return
+        }
         connected.value = false
         stopHeartbeat()
         // 断线后内存中的瞬时 LLM 重试状态已不可信，全部清理避免重连后残留过期提示

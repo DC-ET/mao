@@ -117,6 +117,8 @@ export class CompactionService {
       temperature: source.temperature,
       stream: true,
       reasoning: source.reasoning,
+      thinking: source.thinking,
+      enableThinking: source.enableThinking,
       audio: source.audio,
     };
   }

@@ -134,11 +134,13 @@ describe('CRUD routes', () => {
         jwt: jwt as never, analytics: analytics as never, userRepo: userRepo as never,
         passwordHasher: { hash: async (s: string) => s, matches: async () => true },
         rootDir: '/tmp',
+        permissionService: permission,
       });
       registerAdminRuntimeRoutes(f, {
         jwt: jwt as never, analytics: analytics as never, userRepo: userRepo as never,
         passwordHasher: { hash: async (s: string) => s, matches: async () => true },
         rootDir: '/tmp',
+        permissionService: permission,
       });
       registerMcpServerRoutes(f, {
         mcpServerService: mcpServerService as never,

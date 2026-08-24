@@ -358,13 +358,33 @@ export class BackgroundSubagentManager {
       return { ok: true, taskId: execution.id, childSessionId: child.id };
     } catch (e) {
       this.untrackRunning(execution.parentSessionId, execution.id);
+      const message = '后台子代理执行提交失败: ' + ((e as Error)?.message ?? 'agent executor rejected');
       await this.deps.subagentExecutionMapper.updateById(execution.id, {
         status: 'FAILED',
-        result: '后台子代理执行提交失败: ' + ((e as Error)?.message ?? 'agent executor rejected'),
+        result: message,
         deliveryStatus: 'SUPPRESSED',
         completedAt: nowSql(),
       });
       await this.deps.visibilityService.finishSubagent(child.id, child.userId, 'FAILED', '');
+      // 必须向父代理投递失败结果：否则 waitForAll 正常退出且无待收结果，
+      // 父代理上下文永远不知道这个子代理失败了
+      const entries = this.resultsByParent.get(execution.parentSessionId) ?? [];
+      entries.push({
+        executionId: execution.id,
+        resultJson: JSON.stringify({
+          success: false,
+          cancelled: false,
+          task_id: execution.id,
+          child_session_id: child.id,
+          agent_type: execution.agentType ?? '',
+          status: 'FAILED',
+          result: message,
+          error: message,
+          rounds: 0,
+          tool_calls: 0,
+        }),
+      });
+      this.resultsByParent.set(execution.parentSessionId, entries);
       return { ok: false, error: '后台子代理执行提交失败，请稍后重试' };
     }
   }

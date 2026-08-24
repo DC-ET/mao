@@ -75,16 +75,15 @@ export class EditFileTool extends BaseTool {
         });
       }
       writeFileSync(filePath, match.updated);
-      const oldLines = oldString.split('\n').length;
-      const newLines = newString.split('\n').length;
+      const lineDelta = FileChangeDiffUtil.computeLineDelta(content, match.updated);
       return toJson({
         success: true,
         replacements: match.replacements,
         file_change: {
           path: filePathArg,
           type: 'MODIFIED',
-          lines_added: newLines * match.replacements,
-          lines_deleted: oldLines * match.replacements,
+          lines_added: lineDelta.linesAdded,
+          lines_deleted: lineDelta.linesDeleted,
         },
         [FileChangeDiffUtil.PRIVATE_DIFF_FIELD]: FileChangeDiffUtil.buildDiff(filePathArg, content, match.updated),
       });

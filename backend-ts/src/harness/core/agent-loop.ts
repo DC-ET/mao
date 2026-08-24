@@ -559,10 +559,10 @@ export class AgentLoop {
     if (!target.function) target.function = { name: '', arguments: '' };
     if (!delta.function) return;
     if (delta.function.name) {
+      // name 按规范一次性完整传输；部分网关会分片，此时只接受首个非空值，
+      // 追加拼接会把 "read_" + "_file" 拼成 "read__file"
       if (!target.function.name) {
         target.function.name = delta.function.name;
-      } else if (delta.function.name !== target.function.name) {
-        target.function.name += delta.function.name;
       }
     }
     if (delta.function.arguments) {

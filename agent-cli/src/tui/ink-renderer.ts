@@ -72,7 +72,11 @@ export class InkTuiRenderer implements Renderer {
   };
   private modelNames: string[] = [];
   private askResolvers = new Map<string, (answers: import('../ws/event-types').AskAnswer[] | 'fail' | 'cancelled') => void>();
-  private approvalResolver: ((choice: 'allow' | 'deny' | 'always') => void) | null = null;
+  private approvalQueue: Array<{
+    resolve: (choice: 'allow' | 'deny' | 'always') => void;
+    request: { toolName: string; description: string; dangerReason?: string | null; workspace?: string };
+    reason: string;
+  }> = [];
 
   constructor(opts: {
     asciiOnly?: boolean;
@@ -228,26 +232,36 @@ export class InkTuiRenderer implements Renderer {
     }
   }
 
-  /** LOCAL 审批：显示 approval modal 并等待用户选择。 */
+  /** LOCAL 审批：显示 approval modal 并等待用户选择。并行审批按 FIFO 串行展示，避免 resolver 相互覆盖导致永久悬挂。 */
   requestApproval(req: { toolName: string; description: string; dangerReason?: string | null; workspace?: string }, reason: string): Promise<'allow' | 'deny' | 'always'> {
     return new Promise((resolve) => {
-      // 单槽 modal：若已有 ask modal 打开，先以空答案提交（而非静默 cancelled），
+      // 若已有 ask modal 打开，先以空答案提交（而非静默 cancelled），
       // 让服务端结束问答继续执行，避免 waitForAnswer 长时间阻塞
       if (this.modal?.type === 'ask') {
         this.resolveAsk(this.modal.requestId, []);
       }
-      this.approvalResolver = resolve;
-      this.modal = { type: 'approval', request: req, reason };
-      this.flush();
+      this.approvalQueue.push({ resolve, request: req, reason });
+      if (this.approvalQueue.length === 1) {
+        this.showNextApproval();
+      }
     });
   }
 
+  private showNextApproval(): void {
+    const head = this.approvalQueue[0];
+    this.modal = head ? { type: 'approval', request: head.request, reason: head.reason } : null;
+    this.flush();
+  }
+
   resolveApproval(choice: 'allow' | 'deny' | 'always'): void {
+    const head = this.approvalQueue.shift();
+    if (head) {
+      this.showNextApproval();
+      head.resolve(choice);
+      return;
+    }
     this.modal = null;
     this.flush();
-    const resolve = this.approvalResolver;
-    this.approvalResolver = null;
-    if (resolve) resolve(choice);
   }
 
   hasModal(): boolean {

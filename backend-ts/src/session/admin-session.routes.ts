@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireUserId, sendOk } from '../common/http-error.js';
+import { requireAdmin, sendOk } from '../common/http-error.js';
 import { collectEntityIds, parseEntityId, pathId, queryInt, queryOptInt, queryOptStr } from '../common/request.js';
 import type { SessionService } from './session.service.js';
 import type { AgentLookup, LlmModelLookup, Session, UserLookup } from './types.js';
@@ -10,10 +10,12 @@ export interface AdminSessionRouteDeps {
   userLookup: UserLookup;
   agentLookup: AgentLookup;
   modelLookup: LlmModelLookup;
+  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
 }
 
 export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSessionRouteDeps): void {
-  const { sessionService, userLookup, agentLookup, modelLookup } = deps;
+  const { sessionService, userLookup, agentLookup, modelLookup, permissionService } = deps;
+  const requireAdminUser = (request: Parameters<typeof requireAdmin>[1]) => requireAdmin(permissionService, request);
 
   async function batchLoadUsers(sessions: Session[]) {
     const ids = collectEntityIds(sessions.map((s) => s.userId));
@@ -41,7 +43,7 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   }
 
   app.get('/v1/admin/sessions/options/users', async (request, reply) => {
-    requireUserId(request);
+    requireAdminUser(request);
     const users = await userLookup.listOptions();
     return sendOk(reply, users.map((u) => ({
       id: u.id,
@@ -51,13 +53,13 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   });
 
   app.get('/v1/admin/sessions/options/agents', async (request, reply) => {
-    requireUserId(request);
+    requireAdminUser(request);
     const agents = await agentLookup.listOptions();
     return sendOk(reply, agents.map((a) => ({ id: a.id, name: a.name })));
   });
 
   app.get('/v1/admin/sessions', async (request, reply) => {
-    requireUserId(request);
+    requireAdminUser(request);
     const page = queryInt(request, 'page', 1);
     const size = queryInt(request, 'size', 20);
     const pageResult = await sessionService.listSessionsForAdmin(
@@ -84,7 +86,7 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   });
 
   app.get('/v1/admin/sessions/:id', async (request, reply) => {
-    requireUserId(request);
+    requireAdminUser(request);
     const session = await sessionService.getSession(pathId(request));
     const single = [session];
     return sendOk(reply, toAdminSessionVO(
@@ -96,7 +98,7 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   });
 
   app.get('/v1/admin/sessions/:id/messages', async (request, reply) => {
-    requireUserId(request);
+    requireAdminUser(request);
     const id = pathId(request);
     const roundLimit = queryOptInt(request, 'roundLimit') ?? 5;
     const beforeMessageId = queryOptInt(request, 'beforeMessageId') ?? null;

@@ -284,7 +284,13 @@ onMounted(() => {
 
 // When returning from the session detail page (kept alive), refresh the list
 // so any changes made there are reflected, while preserving current filters/page.
+// 首次挂载时 onMounted 与 onActivated 都会触发，跳过首次避免重复请求。
+let activatedOnce = false
 onActivated(() => {
+  if (!activatedOnce) {
+    activatedOnce = true
+    return
+  }
   fetchSessions()
 })
 </script>

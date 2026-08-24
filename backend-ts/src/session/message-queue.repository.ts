@@ -5,6 +5,24 @@ import type { MessageQueue } from './types.js';
 export class MessageQueueRepository {
   constructor(private readonly db: Db) {}
 
+  transaction<T>(fn: (tx: MessageQueueRepository) => Promise<T>): Promise<T> {
+    return this.db.transaction((txDb) => fn(new MessageQueueRepository(txDb)));
+  }
+
+  findLastPendingForUpdate(sessionId: number): Promise<MessageQueue | null> {
+    return this.db.queryOne<MessageQueue>(
+      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} ORDER BY sort_order DESC, id DESC LIMIT 1 FOR UPDATE`,
+      [sessionId],
+    );
+  }
+
+  findFirstPendingForUpdate(sessionId: number): Promise<MessageQueue | null> {
+    return this.db.queryOne<MessageQueue>(
+      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} ORDER BY sort_order ASC, id ASC LIMIT 1 FOR UPDATE`,
+      [sessionId],
+    );
+  }
+
   findById(id: number): Promise<MessageQueue | null> {
     return this.db.queryOne<MessageQueue>(`SELECT * FROM message_queue WHERE id = ? AND ${notDeleted()}`, [id]);
   }
@@ -37,35 +55,35 @@ export class MessageQueueRepository {
 
   findLastPending(sessionId: number): Promise<MessageQueue | null> {
     return this.db.queryOne<MessageQueue>(
-      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} ORDER BY sort_order DESC LIMIT 1`,
+      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} ORDER BY sort_order DESC, id DESC LIMIT 1`,
       [sessionId],
     );
   }
 
   findHeadPending(sessionId: number): Promise<MessageQueue | null> {
     return this.db.queryOne<MessageQueue>(
-      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} ORDER BY sort_order ASC LIMIT 1`,
+      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} ORDER BY sort_order ASC, id ASC LIMIT 1`,
       [sessionId],
     );
   }
 
   findNeighborUp(sessionId: number, sortOrder: number): Promise<MessageQueue | null> {
     return this.db.queryOne<MessageQueue>(
-      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} AND sort_order < ? ORDER BY sort_order DESC LIMIT 1`,
+      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} AND sort_order < ? ORDER BY sort_order DESC, id DESC LIMIT 1`,
       [sessionId, sortOrder],
     );
   }
 
   findNeighborDown(sessionId: number, sortOrder: number): Promise<MessageQueue | null> {
     return this.db.queryOne<MessageQueue>(
-      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} AND sort_order > ? ORDER BY sort_order ASC LIMIT 1`,
+      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} AND sort_order > ? ORDER BY sort_order ASC, id ASC LIMIT 1`,
       [sessionId, sortOrder],
     );
   }
 
   listPending(sessionId: number): Promise<MessageQueue[]> {
     return this.db.query<MessageQueue>(
-      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} ORDER BY sort_order ASC`,
+      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} ORDER BY sort_order ASC, id ASC`,
       [sessionId],
     );
   }

@@ -278,16 +278,15 @@ function writeEditedFile(resolvedPath, filePathArg, oldString, newString, replac
     return out
   }
   fs.writeFileSync(resolvedPath, match.updated, 'utf-8')
-  const oldLines = String(oldString ?? '').split('\n').length
-  const newLines = String(newString ?? '').split('\n').length
+  const lineDelta = computeLineDelta(content, match.updated)
   return {
     success: true,
     replacements: match.replacements,
     file_change: {
       path: filePathArg,
       type: 'MODIFIED',
-      lines_added: newLines * match.replacements,
-      lines_deleted: oldLines * match.replacements
+      lines_added: lineDelta.linesAdded,
+      lines_deleted: lineDelta.linesDeleted
     },
     [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(filePathArg, content, match.updated)
   }

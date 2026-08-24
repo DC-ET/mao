@@ -8,7 +8,7 @@ function queue(id: number, sessionId: number, order: number, status: string): Me
 }
 
 describe('MessageQueueService', () => {
-  const repo: MessageQueueRepository = {
+  const repo = {
     findById: vi.fn(),
     insert: vi.fn(async (item) => {
       item.id = 99;
@@ -21,11 +21,14 @@ describe('MessageQueueService', () => {
     findNeighborDown: vi.fn(),
     listPending: vi.fn(),
     clearPending: vi.fn(),
-  } as unknown as MessageQueueRepository;
-  const service = new MessageQueueService(repo);
+    findLastPendingForUpdate: vi.fn(),
+    findFirstPendingForUpdate: vi.fn(),
+    transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(repo)),
+  };
+  const service = new MessageQueueService(repo as unknown as MessageQueueRepository);
 
   it('enqueueAppendsAfterLastPendingItem', async () => {
-    vi.mocked(repo.findLastPending).mockResolvedValue(queue(1, 10, 4, 'PENDING'));
+    vi.mocked(repo.findLastPendingForUpdate).mockResolvedValue(queue(1, 10, 4, 'PENDING'));
     const item = await service.enqueue(10, 20, 'hello', '[img]');
     expect(item.sessionId).toBe(10);
     expect(item.userId).toBe(20);
@@ -34,6 +37,13 @@ describe('MessageQueueService', () => {
     expect(item.sortOrder).toBe(5);
     expect(item.status).toBe('PENDING');
     expect(repo.insert).toHaveBeenCalledWith(item);
+  });
+
+  it('enqueueHeadInsertsBeforeCurrentHead', async () => {
+    vi.mocked(repo.insert).mockClear();
+    vi.mocked(repo.findFirstPendingForUpdate).mockResolvedValue(queue(2, 10, 1, 'PENDING'));
+    await service.enqueueHead(10, 20, 'urgent', null);
+    expect(repo.insert).toHaveBeenCalledWith(expect.objectContaining({ sortOrder: 0, content: 'urgent' }));
   });
 
   it('dequeueMarksHeadDeletedWhenPresent', async () => {

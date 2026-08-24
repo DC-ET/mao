@@ -10,6 +10,12 @@ import { harnessLog } from '../../log.js';
 
 const DEFAULT_HEAD_LIMIT = 100;
 
+// 与 rg 默认行为对齐：JS 回退遍历时跳过依赖与构建产物目录（参照 file/file.service.ts 的 IGNORED_DIRS）
+const IGNORED_DIRS = new Set([
+  'node_modules', '__pycache__', '.git', 'target', 'dist', 'build',
+  '.next', '.nuxt', '.venv', 'venv', '.idea', '.vscode',
+]);
+
 export class GlobSearchTool extends BaseTool {
   private rgAvailable: boolean | null = null;
 
@@ -94,6 +100,7 @@ export class GlobSearchTool extends BaseTool {
       try { entries = readdirSync(dir); } catch { return; }
       for (const name of entries) {
         if (files.length >= headLimit) return;
+        if (IGNORED_DIRS.has(name)) continue;
         const full = path.join(dir, name);
         let st;
         try { st = statSync(full); } catch { continue; }

@@ -32,6 +32,17 @@ export async function requirePermission(
   }
 }
 
+export async function requireAdmin(
+  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> },
+  request: FastifyRequest,
+): Promise<number> {
+  const userId = requireUserId(request);
+  if (!(await permissionService.isAdmin(userId))) {
+    throw new BusinessException(403, '需要管理员权限');
+  }
+  return userId;
+}
+
 export function handleError(err: unknown, _req: FastifyRequest, reply: FastifyReply): void {
   if (err instanceof BusinessException) {
     const http = err.code === 1001 || err.code === 401 ? 401

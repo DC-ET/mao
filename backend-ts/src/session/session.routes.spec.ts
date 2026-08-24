@@ -106,7 +106,7 @@ describe('session and admin routes', () => {
       subagentExecutionRepo: { findByChildSessionIds: vi.fn(async () => []) } as unknown as SubagentExecutionRepository,
       sessionCompactionEventService: { listBySessionId: vi.fn(async () => []) } as unknown as SessionCompactionEventService,
     });
-    registerAdminSessionRoutes(fastify, { sessionService, userLookup, agentLookup, modelLookup });
+    registerAdminSessionRoutes(fastify, { sessionService, userLookup, agentLookup, modelLookup, permissionService: { isAdmin: vi.fn(async () => true) } });
     const ossStsService = {
       generateStsToken: vi.fn(async () => ({
         accessKeyId: 'a', accessKeySecret: 'b', securityToken: 'c', expiration: 'e',

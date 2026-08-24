@@ -1,22 +1,40 @@
 import type { MessageQueue } from './types.js';
 import type { MessageQueueRepository } from './message-queue.repository.js';
-
 export class MessageQueueService {
   constructor(private readonly repo: MessageQueueRepository) {}
 
   async enqueue(sessionId: number, userId: number, content: string, images: string | null): Promise<MessageQueue> {
-    const last = await this.repo.findLastPending(sessionId);
-    const maxOrder = last?.sortOrder ?? 0;
-    const item: MessageQueue = {
-      sessionId,
-      userId,
-      content,
-      images,
-      sortOrder: maxOrder + 1,
-      status: 'PENDING',
-    };
-    await this.repo.insert(item);
-    return item;
+    // 事务 + FOR UPDATE 锁住队尾，避免并发 enqueue 读到相同 max(sort_order) 产生重复排序值
+    return this.repo.transaction(async (tx) => {
+      const last = await tx.findLastPendingForUpdate(sessionId);
+      const maxOrder = last?.sortOrder ?? 0;
+      const item: MessageQueue = {
+        sessionId,
+        userId,
+        content,
+        images,
+        sortOrder: maxOrder + 1,
+        status: 'PENDING',
+      };
+      await tx.insert(item);
+      return item;
+    });
+  }
+
+  /** 将消息插回队头（用于 auto-consume 失败补偿），取队首 order-1 保证排在所有现存消息之前。 */
+  async enqueueHead(sessionId: number, userId: number, content: string, images: string | null): Promise<void> {
+    return this.repo.transaction(async (tx) => {
+      const first = await tx.findFirstPendingForUpdate(sessionId);
+      const minOrder = first?.sortOrder ?? 1;
+      await tx.insert({
+        sessionId,
+        userId,
+        content,
+        images,
+        sortOrder: minOrder - 1,
+        status: 'PENDING',
+      });
+    });
   }
 
   async dequeue(sessionId: number): Promise<MessageQueue | null> {

@@ -700,6 +700,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         findByIds: (ids: number[]) => modelRepo.findByIds(ids),
         findDefault: () => modelRepo.findDefault(),
       } as never,
+      permissionService,
     });
     registerFileRoutes(api, {
       fileService, sessionService, workspaceBrowseService: workspaceBrowse,
@@ -724,6 +725,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     const adminDeps = {
       jwt, analytics: adminAnalytics,
       sessionLister: sessionService as never,
+      permissionService,
     };
     registerAdminAnalyticsRoutes(api, adminDeps);
     registerAdminRuntimeRoutes(api, adminDeps);

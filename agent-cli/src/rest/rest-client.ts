@@ -38,6 +38,11 @@ function unauthorizedHint(): string {
   return '未登录或登录已过期（HTTP 401）。请执行 mao-agent login 或设置 MAO_TOKEN。';
 }
 
+/** 仅幂等方法允许自动重试，避免 POST 等请求在服务端已生效后重试造成重复副作用。 */
+function isRetryableMethod(method: string): boolean {
+  return method === 'GET' || method === 'HEAD' || method === 'PUT' || method === 'DELETE';
+}
+
 export class RestClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
@@ -132,10 +137,13 @@ export class RestClient {
       });
     } catch (err) {
       clearTimeout(timer);
-      const netRetries = options._retriedNet ?? 0;
-      if (netRetries < 2) {
-        await sleep(200 * 2 ** netRetries);
-        return this.request<T>(method, apiPath, { ...options, _retriedNet: netRetries + 1 });
+      // 仅幂等方法自动重试；POST 等非幂等请求可能已在服务端生效，重试会产生重复副作用
+      if (isRetryableMethod(method)) {
+        const netRetries = options._retriedNet ?? 0;
+        if (netRetries < 2) {
+          await sleep(200 * 2 ** netRetries);
+          return this.request<T>(method, apiPath, { ...options, _retriedNet: netRetries + 1 });
+        }
       }
       throw classifyNetworkError(err, this.timeoutMs, url);
     } finally {
@@ -168,7 +176,7 @@ export class RestClient {
     if (!response.ok) {
       const msg = json?.message || response.statusText || '请求失败';
       if (response.status === 401) throw new CliError(unauthorizedHint());
-      if (response.status >= 500) {
+      if (response.status >= 500 && isRetryableMethod(method)) {
         const netRetries = options._retriedNet ?? 0;
         if (netRetries < 2) {
           await sleep(200 * 2 ** netRetries);

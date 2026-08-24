@@ -174,7 +174,7 @@ export class SessionRunner {
 
   async cancel(): Promise<void> {
     this.cancelledByUserFlag = true;
-    this.opts.ws.send({ type: 'cancel', sessionId: this.sessionId });
+    await this.sendCancel();
   }
 
   markApprovalDenied(): void {
@@ -207,6 +207,17 @@ export class SessionRunner {
     return { type: 'cancel', sessionId: this.sessionId };
   }
 
+  /**
+   * 取消是关键控制帧：走可靠发送（断线时先重连再发），
+   * 避免裸 send 在断线窗口静默丢弃导致服务端任务跑满全程。
+   */
+  private async sendCancel(): Promise<void> {
+    const sent = await this.opts.ws.sendReliable({ type: 'cancel', sessionId: this.sessionId });
+    if (!sent) {
+      console.error('[cancel] 取消帧发送失败（连接不可用），任务可能在服务端继续执行');
+    }
+  }
+
   private resetRound(): void {
     this.executionId = null;
     this.seenRunning = false;
@@ -233,8 +244,7 @@ export class SessionRunner {
     if (!sec || sec <= 0) return;
     this.durationTimer = setTimeout(() => {
       this.timedOutFlag = true;
-      this.opts.ws.send({ type: 'cancel', sessionId: this.sessionId });
-      void this.waitCancelThenSettle(CANCEL_WAIT_MS);
+      void this.sendCancel().then(() => this.waitCancelThenSettle(CANCEL_WAIT_MS));
     }, sec * 1000);
   }
 
@@ -257,7 +267,7 @@ export class SessionRunner {
         throw new CliError('该会话仍在执行（--if-running=fail）', EXIT.GENERAL);
       }
       if (this.opts.ifRunning === 'cancel') {
-        this.opts.ws.send({ type: 'cancel', sessionId: this.sessionId });
+        await this.sendCancel();
         await this.waitUntilSettled(CANCEL_WAIT_MS);
         this.resetRound();
         return;
@@ -266,12 +276,26 @@ export class SessionRunner {
       this.resetRound();
       return;
     }
-    this.executionId = this.session?.phase === 'RUNNING' || phase === 'RUNNING' ? this.executionId : this.executionId;
+    // REPL：会话忙时不做特殊处理，消息照常发送；服务端回 session_already_running
+    // 后由 handleAlreadyRunningEvent 等待当前执行结束并自动重发
   }
 
   private handleWs(evt: WsEvent): void {
     if (evt.type === 'connected' || evt.type === 'pong') return;
     if (evt.sessionId == null && evt.type !== 'error') return;
+
+    // 该事件是服务端对我们 send_message 的拒绝回执，收件人就是发送方本人，
+    // 其 data.executionId 指向占用方，不能走按自身 executionId 的过滤
+    if (evt.type === 'session_already_running' && (evt.sessionId == null || evt.sessionId === this.sessionId)) {
+      this.emit({
+        type: 'session_already_running',
+        message: String(evt.data?.message ?? '该会话仍在执行'),
+        executionId: evt.data?.executionId != null ? String(evt.data.executionId) : undefined,
+      });
+      void this.handleAlreadyRunningEvent(evt.data?.executionId != null ? String(evt.data.executionId) : undefined);
+      return;
+    }
+
     if (!acceptEvent(evt, this.sessionId, this.executionId)) return;
 
     if (evt.type === 'tool_execute' || evt.type === 'skill_sync_required' || evt.type === 'mcp_sync_required') {
@@ -321,7 +345,37 @@ export class SessionRunner {
 
   private async handleAlreadyRunningEvent(runningEid?: string): Promise<void> {
     if (!this.opts.printMode) {
-      this.terminal = { phase: 'ALREADY_RUNNING' };
+      // REPL：会话忙时不丢弃输入。接管本轮：摘走主流程 waiter，
+      // 等占用执行结束后以新 executionId 重发输入，待新轮结束后放行主流程
+      if (this.alreadyRunningRetried || !this.pendingContent) {
+        this.terminal = { phase: 'ALREADY_RUNNING' };
+        this.flushWaiters();
+        return;
+      }
+      this.alreadyRunningRetried = true;
+      const parked = this.waiters.splice(0);
+      this.executionId = runningEid ?? null;
+      this.seenRunning = true;
+      this.terminal = null;
+      await this.waitUntilSettled();
+      this.currentText = '';
+      this.lastAssistantText = '';
+      this.usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      this.toolCalls.clear();
+      this.fileChanges = [];
+      this.seenRunning = false;
+      const content = this.pendingContent;
+      this.pendingContent = null;
+      this.executionId = randomUUID();
+      this.startedAt = this.now();
+      this.emit({ type: 'session_started', sessionId: this.sessionId, executionId: this.executionId });
+      const sent = await this.sendMessage(content, this.pendingModelId);
+      if (!sent) {
+        this.terminal = { phase: 'FAILED' };
+        this.flushWaiters();
+        return;
+      }
+      await this.waitUntilSettled();
       this.flushWaiters();
       return;
     }
@@ -341,7 +395,7 @@ export class SessionRunner {
     this.seenRunning = true;
     this.terminal = null;
     if (this.opts.ifRunning === 'cancel') {
-      this.opts.ws.send({ type: 'cancel', sessionId: this.sessionId });
+      await this.sendCancel();
     }
     await this.waitUntilSettled(this.opts.ifRunning === 'cancel' ? CANCEL_WAIT_MS : undefined);
     this.terminal = null;
@@ -533,7 +587,7 @@ export class SessionRunner {
   private async handleQuestions(requestId: string, questions: AskQuestion[]): Promise<void> {
     if (this.opts.onQuestion === 'fail' || !this.opts.askHandler) {
       this.questionFailedFlag = true;
-      this.opts.ws.send({ type: 'cancel', sessionId: this.sessionId });
+      await this.sendCancel();
       await this.waitCancelThenSettle(QUESTION_FAIL_WAIT_MS);
       return;
     }
@@ -544,7 +598,7 @@ export class SessionRunner {
     }
     if (answers === 'fail') {
       this.questionFailedFlag = true;
-      this.opts.ws.send({ type: 'cancel', sessionId: this.sessionId });
+      await this.sendCancel();
       await this.waitCancelThenSettle(QUESTION_FAIL_WAIT_MS);
       return;
     }

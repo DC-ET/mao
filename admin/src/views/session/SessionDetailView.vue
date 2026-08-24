@@ -124,19 +124,24 @@ function formatTime(value: string | null | undefined): string {
   return value ? String(value) : ''
 }
 
+let latestFetchSeq = 0
+
 async function fetchDetail() {
   const id = route.params.id
+  const seq = ++latestFetchSeq
   loading.value = true
   try {
     const [sessionRes, messagesRes] = await Promise.all([
       api.get(`/admin/sessions/${id}`),
       api.get(`/admin/sessions/${id}/messages`, { params: { roundLimit: ROUND_LIMIT } })
     ])
+    // 路由已切换或组件重新触发加载时，丢弃过期响应，避免旧会话数据覆盖新会话
+    if (seq !== latestFetchSeq) return
     sessionInfo.value = sessionRes.data
     applyMessagePage(messagesRes.data, false)
     await scrollChatToBottom()
   } finally {
-    loading.value = false
+    if (seq === latestFetchSeq) loading.value = false
   }
 }
 
@@ -195,7 +200,10 @@ watch(() => route.params.id, (id, prev) => {
 })
 
 onMounted(fetchDetail)
-onActivated(fetchDetail)
+// keep-alive 首次激活时 onMounted 与 onActivated 都会触发；只在已挂载后重新激活时才刷新
+let mountedOnce = false
+onMounted(() => { mountedOnce = true })
+onActivated(() => { if (mountedOnce) fetchDetail() })
 </script>
 
 <style scoped>

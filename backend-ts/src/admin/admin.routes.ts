@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireUserId } from '../common/auth.js';
+import { requireAdmin } from '../common/http-error.js';
 import { sendJson } from '../common/http-error.js';
 import { ok } from '../common/result.js';
 import type { JwtService } from '../crypto/jwt.service.js';
@@ -22,11 +22,12 @@ export interface AdminRouteDeps {
   jwt: JwtService;
   analytics: AdminAnalyticsService;
   sessionLister?: AdminSessionLister;
+  permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
 }
 
 export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRouteDeps): void {
   app.get('/v1/admin/analytics/summary', async (req, reply) => {
-    requireUserId(req, deps.jwt);
+    await requireAdmin(deps.permissionService, req);
     const days = Number((req.query as { days?: string }).days ?? 30);
     sendJson(reply, 200, ok(await deps.analytics.summary(Math.max(1, Math.min(days, 90)))));
   });
@@ -34,7 +35,7 @@ export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRo
 
 export function registerAdminRuntimeRoutes(app: FastifyInstance, deps: AdminRouteDeps): void {
   app.get('/v1/admin/runtime/sessions', async (req, reply) => {
-    requireUserId(req, deps.jwt);
+    await requireAdmin(deps.permissionService, req);
     const q = req.query as {
       page?: string;
       size?: string;
