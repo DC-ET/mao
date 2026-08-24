@@ -1,84 +1,80 @@
 <template>
-  <el-dialog
-    v-model="visible"
-    width="420px"
-    :show-close="true"
-    :close-on-click-modal="false"
-    :close-on-press-escape="true"
-    :append-to-body="true"
-    class="login-dialog"
-    @close="handleClose"
-  >
-    <div class="login-header">
-      <div class="login-logo">
-        <img :src="appIcon" alt="Mao" class="login-logo-img" />
+  <div class="login-page">
+    <div class="login-topbar" aria-hidden="true" />
+    <div class="login-theme-toggle">
+      <div class="theme-toggle" role="button" :aria-label="themeTooltip" @click="toggleTheme">
+        <el-icon :size="16">
+          <Sunrise v-if="theme === 'auto'" />
+          <Moon v-else-if="theme === 'light'" />
+          <Sunny v-else />
+        </el-icon>
       </div>
-      <h2 class="login-title">Mao</h2>
     </div>
 
-    <el-form
-      v-if="mode === 'password'"
-      ref="formRef"
-      :model="form"
-      :rules="formRules"
-      @submit.prevent="handleLogin"
-      class="login-form"
-    >
-      <el-form-item prop="username">
-        <el-input
-          ref="usernameInputRef"
-          v-model="form.username"
-          placeholder="用户名"
-          prefix-icon="User"
-          size="large"
-          @keyup.enter="handleLogin"
-        />
-      </el-form-item>
-      <el-form-item prop="password">
-        <el-input
-          ref="passwordInputRef"
-          v-model="form.password"
-          type="password"
-          placeholder="密码"
-          prefix-icon="Lock"
-          show-password
-          size="large"
-          @keyup.enter="handleLogin"
-        />
-      </el-form-item>
-      <el-form-item class="login-actions">
-        <el-button
-          type="primary"
-          native-type="submit"
-          :loading="passwordLoading"
-          size="large"
-          class="login-btn"
-        >
-          登录
-        </el-button>
-        <el-button
-          size="large"
-          class="cancel-btn"
-          @click="handleClose"
-        >
-          取消
-        </el-button>
-      </el-form-item>
-      <el-button
-        v-if="authStore.features.feishuEnabled"
-        class="feishu-entry"
-        size="large"
-        plain
-        @click="startFeishuLogin"
-      >
-        飞书登录
-      </el-button>
-    </el-form>
+    <div class="login-card">
+      <div class="login-header">
+        <img :src="appIcon" alt="Mao" class="login-logo-img" />
+        <h2 class="login-title">Mao</h2>
+      </div>
 
-    <div v-else class="feishu-panel">
-      <el-icon class="feishu-icon" :size="48"><Connection /></el-icon>
-      <p class="feishu-status">{{ feishuStatusText }}</p>
-      <div class="feishu-actions">
+      <el-form
+        v-if="mode === 'password'"
+        ref="formRef"
+        :model="form"
+        :rules="formRules"
+        class="login-form"
+        @submit.prevent="handleLogin"
+      >
+        <el-form-item prop="username">
+          <el-input
+            ref="usernameInputRef"
+            v-model="form.username"
+            placeholder="用户名"
+            prefix-icon="User"
+            size="large"
+            @keyup.enter="handleLogin"
+          />
+        </el-form-item>
+        <el-form-item prop="password">
+          <el-input
+            ref="passwordInputRef"
+            v-model="form.password"
+            type="password"
+            placeholder="密码"
+            prefix-icon="Lock"
+            show-password
+            size="large"
+            @keyup.enter="handleLogin"
+          />
+        </el-form-item>
+        <el-form-item class="remember-item">
+          <el-checkbox v-model="rememberUsername">记住用户名</el-checkbox>
+        </el-form-item>
+        <el-form-item class="submit-item">
+          <el-button
+            type="primary"
+            native-type="submit"
+            :loading="passwordLoading"
+            size="large"
+            class="login-btn"
+          >
+            登录
+          </el-button>
+        </el-form-item>
+        <el-button
+          v-if="authStore.features.feishuEnabled"
+          class="feishu-entry"
+          size="large"
+          plain
+          @click="startFeishuLogin"
+        >
+          飞书登录
+        </el-button>
+      </el-form>
+
+      <div v-else class="feishu-panel">
+        <el-icon class="feishu-icon" :size="48"><Connection /></el-icon>
+        <p class="feishu-status">{{ feishuStatusText }}</p>
         <el-button
           size="large"
           type="primary"
@@ -87,37 +83,48 @@
         >
           飞书登录
         </el-button>
+        <el-button class="password-entry" link @click="backToPasswordLogin">
+          返回密码登录
+        </el-button>
       </div>
-      <el-button class="password-entry" link @click="backToPasswordLogin">
-        返回密码登录
-      </el-button>
     </div>
-  </el-dialog>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Sunrise, Moon, Sunny } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules, InputInstance } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import appIcon from '../../assets/app-icon-small.png'
-import { useLoginDialog } from '../../composables/useLoginDialog'
-import { getToken } from '../../utils/auth-storage'
+import { useTheme } from '../../utils/theme'
+import { readRedirectQuery, safeRedirect } from '../../utils/login-redirect'
 
 type LoginMode = 'password' | 'feishu'
 
 const authStore = useAuthStore()
-const { visible, close, notifySuccess } = useLoginDialog()
+const route = useRoute()
+const router = useRouter()
+const { theme, toggleTheme } = useTheme()
+
+const themeTooltip = computed(() => {
+  if (theme.value === 'auto') return '跟随系统（点击切换浅色）'
+  if (theme.value === 'light') return '浅色（点击切换深色）'
+  return '深色（点击跟随系统）'
+})
 
 const mode = ref<LoginMode>('password')
 const passwordLoading = ref(false)
 const feishuLoading = ref(false)
 const feishuStatusText = ref('')
+const rememberUsername = ref(localStorage.getItem('rememberMe') === '1')
 const formRef = ref<FormInstance>()
 const usernameInputRef = ref<InputInstance>()
 const passwordInputRef = ref<InputInstance>()
 const form = ref({
-  username: '',
+  username: localStorage.getItem('rememberedUsername') ?? '',
   password: ''
 })
 
@@ -136,6 +143,16 @@ onMounted(() => {
   })
 })
 
+onMounted(() => {
+  document.title = 'Mao'
+})
+
+/** 登录成功后的统一出口：回跳 redirect 或首页（已登录访问 /login 的守卫也会走这里）。 */
+async function finishLogin() {
+  const target = safeRedirect(readRedirectQuery(route.query))
+  await router.replace(target)
+}
+
 async function handleLogin() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) {
@@ -151,12 +168,23 @@ async function handleLogin() {
   passwordLoading.value = true
   try {
     await authStore.login(form.value.username, form.value.password)
+    saveRememberedUsername()
     form.value.username = ''
     form.value.password = ''
     formRef.value?.clearValidate()
-    notifySuccess()
+    await finishLogin()
   } finally {
     passwordLoading.value = false
+  }
+}
+
+function saveRememberedUsername() {
+  if (rememberUsername.value) {
+    localStorage.setItem('rememberMe', '1')
+    localStorage.setItem('rememberedUsername', form.value.username.trim())
+  } else {
+    localStorage.removeItem('rememberMe')
+    localStorage.removeItem('rememberedUsername')
   }
 }
 
@@ -183,7 +211,7 @@ async function startFeishuLogin() {
         backToPasswordLogin()
       }
     } else {
-      // Web: 新窗口打开飞书授权页
+      // Web / 安卓: 新窗口打开飞书授权页，轮询状态
       feishuStatusText.value = '请在打开的飞书授权页面中完成登录'
       window.open(authUrl, '_blank')
       startPolling(qr.pollInterval || 2)
@@ -216,7 +244,7 @@ async function checkFeishuStatus() {
     if (result.status === 'SUCCESS') {
       feishuStatusText.value = '登录成功'
       feishuState = ''
-      notifySuccess()
+      await finishLogin()
       return
     }
     feishuStatusText.value = result.message || statusText(result.status)
@@ -240,7 +268,7 @@ async function pollFeishuResult(state: string) {
       const result = await authStore.pollFeishuLogin(state)
       if (result.status === 'SUCCESS') {
         feishuStatusText.value = '登录成功'
-        notifySuccess()
+        await finishLogin()
         return
       }
       if (result.status === 'FAILED' || result.status === 'EXPIRED') {
@@ -263,18 +291,6 @@ function backToPasswordLogin() {
   mode.value = 'password'
   feishuState = ''
   feishuStatusText.value = ''
-}
-
-function handleClose() {
-  if (!getToken()) {
-    ElMessage.warning('需登录才能使用完整功能')
-  }
-  clearPollTimer()
-  feishuState = ''
-  feishuLoading.value = false
-  feishuStatusText.value = ''
-  mode.value = 'password'
-  close()
 }
 
 function clearPollTimer() {
@@ -302,6 +318,67 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.login-page {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--aw-canvas);
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+/* Electron 红绿灯避让 + 可拖拽顶栏；Web/安卓为透明占位 */
+.login-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--aw-nav-height);
+  -webkit-app-region: drag;
+}
+
+.login-theme-toggle {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  z-index: 10;
+  -webkit-app-region: no-drag;
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  color: var(--aw-nav-text-muted);
+  transition: color 0.15s, background 0.15s;
+}
+
+.theme-toggle:hover {
+  color: var(--aw-nav-text);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] .theme-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.login-card {
+  width: 380px;
+  max-width: 100%;
+  padding: 40px 32px 24px;
+  background: var(--aw-surface);
+  border: 1px solid var(--aw-border);
+  border-radius: var(--aw-radius-lg);
+  box-sizing: border-box;
+}
+
 .login-header {
   display: flex;
   flex-direction: column;
@@ -310,17 +387,9 @@ onBeforeUnmount(() => {
   margin-bottom: 32px;
 }
 
-.login-logo {
+.login-logo-img {
   width: 64px;
   height: 64px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.login-logo-img {
-  width: 100%;
-  height: 100%;
   object-fit: contain;
   border-radius: var(--aw-radius-lg);
 }
@@ -331,11 +400,6 @@ onBeforeUnmount(() => {
   font-size: var(--aw-text-tagline);
   font-weight: 600;
   color: var(--aw-ink);
-  letter-spacing: 0;
-}
-
-.login-form {
-  width: 100%;
 }
 
 .login-form :deep(.el-input__wrapper) {
@@ -347,18 +411,16 @@ onBeforeUnmount(() => {
   margin-bottom: 20px;
 }
 
-.login-form :deep(.login-actions) {
-  margin-bottom: 0;
+.remember-item {
+  margin-bottom: 12px !important;
 }
 
-.login-actions,
-.feishu-actions {
-  display: flex;
-  gap: 12px;
+.submit-item {
+  margin-bottom: 0 !important;
 }
 
 .login-btn {
-  flex: 1;
+  width: 100%;
   border-radius: var(--aw-radius-pill) !important;
   font-size: var(--aw-text-body);
   font-weight: 400;
@@ -367,22 +429,13 @@ onBeforeUnmount(() => {
 }
 
 .login-btn:active,
-.feishu-entry:active,
-.cancel-btn:active {
+.feishu-entry:active {
   transform: scale(0.95);
-}
-
-.cancel-btn {
-  border-radius: var(--aw-radius-pill) !important;
-  font-size: var(--aw-text-body);
-  font-weight: 400;
-  padding: 11px 22px;
-  height: auto;
 }
 
 .feishu-entry {
   width: 100%;
-  margin-top: 16px;
+  margin-top: 4px;
   border-radius: var(--aw-radius-pill) !important;
 }
 
@@ -394,7 +447,7 @@ onBeforeUnmount(() => {
 }
 
 .feishu-icon {
-  color: var(--aw-ink-secondary, #6b7280);
+  color: var(--aw-muted);
 }
 
 .feishu-status {
@@ -406,26 +459,13 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-.feishu-actions {
+.feishu-panel .el-button[type="primary"],
+.feishu-panel > .el-button:not(.password-entry) {
   width: 100%;
-}
-
-.feishu-actions .el-button {
-  flex: 1;
   border-radius: var(--aw-radius-pill) !important;
 }
 
 .password-entry {
   padding: 0;
-}
-</style>
-
-<style>
-.login-dialog .el-dialog__header {
-  display: none;
-}
-
-.login-dialog .el-dialog__body {
-  padding: 40px 40px 32px;
 }
 </style>

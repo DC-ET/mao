@@ -1,9 +1,17 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import type { NotificationChannel, Result, TaskNotificationPreference } from '@mao/contracts'
-import { useLoginDialog } from '../composables/useLoginDialog'
+import { redirectToLogin } from '../utils/login-redirect'
+import { useAuthStore } from '../stores/auth'
 import { getRefreshToken, getToken, setTokens } from '../utils/auth-storage'
 import type { SessionSearchItem } from '../types/chat'
+
+/** 强制下线：动态引入 router（避免模块加载期创建路由，破坏 Node 环境单测）。 */
+async function forceRelogin(): Promise<void> {
+  await useAuthStore().clearLocalSession()
+  const { default: router } = await import('../router')
+  redirectToLogin(router)
+}
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1',
@@ -13,19 +21,13 @@ export const api = axios.create({
   }
 })
 
-let isReloginShowing = false
+/** 登录页自身的请求（/auth/*），失败只展示表单错误，不得触发强制下线跳转。 */
+function isAuthPath(url?: string): boolean {
+  return !!url && /\/auth\/(login|refresh|feishu)/.test(url)
+}
+
 let isRefreshing = false
 let pendingRequests: Array<(token: string) => void> = []
-
-function showReloginDialog() {
-  if (isReloginShowing) return
-  isReloginShowing = true
-  const { open } = useLoginDialog()
-  open({
-    onSuccess: () => { isReloginShowing = false },
-    onDismiss: () => { isReloginShowing = false }
-  })
-}
 
 export async function doRefreshToken(): Promise<string> {
   const refreshToken = getRefreshToken()
@@ -75,6 +77,11 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true
 
+      if (isAuthPath(originalRequest.url)) {
+        // 登录/刷新接口自身的 401 交给调用方处理
+        return Promise.reject(error)
+      }
+
       if (isRefreshing) {
         // Another request is already refreshing — queue this one
         return new Promise((resolve) => {
@@ -96,7 +103,8 @@ api.interceptors.response.use(
         return api(originalRequest)
       } catch {
         pendingRequests = []
-        showReloginDialog()
+        // refresh 失败：清本地会话并回登录页（redirectToLogin 自带防抖与「已在登录页」判断）
+        void forceRelogin()
         return Promise.reject(error)
       } finally {
         isRefreshing = false
@@ -106,7 +114,11 @@ api.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response
       if (status === 403) {
-        showReloginDialog()
+        // 403 是已登录无权限，不是未登录：只提示，不踢回登录页
+        ElMessage.error(data?.message || '无权限执行该操作')
+        if (error && typeof error === 'object') {
+          (error as Error & { toastShown?: boolean }).toastShown = true
+        }
       } else if (status !== 401) {
         ElMessage.error(data?.message || '请求失败')
         if (error && typeof error === 'object') {

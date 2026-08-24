@@ -86,16 +86,9 @@
           </template>
         </el-dropdown>
       </template>
-      <template v-else>
-        <div class="theme-toggle login-btn" @click="loginDialog.open()">
-          <span>登录</span>
-        </div>
-      </template>
     </div>
   </nav>
-</template>
-
-<script setup lang="ts">
+</template><script setup lang="ts">
 import { ArrowLeft, Sunrise, Moon, Refresh, Setting, Sunny, SwitchButton, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -107,7 +100,6 @@ import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout, isMobileDevice } from '../../composables/usePanelLayout'
 import { useSkillDrawer } from '../../composables/useSkillDrawer'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
-import { useLoginDialog } from '../../composables/useLoginDialog'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
 
@@ -136,7 +128,6 @@ function toggleTerminal() {
 }
 
 const authStore = useAuthStore()
-const loginDialog = useLoginDialog()
 const router = useRouter()
 const route = useRoute()
 const {
@@ -204,16 +195,12 @@ onUnmounted(() => {
   document.removeEventListener('keydown', handleSearchShortcut)
 })
 
-/** Ctrl/Cmd+K：打开/关闭会话搜索浮窗。未登录时唤起登录对话框，不发起搜索请求。 */
+/** Ctrl/Cmd+K：打开/关闭会话搜索浮窗。 */
 function handleSearchShortcut(e: KeyboardEvent) {
   if (e.repeat) return
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault()
-    if (authStore.user) {
-      searchPopoverRef.value?.toggle()
-    } else {
-      loginDialog.open()
-    }
+    searchPopoverRef.value?.toggle()
   }
 }
 
@@ -487,12 +474,6 @@ async function handleCommand(command: string) {
 
 [data-theme="dark"] .theme-toggle:hover {
   background: rgba(255, 255, 255, 0.08);
-}
-
-.login-btn {
-  width: auto;
-  padding: 0 12px;
-  font-size: var(--aw-text-caption);
 }
 
 .refresh-btn {

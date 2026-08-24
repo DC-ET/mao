@@ -5,6 +5,7 @@ import { useSessionStore } from './session'
 import { useDraftStore } from './draft'
 import { useStreamWS } from '../composables/useStreamWS'
 import { clearTokens, getToken, setTokens } from '../utils/auth-storage'
+import { redirectToLogin } from '../utils/login-redirect'
 
 interface User {
   id: number
@@ -45,6 +46,16 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const features = ref<AuthFeatures>({ feishuEnabled: false })
 
+  /** 清掉本地会话状态（token、WS、会话与草稿）。不调用后端，供登出与 401 强制下线共用。 */
+  async function clearLocalSession() {
+    token.value = null
+    user.value = null
+    await clearTokens()
+    useStreamWS().disconnect()
+    useSessionStore().reset()
+    useDraftStore().reset()
+  }
+
   async function applyLogin(data: LoginResponse) {
     token.value = data.accessToken
     user.value = data.user
@@ -77,17 +88,17 @@ export const useAuthStore = defineStore('auth', () => {
     return data
   }
 
+  /** 登出：尽量通知后端，然后清本地会话并回登录页（不带 redirect）。 */
   async function logout() {
     try {
       await api.post('/auth/logout')
     } finally {
-      token.value = null
-      user.value = null
-      await clearTokens()
-      useStreamWS().disconnect()
-      useSessionStore().reset()
-      useDraftStore().reset()
+      await clearLocalSession()
     }
+    // 动态引入 router：避免模块加载期创建路由，破坏 Node 环境单测
+    const { default: router } = await import('../router')
+    // 不带 redirect：登出后回跳到需登录页没有意义
+    redirectToLogin(router, '/')
   }
 
   async function fetchUserInfo() {
@@ -105,6 +116,7 @@ export const useAuthStore = defineStore('auth', () => {
     startFeishuLogin,
     pollFeishuLogin,
     logout,
+    clearLocalSession,
     fetchUserInfo
   }
 })

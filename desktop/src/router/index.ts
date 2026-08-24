@@ -2,8 +2,15 @@ import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router
 import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { getToken } from '../utils/auth-storage'
+import { readRedirectQuery } from '../utils/login-redirect'
 
 const routes: RouteRecordRaw[] = [
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('../views/auth/LoginView.vue'),
+    meta: { public: true }
+  },
   {
     path: '/',
     name: 'Layout',
@@ -95,17 +102,30 @@ const router = createRouter({
   routes
 })
 
-// Navigation guard — hydrate user info if token exists
-router.beforeEach(async (_to, _from, next) => {
+// Navigation guard — 未登录只能进公开页（/login），已登录访问 /login 时回跳目标页
+router.beforeEach(async (to, _from, next) => {
   const token = getToken()
-  if (token) {
-    const authStore = useAuthStore()
-    if (!authStore.user) {
-      try {
-        await authStore.fetchUserInfo()
-      } catch {
-        // Token expired — the API interceptor will show the login dialog
-      }
+  const isPublic = to.meta.public === true
+
+  if (!token) {
+    if (isPublic) return next()
+    return next({
+      name: 'Login',
+      query: to.fullPath && to.fullPath !== '/' ? { redirect: to.fullPath } : undefined,
+      replace: true
+    })
+  }
+
+  if (to.name === 'Login') {
+    return next({ path: readRedirectQuery(to.query), replace: true })
+  }
+
+  const authStore = useAuthStore()
+  if (!authStore.user) {
+    try {
+      await authStore.fetchUserInfo()
+    } catch {
+      // 401 由 API 拦截器处理（refresh → 失败强制下线）；其它错误不阻断导航，避免弱网被踢出
     }
   }
   next()

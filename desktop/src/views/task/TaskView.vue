@@ -63,8 +63,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useStreamWS } from '../../composables/useStreamWS'
-import { useLoginDialog } from '../../composables/useLoginDialog'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase, type SubagentItem } from '../../stores/session'
 import { useDraftStore } from '../../stores/draft'
@@ -89,8 +87,6 @@ const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const draftStore = useDraftStore()
-const { connect } = useStreamWS()
-const { loginVersion } = useLoginDialog()
 const { loadPrefs } = useTaskPanelPrefs()
 const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight } = usePanelLayout()
 
@@ -1033,17 +1029,6 @@ watch(getRouteWatchState, async (state, prev) => {
   if (!state.sessionId && state.explicitNewTask && state.newTaskSignature !== prevState.newTaskSignature) {
     await applyExplicitNewTaskRoute()
   }
-})
-
-// Re-load data after login success
-watch(loginVersion, async () => {
-  try {
-    await connect()
-  } catch {
-    // WS connect failed — data load can still proceed; subscribe retried on reconnect
-  }
-  if (!await loadTaskIndex()) return
-  await resolveInitialRoute()
 })
 
 onMounted(async () => {

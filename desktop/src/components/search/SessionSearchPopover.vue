@@ -1,9 +1,8 @@
 <template>
-  <template v-if="authStore.user">
-    <div class="theme-toggle search-toggle" role="button" aria-label="搜索会话" @click="openSearch">
-      <el-icon :size="16"><Search /></el-icon>
-    </div>
-    <el-dialog
+  <div class="theme-toggle search-toggle" role="button" aria-label="搜索会话" @click="openSearch">
+    <el-icon :size="16"><Search /></el-icon>
+  </div>
+  <el-dialog
       v-model="isOpen"
       class="session-search-dialog"
       width="min(760px, calc(100vw - 32px))"
@@ -74,12 +73,6 @@
         </template>
       </div>
     </el-dialog>
-  </template>
-  <template v-else>
-    <div class="theme-toggle search-toggle" role="button" aria-label="搜索会话" @click="loginDialog.open()">
-      <el-icon :size="16"><Search /></el-icon>
-    </div>
-  </template>
 </template>
 
 <script setup lang="ts">
@@ -89,12 +82,8 @@ import { Close, Search } from '@element-plus/icons-vue'
 import { searchSessions } from '../../api'
 import type { SessionSearchItem } from '../../types/chat'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
-import { useAuthStore } from '../../stores/auth'
-import { useLoginDialog } from '../../composables/useLoginDialog'
 import { openSideTaskTabFor } from '../../composables/useCenterTabs'
 
-const authStore = useAuthStore()
-const loginDialog = useLoginDialog()
 const sessionStore = useSessionStore()
 const router = useRouter()
 const route = useRoute()
