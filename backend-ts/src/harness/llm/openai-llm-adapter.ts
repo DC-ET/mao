@@ -1,6 +1,5 @@
 import http from 'node:http';
 import https from 'node:https';
-import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
 import { ensureContentPresent } from '../core/message-history-normalizer.js';
 import { ImageFileSupport } from '../tool/image-file-support.js';
@@ -21,6 +20,7 @@ import type {
 } from './chat-request.js';
 import { DEFAULT_LLM_RETRY } from './chat-request.js';
 import { parseChatResponse, parseStreamChunk, parseStreamErrorEvent, parseUsageFromSse, serializeChatRequest } from './json.js';
+import { applyClientImpersonationHeaders } from './client-impersonation-headers.js';
 
 const IMAGE_PLACEHOLDER = '「此处用户上传了图片」';
 
@@ -364,17 +364,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         Authorization: `Bearer ${config.apiKey ?? ''}`,
         'Content-Type': 'application/json',
       };
-      if (config.modelId?.toLowerCase().startsWith('gpt')) {
-        headers['User-Agent'] = 'codex_cli_rs/0.146.0 (Linux 6.1.0; x86_64) xterm-256color';
-        headers.originator = 'codex_cli_rs';
-        headers['x-codex-window-id'] = '019e9e6a-e81e-7442-bac0-d3bc42cc1b45';
-      }
-      if (config.modelId?.toLowerCase().includes('claude')) {
-        headers['User-Agent'] = 'claude-cli/999.0.0-restored (external, cli)';
-        headers['x-app'] = 'cli';
-        headers['X-Claude-Code-Session-Id'] = randomUUID();
-        headers['x-client-request-id'] = randomUUID();
-      }
+      applyClientImpersonationHeaders(headers, config.clientImpersonation);
       const started = Date.now();
       const headerDeadline = started + this.retry.callTimeoutSeconds * 1000;
       const callDeadline = streaming ? Number.POSITIVE_INFINITY : started + this.retry.httpCallTimeoutSeconds * 1000;

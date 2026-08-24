@@ -1,5 +1,6 @@
 import type { ChatRequest, ChatUsage, LlmModelConfig } from './llm/chat-request.js';
 import type { Db } from '../db/db.js';
+import type { ClientImpersonation } from '@mao/contracts';
 
 export interface Session {
   id?: number;
@@ -58,6 +59,7 @@ export interface LlmModel {
   baseUrl?: string | null;
   apiKey?: string | null;
   modelId?: string | null;
+  clientImpersonation?: string | null;
   contextWindowTokens?: number | null;
   supportsVision?: number | boolean | null;
   isDefault?: number | boolean | null;
@@ -276,7 +278,13 @@ export function llmModelToConfig(model: LlmModel): LlmModelConfig {
     modelId: model.modelId ?? undefined,
     contextWindowTokens: model.contextWindowTokens ?? undefined,
     supportsVision: model.supportsVision === 1 || model.supportsVision === true,
+    clientImpersonation: toClientImpersonation(model.clientImpersonation),
   };
+}
+
+function toClientImpersonation(value: string | null | undefined): ClientImpersonation {
+  if (value === 'codex' || value === 'claude_code') return value;
+  return 'none';
 }
 
 export function boolish(value: boolean | number | null | undefined): boolean | undefined {
@@ -284,4 +292,4 @@ export function boolish(value: boolean | number | null | undefined): boolean | u
   return value === true || value === 1;
 }
 
-export type { ChatRequest, ChatUsage, LlmModelConfig, Db };
+export type { ChatRequest, ChatUsage, LlmModelConfig, ClientImpersonation, Db };

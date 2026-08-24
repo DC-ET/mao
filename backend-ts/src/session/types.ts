@@ -180,6 +180,7 @@ export interface LlmModelRef {
   baseUrl?: string | null;
   apiKey?: string | null;
   modelId?: string | null;
+  clientImpersonation?: string | null;
   contextWindowTokens?: number | null;
   supportsVision?: number | null;
   isDefault?: number | null;

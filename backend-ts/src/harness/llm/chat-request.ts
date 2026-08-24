@@ -115,6 +115,8 @@ export interface StreamChunk {
   choices?: DeltaChoice[];
 }
 
+import type { ClientImpersonation } from '@mao/contracts';
+
 export interface LlmModelConfig {
   id?: number;
   name?: string;
@@ -124,6 +126,7 @@ export interface LlmModelConfig {
   modelId?: string;
   contextWindowTokens?: number;
   supportsVision?: boolean;
+  clientImpersonation?: ClientImpersonation;
 }
 
 export interface LlmRetryConfig {

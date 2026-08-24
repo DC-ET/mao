@@ -1,6 +1,7 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
+import type { ClientImpersonation } from '@mao/contracts';
 import type {
   LlmChatClient,
   LlmChatRequest,
@@ -20,6 +21,23 @@ const MID_SYSTEM_CODENAME_ASKED = 'MAO_ALPHA';
 const MID_SYSTEM_CODENAME_OVERRIDE = 'MAO_BRAVO';
 
 type MidSystemTestOutcome = 'SUPPORTED' | 'NOT_SUPPORTED' | 'AMBIGUOUS';
+
+const CLIENT_IMPERSONATION_VALUES = ['none', 'codex', 'claude_code'] as const;
+
+function normalizeClientImpersonation(
+  value: string | null | undefined,
+): ClientImpersonation | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  if (!(CLIENT_IMPERSONATION_VALUES as readonly string[]).includes(trimmed)) {
+    throw new BusinessException(
+      ErrorCode.PARAM_INVALID.code,
+      `clientImpersonation 只能是 ${CLIENT_IMPERSONATION_VALUES.join(' / ')} 之一`,
+    );
+  }
+  return trimmed as ClientImpersonation;
+}
 
 export class ModelService {
   constructor(
@@ -85,6 +103,7 @@ export class ModelService {
     isDefault: number | null | undefined,
     contextWindowTokens: number | null | undefined,
     modelType: string | null | undefined,
+    clientImpersonation: string | null | undefined,
   ): Promise<LlmModel> {
     if (isDefault != null && isDefault === 1) {
       await this.modelRepo.clearDefaultFlag();
@@ -96,6 +115,7 @@ export class ModelService {
       apiKey,
       modelId,
       modelType: hasText(modelType) ? modelType!.trim() : 'text',
+      clientImpersonation: normalizeClientImpersonation(clientImpersonation) ?? 'none',
       supportsVision: supportsVision != null ? supportsVision : 0,
       isDefault: isDefault != null ? isDefault : 0,
       contextWindowTokens,
@@ -116,6 +136,7 @@ export class ModelService {
     isDefault: number | null | undefined,
     contextWindowTokens: number | null | undefined,
     modelType: string | null | undefined,
+    clientImpersonation: string | null | undefined,
   ): Promise<LlmModel> {
     const model = await this.getModel(id);
     if (name != null) model.name = name;
@@ -124,6 +145,8 @@ export class ModelService {
     if (apiKey != null) model.apiKey = apiKey;
     if (modelId != null) model.modelId = modelId;
     if (hasText(modelType)) model.modelType = modelType!.trim();
+    const impersonation = normalizeClientImpersonation(clientImpersonation);
+    if (impersonation != null) model.clientImpersonation = impersonation;
     if (supportsVision != null) model.supportsVision = supportsVision;
     if (contextWindowTokens != null) model.contextWindowTokens = contextWindowTokens;
     if (isDefault != null) {
@@ -173,6 +196,7 @@ export class ModelService {
       baseUrl: model.baseUrl,
       apiKey: model.apiKey,
       modelId: model.modelId,
+      clientImpersonation: normalizeClientImpersonation(model.clientImpersonation) ?? 'none',
     };
     const startTime = Date.now();
     if (model.modelType === 'audio') {

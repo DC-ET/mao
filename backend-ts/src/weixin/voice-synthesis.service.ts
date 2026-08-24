@@ -1,9 +1,15 @@
+import type { ClientImpersonation } from '@mao/contracts';
 import type { OpenAiLlmAdapter } from '../harness/llm/openai-llm-adapter.js';
 import type { LlmModel } from '../model/types.js';
 import type { WeixinBotConfig } from './types.js';
 import { WeixinVoiceTextSanitizer } from './voice-text-sanitizer.js';
 
 const DEFAULT_MAX_CHARS = 240;
+
+function toClientImpersonation(value: string | null | undefined): ClientImpersonation {
+  if (value === 'codex' || value === 'claude_code') return value;
+  return 'none';
+}
 
 export interface VoiceModelLookup {
   findFirstActiveAudioModel(): Promise<LlmModel | null>;
@@ -62,6 +68,7 @@ export class WeixinVoiceSynthesisService {
           baseUrl: model.baseUrl,
           apiKey: model.apiKey,
           modelId: model.modelId,
+          clientImpersonation: toClientImpersonation(model.clientImpersonation),
         },
       );
       const audio = response?.choices?.[0]?.message?.audio;

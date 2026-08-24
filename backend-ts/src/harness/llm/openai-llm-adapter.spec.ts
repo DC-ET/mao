@@ -198,6 +198,46 @@ describe('OpenAiLlmAdapter', () => {
     expect(server.bodies[0]).toContain('"temperature":0.2');
   });
 
+  it('injectsCodexHeadersWhenConfigured', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"ok","choices":[]}');
+    await server.start();
+    await adapter(0, 0).chat(request('hi'), configOf(server, { clientImpersonation: 'codex' }));
+    const headers = server.headers[0];
+    expect(headers['user-agent']).toBe('codex_cli_rs/0.146.0 (Linux 6.1.0; x86_64) xterm-256color');
+    expect(headers.originator).toBe('codex_cli_rs');
+    expect(headers['x-codex-window-id']).toBe('019e9e6a-e81e-7442-bac0-d3bc42cc1b45');
+  });
+
+  it('injectsClaudeCodeHeadersWhenConfigured', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"ok","choices":[]}');
+    await server.start();
+    await adapter(0, 0).chat(request('hi'), configOf(server, { clientImpersonation: 'claude_code' }));
+    const headers = server.headers[0];
+    expect(headers['user-agent']).toBe('claude-cli/999.0.0-restored (external, cli)');
+    expect(headers['x-app']).toBe('cli');
+    expect(headers['x-claude-code-session-id']).toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+    expect(headers['x-client-request-id']).toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+  });
+
+  it('doesNotInjectImpersonationHeadersForNoneEvenIfModelNameLooksLikeGptOrClaude', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"ok","choices":[]}');
+    await server.start();
+    await adapter(0, 0).chat(
+      request('hi'),
+      configOf(server, { modelId: 'gpt-claude-proxy', clientImpersonation: 'none' }),
+    );
+    const headers = server.headers[0];
+    expect(headers['user-agent']).toBeUndefined();
+    expect(headers.originator).toBeUndefined();
+    expect(headers['x-codex-window-id']).toBeUndefined();
+    expect(headers['x-app']).toBeUndefined();
+    expect(headers['x-claude-code-session-id']).toBeUndefined();
+    expect(headers['x-client-request-id']).toBeUndefined();
+  });
+
   it('chatParsesNullableCachedTokensAndSendsNoOutputLimit', async () => {
     server = new QueueServer();
     server.enqueueJson('{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":0}}}');

@@ -1,5 +1,5 @@
-import type { ModelVO, ModelPageResult, ModelListFilter } from '@mao/contracts';
-export type { ModelVO, ModelPageResult, ModelListFilter };
+import type { ClientImpersonation, ModelVO, ModelPageResult, ModelListFilter } from '@mao/contracts';
+export type { ClientImpersonation, ModelVO, ModelPageResult, ModelListFilter };
 
 export interface LlmModel {
   id?: number;
@@ -9,6 +9,7 @@ export interface LlmModel {
   apiKey: string;
   modelId: string;
   modelType?: string | null;
+  clientImpersonation?: string | null;
   contextWindowTokens?: number | null;
   status?: number | null;
   supportsVision?: number | null;
@@ -88,6 +89,7 @@ export interface LlmModelConfig {
   baseUrl: string;
   apiKey: string;
   modelId: string;
+  clientImpersonation?: ClientImpersonation;
   supportsVision?: boolean;
 }
 

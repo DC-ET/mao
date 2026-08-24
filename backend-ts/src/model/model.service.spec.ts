@@ -103,8 +103,37 @@ describe('ModelService', () => {
     expect(created.isDefault).toBe(1);
     expect(created.contextWindowTokens).toBe(128000);
     expect(created.status).toBe(1);
+    expect(created.clientImpersonation).toBe('none');
     expect(modelRepo.clearDefaultFlag).toHaveBeenCalled();
     expect(modelRepo.insert).toHaveBeenCalledWith(created);
+  });
+
+  it('createModelRejectsInvalidClientImpersonationAndAcceptsValidValues', async () => {
+    await expect(
+      service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', 'openai'),
+    ).rejects.toThrow(/clientImpersonation 只能是/);
+
+    const created = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', 'codex');
+    expect(created.clientImpersonation).toBe('codex');
+  });
+
+  it('updateModelValidatesClientImpersonationAndKeepsExistingWhenOmitted', async () => {
+    const existing = model(7, 'old', 0, 1);
+    existing.clientImpersonation = 'claude_code';
+    vi.mocked(modelRepo.findById).mockResolvedValue(existing);
+
+    await expect(
+      service.updateModel(7, null, null, null, null, null, null, null, null, null, 'bogus'),
+    ).rejects.toThrow(/clientImpersonation 只能是/);
+
+    // 不传（undefined/null）表示不修改，保留原值
+    await service.updateModel(7, null, null, null, null, null, null, null, null, null, null);
+    expect(existing.clientImpersonation).toBe('claude_code');
+    expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
+
+    // 显式改为 none 生效
+    await service.updateModel(7, null, null, null, null, null, null, null, null, null, 'none');
+    expect(existing.clientImpersonation).toBe('none');
   });
 
   it('updateModelOnlyChangesProvidedFieldsAndCanSetDefault', async () => {
@@ -209,5 +238,20 @@ describe('ModelService', () => {
     expect(modelRepo.clearDefaultFlag).toHaveBeenCalled();
     await service.updateModel(1, 'n2', 'p', 'https://y', 'k2', 'm2', 0, 0, 4000, 'text');
     expect(modelRepo.updateById).toHaveBeenCalled();
+  });
+
+  it('testConnectivityPassesClientImpersonationToAdapter', async () => {
+    const llmModel = model(9, 'impersonated', 0, 1);
+    llmModel.clientImpersonation = 'claude_code';
+    vi.mocked(modelRepo.findById).mockResolvedValue(llmModel);
+    vi.mocked(llmClient.chat).mockImplementation(async (request) => {
+      if (isConnectivityProbe(request)) {
+        return { choices: [{ message: { role: 'assistant', content: 'hey' } }] };
+      }
+      return { choices: [{ message: { role: 'assistant', content: MID_SYSTEM_CODENAME_ASKED } }] };
+    });
+
+    await service.testConnectivity(9);
+    expect(vi.mocked(llmClient.chat).mock.calls[0][1].clientImpersonation).toBe('claude_code');
   });
 });

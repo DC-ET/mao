@@ -1,5 +1,6 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
+import type { ClientImpersonation } from '@mao/contracts';
 import { AtomicBoolean } from '../harness/atomic-boolean.js';
 import { hasText } from '../common/case.js';
 import type { LlmModelRef, Session } from '../session/types.js';
@@ -49,6 +50,7 @@ export interface LlmModelConfig {
   modelId?: string | null;
   contextWindowTokens?: number | null;
   supportsVision?: boolean;
+  clientImpersonation?: ClientImpersonation;
 }
 
 export interface HarnessModelResolver {
@@ -236,7 +238,13 @@ function toConfig(model: LlmModelRef): LlmModelConfig {
     modelId: model.modelId,
     contextWindowTokens: model.contextWindowTokens,
     supportsVision: model.supportsVision != null && model.supportsVision === 1,
+    clientImpersonation: toClientImpersonation(model.clientImpersonation),
   };
+}
+
+function toClientImpersonation(value: string | null | undefined): ClientImpersonation {
+  if (value === 'codex' || value === 'claude_code') return value;
+  return 'none';
 }
 
 function parse(raw: string): CommitMessage {

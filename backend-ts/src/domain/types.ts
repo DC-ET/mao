@@ -57,6 +57,7 @@ export interface LlmModel {
   apiKey?: string | null;
   baseUrl?: string | null;
   modelId?: string | null;
+  clientImpersonation?: string | null;
 }
 
 export interface UserRow {

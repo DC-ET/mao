@@ -30,6 +30,14 @@
       <el-form-item label="模型标识" prop="modelId">
         <el-input v-model="form.modelId" placeholder="例如: gpt-4o, mimo-v2.5-tts" />
       </el-form-item>
+      <el-form-item label="客户端标识">
+        <el-radio-group v-model="form.clientImpersonation">
+          <el-radio value="none">None</el-radio>
+          <el-radio value="codex">Codex</el-radio>
+          <el-radio value="claude_code">Claude Code</el-radio>
+        </el-radio-group>
+        <span style="margin-left: 8px; color: #909399; font-size: 12px;">调用该模型时模拟的客户端请求头</span>
+      </el-form-item>
       <el-form-item label="API 地址" prop="baseUrl">
         <el-input v-model="form.baseUrl" placeholder="例如: https://api.openai.com/v1" />
       </el-form-item>
@@ -103,6 +111,7 @@ const form = reactive({
   name: '',
   provider: '',
   modelId: '',
+  clientImpersonation: 'none',
   baseUrl: '',
   apiKey: '',
   contextWindowTokens: 256000,
@@ -124,6 +133,7 @@ function resetForm() {
     name: '',
     provider: '',
     modelId: '',
+    clientImpersonation: 'none',
     baseUrl: '',
     apiKey: '',
     contextWindowTokens: 256000,
@@ -140,6 +150,7 @@ watch(() => props.visible, (val) => {
       name: props.mode === 'copy' ? `${props.modelData.name || ''} - 副本` : props.modelData.name || '',
       provider: props.modelData.provider || '',
       modelId: props.modelData.modelId || '',
+      clientImpersonation: props.modelData.clientImpersonation || 'none',
       baseUrl: props.modelData.baseUrl || '',
       apiKey: props.modelData.apiKey || '',
       contextWindowTokens: props.modelData.contextWindowTokens || 256000,

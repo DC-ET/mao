@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { ClientImpersonation } from '@mao/contracts';
 import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId, queryInt, queryOptInt, queryOptStr } from '../common/request.js';
 import type { ModelService } from './model.service.js';
@@ -16,6 +17,7 @@ interface CreateModelRequest {
   apiKey?: string;
   modelId?: string;
   modelType?: string;
+  clientImpersonation?: string;
   contextWindowTokens?: number;
   supportsVision?: number;
   isDefault?: number;
@@ -95,6 +97,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.isDefault,
       body.contextWindowTokens,
       body.modelType,
+      body.clientImpersonation,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -113,6 +116,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.isDefault,
       body.contextWindowTokens,
       body.modelType,
+      body.clientImpersonation,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -151,10 +155,16 @@ function toVO(entity: LlmModel, revealApiKey: boolean): ModelVO {
     apiKey: revealApiKey ? entity.apiKey : maskApiKey(entity.apiKey),
     modelId: entity.modelId,
     modelType: entity.modelType,
+    clientImpersonation: normalizeVoClientImpersonation(entity.clientImpersonation),
     contextWindowTokens: entity.contextWindowTokens,
     supportsVision: entity.supportsVision != null && entity.supportsVision === 1,
     isDefault: entity.isDefault != null && entity.isDefault === 1,
     status: entity.status,
     createdAt: entity.createdAt ?? null,
   };
+}
+
+function normalizeVoClientImpersonation(value: string | null | undefined): ClientImpersonation {
+  if (value === 'codex' || value === 'claude_code') return value;
+  return 'none';
 }
