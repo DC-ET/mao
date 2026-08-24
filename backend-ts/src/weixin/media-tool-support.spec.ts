@@ -1,16 +1,21 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { WeixinMediaToolSupport } from './media-tool-support.js';
+import { bindWeixinSessionPeer, resetWeixinSessionPeerForTests } from './session-peer.js';
 import type { WeixinAccountRepository } from './account.repository.js';
 import type { ContextTokenRepository } from './context-token.repository.js';
 
 describe('WeixinMediaToolSupport', () => {
+  afterEach(() => {
+    resetWeixinSessionPeerForTests();
+  });
+
   const tempDir = mkdtempSync(join(tmpdir(), 'weixin-tool-'));
   const accountRepository = { findByUserId: vi.fn() };
-  const contextTokenRepository = { findByAccountId: vi.fn() };
+  const contextTokenRepository = { findByAccountId: vi.fn(), getLatestToken: vi.fn() };
   const pathSandbox = new PathSandbox(tempDir);
   const support = new WeixinMediaToolSupport(
     accountRepository as unknown as WeixinAccountRepository,
@@ -78,5 +83,21 @@ describe('WeixinMediaToolSupport', () => {
 
   it('errorJson_wellFormed', () => {
     expect(support.errorJson('出错了')).toBe('{"error":"出错了"}');
+  });
+
+  it('resolveTarget_usesBoundPeerWhenMultipleContacts', async () => {
+    bindWeixinSessionPeer(9, 'wx-user-2');
+    accountRepository.findByUserId.mockResolvedValue(account(100, 'acc-1'));
+    contextTokenRepository.findByAccountId.mockResolvedValue([{ wxUserId: 'wx-user-1' }, { wxUserId: 'wx-user-2' }]);
+    contextTokenRepository.getLatestToken.mockResolvedValue('tok');
+    const target = await support.resolveTarget(100, 9);
+    expect(target?.wxUserId).toBe('wx-user-2');
+    expect(contextTokenRepository.getLatestToken).toHaveBeenCalledWith('acc-1', 'wx-user-2');
+  });
+
+  it('resolveTarget_refusesGuessWhenMultipleContactsAndUnbound', async () => {
+    accountRepository.findByUserId.mockResolvedValue(account(100, 'acc-1'));
+    contextTokenRepository.findByAccountId.mockResolvedValue([{ wxUserId: 'wx-user-1' }, { wxUserId: 'wx-user-2' }]);
+    expect(await support.resolveTarget(100, 10)).toBeNull();
   });
 });

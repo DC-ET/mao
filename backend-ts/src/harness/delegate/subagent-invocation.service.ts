@@ -85,7 +85,8 @@ export class SubagentInvocationService {
         'SELECT * FROM session WHERE id = ? AND deleted = 0 FOR UPDATE', [childSessionId],
       );
       if (!child || child.sessionType !== 'SUBAGENT' || child.parentSessionId !== parent.id) return null;
-      if (child.phase === 'RUNNING' || child.phase === 'RESUMING') return null;
+      if (child.phase === 'RUNNING' || child.phase === 'RESUMING'
+        || child.phase === 'WAITING_APPROVAL' || child.phase === 'CANCELLING') return null;
       await tx.execute("UPDATE session SET phase = 'RUNNING' WHERE id = ?", [childSessionId]);
       child.phase = 'RUNNING';
       if (beforeUserMessage && beforeUserMessage.trim() !== '') {

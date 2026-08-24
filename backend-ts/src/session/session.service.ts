@@ -885,6 +885,10 @@ export class SessionService {
     if (message.sessionId !== sessionId) {
       throw new BusinessException(ErrorCode.FORBIDDEN, '无权操作该消息');
     }
+    const lastUser = await this.getLastUserMessage(sessionId);
+    if (!lastUser || lastUser.id !== messageId) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '只能编辑最后一条用户消息');
+    }
     await this.sessionRepo.lockActiveSessionById(sessionId);
     const compaction = await this.sessionCompactionService.loadValidated(message.sessionId);
     if (compaction != null && messageId <= this.sessionCompactionService.boundaryOf(compaction)) {

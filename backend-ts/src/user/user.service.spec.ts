@@ -71,10 +71,11 @@ describe('UserService', () => {
   it('updateUserAppliesOptionalFieldsAndRoles', async () => {
     const existing = user(7, 'alice', 'Alice', 'old@example.test', 'hash', 1);
     vi.mocked(userRepo.findById).mockResolvedValue(existing);
-    const updated = await service.updateUser(7, ' New Name ', '', [1, 2], 0);
+    const updated = await service.updateUser(7, ' New Name ', '', [1, 2], 0, 1);
     expect(updated.displayName).toBe('New Name');
     expect(updated.email).toBeNull();
     expect(updated.status).toBe(0);
+    expect(permissionService.assertCanDisableUser).toHaveBeenCalledWith(7, 1);
     expect(permissionService.assertCanChangeRoles).toHaveBeenCalledWith(7, [1, 2]);
     expect(permissionService.assignRoles).toHaveBeenCalledWith(7, [1, 2]);
     expect(userRepo.updateById).toHaveBeenCalledWith(existing);

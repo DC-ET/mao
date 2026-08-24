@@ -116,7 +116,7 @@ describe('createWechatToolBridges', () => {
     const tokens = { findByAccountId: vi.fn(async () => [{ wxUserId: 'u' }]) };
     const bridges = createWechatToolBridges(support as never, upload as never, send as never, accounts as never, tokens as never);
     expect(await bridges.toolSupport.resolveAccount(1, 7)).toEqual({ accountId: 'a', wxUserId: 'u' });
-    const img = await bridges.uploadService.uploadImage('a', Buffer.from('x'));
+    const img = await bridges.uploadService.uploadImage('a', 'u', Buffer.from('x'));
     expect(JSON.parse(img.mediaId)).toEqual({ mediaId: 'm' });
     await bridges.sendService.sendImage('a', 'u', JSON.stringify({ mediaId: 'm' }));
     expect(send.sendImage).toHaveBeenCalled();

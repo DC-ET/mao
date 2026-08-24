@@ -45,6 +45,7 @@ export interface WeixinHttpRequestInit {
   timeoutMs?: number;
   httpsAgent?: https.Agent;
   httpAgent?: http.Agent;
+  signal?: AbortSignal;
 }
 
 export interface WeixinHttpResponse {
@@ -125,6 +126,15 @@ export function weixinRequest(url: string, init: WeixinHttpRequestInit = {}): Pr
       req.destroy(new Error(`timeout after ${timeoutMs}ms`));
     });
     req.on('error', reject);
+    if (init.signal) {
+      if (init.signal.aborted) {
+        req.destroy(new Error('aborted'));
+        return;
+      }
+      init.signal.addEventListener('abort', () => {
+        req.destroy(new Error('aborted'));
+      }, { once: true });
+    }
     if (body != null) {
       req.write(body);
     }

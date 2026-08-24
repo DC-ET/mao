@@ -140,7 +140,7 @@ const props = defineProps<{
 
 const sessionStore = useSessionStore()
 const draftStore = useDraftStore()
-const { createSideSession, sendMessage, cancel, retryExecution, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, onMessageSaved, offMessageSaved } = useStreamWS()
+const { connect, createSideSession, sendMessage, cancel, retryExecution, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage, insertMessage, deleteQueueMessage: wsDeleteQueueMessage, reorderQueueMessage: wsReorderQueueMessage, onMessageSaved, offMessageSaved } = useStreamWS()
 const { openWithContent } = useCommandDrawer()
 const { pendingApprovals, confirmApproval } = useToolApprovals()
 
@@ -506,6 +506,8 @@ function handleModelSwitch(modelId: number) {
 async function handleChatSend(text: string, files: File[], pendingUploads?: File[]) {
   const trimmed = text.trim()
   if (!trimmed && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) return
+
+  await connect()
 
   if (hasRealSession.value) {
     sessionStore.clearExecutionError(String(realSessionId.value))

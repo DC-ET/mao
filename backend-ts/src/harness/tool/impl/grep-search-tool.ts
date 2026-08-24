@@ -7,6 +7,7 @@ import { SearchScope } from '../search-scope.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { SecurityException } from '../../safety/path-sandbox.js';
 import { harnessLog } from '../../log.js';
+import { IGNORED_DIRS } from './glob-search-tool.js';
 
 const DEFAULT_MAX_OUTPUT_CHARS = 10000;
 
@@ -135,7 +136,7 @@ export class GrepSearchTool extends BaseTool {
     let truncated = false;
     const files: string[] = [];
     if (scope.isSingleFile() && scope.singleFile) files.push(scope.singleFile);
-    else collectFiles(scope.cwd, globRe, files);
+    else collectFiles(scope.cwd, globRe, files, scope.cwd);
     for (const file of files) {
       if (truncated) break;
       const relativePath = scope.outputFilePath(file, workspaceRoot);
@@ -179,14 +180,19 @@ function globToFileRe(glob: string): RegExp {
   return new RegExp(`^${escaped}$`);
 }
 
-function collectFiles(dir: string, globRe: RegExp | null, out: string[]): void {
+function collectFiles(dir: string, globRe: RegExp | null, out: string[], root: string): void {
   let entries: string[] = [];
   try { entries = readdirSync(dir); } catch { return; }
   for (const name of entries) {
     const full = path.join(dir, name);
     let st;
     try { st = statSync(full); } catch { continue; }
-    if (st.isDirectory()) collectFiles(full, globRe, out);
-    else if (st.isFile() && (!globRe || globRe.test(name))) out.push(full);
+    if (st.isDirectory()) {
+      if (IGNORED_DIRS.has(name)) continue;
+      collectFiles(full, globRe, out, root);
+    } else if (st.isFile()) {
+      const rel = path.relative(root, full).split(path.sep).join('/');
+      if (!globRe || globRe.test(rel) || globRe.test(name)) out.push(full);
+    }
   }
 }

@@ -4,6 +4,7 @@ import type { ChatUsage, ToolCall } from '../llm/chat-request.js';
 export class SubAgentResultCollector implements AgentEventListener {
   private readonly contentBuilder: string[] = [];
   private readonly thinkingBuilder: string[] = [];
+  private readonly seenToolCallIds = new Set<string>();
   totalUsage?: ChatUsage;
   completed = false;
   error?: unknown;
@@ -18,13 +19,16 @@ export class SubAgentResultCollector implements AgentEventListener {
     this.contentBuilder.length = 0;
     this.thinkingBuilder.length = 0;
     this.toolCallCount = 0;
+    this.seenToolCallIds.clear();
   }
 
   onContentDelta(delta: string): void {
     if (delta) this.contentBuilder.push(delta);
   }
 
-  onToolCallStart(_toolCall: ToolCall): void {
+  onToolCallStart(toolCall: ToolCall): void {
+    if (toolCall.id && this.seenToolCallIds.has(toolCall.id)) return;
+    if (toolCall.id) this.seenToolCallIds.add(toolCall.id);
     this.toolCallCount++;
     this.contentBuilder.length = 0;
   }

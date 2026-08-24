@@ -38,6 +38,7 @@ function makeService() {
     selectUserStarts: vi.fn(async () => []),
     selectRange: vi.fn(async () => []),
     selectMessagesForSearch: vi.fn(async () => []),
+    selectLastUserMessage: vi.fn(async () => null),
   };
   const fileChangeRepo = {
     listBySession: vi.fn(async () => []),
@@ -189,6 +190,7 @@ describe('SessionService extra', () => {
     expect(await service.cleanupIncompleteTailAfterId(11, 0)).toBe(0);
 
     messageRepo.findById.mockResolvedValue({ id: 3, sessionId: 11, role: 'USER', content: 'old' });
+    messageRepo.selectLastUserMessage.mockResolvedValue({ id: 3, sessionId: 11, role: 'USER', content: 'old' });
     await service.editMessageAndTruncate(11, 3, 'new', ['img']);
     expect(messageRepo.logicalDeleteAfter).toHaveBeenCalled();
     sessionRepo.findById.mockResolvedValue({ id: 11, phase: 'WAITING_APPROVAL' });

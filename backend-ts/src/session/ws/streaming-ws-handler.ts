@@ -4,6 +4,7 @@ import type { JwtService } from '../../crypto/jwt.service.js';
 import { contentParts, WsStreamingEventListener, type AgentEventListener, type WsListenerDeps } from './ws-streaming-event-listener.js';
 import type { StreamingWsRegistry, WsSocket } from './streaming-ws-registry.js';
 import { wsEvent } from './ws-event.js';
+import { isActivePhase } from '../session-vo.js';
 
 export interface WsHandlerDeps {
   registry: StreamingWsRegistry;
@@ -126,6 +127,10 @@ export class StreamingWsHandler {
 
   constructor(private readonly deps: WsHandlerDeps) {
     this.mcpSyncTimeoutSeconds = deps.mcpSyncTimeoutSeconds ?? 60;
+  }
+
+  hasExecutionClaim(sessionId: number): boolean {
+    return this.executionClaims.has(sessionId) || this.runningTasks.has(sessionId);
   }
 
   async afterConnectionEstablished(session: WsSocket, query: Record<string, string>): Promise<void> {
@@ -455,12 +460,6 @@ export class StreamingWsHandler {
         return;
       }
     }
-    try {
-      await this.deps.sessionService.editMessageAndTruncate(sessionId, messageId, content, images);
-    } catch (e) {
-      this.deps.registry.send(userId, wsEvent('error', sessionId, { message: `编辑消息失败: ${e instanceof Error ? e.message : String(e)}` }));
-      return;
-    }
     if (this.executionClaims.has(sessionId)) {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
@@ -475,6 +474,13 @@ export class StreamingWsHandler {
       }
       this.deps.localSkillRegistry.report(sessionId, this.parseLocalSkills(root.localSkills));
       this.deps.localAgentsMdRegistry.report(sessionId, typeof root.agentsMdContent === 'string' ? root.agentsMdContent : null);
+    }
+    try {
+      await this.deps.sessionService.editMessageAndTruncate(sessionId, messageId, content, images);
+    } catch (e) {
+      this.executionClaims.delete(sessionId);
+      this.deps.registry.send(userId, wsEvent('error', sessionId, { message: `编辑消息失败: ${e instanceof Error ? e.message : String(e)}` }));
+      return;
     }
     const messageContent: unknown = images.length === 0 ? content : contentParts(content, images);
     const resolvedEventId = await this.deps.harnessService.prepareMessage(sessionId, messageContent);
@@ -582,7 +588,10 @@ export class StreamingWsHandler {
     }
     const messageContent = images.length === 0 ? content : contentParts(content, images);
     const savedMessage = await this.deps.sessionService.saveMessage(sideSessionId, 'USER', messageContent, null, null, null, 0, null);
-    this.deps.registry.send(userId, wsEvent('side_session_created', parentSessionId, { sideSessionId, title: sideSession.title }));
+    const clientRequestId = typeof data.clientRequestId === 'string' ? data.clientRequestId : null;
+    this.deps.registry.send(userId, wsEvent('side_session_created', parentSessionId, {
+      sideSessionId, title: sideSession.title, ...(clientRequestId ? { clientRequestId } : {}),
+    }));
     this.deps.titleService.scheduleForFirstUserMessage(sideSessionId, savedMessage.id, messageContent);
     this.deps.registry.send(userId, wsEvent('user_message_saved', sideSessionId, { messageId: savedMessage.id }));
     this.executionClaims.add(sideSessionId);
@@ -591,7 +600,8 @@ export class StreamingWsHandler {
     const sideExecutionId = randomUUID();
     this.runningExecutionIds.set(sideSessionId, sideExecutionId);
     const futureRef = { current: null as unknown };
-    const future = this.deps.agentExecutor(async () => {
+    try {
+      const future = this.deps.agentExecutor(async () => {
       await this.withLock(this.sessionLocks, sideSessionId, async () => {
         try {
           await this.deps.sessionService.updateField(sideSessionId, 'phase', 'RUNNING');
@@ -599,7 +609,15 @@ export class StreamingWsHandler {
           this.deps.treeSignalPublisher.publishIfSideTask(sideSessionId);
           if (sideSession.executionMode === 'LOCAL' && sideSession.agentId != null) {
             const sideAgent = await this.deps.agentMapper.selectById(sideSession.agentId);
-            if (sideAgent) await this.syncMcpServersToClient(userId, sideSessionId, sideSession, sideAgent);
+            if (sideAgent) {
+              const synced = await this.syncSkillsToClient(userId, sideSessionId, sideSession, sideAgent);
+              if (!synced) {
+                await this.finishFailedSession(sideSessionId, userId, sideExecutionId, 'Skill sync failed or timed out');
+                this.deps.registry.send(userId, wsEvent('error', sideSessionId, { message: 'Skill sync failed or timed out' }));
+                return;
+              }
+              await this.syncMcpServersToClient(userId, sideSessionId, sideSession, sideAgent);
+            }
           }
           const listener = new WsStreamingEventListener(
             { registry: this.deps.registry, activityService: this.deps.activityService, activityHeartbeat: this.deps.activityHeartbeat, sessionTodoMapper: this.deps.sessionTodoMapper, sessionService: this.deps.sessionService },
@@ -629,8 +647,17 @@ export class StreamingWsHandler {
         }
       });
     });
-    futureRef.current = future;
-    this.runningTasks.set(sideSessionId, future);
+      futureRef.current = future;
+      this.runningTasks.set(sideSessionId, future);
+    } catch {
+      this.executionClaims.delete(sideSessionId);
+      this.cancelFlags.delete(sideSessionId);
+      this.runningExecutionIds.delete(sideSessionId);
+      this.deps.agentLoop.removeCancelFlag(sideSessionId);
+      await this.finishFailedSession(sideSessionId, userId, sideExecutionId, '服务器繁忙，请稍后重试');
+      this.deps.registry.send(userId, wsEvent('error', sideSessionId, { message: '服务器繁忙，请稍后重试' }));
+      this.deps.registry.send(userId, wsEvent('error', parentSessionId, { message: '服务器繁忙，请稍后重试' }));
+    }
   }
 
   private async handleCancelSideTask(userId: number, root: Record<string, unknown>): Promise<void> {
@@ -766,8 +793,9 @@ export class StreamingWsHandler {
     const queueId = Number(data.queueId);
     this.suppressAutoConsumeSend.add(sessionId);
     this.abortRunningExecution(sessionId, userId);
-    this.deps.agentExecutor(async () => {
-      await this.withLock(this.insertLocks, sessionId, async () => {
+    try {
+      this.deps.agentExecutor(async () => {
+        await this.withLock(this.insertLocks, sessionId, async () => {
         try {
           const item = await this.deps.messageQueueService.getById(queueId);
           if (!item || item.sessionId !== sessionId) {
@@ -783,8 +811,6 @@ export class StreamingWsHandler {
             return;
           }
           this.executionClaims.add(sessionId);
-          await this.deps.messageQueueService.delete(queueId);
-          await this.sendQueueUpdated(sessionId, userId);
           const content = item.content ?? '';
           let imageList: string[] = [];
           if (item.images) {
@@ -792,6 +818,8 @@ export class StreamingWsHandler {
           }
           const messageContent: unknown = imageList.length === 0 ? content : contentParts(content, imageList);
           const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
+          await this.deps.messageQueueService.delete(queueId);
+          await this.sendQueueUpdated(sessionId, userId);
           this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
           const consumed: Record<string, unknown> = { messageId: String(savedMessage.id), content };
           if (imageList.length > 0) consumed.images = imageList;
@@ -809,7 +837,12 @@ export class StreamingWsHandler {
           this.suppressAutoConsumeSend.delete(sessionId);
         }
       });
-    });
+      });
+    } catch {
+      this.suppressAutoConsumeSend.delete(sessionId);
+      this.executionClaims.delete(sessionId);
+      this.autoConsumingSessionIds.delete(sessionId);
+    }
   }
 
   private async handleDeleteQueueMessage(userId: number, root: Record<string, unknown>): Promise<void> {
@@ -1061,7 +1094,7 @@ export class StreamingWsHandler {
   }
 
   private isSessionActive(phase: string | null | undefined): boolean {
-    return phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL';
+    return isActivePhase(phase);
   }
 
   private isTerminalPhase(phase: string | null | undefined): boolean {

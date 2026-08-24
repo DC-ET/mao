@@ -134,7 +134,10 @@ export class LocalExecutor {
 
     const result = await this.runTool(toolName, args, sessionId, workspace);
     const payload = persistToolResult(sessionId, requestId, result);
-    await this.opts.ws.sendReliable({ type: 'tool_result', sessionId, requestId, result: payload });
+    const sent = await this.opts.ws.sendReliable({ type: 'tool_result', sessionId, requestId, result: payload });
+    if (!sent) {
+      console.error(`Failed to send tool result session=${sessionId} requestId=${requestId}`);
+    }
   }
 
   private async runTool(

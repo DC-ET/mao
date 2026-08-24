@@ -303,7 +303,8 @@ export class DelegateFollowupTool extends BaseTool {
       if (childSession.parentSessionId !== sessionId) {
         return toJson({ error: '子代理会话 ' + childSessionId + ' 不属于当前会话，无法追问' });
       }
-      if (childSession.phase === 'RUNNING') {
+      if (childSession.phase === 'RUNNING' || childSession.phase === 'RESUMING'
+        || childSession.phase === 'WAITING_APPROVAL' || childSession.phase === 'CANCELLING') {
         return toJson({ error: '子代理会话 ' + childSessionId + ' 正在执行中，无法追问' });
       }
 

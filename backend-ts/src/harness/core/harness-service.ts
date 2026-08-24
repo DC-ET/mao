@@ -224,6 +224,7 @@ export class HarnessService {
         const rows = await tx.query<{ id: number; parentToolCallId: string }>(
           `SELECT id, parent_tool_call_id FROM subagent_execution
            WHERE parent_session_id = ? AND delivery_status = 'PENDING'
+             AND invocation_type = 'DELEGATE'
              AND parent_tool_call_id IN (${placeholders}) FOR UPDATE`,
           [targetSessionId, ...toolCallIds],
         );
@@ -234,7 +235,7 @@ export class HarnessService {
           await tx.execute(
             `UPDATE subagent_execution SET delivery_status = 'DELIVERED',
              parent_result_delivered_at = ?, parent_assistant_message_id = ?, parent_tool_message_id = ?
-             WHERE id = ? AND delivery_status = 'PENDING'`,
+             WHERE id = ? AND delivery_status = 'PENDING' AND invocation_type = 'DELEGATE'`,
             [now, id, toolMessageId, execution.id],
           );
         }
@@ -514,6 +515,7 @@ export class HarnessService {
         context.systemPrompt = (context.systemPrompt ?? '')
           + '\n\n<主任务背景摘要>\n' + contextSummary + '\n</主任务背景摘要>\n'
           + '以上是主任务的最近对话摘要，本次边路任务的结果不需要反馈到主任务。';
+        context.preparedRequest = null;
       }
     }
     const persistenceCallback = this.createPersistenceCallback(sideSessionId, context);

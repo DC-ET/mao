@@ -11,7 +11,7 @@ import { harnessLog } from '../../log.js';
 const DEFAULT_HEAD_LIMIT = 100;
 
 // 与 rg 默认行为对齐：JS 回退遍历时跳过依赖与构建产物目录（参照 file/file.service.ts 的 IGNORED_DIRS）
-const IGNORED_DIRS = new Set([
+export const IGNORED_DIRS = new Set([
   'node_modules', '__pycache__', '.git', 'target', 'dist', 'build',
   '.next', '.nuxt', '.venv', 'venv', '.idea', '.vscode',
 ]);

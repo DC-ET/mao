@@ -27,27 +27,23 @@ export function createWechatToolBridges(
 ): { toolSupport: ToolSupport; uploadService: ToolUpload; sendService: ToolSend } {
   return {
     toolSupport: {
-      async resolveAccount(_sessionId, userId) {
-        const target = await support.resolveTarget(userId);
+      async resolveAccount(sessionId, userId) {
+        const target = await support.resolveTarget(userId, sessionId);
         return target == null ? null : { accountId: target.accountId, wxUserId: target.wxUserId };
       },
     },
     uploadService: {
-      async uploadImage(accountId, bytes) {
+      async uploadImage(accountId, wxUserId, bytes) {
         const account = await accountRepository.findByAccountId(accountId);
         if (account == null) throw new Error('微信账号不存在');
-        const tokens = await tokenRepository.findByAccountId(accountId);
-        if (tokens.length === 0) throw new Error('微信会话尚未建立');
-        const media = await upload.uploadImage(account, tokens[0].wxUserId!, bytes);
+        const media = await upload.uploadImage(account, wxUserId, bytes);
         if (media == null) throw new Error('微信图片上传失败');
         return { mediaId: JSON.stringify(media) };
       },
-      async uploadFile(accountId, bytes, _fileName) {
+      async uploadFile(accountId, wxUserId, bytes, _fileName) {
         const account = await accountRepository.findByAccountId(accountId);
         if (account == null) throw new Error('微信账号不存在');
-        const tokens = await tokenRepository.findByAccountId(accountId);
-        if (tokens.length === 0) throw new Error('微信会话尚未建立');
-        const media = await upload.uploadFile(account, tokens[0].wxUserId!, bytes);
+        const media = await upload.uploadFile(account, wxUserId, bytes);
         if (media == null) throw new Error('微信文件上传失败');
         return { mediaId: JSON.stringify(media) };
       },

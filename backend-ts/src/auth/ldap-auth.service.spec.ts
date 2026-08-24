@@ -74,4 +74,21 @@ describe('LdapAuthService', () => {
     const service = new LdapAuthService(userRepo as never, userRoleRepo as never, jwt, cfg() as never);
     await expect(service.authenticate('ghost', 'pw')).rejects.toBeInstanceOf(BusinessException);
   });
+
+  it('authenticateRejectsDisabledExistingUser', async () => {
+    search.mockResolvedValue({
+      searchEntries: [{ dn: 'cn=Ada,ou=users,dc=example,dc=test', cn: 'Ada', mail: 'ada@example.test' }],
+    });
+    const userRepo = {
+      findByUsername: vi.fn(async () => ({
+        id: 4, username: 'ada', displayName: 'Ada', email: 'ada@example.test', status: 0,
+      })),
+      insert: vi.fn(),
+      updateById: vi.fn(),
+    };
+    const userRoleRepo = { insert: vi.fn() };
+    const service = new LdapAuthService(userRepo as never, userRoleRepo as never, jwt, cfg() as never);
+    await expect(service.authenticate('ada', 'pw')).rejects.toMatchObject({ code: 1006 });
+    expect(userRepo.updateById).not.toHaveBeenCalled();
+  });
 });

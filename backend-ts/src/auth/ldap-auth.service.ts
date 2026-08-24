@@ -1,5 +1,6 @@
 import { Client } from 'ldapts';
 import { BusinessException } from '../common/business-exception.js';
+import { ErrorCode } from '../common/error-code.js';
 import { JwtService } from '../crypto/jwt.service.js';
 import type { AppConfig } from '../config/app-config.js';
 import { hasText } from '../common/case.js';
@@ -54,6 +55,9 @@ export class LdapAuthService {
           await this.userRepo.insert(user);
           await this.userRoleRepo.insert({ userId: user.id!, roleId: 2 });
         } else {
+          if (user.status != null && user.status === 0) {
+            throw new BusinessException(ErrorCode.ACCOUNT_DISABLED);
+          }
           user.displayName = displayName;
           user.email = email;
           user.lastLoginAt = formatNow();

@@ -68,9 +68,10 @@ export class WeixinMonitorService {
       this.httpClient = createWeixinHttpClient(readTimeout);
     }
     const abort = new AbortController();
-    this.activeMonitors.set(accountId, { abort });
+    const handle = { abort };
+    this.activeMonitors.set(accountId, handle);
     console.info(`启动账号监控, accountId=${accountId}`);
-    void this.monitorLoop(accountId, abort.signal);
+    void this.monitorLoop(accountId, abort.signal, handle);
   }
 
   stopMonitor(accountId: string): void {
@@ -82,7 +83,7 @@ export class WeixinMonitorService {
     }
   }
 
-  private async monitorLoop(accountId: string, signal: AbortSignal): Promise<void> {
+  private async monitorLoop(accountId: string, signal: AbortSignal, handle: { abort: AbortController }): Promise<void> {
     let consecutiveFailures = 0;
     while (!signal.aborted) {
       try {
@@ -92,7 +93,7 @@ export class WeixinMonitorService {
           break;
         }
         const payload = JSON.parse(account.payloadJson ?? '{}') as { token: string; baseUrl: string };
-        const result = await this.getUpdates(payload.baseUrl, payload.token, account.getUpdatesBuf ?? null);
+        const result = await this.getUpdates(payload.baseUrl, payload.token, account.getUpdatesBuf ?? null, signal);
         consecutiveFailures = 0;
         if (result.newBuf != null && account.id != null) {
           await this.accountRepository.updateGetUpdatesBuf(account.id, result.newBuf);
@@ -127,11 +128,13 @@ export class WeixinMonitorService {
         await sleep(backoff, signal);
       }
     }
-    this.activeMonitors.delete(accountId);
+    if (this.activeMonitors.get(accountId) === handle) {
+      this.activeMonitors.delete(accountId);
+    }
     console.info(`账号监控循环结束, accountId=${accountId}`);
   }
 
-  private async getUpdates(baseUrl: string, botToken: string, cursor: string | null): Promise<{
+  private async getUpdates(baseUrl: string, botToken: string, cursor: string | null, signal?: AbortSignal): Promise<{
     messages: Record<string, unknown>[];
     newBuf: string | null;
   }> {
@@ -149,6 +152,7 @@ export class WeixinMonitorService {
       },
       body: JSON.stringify(body),
       timeoutMs,
+      signal,
     });
     if (response.status < 200 || response.status >= 300) {
       throw new Error(`getupdates 失败: HTTP ${response.status}`);

@@ -220,9 +220,11 @@ export class WorkspaceBrowseService {
     if (!existsSync(filePath)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `文件不存在：${relativePath}`);
     }
-    if (!statSync(filePath).isFile()) {
+    const lst = lstatSync(filePath);
+    if (!lst.isFile() || lst.isSymbolicLink()) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `不是普通文件：${relativePath}`);
     }
+    this.assertRealPathInWorkspace(filePath, sessionWorkspace, relativePath);
     if (ImageFileSupport.mimeFromPath(relativePath)) {
       return this.readImageFile(filePath, relativePath);
     }

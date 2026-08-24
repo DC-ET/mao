@@ -111,6 +111,7 @@ interface GrepMatch {
   file: string;
   line: number;
   content: string;
+  contextual?: boolean;
 }
 
 function grepWithNode(
@@ -173,17 +174,22 @@ function grepWithNode(
   return { matches, truncated, total_matches: matches.length };
 }
 
-function parseRgLine(line: string, scope: SearchScope): GrepMatch | null {
-  const firstColon = line.indexOf(':');
-  if (firstColon < 0) return null;
-  const secondColon = line.indexOf(':', firstColon + 1);
-  if (secondColon < 0) return null;
-  const filePath = line.slice(0, firstColon);
-  const lineNum = Number(line.slice(firstColon + 1, secondColon));
-  const content = line.slice(secondColon + 1);
-  if (!Number.isFinite(lineNum)) return null;
-  const file = scope.singleFile ? path.basename(scope.singleFile) : relativizeRgPath(filePath, scope.cwd);
-  return { file, line: lineNum, content };
+export function parseRgJsonLine(line: string, scope: SearchScope): GrepMatch | null {
+  try {
+    const obj = JSON.parse(line) as {
+      type?: string;
+      data?: { path?: { text?: string }; line_number?: number; lines?: { text?: string } };
+    };
+    if ((obj.type !== 'match' && obj.type !== 'context') || obj.data == null) return null;
+    const filePath = obj.data.path?.text ?? '';
+    const lineNum = Number(obj.data.line_number);
+    const content = (obj.data.lines?.text ?? '').replace(/\n$/, '');
+    if (!filePath || !Number.isFinite(lineNum)) return null;
+    const file = scope.singleFile ? path.basename(scope.singleFile) : relativizeRgPath(filePath, scope.cwd);
+    return { file, line: lineNum, content, ...(obj.type === 'context' ? { contextual: true } : {}) };
+  } catch {
+    return null;
+  }
 }
 
 function grepWithRg(
@@ -195,7 +201,7 @@ function grepWithRg(
   maxOutputChars: number,
 ): Promise<{ matches: GrepMatch[]; truncated: boolean; total_matches: number }> {
   return new Promise((resolve) => {
-    const cmd = ['--line-number', '--no-heading'];
+    const cmd = ['--json'];
     if (ignoreCase) cmd.push('--ignore-case');
     if (contextLines > 0) cmd.push('--context', String(contextLines));
     if (glob) cmd.push('--glob', glob);
@@ -205,18 +211,20 @@ function grepWithRg(
       const matches: GrepMatch[] = [];
       let charsUsed = 0;
       let truncated = false;
+      let totalMatches = 0;
       for (const line of (stdout || '').split('\n').filter(Boolean)) {
         if (charsUsed + line.length + 1 > maxOutputChars) {
           truncated = true;
           break;
         }
-        const parsed = parseRgLine(line, scope);
+        const parsed = parseRgJsonLine(line, scope);
         if (parsed) {
           matches.push(parsed);
           charsUsed += line.length + 1;
+          if (!parsed.contextual) totalMatches++;
         }
       }
-      resolve({ matches, truncated, total_matches: matches.length });
+      resolve({ matches, truncated, total_matches: totalMatches });
     });
   });
 }
@@ -225,7 +233,8 @@ export async function handleGrepSearch(args: Record<string, unknown>, workspace:
   const pattern = typeof args.pattern === 'string' ? args.pattern : '';
   if (!pattern) return { matches: [], error: 'pattern is required' };
   const glob = typeof args.glob === 'string' ? args.glob : null;
-  const ignoreCase = Boolean(args.ignore_case);
+  const ignoreCase = args.ignore_case === true || args.ignore_case === 1
+    || args.ignore_case === 'true' || args.ignore_case === '1';
   const contextLines = Number(args.context_lines ?? 0) || 0;
   const maxOutputChars = Number(args.max_output_chars ?? 10000) || 10000;
   const resolvedPath = typeof args.path === 'string'

@@ -29,4 +29,16 @@ export class DeliveryDbStore implements DeliveryStore {
   updateById(row: Partial<TaskNotificationDelivery> & { id: number }): Promise<void> {
     return this.db.updateById('task_notification_delivery', row.id, row);
   }
+
+  async updateIfStatus(
+    id: number,
+    expectedStatus: string,
+    row: Partial<TaskNotificationDelivery>,
+  ): Promise<boolean> {
+    const result = await this.db.execute(
+      `UPDATE task_notification_delivery SET status = ?, next_retry_at = ? WHERE id = ? AND status = ?`,
+      [row.status ?? null, row.nextRetryAt ?? null, id, expectedStatus],
+    );
+    return result.affectedRows > 0;
+  }
 }

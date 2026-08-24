@@ -13,8 +13,8 @@ export interface WeixinMediaToolSupport {
 }
 
 export interface WeixinMediaUploadService {
-  uploadImage(accountId: string, bytes: Buffer, mime: string): Promise<{ mediaId: string }>;
-  uploadFile(accountId: string, bytes: Buffer, fileName: string, mime: string): Promise<{ mediaId: string }>;
+  uploadImage(accountId: string, wxUserId: string, bytes: Buffer, mime: string): Promise<{ mediaId: string }>;
+  uploadFile(accountId: string, wxUserId: string, bytes: Buffer, fileName: string, mime: string): Promise<{ mediaId: string }>;
 }
 
 export interface WeixinSendService {
@@ -63,7 +63,7 @@ export class SendWechatImageTool extends BaseTool implements WeixinChannelTool {
       if (bytes.length > MAX_IMAGE_BYTES) return errorJson('图片超过 20MB 上限');
       const mime = ImageFileSupport.detectMimeFromBytes(bytes);
       if (!mime || !ALLOWED_IMAGE_MIMES.has(mime)) return errorJson('不支持的图片格式');
-      const uploaded = await this.uploadService.uploadImage(account.accountId, bytes, mime);
+      const uploaded = await this.uploadService.uploadImage(account.accountId, account.wxUserId, bytes, mime);
       const ok = await this.sendService.sendImage(account.accountId, account.wxUserId, uploaded.mediaId);
       return toJson({ success: ok });
     } catch (e) {
@@ -110,7 +110,7 @@ export class SendWechatFileTool extends BaseTool implements WeixinChannelTool {
       if (!account) return errorJson('微信账号未绑定或尚未建立会话');
       const bytes = await loadBytes(file, this.pathSandbox, workspace);
       const fileName = asText(args.filename) ?? file.split(/[\\/]/).pop() ?? 'file';
-      const uploaded = await this.uploadService.uploadFile(account.accountId, bytes, fileName, 'application/octet-stream');
+      const uploaded = await this.uploadService.uploadFile(account.accountId, account.wxUserId, bytes, fileName, 'application/octet-stream');
       const ok = await this.sendService.sendFile(account.accountId, account.wxUserId, uploaded.mediaId, fileName);
       return toJson({ success: ok });
     } catch (e) {

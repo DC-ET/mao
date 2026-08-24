@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
-import { requireUserId, sendOk } from '../common/http-error.js';
+import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId } from '../common/request.js';
 import type { UserRepository } from '../user/types.js';
 import { experienceInputOf } from './agent-experience.service.js';
@@ -22,6 +22,7 @@ export interface AgentRouteDeps {
   experienceService: AgentExperienceService;
   userRepo: UserRepository;
   mcpServerValidator: McpServerValidator;
+  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
 }
 
 interface CreateAgentRequest {
@@ -51,7 +52,13 @@ interface ExperienceRequest {
 }
 
 export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps): void {
-  const { agentService, experienceService, userRepo, mcpServerValidator } = deps;
+  const { agentService, experienceService, userRepo, mcpServerValidator, permissionService } = deps;
+
+  async function requireAgentWrite(request: Parameters<typeof requireUserId>[0]): Promise<number> {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'agent:write');
+    return userId;
+  }
 
   app.get('/v1/agents', async (request, reply) => {
     const userId = requireUserId(request);
@@ -68,7 +75,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
   });
 
   app.post('/v1/agents', async (request, reply) => {
-    const userId = requireUserId(request);
+    const userId = await requireAgentWrite(request);
     const body = bodyOf<CreateAgentRequest>(request);
     if (!hasText(body.name)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'Agent 名称不能为空');
@@ -91,7 +98,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
   });
 
   app.put('/v1/agents/:id', async (request, reply) => {
-    requireUserId(request);
+    await requireAgentWrite(request);
     const body = bodyOf<UpdateAgentRequest>(request);
     const mcpServerIds = await resolveMcpServerIds(mcpServerValidator, body.mcpServerIds ?? undefined);
     const agent = await agentService.updateAgent(
@@ -108,7 +115,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
   });
 
   app.delete('/v1/agents/:id', async (request, reply) => {
-    requireUserId(request);
+    await requireAgentWrite(request);
     await agentService.deleteAgent(pathId(request));
     return sendOk(reply);
   });
@@ -122,7 +129,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
   });
 
   app.post('/v1/agents/:agentId/experiences', async (request, reply) => {
-    requireUserId(request);
+    await requireAgentWrite(request);
     const agentId = pathId(request, 'agentId');
     await agentService.getAgent(agentId);
     const body = bodyOf<ExperienceRequest>(request);
@@ -131,7 +138,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
   });
 
   app.put('/v1/agents/:agentId/experiences/:id', async (request, reply) => {
-    requireUserId(request);
+    await requireAgentWrite(request);
     const agentId = pathId(request, 'agentId');
     await agentService.getAgent(agentId);
     const body = bodyOf<ExperienceRequest>(request);
@@ -146,7 +153,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
   });
 
   app.delete('/v1/agents/:agentId/experiences/:id', async (request, reply) => {
-    requireUserId(request);
+    await requireAgentWrite(request);
     const agentId = pathId(request, 'agentId');
     await agentService.getAgent(agentId);
     await experienceService.delete(agentId, pathId(request));

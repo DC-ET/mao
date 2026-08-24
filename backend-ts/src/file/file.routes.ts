@@ -9,7 +9,8 @@ import { requireUserId, sendJson, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId, queryOptInt, queryOptStr } from '../common/request.js';
 import { fail } from '../common/result.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
-import type { PathSandbox } from '../harness/safety/path-sandbox.js';
+import { isUnder, type PathSandbox } from '../harness/safety/path-sandbox.js';
+import { CloudWorkspaceResolver } from '../harness/safety/cloud-workspace-resolver.js';
 import type { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 import type { Session } from '../session/types.js';
 import type { SessionService } from '../session/session.service.js';
@@ -233,9 +234,10 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const userId = requireUserId(request);
     const projectKey = queryOptStr(request, 'projectKey');
     if (projectKey == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    const slug = CloudWorkspaceResolver.normalizeAndValidate(projectKey);
     const userRoot = resolve(pathSandbox.getWorkspaceRoot(), String(userId));
-    const projectPath = resolve(userRoot, 'projects', projectKey);
-    if (!projectPath.startsWith(userRoot)) {
+    const projectPath = resolve(userRoot, 'projects', slug);
+    if (!isUnder(projectPath, userRoot)) {
       return sendJson(reply, 200, fail(403, '无权访问该项目'));
     }
     if (!existsSync(projectPath) || !statSync(projectPath).isDirectory()) {

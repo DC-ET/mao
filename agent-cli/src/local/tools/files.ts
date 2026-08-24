@@ -98,7 +98,7 @@ export function handleReadFile(args: Record<string, unknown>, workspace: string 
     if (mimeFromPath(filePath)) return readImage(resolvedPath, filePath);
     const content = fs.readFileSync(resolvedPath, 'utf-8');
     const lines = content.split('\n');
-    const start = Number(args.offset ?? 0) || 0;
+    const start = Math.max(0, Number(args.offset ?? 0) || 0);
     const end = args.limit != null ? Math.min(start + Number(args.limit), lines.length) : lines.length;
     return { content: lines.slice(start, end).join('\n'), total_lines: lines.length };
   } catch (e) {

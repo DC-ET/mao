@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireUserId, sendOk } from '../common/http-error.js';
+import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId } from '../common/request.js';
 import type { Permission, Role } from '../user/types.js';
 import type { PermissionService } from './permission.service.js';
@@ -13,14 +13,16 @@ export function registerPermissionRoutes(app: FastifyInstance, permissionService
   });
 
   app.post('/v1/roles', async (request, reply) => {
-    requireUserId(request);
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'user:write');
     const body = bodyOf<{ name?: string; code?: string; description?: string }>(request);
     const role = await permissionService.createRole(body.name ?? '', body.code ?? '', body.description);
     return sendOk(reply, await toRoleVO(role, permissionService));
   });
 
   app.put('/v1/roles/:id', async (request, reply) => {
-    requireUserId(request);
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'user:write');
     const body = bodyOf<{ name?: string; description?: string }>(request);
     const role = await permissionService.updateRole(pathId(request), body.name, body.description);
     return sendOk(reply, role ? await toRoleVO(role, permissionService) : null);
@@ -33,16 +35,21 @@ export function registerPermissionRoutes(app: FastifyInstance, permissionService
   });
 
   app.put('/v1/roles/:id/permissions', async (request, reply) => {
-    requireUserId(request);
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'user:write');
     const body = bodyOf<{ permissionIds?: number[] }>(request);
     await permissionService.assignPermissions(pathId(request), body.permissionIds ?? []);
     return sendOk(reply);
   });
 
   app.put('/v1/users/:id/roles', async (request, reply) => {
-    requireUserId(request);
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'user:write');
     const body = bodyOf<{ roleIds?: number[] }>(request);
-    await permissionService.assignRoles(pathId(request), body.roleIds ?? []);
+    const targetUserId = pathId(request);
+    const roleIds = body.roleIds ?? [];
+    await permissionService.assertCanChangeRoles(targetUserId, roleIds);
+    await permissionService.assignRoles(targetUserId, roleIds);
     return sendOk(reply);
   });
 }

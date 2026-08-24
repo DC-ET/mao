@@ -162,6 +162,42 @@ describe('StreamingWsHandler', () => {
     await executor.runAll();
   });
 
+  it('rejects send_message while session is CANCELLING', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'CANCELLING'));
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'send_message', sessionId: 11, data: { content: 'continue' } }));
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'session_already_running',
+    }));
+    expect(sessionService.saveMessage).not.toHaveBeenCalled();
+  });
+
+  it('marks side session failed when the agent executor rejects the task', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    sessionService.save.mockImplementation(async (s: Session) => { s.id = 13; });
+    const submit = vi.spyOn(executor, 'submit').mockImplementationOnce(() => {
+      throw new Error('Agent executor rejected: active=100 queued=200');
+    });
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'create_side_session', sessionId: 11, data: { content: 'side work', inheritContext: true },
+    }));
+
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(
+      13, 7, 'FAILED', expect.any(String), '服务器繁忙，请稍后重试',
+    );
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'error',
+      sessionId: 13,
+      data: expect.objectContaining({ message: '服务器繁忙，请稍后重试' }),
+    }));
+    submit.mockRestore();
+  });
+
   it('sendMessageRejectsUnsupportedImagesAndDisconnectedLocalClient', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);

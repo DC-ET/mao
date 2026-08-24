@@ -1,5 +1,6 @@
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
+import type { AtomicBoolean } from '../../atomic-boolean.js';
 import type { BackgroundSubagentManager } from '../../delegate/background-subagent-manager.js';
 import { ToolCallContext } from '../tool-call-context.js';
 
@@ -161,7 +162,10 @@ export class CancelSubagentTool extends BaseTool {
 const DEFAULT_WAIT_SUBAGENTS_TIMEOUT_SECONDS = 30 * 60;
 
 export class WaitSubagentsTool extends BaseTool {
-  constructor(private readonly manager: BackgroundSubagentManager) { super(); }
+  constructor(
+    private readonly manager: BackgroundSubagentManager,
+    private readonly getCancelFlag?: (sessionId: number) => AtomicBoolean | undefined,
+  ) { super(); }
 
   getName(): string { return 'wait_subagents'; }
   getDescription(): string {
@@ -184,7 +188,11 @@ export class WaitSubagentsTool extends BaseTool {
     const timeoutSeconds = Number(rawTimeoutSeconds);
     if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 0) return errorJson('参数 timeout_seconds 必须是非负数字');
 
-    const waitResult = await this.manager.waitForAll(sessionId, null, timeoutSeconds * 1000);
+    const waitResult = await this.manager.waitForAll(
+      sessionId,
+      this.getCancelFlag?.(sessionId) ?? null,
+      timeoutSeconds * 1000,
+    );
     const results = await this.manager.consumeResults(sessionId);
     const list = Object.values(results).map((raw) => {
       try { return JSON.parse(raw) as unknown; } catch { return raw; }

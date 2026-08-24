@@ -158,6 +158,7 @@ export class AgentLoop {
           }
           sb += '</后台任务结果>';
           context.addSystemMessage(sb);
+          context.preparedRequest = null;
         }
 
         const bgSubagentManager = this.backgroundSubagentManager?.();

@@ -9,6 +9,11 @@ import type { TaskNotificationPreferenceService } from './preference.service.js'
 export interface DeliveryStore {
   insert(row: TaskNotificationDelivery): Promise<number>;
   updateById(row: Partial<TaskNotificationDelivery> & { id: number }): Promise<void>;
+  updateIfStatus?(
+    id: number,
+    expectedStatus: string,
+    row: Partial<TaskNotificationDelivery>,
+  ): Promise<boolean>;
 }
 
 export interface QueueLister {
@@ -93,12 +98,15 @@ export class TaskNotificationDeliveryService {
     if (delivery == null || delivery.id == null) {
       return;
     }
-    await this.store.updateById({
-      id: delivery.id,
-      status: delivered ? DeliveryStatus.SUPPRESSED_WS : DeliveryStatus.PENDING,
+    const nextStatus = delivered ? DeliveryStatus.SUPPRESSED_WS : DeliveryStatus.PENDING;
+    const patch: Partial<TaskNotificationDelivery> = {
+      status: nextStatus,
       nextRetryAt: delivered ? null : formatDateTime(new Date()),
-    });
-    if (delivered) {
+    };
+    const updated = this.store.updateIfStatus
+      ? await this.store.updateIfStatus(delivery.id, DeliveryStatus.WAITING_WS, patch)
+      : (await this.store.updateById({ id: delivery.id, ...patch }), true);
+    if (updated && delivered) {
       this.metrics.suppressedByWebSocket(delivery.channel!);
     }
   }

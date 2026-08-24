@@ -43,7 +43,7 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   }
 
   app.get('/v1/admin/sessions/options/users', async (request, reply) => {
-    requireAdminUser(request);
+    await requireAdminUser(request);
     const users = await userLookup.listOptions();
     return sendOk(reply, users.map((u) => ({
       id: u.id,
@@ -53,13 +53,13 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   });
 
   app.get('/v1/admin/sessions/options/agents', async (request, reply) => {
-    requireAdminUser(request);
+    await requireAdminUser(request);
     const agents = await agentLookup.listOptions();
     return sendOk(reply, agents.map((a) => ({ id: a.id, name: a.name })));
   });
 
   app.get('/v1/admin/sessions', async (request, reply) => {
-    requireAdminUser(request);
+    await requireAdminUser(request);
     const page = queryInt(request, 'page', 1);
     const size = queryInt(request, 'size', 20);
     const pageResult = await sessionService.listSessionsForAdmin(
@@ -86,7 +86,7 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   });
 
   app.get('/v1/admin/sessions/:id', async (request, reply) => {
-    requireAdminUser(request);
+    await requireAdminUser(request);
     const session = await sessionService.getSession(pathId(request));
     const single = [session];
     return sendOk(reply, toAdminSessionVO(
@@ -98,7 +98,7 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
   });
 
   app.get('/v1/admin/sessions/:id/messages', async (request, reply) => {
-    requireAdminUser(request);
+    await requireAdminUser(request);
     const id = pathId(request);
     const roundLimit = queryOptInt(request, 'roundLimit') ?? 5;
     const beforeMessageId = queryOptInt(request, 'beforeMessageId') ?? null;

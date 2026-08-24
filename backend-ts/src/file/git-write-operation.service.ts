@@ -73,7 +73,7 @@ export function envVarNameForDomain(domain: string): string {
 }
 
 export class GitWriteOperationService {
-  private readonly locks = new Map<string, boolean>();
+  private readonly locks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly workspaceGitService: WorkspaceGitService,
@@ -109,9 +109,7 @@ export class GitWriteOperationService {
 
   async refreshRemoteStatus(session: Session, repoPath?: string | null): Promise<GitStatusDTO> {
     const repo = await this.resolveRepository(session, repoPath);
-    if (this.locks.get(repo)) throw new BusinessException(ErrorCode.PARAM_INVALID, 'Git 操作进行中');
-    this.locks.set(repo, true);
-    try {
+    return this.withRepoLock(repo, async () => {
       const state = await this.remoteState(repo);
       const remote = await this.selectRefreshRemote(repo, state);
       if (remote == null) {
@@ -133,9 +131,7 @@ export class GitWriteOperationService {
         status.remoteStatusError = classify(fetch, '远端状态刷新失败');
       }
       return status;
-    } finally {
-      this.locks.set(repo, false);
-    }
+    });
   }
 
   async pull(session: Session, repoPath?: string | null): Promise<GitOperationResult> {
@@ -256,29 +252,42 @@ export class GitWriteOperationService {
 
   private async locked(session: Session, repoPath: string | null | undefined, operation: string, action: (repo: string) => Promise<GitOperationResult>): Promise<GitOperationResult> {
     const repo = await this.resolveRepository(session, repoPath);
-    if (this.locks.get(repo)) throw new BusinessException(ErrorCode.PARAM_INVALID, 'Git 操作进行中');
-    this.locks.set(repo, true);
     const started = Date.now();
-    try {
-      const result = await action(repo);
-      await this.recordOperation(session, repoPath, result, started);
-      return result;
-    } catch (e) {
-      if (e instanceof GitOperationException) {
-        const result = failedResult(operation, e.message);
-        result.conflict = e.conflict;
-        result.stashRef = e.stashRef ?? undefined;
+    return this.withRepoLock(repo, async () => {
+      try {
+        const result = await action(repo);
         await this.recordOperation(session, repoPath, result, started);
-        throw new BusinessException(ErrorCode.INTERNAL_ERROR, e.message);
-      }
-      if (e instanceof BusinessException) {
-        const result = failedResult(operation, sanitize(e.message) ?? e.message);
-        await this.recordOperation(session, repoPath, result, started);
+        return result;
+      } catch (e) {
+        if (e instanceof GitOperationException) {
+          const result = failedResult(operation, e.message);
+          result.conflict = e.conflict;
+          result.stashRef = e.stashRef ?? undefined;
+          await this.recordOperation(session, repoPath, result, started);
+          throw new BusinessException(ErrorCode.INTERNAL_ERROR, e.message);
+        }
+        if (e instanceof BusinessException) {
+          const result = failedResult(operation, sanitize(e.message) ?? e.message);
+          await this.recordOperation(session, repoPath, result, started);
+          throw e;
+        }
         throw e;
       }
-      throw e;
+    });
+  }
+
+  private async withRepoLock<T>(repo: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(repo) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const chained = previous.then(() => current, () => current);
+    this.locks.set(repo, chained);
+    try {
+      await previous;
+      return await action();
     } finally {
-      this.locks.set(repo, false);
+      release();
+      if (this.locks.get(repo) === chained) this.locks.delete(repo);
     }
   }
 

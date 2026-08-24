@@ -144,7 +144,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
 
   function isActivePhase(phase?: string | null) {
-    return phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL'
+    return phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL' || phase === 'CANCELLING'
   }
 
   // Computed refs from store — reactive to active session
@@ -399,15 +399,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         images: imageUrls.length > 0 ? imageUrls : undefined
       })
 
-      // Add empty assistant message
-      sessionStore.addAssistantMessage(sid, {
-        id: `msg_${Date.now()}_assistant`,
-        role: 'assistant',
-        content: '',
-        createdAt: nowDateTime(),
-        toolCalls: [],
-        segments: []
-      })
+      // Register streaming assistant bubble so WS deltas attach here instead of inserting a second bubble
+      sessionStore.ensureStreamingAssistantMessage(sid)
 
       // Subscribe to this session's events
       subscribe(sid)
@@ -446,9 +439,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       initializingWorkspace.value = false
       initializingWorkspaceLabel.value = ''
       // Remove empty assistant message if it was added
-      const lastMsg = messages.value[messages.value.length - 1]
+      const list = sid ? sessionStore.getMessages(sid) : messages.value
+      const lastMsg = list[list.length - 1]
       if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
-        messages.value.pop()
+        list.pop()
       }
       if (!(error as Error & { toastShown?: boolean }).toastShown) {
         const failedBeforeSession = !sessionId.value
@@ -584,15 +578,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         images: imageUrls.length > 0 ? imageUrls : undefined
       })
 
-      // Add empty assistant message
-      sessionStore.addAssistantMessage(sid, {
-        id: `msg_${Date.now()}_assistant`,
-        role: 'assistant',
-        content: '',
-        createdAt: nowDateTime(),
-        toolCalls: [],
-        segments: []
-      })
+      // Register streaming assistant bubble so WS deltas attach here instead of inserting a second bubble
+      sessionStore.ensureStreamingAssistantMessage(sid)
 
       // Subscribe to this session's events
       subscribe(sid)
@@ -659,9 +646,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       initializingWorkspace.value = false
       initializingWorkspaceLabel.value = ''
       // Remove empty assistant message if it was added
-      const lastMsg = messages.value[messages.value.length - 1]
+      const list = sid ? sessionStore.getMessages(sid) : messages.value
+      const lastMsg = list[list.length - 1]
       if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
-        messages.value.pop()
+        list.pop()
       }
       if (!(error as Error & { toastShown?: boolean }).toastShown) {
         const failedBeforeSession = !sessionId.value
@@ -803,9 +791,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     } catch (error: any) {
       sending.value = false
       // Remove empty assistant message if it was added
-      const lastMsg = messages.value[messages.value.length - 1]
+      const list = sid ? sessionStore.getMessages(sid) : messages.value
+      const lastMsg = list[list.length - 1]
       if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
-        messages.value.pop()
+        list.pop()
       }
       ElMessage.error(error?.message || '编辑重新发送失败')
       if (sessionId.value) {
@@ -864,10 +853,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
   // --- Message Queue ---
 
-  const isActive = computed(() => {
-    const phase = sessionStore.activeSession?.phase
-    return phase === 'RUNNING' || phase === 'WAITING_APPROVAL'
-  })
+  const isActive = computed(() => isActivePhase(sessionStore.activeSession?.phase))
 
   async function sendMessageWithQueue(text: string, files: File[], pendingUploads?: File[]): Promise<boolean> {
     if (isActive.value) {
@@ -886,6 +872,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     if (pendingUploads && pendingUploads.length > 0) {
       resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, sid)
     }
+    resolvedText = resolveFileRefPaths(resolvedText, workspace.value)
     await connect()
     if (!requireCurrentSession(sid)) return false
     const eventId = generateUUID()

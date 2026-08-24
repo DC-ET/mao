@@ -70,6 +70,7 @@ function makeService() {
     findById: vi.fn(),
     logicalDeleteAfter: vi.fn(),
     updateById: vi.fn(),
+    selectLastUserMessage: vi.fn(),
   } as unknown as MessageRepository;
   const agentLookup = {
     findByIds: vi.fn().mockResolvedValue([]),
@@ -208,6 +209,14 @@ describe('SessionService archive', () => {
     const { service, messageRepo } = makeService();
     vi.mocked(messageRepo.findById).mockResolvedValue({ id: 3, sessionId: 99, role: 'USER', content: 'old' });
     await expect(service.editMessageAndTruncate(11, 3, 'new', null)).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
+  });
+
+  it('rejectsEditWhenNotLastUserMessage', async () => {
+    const { service, messageRepo } = makeService();
+    vi.mocked(messageRepo.findById).mockResolvedValue({ id: 3, sessionId: 11, role: 'USER', content: 'old' });
+    vi.mocked(messageRepo.selectLastUserMessage).mockResolvedValue({ id: 9, sessionId: 11, role: 'USER', content: 'later' });
+    await expect(service.editMessageAndTruncate(11, 3, 'new', null)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    expect(messageRepo.logicalDeleteAfter).not.toHaveBeenCalled();
   });
 });
 

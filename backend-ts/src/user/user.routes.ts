@@ -85,7 +85,9 @@ export function registerUserRoutes(
       roleIds?: number[];
       status?: number;
     }>(request);
-    const user = await userService.updateUser(pathId(request), body.displayName, body.email, body.roleIds, body.status);
+    const user = await userService.updateUser(
+      pathId(request), body.displayName, body.email, body.roleIds, body.status, userId,
+    );
     const roles = await userService.getUserRoles(user.id!);
     return sendOk(reply, toUserVO(user, roles));
   });

@@ -55,6 +55,7 @@ export class BackgroundTaskManager {
         }
         this.tasks.delete(taskId);
       } else if (now - entry.submitTimeMs > ABANDONED_THRESHOLD_MS) {
+        if (sessionId !== entry.sessionId) continue;
         entry.cancelled = true;
         this.tasks.delete(taskId);
         harnessLog('warn', `Cancelled abandoned background task: ${taskId} session=${entry.sessionId}`);

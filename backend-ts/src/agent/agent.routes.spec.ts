@@ -38,11 +38,13 @@ describe('CRUD routes', () => {
     };
     const userRepo = { findById: vi.fn(async () => ({ id: 7, username: 'ada', displayName: 'Ada' })) };
     const mcpServerValidator = { validateForAgent: vi.fn(async (ids: number[]) => ids) };
+    const permissionService = { hasPermission: vi.fn(async () => true) };
     const app = await appWithUser((f) => registerAgentRoutes(f, {
       agentService: agentService as never,
       experienceService: experienceService as never,
       userRepo: userRepo as never,
       mcpServerValidator: mcpServerValidator as never,
+      permissionService,
     }));
     expect((await app.inject({ method: 'GET', url: '/v1/agents' })).statusCode).toBe(200);
     expect((await app.inject({ method: 'GET', url: '/v1/agents/1' })).statusCode).toBe(200);
@@ -122,7 +124,7 @@ describe('CRUD routes', () => {
     };
 
     const app = await appWithUser((f) => {
-      registerModelRoutes(f, { modelService: modelService as never });
+      registerModelRoutes(f, { modelService: modelService as never, permissionService: permission });
       registerCommandRoutes(f, {
         userCommandService: commandService as never,
         agentService: { getAgent: vi.fn(async () => ({ id: 1, skillNames: '["java"]' })) } as never,

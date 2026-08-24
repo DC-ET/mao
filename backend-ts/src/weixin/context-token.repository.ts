@@ -42,7 +42,7 @@ export class ContextTokenRepository {
 
   findByAccountId(accountId: string): Promise<WeixinChannelContextToken[]> {
     return this.db.query<WeixinChannelContextToken>(
-      `SELECT * FROM weixin_channel_context_token WHERE account_id = ? AND ${NOT_DELETED}`,
+      `SELECT * FROM weixin_channel_context_token WHERE account_id = ? AND ${NOT_DELETED} ORDER BY updated_at DESC, id DESC`,
       [accountId],
     );
   }

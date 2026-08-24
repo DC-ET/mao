@@ -564,6 +564,8 @@ export class SessionRunner {
         break;
       case 'error':
         this.emit({ type: 'error', message: String(d.message ?? 'Agent 执行异常') });
+        this.terminal = { phase: 'FAILED' };
+        this.flushWaiters();
         break;
       case 'side_session_created':
         this.emit({

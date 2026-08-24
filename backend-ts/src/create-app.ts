@@ -149,6 +149,8 @@ import { StreamingWsHandler } from './session/ws/streaming-ws-handler.js';
 import { attachWebSocket } from './session/ws/attach-websocket.js';
 import { WeixinAccountRepository } from './weixin/account.repository.js';
 import { ContextTokenRepository } from './weixin/context-token.repository.js';
+import { WeixinSessionPeerRepository } from './weixin/session-peer.repository.js';
+import { configureWeixinSessionPeerStore } from './weixin/session-peer.js';
 import { WeixinMonitorService } from './weixin/monitor.service.js';
 import { QrLoginService } from './weixin/qr-login.service.js';
 import { registerWeixinBotRoutes } from './weixin/weixin.routes.js';
@@ -353,6 +355,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   };
   const weixinAccounts = new WeixinAccountRepository(db);
   const weixinTokens = new ContextTokenRepository(db);
+  const weixinPeerRepo = new WeixinSessionPeerRepository(db);
+  configureWeixinSessionPeerStore({
+    save: (sessionId, wxUserId) => weixinPeerRepo.save(sessionId, wxUserId),
+    load: (sessionId) => weixinPeerRepo.findBySessionId(sessionId),
+  });
   const weixinSend = new WeixinSendService(weixinAccounts, weixinTokens);
   const weixinUpload = new WeixinMediaUploadService(weixinConfig);
   const weixinMedia = new WeixinMediaService(weixinConfig);
@@ -628,6 +635,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   } as never);
   scheduledService.setLiveExecution((session, userId, executionId, saved) =>
     wsHandler.executePersistedUserPrompt(session, userId, executionId, saved));
+  scheduledService.setSessionBusyCheck((sessionId) => wsHandler.hasExecutionClaim(sessionId));
 
   const analyticsService = new AnalyticsService(new AnalyticsDbStore(db));
   const statisticsService = new StatisticsService(new StatisticsDbStore(db));
@@ -645,8 +653,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerGitCredentialRoutes(api, gitCredentials);
     registerAgentRoutes(api, {
       agentService, experienceService, userRepo, mcpServerValidator: mcpValidator,
+      permissionService,
     });
-    registerModelRoutes(api, { modelService });
+    registerModelRoutes(api, { modelService, permissionService });
     registerSystemSettingRoutes(api, { systemSettingService: settingService });
     registerCommandRoutes(api, {
       userCommandService: commandService,
@@ -720,8 +729,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       } as never,
     });
     registerScheduledTaskRoutes(api, { service: scheduledService, jwt, permission: permissionService });
-    registerAnalyticsRoutes(api, { analytics: analyticsService, jwt });
-    registerStatisticsRoutes(api, { statistics: statisticsService, jwt });
+    registerAnalyticsRoutes(api, { analytics: analyticsService, jwt, permissionService });
+    registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
     const adminDeps = {
       jwt, analytics: adminAnalytics,
       sessionLister: sessionService as never,

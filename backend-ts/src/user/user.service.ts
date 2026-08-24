@@ -62,6 +62,7 @@ export class UserService {
     email: string | null | undefined,
     roleIds: number[] | null | undefined,
     status: number | null | undefined,
+    currentUserId?: number,
   ): Promise<User> {
     const user = await this.getUser(id);
     if (hasText(displayName ?? undefined)) {
@@ -69,6 +70,9 @@ export class UserService {
     }
     if (email != null) {
       user.email = hasText(email) ? email.trim() : null;
+    }
+    if (status != null && status === 0) {
+      await this.permissionService.assertCanDisableUser(id, currentUserId ?? 0);
     }
     if (status != null) {
       user.status = status;

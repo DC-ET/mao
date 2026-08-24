@@ -5,6 +5,7 @@ import { WsStreamingEventListener, type AgentEventListener, type WsListenerDeps 
 import type { WeixinAccountRepository } from './account.repository.js';
 import { StorageException, type WeixinFileStorageService } from './file-storage.service.js';
 import type { WeixinSessionService } from './session.service.js';
+import { bindWeixinSessionPeer } from './session-peer.js';
 import type { InboundFile, WeixinInboundHandler, WeixinInboundMessageContext, WeixinReply } from './types.js';
 
 const DEFAULT_IMAGE_PROMPT = '请查看这张图片';
@@ -92,6 +93,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
       return { text: '抱歉，处理您的消息时出现了错误，请稍后再试。' };
     }
     const sessionId = session.id!;
+    bindWeixinSessionPeer(sessionId, context.fromUserId);
     const generation = this.nextGeneration(sessionId);
     this.abortRunningExecution(sessionId, userId);
 

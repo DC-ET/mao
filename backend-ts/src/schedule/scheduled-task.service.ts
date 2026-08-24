@@ -6,6 +6,7 @@ import { formatDateTime } from '../common/json.js';
 import { mpPage, type MpPage } from '../common/json.js';
 import type { Message, Session } from '../domain/types.js';
 import { WEIXIN_PROJECT_KEY } from '../domain/types.js';
+import { isActivePhase } from '../session/session-vo.js';
 
 export interface ScheduledTask {
   id?: number;
@@ -113,10 +114,15 @@ export class ScheduledTaskService {
     private readonly weixinContextTokenRepository: ScheduleWeixinTokenRepo,
     private readonly agentExecutor: (fn: () => void | Promise<void>) => void = (fn) => { void Promise.resolve().then(fn); },
     private liveExecution: ScheduledLiveExecution | null = null,
+    private isSessionBusy: ((sessionId: number) => boolean) | null = null,
   ) {}
 
   setLiveExecution(liveExecution: ScheduledLiveExecution | null): void {
     this.liveExecution = liveExecution;
+  }
+
+  setSessionBusyCheck(isSessionBusy: ((sessionId: number) => boolean) | null): void {
+    this.isSessionBusy = isSessionBusy;
   }
 
   async createTask(userId: number, agentId: number, sessionId: number, name: string, prompt: string, cronExpression: string): Promise<ScheduledTask> {
@@ -194,27 +200,32 @@ export class ScheduledTaskService {
       const executionId = randomUUID();
       const userId = task.userId!;
       this.agentExecutor(() => withSessionLock(task.sessionId!, async () => {
+        let countThisRun = false;
         try {
           // 拿到锁后重读最新任务状态，排队期间可能已被更新/暂停/删除
           const latest = task.id != null ? await this.store.selectById(task.id) : null;
-          if (latest != null) {
-            task.name = latest.name;
-            task.prompt = latest.prompt ?? task.prompt;
-            task.cronExpression = latest.cronExpression;
-            task.status = latest.status;
+          if (latest == null) {
+            return;
           }
+          task.name = latest.name;
+          task.prompt = latest.prompt ?? task.prompt;
+          task.cronExpression = latest.cronExpression;
+          task.status = latest.status;
           if (task.status != null && task.status !== 'ACTIVE') {
             return;
           }
           const session = await this.sessionService.getSession(task.sessionId!);
           if (session == null) {
             await this.markTaskResult(task, 'FAILED');
+            countThisRun = true;
             return;
           }
           const phase = session.phase;
-          if (phase === 'RUNNING' || phase === 'RESUMING' || phase === 'WAITING_APPROVAL') {
+          const busy = this.isSessionBusy?.(task.sessionId!) === true || isActivePhase(phase);
+          if (busy) {
             await this.messageQueueService.enqueue(task.sessionId!, userId, task.prompt!, null);
             await this.markTaskResult(task, 'QUEUED');
+            countThisRun = true;
             return;
           }
           await this.sessionService.updatePhase(task.sessionId!, 'RUNNING');
@@ -224,6 +235,7 @@ export class ScheduledTaskService {
           } catch {
             await this.sessionService.updatePhase(task.sessionId!, 'IDLE');
             await this.markTaskResult(task, 'FAILED');
+            countThisRun = true;
             return;
           }
           if (this.liveExecution != null) {
@@ -240,13 +252,16 @@ export class ScheduledTaskService {
           }
           await this.markTaskResult(task, 'COMPLETED');
           await this.sendWeixinReplyIfApplicable(task.sessionId!, userId);
+          countThisRun = true;
         } catch (e) {
+          countThisRun = true;
           try {
             await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'FAILED', executionId,
               e instanceof Error ? e.message : String(e));
           } catch { /* ignore */ }
           await this.markTaskResult(task, 'FAILED');
         } finally {
+          if (!countThisRun) return;
           task.lastFireTime = formatDateTime(new Date());
           task.fireCount = (task.fireCount ?? 0) + 1;
           if (task.lastExecutionStatus !== 'QUEUED' && this.calculateNextFireTime(task.cronExpression!) == null) {
@@ -306,8 +321,11 @@ export class ScheduledTaskService {
       if (!reply || reply.trim() === '') {
         return;
       }
+      const { getWeixinSessionPeer } = await import('../weixin/session-peer.js');
+      const boundWxUserId = await getWeixinSessionPeer(sessionId);
       const tokens = await this.weixinContextTokenRepository.findByAccountId(account.accountId);
-      const wxUserId = tokens[0]?.wxUserId;
+      const wxUserId = boundWxUserId
+        ?? (tokens.length === 1 ? tokens[0]?.wxUserId : undefined);
       if (!wxUserId) {
         return;
       }

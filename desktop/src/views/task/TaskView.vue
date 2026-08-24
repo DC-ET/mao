@@ -789,12 +789,16 @@ function getRouteWatchState() {
   }
 }
 
+let loadGeneration = 0
+
 async function loadSession(sid: string) {
+  const gen = ++loadGeneration
   newTaskAgentId.value = null
   const phaseAtRequest = sessionStore.getSessionEntity(sid)?.phase
 
   try {
     const { data } = await api.get(`/sessions/${sid}`)
+    if (gen !== loadGeneration) return
     if (data) {
       // Preserve locally derived title (avoids race with deriveTitle in sendMessage)
       const existing = sessionStore.sessions.find(s => String(s.id) === String(sid))
@@ -922,9 +926,11 @@ async function handleNewTaskFromGroup(payload: { agentId: string; executionMode:
 }
 
 function handleNewSideTask() {
-  // Create a placeholder tab with sideSessionId=0
-  // The real sideSessionId will be assigned when the user sends the first message
-  // and the server responds with side_session_created
+  const placeholder = tabs.value.find(t => t.type === 'side_task' && (t.sideSessionId == null || t.sideSessionId <= 0))
+  if (placeholder) {
+    activateTab(placeholder.id)
+    return
+  }
   const tempId = -Date.now()
   openSideTaskTab(tempId, '任务')
 }

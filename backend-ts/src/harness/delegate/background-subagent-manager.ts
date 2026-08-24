@@ -730,6 +730,7 @@ export class BackgroundSubagentManager {
     });
     ctx.availableSkillNames = [];
     ctx.availableSkillDocs.clear();
+    ctx.preparedRequest = null;
     return ctx;
   }
 }

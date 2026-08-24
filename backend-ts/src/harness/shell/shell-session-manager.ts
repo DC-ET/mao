@@ -318,8 +318,7 @@ export class ShellSessionManager {
     let cleaned = 0;
     for (const [sessionId, session] of [...this.sessions.entries()]) {
       if (!session.isAlive() || session.isIdleTimeout(idleTimeout) || session.isExpired(maxLifetime)) {
-        this.sessions.delete(sessionId);
-        session.close();
+        this.removeSession(sessionId);
         cleaned++;
       }
     }

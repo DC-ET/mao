@@ -154,7 +154,7 @@ export class SubagentExecutionRecoveryService {
   private async waitForLocalNoDeadline(
     childSessionId: number,
     cancel: { get(): boolean },
-    timeoutMs = 60_000,
+    timeoutMs = 3_600_000,
   ): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     while (!cancel.get() && Date.now() < deadline) {
