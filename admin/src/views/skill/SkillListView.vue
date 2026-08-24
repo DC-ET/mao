@@ -20,7 +20,16 @@
       </el-form>
 
       <!-- Upload area -->
+      <el-alert
+        v-if="isMobile"
+        type="info"
+        :closable="false"
+        show-icon
+        title="手机端可查看、删除已有 Skill；上传目录包请在电脑浏览器完成。"
+        style="margin-bottom: 12px"
+      />
       <div
+        v-else
         class="upload-zone"
         :class="{ 'is-dragover': isDragover }"
         v-loading="uploading"
@@ -44,7 +53,7 @@
       </div>
 
       <!-- Skill table -->
-      <el-table :data="filteredSkillDocs" v-loading="loading" stripe style="margin-top: 16px">
+      <el-table v-if="!isMobile" :data="filteredSkillDocs" v-loading="loading" stripe style="margin-top: 16px">
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
@@ -84,6 +93,41 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-else class="mobile-card-list" v-loading="loading" style="margin-top: 16px">
+        <el-card v-for="row in filteredSkillDocs" :key="row.name" shadow="hover">
+          <div class="mobile-card-head">
+            <span class="mobile-card-title">{{ row.name }}</span>
+            <el-tag :type="isSkillAvailable(row) ? 'success' : 'danger'" size="small">
+              {{ isSkillAvailable(row) ? '可用' : '不可用' }}
+            </el-tag>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">描述</span>
+            <span>{{ row.description || '-' }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">校验</span>
+            <el-tag :type="row.filePath || row.folderPath ? 'success' : 'danger'" size="small">
+              {{ row.filePath || row.folderPath ? '通过' : '异常' }}
+            </el-tag>
+          </div>
+          <div class="mobile-card-actions">
+            <el-button type="primary" link @click="handleView(row)">查看</el-button>
+            <el-popconfirm
+              :title="`确认删除 Skill「${row.name}」？`"
+              confirm-button-text="删除"
+              cancel-button-text="取消"
+              @confirm="handleDelete(row)"
+            >
+              <template #reference>
+                <el-button type="danger" link>删除</el-button>
+              </template>
+            </el-popconfirm>
+          </div>
+        </el-card>
+        <el-empty v-if="!loading && filteredSkillDocs.length === 0" description="暂无数据" />
+      </div>
     </el-card>
 
     <!-- Skill content dialog -->
@@ -110,7 +154,10 @@ import { computed, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
+
+const { isMobile } = useBreakpoint()
 
 const loading = ref(false)
 const skillDocs = ref<any[]>([])

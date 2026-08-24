@@ -26,12 +26,11 @@
         </el-form-item>
       </el-form>
 
-      <!-- Table -->
-      <el-table :data="filteredAgents" v-loading="loading" stripe>
+      <el-table v-if="!isMobile" :data="filteredAgents" v-loading="loading" stripe>
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
-        <el-table-column prop="id" label="ID" width="80" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
+        <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="名称" min-width="120">
           <template #default="{ row }">
             <span>{{ row.name }}</span>
@@ -39,13 +38,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-        <el-table-column label="Skills" width="110" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
+        <el-table-column label="Skills" width="110" align="right">
           <template #default="{ row }">{{ row.skillNames?.length || 0 }}</template>
         </el-table-column>
-        <el-table-column label="经验数" width="90" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
+        <el-table-column label="经验数" width="90" align="right">
           <template #default="{ row }">{{ row.experiences?.length || 0 }}</template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="创建时间" width="180" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
+        <el-table-column prop="createdAt" label="创建时间" width="180" />
         <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
@@ -55,14 +54,35 @@
         </el-table-column>
       </el-table>
 
-      <!-- Pagination -->
-      <el-pagination
+      <div v-else class="mobile-card-list" v-loading="loading">
+        <el-card v-for="row in filteredAgents" :key="row.id" shadow="hover">
+          <div class="mobile-card-head">
+            <span class="mobile-card-title">{{ row.name }}</span>
+            <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">描述</span>
+            <span>{{ row.description || '-' }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Skills</span>
+            <span>{{ row.skillNames?.length || 0 }}</span>
+          </div>
+          <div class="mobile-card-actions">
+            <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
+            <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
+            <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+          </div>
+        </el-card>
+        <el-empty v-if="!loading && filteredAgents.length === 0" description="暂无数据" />
+      </div>
+
+      <ResponsivePagination
         class="pagination"
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
         :page-sizes="[10, 20, 50, 100]"
         :total="total"
-        layout="total, sizes, prev, pager, next, jumper"
         @current-change="fetchAgents"
         @size-change="handleSizeChange"
       />
@@ -83,7 +103,11 @@
 import { computed, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import AgentFormDialog from './AgentFormDialog.vue'
+
+const { isMobile } = useBreakpoint()
 
 const loading = ref(false)
 const allAgents = ref<any[]>([])

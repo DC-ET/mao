@@ -38,3 +38,52 @@ body {
   --el-menu-hover-bg-color: var(--mao-canvas);
   --el-menu-active-color: var(--mao-accent);
 }
+
+.mobile-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mobile-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.mobile-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mao-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+.mobile-card-label {
+  width: 52px;
+  flex-shrink: 0;
+  color: var(--mao-muted);
+}
+
+.mobile-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+  border-top: 1px solid var(--mao-border);
+  padding-top: 10px;
+}

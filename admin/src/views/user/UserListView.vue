@@ -12,26 +12,30 @@
       </template>
 
       <el-form :inline="true" class="search-form">
-        <el-form-item label="关键词">
-          <el-input
-            v-model="filters.keyword"
-            placeholder="用户名 / 显示名 / 邮箱"
-            clearable
-            style="width: 220px"
-            @clear="handleSearch"
-            @keyup.enter="handleSearch"
-          />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
-            <el-option label="启用" :value="1" />
-            <el-option label="禁用" :value="0" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearch">查询</el-button>
-          <el-button @click="handleReset">重置</el-button>
-        </el-form-item>
+        <FilterPanel>
+          <template #always>
+            <el-form-item label="关键词">
+              <el-input
+                v-model="filters.keyword"
+                placeholder="用户名 / 显示名 / 邮箱"
+                clearable
+                style="width: 220px"
+                @clear="handleSearch"
+                @keyup.enter="handleSearch"
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="handleSearch">查询</el-button>
+              <el-button @click="handleReset">重置</el-button>
+            </el-form-item>
+          </template>
+          <el-form-item label="状态">
+            <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
+              <el-option label="启用" :value="1" />
+              <el-option label="禁用" :value="0" />
+            </el-select>
+          </el-form-item>
+        </FilterPanel>
       </el-form>
 
       <el-table v-if="!isMobile" :data="users" v-loading="loading" stripe>
@@ -207,6 +211,7 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
 import UserFormDialog from './UserFormDialog.vue'
 import ResetPasswordDialog from './ResetPasswordDialog.vue'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
+import FilterPanel from '../../components/FilterPanel.vue'
 
 const authStore = useAuthStore()
 const { isMobile } = useBreakpoint()

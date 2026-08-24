@@ -11,24 +11,28 @@
       </template>
 
       <el-form :inline="true" class="search-form">
-        <el-form-item label="关键词">
-          <el-input
-            v-model="keyword"
-            clearable
-            placeholder="名称 / 描述"
-            style="width: 220px"
-            @input="loadData()"
-          />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="statusFilter" clearable placeholder="全部" style="width: 140px" @change="loadData()">
-            <el-option label="启用" value="ENABLED" />
-            <el-option label="停用" value="DISABLED" />
-          </el-select>
-        </el-form-item>
+        <FilterPanel>
+          <template #always>
+            <el-form-item label="关键词">
+              <el-input
+                v-model="keyword"
+                clearable
+                placeholder="名称 / 描述"
+                style="width: 220px"
+                @input="loadData()"
+              />
+            </el-form-item>
+          </template>
+          <el-form-item label="状态">
+            <el-select v-model="statusFilter" clearable placeholder="全部" style="width: 140px" @change="loadData()">
+              <el-option label="启用" value="ENABLED" />
+              <el-option label="停用" value="DISABLED" />
+            </el-select>
+          </el-form-item>
+        </FilterPanel>
       </el-form>
 
-      <el-table :data="servers" v-loading="loading" stripe>
+      <el-table v-if="!isMobile" :data="servers" v-loading="loading" stripe>
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
@@ -109,6 +113,68 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-else class="mobile-card-list" v-loading="loading">
+        <el-card v-for="row in servers" :key="row.id" shadow="hover">
+          <div class="mobile-card-head">
+            <span class="mobile-card-title">{{ row.name }}</span>
+            <el-tag :type="row.status === 'ENABLED' ? 'success' : 'info'" size="small">
+              {{ row.status === 'ENABLED' ? '启用' : '停用' }}
+            </el-tag>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">归属</span>
+            <span v-if="!isUserServer(row)">全局</span>
+            <el-tag v-else size="small" type="info">{{ row.userName || '用户' }}</el-tag>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">类型</span>
+            <el-tag :type="row.serverType === 'STDIO' ? 'warning' : 'primary'" size="small">
+              {{ row.serverType }}
+            </el-tag>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">连接</span>
+            <code class="conn-text">{{ connectionSummary(row) }}</code>
+          </div>
+          <div class="mobile-card-actions">
+            <template v-if="isUserServer(row)">
+              <el-button :type="row.status === 'ENABLED' ? 'warning' : 'success'" link @click="toggleStatus(row)">
+                {{ row.status === 'ENABLED' ? '停用' : '启用' }}
+              </el-button>
+              <el-popconfirm
+                :title="`确认删除用户「${row.userName || '未知'}」的服务器「${row.name}」？`"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm="handleDelete(row)"
+              >
+                <template #reference>
+                  <el-button type="danger" link>删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
+            <template v-else>
+              <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
+              <el-button type="primary" link @click="openTest(row)">测试</el-button>
+              <el-button link @click="openTools(row)">工具</el-button>
+              <el-button :type="row.status === 'ENABLED' ? 'warning' : 'success'" link @click="toggleStatus(row)">
+                {{ row.status === 'ENABLED' ? '停用' : '启用' }}
+              </el-button>
+              <el-popconfirm
+                :title="`确认删除「${row.name}」？`"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm="handleDelete(row)"
+              >
+                <template #reference>
+                  <el-button type="danger" link>删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
+          </div>
+        </el-card>
+        <el-empty v-if="!loading && servers.length === 0" description="暂无数据" />
+      </div>
     </el-card>
 
     <!-- Create / Edit dialog -->
@@ -248,7 +314,11 @@ import { reactive, ref } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
+import FilterPanel from '../../components/FilterPanel.vue'
+
+const { isMobile } = useBreakpoint()
 
 interface EnvItem {
   key: string

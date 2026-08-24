@@ -18,55 +18,59 @@
       </el-tabs>
 
       <el-form :inline="true" class="search-form">
-        <el-form-item label="关键词">
-          <el-input
-            v-model="state.filters.keyword"
-            clearable
-            placeholder="名称 / 模型标识 / 供应商"
-            style="width: 220px"
-            @keyup.enter="handleSearch"
-            @clear="handleSearch"
-          />
-        </el-form-item>
-        <el-form-item label="供应商">
-          <el-select v-model="state.filters.provider" clearable filterable placeholder="全部供应商" style="width: 150px" @change="handleSearch">
-            <el-option v-for="provider in providerOptions" :key="provider" :label="provider" :value="provider" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="state.filters.status" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
-            <el-option label="启用" :value="1" />
-            <el-option label="禁用" :value="0" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="isTextTab" label="视觉">
-          <el-select v-model="state.filters.supportsVision" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
-            <el-option label="支持" :value="1" />
-            <el-option label="不支持" :value="0" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="isTextTab" label="默认">
-          <el-select v-model="state.filters.isDefault" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
-            <el-option label="默认" :value="1" />
-            <el-option label="非默认" :value="0" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearch">查询</el-button>
-          <el-button @click="handleReset">重置</el-button>
-        </el-form-item>
+        <FilterPanel>
+          <template #always>
+            <el-form-item label="关键词">
+              <el-input
+                v-model="state.filters.keyword"
+                clearable
+                placeholder="名称 / 模型标识 / 供应商"
+                style="width: 220px"
+                @keyup.enter="handleSearch"
+                @clear="handleSearch"
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="handleSearch">查询</el-button>
+              <el-button @click="handleReset">重置</el-button>
+            </el-form-item>
+          </template>
+          <el-form-item label="供应商">
+            <el-select v-model="state.filters.provider" clearable filterable placeholder="全部供应商" style="width: 150px" @change="handleSearch">
+              <el-option v-for="provider in providerOptions" :key="provider" :label="provider" :value="provider" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="state.filters.status" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+              <el-option label="启用" :value="1" />
+              <el-option label="禁用" :value="0" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="isTextTab" label="视觉">
+            <el-select v-model="state.filters.supportsVision" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+              <el-option label="支持" :value="1" />
+              <el-option label="不支持" :value="0" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="isTextTab" label="默认">
+            <el-select v-model="state.filters.isDefault" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+              <el-option label="默认" :value="1" />
+              <el-option label="非默认" :value="0" />
+            </el-select>
+          </el-form-item>
+        </FilterPanel>
       </el-form>
 
-      <el-table :data="state.models" v-loading="loading" stripe>
+      <el-table v-if="!isMobile" :data="state.models" v-loading="loading" stripe>
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
-        <el-table-column prop="id" label="ID" width="80" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
+        <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="名称" width="150" />
         <el-table-column prop="provider" label="供应商" width="120" />
-        <el-table-column prop="modelId" label="模型标识" width="150" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
-        <el-table-column prop="baseUrl" label="API 地址" min-width="200" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
-        <el-table-column v-if="isTextTab" label="上下文窗口" width="120" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
+        <el-table-column prop="modelId" label="模型标识" width="150" />
+        <el-table-column prop="baseUrl" label="API 地址" min-width="200" show-overflow-tooltip />
+        <el-table-column v-if="isTextTab" label="上下文窗口" width="120" align="right">
           <template #default="{ row }">
             {{ row.contextWindowTokens ? row.contextWindowTokens.toLocaleString() : '-' }}
           </template>
@@ -115,13 +119,45 @@
         </el-table-column>
       </el-table>
 
+      <div v-else class="mobile-card-list" v-loading="loading">
+        <el-card v-for="row in state.models" :key="row.id" shadow="hover">
+          <div class="mobile-card-head">
+            <span class="mobile-card-title">{{ row.name }}</span>
+            <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
+              {{ row.status === 1 ? '启用' : '禁用' }}
+            </el-tag>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">供应商</span>
+            <span>{{ row.provider }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">标识</span>
+            <span>{{ row.modelId }}</span>
+          </div>
+          <div v-if="isTextTab" class="mobile-card-row">
+            <span class="mobile-card-label">视觉</span>
+            <span>{{ row.supportsVision ? '支持' : '不支持' }}</span>
+          </div>
+          <div class="mobile-card-actions">
+            <el-button type="primary" link :loading="testingId === row.id" @click="handleTest(row)">测试</el-button>
+            <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
+            <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
+            <el-button :type="row.status === 1 ? 'danger' : 'success'" link @click="handleToggleStatus(row)">
+              {{ row.status === 1 ? '停用' : '启用' }}
+            </el-button>
+            <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+          </div>
+        </el-card>
+        <el-empty v-if="!loading && state.models.length === 0" description="暂无数据" />
+      </div>
+
       <div class="pagination">
-        <el-pagination
+        <ResponsivePagination
           v-model:current-page="state.currentPage"
           v-model:page-size="state.pageSize"
           :page-sizes="[10, 20, 50, 100]"
           :total="state.total"
-          layout="total, sizes, prev, pager, next, jumper"
           @current-change="fetchModels"
           @size-change="handleSizeChange"
         />
@@ -219,7 +255,12 @@
 import { computed, reactive, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import ResponsivePagination from '../../components/ResponsivePagination.vue'
+import FilterPanel from '../../components/FilterPanel.vue'
 import ModelFormDialog from './ModelFormDialog.vue'
+
+const { isMobile } = useBreakpoint()
 
 type TabType = 'text' | 'audio' | 'image'
 

@@ -7,11 +7,11 @@
         </div>
       </template>
 
-      <el-table :data="tasks" stripe v-loading="loading">
+      <el-table v-if="!isMobile" :data="tasks" stripe v-loading="loading">
         <template #empty>
           <el-empty description="暂无定时任务" :image-size="60" />
         </template>
-        <el-table-column prop="id" label="ID" width="70" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
+        <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="任务名称" min-width="160" show-overflow-tooltip />
         <el-table-column label="用户" width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ userName(row.userId) }}</template>
@@ -74,6 +74,58 @@
         </el-table-column>
       </el-table>
 
+      <div v-else class="mobile-card-list" v-loading="loading">
+        <el-card v-for="row in tasks" :key="row.id" shadow="hover">
+          <div class="mobile-card-head">
+            <span class="mobile-card-title">{{ row.name }}</span>
+            <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" size="small">
+              {{ row.status === 'ACTIVE' ? '启用' : '暂停' }}
+            </el-tag>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">用户</span>
+            <span>{{ userName(row.userId) }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Agent</span>
+            <span>{{ agentName(row.agentId) }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Cron</span>
+            <span>{{ row.cronExpression }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">上次</span>
+            <el-tag v-if="row.lastExecutionStatus" :type="statusTagType(row.lastExecutionStatus)" size="small">
+              {{ statusLabel(row.lastExecutionStatus) }}
+            </el-tag>
+            <span v-else class="text-muted">-</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">下次</span>
+            <span>{{ row.nextFireTime || '-' }}</span>
+          </div>
+          <div class="mobile-card-actions">
+            <el-switch
+              v-model="row.status"
+              active-value="ACTIVE"
+              inactive-value="PAUSED"
+              inline-prompt
+              active-text="启"
+              inactive-text="停"
+              :disabled="!!row.finished"
+              @change="handleToggleStatus(row)"
+            />
+            <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
+              <template #reference>
+                <el-button type="danger" link>删除</el-button>
+              </template>
+            </el-popconfirm>
+          </div>
+        </el-card>
+        <el-empty v-if="!loading && tasks.length === 0" description="暂无定时任务" />
+      </div>
+
       <el-pagination
         v-if="total > pageSize"
         class="pagination"
@@ -91,6 +143,9 @@
 import { ref, onMounted } from 'vue'
 import { api } from '../../api'
 import { ElMessage } from 'element-plus'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+
+const { isMobile } = useBreakpoint()
 
 interface ScheduledTask {
   id: number
