@@ -20,7 +20,7 @@ import type {
   StreamChunk,
 } from './chat-request.js';
 import { DEFAULT_LLM_RETRY } from './chat-request.js';
-import { parseChatResponse, parseStreamChunk, parseUsageFromSse, serializeChatRequest } from './json.js';
+import { parseChatResponse, parseStreamChunk, parseStreamErrorEvent, parseUsageFromSse, serializeChatRequest } from './json.js';
 
 const IMAGE_PLACEHOLDER = '「此处用户上传了图片」';
 
@@ -38,6 +38,23 @@ class StreamThinkingTruncatedException extends Error {
   constructor() {
     super('Model thinking truncated by output limit (finish_reason=length without content)');
     this.name = 'StreamThinkingTruncatedException';
+  }
+}
+
+/** 上游在流已开始（HTTP 200 已发出）后失败，错误只能内嵌在 SSE 事件里下发。
+ *  典型是 OpenRouter 免费模型的中途限流：`{"error":{"code":429}}` + `finish_reason:"error"`。
+ *  必须显式识别，否则会被当成一次内容为空的正常响应，进而被误判为「LLM 返回空响应」。 */
+class StreamErrorEventException extends Error {
+  constructor(readonly statusCode: number | null, detail: string) {
+    super(`LLM stream reported error event${statusCode != null ? ` (code ${statusCode})` : ''}: ${detail}`);
+    this.name = 'StreamErrorEventException';
+  }
+
+  /** 限流与服务端故障可重试；参数、鉴权、余额类错误重试无意义。 */
+  get retryable(): boolean {
+    if (this.statusCode == null) return true;
+    return this.statusCode === 408 || this.statusCode === 429
+      || (this.statusCode >= 500 && this.statusCode < 600);
   }
 }
 
@@ -167,27 +184,51 @@ export class OpenAiLlmAdapter implements LlmAdapter {
           callback.onError(this.cancelledException());
           return;
         }
+        const streamError = e instanceof StreamErrorEventException ? e : null;
         const truncated = e instanceof StreamInterruptedAfterOutputException
           || e instanceof StreamThinkingTruncatedException;
-        if (!this.isRetryableNetworkFailure(e) || attempt > this.retry.rateLimitMaxRetries) {
-          callback.onError(truncated
-            ? new Error(e instanceof StreamThinkingTruncatedException
-              ? '模型思考被输出上限截断，自动重试已耗尽，请重试'
-              : '模型流式响应已中断，自动重试已耗尽', { cause: e })
-            : e);
+        const retryable = streamError != null ? streamError.retryable : this.isRetryableNetworkFailure(e);
+        if (!retryable || attempt > this.retry.rateLimitMaxRetries) {
+          callback.onError(this.describeStreamFailure(e, streamError, truncated, retryable));
           return;
         }
-        if (truncated) {
-          // 丢弃被截断的思考过程，下一轮从干净状态重新生成
+        if (truncated || streamError != null) {
+          // 丢弃本轮残留输出（被截断的思考或中途失败前的片段），下一轮从干净状态重新生成
           callback.onStreamReset?.();
         }
         const delaySeconds = this.resolveRetryDelaySeconds(null, attempt);
-        if (!(await this.notifyAndWaitForRetry(callback, cancelFlag, config.modelId, this.networkReason(e), null, attempt, delaySeconds, attemptStarted, totalStarted))) {
+        const reason = streamError != null ? 'stream_error_event' : this.networkReason(e);
+        if (!(await this.notifyAndWaitForRetry(callback, cancelFlag, config.modelId, reason, streamError?.statusCode ?? null, attempt, delaySeconds, attemptStarted, totalStarted))) {
           callback.onError(this.cancelledException());
           return;
         }
       }
     }
+  }
+
+  /** 把流式失败翻译成给用户看的最终错误。 */
+  private describeStreamFailure(
+    failure: unknown,
+    streamError: StreamErrorEventException | null,
+    truncated: boolean,
+    retryable: boolean,
+  ): unknown {
+    if (streamError != null) {
+      const suffix = retryable ? '，自动重试已耗尽，请稍后重试' : '';
+      const prefix = streamError.statusCode === 429
+        ? '上游模型触发限流（流式响应中途返回 429）'
+        : '模型流式响应中途返回错误';
+      return new Error(`${prefix}${suffix}：${streamError.message}`, { cause: streamError });
+    }
+    if (truncated) {
+      return new Error(
+        failure instanceof StreamThinkingTruncatedException
+          ? '模型思考被输出上限截断，自动重试已耗尽，请重试'
+          : '模型流式响应已中断，自动重试已耗尽',
+        { cause: failure },
+      );
+    }
+    return failure;
   }
 
   private async processStreamBody(
@@ -232,6 +273,12 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       if (data === '[DONE]') return true;
       try {
         const parsed = JSON.parse(data) as unknown;
+        // 中途错误（如限流）内嵌在 SSE 事件里，HTTP 状态码已发出无法反映，必须在此拦截，
+        // 否则该轮会被当成内容为空的正常响应，最终被上层误判为「LLM 返回空响应」。
+        const errorEvent = parseStreamErrorEvent(parsed);
+        if (errorEvent) {
+          throw new StreamErrorEventException(errorEvent.code, errorEvent.message);
+        }
         const streamChunk = parseStreamChunk(parsed);
         for (const choice of streamChunk.choices ?? []) {
           if (choice.finishReason) finishReason = choice.finishReason;
@@ -249,6 +296,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
           usage.promptTokensDetails = u.promptTokensDetails;
         }
       } catch (e) {
+        if (e instanceof StreamErrorEventException) throw e;
         harnessLog('warn', `Failed to parse SSE chunk: ${data}`, e);
       }
       return false;
@@ -290,6 +338,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       callback.onComplete(usage);
     } catch (e) {
       if (idleTimedOut) throw idleTimedOut;
+      if (e instanceof StreamErrorEventException) throw e;
       if (e instanceof StreamInterruptedAfterOutputException || e instanceof StreamThinkingTruncatedException) throw e;
       if (emitted) throw new StreamInterruptedAfterOutputException(e);
       throw e;

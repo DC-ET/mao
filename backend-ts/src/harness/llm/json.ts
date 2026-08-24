@@ -213,3 +213,37 @@ export function parseUsageFromSse(raw: unknown): ChatUsage | null {
   if (!isPlainObject(raw) || raw.usage == null) return null;
   return parseUsage(raw.usage) ?? null;
 }
+
+/** 流式响应中途失败时上游携带的错误信息（HTTP 状态已是 200，错误只能内嵌在 SSE 事件里）。 */
+export interface StreamErrorEvent {
+  message: string;
+  /** 上游给出的原始状态码，可能缺失。 */
+  code: number | null;
+}
+
+/**
+ * 解析 SSE 事件里的顶层 error 字段。
+ * OpenRouter 等网关在首个 token 之后触发限流时无法再改写 HTTP 状态码，
+ * 会改为下发 `{"error":{"code":429,...},"choices":[{"finish_reason":"error"}]}`，
+ * 若不识别就会被当成一次内容为空的正常响应。
+ */
+export function parseStreamErrorEvent(raw: unknown): StreamErrorEvent | null {
+  if (!isPlainObject(raw)) return null;
+  const err = raw.error;
+  if (typeof err === 'string') {
+    return err.trim() === '' ? null : { message: err, code: null };
+  }
+  if (!isPlainObject(err)) return null;
+  const code = err.code == null ? null : Number(err.code);
+  const message = typeof err.message === 'string' && err.message.trim() !== ''
+    ? err.message
+    : 'upstream stream error';
+  const metadata = isPlainObject(err.metadata) ? err.metadata : null;
+  const detail = metadata != null && typeof metadata.raw === 'string' && metadata.raw.trim() !== ''
+    ? metadata.raw
+    : null;
+  return {
+    message: detail != null ? `${message}: ${detail}` : message,
+    code: code != null && Number.isFinite(code) ? code : null,
+  };
+}

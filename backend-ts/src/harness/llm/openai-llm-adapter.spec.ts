@@ -586,4 +586,68 @@ describe('OpenAiLlmAdapter', () => {
     expect(server.requestCount).toBe(1);
     expect((callback.error as Error).message).toContain('400');
   });
+
+  it('streamRetriesMidStreamRateLimitErrorEventAndSucceeds', async () => {
+    // OpenRouter 等网关在流已开始后触发限流时，HTTP 状态码已是 200，
+    // 错误只能内嵌在 SSE 事件里下发；必须识别并重试，否则会被误判为空响应。
+    const rateLimited = 'data: {"id":"gen-1","error":{"message":"Provider returned error","code":429,'
+      + '"metadata":{"raw":"stealth/ox-alpha is temporarily rate-limited upstream."}},'
+      + '"choices":[{"index":0,"delta":{},"finish_reason":"error"}]}\n\ndata: [DONE]\n\n';
+    server = new QueueServer();
+    server.enqueueSse(rateLimited);
+    server.enqueueSse('data: {"choices":[{"delta":{"content":"recovered"}}]}\n\ndata: [DONE]\n\n');
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(2, 0).stream(request('mid-429'), configOf(server), callback, { get: () => false });
+    expect(callback.error).toBeUndefined();
+    expect(callback.usage).toBeDefined();
+    expect(callback.retryReasons).toEqual(['stream_error_event']);
+    expect(callback.retryStatuses).toEqual([429]);
+    expect(callback.chunks).toHaveLength(1);
+    expect(server.requestCount).toBe(2);
+  });
+
+  it('streamReportsRateLimitWhenMidStreamErrorEventRetriesExhausted', async () => {
+    const rateLimited = 'data: {"error":{"message":"Provider returned error","code":429},'
+      + '"choices":[{"index":0,"delta":{},"finish_reason":"error"}]}\n\ndata: [DONE]\n\n';
+    server = new QueueServer();
+    server.enqueueSse(rateLimited);
+    server.enqueueSse(rateLimited);
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(1, 0).stream(request('mid-429-exhausted'), configOf(server), callback, { get: () => false });
+    // 必须报出限流原因，而不是让上层看到一次内容为空的“正常”响应
+    expect(callback.usage).toBeUndefined();
+    expect((callback.error as Error).message).toContain('429');
+    expect((callback.error as Error).message).toContain('限流');
+    expect(server.requestCount).toBe(2);
+  });
+
+  it('streamDoesNotRetryNonRetryableMidStreamErrorEvent', async () => {
+    server = new QueueServer();
+    server.enqueueSse('data: {"error":{"message":"No auth credentials found","code":401}}\n\ndata: [DONE]\n\n');
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(3, 0).stream(request('mid-401'), configOf(server), callback, { get: () => false });
+    expect(callback.usage).toBeUndefined();
+    expect(callback.retryReasons).toEqual([]);
+    expect((callback.error as Error).message).toContain('401');
+    expect(server.requestCount).toBe(1);
+  });
+
+  it('streamDiscardsPartialOutputBeforeMidStreamErrorEvent', async () => {
+    server = new QueueServer();
+    server.enqueueSse('data: {"choices":[{"delta":{"reasoning":"thinking"}}]}\n\n'
+      + 'data: {"error":{"message":"rate limited","code":429},"choices":[{"delta":{},"finish_reason":"error"}]}\n\n'
+      + 'data: [DONE]\n\n');
+    server.enqueueSse('data: {"choices":[{"delta":{"content":"clean"}}]}\n\ndata: [DONE]\n\n');
+    await server.start();
+    const callback = new CapturingCallback();
+    await adapter(2, 0).stream(request('mid-429-partial'), configOf(server), callback, { get: () => false });
+    expect(callback.error).toBeUndefined();
+    // 失败前的思考片段必须被丢弃，避免与重试后的输出叠加
+    expect(callback.streamResetCount).toBe(1);
+    expect(callback.chunks).toHaveLength(1);
+    expect(callback.chunks[0].choices?.[0]?.delta?.content).toBe('clean');
+  });
 });
