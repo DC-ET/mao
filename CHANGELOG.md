@@ -15,6 +15,15 @@
 
 ---
 
+## 0.0.50 (2026-08-24)
+
+### 管理后台
+- 合并单域名：`/admin/` 路径下托管管理后台，`base` 改为 `/admin/`
+- 移除 `maoadmin.etarch.cn` 独立域名，改为 301 跳转到 `mao.etarch.cn/admin/`
+
+### 前端（桌面 / Web / 安卓）
+- 修复 `useChat.ts` 中 `catch` 块引用块级变量 `sid` 的 TypeScript 错误
+
 ## 0.0.49 (2026-08-24)
 
 ### 管理后台
