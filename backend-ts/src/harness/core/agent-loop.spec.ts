@@ -565,26 +565,40 @@ describe('AgentLoop', () => {
     expect(l.onMessageEnd).toHaveBeenCalled();
     expect(l.onError).not.toHaveBeenCalled();
     expect(call).toBe(2);
-    // 第 2 次调用的消息中应包含系统提示注入
+    // 空响应后应重试，不再注入系统提示
     expect(promptEngine.buildRequest).toHaveBeenCalled();
     const secondCallMessages = promptEngine.buildRequest.mock.calls[0][0]?.messages;
-    const systemMsg = secondCallMessages?.find((m: { role: string }) => m.role === 'system');
-    expect(systemMsg?.content).toContain('上一轮模型未产生有效输出');
+    const systemMsgs = secondCallMessages?.filter((m: { role: string }) => m.role === 'system');
+    expect(systemMsgs?.some((m: { content: string }) => m.content.includes('上一轮模型未产生有效输出'))).toBe(false);
   });
 
-  it('throwsFriendlyErrorAfterThreeConsecutiveEmptyResponses', async () => {
-    const ctx = context();
-    const l = listener();
-    const p = persistence();
-    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
-    stubActiveContext(42);
-    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
-    let call = 0;
-    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
-      call++;
-      callback.onComplete({ promptTokens: 10, completionTokens: 0, totalTokens: 10 });
-    });
-    await expect(agentLoop.execute(ctx, l, p)).rejects.toThrow('LLM 连续返回空响应，自动重试已耗尽，请重试');
-    expect(call).toBe(3);
+  it('throwsFriendlyErrorAfterTenConsecutiveEmptyResponses', async () => {
+    vi.useFakeTimers();
+    try {
+      const ctx = context();
+      const l = listener();
+      const p = persistence();
+      promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+      stubActiveContext(42);
+      backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+      let call = 0;
+      llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+        call++;
+        callback.onComplete({ promptTokens: 10, completionTokens: 0, totalTokens: 10 });
+      });
+      const promise = agentLoop.execute(ctx, l, p);
+      // 防止 unhandled rejection：立即捕获
+      const assertion = promise.then(
+        () => { throw new Error('expected rejection but resolved'); },
+        (e: Error) => e,
+      );
+      // 指数退避：1+2+4+8+16+30+30+30+30 = 151s，快进定时器
+      await vi.advanceTimersByTimeAsync(200_000);
+      const err = await assertion;
+      expect(err.message).toBe('LLM 连续返回空响应，自动重试已耗尽，请重试');
+      expect(call).toBe(10);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

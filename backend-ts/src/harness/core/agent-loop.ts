@@ -124,6 +124,15 @@ export class AgentLoop {
     return inherited;
   }
 
+  private async sleepMs(ms: number, cancelFlag?: { get(): boolean } | null): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (cancelFlag?.get()) return false;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return true;
+  }
+
   async execute(
     context: AgentExecutionContext,
     listener: AgentEventListener,
@@ -188,6 +197,8 @@ export class AgentLoop {
 
         const currentRound = round;
         let emptyResponseEncountered = false;
+        const emptyBackoffMs = { v: 0 };
+        const emptyRetryInfo = { attempt: 0, maxRetries: 10 };
         const thinkingEnded = { v: false };
         const emittedEarlyStarts = new Set<string>();
         listener.onThinkingStart?.();
@@ -250,7 +261,7 @@ export class AgentLoop {
               const content = contentBuilder.join('');
               const thinkingContent = thinkingBuilder.length > 0 ? thinkingBuilder.join('') : null;
               if (content !== '' || toolCalls.length > 0) {
-                // 收到有效输出即复位计数，保证"连续 3 次空响应"语义
+                // 收到有效输出即复位计数，保证"连续 10 次空响应"语义
                 emptyResponseCount = 0;
                 context.addAssistantMessage(content, toolCalls);
                 if (toolCalls.length === 0 && persistenceCallback) {
@@ -263,20 +274,22 @@ export class AgentLoop {
                 }
               } else {
                 // LLM 返回了空响应（无 content、无 tool_calls，可能有思考或无思考）。
-                // 不静默退出，而是注入系统提示让模型继续，最多重试 3 次。
+                // 指数退避重试，最多 10 次。
                 emptyResponseCount++;
+                const emptyMaxRetries = 10;
+                const backoffSeconds = Math.min(30, Math.pow(2, emptyResponseCount - 1));
+                emptyBackoffMs.v = backoffSeconds * 1000;
+                emptyRetryInfo.attempt = emptyResponseCount;
+                emptyRetryInfo.maxRetries = emptyMaxRetries;
                 harnessLog('warn',
                   `Agent loop round ${currentRound} for session ${sessionId}: empty LLM response`
-                  + ` (thinking=${thinkingContent?.length ?? 0} chars, retry=${emptyResponseCount}/3)`,
+                  + ` (thinking=${thinkingContent?.length ?? 0} chars, retry=${emptyResponseCount}/${emptyMaxRetries})`,
                 );
-                if (emptyResponseCount >= 3) {
+                if (emptyResponseCount >= emptyMaxRetries) {
                   throw new Error(
                     'LLM 连续返回空响应，自动重试已耗尽，请重试',
                   );
                 }
-                context.addSystemMessage(
-                  '<系统提示：上一轮模型未产生有效输出，请继续完成当前任务。>',
-                );
                 emptyResponseEncountered = true;
               }
             },
@@ -315,7 +328,12 @@ export class AgentLoop {
         const pendingCalls = context.pendingToolCalls;
         if (!pendingCalls || pendingCalls.length === 0) {
           if (emptyResponseEncountered) {
-            // 空响应已注入系统提示，继续下一轮让模型重新回答
+            // 空响应：指数退避后重试下一轮，通知客户端重试事件
+            const backoffSeconds = Math.ceil(emptyBackoffMs.v / 1000);
+            listener.onLlmRetry?.('empty_response', null, emptyRetryInfo.attempt, emptyRetryInfo.maxRetries, backoffSeconds);
+            if (emptyBackoffMs.v > 0) {
+              await this.sleepMs(emptyBackoffMs.v, cancelFlag ?? null);
+            }
             context.clearPendingToolCalls();
             continue;
           }
