@@ -1,6 +1,6 @@
 # 管理后台使用
 
-管理后台用于平台治理与配置。默认开发地址 `http://localhost:5200`；生产为 `https://mao-admin.example.com`（由部署方配置）。
+管理后台用于平台治理与配置。默认开发地址 `http://localhost:5200/admin/`；生产与桌面 Web 同一域名，路径为 `https://mao.example.com/admin/`（由部署方配置）。
 
 登录与账号见 [config.md](config.md)。REST 运维可用 `mao` CLI（`user`、`role`、`model`、`skill-docs`、`admin-session`、`audit` 等）。
 

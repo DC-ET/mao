@@ -63,7 +63,7 @@ npm install
 npm run dev
 ```
 
-访问 `http://localhost:5200`
+访问 `http://localhost:5200/admin/`
 
 ## 6. 启动桌面端
 

@@ -4,14 +4,17 @@
 
 ## 架构概览
 
-| 组件 | 方式 | 端口 | 域名示例 |
-|------|------|------|----------|
-| TypeScript 后端 | Node + restart.sh | 9080/9081 本机 | Nginx 反代 |
-| 管理后台 | Nginx 静态 `admin/dist` | 80/443 | `mao-admin.example.com` |
-| 桌面 Web | Nginx 静态 `desktop/dist` | 80/443 | `mao.example.com` |
+同一域名、按路径分流（将 `mao.example.com` 替换为你的域名）：
+
+| 组件 | 方式 | 端口 | 路径 |
+|------|------|------|------|
+| TypeScript 后端 | Node + restart.sh | 9080/9081 本机 | `/api/`、`/api/ws/` |
+| 桌面 Web | Nginx 静态 `desktop/dist` | 80/443 | `/` |
+| 管理后台 | Nginx 静态 `admin/dist`（Vite `base: '/admin/'`） | 80/443 | `/admin/` |
+| 本地上传 / OTA | Nginx `alias` | 80/443 | `/uploads/` |
 | MySQL | 自建/云 | 3306 | 内网 |
 
-将 `mao.example.com`、`mao-admin.example.com` 替换为你的域名。
+桌面路由勿占用 `/admin`、`/api`、`/uploads`。已有**双域名**环境的 Nginx 调整见仓库 [`docs/guides/single-domain-nginx-migration.md`](../../../docs/guides/single-domain-nginx-migration.md)。
 
 ## 目录结构
 
@@ -148,38 +151,9 @@ upstream mao_backend {
 }
 ```
 
-9080/9081 仅本机监听；对外经 Nginx 443/80。
+9080/9081 仅本机监听；对外经 Nginx 443/80。一份 `server` 同时托管桌面 Web 与管理后台。`location ^~ /admin/` 必须写在桌面端后缀匹配之前，否则 `/admin/assets/*.js` 会落到 `desktop/dist`。
 
-### 管理后台 maoadmin.conf
-
-```nginx
-server {
-    listen 80;
-    server_name mao-admin.example.com;
-    client_max_body_size 50m;
-
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        root /opt/mao/admin/dist;
-        expires 7d;
-        add_header Cache-Control "public, immutable";
-    }
-    location / {
-        root /opt/mao/admin/dist;
-        index index.html;
-        try_files $uri $uri/ /index.html;
-    }
-    location /api/ {
-        proxy_pass http://mao_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-    }
-}
-```
-
-### 桌面端 mao.conf
+`try_files` 的 SPA fallback **不要**写成 `/index.html`（会进桌面端）；管理后台必须 fallback 到 `/admin/index.html`。
 
 ```nginx
 server {
@@ -187,30 +161,6 @@ server {
     server_name mao.example.com;
     client_max_body_size 50m;
 
-    location ~* \.(js|mjs|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        root /opt/mao/desktop/dist;
-        expires 7d;
-        add_header Cache-Control "public, immutable";
-    }
-    location / {
-        root /opt/mao/desktop/dist;
-        index index.html;
-        try_files $uri $uri/ /index.html;
-    }
-    location ^~ /uploads/ {
-        alias /opt/mao-data/uploads/;
-        expires 7d;
-        add_header Cache-Control "public, immutable";
-        add_header Access-Control-Allow-Origin "*" always;
-    }
-    location /api/ {
-        proxy_pass http://mao_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-    }
     location /api/ws/ {
         proxy_pass http://mao_backend;
         proxy_http_version 1.1;
@@ -221,6 +171,47 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 86400s;
+    }
+    location /api/ {
+        proxy_pass http://mao_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+    location ^~ /uploads/ {
+        alias /opt/mao-data/uploads/;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+        add_header Access-Control-Allow-Origin "*" always;
+    }
+
+    location = /admin {
+        return 302 /admin/;
+    }
+    location ^~ /admin/assets/ {
+        rewrite ^/admin/(.*)$ /$1 break;
+        root /opt/mao/admin/dist;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+    location ^~ /admin/ {
+        rewrite ^/admin/(.*)$ /$1 break;
+        root /opt/mao/admin/dist;
+        index index.html;
+        try_files $uri $uri/ /admin/index.html;
+    }
+
+    location ~* \.(js|mjs|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        root /opt/mao/desktop/dist;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+    location / {
+        root /opt/mao/desktop/dist;
+        index index.html;
+        try_files $uri $uri/ /index.html;
     }
 }
 ```
@@ -233,7 +224,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d mao.example.com -d mao-admin.example.com
+sudo certbot --nginx -d mao.example.com
 ```
 
 ## 五、防火墙
@@ -298,8 +289,8 @@ APK 发布到 `/opt/mao-data/uploads/releases/`。详见 [android.md](android.md
 
 | 用途 | 地址 |
 |------|------|
-| 管理后台 | `https://mao-admin.example.com` |
-| 桌面 Web | `https://mao.example.com` |
+| 桌面 Web | `https://mao.example.com/` |
+| 管理后台 | `https://mao.example.com/admin/` |
 | Swagger | `https://mao.example.com/api/swagger-ui.html` |
 
 ## 十、运维命令

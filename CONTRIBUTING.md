@@ -35,7 +35,7 @@ npm run start:dev    # 开发模式（tsx 热重载），监听 9080
 ### 前端
 
 ```bash
-cd admin && npm install && npm run dev    # http://localhost:5200
+cd admin && npm install && npm run dev    # http://localhost:5200/admin/
 cd desktop && npm install && npm run dev  # http://localhost:5201
 ```
 

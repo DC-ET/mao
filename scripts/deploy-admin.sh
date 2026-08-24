@@ -2,7 +2,9 @@
 # =============================================================================
 # deploy-admin.sh — 构建管理后台前端（已废弃独立部署步骤）
 #
-# 迁移后 Nginx root 直接指向仓库内 admin/dist/，构建完成即生效，无需 rsync。
+# 迁移后 Nginx 将 /admin/ 指向仓库内 admin/dist/，构建完成即生效，无需 rsync。
+# 生产必须使用 Vite base `/admin/`（见 admin/vite.config.ts）；双域名合并步骤见
+# docs/guides/single-domain-nginx-migration.md。
 #
 # 用法：
 #   ./deploy-admin.sh

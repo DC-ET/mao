@@ -4,7 +4,7 @@
 搭建/环境/部署：README.md、DEPLOY.md。产品/使用问答：skills/mao-cli/SKILL.md。细案：docs/plan/（technical-design.md、android-app-technical-design.md）。初版：重构不考虑存量数据与兼容。
 
 ## 部署坑
-线上目录是 `/opt/mao`，不是会话工作区 `/opt/mao-data/workspace/...`（两套 git 检出）。改代码：工作区提交并推 origin/main。部署/线上 git：一律在 `/opt/mao` 跑 pull、scripts/deploy-{admin,desktop}.sh、构建、restart-backend.sh。勿混用。
+线上目录是 `/opt/mao`，不是会话工作区 `/opt/mao-data/workspace/...`（两套 git 检出）。改代码：工作区提交并推 origin/main。部署/线上 git：一律在 `/opt/mao` 跑 pull、scripts/deploy-{admin,desktop}.sh、构建、restart-backend.sh。勿混用。双域名合并为单域名：`docs/guides/single-domain-nginx-migration.md`。
 
 ## CHANGELOG
 根 CHANGELOG.md 唯一发版说明。用户/运维可见改动须同任务写入顶部 `## x.y.z (日期)`（无则新建）；内部重构/单测/注释/无行为依赖升级可不记。打包/发版/OTA 前先写完。
@@ -19,7 +19,7 @@ mao-agent：`cd agent-cli && npm ci && npm run build && npm test`；`bash script
 CI：backend-ts build+test、admin/desktop build、agent-cli build+test；不跑 Playwright。
 
 ## 架构
-五端：backend-ts（NestJS+Fastify :9080 `/api/v1/`，`Result<T>` code=0）+ admin + desktop（Electron/Web）+ android（Capacitor 远程加载 https://mao.etarch.cn，仅 CLOUD）+ agent-cli（mao-agent）。
+五端：backend-ts（NestJS+Fastify :9080 `/api/v1/`，`Result<T>` code=0）+ admin + desktop（Electron/Web）+ android（Capacitor 远程加载 https://mao.etarch.cn，仅 CLOUD）+ agent-cli（mao-agent）。生产单域：桌面 `/`、管理后台 `/admin/`、API `/api/`、上传 `/uploads/`；desktop 路由勿占用这些前缀。
 领域：`src/<domain>/*.{routes,service,repository,spec}.ts`。引擎 `backend-ts/src/harness/`：AgentLoop、PromptEngine、ContextManager/CompactionService、ToolDispatcher→ToolRegistry（内置 `harness/tool/impl/`）、LlmAdapter、LocalToolExecutor（WS 委托桌面）、HarnessService、delegate/、skill/。CLOUD 服务端执行 / LOCAL Electron 执行。WS `/api/ws/stream` StreamingWsHandler。拦截器 Audit+Permission，`/v1/**` 排除 auth/ws。DB：MySQL8 + Flyway `backend-ts/db/migration/`，TS 启动执行（FLYWAY_ENABLED）。
 admin：router `admin/src/router/index.ts`，视图 `views/`。desktop：useStreamWS、useChat、stores/auth|agent|session、electron/{main,preload}.cjs。Side Task：HarnessService + StreamingWsHandler + useCenterTabs/CenterTabBar。
 

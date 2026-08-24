@@ -9,7 +9,7 @@
 3. 构建 backend、admin、desktop（改 `desktop/.env.production`）
 4. 编写 `backend-ts/.env`（JWT、MySQL、数据目录、加密密钥）
 5. `restart.sh` 启动后端，配置 Nginx + HTTPS
-6. 登录管理后台，**改 admin 密码**
+6. 登录管理后台（`https://<域名>/admin/`），**改 admin 密码**
 7. 配置至少一个可用模型（真实 API Key + 测试连接）
 8. 创建角色/用户、Agent、Skill（按需）
 9. 桌面端验证 CLOUD 任务；按需验证 Electron LOCAL、微信、定时任务、通知

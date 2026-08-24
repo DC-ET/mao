@@ -1,6 +1,6 @@
 # 桌面 Web 端使用
 
-桌面端是普通用户主入口：选 Agent、建任务、对话、工作区、定时任务、通知与设置。开发默认 `http://localhost:5201`；生产多为 `https://mao.example.com`。
+桌面端是普通用户主入口：选 Agent、建任务、对话、工作区、定时任务、通知与设置。开发默认 `http://localhost:5201`；生产多为 `https://mao.example.com/`（管理后台在同域 `/admin/`）。
 
 LOCAL 本机工具需 Electron，见 [electron.md](electron.md)。对话执行也可用 [mao-agent.md](mao-agent.md)。
 

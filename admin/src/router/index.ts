@@ -110,7 +110,7 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({
-  history: createWebHistory('/admin'),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes
 })
 

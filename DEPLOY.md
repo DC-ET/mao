@@ -5,6 +5,7 @@
 | 主题 | 文档 |
 |------|------|
 | 服务器目录、Nginx、HTTPS、蓝绿重启、升级、运维 | [skills/mao-cli/reference/deploy.md](skills/mao-cli/reference/deploy.md) |
+| 已有双域名环境合并为单域名 | [docs/guides/single-domain-nginx-migration.md](docs/guides/single-domain-nginx-migration.md) |
 | 环境变量与数据目录 | [skills/mao-cli/reference/config.md](skills/mao-cli/reference/config.md) |
 | Electron / 安卓可选部署 | [skills/mao-cli/reference/electron.md](skills/mao-cli/reference/electron.md)、[skills/mao-cli/reference/android.md](skills/mao-cli/reference/android.md) |
 | 部署排障 | [skills/mao-cli/reference/troubleshooting.md](skills/mao-cli/reference/troubleshooting.md) |

@@ -8,7 +8,7 @@
 |------|------|
 | 启动退出：`APP_GIT_CREDENTIAL_SECRET is not configured` | 检查 `backend-ts/.env` 是否存在且被 `restart.sh` 加载 |
 | Nginx 502 / 后端起不来 | `ss -tlnp \| grep 9080`；核对 `MYSQL_*`；看 `logs/backend-ts-*.log` |
-| 前端 404 / 旧页面 | Nginx root 是否指向 `admin/dist` 或 `desktop/dist`；是否已 `npm run build` |
+| 前端 404 / 旧页面 | 桌面 Nginx root 是否指向 `desktop/dist`；管理后台是否为 `/admin/` 且已按新 base 重新构建；是否已 `npm run build` |
 | 历史工作区文件找不到 | `WORKSPACE_ROOT` 是否与 `session.workspace` 前缀一致 |
 | 蓝绿后仍连旧端口 | 查 `MAO_RUNTIME_DIR/active-backend-port` 与 `mao-upstream.conf` |
 
