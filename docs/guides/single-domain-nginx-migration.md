@@ -1,10 +1,8 @@
 # 单域名 Nginx 迁移说明
 
-给**已经在跑双域名**的服务器用（桌面 Web 一个 host，管理后台另一个 host）。新装请直接按 [deploy.md](../../skills/mao-cli/reference/deploy.md) 配一份 `server`。
+给**已经在跑双域名**的服务器用。执行位置一律 **`/opt/mao`**，不要在会话工作区改 Nginx。本改动**不重启后端**。
 
-执行位置一律是 **`/opt/mao`**，不要在会话工作区里改 Nginx 或构建。本改动**不重启后端**。
-
-目标路径：
+目标：
 
 | 用途 | 地址 |
 |------|------|
@@ -12,84 +10,106 @@
 | 管理后台 | `https://<桌面域名>/admin/` |
 | API / WS | `https://<桌面域名>/api/` |
 
-## 1. 先看清现网
+新装完整 `server` 见 [deploy.md 第三节](../../skills/mao-cli/reference/deploy.md)。管理后台 location 的权威片段：仓库 `scripts/nginx/mao-admin-locations.conf`。
+
+---
+
+## 若已经迁过：`/admin/` 白屏、`/admin/login` 正常
+
+这是旧文档里 `rewrite ^/admin/(.*)$ /$1` + `try_files ... /admin/index.html` 的已知坑，**只改 Nginx，不必重建、不必重启后端**。
+
+原因：`/admin/` 被 rewrite 成 `/` 后，`try_files` 的内部跳转被桌面端 `location /` 接管，返回的是桌面 `index.html`（标题 `Mao`）。管理后台 JS 跑在错误的 HTML 上就是白屏。`/admin/login` 往往还能命中后台入口，所以看起来「只有根路径坏了」。
+
+判别：
+
+```bash
+HOST=https://mao.acg.team   # 换成实际桌面域名
+curl -sS "$HOST/admin/" | grep -o '<title>[^<]*</title>'
+curl -sS "$HOST/admin/index.html" | grep -o '<title>[^<]*</title>'
+curl -sS "$HOST/admin/login" | grep -o '<title>[^<]*</title>'
+```
+
+| 标题 | 含义 |
+|------|------|
+| `<title>admin</title>` | 后台入口，正确 |
+| `<title>Mao</title>` | 误返回桌面 Web，就是本坑 |
+
+处理：打开桌面 host 的 nginx 配置，**删掉**所有 `rewrite ^/admin/` 和 `try_files ... /admin/index.html`，换成下面「正确 location」，然后 `sudo nginx -t && sudo systemctl reload nginx`。再用上面三条 `curl` 确认标题都是 `admin`。
+
+---
+
+## 1. 看清现网
 
 ```bash
 ls /etc/nginx/conf.d/ /etc/nginx/sites-enabled/ 2>/dev/null
 grep -R "server_name" /etc/nginx/conf.d/ /etc/nginx/sites-enabled/ 2>/dev/null
+grep -n "base:" /opt/mao/admin/vite.config.ts   # 应有 base: '/admin/'
 ```
 
-记下：
-
-- **桌面 host**（例如 `mao.etarch.cn`）所在文件
-- **管理后台 host**（例如 `mao-admin.etarch.cn`）所在文件
-- 是否已有 `listen 443 ssl` 以及 `ssl_certificate` 路径
-
-```bash
-# 确认仓库已含新构建约定
-grep -n "base:" /opt/mao/admin/vite.config.ts
-# 应看到 base: '/admin/'
-```
-
-若还没有这行：先在 `/opt/mao` `git pull origin main`，再继续。
+记下桌面 host 配置文件、旧管理后台 host 配置文件、`ssl_certificate` 路径。若还没有 `base: '/admin/'`：先 `cd /opt/mao && git pull origin main`。
 
 ## 2. 备份
 
 ```bash
 sudo cp -a /etc/nginx/conf.d /etc/nginx/conf.d.bak.$(date +%Y%m%d%H%M)
-sudo mkdir -p /root/nginx-mao-backup
-sudo cp -a /etc/nginx/conf.d /root/nginx-mao-backup/
 ```
 
-## 3. 改桌面 host 的 location（保留原证书）
+## 3. 正确 location（保留原证书，只改 location）
 
-**不要整文件覆盖。** 已有 HTTPS 时保留 `listen 443 ssl`、`ssl_certificate*`、`server_name`（桌面域名）、`client_max_body_size`。只调整 `location`。
+**不要整文件覆盖。** HTTPS 时保留 `listen 443 ssl`、`ssl_certificate*`、`server_name`（桌面域名）、`/api/`、`/api/ws/`、`/uploads/`。
 
-必须同时满足：
-
-1. `location ^~ /admin/`（以及 `/admin/assets/`）写在桌面端 `location ~* \.(js|css|...)$` **之前**，并用 `^~`，避免管理后台静态资源落到 `desktop/dist`
-2. 管理后台 SPA fallback 是 **`/admin/index.html`**，不是 `/index.html`
-3. `/api/`、`/api/ws/`、`/uploads/` 保持原样
-
-在桌面 host 的 `server { }` 里加入（或替换旧的 admin 相关 location）：
+把下面整段放进桌面 host 的 `server { }`，且**必须在**桌面端 `location ~* \.(js|css|...)$` 和 `location /` **之前**。可直接复制 `scripts/nginx/mao-admin-locations.conf`。
 
 ```nginx
     location = /admin {
         return 302 /admin/;
     }
+    location = /admin/ {
+        default_type text/html;
+        alias /opt/mao/admin/dist/index.html;
+    }
+    location = /admin/index.html {
+        default_type text/html;
+        alias /opt/mao/admin/dist/index.html;
+    }
     location ^~ /admin/assets/ {
-        rewrite ^/admin/(.*)$ /$1 break;
-        root /opt/mao/admin/dist;
+        alias /opt/mao/admin/dist/assets/;
         expires 7d;
         add_header Cache-Control "public, immutable";
     }
     location ^~ /admin/ {
-        rewrite ^/admin/(.*)$ /$1 break;
+        alias /opt/mao/admin/dist/;
+        error_page 404 = @admin;
+    }
+    location @admin {
         root /opt/mao/admin/dist;
-        index index.html;
-        try_files $uri $uri/ /admin/index.html;
+        rewrite ^ /index.html break;
     }
 ```
 
-完整单 `server` 示例（HTTP；HTTPS 把 `listen` / 证书按现网保留）见 [deploy.md 第三节](../../skills/mao-cli/reference/deploy.md)。
+要点：
 
-## 4. 重建管理后台（与 Nginx 同一窗口做完）
+- `/admin/`、`/admin/index.html` 用 `location =` **直接 alias 到后台 html**，不要 rewrite、不要 try_files
+- `/admin/login` 等前端路由：文件不存在 → `error_page 404 = @admin`（named location **不会**再走 `location /`）
+- 禁止 `rewrite ^/admin/(.*)$ /$1`（`/admin/` 会变成 `/`）
+- 禁止 `try_files` 最后一项写成 URI（`/index.html` 或 `/admin/index.html` 都会重新匹配 location）
 
-旧产物的 JS 在 `/assets/`，新产物在 `/admin/assets/`。先改 Nginx 或先构建都会有短暂后台不可用，应连续执行：
+## 4. 重建管理后台（首次合并时；只修白屏则跳过）
+
+首次从双域名切过来时，旧产物 JS 在 `/assets/`，新产物在 `/admin/assets/`。改 Nginx 与构建应连续做完：
 
 ```bash
 cd /opt/mao && git pull origin main
 bash /opt/mao/scripts/deploy-admin.sh
-# 确认产物带 /admin/ 前缀
 grep -o '/admin/assets/[^"]*' /opt/mao/admin/dist/index.html | head
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-桌面端、后端都不必因本次迁移而重建/重启。
+只修白屏、产物里已经是 `/admin/assets/` 时，不必构建，reload Nginx 即可。桌面端、后端都不必动。
 
 ## 5. 旧管理后台域名 301
 
-把原来的管理后台 `server`（只服务于旧 host 的那一份）改成跳转，**保留它的证书**，避免证书告警：
+保留旧 vhost 的证书，整站跳到新路径：
 
 ```nginx
 server {
@@ -104,30 +124,26 @@ server {
 }
 ```
 
-HTTP 80 的旧 host 同样 301。改完再 `sudo nginx -t && sudo systemctl reload nginx`。
+HTTP 80 同样 301。然后 `sudo nginx -t && sudo systemctl reload nginx`。
 
-确认跳转可用后，可再停用旧 host 配置文件（`mv xxx.conf xxx.conf.disabled`），证书续期若不再需要旧域名，之后从 certbot 里去掉即可。
-
-## 6. 验收
+## 6. 验收（必须看标题，不要只看 HTTP 200）
 
 ```bash
-# 将 HOST 换成桌面域名
-HOST=https://mao.example.com
+HOST=https://<桌面域名>
 
-curl -sI "$HOST/" | head
-curl -sI "$HOST/admin/" | head
-curl -sI "$HOST/admin/login" | head
-# 下面应返回 200，且 Content-Type 为 JavaScript
-curl -sI "$HOST$(grep -oE '/admin/assets/[^"]+\.js' /opt/mao/admin/dist/index.html | head -1)" | head
+# 三条都必须是 <title>admin</title>，不能是 Mao
+curl -sS "$HOST/admin/" | grep -o '<title>[^<]*</title>'
+curl -sS "$HOST/admin/index.html" | grep -o '<title>[^<]*</title>'
+curl -sS "$HOST/admin/login" | grep -o '<title>[^<]*</title>'
 
-curl -s -o /dev/null -w "%{http_code}\n" "$HOST/api/swagger-ui.html"
+# 桌面首页仍是 Mao
+curl -sS "$HOST/" | grep -o '<title>[^<]*</title>'
+
+# 后台 JS 200
+curl -sI "$HOST$(grep -oE '/admin/assets/[^"]+\.js' /opt/mao/admin/dist/index.html | head -1)"
 ```
 
-浏览器：
-
-- 桌面 Web 首页仍可用
-- `https://<桌面域名>/admin/login` 能打开管理后台登录页
-- 旧管理后台域名应跳到 `/admin/`
+浏览器：`/` 桌面可用；`/admin/`、`/admin/index.html`、`/admin/login` 都能进管理后台；旧域名跳到 `/admin/`。
 
 ## 7. 回滚
 
@@ -136,12 +152,12 @@ sudo cp -a /etc/nginx/conf.d.bak.<时间戳>/. /etc/nginx/conf.d/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-回滚 Nginx 后，管理后台仍是新构建（资源在 `/admin/assets/`），旧「根路径托管 admin/dist」的 vhost 会继续 404。若必须立刻恢复旧独立域名，需要把 `admin/vite.config.ts` 的 `base` 改回 `'/'` 并重新 `bash scripts/deploy-admin.sh`（不推荐；应修好单域 location）。
+回滚后若后台仍是新构建（资源在 `/admin/assets/`），旧「根路径托管 admin」的 vhost 会 404。应修好单域 location，不要把 `base` 改回去。
 
 ## 不要做
 
 - 不要在 `/opt/mao-data/workspace/...` 里 `git pull` 或改 `/etc/nginx`
-- 不要用 `alias` + `try_files` 指向 `admin/dist`（Nginx 组合容易 404）
-- 不要把 `/admin/` 的 fallback 写成 `/index.html`
+- 不要 `rewrite ^/admin/(.*)$ /$1`
+- 不要 `try_files $uri $uri/ /index.html` 或 `... /admin/index.html` 做后台 fallback
 - 不要为这次迁移重启 `backend-ts`
-- 不要改 `desktop/.env.production` 为相对路径 `/api/v1`（Electron 打包仍需要绝对 API 地址）
+- 不要改 `desktop/.env.production` 为相对路径 `/api/v1`（Electron 仍需要绝对 API 地址）

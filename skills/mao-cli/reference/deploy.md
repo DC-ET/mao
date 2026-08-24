@@ -151,9 +151,9 @@ upstream mao_backend {
 }
 ```
 
-9080/9081 仅本机监听；对外经 Nginx 443/80。一份 `server` 同时托管桌面 Web 与管理后台。`location ^~ /admin/` 必须写在桌面端后缀匹配之前，否则 `/admin/assets/*.js` 会落到 `desktop/dist`。
+9080/9081 仅本机监听；对外经 Nginx 443/80。一份 `server` 同时托管桌面 Web 与管理后台。
 
-`try_files` 的 SPA fallback **不要**写成 `/index.html`（会进桌面端）；管理后台必须 fallback 到 `/admin/index.html`。
+**管理后台 location 必须原样使用下面这一段**（仓库 `scripts/nginx/mao-admin-locations.conf`）。不要 `rewrite ^/admin/(.*)$ /$1`：`/admin/` 会被写成 `/`，`try_files` 内部跳转进桌面端 `location /`，页面标题变成 `Mao`、管理后台白屏；`/admin/login` 却可能正常。也不要把 SPA fallback 写成 URI `/index.html` 或 `/admin/index.html`，改用 named location `@admin`。`^~ /admin` 必须写在桌面端后缀匹配和 `location /` **之前**。
 
 ```nginx
 server {
@@ -190,17 +190,26 @@ server {
     location = /admin {
         return 302 /admin/;
     }
+    location = /admin/ {
+        default_type text/html;
+        alias /opt/mao/admin/dist/index.html;
+    }
+    location = /admin/index.html {
+        default_type text/html;
+        alias /opt/mao/admin/dist/index.html;
+    }
     location ^~ /admin/assets/ {
-        rewrite ^/admin/(.*)$ /$1 break;
-        root /opt/mao/admin/dist;
+        alias /opt/mao/admin/dist/assets/;
         expires 7d;
         add_header Cache-Control "public, immutable";
     }
     location ^~ /admin/ {
-        rewrite ^/admin/(.*)$ /$1 break;
+        alias /opt/mao/admin/dist/;
+        error_page 404 = @admin;
+    }
+    location @admin {
         root /opt/mao/admin/dist;
-        index index.html;
-        try_files $uri $uri/ /admin/index.html;
+        rewrite ^ /index.html break;
     }
 
     location ~* \.(js|mjs|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
