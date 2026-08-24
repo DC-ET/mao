@@ -45,6 +45,38 @@ describe('McpToolAdapter', () => {
     expect(adapter.getInputSchema().type).toBe('object');
   });
 
+  it('flattensRootAnyOfForProvidersThatRejectTopLevelCombinators', () => {
+    const adapter = new McpToolAdapter({
+      ...ref,
+      inputSchema: {
+        anyOf: [
+          { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+          { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+        ],
+      },
+    }, null);
+    const schema = adapter.getInputSchema();
+    expect(schema).not.toHaveProperty('anyOf');
+    expect(schema.type).toBe('object');
+    expect(schema.properties).toMatchObject({ path: { type: 'string' }, url: { type: 'string' } });
+    expect(schema.required).toBeUndefined();
+  });
+
+  it('mergesRootAllOfRequiredProperties', () => {
+    const adapter = new McpToolAdapter({
+      ...ref,
+      inputSchema: {
+        allOf: [
+          { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+          { type: 'object', properties: { mode: { type: 'string' } }, required: ['mode'] },
+        ],
+      },
+    }, null);
+    const schema = adapter.getInputSchema();
+    expect(schema).not.toHaveProperty('allOf');
+    expect(schema.required).toEqual(['path', 'mode']);
+  });
+
   it('delegatesExecutionToClientManagerWithSessionAndWorkspace', async () => {
     const clientManager = { callTool: vi.fn().mockResolvedValue('{"result":"content"}') } as unknown as McpClientManager;
     const adapter = new McpToolAdapter(ref, clientManager);
