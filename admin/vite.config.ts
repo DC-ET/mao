@@ -8,6 +8,7 @@ export default defineConfig(({ mode }) => {
   return {
     // 与 Vue Router / 生产 Nginx 一致：管理后台挂在同一域名的 /admin/
     base: '/admin/',
+    base: '/admin/',
     plugins: [vue()],
     resolve: {
       alias: {
