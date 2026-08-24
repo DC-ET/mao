@@ -439,7 +439,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       initializingWorkspace.value = false
       initializingWorkspaceLabel.value = ''
       // Remove empty assistant message if it was added
-      const list = sid ? sessionStore.getMessages(sid) : messages.value
+      const list = sessionId.value ? sessionStore.getMessages(sessionId.value) : messages.value
       const lastMsg = list[list.length - 1]
       if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
         list.pop()
@@ -646,7 +646,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       initializingWorkspace.value = false
       initializingWorkspaceLabel.value = ''
       // Remove empty assistant message if it was added
-      const list = sid ? sessionStore.getMessages(sid) : messages.value
+      const list = sessionId.value ? sessionStore.getMessages(sessionId.value) : messages.value
       const lastMsg = list[list.length - 1]
       if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
         list.pop()
@@ -791,7 +791,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     } catch (error: any) {
       sending.value = false
       // Remove empty assistant message if it was added
-      const list = sid ? sessionStore.getMessages(sid) : messages.value
+      const list = sessionId.value ? sessionStore.getMessages(sessionId.value) : messages.value
       const lastMsg = list[list.length - 1]
       if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
         list.pop()
