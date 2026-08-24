@@ -182,6 +182,8 @@ function unregisterChatInput(key: string) {
 }
 provide('registerChatInput', registerChatInput)
 provide('unregisterChatInput', unregisterChatInput)
+// 供聊天区深层组件（如文件变更面板右键菜单「添加到聊天」）复用，与右侧栏 add-file-to-chat 同一入口
+provide('addFileToChat', handleAddFileToChat)
 
 function handleAddFileToChat(filePath: string) {
   // 优先插入当前激活 tab 的输入框（主会话 / 边路任务）
@@ -409,6 +411,7 @@ watch(inspectorSessionId, (sid) => {
 
 const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef)
 const gitProvider = useWorkspaceGitProvider(executionMode, workspace, activeSessionIdRef)
+provide('fileProvider', fileProvider)
 
 // Terminal
 const { togglePanel } = useTerminal()

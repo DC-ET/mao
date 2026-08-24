@@ -16,6 +16,7 @@
         :key="change.path"
         class="file-change-item"
         @click="handleFileClick(change)"
+        @contextmenu.prevent="handleContextmenu($event, change)"
       >
         <div class="file-path-row">
           <span class="file-type-badge" :class="changeTypeClass(change.type)">
@@ -30,15 +31,43 @@
       </div>
     </div>
   </div>
+
+  <GitContextMenu
+    :visible="ctxMenu.visible"
+    :x="ctxMenu.x"
+    :y="ctxMenu.y"
+    :show-open-in-finder="executionMode !== 'CLOUD'"
+    :show-download-actions="executionMode === 'CLOUD'"
+    @hide="ctxMenu.visible = false"
+    @copy-absolute="handleCopyAbsolute"
+    @copy-relative="handleCopyRelative"
+    @open-in-finder="handleOpenInFinder"
+    @add-to-chat="handleAddToChat"
+    @download-file="handleDownloadFile"
+  />
+
+  <DownloadLinkDialog
+    :visible="downloadDialog.visible"
+    :url="downloadDialog.url"
+    :file-name="downloadDialog.fileName"
+    @close="downloadDialog.visible = false"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, reactive, watch, inject } from 'vue'
 import { Document, ArrowDown } from '@element-plus/icons-vue'
 import type { FileChange } from '../../types/chat'
 import { useSessionStore } from '../../stores/session'
 import { useCenterTabs } from '../../composables/useCenterTabs'
-import { toRelativeWorkspacePath } from '../../utils/workspace-path'
+import { toRelativeWorkspacePath, resolveWorkspaceFilePath } from '../../utils/workspace-path'
+import GitContextMenu from '../task/GitContextMenu.vue'
+import DownloadLinkDialog from '../common/DownloadLinkDialog.vue'
+import { copyText } from '../../utils/clipboard'
+import { ElMessage } from 'element-plus'
+import { isWechatBrowser } from '../../utils/user-agent'
+import { isAndroidCapacitor } from '../../utils/capacitor'
+import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 
 const props = defineProps<{
   changes: FileChange[]
@@ -48,6 +77,10 @@ const props = defineProps<{
 const sessionStore = useSessionStore()
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId)
 const { openDiffTab } = useCenterTabs(activeSessionIdRef)
+
+const executionMode = inject<string>('executionMode', 'CLOUD')
+const fileProvider = inject<WorkspaceFileProvider | null>('fileProvider', null)
+const addFileToChat = inject<(filePath: string) => void>('addFileToChat', () => {})
 
 type MergedChange = FileChange & { displayPath: string }
 
@@ -103,6 +136,79 @@ const displayChanges = computed((): MergedChange[] => {
     displayPath: ws ? toRelativeWorkspacePath(ws, c.path) : c.path
   }))
 })
+
+// ===== 右键菜单（与文件 Tab / Git 变更列表一致） =====
+const ctxMenu = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  change: null as MergedChange | null,
+})
+
+const downloadDialog = reactive({
+  visible: false,
+  url: '',
+  fileName: '',
+})
+
+function handleContextmenu(e: MouseEvent, change: MergedChange) {
+  ctxMenu.x = e.clientX
+  ctxMenu.y = e.clientY
+  ctxMenu.change = change
+  ctxMenu.visible = true
+}
+
+function handleCopyAbsolute() {
+  if (!ctxMenu.change) return
+  copyText(resolveWorkspaceFilePath(workspace.value || '', ctxMenu.change.path))
+}
+
+function handleCopyRelative() {
+  if (!ctxMenu.change) return
+  copyText(ctxMenu.change.path)
+}
+
+function handleOpenInFinder() {
+  if (!ctxMenu.change) return
+  window.electronAPI.showItemInFolder(resolveWorkspaceFilePath(workspace.value || '', ctxMenu.change.path))
+}
+
+function handleAddToChat() {
+  if (!ctxMenu.change) return
+  addFileToChat(ctxMenu.change.path)
+}
+
+async function handleDownloadFile() {
+  const change = ctxMenu.change
+  if (!change) return
+  if (!fileProvider?.downloadFile) {
+    ElMessage.warning('当前模式不支持下载')
+    return
+  }
+  const fileName = change.path.split(/[/\\]/).pop() || change.path
+  try {
+    const result = await fileProvider.downloadFile(change.path, fileName)
+    if (result.ok) {
+      if ((isWechatBrowser() || isAndroidCapacitor()) && result.url) {
+        // 微信浏览器和安卓 WebView 可能阻止 Blob 自动下载，显示可鉴权的下载链接
+        downloadDialog.url = result.url
+        downloadDialog.fileName = fileName
+        downloadDialog.visible = true
+      } else {
+        ElMessage.success(`已触发下载：${fileName}`)
+      }
+    } else {
+      ElMessage.error(result.error || '下载失败')
+      if (result.url) {
+        downloadDialog.url = result.url
+        downloadDialog.fileName = fileName
+        downloadDialog.visible = true
+      }
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '下载失败')
+  }
+}
 
 function changeTypeLabel(type: string): string {
   switch ((type || '').toUpperCase()) {
