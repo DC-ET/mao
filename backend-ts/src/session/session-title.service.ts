@@ -10,7 +10,7 @@ import { SESSION_TITLE_MODEL_ID_KEY } from '../settings/settings.service.js';
 import { TitleGenerator } from './util/title-generator.js';
 import { wsEvent } from './ws/ws-event.js';
 
-const TITLE_TIMEOUT_MS = 10_000;
+const TITLE_TIMEOUT_MS = 30_000;
 const NORMAL_PLACEHOLDER = '未命名会话';
 const SIDE_TASK_PLACEHOLDER = '任务';
 const IMAGE_TITLE = '图片消息';
