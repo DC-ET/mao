@@ -41,7 +41,13 @@ export class BackgroundTaskManager {
       const entry = this.tasks.get(taskId);
       if (!entry) continue;
       if (entry.done) {
-        if (sessionId !== entry.sessionId) continue;
+        if (sessionId !== entry.sessionId) {
+          // 其他会话的已完成结果留给所属会话消费；超过阈值仍无人领取则回收，避免死会话泄漏
+          if (now - entry.submitTimeMs > ABANDONED_THRESHOLD_MS) {
+            this.tasks.delete(taskId);
+          }
+          continue;
+        }
         try {
           let result = entry.error
             ? 'Error: ' + ((entry.error as Error).message ?? String(entry.error))

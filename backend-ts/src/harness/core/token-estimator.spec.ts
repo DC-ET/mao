@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TokenEstimator } from './token-estimator.js';
 import { MessageHistoryNormalizer } from './message-history-normalizer.js';
 import { LocalAgentsMdRegistry } from './local-agents-md-registry.js';
@@ -164,12 +164,32 @@ describe('BackgroundTaskManager', () => {
 
   it('consumeOnlyReturnsResultsForMatchingSession', async () => {
     const manager = new BackgroundTaskManager();
-    manager.submit(1, () => 'from-a');
+    const forA = manager.submit(1, () => 'from-a');
     const forB = manager.submit(2, () => 'from-b');
     await new Promise((r) => setTimeout(r, 50));
     const consumedByB = await manager.consumeCompletedResults(2);
     expect(Object.keys(consumedByB)).toEqual([forB]);
     expect(consumedByB[forB]).toBe('from-b');
+    const consumedByA = await manager.consumeCompletedResults(1);
+    expect(Object.keys(consumedByA)).toEqual([forA]);
+    expect(consumedByA[forA]).toBe('from-a');
+  });
+
+  it('gcUnconsumedCompletedResultsFromOtherSessionsAfterAbandonedThreshold', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const manager = new BackgroundTaskManager();
+      manager.submit(1, () => 'from-a');
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(await manager.consumeCompletedResults(2)).toEqual({});
+      vi.setSystemTime(new Date('2026-01-01T00:31:00Z'));
+      expect(await manager.consumeCompletedResults(2)).toEqual({});
+      expect(await manager.consumeCompletedResults(1)).toEqual({});
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('consumeRemovesAllCompletedEntriesWithoutSkippingUnderManyTasks', async () => {

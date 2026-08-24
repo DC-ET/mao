@@ -188,91 +188,99 @@ export class ScheduledTaskService {
   }
 
   async executeTask(task: ScheduledTask): Promise<void> {
-    // 在飞守卫：锁排队期间同一任务再次到期时直接跳过本次触发（nextFireTime 已推进，
-    // 下个周期会正常调度），避免连环补发与 fireCount 竞态覆盖
+    // 在飞守卫：提交后直到异步执行结束都占住，避免 cron 再次扫描时连环补发与 fireCount 竞态
     if (task.id != null && this.inFlight.has(task.id)) {
       return;
     }
     if (task.id != null) this.inFlight.add(task.id);
+    let submitted = false;
     try {
       task.nextFireTime = this.calculateNextFireTime(task.cronExpression!);
       await this.store.updateById(task);
       const executionId = randomUUID();
       const userId = task.userId!;
-      this.agentExecutor(() => withSessionLock(task.sessionId!, async () => {
-        let countThisRun = false;
+      this.agentExecutor(async () => {
         try {
-          // 拿到锁后重读最新任务状态，排队期间可能已被更新/暂停/删除
-          const latest = task.id != null ? await this.store.selectById(task.id) : null;
-          if (latest == null) {
-            return;
-          }
-          task.name = latest.name;
-          task.prompt = latest.prompt ?? task.prompt;
-          task.cronExpression = latest.cronExpression;
-          task.status = latest.status;
-          if (task.status != null && task.status !== 'ACTIVE') {
-            return;
-          }
-          const session = await this.sessionService.getSession(task.sessionId!);
-          if (session == null) {
-            await this.markTaskResult(task, 'FAILED');
-            countThisRun = true;
-            return;
-          }
-          const phase = session.phase;
-          const busy = this.isSessionBusy?.(task.sessionId!) === true || isActivePhase(phase);
-          if (busy) {
-            await this.messageQueueService.enqueue(task.sessionId!, userId, task.prompt!, null);
-            await this.markTaskResult(task, 'QUEUED');
-            countThisRun = true;
-            return;
-          }
-          await this.sessionService.updatePhase(task.sessionId!, 'RUNNING');
-          let savedMessage: Message;
-          try {
-            savedMessage = await this.sessionService.saveMessage(task.sessionId!, 'USER', task.prompt, null, null, null, 0, null);
-          } catch {
-            await this.sessionService.updatePhase(task.sessionId!, 'IDLE');
-            await this.markTaskResult(task, 'FAILED');
-            countThisRun = true;
-            return;
-          }
-          if (this.liveExecution != null) {
-            await this.liveExecution(session, userId, executionId, savedMessage);
-          } else {
-            await this.harnessService.executeFromEvent(task.sessionId!, executionId, {
-              onContentDelta() {},
-              onToolCallStart() {},
-              onToolCallResult() {},
-              onMessageEnd() {},
-              onError() {},
-            });
-            await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'COMPLETED', executionId);
-          }
-          await this.markTaskResult(task, 'COMPLETED');
-          await this.sendWeixinReplyIfApplicable(task.sessionId!, userId);
-          countThisRun = true;
-        } catch (e) {
-          countThisRun = true;
-          try {
-            await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'FAILED', executionId,
-              e instanceof Error ? e.message : String(e));
-          } catch { /* ignore */ }
-          await this.markTaskResult(task, 'FAILED');
+          await withSessionLock(task.sessionId!, async () => {
+            let countThisRun = false;
+            try {
+              // 拿到锁后重读最新任务状态，排队期间可能已被更新/暂停/删除
+              const latest = task.id != null ? await this.store.selectById(task.id) : null;
+              if (latest == null) {
+                return;
+              }
+              task.name = latest.name;
+              task.prompt = latest.prompt ?? task.prompt;
+              task.cronExpression = latest.cronExpression;
+              task.status = latest.status;
+              task.fireCount = latest.fireCount ?? task.fireCount;
+              if (task.status != null && task.status !== 'ACTIVE') {
+                return;
+              }
+              const session = await this.sessionService.getSession(task.sessionId!);
+              if (session == null) {
+                await this.markTaskResult(task, 'FAILED');
+                countThisRun = true;
+                return;
+              }
+              const phase = session.phase;
+              const busy = this.isSessionBusy?.(task.sessionId!) === true || isActivePhase(phase);
+              if (busy) {
+                await this.messageQueueService.enqueue(task.sessionId!, userId, task.prompt!, null);
+                await this.markTaskResult(task, 'QUEUED');
+                countThisRun = true;
+                return;
+              }
+              await this.sessionService.updatePhase(task.sessionId!, 'RUNNING');
+              let savedMessage: Message;
+              try {
+                savedMessage = await this.sessionService.saveMessage(task.sessionId!, 'USER', task.prompt, null, null, null, 0, null);
+              } catch {
+                await this.sessionService.updatePhase(task.sessionId!, 'IDLE');
+                await this.markTaskResult(task, 'FAILED');
+                countThisRun = true;
+                return;
+              }
+              if (this.liveExecution != null) {
+                await this.liveExecution(session, userId, executionId, savedMessage);
+              } else {
+                await this.harnessService.executeFromEvent(task.sessionId!, executionId, {
+                  onContentDelta() {},
+                  onToolCallStart() {},
+                  onToolCallResult() {},
+                  onMessageEnd() {},
+                  onError() {},
+                });
+                await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'COMPLETED', executionId);
+              }
+              await this.markTaskResult(task, 'COMPLETED');
+              await this.sendWeixinReplyIfApplicable(task.sessionId!, userId);
+              countThisRun = true;
+            } catch (e) {
+              countThisRun = true;
+              try {
+                await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'FAILED', executionId,
+                  e instanceof Error ? e.message : String(e));
+              } catch { /* ignore */ }
+              await this.markTaskResult(task, 'FAILED');
+            } finally {
+              if (!countThisRun) return;
+              task.lastFireTime = formatDateTime(new Date());
+              task.fireCount = (task.fireCount ?? 0) + 1;
+              if (task.lastExecutionStatus !== 'QUEUED' && this.calculateNextFireTime(task.cronExpression!) == null) {
+                task.finished = 1;
+                task.finishedAt = formatDateTime(new Date());
+              }
+              await this.store.updateById(task);
+            }
+          });
         } finally {
-          if (!countThisRun) return;
-          task.lastFireTime = formatDateTime(new Date());
-          task.fireCount = (task.fireCount ?? 0) + 1;
-          if (task.lastExecutionStatus !== 'QUEUED' && this.calculateNextFireTime(task.cronExpression!) == null) {
-            task.finished = 1;
-            task.finishedAt = formatDateTime(new Date());
-          }
-          await this.store.updateById(task);
+          if (task.id != null) this.inFlight.delete(task.id);
         }
-      }));
+      });
+      submitted = true;
     } finally {
-      if (task.id != null) this.inFlight.delete(task.id);
+      if (!submitted && task.id != null) this.inFlight.delete(task.id);
     }
   }
 
@@ -349,6 +357,7 @@ export class ScheduledTaskService {
 
 export class ScheduledTaskScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private scanning = false;
 
   constructor(
     private readonly store: ScheduledTaskStore,
@@ -368,20 +377,26 @@ export class ScheduledTaskScheduler {
   }
 
   async scanAndExecute(): Promise<void> {
-    const dueTasks = await this.store.listDue(formatDateTime(new Date()));
-    if (dueTasks.length === 0) {
-      return;
-    }
-    console.info(`Found ${dueTasks.length} due scheduled tasks`);
-    for (const task of dueTasks) {
-      try {
-        await this.service.executeTask(task);
-      } catch (e) {
-        console.error(`Failed to execute scheduled task: id=${task.id}, name=${task.name}`, e);
-        task.lastExecutionStatus = 'FAILED';
-        task.nextFireTime = this.service.calculateNextFireTime(task.cronExpression!);
-        await this.store.updateById(task);
+    if (this.scanning) return;
+    this.scanning = true;
+    try {
+      const dueTasks = await this.store.listDue(formatDateTime(new Date()));
+      if (dueTasks.length === 0) {
+        return;
       }
+      console.info(`Found ${dueTasks.length} due scheduled tasks`);
+      for (const task of dueTasks) {
+        try {
+          await this.service.executeTask(task);
+        } catch (e) {
+          console.error(`Failed to execute scheduled task: id=${task.id}, name=${task.name}`, e);
+          task.lastExecutionStatus = 'FAILED';
+          task.nextFireTime = this.service.calculateNextFireTime(task.cronExpression!);
+          await this.store.updateById(task);
+        }
+      }
+    } finally {
+      this.scanning = false;
     }
   }
 }
