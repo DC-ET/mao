@@ -49,7 +49,7 @@
         </div>
       </el-header>
 
-      <TabBar />
+      <TabBar v-if="!isMobile" />
 
       <el-main class="layout-main">
         <div class="layout-content">
@@ -140,7 +140,12 @@ async function handleCommand(command: string) {
 }
 
 .layout-header {
-  height: 56px;
+  box-sizing: border-box;
+  min-height: 56px;
+  height: calc(56px + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -218,6 +223,7 @@ async function handleCommand(command: string) {
 .layout-content {
   height: 100%;
   padding: 20px;
+  padding-bottom: calc(20px + env(safe-area-inset-bottom));
   overflow-y: auto;
 }
 </style>

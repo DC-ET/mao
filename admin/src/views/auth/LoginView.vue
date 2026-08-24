@@ -100,7 +100,7 @@ async function handleLogin() {
   min-height: 100vh;
   min-height: 100dvh;
   background: var(--mao-canvas);
-  padding: 16px;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   box-sizing: border-box;
 }
 

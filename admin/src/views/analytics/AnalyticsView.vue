@@ -32,7 +32,7 @@
       <el-col :span="12">
         <el-card>
           <template #header><span>阶段分布</span></template>
-          <el-table :data="summary.phaseDistribution || []" size="small" stripe>
+          <el-table class="table-scroll" :data="summary.phaseDistribution || []" size="small" stripe>
             <template #empty>
               <el-empty description="暂无数据" :image-size="48" />
             </template>
@@ -46,7 +46,7 @@
       <el-col :span="12">
         <el-card>
           <template #header><span>模型调用</span></template>
-          <el-table :data="summary.modelStats || []" size="small" stripe>
+          <el-table class="table-scroll" :data="summary.modelStats || []" size="small" stripe>
             <template #empty>
               <el-empty description="暂无数据" :image-size="48" />
             </template>
@@ -62,7 +62,7 @@
       <el-col :span="12">
         <el-card>
           <template #header><span>Token 消耗排行</span></template>
-          <el-table :data="summary.tokenStats || []" size="small" stripe>
+          <el-table class="table-scroll" :data="summary.tokenStats || []" size="small" stripe>
             <template #empty>
               <el-empty description="暂无数据" :image-size="48" />
             </template>
@@ -75,7 +75,7 @@
       <el-col :span="12">
         <el-card>
           <template #header><span>活跃用户</span></template>
-          <el-table :data="summary.userActivity || []" size="small" stripe>
+          <el-table class="table-scroll" :data="summary.userActivity || []" size="small" stripe>
             <template #empty>
               <el-empty description="暂无数据" :image-size="48" />
             </template>
@@ -210,6 +210,10 @@ onMounted(fetchSummary)
 
   .toolbar-period {
     width: 100%;
+  }
+
+  .table-scroll {
+    overflow-x: auto;
   }
 }
 </style>

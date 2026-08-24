@@ -20,48 +20,52 @@
 
       <!-- Filter form -->
       <el-form :inline="true" class="search-form">
-        <el-form-item label="用户">
-          <el-select v-model="filters.userId" placeholder="全部用户" clearable filterable style="width: 160px">
-            <el-option v-for="u in userOptions" :key="u.id" :label="u.displayName || u.username" :value="u.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Agent">
-          <el-select v-model="filters.agentId" placeholder="全部 Agent" clearable filterable style="width: 160px">
-            <el-option v-for="a in agentOptions" :key="a.id" :label="a.name" :value="a.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="执行模式">
-          <el-select v-model="filters.executionMode" placeholder="全部" clearable style="width: 120px">
-            <el-option
-              v-for="opt in EXECUTION_MODE_OPTIONS"
-              :key="opt.value"
-              :label="opt.label"
-              :value="opt.value"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="任务阶段">
-          <el-select v-model="filters.phase" placeholder="全部" clearable style="width: 140px">
-            <el-option v-for="p in PHASE_OPTIONS" :key="p.value" :label="p.label" :value="p.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
-            <el-option
-              v-for="opt in SESSION_STATUS_OPTIONS"
-              :key="opt.value"
-              :label="opt.label"
-              :value="opt.value"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="关键词">
-          <el-input v-model="filters.keyword" placeholder="标题/摘要" clearable style="width: 160px" @keyup.enter="handleSearch" @clear="handleSearch" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearch">查询</el-button>
-          <el-button @click="handleReset">重置</el-button>
-        </el-form-item>
+        <FilterPanel>
+          <template #always>
+            <el-form-item label="关键词">
+              <el-input v-model="filters.keyword" placeholder="标题/摘要" clearable style="width: 160px" @keyup.enter="handleSearch" @clear="handleSearch" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="handleSearch">查询</el-button>
+              <el-button @click="handleReset">重置</el-button>
+            </el-form-item>
+          </template>
+          <el-form-item label="用户">
+            <el-select v-model="filters.userId" placeholder="全部用户" clearable filterable style="width: 160px">
+              <el-option v-for="u in userOptions" :key="u.id" :label="u.displayName || u.username" :value="u.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Agent">
+            <el-select v-model="filters.agentId" placeholder="全部 Agent" clearable filterable style="width: 160px">
+              <el-option v-for="a in agentOptions" :key="a.id" :label="a.name" :value="a.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="执行模式">
+            <el-select v-model="filters.executionMode" placeholder="全部" clearable style="width: 120px">
+              <el-option
+                v-for="opt in EXECUTION_MODE_OPTIONS"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="任务阶段">
+            <el-select v-model="filters.phase" placeholder="全部" clearable style="width: 140px">
+              <el-option v-for="p in PHASE_OPTIONS" :key="p.value" :label="p.label" :value="p.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
+              <el-option
+                v-for="opt in SESSION_STATUS_OPTIONS"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+          </el-form-item>
+        </FilterPanel>
       </el-form>
 
       <!-- Table -->
@@ -107,27 +111,27 @@
 
       <!-- Mobile card list -->
       <div v-else class="mobile-card-list">
-        <el-card v-for="row in sessions" :key="row.id" class="session-card" shadow="hover">
-          <div class="session-card-head">
-            <span class="session-card-title">{{ row.title || '-' }}</span>
+        <el-card v-for="row in sessions" :key="row.id" shadow="hover">
+          <div class="mobile-card-head">
+            <span class="mobile-card-title">{{ row.title || '-' }}</span>
             <el-tag :type="phaseTagType(row.phase)" size="small">{{ phaseLabel(row.phase) }}</el-tag>
           </div>
-          <div class="session-card-row">
-            <span class="session-card-label">用户</span>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">用户</span>
             <span>{{ row.userName || '-' }}</span>
           </div>
-          <div class="session-card-row">
-            <span class="session-card-label">Agent</span>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Agent</span>
             <span>{{ row.agentName || '-' }}</span>
           </div>
-          <div class="session-card-row">
-            <span class="session-card-label">模式</span>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">模式</span>
             <el-tag :type="row.executionMode === 'CLOUD' ? 'primary' : 'warning'" size="small">
               {{ executionModeLabel(row.executionMode) }}
             </el-tag>
           </div>
-          <div class="session-card-row">
-            <span class="session-card-label">Token</span>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">Token</span>
             <el-progress
               :percentage="tokenPercent(row)"
               :stroke-width="8"
@@ -136,12 +140,12 @@
               style="flex: 1"
             />
           </div>
-          <div class="session-card-row">
-            <span class="session-card-label">活动</span>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">活动</span>
             <span>{{ row.lastActivityAt || '-' }}</span>
           </div>
-          <div class="session-card-actions">
-            <el-button type="primary" link size="small" @click="handleView(row)">查看</el-button>
+          <div class="mobile-card-actions">
+            <el-button type="primary" link @click="handleView(row)">查看</el-button>
           </div>
         </el-card>
         <el-empty v-if="!loading && sessions.length === 0" description="暂无数据" />
@@ -167,6 +171,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
+import FilterPanel from '../../components/FilterPanel.vue'
 import {
   EXECUTION_MODE_OPTIONS,
   PHASE_OPTIONS,
@@ -341,47 +346,6 @@ onActivated(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.session-card {
-  font-size: 14px;
-}
-
-.session-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.session-card-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #303133;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-card-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  line-height: 1.5;
-}
-
-.session-card-label {
-  width: 40px;
-  flex-shrink: 0;
-  color: #909399;
-}
-
-.session-card-actions {
-  margin-top: 10px;
-  border-top: 1px solid #f0f0f0;
-  padding-top: 10px;
 }
 
 @media (max-width: 768px) {

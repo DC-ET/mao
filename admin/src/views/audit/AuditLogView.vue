@@ -11,29 +11,33 @@
       </template>
 
       <el-form :inline="true" class="search-form">
-        <el-form-item label="动作">
-          <el-select v-model="filters.action" clearable placeholder="全部" style="width: 130px" @change="handleSearch">
-            <el-option
-              v-for="opt in AUDIT_ACTION_OPTIONS"
-              :key="opt.value"
-              :label="opt.label"
-              :value="opt.value"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="对象">
-          <el-input v-model="filters.objectType" clearable placeholder="users / agents" style="width: 160px" @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item label="结果">
-          <el-select v-model="filters.success" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
-            <el-option label="成功" :value="true" />
-            <el-option label="失败" :value="false" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearch">查询</el-button>
-          <el-button @click="handleReset">重置</el-button>
-        </el-form-item>
+        <FilterPanel>
+          <template #always>
+            <el-form-item label="动作">
+              <el-select v-model="filters.action" clearable placeholder="全部" style="width: 130px" @change="handleSearch">
+                <el-option
+                  v-for="opt in AUDIT_ACTION_OPTIONS"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="handleSearch">查询</el-button>
+              <el-button @click="handleReset">重置</el-button>
+            </el-form-item>
+          </template>
+          <el-form-item label="对象">
+            <el-input v-model="filters.objectType" clearable placeholder="users / agents" style="width: 160px" @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item label="结果">
+            <el-select v-model="filters.success" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+              <el-option label="成功" :value="true" />
+              <el-option label="失败" :value="false" />
+            </el-select>
+          </el-form-item>
+        </FilterPanel>
       </el-form>
 
       <el-table v-if="!isMobile" :data="logs" v-loading="loading" stripe>
@@ -132,6 +136,7 @@ import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
+import FilterPanel from '../../components/FilterPanel.vue'
 import { AUDIT_ACTION_OPTIONS, auditActionLabel } from '../../utils/labels'
 
 const { isMobile } = useBreakpoint()
