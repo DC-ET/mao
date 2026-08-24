@@ -1,94 +1,55 @@
 <template>
   <div class="dashboard" v-loading="loading">
-    <!-- Overview Cards -->
-    <el-row :gutter="20" class="overview-cards">
-      <el-col :span="6">
-        <el-card shadow="hover">
-          <div class="stat-card">
-            <div class="stat-icon" style="background: #409eff"><el-icon size="28"><Monitor /></el-icon></div>
-            <div class="stat-info">
-              <div class="stat-value">{{ overview.totalAgents || 0 }}</div>
-              <div class="stat-label">Agent 数量</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="hover">
-          <div class="stat-card">
-            <div class="stat-icon" style="background: #67c23a"><el-icon size="28"><User /></el-icon></div>
-            <div class="stat-info">
-              <div class="stat-value">{{ overview.totalUsers || 0 }}</div>
-              <div class="stat-label">用户数量</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="hover">
-          <div class="stat-card">
-            <div class="stat-icon" style="background: #e6a23c"><el-icon size="28"><ChatDotRound /></el-icon></div>
-            <div class="stat-info">
-              <div class="stat-value">{{ overview.totalSessions || 0 }}</div>
-              <div class="stat-label">总会话数</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="hover">
-          <div class="stat-card">
-            <div class="stat-icon" style="background: #f56c6c"><el-icon size="28"><Comment /></el-icon></div>
-            <div class="stat-info">
-              <div class="stat-value">{{ overview.totalMessages || 0 }}</div>
-              <div class="stat-label">总消息数</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+    <div class="page-intro">
+      <div>
+        <h3>平台健康</h3>
+        <p>异常会话点进运行监控；周期报表与 Token 排行见用量分析。</p>
+      </div>
+      <el-button v-if="canSession" type="primary" link @click="go('/analytics')">查看用量分析</el-button>
+    </div>
 
     <el-row :gutter="20" class="governance-cards">
-      <el-col :span="6">
-        <el-card shadow="hover">
-          <div class="governance-card">
-            <span>运行中会话</span>
-            <strong>{{ governance.runningSessions || 0 }}</strong>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="hover">
-          <div class="governance-card">
-            <span>待审批会话</span>
-            <strong>{{ governance.waitingSessions || 0 }}</strong>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="hover">
-          <div class="governance-card danger">
-            <span>失败会话</span>
-            <strong>{{ governance.failedSessions || 0 }}</strong>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="hover">
-          <div class="governance-card">
-            <span>取消会话</span>
-            <strong>{{ governance.cancelledSessions || 0 }}</strong>
+      <el-col :span="6" v-for="item in governanceCards" :key="item.label">
+        <el-card
+          shadow="hover"
+          :class="{ 'clickable-card': canSession }"
+          @click="canSession && go(item.path, item.query)"
+        >
+          <div class="governance-card" :class="{ danger: item.danger }">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
           </div>
         </el-card>
       </el-col>
     </el-row>
 
-    <!-- Charts Row -->
-    <el-row :gutter="20" style="margin-top: 20px">
-      <!-- Usage Trends -->
+    <el-row :gutter="20" class="overview-cards">
+      <el-col :span="6" v-for="item in overviewCards" :key="item.label">
+        <el-card
+          shadow="hover"
+          :class="{ 'clickable-card': !!item.path }"
+          @click="item.path && go(item.path)"
+        >
+          <div class="stat-card">
+            <div class="stat-icon"><el-icon size="22"><component :is="item.icon" /></el-icon></div>
+            <div class="stat-info">
+              <div class="stat-value">{{ item.value }}</div>
+              <div class="stat-label">{{ item.label }}</div>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" class="chart-row">
       <el-col :span="14">
         <el-card>
-          <template #header><span>使用趋势 (近 7 天)</span></template>
+          <template #header>
+            <div class="card-header">
+              <span>使用趋势 (近 7 天)</span>
+              <el-button v-if="canSession" type="primary" link @click="go('/analytics')">更多周期</el-button>
+            </div>
+          </template>
           <div v-if="trends.length === 0" class="chart-empty">
             <el-empty description="近 7 天暂无数据" :image-size="80" />
           </div>
@@ -116,11 +77,16 @@
         </el-card>
       </el-col>
 
-      <!-- Agent Stats -->
       <el-col :span="10">
         <el-card>
           <template #header><span>Agent 使用排行</span></template>
-          <div v-for="(agent, idx) in agentStats" :key="agent.agentId" class="rank-item">
+          <div
+            v-for="(agent, idx) in agentStats"
+            :key="agent.agentId"
+            class="rank-item"
+            :class="{ clickable: canSession }"
+            @click="canSession && go('/sessions', { agentId: String(agent.agentId) })"
+          >
             <span class="rank-num" :class="{ top: idx < 3 }">{{ idx + 1 }}</span>
             <span class="rank-name">{{ agent.agentName }}</span>
             <span class="rank-value">{{ agent.sessionCount }} 会话 / {{ agent.messageCount }} 消息</span>
@@ -131,55 +97,50 @@
         </el-card>
       </el-col>
     </el-row>
-
-    <!-- Token & User Stats -->
-    <el-row :gutter="20" style="margin-top: 20px">
-      <el-col :span="12">
-        <el-card>
-          <template #header><span>Token 消耗排行</span></template>
-          <el-table :data="tokenStats" stripe size="small">
-            <el-table-column prop="agentName" label="Agent" />
-            <el-table-column prop="totalTokens" label="Token 总量" width="120">
-              <template #default="{ row }">{{ row.totalTokens.toLocaleString() }}</template>
-            </el-table-column>
-            <el-table-column prop="messageCount" label="消息数" width="100" />
-          </el-table>
-          <el-empty v-if="tokenStats.length === 0" description="暂无数据" :image-size="60" />
-        </el-card>
-      </el-col>
-      <el-col :span="12">
-        <el-card>
-          <template #header><span>用户活跃度</span></template>
-          <el-table :data="userStats" stripe size="small">
-            <el-table-column prop="displayName" label="用户" />
-            <el-table-column prop="sessionCount" label="会话数" width="100" />
-            <el-table-column prop="messageCount" label="消息数" width="100" />
-            <el-table-column prop="lastLoginAt" label="最后登录" width="180" />
-          </el-table>
-          <el-empty v-if="userStats.length === 0" description="暂无数据" :image-size="60" />
-        </el-card>
-      </el-col>
-    </el-row>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '../../api'
+import { useAuthStore } from '../../stores/auth'
+
+const router = useRouter()
+const authStore = useAuthStore()
 
 const overview = ref<any>({})
-const governance = ref<any>({})
 const trends = ref<any[]>([])
 const agentStats = ref<any[]>([])
-const tokenStats = ref<any[]>([])
-const userStats = ref<any[]>([])
 const loading = ref(false)
+
+const canSession = computed(() => authStore.hasPermission('session:read'))
+const canAgent = computed(() => authStore.hasPermission('agent:read'))
+const canUser = computed(() => authStore.hasPermission('user:read'))
 
 const maxSessions = computed(() => Math.max(1, ...trends.value.map(d => d.sessions)))
 const maxMessages = computed(() => Math.max(1, ...trends.value.map(d => d.messages)))
 
+const governanceCards = computed(() => [
+  { label: '运行中会话', value: overview.value.runningSessions || 0, path: '/runtime', query: { phase: 'RUNNING' } },
+  { label: '待审批会话', value: overview.value.waitingSessions || 0, path: '/runtime', query: { phase: 'WAITING_APPROVAL' } },
+  { label: '失败会话', value: overview.value.failedSessions || 0, path: '/runtime', query: { phase: 'FAILED' }, danger: true },
+  { label: '取消会话', value: overview.value.cancelledSessions || 0, path: '/runtime', query: { phase: 'CANCELLED' } }
+])
+
+const overviewCards = computed(() => [
+  { label: 'Agent 数量', value: overview.value.totalAgents || 0, icon: 'Monitor', path: canAgent.value ? '/agents' : '' },
+  { label: '用户数量', value: overview.value.totalUsers || 0, icon: 'User', path: canUser.value ? '/users' : '' },
+  { label: '总会话数', value: overview.value.totalSessions || 0, icon: 'ChatDotRound', path: canSession.value ? '/sessions' : '' },
+  { label: '总消息数', value: overview.value.totalMessages || 0, icon: 'Comment', path: canSession.value ? '/analytics' : '' }
+])
+
 function barHeight(value: number, max: number) {
   return Math.max(4, (value / max) * 120)
+}
+
+function go(path: string, query?: Record<string, string>) {
+  router.push({ path, query })
 }
 
 async function fetchAll() {
@@ -187,10 +148,7 @@ async function fetchAll() {
   try {
     const { data } = await api.get('/admin/analytics/summary', { params: { days: 7 } }) as any
     overview.value = data?.overview || {}
-    governance.value = overview.value
     trends.value = data?.trends || []
-    tokenStats.value = data?.tokenStats || []
-    userStats.value = data?.userActivity || []
     agentStats.value = data?.agentStats || []
   } finally {
     loading.value = false
@@ -201,14 +159,38 @@ onMounted(fetchAll)
 </script>
 
 <style scoped>
+.page-intro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.page-intro h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: #303133;
+}
+
+.page-intro p {
+  margin: 0;
+  font-size: 13px;
+  color: #909399;
+}
+
+.clickable-card {
+  cursor: pointer;
+}
+
+.overview-cards {
+  margin-top: 16px;
+}
+
 .overview-cards .stat-card {
   display: flex;
   align-items: center;
   gap: 16px;
-}
-
-.governance-cards {
-  margin-top: 20px;
 }
 
 .governance-card {
@@ -231,17 +213,18 @@ onMounted(fetchAll)
 }
 
 .stat-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: #409eff;
+  background: #ecf5ff;
 }
 
 .stat-value {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 700;
   color: #303133;
 }
@@ -250,6 +233,16 @@ onMounted(fetchAll)
   font-size: 13px;
   color: #909399;
   margin-top: 4px;
+}
+
+.chart-row {
+  margin-top: 20px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .chart-container {
@@ -332,6 +325,14 @@ onMounted(fetchAll)
   border-bottom: 1px solid #f0f0f0;
 }
 
+.rank-item.clickable {
+  cursor: pointer;
+}
+
+.rank-item.clickable:hover {
+  background: #f5f7fa;
+}
+
 .rank-item.empty {
   color: #909399;
 }
@@ -366,7 +367,6 @@ onMounted(fetchAll)
 }
 
 @media (max-width: 768px) {
-  /* Charts/table rows collapse to a single column */
   .dashboard :deep(.el-row) {
     margin-left: 0 !important;
     margin-right: 0 !important;
@@ -377,7 +377,6 @@ onMounted(fetchAll)
     flex: 0 0 100%;
   }
 
-  /* Keep the small metric/stat cards in a 2-column grid */
   .overview-cards :deep(.el-col),
   .governance-cards :deep(.el-col) {
     max-width: 50%;
@@ -386,6 +385,11 @@ onMounted(fetchAll)
 
   .chart-container {
     height: 140px;
+  }
+
+  .page-intro {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

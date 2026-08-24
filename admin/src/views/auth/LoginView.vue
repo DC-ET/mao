@@ -2,7 +2,10 @@
   <div class="login-container">
     <el-card class="login-card">
       <template #header>
-        <h2>Agent 工作台 - 管理后台</h2>
+        <div class="login-brand">
+          <img class="login-logo" :src="logoSrc" alt="" />
+          <h2>Mao 管理后台</h2>
+        </div>
       </template>
 
       <el-form :model="form" @submit.prevent="handleLogin">
@@ -25,7 +28,7 @@
           />
         </el-form-item>
         <el-form-item>
-          <el-checkbox v-model="rememberMe">记住密码</el-checkbox>
+          <el-checkbox v-model="rememberMe">记住用户名</el-checkbox>
         </el-form-item>
         <el-form-item>
           <el-button
@@ -43,19 +46,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const logoSrc = `${import.meta.env.BASE_URL}app-icon-small.png`
 
 const loading = ref(false)
 const rememberMe = ref(localStorage.getItem('rememberMe') === '1')
 const form = ref({
   username: localStorage.getItem('rememberedUsername') ?? '',
-  password: localStorage.getItem('rememberedPassword') ?? ''
+  password: ''
+})
+
+localStorage.removeItem('rememberedPassword')
+onMounted(() => {
+  document.title = '登录 · Mao 管理后台'
 })
 
 async function handleLogin() {
@@ -70,11 +79,9 @@ async function handleLogin() {
     if (rememberMe.value) {
       localStorage.setItem('rememberMe', '1')
       localStorage.setItem('rememberedUsername', form.value.username)
-      localStorage.setItem('rememberedPassword', btoa(unescape(encodeURIComponent(form.value.password))))
     } else {
       localStorage.removeItem('rememberMe')
       localStorage.removeItem('rememberedUsername')
-      localStorage.removeItem('rememberedPassword')
     }
     router.push('/')
   } catch {
@@ -102,9 +109,23 @@ async function handleLogin() {
   max-width: 100%;
 }
 
+.login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.login-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
 .login-card h2 {
   text-align: center;
   margin: 0;
   color: #303133;
+  font-size: 18px;
 }
 </style>

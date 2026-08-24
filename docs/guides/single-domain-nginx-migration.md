@@ -31,10 +31,10 @@ curl -sS "$HOST/admin/login" | grep -o '<title>[^<]*</title>'
 
 | 标题 | 含义 |
 |------|------|
-| `<title>admin</title>` | 后台入口，正确 |
+| `<title>Mao 管理后台</title>` | 后台入口，正确 |
 | `<title>Mao</title>` | 误返回桌面 Web，就是本坑 |
 
-处理：打开桌面 host 的 nginx 配置，**删掉**所有 `rewrite ^/admin/` 和 `try_files ... /admin/index.html`，换成下面「正确 location」，然后 `sudo nginx -t && sudo systemctl reload nginx`。再用上面三条 `curl` 确认标题都是 `admin`。
+处理：打开桌面 host 的 nginx 配置，**删掉**所有 `rewrite ^/admin/` 和 `try_files ... /admin/index.html`，换成下面「正确 location」，然后 `sudo nginx -t && sudo systemctl reload nginx`。再用上面三条 `curl` 确认标题都是 `Mao 管理后台`。
 
 ---
 
@@ -131,7 +131,7 @@ HTTP 80 同样 301。然后 `sudo nginx -t && sudo systemctl reload nginx`。
 ```bash
 HOST=https://<桌面域名>
 
-# 三条都必须是 <title>admin</title>，不能是 Mao
+# 三条都必须是 <title>Mao 管理后台</title>，不能是单独的 Mao
 curl -sS "$HOST/admin/" | grep -o '<title>[^<]*</title>'
 curl -sS "$HOST/admin/index.html" | grep -o '<title>[^<]*</title>'
 curl -sS "$HOST/admin/login" | grep -o '<title>[^<]*</title>'

@@ -1,11 +1,17 @@
 <template>
   <div class="runtime-monitor">
     <el-row :gutter="16" class="metric-row">
-      <el-col :span="6" v-for="item in metrics" :key="item.label">
-        <el-card>
-          <div class="metric">
+      <el-col :span="6" v-for="item in runtimeShortcuts" :key="item.phase || 'all'">
+        <el-card
+          shadow="hover"
+          class="clickable-card"
+          :class="{ 'is-active': filters.phase === item.phase }"
+          @click="selectPhase(item.phase)"
+        >
+          <div class="metric" :class="{ danger: item.phase === 'FAILED' }">
             <span>{{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
+            <strong v-if="filters.phase === item.phase">{{ total }}</strong>
+            <strong v-else class="metric-hint">查看</strong>
           </div>
         </el-card>
       </el-col>
@@ -95,8 +101,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted, onActivated } from 'vue'
-import { useRouter } from 'vue-router'
+import { reactive, ref, onMounted, onActivated } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api'
 import {
   EXECUTION_MODE_OPTIONS,
@@ -105,6 +111,7 @@ import {
   phaseLabel
 } from '../../utils/labels'
 
+const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const sessions = ref<any[]>([])
@@ -117,12 +124,24 @@ const filters = reactive({
   keyword: ''
 })
 
-const metrics = computed(() => [
-  { label: '重点会话(当前页)', value: sessions.value.length },
-  { label: '运行中(当前页)', value: sessions.value.filter(s => s.phase === 'RUNNING').length },
-  { label: '待审批(当前页)', value: sessions.value.filter(s => s.phase === 'WAITING_APPROVAL').length },
-  { label: '失败/取消(当前页)', value: sessions.value.filter(s => ['FAILED', 'CANCELLED'].includes(s.phase)).length }
-])
+const runtimeShortcuts = [
+  { label: '全部重点', phase: '' },
+  { label: '运行中', phase: 'RUNNING' },
+  { label: '待审批', phase: 'WAITING_APPROVAL' },
+  { label: '失败', phase: 'FAILED' }
+]
+
+function applyRouteQuery() {
+  const q = route.query
+  if (typeof q.executionMode === 'string') filters.executionMode = q.executionMode
+  if (typeof q.phase === 'string') filters.phase = q.phase
+  if (typeof q.keyword === 'string') filters.keyword = q.keyword
+}
+
+function selectPhase(phase: string) {
+  filters.phase = phase
+  handleSearch()
+}
 
 function phaseTag(phase: string) {
   if (phase === 'FAILED') return 'danger'
@@ -171,6 +190,7 @@ let activatedOnce = false
 onMounted(() => {
   if (!activatedOnce) {
     activatedOnce = true
+    applyRouteQuery()
     fetchSessions()
   }
 })
@@ -188,6 +208,14 @@ onActivated(() => {
   margin-bottom: 16px;
 }
 
+.clickable-card {
+  cursor: pointer;
+}
+
+.clickable-card.is-active {
+  border-color: #409eff;
+}
+
 .metric {
   display: flex;
   justify-content: space-between;
@@ -201,6 +229,16 @@ onActivated(() => {
 .metric strong {
   font-size: 24px;
   color: #303133;
+}
+
+.metric.danger strong {
+  color: #f56c6c;
+}
+
+.metric-hint {
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  color: #909399 !important;
 }
 
 .card-header {

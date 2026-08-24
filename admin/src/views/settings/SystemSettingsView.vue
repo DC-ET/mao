@@ -18,28 +18,28 @@
           :name="category"
         >
           <el-table :data="settingsByCategory[category] || []" stripe>
-            <el-table-column prop="settingKey" label="配置键" width="190" />
-            <el-table-column prop="description" label="说明" min-width="220" />
+            <el-table-column prop="description" label="说明" min-width="240" />
+            <el-table-column prop="settingKey" label="配置键" width="200" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
+              <template #default="{ row }">
+                <code class="setting-key">{{ row.settingKey }}</code>
+              </template>
+            </el-table-column>
             <el-table-column prop="value" label="当前值" min-width="220" show-overflow-tooltip>
               <template #default="{ row }">
-                <el-tag v-if="row.settingKey.endsWith('enabled')" :type="row.value === 'true' ? 'success' : 'info'" size="small">
-                  {{ row.value === 'true' ? '已启用' : '未启用' }}
-                </el-tag>
+                <el-switch
+                  v-if="isBooleanSetting(row.settingKey)"
+                  :model-value="row.value === 'true'"
+                  :disabled="row.editable !== 1"
+                  @change="(val: string | number | boolean) => saveBoolean(row, val === true)"
+                />
                 <span v-else-if="row.settingKey === 'weixin.agentId'">{{ formatWeixinAgent(row.value) }}</span>
                 <span v-else-if="row.settingKey === 'weixin.modelId' || row.settingKey === 'session.titleModelId' || row.settingKey === 'git.commitMessageModelId'">{{ formatModelSetting(row.value) }}</span>
                 <span v-else>{{ row.value }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="可编辑" width="90">
-              <template #default="{ row }">
-                <el-tag :type="row.editable === 1 ? 'success' : 'info'" size="small">
-                  {{ row.editable === 1 ? '是' : '否' }}
-                </el-tag>
-              </template>
-            </el-table-column>
             <el-table-column label="操作" width="90" fixed="right">
               <template #default="{ row }">
-                <el-button type="primary" link size="small" :disabled="row.editable !== 1" @click="handleEdit(row)">编辑</el-button>
+                <el-button type="primary" link size="small" :disabled="row.editable !== 1 || isBooleanSetting(row.settingKey)" @click="handleEdit(row)">编辑</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -219,6 +219,18 @@ async function handleEdit(row: any) {
   dialogVisible.value = true
 }
 
+async function saveBoolean(row: any, enabled: boolean) {
+  if (row.editable !== 1 || saving.value) return
+  saving.value = true
+  try {
+    await api.put(`/system-settings/${row.settingKey}`, { value: enabled ? 'true' : 'false' })
+    row.value = enabled ? 'true' : 'false'
+    ElMessage.success('配置已更新')
+  } finally {
+    saving.value = false
+  }
+}
+
 async function saveSetting() {
   if (!currentSetting.value || saving.value) return
   const value = SELECT_KEYS.has(currentSetting.value.settingKey)
@@ -246,5 +258,10 @@ onActivated(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.setting-key {
+  font-size: 12px;
+  color: #909399;
 }
 </style>

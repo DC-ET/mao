@@ -1,11 +1,11 @@
 <template>
   <div class="session-list">
     <el-row :gutter="16" class="session-metrics">
-      <el-col :span="6" v-for="item in phaseMetrics" :key="item.label">
+      <el-col :span="6">
         <el-card>
           <div class="metric">
-            <span>{{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
+            <span>匹配会话</span>
+            <strong>{{ total }}</strong>
           </div>
         </el-card>
       </el-col>
@@ -162,8 +162,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted, onActivated } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, onMounted, onActivated } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
@@ -175,6 +175,7 @@ import {
   phaseLabel
 } from '../../utils/labels'
 
+const route = useRoute()
 const router = useRouter()
 const { isMobile } = useBreakpoint()
 const loading = ref(false)
@@ -195,12 +196,15 @@ const filters = reactive({
 const userOptions = ref<Array<{ id: number; username: string; displayName: string }>>([])
 const agentOptions = ref<Array<{ id: number; name: string }>>([])
 
-const phaseMetrics = computed(() => [
-  { label: '当前页会话', value: sessions.value.length },
-  { label: '运行中(当前页)', value: sessions.value.filter(s => s.phase === 'RUNNING').length },
-  { label: '已完成(当前页)', value: sessions.value.filter(s => s.phase === 'COMPLETED').length },
-  { label: '失败/取消(当前页)', value: sessions.value.filter(s => ['FAILED', 'CANCELLED'].includes(s.phase)).length }
-])
+function applyRouteQuery() {
+  const q = route.query
+  if (typeof q.userId === 'string' && q.userId) filters.userId = Number(q.userId)
+  if (typeof q.agentId === 'string' && q.agentId) filters.agentId = Number(q.agentId)
+  if (typeof q.executionMode === 'string') filters.executionMode = q.executionMode
+  if (typeof q.phase === 'string') filters.phase = q.phase
+  if (typeof q.status === 'string') filters.status = q.status
+  if (typeof q.keyword === 'string') filters.keyword = q.keyword
+}
 
 function phaseTagType(phase: string): 'primary' | 'success' | 'danger' | 'warning' | 'info' {
   switch (phase) {
@@ -278,6 +282,7 @@ function tokenPercent(row: { contextTokens?: number; contextWindowTokens?: numbe
 }
 
 onMounted(() => {
+  applyRouteQuery()
   fetchSessions()
   fetchOptions()
 })

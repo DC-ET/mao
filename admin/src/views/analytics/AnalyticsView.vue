@@ -2,15 +2,25 @@
   <div class="analytics-view" v-loading="loading">
     <el-card class="toolbar-card">
       <div class="toolbar">
-        <span>统计周期</span>
-        <el-segmented v-model="days" :options="periodOptions" @change="fetchSummary" />
+        <div>
+          <div class="toolbar-title">周期报表</div>
+          <div class="toolbar-hint">按统计周期看阶段、模型与 Token；实时异常请用运行监控。</div>
+        </div>
+        <div class="toolbar-period">
+          <span>统计周期</span>
+          <el-segmented v-model="days" :options="periodOptions" @change="fetchSummary" />
+        </div>
       </div>
     </el-card>
 
     <el-row :gutter="16" class="metric-row">
       <el-col :span="6" v-for="item in overviewCards" :key="item.label">
-        <el-card>
-          <div class="metric">
+        <el-card
+          shadow="hover"
+          :class="{ 'clickable-card': !!item.path }"
+          @click="go(item.path)"
+        >
+          <div class="metric" :class="{ danger: item.danger }">
             <span>{{ item.label }}</span>
             <strong>{{ item.value }}</strong>
           </div>
@@ -81,9 +91,11 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '../../api'
 import { phaseLabel } from '../../utils/labels'
 
+const router = useRouter()
 const days = ref(30)
 const loading = ref(false)
 const periodOptions = [
@@ -96,12 +108,16 @@ const summary = ref<any>({})
 const overviewCards = computed(() => {
   const overview = summary.value.overview || {}
   return [
-    { label: '总会话', value: overview.totalSessions || 0 },
-    { label: '总消息', value: overview.totalMessages || 0 },
-    { label: '运行中', value: overview.runningSessions || 0 },
-    { label: '失败会话', value: overview.failedSessions || 0 }
+    { label: '总会话', value: overview.totalSessions || 0, path: '/sessions' as const },
+    { label: '总消息', value: overview.totalMessages || 0, path: '' as const },
+    { label: '运行中', value: overview.runningSessions || 0, path: '/runtime?phase=RUNNING' as const },
+    { label: '失败会话', value: overview.failedSessions || 0, path: '/runtime?phase=FAILED' as const, danger: true }
   ]
 })
+
+function go(path: string) {
+  if (path) router.push(path)
+}
 
 async function fetchSummary() {
   loading.value = true
@@ -125,7 +141,31 @@ onMounted(fetchSummary)
 .toolbar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.toolbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.toolbar-hint {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #909399;
+}
+
+.toolbar-period {
+  display: flex;
+  align-items: center;
   gap: 12px;
+  flex-shrink: 0;
+}
+
+.clickable-card {
+  cursor: pointer;
 }
 
 .metric {
@@ -141,6 +181,10 @@ onMounted(fetchSummary)
 .metric strong {
   font-size: 24px;
   color: #303133;
+}
+
+.metric.danger strong {
+  color: #f56c6c;
 }
 
 @media (max-width: 768px) {
@@ -162,6 +206,10 @@ onMounted(fetchSummary)
 
   .toolbar {
     flex-wrap: wrap;
+  }
+
+  .toolbar-period {
+    width: 100%;
   }
 }
 </style>

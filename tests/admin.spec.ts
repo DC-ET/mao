@@ -24,7 +24,7 @@ async function login(page: import('@playwright/test').Page) {
 test.describe('Login Page', () => {
   test('should render login form', async ({ page }) => {
     await page.goto('/admin/login')
-    await expect(page.locator('.login-card h2')).toHaveText('Agent 工作台 - 管理后台')
+    await expect(page.locator('.login-card h2')).toHaveText('Mao 管理后台')
     await expect(page.locator('input[placeholder="用户名"]')).toBeVisible()
     await expect(page.locator('input[placeholder="密码"]')).toBeVisible()
     await expect(page.locator('button:has-text("登录")')).toBeVisible()
@@ -84,22 +84,20 @@ test.describe('Dashboard', () => {
   })
 
   test('should show trend chart and rank sections', async ({ page }) => {
-    await expect(page.locator('.chart-container')).toBeVisible({ timeout: 10_000 })
-    // Usage trend card title
-    await expect(page.locator('.el-card:has(.chart-container) .el-card__header')).toContainText('使用趋势')
-    // Agent rank card
+    await expect(page.locator('.chart-container, .chart-empty').first()).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.el-card__header').filter({ hasText: '使用趋势' })).toBeVisible()
     await expect(page.locator('.rank-item').first()).toBeVisible({ timeout: 10_000 })
   })
 
-  test('should show token and user stats tables', async ({ page }) => {
-    // Token table
-    await expect(page.locator('text=Token 消耗排行')).toBeVisible({ timeout: 10_000 })
-    // User activity table
-    await expect(page.locator('text=用户活跃度')).toBeVisible({ timeout: 10_000 })
-    // Tables should have headers
-    const tables = page.locator('.el-table')
-    const tableCount = await tables.count()
-    expect(tableCount).toBeGreaterThanOrEqual(2)
+  test('should show governance cards and link to analytics', async ({ page }) => {
+    await expect(page.locator('.governance-card')).toContainText(['运行中会话', '待审批会话', '失败会话', '取消会话'])
+    await expect(page.locator('text=查看用量分析')).toBeVisible()
+  })
+
+  test('should drill down from failed sessions to runtime monitor', async ({ page }) => {
+    await page.locator('.governance-card:has-text("失败会话")').click()
+    await page.waitForURL(/\/runtime/, { timeout: 10_000 })
+    await expect(page.locator('text=运行中与异常会话')).toBeVisible({ timeout: 10_000 })
   })
 })
 
@@ -235,7 +233,7 @@ test.describe('Skills Management', () => {
   })
 
   test('should display skills page with upload zone', async ({ page }) => {
-    await expect(page.locator('.card-header span').first()).toContainText('Agent Skills')
+    await expect(page.locator('.card-header span').first()).toContainText('Skills 管理')
     // Upload zone should be visible
     await expect(page.locator('.upload-zone')).toBeVisible()
     await expect(page.locator('.upload-text')).toContainText(/拖动或点击上传/)
@@ -302,6 +300,10 @@ test.describe('Sidebar Navigation', () => {
     await login(page)
   })
 
+  test('should show grouped sidebar sections', async ({ page }) => {
+    await expect(page.locator('.el-menu-item-group__title')).toContainText(['能力', '运行', '安全', '系统'])
+  })
+
   test('should navigate between all pages via sidebar', async ({ page }) => {
     const navItems = [
       { label: '数据概览', url: /\/dashboard$/ },
@@ -309,11 +311,11 @@ test.describe('Sidebar Navigation', () => {
       { label: '模型管理', url: /\/models$/ },
       { label: 'Skills 管理', url: /\/skills$/ },
       { label: '会话管理', url: /\/sessions$/ },
+      { label: '运行监控', url: /\/runtime$/ },
+      { label: '用量分析', url: /\/analytics$/ },
       { label: '用户管理', url: /\/users$/ },
       { label: '角色权限', url: /\/roles$/ },
       { label: '审计日志', url: /\/audit-logs$/ },
-      { label: '运行监控', url: /\/runtime$/ },
-      { label: '用量分析', url: /\/analytics$/ },
       { label: '系统设置', url: /\/settings$/ },
     ]
 

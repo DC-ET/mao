@@ -20,8 +20,13 @@
 ### 管理后台
 - 合并单域名：`/admin/` 路径下托管管理后台，`base` 改为 `/admin/`
 - 移除 `maoadmin.etarch.cn` 独立域名，改为 301 跳转到 `mao.etarch.cn/admin/`
-- 修复 `/admin/` 子路径下站点图标不显示：favicon 改为随 `base` 引用 `favicon.svg`
-- 修正单域 Nginx：`/admin/` 不可 rewrite 成 `/`，否则会返回桌面 index 导致白屏；验收须核对页面标题为 `admin`
+- 修复 `/admin/` 子路径下站点图标不显示：favicon 改为随 `base` 引用 `app-icon-small.png`
+- 修正单域 Nginx：`/admin/` 不可 rewrite 成 `/`，否则会返回桌面 index 导致白屏；验收须核对页面标题含 `Mao 管理后台`
+- 侧栏按「能力 / 运行 / 安全 / 系统」分组，运行监控与用量分析提前到会话附近
+- 数据概览改为健康看板：异常会话可下钻到运行监控，总量卡片可进入对应列表；周期报表入口指向用量分析
+- 统一品牌为「Mao 管理后台」（登录页、侧栏 Logo、浏览器标题）；登录只记住用户名，不再把密码写入 localStorage
+- 运行监控指标改为接口总数并可按阶段筛选；会话列表展示匹配总数；定时任务展示用户名与 Agent 名
+- 系统设置以说明为主、开关可直接切换，不再把「可编辑」列作为主信息
 
 ### 前端（桌面 / Web / 安卓）
 - 修复 `useChat.ts` 中 `catch` 块引用块级变量 `sid` 的 TypeScript 错误

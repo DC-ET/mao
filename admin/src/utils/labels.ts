@@ -55,6 +55,7 @@ export const EXECUTION_MODE_OPTIONS = [
 export const PHASE_OPTIONS = [
   { label: '空闲', value: 'IDLE' },
   { label: '运行中', value: 'RUNNING' },
+  { label: '待审批', value: 'WAITING_APPROVAL' },
   { label: '已完成', value: 'COMPLETED' },
   { label: '失败', value: 'FAILED' },
   { label: '已取消', value: 'CANCELLED' }

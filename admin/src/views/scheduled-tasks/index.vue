@@ -11,10 +11,14 @@
         <template #empty>
           <el-empty description="暂无定时任务" :image-size="60" />
         </template>
-        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column prop="id" label="ID" width="70" class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column prop="name" label="任务名称" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="userId" label="用户ID" width="90" />
-        <el-table-column prop="agentId" label="Agent ID" width="90" />
+        <el-table-column label="用户" width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ userName(row.userId) }}</template>
+        </el-table-column>
+        <el-table-column label="Agent" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ agentName(row.agentId) }}</template>
+        </el-table-column>
         <el-table-column prop="cronExpression" label="Cron 表达式" width="150" />
         <el-table-column prop="status" label="状态" width="90">
           <template #default="{ row }">
@@ -111,6 +115,38 @@ const loading = ref(false)
 const pageNum = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const userNames = ref<Record<number, string>>({})
+const agentNames = ref<Record<number, string>>({})
+
+function userName(id: number) {
+  return userNames.value[id] || `用户 #${id}`
+}
+
+function agentName(id: number) {
+  return agentNames.value[id] || `Agent #${id}`
+}
+
+async function fetchLookups() {
+  try {
+    const [usersRes, agentsRes] = await Promise.all([
+      api.get('/admin/sessions/options/users'),
+      api.get('/admin/sessions/options/agents')
+    ])
+    const nextUsers: Record<number, string> = {}
+    for (const u of usersRes.data || []) {
+      nextUsers[u.id] = u.displayName || u.username || `用户 #${u.id}`
+    }
+    userNames.value = nextUsers
+    const nextAgents: Record<number, string> = {}
+    for (const a of agentsRes.data || []) {
+      nextAgents[a.id] = a.name || `Agent #${a.id}`
+    }
+    agentNames.value = nextAgents
+  } catch {
+    userNames.value = {}
+    agentNames.value = {}
+  }
+}
 
 async function fetchTasks() {
   loading.value = true
@@ -172,12 +208,15 @@ function statusLabel(status: string) {
   }
 }
 
-onMounted(fetchTasks)
+onMounted(() => {
+  fetchLookups()
+  fetchTasks()
+})
 </script>
 
 <style scoped>
 .scheduled-tasks {
-  padding: 20px;
+  width: 100%;
 }
 .card-header {
   display: flex;
