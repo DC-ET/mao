@@ -81,10 +81,23 @@ describe('FileService', () => {
     const saved = await service.uploadIncomingFile(
       Buffer.from('x'), '../../evil.txt', 'text/plain', 7, 11, incomingDir,
     );
-    expect(saved.storedName).toMatch(/^[0-9a-f-]+\.txt$/);
+    expect(saved.storedName).toBe('evil.txt');
+    expect(saved.originalName).toBe('evil.txt');
     expect(saved.filePath).toBe(join(incomingDir, saved.storedName));
     expect(existsSync(saved.filePath)).toBe(true);
     expect(saved.filePath.includes('..')).toBe(false);
+  });
+
+  it('uploadIncomingFileKeepsOriginalNameAndResolvesConflicts', async () => {
+    const { dir, service } = await setup();
+    const incomingDir = join(dir, 'runtime', '7', '11', 'incoming');
+    const first = await service.uploadIncomingFile(Buffer.from('a'), '报告 最终版.pdf', 'application/pdf', 7, 11, incomingDir);
+    expect(first.storedName).toBe('报告 最终版.pdf');
+
+    const second = await service.uploadIncomingFile(Buffer.from('b'), '报告 最终版.pdf', 'application/pdf', 7, 11, incomingDir);
+    expect(second.storedName).toBe('报告 最终版-2.pdf');
+    expect(second.filePath).toBe(join(incomingDir, second.storedName));
+    expect(existsSync(second.filePath)).toBe(true);
   });
 
   it('sanitizeHandlesUrlEncodedTraversalAndKeepsNormalNames', async () => {
@@ -94,8 +107,10 @@ describe('FileService', () => {
     const evil = await service.uploadIncomingFile(
       Buffer.from('x'), '..%2F..%2Fevil.txt', 'text/plain', 7, 12, incomingDir,
     );
-    expect(evil.storedName).toMatch(/^[0-9a-f-]+\.txt$/);
+    expect(evil.storedName).toBe('.._.._evil.txt');
     expect(evil.filePath).toBe(join(incomingDir, evil.storedName));
+    expect(existsSync(evil.filePath)).toBe(true);
+    expect(evil.filePath.includes('/../')).toBe(false);
 
     const normal = await service.uploadIncomingFile(
       Buffer.from('y'), '100%2e5.xlsx', 'application/octet-stream', 7, 12, incomingDir,

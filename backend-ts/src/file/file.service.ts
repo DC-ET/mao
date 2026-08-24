@@ -112,8 +112,9 @@ export class FileService {
   ): Promise<FileEntity> {
     this.assertUploadable(bytes);
     try {
-      const entity = this.buildFileEntity(bytes, originalFilename, declaredMime, userId, sessionId);
+      const entity = this.buildFileEntity(bytes, originalFilename, declaredMime, userId, sessionId, true);
       mkdirSync(incomingDir, { recursive: true });
+      entity.storedName = uniqueIncomingName(incomingDir, entity.storedName);
       entity.filePath = join(incomingDir, entity.storedName);
       writeFileSync(entity.filePath, bytes);
       await this.repo.insert(entity);
@@ -141,6 +142,7 @@ export class FileService {
     declaredMime: string | null,
     userId: number,
     sessionId: number | null,
+    keepName = false,
   ): FileEntity {
     let originalName = originalFilename == null || originalFilename.trim().length === 0 ? 'upload' : originalFilename;
     // 仅保留文件名（剥掉路径），并替换 URL 编码/反斜杠等危险字符，防止展示与拼接异常
@@ -153,7 +155,8 @@ export class FileService {
       originalName = baseName;
     }
     const extension = safeExtension(originalName);
-    const storedName = randomUUID() + extension;
+    // incoming 会话临时目录按用户/会话隔离，直接保留原始文件名便于 Agent 与用户识别；通用 uploads 保持 UUID 防冲突
+    const storedName = keepName ? sanitizeBaseName(originalName) : randomUUID() + extension;
     return {
       storedName,
       filePath: '',
@@ -264,6 +267,18 @@ function safeExtension(originalName: string): string {
   if (dot <= 0) return '';
   const ext = originalName.slice(dot + 1).toLowerCase();
   return /^[a-z0-9._-]{1,16}$/.test(ext) ? `.${ext}` : '';
+}
+
+/** incoming 目录内取不冲突的文件名：重名时追加 -2、-3 序号（保留扩展名）。 */
+function uniqueIncomingName(dir: string, name: string): string {
+  if (!existsSync(join(dir, name))) return name;
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let i = 2; ; i++) {
+    const candidate = `${stem}-${i}${ext}`;
+    if (!existsSync(join(dir, candidate))) return candidate;
+  }
 }
 
 /** 清洗文件名：仅处理路径穿越片段（如 %2e%2e 编码的 ../）与反斜杠/控制字符，保留正常字符。 */
