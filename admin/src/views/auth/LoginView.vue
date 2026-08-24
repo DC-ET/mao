@@ -1,12 +1,9 @@
 <template>
   <div class="login-container">
-    <el-card class="login-card">
-      <template #header>
-        <div class="login-brand">
-          <img class="login-logo" :src="logoSrc" alt="" />
-          <h2>Mao 管理后台</h2>
-        </div>
-      </template>
+    <div class="login-card">
+      <img class="login-logo" :src="logoSrc" alt="" />
+      <h2>Mao 管理后台</h2>
+      <p class="login-hint">平台配置、会话排障与权限治理</p>
 
       <el-form :model="form" @submit.prevent="handleLogin">
         <el-form-item>
@@ -14,6 +11,7 @@
             v-model="form.username"
             placeholder="用户名"
             prefix-icon="User"
+            size="large"
             @keyup.enter="handleLogin"
           />
         </el-form-item>
@@ -23,6 +21,7 @@
             type="password"
             placeholder="密码"
             prefix-icon="Lock"
+            size="large"
             show-password
             @keyup.enter="handleLogin"
           />
@@ -34,6 +33,7 @@
           <el-button
             type="primary"
             native-type="submit"
+            size="large"
             :loading="loading"
             style="width: 100%"
           >
@@ -41,7 +41,7 @@
           </el-button>
         </el-form-item>
       </el-form>
-    </el-card>
+    </div>
   </div>
 </template>
 
@@ -99,33 +99,41 @@ async function handleLogin() {
   align-items: center;
   min-height: 100vh;
   min-height: 100dvh;
-  background: #f5f7fa;
+  background: var(--mao-canvas);
   padding: 16px;
   box-sizing: border-box;
 }
 
 .login-card {
-  width: 400px;
+  width: 380px;
   max-width: 100%;
-}
-
-.login-brand {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
+  padding: 40px 32px 24px;
+  background: var(--mao-surface);
+  border: 1px solid var(--mao-border);
+  border-radius: 16px;
+  box-sizing: border-box;
 }
 
 .login-logo {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  display: block;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 16px;
+  border-radius: 12px;
 }
 
 .login-card h2 {
   text-align: center;
-  margin: 0;
-  color: #303133;
-  font-size: 18px;
+  margin: 0 0 6px;
+  color: var(--mao-ink);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.login-hint {
+  margin: 0 0 28px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--mao-muted);
 }
 </style>

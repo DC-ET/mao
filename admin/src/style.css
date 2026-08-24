@@ -1,11 +1,40 @@
 :root {
+  --mao-ink: #1d1d1f;
+  --mao-muted: #86868b;
+  --mao-canvas: #f5f5f7;
+  --mao-surface: #ffffff;
+  --mao-border: #e0e0e0;
+  --mao-accent: #0066cc;
+  --mao-accent-bg: rgba(0, 102, 204, 0.08);
+  --el-color-primary: #0066cc;
+  --el-color-primary-light-3: #3385d6;
+  --el-color-primary-light-5: #66a3e0;
+  --el-color-primary-light-7: #99c2eb;
+  --el-color-primary-light-8: #b3d1f0;
+  --el-color-primary-light-9: #e6f0fa;
+  --el-color-primary-dark-2: #0052a3;
   font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  color: var(--mao-ink);
 }
 
 body {
   margin: 0;
+  background: var(--mao-canvas);
+}
+
+.el-button--primary {
+  --el-button-bg-color: var(--mao-accent);
+  --el-button-border-color: var(--mao-accent);
+  --el-button-hover-bg-color: #0071e3;
+  --el-button-hover-border-color: #0071e3;
+}
+
+.el-menu {
+  --el-menu-bg-color: var(--mao-surface);
+  --el-menu-hover-bg-color: var(--mao-canvas);
+  --el-menu-active-color: var(--mao-accent);
 }

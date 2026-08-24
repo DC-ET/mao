@@ -3,7 +3,10 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>系统设置</span>
+          <div>
+            <div class="card-title">系统设置</div>
+            <div class="card-hint">按分类编辑平台配置，开关可直接切换。</div>
+          </div>
           <el-button @click="fetchSettings">
             <el-icon><Refresh /></el-icon>
           </el-button>
@@ -17,81 +20,71 @@
           :label="category"
           :name="category"
         >
-          <el-table :data="settingsByCategory[category] || []" stripe>
-            <el-table-column prop="description" label="说明" min-width="240" />
-            <el-table-column prop="settingKey" label="配置键" width="200" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
-              <template #default="{ row }">
+          <div class="setting-list">
+            <div v-for="row in settingsByCategory[category] || []" :key="row.settingKey" class="setting-row">
+              <div class="setting-copy">
+                <div class="setting-name">{{ row.description || row.settingKey }}</div>
                 <code class="setting-key">{{ row.settingKey }}</code>
-              </template>
-            </el-table-column>
-            <el-table-column prop="value" label="当前值" min-width="220" show-overflow-tooltip>
-              <template #default="{ row }">
+              </div>
+              <div class="setting-control">
                 <el-switch
                   v-if="isBooleanSetting(row.settingKey)"
                   :model-value="row.value === 'true'"
                   :disabled="row.editable !== 1"
                   @change="(val: string | number | boolean) => saveBoolean(row, val === true)"
                 />
-                <span v-else-if="row.settingKey === 'weixin.agentId'">{{ formatWeixinAgent(row.value) }}</span>
-                <span v-else-if="row.settingKey === 'weixin.modelId' || row.settingKey === 'session.titleModelId' || row.settingKey === 'git.commitMessageModelId'">{{ formatModelSetting(row.value) }}</span>
-                <span v-else>{{ row.value }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="90" fixed="right">
-              <template #default="{ row }">
-                <el-button type="primary" link size="small" :disabled="row.editable !== 1 || isBooleanSetting(row.settingKey)" @click="handleEdit(row)">编辑</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+                <el-select
+                  v-else-if="row.settingKey === 'weixin.agentId'"
+                  :model-value="row.value || ''"
+                  :disabled="row.editable !== 1"
+                  clearable
+                  filterable
+                  placeholder="默认 Agent"
+                  style="width: 240px"
+                  @change="(val: string) => saveSelect(row, val)"
+                >
+                  <el-option
+                    v-for="agent in agents"
+                    :key="agent.id"
+                    :label="agentLabel(agent)"
+                    :value="String(agent.id)"
+                  />
+                </el-select>
+                <el-select
+                  v-else-if="isModelSetting(row.settingKey)"
+                  :model-value="row.value || ''"
+                  :disabled="row.editable !== 1"
+                  clearable
+                  filterable
+                  placeholder="默认模型"
+                  style="width: 240px"
+                  @change="(val: string) => saveSelect(row, val)"
+                >
+                  <el-option
+                    v-for="model in models"
+                    :key="model.id"
+                    :label="modelLabel(model)"
+                    :value="String(model.id)"
+                  />
+                </el-select>
+                <template v-else>
+                  <span class="setting-value">{{ row.value || '未设置' }}</span>
+                  <el-button type="primary" link size="small" :disabled="row.editable !== 1" @click="handleEdit(row)">编辑</el-button>
+                </template>
+              </div>
+            </div>
+          </div>
         </el-tab-pane>
       </el-tabs>
     </el-card>
 
     <ResponsiveDialog v-if="dialogVisible" v-model="dialogVisible" title="编辑配置" width="480px">
       <el-form label-width="90px">
-        <el-form-item label="配置键">
-          <el-input :model-value="currentSetting?.settingKey" disabled />
+        <el-form-item label="说明">
+          <el-input :model-value="currentSetting?.description" disabled />
         </el-form-item>
         <el-form-item label="配置值">
-          <el-select
-            v-if="currentSetting?.settingKey === 'weixin.agentId'"
-            v-model="settingValue"
-            clearable
-            filterable
-            placeholder="留空则使用默认 Agent"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="agent in agents"
-              :key="agent.id"
-              :label="agentLabel(agent)"
-              :value="String(agent.id)"
-            />
-          </el-select>
-          <el-select
-            v-else-if="currentSetting?.settingKey === 'weixin.modelId' || currentSetting?.settingKey === 'session.titleModelId' || currentSetting?.settingKey === 'git.commitMessageModelId'"
-            v-model="settingValue"
-            clearable
-            filterable
-            placeholder="留空则使用默认模型"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="model in models"
-              :key="model.id"
-              :label="modelLabel(model)"
-              :value="String(model.id)"
-            />
-          </el-select>
-          <el-select
-            v-else-if="isBooleanSetting(currentSetting?.settingKey)"
-            v-model="settingValue"
-            style="width: 100%"
-          >
-            <el-option label="已启用 (true)" value="true" />
-            <el-option label="未启用 (false)" value="false" />
-          </el-select>
-          <el-input v-else v-model="settingValue" />
+          <el-input v-model="settingValue" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -108,7 +101,6 @@ import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
-const SELECT_KEYS = new Set(['weixin.agentId', 'weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId'])
 const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId'])
 
 const loading = ref(false)
@@ -123,6 +115,10 @@ const saving = ref(false)
 
 function isBooleanSetting(key: string | undefined | null) {
   return !!key && key.endsWith('enabled')
+}
+
+function isModelSetting(key: string | undefined | null) {
+  return !!key && MODEL_SELECT_KEYS.has(key)
 }
 
 const categories = computed(() => {
@@ -191,60 +187,36 @@ function modelLabel(model: any) {
   return model.isDefault ? `${model.name}（默认）` : model.name
 }
 
-function formatWeixinAgent(value: string | null | undefined) {
-  if (!value) return '未设置（使用默认 Agent）'
-  const agent = agents.value.find(a => String(a.id) === String(value))
-  return agent ? `${agent.name}（ID: ${value}）` : `Agent ID: ${value}`
-}
-
-function formatModelSetting(value: string | null | undefined) {
-  if (!value) return '未设置（使用默认模型）'
-  const model = models.value.find(m => String(m.id) === String(value))
-  return model ? `${model.name}（ID: ${value}）` : `模型 ID: ${value}`
-}
-
-async function handleEdit(row: any) {
+function handleEdit(row: any) {
   currentSetting.value = row
-  if (row.settingKey === 'weixin.agentId') {
-    await fetchAgents()
-  }
-  if (MODEL_SELECT_KEYS.has(row.settingKey)) {
-    await fetchModels()
-  }
-  if (isBooleanSetting(row.settingKey)) {
-    settingValue.value = row.value === 'true' ? 'true' : 'false'
-  } else {
-    settingValue.value = row.value || ''
-  }
+  settingValue.value = row.value || ''
   dialogVisible.value = true
 }
 
-async function saveBoolean(row: any, enabled: boolean) {
+async function persist(row: any, value: string) {
   if (row.editable !== 1 || saving.value) return
   saving.value = true
   try {
-    await api.put(`/system-settings/${row.settingKey}`, { value: enabled ? 'true' : 'false' })
-    row.value = enabled ? 'true' : 'false'
+    await api.put(`/system-settings/${row.settingKey}`, { value })
+    row.value = value
     ElMessage.success('配置已更新')
   } finally {
     saving.value = false
   }
 }
 
+async function saveBoolean(row: any, enabled: boolean) {
+  await persist(row, enabled ? 'true' : 'false')
+}
+
+async function saveSelect(row: any, value: string) {
+  await persist(row, value || '')
+}
+
 async function saveSetting() {
-  if (!currentSetting.value || saving.value) return
-  const value = SELECT_KEYS.has(currentSetting.value.settingKey)
-    ? (settingValue.value || '')
-    : settingValue.value
-  saving.value = true
-  try {
-    await api.put(`/system-settings/${currentSetting.value.settingKey}`, { value })
-    ElMessage.success('配置已更新')
-    dialogVisible.value = false
-    fetchSettings()
-  } finally {
-    saving.value = false
-  }
+  if (!currentSetting.value) return
+  await persist(currentSetting.value, settingValue.value)
+  dialogVisible.value = false
 }
 
 onActivated(async () => {
@@ -257,11 +229,85 @@ onActivated(async () => {
 .card-header {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mao-ink);
+}
+
+.card-hint {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--mao-muted);
+}
+
+.setting-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.setting-row {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 4px;
+  border-bottom: 1px solid var(--mao-border);
+}
+
+.setting-row:last-child {
+  border-bottom: none;
+}
+
+.setting-copy {
+  min-width: 0;
+}
+
+.setting-name {
+  font-size: 14px;
+  color: var(--mao-ink);
 }
 
 .setting-key {
+  display: block;
+  margin-top: 4px;
   font-size: 12px;
-  color: #909399;
+  color: var(--mao-muted);
+}
+
+.setting-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.setting-value {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--mao-ink);
+}
+
+@media (max-width: 768px) {
+  .setting-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .setting-control {
+    width: 100%;
+  }
+
+  .setting-control :deep(.el-select) {
+    width: 100% !important;
+  }
 }
 </style>

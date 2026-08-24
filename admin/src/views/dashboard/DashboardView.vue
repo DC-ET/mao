@@ -200,12 +200,12 @@ onMounted(fetchAll)
 }
 
 .governance-card span {
-  color: #606266;
+  color: var(--mao-muted);
 }
 
 .governance-card strong {
   font-size: 24px;
-  color: #303133;
+  color: var(--mao-ink);
 }
 
 .governance-card.danger strong {
@@ -219,8 +219,8 @@ onMounted(fetchAll)
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #409eff;
-  background: #ecf5ff;
+  color: var(--mao-accent);
+  background: var(--mao-accent-bg);
 }
 
 .stat-value {
@@ -286,7 +286,7 @@ onMounted(fetchAll)
   border-radius: 3px 3px 0 0;
 }
 
-.trend-bar.sessions .bar-inner { background: #409eff; }
+.trend-bar.sessions .bar-inner { background: var(--mao-accent); }
 .trend-bar.messages .bar-inner { background: #67c23a; }
 
 .trend-label {
@@ -315,7 +315,7 @@ onMounted(fetchAll)
   border-radius: 2px;
 }
 
-.legend-dot.sessions { background: #409eff; }
+.legend-dot.sessions { background: var(--mao-accent); }
 .legend-dot.messages { background: #67c23a; }
 
 .rank-item {
@@ -352,7 +352,7 @@ onMounted(fetchAll)
 }
 
 .rank-num.top {
-  background: #409eff;
+  background: var(--mao-accent);
   color: #fff;
 }
 

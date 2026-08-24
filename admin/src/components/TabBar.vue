@@ -101,10 +101,10 @@ function onKeydown(e: KeyboardEvent) {
 .tab-bar {
   display: flex;
   align-items: center;
-  height: 40px;
-  background: #fff;
-  border-bottom: 1px solid #e6e6e6;
-  padding: 0 8px;
+  height: 36px;
+  background: var(--mao-surface);
+  border-bottom: 1px solid var(--mao-border);
+  padding: 0 12px;
   overflow-x: auto;
   overflow-y: hidden;
   flex-shrink: 0;
@@ -118,40 +118,39 @@ function onKeydown(e: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 10px;
   margin: 0 2px;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
   font-size: 13px;
-  color: #606266;
-  transition: all 0.2s;
+  color: var(--mao-muted);
   flex-shrink: 0;
   outline: none;
 }
 
 .tab-item:hover {
-  background: #f5f7fa;
+  background: var(--mao-canvas);
+  color: var(--mao-ink);
 }
 
 .tab-item.active {
-  color: #409eff;
-  background: #ecf5ff;
+  color: var(--mao-accent);
+  background: var(--mao-accent-bg);
 }
 
 .tab-item:focus-visible {
-  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.45);
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.28);
 }
 
 .tab-close {
   font-size: 12px;
   border-radius: 50%;
-  transition: all 0.2s;
 }
 
 .tab-close:hover {
-  background: #c0c4cc;
-  color: #fff;
+  background: #d2d2d7;
+  color: var(--mao-ink);
 }
 </style>

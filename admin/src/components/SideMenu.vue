@@ -1,8 +1,8 @@
 <template>
-  <div class="side-menu-wrap">
+  <div class="side-menu-wrap" :class="{ 'is-collapsed': collapsed }">
     <div v-if="showLogo" class="logo" @click="goHome">
       <img class="logo-img" :src="logoSrc" alt="" />
-      <div class="logo-text">
+      <div v-if="!collapsed" class="logo-text">
         <strong>Mao</strong>
         <span>管理后台</span>
       </div>
@@ -10,6 +10,8 @@
 
     <el-menu
       :default-active="activeMenu"
+      :collapse="collapsed"
+      :collapse-transition="false"
       router
       class="sidebar-menu"
       @select="onSelect"
@@ -20,16 +22,16 @@
           :index="group.items[0].index"
         >
           <el-icon><component :is="group.items[0].icon" /></el-icon>
-          <span>{{ group.items[0].label }}</span>
+          <template #title>{{ group.items[0].label }}</template>
         </el-menu-item>
-        <el-menu-item-group v-else :title="group.label">
+        <el-menu-item-group v-else :title="collapsed ? '' : group.label">
           <el-menu-item
             v-for="item in group.items"
             :key="item.index"
             :index="item.index"
           >
             <el-icon><component :is="item.icon" /></el-icon>
-            <span>{{ item.label }}</span>
+            <template #title>{{ item.label }}</template>
           </el-menu-item>
         </el-menu-item-group>
       </template>
@@ -60,8 +62,9 @@ import { useAuthStore } from '../stores/auth'
 withDefaults(
   defineProps<{
     showLogo?: boolean
+    collapsed?: boolean
   }>(),
-  { showLogo: true }
+  { showLogo: true, collapsed: false }
 )
 
 const emit = defineEmits<{
@@ -166,24 +169,29 @@ function onSelect() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #304156;
+  background: var(--mao-surface);
 }
 
 .logo {
-  height: 60px;
+  height: 56px;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 0 16px;
-  color: #fff;
+  color: var(--mao-ink);
   cursor: pointer;
   flex-shrink: 0;
+}
+
+.is-collapsed .logo {
+  justify-content: center;
+  padding: 0;
 }
 
 .logo-img {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: 7px;
 }
 
 .logo-text {
@@ -199,30 +207,53 @@ function onSelect() {
 
 .logo-text span {
   font-size: 11px;
-  color: #bfcbd9;
+  color: var(--mao-muted);
 }
 
 .sidebar-menu {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   border-right: none;
-  background: #304156;
+  background: var(--mao-surface);
+}
+
+.sidebar-menu:not(.el-menu--collapse) {
+  width: 100%;
 }
 
 .sidebar-menu :deep(.el-menu-item-group__title) {
-  color: #8091a5;
-  font-size: 12px;
+  color: var(--mao-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
   padding: 16px 20px 6px;
   line-height: 1;
 }
 
-.sidebar-menu .el-menu-item {
-  color: #bfcbd9;
+.is-collapsed .sidebar-menu :deep(.el-menu-item-group__title) {
+  display: none;
 }
 
-.sidebar-menu .el-menu-item:hover,
+.sidebar-menu .el-menu-item {
+  color: var(--mao-ink);
+  margin: 0 8px;
+  width: calc(100% - 16px);
+  border-radius: 8px;
+}
+
+.sidebar-menu .el-menu-item:hover {
+  background: var(--mao-canvas);
+}
+
 .sidebar-menu .el-menu-item.is-active {
-  background: #263445;
-  color: #409eff;
+  background: var(--mao-accent-bg);
+  color: var(--mao-accent);
+}
+
+.is-collapsed .sidebar-menu .el-menu-item {
+  margin: 0 8px;
+  width: calc(100% - 16px);
+  padding: 0 !important;
+  justify-content: center;
 }
 </style>

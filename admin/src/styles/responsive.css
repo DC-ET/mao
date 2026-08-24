@@ -57,10 +57,10 @@
     --el-card-padding: 14px;
   }
 
-  /* 移动端抽屉菜单：去除默认白底与内边距，让深色菜单铺满 */
+  /* 移动端抽屉菜单铺满浅色侧栏 */
   .mobile-side-drawer .el-drawer,
   .mobile-side-drawer .el-drawer__body {
-    background: #304156 !important;
+    background: var(--mao-surface) !important;
   }
 
   .mobile-side-drawer .el-drawer__body {
@@ -70,7 +70,7 @@
 
   .mobile-side-drawer .el-drawer .el-menu,
   .mobile-side-drawer .side-menu-wrap {
-    background: #304156 !important;
+    background: var(--mao-surface) !important;
     border-right: none !important;
     height: 100% !important;
   }

@@ -1,13 +1,13 @@
 <template>
   <el-container class="layout-container">
-    <el-aside v-if="!isMobile" width="220px" class="layout-aside">
-      <SideMenu :show-logo="true" />
+    <el-aside v-if="!isMobile" :width="asideWidth" class="layout-aside">
+      <SideMenu :show-logo="true" :collapsed="collapsed" />
     </el-aside>
 
     <el-drawer
       v-model="drawerVisible"
       direction="ltr"
-      size="70%"
+      size="72%"
       :with-header="false"
       class="mobile-side-drawer"
     >
@@ -19,6 +19,10 @@
         <div class="header-left">
           <el-icon v-if="isMobile" class="menu-toggle" @click="drawerVisible = true">
             <Menu />
+          </el-icon>
+          <el-icon v-else class="menu-toggle" :title="collapsed ? '展开菜单' : '收起菜单'" @click="toggleCollapsed">
+            <Fold v-if="!collapsed" />
+            <Expand v-else />
           </el-icon>
           <nav v-if="crumbs.length > 1" class="page-crumb" aria-label="面包屑">
             <template v-for="(crumb, idx) in crumbs" :key="crumb.title">
@@ -33,7 +37,7 @@
         <div class="header-right">
           <el-dropdown @command="handleCommand">
             <span class="user-info">
-              <el-avatar :size="32" icon="User" />
+              <el-avatar :size="28" icon="User" />
               <span v-if="!isMobile" class="username">{{ authStore.user?.displayName || '管理员' }}</span>
             </span>
             <template #dropdown>
@@ -69,6 +73,8 @@ import { useBreakpoint } from '../composables/useBreakpoint'
 import TabBar from './TabBar.vue'
 import SideMenu from './SideMenu.vue'
 
+const SIDEBAR_KEY = 'admin-sidebar-collapsed'
+
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
@@ -76,7 +82,9 @@ const tabStore = useTabStore()
 const { isMobile } = useBreakpoint()
 
 const drawerVisible = ref(false)
+const collapsed = ref(localStorage.getItem(SIDEBAR_KEY) === '1')
 
+const asideWidth = computed(() => (collapsed.value ? '64px' : '232px'))
 const currentTitle = computed(() => (route.meta?.title as string) || '')
 
 const crumbs = computed(() => {
@@ -88,6 +96,11 @@ const crumbs = computed(() => {
   }
   return [{ title: currentTitle.value }]
 })
+
+function toggleCollapsed() {
+  collapsed.value = !collapsed.value
+  localStorage.setItem(SIDEBAR_KEY, collapsed.value ? '1' : '0')
+}
 
 watch(
   currentTitle,
@@ -120,16 +133,19 @@ async function handleCommand(command: string) {
 }
 
 .layout-aside {
-  background: #304156;
+  background: var(--mao-surface);
+  border-right: 1px solid var(--mao-border);
   overflow: hidden;
+  transition: width 0.2s ease;
 }
 
 .layout-header {
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #e6e6e6;
-  background: #fff;
+  border-bottom: 1px solid var(--mao-border);
+  background: var(--mao-surface);
 }
 
 .header-left {
@@ -140,9 +156,9 @@ async function handleCommand(command: string) {
 }
 
 .page-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  color: #303133;
+  color: var(--mao-ink);
 }
 
 .page-crumb {
@@ -153,8 +169,8 @@ async function handleCommand(command: string) {
 }
 
 .page-crumb-link {
-  font-size: 16px;
-  color: #409eff;
+  font-size: 15px;
+  color: var(--mao-accent);
   text-decoration: none;
 }
 
@@ -163,7 +179,7 @@ async function handleCommand(command: string) {
 }
 
 .page-crumb-sep {
-  color: #c0c4cc;
+  color: var(--mao-muted);
 }
 
 .header-right {
@@ -179,18 +195,22 @@ async function handleCommand(command: string) {
 }
 
 .username {
-  font-size: 14px;
-  color: #606266;
+  font-size: 13px;
+  color: var(--mao-muted);
 }
 
 .menu-toggle {
-  font-size: 22px;
+  font-size: 20px;
   cursor: pointer;
-  color: #606266;
+  color: var(--mao-muted);
+}
+
+.menu-toggle:hover {
+  color: var(--mao-ink);
 }
 
 .layout-main {
-  background: #f5f7fa;
+  background: var(--mao-canvas);
   padding: 0;
   overflow: hidden;
 }
