@@ -32,8 +32,11 @@ describe('BackgroundSubagentManager.progress snapshot', () => {
 
     const collector = new SubAgentResultCollector();
     collector.toolCallCount = 3;
-    collector.totalUsage = { promptTokens: 120, completionTokens: 45, totalTokens: 165 };
-    const context = { currentRound: 4 } as never;
+    // 运行中 token 统计读 context.totalUsage（AgentLoop 每轮 addUsage 实时累计）
+    const context = {
+      currentRound: 4,
+      totalUsage: { promptTokens: 120, completionTokens: 45, totalTokens: 165 },
+    } as never;
     (manager as unknown as { runningRefsByTask: Map<number, unknown> }).runningRefsByTask.set(7, {
       context,
       collector,
@@ -65,6 +68,27 @@ describe('BackgroundSubagentManager.progress snapshot', () => {
     const snap = (await manager.progress(1, 7)) as BackgroundProgress;
     expect(snap.totalRounds).toBe(0);
     expect(snap.totalToolCalls).toBe(0);
+  });
+
+  it('recentOutput picks last assistant message even when it carries tool calls', async () => {
+    const execution = {
+      id: 7,
+      parentSessionId: 1,
+      childSessionId: 42,
+      agentType: 'reviewer',
+      status: 'RUNNING',
+      invocationType: 'BACKGROUND',
+    };
+    const messages = [
+      { role: 'USER', content: 'hi' },
+      { role: 'ASSISTANT', content: '', toolCalls: '[{"id":"a"}]' },
+      { role: 'ASSISTANT', content: '正在读取文件', toolCalls: '[{"id":"b"}]' },
+      { role: 'ASSISTANT', content: null, toolCalls: '[{"id":"c"}]' },
+    ];
+    const manager = buildManager(execution, messages);
+
+    const snap = (await manager.progress(1, 7)) as BackgroundProgress;
+    expect(snap.recentOutput).toBe('正在读取文件');
   });
 
   it('reads persisted db values when terminal, ignoring stale refs', async () => {

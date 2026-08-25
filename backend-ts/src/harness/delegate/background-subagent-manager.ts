@@ -291,8 +291,10 @@ export class BackgroundSubagentManager {
       status: execution.status ?? null,
       totalRounds: refs ? refs.context.currentRound : execution.totalRounds ?? null,
       totalToolCalls: refs ? refs.collector.toolCallCount : execution.totalToolCalls ?? null,
-      totalPromptTokens: refs ? refs.collector.totalUsage?.promptTokens ?? 0 : execution.totalPromptTokens ?? null,
-      totalCompletionTokens: refs ? refs.collector.totalUsage?.completionTokens ?? 0 : execution.totalCompletionTokens ?? null,
+      // 运行中 totalUsage 由 AgentLoop 每轮流式 onComplete 实时累计（context.addUsage），
+      // 终态 onMessageEnd 传入的也是同一累计对象，运行中读取与终态落库值天然一致
+      totalPromptTokens: refs ? refs.context.totalUsage?.promptTokens ?? 0 : execution.totalPromptTokens ?? null,
+      totalCompletionTokens: refs ? refs.context.totalUsage?.completionTokens ?? 0 : execution.totalCompletionTokens ?? null,
       recentOutput,
     };
   }
@@ -303,7 +305,9 @@ export class BackgroundSubagentManager {
       const messages = this.deps.sessionService.getMessages
         ? await this.deps.sessionService.getMessages(childSessionId)
         : [];
-      const last = [...messages].reverse().find((m) => m.role === 'ASSISTANT' && !m.toolCalls);
+      // 后台代理运行中的 ASSISTANT 消息常同时带工具调用（toolCalls 非空），
+      // 只看 content 是否非空，避免运行中 recentOutput 恒为 null
+      const last = [...messages].reverse().find((m) => m.role === 'ASSISTANT' && m.content);
       const content = last?.content;
       if (content == null || content.trim() === '') return null;
       return truncate(content, 2000);
