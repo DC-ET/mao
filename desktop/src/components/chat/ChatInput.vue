@@ -1166,16 +1166,46 @@ function hasDraft(): boolean {
   return editorContent.value.trim().length > 0 || pendingFiles.value.length > 0
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/** 将含 @{..}@ / ${..}$ / #{..}# 标记的纯文本转换为含 Tag 节点的编辑器 HTML（与 handlePaste 的解析规则一致）。 */
+function markedTextToEditorHtml(text: string): string {
+  const parts = text.split(/(@\{[^}]+\}@|\$\{[^}]+\}\$|#\{[^}]+\}#)/)
+  return parts
+    .map(part => {
+      if (!part) return ''
+      const fileMatch = part.match(/^@\{(.+)\}@$/)
+      const skillMatch = part.match(/^\$\{(.+)\}\$$/)
+      const commandMatch = part.match(/^#\{(.+)\}#$/)
+      if (fileMatch) {
+        const path = escapeHtml(fileMatch[1])
+        const name = escapeHtml(fileMatch[1].split('/').pop() || fileMatch[1])
+        return `<span data-file-reference data-file-path="${path}">${name}</span>`
+      }
+      if (skillMatch) {
+        const name = escapeHtml(skillMatch[1])
+        return `<span data-quick-command data-command-type="skill" data-command-name="${name}">${name}</span>`
+      }
+      if (commandMatch) {
+        const name = escapeHtml(commandMatch[1])
+        return `<span data-quick-command data-command-type="command" data-command-name="${name}">${name}</span>`
+      }
+      return escapeHtml(part).replace(/\n/g, '<br>')
+    })
+    .join('')
+}
+
 /** 撤回回填：清空当前内容后写入文本与附件（图片重建预览 URL，非图片文件直接加入待发列表）。 */
 function restoreContent(text: string, files: File[]) {
   clearInput()
   if (text) {
-    const escaped = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-    editor.value?.commands.setContent(`<p>${escaped.replace(/\n/g, '<br>')}</p>`)
+    editor.value?.commands.setContent(`<p>${markedTextToEditorHtml(text)}</p>`)
     editorContent.value = text
   }
   for (const file of files) {

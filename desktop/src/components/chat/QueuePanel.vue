@@ -9,22 +9,29 @@
 
     <div v-if="expanded || queueMessages.length <= 5" class="queue-list">
       <div
-        v-for="(msg, index) in queueMessages"
-        :key="msg.id"
+        v-for="(item, index) in queueView"
+        :key="item.msg.id"
         class="queue-item"
       >
         <div class="queue-item-content">
           <span class="queue-index">{{ index + 1 }}.</span>
-          <span class="queue-text">{{ truncate(msg.content, 50) }}</span>
-          <span v-if="msg.images?.length" class="queue-images">
-            [{{ msg.images.length }}张图片]
+          <span class="queue-text">
+            <template v-for="(seg, segIdx) in item.segments" :key="segIdx">
+              <FileReferenceTag v-if="seg.type === 'file'" :file-path="seg.filePath" />
+              <QuickCommandTag v-else-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" />
+              <template v-else>{{ seg.content }}</template>
+            </template>
+            <span v-if="item.truncated" class="queue-ellipsis">…</span>
+          </span>
+          <span v-if="item.msg.images?.length" class="queue-images">
+            [{{ item.msg.images.length }}张图片]
           </span>
         </div>
         <div class="queue-item-actions">
           <button
             class="action-btn"
             title="编辑"
-            @click="emit('edit', msg)"
+            @click="emit('edit', item.msg)"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
           </button>
@@ -32,7 +39,7 @@
             v-if="index > 0"
             class="action-btn"
             title="上移"
-            @click="emit('reorder', msg.id, 'up')"
+            @click="emit('reorder', item.msg.id, 'up')"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
           </button>
@@ -40,22 +47,22 @@
             v-if="index < queueMessages.length - 1"
             class="action-btn"
             title="下移"
-            @click="emit('reorder', msg.id, 'down')"
+            @click="emit('reorder', item.msg.id, 'down')"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
           </button>
           <button
             class="action-btn insert-btn"
-            :disabled="insertingQueueId === msg.id"
+            :disabled="insertingQueueId === item.msg.id"
             title="立即发送"
-            @click="handleInsert(msg.id)"
+            @click="handleInsert(item.msg.id)"
           >
-            {{ insertingQueueId === msg.id ? '处理中...' : '立即发送' }}
+            {{ insertingQueueId === item.msg.id ? '处理中...' : '立即发送' }}
           </button>
           <button
             class="action-btn delete-btn"
             title="删除"
-            @click="handleDelete(msg.id)"
+            @click="handleDelete(item.msg.id)"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
           </button>
@@ -65,7 +72,14 @@
 
     <!-- Collapsed state -->
     <div v-else class="queue-collapsed">
-      <span class="queue-text">{{ truncate(queueMessages[0].content, 30) }}...</span>
+      <span class="queue-text">
+        <template v-for="(seg, segIdx) in queueView[0].segments" :key="segIdx">
+          <FileReferenceTag v-if="seg.type === 'file'" :file-path="seg.filePath" />
+          <QuickCommandTag v-else-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" />
+          <template v-else>{{ seg.content }}</template>
+        </template>
+        <span v-if="queueView[0].truncated" class="queue-ellipsis">…</span>
+      </span>
       <span class="queue-more">还有 {{ queueMessages.length - 1 }} 条</span>
     </div>
   </div>
@@ -76,6 +90,9 @@ import { ref, computed, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { useSessionStore } from '../../stores/session'
 import type { QueueMessage } from '../../types/chat'
+import { parseQuickCommandSegments, type ParsedSegment } from '../../utils/quick-command-parser'
+import QuickCommandTag from './QuickCommandTag.vue'
+import FileReferenceTag from './FileReferenceTag.vue'
 
 const props = defineProps<{
   /** 可选：指定会话 ID，用于非活跃会话（如边路任务）的队列消息 */
@@ -122,10 +139,49 @@ watch(activePhase, (phase) => {
   }
 })
 
-function truncate(text: string, max: number): string {
-  if (!text) return ''
-  return text.length > max ? text.substring(0, max) + '...' : text
+/** 队列行展示预算（字符数）：文本段按字符计入，Tag 段按名称长度计入，超出则截断。 */
+const QUEUE_DISPLAY_BUDGET = 60
+
+function truncateSegments(content: string): { segments: ParsedSegment[]; truncated: boolean } {
+  const segments = parseQuickCommandSegments(content || '')
+  let budget = QUEUE_DISPLAY_BUDGET
+  const out: ParsedSegment[] = []
+  let truncated = false
+  for (const seg of segments) {
+    if (budget <= 0) {
+      truncated = true
+      break
+    }
+    if (seg.type === 'text') {
+      if (seg.content.length > budget) {
+        out.push({ type: 'text', content: seg.content.slice(0, budget) })
+        truncated = true
+        break
+      }
+      out.push(seg)
+      budget -= seg.content.length
+    } else {
+      const len = seg.type === 'file'
+        ? (seg.filePath.split('/').pop()?.length ?? seg.filePath.length)
+        : seg.name.length
+      // 预算不足容纳整个 Tag 时不再展示，避免半个 Tag
+      if (len >= budget) {
+        truncated = true
+        break
+      }
+      out.push(seg)
+      budget -= len
+    }
+  }
+  return { segments: out, truncated }
 }
+
+const queueView = computed(() =>
+  queueMessages.value.map(msg => {
+    const { segments, truncated } = truncateSegments(msg.content)
+    return { msg, segments, truncated }
+  })
+)
 
 function handleInsert(queueId: string) {
   if (insertingQueueId.value) return
@@ -225,6 +281,10 @@ async function handleDelete(queueId: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.queue-ellipsis {
+  color: var(--aw-ink-muted-48);
 }
 
 .queue-images {
