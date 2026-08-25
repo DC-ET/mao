@@ -88,6 +88,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '定时任务', keepAlive: true, permission: 'session:read' }
       },
       {
+        path: 'system-commands',
+        name: 'SystemCommands',
+        component: () => import('../views/system-commands/SystemCommandListView.vue'),
+        meta: { title: '系统指令', keepAlive: true, permission: 'user:write' }
+      },
+      {
         path: 'settings',
         name: 'SystemSettings',
         component: () => import('../views/settings/SystemSettingsView.vue'),

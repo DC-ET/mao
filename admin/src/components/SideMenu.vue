@@ -55,7 +55,8 @@ import {
   Timer,
   TrendCharts,
   Setting,
-  Link
+  Link,
+  Promotion
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -132,6 +133,7 @@ const menuGroups: MenuGroup[] = [
     id: 'system',
     label: '系统',
     items: [
+      { index: '/system-commands', label: '系统指令', icon: Promotion, permission: 'user:write' },
       { index: '/settings', label: '系统设置', icon: Setting, permission: 'user:write' }
     ]
   }

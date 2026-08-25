@@ -47,6 +47,7 @@ import { registerSystemSettingRoutes } from './settings/settings.routes.js';
 import { MysqlUserCommandRepository } from './command/command.repository.js';
 import { UserCommandService } from './command/command.service.js';
 import { registerCommandRoutes } from './command/command.routes.js';
+import { registerAdminSystemCommandRoutes } from './command/admin-system-command.routes.js';
 import {
   MysqlUserTaskPanelPreferenceRepository,
   MysqlUserWeixinPreferenceRepository,
@@ -283,7 +284,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       feishuAppId: cfg.feishu.appId,
     },
   );
-  const commandService = new UserCommandService(new MysqlUserCommandRepository(db));
+  const commandRepo = new MysqlUserCommandRepository(db);
+  const commandService = new UserCommandService(commandRepo);
   const weixinPref = new UserWeixinPreferenceService(new MysqlUserWeixinPreferenceRepository(db));
   const taskPanelPref = new UserTaskPanelPreferenceService(new MysqlUserTaskPanelPreferenceRepository(db));
 
@@ -738,6 +740,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     };
     registerAdminAnalyticsRoutes(api, adminDeps);
     registerAdminRuntimeRoutes(api, adminDeps);
+    registerAdminSystemCommandRoutes(api, { commandRepo, permissionService });
     registerMcpServerRoutes(api, {
       mcpServerService, mcpClientManager: mcpClient, userMcpPreferenceService: mcpPref, permissionService,
     });
