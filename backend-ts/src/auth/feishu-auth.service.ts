@@ -45,13 +45,14 @@ export class FeishuAuthService {
     private readonly jwtService: JwtService,
     private readonly cfg: AppConfig['feishu'],
     private readonly http: FeishuHttp = defaultFeishuHttp(),
+    private readonly onUserAuthenticated?: (user: User, targetUserId?: number) => Promise<void>,
   ) {}
 
   isEnabled(): boolean {
     return this.cfg.enabled && hasText(this.cfg.appId) && this.cfg.appId !== '1234567890';
   }
 
-  async getQrCodeUrl() {
+  async getQrCodeUrl(userId?: number) {
     this.ensureEnabled();
     this.ensureAppIdConfigured();
     const state = randomUUID();
@@ -59,6 +60,7 @@ export class FeishuAuthService {
     await this.stateRepo.insert({
       state,
       status: FEISHU_PENDING,
+      userId,
       expiresAt,
     });
     const authUrl = this.buildAuthorizeUrl(state);
@@ -75,10 +77,11 @@ export class FeishuAuthService {
     this.ensureEnabled();
     this.ensureFullyConfigured();
     const user = await this.authenticateByCode(code);
+    await this.onUserAuthenticated?.(user);
     return this.buildLoginVO(user);
   }
 
-  async completeStateWithCode(state: string | undefined, code: string | undefined): Promise<void> {
+  async completeStateWithCode(state: string | undefined, code: string | undefined): Promise<User> {
     this.ensureEnabled();
     this.ensureFullyConfigured();
     if (!hasText(state)) {
@@ -102,11 +105,18 @@ export class FeishuAuthService {
     try {
       const user = await this.authenticateByCode(code!);
       this.ensureUserEnabled(user);
+      const targetUserId = oauthState.userId ?? user.id;
+      if (oauthState.userId != null && user.id !== oauthState.userId) {
+        const targetUser = await this.userRepo.findById(oauthState.userId);
+        if (targetUser == null) throw new BusinessException(5002, '绑定用户不存在');
+        this.ensureUserEnabled(targetUser);
+      }
       await this.stateRepo.updateByState(state!, FEISHU_PENDING, {
         status: FEISHU_SUCCESS,
-        userId: user.id,
+        userId: targetUserId,
         errorMessage: null,
       });
+      return user;
     } catch (e) {
       if (e instanceof BusinessException) {
         await this.markStateFailed(state!, e.message);
@@ -141,7 +151,16 @@ export class FeishuAuthService {
 
   async renderCallbackPage(state?: string, code?: string): Promise<string> {
     try {
-      await this.completeStateWithCode(state, code);
+      const user = await this.completeStateWithCode(state, code);
+      // 绑定场景：state 携带设置页发起绑定的目标用户 ID（与扫码登录用户不同）。
+      // 此时应把扫码用户与目标用户一并传给回调，由回调完成“目标用户 ↔ 扫码飞书身份”的绑定；
+      // 登录场景（state 无目标用户）直接以扫码用户自身建立绑定。
+      const oauthState = state != null ? await this.stateRepo.findByState(state) : null;
+      if (oauthState?.userId != null && oauthState.userId !== user.id) {
+        await this.onUserAuthenticated?.(user, oauthState.userId);
+      } else {
+        await this.onUserAuthenticated?.(user);
+      }
       return htmlPage('登录成功', '飞书授权已完成，请回到 Mao 客户端。', true);
     } catch (e) {
       const msg = e instanceof BusinessException ? e.message : '飞书登录失败';
@@ -244,7 +263,7 @@ export class FeishuAuthService {
   }
 
   resolveFeishuUserId(userInfo: Record<string, unknown>, email: string): string {
-    const id = this.firstText(userInfo, 'user_id', 'union_id', 'open_id');
+    const id = this.firstText(userInfo, 'union_id', 'user_id', 'open_id');
     if (hasText(id)) {
       return id;
     }

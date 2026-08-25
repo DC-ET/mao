@@ -103,6 +103,14 @@ CLI：`mao runtime ...`（见 [runtime.md](runtime.md)）。
 
 CLI：`mao settings list|set`（见 [settings.md](settings.md)）。
 
+## 飞书机器人通道
+
+「飞书机器人」页面管理飞书自建应用机器人：每个机器人独立配置 App ID / App Secret、Agent、模型，可启用/停用/删除。App Secret 以 `APP_FEISHU_BOT_SECRET` 加密存储，不返回明文；未配置该密钥时无法添加机器人。
+
+启用后服务端与飞书建立长连接接收消息：用户在飞书内私聊或群里 @ 机器人即可触发对应 Agent。用户绑定流程见 [feishu-bot.md](feishu-bot.md)。
+
+REST：`/v1/admin/feishu-bots` 系列（详见 [feishu-bot.md](feishu-bot.md)）。
+
 ## 管理员上线清单
 
 正式开放前建议完成 [business_process.md](business_process.md) 中的检查项。

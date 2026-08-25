@@ -94,6 +94,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '系统指令', keepAlive: true, permission: 'user:write' }
       },
       {
+        path: 'feishu-bots',
+        name: 'FeishuBots',
+        component: () => import('../views/feishu-bot/FeishuBotListView.vue'),
+        meta: { title: '飞书机器人', keepAlive: true, adminOnly: true }
+      },
+      {
         path: 'settings',
         name: 'SystemSettings',
         component: () => import('../views/settings/SystemSettingsView.vue'),

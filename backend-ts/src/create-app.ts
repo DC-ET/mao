@@ -4,8 +4,9 @@ import fastifyStatic from '@fastify/static';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { mkdirSync, existsSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, existsSync, rmSync, lstatSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { resolve, relative } from 'node:path';
 import { fail } from './common/result.js';
 import { sendJson, handleError } from './common/http-error.js';
 import { loadConfig, type AppConfig } from './config/app-config.js';
@@ -177,10 +178,81 @@ import { TaskNotificationDeliveryService } from './notification/task/delivery.se
 import { WebhookSenderRegistry, DingTalkWebhookSender, FeishuWebhookSender } from './notification/task/webhook-sender.js';
 import { WebhookUrlValidator } from './notification/task/webhook-url-validator.js';
 import { LlmUsageRepository, LlmUsageService } from './usage/llm-usage.service.js';
+import * as Lark from '@larksuiteoapi/node-sdk';
+import { decryptAesGcm } from './crypto/aes-gcm.js';
+import { MysqlFeishuBotRepository } from './feishu/feishu_bot.repository.js';
+import { MysqlFeishuBindingRepository } from './feishu/binding.repository.js';
+import { registerFeishuBotRoutes } from './feishu/admin.routes.js';
+import { registerFeishuBindingRoutes } from './feishu/binding.routes.js';
+import { FeishuMonitorService } from './feishu/monitor.service.js';
+import { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
+import { FeishuMessageService } from './feishu/message.service.js';
+import { senderName } from './feishu/message.service.js';
+import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
+import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
+import type { FeishuInboundContext } from './feishu/types.js';
+import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 
 export interface MaoApp {
   app: FastifyInstance;
   close(): Promise<void>;
+}
+
+function resolveFeishuGroupWorkspace(root: string, accountId: string, chatId: string): string {
+  const safeAccountId = encodeURIComponent(accountId);
+  const safeChatId = encodeURIComponent(chatId);
+  const workspaceRoot = resolve(root);
+  const workspace = resolve(workspaceRoot, 'feishu-chat', safeAccountId, safeChatId);
+  for (const candidate of [workspaceRoot, resolve(workspaceRoot, 'feishu-chat'), resolve(workspaceRoot, 'feishu-chat', safeAccountId)]) {
+    try {
+      if (lstatSync(candidate).isSymbolicLink()) throw new Error('飞书群工作区路径不允许符号链接');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  const rel = relative(workspaceRoot, workspace);
+  if (rel.startsWith('..') || rel.includes('..' + '/') || rel.startsWith('/')) {
+    throw new Error('飞书群工作区路径非法');
+  }
+  return workspace;
+}
+
+/** 文件落盘文件名清洗：去除路径分隔符与穿越片段，仅保留 basename。 */
+function sanitizeFeishuFileName(name: string | null | undefined, fallback: string): string {
+  const raw = (name ?? '').trim();
+  if (raw === '') return fallback;
+  const basename = raw.replace(/\\/g, '/').split('/').pop() ?? fallback;
+  const cleaned = basename.replace(/[^\w.\u4e00-\u9fa5-]/g, '_').replace(/^_+|_+$/g, '');
+  return cleaned === '' ? fallback : cleaned.length > 128 ? cleaned.slice(0, 128) : cleaned;
+}
+
+/** 下载消息资源（图片/文件），流式收集并校验大小上限（字节），超限抛错。 */
+async function downloadFeishuMediaBuffer(
+  client: Lark.Client,
+  messageId: string,
+  fileKey: string,
+  type: 'image' | 'file',
+  maxBytes: number,
+): Promise<{ buffer: Buffer; contentType: string }> {
+  const result = await client.im.v1.messageResource.get({
+    path: { message_id: messageId, file_key: fileKey },
+    params: { type },
+  });
+  const contentType = String((result as { headers?: Record<string, string> }).headers?.['content-type'] ?? 'application/octet-stream').split(';')[0].trim();
+  const stream = result.getReadableStream();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > maxBytes) throw new Error(`飞书资源超出大小限制: ${total} > ${maxBytes}`);
+    chunks.push(buffer);
+  }
+  return { buffer: Buffer.concat(chunks), contentType };
+}
+
+function dataUriOf(contentType: string, buffer: Buffer): string {
+  return `data:${contentType || 'image/jpeg'};base64,${buffer.toString('base64')}`;
 }
 
 export async function registerUploadStatic(app: FastifyInstance, uploadDir: string, apiPrefix: string): Promise<void> {
@@ -227,8 +299,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const userService = new UserService(userRepo, permissionService, hasher);
   const ldap = new LdapAuthService(userRepo, userRoleRepo, jwt, cfg.ldap);
   const authService = new AuthService(userRepo, jwt, hasher, ldap, permissionService);
+  const earlyFeishuBinding = new MysqlFeishuBindingRepository(db);
   const feishu = new FeishuAuthService(
     userRepo, userRoleRepo, new MysqlFeishuOauthStateRepository(db), jwt, cfg.feishu,
+    undefined,
+    async (user, targetUserId) => {
+      if (user.id != null && user.feishuUserId != null && user.feishuUserId !== '') {
+        // 设置页绑定场景：以扫码飞书用户 A 的 union_id 绑定到目标用户 B（targetUserId）；
+        // 登录场景：绑定到扫码用户自身。
+        await earlyFeishuBinding.bind(targetUserId ?? user.id, user.feishuUserId);
+      }
+    },
   );
   const gitCredentials = new GitCredentialService(db, cfg.app.gitCredential.secretKey);
   const gitLookup = {
@@ -356,6 +437,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     monitor: cfg.weixin.bot.monitor,
   };
   const weixinAccounts = new WeixinAccountRepository(db);
+  const feishuBots = new MysqlFeishuBotRepository(db);
+  const feishuBinding = earlyFeishuBinding;
   const weixinTokens = new ContextTokenRepository(db);
   const weixinPeerRepo = new WeixinSessionPeerRepository(db);
   configureWeixinSessionPeerStore({
@@ -639,6 +722,215 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     wsHandler.executePersistedUserPrompt(session, userId, executionId, saved));
   scheduledService.setSessionBusyCheck((sessionId) => wsHandler.hasExecutionClaim(sessionId));
 
+  const feishuMessageRepository = new MysqlFeishuMessageRepository(db);
+  const feishuMessageService = new FeishuMessageService(
+    feishuMessageRepository,
+    {
+      create: async (accountId, context) => {
+        const bot = await feishuBots.findById(Number(accountId));
+        if (bot == null) throw new Error(`飞书Bot不存在: ${accountId}`);
+        const unionId = context.senderUnionId ?? context.senderId;
+        const userId = unionId == null ? null : await feishuBinding.findUserIdByUnionId(unionId);
+        const user = userId == null ? null : await userRepo.findById(userId);
+        if (user?.id == null) throw new Error(`飞书用户未绑定: ${context.senderId ?? ''}`);
+        const agent = bot.agentId != null ? await agentService.getAgent(bot.agentId) : await agentService.requireDefaultAgent();
+        const model = bot.modelId != null ? await modelService.getModel(bot.modelId) : await modelService.getDefaultModel();
+        const isGroup = context.chatType === 'group' && context.chatId != null;
+        const groupWorkspace = isGroup
+          ? resolveFeishuGroupWorkspace(cfg.app.harness.workspaceRoot, accountId, context.chatId!)
+          : null;
+        if (groupWorkspace != null) mkdirSync(groupWorkspace, { recursive: true });
+        const session = await sessionService.createSession(
+          user.id, agent.id, '飞书Bot会话', 'CLOUD', groupWorkspace, 'FULL', false,
+          'linux', '/bin/bash', 'Linux', model?.id ?? null,
+          isGroup ? `feishu-chat-${accountId}-${context.chatId}` : `feishu-${accountId}-private-${user.id}`,
+          'new', null, null,
+        );
+        return { sessionId: session.id!, ownerUserId: user.id, workspace: session.workspace };
+      },
+    },
+    cfg.feishu.bot.groupContext.maxItems,
+    cfg.feishu.bot.groupContext.maxMinutes,
+  );
+  // 会话复用时按机器人配置热切换 Agent/模型（对齐微信通道切换逻辑）。
+  const applyFeishuBotConfig = async (sessionId: number, botId: number): Promise<void> => {
+    const bot = await feishuBots.findById(botId);
+    if (bot == null) return;
+    const session = await sessionService.getSession(sessionId);
+    if (session == null || session.id == null) return;
+    const agent = bot.agentId != null ? await agentService.getAgent(bot.agentId) : await agentService.requireDefaultAgent();
+    const model = bot.modelId != null ? await modelService.getModel(bot.modelId) : await modelService.getDefaultModel();
+    const agentId = agent?.id ?? null;
+    const modelId = model?.id ?? null;
+    const fields: Record<string, unknown> = {};
+    if (agentId != null && session.agentId !== agentId) fields.agentId = agentId;
+    if (session.modelId !== modelId) fields.modelId = modelId;
+    if (Object.keys(fields).length > 0) {
+      console.info(`飞书会话热切换 Agent/模型, sessionId=${sessionId}, botId=${botId}`, fields);
+      await sessionRepo.updateFields(session.id, fields);
+    }
+  };
+  // 按机器人缓存 Lark Client，避免每次收发都重新走 tenant_access_token 换取端点；
+  // 缓存 key 包含 appId 与 appSecret 密文，admin 修改 app_id/app_secret 后自动失效重建；停用的机器人直接拒绝。
+  const feishuClients = new Map<string, Lark.Client>();
+  const getFeishuClient = async (botId: number): Promise<Lark.Client | null> => {
+    const bot = await feishuBots.findById(botId);
+    if (bot == null || bot.enabled === 0 || !cfg.feishu.bot.appSecretKey) return null;
+    const key = `${botId}:${bot.appId}:${bot.appSecret}`;
+    const cached = feishuClients.get(key);
+    if (cached != null) return cached;
+    const appSecret = decryptAesGcm(bot.appSecret, cfg.feishu.bot.appSecretKey, '飞书Bot appSecret解密失败');
+    const client = new Lark.Client({ appId: bot.appId, appSecret });
+    feishuClients.set(key, client);
+    return client;
+  };
+  // 私聊会话按当前绑定用户隔离：同一 union_id 换绑到其他用户时不复用原会话/工作区。
+  const resolveFeishuUserId = async (accountId: string, context: FeishuInboundContext): Promise<number | undefined> => {
+    const unionId = context.senderUnionId ?? context.senderId;
+    if (unionId == null) return undefined;
+    return (await feishuBinding.findUserIdByUnionId(unionId)) ?? undefined;
+  };
+  const feishuInboundHandler = new AgentFeishuInboundHandler({
+    sessionService: {
+      getOrCreateSession: async (accountId, context) => {
+        const conversation = context.chatType === 'group'
+          ? await feishuMessageService.getOrCreateGroup(accountId, context)
+          : await feishuMessageService.getOrCreateP2p(accountId, context, await resolveFeishuUserId(accountId, context));
+        await applyFeishuBotConfig(conversation.sessionId, Number(accountId));
+        return { id: conversation.sessionId, workspace: conversation.workspace ?? null };
+      },
+      saveUserMessage: async (sessionId, content) => { await sessionService.saveMessage(sessionId, 'USER', content, null, null, null, 0, null); },
+      updatePhase: async (sessionId, phase) => { await sessionService.updatePhase(sessionId, phase); },
+      cleanupIncompleteTail: async (sessionId) => sessionService.cleanupIncompleteTail(sessionId),
+      getLatestAssistantReply: async (sessionId) => {
+        const messages = await sessionService.getMessages(sessionId);
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === 'ASSISTANT') return messages[i].content ?? '';
+        }
+        return '抱歉，暂时无法生成回复。';
+      },
+    },
+    harnessService: harness as never,
+    createCancelFlag: (sessionId) => agentLoop.registerCancelFlag(sessionId),
+    releaseCancelFlag: (sessionId) => agentLoop.removeCancelFlag(sessionId),
+    onGenerationCancelled: (sessionId) => {
+      try { shellManager.closeByConversation(sessionId); } catch (error) {
+        console.debug(`关闭飞书会话 Shell 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    downloadMedia: async (context, workspace) => {
+      const botId = Number(context.accountId);
+      const client = await getFeishuClient(botId);
+      if (client == null) return null;
+      const isMedia = context.messageType === 'image' && context.imageKey != null
+        || context.messageType === 'file' && context.fileKey != null;
+      if (!isMedia || context.messageId == null) return null;
+      const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
+      const images: string[] = [];
+      const filePaths: string[] = [];
+      const errors: string[] = [];
+      try {
+        if (context.messageType === 'image' && context.imageKey != null) {
+          try {
+            const { buffer, contentType } = await downloadFeishuMediaBuffer(client, context.messageId, context.imageKey, 'image', maxBytes);
+            if (buffer.length === 0) errors.push('图片（接收失败）');
+            else images.push(dataUriOf(contentType, buffer));
+          } catch (error) {
+            console.error(`飞书图片下载失败, bot=${botId}, messageId=${context.messageId}`, error);
+            errors.push('图片（接收失败）');
+          }
+        } else if (context.messageType === 'file' && context.fileKey != null) {
+          if (workspace == null || workspace === '') {
+            errors.push(context.fileName ?? '文件（接收失败）');
+          } else {
+            try {
+              const { buffer } = await downloadFeishuMediaBuffer(client, context.messageId, context.fileKey, 'file', maxBytes);
+              if (buffer.length === 0) {
+                errors.push(context.fileName ?? '文件（接收失败）');
+              } else {
+                const fileName = sanitizeFeishuFileName(context.fileName, `feishu-${context.fileKey}`);
+                mkdirSync(workspace, { recursive: true });
+                const target = resolve(workspace, fileName);
+                await writeFile(target, buffer);
+                filePaths.push(target);
+              }
+            } catch (error) {
+              console.error(`飞书文件下载失败, bot=${botId}, messageId=${context.messageId}`, error);
+              errors.push(context.fileName ?? '文件（接收失败）');
+            }
+          }
+        }
+      } finally { /* 下载失败已收集 errors */ }
+      return { images, filePaths, errors };
+    },
+    listenerFactory: async (sessionId, context, executionId) => {
+      const session = await sessionService.getSession(sessionId);
+      const ownerUserId = session.userId!;
+      return new WsStreamingEventListener({
+        registry: wsRegistry,
+        activityService: activityService as never,
+        activityHeartbeat,
+        sessionTodoMapper: todoMapper,
+        sessionService: sessionService as never,
+      }, sessionId, ownerUserId, executionId, session.modelId != null && (await modelService.getModel(session.modelId))?.supportsVision === 1);
+    },
+    onExecutionFinished: async (sessionId, _context, executionId, success) => {
+      const session = await sessionService.getSession(sessionId);
+      await taskTerminal.finishExecution(sessionId, session.userId!, success ? 'COMPLETED' : 'FAILED', executionId);
+    },
+  });
+  const feishuInboundProcessor = new FeishuInboundProcessor(feishuInboundHandler, {
+    messageService: feishuMessageService,
+    authorizeSender: async (accountId, event) => {
+      const unionId = event.senderUnionId ?? event.senderId;
+      if (unionId == null) return false;
+      const userId = await feishuBinding.findUserIdByUnionId(unionId);
+      if (userId == null) return false;
+      if (event.chatType === 'group') {
+        if (event.chatId == null) return false;
+        if (!(await feishuMessageRepository.isGroupMember(String(accountId), event.chatId, userId))) {
+          await feishuMessageRepository.addGroupMember(String(accountId), event.chatId, userId, event.senderId!, senderName(event));
+        }
+        return true;
+      }
+      return true;
+    },
+    sendReply: async (accountId, event, text) => {
+      const client = await getFeishuClient(Number(accountId));
+      if (client == null) return;
+      const maxReplyLength = Math.max(100, Math.min(10000, cfg.feishu.bot.reply.maxLength));
+      const limited = text.length > maxReplyLength ? `${text.slice(0, maxReplyLength)}…（回复过长已截断）` : text;
+      if (event.chatType === 'group' && event.messageId != null) {
+        await client.im.v1.message.reply({
+          path: { message_id: event.messageId },
+          data: { msg_type: 'text', content: JSON.stringify({ text: limited }) },
+        });
+      } else {
+        const receiveId = event.chatType === 'group' ? event.chatId : event.senderId;
+        const receiveIdType = event.chatType === 'group' ? 'chat_id' : 'open_id';
+        if (receiveId == null) return;
+        await client.im.v1.message.create({
+          params: { receive_id_type: receiveIdType },
+          data: { receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text: limited }) },
+        });
+      }
+    },
+    unauthorizedText: async (_accountId, event) => {
+      const base = event.chatType === 'group'
+        ? '请先完成飞书账号绑定，获得群内使用权限后再试。'
+        : '请先完成飞书账号绑定后再试。';
+      let link = '';
+      try {
+        if (feishu.isEnabled()) {
+          const qr = await feishu.getQrCodeUrl();
+          link = qr.authUrl ?? '';
+        }
+      } catch { link = ''; }
+      return link ? `${base}\n点击完成绑定：${link}` : base;
+    },
+  });
+  const feishuMonitor = new FeishuMonitorService(cfg.feishu.bot, feishuBots, feishuInboundProcessor);
+
   const analyticsService = new AnalyticsService(new AnalyticsDbStore(db));
   const statisticsService = new StatisticsService(new StatisticsDbStore(db));
   const adminAnalytics = new AdminAnalyticsService(statisticsService, new AdminAnalyticsDbStore(db));
@@ -745,6 +1037,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       mcpServerService, mcpClientManager: mcpClient, userMcpPreferenceService: mcpPref, permissionService,
     });
     registerWeixinBotRoutes(api, { jwt, qrLogin, accountRepository: weixinAccounts, monitorService: weixinMonitor });
+    registerFeishuBotRoutes(api, {
+      repository: feishuBots,
+      secretKey: cfg.feishu.bot.appSecretKey,
+      permissionService,
+    });
+    registerFeishuBindingRoutes(api, { jwt, repository: feishuBinding, auth: feishu });
     registerTaskNotificationPreferenceRoutes(api, { preference: notifPref, jwt });
     await attachWebSocket(api, { handler: wsHandler, idleTimeoutMs: cfg.app.ws.idleTimeoutMs });
   }, { prefix: apiPrefix });
@@ -759,6 +1057,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
   deliveryScheduler.start();
   weixinMonitor.start();
+  feishuMonitor.start();
   shellManager.startCleanup();
   const subagentExecutionRecovery = new SubagentExecutionRecoveryService(
     subagentMapper, sessionMap, sessionSvc, compactionSvc, definitionRegistry,
@@ -786,6 +1085,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       deliveryScheduler.stop();
       shellManager.stopCleanup();
       weixinMonitor.shutdown();
+      feishuMonitor.shutdown();
       weixinInboundHandler.shutdown();
       wsRegistry.shutdown();
       await app.close();

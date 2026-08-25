@@ -55,6 +55,11 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/WeixinBotView.vue')
           },
           {
+            path: 'feishu-bot',
+            name: 'FeishuBot',
+            component: () => import('../views/settings/FeishuBotView.vue')
+          },
+          {
             path: 'mcp-servers',
             name: 'McpServers',
             component: () => import('../views/settings/McpServersView.vue')

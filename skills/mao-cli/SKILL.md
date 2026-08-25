@@ -18,6 +18,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 环境变量、数据目录、默认账号、认证方式 | [reference/config.md](reference/config.md) |
 | 管理后台怎么用 | [reference/admin.md](reference/admin.md) |
 | 桌面 Web 端（任务、工作区、通知、微信等） | [reference/desktop.md](reference/desktop.md) |
+| 飞书机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/feishu-bot.md](reference/feishu-bot.md) |
 | Electron LOCAL、工具审批、打包与自动更新 | [reference/electron.md](reference/electron.md) |
 | 安卓壳、远程前端、APK OTA | [reference/android.md](reference/android.md) |
 | 终端对话客户端 mao-agent | [reference/mao-agent.md](reference/mao-agent.md) |

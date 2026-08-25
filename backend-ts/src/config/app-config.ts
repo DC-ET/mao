@@ -3,6 +3,21 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 
+export interface FeishuBotConfig {
+  enabled: boolean;
+  appSecretKey: string;
+  longConnection: {
+    enabled: boolean;
+    reconcileIntervalMs: number;
+    reconnectBaseMs: number;
+    reconnectMaxMs: number;
+    maxConsecutiveFailures: number;
+  };
+  groupContext: { maxItems: number; maxMinutes: number };
+  reply: { maxLength: number };
+  file: { maxInboundFileMb: number };
+}
+
 export interface AppConfig {
   server: {
     port: number;
@@ -45,6 +60,7 @@ export interface AppConfig {
   };
   feishu: {
     enabled: boolean;
+    bot: FeishuBotConfig;
     appId: string;
     appSecret: string;
     redirectUri: string;
@@ -200,6 +216,20 @@ const DEFAULTS: AppConfig = {
   },
   feishu: {
     enabled: false,
+    bot: {
+      enabled: false,
+      appSecretKey: '',
+      longConnection: {
+        enabled: true,
+        reconcileIntervalMs: 5000,
+        reconnectBaseMs: 1000,
+        reconnectMaxMs: 30000,
+        maxConsecutiveFailures: 5,
+      },
+      groupContext: { maxItems: 30, maxMinutes: 120 },
+      reply: { maxLength: 2000 },
+      file: { maxInboundFileMb: 100 },
+    },
     appId: '',
     appSecret: '',
     redirectUri: 'http://localhost:9080/api/v1/auth/feishu/callback',
@@ -427,7 +457,17 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   }
   cfg.spring.flyway.enabled = b(process.env.FLYWAY_ENABLED ?? cfg.spring.flyway.enabled, true);
   cfg.ldap.enabled = b(cfg.ldap.enabled, false);
-  cfg.feishu.enabled = b(cfg.feishu.enabled, false);
+  cfg.feishu.enabled = b(process.env.FEISHU_ENABLED ?? cfg.feishu.enabled, false);
+  cfg.feishu.bot.enabled = b(process.env.FEISHU_BOT_ENABLED ?? cfg.feishu.bot.enabled, false);
+  cfg.feishu.bot.longConnection.enabled = b(process.env.FEISHU_BOT_LC_ENABLED ?? cfg.feishu.bot.longConnection.enabled, true);
+  cfg.feishu.bot.longConnection.reconcileIntervalMs = n(process.env.FEISHU_BOT_RECONCILE_INTERVAL_MS ?? cfg.feishu.bot.longConnection.reconcileIntervalMs, 5000);
+  cfg.feishu.bot.longConnection.reconnectBaseMs = n(process.env.FEISHU_BOT_RECONNECT_BASE_MS ?? cfg.feishu.bot.longConnection.reconnectBaseMs, 1000);
+  cfg.feishu.bot.longConnection.reconnectMaxMs = n(process.env.FEISHU_BOT_RECONNECT_MAX_MS ?? cfg.feishu.bot.longConnection.reconnectMaxMs, 30000);
+  cfg.feishu.bot.longConnection.maxConsecutiveFailures = n(process.env.FEISHU_BOT_MAX_CONSECUTIVE_FAILURES ?? cfg.feishu.bot.longConnection.maxConsecutiveFailures, 5);
+  cfg.feishu.bot.groupContext.maxItems = n(process.env.FEISHU_BOT_GROUP_CONTEXT_MAX_ITEMS ?? cfg.feishu.bot.groupContext.maxItems, 30);
+  cfg.feishu.bot.groupContext.maxMinutes = n(process.env.FEISHU_BOT_GROUP_CONTEXT_MAX_MINUTES ?? cfg.feishu.bot.groupContext.maxMinutes, 120);
+  cfg.feishu.bot.reply.maxLength = n(process.env.FEISHU_BOT_REPLY_MAX_LENGTH ?? cfg.feishu.bot.reply.maxLength, 2000);
+  cfg.feishu.bot.file.maxInboundFileMb = n(process.env.FEISHU_BOT_MAX_INBOUND_FILE_MB ?? cfg.feishu.bot.file.maxInboundFileMb, 100);
   cfg.jwt.expiration = n(cfg.jwt.expiration, 86400000);
   cfg.jwt.refreshExpiration = n(cfg.jwt.refreshExpiration, 604800000);
   cfg.jwt.shellExpiration = n(cfg.jwt.shellExpiration, 7200000);
@@ -477,6 +517,9 @@ export function loadConfig(): AppConfig {
   }
   if (process.env.APP_MCP_SECRET) {
     cfg.app.mcp.secretKey = process.env.APP_MCP_SECRET;
+  }
+  if (process.env.APP_FEISHU_BOT_SECRET) {
+    cfg.feishu.bot.appSecretKey = process.env.APP_FEISHU_BOT_SECRET;
   }
   cached = cfg;
   return cfg;

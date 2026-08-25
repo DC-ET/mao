@@ -56,6 +56,21 @@
 
 `FEISHU_ENABLED`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REDIRECT_URI`（后端公网回调，如 `https://your-domain/api/v1/auth/feishu/callback`）。
 
+### 飞书机器人通道（可选）
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `FEISHU_BOT_ENABLED` | false | 飞书机器人通道总开关（需同时开启 `FEISHU_ENABLED`，绑定扫码走飞书 OAuth） |
+| `APP_FEISHU_BOT_SECRET` | - | 机器人 App Secret 的 AES-GCM 加密密钥；未配置时管理后台无法添加机器人 |
+| `FEISHU_BOT_LC_ENABLED` | true | 长连接开关 |
+| `FEISHU_BOT_RECONCILE_INTERVAL_MS` | 5000 | 长连接一致性巡检间隔 |
+| `FEISHU_BOT_RECONNECT_BASE_MS` | 1000 | 重连初始退避 |
+| `FEISHU_BOT_RECONNECT_MAX_MS` | 30000 | 重连最大退避 |
+| `FEISHU_BOT_MAX_CONSECUTIVE_FAILURES` | 5 | 连续失败告警阈值 |
+| `FEISHU_BOT_GROUP_CONTEXT_MAX_ITEMS` | 30 | 群聊上下文注入的最大消息条数 |
+
+注意：飞书应用需开通「获取用户 union_id」权限，否则无法识别发送者身份，全员按未绑定处理。使用详见 [feishu-bot.md](feishu-bot.md)。
+
 ### 微信 Bot（可选，默认多项开启）
 
 `WEIXIN_BOT_ENABLED`、`WEIXIN_BOT_MONITOR_ENABLED` 等。管理后台系统设置可指定 `weixin.agentId`、`weixin.modelId`。
