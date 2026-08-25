@@ -58,6 +58,9 @@ export class SessionHistoryLoader {
         harnessLog('warn', `Failed to parse tool_calls for message ${message.id}`, e);
       }
     }
+    // DeepSeek thinking 模式要求带 tools 的多轮请求回传历史 assistant 的 reasoning_content，
+    // 崩溃恢复 / compaction 重载历史时需从持久化的 thinking_content 还原，否则后续请求 400。
+    if (message.thinkingContent) msg.reasoningContent = message.thinkingContent;
     return msg;
   }
 }

@@ -21,6 +21,10 @@
 
 - 修复快捷指令/技能/文件引用在待发送队列与编辑回显中的展示：发送后队列消息与编辑回填输入框时，快捷指令、技能、文件引用现在以 Tag 形式展示，不再显示为 `${...}$` / `#{...}#` / `@{...}@` 占位符文本
 
+### 后端
+
+- 修复 DeepSeek 等 thinking 模式模型（如 ds-v4-flash）在多轮工具调用中频繁报 400「The reasoning_content in the thinking mode must be passed back to the API」：assistant 消息的思考内容（reasoning_content）现在会在上下文内存、序列化请求体、崩溃恢复/压缩重载历史三条链路上完整保留并原样回传，不再在工具调用后的后续请求中丢失
+
 ## 0.0.54 (2026-08-25)
 
 ### 后端

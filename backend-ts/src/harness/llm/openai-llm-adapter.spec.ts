@@ -289,6 +289,31 @@ describe('OpenAiLlmAdapter', () => {
     expect(response.choices?.[0]?.message?.reasoningContent).toBe('思考过程');
   });
 
+  it('chatSendsBackReasoningContentForAssistantMessages', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"ok","choices":[]}');
+    await server.start();
+    await adapter(0, 0).chat({
+      messages: [{
+        role: 'assistant',
+        content: '答案',
+        reasoningContent: '思考过程',
+        toolCalls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }],
+      }],
+    }, configOf(server));
+    expect(server.bodies[0]).toContain('"reasoning_content":"思考过程"');
+  });
+
+  it('chatOmitsReasoningContentWhenAbsent', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"ok","choices":[]}');
+    await server.start();
+    await adapter(0, 0).chat({
+      messages: [{ role: 'assistant', content: '答案' }],
+    }, configOf(server));
+    expect(server.bodies[0]).not.toContain('reasoning_content');
+  });
+
   it('chatIncludesThinkingDisableFieldsWhenPresentOnRequest', async () => {
     server = new QueueServer();
     server.enqueueJson('{"id":"ok","choices":[]}');

@@ -58,6 +58,9 @@ export function serializeChatMessage(msg: ChatMessage): Record<string, unknown> 
   if (msg.toolCallId != null) out.tool_call_id = msg.toolCallId;
   if (msg.toolCalls != null) out.tool_calls = msg.toolCalls.map(serializeToolCall);
   if (msg.audio != null) out.audio = msg.audio;
+  // DeepSeek thinking 模式下，带 tools 的多轮请求要求把上一轮 assistant 的 reasoning_content
+  // 原样回传，否则返回 400。其他模型忽略该字段，故统一在有值时透传。
+  if (msg.reasoningContent != null && msg.reasoningContent !== '') out.reasoning_content = msg.reasoningContent;
   return out;
 }
 

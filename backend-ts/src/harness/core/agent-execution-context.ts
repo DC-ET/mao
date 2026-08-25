@@ -53,12 +53,13 @@ export class AgentExecutionContext {
     this.ephemeralSystemMessages.push(systemMessage);
   }
 
-  addAssistantMessage(content: string | null | undefined, toolCalls?: ToolCall[] | null): void {
+  addAssistantMessage(content: string | null | undefined, toolCalls?: ToolCall[] | null, reasoningContent?: string | null): void {
     const hasToolCalls = toolCalls != null && toolCalls.length > 0;
     this.messages.push({
       role: 'assistant',
       content: content ?? '',
       toolCalls: hasToolCalls ? toolCalls : undefined,
+      reasoningContent: reasoningContent != null && reasoningContent !== '' ? reasoningContent : undefined,
     });
   }
 

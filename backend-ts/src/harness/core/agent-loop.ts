@@ -264,7 +264,7 @@ export class AgentLoop {
               if (content !== '' || toolCalls.length > 0) {
                 // 收到有效输出即复位计数，保证"连续 10 次空响应"语义
                 emptyResponseCount = 0;
-                context.addAssistantMessage(content, toolCalls);
+                context.addAssistantMessage(content, toolCalls, thinkingContent);
                 if (toolCalls.length === 0 && persistenceCallback) {
                   afterStream.push(Promise.resolve(persistenceCallback.onSaveAssistantMessage(content, thinkingContent, toolCalls, usage)));
                 } else {

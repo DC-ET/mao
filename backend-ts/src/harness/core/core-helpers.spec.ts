@@ -89,6 +89,17 @@ describe('SessionHistoryLoader', () => {
     expect(snapshot.persistedMessages).toHaveLength(1);
     expect(snapshot.persistedMessages[0].chatMessage.role).toBe('user');
   });
+
+  it('loadHistoryRestoresReasoningContentForAssistantMessages', async () => {
+    const sessionService = {
+      getMessagesAfterId: vi.fn().mockResolvedValue([
+        { id: 7, role: 'ASSISTANT', content: '答案', thinkingContent: '思考过程' },
+      ]),
+    } as unknown as SessionService;
+    const loader = new SessionHistoryLoader(sessionService, {} as ContextManager);
+    const snapshot = await loader.loadHistoryAfterBoundary(3, 0);
+    expect(snapshot.persistedMessages[0].chatMessage.reasoningContent).toBe('思考过程');
+  });
 });
 
 describe('ToolMediaInjector', () => {
