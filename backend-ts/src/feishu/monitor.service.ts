@@ -30,12 +30,22 @@ export function createFeishuBotHandle(
   if (!config.appSecretKey) throw new Error('飞书Bot appSecretKey未配置');
   const appSecret = decryptAesGcm(bot.appSecret, config.appSecretKey, '飞书Bot appSecret解密失败');
   const accountId = String(bot.id);
+  // 入站处理转入后台异步执行：事件处理器必须立即返回，让 SDK 尽快向飞书回 ack。
+  // 若在此处 await 完整 agent 执行，长连接会阻塞到整轮跑完才 ack，飞书侧 ack 超时后
+  // 会重发同一事件，造成消息重复执行（飞书已回复但任务一直运行中）。
+  // 重复执行由 claimInboundMessage 的 DB 级去重（CLAIMED + 10 分钟窗口）兜底拦截。
+  const dispatchInbound = (event: FeishuNormalizedMessage): void => {
+    if (processor == null) return;
+    void processor.process(accountId, event).catch((error) => {
+      console.error(`飞书入站处理失败, id=${bot.id}`, error);
+    });
+  };
   const eventDispatcher = new Lark.EventDispatcher({}).register({
     'im.message.receive_v1': async (data: unknown) => {
       const event = normalizeFeishuEvent(data);
       if (event == null) return;
       if (event.header?.appId !== bot.appId) return;
-      await processor?.process(accountId, event);
+      dispatchInbound(event);
     },
   });
   const wsClient = new Lark.WSClient({
