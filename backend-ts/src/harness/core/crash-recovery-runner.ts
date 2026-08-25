@@ -20,6 +20,13 @@ import {
 
 export class CrashRecoveryRunner {
   private deferredTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * 初始扫描时被推迟恢复的会话快照。蓝绿部署下延迟恢复若重新扫描 DB，
+   * 会把「重启后刚创建并正在活跃执行的会话」误判为崩溃遗留的 RUNNING 会话，
+   * 从而对同一会话再次启动一次 harness 执行，造成消息重复执行（飞书已回复但任务一直运行中）。
+   * 因此延迟恢复只复用初始扫描的快照，不再重新扫描。
+   */
+  private deferredCandidates: Session[] = [];
 
   constructor(
     private readonly sessionMapper: SessionMapper,
@@ -48,13 +55,8 @@ export class CrashRecoveryRunner {
     const blocked = this.subagentCoordinator
       ? await this.subagentCoordinator.schedule((session) => this.recoverSession(session))
       : new Set<number>();
-    const running = this.sessionMapper.selectByPhase ? await this.sessionMapper.selectByPhase('RUNNING') : [];
-    const resuming = this.sessionMapper.selectByPhase ? await this.sessionMapper.selectByPhase('RESUMING') : [];
-    const candidates = [...running, ...resuming].filter((session, index, all) =>
-      session.sessionType !== 'SUBAGENT'
-      && session.id != null
-      && !blocked.has(session.id)
-      && all.findIndex((item) => item.id === session.id) === index);
+    // 延迟恢复复用初始扫描快照，避免把重启后新建的活跃会话误判为崩溃遗留会话。
+    const candidates = deferred ? this.deferredCandidates : await this.collectCandidates(blocked);
 
     const deployLock = readDeployLock(this.runtimeDir);
     const deferAll = !deferred && shouldDeferAllRecoveryDuringDeploy(deployLock);
@@ -64,6 +66,8 @@ export class CrashRecoveryRunner {
       : this.partitionForDeploy(candidates, skipDeployActive, deployLock);
 
     if (deferAll && candidates.length > 0) {
+      // 快照被推迟的会话，供延迟恢复复用，避免重新扫描 DB 误抓重启后新建的活跃会话。
+      this.deferredCandidates = candidates;
       harnessLog(
         'info',
         `Deferring crash recovery for ${candidates.length} session(s) during blue-green deploy (status=${deployLock?.status})`,
@@ -72,6 +76,8 @@ export class CrashRecoveryRunner {
         this.scheduleDeferredRecovery(deployDrainSec(deployLock));
       }
     } else if (skipped.length > 0) {
+      // 蓝绿部署中仍在排空实例上活跃的会话：记录快照，延迟恢复只重试这批，不重新全库扫描。
+      this.deferredCandidates = skipped;
       harnessLog(
         'info',
         `Skipping crash recovery for ${skipped.length} session(s) still active on draining instance during blue-green deploy`,
@@ -85,6 +91,20 @@ export class CrashRecoveryRunner {
     const label = deferred ? 'deferred' : 'initial';
     harnessLog('warn', `Found ${recover.length} sessions stuck in RUNNING after restart, initiating ${label} recovery`);
     for (const session of recover) this.agentExecutor.submit(() => this.recoverSession(session));
+  }
+
+  /**
+   * 从 DB 收集崩溃遗留的 RUNNING/RESUMING 会话候选（排除子代理、被协调器阻塞的会话），
+   * 并按 session.id 去重。
+   */
+  private async collectCandidates(blocked: Set<number>): Promise<Session[]> {
+    const running = this.sessionMapper.selectByPhase ? await this.sessionMapper.selectByPhase('RUNNING') : [];
+    const resuming = this.sessionMapper.selectByPhase ? await this.sessionMapper.selectByPhase('RESUMING') : [];
+    return [...running, ...resuming].filter((session, index, all) =>
+      session.sessionType !== 'SUBAGENT'
+      && session.id != null
+      && !blocked.has(session.id)
+      && all.findIndex((item) => item.id === session.id) === index);
   }
 
   private partitionForDeploy(

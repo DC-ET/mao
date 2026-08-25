@@ -51,6 +51,41 @@ describe('CrashRecoveryRunner', () => {
     expect(taskTerminal.finishExecution).toHaveBeenCalledWith(4, 7, 'COMPLETED', expect.any(String));
     expect(activityHeartbeat.clear).toHaveBeenCalledWith(4);
   });
+
+  it('deferred pass reuses the initial snapshot and does not re-scan the DB', async () => {
+    const selectByPhase = vi.fn(async () => []);
+    const submitted: Array<() => Promise<void>> = [];
+    const sessionService = { cleanupIncompleteTail: vi.fn(async () => 0), updatePhase: vi.fn() };
+    const harness = { execute: vi.fn(async () => undefined) };
+    const agentLoop = {
+      registerCancelFlag: vi.fn(() => ({ get: () => false })),
+      removeCancelFlag: vi.fn(),
+    };
+    const runner = new CrashRecoveryRunner(
+      { selectByPhase } as never,
+      sessionService as never,
+      { finishExecution: vi.fn() } as never,
+      harness as never,
+      agentLoop as never,
+      { send: vi.fn() } as never,
+      { record: vi.fn() } as never,
+      { clear: vi.fn() } as never,
+      { selectBySessionId: vi.fn(async () => []) } as never,
+      { selectById: vi.fn(async () => ({ supportsVision: 1 })), selectDefault: vi.fn() } as never,
+      '/tmp/mao-runtime-test',
+      { submit: (fn) => { submitted.push(fn); } },
+    );
+    // 模拟蓝绿部署下 deferAll/skip 分支在初始扫描写入的快照。
+    (runner as unknown as { deferredCandidates: unknown[] }).deferredCandidates = [
+      { id: 9, userId: 3, modelId: 1, phase: 'RUNNING' },
+    ] as never;
+    await (runner as unknown as { runPass: (d: boolean) => Promise<void> }).runPass(true);
+    // 延迟恢复必须复用快照（session 9），不得重新扫描 DB。
+    expect(selectByPhase).not.toHaveBeenCalled();
+    expect(submitted).toHaveLength(1);
+    await submitted[0]();
+    expect(harness.execute).toHaveBeenCalled();
+  });
 });
 
 describe('createAgentExecutor', () => {
