@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatRequest, ChatUsage, LlmAdapter, StreamCallback, StreamChunk, ToolCall } from '../llm/chat-request.js';
+import { EmptyResponseExhaustedException } from '../llm/empty-response-exhausted.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
 import { harnessLog } from '../log.js';
 import type { AgentEventListener } from './agent-event-listener.js';
@@ -286,9 +287,8 @@ export class AgentLoop {
                   + ` (thinking=${thinkingContent?.length ?? 0} chars, retry=${emptyResponseCount}/${emptyMaxRetries})`,
                 );
                 if (emptyResponseCount >= emptyMaxRetries) {
-                  throw new Error(
-                    'LLM 连续返回空响应，自动重试已耗尽，请重试',
-                  );
+                  // 专用异常类型：适配器须原样透传，不得包装成流中断或触发整轮流重试
+                  throw new EmptyResponseExhaustedException();
                 }
                 emptyResponseEncountered = true;
               }

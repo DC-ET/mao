@@ -16,10 +16,10 @@ export class SubAgentResultCollector implements AgentEventListener {
   }
 
   onLlmStreamReset(): void {
+    // 只清本轮文本缓冲。toolCallCount 是跨轮累计指标（快照/结果统计用），
+    // 不能随整轮流重试归零；seenToolCallIds 保留后，重试轮重发的相同 id 也会自然去重
     this.contentBuilder.length = 0;
     this.thinkingBuilder.length = 0;
-    this.toolCallCount = 0;
-    this.seenToolCallIds.clear();
   }
 
   onContentDelta(delta: string): void {

@@ -152,8 +152,7 @@ describe('BackgroundTaskManager', () => {
   it('consumesCompletedSuccessFailureAndTruncatedResults', async () => {
     const manager = new BackgroundTaskManager();
     const ok = manager.submit(11, () => 'done');
-    const longTask = manager.submit(11, () => 'x'.repeat(600));
-    const failed = manager.submit(11, () => { throw new Error('boom'); });
+    const longTask = manager.submit(11, () => 'x'.repeat(20001));    const failed = manager.submit(11, () => { throw new Error('boom'); });
     await new Promise((r) => setTimeout(r, 50));
     const completed = await manager.consumeCompletedResults(11);
     expect(completed[ok]).toBe('done');
@@ -215,6 +214,20 @@ describe('BackgroundTaskManager', () => {
     expect(await manager.getResult(ok, 1)).toContain('task not found');
     const failed = manager.submit(7, () => { throw new Error('bad'); });
     expect(await manager.getResult(failed, 1)).toContain('Error: bad');
+  });
+
+  it('normalizesShellJsonResultsWithExitCodeAndCompleted', async () => {
+    const manager = new BackgroundTaskManager();
+    const shellTask = manager.submit(5, () => JSON.stringify({ exit_code: 3, completed: true, output: 'step-1\nstep-2' }));
+    const longOutputTask = manager.submit(5, () => JSON.stringify({ exit_code: 0, completed: true, output: 'y'.repeat(20001) }));
+    await new Promise((r) => setTimeout(r, 50));
+    const results = await manager.consumeCompletedResults(5);
+    expect(JSON.parse(results[shellTask])).toMatchObject({ exit_code: 3, completed: true, output: 'step-1\nstep-2' });
+    // output 预算内截断后重组仍是合法 JSON，且只带一个截断标记
+    const normalizedLong = JSON.parse(results[longOutputTask]);
+    expect(normalizedLong).toMatchObject({ exit_code: 0, completed: true });
+    expect(normalizedLong.output).toMatch(/\.\.\. \[truncated\]$/);
+    expect(results[longOutputTask].length).toBeLessThanOrEqual(10000 + 20);
   });
 });
 

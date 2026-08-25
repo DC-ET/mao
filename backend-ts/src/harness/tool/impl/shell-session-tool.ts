@@ -132,7 +132,12 @@ export class ShellSessionTool extends BaseTool {
       const taskId = this.backgroundTaskManager.submit(conversationId, async () => {
         const r = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs);
         if (!keepSession) this.sessionManager.close(session.sessionId);
-        return r.output;
+        return toJson({
+          exit_code: this.resolveExitCode(r),
+          completed: r.completed,
+          output: r.output,
+          truncated: r.truncated,
+        });
       });
       return toJson({
         async: true,

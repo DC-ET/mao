@@ -154,11 +154,11 @@ export class ToolDispatcher {
     if (metadata) data.metadata = metadata;
     this.streamingWsRegistry.send(userId, wsEvent('ask_user_questions', sessionId, data));
     const result = await this.askUserQuestionsRegistry.waitForAnswer(sessionId!, requestId);
-    if (result != null && result.includes('"error"')) {
+    if (!result.answered || result.cancelled) {
       this.streamingWsRegistry.send(userId, wsEvent('ask_user_questions_cancelled', sessionId, { requestId }));
       this.treeSignalPublisher.publishForSession(sessionId!);
     }
-    return result;
+    return result.resultJson;
   }
 
   private async shouldRequireApproval(
@@ -216,12 +216,14 @@ export class ToolDispatcher {
       return startResult;
     }
     const shellId = parsed.session_id;
-    const taskId = this.backgroundTaskManager!.submit(sessionId, () =>
-      this.localToolExecutor.execute(
+    const taskId = this.backgroundTaskManager!.submit(sessionId, async () => {
+      const awaited = await this.localToolExecutor.execute(
         sessionId, 'shell', JSON.stringify({ action: 'await_async', session_id: shellId }),
         workspace, false, null,
-      ),
-    );
+      );
+      // 桌面端返回的是结构化 JSON（exit_code/completed/output），原样交给后台任务管理器归一化
+      return awaited;
+    });
     return JSON.stringify({
       async: true,
       task_id: taskId,

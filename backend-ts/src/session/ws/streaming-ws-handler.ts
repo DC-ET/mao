@@ -255,6 +255,19 @@ export class StreamingWsHandler {
     }
     const replacingExecution = data.replaceExecution === true;
     const isAutoConsume = this.autoConsumingSessionIds.delete(sessionId);
+    /** 自动消费的消息已出队并落库，任何未进入执行的早退都必须回补队首，否则消息永不执行 */
+    const requeueIfClaimed = async () => {
+      if (!claimAlreadyHeld) return;
+      this.executionClaims.delete(sessionId);
+      try {
+        await this.deps.messageQueueService.enqueueHead(
+          sessionId, userId, content, images.length > 0 ? JSON.stringify(images) : null,
+        );
+        await this.sendQueueUpdated(sessionId, userId);
+      } catch (e) {
+        console.error(`Failed to re-enqueue auto-consumed message for session ${sessionId}`, e);
+      }
+    };
     if (!replacingExecution && !isAutoConsume && this.isSessionActive(session.phase)) {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
@@ -269,12 +282,12 @@ export class StreamingWsHandler {
     if (images.length > 0) {
       const model = await this.resolveSessionModel(session);
       if (!model || model.supportsVision !== 1) {
-        if (claimAlreadyHeld) this.executionClaims.delete(sessionId);
+        await requeueIfClaimed();
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '当前模型不支持图片输入，请切换支持视觉的模型' }));
         return;
       }
       if (images.length > 10) {
-        if (claimAlreadyHeld) this.executionClaims.delete(sessionId);
+        await requeueIfClaimed();
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '单条消息最多支持 10 张图片', }));
         return;
       }
@@ -287,7 +300,7 @@ export class StreamingWsHandler {
     if (session.executionMode === 'LOCAL') {
       this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
       if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
-        this.executionClaims.delete(sessionId);
+        await requeueIfClaimed();
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message: 'Local client is not connected. Please ensure the desktop app is running.' }));
         return;
       }
@@ -306,7 +319,7 @@ export class StreamingWsHandler {
     this.cancelFlags.set(sessionId, flag);
     this.runningExecutionIds.set(sessionId, resolvedEventId);
     this.submitExecution(sessionId, userId, resolvedEventId, (futureRef) =>
-      this.runExecution(session, userId, sessionId, resolvedEventId, flag, clearTodos, futureRef));
+      this.runExecution(session, userId, sessionId, resolvedEventId, flag, clearTodos, futureRef), requeueIfClaimed);
   }
 
   /**
@@ -318,6 +331,7 @@ export class StreamingWsHandler {
     userId: number,
     executionId: string,
     run: (futureRef: { current: unknown }) => Promise<void>,
+    requeueIfClaimed?: () => Promise<void>,
   ): void {
     const futureRef = { current: null as unknown };
     try {
@@ -332,6 +346,9 @@ export class StreamingWsHandler {
       this.runningExecutionIds.delete(sessionId);
       this.cancelFlags.delete(sessionId);
       this.deps.agentLoop.removeCancelFlag(sessionId);
+      void requeueIfClaimed?.().catch((requeueErr) => {
+        console.error(`Failed to re-enqueue auto-consumed message for session ${sessionId}`, requeueErr);
+      });
       this.deps.registry.send(userId, wsEvent('error', sessionId, {
         message: '服务器繁忙，请稍后重试', executionId,
       }));
@@ -527,8 +544,8 @@ export class StreamingWsHandler {
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
     const requestId = typeof data.requestId === 'string' ? data.requestId : null;
     if (!requestId) return;
-    const answersJson = data.answers != null ? JSON.stringify(data.answers) : '[]';
-    const resultJson = `{"answers": ${answersJson}}`;
+    const answers = Array.isArray(data.answers) ? data.answers : [];
+    const resultJson = JSON.stringify({ answers });
     const completed = this.deps.askUserQuestionsRegistry.complete(sessionId, requestId, resultJson);
     if (completed) {
       const executionId = this.runningExecutionIds.get(sessionId);

@@ -1,6 +1,8 @@
 import { harnessLog } from '../log.js';
+import { parseObject } from '../tool/json.js';
 
-const MAX_OUTPUT_LENGTH = 500;
+/** 后台任务注入上下文的整体长度上限（字符）。 */
+const MAX_RESULT_LENGTH = 10000;
 const ABANDONED_THRESHOLD_MS = 30 * 60 * 1000;
 
 interface TaskEntry {
@@ -49,13 +51,7 @@ export class BackgroundTaskManager {
           continue;
         }
         try {
-          let result = entry.error
-            ? 'Error: ' + ((entry.error as Error).message ?? String(entry.error))
-            : (entry.result ?? '');
-          if (result.length > MAX_OUTPUT_LENGTH) {
-            result = result.slice(0, MAX_OUTPUT_LENGTH) + '... [truncated]';
-          }
-          completed[taskId] = result;
+          completed[taskId] = entry.error ? this.formatError(entry.error) : this.normalizeResult(entry.result ?? '');
         } catch {
           continue;
         }
@@ -79,13 +75,47 @@ export class BackgroundTaskManager {
         new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutSeconds * 1000)),
       ]);
       this.tasks.delete(taskId);
-      return result.length > MAX_OUTPUT_LENGTH ? result.slice(0, MAX_OUTPUT_LENGTH) + '... [truncated]' : result;
+      return this.normalizeResult(result);
     } catch (e) {
       if ((e as Error).message === 'timeout') {
         return `Error: task timed out after ${timeoutSeconds} seconds`;
       }
       this.tasks.delete(taskId);
-      return 'Error: ' + ((e as Error).message ?? String(e));
+      return this.formatError(e);
     }
+  }
+
+  /**
+   * 把后台任务结果统一为可注入上下文的文本：
+   * shell 后台任务（CLOUD exec / LOCAL await_async）的返回是 JSON，先解析重组出
+   * 与同步路径同构的结构化摘要（exit_code/completed/output），再整体限长；
+   * 纯文本结果仅做整体限长。
+   */
+  private normalizeResult(raw: string): string {
+    const parsed = parseObject(raw);
+    let text: string;
+    if (parsed != null && typeof parsed.output === 'string') {
+      // output 截断预留 JSON 头部与 error 字段开销，保证重组后的完整 JSON 不再触发整体二次截断
+      const budget = MAX_RESULT_LENGTH - 400;
+      const exitCode = typeof parsed.exit_code === 'number' ? parsed.exit_code : -1;
+      const completed = parsed.completed !== false;
+      let output = parsed.output;
+      if (output.length > budget) {
+        output = output.slice(0, budget) + '... [truncated]';
+      }
+      const payload: Record<string, unknown> = { exit_code: exitCode, completed, output };
+      if (parsed.error != null) payload.error = String(parsed.error).slice(0, 100);
+      text = JSON.stringify(payload, null, 2);
+    } else {
+      text = raw;
+    }
+    if (text.length > MAX_RESULT_LENGTH) {
+      text = text.slice(0, MAX_RESULT_LENGTH) + '... [truncated]';
+    }
+    return text;
+  }
+
+  private formatError(e: unknown): string {
+    return 'Error: ' + ((e as Error).message ?? String(e));
   }
 }

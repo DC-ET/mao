@@ -286,7 +286,7 @@ describe('StreamingWsHandler', () => {
     expect(localToolSessionRegistry.completeToolRequestError).toHaveBeenCalledWith(11, 'req', 'bad');
     expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req');
     expect(treeSignalPublisher.publishForSession).toHaveBeenCalledWith(11);
-    expect(askUserQuestionsRegistry.complete).toHaveBeenCalledWith(11, 'q', '{"answers": [{"id":"a"}]}');
+    expect(askUserQuestionsRegistry.complete).toHaveBeenCalledWith(11, 'q', '{"answers":[{"id":"a"}]}');
   });
 
   it('subscribeSendsSnapshotForWaitingApproval', async () => {

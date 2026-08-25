@@ -110,7 +110,7 @@ describe('ToolDispatcher', () => {
     localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
     streamingWsRegistry.hasConnection.mockReturnValue(true);
     askUserQuestionsRegistry.register.mockReturnValue('req-1');
-    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue('{"error":"timeout"}');
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: false, resultJson: '{"error":"timeout"}' });
     const result = await dispatcher.dispatch(
       'ask_user_questions',
       '{"questions":[{"id":"q1"}],"metadata":{"source":"test"}}',
@@ -181,7 +181,7 @@ describe('ToolDispatcher', () => {
         output_file: '~/.mao/runtime/7/shellOutput/sh-started.out',
         message: '命令已提交到后台执行。',
       }))
-      .mockResolvedValueOnce('{"exit_code":0,"output":"done"}');
+      .mockResolvedValueOnce('{"exit_code":0,"output":"done","completed":true}');
     const raw = await asyncDispatcher.dispatch(
       'shell', '{"command":"sleep 1","async":true}', 'LOCAL', 7, 'workspace', 'FULL', null,
     );
@@ -202,7 +202,11 @@ describe('ToolDispatcher', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
     const consumed = await backgroundTasks.consumeCompletedResults(7);
-    expect(consumed[result.task_id]).toBe('{"exit_code":0,"output":"done"}');
+    expect(JSON.parse(consumed[result.task_id])).toEqual({
+      exit_code: 0,
+      completed: true,
+      output: 'done',
+    });
   });
 
   it('localShellAsyncReturnsSyncErrorWhenDesktopIsDisconnected', async () => {

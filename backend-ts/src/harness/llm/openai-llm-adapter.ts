@@ -19,6 +19,7 @@ import type {
   StreamChunk,
 } from './chat-request.js';
 import { DEFAULT_LLM_RETRY } from './chat-request.js';
+import { EmptyResponseExhaustedException } from './empty-response-exhausted.js';
 import { parseChatResponse, parseStreamChunk, parseStreamErrorEvent, parseUsageFromSse, serializeChatRequest } from './json.js';
 import { applyClientImpersonationHeaders } from './client-impersonation-headers.js';
 
@@ -184,6 +185,11 @@ export class OpenAiLlmAdapter implements LlmAdapter {
           callback.onError(this.cancelledException());
           return;
         }
+        // 空响应重试耗尽是终态：原样透传给 onError，禁止包装、禁止整轮流重试
+        if (e instanceof EmptyResponseExhaustedException) {
+          callback.onError(e);
+          return;
+        }
         const streamError = e instanceof StreamErrorEventException ? e : null;
         const truncated = e instanceof StreamInterruptedAfterOutputException
           || e instanceof StreamThinkingTruncatedException;
@@ -338,6 +344,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       callback.onComplete(usage);
     } catch (e) {
       if (idleTimedOut) throw idleTimedOut;
+      if (e instanceof EmptyResponseExhaustedException) throw e;
       if (e instanceof StreamErrorEventException) throw e;
       if (e instanceof StreamInterruptedAfterOutputException || e instanceof StreamThinkingTruncatedException) throw e;
       if (emitted) throw new StreamInterruptedAfterOutputException(e);
@@ -576,6 +583,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       if (cause instanceof Error) {
         const name = cause.name;
         const msg = cause.message ?? '';
+        if (cause instanceof EmptyResponseExhaustedException) return false;
         if (name === 'TimeoutException' || name === 'TimeoutError' || name === 'EOFException'
           || name === 'ConnectException' || name === 'InterruptedIOException'
           || (cause as NodeJS.ErrnoException).code === 'ETIMEDOUT'

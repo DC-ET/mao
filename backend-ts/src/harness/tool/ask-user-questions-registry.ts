@@ -9,6 +9,15 @@ export interface PendingQuestion {
   metadata: Record<string, unknown> | null;
 }
 
+/** waitForAnswer 的结构化终态：answered/cancelled 与 timeout 互斥，禁止用结果内容猜测。 */
+export interface AskUserAnswersResult {
+  answered: boolean;
+  /** 会话停止/中止等场景由 failAll 结束等待，调用方应广播取消事件。 */
+  cancelled: boolean;
+  /** answered=true 时为 {"answers": [...]}；否则为错误说明 JSON。 */
+  resultJson: string;
+}
+
 interface PendingEntry {
   future: { resolve: (v: string) => void; promise: Promise<string> };
   questions: Array<Record<string, unknown>>;
@@ -29,20 +38,26 @@ export class AskUserQuestionsRegistry {
     return requestId;
   }
 
-  async waitForAnswer(sessionId: number, requestId: string): Promise<string> {
+  async waitForAnswer(sessionId: number, requestId: string): Promise<AskUserAnswersResult> {
     const entry = this.pending.get(this.key(sessionId, requestId));
     if (!entry) {
-      return JSON.stringify({ error: `No pending question found for requestId: ${requestId}` });
+      return { answered: false, cancelled: false, resultJson: JSON.stringify({ error: `No pending question found for requestId: ${requestId}` }) };
     }
     try {
-      return await Promise.race([
+      const resultJson = await Promise.race([
         entry.future.promise,
         new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), this.timeoutMillis)),
       ]);
+      // failAllForSession 结束等待时也走 resolve 通道，须解析标记区分「正常应答」与「会话取消」
+      let cancelled = false;
+      try {
+        cancelled = JSON.parse(resultJson)?.cancelled === true;
+      } catch { /* 非 JSON 视为正常应答 */ }
+      return { answered: true, cancelled, resultJson };
     } catch {
       this.pending.delete(this.key(sessionId, requestId));
       harnessLog('warn', `ask_user_questions timeout for session ${sessionId}, requestId ${requestId}`);
-      return JSON.stringify({ error: 'User did not respond within timeout' });
+      return { answered: false, cancelled: false, resultJson: JSON.stringify({ error: 'User did not respond within timeout' }) };
     }
   }
 
@@ -86,7 +101,9 @@ export class AskUserQuestionsRegistry {
     const prefix = sessionId + ':';
     for (const [key, entry] of [...this.pending.entries()]) {
       if (key.startsWith(prefix)) {
-        entry.future.resolve(JSON.stringify({ error: 'Session cancelled' }));
+        // cancelled=true 标记取消终态：dispatcher 据此广播 ask_user_questions_cancelled，
+        // 结果内容仍以 {"error": ...} 传给 LLM，不靠内容猜语义
+        entry.future.resolve(JSON.stringify({ error: 'Session cancelled', cancelled: true }));
         this.pending.delete(key);
       }
     }
