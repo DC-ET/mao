@@ -84,13 +84,44 @@ function collectText(node: unknown): string {
   return '';
 }
 
-/** 卡片消息（多为机器人回复）：提取 markdown/text 元素内容，失败退化为占位。 */
+/** 卡片消息（多为机器人回复）：遍历卡片 JSON 收集文本元素，失败退化为占位。 */
 function extractInteractiveText(content: Record<string, unknown>): string {
-  const text = collectText(content)
+  const parts: string[] = [];
+  walkCardContent(content, parts);
+  const text = parts.join(' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/[*_#`>~-]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   return text === '' ? '[卡片消息]' : text.slice(0, 2000);
+}
+
+/**
+ * 递归遍历卡片 JSON 提取文本。兼容两种卡片结构：
+ * - 经典卡片（schema 1.0）：elements[] 下 div.text（lark_md/plain_text）与 markdown 元素的 content；
+ * - 新版卡片（schema 2.0）：header.title.content 与 body.elements[] 下 markdown 元素的 content。
+ */
+function walkCardContent(node: unknown, parts: string[]): void {
+  if (Array.isArray(node)) {
+    for (const item of node) walkCardContent(item, parts);
+    return;
+  }
+  if (node == null || typeof node !== 'object') return;
+  const record = node as Record<string, unknown>;
+  const tag = typeof record.tag === 'string' ? record.tag : '';
+  if (tag === 'img' || tag === 'media' || tag === 'emotion') return;
+  if ((tag === 'markdown' || tag === 'lark_md' || tag === 'plain_text') && typeof record.content === 'string') {
+    if (record.content.trim() !== '') parts.push(record.content);
+    return;
+  }
+  if (typeof record.content === 'string' && record.content.trim() !== '') {
+    parts.push(record.content);
+    return;
+  }
+  if (typeof record.text === 'string' && record.text.trim() !== '') {
+    parts.push(record.text);
+    return;
+  }
+  for (const value of Object.values(record)) walkCardContent(value, parts);
 }
