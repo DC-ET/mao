@@ -13,6 +13,7 @@ import type { ImageModelLookup } from './impl/generate-image-tool.js';
 import type { WeixinMediaToolSupport, WeixinMediaUploadService, WeixinSendService } from './impl/wechat-tools.js';
 import type {
   FeishuChannelToolSupport, FeishuDocReader, FeishuGroupMediaLookup, FeishuMediaDownloader, FeishuMessageDetailFetcher,
+  FeishuMediaSendSupport,
 } from './impl/feishu-tools.js';
 import type { AgentDefinitionRegistry } from '../delegate/agent-definition-registry.js';
 import type { HarnessService } from '../core/harness-service.js';
@@ -40,7 +41,7 @@ import {
   CreateScheduledTaskTool, DeleteScheduledTaskTool, ListScheduledTasksTool, UpdateScheduledTaskTool,
 } from './impl/scheduled-task-tools.js';
 import { SendWechatFileTool, SendWechatImageTool } from './impl/wechat-tools.js';
-import { FeishuDownloadFileTool, ReadFeishuDocTool } from './impl/feishu-tools.js';
+import { FeishuDownloadFileTool, ReadFeishuDocTool, SendFeishuFileTool, SendFeishuImageTool } from './impl/feishu-tools.js';
 
 export interface DefaultToolRegistryDeps {
   pathSandbox: PathSandbox;
@@ -68,6 +69,7 @@ export interface DefaultToolRegistryDeps {
   feishuGroupMediaLookup: FeishuGroupMediaLookup;
   feishuMessageDetailFetcher: FeishuMessageDetailFetcher;
   feishuMaxInboundFileBytes: number;
+  feishuMediaSendSupport: FeishuMediaSendSupport;
   definitionRegistry: AgentDefinitionRegistry;
   harnessService: HarnessService;
   agentLoop: AgentLoop;
@@ -109,6 +111,8 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
     new ReadFeishuDocTool(deps.feishuToolSupport, deps.feishuDocReader),
     new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),
+    new SendFeishuImageTool(deps.pathSandbox, deps.feishuMediaSendSupport),
+    new SendFeishuFileTool(deps.pathSandbox, deps.feishuMediaSendSupport),
     new SpawnSubagentTool(deps.backgroundSubagentManager),
     new SubagentFollowupTool(deps.backgroundSubagentManager),
     new CheckSubagentTool(deps.backgroundSubagentManager),

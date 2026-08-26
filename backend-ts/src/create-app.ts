@@ -193,6 +193,7 @@ import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.re
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
 import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
+import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 import type { FeishuCardProgress } from './feishu/card-progress-listener.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
@@ -649,6 +650,23 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       },
     },
     feishuMaxInboundFileBytes: Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024,
+    feishuMediaSendSupport: {
+      resolveSendTarget: async (sessionId) => {
+        if (sessionId == null) return null;
+        const conversation = await feishuMessageRepository.findConversationBySessionId(sessionId);
+        return conversation == null ? null : feishuSendTargetOf(conversation.appId, conversation.chatId);
+      },
+      sendImage: async (target, image) => {
+        const client = await getFeishuClient(Number(target.appId));
+        if (client == null) throw new Error(`飞书Bot不存在或未启用: ${target.appId}`);
+        await sendFeishuImage(client, target, image);
+      },
+      sendFile: async (target, fileName, file) => {
+        const client = await getFeishuClient(Number(target.appId));
+        if (client == null) throw new Error(`飞书Bot不存在或未启用: ${target.appId}`);
+        await sendFeishuFile(client, target, fileName, file);
+      },
+    },
     definitionRegistry,
     get harnessService() { return holder.harness!; },
     get agentLoop() { return holder.loop!; },
@@ -876,7 +894,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[],
   ): Record<string, unknown> => {
     const title = status === 'RUNNING' ? '正在处理' : status === 'COMPLETED' ? '处理完成' : status === 'CANCELLED' ? '任务已取消' : '处理失败';
-    const color = status === 'RUNNING' ? 'blue' : status === 'COMPLETED' ? 'green' : status === 'CANCELLED' ? 'grey' : 'red';
     const sections: Array<Record<string, unknown>> = [
       { tag: 'markdown', content: `**状态：${title}**${round > 0 ? ` · 第 ${round} 轮` : ''}`, text_align: 'left', text_size: 'normal_v2' },
     ];
@@ -885,7 +902,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     return {
       schema: '2.0',
       config: { update_multi: true },
-      header: { template: color, title: { tag: 'plain_text', content: 'Mao Agent' } },
       body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements: sections },
     };
   };
