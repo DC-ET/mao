@@ -9,6 +9,7 @@ import { MessageHistoryNormalizer } from '../harness/core/message-history-normal
 import { CloudWorkspaceResolver } from '../harness/safety/cloud-workspace-resolver.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { fromString as permissionFromString } from './permission-level.js';
+import { isFeishuChannelSession } from '../harness/tool/feishu-channel-tool.js';
 import type { GitOperationService } from './git-operation.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
@@ -916,8 +917,10 @@ export class SessionService {
         fields.elapsedMs = (session.elapsedMs != null ? session.elapsedMs : 0) + Math.max(0, elapsed);
         fields.startedAt = null;
       }
-      // 微信通道会话由定时任务等机器触发，终态不计未读，避免聚焦模式被无人工关注的会话置顶
-      if (!isTerminalPhase(oldPhase) && isTerminalPhase(phase) && session.projectKey !== WEIXIN_PROJECT_KEY) {
+      // 微信/飞书通道会话由机器人等外部触发，终态不计未读，避免聚焦模式被无人工关注的会话置顶
+      if (!isTerminalPhase(oldPhase) && isTerminalPhase(phase)
+        && session.projectKey !== WEIXIN_PROJECT_KEY
+        && !isFeishuChannelSession(session.projectKey, session.workspace)) {
         fields.unread = 1;
       }
     }

@@ -127,6 +127,14 @@ describe('SessionService extra', () => {
     sessionRepo.findById.mockResolvedValue({ id: 12, userId: 7, phase: 'RUNNING', startedAt: null, projectKey: 'weixin-bot' });
     await service.updatePhase(12, 'COMPLETED');
     expect(sessionRepo.updateFields).toHaveBeenCalledWith(12, expect.not.objectContaining({ unread: expect.anything() }));
+
+    sessionRepo.findById.mockResolvedValue({ id: 13, userId: 7, phase: 'RUNNING', startedAt: null, projectKey: 'feishu-1-private-2' });
+    await service.updatePhase(13, 'COMPLETED');
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(13, expect.not.objectContaining({ unread: expect.anything() }));
+
+    sessionRepo.findById.mockResolvedValue({ id: 14, userId: 7, phase: 'RUNNING', startedAt: null, projectKey: 'oc_group', workspace: '/opt/mao-data/workspace/feishu-chat/1/oc_group' });
+    await service.updatePhase(14, 'COMPLETED');
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(14, expect.not.objectContaining({ unread: expect.anything() }));
   });
 
   it('createSessionThrowsWhenAgentMissing', async () => {
@@ -293,6 +301,23 @@ describe('TaskTerminalService', () => {
     const tree = { publish: vi.fn() };
     const svc = new TaskTerminalService(sessionService as never, registry as never, delivery as never, tree as never);
     await svc.finishExecution(647, 7, 'COMPLETED', 'exec-1');
+    expect(registry.sendWithResult).toHaveBeenCalledWith(7, expect.objectContaining({
+      data: expect.objectContaining({ unread: false }),
+    }));
+  });
+
+  it('feishu channel terminal push carries unread=false', async () => {
+    const sessionService = {
+      getSession: vi.fn(async () => ({ id: 648, userId: 7, phase: 'RUNNING', sessionType: 'NORMAL', projectKey: 'feishu-1-private-2' })),
+      updatePhase: vi.fn(),
+      updateRuntimeStatus: vi.fn(),
+      markLastMessageFinished: vi.fn(),
+    };
+    const registry = { send: vi.fn(), sendWithResult: vi.fn(async () => ({ delivered: true })) };
+    const delivery = { prepare: vi.fn(async () => null), resolveWebSocket: vi.fn() };
+    const tree = { publish: vi.fn() };
+    const svc = new TaskTerminalService(sessionService as never, registry as never, delivery as never, tree as never);
+    await svc.finishExecution(648, 7, 'COMPLETED', 'exec-1');
     expect(registry.sendWithResult).toHaveBeenCalledWith(7, expect.objectContaining({
       data: expect.objectContaining({ unread: false }),
     }));
