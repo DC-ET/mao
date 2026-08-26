@@ -48,7 +48,7 @@ describe('AgentFeishuInboundHandler', () => {
       listenerFactory: async () => ({ onEvent: () => undefined }),
     });
     await handler.onMessage(makeContext({ groupContext: '[09:36] 张三：在吗', senderLabel: '李四' }));
-    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '[09:36] 张三：在吗\n李四：hello');
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '【群内最近消息】\n[09:36] 张三：在吗\n\n【用户消息】\n李四：hello');
   });
 
   it('prepends quoted message context before group history', async () => {
@@ -67,9 +67,9 @@ describe('AgentFeishuInboundHandler', () => {
     await handler.onMessage(makeContext({
       groupContext: '[09:36] 张三：在吗',
       senderLabel: '李四',
-      quotedContext: '[引用消息] [09:35] 王五：告警内容',
+      quotedContext: '[09:35] 王五：告警内容',
     }));
-    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '[引用消息] [09:35] 王五：告警内容\n[09:36] 张三：在吗\n李四：hello');
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '【引用的消息】\n[09:35] 王五：告警内容\n\n【群内最近消息】\n[09:36] 张三：在吗\n\n【用户消息】\n李四：hello');
   });
 
   it('executes agent and returns latest assistant reply', async () => {
@@ -94,7 +94,7 @@ describe('AgentFeishuInboundHandler', () => {
     const reply = await handler.onMessage(makeContext());
     expect(reply).toEqual({ text: 'assistant text' });
     // 群聊首条消息（无历史上下文）也必须带发送人前缀，否则 Agent 不知道发送者。
-    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '未知用户：hello');
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '【用户消息】\n未知用户：hello');
     expect(harness.execute).toHaveBeenCalledWith(7, 'exec-1', expect.anything(), expect.anything(), null);
     expect(onExecutionFinished).toHaveBeenCalledWith(7, expect.anything(), 'exec-1', true);
   });
@@ -112,7 +112,7 @@ describe('AgentFeishuInboundHandler', () => {
       listenerFactory: async () => ({ onEvent: () => undefined }),
     });
     await handler.onMessage(makeContext({ groupContext: '[张三] 讨论1', senderLabel: '李四' }));
-    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '[张三] 讨论1\n李四：hello');
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '【群内最近消息】\n[张三] 讨论1\n\n【用户消息】\n李四：hello');
   });
 
   it('cancels the previous generation when a new message arrives', async () => {
@@ -328,7 +328,7 @@ describe('AgentFeishuInboundHandler', () => {
     });
     await handler.onMessage(makeContext({ messageType: 'image', imageKey: 'img_1', text: '[图片]' }));
     expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, [
-      { type: 'text', text: '未知用户：[图片]' },
+      { type: 'text', text: '【用户消息】\n未知用户：[图片]' },
       { type: 'image_url', imageUrl: { url: 'data:image/jpeg;base64,AAA' } },
     ]);
   });

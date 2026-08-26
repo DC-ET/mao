@@ -1035,14 +1035,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         ? await feishuMessageRepository.findGroupMessageByMessageId(String(accountId), event.chatId, event.parentId)
         : null;
       if (fromLog != null) {
-        return truncateQuoted(`[引用消息] [${formatGroupTime(fromLog.createdAt)}] ${fromLog.senderName}：${fromLog.content ?? ''}`);
+        return truncateQuoted(`[${formatGroupTime(fromLog.createdAt)}] ${fromLog.senderName}：${fromLog.content ?? ''}`);
       }
       // 日志未命中（引用机器人消息、超出日志窗口或私聊）：通过消息详情 API 兜底。
       const client = await getFeishuClient(Number(accountId));
       if (client == null) return null;
       const detail = await fetchFeishuMessageDetail(client, event.parentId);
       if (detail == null) return null;
-      return truncateQuoted(`[引用消息] ${detail.text}`);
+      return truncateQuoted(detail.text);
     },
     resolveUserId: async (accountId, event) => {
       const unionId = event.senderUnionId ?? event.senderId;

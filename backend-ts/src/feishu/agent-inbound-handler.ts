@@ -135,16 +135,16 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   }
 
   private async buildMessage(context: FeishuInboundContext, workspace: string | null): Promise<string | FeishuContentPart[]> {
-    // 群聊消息始终带发送人前缀（含无历史上下文的首条消息），否则 Agent 不知道消息是谁发的；私聊无需前缀。
+    // 群聊消息按区块结构化：引用消息 / 群内最近消息 / 用户消息，避免上下文看起来像用户发送的内容。
     const isGroup = context.chatType === 'group';
     const senderLabel = context.senderLabel?.trim() || '未知用户';
-    // 被引用/回复消息的内容预取：引用是任务意图核心，置于消息最前。
-    const quotedPrefix = context.quotedContext?.trim() !== '' && context.quotedContext != null
-      ? `${context.quotedContext.trim()}\n`
-      : '';
-    const text = isGroup
-      ? `${quotedPrefix}${context.groupContext?.trim() ? `${context.groupContext}\n` : ''}${senderLabel}：${context.text}`
-      : `${quotedPrefix}${context.text}`;
+    const sections: string[] = [];
+    const quoted = context.quotedContext?.trim();
+    if (quoted != null && quoted !== '') sections.push(`【引用的消息】\n${quoted}`);
+    const groupContext = context.groupContext?.trim();
+    if (isGroup && groupContext != null && groupContext !== '') sections.push(`【群内最近消息】\n${groupContext}`);
+    sections.push(`【用户消息】\n${isGroup ? `${senderLabel}：${context.text}` : context.text}`);
+    const text = sections.join('\n\n');
     const media = await this.options.downloadMedia?.(context, workspace) ?? null;
     if (media == null) return text;
     return this.composeContent(text, media);
