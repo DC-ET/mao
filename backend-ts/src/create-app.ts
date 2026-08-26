@@ -1061,9 +1061,29 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     if (name != null && name !== '') feishuSenderNames.set(key, Promise.resolve(name));
     return name;
   };
+  // 群图片入站即下载（非懒加载）：落到群工作区，占位文本携带 @{路径}@ 引用，Agent 免工具直接读取；
+  // 失败返回 null 由调用方保留 msg 占位符，仍可通过 feishu_download_file 懒加载兜底。
+  const IMAGE_EXT_BY_CONTENT_TYPE: Record<string, string> = {
+    'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp',
+  };
+  const downloadFeishuGroupImage = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
+    if (event.chatType !== 'group' || event.chatId == null || event.messageId == null || event.imageKey == null) return null;
+    const client = await getFeishuClient(Number(accountId));
+    if (client == null) return null;
+    const workspace = resolveFeishuGroupWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
+    const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
+    const { buffer, contentType } = await downloadFeishuMediaBuffer(client, event.messageId, event.imageKey, 'image', maxBytes);
+    if (buffer.length === 0) return null;
+    mkdirSync(workspace, { recursive: true });
+    const ext = IMAGE_EXT_BY_CONTENT_TYPE[contentType] ?? '.jpg';
+    const target = resolve(workspace, `feishu-image-${event.messageId}${ext}`);
+    await writeFile(target, buffer);
+    return target;
+  };
   const feishuInboundProcessor = new FeishuInboundProcessor(feishuInboundHandler, {
     messageService: feishuMessageService,
     resolveSenderName: resolveFeishuSenderName,
+    downloadGroupImage: downloadFeishuGroupImage,
     resolveQuotedMessage: async (accountId, event) => {
       if (event.parentId == null) return null;
       // 群消息日志优先：免 API 调用，发送人姓名与占位符格式也和上下文一致。

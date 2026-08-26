@@ -15,6 +15,8 @@ export interface FeishuInboundProcessorOptions {
   resolveSenderName?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
   /** 解析被引用/回复消息的内容文本（含 [引用消息] 前缀）；返回 null 表示无法解析。 */
   resolveQuotedMessage?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
+  /** 群聊图片入站即下载（非懒加载）：返回落盘绝对路径嵌入占位文本；null/抛错表示失败，保留懒加载占位符。 */
+  downloadGroupImage?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
 }
 
 export class FeishuInboundProcessor {
@@ -31,6 +33,7 @@ export class FeishuInboundProcessor {
       ? true
       : await messageService.claimInboundMessage(accountId, { ...normalized, accountId, messageId });
     if (messageService != null && !claimed) return;
+    normalized = await this.prewarmGroupImage(accountId, normalized);
     let completed = false;
     try {
       if (normalized.chatType === 'p2p') {
@@ -102,6 +105,20 @@ export class FeishuInboundProcessor {
     } catch (error) {
       console.warn(`解析飞书引用消息失败, messageId=${event.messageId}, parentId=${event.parentId}: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
+    }
+  }
+
+  /** 群图片入站预下载：成功则占位文本携带 @{路径}@ 引用（Agent 免工具直接读取），失败保留 msg 占位符走懒加载兜底。 */
+  private async prewarmGroupImage(accountId: string, event: FeishuNormalizedMessage): Promise<FeishuNormalizedMessage> {
+    if (event.chatType !== 'group' || event.messageType !== 'image' || this.options.downloadGroupImage == null) return event;
+    try {
+      const path = await this.options.downloadGroupImage(accountId, event);
+      if (path == null || path === '') return event;
+      // 飞书图片消息无文本，text 此时只可能是懒加载占位符，直接整体替换。
+      return { ...event, text: `[图片已保存: @{${path}}@]` };
+    } catch (error) {
+      console.warn(`飞书群图片预下载失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+      return event;
     }
   }
 

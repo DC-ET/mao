@@ -146,6 +146,44 @@ describe('FeishuInboundProcessor', () => {
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '[图片 msg=om_1]' }));
   });
 
+  it('pre-downloads group image and embeds local path into text', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const downloadGroupImage = vi.fn(async (_accountId: string, _event: FeishuNormalizedMessage) =>
+      '/ws/feishu-chat/1/oc_group/feishu-image-om_1.png');
+    const processor = new FeishuInboundProcessor(makeHandler(), {
+      messageService,
+      downloadGroupImage,
+    });
+    await processor.process('1', makeEvent({ messageType: 'image', imageKey: 'img_1', text: '', isBotMentioned: false }));
+    expect(downloadGroupImage).toHaveBeenCalledOnce();
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
+      expect.objectContaining({ text: '[图片已保存: @{/ws/feishu-chat/1/oc_group/feishu-image-om_1.png}@]' }), false);
+  });
+
+  it('keeps lazy placeholder when group image pre-download fails', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const downloadGroupImage = vi.fn(async (_accountId: string, _event: FeishuNormalizedMessage) => {
+      throw new Error('download failed');
+    });
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const processor = new FeishuInboundProcessor(makeHandler(), { messageService, downloadGroupImage });
+    try {
+      await processor.process('1', makeEvent({ messageType: 'image', imageKey: 'img_1', text: '', isBotMentioned: false }));
+      expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
+        expect.objectContaining({ text: '[图片 msg=om_1]' }), false);
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+
+  it('does not pre-download images for p2p messages', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const downloadGroupImage = vi.fn(async () => '/tmp/x.png');
+    const processor = new FeishuInboundProcessor(makeHandler(), { messageService, downloadGroupImage });
+    await processor.process('1', makeEvent({ chatType: 'p2p', messageType: 'image', imageKey: 'img_1', text: '' }));
+    expect(downloadGroupImage).not.toHaveBeenCalled();
+  });
+
   it('normalizes file message to placeholder with message id', async () => {
     messageService.claimInboundMessage.mockResolvedValueOnce(true);
     const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.text }));
