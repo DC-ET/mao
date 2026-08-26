@@ -227,12 +227,16 @@ export class SessionService {
     const keys = [...keyOrder];
     keys.sort(SessionGroupKey.compareKeys);
     const groups: SessionGroupBucket[] = [];
+    const agentMap = await this.batchLoadAgents(all);
     for (const key of keys) {
       const members = byKey.get(key)!;
       members.sort(SessionGroupKey.compareSessions);
       const total = members.length;
       const preview = limit >= total ? members : members.slice(0, limit);
-      groups.push({ key, label: SessionGroupKey.formatLabel(key), total, hasMore: total > limit, sessions: [...preview] });
+      const first = members[0];
+      const agentName = first.agentId != null ? agentMap.get(first.agentId)?.name : undefined;
+      const groupName = first.title != null && first.title !== '飞书Bot会话' ? first.title : undefined;
+      groups.push({ key, label: SessionGroupKey.formatLabel(key, agentName, groupName), total, hasMore: total > limit, sessions: [...preview] });
     }
     return groups;
   }

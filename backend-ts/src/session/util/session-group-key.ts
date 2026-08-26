@@ -3,6 +3,39 @@ import type { Session } from '../types.js';
 export const CLOUD_TEMP = 'CLOUD:临时工作区';
 export const LOCAL_UNSET = 'LOCAL:未设置';
 const FEISHU_GROUP_WORKSPACE = '/feishu-chat/';
+const FEISHU_PRIVATE_GROUP_PREFIX = 'FEISHU_PRIVATE:';
+const FEISHU_GROUP_PREFIX = 'FEISHU_GROUP:';
+
+export function feishuGroupKey(session: Session): string | null {
+  if (session.projectKey != null && /^feishu-\d+-private-\d+$/.test(session.projectKey)) {
+    return `${FEISHU_PRIVATE_GROUP_PREFIX}${session.agentId ?? 'null'}`;
+  }
+  if (session.workspace?.replace(/\\/g, '/').includes(FEISHU_GROUP_WORKSPACE)) {
+    return `${FEISHU_GROUP_PREFIX}${session.workspace}`;
+  }
+  return null;
+}
+
+export function isFeishuGroupKey(key: string): boolean {
+  return key.startsWith(FEISHU_PRIVATE_GROUP_PREFIX) || key.startsWith(FEISHU_GROUP_PREFIX);
+}
+
+export function applyFeishuFilter(groupKey: string): GroupFilterSql {
+  if (groupKey.startsWith(FEISHU_PRIVATE_GROUP_PREFIX)) {
+    const agentId = groupKey.slice(FEISHU_PRIVATE_GROUP_PREFIX.length);
+    return {
+      clauses: ['execution_mode = ?', 'agent_id = ?', 'project_key LIKE ?'],
+      params: ['CLOUD', agentId === 'null' ? null : Number(agentId), 'feishu-%-private-%'],
+    };
+  }
+  if (groupKey.startsWith(FEISHU_GROUP_PREFIX)) {
+    return {
+      clauses: ['execution_mode = ?', 'workspace = ?'],
+      params: ['CLOUD', groupKey.slice(FEISHU_GROUP_PREFIX.length)],
+    };
+  }
+  throw new Error(`Invalid Feishu groupKey: ${groupKey}`);
+}
 
 export interface GroupFilterSql {
   clauses: string[];
@@ -11,7 +44,7 @@ export interface GroupFilterSql {
 
 export function of(sessionOrMode: Session | string | null | undefined, workspace?: string | null): string {
   if (sessionOrMode && typeof sessionOrMode === 'object') {
-    return ofMode(sessionOrMode.executionMode, sessionOrMode.workspace);
+    return feishuGroupKey(sessionOrMode) ?? ofMode(sessionOrMode.executionMode, sessionOrMode.workspace);
   }
   return ofMode(sessionOrMode as string | null | undefined, workspace);
 }
@@ -26,7 +59,13 @@ export function ofMode(executionMode: string | null | undefined, workspace: stri
   return CLOUD_TEMP;
 }
 
-export function formatLabel(key: string): string {
+export function formatLabel(key: string, agentName?: string, groupName?: string): string {
+  if (key.startsWith(FEISHU_PRIVATE_GROUP_PREFIX)) {
+    return agentName ?? '未知 Agent';
+  }
+  if (key.startsWith(FEISHU_GROUP_PREFIX)) {
+    return `${agentName ?? '未知 Agent'}:${groupName ?? '飞书群聊'}`;
+  }
   if (CLOUD_TEMP === key) {
     return '临时工作区';
   }
@@ -73,6 +112,9 @@ export function compareKeys(a: string, b: string): number {
 export function applyFilter(groupKey: string | null | undefined): GroupFilterSql {
   if (groupKey == null || groupKey.trim().length === 0) {
     throw new Error('groupKey is required');
+  }
+  if (isFeishuGroupKey(groupKey)) {
+    return applyFeishuFilter(groupKey);
   }
   if (LOCAL_UNSET === groupKey) {
     return {
@@ -148,6 +190,9 @@ export const SessionGroupKey = {
   CLOUD_TEMP,
   LOCAL_UNSET,
   of,
+  feishuGroupKey,
+  isFeishuGroupKey,
+  applyFeishuFilter,
   ofMode,
   formatLabel,
   compareKeys,
