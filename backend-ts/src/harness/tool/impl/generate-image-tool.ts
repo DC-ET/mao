@@ -7,6 +7,7 @@ import { BaseTool } from '../tool.js';
 import { asInt, asText, errorJson, parseObject, toJson } from '../json.js';
 import { harnessLog } from '../../log.js';
 import type { LlmModel } from '../../deps.js';
+import { applyClientImpersonationHeaders } from '../../llm/client-impersonation-headers.js';
 
 export interface ImageModelLookup {
   findFirstActiveImageModel(): Promise<LlmModel | null>;
@@ -66,7 +67,7 @@ export class GenerateImageTool extends BaseTool {
       const n = Math.min(4, Math.max(1, args.n != null ? asInt(args.n, 1) : 1));
       const body = JSON.stringify({ model: model.modelId, prompt, size, n, response_format: 'b64_json' });
       const url = new URL((model.baseUrl ?? '').replace(/\/$/, '') + '/images/generations');
-      const json = await postJson(url, body, model.apiKey ?? '');
+      const json = await postJson(url, body, model.apiKey ?? '', model.clientImpersonation);
       const parsed = JSON.parse(json) as { data?: Array<{ b64_json?: string; url?: string }> };
       const images: Array<Record<string, unknown>> = [];
       mkdirSync(this.uploadDir, { recursive: true });
@@ -93,7 +94,15 @@ export class GenerateImageTool extends BaseTool {
   }
 }
 
-function postJson(url: URL, body: string, apiKey: string): Promise<string> {
+function postJson(url: URL, body: string, apiKey: string, clientImpersonation?: string | null): Promise<string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+    'Content-Length': String(Buffer.byteLength(body)),
+  };
+  if (clientImpersonation === 'codex' || clientImpersonation === 'claude_code') {
+    applyClientImpersonationHeaders(headers, clientImpersonation);
+  }
   return new Promise((resolve, reject) => {
     const lib = url.protocol === 'https:' ? https : http;
     const req = lib.request({
@@ -101,11 +110,7 @@ function postJson(url: URL, body: string, apiKey: string): Promise<string> {
       port: url.port,
       path: url.pathname + url.search,
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-      },
+      headers,
       timeout: 180_000,
     }, (res) => {
       const chunks: Buffer[] = [];

@@ -9,8 +9,10 @@ import { GenerateImageTool } from './generate-image-tool.js';
 describe('GenerateImageTool', () => {
   let server: http.Server;
   let port = 0;
+  let lastHeaders: http.IncomingHttpHeaders = {};
   beforeAll(async () => {
-    server = http.createServer((_req, res) => {
+    server = http.createServer((req, res) => {
+      lastHeaders = req.headers;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ data: [{ b64_json: Buffer.from('PNG').toString('base64') }, { url: 'https://cdn.example/a.png' }] }));
     });
@@ -35,5 +37,17 @@ describe('GenerateImageTool', () => {
     const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'a cat', n: 2 }), 1, null));
     expect(result.images.length).toBe(2);
     expect(result.images[0].image_url).toContain('uploads');
+  });
+
+  it('injects client impersonation headers when configured', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'img-'));
+    const tool = new GenerateImageTool({
+      findFirstActiveImageModel: async () => ({
+        modelId: 'gpt-image', baseUrl: `http://127.0.0.1:${port}`, apiKey: 'k', clientImpersonation: 'codex',
+      }),
+    }, dir);
+    await tool.execute(JSON.stringify({ prompt: 'a cat' }), 1, null);
+    expect(lastHeaders['user-agent']).toBe('codex_cli_rs/0.146.0 (Linux 6.1.0; x86_64) xterm-256color');
+    expect(lastHeaders.originator).toBe('codex_cli_rs');
   });
 });
