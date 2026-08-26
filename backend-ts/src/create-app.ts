@@ -979,7 +979,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         const unionId = event.senderUnionId ?? event.senderId;
         const userId = unionId == null ? null : await feishuBinding.findUserIdByUnionId(unionId);
         const bound = userId == null ? null : await userRepo.findById(userId);
-        return bound?.name?.trim() || null;
+        return bound?.displayName?.trim() || null;
       }
     })();
     const name = await lookup;
