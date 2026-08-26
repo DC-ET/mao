@@ -31,7 +31,10 @@ describe('CrashRecoveryRunner', () => {
     const taskTerminal = { finishExecution: vi.fn() };
     const llm = { selectById: vi.fn(async () => ({ supportsVision: 1 })), selectDefault: vi.fn() };
     const runner = new CrashRecoveryRunner(
-      { selectByPhase: vi.fn(async () => [{ id: 4, userId: 7, modelId: 3, phase: 'RUNNING' }]) } as never,
+      {
+        selectByPhase: vi.fn(async () => [{ id: 4, userId: 7, modelId: 3, phase: 'RUNNING' }]),
+        selectById: vi.fn(async () => ({ id: 4, userId: 7, modelId: 3, phase: 'RUNNING' })),
+      } as never,
       sessionService as never,
       taskTerminal as never,
       harness as never,
@@ -62,7 +65,7 @@ describe('CrashRecoveryRunner', () => {
       removeCancelFlag: vi.fn(),
     };
     const runner = new CrashRecoveryRunner(
-      { selectByPhase } as never,
+      { selectByPhase, selectById: vi.fn(async () => ({ id: 9, userId: 3, modelId: 1, phase: 'RUNNING' })) } as never,
       sessionService as never,
       { finishExecution: vi.fn() } as never,
       harness as never,
@@ -85,6 +88,39 @@ describe('CrashRecoveryRunner', () => {
     expect(submitted).toHaveLength(1);
     await submitted[0]();
     expect(harness.execute).toHaveBeenCalled();
+  });
+
+  it('skips recovery when snapshot session already reached terminal phase', async () => {
+    const selectByPhase = vi.fn(async () => []);
+    const submitted: Array<() => Promise<void>> = [];
+    const sessionService = { cleanupIncompleteTail: vi.fn(async () => 0), updatePhase: vi.fn() };
+    const harness = { execute: vi.fn(async () => undefined) };
+    // 快照时 RUNNING，蓝绿排空期间旧实例正常收尾置为 COMPLETED。
+    const runner = new CrashRecoveryRunner(
+      {
+        selectByPhase,
+        selectById: vi.fn(async () => ({ id: 9, userId: 3, modelId: 1, phase: 'COMPLETED' })),
+      } as never,
+      sessionService as never,
+      { finishExecution: vi.fn() } as never,
+      harness as never,
+      { registerCancelFlag: vi.fn(), removeCancelFlag: vi.fn() } as never,
+      { send: vi.fn() } as never,
+      { record: vi.fn() } as never,
+      { clear: vi.fn() } as never,
+      { selectBySessionId: vi.fn(async () => []) } as never,
+      { selectById: vi.fn(async () => ({ supportsVision: 1 })), selectDefault: vi.fn() } as never,
+      '/tmp/mao-runtime-test',
+      { submit: (fn) => { submitted.push(fn); } },
+    );
+    (runner as unknown as { deferredCandidates: unknown[] }).deferredCandidates = [
+      { id: 9, userId: 3, modelId: 1, phase: 'RUNNING' },
+    ] as never;
+    await (runner as unknown as { runPass: (d: boolean) => Promise<void> }).runPass(true);
+    expect(submitted).toHaveLength(1);
+    await submitted[0]();
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(sessionService.updatePhase).not.toHaveBeenCalled();
   });
 });
 

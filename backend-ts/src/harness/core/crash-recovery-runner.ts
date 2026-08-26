@@ -133,9 +133,17 @@ export class CrashRecoveryRunner {
     }, delaySec * 1000);
   }
 
-  private async recoverSession(session: Session): Promise<void> {
-    const sessionId = session.id!;
-    const userId = session.userId ?? null;
+  private async recoverSession(snapshot: Session): Promise<void> {
+    const sessionId = snapshot.id!;
+    const userId = snapshot.userId ?? null;
+    // 恢复前重查当前状态：候选来自启动时（或延迟恢复的初始）快照，蓝绿排空期间
+    // 会话可能已被旧实例正常收尾进入终态，直接重放会把已完成会话误判为 FAILED。
+    const current = await this.sessionMapper.selectById(sessionId);
+    if (current == null || (current.phase !== 'RUNNING' && current.phase !== 'RESUMING')) {
+      harnessLog('info', `Skip recovery for session ${sessionId}: current phase=${current?.phase ?? 'deleted'}`);
+      return;
+    }
+    const session = current;
     const executionId = randomUUID();
     try {
       const deleted = await this.sessionService.cleanupIncompleteTail(sessionId);
