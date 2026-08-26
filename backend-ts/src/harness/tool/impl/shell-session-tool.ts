@@ -57,7 +57,7 @@ export class ShellSessionTool extends BaseTool {
         command: { type: 'string', description: '要执行的命令（用于 exec 动作）' },
         session_id: { type: 'string', description: '会话 ID。省略时执行一次性命令；提供时复用已有会话。' },
         input: { type: 'string', description: '要写入 stdin 的输入（用于 write_stdin 动作）' },
-        workdir: { type: 'string', description: '工作目录：工作区相对路径，或工作区内的绝对路径' },
+        workdir: { type: 'string', description: '工作目录：支持相对路径和任意绝对路径' },
         yield_time_ms: { type: 'integer', description: '等待输出的最长时间，单位毫秒（默认 300000）' },
         async: { type: 'boolean', description: '是否在后台运行并立即返回 task_id（默认 false，仅用于 exec 动作）' },
         keep_session: { type: 'boolean', description: '是否保留会话（默认 false）。执行后自动关闭会话以释放资源。' },
@@ -113,7 +113,7 @@ export class ShellSessionTool extends BaseTool {
     const yieldTimeMs = args.yield_time_ms != null ? asInt(args.yield_time_ms, 300_000) : 300_000;
     let workdir = workspace;
     const workdirArg = asText(args.workdir);
-    if (workdirArg) workdir = this.pathSandbox.resolve(workdirArg, workspace);
+    if (workdirArg) workdir = this.pathSandbox.resolveLenient(workdirArg, workspace);
     const tokenMap = userId != null && this.gitCredentialService
       ? await this.gitCredentialService.getTokenMapByUser(userId) : {};
     const shellId = asText(args.session_id);

@@ -3,7 +3,10 @@ import { ShellSessionTool } from './shell-session-tool.js';
 import { SecurityException } from '../../safety/path-sandbox.js';
 
 describe('ShellSessionTool', () => {
-  const pathSandbox = { resolve: vi.fn((_p: string, ws: string | null) => ws ?? '/tmp') };
+  const pathSandbox = {
+    resolve: vi.fn((_p: string, ws: string | null) => ws ?? '/tmp'),
+    resolveLenient: vi.fn((p: string, ws: string | null) => p.startsWith('/') ? p : `${ws ?? '/tmp'}/${p}`),
+  };
   const session = {
     sessionId: 'sh-1',
     writeStdin: vi.fn(),
@@ -59,8 +62,14 @@ describe('ShellSessionTool', () => {
     expect(gone.error).toContain('不存在');
   });
 
-  it('maps sandbox blocks to error json', async () => {
-    pathSandbox.resolve.mockImplementationOnce(() => { throw new SecurityException('blocked'); });
+  it('allows shell workdirs outside the workspace', async () => {
+    const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', workdir: '/etc' }), 11, 7, '/tmp'));
+    expect(result.error).toBeUndefined();
+    expect(pathSandbox.resolveLenient).toHaveBeenCalledWith('/etc', '/tmp');
+  });
+
+  it('maps shell workdir resolution errors to error json', async () => {
+    pathSandbox.resolveLenient.mockImplementationOnce(() => { throw new SecurityException('blocked'); });
     const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', workdir: '/etc' }), 11, 7, '/tmp'));
     expect(result.error).toContain('blocked');
   });
