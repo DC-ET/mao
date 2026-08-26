@@ -5,6 +5,8 @@ export interface AgentEventListener {
   onToolCallStart(toolCall: ToolCall): void;
   onToolCallResult(toolCallId: string, result: string): void;
   onMessageEnd(usage: ChatUsage): void;
+  onRoundStart?(round: number): void;
+  onRoundEnd?(round: number): void;
   onError(t: unknown): void;
   onContextWindow?(estimatedTokens: number, actualTokens: number): void;
   onCompactionStart?(type: string, messageCount: number, estimatedTokens: number): void;

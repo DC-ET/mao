@@ -28,6 +28,12 @@ export class CompositeAgentEventListener implements AgentEventListener {
   onMessageEnd(usage: ChatUsage): void {
     this.forEach('onMessageEnd', (l) => l.onMessageEnd(usage));
   }
+  onRoundStart(round: number): void {
+    this.forEach('onRoundStart', (l) => l.onRoundStart?.(round));
+  }
+  onRoundEnd(round: number): void {
+    this.forEach('onRoundEnd', (l) => l.onRoundEnd?.(round));
+  }
   onError(t: unknown): void {
     this.forEach('onError', (l) => l.onError(t));
   }

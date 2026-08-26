@@ -1,4 +1,6 @@
 import type { FeishuHarnessService, FeishuInboundContext, FeishuInboundHandler, FeishuReply, CancelFlag } from './types.js';
+import { CompositeAgentEventListener } from '../harness/core/composite-agent-event-listener.js';
+import { FeishuCardProgressListener, type FeishuCardProgress } from './card-progress-listener.js';
 
 export interface FeishuSessionAdapter {
   getOrCreateSession(accountId: string, context: FeishuInboundContext): Promise<{ id: number; workspace?: string | null }>;
@@ -39,6 +41,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     downloadMedia?: (context: FeishuInboundContext, workspace: string | null) => Promise<FeishuMediaDownload | null>;
     listenerFactory?: (sessionId: number, context: FeishuInboundContext, executionId: string) => Parameters<FeishuHarnessService['execute']>[2] | Promise<Parameters<FeishuHarnessService['execute']>[2]>;
     onExecutionFinished?: (sessionId: number, context: FeishuInboundContext, executionId: string, success: boolean) => Promise<void>;
+    createProgressCard?: (context: FeishuInboundContext) => Promise<FeishuCardProgress | null>;
     onReply?: (context: FeishuInboundContext, text: string) => Promise<void>;
   }) {}
 
@@ -73,7 +76,14 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     const cancelFlag = this.options.createCancelFlag?.(sessionId) ?? NOOP_CANCEL_FLAG;
     this.cancelFlags.set(sessionId, cancelFlag);
     let executionId = '';
+    let cardListener: FeishuCardProgressListener | null = null;
     try {
+      try {
+        const progress = await this.options.createProgressCard?.(context) ?? null;
+        if (progress != null) cardListener = new FeishuCardProgressListener(progress);
+      } catch (error) {
+        console.warn(`飞书进度卡片创建失败，继续执行 Agent: ${error instanceof Error ? error.message : String(error)}`);
+      }
       // 执行前重置 phase：避免上一轮 FAILED/CANCELLED 终态被 AgentLoop.isTerminalPhaseInDb 判定为取消。
       await this.options.sessionService.updatePhase?.(sessionId, 'RUNNING');
       const message = await this.buildMessage(context, session.workspace ?? null);
@@ -82,23 +92,34 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       executionId = eventId || '';
       const listener = await this.options.listenerFactory?.(sessionId, context, executionId);
       if (listener == null) throw new Error('Feishu listenerFactory is required to execute a harness session');
-      await this.options.harnessService.execute(sessionId, eventId || null, listener, cancelFlag);
+      await this.options.harnessService.execute(
+        sessionId, eventId || null,
+        cardListener == null ? listener : CompositeAgentEventListener.of(listener, cardListener),
+        cancelFlag,
+      );
       // 被代际取消（本代 flag 被置位或已有更新的消息排队）时不回复，并清理残留消息尾部。
       if (cancelFlag.get() || this.generations.get(sessionId) !== generation) {
         await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
+        const cardUpdated = await cardListener?.cancel();
         await this.options.onExecutionFinished?.(sessionId, context, executionId, false);
-        return null;
+        if (cardListener == null || cardUpdated !== false) return null;
+        return { text: '任务已取消。' };
       }
       await this.options.onExecutionFinished?.(sessionId, context, executionId, true);
       const text = await this.options.sessionService.getLatestAssistantReply(sessionId);
-      await this.options.onReply?.(context, text);
-      return { text };
+      const cardUpdated = await cardListener?.complete(text);
+      if (cardListener == null || cardUpdated === false) {
+        await this.options.onReply?.(context, text);
+        return { text };
+      }
+      return null;
     } catch (error) {
       // 前置步骤或 Agent 执行失败：不向长连接冒泡，向用户回友好文案并标记失败。
       console.error(`飞书 Agent 执行失败, sessionId=${sessionId}`, error);
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
+      const cardUpdated = await cardListener?.fail('抱歉，处理您的消息时出现了错误，请稍后再试。');
       await this.options.onExecutionFinished?.(sessionId, context, executionId, false);
-      return { text: '抱歉，处理您的消息时出现了错误，请稍后再试。' };
+      return cardListener == null || cardUpdated === false ? { text: '抱歉，处理您的消息时出现了错误，请稍后再试。' } : null;
     } finally {
       release();
       if (this.locks.get(sessionId) === queued) {

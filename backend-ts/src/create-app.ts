@@ -190,6 +190,7 @@ import { FeishuMessageService } from './feishu/message.service.js';
 import { senderName } from './feishu/message.service.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
+import type { FeishuCardProgress } from './feishu/card-progress-listener.js';
 import type { FeishuInboundContext } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 
@@ -784,6 +785,48 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     feishuClients.set(key, client);
     return client;
   };
+  const buildFeishuProgressCard = (
+    status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[],
+  ): Record<string, unknown> => {
+    const title = status === 'RUNNING' ? '正在处理' : status === 'COMPLETED' ? '处理完成' : status === 'CANCELLED' ? '任务已取消' : '处理失败';
+    const color = status === 'RUNNING' ? 'blue' : status === 'COMPLETED' ? 'green' : status === 'CANCELLED' ? 'grey' : 'red';
+    const sections: Array<Record<string, unknown>> = [
+      { tag: 'div', text: { tag: 'lark_md', content: `**状态：${title}**${round > 0 ? ` · 第 ${round} 轮` : ''}` } },
+    ];
+    if (content.trim() !== '') sections.push({ tag: 'div', text: { tag: 'lark_md', content: content.slice(0, 6000) } });
+    if (tools.length > 0) sections.push({ tag: 'div', text: { tag: 'lark_md', content: `**本轮工具**\n${tools.map((tool) => `- ${tool}`).join('\n').slice(0, 3000)}` } });
+    return {
+      config: { wide_screen_mode: true, update_multi: true },
+      header: { template: color, title: { tag: 'plain_text', content: 'Mao Agent' } },
+      elements: sections,
+    };
+  };
+  const createFeishuProgressCard = async (context: FeishuInboundContext): Promise<FeishuCardProgress | null> => {
+    const client = await getFeishuClient(Number(context.accountId));
+    if (client == null) return null;
+    const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', []);
+    const data = { msg_type: 'interactive', content: JSON.stringify(card) };
+    const response = context.chatType === 'group' && context.messageId != null
+      ? await client.im.v1.message.reply({ path: { message_id: context.messageId }, data })
+      : await client.im.v1.message.create({
+        params: { receive_id_type: context.chatType === 'group' ? 'chat_id' : 'open_id' },
+        data: { ...data, receive_id: context.chatType === 'group' ? context.chatId! : context.senderId! },
+      });
+    const messageId = (response as { data?: { message_id?: string } }).data?.message_id;
+    if (messageId == null || messageId === '') throw new Error('飞书处理中卡片发送失败：未返回 message_id');
+    let nextUpdateAt = 0;
+    return {
+      update: async (status, round, content, tools) => {
+        const wait = nextUpdateAt - Date.now();
+        if (wait > 0) await new Promise<void>((resolve) => setTimeout(resolve, wait));
+        nextUpdateAt = Date.now() + 250;
+        await client.im.v1.message.patch({
+          path: { message_id: messageId },
+          data: { content: JSON.stringify(buildFeishuProgressCard(status, round, content, tools)) },
+        });
+      },
+    };
+  };
   // 私聊会话按当前绑定用户隔离：同一 union_id 换绑到其他用户时不复用原会话/工作区。
   const resolveFeishuUserId = async (accountId: string, context: FeishuInboundContext): Promise<number | undefined> => {
     const unionId = context.senderUnionId ?? context.senderId;
@@ -813,6 +856,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     harnessService: harness as never,
     createCancelFlag: (sessionId) => agentLoop.registerCancelFlag(sessionId),
     releaseCancelFlag: (sessionId) => agentLoop.removeCancelFlag(sessionId),
+    createProgressCard: createFeishuProgressCard,
     onGenerationCancelled: (sessionId) => {
       try { shellManager.closeByConversation(sessionId); } catch (error) {
         console.debug(`关闭飞书会话 Shell 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);

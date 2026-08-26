@@ -152,6 +152,7 @@ export class AgentLoop {
       while (true) {
         round++;
         context.currentRound = round;
+        listener.onRoundStart?.(round);
         const sessionId = context.sessionId;
         this.activityHeartbeat.touch(sessionId);
         const cancelFlag = this.resolveCancelFlag(context);
@@ -347,6 +348,7 @@ export class AgentLoop {
             context.clearPendingToolCalls();
             continue;
           }
+          listener.onRoundEnd?.(round);
           break;
         }
 
@@ -395,6 +397,7 @@ export class AgentLoop {
         }
 
         context.clearPendingToolCalls();
+        listener.onRoundEnd?.(round);
 
         const loopConfig = context.compactionConfig;
         const midLoopAllowed = loopConfig != null
