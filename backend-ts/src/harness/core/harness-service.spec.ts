@@ -40,6 +40,14 @@ describe('HarnessService.filterToolsForSession', () => {
     expect(names(filtered)).not.toContain('ask_user_questions');
   });
 
+  it('feishuChannelRemovesAskUserQuestionsAndWeixinTools', () => {
+    const filtered = HarnessService.filterToolsForSession(
+      tools('ask_user_questions', 'read_file'),
+      'feishu-1-private-2',
+    );
+    expect(names(filtered)).toEqual(['read_file']);
+  });
+
   it('nonWeixinChannelKeepsAskUserQuestionsButRemovesWeixinTools', () => {
     const filtered = HarnessService.filterToolsForSession(
       tools('ask_user_questions', 'read_file'),

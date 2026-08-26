@@ -424,7 +424,7 @@ export class HarnessService {
       return result.filter((t) => t.getName() !== ASK_USER_QUESTIONS);
     }
     if (isFeishuChannelSession(projectKey, workspace)) {
-      return result.filter((t) => !isWeixinChannelTool(t));
+      return result.filter((t) => !isWeixinChannelTool(t) && t.getName() !== ASK_USER_QUESTIONS);
     }
     return result.filter((t) => !isWeixinChannelTool(t) && !isFeishuChannelTool(t));
   }
