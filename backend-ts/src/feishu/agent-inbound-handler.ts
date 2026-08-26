@@ -143,7 +143,11 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     if (quoted != null && quoted !== '') sections.push(`【引用的消息】\n${quoted}`);
     const groupContext = context.groupContext?.trim();
     if (isGroup && groupContext != null && groupContext !== '') sections.push(`【群内最近消息】\n${groupContext}`);
-    sections.push(`【用户消息】\n${isGroup ? `${senderLabel}：${context.text}` : context.text}`);
+    if (isGroup) {
+      sections.push(`【用户消息】\n${senderLabel}：${context.text}`);
+    } else {
+      sections.push(context.text);
+    }
     const text = sections.join('\n\n');
     const media = await this.options.downloadMedia?.(context, workspace) ?? null;
     if (media == null) return text;
