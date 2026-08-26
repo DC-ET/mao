@@ -23,7 +23,7 @@ export type FeishuChatType = 'p2p' | 'group' | 'unknown';
 export interface FeishuBotConfig { enabled: boolean; appId: string; appSecret: string; websocketEndpoint?: string; reconnectDelayMs: number; requestTimeoutMs: number; }
 export const DEFAULT_FEISHU_BOT_CONFIG: FeishuBotConfig = { enabled: true, appId: '', appSecret: '', reconnectDelayMs: 1_000, requestTimeoutMs: 30_000 };
 export interface FeishuEventHeader { eventId?: string; eventType?: string; createTime?: string; tenantKey?: string; appId?: string; token?: string; }
-export interface FeishuNormalizedMessage { eventId: string | null; messageId: string | null; chatId: string | null; chatType: FeishuChatType; senderId: string | null; senderUnionId: string | null; senderName?: string; maoUserId?: number; senderType: string | null; messageType: string; imageKey?: string | null; fileKey?: string | null; fileName?: string | null; text: string; mentions: string[]; isBotMentioned: boolean; content: unknown; rawEvent: unknown; header?: FeishuEventHeader; }
+export interface FeishuNormalizedMessage { eventId: string | null; messageId: string | null; chatId: string | null; chatType: FeishuChatType; senderId: string | null; senderUnionId: string | null; senderName?: string; maoUserId?: number; senderType: string | null; messageType: string; imageKey?: string | null; fileKey?: string | null; fileName?: string | null; text: string; mentions: string[]; isBotMentioned: boolean; content: unknown; rawEvent: unknown; header?: FeishuEventHeader; progressCardMessageId?: string | null; }
 export interface FeishuInboundContext extends FeishuNormalizedMessage {
   accountId: string;
   /** Group messages are annotated before reaching the agent handler. */

@@ -9,6 +9,7 @@ export interface FeishuInboundProcessorOptions {
   authorizeSender?: (accountId: string, event: FeishuNormalizedMessage) => Promise<boolean>;
   resolveUserId?: (accountId: string, event: FeishuNormalizedMessage) => Promise<number | null>;
   onUnauthorized?: (accountId: string, event: FeishuNormalizedMessage) => Promise<void>;
+  sendUnauthorizedCard?: (accountId: string, event: FeishuNormalizedMessage) => Promise<boolean>;
   /** 未绑定/未授权时的引导文案；可包含绑定链接。 */
   unauthorizedText?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string> | string;
   resolveSenderName?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
@@ -17,15 +18,15 @@ export interface FeishuInboundProcessorOptions {
 export class FeishuInboundProcessor {
   constructor(private readonly handler: FeishuInboundHandler, private readonly options: FeishuInboundProcessorOptions = {}) {}
 
-  async process(accountId: string, event: FeishuNormalizedMessage): Promise<void> {
+  async process(accountId: string, event: FeishuNormalizedMessage, skipClaim = false): Promise<void> {
     if (event.senderId == null || event.messageId == null) return;
     // 媒体消息（图片/文件）无文本时生成标注文本，避免空消息进入链路且群日志内容为空。
     let normalized = await this.resolveSenderName(event, accountId);
     normalized = this.normalizeText(normalized);
     const messageId = normalized.messageId!;
     const messageService = this.options.messageService;
-    const claimed = messageService == null
-      ? false
+    const claimed = skipClaim || messageService == null
+      ? true
       : await messageService.claimInboundMessage(accountId, { ...normalized, accountId, messageId });
     if (messageService != null && !claimed) return;
     let completed = false;
@@ -54,7 +55,13 @@ export class FeishuInboundProcessor {
       }
       if (this.options.authorizeSender != null && !(await this.options.authorizeSender(accountId, normalized))) {
         await this.options.onUnauthorized?.(accountId, normalized);
-        await this.sendUnauthorized(accountId, normalized);
+        let sentCard = false;
+        try {
+          sentCard = await this.options.sendUnauthorizedCard?.(accountId, normalized) ?? false;
+        } catch (error) {
+          console.warn(`飞书绑定卡片发送失败，使用文本回退: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (!sentCard) await this.sendUnauthorized(accountId, normalized);
         completed = true;
         return;
       }

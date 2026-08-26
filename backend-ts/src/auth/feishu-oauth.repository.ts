@@ -42,9 +42,18 @@ export class MysqlFeishuOauthStateRepository implements FeishuOauthStateReposito
       return 0;
     }
     params.push(state, expectedStatus);
+    const expiryClause = expectedStatus === 'PROCESSING' && patch.status === 'SUCCESS' ? ' AND expires_at > CURRENT_TIMESTAMP' : '';
     const result = await this.db.execute(
-      `UPDATE feishu_oauth_state SET ${sets.join(', ')} WHERE state = ? AND status = ?`,
+      `UPDATE feishu_oauth_state SET ${sets.join(', ')} WHERE state = ? AND status = ?${expiryClause}`,
       params,
+    );
+    return result.affectedRows;
+  }
+
+  async claimPending(state: string, now: string): Promise<number> {
+    const result = await this.db.execute(
+      `UPDATE feishu_oauth_state SET status = 'PROCESSING' WHERE state = ? AND status = 'PENDING' AND expires_at > ?`,
+      [state, now],
     );
     return result.affectedRows;
   }

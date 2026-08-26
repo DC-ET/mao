@@ -189,6 +189,7 @@ import { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
 import { FeishuMessageService } from './feishu/message.service.js';
 import { senderName } from './feishu/message.service.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
+import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
 import type { FeishuCardProgress } from './feishu/card-progress-listener.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
@@ -301,14 +302,26 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const ldap = new LdapAuthService(userRepo, userRoleRepo, jwt, cfg.ldap);
   const authService = new AuthService(userRepo, jwt, hasher, ldap, permissionService);
   const earlyFeishuBinding = new MysqlFeishuBindingRepository(db);
+  const pendingBindingMessages = new MysqlFeishuPendingBindingRepository(db);
+  let pendingBindingProcessor: FeishuInboundProcessor | undefined;
   const feishu = new FeishuAuthService(
     userRepo, userRoleRepo, new MysqlFeishuOauthStateRepository(db), jwt, cfg.feishu,
     undefined,
-    async (user, targetUserId) => {
+    async (user, targetUserId, state) => {
       if (user.id != null && user.feishuUserId != null && user.feishuUserId !== '') {
-        // 设置页绑定场景：以扫码飞书用户 A 的 union_id 绑定到目标用户 B（targetUserId）；
-        // 登录场景：绑定到扫码用户自身。
         await earlyFeishuBinding.bind(targetUserId ?? user.id, user.feishuUserId);
+      }
+      if (state != null && pendingBindingProcessor != null) {
+        const pending = await pendingBindingMessages.claim(state);
+        if (pending != null) {
+          try {
+            await pendingBindingProcessor.process(String(pending.appId), { ...pending.event, progressCardMessageId: pending.cardMessageId }, true);
+            await pendingBindingMessages.complete(state!);
+          } catch (error) {
+            await pendingBindingMessages.release(state!);
+            console.error(`恢复飞书待绑定消息失败, state=${state}`, error);
+          }
+        }
       }
     },
   );
@@ -806,14 +819,32 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const createFeishuProgressCard = async (context: FeishuInboundContext): Promise<FeishuCardProgress | null> => {
     const client = await getFeishuClient(Number(context.accountId));
     if (client == null) return null;
+    const existingMessageId = context.progressCardMessageId;
     const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', []);
     const data = { msg_type: 'interactive', content: JSON.stringify(card) };
-    const response = context.chatType === 'group' && context.messageId != null
-      ? await client.im.v1.message.reply({ path: { message_id: context.messageId }, data })
-      : await client.im.v1.message.create({
+    if (existingMessageId != null) {
+      await client.im.v1.message.patch({ path: { message_id: existingMessageId }, data: { content: data.content } });
+    }
+    if (existingMessageId != null) {
+      let nextUpdateAt = 0;
+      return {
+        update: async (status, round, content, tools) => {
+          const wait = nextUpdateAt - Date.now();
+          if (wait > 0) await new Promise<void>((resolve) => setTimeout(resolve, wait));
+          nextUpdateAt = Date.now() + 250;
+          await client.im.v1.message.patch({
+            path: { message_id: existingMessageId },
+            data: { content: JSON.stringify(buildFeishuProgressCard(status, round, content, tools)) },
+          });
+        },
+      };
+    }
+    const response = await (context.chatType === 'group' && context.messageId != null
+      ? client.im.v1.message.reply({ path: { message_id: context.messageId }, data })
+      : client.im.v1.message.create({
         params: { receive_id_type: context.chatType === 'group' ? 'chat_id' : 'open_id' },
         data: { ...data, receive_id: context.chatType === 'group' ? context.chatId! : context.senderId! },
-      });
+      }));
     const messageId = (response as { data?: { message_id?: string } }).data?.message_id;
     if (messageId == null || messageId === '') throw new Error('飞书处理中卡片发送失败：未返回 message_id');
     let nextUpdateAt = 0;
@@ -992,6 +1023,45 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         });
       }
     },
+    sendUnauthorizedCard: async (accountId, event) => {
+      const client = await getFeishuClient(Number(accountId));
+      if (client == null || event.chatType !== 'group' || event.chatId == null || event.messageId == null) return false;
+      let auth;
+      try {
+        auth = await feishu.getQrCodeUrl();
+      } catch { return false; }
+      await pendingBindingMessages.insert({ state: auth.state, appId: Number(accountId), messageId: event.messageId, event });
+      const card = {
+        schema: '2.0', config: { update_multi: true },
+        header: { template: 'orange', title: { tag: 'plain_text', content: '需要完成飞书绑定' } },
+        body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements: [
+          { tag: 'markdown', content: '请先完成飞书账号绑定，获得群内使用权限后再试。' },
+          { tag: 'markdown', content: `[点击完成绑定](${auth.authUrl})` },
+        ] },
+      };
+      let response;
+      try {
+        response = await client.im.v1.message.reply({
+          path: { message_id: event.messageId },
+          data: { msg_type: 'interactive', content: JSON.stringify(card) },
+        });
+      } catch (error) {
+        await pendingBindingMessages.fail(auth.state);
+        throw error;
+      }
+      const cardMessageId = (response as { data?: { message_id?: string } }).data?.message_id;
+      if (cardMessageId == null || cardMessageId === '') {
+        await pendingBindingMessages.fail(auth.state);
+        return false;
+      }
+      try {
+        await pendingBindingMessages.setCardMessageId(auth.state, cardMessageId);
+      } catch (error) {
+        await pendingBindingMessages.fail(auth.state);
+        throw error;
+      }
+      return true;
+    },
     unauthorizedText: async (_accountId, event) => {
       const base = event.chatType === 'group'
         ? '请先完成飞书账号绑定，获得群内使用权限后再试。'
@@ -1006,6 +1076,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       return link ? `${base}\n点击完成绑定：${link}` : base;
     },
   });
+  pendingBindingProcessor = feishuInboundProcessor;
   const feishuMonitor = new FeishuMonitorService(cfg.feishu.bot, feishuBots, feishuInboundProcessor);
 
   const analyticsService = new AnalyticsService(new AnalyticsDbStore(db));
@@ -1135,6 +1206,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   deliveryScheduler.start();
   weixinMonitor.start();
   feishuMonitor.start();
+  void pendingBindingMessages.listRecoverable().then(async (pending) => {
+    for (const message of pending) {
+      if (pendingBindingProcessor == null) return;
+      const claimed = await pendingBindingMessages.claim(message.state);
+      if (claimed == null) continue;
+      try {
+        await pendingBindingProcessor.process(String(claimed.appId), { ...claimed.event, progressCardMessageId: claimed.cardMessageId }, true);
+        await pendingBindingMessages.complete(claimed.state);
+      } catch (error) {
+        await pendingBindingMessages.release(claimed.state);
+        console.error(`恢复飞书待绑定消息失败, state=${claimed.state}`, error);
+      }
+    }
+  }).catch((error) => console.error('恢复飞书待绑定消息列表失败', error));
   shellManager.startCleanup();
   const subagentExecutionRecovery = new SubagentExecutionRecoveryService(
     subagentMapper, sessionMap, sessionSvc, compactionSvc, definitionRegistry,

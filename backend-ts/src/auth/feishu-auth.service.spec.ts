@@ -42,6 +42,7 @@ function makeService(http?: FeishuHttp) {
     findByState: vi.fn(),
     updateByState: vi.fn(async () => 1),
     consumeSuccess: vi.fn(async () => 1),
+    claimPending: vi.fn(async () => 1),
   };
   const service = new FeishuAuthService(
     userRepo as unknown as UserRepository,

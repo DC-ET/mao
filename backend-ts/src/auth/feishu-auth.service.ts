@@ -12,6 +12,7 @@ export const FEISHU_PENDING = 'PENDING';
 export const FEISHU_SUCCESS = 'SUCCESS';
 export const FEISHU_FAILED = 'FAILED';
 export const FEISHU_EXPIRED = 'EXPIRED';
+const FEISHU_PROCESSING = 'PROCESSING';
 const STATE_EXPIRES_SECONDS = 300;
 const POLL_INTERVAL_SECONDS = 2;
 
@@ -30,6 +31,7 @@ export interface FeishuOauthStateRepository {
   findByState(state: string): Promise<FeishuOauthState | null>;
   updateByState(state: string, expectedStatus: string, patch: Partial<FeishuOauthState>): Promise<number>;
   consumeSuccess(state: string, now: string): Promise<number>;
+  claimPending(state: string, now: string): Promise<number>;
 }
 
 export interface FeishuHttp {
@@ -45,7 +47,7 @@ export class FeishuAuthService {
     private readonly jwtService: JwtService,
     private readonly cfg: AppConfig['feishu'],
     private readonly http: FeishuHttp = defaultFeishuHttp(),
-    private readonly onUserAuthenticated?: (user: User, targetUserId?: number) => Promise<void>,
+    private readonly onUserAuthenticated?: (user: User, targetUserId?: number, state?: string) => Promise<void>,
   ) {}
 
   isEnabled(): boolean {
@@ -102,6 +104,9 @@ export class FeishuAuthService {
       await this.markStateExpired(state!);
       throw new BusinessException(5002, '飞书登录二维码已过期');
     }
+    if (await this.stateRepo.claimPending(state!, formatNow()) !== 1) {
+      throw new BusinessException(5002, '飞书登录二维码已使用或已过期');
+    }
     try {
       const user = await this.authenticateByCode(code!);
       this.ensureUserEnabled(user);
@@ -111,20 +116,22 @@ export class FeishuAuthService {
         if (targetUser == null) throw new BusinessException(5002, '绑定用户不存在');
         this.ensureUserEnabled(targetUser);
       }
-      await this.stateRepo.updateByState(state!, FEISHU_PENDING, {
+      if (await this.stateRepo.updateByState(state!, FEISHU_PROCESSING, {
         status: FEISHU_SUCCESS,
         userId: targetUserId,
         errorMessage: null,
-      });
+      }) !== 1) throw new BusinessException(5002, '飞书登录二维码已使用或已过期');
       return user;
     } catch (e) {
-      if (e instanceof BusinessException) {
-        await this.markStateFailed(state!, e.message);
-        throw e;
+      const message = e instanceof Error ? e.message : String(e);
+      try {
+        await this.stateRepo.updateByState(state!, FEISHU_PROCESSING, { status: FEISHU_FAILED, errorMessage: message });
+      } catch (stateError) {
+        console.error('Feishu OAuth state failure update failed', stateError);
       }
+      if (e instanceof BusinessException) throw e;
       console.error('Feishu OAuth state callback failed', e);
-      await this.markStateFailed(state!, e instanceof Error ? e.message : String(e));
-      throw new BusinessException(5002, `飞书登录失败: ${e instanceof Error ? e.message : String(e)}`);
+      throw new BusinessException(5002, `飞书登录失败: ${message}`);
     }
   }
 
@@ -146,6 +153,10 @@ export class FeishuAuthService {
     if (oauthState.status === FEISHU_SUCCESS) {
       return this.consumeSuccessState(oauthState);
     }
+    if (oauthState.status === FEISHU_PROCESSING && this.isExpired(oauthState)) {
+      await this.stateRepo.updateByState(state!, FEISHU_PROCESSING, { status: FEISHU_EXPIRED, errorMessage: '飞书登录二维码已过期' });
+      return { status: FEISHU_EXPIRED, message: '飞书登录二维码已过期' };
+    }
     return { status: oauthState.status, message: oauthState.errorMessage };
   }
 
@@ -157,9 +168,9 @@ export class FeishuAuthService {
       // 登录场景（state 无目标用户）直接以扫码用户自身建立绑定。
       const oauthState = state != null ? await this.stateRepo.findByState(state) : null;
       if (oauthState?.userId != null && oauthState.userId !== user.id) {
-        await this.onUserAuthenticated?.(user, oauthState.userId);
+        await this.onUserAuthenticated?.(user, oauthState.userId, state);
       } else {
-        await this.onUserAuthenticated?.(user);
+        await this.onUserAuthenticated?.(user, undefined, state);
       }
       return htmlPage('登录成功', '飞书授权已完成，请回到 Mao 客户端。', true);
     } catch (e) {
