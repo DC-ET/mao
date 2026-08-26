@@ -1,6 +1,6 @@
 import type { FeishuChatType, FeishuEventHeader, FeishuNormalizedMessage } from './types.js';
 
-export function normalizeFeishuEvent(input: unknown): FeishuNormalizedMessage | null {
+export function normalizeFeishuEvent(input: unknown, botOpenId?: string): FeishuNormalizedMessage | null {
   const root = asRecord(input);
   // Lark SDK 的 EventDispatcher 会把 v2 事件的 header/event 展开到顶层（无 header 对象），
   // 因此同时兼容标准信封格式（root.header）与 SDK 展开格式（root.app_id / root.event_id ...）。
@@ -23,6 +23,8 @@ export function normalizeFeishuEvent(input: unknown): FeishuNormalizedMessage | 
   //   「群全量消息」权限后 @同群其他机器人（key 为其他 cli_xxx）误触发本机器人；
   // - 仅当 app_id 缺失（极端格式）时，以 key 的 cli_ 前缀作为兜底。
   const isBotMentioned = mentionItems.some((item) => {
+    if (item.mentionedType === 'bot' && (botOpenId == null || item.id === botOpenId)) return true;
+    if (botOpenId != null) return item.id === botOpenId;
     if (appId != null) return item.key === appId;
     return item.key != null && item.key.startsWith('cli_');
   }) || (isStrictTrue(message.is_at_me ?? event.is_at_me) && mentions.length > 0);
@@ -75,7 +77,7 @@ function extractText(content: unknown, fallback: unknown): string {
   return firstString(record.text, fallback) ?? '';
 }
 
-interface MentionItem { key?: string | null; id?: string | null; unionId?: string | null; }
+interface MentionItem { key?: string | null; id?: string | null; unionId?: string | null; mentionedType?: string | null; }
 
 function extractMentionItems(value: unknown): MentionItem[] {
   if (!Array.isArray(value)) return [];
@@ -86,6 +88,7 @@ function extractMentionItems(value: unknown): MentionItem[] {
       key: firstString(record.key),
       id: firstString(id.open_id, id.user_id, record.id),
       unionId: firstString(id.union_id),
+      mentionedType: firstString(record.mentioned_type),
     };
   });
 }

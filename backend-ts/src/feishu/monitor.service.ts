@@ -34,6 +34,8 @@ export function createFeishuBotHandle(
   // 若在此处 await 完整 agent 执行，长连接会阻塞到整轮跑完才 ack，飞书侧 ack 超时后
   // 会重发同一事件，造成消息重复执行（飞书已回复但任务一直运行中）。
   // 重复执行由 claimInboundMessage 的 DB 级去重（CLAIMED + 10 分钟窗口）兜底拦截。
+  const identityClient = new Lark.Client({ appId: bot.appId, appSecret });
+  let botOpenId: string | undefined;
   const dispatchInbound = (event: FeishuNormalizedMessage): void => {
     if (processor == null) return;
     void processor.process(accountId, event).catch((error) => {
@@ -42,16 +44,26 @@ export function createFeishuBotHandle(
   };
   const eventDispatcher = new Lark.EventDispatcher({}).register({
     'im.message.receive_v1': async (data: unknown) => {
-      const event = normalizeFeishuEvent(data);
+      const event = normalizeFeishuEvent(data, botOpenId);
       if (event == null) return;
-      if (event.header?.appId !== bot.appId) return;
+      if (event.header?.appId !== bot.appId) {
+        console.warn(`飞书事件appId不匹配, id=${bot.id}, eventAppId=${event.header?.appId ?? 'null'}, botAppId=${bot.appId}`);
+        return;
+      }
+      console.info(`飞书收到消息, id=${bot.id}, messageId=${event.messageId ?? 'null'}, chatType=${event.chatType}, mentioned=${event.isBotMentioned}`);
       dispatchInbound(event);
     },
   });
   const wsClient = new Lark.WSClient({
     appId: bot.appId,
     appSecret,
-    onReady: () => callbacks?.onReady?.(),
+    onReady: () => {
+      void identityClient.request<{ bot?: { open_id?: string } }>({ url: '/open-apis/bot/v3/info', method: 'GET' })
+        .then((response) => { botOpenId = response.bot?.open_id; })
+        .catch((error) => { console.warn(`获取飞书Bot open_id失败, id=${bot.id}`, error); });
+      console.info(`飞书Bot长连接已连接, id=${bot.id}, appId=${bot.appId}`);
+      callbacks?.onReady?.();
+    },
     onError: (error: Error) => {
       console.error(`飞书Bot长连接失败, id=${bot.id}`, error);
       callbacks?.onFailure?.(error);

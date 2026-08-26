@@ -40,6 +40,21 @@ describe('normalizeFeishuEvent', () => {
     expect(event!.mentions).toContain('ou_bot');
   });
 
+  it('detects bot mention by mentioned_type even when key is not app_id', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_g_type', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@机器人 hi"}',
+          mentions: [{ key: 'ou_bot', id: { open_id: 'ou_bot' }, mentioned_type: 'bot', name: '机器人' }],
+        },
+      },
+    });
+    expect(event!.isBotMentioned).toBe(true);
+  });
+
   it('does not treat mention of another user as bot mention', () => {
     const event = normalizeFeishuEvent({
       header: { app_id: 'cli_mybot' },
