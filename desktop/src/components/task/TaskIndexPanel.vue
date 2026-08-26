@@ -50,9 +50,9 @@
           >
             <div class="group-header" @click="toggleGroup(group.key)">
               <div class="group-header-left">
-                <el-icon :size="13" class="group-icon" :class="group.key.startsWith('CLOUD:') ? 'icon-cloud' : 'icon-folder'">
-                  <PartlyCloudy v-if="group.key.startsWith('CLOUD:') && !isGroupCollapsed(group.key)" />
-                  <Cloudy v-else-if="group.key.startsWith('CLOUD:')" />
+                <el-icon :size="13" class="group-icon" :class="(group.key.startsWith('CLOUD:') || group.key.startsWith('FEISHU_')) ? 'icon-cloud' : 'icon-folder'">
+                  <PartlyCloudy v-if="(group.key.startsWith('CLOUD:') || group.key.startsWith('FEISHU_')) && !isGroupCollapsed(group.key)" />
+                  <Cloudy v-else-if="group.key.startsWith('CLOUD:') || group.key.startsWith('FEISHU_')" />
                   <FolderOpened v-else-if="!isGroupCollapsed(group.key)" />
                   <Folder v-else />
                 </el-icon>
