@@ -26,21 +26,30 @@ export function cloudProjectKeyForNewTask(
   return session.projectKey
 }
 
-export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspace'>): string {
+export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspace'> & Partial<Pick<Session, 'projectKey' | 'agentId'>>): string {
   if (session.executionMode !== 'CLOUD') {
     return session.workspace ? `LOCAL:${session.workspace}` : 'LOCAL:未设置'
+  }
+  if (session.projectKey && /^feishu-\d+-private-\d+$/.test(session.projectKey)) {
+    return `FEISHU_PRIVATE:${session.agentId ?? 'null'}`
   }
   if (isSharedCloudProject(session)) {
     return `CLOUD:${session.workspace}`
   }
-  // 飞书群聊工作区按机器人×群聊独立分组，而不是归入"临时工作区"。
   if (isFeishuChatWorkspace(session.workspace)) {
-    return `CLOUD:${session.workspace}`
+    return `FEISHU_GROUP:${session.workspace}`
   }
   return 'CLOUD:临时工作区'
 }
 
-export function formatCloudGroupLabel(key: string): string {
+export function formatCloudGroupLabel(
+  key: string,
+  session?: Pick<Session, 'agentName' | 'title'>
+): string {
+  if (key.startsWith('FEISHU_PRIVATE:')) return session?.agentName || '未知 Agent'
+  if (key.startsWith('FEISHU_GROUP:')) {
+    return `${session?.agentName || '未知 Agent'}:${session?.title && session.title !== '飞书Bot会话' ? session.title : '飞书群聊'}`
+  }
   if (key === 'CLOUD:临时工作区') return '临时工作区'
   if (key.startsWith('CLOUD:')) {
     const ws = key.substring(6)

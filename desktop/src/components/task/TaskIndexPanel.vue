@@ -826,7 +826,7 @@ const groupedSessions = computed(() => {
 
   const result = entries.map(([key, sessions]) => ({
     key,
-    label: formatGroupLabel(key),
+    label: formatGroupLabel(key, sessions[0]),
     sessions: sessions.sort((a, b) => {
       if (a.running && !b.running) return -1
       if (!a.running && b.running) return 1
@@ -842,8 +842,12 @@ const groupedSessions = computed(() => {
   return sortGroups(result)
 })
 
-function formatGroupLabel(key: string): string {
-  if (key.startsWith('CLOUD:')) return formatCloudGroupLabel(key)
+function formatGroupLabel(key: string, session?: Session): string {
+  if (key.startsWith('FEISHU_PRIVATE:')) return session?.agentName || '未知 Agent'
+  if (key.startsWith('FEISHU_GROUP:')) {
+    return `${session?.agentName || '未知 Agent'}:${session?.title && session.title !== '飞书Bot会话' ? session.title : '飞书群聊'}`
+  }
+  if (key.startsWith('CLOUD:')) return formatCloudGroupLabel(key, session)
   if (key.startsWith('LOCAL:')) {
     const ws = key.substring(6)
     if (ws === '未设置') return '未设置'

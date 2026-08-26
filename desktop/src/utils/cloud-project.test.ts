@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cloudGroupKey, cloudWorkspaceIndicator, formatCloudGroupLabel, isFeishuChatWorkspace } from './cloud-project'
 
-const cloud = (workspace: string) => ({ executionMode: 'CLOUD' as const, workspace })
+const cloud = (workspace: string, extra: Partial<{ projectKey: string; agentId: string }> = {}) => ({ executionMode: 'CLOUD' as const, workspace, ...extra })
 
 describe('isFeishuChatWorkspace', () => {
   it('detects feishu-chat workspace paths', () => {
@@ -12,8 +12,12 @@ describe('isFeishuChatWorkspace', () => {
 })
 
 describe('cloudGroupKey', () => {
-  it('groups feishu chat sessions by workspace instead of temp bucket', () => {
-    expect(cloudGroupKey(cloud('/opt/mao-data/workspace/feishu-chat/1/oc_abc'))).toBe('CLOUD:/opt/mao-data/workspace/feishu-chat/1/oc_abc')
+  it('groups feishu chat sessions by workspace', () => {
+    expect(cloudGroupKey(cloud('/opt/mao-data/workspace/feishu-chat/1/oc_abc'))).toBe('FEISHU_GROUP:/opt/mao-data/workspace/feishu-chat/1/oc_abc')
+  })
+
+  it('groups Feishu private sessions by Agent', () => {
+    expect(cloudGroupKey(cloud('/tmp', { projectKey: 'feishu-1-private-2', agentId: '7' }))).toBe('FEISHU_PRIVATE:7')
   })
 
   it('keeps regular temp sessions in the temp bucket', () => {
@@ -22,8 +26,12 @@ describe('cloudGroupKey', () => {
 })
 
 describe('formatCloudGroupLabel', () => {
-  it('labels feishu chat group with bot id and chat id prefix', () => {
-    expect(formatCloudGroupLabel('CLOUD:/opt/mao-data/workspace/feishu-chat/1/oc_c8757d032af2')).toBe('飞书群1·oc_c8757d0')
+  it('labels private Feishu groups with Agent name', () => {
+    expect(formatCloudGroupLabel('FEISHU_PRIVATE:7', { agentName: 'Coder', title: '飞书Bot会话' })).toBe('Coder')
+  })
+
+  it('labels Feishu groups with Agent and chat name', () => {
+    expect(formatCloudGroupLabel('FEISHU_GROUP:/opt/mao-data/workspace/feishu-chat/1/oc_abc', { agentName: 'Coder', title: '告警群' })).toBe('Coder:告警群')
   })
 })
 

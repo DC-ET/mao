@@ -24,6 +24,7 @@
 - 飞书通道会话屏蔽 `ask_user_questions` 工具（工具列表不再暴露，模型无法在飞书对话中发起提问卡片）。
 - 飞书通道会话终态不再标记未读（与微信通道一致）：DB `unread` 与 `session_status` 推送均排除飞书会话。
 - 飞书私聊按 Agent 分组并显示 Agent 名称，飞书群聊分组显示为 `Agent名称:群名`。
+- 修复前端本地分组逻辑覆盖飞书分组名称的问题，刷新任务列表后已有会话也按新名称显示。
 
 - `generate_image` 工具请求文生图 API 时按模型配置注入客户端伪装头（codex / claude_code），与主对话链路一致，修复部分要求 CLI 伪装头的中转网关拒绝图片生成请求的问题
 - 修复引用/回复卡片消息时内容显示为"[卡片消息]"：卡片文本提取改为遍历卡片 JSON 树，兼容经典卡片（div/lark_md、markdown、note 元素）与新版 schema 2.0 卡片（header.title、body.elements），无文本元素的卡片才退化为占位符
