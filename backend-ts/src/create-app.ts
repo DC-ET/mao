@@ -791,14 +791,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     const title = status === 'RUNNING' ? '正在处理' : status === 'COMPLETED' ? '处理完成' : status === 'CANCELLED' ? '任务已取消' : '处理失败';
     const color = status === 'RUNNING' ? 'blue' : status === 'COMPLETED' ? 'green' : status === 'CANCELLED' ? 'grey' : 'red';
     const sections: Array<Record<string, unknown>> = [
-      { tag: 'div', text: { tag: 'lark_md', content: `**状态：${title}**${round > 0 ? ` · 第 ${round} 轮` : ''}` } },
+      { tag: 'markdown', content: `**状态：${title}**${round > 0 ? ` · 第 ${round} 轮` : ''}`, text_align: 'left', text_size: 'normal_v2' },
     ];
-    if (content.trim() !== '') sections.push({ tag: 'div', text: { tag: 'lark_md', content: content.slice(0, 6000) } });
-    if (tools.length > 0) sections.push({ tag: 'div', text: { tag: 'lark_md', content: `**本轮工具**\n${tools.map((tool) => `- ${tool}`).join('\n').slice(0, 3000)}` } });
+    if (content.trim() !== '') sections.push({ tag: 'markdown', content: content.slice(0, 6000), text_align: 'left', text_size: 'normal_v2' });
+    if (tools.length > 0) sections.push({ tag: 'markdown', content: `**本轮工具**\n${tools.map((tool) => `- ${tool}`).join('\n').slice(0, 3000)}`, text_align: 'left', text_size: 'normal_v2' });
     return {
-      config: { wide_screen_mode: true, update_multi: true },
+      schema: '2.0',
+      config: { update_multi: true },
       header: { template: color, title: { tag: 'plain_text', content: 'Mao Agent' } },
-      elements: sections,
+      body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements: sections },
     };
   };
   const createFeishuProgressCard = async (context: FeishuInboundContext): Promise<FeishuCardProgress | null> => {
