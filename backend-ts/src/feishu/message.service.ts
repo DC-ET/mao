@@ -54,6 +54,7 @@ export class FeishuMessageService {
       senderName: senderName(context), content: context.text, messageId: context.messageId,
       isMention, msgType: context.messageType ?? 'text',
       fileKey: context.fileKey ?? context.imageKey ?? null,
+      fileName: context.fileName ?? null,
     });
   }
 
@@ -65,9 +66,18 @@ export class FeishuMessageService {
   async buildGroupContext(accountId: string, context: FeishuInboundContext): Promise<FeishuGroupContext> {
     const conversation = await this.getOrCreateGroup(accountId, context);
     const messages = await this.repository.listGroupMessages(accountId, context.chatId!, this.contextWindow, this.maxMinutes);
-    // 仅注入未 @ 机器人的普通群消息：当前及历史 @ 机器人的消息已经存入该会话的原生 messages，避免重复。
-    const filtered = messages.filter((message) => !message.isMention && message.messageId !== context.messageId);
+    // 增量注入：仅注入上次触发之后新增的未 @ 机器人的普通群消息。
+    // 已注入的历史随上一轮 USER 消息保存在会话上下文中，重复注入只会浪费 token；
+    // @ 机器人的消息本身已作为会话消息保存，同样无需注入。
+    // 消息中的文件/图片由 Agent 按需通过 feishu_download_file 工具懒加载，占位文本携带消息 ID。
+    const watermark = conversation.lastContextLogId ?? 0;
+    const filtered = messages.filter((message) =>
+      !message.isMention && message.messageId !== context.messageId && (message.id ?? 0) > watermark);
     const prompt = filtered.map((message) => `[${formatGroupTime(message.createdAt)}] ${message.senderName}：${message.content ?? ''}`).join('\n');
+    const maxLogId = messages.reduce((acc, message) => Math.max(acc, message.id ?? 0), watermark);
+    if (maxLogId > watermark) {
+      await this.repository.updateGroupContextWatermark(accountId, context.chatId!, maxLogId);
+    }
     return { conversation, messages: filtered, prompt };
   }
 
@@ -104,10 +114,10 @@ function senderName(context: FeishuNormalizedMessage): string {
   return name ?? context.senderId ?? '未知用户';
 }
 
-/** createdAt 为 'YYYY-MM-DD HH:mm:ss'，取 HH:mm。 */
+/** createdAt 为 'YYYY-MM-DD HH:mm:ss'（库内本地时间），取 'YYYY-MM-DD HH:mm' 避免跨日丢失年月日。 */
 function formatGroupTime(createdAt?: string | null): string {
   if (createdAt == null || createdAt.length < 16) return '--:--';
-  return createdAt.slice(11, 16);
+  return createdAt.slice(0, 16);
 }
 
 export { senderName, formatGroupTime };

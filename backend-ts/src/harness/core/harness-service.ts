@@ -24,6 +24,7 @@ import type { ActiveContextCalculator } from './active-context-calculator.js';
 import type { ToolRegistry } from '../tool/tool-registry.js';
 import type { Tool } from '../tool/tool.js';
 import { isWeixinChannelTool } from '../tool/weixin-channel-tool.js';
+import { isFeishuChannelSession, isFeishuChannelTool } from '../tool/feishu-channel-tool.js';
 import { FileChangeDiffUtil } from '../tool/file-change-diff-util.js';
 import type { SkillLoader } from '../skill/skill-loader.js';
 import type { SkillSyncService } from '../skill/skill-sync-service.js';
@@ -310,7 +311,7 @@ export class HarnessService {
     context.lastPromptTokens = anchor.lastPromptTokens;
     context.contextAnchorMsgId = anchor.contextAnchorMsgId;
 
-    let sessionTools = HarnessService.filterToolsForSession(this.toolRegistry.getAllTools(), session.projectKey);
+    let sessionTools = HarnessService.filterToolsForSession(this.toolRegistry.getAllTools(), session.projectKey, session.workspace);
     const mcpWarnings: string[] = [];
     if (this.mcpSyncService) {
       try {
@@ -410,12 +411,15 @@ export class HarnessService {
     return this.promptEngine.buildRequest(context);
   }
 
-  static filterToolsForSession(tools: Tool[], projectKey: string | null | undefined): Tool[] {
+  static filterToolsForSession(tools: Tool[], projectKey: string | null | undefined, workspace?: string | null): Tool[] {
     const result = [...tools];
     if (projectKey === WEIXIN_PROJECT_KEY) {
       return result.filter((t) => t.getName() !== ASK_USER_QUESTIONS);
     }
-    return result.filter((t) => !isWeixinChannelTool(t));
+    if (isFeishuChannelSession(projectKey, workspace)) {
+      return result.filter((t) => !isWeixinChannelTool(t));
+    }
+    return result.filter((t) => !isWeixinChannelTool(t) && !isFeishuChannelTool(t));
   }
 
   static mergeLocalUnsyncedSkills(

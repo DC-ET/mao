@@ -7,6 +7,8 @@ export interface FeishuConversation {
   sessionId: number;
   ownerUserId: number;
   workspace?: string | null;
+  /** 群聊上下文增量注入水位线：上次已注入的最大群消息 log id。 */
+  lastContextLogId?: number | null;
 }
 
 export interface FeishuGroupMessage {
@@ -18,6 +20,7 @@ export interface FeishuGroupMessage {
   msgType?: string;
   content?: string | null;
   fileKey?: string | null;
+  fileName?: string | null;
   messageId?: string | null;
   isMention: boolean;
   createdAt?: string | null;
@@ -26,12 +29,18 @@ export interface FeishuGroupMessage {
 export interface FeishuMessageRepository {
   findP2pConversation(appId: string, userOpenId: string, userId?: number): Promise<FeishuConversation | null>;
   findGroupConversation(appId: string, chatId: string, ownerUserId?: number): Promise<FeishuConversation | null>;
+  /** 按会话 ID 反查飞书会话（工具层用于定位会话所属 bot）。 */
+  findConversationBySessionId(sessionId: number): Promise<FeishuConversation | null>;
+  /** 按消息 ID 查询群消息中的媒体元数据（下载工具用）。 */
+  findMediaByMessageId(messageId: string): Promise<{ appId: string; fileKey: string | null; fileName: string | null; msgType: string | null } | null>;
   saveConversation(conversation: Omit<FeishuConversation, 'id'>): Promise<FeishuConversation>;
   claimInboundMessage(appId: string, messageId: string, eventId: string | null, chatId: string | null): Promise<boolean>;
   releaseInboundMessage(appId: string, messageId: string): Promise<void>;
   completeInboundMessage(appId: string, messageId: string): Promise<void>;
   appendGroupMessage(message: FeishuGroupMessage): Promise<number>;
   listGroupMessages(appId: string, chatId: string, limit: number, maxMinutes?: number): Promise<FeishuGroupMessage[]>;
+  /** 推进群聊上下文增量注入水位线（只前进不后退）。 */
+  updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void>;
   isGroupMember(appId: string, chatId: string, userId: number): Promise<boolean>;
   addGroupMember(appId: string, chatId: string, userId: number, openId: string, displayName: string): Promise<void>;
 }
@@ -51,6 +60,17 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
       : 'SELECT * FROM feishu_chat WHERE app_id = ? AND chat_id = ? AND owner_user_id = ? LIMIT 1';
     const params = ownerUserId == null ? [appId, chatId] : [appId, chatId, ownerUserId];
     return this.db.queryOne<FeishuConversation>(sql, params);
+  }
+
+  findConversationBySessionId(sessionId: number): Promise<FeishuConversation | null> {
+    return this.db.queryOne<FeishuConversation>('SELECT * FROM feishu_chat WHERE session_id = ? LIMIT 1', [sessionId]);
+  }
+
+  findMediaByMessageId(messageId: string): Promise<{ appId: string; fileKey: string | null; fileName: string | null; msgType: string | null } | null> {
+    return this.db.queryOne(
+      'SELECT app_id, file_key, file_name, msg_type FROM feishu_group_message_log WHERE message_id = ? AND file_key IS NOT NULL LIMIT 1',
+      [messageId],
+    );
   }
 
   async saveConversation(conversation: Omit<FeishuConversation, 'id'>): Promise<FeishuConversation> {
@@ -94,10 +114,10 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     if (message.messageId == null || message.messageId === '') throw new Error('Feishu group message requires messageId');
     await this.db.execute(
       `INSERT IGNORE INTO feishu_group_message_log
-       (app_id, chat_id, sender_open_id, sender_name, msg_type, content, file_key, message_id, is_mention)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (app_id, chat_id, sender_open_id, sender_name, msg_type, content, file_key, file_name, message_id, is_mention)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [message.appId, message.chatId, message.senderOpenId, message.senderName, message.msgType ?? 'text', message.content ?? null,
-        message.fileKey ?? null, message.messageId, message.isMention ? 1 : 0],
+        message.fileKey ?? null, message.fileName ?? null, message.messageId, message.isMention ? 1 : 0],
     );
     const saved = await this.db.queryOne<{ id?: number }>(
       'SELECT id FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ? AND message_id = ? LIMIT 1',
@@ -130,5 +150,12 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
        AND created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ${safeMinutes} MINUTE)
        ORDER BY created_at DESC, id DESC LIMIT ${safeLimit}`, [appId, chatId],
     ).then((rows) => rows.reverse());
+  }
+
+  async updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void> {
+    await this.db.execute(
+      'UPDATE feishu_chat SET last_context_log_id = GREATEST(last_context_log_id, ?) WHERE app_id = ? AND chat_id = ?',
+      [logId, appId, chatId],
+    );
   }
 }

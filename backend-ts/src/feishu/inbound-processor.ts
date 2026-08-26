@@ -91,9 +91,11 @@ export class FeishuInboundProcessor {
   private normalizeText(event: FeishuNormalizedMessage): FeishuNormalizedMessage {
     const rawText = event.text?.trim() ?? '';
     if (rawText !== '') return event;
+    // 媒体消息（图片/文件）无文本时生成标注文本；占位符携带消息 ID，
+    // 供 Agent 在飞书通道会话中通过 feishu_download_file 工具按需下载。
     let placeholder = '';
-    if (event.messageType === 'image') placeholder = '[图片]';
-    else if (event.messageType === 'file') placeholder = `[文件:${event.fileName ?? event.fileKey ?? '未知文件'}]`;
+    if (event.messageType === 'image') placeholder = `[图片 msg=${event.messageId ?? '未知'}]`;
+    else if (event.messageType === 'file') placeholder = `[文件:${event.fileName ?? event.fileKey ?? '未知文件'} msg=${event.messageId ?? '未知'}]`;
     if (placeholder === '') return event;
     return { ...event, text: placeholder };
   }

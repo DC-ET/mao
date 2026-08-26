@@ -191,6 +191,7 @@ import { senderName } from './feishu/message.service.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
+import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import type { FeishuCardProgress } from './feishu/card-progress-listener.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
@@ -611,6 +612,29 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     weixinToolSupport: wechatBridges.toolSupport,
     weixinUploadService: wechatBridges.uploadService,
     weixinSendService: wechatBridges.sendService,
+    feishuToolSupport: {
+      resolveBotAppId: async (sessionId) => {
+        if (sessionId == null) return null;
+        const conversation = await feishuMessageRepository.findConversationBySessionId(sessionId);
+        return conversation?.appId ?? null;
+      },
+    },
+    feishuDocReader: {
+      readMarkdown: async (appId, link) => {
+        const client = await getFeishuClient(Number(appId));
+        if (client == null) throw new Error(`飞书Bot不存在或未启用: ${appId}`);
+        return readFeishuDocMarkdown(client, link);
+      },
+    },
+    feishuMediaDownloader: {
+      download: async (appId, messageId, fileKey, type, maxBytes) => {
+        const client = await getFeishuClient(Number(appId));
+        if (client == null) throw new Error(`飞书Bot不存在或未启用: ${appId}`);
+        return downloadFeishuMediaBuffer(client, messageId, fileKey, type, maxBytes);
+      },
+    },
+    feishuGroupMediaLookup: { findMediaByMessageId: (messageId: string) => feishuMessageRepository.findMediaByMessageId(messageId) } as never,
+    feishuMaxInboundFileBytes: Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024,
     definitionRegistry,
     get harnessService() { return holder.harness!; },
     get agentLoop() { return holder.loop!; },
