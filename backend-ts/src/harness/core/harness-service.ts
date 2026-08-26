@@ -388,9 +388,16 @@ export class HarnessService {
 
     if (effectiveConfig.enabled && history.persistedMessages.length > 0) {
       const normalRequest = await this.buildNormalRequest(context);
+      // 触发值以锚点记录的真实 prompt usage 为下限，避免内部估算器低估导致压缩永不触发
+      const activeTokensHint = Math.max(
+        context.lastPromptTokens,
+        this.activeContextCalculator.activeFromMessageSuffix(
+          context.lastPromptTokens, context.contextAnchorMsgId,
+          context.messages, context.messagesCoveredByAnchor, normalRequest),
+      );
       try {
         await this.sessionCompactionOrchestrator.compact(
-          sessionId, context, normalRequest, listener ?? null, effectiveConfig, false, cancelFlag ?? null);
+          sessionId, context, normalRequest, listener ?? null, effectiveConfig, false, cancelFlag ?? null, activeTokensHint);
         context.preparedRequest = await this.buildNormalRequest(context);
       } catch (e) {
         if (e instanceof CompactionContextOverflowException

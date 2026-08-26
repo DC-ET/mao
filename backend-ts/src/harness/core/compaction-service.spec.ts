@@ -85,6 +85,22 @@ describe('CompactionService', () => {
     expect(llmAdapter.stream).not.toHaveBeenCalled();
   });
 
+  it('hintAboveThresholdTriggersDespiteUnderestimating', async () => {
+    // 模拟估算器显著低估真实用量（如中文场景）：estimator=100，但锚点真实 usage=900 ≥ 800 阈值
+    tokenEstimator.estimateRequestTokens.mockReturnValue(100);
+    streamHandoff('交接正文', usage(50, null, 20));
+    const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null, 900);
+    expect(result).not.toBeNull();
+    expect(llmAdapter.stream).toHaveBeenCalledOnce();
+  });
+
+  it('hintBelowThresholdStillSkipsAndLogs', async () => {
+    tokenEstimator.estimateRequestTokens.mockReturnValue(100);
+    const result = await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null, 500);
+    expect(result).toBeNull();
+    expect(llmAdapter.stream).not.toHaveBeenCalled();
+  });
+
   it('derivesStrictPrefixWithoutMutatingNormalRequestAndUsesStream', async () => {
     const normal = normalRequest();
     const originalMessages = [...(normal.messages ?? [])];

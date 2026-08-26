@@ -36,6 +36,7 @@ export class SessionCompactionOrchestrator {
     config: CompactionConfig,
     compactCurrentTurn: boolean,
     cancelFlag: { get(): boolean } | null,
+    activeTokensHint?: number | null,
   ): Promise<boolean> {
     const record = await this.sessionCompactionService.loadValidated(sessionId);
     const boundary = this.sessionCompactionService.boundaryOf(record);
@@ -45,7 +46,7 @@ export class SessionCompactionOrchestrator {
 
     const result = await this.contextManager.compactSession(
       sessionId, boundary, history.persistedMessages, history.snapshotMessageIds,
-      normalRequest, context.modelConfig!, config, listener, cancelFlag);
+      normalRequest, context.modelConfig!, config, listener, cancelFlag, activeTokensHint ?? null);
     if (result == null) return false;
 
     let compactionEnded = false;

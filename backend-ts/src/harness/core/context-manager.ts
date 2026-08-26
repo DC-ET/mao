@@ -29,10 +29,11 @@ export class ContextManager {
     config: CompactionConfig,
     listener: AgentEventListener | null,
     cancelFlag: { get(): boolean } | null,
+    activeTokensHint?: number | null,
   ): Promise<SessionCompactionResult | null> {
     return this.compactionService.compactSession(
       sessionId, expectedOldBoundary, messages, snapshotMessageIds,
-      normalRequest, modelConfig, config, listener, cancelFlag,
+      normalRequest, modelConfig, config, listener, cancelFlag, activeTokensHint,
     );
   }
 

@@ -412,7 +412,7 @@ export class AgentLoop {
             const effectiveContextWindow = CompactionConfig.resolveEffectiveContextWindow(context.modelConfig, loopConfig);
             if (nextRequestTokens >= effectiveContextWindow * loopConfig.triggerRatio) {
               await this.sessionCompactionOrchestrator.compact(
-                context.sessionId!, context, nextRequest, listener, loopConfig, true, cancelFlag ?? null);
+                context.sessionId!, context, nextRequest, listener, loopConfig, true, cancelFlag ?? null, nextRequestTokens);
               context.preparedRequest = await this.promptEngine.buildRequest(context);
             }
           } catch (e) {

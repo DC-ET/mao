@@ -58,15 +58,25 @@ export class CompactionService {
     config: CompactionConfig,
     listener: AgentEventListener | null,
     cancelFlag: { get(): boolean } | null,
+    activeTokensHint?: number | null,
   ): Promise<SessionCompactionResult | null> {
     if (!config.enabled || messages == null || messages.length === 0 || normalRequest == null) {
       return null;
     }
     this.checkCancelled(cancelFlag);
 
+    // 触发判断优先采信调用方提供的活跃 tokens（锚点法，含真实 prompt usage）。
+    // 内部估算器（utf8 字节/4）对中文与工具调用普遍显著低估，
+    // 单独依赖它会在真实用量已超阈值时静默跳过压缩。
     const normalRequestTokens = this.tokenEstimator.estimateRequestTokens(normalRequest);
     const effectiveWindow = CompactionConfig.resolveEffectiveContextWindow(modelConfig, config);
-    if (normalRequestTokens < effectiveWindow * config.triggerRatio) {
+    const measuredTokens = activeTokensHint != null && activeTokensHint > normalRequestTokens
+      ? activeTokensHint
+      : normalRequestTokens;
+    const triggerThreshold = Math.floor(effectiveWindow * config.triggerRatio);
+    if (measuredTokens < triggerThreshold) {
+      harnessLog('info', `Session handoff compaction skipped below threshold: sessionId=${sessionId}`
+        + `, measuredTokens=${measuredTokens}, estimatorTokens=${normalRequestTokens}, threshold=${triggerThreshold}`);
       return null;
     }
 
