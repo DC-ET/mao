@@ -53,7 +53,7 @@ export class ToolDispatcher {
    * (name, args, mode, sessionId, userId, workspace, perm, model)
    * (name, args, mode, sessionId, userId, workspace, perm, model, sessionTools)
    */
-  dispatch(toolName: string, argumentsJson: string, a?: unknown, b?: unknown, c?: unknown, d?: unknown, e?: unknown, f?: unknown, g?: unknown): Promise<string> | string {
+  dispatch(toolName: string, argumentsJson: string, a?: unknown, b?: unknown, c?: unknown, d?: unknown, e?: unknown, f?: unknown, g?: unknown, h?: unknown): Promise<string> | string {
     const n = arguments.length;
     if (n <= 2) return this.dispatchCloud(toolName, argumentsJson, null);
     if (n === 3) return this.dispatchCloud(toolName, argumentsJson, a as string | null);
@@ -64,9 +64,12 @@ export class ToolDispatcher {
       return this.dispatchFull(toolName, argumentsJson, a as string, b as number, null, c as string, d as string, e as LlmModelConfig | null, null);
     }
     if (n === 8) {
-      return this.dispatchFull(toolName, argumentsJson, a as string, b as number, c as number, d as string, e as string, f as LlmModelConfig | null, null);
+      return this.dispatchFull(toolName, argumentsJson, a as string, b as number, c as number, d as string, e as string, f as LlmModelConfig | null, null, null);
     }
-    return this.dispatchFull(toolName, argumentsJson, a as string, b as number, c as number, d as string, e as string, f as LlmModelConfig | null, g as Tool[] | null);
+    if (n === 9) {
+      return this.dispatchFull(toolName, argumentsJson, a as string, b as number, c as number, d as string, e as string, f as LlmModelConfig | null, g as Tool[] | null, null);
+    }
+    return this.dispatchFull(toolName, argumentsJson, a as string, b as number, c as number, d as string, e as string, f as LlmModelConfig | null, g as Tool[] | null, h as number | null);
   }
 
   private async dispatchCloud(toolName: string, argumentsJson: string, workspace: string | null): Promise<string> {
@@ -88,6 +91,7 @@ export class ToolDispatcher {
     permissionLevel: string | null,
     modelConfig: LlmModelConfig | null,
     sessionTools: Tool[] | null,
+    executionUserId: number | null = null,
   ): Promise<string> {
     if (toolName === ASK_USER_QUESTIONS) {
       return this.dispatchAskUserQuestions(argumentsJson, sessionId);
@@ -120,7 +124,8 @@ export class ToolDispatcher {
       tool = sessionTools.find((t) => t.getName() === toolName);
     }
     if (tool) {
-      return await callTool(tool, argumentsJson, sessionId, userId, workspace);
+      const toolUserId = toolName === 'shell' ? executionUserId ?? userId : userId;
+      return await callTool(tool, argumentsJson, sessionId, toolUserId, workspace);
     }
     throw new IllegalArgumentException('Unknown tool: ' + toolName);
   }

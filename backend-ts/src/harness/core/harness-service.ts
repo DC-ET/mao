@@ -79,8 +79,10 @@ export class HarnessService {
 
   async execute(
     sessionId: number, _userContent: string | null, listener: AgentEventListener, cancelFlag?: AtomicBoolean | null,
+    executionUserId?: number | null,
   ): Promise<void> {
     const context = await this.buildContext(sessionId, listener, cancelFlag);
+    if (executionUserId != null) context.executionUserId = executionUserId;
     const persistenceCallback = this.createPersistenceCallback(sessionId, context);
     await this.agentLoop.execute(context, listener, persistenceCallback);
     if (cancelFlag != null) this.agentLoop.removeCancelFlag(sessionId);

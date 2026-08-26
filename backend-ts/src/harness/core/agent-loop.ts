@@ -534,7 +534,7 @@ export class AgentLoop {
     try {
       return await Promise.resolve(this.toolDispatcher.dispatch(
         toolName, argumentsJson, context.executionMode, context.sessionId, context.userId,
-        context.workspace, context.permissionLevel, context.modelConfig, context.tools,
+        context.workspace, context.permissionLevel, context.modelConfig, context.tools, context.executionUserId,
       ));
     } catch (e) {
       return 'Tool execution failed: ' + (e as Error).message;

@@ -191,7 +191,7 @@ import { senderName } from './feishu/message.service.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
 import type { FeishuCardProgress } from './feishu/card-progress-listener.js';
-import type { FeishuInboundContext } from './feishu/types.js';
+import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 
 export interface MaoApp {
@@ -774,6 +774,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 按机器人缓存 Lark Client，避免每次收发都重新走 tenant_access_token 换取端点；
   // 缓存 key 包含 appId 与 appSecret 密文，admin 修改 app_id/app_secret 后自动失效重建；停用的机器人直接拒绝。
   const feishuClients = new Map<string, Lark.Client>();
+  const feishuSenderNames = new Map<string, Promise<string | null>>();
   const getFeishuClient = async (botId: number): Promise<Lark.Client | null> => {
     const bot = await feishuBots.findById(botId);
     if (bot == null || bot.enabled === 0 || !cfg.feishu.bot.appSecretKey) return null;
@@ -837,11 +838,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const feishuInboundHandler = new AgentFeishuInboundHandler({
     sessionService: {
       getOrCreateSession: async (accountId, context) => {
+        const triggerUserId = await resolveFeishuUserId(accountId, context);
         const conversation = context.chatType === 'group'
           ? await feishuMessageService.getOrCreateGroup(accountId, context)
-          : await feishuMessageService.getOrCreateP2p(accountId, context, await resolveFeishuUserId(accountId, context));
+          : await feishuMessageService.getOrCreateP2p(accountId, context, triggerUserId);
         await applyFeishuBotConfig(conversation.sessionId, Number(accountId));
-        return { id: conversation.sessionId, workspace: conversation.workspace ?? null };
+        return { id: conversation.sessionId, workspace: conversation.workspace ?? null, executionUserId: triggerUserId ?? null };
       },
       saveUserMessage: async (sessionId, content) => { await sessionService.saveMessage(sessionId, 'USER', content, null, null, null, 0, null); },
       updatePhase: async (sessionId, phase) => { await sessionService.updatePhase(sessionId, phase); },
@@ -924,8 +926,34 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       await taskTerminal.finishExecution(sessionId, session.userId!, success ? 'COMPLETED' : 'FAILED', executionId);
     },
   });
+  const resolveFeishuSenderName = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
+    if (event.senderId == null) return null;
+    const key = `${accountId}:${event.senderId}`;
+    const cached = feishuSenderNames.get(key);
+    if (cached != null) return cached;
+    const lookup = (async (): Promise<string | null> => {
+      try {
+        const client = await getFeishuClient(Number(accountId));
+        if (client == null) return null;
+        const response = await client.contact.v3.user.get({ path: { user_id: event.senderId! }, params: { user_id_type: 'open_id' } });
+        const data = (response as { data?: { user?: { name?: string; display_name?: string } } }).data?.user;
+        return data?.display_name?.trim() || data?.name?.trim() || null;
+      } catch (error) {
+        console.warn(`获取飞书发送人姓名失败, accountId=${accountId}, openId=${event.senderId}`, error);
+        return null;
+      }
+    })();
+    feishuSenderNames.set(key, lookup);
+    return lookup;
+  };
   const feishuInboundProcessor = new FeishuInboundProcessor(feishuInboundHandler, {
     messageService: feishuMessageService,
+    resolveSenderName: resolveFeishuSenderName,
+    resolveUserId: async (accountId, event) => {
+      const unionId = event.senderUnionId ?? event.senderId;
+      if (unionId == null) return null;
+      return (await feishuBinding.findUserIdByUnionId(unionId)) ?? null;
+    },
     authorizeSender: async (accountId, event) => {
       const unionId = event.senderUnionId ?? event.senderId;
       if (unionId == null) return false;

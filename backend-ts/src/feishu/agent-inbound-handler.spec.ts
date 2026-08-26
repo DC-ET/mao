@@ -17,6 +17,23 @@ function makeFlag(): CancelFlag {
 }
 
 describe('AgentFeishuInboundHandler', () => {
+  it('passes the triggering Mao user to the harness without changing session ownership', async () => {
+    const sessionService = {
+      getOrCreateSession: vi.fn(async () => ({ id: 7, executionUserId: 42 })),
+      saveUserMessage: vi.fn(async () => undefined),
+      getLatestAssistantReply: vi.fn(async () => 'assistant text'),
+    };
+    const harness = { prepareMessage: vi.fn(() => 'exec-1'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => ({ onEvent: () => undefined }),
+    });
+    await handler.onMessage(makeContext());
+    expect(harness.execute).toHaveBeenCalledWith(7, 'exec-1', expect.anything(), expect.anything(), 42);
+  });
+
   it('executes agent and returns latest assistant reply', async () => {
     const sessionService = {
       getOrCreateSession: vi.fn(async () => ({ id: 7 })),
@@ -39,7 +56,7 @@ describe('AgentFeishuInboundHandler', () => {
     const reply = await handler.onMessage(makeContext());
     expect(reply).toEqual({ text: 'assistant text' });
     expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, 'hello');
-    expect(harness.execute).toHaveBeenCalledWith(7, 'exec-1', expect.anything(), expect.anything());
+    expect(harness.execute).toHaveBeenCalledWith(7, 'exec-1', expect.anything(), expect.anything(), null);
     expect(onExecutionFinished).toHaveBeenCalledWith(7, expect.anything(), 'exec-1', true);
   });
 

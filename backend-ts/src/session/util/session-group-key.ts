@@ -2,6 +2,7 @@ import type { Session } from '../types.js';
 
 export const CLOUD_TEMP = 'CLOUD:临时工作区';
 export const LOCAL_UNSET = 'LOCAL:未设置';
+const FEISHU_GROUP_WORKSPACE = '/feishu-chat/';
 
 export interface GroupFilterSql {
   clauses: string[];
@@ -19,7 +20,7 @@ export function ofMode(executionMode: string | null | undefined, workspace: stri
   if (executionMode !== 'CLOUD') {
     return workspace != null && workspace.length > 0 ? `LOCAL:${workspace}` : LOCAL_UNSET;
   }
-  if (workspace != null && workspace.includes('/projects/')) {
+  if (workspace != null && (workspace.includes('/projects/') || workspace.includes(FEISHU_GROUP_WORKSPACE))) {
     return `CLOUD:${workspace}`;
   }
   return CLOUD_TEMP;
@@ -87,8 +88,8 @@ export function applyFilter(groupKey: string | null | undefined): GroupFilterSql
   }
   if (CLOUD_TEMP === groupKey) {
     return {
-      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ? OR workspace NOT LIKE ?)'],
-      params: ['CLOUD', '', '%/projects/%'],
+      clauses: ['execution_mode = ?', '(workspace IS NULL OR workspace = ? OR (workspace NOT LIKE ? AND workspace NOT LIKE ?))'],
+      params: ['CLOUD', '', '%/projects/%', '%/feishu-chat/%'],
     };
   }
   if (groupKey.startsWith('CLOUD:')) {

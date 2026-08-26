@@ -97,6 +97,7 @@ export class FeishuMessageService {
 }
 
 function senderName(context: FeishuNormalizedMessage): string {
+  if (context.senderName != null && context.senderName.trim() !== '') return context.senderName;
   const raw = context.rawEvent as Record<string, any>;
   const mentions: any[] = raw?.event?.message?.mentions ?? raw?.message?.mentions ?? [];
   const self = mentions.find((item) => (item?.id?.open_id ?? item?.key) === context.senderId);

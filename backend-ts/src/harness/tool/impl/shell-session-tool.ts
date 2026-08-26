@@ -118,47 +118,63 @@ export class ShellSessionTool extends BaseTool {
       ? await this.gitCredentialService.getTokenMapByUser(userId) : {};
     const shellId = asText(args.session_id);
     const session = this.sessionManager.getOrCreate(conversationId ?? 0, shellId, userId, workdir, tokenMap);
-    // 持久会话的 env 不会自动更新，每次执行前重新注入短效 MAO_TOKEN
-    await this.injectMaoToken(session, userId);
-    // 复用已有会话时 getOrCreate 不会改变 cwd，必须显式 cd
-    if (workdirArg && workdir) {
-      await this.executeWithMarker(session, 'cd ' + shellSingleQuote(workdir), WORKDIR_TIMEOUT_MS);
-    }
-    const marker = this.newMarker();
-    session.writeStdin(command + '\necho ' + marker + ' $?\n');
-    session.incrementCommandCount();
-    session.touch();
-    if (isAsync) {
-      const taskId = this.backgroundTaskManager.submit(conversationId, async () => {
-        const r = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs);
-        if (!keepSession) this.sessionManager.close(session.sessionId);
+    const releaseCommand = await session.acquireCommand?.() ?? (() => undefined);
+    try {
+      // 持久会话的用户环境不会自动更新，执行前按当前触发者刷新 Git/Home 环境。
+      this.sessionManager.refreshUserEnvironment?.(session, userId, tokenMap);
+      await this.injectMaoToken(session, userId);
+      // 复用已有会话时 getOrCreate 不会改变 cwd，必须显式 cd
+      if (workdirArg && workdir) {
+        await this.executeWithMarker(session, 'cd ' + shellSingleQuote(workdir), WORKDIR_TIMEOUT_MS);
+      }
+      const marker = this.newMarker();
+      session.writeStdin(command + '\necho ' + marker + ' $?\n');
+      session.incrementCommandCount();
+      session.touch();
+      if (isAsync) {
+        let taskId: string;
+        try {
+          taskId = this.backgroundTaskManager.submit(conversationId, async () => {
+            try {
+              const r = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs);
+              if (!keepSession) this.sessionManager.close(session.sessionId);
+              return toJson({
+                exit_code: this.resolveExitCode(r),
+                completed: r.completed,
+                output: r.output,
+                truncated: r.truncated,
+              });
+            } finally {
+              releaseCommand();
+            }
+          });
+        } catch (error) {
+          releaseCommand();
+          throw error;
+        }
         return toJson({
-          exit_code: this.resolveExitCode(r),
-          completed: r.completed,
-          output: r.output,
-          truncated: r.truncated,
+          async: true,
+          task_id: taskId,
+          session_id: session.sessionId,
+          output_file: session.outputFile,
+          message: '命令已提交到后台执行。',
         });
-      });
-      return toJson({
-        async: true,
-        task_id: taskId,
+      }
+      const result = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs);
+      const payload: Record<string, unknown> = {
+        exit_code: this.resolveExitCode(result),
         session_id: session.sessionId,
+        output: result.output,
+        truncated: result.truncated,
+        completed: result.completed,
+        current_workdir: await this.resolveCurrentWorkdir(session, result),
         output_file: session.outputFile,
-        message: '命令已提交到后台执行。',
-      });
+      };
+      if (!keepSession) this.sessionManager.close(session.sessionId);
+      return toJson(payload);
+    } finally {
+      if (!isAsync) releaseCommand();
     }
-    const result = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs);
-    const payload: Record<string, unknown> = {
-      exit_code: this.resolveExitCode(result),
-      session_id: session.sessionId,
-      output: result.output,
-      truncated: result.truncated,
-      completed: result.completed,
-      current_workdir: await this.resolveCurrentWorkdir(session, result),
-      output_file: session.outputFile,
-    };
-    if (!keepSession) this.sessionManager.close(session.sessionId);
-    return toJson(payload);
   }
 
   private async handleWriteStdin(args: Record<string, unknown>, conversationId: number | null, userId: number | null): Promise<string> {
@@ -167,23 +183,31 @@ export class ShellSessionTool extends BaseTool {
     if (!shellId) return errorJson('write_stdin 必须提供 session_id');
     const session = this.sessionManager.getSession(shellId);
     if (!session) return errorJson('会话不存在或已关闭：' + shellId);
-    // 与 exec 一致：持久会话的 env 不会自动更新，写命令前重新注入短效 MAO_TOKEN
-    await this.injectMaoToken(session, userId);
-    const yieldTimeMs = args.yield_time_ms != null ? asInt(args.yield_time_ms, 5000) : 5000;
-    // 输入本身不带结束标记，必须额外回显 marker，否则只能空等到超时
-    const marker = this.newMarker();
-    session.writeStdin(input + '\necho ' + marker + ' $?\n');
-    session.touch();
-    const result = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs);
-    return toJson({
-      exit_code: this.resolveExitCode(result),
-      session_id: session.sessionId,
-      output: result.output,
-      truncated: result.truncated,
-      completed: result.completed,
-      current_workdir: await this.resolveCurrentWorkdir(session, result),
-      output_file: session.outputFile,
-    });
+    const releaseCommand = await session.acquireCommand?.() ?? (() => undefined);
+    try {
+      const tokenMap = userId != null && this.gitCredentialService
+        ? await this.gitCredentialService.getTokenMapByUser(userId) : {};
+      this.sessionManager.refreshUserEnvironment?.(session, userId, tokenMap);
+      // 与 exec 一致：写命令前重新注入短效 MAO_TOKEN
+      await this.injectMaoToken(session, userId);
+      const yieldTimeMs = args.yield_time_ms != null ? asInt(args.yield_time_ms, 5000) : 5000;
+      // 输入本身不带结束标记，必须额外回显 marker，否则只能空等到超时
+      const marker = this.newMarker();
+      session.writeStdin(input + '\necho ' + marker + ' $?\n');
+      session.touch();
+      const result = await this.outputManager.readUntilMarker(session, marker, yieldTimeMs);
+      return toJson({
+        exit_code: this.resolveExitCode(result),
+        session_id: session.sessionId,
+        output: result.output,
+        truncated: result.truncated,
+        completed: result.completed,
+        current_workdir: await this.resolveCurrentWorkdir(session, result),
+        output_file: session.outputFile,
+      });
+    } finally {
+      releaseCommand();
+    }
   }
 
   private resolveExitCode(result: OutputResult): number {

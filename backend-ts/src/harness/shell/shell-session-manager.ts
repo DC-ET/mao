@@ -13,6 +13,8 @@ export class ShellSession {
   currentWorkdir: string;
   commandCount = 0;
   private leftover = '';
+  private commandQueue: Promise<void> = Promise.resolve();
+  private readonly userEnvironmentKeys = new Set<string>();
 
   constructor(
     readonly sessionId: string,
@@ -20,7 +22,9 @@ export class ShellSession {
     readonly process: ChildProcessWithoutNullStreams,
     readonly workspaceDir: string,
     readonly outputFile: string,
+    initialUserEnvironmentKeys: Iterable<string> = [],
   ) {
+    for (const key of initialUserEnvironmentKeys) this.userEnvironmentKeys.add(key);
     this.currentWorkdir = workspaceDir;
     this.process.stdout.setEncoding('utf8');
     this.process.stderr.setEncoding('utf8');
@@ -64,6 +68,21 @@ export class ShellSession {
     this.process.stdin.write(text);
   }
 
+  refreshEnvironment(env: Record<string, string | null | undefined>): void {
+    const nextKeys = new Set(Object.keys(env));
+    const commands = [...this.userEnvironmentKeys]
+      .filter((key) => !nextKeys.has(key))
+      .map((key) => `unset ${key}`);
+    for (const [key, value] of Object.entries(env)) {
+      commands.push(value == null
+        ? `unset ${key}`
+        : `export ${key}='${value.replace(/'/g, "'\\''")}'`);
+    }
+    if (commands.length > 0) this.writeStdin(commands.join('\n') + '\n');
+    this.userEnvironmentKeys.clear();
+    for (const key of nextKeys) this.userEnvironmentKeys.add(key);
+  }
+
   close(): void {
     if (!this.alive) return;
     this.alive = false;
@@ -92,6 +111,14 @@ export class ShellSession {
 
   appendLeftover(text: string): void {
     this.leftover += text;
+  }
+
+  async acquireCommand(): Promise<() => void> {
+    const previous = this.commandQueue;
+    let release!: () => void;
+    this.commandQueue = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    return release;
   }
 }
 
@@ -235,6 +262,31 @@ export class ShellSessionManager {
     private readonly sessionMaxLifetimeHours = 2,
   ) {}
 
+  refreshUserEnvironment(
+    session: ShellSession,
+    userId: number | null,
+    domainTokenMap: Record<string, string>,
+  ): void {
+    const env: Record<string, string | null> = {};
+    this.configureUserHome(env as NodeJS.ProcessEnv, userId);
+    for (const [domain, token] of Object.entries(domainTokenMap)) {
+      env[GitCredentialService.envVarNameForDomain(domain)] = token;
+    }
+    const uid = userId ?? 0;
+    if (Object.keys(domainTokenMap).length > 0) {
+      const askPassScript = this.runtimeDataResolver.resolveGitAskpassScript(uid, session.conversationId ?? 0);
+      mkdirSync(path.dirname(askPassScript), { recursive: true });
+      writeFileSync(askPassScript, ASKPASS, 'utf8');
+      try { chmodSync(askPassScript, 0o700); } catch { /* non-posix */ }
+      env.GIT_ASKPASS = askPassScript;
+      env.GIT_TERMINAL_PROMPT = '0';
+    } else {
+      env.GIT_ASKPASS = null;
+      env.GIT_TERMINAL_PROMPT = null;
+    }
+    session.refreshEnvironment(env);
+  }
+
   getOrCreate(
     conversationId: number,
     shellSessionId: string | null,
@@ -344,9 +396,13 @@ export class ShellSessionManager {
     const outputFile = path.join(outputDir, `${shellSessionId}.out`);
     writeFileSync(outputFile, '');
     const env: NodeJS.ProcessEnv = { ...process.env, TERM: 'dumb', PS1: '' };
+    const initialUserEnvironmentKeys = new Set<string>(['HOME']);
     this.configureUserHome(env, userId);
     if (domainTokenMap && Object.keys(domainTokenMap).length > 0) {
       this.configureGitCredentials(env, uid, conversationId, domainTokenMap);
+      initialUserEnvironmentKeys.add('GIT_ASKPASS');
+      initialUserEnvironmentKeys.add('GIT_TERMINAL_PROMPT');
+      for (const domain of Object.keys(domainTokenMap)) initialUserEnvironmentKeys.add(GitCredentialService.envVarNameForDomain(domain));
     }
     const child = spawn('bash', ['-c', 'exec 2>&1; exec bash --norc --noprofile'], {
       cwd: workDir,
@@ -355,7 +411,7 @@ export class ShellSessionManager {
       // 独立进程组，close() 才能一次性回收 bash 的所有后代进程
       detached: true,
     });
-    return new ShellSession(shellSessionId, conversationId, child, workDir, outputFile);
+    return new ShellSession(shellSessionId, conversationId, child, workDir, outputFile, initialUserEnvironmentKeys);
   }
 
   private configureUserHome(env: NodeJS.ProcessEnv, userId: number | null): void {

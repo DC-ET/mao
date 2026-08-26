@@ -10,6 +10,8 @@ import { AtomicBoolean } from '../atomic-boolean.js';
 export class AgentExecutionContext {
   sessionId?: number | null;
   userId?: number | null;
+  /** 本次外部消息触发者；群聊会话的 userId 仍保留为 owner。 */
+  executionUserId?: number | null;
   agentId?: number | null;
   projectKey?: string | null;
   systemPrompt?: string | null;

@@ -3,7 +3,7 @@ import { CompositeAgentEventListener } from '../harness/core/composite-agent-eve
 import { FeishuCardProgressListener, type FeishuCardProgress } from './card-progress-listener.js';
 
 export interface FeishuSessionAdapter {
-  getOrCreateSession(accountId: string, context: FeishuInboundContext): Promise<{ id: number; workspace?: string | null }>;
+  getOrCreateSession(accountId: string, context: FeishuInboundContext): Promise<{ id: number; workspace?: string | null; executionUserId?: number | null }>;
   saveUserMessage(sessionId: number, content: unknown): Promise<void>;
   getLatestAssistantReply(sessionId: number): Promise<string>;
   /** 执行前重置会话 phase（如 RUNNING），避免上一轮终态（FAILED/CANCELLED）触发 AgentLoop 取消。 */
@@ -96,6 +96,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         sessionId, eventId || null,
         cardListener == null ? listener : CompositeAgentEventListener.of(listener, cardListener),
         cancelFlag,
+        session.executionUserId ?? context.maoUserId ?? null,
       );
       // 被代际取消（本代 flag 被置位或已有更新的消息排队）时不回复，并清理残留消息尾部。
       if (cancelFlag.get() || this.generations.get(sessionId) !== generation) {
