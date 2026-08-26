@@ -764,11 +764,11 @@ async function handleQueueEdit(msg: QueueMessage) {
 }
 
 .typing-dots span {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: #c0c4cc;
-  animation: typing 1.4s infinite ease-in-out both;
+  background: var(--aw-ink-muted-48);
+  animation: typing 1.4s infinite ease-in-out;
 }
 
 .typing-dots span:nth-child(1) { animation-delay: -0.32s; }
@@ -829,7 +829,7 @@ async function handleQueueEdit(msg: QueueMessage) {
 }
 
 @keyframes typing {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  0%, 80%, 100% { transform: scale(0.8); opacity: 0.3; }
   40% { transform: scale(1); opacity: 1; }
 }
 

@@ -423,12 +423,13 @@ onUnmounted(() => {
 .typing-dots span {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
   background: var(--aw-ink-muted-48);
-  animation: bounce 1.2s infinite ease-in-out;
+  border-radius: 50%;
+  animation: typing 1.4s infinite ease-in-out;
 }
 
-.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+.typing-dots span:nth-child(2) { animation-delay: -0.16s; }
 
 .typing-retry {
   display: inline-flex;
@@ -456,11 +457,9 @@ onUnmounted(() => {
 @keyframes typing-retry-spin {
   to { transform: rotate(360deg); }
 }
-.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
-
-@keyframes bounce {
-  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
-  40% { transform: translateY(-4px); opacity: 1; }
+@keyframes typing {
+  0%, 80%, 100% { transform: scale(0.8); opacity: 0.3; }
+  40% { transform: scale(1); opacity: 1; }
 }
 
 .readonly-footer {

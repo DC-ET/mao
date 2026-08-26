@@ -277,7 +277,11 @@ const isAssistantRunning = computed(() => {
 })
 
 const showStreamIndicator = computed(() =>
-  role.value === 'assistant' && props.isLast && sessionStore.activeStreaming
+  role.value === 'assistant' &&
+  props.isLast &&
+  (props.sessionId
+    ? sessionStore.isSessionStreaming(props.sessionId)
+    : sessionStore.activeStreaming)
 )
 
 /** 重试状态按消息所属会话读取，避免多会话（边路/子代理）串扰 */
