@@ -23,12 +23,14 @@ export type FeishuChatType = 'p2p' | 'group' | 'unknown';
 export interface FeishuBotConfig { enabled: boolean; appId: string; appSecret: string; websocketEndpoint?: string; reconnectDelayMs: number; requestTimeoutMs: number; }
 export const DEFAULT_FEISHU_BOT_CONFIG: FeishuBotConfig = { enabled: true, appId: '', appSecret: '', reconnectDelayMs: 1_000, requestTimeoutMs: 30_000 };
 export interface FeishuEventHeader { eventId?: string; eventType?: string; createTime?: string; tenantKey?: string; appId?: string; token?: string; }
-export interface FeishuNormalizedMessage { eventId: string | null; messageId: string | null; chatId: string | null; chatType: FeishuChatType; senderId: string | null; senderUnionId: string | null; senderName?: string; maoUserId?: number; senderType: string | null; messageType: string; imageKey?: string | null; fileKey?: string | null; fileName?: string | null; text: string; mentions: string[]; isBotMentioned: boolean; content: unknown; rawEvent: unknown; header?: FeishuEventHeader; progressCardMessageId?: string | null; }
+export interface FeishuNormalizedMessage { eventId: string | null; messageId: string | null; parentId?: string | null; rootId?: string | null; chatId: string | null; chatType: FeishuChatType; senderId: string | null; senderUnionId: string | null; senderName?: string; maoUserId?: number; senderType: string | null; messageType: string; imageKey?: string | null; fileKey?: string | null; fileName?: string | null; text: string; mentions: string[]; isBotMentioned: boolean; content: unknown; rawEvent: unknown; header?: FeishuEventHeader; progressCardMessageId?: string | null; }
 export interface FeishuInboundContext extends FeishuNormalizedMessage {
   accountId: string;
   /** Group messages are annotated before reaching the agent handler. */
   groupContext?: string;
   senderLabel?: string;
+  /** 被引用/回复消息的内容预取（引用是任务意图核心，直接注入而非懒加载）。 */
+  quotedContext?: string;
 }
 export interface FeishuReply { text?: string | null; }
 export interface FeishuInboundHandler { authorizeDirectMessage(accountId: string, senderId: string, text: string): boolean; onMessage(context: FeishuInboundContext): Promise<FeishuReply | null>; }

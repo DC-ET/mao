@@ -33,6 +33,8 @@ export interface FeishuMessageRepository {
   findConversationBySessionId(sessionId: number): Promise<FeishuConversation | null>;
   /** 按消息 ID 查询群消息中的媒体元数据（下载工具用）。 */
   findMediaByMessageId(messageId: string): Promise<{ appId: string; fileKey: string | null; fileName: string | null; msgType: string | null } | null>;
+  /** 按消息 ID 查询群消息完整记录（引用消息内容预取优先走日志，免 API 调用）。 */
+  findGroupMessageByMessageId(appId: string, chatId: string, messageId: string): Promise<FeishuGroupMessage | null>;
   saveConversation(conversation: Omit<FeishuConversation, 'id'>): Promise<FeishuConversation>;
   claimInboundMessage(appId: string, messageId: string, eventId: string | null, chatId: string | null): Promise<boolean>;
   releaseInboundMessage(appId: string, messageId: string): Promise<void>;
@@ -70,6 +72,13 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     return this.db.queryOne(
       'SELECT app_id, file_key, file_name, msg_type FROM feishu_group_message_log WHERE message_id = ? AND file_key IS NOT NULL LIMIT 1',
       [messageId],
+    );
+  }
+
+  findGroupMessageByMessageId(appId: string, chatId: string, messageId: string): Promise<FeishuGroupMessage | null> {
+    return this.db.queryOne<FeishuGroupMessage>(
+      'SELECT * FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ? AND message_id = ? LIMIT 1',
+      [appId, chatId, messageId],
     );
   }
 

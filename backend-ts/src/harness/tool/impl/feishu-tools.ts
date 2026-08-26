@@ -29,6 +29,11 @@ export interface FeishuGroupMediaLookup {
   findMediaByMessageId(messageId: string): Promise<{ appId: string; fileKey: string | null; fileName: string | null; msgType: string | null } | null>;
 }
 
+/** 消息详情 API 兜底：群消息日志未命中时（如引用机器人发的文件）获取文件元数据。 */
+export interface FeishuMessageDetailFetcher {
+  fetchMessageDetail(appId: string, messageId: string): Promise<{ fileKey: string | null; fileName: string | null; msgType: string } | null>;
+}
+
 function sanitizeFileName(name: string | null | undefined, fallback: string): string {
   const raw = (name ?? '').trim();
   if (raw === '') return fallback;
@@ -97,6 +102,7 @@ export class FeishuDownloadFileTool extends BaseTool implements FeishuChannelToo
     private readonly mediaLookup: FeishuGroupMediaLookup,
     private readonly downloader: FeishuMediaDownloader,
     private readonly maxBytes: number,
+    private readonly detailFetcher?: FeishuMessageDetailFetcher,
   ) { super(); }
 
   getName(): string { return 'feishu_download_file'; }
@@ -124,11 +130,18 @@ export class FeishuDownloadFileTool extends BaseTool implements FeishuChannelToo
       if (!workspace) return errorJson('当前会话没有可用的工作区，无法下载文件');
       const appId = await this.support.resolveBotAppId(sessionId);
       if (!appId) return errorJson('当前会话不是飞书通道会话，无法下载飞书文件');
-      const media = await this.mediaLookup.findMediaByMessageId(messageId);
-      if (media == null || media.fileKey == null) return errorJson(`未找到包含文件/图片的群聊消息: ${messageId}`);
+      let media = await this.mediaLookup.findMediaByMessageId(messageId);
+      if (media == null || media.fileKey == null) {
+        // 日志未命中（如引用的是机器人发的文件）：通过消息详情 API 兜底获取 file_key。
+        const detail = await this.detailFetcher?.fetchMessageDetail(appId, messageId) ?? null;
+        if (detail?.fileKey == null) return errorJson(`未找到包含文件/图片的群聊消息: ${messageId}`);
+        media = { appId, fileKey: detail.fileKey, fileName: detail.fileName ?? null, msgType: detail.msgType };
+      }
       const isImage = media.msgType === 'image';
+      const fileKey = media.fileKey;
+      if (fileKey == null) return errorJson(`未找到包含文件/图片的群聊消息: ${messageId}`);
       const { buffer, contentType } = await this.downloader.download(
-        media.appId, messageId, media.fileKey, isImage ? 'image' : 'file', this.maxBytes,
+        media.appId, messageId, fileKey, isImage ? 'image' : 'file', this.maxBytes,
       );
       if (buffer.length === 0) return errorJson('文件下载失败：内容为空（可能已过期或无权限）');
       mkdirSync(workspace, { recursive: true });

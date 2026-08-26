@@ -39,6 +39,8 @@ export function normalizeFeishuEvent(input: unknown, botOpenId?: string): Feishu
   return {
     eventId: firstString(header?.eventId, root.event_id, event.event_id) ?? null,
     messageId: firstString(message.message_id, event.message_id) ?? null,
+    parentId: firstString(message.parent_id, event.parent_id) ?? null,
+    rootId: firstString(message.root_id, event.root_id) ?? null,
     chatId: firstString(message.chat_id, event.chat_id) ?? null,
     chatType,
     senderId: senderId ?? null,

@@ -58,6 +58,47 @@ describe('FeishuInboundProcessor', () => {
     expect(messageService.completeInboundMessage).toHaveBeenCalledWith('1', 'om_1');
   });
 
+  it('resolves quoted message content into quotedContext when replying', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const resolveQuotedMessage = vi.fn(async (_accountId: string, event: FeishuNormalizedMessage) =>
+      event.parentId == null ? null : '[引用消息] 告警内容');
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveQuotedMessage,
+    });
+    await processor.process('1', makeEvent({ isBotMentioned: true, parentId: 'om_parent' }));
+    expect(resolveQuotedMessage).toHaveBeenCalledWith('1', expect.objectContaining({ parentId: 'om_parent' }));
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ quotedContext: '[引用消息] 告警内容' }));
+  });
+
+  it('skips quote resolution when message has no parent', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const resolveQuotedMessage = vi.fn();
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveQuotedMessage,
+    });
+    await processor.process('1', makeEvent({ isBotMentioned: true }));
+    expect(resolveQuotedMessage).not.toHaveBeenCalled();
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ quotedContext: undefined }));
+  });
+
+  it('degrades to no quote when quote resolution fails', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveQuotedMessage: vi.fn(async () => { throw new Error('api down'); }),
+    });
+    await processor.process('1', makeEvent({ isBotMentioned: true, parentId: 'om_parent' }));
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ quotedContext: undefined }));
+  });
+
   it('only records group message when bot not mentioned', async () => {
     messageService.claimInboundMessage.mockResolvedValueOnce(true);
     const onMessage = vi.fn(async () => ({ text: 'r' }));

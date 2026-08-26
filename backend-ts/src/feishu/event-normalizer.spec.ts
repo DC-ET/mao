@@ -192,6 +192,23 @@ describe('normalizeFeishuEvent', () => {
     expect(event!.isBotMentioned).toBe(false);
   });
 
+  it('extracts parent_id and root_id for reply messages', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_app' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_reply', parent_id: 'om_parent', root_id: 'om_root', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_1 看看"}',
+          mentions: [{ key: '@_user_1', id: { open_id: 'ou_bot' }, name: 'Eter' }],
+        },
+      },
+    });
+    expect(event!.parentId).toBe('om_parent');
+    expect(event!.rootId).toBe('om_root');
+    expect(event!.text).toBe('@Eter 看看');
+  });
+
   it('parses image message media keys', () => {
     const event = normalizeFeishuEvent({
       header: { app_id: 'cli_mybot' },

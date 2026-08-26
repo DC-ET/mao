@@ -51,6 +51,27 @@ describe('AgentFeishuInboundHandler', () => {
     expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '[09:36] 张三：在吗\n李四：hello');
   });
 
+  it('prepends quoted message context before group history', async () => {
+    const sessionService = {
+      getOrCreateSession: vi.fn(async () => ({ id: 7 })),
+      saveUserMessage: vi.fn(async () => undefined),
+      getLatestAssistantReply: vi.fn(async () => 'assistant text'),
+    };
+    const harness = { prepareMessage: vi.fn(() => 'exec-1'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => ({ onEvent: () => undefined }),
+    });
+    await handler.onMessage(makeContext({
+      groupContext: '[09:36] 张三：在吗',
+      senderLabel: '李四',
+      quotedContext: '[引用消息] [09:35] 王五：告警内容',
+    }));
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '[引用消息] [09:35] 王五：告警内容\n[09:36] 张三：在吗\n李四：hello');
+  });
+
   it('executes agent and returns latest assistant reply', async () => {
     const sessionService = {
       getOrCreateSession: vi.fn(async () => ({ id: 7 })),

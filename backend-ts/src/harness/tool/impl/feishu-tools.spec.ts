@@ -65,6 +65,7 @@ describe('FeishuDownloadFileTool', () => {
     appId?: string | null;
     media?: { appId: string; fileKey: string | null; fileName: string | null; msgType: string | null } | null;
     download?: ReturnType<typeof vi.fn>;
+    detailFetcher?: { fetchMessageDetail(appId: string, messageId: string): Promise<{ fileKey: string | null; fileName: string | null; msgType: string } | null> };
   } = {}) => new FeishuDownloadFileTool(
     { resolveBotAppId: vi.fn(async () => options.appId === undefined ? 'cli_bot' : options.appId) },
     { findMediaByMessageId: vi.fn(async () => options.media === undefined
@@ -72,6 +73,7 @@ describe('FeishuDownloadFileTool', () => {
       : options.media) },
     { download: options.download ?? vi.fn(async () => ({ buffer: Buffer.from('hello'), contentType: 'text/markdown' })) },
     100 * 1024 * 1024,
+    options.detailFetcher,
   );
 
   it('downloads a group file into the workspace and returns the path', async () => {
@@ -88,6 +90,21 @@ describe('FeishuDownloadFileTool', () => {
     const parsed = JSON.parse(result);
     expect(parsed.success).toBe(true);
     expect(parsed.path).toBe(join(workspace, '说明-om_123.md'));
+  });
+
+  it('falls back to message detail API when the log has no such media', async () => {
+    const download = vi.fn(async () => ({ buffer: Buffer.from('bin'), contentType: 'application/octet-stream' }));
+    const tool = new FeishuDownloadFileTool(
+      { resolveBotAppId: vi.fn(async () => 'cli_bot') },
+      { findMediaByMessageId: vi.fn(async () => null) },
+      { download },
+      100 * 1024 * 1024,
+      { fetchMessageDetail: vi.fn(async () => ({ fileKey: 'file_v3', fileName: 'robot-file.pdf', msgType: 'file' })) },
+    );
+    const result = await tool.execute(JSON.stringify({ message_id: 'om_bot_msg' }), 9, 1, workspace);
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.path).toBe(join(workspace, 'robot-file.pdf'));
   });
 
   it('rejects messages without a downloadable file', async () => {

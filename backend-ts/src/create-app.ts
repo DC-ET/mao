@@ -187,11 +187,12 @@ import { registerFeishuBindingRoutes } from './feishu/binding.routes.js';
 import { FeishuMonitorService } from './feishu/monitor.service.js';
 import { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
 import { FeishuMessageService } from './feishu/message.service.js';
-import { senderName } from './feishu/message.service.js';
+import { formatGroupTime, senderName } from './feishu/message.service.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
 import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
+import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import type { FeishuCardProgress } from './feishu/card-progress-listener.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
@@ -227,6 +228,11 @@ function sanitizeFeishuFileName(name: string | null | undefined, fallback: strin
   const basename = raw.replace(/\\/g, '/').split('/').pop() ?? fallback;
   const cleaned = basename.replace(/[^\w.\u4e00-\u9fa5-]/g, '_').replace(/^_+|_+$/g, '');
   return cleaned === '' ? fallback : cleaned.length > 128 ? cleaned.slice(0, 128) : cleaned;
+}
+
+/** 引用消息注入文本截断：告警堆栈等长内容防止撑爆用户消息。 */
+function truncateQuoted(text: string, maxLength = 1500): string {
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength)}…（引用内容过长已截断）`;
 }
 
 /** 下载消息资源（图片/文件），流式收集并校验大小上限（字节），超限抛错。 */
@@ -634,6 +640,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       },
     },
     feishuGroupMediaLookup: { findMediaByMessageId: (messageId: string) => feishuMessageRepository.findMediaByMessageId(messageId) } as never,
+    feishuMessageDetailFetcher: {
+      fetchMessageDetail: async (appId, messageId) => {
+        const client = await getFeishuClient(Number(appId));
+        if (client == null) throw new Error(`飞书Bot不存在或未启用: ${appId}`);
+        const detail = await fetchFeishuMessageDetail(client, messageId);
+        return detail == null ? null : { fileKey: detail.fileKey ?? null, fileName: detail.fileName ?? null, msgType: detail.msgType };
+      },
+    },
     feishuMaxInboundFileBytes: Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024,
     definitionRegistry,
     get harnessService() { return holder.harness!; },
@@ -1014,6 +1028,22 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const feishuInboundProcessor = new FeishuInboundProcessor(feishuInboundHandler, {
     messageService: feishuMessageService,
     resolveSenderName: resolveFeishuSenderName,
+    resolveQuotedMessage: async (accountId, event) => {
+      if (event.parentId == null) return null;
+      // 群消息日志优先：免 API 调用，发送人姓名与占位符格式也和上下文一致。
+      const fromLog = event.chatId != null
+        ? await feishuMessageRepository.findGroupMessageByMessageId(String(accountId), event.chatId, event.parentId)
+        : null;
+      if (fromLog != null) {
+        return truncateQuoted(`[引用消息] [${formatGroupTime(fromLog.createdAt)}] ${fromLog.senderName}：${fromLog.content ?? ''}`);
+      }
+      // 日志未命中（引用机器人消息、超出日志窗口或私聊）：通过消息详情 API 兜底。
+      const client = await getFeishuClient(Number(accountId));
+      if (client == null) return null;
+      const detail = await fetchFeishuMessageDetail(client, event.parentId);
+      if (detail == null) return null;
+      return truncateQuoted(`[引用消息] ${detail.text}`);
+    },
     resolveUserId: async (accountId, event) => {
       const unionId = event.senderUnionId ?? event.senderId;
       if (unionId == null) return null;

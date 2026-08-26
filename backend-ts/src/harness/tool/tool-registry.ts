@@ -12,7 +12,7 @@ import type { WebPageConfig } from './impl/open-web-page-tool.js';
 import type { ImageModelLookup } from './impl/generate-image-tool.js';
 import type { WeixinMediaToolSupport, WeixinMediaUploadService, WeixinSendService } from './impl/wechat-tools.js';
 import type {
-  FeishuChannelToolSupport, FeishuDocReader, FeishuGroupMediaLookup, FeishuMediaDownloader,
+  FeishuChannelToolSupport, FeishuDocReader, FeishuGroupMediaLookup, FeishuMediaDownloader, FeishuMessageDetailFetcher,
 } from './impl/feishu-tools.js';
 import type { AgentDefinitionRegistry } from '../delegate/agent-definition-registry.js';
 import type { HarnessService } from '../core/harness-service.js';
@@ -66,6 +66,7 @@ export interface DefaultToolRegistryDeps {
   feishuDocReader: FeishuDocReader;
   feishuMediaDownloader: FeishuMediaDownloader;
   feishuGroupMediaLookup: FeishuGroupMediaLookup;
+  feishuMessageDetailFetcher: FeishuMessageDetailFetcher;
   feishuMaxInboundFileBytes: number;
   definitionRegistry: AgentDefinitionRegistry;
   harnessService: HarnessService;
@@ -107,7 +108,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new SendWechatImageTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
     new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService),
     new ReadFeishuDocTool(deps.feishuToolSupport, deps.feishuDocReader),
-    new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes),
+    new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),
     new SpawnSubagentTool(deps.backgroundSubagentManager),
     new SubagentFollowupTool(deps.backgroundSubagentManager),
     new CheckSubagentTool(deps.backgroundSubagentManager),
