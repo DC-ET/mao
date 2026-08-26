@@ -65,10 +65,8 @@ export class FeishuMessageService {
   async buildGroupContext(accountId: string, context: FeishuInboundContext): Promise<FeishuGroupContext> {
     const conversation = await this.getOrCreateGroup(accountId, context);
     const messages = await this.repository.listGroupMessages(accountId, context.chatId!, this.contextWindow, this.maxMinutes);
-    // 排除触发消息自身（刚写入日志，不应作为群讨论注入上下文）。
-    const filtered = context.messageId == null
-      ? messages
-      : messages.filter((message) => message.messageId !== context.messageId);
+    // 仅注入未 @ 机器人的普通群消息：当前及历史 @ 机器人的消息已经存入该会话的原生 messages，避免重复。
+    const filtered = messages.filter((message) => !message.isMention && message.messageId !== context.messageId);
     const prompt = filtered.map((message) => `[${formatGroupTime(message.createdAt)}] ${message.senderName}：${message.content ?? ''}`).join('\n');
     return { conversation, messages: filtered, prompt };
   }

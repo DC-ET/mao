@@ -135,9 +135,9 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   }
 
   private async buildMessage(context: FeishuInboundContext, workspace: string | null): Promise<string | FeishuContentPart[]> {
-    const text = context.groupContext == null
+    const text = context.groupContext == null || context.groupContext.trim() === ''
       ? context.text
-      : `[群聊上下文，以下为群内最近讨论]\n${context.groupContext}\n---\n（触发者${context.senderLabel ?? '未知用户'}）请基于上面讨论继续处理：${context.text}`;
+      : `${context.groupContext}\n${context.senderLabel ?? '未知用户'}：${context.text}`;
     const media = await this.options.downloadMedia?.(context, workspace) ?? null;
     if (media == null) return text;
     return this.composeContent(text, media);

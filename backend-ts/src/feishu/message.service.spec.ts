@@ -23,7 +23,8 @@ describe('FeishuMessageService', () => {
       appendGroupMessage: vi.fn(),
       listGroupMessages: vi.fn(async () => [
         { id: 1, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_old', content: '昨天讨论' },
-        { id: 2, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_user', senderName: '李四', isMention: true, messageId: 'om_1', content: 'hello' },
+        { id: 2, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_b', senderName: '王五', isMention: true, messageId: 'om_previous_mention', content: '机器人之前的问题' },
+        { id: 3, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_user', senderName: '李四', isMention: true, messageId: 'om_1', content: 'hello' },
       ]),
       isGroupMember: vi.fn(),
       addGroupMember: vi.fn(),
@@ -32,6 +33,7 @@ describe('FeishuMessageService', () => {
     const service = new FeishuMessageService(repository as never, sessionFactory as never, 30, 120);
     const group = await service.buildGroupContext('1', makeContext());
     expect(group.prompt).toContain('昨天讨论');
+    expect(group.prompt).not.toContain('机器人之前的问题');
     expect(group.prompt).not.toContain('hello');
     expect(group.messages.map((m) => m.messageId)).toEqual(['om_old']);
   });

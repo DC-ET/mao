@@ -11,12 +11,15 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
       return this;
     }
   }
+  class Client {
+    request(): Promise<{ bot: { open_id: string } }> { return Promise.resolve({ bot: { open_id: 'ou_bot' } }); }
+  }
   class WSClient {
     constructor(_params: unknown) { /* nothing to connect in test */ }
     start(_params: unknown): Promise<void> { return Promise.resolve(); }
     close(): void { /* noop */ }
   }
-  return { EventDispatcher, WSClient };
+  return { Client, EventDispatcher, WSClient };
 });
 
 vi.mock('../crypto/aes-gcm.js', () => ({

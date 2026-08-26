@@ -34,6 +34,23 @@ describe('AgentFeishuInboundHandler', () => {
     expect(harness.execute).toHaveBeenCalledWith(7, 'exec-1', expect.anything(), expect.anything(), 42);
   });
 
+  it('formats group history without redundant wrapper text', async () => {
+    const sessionService = {
+      getOrCreateSession: vi.fn(async () => ({ id: 7 })),
+      saveUserMessage: vi.fn(async () => undefined),
+      getLatestAssistantReply: vi.fn(async () => 'assistant text'),
+    };
+    const harness = { prepareMessage: vi.fn(() => 'exec-1'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => ({ onEvent: () => undefined }),
+    });
+    await handler.onMessage(makeContext({ groupContext: '[09:36] 张三：在吗', senderLabel: '李四' }));
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '[09:36] 张三：在吗\n李四：hello');
+  });
+
   it('executes agent and returns latest assistant reply', async () => {
     const sessionService = {
       getOrCreateSession: vi.fn(async () => ({ id: 7 })),
@@ -72,9 +89,8 @@ describe('AgentFeishuInboundHandler', () => {
       harnessService: harness as never,
       listenerFactory: async () => ({ onEvent: () => undefined }),
     });
-    await handler.onMessage(makeContext({ groupContext: '群聊上下文：\n[张三] 讨论1', senderLabel: '李四' }));
-    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, expect.stringContaining('（触发者李四）请基于上面讨论继续处理：hello'));
-    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, expect.stringContaining('讨论1'));
+    await handler.onMessage(makeContext({ groupContext: '[张三] 讨论1', senderLabel: '李四' }));
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '[张三] 讨论1\n李四：hello');
   });
 
   it('cancels the previous generation when a new message arrives', async () => {

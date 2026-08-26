@@ -927,17 +927,21 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
   });
   const resolveFeishuSenderName = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
-    if (event.senderId == null) return null;
-    const key = `${accountId}:${event.senderId}`;
+    const senderId = event.senderId;
+    if (senderId == null) return null;
+    const key = `${accountId}:${senderId}`;
     const cached = feishuSenderNames.get(key);
     if (cached != null) return cached;
     const lookup = (async (): Promise<string | null> => {
       try {
         const client = await getFeishuClient(Number(accountId));
         if (client == null) return null;
-        const response = await client.contact.v3.user.get({ path: { user_id: event.senderId! }, params: { user_id_type: 'open_id' } });
-        const data = (response as { data?: { user?: { name?: string; display_name?: string } } }).data?.user;
-        return data?.display_name?.trim() || data?.name?.trim() || null;
+        // basicBatch 仅返回姓名且不受通讯录授权范围限制，适合群聊消息发送人展示。
+        const response = await client.contact.v3.user.basicBatch({
+          data: { user_ids: [senderId] }, params: { user_id_type: 'open_id' },
+        });
+        const user = (response as { data?: { users?: Array<{ name?: string }> } }).data?.users?.[0];
+        return user?.name?.trim() || null;
       } catch (error) {
         console.warn(`获取飞书发送人姓名失败, accountId=${accountId}, openId=${event.senderId}`, error);
         return null;
