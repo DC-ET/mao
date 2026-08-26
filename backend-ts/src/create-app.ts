@@ -792,8 +792,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
           ? resolveFeishuGroupWorkspace(cfg.app.harness.workspaceRoot, accountId, context.chatId!)
           : null;
         if (groupWorkspace != null) mkdirSync(groupWorkspace, { recursive: true });
+        const title = isGroup ? (await getFeishuChatTitle(Number(accountId), context.chatId!)) || '飞书Bot会话' : '飞书Bot会话';
         const session = await sessionService.createSession(
-          user.id, agent.id, '飞书Bot会话', 'CLOUD', groupWorkspace, 'FULL', false,
+          user.id, agent.id, title, 'CLOUD', groupWorkspace, 'FULL', false,
           'linux', '/bin/bash', 'Linux', model?.id ?? null,
           isGroup ? `feishu-chat-${accountId}-${context.chatId}` : `feishu-${accountId}-private-${user.id}`,
           'new', null, null,
@@ -822,6 +823,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       await sessionRepo.updateFields(session.id, fields);
     }
   };
+  // 存量群会话标题仍为默认“飞书Bot会话”时，补一次群名称；失败静默，下次触发重试。
+  const ensureFeishuSessionTitle = async (sessionId: number, accountId: number, context: FeishuInboundContext): Promise<void> => {
+    try {
+      if (context.chatType !== 'group' || context.chatId == null) return;
+      const session = await sessionService.getSession(sessionId);
+      if (session?.title !== '飞书Bot会话') return;
+      const title = await getFeishuChatTitle(accountId, context.chatId);
+      if (title === '') return;
+      await sessionRepo.updateFields(sessionId, { title });
+      console.info(`飞书会话标题更新为群名称, sessionId=${sessionId}, chatId=${context.chatId}, title=${title}`);
+    } catch (error) {
+      console.warn(`更新飞书会话标题失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   // 按机器人缓存 Lark Client，避免每次收发都重新走 tenant_access_token 换取端点；
   // 缓存 key 包含 appId 与 appSecret 密文，admin 修改 app_id/app_secret 后自动失效重建；停用的机器人直接拒绝。
   const feishuClients = new Map<string, Lark.Client>();
@@ -836,6 +851,26 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     const client = new Lark.Client({ appId: bot.appId, appSecret });
     feishuClients.set(key, client);
     return client;
+  };
+  // 群名称按 botId+chatId 缓存（成功结果）；获取失败不缓存，下次触发重试并告警提示权限缺口。
+  const feishuChatTitles = new Map<string, Promise<string>>();
+  const getFeishuChatTitle = (botId: number, chatId: string): Promise<string> => {
+    const key = `${botId}:${chatId}`;
+    const cached = feishuChatTitles.get(key);
+    if (cached != null) return cached;
+    const promise = (async () => {
+      try {
+        const client = await getFeishuClient(botId);
+        if (client == null) return '';
+        const response = await client.im.v1.chat.get({ path: { chat_id: chatId } });
+        return (response as { data?: { name?: string } }).data?.name?.trim() ?? '';
+      } catch (error) {
+        console.warn(`获取飞书群名称失败, botId=${botId}, chatId=${chatId}: ${error instanceof Error ? error.message : String(error)}`);
+        return '';
+      }
+    })();
+    feishuChatTitles.set(key, promise);
+    return promise;
   };
   const buildFeishuProgressCard = (
     status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[],
@@ -912,6 +947,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
           ? await feishuMessageService.getOrCreateGroup(accountId, context)
           : await feishuMessageService.getOrCreateP2p(accountId, context, triggerUserId);
         await applyFeishuBotConfig(conversation.sessionId, Number(accountId));
+        void ensureFeishuSessionTitle(conversation.sessionId, Number(accountId), context);
         return { id: conversation.sessionId, workspace: conversation.workspace ?? null, executionUserId: triggerUserId ?? null };
       },
       saveUserMessage: async (sessionId, content) => { await sessionService.saveMessage(sessionId, 'USER', content, null, null, null, 0, null); },
