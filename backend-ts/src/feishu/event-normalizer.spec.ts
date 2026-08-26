@@ -55,6 +55,69 @@ describe('normalizeFeishuEvent', () => {
     expect(event!.isBotMentioned).toBe(true);
   });
 
+  it('detects bot mention by mentioned_type app even when botOpenId does not match mention id', () => {
+    // 线上漏判场景：botOpenId 已获取但与事件中 mention 的 id 形态不一致，mentioned_type 仍应命中。
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_g_app', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_1 你是谁"}',
+          mentions: [{ key: '@_user_1', id: { union_id: 'on_bot' }, mentioned_type: 'app', name: 'Eter' }],
+        },
+      },
+    }, 'ou_other_bot');
+    expect(event!.isBotMentioned).toBe(true);
+  });
+  it('does not treat mention of another app with cli_ key as own bot mention', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_g_app2', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@其他机器人 hi"}',
+          mentions: [{ key: 'cli_otherbot', id: { open_id: 'ou_bot2' }, mentioned_type: 'app', name: '其他机器人' }],
+        },
+      },
+    }, 'ou_my_bot');
+    expect(event!.isBotMentioned).toBe(false);
+  });
+
+  it('replaces mention placeholders with real names in text', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_mention_name', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_1我是谁? @_user_2 看看"}',
+          mentions: [
+            { key: '@_user_1', id: { open_id: 'ou_bot' }, mentioned_type: 'app', name: 'Eter' },
+            { key: '@_user_2', id: { open_id: 'ou_zs' }, mentioned_type: 'user', name: '张三' },
+          ],
+        },
+      },
+    });
+    expect(event!.text).toBe('@Eter我是谁? @张三 看看');
+  });
+
+  it('keeps text unchanged when mentions carry no usable name', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_mention_noop', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_1 hi"}',
+          mentions: [{ key: '@_user_1', id: { open_id: 'ou_x' } }],
+        },
+      },
+    });
+    expect(event!.text).toBe('@_user_1 hi');
+  });
+
   it('does not treat mention of another user as bot mention', () => {
     const event = normalizeFeishuEvent({
       header: { app_id: 'cli_mybot' },

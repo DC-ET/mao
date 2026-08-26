@@ -51,6 +51,11 @@ export function createFeishuBotHandle(
         return;
       }
       console.info(`飞书收到消息, id=${bot.id}, messageId=${event.messageId ?? 'null'}, chatType=${event.chatType}, mentioned=${event.isBotMentioned}`);
+      // 群聊消息带提及但未命中机器人时打印原始 mentions，便于排查 botOpenId 与事件身份形态不一致导致的漏判。
+      const rawMentions = asRecord(asRecord((data as { event?: unknown }).event ?? data).message).mentions;
+      if (event.chatType === 'group' && !event.isBotMentioned && Array.isArray(rawMentions) && rawMentions.length > 0) {
+        console.warn(`飞书群消息含提及但未命中机器人, id=${bot.id}, botOpenId=${botOpenId ?? 'null'}, mentions=${JSON.stringify(rawMentions)}`);
+      }
       dispatchInbound(event);
     },
   });
@@ -209,3 +214,7 @@ export class FeishuMonitorService {
 }
 
 export type FeishuInboundEventHandler = (event: FeishuNormalizedMessage) => void | Promise<void>;
+
+function asRecord(value: unknown): Record<string, any> {
+  return value != null && typeof value === 'object' ? value as Record<string, any> : {};
+}

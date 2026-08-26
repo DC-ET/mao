@@ -18,15 +18,21 @@ export function normalizeFeishuEvent(input: unknown, botOpenId?: string): Feishu
   const mentions = mentionItems.map((item) => item.id ?? item.key).filter((id): id is string => id != null);
   const appId = header?.appId ?? null;
   // 飞书 im.message.receive_v1 事件体不含 is_at_me 字段，群聊 @机器人必须通过
-  // mentions 中携带的身份 key 确认。机器人被@时 key 为应用 id（cli_xxx）：
-  // - 事件携带 app_id（header.appId）时仅用精确匹配（key === appId），避免开通
-  //   「群全量消息」权限后 @同群其他机器人（key 为其他 cli_xxx）误触发本机器人；
-  // - 仅当 app_id 缺失（极端格式）时，以 key 的 cli_ 前缀作为兜底。
+  // mentions 中携带的身份确认。识别顺序（宁可误触发不可漏触发）：
+  // 1. mention key 直接等于应用 id（cli_xxx，旧格式）；
+  // 2. botOpenId（/bot/v3/info 获取）与 mention 的 open_id/union_id/key 精确匹配；
+  // 3. mentioned_type 标记为 bot/app 的提及：仅当 key 是其他应用的 cli_ id 时才排除，
+  //    否则视为命中——线上曾出现 botOpenId 与 mention id 形态不一致导致 @机器人全部漏判；
+  // 4. 仅当 app_id 缺失（极端格式）时，以 key 的 cli_ 前缀作为兜底。
   const isBotMentioned = mentionItems.some((item) => {
-    if (item.mentionedType === 'bot' && (botOpenId == null || item.id === botOpenId)) return true;
-    if (botOpenId != null) return item.id === botOpenId;
-    if (appId != null) return item.key === appId;
-    return item.key != null && item.key.startsWith('cli_');
+    if (appId != null && item.key === appId) return true;
+    if (botOpenId != null && (item.id === botOpenId || item.unionId === botOpenId || item.key === botOpenId)) return true;
+    if (item.mentionedType === 'bot' || item.mentionedType === 'app') {
+      if (appId != null && item.key != null && item.key.startsWith('cli_')) return item.key === appId;
+      return true;
+    }
+    if (appId == null) return item.key != null && item.key.startsWith('cli_');
+    return false;
   }) || (isStrictTrue(message.is_at_me ?? event.is_at_me) && mentions.length > 0);
   const messageType = firstString(message.message_type, event.message_type) ?? 'text';
   const media = extractMedia(messageType, content);
@@ -42,7 +48,8 @@ export function normalizeFeishuEvent(input: unknown, botOpenId?: string): Feishu
     imageKey: media.imageKey ?? null,
     fileKey: media.fileKey ?? null,
     fileName: media.fileName ?? null,
-    text: extractText(content, message.text ?? event.text),
+    // 文本中的 @提及 是 @_user_N 占位符，需用 mentions 的姓名还原，否则 Agent 不知道 @ 的是谁。
+    text: replaceMentionKeys(extractText(content, message.text ?? event.text), mentionItems),
     mentions,
     isBotMentioned,
     content,
@@ -77,7 +84,7 @@ function extractText(content: unknown, fallback: unknown): string {
   return firstString(record.text, fallback) ?? '';
 }
 
-interface MentionItem { key?: string | null; id?: string | null; unionId?: string | null; mentionedType?: string | null; }
+interface MentionItem { key?: string | null; id?: string | null; unionId?: string | null; name?: string | null; mentionedType?: string | null; }
 
 function extractMentionItems(value: unknown): MentionItem[] {
   if (!Array.isArray(value)) return [];
@@ -88,9 +95,21 @@ function extractMentionItems(value: unknown): MentionItem[] {
       key: firstString(record.key),
       id: firstString(id.open_id, id.user_id, record.id),
       unionId: firstString(id.union_id),
+      name: firstString(record.name),
       mentionedType: firstString(record.mentioned_type),
     };
   });
+}
+
+/** 将文本中的 @_user_N 占位符替换为 @姓名（含 @机器人），还原真实提及对象。 */
+function replaceMentionKeys(text: string, mentionItems: MentionItem[]): string {
+  if (text === '' || mentionItems.length === 0) return text;
+  let replaced = text;
+  for (const item of mentionItems) {
+    if (item.key == null || item.key === '' || item.name == null || item.name === '') continue;
+    replaced = replaced.split(item.key).join(`@${item.name}`);
+  }
+  return replaced;
 }
 
 function extractMedia(messageType: string, content: unknown): { imageKey?: string; fileKey?: string; fileName?: string } {

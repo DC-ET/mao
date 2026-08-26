@@ -72,7 +72,8 @@ describe('AgentFeishuInboundHandler', () => {
     });
     const reply = await handler.onMessage(makeContext());
     expect(reply).toEqual({ text: 'assistant text' });
-    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, 'hello');
+    // 群聊首条消息（无历史上下文）也必须带发送人前缀，否则 Agent 不知道发送者。
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '未知用户：hello');
     expect(harness.execute).toHaveBeenCalledWith(7, 'exec-1', expect.anything(), expect.anything(), null);
     expect(onExecutionFinished).toHaveBeenCalledWith(7, expect.anything(), 'exec-1', true);
   });
@@ -306,7 +307,7 @@ describe('AgentFeishuInboundHandler', () => {
     });
     await handler.onMessage(makeContext({ messageType: 'image', imageKey: 'img_1', text: '[图片]' }));
     expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, [
-      { type: 'text', text: '[图片]' },
+      { type: 'text', text: '未知用户：[图片]' },
       { type: 'image_url', imageUrl: { url: 'data:image/jpeg;base64,AAA' } },
     ]);
   });

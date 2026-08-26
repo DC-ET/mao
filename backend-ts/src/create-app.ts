@@ -974,12 +974,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         const user = (response as { data?: { users?: Array<{ name?: string }> } }).data?.users?.[0];
         return user?.name?.trim() || null;
       } catch (error) {
+        // 失败不缓存（权限补开后自动恢复）；回退到已绑定 mao 账号的用户名。
         console.warn(`获取飞书发送人姓名失败, accountId=${accountId}, openId=${event.senderId}`, error);
-        return null;
+        const unionId = event.senderUnionId ?? event.senderId;
+        const userId = unionId == null ? null : await feishuBinding.findUserIdByUnionId(unionId);
+        const bound = userId == null ? null : await userRepo.findById(userId);
+        return bound?.name?.trim() || null;
       }
     })();
-    feishuSenderNames.set(key, lookup);
-    return lookup;
+    const name = await lookup;
+    // 仅缓存成功结果：失败（如通讯录权限未开通）不缓存，后续消息重试。
+    if (name != null && name !== '') feishuSenderNames.set(key, Promise.resolve(name));
+    return name;
   };
   const feishuInboundProcessor = new FeishuInboundProcessor(feishuInboundHandler, {
     messageService: feishuMessageService,

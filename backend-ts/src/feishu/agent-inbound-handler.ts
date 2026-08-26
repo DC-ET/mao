@@ -135,9 +135,12 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   }
 
   private async buildMessage(context: FeishuInboundContext, workspace: string | null): Promise<string | FeishuContentPart[]> {
-    const text = context.groupContext == null || context.groupContext.trim() === ''
-      ? context.text
-      : `${context.groupContext}\n${context.senderLabel ?? '未知用户'}：${context.text}`;
+    // 群聊消息始终带发送人前缀（含无历史上下文的首条消息），否则 Agent 不知道消息是谁发的；私聊无需前缀。
+    const isGroup = context.chatType === 'group';
+    const senderLabel = context.senderLabel?.trim() || '未知用户';
+    const text = isGroup
+      ? `${context.groupContext?.trim() ? `${context.groupContext}\n` : ''}${senderLabel}：${context.text}`
+      : context.text;
     const media = await this.options.downloadMedia?.(context, workspace) ?? null;
     if (media == null) return text;
     return this.composeContent(text, media);

@@ -1,5 +1,13 @@
 import type { Session } from '../stores/session'
 
+/** 飞书群聊工作区路径标记：{workspaceRoot}/feishu-chat/{botId}/{chatId}，每个机器人×群聊独立目录。 */
+const FEISHU_CHAT_SEGMENT = 'feishu-chat'
+
+export function isFeishuChatWorkspace(workspace: string | undefined | null): boolean {
+  if (!workspace) return false
+  return workspace.replace(/\\/g, '/').split('/').includes(FEISHU_CHAT_SEGMENT)
+}
+
 export function isSharedCloudProject(session: Pick<Session, 'executionMode' | 'workspace'>): boolean {
   return session.executionMode === 'CLOUD' && !!session.workspace?.includes('/projects/')
 }
@@ -25,6 +33,10 @@ export function cloudGroupKey(session: Pick<Session, 'executionMode' | 'workspac
   if (isSharedCloudProject(session)) {
     return `CLOUD:${session.workspace}`
   }
+  // 飞书群聊工作区按机器人×群聊独立分组，而不是归入"临时工作区"。
+  if (isFeishuChatWorkspace(session.workspace)) {
+    return `CLOUD:${session.workspace}`
+  }
   return 'CLOUD:临时工作区'
 }
 
@@ -36,6 +48,13 @@ export function formatCloudGroupLabel(key: string): string {
     const projectsIdx = parts.indexOf('projects')
     if (projectsIdx >= 0 && projectsIdx < parts.length - 1) {
       return parts[projectsIdx + 1]
+    }
+    // 飞书群聊工作区：…/feishu-chat/{botId}/{chatId} → 飞书群聊·{chatId 前缀}
+    const chatIdx = parts.indexOf(FEISHU_CHAT_SEGMENT)
+    if (chatIdx >= 0 && chatIdx < parts.length - 1) {
+      const botId = parts[chatIdx + 1]
+      const chatId = parts[chatIdx + 2] ?? ''
+      return `飞书群${botId}·${chatId.slice(0, 10)}`
     }
     return parts[parts.length - 1] || ws
   }
@@ -113,6 +132,9 @@ export function cloudWorkspaceIndicator(
   if (draftProjectKey) return draftProjectKey
   if (isSharedCloudProject({ executionMode: 'CLOUD', workspace })) {
     return projectKey || formatCloudGroupLabel(`CLOUD:${workspace}`)
+  }
+  if (isFeishuChatWorkspace(workspace)) {
+    return formatCloudGroupLabel(`CLOUD:${workspace}`)
   }
   return '临时工作区'
 }
