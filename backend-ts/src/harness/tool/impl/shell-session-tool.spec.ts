@@ -99,7 +99,7 @@ describe('ShellSessionTool marker and environment handling', () => {
       })),
     };
     const tool = new ShellSessionTool(
-      { resolve: vi.fn((p: string) => p) } as never,
+      { resolve: vi.fn((p: string) => p), resolveLenient: vi.fn((p: string) => p) } as never,
       sessionManager as never,
       outputManager as never,
       { submit: vi.fn(() => 'task-1') } as never,

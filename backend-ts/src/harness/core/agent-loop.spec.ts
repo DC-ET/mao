@@ -291,6 +291,7 @@ describe('AgentLoop', () => {
       'READ_ONLY',
       undefined,
       ctx.tools,
+      ctx.executionUserId,
     );
     expect(p.onSaveAssistantMessage.mock.calls[0][2]).toHaveLength(1);
     expect(p.onSaveAssistantMessage.mock.calls[0][2][0]).toEqual(expect.objectContaining({
@@ -402,7 +403,7 @@ describe('AgentLoop', () => {
     expect(vi.mocked(l.onToolCallStart).mock.calls.filter(([tc]) => tc.id === 'call-shell')).toHaveLength(2);
     expect(vi.mocked(l.onToolCallStart).mock.calls.filter(([tc]) => tc.id === 'call-read')).toHaveLength(2);
     expect(toolDispatcher.dispatch).toHaveBeenCalledWith(
-      'shell', '{"command":"pwd"}', 'CLOUD', 11, 7, '/repo', 'READ_ONLY', undefined, ctx.tools,
+      'shell', '{"command":"pwd"}', 'CLOUD', 11, 7, '/repo', 'READ_ONLY', undefined, ctx.tools, ctx.executionUserId,
     );
   });
 
