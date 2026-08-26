@@ -30,6 +30,8 @@ export class FeishuCardProgressListener implements AgentEventListener {
     const name = toolCall.function?.name ?? '未知工具';
     const previous = this.tools.get(toolCallId);
     this.tools.set(toolCallId, { name, argumentsJson: toolCall.function?.arguments ?? previous?.argumentsJson ?? null, summary: previous?.summary ?? null });
+    // 工具触发即推送一次进度，长耗时工具执行期间用户可见"执行中"状态，而不是等结果返回。
+    this.queue('RUNNING', this.content, this.toolValues(), this.round);
   }
 
   onToolCallArgsDelta(toolCallId: string, argumentsJson: string): void {
@@ -94,7 +96,7 @@ export class FeishuCardProgressListener implements AgentEventListener {
   }
 
   private toolValues(): string[] {
-    return [...this.tools.values()].map((tool) => `${tool.name}：${tool.summary || '已完成'}`);
+    return [...this.tools.values()].map((tool) => `${tool.name}：${tool.summary || '执行中…'}`);
   }
 
   private toolsList(): string[] {

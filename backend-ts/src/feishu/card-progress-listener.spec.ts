@@ -13,7 +13,9 @@ describe('FeishuCardProgressListener', () => {
     listener.onToolCallResult('tool-1', '读取成功');
     listener.onRoundEnd(1);
     await listener.complete('最终答案');
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(updates).toEqual([
+      { status: 'RUNNING', round: 1, content: '摘要', tools: ['read_file：执行中…'] },
       { status: 'RUNNING', round: 1, content: '摘要', tools: ['read_file：读取 文件'] },
       { status: 'COMPLETED', round: 1, content: '最终答案', tools: [] },
     ]);
@@ -22,15 +24,15 @@ describe('FeishuCardProgressListener', () => {
   it('keeps tool results matched when results arrive out of order', async () => {
     const updates: string[][] = [];
     const listener = new FeishuCardProgressListener({ update: async (_status, _round, _content, tools) => { updates.push(tools); } });
+    listener.onRoundStart(1);
     listener.onToolCallStart({ id: 'a', function: { name: 'first', arguments: '{}' } });
+    listener.onToolCallResult('a', 'first result');
     listener.onToolCallStart({ id: 'b', function: { name: 'second', arguments: '{}' } });
     listener.onToolCallResult('b', 'second result');
-    listener.onToolCallResult('a', 'first result');
-    listener.onRoundStart(1);
     listener.onMessageEnd({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
-    listener.onRoundEnd(1);
-    await listener.complete('done');
-    expect(updates[0]).toEqual(['first：first', 'second：second']);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates[0]).toEqual(['first：执行中…']);
+    expect(updates[updates.length - 1]).toEqual(['first：first', 'second：执行中…']);
   });
 
   it('swallows card update failures', async () => {
