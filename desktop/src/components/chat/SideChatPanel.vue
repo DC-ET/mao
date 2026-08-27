@@ -88,6 +88,7 @@
         :workspace="parentWorkspace"
         :cloud-project-key="parentCloudProjectKey"
         :project-key="parentProjectKey"
+        :session-title="parentSession?.title"
         :execution-mode="parentExecutionMode"
         :model-id="currentModelId"
         :model-supports-vision="currentModelSupportsVision"

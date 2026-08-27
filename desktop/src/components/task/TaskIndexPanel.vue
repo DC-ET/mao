@@ -423,7 +423,7 @@ import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
-import { cloudGroupKey, formatCloudGroupLabel, isSharedCloudProject } from '../../utils/cloud-project'
+import { cloudGroupKey, formatCloudGroupLabel, isSharedCloudProject, FEISHU_PLACEHOLDER_TITLE } from '../../utils/cloud-project'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
 
 const props = defineProps<{
@@ -845,7 +845,8 @@ const groupedSessions = computed(() => {
 function formatGroupLabel(key: string, session?: Session): string {
   if (key.startsWith('FEISHU_PRIVATE:')) return session?.agentName || '未知 Agent'
   if (key.startsWith('FEISHU_GROUP:')) {
-    return `${session?.agentName || '未知 Agent'}:${session?.title && session.title !== '飞书Bot会话' ? session.title : '飞书群聊'}`
+    const title = session?.title && session.title !== FEISHU_PLACEHOLDER_TITLE ? session.title : undefined
+    return `${session?.agentName || '未知 Agent'}:${title ?? '飞书群聊'}`
   }
   if (key.startsWith('CLOUD:')) return formatCloudGroupLabel(key, session)
   if (key.startsWith('LOCAL:')) {

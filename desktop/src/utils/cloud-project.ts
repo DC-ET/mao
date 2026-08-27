@@ -3,9 +3,25 @@ import type { Session } from '../stores/session'
 /** 飞书群聊工作区路径标记：{workspaceRoot}/feishu-chat/{botId}/{chatId}，每个机器人×群聊独立目录。 */
 const FEISHU_CHAT_SEGMENT = 'feishu-chat'
 
+/** 飞书会话默认占位标题（后端建会话时写入），不作为展示名外露。 */
+export const FEISHU_PLACEHOLDER_TITLE = '飞书Bot会话'
+
 export function isFeishuChatWorkspace(workspace: string | undefined | null): boolean {
   if (!workspace) return false
   return workspace.replace(/\\/g, '/').split('/').includes(FEISHU_CHAT_SEGMENT)
+}
+
+/** 飞书私聊工作区：…/feishu-chat/{botId}/private-{userId}（与群聊 oc_ 目录区分）。 */
+export function isFeishuPrivateWorkspace(workspace: string | undefined | null): boolean {
+  if (!isFeishuChatWorkspace(workspace)) return false
+  const parts = workspace!.replace(/\\/g, '/').split('/')
+  return (parts[parts.length - 1] ?? '').startsWith('private-')
+}
+
+/** 会话标题中适合作为展示名的部分：默认占位标题不外露。 */
+function displayTitleOf(title: string | undefined | null): string | undefined {
+  const trimmed = title?.trim()
+  return trimmed && trimmed !== FEISHU_PLACEHOLDER_TITLE ? trimmed : undefined
 }
 
 export function isSharedCloudProject(session: Pick<Session, 'executionMode' | 'workspace'>): boolean {
@@ -48,7 +64,8 @@ export function formatCloudGroupLabel(
 ): string {
   if (key.startsWith('FEISHU_PRIVATE:')) return session?.agentName || '未知 Agent'
   if (key.startsWith('FEISHU_GROUP:')) {
-    return `${session?.agentName || '未知 Agent'}:${session?.title && session.title !== '飞书Bot会话' ? session.title : '飞书群聊'}`
+    const title = session?.title && session.title !== FEISHU_PLACEHOLDER_TITLE ? session.title : undefined
+    return `${session?.agentName || '未知 Agent'}:${title ?? '飞书群聊'}`
   }
   if (key === 'CLOUD:临时工作区') return '临时工作区'
   if (key.startsWith('CLOUD:')) {
@@ -62,8 +79,9 @@ export function formatCloudGroupLabel(
     const chatIdx = parts.indexOf(FEISHU_CHAT_SEGMENT)
     if (chatIdx >= 0 && chatIdx < parts.length - 1) {
       const botId = parts[chatIdx + 1]
-      const chatId = parts[chatIdx + 2] ?? ''
-      return `飞书群${botId}·${chatId.slice(0, 10)}`
+      const lastSegment = parts[chatIdx + 2] ?? ''
+      if (lastSegment.startsWith('private-')) return '飞书私聊'
+      return `飞书群${botId}·${lastSegment.slice(0, 10)}`
     }
     return parts[parts.length - 1] || ws
   }
@@ -126,24 +144,34 @@ export function extractGitRepoSlug(url: string): string | undefined {
   return name || undefined
 }
 
+export interface CloudWorkspaceIndicatorOptions {
+  /** 新建任务的云端项目键：优先展示。 */
+  draftProjectKey?: string
+  workspaceMode?: string
+  gitCloneUrl?: string
+  /** 会话标题（需与 workspace 同一主体）：飞书通道优先于路径合成标签。 */
+  sessionTitle?: string
+}
+
 export function cloudWorkspaceIndicator(
   executionMode: string | undefined,
   workspace: string | undefined,
   projectKey: string | undefined,
-  draftProjectKey?: string,
-  workspaceMode?: string,
-  gitCloneUrl?: string
+  options: CloudWorkspaceIndicatorOptions = {}
 ): string {
   if (executionMode !== 'CLOUD') return ''
-  if (workspaceMode === 'git') {
-    return extractGitRepoSlug(gitCloneUrl || '') || 'Git 仓库'
+  if (options.workspaceMode === 'git') {
+    return extractGitRepoSlug(options.gitCloneUrl || '') || 'Git 仓库'
   }
-  if (draftProjectKey) return draftProjectKey
+  if (options.draftProjectKey) return options.draftProjectKey
   if (isSharedCloudProject({ executionMode: 'CLOUD', workspace })) {
     return projectKey || formatCloudGroupLabel(`CLOUD:${workspace}`)
   }
+  if (isFeishuPrivateWorkspace(workspace)) {
+    return '飞书私聊'
+  }
   if (isFeishuChatWorkspace(workspace)) {
-    return formatCloudGroupLabel(`CLOUD:${workspace}`)
+    return displayTitleOf(options.sessionTitle) ?? formatCloudGroupLabel(`CLOUD:${workspace}`)
   }
   return '临时工作区'
 }

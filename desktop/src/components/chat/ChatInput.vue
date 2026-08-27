@@ -248,6 +248,8 @@ const props = withDefaults(defineProps<{
   registerKey?: string
   /** 草稿绑定键：主会话 's:{id}' / 新建任务 'new' / 边路任务 tabId；null 表示暂不绑定（加载过渡期） */
   draftKey?: string | null
+  /** 当前会话标题：飞书通道用作工作区指示标签（群名/私聊占位标题不外露） */
+  sessionTitle?: string
 }>(), {
   disabled: false,
   loading: false,
@@ -353,9 +355,12 @@ const cloudIndicatorLabel = computed(() =>
     props.executionMode,
     props.workspace,
     props.isNewTask ? undefined : props.projectKey,
-    props.isNewTask ? props.cloudProjectKey : undefined,
-    props.isNewTask ? props.workspaceMode : undefined,
-    props.isNewTask ? props.gitCloneUrl : undefined
+    {
+      draftProjectKey: props.isNewTask ? props.cloudProjectKey : undefined,
+      workspaceMode: props.isNewTask ? props.workspaceMode : undefined,
+      gitCloneUrl: props.isNewTask ? props.gitCloneUrl : undefined,
+      sessionTitle: props.sessionTitle,
+    }
   )
 )
 

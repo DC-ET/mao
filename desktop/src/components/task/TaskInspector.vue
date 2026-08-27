@@ -263,6 +263,8 @@ const props = defineProps<{
   workspace?: string
   projectKey?: string
   executionMode?: string
+  /** 主会话标题（与 workspace 同主体；title prop 在边路/子代理视图是子任务名） */
+  sessionTitle?: string
   sessionId?: string
   fileProvider: WorkspaceFileProvider | null
   listMode?: 'standard' | 'focus'
@@ -553,7 +555,8 @@ const displayTitle = computed(() => props.title || '新任务')
 
 const workspaceLabel = computed(() => {
   if (props.executionMode === 'CLOUD') {
-    return cloudWorkspaceIndicator(props.executionMode, props.workspace, props.projectKey)
+    // 工作区/主体始终是主会话，标题必须同为主动会话（title prop 在子会话视图是子任务名）。
+    return cloudWorkspaceIndicator(props.executionMode, props.workspace, props.projectKey, { sessionTitle: props.sessionTitle })
   }
   return props.workspace || ''
 })

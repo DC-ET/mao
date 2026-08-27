@@ -36,6 +36,7 @@
       :workspace="workspace"
       :project-key="projectKey"
       :execution-mode="executionMode"
+      :session-title="sessionStore.activeSession?.title"
       :session-id="inspectorSessionId"
       :file-provider="fileProvider"
       :git-provider="gitProvider"

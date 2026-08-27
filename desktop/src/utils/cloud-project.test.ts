@@ -40,6 +40,17 @@ describe('cloudWorkspaceIndicator', () => {
     expect(cloudWorkspaceIndicator('CLOUD', '/opt/mao-data/workspace/feishu-chat/1/oc_c8757d032af2', 'oc_c8757d032af2')).toBe('飞书群1·oc_c8757d0')
   })
 
+  it('prefers the session title for feishu group sessions', () => {
+    const ws = '/opt/mao-data/workspace/feishu-chat/1/oc_c8757d032af2'
+    expect(cloudWorkspaceIndicator('CLOUD', ws, 'oc_c8757d032af2', { sessionTitle: '告警群' })).toBe('告警群')
+    // 默认占位标题不外露，回退到合成标签。
+    expect(cloudWorkspaceIndicator('CLOUD', ws, 'oc_c8757d032af2', { sessionTitle: '飞书Bot会话' })).toBe('飞书群1·oc_c8757d0')
+  })
+
+  it('labels feishu private workspaces without chat id noise', () => {
+    expect(cloudWorkspaceIndicator('CLOUD', '/opt/mao-data/workspace/feishu-chat/1/private-3', 'feishu-1-private-3', { sessionTitle: '飞书Bot会话' })).toBe('飞书私聊')
+  })
+
   it('still shows temp workspace for unrelated workspaces', () => {
     expect(cloudWorkspaceIndicator('CLOUD', '/opt/mao-data/workspace/2/sessions/xx', undefined)).toBe('临时工作区')
   })
