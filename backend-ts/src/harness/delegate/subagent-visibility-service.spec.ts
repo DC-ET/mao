@@ -41,6 +41,31 @@ describe('SubAgentVisibilityService', () => {
     }));
   });
 
+  it('notifies frontend with subagent_followup_created including start message id and subscribes child', () => {
+    const d = deps();
+    const service = new SubAgentVisibilityService(d);
+    service.notifySubagentFollowup(
+      { id: 10, userId: 7 },
+      { id: 42, title: '子代理(coder): hello' },
+      'coder',
+      '再核查一遍 tsconfig',
+      9001,
+      true,
+    );
+    expect(d.registry.subscribe).toHaveBeenCalledWith(7, 42);
+    expect(d.registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'subagent_followup_created',
+      sessionId: 10,
+      data: expect.objectContaining({
+        childSessionId: 42,
+        agentType: 'coder',
+        task: '再核查一遍 tsconfig',
+        messageId: 9001,
+        corrected: true,
+      }),
+    }));
+  });
+
   it('streams child execution through a composite WS listener', async () => {
     const d = deps();
     const service = new SubAgentVisibilityService(d);

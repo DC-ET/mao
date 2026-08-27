@@ -143,6 +143,11 @@ export class BackgroundSubagentManager {
       parentSession, childSessionId, agentType, task, parentToolCallId, correctionNotice,
     );
     if (!created) return { ok: false, error: '子代理会话 ' + childSessionId + ' 正在执行中，无法追问' };
+    // 先广播 followup 事件再提交执行：前端先补插新轮 USER 消息，流式增量才不会续接到上一回合
+    this.deps.visibilityService.notifySubagentFollowup(
+      parentSession, created.child, agentType, task,
+      created.execution.executionStartMessageId, corrected,
+    );
     const submitted = await this.submitExecution(parentSession, created.child, created.execution, definition);
     if (!submitted.ok) return submitted;
     return { ok: true, taskId: created.execution.id, childSessionId, corrected };

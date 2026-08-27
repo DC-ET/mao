@@ -791,6 +791,26 @@ export function useStreamWS() {
         }
         break
 
+      case 'subagent_followup_created':
+        // 追问的 USER 消息由服务端直接落库，不会经过 user_message_saved 链路。
+        // 必须在此补插：否则子代理面板 store 缓存的上轮 assistant 会与新轮流式增量直接续接，
+        // 表现为看不到追问内容、输出接在上一回合尾部；真实 messageId 与历史拉取天然去重。
+        if (sessionId && data?.childSessionId) {
+          const followupChildSid = String(data.childSessionId)
+          subscribe(followupChildSid)
+          if (data.messageId != null) {
+            sessionStore.addUserMessage(followupChildSid, {
+              id: String(data.messageId),
+              role: 'user',
+              content: typeof data.task === 'string' ? data.task : '',
+              createdAt: nowDateTime()
+            })
+            // 新一轮尚未产生流事件时提前占位 assistant，保证面板进入正确的回合分组
+            sessionStore.ensureStreamingAssistantMessage(followupChildSid)
+          }
+        }
+        break
+
       case 'skill_sync_required': {
         // Server requests skill sync — trigger main process to download & extract zip
         const syncUrl = data?.syncUrl

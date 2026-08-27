@@ -64,6 +64,38 @@ export class SubAgentVisibilityService {
     );
   }
 
+  /**
+   * 追问/纠偏创建后通知前端：followup 的 USER 消息由服务端直接落库、
+   * 不经过 WS send_message 链路，若不显式推送，前端 store 缓存的上轮消息会与
+   * 新轮流式增量直接续接（缺新轮 user 消息）。messageId 为真实 DB 消息 id，
+   * 前端据此插入 user 消息并与历史拉取天然去重。
+   */
+  notifySubagentFollowup(
+    parentSession: Session,
+    childSession: Session,
+    agentType: string,
+    task: string,
+    startMessageId: number | null | undefined,
+    corrected?: boolean,
+  ): void {
+    const userId = parentSession.userId;
+    const childSessionId = childSession.id;
+    if (userId == null || childSessionId == null) return;
+    this.deps.registry.subscribe(userId, childSessionId);
+    this.deps.registry.send(userId, wsEvent('subagent_followup_created', parentSession.id ?? null, {
+      childSessionId,
+      title: childSession.title || '子代理',
+      agentType: agentType ?? '',
+      task: task ?? '',
+      ...(startMessageId != null ? { messageId: startMessageId } : {}),
+      ...(corrected ? { corrected } : {}),
+    }));
+    harnessLog(
+      'info',
+      `Notified subagent_followup_created parent=${parentSession.id} child=${childSessionId} agentType=${agentType} corrected=${corrected === true}`,
+    );
+  }
+
   ensureSubscribed(userId: number | null | undefined, childSessionId: number): void {
     if (userId == null) return;
     this.deps.registry.subscribe(userId, childSessionId);
