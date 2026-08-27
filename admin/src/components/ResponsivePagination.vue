@@ -7,8 +7,8 @@
     :layout="isMobile ? 'prev, pager, next' : layout"
     :small="isMobile"
     v-bind="$attrs"
-    @current-change="(p: number) => emit('update:currentPage', p)"
-    @size-change="(s: number) => emit('update:pageSize', s)"
+    @current-change="handleCurrentChange"
+    @size-change="handleSizeChange"
   />
 </template>
 
@@ -33,7 +33,19 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'update:currentPage', value: number): void
   (e: 'update:pageSize', value: number): void
+  (e: 'current-change', value: number): void
+  (e: 'size-change', value: number): void
 }>()
+
+function handleCurrentChange(page: number) {
+  emit('update:currentPage', page)
+  emit('current-change', page)
+}
+
+function handleSizeChange(size: number) {
+  emit('update:pageSize', size)
+  emit('size-change', size)
+}
 
 const { isMobile } = useBreakpoint()
 
