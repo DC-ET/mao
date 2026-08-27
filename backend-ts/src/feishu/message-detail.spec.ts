@@ -11,6 +11,14 @@ async function fetchDetail(message: Record<string, unknown>) {
 }
 
 describe('fetchFeishuMessageDetail 卡片文本提取', () => {
+  it('requests original card JSON to avoid Feishu client-upgrade fallback text', async () => {
+    const client = makeClient([{ message_id: 'om_card', msg_type: 'interactive', body: { content: JSON.stringify({ elements: [{ tag: 'markdown', content: '真实卡片内容' }] }) } }]);
+    await fetchFeishuMessageDetail(client, 'om_card');
+    expect((client.request as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(expect.objectContaining({
+      params: { card_msg_content_type: 'user_card_content' },
+    }));
+  });
+
   it('extracts text from schema 2.0 card (header.title + body.elements markdown)', async () => {
     const card = {
       schema: '2.0',

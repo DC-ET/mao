@@ -31,6 +31,7 @@ export async function fetchFeishuMessageDetail(client: Lark.Client, messageId: s
   const response = await client.request<{ code?: number; msg?: string; data?: { items?: RawFeishuMessage[] } }>({
     url: `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}`,
     method: 'GET',
+    params: { card_msg_content_type: 'user_card_content' },
   });
   if (Number(response.code ?? 0) !== 0) {
     throw new Error(`获取飞书消息失败: ${messageId}, msg: ${response.msg ?? JSON.stringify(response)}`);
