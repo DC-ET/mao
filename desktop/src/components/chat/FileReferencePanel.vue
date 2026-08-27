@@ -3,8 +3,8 @@
     <div v-if="loading" class="panel-loading">
       <span class="loading-text">搜索文件中...</span>
     </div>
-    <div v-else-if="files.length === 0" class="panel-empty">
-      {{ filter ? '未找到匹配的文件' : '工作区内暂无文件' }}
+    <div v-else-if="files.length === 0 && !filter" class="panel-empty">
+      工作区内暂无文件
     </div>
     <template v-else>
       <div class="panel-group">
