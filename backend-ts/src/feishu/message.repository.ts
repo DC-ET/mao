@@ -43,6 +43,10 @@ export interface FeishuMessageRepository {
   listGroupMessages(appId: string, chatId: string, limit: number, maxMinutes?: number): Promise<FeishuGroupMessage[]>;
   /** 推进群聊上下文增量注入水位线（只前进不后退）。 */
   updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void>;
+  /** 回填群消息行的内容占位文本（如图片预下载完成后的本地路径引用）。 */
+  updateGroupMessageContent(id: number, content: string): Promise<void>;
+  /** 回填群消息行的发送人显示名（入站时原始事件可能缺少姓名）。 */
+  updateGroupMessageSenderName(id: number, senderName: string): Promise<void>;
   isGroupMember(appId: string, chatId: string, userId: number): Promise<boolean>;
   addGroupMember(appId: string, chatId: string, userId: number, openId: string, displayName: string): Promise<void>;
 }
@@ -166,5 +170,13 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
       'UPDATE feishu_chat SET last_context_log_id = GREATEST(last_context_log_id, ?) WHERE app_id = ? AND chat_id = ?',
       [logId, appId, chatId],
     );
+  }
+
+  updateGroupMessageContent(id: number, content: string): Promise<void> {
+    return this.db.execute('UPDATE feishu_group_message_log SET content = ? WHERE id = ?', [content, id]).then(() => undefined);
+  }
+
+  updateGroupMessageSenderName(id: number, senderName: string): Promise<void> {
+    return this.db.execute('UPDATE feishu_group_message_log SET sender_name = ? WHERE id = ?', [senderName, id]).then(() => undefined);
   }
 }

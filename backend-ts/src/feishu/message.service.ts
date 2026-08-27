@@ -63,6 +63,16 @@ export class FeishuMessageService {
     await this.repository.addGroupMember(accountId, context.chatId, userId, context.senderId, senderName(context));
   }
 
+  /** 回填群消息行内容（图片预下载完成后的本地路径引用等）。 */
+  async updateGroupMessageContent(logId: number, content: string): Promise<void> {
+    await this.repository.updateGroupMessageContent(logId, content);
+  }
+
+  /** 回填群消息行发送人显示名。 */
+  async updateGroupMessageSenderName(logId: number, senderName: string): Promise<void> {
+    await this.repository.updateGroupMessageSenderName(logId, senderName);
+  }
+
   async buildGroupContext(accountId: string, context: FeishuInboundContext): Promise<FeishuGroupContext> {
     const conversation = await this.getOrCreateGroup(accountId, context);
     const messages = await this.repository.listGroupMessages(accountId, context.chatId!, this.contextWindow, this.maxMinutes);

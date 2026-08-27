@@ -22,29 +22,45 @@ export interface FeishuInboundProcessorOptions {
 export class FeishuInboundProcessor {
   constructor(private readonly handler: FeishuInboundHandler, private readonly options: FeishuInboundProcessorOptions = {}) {}
 
+  /** 同群保序门闩：群消息「写入日志」与触发时「读取上下文」必须按到达顺序执行，
+   * 防止并发入站处理乱序（图片尚未入库、水位线已被触发推进，导致该消息永远进不了上下文）。 */
+  private readonly chatOrderQueues = new Map<string, Promise<unknown>>();
+
+  private runInChatOrder<T>(accountId: string, chatId: string | null, fn: () => Promise<T>): Promise<T> {
+    const key = `${accountId}:${chatId ?? ''}`;
+    const previous = this.chatOrderQueues.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.then(() => current);
+    this.chatOrderQueues.set(key, queued);
+    return previous.then(fn).finally(() => {
+      release();
+      if (this.chatOrderQueues.get(key) === queued) this.chatOrderQueues.delete(key);
+    });
+  }
+
   async process(accountId: string, event: FeishuNormalizedMessage, skipClaim = false): Promise<void> {
     if (event.senderId == null || event.messageId == null) return;
     // 媒体消息（图片/文件）无文本时生成标注文本，避免空消息进入链路且群日志内容为空。
-    let normalized = await this.resolveSenderName(event, accountId);
-    normalized = this.normalizeText(normalized);
+    const normalized = this.normalizeText(event);
     const messageId = normalized.messageId!;
     const messageService = this.options.messageService;
     const claimed = skipClaim || messageService == null
       ? true
       : await messageService.claimInboundMessage(accountId, { ...normalized, accountId, messageId });
     if (messageService != null && !claimed) return;
-    normalized = await this.prewarmGroupImage(accountId, normalized);
     let completed = false;
     try {
       if (normalized.chatType === 'p2p') {
-        if (this.options.authorizeSender != null && !(await this.options.authorizeSender(accountId, normalized))) {
-          await this.options.onUnauthorized?.(accountId, normalized);
-          await this.sendUnauthorized(accountId, normalized);
-        } else if (this.handler.authorizeDirectMessage(accountId, normalized.senderUnionId ?? normalized.senderId!, normalized.text)) {
-          const resolvedUserId = await this.options.resolveUserId?.(accountId, normalized);
-          const quotedContext = await this.resolveQuoted(accountId, normalized);
-          const reply = await this.handler.onMessage({ ...normalized, accountId, maoUserId: resolvedUserId ?? undefined, quotedContext });
-          if (reply?.text) await this.sendReply(accountId, normalized, reply);
+        const named = await this.resolveSenderName(normalized, accountId);
+        if (this.options.authorizeSender != null && !(await this.options.authorizeSender(accountId, named))) {
+          await this.options.onUnauthorized?.(accountId, named);
+          await this.sendUnauthorized(accountId, named);
+        } else if (this.handler.authorizeDirectMessage(accountId, named.senderUnionId ?? named.senderId!, named.text)) {
+          const resolvedUserId = await this.options.resolveUserId?.(accountId, named);
+          const quotedContext = await this.resolveQuoted(accountId, named);
+          const reply = await this.handler.onMessage({ ...named, accountId, maoUserId: resolvedUserId ?? undefined, quotedContext });
+          if (reply?.text) await this.sendReply(accountId, named, reply);
         }
         completed = true;
         return;
@@ -54,33 +70,41 @@ export class FeishuInboundProcessor {
         return;
       }
       const mentioned = this.isBotMentioned(normalized);
-      await messageService.recordGroupMessage(accountId, { ...normalized, accountId, messageId }, mentioned);
+      // 群消息立即按到达顺序落日志（占位文本），慢操作（姓名解析/图片预下载）后置为异步富化；
+      // 否则图片下载期间后续 @ 触发会先读上下文并推进水位线，该图片将永远无法进入 Agent 会话。
+      const logId = await this.runInChatOrder(accountId, normalized.chatId,
+        () => messageService.recordGroupMessage(accountId, { ...normalized, accountId }, mentioned));
       if (!mentioned) {
+        void this.enrichGroupMessage(accountId, logId, normalized);
         completed = true;
         return;
       }
-      if (this.options.authorizeSender != null && !(await this.options.authorizeSender(accountId, normalized))) {
-        await this.options.onUnauthorized?.(accountId, normalized);
+      const named = await this.resolveSenderName(normalized, accountId);
+      void this.enrichGroupMessage(accountId, logId, named);
+      if (this.options.authorizeSender != null && !(await this.options.authorizeSender(accountId, named))) {
+        await this.options.onUnauthorized?.(accountId, named);
         let sentCard = false;
         try {
-          sentCard = await this.options.sendUnauthorizedCard?.(accountId, normalized) ?? false;
+          sentCard = await this.options.sendUnauthorizedCard?.(accountId, named) ?? false;
         } catch (error) {
           console.warn(`飞书绑定卡片发送失败，使用文本回退: ${error instanceof Error ? error.message : String(error)}`);
         }
-        if (!sentCard) await this.sendUnauthorized(accountId, normalized);
+        if (!sentCard) await this.sendUnauthorized(accountId, named);
         completed = true;
         return;
       }
-      const resolvedUserId = await this.options.resolveUserId?.(accountId, normalized);
-      const group = await messageService.buildGroupContext(accountId, { ...normalized, accountId, messageId, maoUserId: resolvedUserId ?? undefined });
-      const quotedContext = await this.resolveQuoted(accountId, normalized);
+      const resolvedUserId = await this.options.resolveUserId?.(accountId, named);
+      // 同群内上下文读取排在更早消息的入库之后（runInChatOrder 保序），保证图片等先到消息已可见。
+      const group = await this.runInChatOrder(accountId, named.chatId,
+        () => messageService.buildGroupContext(accountId, { ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined }));
+      const quotedContext = await this.resolveQuoted(accountId, named);
       const context: FeishuInboundContext = {
-        ...normalized, accountId, messageId, maoUserId: resolvedUserId ?? undefined, groupContext: group.prompt,
-        senderLabel: this.options.senderLabel?.(normalized) ?? defaultSenderLabel(normalized),
+        ...named, accountId, messageId, maoUserId: resolvedUserId ?? undefined, groupContext: group.prompt,
+        senderLabel: this.options.senderLabel?.(named) ?? defaultSenderLabel(named),
         quotedContext,
       };
       const reply = await this.handler.onMessage(context);
-      if (reply?.text) await this.sendReply(accountId, normalized, reply);
+      if (reply?.text) await this.sendReply(accountId, named, reply);
       completed = true;
     } finally {
       if (messageService != null) {
@@ -108,17 +132,32 @@ export class FeishuInboundProcessor {
     }
   }
 
-  /** 群图片入站预下载：成功则占位文本携带 @{路径}@ 引用（Agent 免工具直接读取），失败保留 msg 占位符走懒加载兜底。 */
-  private async prewarmGroupImage(accountId: string, event: FeishuNormalizedMessage): Promise<FeishuNormalizedMessage> {
-    if (event.chatType !== 'group' || event.messageType !== 'image' || this.options.downloadGroupImage == null) return event;
+  /** 群消息后台富化（不阻塞入库与触发时序）：补齐发送人显示名；图片消息入站预下载，
+   * 成功则将日志行占位文本升级为携带 @{路径}@ 引用（Agent 免工具直接读取），失败保留懒加载占位符。 */
+  private async enrichGroupMessage(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
+    try {
+      const messageService = this.options.messageService;
+      if (messageService == null || event.chatType !== 'group') return;
+      const resolved = await this.resolveSenderName(event, accountId);
+      if (resolved?.senderName != null && resolved.senderName.trim() !== '') {
+        await messageService.updateGroupMessageSenderName(logId, resolved.senderName);
+      }
+      await this.prewarmGroupImage(accountId, logId, event);
+    } catch (error) {
+      console.warn(`飞书群消息后台富化失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** 群图片预下载：成功回填日志行内容为本地路径引用；失败保留 msg 占位符走 feishu_download_file 懒加载兜底。 */
+  private async prewarmGroupImage(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
+    if (event.messageType !== 'image' || this.options.downloadGroupImage == null) return;
     try {
       const path = await this.options.downloadGroupImage(accountId, event);
-      if (path == null || path === '') return event;
+      if (path == null || path === '') return;
       // 飞书图片消息无文本，text 此时只可能是懒加载占位符，直接整体替换。
-      return { ...event, text: `[图片已保存: @{${path}}@]` };
+      await this.options.messageService?.updateGroupMessageContent(logId, `[图片已保存: @{${path}}@]`);
     } catch (error) {
       console.warn(`飞书群图片预下载失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
-      return event;
     }
   }
 
