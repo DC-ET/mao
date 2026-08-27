@@ -67,9 +67,10 @@ export class FeishuCardProgressListener implements AgentEventListener {
     return this.updateTerminal('COMPLETED', this.round, trimCardText(finalContent), []);
   }
 
-  async cancel(): Promise<boolean> {
+  async cancel(interrupted = false): Promise<boolean> {
     await this.flush();
-    return this.updateTerminal('CANCELLED', this.round, '任务已取消。', []);
+    const message = interrupted ? '已被下一条指令中断。' : '任务已取消。';
+    return this.updateTerminal('CANCELLED', this.round, message, []);
   }
 
   async fail(message: string): Promise<boolean> {

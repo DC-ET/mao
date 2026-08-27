@@ -62,7 +62,7 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
 
   listActiveText(): Promise<LlmModel[]> {
     return this.db.query<LlmModel>(
-      `SELECT * FROM llm_model WHERE status = 1 AND model_type = 'text' AND ${notDeleted()} ORDER BY model_id ASC`,
+      `SELECT * FROM llm_model WHERE status = 1 AND model_type = 'text' AND ${notDeleted()} ORDER BY name ASC`,
     );
   }
 

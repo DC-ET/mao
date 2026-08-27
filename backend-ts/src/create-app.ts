@@ -191,6 +191,9 @@ import { formatGroupTime, senderName } from './feishu/message.service.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
+import { FeishuInboundQueueRepository } from './feishu/inbound-queue.repository.js';
+import { FeishuTaskQueueService } from './feishu/inbound-queue.service.js';
+import { FeishuCardActionService } from './feishu/card-action.service.js';
 import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
@@ -891,6 +894,26 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     feishuChatTitles.set(key, promise);
     return promise;
   };
+  const sendFeishuText = async (botId: number, event: FeishuNormalizedMessage, text: string): Promise<void> => {
+    const client = await getFeishuClient(botId);
+    if (client == null) return;
+    const maxReplyLength = Math.max(100, Math.min(10000, cfg.feishu.bot.reply.maxLength));
+    const limited = text.length > maxReplyLength ? `${text.slice(0, maxReplyLength)}…（回复过长已截断）` : text;
+    if (event.chatType === 'group' && event.messageId != null) {
+      await client.im.v1.message.reply({
+        path: { message_id: event.messageId },
+        data: { msg_type: 'text', content: JSON.stringify({ text: limited }) },
+      });
+    } else {
+      const receiveId = event.chatType === 'group' ? event.chatId : event.senderId;
+      const receiveIdType = event.chatType === 'group' ? 'chat_id' : 'open_id';
+      if (receiveId == null) return;
+      await client.im.v1.message.create({
+        params: { receive_id_type: receiveIdType },
+        data: { receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text: limited }) },
+      });
+    }
+  };
   const buildFeishuProgressCard = (
     status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[],
   ): Record<string, unknown> => {
@@ -905,6 +928,39 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       config: { update_multi: true },
       body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements: sections },
     };
+  };
+  // 排队交互卡片：提示当前任务执行中、新消息已入队，并提供「立即发送/取消本次任务」两个按钮。
+  const buildFeishuQueueCard = (context: FeishuInboundContext, queueId: number, position: number): Record<string, unknown> => {
+    const senderLabel = context.senderLabel?.trim() || '未知用户';
+    const summary = context.text.length > 60 ? `${context.text.slice(0, 60)}…` : context.text;
+    const actionValue = (act: 'run' | 'cancel'): string => JSON.stringify({ kind: 'feishu_queue', queueId, act });
+    return {
+      schema: '2.0',
+      config: { update_multi: true },
+      body: {
+        direction: 'vertical', padding: '12px 12px 12px 12px',
+        elements: [
+          { tag: 'markdown', content: '**⏳ 任务排队中**', text_align: 'left', text_size: 'normal_v2' },
+          { tag: 'markdown', content: `当前任务正在执行中，这条消息已进入队列（第 ${position} 位），将在当前任务完成后自动开始处理。`, text_align: 'left', text_size: 'normal_v2' },
+          { tag: 'markdown', content: `${senderLabel}：${summary}`, text_align: 'left', text_size: 'normal_v2' },
+          {
+            tag: 'action', actions: [
+              { tag: 'button', text: { tag: 'plain_text', content: '立即发送' }, type: 'primary_primary', value: actionValue('run') },
+              { tag: 'button', text: { tag: 'plain_text', content: '取消本次任务' }, type: 'default', value: actionValue('cancel') },
+            ],
+          },
+        ],
+      },
+    };
+  };
+  const createFeishuQueueCard = async (context: FeishuInboundContext, queueId: number, position: number): Promise<string | null> => {
+    const client = await getFeishuClient(Number(context.accountId));
+    if (client == null) return null;
+    const data = { msg_type: 'interactive', content: JSON.stringify(buildFeishuQueueCard(context, queueId, position)) };
+    const response = await (context.chatType === 'group' && context.chatId != null
+      ? client.im.v1.message.create({ params: { receive_id_type: 'chat_id' }, data: { ...data, receive_id: context.chatId } })
+      : client.im.v1.message.create({ params: { receive_id_type: 'open_id' }, data: { ...data, receive_id: context.senderId! } }));
+    return (response as { data?: { message_id?: string } }).data?.message_id ?? null;
   };
   const createFeishuProgressCard = async (context: FeishuInboundContext): Promise<FeishuCardProgress | null> => {
     const client = await getFeishuClient(Number(context.accountId));
@@ -956,6 +1012,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     if (unionId == null) return undefined;
     return (await feishuBinding.findUserIdByUnionId(unionId)) ?? undefined;
   };
+  const feishuInboundQueueRepo = new FeishuInboundQueueRepository(db);
+  const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
+  /** 排队卡片展示位置：入队完成后队列中的 QUEUED 行数（含本条，插入语义=队尾第 N 位）。 */
+  const queuePositionOf = async (sessionId: number): Promise<number> => (await feishuInboundQueueRepo.countPending(sessionId));
   const feishuInboundHandler = new AgentFeishuInboundHandler({
     sessionService: {
       getOrCreateSession: async (accountId, context) => {
@@ -967,9 +1027,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         void ensureFeishuSessionTitle(conversation.sessionId, Number(accountId), context);
         return { id: conversation.sessionId, workspace: conversation.workspace ?? null, executionUserId: triggerUserId ?? null };
       },
-      saveUserMessage: async (sessionId, content) => { await sessionService.saveMessage(sessionId, 'USER', content, null, null, null, 0, null); },
+      saveUserMessage: async (sessionId, content, metadata) => { await sessionService.saveMessage(sessionId, 'USER', content, null, null, null, 0, null, metadata ?? null); },
       updatePhase: async (sessionId, phase) => { await sessionService.updatePhase(sessionId, phase); },
       cleanupIncompleteTail: async (sessionId) => sessionService.cleanupIncompleteTail(sessionId),
+      getPhase: async (sessionId) => (await sessionService.getSession(sessionId))?.phase ?? null,
       getLatestAssistantReply: async (sessionId) => {
         const messages = await sessionService.getMessages(sessionId);
         for (let i = messages.length - 1; i >= 0; i--) {
@@ -982,11 +1043,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     createCancelFlag: (sessionId) => agentLoop.registerCancelFlag(sessionId),
     releaseCancelFlag: (sessionId) => agentLoop.removeCancelFlag(sessionId),
     createProgressCard: createFeishuProgressCard,
-    onGenerationCancelled: (sessionId) => {
+    onInterruptRunning: (sessionId) => {
       try { shellManager.closeByConversation(sessionId); } catch (error) {
         console.debug(`关闭飞书会话 Shell 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
+    queueService: feishuTaskQueue,
+    createQueueCard: async (context, _queueId, sessionId) => createFeishuQueueCard(context, _queueId, await queuePositionOf(sessionId)),
+    resolveBotId: (accountId) => Number(accountId),
+    onReply: async (context, text) => { await sendFeishuText(Number(context.accountId), context, text); },
     downloadMedia: async (context, workspace) => {
       const botId = Number(context.accountId);
       const client = await getFeishuClient(botId);
@@ -1043,9 +1108,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         sessionService: sessionService as never,
       }, sessionId, ownerUserId, executionId, session.modelId != null && (await modelService.getModel(session.modelId))?.supportsVision === 1);
     },
-    onExecutionFinished: async (sessionId, _context, executionId, success) => {
+    onExecutionFinished: async (sessionId, _context, executionId, phase) => {
       const session = await sessionService.getSession(sessionId);
-      await taskTerminal.finishExecution(sessionId, session.userId!, success ? 'COMPLETED' : 'FAILED', executionId);
+      await taskTerminal.finishExecution(sessionId, session.userId!, phase, executionId);
     },
   });
   const resolveFeishuSenderName = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
@@ -1135,26 +1200,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       }
       return true;
     },
-    sendReply: async (accountId, event, text) => {
-      const client = await getFeishuClient(Number(accountId));
-      if (client == null) return;
-      const maxReplyLength = Math.max(100, Math.min(10000, cfg.feishu.bot.reply.maxLength));
-      const limited = text.length > maxReplyLength ? `${text.slice(0, maxReplyLength)}…（回复过长已截断）` : text;
-      if (event.chatType === 'group' && event.messageId != null) {
-        await client.im.v1.message.reply({
-          path: { message_id: event.messageId },
-          data: { msg_type: 'text', content: JSON.stringify({ text: limited }) },
-        });
-      } else {
-        const receiveId = event.chatType === 'group' ? event.chatId : event.senderId;
-        const receiveIdType = event.chatType === 'group' ? 'chat_id' : 'open_id';
-        if (receiveId == null) return;
-        await client.im.v1.message.create({
-          params: { receive_id_type: receiveIdType },
-          data: { receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text: limited }) },
-        });
-      }
-    },
+    sendReply: async (accountId, event, text) => { await sendFeishuText(Number(accountId), event, text); },
     sendUnauthorizedCard: async (accountId, event) => {
       const client = await getFeishuClient(Number(accountId));
       if (client == null || event.chatType !== 'group' || event.chatId == null || event.messageId == null) return false;
@@ -1209,7 +1255,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
   });
   pendingBindingProcessor = feishuInboundProcessor;
-  const feishuMonitor = new FeishuMonitorService(cfg.feishu.bot, feishuBots, feishuInboundProcessor);
+  const feishuCardActionService = new FeishuCardActionService({
+    queuePort: feishuTaskQueue,
+    interrupt: (sessionId) => feishuInboundHandler.interrupt(sessionId),
+    patchCard: async (botId, cardMessageId, card) => {
+      const client = await getFeishuClient(botId);
+      if (client == null) throw new Error(`飞书客户端不可用, botId=${botId}, cardMessageId=${cardMessageId}`);
+      await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
+    },
+  });
+  const feishuMonitor = new FeishuMonitorService(cfg.feishu.bot, feishuBots, feishuInboundProcessor, async (data) => feishuCardActionService.handle(data, ''));
 
   const analyticsService = new AnalyticsService(new AnalyticsDbStore(db));
   const statisticsService = new StatisticsService(new StatisticsDbStore(db));
@@ -1367,10 +1422,27 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     activityService as never, activityHeartbeat, todoMapper, modelRepo as never,
     cfg.app.harness.runtimeDir,
     agentExecutor,
-    (sessionId, userId) => wsHandler.autoConsumeQueue(sessionId, userId),
+    async (sessionId, userId) => {
+      void wsHandler.autoConsumeQueue(sessionId, userId);
+      // 崩溃恢复续跑结束后，若飞书队列仍有排队消息则接力消费。
+      await feishuInboundHandler.drainNextIfPending(sessionId).catch((error) => {
+        console.error(`飞书崩溃恢复后队列接力消费失败, sessionId=${sessionId}`, error);
+      });
+    },
     subagentCoordinator,
   );
-  void crash.run().catch((e) => console.error('Crash recovery failed', e));
+  void crash.run().catch((e) => console.error('Crash recovery failed', e)).then(async () => {
+    // 等崩溃恢复初始扫描提交后再触发队列接力。hydrate 对崩溃时在途执行的 RUNNING 队列行按
+    // 「消息是否已写入会话历史」分支：已落库→删除（其消息由崩溃恢复重放）；未落库→复位为 QUEUED（重新消费，不丢）。
+    // 这里只消费真正的 QUEUED 排队行；若会话仍在被崩溃恢复续跑，drainNextIfPending 的
+    // isBusyOrRecovering（DB phase RUNNING/RESUMING）会兜住不抢跑。
+    const sessionIds = await feishuTaskQueue.hydrate();
+    for (const sessionId of sessionIds) {
+      await feishuInboundHandler.drainNextIfPending(sessionId).catch((error) => {
+        console.error(`飞书队列启动恢复消费失败, sessionId=${sessionId}`, error);
+      });
+    }
+  }).catch((error) => console.error('飞书入站队列启动恢复失败', error));
 
   return {
     app,

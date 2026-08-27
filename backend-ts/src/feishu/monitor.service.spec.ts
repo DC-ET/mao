@@ -102,4 +102,20 @@ describe('createFeishuBotHandle event ack', () => {
     await handler({ header: { app_id: 'cli_test_app' }, event: { sender: {} } });
     expect(process).not.toHaveBeenCalled();
   });
+
+  it('registers card.action.trigger when a card action handler is provided', async () => {
+    const cardActionHandler = vi.fn(async () => undefined);
+    const handle = createFeishuBotHandle(makeBot() as never, config, undefined, undefined, cardActionHandler);
+    handle.start();
+    const handler = registeredHandlers.get('card.action.trigger');
+    expect(handler).toBeDefined();
+    await handler!({ action: { value: { kind: 'feishu_queue', queueId: 1, act: 'run' } } });
+    expect(cardActionHandler).toHaveBeenCalledWith(expect.anything(), '1');
+  });
+
+  it('does not register card.action.trigger when no card action handler', async () => {
+    const handle = createFeishuBotHandle(makeBot() as never, config);
+    handle.start();
+    expect(registeredHandlers.get('card.action.trigger')).toBeUndefined();
+  });
 });

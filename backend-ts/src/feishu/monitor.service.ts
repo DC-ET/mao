@@ -25,6 +25,7 @@ export function createFeishuBotHandle(
   config: FeishuBotConfig,
   processor?: FeishuInboundProcessor,
   callbacks?: FeishuBotHandleCallbacks,
+  cardActionHandler?: (data: unknown, accountId: string) => Promise<unknown>,
 ): FeishuBotHandle {
   if (!bot.id) throw new Error('飞书Bot缺少id');
   if (!config.appSecretKey) throw new Error('飞书Bot appSecretKey未配置');
@@ -58,7 +59,20 @@ export function createFeishuBotHandle(
       }
       dispatchInbound(event);
     },
-  });
+    // 卡片按钮回调（card.action.trigger）：SDK 类型未内置该键，通过泛型扩展注册。
+  } as never);
+  if (cardActionHandler != null) {
+    (eventDispatcher as unknown as { register<T>(handles: T): unknown }).register({
+      'card.action.trigger': async (data: unknown) => {
+        try {
+          return await cardActionHandler(data, String(bot.id));
+        } catch (error) {
+          console.error(`飞书卡片动作处理失败, id=${bot.id}`, error);
+          return undefined;
+        }
+      },
+    });
+  }
   const wsClient = new Lark.WSClient({
     appId: bot.appId,
     appSecret,
@@ -105,6 +119,7 @@ export class FeishuMonitorService {
     private readonly config: FeishuBotConfig,
     private readonly repository: FeishuBotRepository,
     private readonly processor?: FeishuInboundProcessor,
+    private readonly cardActionHandler?: (data: unknown, accountId: string) => Promise<unknown>,
   ) {}
 
   start(): void {
@@ -191,7 +206,7 @@ export class FeishuMonitorService {
               }
             },
           };
-          const handle = createFeishuBotHandle(bot, this.config, this.processor, callbacks);
+          const handle = createFeishuBotHandle(bot, this.config, this.processor, callbacks, this.cardActionHandler);
           this.active.set(bot.id, { handle, generation, fingerprint: `${bot.appId}:${bot.appSecret}`, clearRetryTimer });
           handle.start();
         } catch (error) {
