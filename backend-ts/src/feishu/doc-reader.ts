@@ -42,12 +42,19 @@ export async function readFeishuDocMarkdown(client: Lark.Client, link: string): 
 }
 
 async function wikiTokenToObjToken(client: Lark.Client, wikiToken: string): Promise<string> {
-  const response = await client.request<{ code?: number; data?: { node?: { obj_token?: string } } }>({
+  const response = await client.request<{ code?: number; msg?: string; data?: { node?: { obj_token?: string } } }>({
     url: '/open-apis/wiki/v2/spaces/get_node',
     method: 'GET',
     params: { token: wikiToken },
   });
-  // 转换失败（权限/节点不存在等）降级返回原 token，由后续内容接口给出明确错误。
-  if (Number(response.code ?? 0) !== 0) return wikiToken;
-  return response.data?.node?.obj_token ?? wikiToken;
+  // wiki token 无法直接读正文，转换失败必须立刻报出真实原因（权限/节点不存在），
+  // 不能拿原 token 去打内容接口产生二跳错误。
+  if (Number(response.code ?? 0) !== 0) {
+    throw new Error(`解析飞书知识库节点失败 > token: ${wikiToken}, msg: ${response.msg ?? JSON.stringify(response)}`);
+  }
+  const objToken = response.data?.node?.obj_token;
+  if (objToken == null || objToken === '') {
+    throw new Error(`飞书知识库节点未返回底层文档 token > token: ${wikiToken}`);
+  }
+  return objToken;
 }

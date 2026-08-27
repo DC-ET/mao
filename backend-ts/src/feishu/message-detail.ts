@@ -47,7 +47,7 @@ export async function fetchFeishuMessageDetail(client: Lark.Client, messageId: s
     parentId: raw.parent_id ?? null,
     chatId: raw.chat_id ?? null,
     msgType,
-    text: extractMessageText(msgType, content, raw.message_id),
+    text: describeMessageText(msgType, content, raw.message_id),
     fileKey: typeof content[mediaKey] === 'string' ? content[mediaKey] as string : null,
     fileName: typeof content.file_name === 'string' ? content.file_name as string : null,
     senderId: raw.sender?.id ?? null,
@@ -55,7 +55,8 @@ export async function fetchFeishuMessageDetail(client: Lark.Client, messageId: s
   };
 }
 
-function extractMessageText(msgType: string, content: Record<string, unknown>, messageId: string): string {
+/** 消息类型 → 可读文本/占位符的单一实现：入站占位与引用消息预取共用，防止两套映射漂移。 */
+export function describeMessageText(msgType: string, content: Record<string, unknown>, messageId: string): string {
   if (msgType === 'text') return typeof content.text === 'string' ? content.text : '';
   if (msgType === 'image') return `[图片 msg=${messageId}]`;
   if (msgType === 'file') return `[文件:${typeof content.file_name === 'string' ? content.file_name : '未知文件'} msg=${messageId}]`;

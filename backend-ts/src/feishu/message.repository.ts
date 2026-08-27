@@ -27,7 +27,6 @@ export interface FeishuGroupMessage {
 }
 
 export interface FeishuMessageRepository {
-  findP2pConversation(appId: string, userOpenId: string, userId?: number): Promise<FeishuConversation | null>;
   findGroupConversation(appId: string, chatId: string, ownerUserId?: number): Promise<FeishuConversation | null>;
   /** 按会话 ID 反查飞书会话（工具层用于定位会话所属 bot）。 */
   findConversationBySessionId(sessionId: number): Promise<FeishuConversation | null>;
@@ -47,7 +46,6 @@ export interface FeishuMessageRepository {
   updateGroupMessageContent(id: number, content: string): Promise<void>;
   /** 回填群消息行的发送人显示名（入站时原始事件可能缺少姓名）。 */
   updateGroupMessageSenderName(id: number, senderName: string): Promise<void>;
-  isGroupMember(appId: string, chatId: string, userId: number): Promise<boolean>;
   addGroupMember(appId: string, chatId: string, userId: number, openId: string, displayName: string): Promise<void>;
 }
 
@@ -55,10 +53,6 @@ export interface FeishuMessageRepository {
  * supplied by the caller because this module must not depend on create-app. */
 export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
   constructor(private readonly db: Db) {}
-
-  findP2pConversation(appId: string, userOpenId: string, userId?: number): Promise<FeishuConversation | null> {
-    return this.findGroupConversation(appId, `p2p:${userOpenId}`, userId);
-  }
 
   findGroupConversation(appId: string, chatId: string, ownerUserId?: number): Promise<FeishuConversation | null> {
     const sql = ownerUserId == null
@@ -138,13 +132,6 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     );
     if (saved?.id == null) throw new Error('Failed to record Feishu group message');
     return Number(saved.id);
-  }
-
-  async isGroupMember(appId: string, chatId: string, userId: number): Promise<boolean> {
-    const row = await this.db.queryOne<{ id?: number }>(
-      'SELECT id FROM feishu_chat_member WHERE app_id = ? AND chat_id = ? AND user_id = ? LIMIT 1', [appId, chatId, userId],
-    );
-    return row != null;
   }
 
   async addGroupMember(appId: string, chatId: string, userId: number, openId: string, displayName: string): Promise<void> {

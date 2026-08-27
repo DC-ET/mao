@@ -20,11 +20,11 @@ export class FeishuMessageService {
   ) {}
 
   async getOrCreateP2p(accountId: string, context: FeishuInboundContext, userId?: number): Promise<FeishuConversation> {
-    const userOpenId = context.senderUnionId ?? context.senderId!;
-    // 私聊会话按当前绑定用户隔离：同一 union_id 换绑到其他用户时不会复用原会话/工作区。
-    const existing = await this.repository.findP2pConversation(accountId, userOpenId, userId);
+    const chatId = p2pChatIdOf(context);
+    // 私聊会话按当前绑定用户隔离：同一身份换绑到其他用户时不会复用原会话/工作区。
+    const existing = await this.repository.findGroupConversation(accountId, chatId, userId);
     if (existing != null) return existing;
-    return this.createConversation(accountId, `p2p:${userOpenId}`, context, userId);
+    return this.createConversation(accountId, chatId, context, userId);
   }
 
   async getOrCreateGroup(accountId: string, context: FeishuInboundContext): Promise<FeishuConversation> {
@@ -56,11 +56,6 @@ export class FeishuMessageService {
       fileKey: context.fileKey ?? context.imageKey ?? null,
       fileName: context.fileName ?? null,
     });
-  }
-
-  async ensureGroupMember(accountId: string, context: FeishuInboundContext, userId: number): Promise<void> {
-    if (context.chatId == null || context.senderId == null) throw new Error('Feishu group message is missing identity');
-    await this.repository.addGroupMember(accountId, context.chatId, userId, context.senderId, senderName(context));
   }
 
   /** 回填群消息行内容（图片预下载完成后的本地路径引用等）。 */
@@ -130,4 +125,10 @@ function formatGroupTime(createdAt?: string | null): string {
   return createdAt.slice(0, 16);
 }
 
-export { senderName, formatGroupTime };
+export { senderName, formatGroupTime, p2pChatIdOf };
+
+/** 私聊会话键：身份形态在建会话时确定并编码进前缀，发送侧据此直接解析 receiveIdType（见 feishuSendTargetOf）。 */
+function p2pChatIdOf(context: FeishuInboundContext): string {
+  const unionId = context.senderUnionId ?? '';
+  return unionId !== '' ? `p2p:union:${unionId}` : `p2p:open:${context.senderId ?? ''}`;
+}

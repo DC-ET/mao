@@ -203,21 +203,21 @@ export interface MaoApp {
   close(): Promise<void>;
 }
 
-function resolveFeishuGroupWorkspace(root: string, accountId: string, chatId: string): string {
+function resolveFeishuChatWorkspace(root: string, accountId: string, leaf: string): string {
   const safeAccountId = encodeURIComponent(accountId);
-  const safeChatId = encodeURIComponent(chatId);
+  const safeLeaf = encodeURIComponent(leaf);
   const workspaceRoot = resolve(root);
-  const workspace = resolve(workspaceRoot, 'feishu-chat', safeAccountId, safeChatId);
+  const workspace = resolve(workspaceRoot, 'feishu-chat', safeAccountId, safeLeaf);
   for (const candidate of [workspaceRoot, resolve(workspaceRoot, 'feishu-chat'), resolve(workspaceRoot, 'feishu-chat', safeAccountId)]) {
     try {
-      if (lstatSync(candidate).isSymbolicLink()) throw new Error('飞书群工作区路径不允许符号链接');
+      if (lstatSync(candidate).isSymbolicLink()) throw new Error('飞书会话工作区路径不允许符号链接');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
   const rel = relative(workspaceRoot, workspace);
   if (rel.startsWith('..') || rel.includes('..' + '/') || rel.startsWith('/')) {
-    throw new Error('飞书群工作区路径非法');
+    throw new Error('飞书会话工作区路径非法');
   }
   return workspace;
 }
@@ -805,14 +805,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         if (user?.id == null) throw new Error(`飞书用户未绑定: ${context.senderId ?? ''}`);
         const agent = bot.agentId != null ? await agentService.getAgent(bot.agentId) : await agentService.requireDefaultAgent();
         const model = bot.modelId != null ? await modelService.getModel(bot.modelId) : await modelService.getDefaultModel();
+        // 工作区：群聊按群 ID、私聊按 mao 用户 ID 隔离。私聊必须有工作区，否则入站文件
+        // 无处落盘（downloadMedia 与 feishu_download_file 均依赖 session.workspace）。
+        const workspaceLeaf = context.chatType === 'group' && context.chatId != null ? context.chatId! : `private-${user.id}`;
+        const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, workspaceLeaf);
+        mkdirSync(workspace, { recursive: true });
         const isGroup = context.chatType === 'group' && context.chatId != null;
-        const groupWorkspace = isGroup
-          ? resolveFeishuGroupWorkspace(cfg.app.harness.workspaceRoot, accountId, context.chatId!)
-          : null;
-        if (groupWorkspace != null) mkdirSync(groupWorkspace, { recursive: true });
         const title = isGroup ? (await getFeishuChatTitle(Number(accountId), context.chatId!)) || '飞书Bot会话' : '飞书Bot会话';
         const session = await sessionService.createSession(
-          user.id, agent.id, title, 'CLOUD', groupWorkspace, 'FULL', false,
+          user.id, agent.id, title, 'CLOUD', workspace, 'FULL', false,
           'linux', '/bin/bash', 'Linux', model?.id ?? null,
           isGroup ? `feishu-chat-${accountId}-${context.chatId}` : `feishu-${accountId}-private-${user.id}`,
           'new', null, null,
@@ -1086,7 +1087,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     if (event.chatType !== 'group' || event.chatId == null || event.messageId == null || event.imageKey == null) return null;
     const client = await getFeishuClient(Number(accountId));
     if (client == null) return null;
-    const workspace = resolveFeishuGroupWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
+    const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
     const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
     const { buffer, contentType } = await downloadFeishuMediaBuffer(client, event.messageId, event.imageKey, 'image', maxBytes);
     if (buffer.length === 0) return null;
@@ -1128,9 +1129,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       if (userId == null) return false;
       if (event.chatType === 'group') {
         if (event.chatId == null) return false;
-        if (!(await feishuMessageRepository.isGroupMember(String(accountId), event.chatId, userId))) {
-          await feishuMessageRepository.addGroupMember(String(accountId), event.chatId, userId, event.senderId!, senderName(event));
-        }
+        // 已绑定用户在群内发言即登记为成员并放行（feishu_chat_member 是登记表，不是白名单门槛）。
+        await feishuMessageRepository.addGroupMember(String(accountId), event.chatId, userId, event.senderId!, senderName(event));
         return true;
       }
       return true;

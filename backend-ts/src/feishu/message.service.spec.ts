@@ -15,7 +15,6 @@ describe('FeishuMessageService', () => {
   function makeRepo(overrides: Partial<Record<string, unknown>> = {}) {
     return {
       findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3, lastContextLogId: 0 })),
-      findP2pConversation: vi.fn(),
       findConversationBySessionId: vi.fn(),
       findMediaByMessageId: vi.fn(),
       saveConversation: vi.fn(),
@@ -25,7 +24,6 @@ describe('FeishuMessageService', () => {
       appendGroupMessage: vi.fn(),
       updateGroupContextWatermark: vi.fn(async () => undefined),
       listGroupMessages: vi.fn(async () => []),
-      isGroupMember: vi.fn(),
       addGroupMember: vi.fn(),
       ...overrides,
     };
@@ -79,7 +77,6 @@ describe('FeishuMessageService', () => {
   it('creates conversation under lock on first group message', async () => {
     const repository = makeRepo({
       findGroupConversation: vi.fn(async () => null),
-      findP2pConversation: vi.fn(async () => null),
       saveConversation: vi.fn(async (c: unknown) => ({ id: 1, ...c })),
       appendGroupMessage: vi.fn(),
     });
@@ -91,21 +88,33 @@ describe('FeishuMessageService', () => {
     expect(repository.saveConversation).toHaveBeenCalledWith(expect.objectContaining({ appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3 }));
   });
 
-  it('creates p2p conversation keyed by union id with owner isolation', async () => {
+  it('creates p2p conversation keyed by prefixed identity with owner isolation', async () => {
     const repository = makeRepo({
-      findP2pConversation: vi.fn(async (appId: string, userOpenId: string, userId?: number) => {
-        expect(userOpenId).toBe('on_user');
+      findGroupConversation: vi.fn(async (appId: string, chatId: string, userId?: number) => {
+        expect(appId).toBe('1');
+        // 身份形态在建会话时确定并编码进前缀：优先 union，缺失回退 open。
+        expect(chatId).toBe('p2p:union:on_user');
         expect(userId).toBe(3);
         return null;
       }),
-      findGroupConversation: vi.fn(async () => null),
       saveConversation: vi.fn(async (c: unknown) => ({ id: 2, ...c })),
     });
     const sessionFactory = { create: vi.fn(async () => ({ sessionId: 10, ownerUserId: 3 })) };
     const service = new FeishuMessageService(repository as never, sessionFactory as never, 30, 120);
     const conv = await service.getOrCreateP2p('1', makeContext({ chatType: 'p2p' }), 3);
     expect(conv.id).toBe(2);
-    expect(repository.findP2pConversation).toHaveBeenCalledWith('1', 'on_user', 3);
+  });
+
+  it('falls back to open_id prefix when the event carries no union id', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async (_appId: string, chatId: string) => {
+        expect(chatId).toBe('p2p:open:ou_user');
+        return { id: 4, appId: '1', chatId, sessionId: 11, ownerUserId: 5 };
+      }),
+    });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 30, 120);
+    const conv = await service.getOrCreateP2p('1', makeContext({ chatType: 'p2p', senderUnionId: null }));
+    expect(conv.id).toBe(4);
   });
 
   it('throws when group message lacks chat or sender', async () => {

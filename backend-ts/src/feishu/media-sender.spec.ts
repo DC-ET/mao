@@ -18,9 +18,11 @@ function makeClient(): Lark.Client & {
 }
 
 describe('feishuSendTargetOf', () => {
-  it('parses p2p identity as union_id and group chat as chat_id', () => {
-    expect(feishuSendTargetOf('1', 'p2p:ou_abc')).toEqual({ appId: '1', receiveId: 'ou_abc', receiveIdType: 'union_id' });
+  it('parses p2p identity prefix and group chat as chat_id', () => {
+    expect(feishuSendTargetOf('1', 'p2p:union:on_abc')).toEqual({ appId: '1', receiveId: 'on_abc', receiveIdType: 'union_id' });
+    expect(feishuSendTargetOf('1', 'p2p:open:ou_def')).toEqual({ appId: '1', receiveId: 'ou_def', receiveIdType: 'open_id' });
     expect(feishuSendTargetOf('1', 'oc_chat')).toEqual({ appId: '1', receiveId: 'oc_chat', receiveIdType: 'chat_id' });
+    expect(() => feishuSendTargetOf('1', 'p2p:on_legacy')).toThrow('缺少身份类型前缀');
   });
 });
 
@@ -57,29 +59,21 @@ describe('sendFeishuImage', () => {
     await expect(sendFeishuImage(client, feishuSendTargetOf('1', 'oc_chat'), Buffer.from('png'))).rejects.toThrow('飞书图片上传失败');
   });
 
-  it('retries p2p targets with open_id when union_id send fails', async () => {
+  it('sends p2p target once with the identity type encoded in the prefix', async () => {
     const client = makeClient();
     client.im.v1.image.create.mockResolvedValue({ image_key: 'img_v2' });
     client.im.v1.message.create
-      .mockResolvedValueOnce({ code: 99992400, msg: 'user not found' })
-      .mockResolvedValueOnce({ code: 0 });
+      .mockResolvedValueOnce({ code: 99992400, msg: 'user not found' });
 
-    await sendFeishuImage(client, feishuSendTargetOf('1', 'p2p:ou_abc'), Buffer.from('png'));
+    await expect(sendFeishuImage(client, feishuSendTargetOf('1', 'p2p:union:on_abc'), Buffer.from('png')))
+      .rejects.toThrow('code=99992400, msg=user not found');
 
-    expect(client.im.v1.message.create).toHaveBeenCalledTimes(2);
-    expect(client.im.v1.message.create).toHaveBeenLastCalledWith(
-      { params: { receive_id_type: 'open_id' }, data: expect.objectContaining({ receive_id: 'ou_abc' }) },
-    );
-  });
-
-  it('throws with code and msg when both attempts fail', async () => {
-    const client = makeClient();
-    client.im.v1.image.create.mockResolvedValue({ image_key: 'img_v2' });
-    client.im.v1.message.create.mockResolvedValue({ code: 230001, msg: 'bad request' });
-
-    await expect(sendFeishuImage(client, feishuSendTargetOf('1', 'p2p:ou_abc'), Buffer.from('png')))
-      .rejects.toThrow('code=230001, msg=bad request');
-    expect(client.im.v1.message.create).toHaveBeenCalledTimes(2);
+    // 不做"猜身份重试"：失败一次即抛出真实错误码。
+    expect(client.im.v1.message.create).toHaveBeenCalledTimes(1);
+    expect(client.im.v1.message.create).toHaveBeenCalledWith({
+      params: { receive_id_type: 'union_id' },
+      data: expect.objectContaining({ receive_id: 'on_abc' }),
+    });
   });
 });
 

@@ -1,5 +1,6 @@
 import type { FeishuInboundHandler, FeishuNormalizedMessage, FeishuInboundContext, FeishuReply } from './types.js';
 import type { FeishuMessageService } from './message.service.js';
+import { describeMessageText } from './message-detail.js';
 
 export interface FeishuInboundProcessorOptions {
   messageService?: FeishuMessageService;
@@ -164,12 +165,19 @@ export class FeishuInboundProcessor {
   private normalizeText(event: FeishuNormalizedMessage): FeishuNormalizedMessage {
     const rawText = event.text?.trim() ?? '';
     if (rawText !== '') return event;
-    // 媒体消息（图片/文件）无文本时生成标注文本；占位符携带消息 ID，
-    // 供 Agent 在飞书通道会话中通过 feishu_download_file 工具按需下载。
-    let placeholder = '';
-    if (event.messageType === 'image') placeholder = `[图片 msg=${event.messageId ?? '未知'}]`;
-    else if (event.messageType === 'file') placeholder = `[文件:${event.fileName ?? event.fileKey ?? '未知文件'} msg=${event.messageId ?? '未知'}]`;
-    if (placeholder === '') return event;
+    // 纯文本消息保持原样（空文本不应伪造占位符）；非文本消息统一生成占位/可读文本
+    // （复用引用预取的映射，含 post 富文本、语音、视频、卡片等），占位符携带消息 ID，
+    // 供 Agent 通过 feishu_download_file 按需下载。
+    if (event.messageType === 'text') return event;
+    const content: Record<string, unknown> = (event.content ?? {}) as Record<string, unknown>;
+    // 归一化事件已提取的 file_name 优先于原始 content（测试与部分消息体可能缺失）。
+    const payload = event.fileName != null && content.file_name == null ? { ...content, file_name: event.fileName } : content;
+    let placeholder = describeMessageText(
+      event.messageType,
+      payload,
+      event.messageId ?? '未知',
+    ).trim();
+    if (placeholder === '') placeholder = `[${event.messageType} msg=${event.messageId ?? '未知'}]`;
     return { ...event, text: placeholder };
   }
 

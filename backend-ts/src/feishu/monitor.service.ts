@@ -101,18 +101,11 @@ export class FeishuMonitorService {
   private started = false;
   private reconciling = false;
 
-  private readonly handleFactory: FeishuBotHandleFactory;
-
   constructor(
     private readonly config: FeishuBotConfig,
     private readonly repository: FeishuBotRepository,
-    processorOrFactory?: FeishuInboundProcessor | FeishuBotHandleFactory,
-    handleFactory?: FeishuBotHandleFactory,
-  ) {
-    this.handleFactory = typeof processorOrFactory === 'function'
-      ? processorOrFactory
-      : handleFactory ?? ((bot, callbacks) => createFeishuBotHandle(bot, config, processorOrFactory, callbacks));
-  }
+    private readonly processor?: FeishuInboundProcessor,
+  ) {}
 
   start(): void {
     if (!this.config.enabled || !this.config.longConnection.enabled) {
@@ -198,7 +191,7 @@ export class FeishuMonitorService {
               }
             },
           };
-          const handle = this.handleFactory(bot, callbacks);
+          const handle = createFeishuBotHandle(bot, this.config, this.processor, callbacks);
           this.active.set(bot.id, { handle, generation, fingerprint: `${bot.appId}:${bot.appSecret}`, clearRetryTimer });
           handle.start();
         } catch (error) {
@@ -212,8 +205,6 @@ export class FeishuMonitorService {
     }
   }
 }
-
-export type FeishuInboundEventHandler = (event: FeishuNormalizedMessage) => void | Promise<void>;
 
 function asRecord(value: unknown): Record<string, any> {
   return value != null && typeof value === 'object' ? value as Record<string, any> : {};

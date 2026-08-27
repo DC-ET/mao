@@ -8,12 +8,18 @@ export interface FeishuSendTarget {
 }
 
 /**
- * 由会话存储的 chat_id 解析发送目标：私聊会话存的是 `p2p:{用户身份}`，
- * 身份优先取事件 union_id（缺失时回退 open_id），群聊直接是 chat_id。
+ * 由会话存储的 chat_id 解析发送目标。
+ * 私聊会话的身份形态在建会话时就已确定，直接编码进 chat_id 前缀：
+ * - `p2p:union:{union_id}`：事件携带 union_id（常态）；
+ * - `p2p:open:{open_id}`：事件缺失 union_id 时的回退；
+ * 群聊 chat_id 直接是 oc_ 开头的群 ID。发送侧不做任何"猜身份重试"。
+ * `p2p:{裸身份}` 为升级前的历史键（无法区分 union/open），显式报错而非误当群聊发送。
  */
 export function feishuSendTargetOf(appId: string, chatId: string): FeishuSendTarget {
   const trimmed = chatId.trim();
-  if (trimmed.startsWith('p2p:')) return { appId, receiveId: trimmed.slice(4), receiveIdType: 'union_id' };
+  if (trimmed.startsWith('p2p:union:')) return { appId, receiveId: trimmed.slice('p2p:union:'.length), receiveIdType: 'union_id' };
+  if (trimmed.startsWith('p2p:open:')) return { appId, receiveId: trimmed.slice('p2p:open:'.length), receiveIdType: 'open_id' };
+  if (trimmed.startsWith('p2p:')) throw new Error(`飞书私聊发送目标缺少身份类型前缀（需重建私聊会话）: ${chatId}`);
   return { appId, receiveId: trimmed, receiveIdType: 'chat_id' };
 }
 
@@ -63,10 +69,7 @@ async function sendMessageOnce(
   return Number(response.code ?? 0) === 0 ? null : { code: response.code, msg: response.msg };
 }
 
-/**
- * 私聊身份优先 union_id，但历史会话可能回退存过 open_id，两者同为 ou_ 前缀无法从形态区分；
- * 按 union_id 发送失败时按 open_id 重试一次，仍失败才报错。
- */
+/** 发送媒体消息；receiveIdType 在建会话时已随 chat_id 前缀确定，失败即抛出真实错误码。 */
 async function sendFeishuMediaMessage(
   client: Lark.Client,
   target: FeishuSendTarget,
@@ -74,10 +77,7 @@ async function sendFeishuMediaMessage(
   content: string,
   label: string,
 ): Promise<void> {
-  let failure = await sendMessageOnce(client, target, msgType, content);
-  if (failure != null && target.receiveIdType === 'union_id') {
-    failure = await sendMessageOnce(client, { ...target, receiveIdType: 'open_id' }, msgType, content);
-  }
+  const failure = await sendMessageOnce(client, target, msgType, content);
   if (failure != null) {
     throw new Error(`飞书${label}消息发送失败: code=${failure.code ?? 'unknown'}, msg=${failure.msg ?? 'no message'}`);
   }
