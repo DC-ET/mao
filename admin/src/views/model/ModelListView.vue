@@ -65,8 +65,8 @@
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="名称" width="150">
+        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column prop="name" label="名称" min-width="200">
           <template #default="{ row }">
             <div class="model-name-cell">
               <span>{{ row.name }}</span>
@@ -80,15 +80,15 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="provider" label="供应商" width="120" />
-        <el-table-column prop="modelId" label="模型标识" width="150" />
-        <el-table-column prop="baseUrl" label="API 地址" min-width="200" show-overflow-tooltip />
-        <el-table-column v-if="isTextTab" label="上下文窗口" width="120" align="right">
+        <el-table-column prop="provider" label="供应商" width="110" />
+        <el-table-column prop="modelId" label="模型标识" min-width="180" />
+        <el-table-column prop="baseUrl" label="API 地址" min-width="240" show-overflow-tooltip />
+        <el-table-column v-if="isTextTab" label="上下文窗口" width="110" align="right">
           <template #default="{ row }">
             {{ row.contextWindowTokens ? row.contextWindowTokens.toLocaleString() : '-' }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <el-button
               type="primary"
