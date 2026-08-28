@@ -66,32 +66,26 @@
           <el-empty description="暂无数据" :image-size="60" />
         </template>
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="名称" width="150" />
+        <el-table-column prop="name" label="名称" width="150">
+          <template #default="{ row }">
+            <div class="model-name-cell">
+              <span>{{ row.name }}</span>
+              <el-icon v-if="row.supportsVision" class="name-badge is-vision" title="支持视觉"><Picture /></el-icon>
+              <el-icon v-if="row.status === 1" class="name-badge is-enabled" title="已启用"><CircleCheckFilled /></el-icon>
+              <el-icon v-else class="name-badge is-disabled" title="已停用"><CircleCloseFilled /></el-icon>
+              <svg viewBox="0 0 24 24" class="name-badge protocol-badge" role="img">
+                <title>{{ protocolLabel(row) }}</title>
+                <path :d="protocolIconPath(row)" />
+              </svg>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="provider" label="供应商" width="120" />
         <el-table-column prop="modelId" label="模型标识" width="150" />
         <el-table-column prop="baseUrl" label="API 地址" min-width="200" show-overflow-tooltip />
         <el-table-column v-if="isTextTab" label="上下文窗口" width="120" align="right">
           <template #default="{ row }">
             {{ row.contextWindowTokens ? row.contextWindowTokens.toLocaleString() : '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column v-if="isTextTab" label="视觉" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag :type="row.supportsVision ? 'success' : 'info'" size="small">
-              {{ row.supportsVision ? '是' : '否' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="isTextTab" label="默认" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
-              {{ row.status === 1 ? '启用' : '禁用' }}
-            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="280" fixed="right">
@@ -305,6 +299,23 @@ const isTextTab = computed(() => activeTab.value === 'text')
 
 const loading = ref(false)
 const providerOptions = ref<string[]>([])
+
+// 品牌协议图标（simple-icons，24x24）：空/未知协议回落 OpenAI 兼容
+const OPENAI_ICON_PATH = 'M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z'
+const ANTHROPIC_ICON_PATH = 'M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z'
+
+function isAnthropicProtocol(row: any): boolean {
+  return (row.apiProtocol || '').trim().toLowerCase() === 'anthropic'
+}
+
+function protocolIconPath(row: any): string {
+  return isAnthropicProtocol(row) ? ANTHROPIC_ICON_PATH : OPENAI_ICON_PATH
+}
+
+function protocolLabel(row: any): string {
+  return isAnthropicProtocol(row) ? 'Anthropic（Messages）协议' : 'OpenAI 兼容（ChatCompletions）协议'
+}
+
 const dialogVisible = ref(false)
 const currentModel = ref<any>(null)
 const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
@@ -505,6 +516,38 @@ onMounted(() => {
 
 .model-tabs {
   margin-bottom: 4px;
+}
+
+.model-name-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  line-height: 1.4;
+}
+
+.name-badge {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.name-badge.is-vision {
+  color: var(--el-color-primary);
+}
+
+.name-badge.is-enabled {
+  color: var(--el-color-success);
+}
+
+.name-badge.is-disabled {
+  color: var(--el-color-danger);
+}
+
+.protocol-badge {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  color: var(--el-text-color-secondary);
 }
 
 .pagination {
