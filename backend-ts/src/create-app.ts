@@ -933,7 +933,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const buildFeishuQueueCard = (context: FeishuInboundContext, queueId: number, position: number): Record<string, unknown> => {
     const senderLabel = context.senderLabel?.trim() || '未知用户';
     const summary = context.text.length > 60 ? `${context.text.slice(0, 60)}…` : context.text;
-    const actionValue = (act: 'run' | 'cancel'): string => JSON.stringify({ kind: 'feishu_queue', queueId, act });
     return {
       schema: '2.0',
       config: { update_multi: true },
@@ -944,9 +943,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
           { tag: 'markdown', content: `当前任务正在执行中，这条消息已进入队列（第 ${position} 位），将在当前任务完成后自动开始处理。`, text_align: 'left', text_size: 'normal_v2' },
           { tag: 'markdown', content: `${senderLabel}：${summary}`, text_align: 'left', text_size: 'normal_v2' },
           {
-            tag: 'action', actions: [
-              { tag: 'button', text: { tag: 'plain_text', content: '立即发送' }, type: 'primary_primary', value: actionValue('run') },
-              { tag: 'button', text: { tag: 'plain_text', content: '取消本次任务' }, type: 'default', value: actionValue('cancel') },
+            // 卡片 JSON 2.0 不支持 tag:'action' 交互模块，按钮需放入 elements（并排用 column_set）。
+            tag: 'column_set', flex_mode: 'flow', background_style: 'default',
+            columns: [
+              { tag: 'column', width: 'auto', vertical_align: 'top', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '立即发送' }, type: 'primary', value: { kind: 'feishu_queue', queueId, act: 'run' } }] },
+              { tag: 'column', width: 'auto', vertical_align: 'top', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '取消本次任务' }, type: 'default', value: { kind: 'feishu_queue', queueId, act: 'cancel' } }] },
             ],
           },
         ],
