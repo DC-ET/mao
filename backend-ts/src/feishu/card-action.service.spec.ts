@@ -12,6 +12,7 @@ function options(overrides: Partial<Parameters<typeof makeService>[0]> = {}) {
 function makeService(overrides: {
   queuePort?: Partial<FeishuCardActionPort>;
   interrupt?: (sessionId: number) => void;
+  cancelRunning?: (sessionId: number) => boolean;
   patchCard?: (botId: number, cardMessageId: string, card: Record<string, unknown>) => Promise<void>;
 } = {}) {
   const queuePort: FeishuCardActionPort = {
@@ -21,8 +22,9 @@ function makeService(overrides: {
     ...overrides.queuePort,
   };
   const interrupt = overrides.interrupt ?? vi.fn();
+  const cancelRunning = overrides.cancelRunning ?? vi.fn(() => true);
   const patchCard = overrides.patchCard ?? vi.fn(async () => undefined);
-  return new FeishuCardActionService({ queuePort, interrupt, patchCard });
+  return new FeishuCardActionService({ queuePort, interrupt, cancelRunning, patchCard });
 }
 
 function makeEvent(value: unknown, operatorOpenId = 'ou_1', cardMessageId = 'cm_1') {
@@ -126,5 +128,48 @@ describe('FeishuCardActionService', () => {
     });
     const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'run' }), '');
     expect(res).toEqual({ toast: { type: 'info', content: '该消息已开始执行' } });
+  });
+
+  it('progress cancel by original sender cancels running execution', async () => {
+    const cancelRunning = vi.fn(() => true);
+    const service = makeService({ cancelRunning });
+    const value = { kind: 'feishu_progress', act: 'cancel', sessionId: 7, sender: 'ou_1' };
+    const res = await service.handle(makeEvent(value), '');
+    expect(res).toBeUndefined();
+    expect(cancelRunning).toHaveBeenCalledWith(7);
+  });
+
+  it('progress cancel forbids non-owner operator', async () => {
+    const cancelRunning = vi.fn(() => true);
+    const service = makeService({ cancelRunning });
+    const value = { kind: 'feishu_progress', act: 'cancel', sessionId: 7, sender: 'ou_1' };
+    const res = await service.handle(makeEvent(value, 'ou_other'), '');
+    expect(res).toEqual({ toast: { type: 'error', content: '仅消息发送者可操作' } });
+    expect(cancelRunning).not.toHaveBeenCalled();
+  });
+
+  it('progress cancel returns info toast when nothing is running', async () => {
+    const cancelRunning = vi.fn(() => false);
+    const service = makeService({ cancelRunning });
+    const value = { kind: 'feishu_progress', act: 'cancel', sessionId: 7, sender: 'ou_1' };
+    const res = await service.handle(makeEvent(value), '');
+    expect(res).toEqual({ toast: { type: 'info', content: '该任务已结束' } });
+  });
+
+  it('accepts progress cancel action value as JSON string (compat)', async () => {
+    const cancelRunning = vi.fn(() => true);
+    const service = makeService({ cancelRunning });
+    const value = JSON.stringify({ kind: 'feishu_progress', act: 'cancel', sessionId: 7, sender: 'ou_1' });
+    const res = await service.handle(makeEvent(value), '');
+    expect(res).toBeUndefined();
+    expect(cancelRunning).toHaveBeenCalledWith(7);
+  });
+
+  it('ignores progress action with unsupported act', async () => {
+    const cancelRunning = vi.fn(() => true);
+    const service = makeService({ cancelRunning });
+    const res = await service.handle(makeEvent({ kind: 'feishu_progress', act: 'run', sessionId: 7, sender: 'ou_1' }), '');
+    expect(res).toBeUndefined();
+    expect(cancelRunning).not.toHaveBeenCalled();
   });
 });

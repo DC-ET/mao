@@ -40,6 +40,7 @@ import { registerAgentRoutes } from './agent/agent.routes.js';
 import { McpServerValidatorImpl, MysqlMcpServerLookup } from './agent/mcp-validator.js';
 import { MysqlLlmModelRepository, MysqlSessionModelRepository } from './model/model.repository.js';
 import { OpenAiChatClient } from './model/llm-chat.client.js';
+import { AnthropicChatClient } from './model/anthropic-chat.client.js';
 import { ModelService } from './model/model.service.js';
 import { registerModelRoutes } from './model/model.routes.js';
 import { MysqlSystemSettingRepository } from './settings/settings.repository.js';
@@ -111,6 +112,8 @@ import { McpToolsRegistry } from './harness/mcp/local/mcp-tools-registry.js';
 import { McpSyncService } from './harness/mcp/local/mcp-sync-service.js';
 import { registerMcpServerRoutes } from './harness/mcp/controller/mcp-server.routes.js';
 import { OpenAiLlmAdapter } from './harness/llm/openai-llm-adapter.js';
+import { AnthropicLlmAdapter } from './harness/llm/anthropic-llm-adapter.js';
+import { LlmAdapterFacade } from './harness/llm/llm-adapter-facade.js';
 import { createDefaultToolRegistry } from './harness/tool/tool-registry.js';
 import { ToolDispatcher } from './harness/tool/tool-dispatcher.js';
 import { DangerAssessor } from './harness/tool/danger-assessor.js';
@@ -374,10 +377,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const agentService = new AgentService(agentRepo, experienceService);
   const modelRepo = new MysqlLlmModelRepository(db);
   const modelChatClient = new OpenAiChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
+  const anthropicChatClient = new AnthropicChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
   const modelService = new ModelService(
     modelRepo,
     new MysqlSessionModelRepository(db),
     modelChatClient,
+    new Map([['anthropic', anthropicChatClient]]),
   );
 
   const settingService = new SystemSettingService(
@@ -493,7 +498,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const mcpToolsRegistry = new McpToolsRegistry();
   const mcpSync = new McpSyncService(mcpMapper, mcpServerService, mcpToolsRegistry, mcpPref);
 
-  const llmAdapter = new OpenAiLlmAdapter({
+  const openAiLlmAdapter = new OpenAiLlmAdapter({
     rateLimitMaxRetries: cfg.app.harness.llm.rateLimitMaxRetries,
     rateLimitRetryDelaySeconds: cfg.app.harness.llm.rateLimitRetryDelaySeconds,
     rateLimitMaxRetryDelaySeconds: cfg.app.harness.llm.rateLimitMaxRetryDelaySeconds,
@@ -501,6 +506,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     httpCallTimeoutSeconds: cfg.app.harness.llm.httpCallTimeoutSeconds,
     streamIdleTimeoutSeconds: cfg.app.harness.llm.streamIdleTimeoutSeconds,
   });
+  const anthropicLlmAdapter = new AnthropicLlmAdapter({
+    rateLimitMaxRetries: cfg.app.harness.llm.rateLimitMaxRetries,
+    rateLimitRetryDelaySeconds: cfg.app.harness.llm.rateLimitRetryDelaySeconds,
+    rateLimitMaxRetryDelaySeconds: cfg.app.harness.llm.rateLimitMaxRetryDelaySeconds,
+    callTimeoutSeconds: cfg.app.harness.llm.callTimeoutSeconds,
+    httpCallTimeoutSeconds: cfg.app.harness.llm.httpCallTimeoutSeconds,
+    streamIdleTimeoutSeconds: cfg.app.harness.llm.streamIdleTimeoutSeconds,
+  });
+  const llmAdapter = new LlmAdapterFacade(
+    new Map([['anthropic', anthropicLlmAdapter]]),
+    openAiLlmAdapter,
+  );
   const promptEngine = new PromptEngine(skillLoader, pathSandbox, runtimeResolver, commandService, skillSync);
   const tokenEstimator = new TokenEstimator();
   const compactionService = new CompactionService(llmAdapter, tokenEstimator);
@@ -932,6 +949,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   };
   const buildFeishuProgressCard = (
     status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[],
+    cancelAction?: { sessionId: number; sender: string },
   ): Record<string, unknown> => {
     const title = status === 'RUNNING' ? '正在处理' : status === 'COMPLETED' ? '处理完成' : status === 'CANCELLED' ? '任务已取消' : '处理失败';
     const sections: Array<Record<string, unknown>> = [
@@ -939,6 +957,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     ];
     if (content.trim() !== '') sections.push({ tag: 'markdown', content: content.slice(0, 6000), text_align: 'left', text_size: 'normal_v2' });
     if (tools.length > 0) sections.push({ tag: 'markdown', content: `**本轮工具**\n${tools.map((tool) => `- ${tool}`).join('\n').slice(0, 3000)}`, text_align: 'left', text_size: 'normal_v2' });
+    // 执行中提供「取消任务」按钮（终态 PATCH 不带按钮，随卡片重写自动消失）。
+    if (status === 'RUNNING' && cancelAction != null) {
+      sections.push({
+        // 卡片 JSON 2.0 不支持 tag:'action' 交互模块，按钮需放入 elements（并排用 column_set）。
+        tag: 'column_set', flex_mode: 'flow', background_style: 'default',
+        columns: [
+          { tag: 'column', width: 'auto', vertical_align: 'top', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '取消任务' }, type: 'danger', value: { kind: 'feishu_progress', act: 'cancel', sessionId: cancelAction.sessionId, sender: cancelAction.sender } }] },
+        ],
+      });
+    }
     return {
       schema: '2.0',
       config: { update_multi: true },
@@ -982,11 +1010,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       : client.im.v1.message.create({ params: { receive_id_type: 'open_id' }, data: { ...data, receive_id: context.senderId! } }));
     return (response as { data?: { message_id?: string } }).data?.message_id ?? null;
   };
-  const createFeishuProgressCard = async (context: FeishuInboundContext): Promise<FeishuCardProgress | null> => {
+  const createFeishuProgressCard = async (context: FeishuInboundContext, sessionId: number): Promise<FeishuCardProgress | null> => {
     const client = await getFeishuClient(Number(context.accountId));
     if (client == null) return null;
+    const cancelAction = { sessionId, sender: context.senderId ?? '' };
     const existingMessageId = context.progressCardMessageId;
-    const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', []);
+    const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction);
     const data = { msg_type: 'interactive', content: JSON.stringify(card) };
     if (existingMessageId != null) {
       await client.im.v1.message.patch({ path: { message_id: existingMessageId }, data: { content: data.content } });
@@ -1000,7 +1029,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
           nextUpdateAt = Date.now() + 250;
           await client.im.v1.message.patch({
             path: { message_id: existingMessageId },
-            data: { content: JSON.stringify(buildFeishuProgressCard(status, round, content, tools)) },
+            data: { content: JSON.stringify(buildFeishuProgressCard(status, round, content, tools, cancelAction)) },
           });
         },
       };
@@ -1021,7 +1050,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         nextUpdateAt = Date.now() + 250;
         await client.im.v1.message.patch({
           path: { message_id: messageId },
-          data: { content: JSON.stringify(buildFeishuProgressCard(status, round, content, tools)) },
+          data: { content: JSON.stringify(buildFeishuProgressCard(status, round, content, tools, cancelAction)) },
         });
       },
     };
@@ -1062,7 +1091,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     harnessService: harness as never,
     createCancelFlag: (sessionId) => agentLoop.registerCancelFlag(sessionId),
     releaseCancelFlag: (sessionId) => agentLoop.removeCancelFlag(sessionId),
-    createProgressCard: createFeishuProgressCard,
+    createProgressCard: (context, sessionId) => createFeishuProgressCard(context, sessionId),
     onInterruptRunning: (sessionId) => {
       try { shellManager.closeByConversation(sessionId); } catch (error) {
         console.debug(`关闭飞书会话 Shell 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1278,6 +1307,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const feishuCardActionService = new FeishuCardActionService({
     queuePort: feishuTaskQueue,
     interrupt: (sessionId) => feishuInboundHandler.interrupt(sessionId),
+    // 进度卡「取消任务」：经 AgentLoop 会话取消标志置位（覆盖执行中与崩溃恢复续跑两种场景）+ 关闭会话 shell，与桌面端「停止」同语义。
+    cancelRunning: (sessionId) => {
+      const flag = agentLoop.getCancelFlag(sessionId);
+      if (flag == null) return false;
+      flag.set(true);
+      try { shellManager.closeByConversation(sessionId); } catch (error) {
+        console.debug(`关闭飞书会话 Shell 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return true;
+    },
     patchCard: async (botId, cardMessageId, card) => {
       const client = await getFeishuClient(botId);
       if (client == null) throw new Error(`飞书客户端不可用, botId=${botId}, cardMessageId=${cardMessageId}`);

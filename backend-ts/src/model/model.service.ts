@@ -44,7 +44,15 @@ export class ModelService {
     private readonly modelRepo: LlmModelRepository,
     private readonly sessionRepo: SessionModelRepository,
     private readonly llmClient: LlmChatClient,
+    private readonly llmClients?: Map<string, LlmChatClient>,
   ) {}
+
+  /** 按 provider 协议 code 选择连通性测试客户端，未注册的回落默认 OpenAI 兼容客户端。 */
+  private chatClientFor(config: LlmModelConfig): LlmChatClient {
+    const code = config.provider?.trim().toLowerCase();
+    if (code != null && this.llmClients?.has(code)) return this.llmClients.get(code)!;
+    return this.llmClient;
+  }
 
   async listModels(
     page: number,
@@ -214,7 +222,7 @@ export class ModelService {
           const request: LlmChatRequest = {
             messages: [{ role: 'user', content: 'Hi' }],
           };
-          const response = await this.llmClient.chat(request, config);
+          const response = await this.chatClientFor(config).chat(request, config);
           return { ok: true, output: extractChatContent(response) };
         } catch (e) {
           appendError(`连通性测试失败: ${errorMessage(e)}`);
@@ -301,6 +309,11 @@ export class ModelService {
   }
 
   private async runMidSystemMessageTest(config: LlmModelConfig): Promise<{ supported: boolean; output: string | null }> {
+    // Anthropic 不支持中途 system（仅顶层 system 参数），探测无意义，直接标记不适用
+    const providerCode = config.provider?.trim().toLowerCase();
+    if (providerCode === 'anthropic') {
+      return { supported: false, output: null };
+    }
     let lastOutput: string | null = null;
     for (let attempt = 1; attempt <= MID_SYSTEM_TEST_MAX_ATTEMPTS; attempt++) {
       const probe = await this.probeMidSystemMessage(config);
@@ -336,7 +349,7 @@ export class ModelService {
       ],
       stream: false,
     };
-    const response = await this.llmClient.chat(request, config);
+    const response = await this.chatClientFor(config).chat(request, config);
     const content = extractChatContent(response);
     if (content == null) {
       return { outcome: 'AMBIGUOUS', output: null };

@@ -85,7 +85,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     downloadMedia?: (context: FeishuInboundContext, workspace: string | null) => Promise<FeishuMediaDownload | null>;
     listenerFactory?: (sessionId: number, context: FeishuInboundContext, executionId: string) => Parameters<FeishuHarnessService['execute']>[2] | Promise<Parameters<FeishuHarnessService['execute']>[2]>;
     onExecutionFinished?: (sessionId: number, context: FeishuInboundContext, executionId: string, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>;
-    createProgressCard?: (context: FeishuInboundContext) => Promise<FeishuCardProgress | null>;
+    createProgressCard?: (context: FeishuInboundContext, sessionId: number) => Promise<FeishuCardProgress | null>;
     onReply?: (context: FeishuInboundContext, text: string) => Promise<void>;
     // 队列支持
     queueService?: FeishuTaskQueuePort;
@@ -236,7 +236,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     let cardListener: FeishuCardProgressListener | null = null;
     try {
       try {
-        const progress = await this.options.createProgressCard?.(context) ?? null;
+        const progress = await this.options.createProgressCard?.(context, sessionId) ?? null;
         if (progress != null) cardListener = new FeishuCardProgressListener(progress);
       } catch (error) {
         console.warn(`飞书进度卡片创建失败，继续执行 Agent: ${error instanceof Error ? error.message : String(error)}`);

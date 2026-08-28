@@ -74,10 +74,21 @@ export interface FeishuQueuePayload {
 }
 
 /** 卡片按钮回调动作值。 */
-export interface FeishuCardActionValue {
+export type FeishuCardActionValue = FeishuQueueCardActionValue | FeishuProgressCardActionValue;
+
+/** 排队卡片按钮动作值。 */
+export interface FeishuQueueCardActionValue {
   kind: 'feishu_queue';
   queueId: number;
   act: 'run' | 'cancel';
+}
+
+/** 进度卡「取消任务」按钮动作值（sender 为触发任务的原消息发送者 open_id，用于点击鉴权）。 */
+export interface FeishuProgressCardActionValue {
+  kind: 'feishu_progress';
+  act: 'cancel';
+  sessionId: number;
+  sender: string;
 }
 
 /** 飞书卡片按钮回调事件（SDK RawCardActionEvent 精简版）。 */

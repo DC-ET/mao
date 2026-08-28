@@ -1,5 +1,5 @@
 import type { ClientImpersonation } from '@mao/contracts';
-import type { OpenAiLlmAdapter } from '../harness/llm/openai-llm-adapter.js';
+import type { LlmAdapter } from '../harness/llm/chat-request.js';
 import type { LlmModel } from '../model/types.js';
 import type { WeixinBotConfig } from './types.js';
 import { WeixinVoiceTextSanitizer } from './voice-text-sanitizer.js';
@@ -33,7 +33,7 @@ export function clipSpeechText(text: string, voiceMaxSeconds: number): string {
 export class WeixinVoiceSynthesisService {
   constructor(
     private readonly modelService: VoiceModelLookup,
-    private readonly llmAdapter: OpenAiLlmAdapter,
+    private readonly llmAdapter: LlmAdapter,
     private readonly weixinBotConfig: WeixinBotConfig,
     private readonly textSanitizer = new WeixinVoiceTextSanitizer(),
   ) {}

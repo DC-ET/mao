@@ -65,6 +65,21 @@ describe('AgentFeishuInboundHandler', () => {
     expect(harness.execute).toHaveBeenCalledWith(7, 'exec-1', expect.anything(), expect.anything(), 42);
   });
 
+  it('passes sessionId to createProgressCard (progress card cancel button binding)', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'exec-1'), execute: vi.fn(async () => undefined) };
+    const createProgressCard = vi.fn(async () => null);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      createProgressCard,
+      listenerFactory: async () => listener,
+    });
+    await handler.onMessage(makeContext());
+    expect(createProgressCard).toHaveBeenCalledWith(expect.anything(), 7);
+  });
+
   it('formats group history without redundant wrapper text', async () => {
     const sessionService = makeSessionService();
     const harness = { prepareMessage: vi.fn(() => 'exec-1'), execute: vi.fn(async () => undefined) };
