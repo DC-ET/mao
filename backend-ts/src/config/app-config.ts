@@ -13,7 +13,7 @@ export interface FeishuBotConfig {
     reconnectMaxMs: number;
     maxConsecutiveFailures: number;
   };
-  groupContext: { maxItems: number; maxMinutes: number };
+  groupContext: { maxItems: number; maxMinutes: number; overflowItems: number };
   reply: { maxLength: number };
   file: { maxInboundFileMb: number };
 }
@@ -226,7 +226,7 @@ const DEFAULTS: AppConfig = {
         reconnectMaxMs: 30000,
         maxConsecutiveFailures: 5,
       },
-      groupContext: { maxItems: 30, maxMinutes: 120 },
+      groupContext: { maxItems: 20, maxMinutes: 120, overflowItems: 100 },
       reply: { maxLength: 2000 },
       file: { maxInboundFileMb: 100 },
     },
@@ -464,8 +464,9 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.feishu.bot.longConnection.reconnectBaseMs = n(process.env.FEISHU_BOT_RECONNECT_BASE_MS ?? cfg.feishu.bot.longConnection.reconnectBaseMs, 1000);
   cfg.feishu.bot.longConnection.reconnectMaxMs = n(process.env.FEISHU_BOT_RECONNECT_MAX_MS ?? cfg.feishu.bot.longConnection.reconnectMaxMs, 30000);
   cfg.feishu.bot.longConnection.maxConsecutiveFailures = n(process.env.FEISHU_BOT_MAX_CONSECUTIVE_FAILURES ?? cfg.feishu.bot.longConnection.maxConsecutiveFailures, 5);
-  cfg.feishu.bot.groupContext.maxItems = n(process.env.FEISHU_BOT_GROUP_CONTEXT_MAX_ITEMS ?? cfg.feishu.bot.groupContext.maxItems, 30);
+  cfg.feishu.bot.groupContext.maxItems = n(process.env.FEISHU_BOT_GROUP_CONTEXT_MAX_ITEMS ?? cfg.feishu.bot.groupContext.maxItems, 20);
   cfg.feishu.bot.groupContext.maxMinutes = n(process.env.FEISHU_BOT_GROUP_CONTEXT_MAX_MINUTES ?? cfg.feishu.bot.groupContext.maxMinutes, 120);
+  cfg.feishu.bot.groupContext.overflowItems = n(process.env.FEISHU_BOT_GROUP_CONTEXT_OVERFLOW_ITEMS ?? cfg.feishu.bot.groupContext.overflowItems, 100);
   cfg.feishu.bot.reply.maxLength = n(process.env.FEISHU_BOT_REPLY_MAX_LENGTH ?? cfg.feishu.bot.reply.maxLength, 2000);
   cfg.feishu.bot.file.maxInboundFileMb = n(process.env.FEISHU_BOT_MAX_INBOUND_FILE_MB ?? cfg.feishu.bot.file.maxInboundFileMb, 100);
   cfg.jwt.expiration = n(cfg.jwt.expiration, 86400000);

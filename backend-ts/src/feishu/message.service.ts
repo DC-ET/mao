@@ -1,5 +1,6 @@
 import type { FeishuMessageRepository, FeishuConversation, FeishuGroupMessage } from './message.repository.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './types.js';
+import type { GroupContextSummarizer } from './group-context-summarizer.js';
 
 export interface FeishuSessionFactory {
   create(accountId: string, context: FeishuInboundContext): Promise<{ sessionId: number; ownerUserId: number; workspace?: string | null }>;
@@ -15,8 +16,10 @@ export class FeishuMessageService {
   constructor(
     private readonly repository: FeishuMessageRepository,
     private readonly sessionFactory: FeishuSessionFactory,
-    private readonly contextWindow = 30,
+    private readonly contextWindow = 20,
     private readonly maxMinutes = 120,
+    private readonly summarizer: GroupContextSummarizer | null = null,
+    private readonly overflowWindow = 100,
   ) {}
 
   async getOrCreateP2p(accountId: string, context: FeishuInboundContext, userId?: number): Promise<FeishuConversation> {
@@ -78,12 +81,41 @@ export class FeishuMessageService {
     const watermark = conversation.lastContextLogId ?? 0;
     const filtered = messages.filter((message) =>
       !message.isMention && message.messageId !== context.messageId && (message.id ?? 0) > watermark);
-    const prompt = filtered.map((message) => `[${formatGroupTime(message.createdAt)}] ${message.senderName}：${message.content ?? ''}`).join('\n');
+    // 被窗口淘汰（超出条数上限或时间窗）且从未注入过的更早消息：摘要后一次性注入，避免上下文断层。
+    const overflowSection = await this.buildOverflowSummary(accountId, context, conversation, messages);
+    const lines = filtered.map((message) => `[${formatGroupTime(message.createdAt)}] ${message.senderName}：${message.content ?? ''}`);
+    const prompt = [...(overflowSection != null ? [overflowSection] : []), ...lines].join('\n');
     const maxLogId = messages.reduce((acc, message) => Math.max(acc, message.id ?? 0), watermark);
     if (maxLogId > watermark) {
       await this.repository.updateGroupContextWatermark(accountId, context.chatId!, maxLogId);
     }
     return { conversation, messages: filtered, prompt };
+  }
+
+  /** 溢出摘要：取注入窗口边界之前、水位线之后的未注入普通消息（最多 overflowWindow 条，不限时间），
+   *  LLM 摘要后放在最近消息之前。结果缓存于会话行；摘要失败降级为不注入，不阻塞触发链路。 */
+  private async buildOverflowSummary(
+    accountId: string, context: FeishuInboundContext,
+    conversation: FeishuConversation, recentMessages: FeishuGroupMessage[],
+  ): Promise<string | null> {
+    if (this.summarizer == null || recentMessages.length === 0) return null;
+    const chatId = context.chatId!;
+    const watermark = conversation.lastContextLogId ?? 0;
+    const beforeId = Math.min(...recentMessages.map((message) => message.id ?? 0));
+    const overflow = await this.repository.listOverflowGroupMessages(accountId, chatId, watermark, beforeId, this.overflowWindow);
+    if (overflow.length === 0) return null;
+    const maxOverflowId = Math.max(...overflow.map((message) => message.id ?? 0));
+    const cached = conversation.contextSummary?.trim();
+    if (cached != null && cached !== '' && (conversation.contextSummaryLogId ?? 0) >= maxOverflowId) {
+      return `[更早历史消息摘要]\n${cached}`;
+    }
+    const record = renderOverflowRecord(overflow);
+    if (record === '') return null;
+    const summary = await this.summarizer.summarize(record, conversation.sessionId);
+    if (summary == null || summary.trim() === '') return null;
+    const trimmed = summary.trim();
+    await this.repository.updateGroupContextSummary(accountId, chatId, trimmed, maxOverflowId);
+    return `[更早历史消息摘要]\n${trimmed}`;
   }
 
   private readonly locks = new Map<string, Promise<void>>();
@@ -123,6 +155,25 @@ function senderName(context: FeishuNormalizedMessage): string {
 function formatGroupTime(createdAt?: string | null): string {
   if (createdAt == null || createdAt.length < 16) return '--:--';
   return createdAt.slice(0, 16);
+}
+
+/** 溢出消息渲染为摘要输入：与注入格式一致；单条截断防超长，总量超限时优先保留最近的行。 */
+function renderOverflowRecord(messages: FeishuGroupMessage[]): string {
+  const maxContentChars = 200;
+  const maxTotalChars = 16000;
+  const lines = messages.map((message) => {
+    const content = message.content ?? '';
+    const trimmed = content.length > maxContentChars ? `${content.slice(0, maxContentChars)}…` : content;
+    return `[${formatGroupTime(message.createdAt)}] ${message.senderName}：${trimmed}`;
+  });
+  let total = 0;
+  const kept: string[] = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    total += lines[i].length + 1;
+    if (total > maxTotalChars) break;
+    kept.unshift(lines[i]);
+  }
+  return kept.join('\n');
 }
 
 export { senderName, formatGroupTime, p2pChatIdOf };

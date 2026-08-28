@@ -187,6 +187,8 @@ import { registerFeishuBindingRoutes } from './feishu/binding.routes.js';
 import { FeishuMonitorService } from './feishu/monitor.service.js';
 import { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
 import { FeishuMessageService } from './feishu/message.service.js';
+import { GroupContextSummarizer } from './feishu/group-context-summarizer.js';
+import type { ClientImpersonation } from '@mao/contracts';
 import { formatGroupTime, senderName } from './feishu/message.service.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
@@ -371,10 +373,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const experienceService = new AgentExperienceService(new MysqlAgentExperienceRepository(db));
   const agentService = new AgentService(agentRepo, experienceService);
   const modelRepo = new MysqlLlmModelRepository(db);
+  const modelChatClient = new OpenAiChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
   const modelService = new ModelService(
     modelRepo,
     new MysqlSessionModelRepository(db),
-    new OpenAiChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 }),
+    modelChatClient,
   );
 
   const settingService = new SystemSettingService(
@@ -826,6 +829,19 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     cfg.feishu.bot.groupContext.maxItems,
     cfg.feishu.bot.groupContext.maxMinutes,
+    new GroupContextSummarizer(modelChatClient, async (sessionId) => {
+      // 溢出摘要优先用会话绑定的模型；会话未绑定（或模型已被删除）时回退系统默认模型，仍无则跳过摘要。
+      const session = await sessionService.getSession(sessionId);
+      const model = session?.modelId != null
+        ? await modelService.getModel(session.modelId).catch(() => null)
+        : await modelService.getDefaultModel();
+      if (model == null || model.baseUrl === '' || model.modelId === '') return null;
+      return {
+        baseUrl: model.baseUrl, apiKey: model.apiKey, modelId: model.modelId,
+        clientImpersonation: (model.clientImpersonation ?? 'none') as ClientImpersonation,
+      };
+    }),
+    cfg.feishu.bot.groupContext.overflowItems,
   );
   // 会话复用时按机器人配置热切换 Agent/模型（对齐微信通道切换逻辑）。
   const applyFeishuBotConfig = async (sessionId: number, botId: number): Promise<void> => {

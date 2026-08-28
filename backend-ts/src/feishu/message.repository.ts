@@ -9,6 +9,9 @@ export interface FeishuConversation {
   workspace?: string | null;
   /** 群聊上下文增量注入水位线：上次已注入的最大群消息 log id。 */
   lastContextLogId?: number | null;
+  /** 注入窗口外更早消息的 LLM 摘要缓存；contextSummaryLogId 为摘要已覆盖的最大 log id。 */
+  contextSummary?: string | null;
+  contextSummaryLogId?: number | null;
 }
 
 export interface FeishuGroupMessage {
@@ -40,8 +43,12 @@ export interface FeishuMessageRepository {
   completeInboundMessage(appId: string, messageId: string): Promise<void>;
   appendGroupMessage(message: FeishuGroupMessage): Promise<number>;
   listGroupMessages(appId: string, chatId: string, limit: number, maxMinutes?: number): Promise<FeishuGroupMessage[]>;
+  /** 追溯注入窗口之前被丢弃的未注入普通消息（id > watermark 且 id < beforeId，不限时间），供溢出摘要。 */
+  listOverflowGroupMessages(appId: string, chatId: string, watermark: number, beforeId: number, limit: number): Promise<FeishuGroupMessage[]>;
   /** 推进群聊上下文增量注入水位线（只前进不后退）。 */
   updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void>;
+  /** 写入溢出摘要缓存（logId 只前进不后退）。 */
+  updateGroupContextSummary(appId: string, chatId: string, summary: string, logId: number): Promise<void>;
   /** 回填群消息行的内容占位文本（如图片预下载完成后的本地路径引用）。 */
   updateGroupMessageContent(id: number, content: string): Promise<void>;
   /** 回填群消息行的发送人显示名（入站时原始事件可能缺少姓名）。 */
@@ -152,10 +159,27 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     ).then((rows) => rows.reverse());
   }
 
+  listOverflowGroupMessages(appId: string, chatId: string, watermark: number, beforeId: number, limit: number): Promise<FeishuGroupMessage[]> {
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    return this.db.query<FeishuGroupMessage>(
+      `SELECT * FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ?
+       AND id > ? AND id < ? AND is_mention = 0
+       ORDER BY created_at DESC, id DESC LIMIT ${safeLimit}`,
+      [appId, chatId, watermark, beforeId],
+    ).then((rows) => rows.reverse());
+  }
+
   async updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void> {
     await this.db.execute(
       'UPDATE feishu_chat SET last_context_log_id = GREATEST(last_context_log_id, ?) WHERE app_id = ? AND chat_id = ?',
       [logId, appId, chatId],
+    );
+  }
+
+  async updateGroupContextSummary(appId: string, chatId: string, summary: string, logId: number): Promise<void> {
+    await this.db.execute(
+      'UPDATE feishu_chat SET context_summary = ?, context_summary_log_id = GREATEST(context_summary_log_id, ?) WHERE app_id = ? AND chat_id = ?',
+      [summary, logId, appId, chatId],
     );
   }
 

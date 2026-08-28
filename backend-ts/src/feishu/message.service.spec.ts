@@ -23,7 +23,9 @@ describe('FeishuMessageService', () => {
       completeInboundMessage: vi.fn(),
       appendGroupMessage: vi.fn(),
       updateGroupContextWatermark: vi.fn(async () => undefined),
+      updateGroupContextSummary: vi.fn(async () => undefined),
       listGroupMessages: vi.fn(async () => []),
+      listOverflowGroupMessages: vi.fn(async () => []),
       addGroupMember: vi.fn(),
       ...overrides,
     };
@@ -37,7 +39,7 @@ describe('FeishuMessageService', () => {
         { id: 3, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_user', senderName: '李四', isMention: true, messageId: 'om_1', content: 'hello' },
       ]),
     });
-    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 30, 120);
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
     const group = await service.buildGroupContext('1', makeContext());
     expect(group.prompt).toContain('昨天讨论');
     expect(group.prompt).not.toContain('机器人之前的问题');
@@ -55,7 +57,7 @@ describe('FeishuMessageService', () => {
         { id: 3, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_new', content: '新增讨论', createdAt: '2026-08-26 13:18:00' },
       ]),
     });
-    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 30, 120);
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
     const group = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger' }));
     expect(group.prompt).toBe('[2026-08-26 13:18] 张三：新增讨论');
     expect(repository.updateGroupContextWatermark).toHaveBeenCalledWith('1', 'oc_group', 3);
@@ -63,7 +65,7 @@ describe('FeishuMessageService', () => {
 
   it('records group message with media type and file key', async () => {
     const repository = { appendGroupMessage: vi.fn(async () => 5) };
-    const service = new FeishuMessageService(repository as never, {} as never, 30, 120);
+    const service = new FeishuMessageService(repository as never, {} as never, 20, 120);
     const id = await service.recordGroupMessage('1', makeContext({
       messageType: 'file', fileKey: 'file_9', fileName: 'a.pdf', text: '[文件:a.pdf]',
     }), true);
@@ -81,7 +83,7 @@ describe('FeishuMessageService', () => {
       appendGroupMessage: vi.fn(),
     });
     const sessionFactory = { create: vi.fn(async () => ({ sessionId: 9, ownerUserId: 3, workspace: '/ws' })) };
-    const service = new FeishuMessageService(repository as never, sessionFactory as never, 30, 120);
+    const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
     const conv = await service.getOrCreateGroup('1', makeContext());
     expect(conv.sessionId).toBe(9);
     expect(sessionFactory.create).toHaveBeenCalledOnce();
@@ -100,7 +102,7 @@ describe('FeishuMessageService', () => {
       saveConversation: vi.fn(async (c: unknown) => ({ id: 2, ...c })),
     });
     const sessionFactory = { create: vi.fn(async () => ({ sessionId: 10, ownerUserId: 3 })) };
-    const service = new FeishuMessageService(repository as never, sessionFactory as never, 30, 120);
+    const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
     const conv = await service.getOrCreateP2p('1', makeContext({ chatType: 'p2p' }), 3);
     expect(conv.id).toBe(2);
   });
@@ -112,14 +114,89 @@ describe('FeishuMessageService', () => {
         return { id: 4, appId: '1', chatId, sessionId: 11, ownerUserId: 5 };
       }),
     });
-    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 30, 120);
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
     const conv = await service.getOrCreateP2p('1', makeContext({ chatType: 'p2p', senderUnionId: null }));
     expect(conv.id).toBe(4);
   });
 
   it('throws when group message lacks chat or sender', async () => {
-    const service = new FeishuMessageService({} as never, {} as never, 30, 120);
+    const service = new FeishuMessageService({} as never, {} as never, 20, 120);
     await expect(service.recordGroupMessage('1', makeContext({ chatId: null }), false)).rejects.toThrow();
     await expect(service.recordGroupMessage('1', makeContext({ senderId: null }), false)).rejects.toThrow();
+  });
+
+  it('summarizes overflow messages and prepends the summary to the prompt', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3, lastContextLogId: 0 })),
+      listGroupMessages: vi.fn(async () => [
+        { id: 101, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_recent', content: '最近讨论', createdAt: '2026-08-26 13:18:00' },
+      ]),
+      listOverflowGroupMessages: vi.fn(async () => [
+        { id: 50, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_overflow', content: '更早的讨论', createdAt: '2026-08-25 09:00:00' },
+      ]),
+    });
+    const summarize = vi.fn(async () => '此前讨论了部署方案，决定周五上线。');
+    const summarizer = { summarize } as never;
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120, summarizer, 100);
+    const group = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger' }));
+    // 溢出查询以最近窗口最小 id 为上界，且不受时间窗限制。
+    expect(repository.listOverflowGroupMessages).toHaveBeenCalledWith('1', 'oc_group', 0, 101, 100);
+    expect(summarize).toHaveBeenCalledWith(expect.stringContaining('[2026-08-25 09:00] 张三：更早的讨论'), 9);
+    expect(group.prompt).toBe(
+      '[更早历史消息摘要]\n此前讨论了部署方案，决定周五上线。\n[2026-08-26 13:18] 张三：最近讨论',
+    );
+    expect(repository.updateGroupContextSummary).toHaveBeenCalledWith('1', 'oc_group', '此前讨论了部署方案，决定周五上线。', 50);
+    // 水位线仍推进到最近窗口最大 id，摘要后的溢出消息下轮不再重复处理。
+    expect(repository.updateGroupContextWatermark).toHaveBeenCalledWith('1', 'oc_group', 101);
+  });
+
+  it('reuses the cached overflow summary when it already covers the overflow range', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({
+        id: 1, appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3, lastContextLogId: 0,
+        contextSummary: '缓存摘要', contextSummaryLogId: 50,
+      })),
+      listGroupMessages: vi.fn(async () => [
+        { id: 101, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_recent', content: '最近讨论', createdAt: '2026-08-26 13:18:00' },
+      ]),
+      listOverflowGroupMessages: vi.fn(async () => [
+        { id: 50, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_overflow', content: '更早的讨论', createdAt: '2026-08-25 09:00:00' },
+      ]),
+    });
+    const summarize = vi.fn();
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120, { summarize } as never, 100);
+    const group = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger' }));
+    expect(group.prompt).toBe('[更早历史消息摘要]\n缓存摘要\n[2026-08-26 13:18] 张三：最近讨论');
+    expect(summarize).not.toHaveBeenCalled();
+    expect(repository.updateGroupContextSummary).not.toHaveBeenCalled();
+  });
+
+  it('skips the summary injection when summarization fails', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3, lastContextLogId: 0 })),
+      listGroupMessages: vi.fn(async () => [
+        { id: 101, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_recent', content: '最近讨论', createdAt: '2026-08-26 13:18:00' },
+      ]),
+      listOverflowGroupMessages: vi.fn(async () => [
+        { id: 50, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_overflow', content: '更早的讨论', createdAt: '2026-08-25 09:00:00' },
+      ]),
+    });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120, { summarize: vi.fn(async () => null) } as never, 100);
+    const group = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger' }));
+    expect(group.prompt).toBe('[2026-08-26 13:18] 张三：最近讨论');
+    expect(repository.updateGroupContextSummary).not.toHaveBeenCalled();
+    expect(repository.updateGroupContextWatermark).toHaveBeenCalledWith('1', 'oc_group', 101);
+  });
+
+  it('does not query overflow or call the summarizer when none is configured', async () => {
+    const repository = makeRepo({
+      listGroupMessages: vi.fn(async () => [
+        { id: 101, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_recent', content: '最近讨论', createdAt: '2026-08-26 13:18:00' },
+      ]),
+    });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    const group = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger' }));
+    expect(group.prompt).toBe('[2026-08-26 13:18] 张三：最近讨论');
+    expect(repository.listOverflowGroupMessages).not.toHaveBeenCalled();
   });
 });
