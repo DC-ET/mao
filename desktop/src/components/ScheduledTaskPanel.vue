@@ -46,6 +46,7 @@
                 完结于 {{ formatFinishedAt(task.finishedAt) }}
               </span>
             </div>
+            <div v-if="task.prompt" class="task-prompt" :title="task.prompt">{{ task.prompt }}</div>
             <div v-if="task.lastExecutionStatus" class="task-status">
               上次执行: <span :class="'exec-' + task.lastExecutionStatus.toLowerCase()">
                 {{ statusLabel(task.lastExecutionStatus) }}
@@ -180,6 +181,18 @@ onMounted(fetchTasks)
   margin-top: 4px;
   display: flex;
   gap: 12px;
+}
+
+.task-prompt {
+  font-size: 12px;
+  color: var(--aw-ink-muted);
+  margin-top: 6px;
+  line-height: 1.5;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .cron {
