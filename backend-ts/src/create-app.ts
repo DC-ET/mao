@@ -41,6 +41,7 @@ import { McpServerValidatorImpl, MysqlMcpServerLookup } from './agent/mcp-valida
 import { MysqlLlmModelRepository, MysqlSessionModelRepository } from './model/model.repository.js';
 import { OpenAiChatClient } from './model/llm-chat.client.js';
 import { AnthropicChatClient } from './model/anthropic-chat.client.js';
+import type { LlmChatClient, LlmModelConfig } from './model/types.js';
 import { ModelService } from './model/model.service.js';
 import { registerModelRoutes } from './model/model.routes.js';
 import { MysqlSystemSettingRepository } from './settings/settings.repository.js';
@@ -190,6 +191,7 @@ import { registerFeishuBindingRoutes } from './feishu/binding.routes.js';
 import { FeishuMonitorService } from './feishu/monitor.service.js';
 import { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
 import { FeishuMessageService, botSenderLabel, formatGroupTime, isBotSender, senderName } from './feishu/message.service.js';
+import { buildQuotedInjection } from './feishu/quoted-injection.js';
 import { GroupContextSummarizer } from './feishu/group-context-summarizer.js';
 import type { ClientImpersonation } from '@mao/contracts';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
@@ -377,11 +379,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const modelRepo = new MysqlLlmModelRepository(db);
   const modelChatClient = new OpenAiChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
   const anthropicChatClient = new AnthropicChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
+  const llmChatClients = new Map<string, LlmChatClient>([['anthropic', anthropicChatClient]]);
+  /** 连通性测试、飞书溢出摘要等非流式链路共用的按 provider 协议路由（与 LlmAdapterFacade 同策略）。 */
+  const routeChatClient = (config: LlmModelConfig): LlmChatClient => {
+    const code = config.provider?.trim().toLowerCase();
+    if (code != null && llmChatClients.has(code)) return llmChatClients.get(code)!;
+    return modelChatClient;
+  };
   const modelService = new ModelService(
     modelRepo,
     new MysqlSessionModelRepository(db),
     modelChatClient,
-    new Map([['anthropic', anthropicChatClient]]),
+    llmChatClients,
   );
 
   const settingService = new SystemSettingService(
@@ -845,7 +854,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     cfg.feishu.bot.groupContext.maxItems,
     cfg.feishu.bot.groupContext.maxMinutes,
-    new GroupContextSummarizer(modelChatClient, async (sessionId) => {
+    new GroupContextSummarizer(routeChatClient, async (sessionId) => {
       // 溢出摘要优先用会话绑定的模型；会话未绑定（或模型已被删除）时回退系统默认模型，仍无则跳过摘要。
       const session = await sessionService.getSession(sessionId);
       const model = session?.modelId != null
@@ -854,6 +863,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       if (model == null || model.baseUrl === '' || model.modelId === '') return null;
       return {
         baseUrl: model.baseUrl, apiKey: model.apiKey, modelId: model.modelId,
+        provider: model.provider ?? undefined,
         clientImpersonation: (model.clientImpersonation ?? 'none') as ClientImpersonation,
       };
     }),
@@ -1198,6 +1208,25 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const IMAGE_EXT_BY_CONTENT_TYPE: Record<string, string> = {
     'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp',
   };
+  // 引用消息全文落盘的工作区定位：群会话此时已由 buildGroupContext 创建（直接查库）；
+  // 私聊会话可能尚未创建，按绑定用户推导与建会话一致的 leaf。定位失败降级为纯截断。
+  const QUOTED_INLINE_LIMIT = 100;
+  const resolveQuotedWorkspace = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
+    try {
+      if (event.chatType === 'group') {
+        if (event.chatId == null) return null;
+        const conversation = await feishuMessageRepository.findGroupConversation(String(accountId), event.chatId);
+        return conversation?.workspace ?? null;
+      }
+      const unionId = event.senderUnionId ?? event.senderId;
+      const userId = unionId == null ? null : await feishuBinding.findUserIdByUnionId(unionId);
+      if (userId == null) return null;
+      return resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, String(accountId), `private-${userId}`);
+    } catch (error) {
+      console.warn(`定位引用消息工作区失败, accountId=${accountId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  };
   const downloadFeishuGroupImage = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
     if (event.chatType !== 'group' || event.chatId == null || event.messageId == null || event.imageKey == null) return null;
     const client = await getFeishuClient(Number(accountId));
@@ -1218,19 +1247,23 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     downloadGroupImage: downloadFeishuGroupImage,
     resolveQuotedMessage: async (accountId, event) => {
       if (event.parentId == null) return null;
+      const persist = async (raw: string): Promise<string> => {
+        if (raw.length <= QUOTED_INLINE_LIMIT) return raw;
+        return buildQuotedInjection(raw, { parentMessageId: event.parentId!, workspace: await resolveQuotedWorkspace(accountId, event) });
+      };
       // 群消息日志优先：免 API 调用，发送人姓名与占位符格式也和上下文一致。
       const fromLog = event.chatId != null
         ? await feishuMessageRepository.findGroupMessageByMessageId(String(accountId), event.chatId, event.parentId)
         : null;
       if (fromLog != null) {
-        return truncateQuoted(`[${formatGroupTime(fromLog.createdAt)}] ${fromLog.senderName}：${fromLog.content ?? ''}`);
+        return persist(`[${formatGroupTime(fromLog.createdAt)}] ${fromLog.senderName}：${fromLog.content ?? ''}`);
       }
       // 日志未命中（引用机器人消息、超出日志窗口或私聊）：通过消息详情 API 兜底。
       const client = await getFeishuClient(Number(accountId));
       if (client == null) return null;
       const detail = await fetchFeishuMessageDetail(client, event.parentId);
       if (detail == null) return null;
-      return truncateQuoted(detail.text);
+      return persist(detail.text);
     },
     resolveUserId: async (accountId, event) => {
       const unionId = event.senderUnionId ?? event.senderId;

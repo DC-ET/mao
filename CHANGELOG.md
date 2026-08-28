@@ -25,7 +25,7 @@
 
 ### 后端
 
-- 支持接入 Anthropic Messages 协议模型：模型配置新增协议路由能力（`provider` 字段作为协议标识），管理后台「供应商」改为下拉选择（`openai-compatible` / `anthropic`），provider 为 `anthropic` 的模型走原生 Messages API（`{baseUrl}/messages`，兼容官方与网关渠道的双认证头），支持流式对话、thinking、工具调用多轮循环、限流重试/退避、取消与用量归一（含 cache read tokens）；连通性测试同步支持 Anthropic 协议，mid-system-message 探测对该协议自动跳过；存量模型行为不变
+- 支持接入 Anthropic Messages 协议模型：模型配置新增协议路由能力（`provider` 字段作为协议标识），管理后台「供应商」改为下拉选择（`openai-compatible` / `anthropic`），provider 为 `anthropic` 的模型走原生 Messages API（`{baseUrl}/messages`，兼容官方与网关渠道的双认证头），支持流式对话、thinking、工具调用多轮循环、限流重试/退避、取消与用量归一（含 cache read tokens）；连通性测试同步支持 Anthropic 协议，mid-system-message 探测对该协议自动跳过；飞书群聊溢出摘要的 LLM 调用同步按协议路由，避免使用 Anthropic 模型时摘要静默失效；存量模型行为不变
 
 ### 管理后台
 
@@ -41,6 +41,7 @@
 
 - 飞书群聊上下文新增溢出摘要：注入窗口由最近 30 条收紧为 20 条（`FEISHU_BOT_GROUP_CONTEXT_MAX_ITEMS`），被窗口（条数上限或 120 分钟时间窗）淘汰且从未注入过的更早消息，会往前追溯最多 100 条（`FEISHU_BOT_GROUP_CONTEXT_OVERFLOW_ITEMS`，不限时间）由 LLM 生成一次性摘要，置于【群内最近消息】顶部，平衡 token 占用与上下文断层；摘要优先使用会话绑定的模型（未绑定时回退系统默认模型），失败时自动降级为不注入、不阻塞消息触发，并按会话缓存避免重复摘要
 - 飞书群聊上下文中机器人（应用）发送者统一显示为「机器人_」+ open_id 前 8 位（如 `机器人_253023b9`），不再显示裸 open_id；同时触发消息与后台富化对机器人发送者跳过通讯录查询，消除无效调用报错
+- 飞书引用消息超过 100 字时注入上下文仅保留前 100 字，全文落盘至会话工作区 `quoted/quoted-<消息id>.txt`，并在注入文本中以 `@{文件路径}@` 引用提示 Agent 按需读取完整内容；无法定位工作区或落盘失败时降级为 1500 字截断，不阻塞消息触发
 
 ## 0.0.63 (2026-08-28)
 
