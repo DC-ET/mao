@@ -69,7 +69,7 @@
 | max_tokens（Anthropic 必填） | Adapter 内常量默认 16384，不落库 |
 | thinking | 不主动开启；响应中若出现 thinking block 则解析为 `reasoningContent` 兼容 |
 | 认证头 | 同时携带 `x-api-key` 与 `Authorization: Bearer`（同值），兼容官方与网关类渠道 |
-| Responses API | DB 列容量预留 `openai-responses` 值；写入口暂拒绝（见校验策略行），实现推迟到真实接入时 |
+| Responses API | 已实现（0.0.67）：`ResponsesLlmAdapter` + `ResponsesChatClient`，写入口白名单与 admin 下拉已放开 `openai-responses`。详见 `docs/plan/openai-responses-adapter-design.md` |
 | 展示名 | **修订（2026-08-28）**：初版"供应商展示与协议 code 合一"决策作废。`provider` 保持渠道名自由文本（如 "OpenAI"、"Anthropic"、渠道商名），协议由独立的「API 协议」下拉承载 |
 
 ## 三、总体设计

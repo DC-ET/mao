@@ -41,6 +41,7 @@ import { McpServerValidatorImpl, MysqlMcpServerLookup } from './agent/mcp-valida
 import { MysqlLlmModelRepository, MysqlSessionModelRepository } from './model/model.repository.js';
 import { OpenAiChatClient } from './model/llm-chat.client.js';
 import { AnthropicChatClient } from './model/anthropic-chat.client.js';
+import { ResponsesChatClient } from './model/responses-chat.client.js';
 import type { LlmChatClient, LlmModelConfig } from './model/types.js';
 import { ModelService } from './model/model.service.js';
 import { registerModelRoutes } from './model/model.routes.js';
@@ -114,7 +115,9 @@ import { McpSyncService } from './harness/mcp/local/mcp-sync-service.js';
 import { registerMcpServerRoutes } from './harness/mcp/controller/mcp-server.routes.js';
 import { OpenAiLlmAdapter } from './harness/llm/openai-llm-adapter.js';
 import { AnthropicLlmAdapter } from './harness/llm/anthropic-llm-adapter.js';
+import { ResponsesLlmAdapter } from './harness/llm/responses-llm-adapter.js';
 import { LlmAdapterFacade } from './harness/llm/llm-adapter-facade.js';
+import type { LlmAdapter } from './harness/llm/chat-request.js';
 import { createDefaultToolRegistry } from './harness/tool/tool-registry.js';
 import { ToolDispatcher } from './harness/tool/tool-dispatcher.js';
 import { DangerAssessor } from './harness/tool/danger-assessor.js';
@@ -380,7 +383,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const modelRepo = new MysqlLlmModelRepository(db);
   const modelChatClient = new OpenAiChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
   const anthropicChatClient = new AnthropicChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
-  const llmChatClients = new Map<string, LlmChatClient>([['anthropic', anthropicChatClient]]);
+  const responsesChatClient = new ResponsesChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
+  const llmChatClients = new Map<string, LlmChatClient>([
+    ['anthropic', anthropicChatClient],
+    ['openai-responses', responsesChatClient],
+  ]);
   /** 连通性测试、飞书溢出摘要等非流式链路共用的按 apiProtocol 协议路由（与 LlmAdapterFacade 同策略）。 */
   const routeChatClient = (config: LlmModelConfig): LlmChatClient => {
     const code = config.apiProtocol?.trim().toLowerCase();
@@ -523,8 +530,19 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     httpCallTimeoutSeconds: cfg.app.harness.llm.httpCallTimeoutSeconds,
     streamIdleTimeoutSeconds: cfg.app.harness.llm.streamIdleTimeoutSeconds,
   });
+  const responsesLlmAdapter = new ResponsesLlmAdapter({
+    rateLimitMaxRetries: cfg.app.harness.llm.rateLimitMaxRetries,
+    rateLimitRetryDelaySeconds: cfg.app.harness.llm.rateLimitRetryDelaySeconds,
+    rateLimitMaxRetryDelaySeconds: cfg.app.harness.llm.rateLimitMaxRetryDelaySeconds,
+    callTimeoutSeconds: cfg.app.harness.llm.callTimeoutSeconds,
+    httpCallTimeoutSeconds: cfg.app.harness.llm.httpCallTimeoutSeconds,
+    streamIdleTimeoutSeconds: cfg.app.harness.llm.streamIdleTimeoutSeconds,
+  });
   const llmAdapter = new LlmAdapterFacade(
-    new Map([['anthropic', anthropicLlmAdapter]]),
+    new Map<string, LlmAdapter>([
+      ['anthropic', anthropicLlmAdapter],
+      ['openai-responses', responsesLlmAdapter],
+    ]),
     openAiLlmAdapter,
   );
   const promptEngine = new PromptEngine(skillLoader, pathSandbox, runtimeResolver, commandService, skillSync);

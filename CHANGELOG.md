@@ -46,6 +46,16 @@
 
 - 修复系统重启后飞书进度卡片不再更新：崩溃恢复自动续跑的任务此前只推送桌面/Web 前端，不感知飞书卡片，导致卡片永久停留在「正在处理」。现将会话的活跃进度卡片映射落库（新表 `feishu_progress_card`），恢复续跑时自动续更卡片进度直至终态（完成/失败/取消均会正确刷新终态，恢复后「取消任务」按钮继续可用）；任务终态后自动清理映射，不影响后续新任务的卡片
 
+## 0.0.67 (2026-08-29)
+
+### 后端
+
+- 支持接入 OpenAI Responses API 协议模型：模型「API 协议」新增 `openai-responses` 选项（此前预留），新增 `ResponsesLlmAdapter`（`{baseUrl}/responses`，Bearer 认证）实现非流式与流式调用、工具调用多轮循环、限流重试/退避、取消与用量归一（含 cached tokens）；Responses 专属语义：`store:false` 无状态多轮、历史 assistant 回传 `function_call` 项与 `function_call_output` 项、推理思维链经 `reasoning.encrypted_content` 往返（挂靠持久化 tool_calls，崩溃恢复可用）、并行多工具调用聚合、思考截断整轮重试；连通性测试同步支持该协议（`ResponsesChatClient`），mid-system-message 探测自动跳过；多工具轮的 `reasoning` 引用仅写入 Responses 模型的会话数据，其他协议模型行为不变
+
+### 管理后台
+
+- 模型表单「API 协议」下拉启用「OpenAI（Responses）」选项（移除规划中置灰）
+
 ## 0.0.66 (2026-08-28)
 
 ### 后端

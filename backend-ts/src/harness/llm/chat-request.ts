@@ -40,6 +40,15 @@ export interface ToolCall {
   type?: string;
   function?: FunctionCall;
   summary?: string;
+  /** Mao 扩展（仅 openai-responses 协议）：本工具轮 reasoning 项的往返引用。
+   *  只挂在轮内首个 toolCall 上，随 tool_calls JSON 持久化；其余协议序列化时忽略。 */
+  reasoning?: ReasoningItemRef;
+}
+
+/** OpenAI Responses API reasoning 项引用：stateless 多轮回传 function_call 时必须携带配对的 reasoning 项。 */
+export interface ReasoningItemRef {
+  id?: string;
+  encryptedContent?: string;
 }
 
 export interface ToolDefinition {

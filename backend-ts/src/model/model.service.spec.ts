@@ -260,10 +260,9 @@ describe('ModelService', () => {
       service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'bogus'),
     ).rejects.toThrow(/apiProtocol 只能是/);
 
-    // openai-responses 尚无实现，写入口拒绝，避免写入后运行时静默回落 OpenAI 客户端
-    await expect(
-      service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses'),
-    ).rejects.toThrow(/apiProtocol 只能是/);
+    // openai-responses 已实现，可正常保存
+    const responsesModel = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses');
+    expect(responsesModel.apiProtocol).toBe('openai-responses');
 
     const normalized = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-compatible');
     expect(normalized.apiProtocol).toBe('');
@@ -296,9 +295,14 @@ describe('ModelService', () => {
 
   it('testConnectivityRoutesByApiProtocolNotProvider', async () => {
     const anthropicClient: LlmChatClient = { chat: vi.fn() };
-    const routedService = new ModelService(modelRepo, sessionRepo, llmClient, new Map([['anthropic', anthropicClient]]));
+    const responsesClient: LlmChatClient = { chat: vi.fn() };
+    const routedService = new ModelService(
+      modelRepo, sessionRepo, llmClient,
+      new Map([['anthropic', anthropicClient], ['openai-responses', responsesClient]]),
+    );
     vi.mocked(llmClient.chat).mockImplementation(async () => ({ choices: [{ message: { role: 'assistant', content: 'hi' } }] }));
     vi.mocked(anthropicClient.chat as never).mockImplementation(async () => ({ choices: [{ message: { role: 'assistant', content: 'hi' } }] }));
+    vi.mocked(responsesClient.chat as never).mockImplementation(async () => ({ choices: [{ message: { role: 'assistant', content: 'hi' } }] }));
 
     // apiProtocol=anthropic 走 anthropic 客户端
     const anthropicModel = model(12, 'claude', 0, 1);
@@ -308,8 +312,19 @@ describe('ModelService', () => {
     await routedService.testConnectivity(12);
     expect(anthropicClient.chat).toHaveBeenCalled();
 
+    // apiProtocol=openai-responses 走 responses 客户端
+    vi.mocked(anthropicClient.chat as never).mockClear();
+    const responsesModel = model(14, 'gpt-5', 0, 1);
+    responsesModel.apiProtocol = 'openai-responses';
+    responsesModel.modelType = 'text';
+    vi.mocked(modelRepo.findById).mockResolvedValue(responsesModel);
+    await routedService.testConnectivity(14);
+    expect(responsesClient.chat).toHaveBeenCalled();
+    expect(anthropicClient.chat).not.toHaveBeenCalled();
+
     // provider 为渠道名、apiProtocol 为空时走默认 OpenAI 客户端（存量行为不变）
     vi.mocked(anthropicClient.chat as never).mockClear();
+    vi.mocked(responsesClient.chat as never).mockClear();
     vi.mocked(llmClient.chat).mockClear();
     const legacyModel = model(13, 'legacy', 0, 1);
     legacyModel.provider = 'anthropic';
@@ -318,5 +333,21 @@ describe('ModelService', () => {
     await routedService.testConnectivity(13);
     expect(llmClient.chat).toHaveBeenCalled();
     expect(anthropicClient.chat).not.toHaveBeenCalled();
+    expect(responsesClient.chat).not.toHaveBeenCalled();
+  });
+
+  it('midSystemTestSkipsResponsesProtocol', async () => {
+    const responsesClient: LlmChatClient = { chat: vi.fn() };
+    const routedService = new ModelService(modelRepo, sessionRepo, llmClient, new Map([['openai-responses', responsesClient]]));
+    vi.mocked(llmClient.chat).mockImplementation(async () => ({ choices: [{ message: { role: 'assistant', content: 'hey' } }] }));
+
+    const responsesModel = model(15, 'gpt-5', 0, 1);
+    responsesModel.apiProtocol = 'openai-responses';
+    responsesModel.modelType = 'text';
+    vi.mocked(modelRepo.findById).mockResolvedValue(responsesModel);
+    const result = await routedService.testConnectivity(15);
+    expect(result.connectivity).toBe(true);
+    expect(result.midSystemMessage).toBe(false);
+    expect(responsesClient.chat).toHaveBeenCalledTimes(1);
   });
 });

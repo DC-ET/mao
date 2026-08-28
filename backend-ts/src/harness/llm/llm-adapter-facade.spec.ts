@@ -23,6 +23,15 @@ describe('LlmAdapterFacade', () => {
     await expect(facade.chat({ messages: [] }, config('openai-compatible'))).resolves.toMatchObject({ id: 'openai' });
   });
 
+  it('openai-responses 路由到注册的协议适配器', async () => {
+    const responses = fakeAdapter('responses');
+    const withResponses = new LlmAdapterFacade(
+      new Map([['anthropic', anthropic], ['openai-responses', responses]]),
+      openai,
+    );
+    await expect(withResponses.chat({ messages: [] }, config('openai-responses'))).resolves.toMatchObject({ id: 'responses' });
+  });
+
   it('大小写与首尾空白归一后路由', async () => {
     await expect(facade.chat({ messages: [] }, config(' Anthropic '))).resolves.toMatchObject({ id: 'anthropic' });
     await expect(facade.chat({ messages: [] }, config('ANTHROPIC'))).resolves.toMatchObject({ id: 'anthropic' });

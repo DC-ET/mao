@@ -31,7 +31,7 @@
         <el-select v-model="form.apiProtocol" style="width: 100%">
           <el-option label="OpenAI 兼容（ChatCompletions）" value="openai-compatible" />
           <el-option label="Anthropic（Messages）" value="anthropic" />
-          <el-option label="OpenAI Responses（规划中）" value="openai-responses" disabled />
+          <el-option label="OpenAI（Responses）" value="openai-responses" />
         </el-select>
         <span style="margin-left: 8px; color: #909399; font-size: 12px;">决定调用该模型使用的 API 协议，供应商仅作渠道标识</span>
       </el-form-item>
