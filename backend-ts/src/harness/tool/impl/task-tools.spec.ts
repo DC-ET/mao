@@ -62,6 +62,16 @@ describe('TaskTools', () => {
     expect(verified.hint).not.toContain('没有验证');
   });
 
+  it('updateToolRejectsItemsWithoutValidId', async () => {
+    const tool = new TaskUpdateTool(mapper);
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      items: [{ status: 'in_progress' }],
+    }), 11, null));
+    expect(result.error).toContain('无效的待办事项 ID');
+    expect(mapper.resetInProgress).not.toHaveBeenCalled();
+    expect(mapper.updateFields).not.toHaveBeenCalled();
+  });
+
   it('deleteAndListToolsReturnProgressAndErrors', async () => {
     mapper.selectBySessionId.mockResolvedValue([
       todo(1, 'done', 'completed'),

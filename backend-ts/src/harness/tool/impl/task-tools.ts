@@ -179,6 +179,9 @@ export class TaskUpdateTool extends BaseTool {
       const updatedSummaries: string[] = [];
       for (const item of items) {
         const id = Number(item.id);
+        if (!Number.isFinite(id)) {
+          return errorJson(`无效的待办事项 ID: ${item.id}`);
+        }
         const newStatus = asText(item.status);
         if (newStatus === 'in_progress' && sessionId != null) {
           await this.sessionTodoMapper.resetInProgress(sessionId, id);

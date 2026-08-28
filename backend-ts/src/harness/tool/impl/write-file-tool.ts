@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { BaseTool } from '../tool.js';
 import { asText, parseObject, toJson } from '../json.js';
+import { splitLines } from './read-file-tool.js';
 import { FileChangeDiffUtil } from '../file-change-diff-util.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { harnessLog } from '../../log.js';
@@ -50,7 +51,7 @@ export class WriteFileTool extends BaseTool {
       const parent = path.dirname(filePath);
       if (parent && !existsSync(parent)) mkdirSync(parent, { recursive: true });
       writeFileSync(filePath, content);
-      const newLineCount = content === '' ? 0 : content.split('\n').length;
+      const newLineCount = splitLines(content).length;
       const lineDelta = fileExisted
         ? FileChangeDiffUtil.computeLineDelta(beforeContent, content)
         : { linesAdded: newLineCount, linesDeleted: 0 };

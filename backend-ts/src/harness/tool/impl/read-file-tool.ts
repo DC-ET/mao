@@ -132,7 +132,7 @@ export class ReadFileTool extends BaseTool {
 }
 
 /** 按行终止符切分，末尾换行不产生空行（与 Java Files.lines 一致）。 */
-function splitLines(raw: string): string[] {
+export function splitLines(raw: string): string[] {
   if (raw === '') return [];
   const lines = raw.split(/\r\n|\r|\n/);
   if (lines[lines.length - 1] === '') lines.pop();

@@ -1298,7 +1298,10 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function markMessageComplete(sessionId: string, _data: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }) {
-    streamingAssistantMessageIds.delete(String(sessionId))
+    const sid = String(sessionId)
+    streamingAssistantMessageIds.delete(sid)
+    sessionStreaming.value.set(sid, false)
+    sessionThinking.value.set(sid, false)
     // Message end — the full assistant message is now persisted server-side
     // Refresh will pick it up via fetchMessages
   }

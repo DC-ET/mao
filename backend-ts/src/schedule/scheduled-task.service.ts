@@ -226,9 +226,9 @@ export class ScheduledTaskService {
               const phase = session.phase;
               const busy = this.isSessionBusy?.(task.sessionId!) === true || isActivePhase(phase);
               if (busy) {
+                // 仅入队未执行：不计入 fireCount/lastFireTime，待消息队列消费真正执行
                 await this.messageQueueService.enqueue(task.sessionId!, userId, task.prompt!, null);
                 await this.markTaskResult(task, 'QUEUED');
-                countThisRun = true;
                 return;
               }
               await this.sessionService.updatePhase(task.sessionId!, 'RUNNING');
@@ -267,7 +267,7 @@ export class ScheduledTaskService {
               if (!countThisRun) return;
               task.lastFireTime = formatDateTime(new Date());
               task.fireCount = (task.fireCount ?? 0) + 1;
-              if (task.lastExecutionStatus !== 'QUEUED' && this.calculateNextFireTime(task.cronExpression!) == null) {
+              if (this.calculateNextFireTime(task.cronExpression!) == null) {
                 task.finished = 1;
                 task.finishedAt = formatDateTime(new Date());
               }

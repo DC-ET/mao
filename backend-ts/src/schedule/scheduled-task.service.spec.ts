@@ -132,6 +132,34 @@ describe('ScheduledTaskService', () => {
     expect(store.updateById).toHaveBeenCalled();
   });
 
+  it('queued run does not count fireCount or lastFireTime', async () => {
+    const localStore: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', prompt: 'q', fireCount: 3,
+      })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      localStore, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn() },
+      { finishExecution: vi.fn() }, { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    stubs.getSession.mockResolvedValue({ id: 11, phase: 'RUNNING' });
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'q', fireCount: 3 });
+    await ran;
+    const persisted = vi.mocked(localStore.updateById).mock.calls.map(([row]) => row);
+    expect(persisted.some((row) => row.fireCount === 4)).toBe(false);
+    expect(persisted.some((row) => row.lastFireTime != null)).toBe(false);
+    expect(persisted.some((row) => row.lastExecutionStatus === 'QUEUED')).toBe(true);
+  });
+
   it('skips a second trigger while the first execution is still in flight', async () => {
     let release!: () => void;
     const hang = new Promise<void>((r) => { release = r; });

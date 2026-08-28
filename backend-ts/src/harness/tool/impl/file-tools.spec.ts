@@ -140,6 +140,13 @@ describe('WriteFileTool', () => {
     expect(result.file_change.lines_deleted).toBe(0);
     expect(existsSync(join(dir, 'created.txt'))).toBe(true);
   });
+
+  it('does not count a trailing newline as an extra line', async () => {
+    const dir = await tmp();
+    const tool = new WriteFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ path: 't.txt', content: 'one\ntwo\n' })));
+    expect(result.file_change.total_lines).toBe(2);
+  });
 });
 
 describe('EditFileTool', () => {

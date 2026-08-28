@@ -501,6 +501,7 @@ export class AgentLoop {
       return;
     }
 
+    if (cancelFlag?.get()) return;
     const results = await Promise.all(pendingCalls.map((tc) => runOne(tc)));
     if (cancelFlag?.get()) return;
     for (let i = 0; i < pendingCalls.length; i++) {
