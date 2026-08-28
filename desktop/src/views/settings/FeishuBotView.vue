@@ -190,8 +190,8 @@ onUnmounted(clearPollTimer)
 .status-badge { color: var(--aw-primary); font-size: 12px; }
 .binding-actions { display: flex; gap: 10px; }
 .bind-btn, .dialog-btn, .open-link-btn, .unbind-btn { border-radius: var(--aw-radius-xs); font-size: 13px; font-weight: 500; cursor: pointer; }
-.bind-btn { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 10px 18px; background: var(--aw-primary); color: #fff; }
-.unbind-btn { border: 1px solid var(--aw-danger); padding: 10px 18px; background: transparent; color: var(--aw-danger); }
+.bind-btn { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 6px 12px; background: var(--aw-primary); color: #fff; }
+.unbind-btn { border: 1px solid var(--aw-danger); padding: 6px 12px; background: transparent; color: var(--aw-danger); }
 .bind-btn:disabled, .dialog-btn:disabled, .open-link-btn:disabled, .unbind-btn:disabled { opacity: .55; cursor: not-allowed; }
 .dialog-content { padding: 14px 20px 8px; text-align: center; }
 .dialog-icon { color: var(--aw-primary); margin-bottom: 10px; }
