@@ -84,6 +84,7 @@
     <ChatInput
       ref="chatInputRef"
       :loading="agentRunning"
+      :can-continue="canContinue"
       :initializing-workspace="initializingWorkspace"
       :initializing-workspace-label="initializingWorkspaceLabel"
       :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
@@ -105,6 +106,7 @@
       :draft-key="currentDraftKey"
       @send="handleSend"
       @stop="handleStop"
+      @continue="handleRetry"
       @update:permission-level="handlePermissionLevelChange"
       @update:execution-mode="handleNewTaskModeChange"
       @update:workspace="handleNewTaskWorkspaceChange"
@@ -346,6 +348,13 @@ const ACTIVE_PHASES: TaskPhase[] = ['RUNNING', 'RESUMING', 'WAITING_APPROVAL', '
 const agentRunning = computed(() => {
   const phase = sessionId.value ? sessionStore.getSessionPhase(sessionId.value) : null
   return sending.value || (phase != null && ACTIVE_PHASES.includes(phase))
+})
+
+/** 会话处于 CANCELLED 终态且未在执行时，输入框为空显示「继续」按钮（续跑语义同重试） */
+const canContinue = computed(() => {
+  if (isNewTaskMode.value || !sessionId.value) return false
+  if (agentRunning.value) return false
+  return sessionStore.getSessionPhase(sessionId.value) === 'CANCELLED'
 })
 
 const showTypingIndicator = computed(() => {

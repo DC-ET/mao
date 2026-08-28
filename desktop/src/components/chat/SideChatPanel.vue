@@ -84,6 +84,7 @@
         :register-key="tabId"
         :draft-key="tabId"
         :loading="sending"
+        :can-continue="canContinue"
         :waiting-for-save="waitingForSave"
         :workspace="parentWorkspace"
         :cloud-project-key="parentCloudProjectKey"
@@ -95,6 +96,7 @@
         :is-new-task="false"
         @send="handleChatSend"
         @stop="handleStop"
+        @continue="handleRetryExecution"
         @update:model-id="handleModelSwitch"
       />
     </div>
@@ -168,6 +170,12 @@ const placeholderCacheKey = computed(() => props.tabId)
 const inheritContext = ref(false)
 const sending = ref(false)
 const waitingForSave = ref(false)
+
+/** 边路会话处于 CANCELLED 终态且未在执行时，输入框为空显示「继续」按钮（续跑语义同重试） */
+const canContinue = computed(() =>
+  hasRealSession.value && !sending.value
+  && sessionStore.getSessionPhase(String(realSessionId.value)) === 'CANCELLED'
+)
 
 /** 等待 user_message_saved 期间的清理回调（卸载时需主动调用，避免泄漏 watcher / 回调） */
 let pendingSendCleanup: (() => void) | null = null

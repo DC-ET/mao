@@ -183,6 +183,16 @@
           </svg>
         </button>
         <button
+          v-else-if="canContinue && !canSend && !initializingWorkspace"
+          class="send-btn continue"
+          title="继续"
+          @click="handleContinue()"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M5 3.3v9.4c0 .65.72 1.04 1.27.69l7.32-4.7a.82.82 0 0 0 0-1.38L6.27 2.61A.82.82 0 0 0 5 3.3z"/>
+          </svg>
+        </button>
+        <button
           v-else
           class="send-btn"
           :class="{ active: canSend }"
@@ -250,6 +260,8 @@ const props = withDefaults(defineProps<{
   draftKey?: string | null
   /** 当前会话标题：飞书通道用作工作区指示标签（群名/私聊占位标题不外露） */
   sessionTitle?: string
+  /** 会话处于 CANCELLED 终态时，输入框为空则显示绿色「继续」按钮（续跑语义同重试） */
+  canContinue?: boolean
 }>(), {
   disabled: false,
   loading: false,
@@ -270,6 +282,7 @@ const props = withDefaults(defineProps<{
   waitingForSave: false,
   registerKey: 'chat',
   draftKey: null,
+  canContinue: false,
   // 视觉能力 tri-state：true=支持 / false=不支持 / undefined=未知（不拦截，交给后端校验）。
   // 必须显式声明，否则 Boolean 类型 props 未传时会被 Vue 强制为 false，导致发送被误拦截。
   modelSupportsVision: undefined,
@@ -278,6 +291,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   send: [text: string, files: File[], pendingUploads?: File[]]
   stop: []
+  continue: []
   'update:permissionLevel': [level: string]
   'update:executionMode': [mode: string]
   'update:workspace': [workspace: string]
@@ -1063,6 +1077,11 @@ function handleStop() {
   emit('stop')
 }
 
+function handleContinue() {
+  if (props.disabled) return
+  emit('continue')
+}
+
 function handleModeChange(mode: string) {
   if (mode === 'LOCAL' && !isElectronClient) {
     ElMessage.warning('浏览器端不支持本地模式，请使用桌面客户端')
@@ -1523,6 +1542,16 @@ onBeforeUnmount(() => {
 
 .send-btn.stop:hover {
   background: color-mix(in srgb, var(--aw-danger) 85%, black);
+  transform: scale(1.05);
+}
+
+.send-btn.continue {
+  background: var(--aw-success);
+  color: #fff;
+}
+
+.send-btn.continue:hover {
+  background: color-mix(in srgb, var(--aw-success) 85%, black);
   transform: scale(1.05);
 }
 
