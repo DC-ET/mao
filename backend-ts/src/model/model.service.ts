@@ -255,7 +255,7 @@ export class ModelService {
         messages: [{ role: 'assistant', content: TTS_TEST_TEXT }],
         audio: TTS_TEST_AUDIO,
       };
-      const response = await this.llmClient.chat(request, config);
+      const response = await this.chatClientFor(config).chat(request, config);
       if (!response?.choices || response.choices.length === 0) {
         return this.buildAudioTestFailure('语音合成接口未返回结果', startTime);
       }

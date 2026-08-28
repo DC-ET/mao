@@ -8,9 +8,12 @@ const SYSTEM_PROMPT = `你是群聊记录摘要助手。把群聊记录压缩为
 - 总长度不超过 300 字；
 - 只输出摘要正文，不要标题、前缀、结尾说明或解释。`;
 
+/** 按 config.provider 选择协议客户端的路由函数签名（与 ModelService 的路由策略一致）。 */
+type ChatClientResolver = (config: LlmModelConfig) => LlmChatClient;
+
 export class GroupContextSummarizer {
   constructor(
-    private readonly llmClient: LlmChatClient,
+    private readonly resolveLlmClient: ChatClientResolver,
     private readonly resolveModelConfig: (sessionId: number) => Promise<LlmModelConfig | null>,
   ) {}
 
@@ -28,7 +31,7 @@ export class GroupContextSummarizer {
         temperature: 0.2,
         stream: false,
       };
-      const response = await this.llmClient.chat(request, config);
+      const response = await this.resolveLlmClient(config).chat(request, config);
       const text = extractText(response);
       return text !== '' ? text : null;
     } catch (error) {

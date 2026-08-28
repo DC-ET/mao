@@ -1,12 +1,15 @@
 import type { LlmChatClient, LlmChatRequest, LlmChatResponse, LlmModelConfig } from './types.js';
 import { applyClientImpersonationHeaders } from '../harness/llm/client-impersonation-headers.js';
+import { convertMessages, mapStopReason } from '../harness/llm/anthropic-llm-adapter.js';
+import type { ChatMessage } from '../harness/llm/chat-request.js';
 
 export interface AnthropicChatClientOptions {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
 
-/** 管理后台连通性测试用的 Anthropic Messages 非流式客户端（仅 chat，不含工具）。 */
+/** 管理后台连通性测试用的 Anthropic Messages 非流式客户端（仅 chat，不含工具）。
+ *  消息转换复用主 Adapter 的 convertMessages，保证两链路协议行为一致。 */
 export class AnthropicChatClient implements LlmChatClient {
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
@@ -18,29 +21,16 @@ export class AnthropicChatClient implements LlmChatClient {
 
   async chat(request: LlmChatRequest, config: LlmModelConfig): Promise<LlmChatResponse> {
     const url = `${stripTrailingSlash(config.baseUrl)}/messages`;
-    const systemParts: string[] = [];
-    const converted: Array<Record<string, unknown>> = [];
-    for (const msg of request.messages) {
-      if (msg.role === 'system') {
-        if (converted.length === 0) {
-          const text = contentToText(msg.content);
-          if (text !== '') systemParts.push(text);
-        } else {
-          // 非首条 system 降级为 user 文本
-          converted.push({ role: 'user', content: [{ type: 'text', text: contentToText(msg.content) }] });
-        }
-        continue;
-      }
-      converted.push({ role: msg.role === 'assistant' ? 'assistant' : 'user', content: [{ type: 'text', text: contentToText(msg.content) }] });
-    }
-
+    const converted = convertMessages(request.messages as ChatMessage[]);
     const body: Record<string, unknown> = {
       model: config.modelId,
+      // 连通性测试只需极短输出，用小 max_tokens 降低探测开销
       max_tokens: 1024,
-      stream: request.stream ?? false,
-      messages: converted,
+      // 固定非流式：本客户端仅按 JSON 解析响应，不支持 SSE
+      stream: false,
+      messages: converted.messages,
     };
-    if (systemParts.length > 0) body.system = systemParts.join('\n\n');
+    if (converted.system != null) body.system = converted.system;
     if (request.temperature != null) body.temperature = request.temperature;
 
     const headers: Record<string, string> = {
@@ -80,7 +70,7 @@ export class AnthropicChatClient implements LlmChatClient {
   }
 }
 
-/** Anthropic 响应 → 统一 LlmChatResponse（取首个 text block）。 */
+/** Anthropic 响应 → 统一 LlmChatResponse（取 text block 拼接）。 */
 function toChatResponse(raw: Record<string, unknown>): LlmChatResponse {
   const content = Array.isArray(raw.content) ? raw.content : [];
   let text = '';
@@ -94,18 +84,9 @@ function toChatResponse(raw: Record<string, unknown>): LlmChatResponse {
   return {
     choices: [{
       message: { role: 'assistant', content: text },
-      finish_reason: stopReason === 'tool_use' ? 'tool_calls' : stopReason === 'max_tokens' ? 'length' : 'stop',
+      finish_reason: mapStopReason(stopReason),
     }],
   };
-}
-
-function contentToText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (content == null) return '';
-  if (Array.isArray(content)) {
-    return content.map((p) => (p && typeof p === 'object' && typeof (p as Record<string, unknown>).text === 'string' ? (p as Record<string, unknown>).text as string : '')).join('');
-  }
-  return String(content);
 }
 
 function stripTrailingSlash(url: string): string {

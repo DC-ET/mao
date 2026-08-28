@@ -140,11 +140,12 @@ export class LlmAdapterFacade implements LlmAdapter {
 | `temperature` | `temperature` |
 | — | `max_tokens: 16384`（常量默认） |
 
-**消息合并规则（关键）**：Anthropic 要求相邻消息 role 交替，且 `tool_result` 必须位于 user 消息 block 序列最前。转换时遍历消息序列：
+**消息合并规则（关键）**：Anthropic 要求相邻消息 role 交替，且 `tool_result` 必须位于 user 消息 block 序列**最前**。转换时遍历消息序列：
 
-1. 连续多条 `role:'tool'` 消息 → 合并为**一条** user 消息的多个 `tool_result` block（顺序不变）；
+1. 连续多条 `role:'tool'` 消息 → 合并为**一条** user 消息：全部 `tool_result` block 集中在前段（顺序不变），tool 消息携带的图片等其余 block 追加在后段（`tool_result` 之后的 image/text 块是官方允许的）；
 2. `tool` 消息后紧跟的 user 消息 → 并入同一条 user 消息（`tool_result` 在前、文本在后）；
-3. 连续 assistant 消息 → 合并为一条 assistant 消息（text 与 tool_use block 顺序按原序保留）。
+3. 连续 assistant 消息 → 合并为一条 assistant 消息（text 与 tool_use block 顺序按原序保留）；
+4. assistant `toolCalls` 中缺失 `function.name` 的项不跳过（跳过会产生悬空 `tool_result` 导致 400），兜底为空名占位 `tool_use`。
 
 #### 4.2.3 流式响应转换（Messages SSE → `StreamCallback`）
 
@@ -159,7 +160,7 @@ export class LlmAdapterFacade implements LlmAdapter {
 | `message_stop` | 组装 `ChatUsage` 回调 `onComplete` |
 | `error` 事件 | 抛 `StreamErrorEventException`（复用可重试判定） |
 
-usage 归一：`input_tokens → promptTokens`、`output_tokens → completionTokens`、`cache_read_input_tokens → promptTokensDetails.cachedTokens`、`totalTokens = prompt + completion`。
+usage 归一：`promptTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens`（Anthropic 的 `input_tokens` 不含缓存部分，与 OpenAI `prompt_tokens` 全量口径对齐）、`completionTokens = output_tokens`、`promptTokensDetails.cachedTokens = cache_read_input_tokens`、`totalTokens = prompt + completion`。流式事件中 `message_start` 与 `message_delta` 的 usage 按字段级"有值即覆盖"合并（兼容部分网关仅在 `message_delta` 下发真实值的场景），流结束后统一折算。
 
 stop_reason 映射：`end_turn → stop`、`tool_use → tool_calls`、`max_tokens → length`、`stop_sequence → stop`。
 
@@ -189,6 +190,7 @@ stop_reason 映射：`end_turn → stop`、`tool_use → tool_calls`、`max_toke
 | `create-app.ts:111-114、493` | import Facade 与新 Adapter；实例化并注入 |
 | `weixin/voice-synthesis.service.ts:36` | 依赖类型改 `LlmAdapter` |
 | `model/model.service.ts` | 注入两个 ChatClient，testConnectivity 按协议路由 + mid-system 跳过 |
+| `feishu/group-context-summarizer.ts` | 溢出摘要 LLM 调用同样按 provider 协议路由（构造参数改为 `(config) => client` 路由函数，模型解析补传 `provider`），避免 anthropic 默认/会话模型时摘要静默失效 |
 | `admin/src/views/model/ModelFormDialog.vue` | 供应商下拉化 |
 | 根 `CHANGELOG.md` | 顶部新版本记录 |
 
@@ -228,4 +230,4 @@ stop_reason 映射：`end_turn → stop`、`tool_use → tool_calls`、`max_toke
 1. **OpenAI Responses API**：协议 code `openai-responses` 已预留，接入时按 §4.2 模式新增 Adapter，仅需请求体构造与 SSE 事件映射两块协议层实现。
 2. **Anthropic extended thinking**：需持久化 thinking block 的 `signature` 并在多轮请求回传，涉及 `session` 表与历史恢复链路，单独立项。
 3. **能力声明**：若未来协议/模型数量增长导致 `isGptModel`（`prompt-engine.ts:347`）类前缀判断扩散，再引入 `ProviderCapabilities` 由 Adapter 声明能力，替换名称猜测。
-4. **骨架合并**：第三个协议落地后，若重试/HTTP 骨架三处重复明显，在测试保护下抽取共享基类。
+4. **骨架合并**：第三个协议落地时，重试/HTTP 骨架已存在 OpenAI/Anthropic 两份副本，抽取共享基类；同时把 `provider` 路由逻辑（trim+lowercase+回落）收敛为单一共享工厂——当前存在 `LlmAdapterFacade.pick`、`ModelService.chatClientFor`、`create-app.routeChatClient` 三处手写副本（第 2 轮 code review N-2），接入 `openai-responses` 前必须先收敛，避免多协议时遗漏同步。

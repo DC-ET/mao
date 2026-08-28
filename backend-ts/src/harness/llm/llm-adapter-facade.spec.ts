@@ -10,7 +10,7 @@ function fakeAdapter(tag: string): LlmAdapter {
 }
 
 function config(provider?: string | null): LlmModelConfig {
-  return { baseUrl: 'https://api.example.test', apiKey: 'key', modelId: 'm', provider };
+  return { baseUrl: 'https://api.example.test', apiKey: 'key', modelId: 'm', provider } as LlmModelConfig;
 }
 
 describe('LlmAdapterFacade', () => {

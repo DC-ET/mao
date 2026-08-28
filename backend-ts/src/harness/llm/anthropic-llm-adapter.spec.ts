@@ -235,6 +235,34 @@ describe('AnthropicLlmAdapter - chat (non-stream)', () => {
     ]);
   });
 
+  it('多条 tool 消息带图片：全部 tool_result 仍位于 user 消息 block 序列最前', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"m","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
+    await server.start();
+
+    await adapter().chat({
+      messages: [
+        { role: 'user', content: '看图查询' },
+        { role: 'assistant', content: '', toolCalls: [{ index: 0, id: 'toolu_1', type: 'function', function: { name: 'lookup', arguments: '{}' } }] },
+        { role: 'tool', toolCallId: 'toolu_1', content: [{ type: 'text', text: '结果A' }, { type: 'image_url', imageUrl: { url: 'data:image/png;base64,aGVsbG8=' } }] },
+        { role: 'tool', toolCallId: 'toolu_2', content: '结果B' },
+        { role: 'user', content: '继续' },
+      ],
+    }, configOf(server, { supportsVision: true }));
+
+    const body = JSON.parse(server.bodies[0]) as Record<string, unknown>;
+    const messages = body.messages as Array<{ role: string; content: Array<Record<string, unknown>> }>;
+    expect(messages).toHaveLength(3);
+    expect(messages[2].role).toBe('user');
+    const blockTypes = messages[2].content.map((b) => b.type);
+    // tool_result 必须全部位于最前，图片与文本在后
+    expect(blockTypes).toEqual(['tool_result', 'tool_result', 'image', 'text']);
+    expect(messages[2].content[0]).toEqual({ type: 'tool_result', tool_use_id: 'toolu_1', content: '结果A' });
+    expect(messages[2].content[1]).toEqual({ type: 'tool_result', tool_use_id: 'toolu_2', content: '结果B' });
+    expect(messages[2].content[2]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } });
+    expect(messages[2].content[3]).toEqual({ type: 'text', text: '继续' });
+  });
+
   it('连续 assistant 消息合并为一条', async () => {
     server = new QueueServer();
     server.enqueueJson('{"id":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
@@ -313,7 +341,7 @@ describe('AnthropicLlmAdapter - stream', () => {
     server = new QueueServer();
     server.enqueueSse(
       'event: message_start\n'
-      + 'data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":25,"cache_read_input_tokens":10}}}\n\n'
+      + 'data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":25,"cache_read_input_tokens":10,"cache_creation_input_tokens":3}}}\n\n'
       + 'event: content_block_start\n'
       + 'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n'
       + 'event: content_block_delta\n'
@@ -334,12 +362,45 @@ describe('AnthropicLlmAdapter - stream', () => {
     expect(callback.error).toBeUndefined();
     const text = callback.chunks.map((c) => c.choices?.[0]?.delta?.content ?? '').join('');
     expect(text).toBe('你好');
+    // Anthropic 口径：总输入 = input + cache_creation + cache_read = 25 + 3 + 10 = 38
     expect(callback.usage).toEqual({
-      promptTokens: 25,
+      promptTokens: 38,
       completionTokens: 7,
-      totalTokens: 32,
+      totalTokens: 45,
       promptTokensDetails: { cachedTokens: 10 },
     });
+  });
+
+  it('网关在 message_start 下发 input_tokens=0、真实值在 message_delta：按有值即覆盖归一', async () => {
+    server = new QueueServer();
+    server.enqueueSse(
+      'data: {"type":"message_start","message":{"usage":{"input_tokens":0,"output_tokens":0}}}\n\n'
+      + 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"回答"}}\n\n'
+      + 'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":42,"output_tokens":6}}\n\n'
+      + 'data: {"type":"message_stop"}\n\n',
+    );
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter().stream(request('hi'), configOf(server), callback);
+    expect(callback.error).toBeUndefined();
+    expect(callback.usage).toEqual({
+      promptTokens: 42,
+      completionTokens: 6,
+      totalTokens: 48,
+    });
+  });
+
+  it('非流式 usage 含缓存字段时按 Anthropic 口径折算总输入', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":20,"cache_read_input_tokens":30,"cache_creation_input_tokens":5,"output_tokens":4}}');
+    await server.start();
+
+    const response = await adapter().chat(request('hi'), configOf(server));
+    expect(response.usage?.promptTokens).toBe(55);
+    expect(response.usage?.completionTokens).toBe(4);
+    expect(response.usage?.totalTokens).toBe(59);
+    expect(response.usage?.promptTokensDetails?.cachedTokens).toBe(30);
   });
 
   it('thinking_delta 映射为 reasoningContent', async () => {
@@ -570,6 +631,19 @@ describe('convertMessages', () => {
     expect(result.messages[0].content).toEqual([
       { type: 'tool_use', id: 't1', name: 'lookup', input: {} },
     ]);
+  });
+
+  it('toolCall 缺失 function.name 时保留空名占位 tool_use，维持与 tool_result 的配对完整', () => {
+    const result = convertMessages([
+      { role: 'assistant', content: '', toolCalls: [{ id: 't1', type: 'function', function: { arguments: '{}' } }] },
+      { role: 'tool', toolCallId: 't1', content: '结果' },
+    ]);
+    // 若跳过无 name 的 toolCall，配对的 tool_result 将引用不存在的 tool_use_id，Anthropic 必然 400；
+    // 占位空名 tool_use 是维持配对的最佳兜底（name 校验由上游在工具声明处保证，正常链路不会缺 name）
+    expect(result.messages[0].content).toEqual([
+      { type: 'tool_use', id: 't1', name: '', input: {} },
+    ]);
+    expect(result.messages[1].content[0]).toEqual({ type: 'tool_result', tool_use_id: 't1', content: '结果' });
   });
 
   it('纯字符串 user content 转为单 text block', () => {

@@ -31,6 +31,7 @@
           allow-create
           default-first-option
           clearable
+          :value-on-clear="''"
           placeholder="选择或输入供应商协议"
           style="width: 100%"
         >

@@ -249,12 +249,27 @@ export class AnthropicLlmAdapter implements LlmAdapter {
     cancelFlag?: { get(): boolean } | null,
   ): Promise<void> {
     const usage: ChatUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    // Anthropic usage 口径：总输入 = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+    // （input_tokens 不含缓存部分）。message_start 与 message_delta 的 usage 均为请求级累计值，
+    // 部分网关（sglang/vLLM 系）message_start 的 input_tokens 为 0、真实值只在 message_delta 下发，
+    // 因此按「有值即覆盖」逐字段合并，流结束后统一折算。
+    let inputTokens: number | null = null;
+    let outputTokens: number | null = null;
+    let cacheReadTokens: number | null = null;
+    let cacheCreationTokens: number | null = null;
+
+    const applyUsageFields = (fields: AnthropicUsageFields): void => {
+      if (fields.inputTokens != null) inputTokens = fields.inputTokens;
+      if (fields.outputTokens != null) outputTokens = fields.outputTokens;
+      if (fields.cacheRead != null) cacheReadTokens = fields.cacheRead;
+      if (fields.cacheCreation != null) cacheCreationTokens = fields.cacheCreation;
+    };
+
     let emitted = false;
     let done = false;
     let buffer = '';
     let stopReason: string | null = null;
     let hasContentOutput = false;
-    const blockTypes = new Map<number, string>();
     // fatal：截断的 UTF-8 必须报错，静默降级为 U+FFFD 会让被截断的流看起来正常完成
     const decoder = new TextDecoder('utf-8', { fatal: true });
     let lastData = Date.now();
@@ -289,18 +304,14 @@ export class AnthropicLlmAdapter implements LlmAdapter {
         switch (type) {
           case 'message_start': {
             const message = isPlainObject(evt.message) ? evt.message : {};
-            const u = mapAnthropicUsage(message.usage);
-            if (u != null) {
-              usage.promptTokens = u.promptTokens;
-              usage.promptTokensDetails = u.promptTokensDetails;
-            }
+            const u = extractUsageFields(message.usage);
+            if (u != null) applyUsageFields(u);
             break;
           }
           case 'content_block_start': {
             const index = typeof evt.index === 'number' ? evt.index : -1;
             const block = isPlainObject(evt.content_block) ? evt.content_block : {};
             const blockType = typeof block.type === 'string' ? block.type : '';
-            blockTypes.set(index, blockType);
             if (blockType === 'tool_use') {
               hasContentOutput = true;
               const id = typeof block.id === 'string' && block.id !== '' ? block.id : undefined;
@@ -335,16 +346,14 @@ export class AnthropicLlmAdapter implements LlmAdapter {
             // signature_delta 仅在启用 extended thinking 时出现，本期忽略
             break;
           }
-          case 'content_block_stop': {
-            const index = typeof evt.index === 'number' ? evt.index : -1;
-            blockTypes.delete(index);
+          case 'content_block_stop':
+            // 无需按块收尾处理；input_json_delta 分片由 AgentLoop 按 index/id 聚合
             break;
-          }
           case 'message_delta': {
             const delta = isPlainObject(evt.delta) ? evt.delta : {};
             if (typeof delta.stop_reason === 'string' && delta.stop_reason !== '') stopReason = delta.stop_reason;
-            const u = mapAnthropicUsage(evt.usage);
-            if (u != null) usage.completionTokens = u.completionTokens;
+            const u = extractUsageFields(evt.usage);
+            if (u != null) applyUsageFields(u);
             break;
           }
           case 'message_stop': {
@@ -396,7 +405,11 @@ export class AnthropicLlmAdapter implements LlmAdapter {
       if (stopReason === 'max_tokens' && !hasContentOutput) {
         throw new StreamThinkingTruncatedException();
       }
-      usage.totalTokens = usage.promptTokens + usage.completionTokens;
+      const finalized = finalizeUsage(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens);
+      usage.promptTokens = finalized.promptTokens;
+      usage.completionTokens = finalized.completionTokens;
+      usage.totalTokens = finalized.totalTokens;
+      if (finalized.promptTokensDetails != null) usage.promptTokensDetails = finalized.promptTokensDetails;
       callback.onComplete(usage);
     } catch (e) {
       if (idleTimedOut) throw idleTimedOut;
@@ -727,6 +740,8 @@ interface AnthropicMessage {
 export function convertMessages(messages: ChatMessage[]): { messages: AnthropicMessage[]; system: string | null } {
   const systemParts: string[] = [];
   const converted: AnthropicMessage[] = [];
+  let toolResultBlocks: AnthropicContentBlock[] = [];
+  let trailingBlocks: AnthropicContentBlock[] = [];
 
   const pushBlocks = (role: 'user' | 'assistant', blocks: AnthropicContentBlock[]): void => {
     const last = converted[converted.length - 1];
@@ -751,28 +766,35 @@ export function convertMessages(messages: ChatMessage[]): { messages: AnthropicM
       continue;
     }
     if (role === 'tool') {
-      // tool 结果 → user 消息里的 tool_result block，与后续 user 文本合并到同一条
+      // tool 结果 → user 消息里的 tool_result block，与后续 user 文本合并到同一条。
+      // Anthropic 要求 tool_result 位于 user 消息 block 序列最前：连续多条 tool 消息合并进同一条
+      // user 消息时，必须把全部 tool_result 集中在前段（toolResultsBlocks），图片等其余 block
+      // 追加在后段（trailingBlocks），否则中间夹杂的图片会导致请求 400。
       const resultText = extractMessageText(msg.content);
-      const blocks: AnthropicContentBlock[] = [];
+      toolResultBlocks.push({ type: 'tool_result', tool_use_id: msg.toolCallId ?? '', content: resultText });
       for (const part of imageParts(msg.content)) {
         const block = toAnthropicImageBlock(part);
-        if (block != null) blocks.push(block);
+        if (block != null) trailingBlocks.push(block);
       }
-      blocks.unshift({ type: 'tool_result', tool_use_id: msg.toolCallId ?? '', content: resultText });
-      pushBlocks('user', blocks);
       continue;
+    }
+    if (toolResultBlocks.length > 0) {
+      pushBlocks('user', [...toolResultBlocks, ...trailingBlocks]);
+      toolResultBlocks = [];
+      trailingBlocks = [];
     }
     if (role === 'assistant') {
       const blocks: AnthropicContentBlock[] = [];
       const text = extractMessageText(msg.content);
       if (text !== '') blocks.push({ type: 'text', text });
       for (const tc of msg.toolCalls ?? []) {
-        if (!tc.function?.name) continue;
+        // name 缺失不能跳过：跳过会产生悬空 tool_result（配对的 tool 消息仍在），Anthropic 将 400。
+        // 兜底为空 input 的占位 tool_use，维持 tool_use/tool_result 配对完整。
         blocks.push({
           type: 'tool_use',
           id: tc.id ?? '',
-          name: tc.function.name,
-          input: safeParseJsonObject(tc.function.arguments),
+          name: tc.function?.name ?? '',
+          input: safeParseJsonObject(tc.function?.arguments),
         });
       }
       if (blocks.length > 0) pushBlocks('assistant', blocks);
@@ -791,6 +813,11 @@ export function convertMessages(messages: ChatMessage[]): { messages: AnthropicM
     pushBlocks('user', blocks);
   }
 
+  if (toolResultBlocks.length > 0) {
+    pushBlocks('user', [...toolResultBlocks, ...trailingBlocks]);
+    toolResultBlocks = [];
+    trailingBlocks = [];
+  }
   return {
     messages: converted.map((m) => ({ role: m.role, content: m.content })),
     system: systemParts.length > 0 ? systemParts.join('\n\n') : null,
@@ -850,35 +877,52 @@ export function mapStopReason(stopReason: string | undefined): string {
   }
 }
 
-interface AnthropicUsage {
-  promptTokens: number;
-  completionTokens: number;
-  promptTokensDetails?: { cachedTokens: number | null };
+/** Anthropic usage 响应中的原始字段（均为可选，有值才覆盖）。 */
+interface AnthropicUsageFields {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheRead?: number;
+  cacheCreation?: number;
 }
 
-function mapAnthropicUsage(raw: unknown): AnthropicUsage | null {
+function extractUsageFields(raw: unknown): AnthropicUsageFields | null {
   if (!isPlainObject(raw)) return null;
   const input = toNumber(raw.input_tokens);
   const output = toNumber(raw.output_tokens);
-  if (input == null && output == null) return null;
   const cacheRead = toNumber(raw.cache_read_input_tokens);
+  const cacheCreation = toNumber(raw.cache_creation_input_tokens);
+  if (input == null && output == null && cacheRead == null && cacheCreation == null) return null;
   return {
-    promptTokens: input ?? 0,
-    completionTokens: output ?? 0,
+    ...(input != null ? { inputTokens: input } : {}),
+    ...(output != null ? { outputTokens: output } : {}),
+    ...(cacheRead != null ? { cacheRead } : {}),
+    ...(cacheCreation != null ? { cacheCreation } : {}),
+  };
+}
+
+/** Anthropic 口径 → 统一 ChatUsage：总输入 = input + cache_creation + cache_read（与官方语义一致，
+ *  OpenAI 口径的 prompt_tokens 本就是全量输入，cachedTokens 是其子集）。 */
+function finalizeUsage(
+  inputTokens: number | null,
+  outputTokens: number | null,
+  cacheRead: number | null,
+  cacheCreation: number | null,
+): { promptTokens: number; completionTokens: number; totalTokens: number; promptTokensDetails?: { cachedTokens: number | null } } {
+  const promptTokens = (inputTokens ?? 0) + (cacheCreation ?? 0) + (cacheRead ?? 0);
+  const completionTokens = outputTokens ?? 0;
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
     ...(cacheRead != null ? { promptTokensDetails: { cachedTokens: cacheRead } } : {}),
   };
 }
 
 /** 非流式响应用的完整 ChatUsage（含 totalTokens）。 */
 function mapAnthropicChatUsage(raw: unknown): ChatUsage | undefined {
-  const u = mapAnthropicUsage(raw);
-  if (u == null) return undefined;
-  return {
-    promptTokens: u.promptTokens,
-    completionTokens: u.completionTokens,
-    totalTokens: u.promptTokens + u.completionTokens,
-    promptTokensDetails: u.promptTokensDetails,
-  };
+  const fields = extractUsageFields(raw);
+  if (fields == null) return undefined;
+  return finalizeUsage(fields.inputTokens ?? null, fields.outputTokens ?? null, fields.cacheRead ?? null, fields.cacheCreation ?? null);
 }
 
 function anthropicErrorTypeToStatus(type: unknown): number | null {
