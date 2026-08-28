@@ -39,6 +39,21 @@ function normalizeClientImpersonation(
   return trimmed as ClientImpersonation;
 }
 
+const API_PROTOCOL_VALUES = ['', 'openai-compatible', 'anthropic', 'openai-responses'] as const;
+
+/** 校验并归一 API 协议：openai-compatible 与空串都归一为 ''（OpenAI 兼容）；null/undefined 表示未提供。 */
+function normalizeApiProtocol(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (!(API_PROTOCOL_VALUES as readonly string[]).includes(trimmed)) {
+    throw new BusinessException(
+      ErrorCode.PARAM_INVALID.code,
+      'apiProtocol 只能是 openai-compatible / anthropic / openai-responses 或留空',
+    );
+  }
+  return trimmed === 'openai-compatible' ? '' : trimmed;
+}
+
 export class ModelService {
   constructor(
     private readonly modelRepo: LlmModelRepository,
@@ -47,9 +62,9 @@ export class ModelService {
     private readonly llmClients?: Map<string, LlmChatClient>,
   ) {}
 
-  /** 按 provider 协议 code 选择连通性测试客户端，未注册的回落默认 OpenAI 兼容客户端。 */
+  /** 按 apiProtocol 协议 code 选择连通性测试客户端，未注册的回落默认 OpenAI 兼容客户端。 */
   private chatClientFor(config: LlmModelConfig): LlmChatClient {
-    const code = config.provider?.trim().toLowerCase();
+    const code = config.apiProtocol?.trim().toLowerCase();
     if (code != null && this.llmClients?.has(code)) return this.llmClients.get(code)!;
     return this.llmClient;
   }
@@ -112,6 +127,7 @@ export class ModelService {
     contextWindowTokens: number | null | undefined,
     modelType: string | null | undefined,
     clientImpersonation: string | null | undefined,
+    apiProtocol: string | null | undefined,
   ): Promise<LlmModel> {
     if (isDefault != null && isDefault === 1) {
       await this.modelRepo.clearDefaultFlag();
@@ -119,6 +135,7 @@ export class ModelService {
     const model: LlmModel = {
       name,
       provider,
+      apiProtocol: normalizeApiProtocol(apiProtocol) ?? '',
       baseUrl,
       apiKey,
       modelId,
@@ -145,10 +162,13 @@ export class ModelService {
     contextWindowTokens: number | null | undefined,
     modelType: string | null | undefined,
     clientImpersonation: string | null | undefined,
+    apiProtocol: string | null | undefined,
   ): Promise<LlmModel> {
     const model = await this.getModel(id);
     if (name != null) model.name = name;
     if (provider != null) model.provider = provider;
+    const apiProtocolValue = normalizeApiProtocol(apiProtocol);
+    if (apiProtocolValue != null) model.apiProtocol = apiProtocolValue;
     if (baseUrl != null) model.baseUrl = baseUrl;
     if (apiKey != null) model.apiKey = apiKey;
     if (modelId != null) model.modelId = modelId;
@@ -201,6 +221,7 @@ export class ModelService {
       id: model.id,
       name: model.name,
       provider: model.provider,
+      apiProtocol: model.apiProtocol,
       baseUrl: model.baseUrl,
       apiKey: model.apiKey,
       modelId: model.modelId,
@@ -310,8 +331,8 @@ export class ModelService {
 
   private async runMidSystemMessageTest(config: LlmModelConfig): Promise<{ supported: boolean; output: string | null }> {
     // Anthropic 不支持中途 system（仅顶层 system 参数），探测无意义，直接标记不适用
-    const providerCode = config.provider?.trim().toLowerCase();
-    if (providerCode === 'anthropic') {
+    const protocolCode = config.apiProtocol?.trim().toLowerCase();
+    if (protocolCode === 'anthropic') {
       return { supported: false, output: null };
     }
     let lastOutput: string | null = null;

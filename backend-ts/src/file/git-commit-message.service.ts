@@ -45,6 +45,7 @@ export interface LlmModelConfig {
   id?: number;
   name?: string | null;
   provider?: string | null;
+  apiProtocol?: string | null;
   baseUrl?: string | null;
   apiKey?: string | null;
   modelId?: string | null;
@@ -233,6 +234,7 @@ function toConfig(model: LlmModelRef): LlmModelConfig {
     id: model.id,
     name: model.name,
     provider: model.provider,
+    apiProtocol: model.apiProtocol,
     baseUrl: model.baseUrl,
     apiKey: model.apiKey,
     modelId: model.modelId,

@@ -9,6 +9,7 @@ export interface ModelVO {
   id?: number;
   name?: string;
   provider?: string | null;
+  apiProtocol?: string | null;
   baseUrl?: string;
   apiKey?: string;
   modelId?: string;

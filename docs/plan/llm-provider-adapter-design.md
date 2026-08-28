@@ -36,11 +36,11 @@
 
 | # | 事项 |
 |---|------|
-| 1 | 新增 `LlmAdapterFacade`：实现 `LlmAdapter` 接口，按 `LlmModelConfig.provider` 路由到具体 Adapter，未匹配值回落 OpenAI 兼容实现 |
+| 1 | 新增 `LlmAdapterFacade`：实现 `LlmAdapter` 接口，按 `LlmModelConfig.apiProtocol` 路由到具体 Adapter，未匹配值回落 OpenAI 兼容实现 |
 | 2 | 新增 `AnthropicLlmAdapter`：完整实现 Messages API 的非流式 + 流式调用，含重试/退避/取消/超时，行为对齐现有 OpenAI 实现 |
 | 3 | `create-app.ts` 改为组装 Facade 并注入；`weixin/voice-synthesis.service.ts` 依赖类型改为 `LlmAdapter` 接口 |
-| 4 | 新增 `AnthropicChatClient`（连通性测试用），`ModelService.testConnectivity` 按 provider 选择客户端 |
-| 5 | admin 模型表单「供应商」由文本框改为可创建的下拉选择（`openai-compatible` / `anthropic` / `openai-responses`） |
+| 4 | 新增 `AnthropicChatClient`（连通性测试用），`ModelService.testConnectivity` 按 apiProtocol 选择客户端 |
+| 5 | 新增 `api_protocol` DB 列承载协议路由；admin 模型表单「供应商」保持渠道名文本框，新增「API 协议」下拉（OpenAI 兼容 / `anthropic` / `openai-responses` 预留） |
 | 6 | 新增 `anthropic-llm-adapter.spec.ts`、`llm-adapter-facade.spec.ts`，现有测试全量回归 |
 | 7 | 根 CHANGELOG.md 记录本次用户可见变更（新协议支持） |
 
@@ -62,15 +62,15 @@
 
 | 决策点 | 结论 |
 |--------|------|
-| 路由键 | `provider` 列语义从"展示名"升级为"协议 code"，约定小写：`anthropic` / `openai-responses` / `openai-compatible` |
-| 存量兼容 | 路由前对 provider 做 `trim + toLowerCase`；未命中或为空一律回落 openai-compatible，存量值（如 "OpenAI"）行为不变，无需迁移 |
-| 校验策略 | 不加白名单；未知 provider 静默回落默认实现 |
+| 路由键 | 独立新增 `api_protocol` 字段承载协议路由（小写：`anthropic` / `openai-responses` / `openai-compatible`，空 = openai-compatible）；`provider` 保持渠道名语义（展示/分组），**不参与路由**。**修订（2026-08-28）**：初版曾把 `provider` 升级为协议 code，因用户以 provider 存放渠道名、无法区分模型来源，改为字段拆分方案 |
+| 存量兼容 | 路由前对 apiProtocol 做 `trim + toLowerCase`；未命中或为空一律回落 openai-compatible，存量模型协议为空行为不变，无需数据迁移 |
+| 校验策略 | 写入口（POST/PUT /models）对 apiProtocol 白名单校验（空 / `openai-compatible` / `anthropic` / `openai-responses`），非法值返回 PARAM_INVALID；运行时路由对未知值仍静默回落默认实现 |
 | 骨架复用方式 | 复制而非抽基类：HTTP/重试/取消骨架从 OpenAiLlmAdapter 复制到新 Adapter，现有 742 行与其测试零改动；将来接第三个协议时再评估合并 |
 | max_tokens（Anthropic 必填） | Adapter 内常量默认 16384，不落库 |
 | thinking | 不主动开启；响应中若出现 thinking block 则解析为 `reasoningContent` 兼容 |
 | 认证头 | 同时携带 `x-api-key` 与 `Authorization: Bearer`（同值），兼容官方与网关类渠道 |
 | Responses API | 仅预留协议 code，实现推迟到真实接入时 |
-| 展示名 | 供应商展示与协议 code 合一（select 可创建），不再维护两套字段 |
+| 展示名 | **修订（2026-08-28）**：初版"供应商展示与协议 code 合一"决策作废。`provider` 保持渠道名自由文本（如 "OpenAI"、"Anthropic"、渠道商名），协议由独立的「API 协议」下拉承载 |
 
 ## 三、总体设计
 
@@ -93,7 +93,7 @@ LlmAdapterFacade implements LlmAdapter          ← 新增，~30 行
 
 ## 四、详细设计
 
-### 4.1 provider 路由约定（Facade）
+### 4.1 apiProtocol 路由约定（Facade）
 
 `backend-ts/src/harness/llm/llm-adapter-facade.ts`（新增）：
 
@@ -105,7 +105,7 @@ export class LlmAdapterFacade implements LlmAdapter {
   ) {}
 
   private pick(config: LlmModelConfig): LlmAdapter {
-    const code = config.provider?.trim().toLowerCase();
+    const code = config.apiProtocol?.trim().toLowerCase();
     return (code != null && this.delegates.get(code)) || this.fallback;
   }
 
@@ -114,9 +114,9 @@ export class LlmAdapterFacade implements LlmAdapter {
 }
 ```
 
-- 路由对 provider 做 `trim + toLowerCase`，防止手填 `Anthropic` 不命中。
+- 路由对 apiProtocol 做 `trim + toLowerCase`，防止手填 `Anthropic` 不命中；`provider` 是渠道展示名，不参与路由。
 - `create-app.ts` 组装：`new LlmAdapterFacade(new Map([['anthropic', anthropicAdapter]]), openAiAdapter)`，注入点（`create-app.ts:493`）与 AgentLoop 构造签名不变。
-- `weixin/voice-synthesis.service.ts:36` 的依赖类型 `OpenAiLlmAdapter` 改为 `LlmAdapter`（语音模型 provider 不会是 anthropic，行为不变）。
+- `weixin/voice-synthesis.service.ts:36` 的依赖类型 `OpenAiLlmAdapter` 改为 `LlmAdapter`（语音模型协议不会是 anthropic，行为不变）。
 
 ### 4.2 AnthropicLlmAdapter
 
@@ -175,13 +175,13 @@ stop_reason 映射：`end_turn → stop`、`tool_use → tool_calls`、`max_toke
 `ModelService.testConnectivity`（`model.service.ts:190-220`）当前经 `OpenAiChatClient` 硬编码调 `/chat/completions`，Anthropic 模型会误报失败。改造：
 
 - 新增 `backend-ts/src/model/anthropic-chat.client.ts`（~80 行）：实现 `LlmChatClient` 接口，仅非流式 `chat`，POST `{baseUrl}/messages`，解析首个 `text` block 返回。头部复用 §4.2.4。
-- `ModelService` 按 `config.provider`（trim+lowercase）选择客户端：`anthropic` → AnthropicChatClient，否则现有 OpenAiChatClient。
+- `ModelService` 按 `config.apiProtocol`（trim+lowercase）选择客户端：`anthropic` → AnthropicChatClient，否则现有 OpenAiChatClient。
 - mid-system-message 检测：对 anthropic 协议跳过（Anthropic 不支持中途 system，测试无意义），结果标记为不适用而非失败。
 - audio/voice 测试分支不受影响（语音模型不配 anthropic）。
 
 ### 4.4 admin 表单
 
-`ModelFormDialog.vue:27-29`「供应商」由 `el-input` 改为 `el-select`（`filterable` + `allow-create`），固定选项：`openai-compatible` / `anthropic` / `openai-responses`（后者标注"规划中"），保留手动输入兜底。列表筛选（`ModelListView.vue:39`）选项仍动态从 DB 拉取，无需改动。
+`ModelFormDialog.vue`「供应商」保持 `el-input` 渠道名自由文本（例如: OpenAI, Anthropic）；其下新增「API 协议」`el-select`：空值（OpenAI 兼容）/ `anthropic` / `openai-responses`（后者标注"规划中"置灰）。列表筛选（`ModelListView.vue:39`）基于 provider 渠道名动态从 DB 拉取，无需改动。
 
 ### 4.5 接线点清单
 
@@ -190,8 +190,8 @@ stop_reason 映射：`end_turn → stop`、`tool_use → tool_calls`、`max_toke
 | `create-app.ts:111-114、493` | import Facade 与新 Adapter；实例化并注入 |
 | `weixin/voice-synthesis.service.ts:36` | 依赖类型改 `LlmAdapter` |
 | `model/model.service.ts` | 注入两个 ChatClient，testConnectivity 按协议路由 + mid-system 跳过 |
-| `feishu/group-context-summarizer.ts` | 溢出摘要 LLM 调用同样按 provider 协议路由（构造参数改为 `(config) => client` 路由函数，模型解析补传 `provider`），避免 anthropic 默认/会话模型时摘要静默失效 |
-| `admin/src/views/model/ModelFormDialog.vue` | 供应商下拉化 |
+| `feishu/group-context-summarizer.ts` | 溢出摘要 LLM 调用同样按 apiProtocol 协议路由（构造参数改为 `(config) => client` 路由函数，模型解析补传 `apiProtocol`），避免 anthropic 默认/会话模型时摘要静默失效 |
+| `admin/src/views/model/ModelFormDialog.vue` | 供应商保持文本框，新增 API 协议下拉 |
 | 根 `CHANGELOG.md` | 顶部新版本记录 |
 
 ## 五、测试计划
@@ -199,7 +199,7 @@ stop_reason 映射：`end_turn → stop`、`tool_use → tool_calls`、`max_toke
 新增（沿用现有 QueueServer 本地回放模式，见 `openai-llm-adapter.spec.ts`）：
 
 - `anthropic-llm-adapter.spec.ts`：非流式响应解析；流式文本；thinking_delta；单/多工具调用；input_json_delta 分片合并；请求体断言（system 拆分、tool_use/tool_result 转换、连续 tool 消息合并、max_tokens、双认证头）；stop_reason 与 usage（含 cache）映射；429/5xx 重试与 Retry-After；error 事件；流中断；取消；空响应耗尽；非首条 system 降级；vision 图片转换。
-- `llm-adapter-facade.spec.ts`：大小写/空白归一路由；未知与空 provider 回落；chat/stream 均透传。
+- `llm-adapter-facade.spec.ts`：大小写/空白归一路由；未知与空 apiProtocol 回落；provider 渠道名不参与路由；chat/stream 均透传。
 - `model` 层：anthropic 模型连通性测试走新客户端；mid-system 跳过。
 
 回归：`cd backend-ts && npm test` 全量（现有 openai-llm-adapter.spec.ts、agent-loop.spec.ts、ws-streaming-event-listener.spec.ts 零改动通过）。
@@ -211,7 +211,7 @@ stop_reason 映射：`end_turn → stop`、`tool_use → tool_calls`、`max_toke
 1. `LlmAdapterFacade` + `create-app.ts`/weixin 接线 + Facade 单测（行为零变化，先行合入）
 2. `AnthropicLlmAdapter` + 完整 spec
 3. `AnthropicChatClient` + 连通性测试路由 + model 层测试
-4. admin 表单下拉化
+4. admin 表单：供应商保持文本框，新增 API 协议下拉
 5. 真实渠道端到端联调（§五验收清单）
 6. CHANGELOG 发版记录
 

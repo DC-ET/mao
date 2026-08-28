@@ -5,6 +5,7 @@ export interface LlmModel {
   id?: number;
   name: string;
   provider?: string | null;
+  apiProtocol?: string | null;
   baseUrl: string;
   apiKey: string;
   modelId: string;
@@ -86,6 +87,7 @@ export interface LlmModelConfig {
   id?: number;
   name?: string;
   provider?: string | null;
+  apiProtocol?: string | null;
   baseUrl: string;
   apiKey: string;
   modelId: string;

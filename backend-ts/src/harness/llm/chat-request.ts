@@ -121,6 +121,7 @@ export interface LlmModelConfig {
   id?: number;
   name?: string;
   provider?: string;
+  apiProtocol?: string;
   baseUrl?: string;
   apiKey?: string;
   modelId?: string;

@@ -177,6 +177,7 @@ export interface LlmModelRef {
   id: number;
   name: string;
   provider?: string | null;
+  apiProtocol?: string | null;
   baseUrl?: string | null;
   apiKey?: string | null;
   modelId?: string | null;

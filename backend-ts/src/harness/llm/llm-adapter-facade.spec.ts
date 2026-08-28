@@ -9,8 +9,8 @@ function fakeAdapter(tag: string): LlmAdapter {
   };
 }
 
-function config(provider?: string | null): LlmModelConfig {
-  return { baseUrl: 'https://api.example.test', apiKey: 'key', modelId: 'm', provider } as LlmModelConfig;
+function config(apiProtocol?: string | null): LlmModelConfig {
+  return { baseUrl: 'https://api.example.test', apiKey: 'key', modelId: 'm', apiProtocol } as LlmModelConfig;
 }
 
 describe('LlmAdapterFacade', () => {
@@ -18,7 +18,7 @@ describe('LlmAdapterFacade', () => {
   const anthropic = fakeAdapter('anthropic');
   const facade = new LlmAdapterFacade(new Map([['anthropic', anthropic]]), openai);
 
-  it('按 provider 精确路由', async () => {
+  it('按 apiProtocol 精确路由', async () => {
     await expect(facade.chat({ messages: [] }, config('anthropic'))).resolves.toMatchObject({ id: 'anthropic' });
     await expect(facade.chat({ messages: [] }, config('openai-compatible'))).resolves.toMatchObject({ id: 'openai' });
   });
@@ -28,11 +28,19 @@ describe('LlmAdapterFacade', () => {
     await expect(facade.chat({ messages: [] }, config('ANTHROPIC'))).resolves.toMatchObject({ id: 'anthropic' });
   });
 
-  it('未知与空 provider 回落默认实现', async () => {
+  it('未知与空 apiProtocol 回落默认实现', async () => {
     await expect(facade.chat({ messages: [] }, config('gemini'))).resolves.toMatchObject({ id: 'openai' });
     await expect(facade.chat({ messages: [] }, config(null))).resolves.toMatchObject({ id: 'openai' });
     await expect(facade.chat({ messages: [] }, config(undefined))).resolves.toMatchObject({ id: 'openai' });
     await expect(facade.chat({ messages: [] }, config('  '))).resolves.toMatchObject({ id: 'openai' });
+  });
+
+  it('provider 渠道展示名不参与路由', async () => {
+    const configWithProviderName = {
+      baseUrl: 'https://api.example.test', apiKey: 'key', modelId: 'm',
+      provider: 'anthropic', apiProtocol: '',
+    } as LlmModelConfig;
+    await expect(facade.chat({ messages: [] }, configWithProviderName)).resolves.toMatchObject({ id: 'openai' });
   });
 
   it('stream 透传相同路由', async () => {

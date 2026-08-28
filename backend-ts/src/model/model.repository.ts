@@ -104,6 +104,7 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
     const id = await this.db.insert('llm_model', {
       name: model.name,
       provider: model.provider,
+      apiProtocol: model.apiProtocol,
       baseUrl: model.baseUrl,
       apiKey: model.apiKey,
       modelId: model.modelId,
@@ -126,6 +127,7 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
     await this.db.updateById('llm_model', model.id, {
       name: model.name,
       provider: model.provider,
+      apiProtocol: model.apiProtocol,
       baseUrl: model.baseUrl,
       apiKey: model.apiKey,
       modelId: model.modelId,

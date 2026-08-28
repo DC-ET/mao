@@ -8,9 +8,9 @@ import type {
 } from './chat-request.js';
 
 /**
- * 按 LlmModelConfig.provider 把调用路由到具体协议适配器。
- * 路由键做 trim + 小写归一；未注册的 provider（含空值）一律回落到默认适配器，
- * 保证存量模型（provider 为展示名或空）行为与改造前完全一致。
+ * 按 LlmModelConfig.apiProtocol 把调用路由到具体协议适配器。
+ * 路由键做 trim + 小写归一；未注册的协议（含空值）一律回落到默认适配器，
+ * 保证存量模型（apiProtocol 为空）行为与改造前完全一致。provider 是渠道展示名，不参与路由。
  */
 export class LlmAdapterFacade implements LlmAdapter {
   constructor(
@@ -19,7 +19,7 @@ export class LlmAdapterFacade implements LlmAdapter {
   ) {}
 
   private pick(config: LlmModelConfig): LlmAdapter {
-    const code = config.provider?.trim().toLowerCase();
+    const code = config.apiProtocol?.trim().toLowerCase();
     if (code == null || code === '') return this.fallback;
     return this.delegates.get(code) ?? this.fallback;
   }

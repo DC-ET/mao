@@ -25,21 +25,15 @@
         <el-input v-model="form.name" placeholder="例如: GPT-4o, Claude Opus" />
       </el-form-item>
       <el-form-item label="供应商" prop="provider">
-        <el-select
-          v-model="form.provider"
-          filterable
-          allow-create
-          default-first-option
-          clearable
-          :value-on-clear="''"
-          placeholder="选择或输入供应商协议"
-          style="width: 100%"
-        >
-          <el-option label="openai-compatible（OpenAI 兼容协议）" value="openai-compatible" />
-          <el-option label="anthropic（Anthropic Messages 协议）" value="anthropic" />
-          <el-option label="openai-responses（规划中）" value="openai-responses" disabled />
+        <el-input v-model="form.provider" placeholder="例如: OpenAI, Anthropic" />
+      </el-form-item>
+      <el-form-item label="API 协议">
+        <el-select v-model="form.apiProtocol" style="width: 100%">
+          <el-option label="OpenAI 兼容（ChatCompletions）" value="" />
+          <el-option label="Anthropic（Messages）" value="anthropic" />
+          <el-option label="OpenAI Responses（规划中）" value="openai-responses" disabled />
         </el-select>
-        <span style="margin-left: 8px; color: #909399; font-size: 12px;">决定调用该模型使用的 API 协议，留空按 OpenAI 兼容处理</span>
+        <span style="margin-left: 8px; color: #909399; font-size: 12px;">决定调用该模型使用的 API 协议，供应商仅作渠道标识</span>
       </el-form-item>
       <el-form-item label="模型标识" prop="modelId">
         <el-input v-model="form.modelId" placeholder="例如: gpt-4o, mimo-v2.5-tts" />
@@ -124,6 +118,7 @@ const form = reactive({
   modelType: 'text',
   name: '',
   provider: '',
+  apiProtocol: '',
   modelId: '',
   clientImpersonation: 'none',
   baseUrl: '',
@@ -146,6 +141,7 @@ function resetForm() {
     modelType: props.defaultType,
     name: '',
     provider: '',
+    apiProtocol: '',
     modelId: '',
     clientImpersonation: 'none',
     baseUrl: '',
@@ -163,6 +159,7 @@ watch(() => props.visible, (val) => {
       modelType: props.modelData.modelType || 'text',
       name: props.mode === 'copy' ? `${props.modelData.name || ''} - 副本` : props.modelData.name || '',
       provider: props.modelData.provider || '',
+      apiProtocol: props.modelData.apiProtocol || '',
       modelId: props.modelData.modelId || '',
       clientImpersonation: props.modelData.clientImpersonation || 'none',
       baseUrl: props.modelData.baseUrl || '',

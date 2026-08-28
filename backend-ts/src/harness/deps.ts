@@ -56,6 +56,7 @@ export interface LlmModel {
   id?: number;
   name?: string | null;
   provider?: string | null;
+  apiProtocol?: string | null;
   baseUrl?: string | null;
   apiKey?: string | null;
   modelId?: string | null;
@@ -273,6 +274,7 @@ export function llmModelToConfig(model: LlmModel): LlmModelConfig {
     id: model.id,
     name: model.name ?? undefined,
     provider: model.provider ?? undefined,
+    apiProtocol: model.apiProtocol ?? undefined,
     baseUrl: model.baseUrl ?? undefined,
     apiKey: model.apiKey ?? undefined,
     modelId: model.modelId ?? undefined,

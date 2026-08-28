@@ -380,9 +380,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const modelChatClient = new OpenAiChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
   const anthropicChatClient = new AnthropicChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
   const llmChatClients = new Map<string, LlmChatClient>([['anthropic', anthropicChatClient]]);
-  /** 连通性测试、飞书溢出摘要等非流式链路共用的按 provider 协议路由（与 LlmAdapterFacade 同策略）。 */
+  /** 连通性测试、飞书溢出摘要等非流式链路共用的按 apiProtocol 协议路由（与 LlmAdapterFacade 同策略）。 */
   const routeChatClient = (config: LlmModelConfig): LlmChatClient => {
-    const code = config.provider?.trim().toLowerCase();
+    const code = config.apiProtocol?.trim().toLowerCase();
     if (code != null && llmChatClients.has(code)) return llmChatClients.get(code)!;
     return modelChatClient;
   };
@@ -864,6 +864,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       return {
         baseUrl: model.baseUrl, apiKey: model.apiKey, modelId: model.modelId,
         provider: model.provider ?? undefined,
+        apiProtocol: model.apiProtocol ?? undefined,
         clientImpersonation: (model.clientImpersonation ?? 'none') as ClientImpersonation,
       };
     }),

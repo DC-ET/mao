@@ -65,6 +65,7 @@ export class WeixinVoiceSynthesisService {
           id: model.id,
           name: model.name,
           provider: model.provider ?? undefined,
+          apiProtocol: model.apiProtocol ?? undefined,
           baseUrl: model.baseUrl,
           apiKey: model.apiKey,
           modelId: model.modelId,
