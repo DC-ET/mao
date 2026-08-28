@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { api } from '../api'
 import { useDraftStore } from './draft'
 import type { ChatMessage, TodoItem, ContextWindowInfo, CompactionEvent, QueueMessage, FileChange, PendingQuestion } from '../types/chat'
-import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil, collectLiveRunningTools, mergeRunningToolsIntoMessages } from '../utils/chatMessage'
+import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
 import { nowDateTime } from '../utils/datetime'
 import { cloudGroupKey } from '../utils/cloud-project'
 import { sortByFocusPriority, sessionToFocusCandidate } from '../utils/focusSort'
@@ -1150,15 +1150,6 @@ export const useSessionStore = defineStore('session', () => {
    * fetchMessages 用 REST 历史覆盖缓存后，把覆盖前仍在 running 的工具调用合并回去，
    * 避免切换进行中任务时丢失工具右侧转圈状态。
    */
-  function mergeLiveRunningTools(sessionId: string, liveMessages: ChatMessage[]) {
-    const sid = String(sessionId)
-    const running = collectLiveRunningTools(liveMessages)
-    if (running.length === 0) return
-    const current = sessionMessages.value.get(sid) ?? []
-    const merged = mergeRunningToolsIntoMessages(current, running)
-    sessionMessages.value.set(sid, merged)
-  }
-
   function getMessages(sessionId: string): ChatMessage[] {
     return sessionMessages.value.get(String(sessionId)) ?? []
   }
@@ -1284,7 +1275,7 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  function finishInterruptedStreamingMessage(sessionId: string) {
+  function finishInterruptedStreamingMessage(sessionId: string, reason = '已被新的纠偏中断') {
     const sid = String(sessionId)
     const liveId = streamingAssistantMessageIds.get(sid)
     if (!liveId) return
@@ -1295,8 +1286,8 @@ export const useSessionStore = defineStore('session', () => {
         if (call.status === 'running' || call.status === 'pending') {
           call.status = 'error'
           call.argsStreaming = false
-          call.summary = call.summary || '已被新的纠偏中断'
-          call.result = call.result || '已被新的纠偏中断'
+          call.summary = call.summary || reason
+          call.result = call.result || reason
         }
       }
       sessionMessages.value.set(sid, [...list])
@@ -1716,7 +1707,6 @@ export const useSessionStore = defineStore('session', () => {
     addUserMessage,
     addAssistantMessage,
     ensureStreamingAssistantMessage,
-    mergeLiveRunningTools,
     getMessages,
     appendDelta,
     appendThinkingDelta,

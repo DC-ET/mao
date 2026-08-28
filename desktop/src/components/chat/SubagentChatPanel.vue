@@ -65,10 +65,8 @@ import { useToolApprovals } from '../../composables/useChat'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { api } from '../../api'
 import {
-  collectLiveRunningTools,
   mapMessagesWithFileChanges,
   mapCompactionEvents,
-  mergeRunningToolsIntoMessages,
 } from '../../utils/chatMessage'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
@@ -224,7 +222,8 @@ async function fetchMessages() {
   try {
     const existing = sessionStore.getMessages(sid.value)
     // 首次打开必须回补历史；后续激活已有真实流式输出时才跳过，避免重复覆盖。
-    if (historyLoaded.value && shouldPreserveLiveStream(existing)) return
+    const preserveLive = shouldPreserveLiveStream(existing)
+    if (historyLoaded.value && preserveLive) return
 
     const { data } = await api.get(`/sessions/${props.childSessionId}/messages`, {
       params: { roundLimit: 50 },
@@ -233,10 +232,11 @@ async function fetchMessages() {
     const { messages, allChanges } = mapMessagesWithFileChanges(raw)
     if (messages.length === 0) return
 
-    // 请求期间可能已收到实时工具事件：以历史为基线，并把仍在运行的工具合并回来。
-    const liveRunningTools = collectLiveRunningTools(sessionStore.getMessages(sid.value))
-    const mergedMessages = mergeRunningToolsIntoMessages(messages, liveRunningTools)
-    sessionStore.setMessages(sid.value, mergedMessages)
+    // 正在流式输出的 tracked 气泡保留在尾部：结果事件只会落到 tracked 气泡，
+    // 合并进历史的副本永远等不到结果事件，会变成永不结束的幻影转圈
+    sessionStore.applyFetchedMessages(sid.value, messages, {
+      preserveStreamingAssistant: preserveLive,
+    })
     historyLoaded.value = true
     sessionStore.setFileChanges(sid.value, allChanges)
     if (Array.isArray(data?.compactionEvents)) {

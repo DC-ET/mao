@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useSessionStore } from './session'
 import { api } from '../api'
-import { collectLiveRunningTools, mergeRunningToolsIntoMessages } from '../utils/chatMessage'
 
 vi.mock('../api', () => ({
   api: {
@@ -318,36 +317,6 @@ describe('session store 实体/投影模型', () => {
     const msgs = store.getMessages('1')
     expect(msgs.map(m => m.id)).toEqual(['10', '11', '12'])
     expect(msgs[2].content).toBe('#{commit_and_push}#')
-  })
-
-  it('子代理历史回补保留请求期间新到达的运行中工具', () => {
-    const live = [{
-      id: 'msg_live',
-      role: 'assistant' as const,
-      content: '',
-      createdAt: '2026-08-15 10:00:02',
-      toolCalls: [{
-        id: 'call-live',
-        name: 'shell',
-        input: { command: 'npm run build' },
-        status: 'running' as const,
-        isExpanded: false,
-        argsStreaming: false,
-        summary: '执行 npm run build',
-      }],
-      segments: [{ type: 'tool' as const, callId: 'call-live' }],
-    }]
-    const history = [
-      { id: '10', role: 'user' as const, content: '实现相册模块', createdAt: '2026-08-15 10:00:00' },
-      { id: '11', role: 'assistant' as const, content: '先读取代码', createdAt: '2026-08-15 10:00:01' },
-    ]
-
-    const merged = mergeRunningToolsIntoMessages(history, collectLiveRunningTools(live))
-
-    expect(merged[0].content).toBe('实现相册模块')
-    expect(merged[1].toolCalls).toEqual([
-      expect.objectContaining({ id: 'call-live', status: 'running', summary: '执行 npm run build' }),
-    ])
   })
 
   it('applyFetchedMessages 用落库用户消息替换尚未收到保存确认的乐观消息', () => {

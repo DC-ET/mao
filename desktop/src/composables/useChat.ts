@@ -5,7 +5,7 @@ import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
 import { collectLocalUnsyncedSkills } from '../utils/localSkills'
 import { collectAgentsMdContent } from '../utils/agentsMd'
-import { mapMessagesWithFileChanges, collectLiveRunningTools, mergeRunningToolsIntoMessages, mapCompactionEvents } from '../utils/chatMessage'
+import { mapMessagesWithFileChanges, mapCompactionEvents } from '../utils/chatMessage'
 import { normalizeMessageRole, type ChatMessage, type QuestionAnswer } from '../types/chat'
 
 export type {
@@ -153,7 +153,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const activities = computed(() => sessionStore.activeActivities)
   const contextWindow = computed(() => sessionStore.activeContextWindow)
 
-  async function fetchMessages(options?: { preserveRunningTools?: boolean }) {
+  async function fetchMessages(options?: { preserveLiveStream?: boolean }) {
     const sid = sessionId.value
     if (!sid) return
     sessionStore.clearMessagePageState(sid)
@@ -161,15 +161,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const { data } = await api.get(`/sessions/${sid}/messages`, { params: { roundLimit: 5 } })
       const raw: Array<Record<string, unknown>> = data?.messages || []
       const { messages, allChanges } = mapMessagesWithFileChanges(raw)
-      // 覆盖前一刻采集仍在 running 的工具，避免 REST 历史抹掉转圈状态
-      const running = options?.preserveRunningTools
-        ? collectLiveRunningTools(sessionStore.getMessages(sid))
-        : []
-      const nextMessages = running.length > 0
-        ? mergeRunningToolsIntoMessages(messages, running)
-        : messages
-      sessionStore.applyFetchedMessages(sid, nextMessages, {
-        preserveStreamingAssistant: Boolean(options?.preserveRunningTools),
+      // 正在流式输出的 tracked 气泡由 applyFetchedMessages 保留在尾部。
+      // 运行中工具禁止合并进 REST 历史：结果事件只会落到 tracked 气泡，
+      // 合并出的副本永远等不到结果事件，会变成永不结束的幻影转圈。
+      sessionStore.applyFetchedMessages(sid, messages, {
+        preserveStreamingAssistant: Boolean(options?.preserveLiveStream),
       })
       sessionStore.setFileChanges(sid, allChanges)
       if (Array.isArray(data?.compactionEvents)) {
@@ -1001,7 +997,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     subscribe(sessionIdVal)
 
     if (!active || !hasCompleteCache) {
-      fetchMessages({ preserveRunningTools: active }).then(() => {
+      fetchMessages({ preserveLiveStream: active }).then(() => {
         if (isActivePhase(sessionStore.activeSession?.phase)) {
           sessionStore.ensureStreamingAssistantMessage(sessionIdVal)
         }

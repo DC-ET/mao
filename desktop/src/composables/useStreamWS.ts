@@ -578,6 +578,14 @@ export function useStreamWS() {
             }
           }
           if (terminalPhases.includes(phase)) {
+            // 服务端对被中止的轮次不会补发工具结果（agent-loop 命中 cancelFlag 后直接丢弃），
+            // CANCELLED/FAILED 必须就地终结仍在 running 的工具，否则转圈永久残留
+            if (phase === 'CANCELLED' || phase === 'FAILED') {
+              sessionStore.finishInterruptedStreamingMessage(
+                sessionId,
+                phase === 'CANCELLED' ? '执行已被中止' : '执行失败中断'
+              )
+            }
             sessionStore.setStreaming(sessionId, false)
             sessionStore.setThinking(sessionId, false)
             sessionStore.setCompacting(sessionId, false)
@@ -733,6 +741,13 @@ export function useStreamWS() {
           sessionStore.updateSideTaskPhase(Number(sessionId), phase, startedAt)
           sessionStore.updateSubagentPhase(Number(sessionId), phase)
           if (['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE'].includes(phase)) {
+            // 与 session_status 终态分支一致：断线期间错过结果事件的工具需要就地终结
+            if (phase === 'FAILED' || phase === 'CANCELLED') {
+              sessionStore.finishInterruptedStreamingMessage(
+                sessionId,
+                phase === 'CANCELLED' ? '执行已被中止' : '执行失败中断'
+              )
+            }
             sessionStore.setStreaming(sessionId, false)
             sessionStore.setThinking(sessionId, false)
             sessionStore.setCompacting(sessionId, false)
