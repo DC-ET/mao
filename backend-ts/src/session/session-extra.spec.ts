@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
 import { SessionService } from './session.service.js';
+import { SessionGroupKey } from './util/session-group-key.js';
 import { SessionActivityHeartbeat } from './session-activity-heartbeat.js';
 import { TaskTerminalService } from './task-terminal.service.js';
 import { GitOperationService, injectHttpsToken, maskToken } from './git-operation.service.js';
@@ -116,6 +117,23 @@ describe('SessionService extra', () => {
     await service.listSessionsForDashboard(7);
     await service.deleteSession(11);
     expect(sessionRepo.logicalDelete).toHaveBeenCalled();
+  });
+
+  it('createSessionCloudPrefersExplicitCloudProjectKeyForFeishuPrivate', async () => {
+    const { service } = makeService();
+    const feishuPrivate = await service.createSession(
+      7, 9, '飞书Bot会话', 'CLOUD', '/opt/mao-data/workspace/feishu-chat/1/private-3', 'FULL',
+      false, 'linux', '/bin/bash', 'Linux', null, 'feishu-1-private-3',
+    );
+    expect(feishuPrivate.projectKey).toBe('feishu-1-private-3');
+    // 分组判定：私聊 projectKey 命中后归入 FEISHU_PRIVATE，而非按 workspace 误判为飞书群聊。
+    expect(SessionGroupKey.of(feishuPrivate)).toBe('FEISHU_PRIVATE:9');
+
+    const withoutKey = await service.createSession(
+      7, 9, 't', 'CLOUD', '/opt/mao-data/workspace/feishu-chat/1/oc_abc', 'FULL',
+      false, 'linux', '/bin/bash', 'Linux', null,
+    );
+    expect(withoutKey.projectKey).toBe('oc_abc');
   });
 
   it('updatePhase terminal sets unread except for weixin channel sessions', async () => {

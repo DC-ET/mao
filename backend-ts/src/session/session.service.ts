@@ -108,7 +108,11 @@ export class SessionService {
     if (session.executionMode === 'CLOUD') {
       if (workspace != null && workspace.length > 0) {
         session.workspace = workspace;
-        session.projectKey = SessionService.deriveProjectKey(workspace);
+        // 显式 cloudProjectKey（如飞书通道 feishu-{botId}-private-{uid}）优先于路径尾段推导，
+        // 否则 feishu-chat 工作区会因 projectKey 不匹配被误判为群聊分组。
+        session.projectKey = cloudProjectKey != null && cloudProjectKey.trim().length > 0
+          ? cloudProjectKey.trim()
+          : SessionService.deriveProjectKey(workspace);
       } else {
         session.workspace = null;
         session.projectKey = null;
