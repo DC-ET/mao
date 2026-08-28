@@ -29,7 +29,7 @@
       </el-form-item>
       <el-form-item label="API 协议">
         <el-select v-model="form.apiProtocol" style="width: 100%">
-          <el-option label="OpenAI 兼容（ChatCompletions）" value="" />
+          <el-option label="OpenAI 兼容（ChatCompletions）" value="openai-compatible" />
           <el-option label="Anthropic（Messages）" value="anthropic" />
           <el-option label="OpenAI Responses（规划中）" value="openai-responses" disabled />
         </el-select>
@@ -118,7 +118,7 @@ const form = reactive({
   modelType: 'text',
   name: '',
   provider: '',
-  apiProtocol: '',
+  apiProtocol: 'openai-compatible',
   modelId: '',
   clientImpersonation: 'none',
   baseUrl: '',
@@ -141,7 +141,7 @@ function resetForm() {
     modelType: props.defaultType,
     name: '',
     provider: '',
-    apiProtocol: '',
+    apiProtocol: 'openai-compatible',
     modelId: '',
     clientImpersonation: 'none',
     baseUrl: '',
@@ -159,7 +159,7 @@ watch(() => props.visible, (val) => {
       modelType: props.modelData.modelType || 'text',
       name: props.mode === 'copy' ? `${props.modelData.name || ''} - 副本` : props.modelData.name || '',
       provider: props.modelData.provider || '',
-      apiProtocol: props.modelData.apiProtocol || '',
+      apiProtocol: props.modelData.apiProtocol || 'openai-compatible',
       modelId: props.modelData.modelId || '',
       clientImpersonation: props.modelData.clientImpersonation || 'none',
       baseUrl: props.modelData.baseUrl || '',
