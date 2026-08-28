@@ -265,6 +265,10 @@ export class ResponsesLlmAdapter implements LlmAdapter {
     const callKeyByItemId = new Map<string, string>();
     // 已收到过 arguments.delta 的聚合键：这类 item 的完整参数已通过增量累积，done 事件不再重复下发
     const keysWithArgsDelta = new Set<string>();
+    // 本轮 reasoning 项的往返引用（流式捕获）：挂到轮内首个 toolCall 随 tool_calls JSON 持久化，
+    // 下一轮 convertMessages 回传为配对的 reasoning 项（强制校验网关缺它即 400）
+    let streamingReasoningRef: ReasoningItemRef | null = null;
+    let firstToolCallEmitted = false;
     const rememberCallKeyMapping = (itemId: string | undefined, callKey: string): void => {
       if (itemId != null && itemId !== '' && itemId !== callKey) callKeyByItemId.set(itemId, callKey);
     };
@@ -307,6 +311,16 @@ export class ResponsesLlmAdapter implements LlmAdapter {
         }
         case 'response.output_item.added': {
           const item = event.item;
+          // reasoning item（含加密内容引用）：流式捕获，待首个 function_call 出现时挂靠下发
+          if (isPlainObject(item) && item.type === 'reasoning') {
+            const ref: ReasoningItemRef = {};
+            const id = str(item.id);
+            const enc = str(item.encrypted_content);
+            if (id != null && id !== '') ref.id = id;
+            if (enc != null && enc !== '') ref.encryptedContent = enc;
+            if (ref.id != null || ref.encryptedContent != null) streamingReasoningRef = ref;
+            return;
+          }
           if (isPlainObject(item) && item.type === 'function_call') {
             hasToolCallOutput = true;
             emitted = true;
@@ -315,8 +329,14 @@ export class ResponsesLlmAdapter implements LlmAdapter {
             const syntheticId = str(item.call_id) ?? str(item.id) ?? `__idx_${event.output_index ?? 0}`;
             rememberCallKeyMapping(str(item.id), syntheticId);
             emitChunk(callback, syntheticId, {
-              toolCalls: [{ id: syntheticId, index: event.output_index ?? 0, function: { name: item.name as string | undefined, arguments: '' } }],
+              toolCalls: [{
+                id: syntheticId,
+                index: event.output_index ?? 0,
+                ...(streamingReasoningRef != null && !firstToolCallEmitted ? { reasoning: streamingReasoningRef } : {}),
+                function: { name: item.name as string | undefined, arguments: '' },
+              }],
             });
+            firstToolCallEmitted = true;
           }
           return;
         }
@@ -334,6 +354,23 @@ export class ResponsesLlmAdapter implements LlmAdapter {
           // 兼容不发 arguments.delta 事件的网关：done item 携带完整参数时在此下发。
           // 已通过 arguments.delta 增量下发过的 item 跳过（完整值再发会被 AgentLoop 拼接两遍）。
           const item = event.item;
+          if (isPlainObject(item) && item.type === 'reasoning') {
+            // reasoning done 携带 include 换取的 encrypted_content：原地补全已挂靠的引用
+            //（AgentLoop 通过首个 function_call delta 持有同一对象）；未挂靠且尚未有工具调用时兜底捕获
+            const enc = str(item.encrypted_content);
+            const id = str(item.id);
+            if (streamingReasoningRef != null) {
+              if (enc != null && enc !== '' && streamingReasoningRef.encryptedContent == null) {
+                streamingReasoningRef.encryptedContent = enc;
+              }
+              if ((streamingReasoningRef.id == null || streamingReasoningRef.id === '') && id != null && id !== '') {
+                streamingReasoningRef.id = id;
+              }
+            } else if (!firstToolCallEmitted && ((id != null && id !== '') || (enc != null && enc !== ''))) {
+              streamingReasoningRef = { ...(id != null && id !== '' ? { id } : {}), ...(enc != null && enc !== '' ? { encryptedContent: enc } : {}) };
+            }
+            return;
+          }
           if (isPlainObject(item) && item.type === 'function_call') {
             const syntheticId = resolveCallKey(str(item.call_id) ?? str(item.id), event.output_index);
             rememberCallKeyMapping(str(item.id), syntheticId);
@@ -365,11 +402,15 @@ export class ResponsesLlmAdapter implements LlmAdapter {
           throw new StreamErrorEventException(code, str((err as Record<string, unknown>).message) ?? 'stream error event');
         }
         case 'response.incomplete': {
-          // 终态事件：响应未正常完成（如输出长度截断）
+          // 终态事件：响应未正常完成（如输出长度截断）；usage 与 completed 同样提取，保证截断轮用量统计不失真
           responseIncomplete = true;
           const response = event.response;
-          if (isPlainObject(response) && isPlainObject(response.incomplete_details)) {
-            if (response.incomplete_details.reason === 'max_output_tokens') finishReason = 'length';
+          if (isPlainObject(response)) {
+            const u = parseResponsesUsage(response.usage);
+            if (u != null) usageObjAssign(usage, u);
+            if (isPlainObject(response.incomplete_details)) {
+              if (response.incomplete_details.reason === 'max_output_tokens') finishReason = 'length';
+            }
           }
           done = true;
           return;
@@ -748,10 +789,11 @@ function buildResponsesBody(request: ChatRequest, config: LlmModelConfig, messag
   if (request.reasoning != null) {
     body.reasoning = { effort: request.reasoning.effort ?? 'high' };
   }
-  // stateless 多轮的 reasoning 上下文往返：function_call 回传时需配对 reasoning 项，
-  // 加密内容仅通过 include 下发（与 previous_response_id 互斥，Mao 不使用前者）
-  const needsReasoningReplay = extractReasoningRefs(messages).length > 0;
-  body.include = needsReasoningReplay ? ['reasoning.encrypted_content'] : [];
+  // stateless 多轮的 reasoning 上下文往返：function_call 回传时需配对 reasoning 项，且网关只在
+  // include:['reasoning.encrypted_content'] 生效时下发密文。include 常驻：若按"历史已有引用"条件下发，
+  // 首轮工具调用流式期间引用尚未入历史、include 为空 → 拿不到密文 → 下轮无引用可回传，形成死锁。
+  // 代价仅是请求体多一个空 include 项（纯文本轮网关不下发 reasoning 时无额外输出）。
+  body.include = ['reasoning.encrypted_content'];
   // 输出上限含 reasoning token，推理模型需预留思考预算，统一给足
   body.max_output_tokens = RESPONSES_MAX_OUTPUT_TOKENS;
   return body;
@@ -863,9 +905,10 @@ function reasoningItem(ref: ReasoningItemRef): Record<string, unknown> {
 }
 
 function functionCallItem(tc: ToolCall): Record<string, unknown> {
+  // 不回传 id（响应侧 item id，fc_* 格式）：持久化的 tc.id 是 call_id（call_*），
+  // 填进 id 属格式错配；配对只依赖 call_id，官方 API 中 id 为可选字段
   return {
     type: 'function_call',
-    ...(tc.id != null && tc.id !== '' ? { id: tc.id } : {}),
     call_id: tc.id ?? '',
     name: tc.function?.name ?? '',
     arguments: tc.function?.arguments ?? '{}',
@@ -886,16 +929,6 @@ function extractReasoningRef(msg: ChatMessage): ReasoningItemRef | null {
     }
  }
   return null;
-}
-
-function extractReasoningRefs(messages: ChatMessage[]): ReasoningItemRef[] {
-  const refs: ReasoningItemRef[] = [];
-  for (const msg of messages) {
-    if (msg.role !== 'assistant') continue;
-    const ref = extractReasoningRef(msg);
-    if (ref != null) refs.push(ref);
-  }
-  return refs;
 }
 
 /** reasoning 往返引用的持久化前缀：thinkingContent 里以它开头的内容是 JSON 引用而非人类可读文本。 */

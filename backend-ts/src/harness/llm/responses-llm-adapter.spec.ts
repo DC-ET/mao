@@ -158,7 +158,7 @@ describe('convertMessages（请求转换）', () => {
     ]);
     expect(input).toEqual([
       { role: 'user', content: [{ type: 'input_text', text: '查天气' }] },
-      { type: 'function_call', id: 'call_1', call_id: 'call_1', name: 'lookup', arguments: '{"q":"bj"}' },
+      { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"q":"bj"}' },
       { type: 'function_call_output', call_id: 'call_1', output: '晴 25 度' },
       { role: 'user', content: [{ type: 'input_text', text: '谢谢' }] },
     ]);
@@ -295,7 +295,7 @@ describe('ResponsesLlmAdapter - chat（非流式）', () => {
     expect(body.model).toBe('gpt-responses-test');
     expect(body.stream).toBe(false);
     expect(body.store).toBe(false);
-    expect(body.include).toEqual([]);
+    expect(body.include).toEqual(['reasoning.encrypted_content']);
     expect(body.max_output_tokens).toBe(RESPONSES_MAX_OUTPUT_TOKENS);
     expect(body.temperature).toBe(0.2);
     expect(Array.isArray(body.tools)).toBe(true);
@@ -417,6 +417,49 @@ describe('ResponsesLlmAdapter - stream（流式）', () => {
     });
     const body = parseBody(server.bodies[0]);
     expect(body.stream).toBe(true);
+  });
+
+  it('reasoning item 流式捕获：挂到首个 function_call，随聚合持久化供下轮回传', async () => {
+    server = new QueueServer();
+    server.enqueueSse([
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1"}}',
+      '',
+      'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"思考"}',
+      '',
+      'data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_1","call_id":"call_x","name":"lookup","arguments":""}}',
+      '',
+      'data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":1,"delta":"{\\\"q\\\":\\\"bj\\\"}"}',
+      '',
+      'data: {"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_1","encrypted_content":"ENC_STREAM"}}',
+      '',
+      'data: {"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"fc_1","call_id":"call_x","name":"lookup","arguments":"{\\\"q\\\":\\\"bj\\\"}"}}',
+      '',
+      'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}',
+      '',
+    ].join('\n'));
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter().stream(request('hi'), configOf(server), callback);
+    expect(callback.error).toBeUndefined();
+    // include 常驻：首轮工具调用的密文必须能换到
+    const body = parseBody(server.bodies[0]);
+    expect(body.include).toEqual(['reasoning.encrypted_content']);
+
+    // 按 AgentLoop mergeToolCall 的方式聚合（reasoning 原样覆盖，arguments 追加）
+    const merged = new Map<string, ToolCall>();
+    for (const chunk of callback.chunks) {
+      for (const tc of chunk.choices?.[0]?.delta?.toolCalls ?? []) {
+        const key = tc.id ?? String(tc.index);
+        const target = merged.get(key) ?? { id: tc.id, type: 'function', function: { name: '', arguments: '' } };
+        if (tc.function?.name && !target.function?.name) target.function!.name = tc.function.name;
+        if (tc.function?.arguments) target.function!.arguments = (target.function!.arguments ?? '') + tc.function.arguments;
+        if (tc.reasoning != null) target.reasoning = tc.reasoning;
+        merged.set(key, target);
+      }
+    }
+    expect(merged.get('call_x')?.function?.arguments).toBe('{"q":"bj"}');
+    expect(merged.get('call_x')?.reasoning).toEqual({ id: 'rs_1', encryptedContent: 'ENC_STREAM' });
   });
 
   it('function_call：output_item.added + arguments.delta 聚合出完整 toolCalls', async () => {
@@ -558,6 +601,24 @@ describe('ResponsesLlmAdapter - stream（流式）', () => {
     expect(callback.retryReasons).toContain('thinking_truncated');
     expect(callback.streamResetCount).toBe(1);
     expect(callback.chunks.map((c) => c.choices?.[0]?.delta?.content ?? '').join('')).toBe('重试成功');
+  });
+
+  it('incomplete 终态同样提取 usage（非截断场景正常收流，用量统计不失真）', async () => {
+    server = new QueueServer();
+    server.enqueueSse([
+      'data: {"type":"response.output_text.delta","item_id":"m","delta":"部分"}',
+      '',
+      'data: {"type":"response.incomplete","response":{"id":"resp_1","status":"incomplete","incomplete_details":{"reason":"content_filter"},"usage":{"input_tokens":9,"output_tokens":4,"total_tokens":13}}}',
+      '',
+    ].join('\n'));
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter().stream(request('hi'), configOf(server), callback);
+    expect(callback.error).toBeUndefined();
+    expect(callback.usage?.promptTokens).toBe(9);
+    expect(callback.usage?.completionTokens).toBe(4);
+    expect(callback.usage?.totalTokens).toBe(13);
   });
 });
 
