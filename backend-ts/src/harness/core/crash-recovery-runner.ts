@@ -6,8 +6,10 @@ import type {
   ActivityService, LlmModelMapper, Session, SessionActivityHeartbeat, SessionMapper,
   SessionService, StreamingWsRegistry, TaskTerminalService,
 } from '../deps.js';
+import type { AgentEventListener } from './agent-event-listener.js';
 import type { AgentLoop } from './agent-loop.js';
 import type { HarnessService } from './harness-service.js';
+import { CompositeAgentEventListener } from './composite-agent-event-listener.js';
 import type { SessionTodoMapper } from '../todo/session-todo.mapper.js';
 import type { SubagentRecoveryCoordinator } from '../delegate/subagent-recovery-coordinator.js';
 import {
@@ -17,6 +19,11 @@ import {
   readDeployLock,
   shouldDeferAllRecoveryDuringDeploy,
 } from './deploy-lock.js';
+
+export interface RecoveryExtraListener extends AgentEventListener {
+  /** 恢复续跑被取消时的终态通知（如飞书进度卡片 PATCH「已取消」）。 */
+  cancel?(interrupted?: boolean): Promise<boolean>;
+}
 
 export class CrashRecoveryRunner {
   private deferredTimer: ReturnType<typeof setTimeout> | null = null;
@@ -45,6 +52,8 @@ export class CrashRecoveryRunner {
     },
     private readonly onExecutionFinished?: (sessionId: number, userId: number) => Promise<void>,
     private readonly subagentCoordinator?: SubagentRecoveryCoordinator,
+    /** 恢复续跑时的额外事件监听（如飞书进度卡片续更）；返回 null 表示该会话无需额外监听。 */
+    private readonly createExtraListeners?: (sessionId: number, userId: number | null, executionId: string) => Promise<RecoveryExtraListener | null>,
   ) {}
 
   async run(): Promise<void> {
@@ -136,6 +145,7 @@ export class CrashRecoveryRunner {
   private async recoverSession(snapshot: Session): Promise<void> {
     const sessionId = snapshot.id!;
     const userId = snapshot.userId ?? null;
+    let extra: RecoveryExtraListener | null = null;
     // 恢复前重查当前状态：候选来自启动时（或延迟恢复的初始）快照，蓝绿排空期间
     // 会话可能已被旧实例正常收尾进入终态，直接重放会把已完成会话误判为 FAILED。
     const current = await this.sessionMapper.selectById(sessionId);
@@ -161,17 +171,29 @@ export class CrashRecoveryRunner {
         sessionTodoMapper: this.sessionTodoMapper,
         sessionService: this.sessionService as never,
       }, sessionId, userId ?? 0, executionId, await this.resolveSupportsVision(session));
+      // 挂载额外监听（如飞书进度卡片）：失败不阻断恢复，仅丢失该次续跑的卡片续更。
+      try {
+        extra = await this.createExtraListeners?.(sessionId, userId, executionId) ?? null;
+      } catch (e) {
+        harnessLog('warn', `Recovery extra listener failed for session ${sessionId}`, e);
+      }
       harnessLog('info', `Session ${sessionId}: starting recovery execution`);
       await this.sessionService.updatePhase(sessionId, 'RUNNING');
       this.notifyClient(userId, sessionId, 'RUNNING');
-      await this.harnessService.execute(sessionId, null, listener as never, cancelFlag);
+      const executionListener = extra == null ? listener as never : CompositeAgentEventListener.of(listener, extra);
+      await this.harnessService.execute(sessionId, null, executionListener as never, cancelFlag);
       if (cancelFlag.get()) {
+        try { await extra?.cancel?.(); } catch (e) {
+          harnessLog('warn', `Recovery extra cancel failed for session ${sessionId}`, e);
+        }
         await this.taskTerminalService.finishExecution(sessionId, userId, 'CANCELLED', executionId);
       } else {
         await this.taskTerminalService.finishExecution(sessionId, userId, 'COMPLETED', executionId);
       }
       harnessLog('info', `Session ${sessionId}: recovery completed`);
     } catch (e) {
+      // 恢复续跑异常：额外监听（如飞书卡片）同步收到 FAILED 终态，避免停留在「正在处理」。
+      try { extra?.onError(e); } catch { /* extra 已尽力 */ }
       harnessLog('error', `Recovery failed for session ${sessionId}`, e);
       try {
         await this.taskTerminalService.finishExecution(

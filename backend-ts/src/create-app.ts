@@ -198,12 +198,13 @@ import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
 import { FeishuInboundQueueRepository } from './feishu/inbound-queue.repository.js';
+import { MysqlFeishuProgressCardRepository } from './feishu/progress-card.repository.js';
 import { FeishuTaskQueueService } from './feishu/inbound-queue.service.js';
 import { FeishuCardActionService } from './feishu/card-action.service.js';
 import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
-import type { FeishuCardProgress } from './feishu/card-progress-listener.js';
+import { FeishuCardProgressListener, type FeishuCardProgress } from './feishu/card-progress-listener.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 
@@ -1020,30 +1021,49 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       : client.im.v1.message.create({ params: { receive_id_type: 'open_id' }, data: { ...data, receive_id: context.senderId! } }));
     return (response as { data?: { message_id?: string } }).data?.message_id ?? null;
   };
+  /** 250ms 节流的进度卡片 PATCH 闭包：正常执行与崩溃恢复续跑共用同一实现。 */
+  const createPatchedProgress = (client: Lark.Client, cardMessageId: string, cancelAction: { sessionId: number; sender: string } | null): FeishuCardProgress => {
+    let nextUpdateAt = 0;
+    return {
+      update: async (status, round, content, tools) => {
+        const wait = nextUpdateAt - Date.now();
+        if (wait > 0) await new Promise<void>((resolve) => setTimeout(resolve, wait));
+        nextUpdateAt = Date.now() + 250;
+        await client.im.v1.message.patch({
+          path: { message_id: cardMessageId },
+          data: { content: JSON.stringify(buildFeishuProgressCard(status, round, content, tools, cancelAction ?? undefined)) },
+        });
+      },
+    };
+  };
   const createFeishuProgressCard = async (context: FeishuInboundContext, sessionId: number): Promise<FeishuCardProgress | null> => {
-    const client = await getFeishuClient(Number(context.accountId));
+    const botId = Number(context.accountId);
+    const client = await getFeishuClient(botId);
     if (client == null) return null;
     const cancelAction = { sessionId, sender: context.senderId ?? '' };
+    // 持久化「会话 → 活跃进度卡片」映射：进程重启后崩溃恢复续跑可凭此续更卡片直至终态。
+    // 持久化失败不阻断执行，仅丢失该任务的恢复续更能力。
+    const persistCard = async (cardMessageId: string): Promise<void> => {
+      try {
+        await feishuProgressCardRepo.upsert({
+          sessionId, botId, cardMessageId,
+          chatType: context.chatType,
+          chatId: context.chatId,
+          senderOpenId: context.senderId,
+        });
+      } catch (error) {
+        console.warn(`飞书进度卡片映射持久化失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
     const existingMessageId = context.progressCardMessageId;
+    if (existingMessageId != null) {
+      const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction);
+      await client.im.v1.message.patch({ path: { message_id: existingMessageId }, data: { content: JSON.stringify(card) } });
+      await persistCard(existingMessageId);
+      return createPatchedProgress(client, existingMessageId, cancelAction);
+    }
     const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction);
     const data = { msg_type: 'interactive', content: JSON.stringify(card) };
-    if (existingMessageId != null) {
-      await client.im.v1.message.patch({ path: { message_id: existingMessageId }, data: { content: data.content } });
-    }
-    if (existingMessageId != null) {
-      let nextUpdateAt = 0;
-      return {
-        update: async (status, round, content, tools) => {
-          const wait = nextUpdateAt - Date.now();
-          if (wait > 0) await new Promise<void>((resolve) => setTimeout(resolve, wait));
-          nextUpdateAt = Date.now() + 250;
-          await client.im.v1.message.patch({
-            path: { message_id: existingMessageId },
-            data: { content: JSON.stringify(buildFeishuProgressCard(status, round, content, tools, cancelAction)) },
-          });
-        },
-      };
-    }
     const response = await (context.chatType === 'group' && context.messageId != null
       ? client.im.v1.message.reply({ path: { message_id: context.messageId }, data })
       : client.im.v1.message.create({
@@ -1052,18 +1072,22 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       }));
     const messageId = (response as { data?: { message_id?: string } }).data?.message_id;
     if (messageId == null || messageId === '') throw new Error('飞书处理中卡片发送失败：未返回 message_id');
-    let nextUpdateAt = 0;
-    return {
-      update: async (status, round, content, tools) => {
-        const wait = nextUpdateAt - Date.now();
-        if (wait > 0) await new Promise<void>((resolve) => setTimeout(resolve, wait));
-        nextUpdateAt = Date.now() + 250;
-        await client.im.v1.message.patch({
-          path: { message_id: messageId },
-          data: { content: JSON.stringify(buildFeishuProgressCard(status, round, content, tools, cancelAction)) },
-        });
-      },
-    };
+    await persistCard(messageId);
+    return createPatchedProgress(client, messageId, cancelAction);
+  };
+  /** 崩溃恢复续跑：按会话查找活跃进度卡片并构造续更 progress；无映射或加载失败返回 null（不阻断恢复）。 */
+  const createFeishuRecoveryProgress = async (sessionId: number): Promise<FeishuCardProgress | null> => {
+    try {
+      const row = await feishuProgressCardRepo.findBySessionId(sessionId);
+      if (row == null) return null;
+      const client = await getFeishuClient(row.botId);
+      if (client == null) return null;
+      const cancelAction = row.senderOpenId != null && row.senderOpenId !== '' ? { sessionId, sender: row.senderOpenId } : null;
+      return createPatchedProgress(client, row.cardMessageId, cancelAction);
+    } catch (error) {
+      console.warn(`飞书恢复进度卡片加载失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
   };
   // 私聊会话按当前绑定用户隔离：同一 union_id 换绑到其他用户时不复用原会话/工作区。
   const resolveFeishuUserId = async (accountId: string, context: FeishuInboundContext): Promise<number | undefined> => {
@@ -1072,6 +1096,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     return (await feishuBinding.findUserIdByUnionId(unionId)) ?? undefined;
   };
   const feishuInboundQueueRepo = new FeishuInboundQueueRepository(db);
+  const feishuProgressCardRepo = new MysqlFeishuProgressCardRepository(db);
   const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
   /** 排队卡片展示位置：入队完成后队列中的 QUEUED 行数（含本条，插入语义=队尾第 N 位）。 */
   const queuePositionOf = async (sessionId: number): Promise<number> => (await feishuInboundQueueRepo.countPending(sessionId));
@@ -1170,6 +1195,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     onExecutionFinished: async (sessionId, _context, executionId, phase) => {
       const session = await sessionService.getSession(sessionId);
       await taskTerminal.finishExecution(sessionId, session.userId!, phase, executionId);
+      // 任务终态后清理活跃进度卡片映射，避免崩溃恢复续跑误更已终态的旧卡片。
+      try { await feishuProgressCardRepo.deleteBySessionId(sessionId); } catch (error) {
+        console.warn(`清理飞书进度卡片映射失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   });
   const resolveFeishuSenderName = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
@@ -1518,12 +1547,21 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     agentExecutor,
     async (sessionId, userId) => {
       void wsHandler.autoConsumeQueue(sessionId, userId);
+      // 恢复终态后清理活跃进度卡片映射；必须先于队列接力消费（下一任务会写入新映射）。
+      await feishuProgressCardRepo.deleteBySessionId(sessionId).catch((error) => {
+        console.warn(`清理飞书进度卡片映射失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      });
       // 崩溃恢复续跑结束后，若飞书队列仍有排队消息则接力消费。
       await feishuInboundHandler.drainNextIfPending(sessionId).catch((error) => {
         console.error(`飞书崩溃恢复后队列接力消费失败, sessionId=${sessionId}`, error);
       });
     },
     subagentCoordinator,
+    // 恢复续跑时挂载飞书进度卡片续更：崩溃前在途任务的卡片不会停留在「正在处理」。
+    async (sessionId) => {
+      const progress = await createFeishuRecoveryProgress(sessionId);
+      return progress == null ? null : new FeishuCardProgressListener(progress);
+    },
   );
   void crash.run().catch((e) => console.error('Crash recovery failed', e)).then(async () => {
     // 等崩溃恢复初始扫描提交后再触发队列接力。hydrate 对崩溃时在途执行的 RUNNING 队列行按
