@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { FeishuMessageService } from './message.service.js';
+import { FeishuMessageService, senderName } from './message.service.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './types.js';
 
 function makeContext(overrides: Partial<FeishuInboundContext> = {}): FeishuInboundContext {
@@ -198,5 +198,16 @@ describe('FeishuMessageService', () => {
     const group = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger' }));
     expect(group.prompt).toBe('[2026-08-26 13:18] 张三：最近讨论');
     expect(repository.listOverflowGroupMessages).not.toHaveBeenCalled();
+  });
+
+  it('names bot senders with the 机器人_ prefix instead of raw open_id', () => {
+    const bot = { senderType: 'app', senderId: 'ou_253023b99594e591a156de428e110823', rawEvent: {} } as never;
+    expect(senderName(bot)).toBe('机器人_253023b9');
+    // 兼容部分事件文档的 bot 取值。
+    expect(senderName({ senderType: 'bot', senderId: 'ou_abcdefgh1234', rawEvent: {} } as never)).toBe('机器人_abcdefgh');
+    // 上游显式提供的名字优先。
+    expect(senderName({ senderType: 'app', senderId: 'ou_253023b9', senderName: '告警机器人', rawEvent: {} } as never)).toBe('告警机器人');
+    // 用户发送者不受影响。
+    expect(senderName({ senderType: 'user', senderId: 'ou_user1', rawEvent: {} } as never)).toBe('ou_user1');
   });
 });

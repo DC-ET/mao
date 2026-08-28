@@ -143,12 +143,25 @@ export class FeishuMessageService {
 
 function senderName(context: FeishuNormalizedMessage): string {
   if (context.senderName != null && context.senderName.trim() !== '') return context.senderName;
+  if (isBotSender(context)) return botSenderLabel(context.senderId);
   const raw = context.rawEvent as Record<string, any>;
   const mentions: any[] = raw?.event?.message?.mentions ?? raw?.message?.mentions ?? [];
   const self = mentions.find((item) => (item?.id?.open_id ?? item?.key) === context.senderId);
   if (self?.name) return String(self.name);
   const name = raw?.event?.sender?.sender_id?.name ?? raw?.sender?.sender_id?.name;
   return name ?? context.senderId ?? '未知用户';
+}
+
+/** 消息发送者是否为机器人（应用）：receive_v1 事件 sender_type 实际取值 app，部分事件文档为 bot，两者都识别。 */
+function isBotSender(context: { senderType?: string | null }): boolean {
+  const type = context.senderType?.trim().toLowerCase();
+  return type === 'app' || type === 'bot';
+}
+
+/** 机器人发送者统一显示名：飞书不提供跨应用机器人名称的查询能力，用「机器人_」+ id 前 8 位区分。 */
+function botSenderLabel(senderId: string | null | undefined): string {
+  const bare = (senderId ?? '').replace(/^ou_/, '');
+  return `机器人_${bare.slice(0, 8)}`;
 }
 
 /** createdAt 为 'YYYY-MM-DD HH:mm:ss'（库内本地时间），取 'YYYY-MM-DD HH:mm' 避免跨日丢失年月日。 */
@@ -176,7 +189,7 @@ function renderOverflowRecord(messages: FeishuGroupMessage[]): string {
   return kept.join('\n');
 }
 
-export { senderName, formatGroupTime, p2pChatIdOf };
+export { senderName, isBotSender, botSenderLabel, formatGroupTime, p2pChatIdOf };
 
 /** 私聊会话键：身份形态在建会话时确定并编码进前缀，发送侧据此直接解析 receiveIdType（见 feishuSendTargetOf）。 */
 function p2pChatIdOf(context: FeishuInboundContext): string {

@@ -189,10 +189,9 @@ import { registerFeishuBotRoutes } from './feishu/admin.routes.js';
 import { registerFeishuBindingRoutes } from './feishu/binding.routes.js';
 import { FeishuMonitorService } from './feishu/monitor.service.js';
 import { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
-import { FeishuMessageService } from './feishu/message.service.js';
+import { FeishuMessageService, botSenderLabel, formatGroupTime, isBotSender, senderName } from './feishu/message.service.js';
 import { GroupContextSummarizer } from './feishu/group-context-summarizer.js';
 import type { ClientImpersonation } from '@mao/contracts';
-import { formatGroupTime, senderName } from './feishu/message.service.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
@@ -1165,6 +1164,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const resolveFeishuSenderName = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
     const senderId = event.senderId;
     if (senderId == null) return null;
+    // 机器人（应用）发送者：飞书无名称查询能力，直接用统一占位名，避免无谓的通讯录查询报错。
+    if (isBotSender(event)) return botSenderLabel(event.senderId);
     const key = `${accountId}:${senderId}`;
     const cached = feishuSenderNames.get(key);
     if (cached != null) return cached;

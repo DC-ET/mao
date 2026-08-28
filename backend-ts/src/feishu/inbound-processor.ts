@@ -1,5 +1,6 @@
 import type { FeishuInboundHandler, FeishuNormalizedMessage, FeishuInboundContext, FeishuReply } from './types.js';
 import type { FeishuMessageService } from './message.service.js';
+import { botSenderLabel, isBotSender } from './message.service.js';
 import { describeMessageText } from './message-detail.js';
 
 export interface FeishuInboundProcessorOptions {
@@ -197,6 +198,7 @@ export class FeishuInboundProcessor {
 
 function defaultSenderLabel(event: FeishuNormalizedMessage): string {
   if (event.senderName != null && event.senderName.trim() !== '') return event.senderName;
+  if (isBotSender(event)) return botSenderLabel(event.senderId);
   const raw = event.rawEvent as Record<string, any>;
   return raw?.event?.sender?.sender_id?.name ?? raw?.event?.sender?.name ?? event.senderId ?? '未知用户';
 }
