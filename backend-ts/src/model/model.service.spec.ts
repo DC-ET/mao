@@ -260,6 +260,11 @@ describe('ModelService', () => {
       service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'bogus'),
     ).rejects.toThrow(/apiProtocol 只能是/);
 
+    // openai-responses 尚无实现，写入口拒绝，避免写入后运行时静默回落 OpenAI 客户端
+    await expect(
+      service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses'),
+    ).rejects.toThrow(/apiProtocol 只能是/);
+
     const normalized = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-compatible');
     expect(normalized.apiProtocol).toBe('');
 

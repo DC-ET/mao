@@ -64,12 +64,12 @@
 |--------|------|
 | 路由键 | 独立新增 `api_protocol` 字段承载协议路由（小写：`anthropic` / `openai-responses` / `openai-compatible`，空 = openai-compatible）；`provider` 保持渠道名语义（展示/分组），**不参与路由**。**修订（2026-08-28）**：初版曾把 `provider` 升级为协议 code，因用户以 provider 存放渠道名、无法区分模型来源，改为字段拆分方案 |
 | 存量兼容 | 路由前对 apiProtocol 做 `trim + toLowerCase`；未命中或为空一律回落 openai-compatible，存量模型协议为空行为不变，无需数据迁移 |
-| 校验策略 | 写入口（POST/PUT /models）对 apiProtocol 白名单校验（空 / `openai-compatible` / `anthropic` / `openai-responses`），非法值返回 PARAM_INVALID；运行时路由对未知值仍静默回落默认实现 |
+| 校验策略 | 写入口（POST/PUT /models）对 apiProtocol 白名单校验（空 / `openai-compatible` / `anthropic`；`openai-responses` 无实现，写入口暂拒绝以避免"写入了但运行时静默回落错误协议"，真实接入时放开），非法值返回 PARAM_INVALID；运行时路由对未知值仍静默回落默认实现 |
 | 骨架复用方式 | 复制而非抽基类：HTTP/重试/取消骨架从 OpenAiLlmAdapter 复制到新 Adapter，现有 742 行与其测试零改动；将来接第三个协议时再评估合并 |
 | max_tokens（Anthropic 必填） | Adapter 内常量默认 16384，不落库 |
 | thinking | 不主动开启；响应中若出现 thinking block 则解析为 `reasoningContent` 兼容 |
 | 认证头 | 同时携带 `x-api-key` 与 `Authorization: Bearer`（同值），兼容官方与网关类渠道 |
-| Responses API | 仅预留协议 code，实现推迟到真实接入时 |
+| Responses API | DB 列容量预留 `openai-responses` 值；写入口暂拒绝（见校验策略行），实现推迟到真实接入时 |
 | 展示名 | **修订（2026-08-28）**：初版"供应商展示与协议 code 合一"决策作废。`provider` 保持渠道名自由文本（如 "OpenAI"、"Anthropic"、渠道商名），协议由独立的「API 协议」下拉承载 |
 
 ## 三、总体设计

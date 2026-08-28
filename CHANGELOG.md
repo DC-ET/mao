@@ -25,7 +25,7 @@
 
 ### 后端
 
-- 支持接入 Anthropic Messages 协议模型：模型新增独立「API 协议」字段（`api_protocol`，可选 `openai-compatible` / `anthropic`，预留 `openai-responses`），`provider` 保持渠道名语义仅作展示与分组；协议为 `anthropic` 的模型走原生 Messages API（`{baseUrl}/messages`，兼容官方与网关渠道的双认证头），支持流式对话、thinking、工具调用多轮循环、限流重试/退避、取消与用量归一（含 cache read tokens）；连通性测试同步支持 Anthropic 协议，mid-system-message 探测对该协议自动跳过；飞书群聊溢出摘要的 LLM 调用同步按协议路由，避免使用 Anthropic 模型时摘要静默失效；存量模型协议为空默认 OpenAI 兼容，行为不变
+- 支持接入 Anthropic Messages 协议模型：模型新增独立「API 协议」字段（`api_protocol`，可选 `openai-compatible` / `anthropic`；`openai-responses` 待实现后放开，写入口暂拒绝），`provider` 保持渠道名语义仅作展示与分组；协议为 `anthropic` 的模型走原生 Messages API（`{baseUrl}/messages`，兼容官方与网关渠道的双认证头），支持流式对话、thinking、工具调用多轮循环、限流重试/退避、取消与用量归一（含 cache read tokens）；连通性测试同步支持 Anthropic 协议，mid-system-message 探测对该协议自动跳过；飞书群聊溢出摘要的 LLM 调用同步按协议路由，避免使用 Anthropic 模型时摘要静默失效；存量模型协议为空默认 OpenAI 兼容，行为不变
 
 ### 管理后台
 

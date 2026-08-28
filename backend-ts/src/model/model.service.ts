@@ -39,7 +39,7 @@ function normalizeClientImpersonation(
   return trimmed as ClientImpersonation;
 }
 
-const API_PROTOCOL_VALUES = ['', 'openai-compatible', 'anthropic', 'openai-responses'] as const;
+const API_PROTOCOL_VALUES = ['', 'openai-compatible', 'anthropic'] as const;
 
 /** 校验并归一 API 协议：openai-compatible 与空串都归一为 ''（OpenAI 兼容）；null/undefined 表示未提供。 */
 function normalizeApiProtocol(value: string | null | undefined): string | null {
@@ -48,7 +48,7 @@ function normalizeApiProtocol(value: string | null | undefined): string | null {
   if (!(API_PROTOCOL_VALUES as readonly string[]).includes(trimmed)) {
     throw new BusinessException(
       ErrorCode.PARAM_INVALID.code,
-      'apiProtocol 只能是 openai-compatible / anthropic / openai-responses 或留空',
+      'apiProtocol 只能是 openai-compatible / anthropic 或留空',
     );
   }
   return trimmed === 'openai-compatible' ? '' : trimmed;
