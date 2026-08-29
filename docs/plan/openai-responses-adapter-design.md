@@ -84,3 +84,4 @@
 | 纯文本轮的 reasoning 引用 | 不挂 toolCall、不持久化引用（blob 前缀除外），网关对纯文本轮回传 reasoning 不做强校验 |
 | 多 responses 轮共享 reasoning | 每轮 reasoning 独立挂靠该轮 toolCalls；网关按 `function_call → 所在轮 reasoning` 配对 |
 | `__idx_` 兜底键 | 网关不下发 call_id/item_id 时 tool 结果回传可能无法配对（极罕见），属可接受降级 |
+| reasoning done 乱序降级 | 流式下若网关不发 reasoning 的 `added` 事件、其 `done` 又晚于 function_call 的 `added`，引用无法挂靠本次 toolCall，回传时走 blob/缺失兜底；需网关同时满足两个非常规行为，属极罕见场景，弱校验网关无影响 |
