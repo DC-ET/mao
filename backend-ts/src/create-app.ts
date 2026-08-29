@@ -1219,6 +1219,23 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       }
     },
   });
+  // 定时任务结果回流飞书通道：按会话反查 feishu_chat 定位 bot 与会话（群聊 chat_id / 私聊身份键），
+  // 非飞书会话查不到 conversation，自然跳过；卡片复用进度卡片的 COMPLETED 终态样式。
+  scheduledService.setFeishuResultPusher(async (sessionId, text) => {
+    const conversation = await feishuMessageRepository.findConversationBySessionId(sessionId);
+    if (conversation == null) return;
+    const client = await getFeishuClient(Number(conversation.appId));
+    if (client == null) return;
+    const target = feishuSendTargetOf(conversation.appId, conversation.chatId);
+    await client.im.v1.message.create({
+      params: { receive_id_type: target.receiveIdType },
+      data: {
+        receive_id: target.receiveId,
+        msg_type: 'interactive',
+        content: JSON.stringify(buildFeishuProgressCard('COMPLETED', 0, text, [])),
+      },
+    });
+  });
   const resolveFeishuSenderName = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
     const senderId = event.senderId;
     if (senderId == null) return null;

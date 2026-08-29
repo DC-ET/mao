@@ -20,6 +20,7 @@
 ### 后端
 
 - 支持接入 OpenAI Responses API 协议模型：模型「API 协议」新增 `openai-responses` 选项（此前预留），新增 `ResponsesLlmAdapter`（`{baseUrl}/responses`，Bearer 认证）实现非流式与流式调用、工具调用多轮循环、限流重试/退避、取消与用量归一（含 cached tokens）；Responses 专属语义：`store:false` 无状态多轮、历史 assistant 回传 `function_call` 项与 `function_call_output` 项、推理思维链经 `reasoning.encrypted_content` 往返（流式与非流式均捕获，挂靠持久化 tool_calls，崩溃恢复可用）、并行多工具调用聚合、思考截断整轮重试、截断轮（incomplete）用量照常统计；连通性测试同步支持该协议（`ResponsesChatClient`），mid-system-message 探测自动跳过；多工具轮的 `reasoning` 引用仅写入 Responses 模型的会话数据，其他协议模型行为不变
+- 修复飞书通道会话的定时任务执行完成后结果只留在会话内、不回流飞书的问题：现与微信通道一致，任务完成后将最终回复以「处理完成」卡片推送回原飞书会话（群聊/私聊均支持，非飞书会话不受影响）
 
 ### 管理后台
 

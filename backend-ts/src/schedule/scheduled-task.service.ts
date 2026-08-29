@@ -61,6 +61,9 @@ export type ScheduledLiveExecution = (
   savedMessage: Message,
 ) => Promise<void>;
 
+/** Push the final assistant result to a Feishu channel session (no-op for non-Feishu sessions). */
+export type ScheduledFeishuResultPusher = (sessionId: number, text: string) => Promise<void>;
+
 /** Spring cron uses `?` in DOM/DOW; Croner needs `*`. Also trim trailing spaces. */
 export function normalizeSpringCron(expression: string): string {
   return expression.trim().replace(/\?/g, '*').replace(/\s+/g, ' ');
@@ -103,6 +106,7 @@ async function withSessionLock<T>(sessionId: number, fn: () => Promise<T>): Prom
 export class ScheduledTaskService {
   /** 正在排队/执行中的任务 id → 计数，防止锁等待期间重复触发连环补发。 */
   private readonly inFlight = new Set<number>();
+  private feishuResultPusher: ScheduledFeishuResultPusher | null = null;
   constructor(
     private readonly store: ScheduledTaskStore,
     private readonly sessionService: ScheduleSessionService,
@@ -119,6 +123,10 @@ export class ScheduledTaskService {
 
   setLiveExecution(liveExecution: ScheduledLiveExecution | null): void {
     this.liveExecution = liveExecution;
+  }
+
+  setFeishuResultPusher(pusher: ScheduledFeishuResultPusher | null): void {
+    this.feishuResultPusher = pusher;
   }
 
   setSessionBusyCheck(isSessionBusy: ((sessionId: number) => boolean) | null): void {
@@ -255,6 +263,7 @@ export class ScheduledTaskService {
               }
               await this.markTaskResult(task, 'COMPLETED');
               await this.sendWeixinReplyIfApplicable(task.sessionId!, userId);
+              await this.sendFeishuReplyIfApplicable(task.sessionId!);
               countThisRun = true;
             } catch (e) {
               countThisRun = true;
@@ -340,6 +349,28 @@ export class ScheduledTaskService {
       await this.weixinSendService.sendText(account.accountId, wxUserId, reply);
     } catch (e) {
       console.error('Error sending WeChat reply for scheduled task', e);
+    }
+  }
+
+  /** 飞书通道定时任务结果回流：推送最终 ASSISTANT 回复；非飞书会话由 pusher 实现内部判断跳过。 */
+  private async sendFeishuReplyIfApplicable(sessionId: number): Promise<void> {
+    const pusher = this.feishuResultPusher;
+    if (pusher == null) return;
+    try {
+      const messages = await this.sessionService.getMessages(sessionId);
+      let reply: string | null = null;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'ASSISTANT') {
+          reply = messages[i].content ?? null;
+          break;
+        }
+      }
+      if (!reply || reply.trim() === '') {
+        return;
+      }
+      await pusher(sessionId, reply);
+    } catch (e) {
+      console.error('Error sending Feishu reply for scheduled task', e);
     }
   }
 

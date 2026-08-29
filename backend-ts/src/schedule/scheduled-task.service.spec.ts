@@ -87,6 +87,51 @@ describe('ScheduledTaskService', () => {
     expect(send.sendText).toHaveBeenCalled();
   });
 
+  it('pushesFinalAssistantReplyToFeishuPusher', async () => {
+    stubs.getSession.mockResolvedValue({ id: 11, phase: 'IDLE' });
+    stubs.saveMessage.mockResolvedValue({ id: 88, content: 'hello' });
+    stubs.getMessages.mockResolvedValue([
+      { role: 'USER', content: 'hello' },
+      { role: 'ASSISTANT', content: 'task result' },
+    ]);
+    const live = vi.fn(async () => undefined);
+    const feishuPusher = vi.fn(async () => undefined);
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      store, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn() }, { finishExecution: vi.fn() },
+      { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+      live,
+    );
+    svc.setFeishuResultPusher(feishuPusher);
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 });
+    await ran;
+    expect(feishuPusher).toHaveBeenCalledWith(11, 'task result');
+  });
+
+  it('pusherFailureDoesNotFailTask', async () => {
+    stubs.getSession.mockResolvedValue({ id: 11, phase: 'IDLE' });
+    stubs.saveMessage.mockResolvedValue({ id: 88, content: 'hello' });
+    stubs.getMessages.mockResolvedValue([{ role: 'ASSISTANT', content: 'task result' }]);
+    const live = vi.fn(async () => undefined);
+    const feishuPusher = vi.fn(async () => { throw new Error('send failed'); });
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      store, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn() }, { finishExecution: vi.fn() },
+      { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+      live,
+    );
+    svc.setFeishuResultPusher(feishuPusher);
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 });
+    await ran;
+    expect(live).toHaveBeenCalledTimes(1);
+    const persisted = vi.mocked(store.updateById).mock.calls.map(([row]) => row);
+    expect(persisted.some((row) => row.lastExecutionStatus === 'COMPLETED')).toBe(true);
+  });
+
   it('liveExecutionPushesThroughWsPathAndSkipsDummyFinish', async () => {
     stubs.getSession.mockResolvedValue({ id: 11, phase: 'IDLE' });
     stubs.saveMessage.mockResolvedValue({ id: 88, content: 'hello' });
