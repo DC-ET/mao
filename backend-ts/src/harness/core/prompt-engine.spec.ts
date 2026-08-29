@@ -69,6 +69,7 @@ describe('PromptEngine', () => {
     const request = await engine.buildRequest(context);
     expect(request.stream).toBe(true);
     expect(request.reasoning).toEqual({ effort: 'high' });
+    expect(request.promptCacheKey).toBe('mao-session-9');
     expect(request.tools?.map((t) => t.function.name)).toEqual(
       expect.arrayContaining(['read_file', 'task_create', 'spawn_subagent', 'subagent_followup']),
     );
@@ -128,10 +129,28 @@ describe('PromptEngine', () => {
     const request = await engine.buildRequest(context);
     expect(request.messages[1].content).toBe('${missing}$ ${label}$ #{nope}#');
     expect(request.reasoning).toBeUndefined();
+    expect(request.promptCacheKey).toBeUndefined();
     expect(logSpy).toHaveBeenCalledWith('warn', 'Skill not found for marker: ${missing}$');
     expect(logSpy).not.toHaveBeenCalledWith('warn', 'Skill not found for marker: ${label}$');
     expect(logSpy).toHaveBeenCalledWith('warn', 'Command not found for marker: #{nope}#');
     logSpy.mockRestore();
+  });
+
+  it('buildRequestInjectsSessionScopedPromptCacheKey', async () => {
+    const engine = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const context = new AgentExecutionContext();
+    context.userId = 1;
+    context.sessionId = 42;
+    context.modelConfig = { modelId: 'gpt-5.6-terra', id: 1 };
+    context.messages = [{ role: 'user', content: 'hi' }];
+    const request = await engine.buildRequest(context);
+    expect(request.promptCacheKey).toBe('mao-session-42');
   });
 });
 void mkdirSync;

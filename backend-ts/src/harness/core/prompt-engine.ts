@@ -71,6 +71,11 @@ export class PromptEngine {
     if (isGptModel(context.modelConfig)) {
       request.reasoning = { effort: 'high' };
     }
+    // 会话级缓存路由键：Responses 网关按 prompt_cache_key 做上游粘性路由，
+    // 缺失时前缀缓存命中随机（实测无 key 连发 4 次仅 1 次命中）
+    if (context.sessionId != null) {
+      request.promptCacheKey = `mao-session-${context.sessionId}`;
+    }
     return request;
   }
 

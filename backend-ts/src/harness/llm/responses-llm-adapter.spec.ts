@@ -377,6 +377,34 @@ describe('ResponsesLlmAdapter - chat（非流式）', () => {
     await expect(adapter().chat(request('hi'), configOf(server))).rejects.toThrow(/LLM API returned 400/);
     expect(server.requestCount).toBe(1);
   });
+
+  it('promptCacheKey 透传为 prompt_cache_key（会话粘性缓存路由）', async () => {
+    server = new QueueServer();
+    server.enqueueJson(JSON.stringify({
+      id: 'resp_ck', status: 'completed',
+      output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    }));
+    await server.start();
+
+    await adapter().chat(request('hi', { promptCacheKey: 'mao-session-42' }), configOf(server));
+    const body = parseBody(server.bodies[0]);
+    expect(body.prompt_cache_key).toBe('mao-session-42');
+  });
+
+  it('无 promptCacheKey 时不发送 prompt_cache_key 字段', async () => {
+    server = new QueueServer();
+    server.enqueueJson(JSON.stringify({
+      id: 'resp_nock', status: 'completed',
+      output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    }));
+    await server.start();
+
+    await adapter().chat(request('hi'), configOf(server));
+    const body = parseBody(server.bodies[0]);
+    expect(body.prompt_cache_key).toBeUndefined();
+  });
 });
 
 describe('ResponsesLlmAdapter - stream（流式）', () => {

@@ -777,6 +777,10 @@ function buildResponsesBody(request: ChatRequest, config: LlmModelConfig, messag
   };
   if (instructions != null) body.instructions = instructions;
   if (request.temperature != null) body.temperature = request.temperature;
+  // 会话粘性缓存路由：无 key 时网关多上游负载均衡，前缀缓存命中随机（实测确认）
+  if (request.promptCacheKey != null && request.promptCacheKey !== '') {
+    body.prompt_cache_key = request.promptCacheKey;
+  }
   if (request.tools != null && request.tools.length > 0) {
     body.tools = request.tools.map((t) => ({
       type: 'function',

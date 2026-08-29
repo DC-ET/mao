@@ -75,6 +75,9 @@ export interface ChatRequest {
   thinking?: ChatThinking;
   enableThinking?: boolean;
   audio?: Record<string, unknown>;
+  /** 会话级前缀缓存路由键（OpenAI Responses 的 prompt_cache_key）。按会话注入，
+   *  网关据此做上游粘性路由，缺失时多上游负载均衡会导致前缀缓存命中随机。其他协议忽略。 */
+  promptCacheKey?: string;
 }
 
 export interface PromptTokensDetails {
