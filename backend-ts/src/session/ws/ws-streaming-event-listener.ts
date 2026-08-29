@@ -5,12 +5,13 @@ import { mapToolToType } from '../activity/activity-type-mapper.js';
 import { ToolResultSummarizer } from '../util/tool-result-summarizer.js';
 import { FileChangeDiffUtil } from '../../harness/tool/file-change-diff-util.js';
 import { ToolImageResultProcessor } from '../../harness/tool/tool-image-result-processor.js';
+import type { ToolCallResultMeta } from '../../harness/tool/tool-result.js';
 import { wsEvent } from './ws-event.js';
 
 export interface AgentEventListener {
   onContentDelta(delta: string): void;
   onToolCallStart(toolCall: ToolCall): void;
-  onToolCallResult(toolCallId: string, result: string): void;
+  onToolCallResult(toolCallId: string, result: string, meta?: ToolCallResultMeta): void;
   onMessageEnd(usage: ChatUsage): void;
   onError(t: unknown): void;
   onContextWindow?(estimatedTokens: number, actualTokens: number): void;
@@ -72,7 +73,7 @@ export class WsStreamingEventListener implements AgentEventListener {
     });
   }
 
-  onToolCallResult(toolCallId: string, result: string): void {
+  onToolCallResult(toolCallId: string, result: string, meta?: ToolCallResultMeta): void {
     this.deps.registry.completeActiveToolCall(this.sessionId, toolCallId);
     const info = this.toolCallInfo.get(toolCallId);
     this.toolCallInfo.delete(toolCallId);
@@ -82,7 +83,8 @@ export class WsStreamingEventListener implements AgentEventListener {
     const processed = ToolImageResultProcessor.process(publicResult, this.supportsVision);
     const displayResult = processed.sanitizedContent ?? publicResult;
     const preview = processed.preview;
-    const isError = isErrorResult(displayResult);
+    // status 优先取执行层 meta（事实），meta 缺失时回退启发式 isErrorResult（旧路径/防御）
+    const isError = meta?.status === 'error' || (meta == null && isErrorResult(displayResult));
     const summary = ToolResultSummarizer.summarize(toolName, argumentsJson, displayResult);
     const data: Record<string, unknown> = {
       tool_call_id: toolCallId,
@@ -215,6 +217,10 @@ export class WsStreamingEventListener implements AgentEventListener {
   }
 }
 
+/**
+ * Fallback 错误启发式：meta 缺失（旧路径/防御）时才使用，勿新增消费方。
+ * 执行层的权威判定在 normalizeToolResult（harness/tool/tool-result.ts）。
+ */
 function isErrorResult(result: string | null): boolean {
   if (result == null) return false;
   try {

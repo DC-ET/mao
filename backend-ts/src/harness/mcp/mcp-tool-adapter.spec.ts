@@ -17,6 +17,23 @@ describe('McpToolAdapter', () => {
     expect(adapter.getName()).toBe('mcp__filesystem__read_file');
   });
 
+  it('exposesMcpDescriptorWithDesktopExecutorWhenNoClientManager', () => {
+    const adapter = new McpToolAdapter(ref, null);
+    expect(adapter.getDescriptor()).toEqual({
+      name: 'mcp__filesystem__read_file',
+      source: 'mcp',
+      executor: 'desktop',
+      serverId: 42,
+      originalName: 'read_file',
+    });
+  });
+
+  it('exposesMcpDescriptorWithMcpServerExecutorWhenClientManagerBound', () => {
+    const clientManager = { callTool: vi.fn() } as unknown as McpClientManager;
+    const adapter = new McpToolAdapter(ref, clientManager);
+    expect(adapter.getDescriptor().executor).toBe('mcp-server');
+  });
+
   it('passesThroughDescriptionAndInputSchema', () => {
     const adapter = new McpToolAdapter(ref, null);
     expect(adapter.getDescription()).toBe('读取文件内容');

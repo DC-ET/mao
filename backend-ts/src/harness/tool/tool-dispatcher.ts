@@ -10,6 +10,10 @@ import type { DangerAssessor } from './danger-assessor.js';
 import type { Tool } from './tool.js';
 import { callTool } from './tool.js';
 import type { ToolRegistry } from './tool-registry.js';
+import type { ToolDescriptor } from './tool-descriptor.js';
+import type { ToolInvocation } from './tool-invocation.js';
+import type { ToolResult } from './tool-result.js';
+import { normalizeToolResult } from './tool-result.js';
 import { permissionLevelFromString, type PermissionLevel } from './permission-level.js';
 import type { BackgroundTaskManager } from '../core/background-task-manager.js';
 import { parseObject } from './json.js';
@@ -72,6 +76,42 @@ export class ToolDispatcher {
     return this.dispatchFull(toolName, argumentsJson, a as string, b as number, c as number, d as string, e as string, f as LlmModelConfig | null, g as Tool[] | null, h as number | null);
   }
 
+  /**
+   * 统一执行入口：显式 ToolInvocation → ToolResult。
+   * 异常统一归一为 status:'error' 的 ToolResult，不向上抛给调用方。
+   */
+  async dispatchInvocation(invocation: ToolInvocation): Promise<ToolResult> {
+    const started = Date.now();
+    try {
+      const raw = await this.dispatchFull(
+        invocation.toolName, invocation.argumentsJson, invocation.executionMode,
+        invocation.sessionId, invocation.userId, invocation.workspace,
+        invocation.permissionLevel, invocation.modelConfig, invocation.sessionTools,
+        invocation.executionUserId ?? null,
+      );
+      return normalizeToolResult(invocation.callId, raw, Date.now() - started);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return {
+        callId: invocation.callId,
+        status: 'error',
+        content: 'Tool execution failed: ' + message,
+        errorMessage: message,
+        durationMs: Date.now() - started,
+      };
+    }
+  }
+
+  private resolveDescriptor(toolName: string, sessionTools: Tool[] | null): ToolDescriptor {
+    const tool = this.toolRegistry.getTool(toolName);
+    const instance = tool ?? sessionTools?.find((t) => t.getName() === toolName);
+    const getter = (instance as { getDescriptor?: () => ToolDescriptor } | null | undefined)?.getDescriptor;
+    if (typeof getter === 'function') {
+      return getter.call(instance);
+    }
+    return { name: toolName, source: 'builtin', executor: 'server' };
+  }
+
   private async dispatchCloud(toolName: string, argumentsJson: string, workspace: string | null): Promise<string> {
     harnessLog('debug', `Dispatching tool call (cloud): ${toolName}`);
     const tool = this.toolRegistry.getTool(toolName);
@@ -93,6 +133,7 @@ export class ToolDispatcher {
     sessionTools: Tool[] | null,
     executionUserId: number | null = null,
   ): Promise<string> {
+    const descriptor = this.resolveDescriptor(toolName, sessionTools);
     if (toolName === ASK_USER_QUESTIONS) {
       return this.dispatchAskUserQuestions(argumentsJson, sessionId);
     }
@@ -110,7 +151,7 @@ export class ToolDispatcher {
         if (session?.permissionLevel) latest = session.permissionLevel;
       }
       const level = permissionLevelFromString(latest);
-      const decision = await this.shouldRequireApproval(toolName, level, argumentsJson, modelConfig);
+      const decision = await this.shouldRequireApproval(descriptor, toolName, level, argumentsJson, modelConfig);
       if (toolName === 'shell' && this.backgroundTaskManager && isLocalShellAsyncExec(argumentsJson)) {
         return this.dispatchLocalShellAsync(
           argumentsJson, sessionId, workspace, decision.needApproval, decision.dangerReason,
@@ -167,12 +208,14 @@ export class ToolDispatcher {
   }
 
   private async shouldRequireApproval(
+    descriptor: ToolDescriptor,
     toolName: string,
     level: PermissionLevel,
     argumentsJson: string,
     modelConfig: LlmModelConfig | null,
   ): Promise<{ needApproval: boolean; dangerReason: string | null }> {
-    const isMcpTool = toolName != null && toolName.startsWith(MCP_TOOL_PREFIX);
+    // MCP 识别：descriptor.source 优先，mcp__ 前缀保留为 fallback（缺 descriptor 的直接实现/旧名场景）
+    const isMcpTool = descriptor?.source === 'mcp' || (toolName != null && toolName.startsWith(MCP_TOOL_PREFIX));
     switch (level) {
       case 'READ_ONLY':
         return { needApproval: this.isWriteOrShellTool(toolName) || isMcpTool, dangerReason: null };

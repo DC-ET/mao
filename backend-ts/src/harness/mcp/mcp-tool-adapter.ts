@@ -1,4 +1,5 @@
 import type { Tool } from '../tool/tool.js';
+import type { ToolDescriptor } from '../tool/tool-descriptor.js';
 import { fullToolName, normalizeMcpInputSchema, type McpToolRef } from './entity/mcp-server.js';
 import type { McpClientManager } from './mcp-client-manager.js';
 
@@ -10,6 +11,17 @@ export class McpToolAdapter implements Tool {
 
   getName(): string {
     return this.ref.fullToolName ?? fullToolName(this.ref.serverName, this.ref.toolName);
+  }
+
+  getDescriptor(): ToolDescriptor {
+    // clientManager 为 null 即 LOCAL 模式（服务端无 MCP 连接，由桌面端执行）——隐式约定在此显式化
+    return {
+      name: this.getName(),
+      source: 'mcp',
+      executor: this.clientManager ? 'mcp-server' : 'desktop',
+      serverId: this.ref.serverId,
+      originalName: this.ref.toolName,
+    };
   }
 
   getDescription(): string {

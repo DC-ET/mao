@@ -20,6 +20,7 @@ import { FileChangeDiffUtil } from '../tool/file-change-diff-util.js';
 import { ToolCallContext } from '../tool/tool-call-context.js';
 import type { ToolDispatcher } from '../tool/tool-dispatcher.js';
 import { ToolImageResultProcessor } from '../tool/tool-image-result-processor.js';
+import { toolResultMeta, type ToolResult } from '../tool/tool-result.js';
 import { ToolResultSummarizer } from '../../session/util/tool-result-summarizer.js';
 import type { Tool } from '../tool/tool.js';
 import type { ShellSessionManager } from '../shell/shell-session-manager.js';
@@ -481,14 +482,15 @@ export class AgentLoop {
     toolResults: Record<string, string>,
     cancelFlag: AtomicBoolean | null,
   ): Promise<void> {
-    const runOne = (tc: ToolCall): Promise<string> => ToolCallContext.run(tc.id, () =>
-      Promise.resolve(this.dispatchTool(tc.function?.name ?? '', tc.function?.arguments ?? '', context)),
+    const runOne = (tc: ToolCall): Promise<ToolResult> => ToolCallContext.run(tc.id, () =>
+      Promise.resolve(this.dispatchTool(tc, context)),
     );
 
     if (pendingCalls.length === 1) {
       if (cancelFlag?.get()) return;
       const tc = pendingCalls[0];
-      const rawResult = await runOne(tc);
+      const result = await runOne(tc);
+      const rawResult = result.content;
       const toolSave = this.processToolResult(rawResult, tc, context);
       if (cancelFlag?.get()) return;
       tc.summary = ToolResultSummarizer.summarize(
@@ -496,7 +498,7 @@ export class AgentLoop {
       ) ?? undefined;
       if (tc.id) toolResults[tc.id] = rawResult;
       context.addToolResult(tc.id!, toolSave.content);
-      listener.onToolCallResult(tc.id!, rawResult);
+      listener.onToolCallResult(tc.id!, rawResult, toolResultMeta(result));
       pendingToolSaves.push(toolSave);
       return;
     }
@@ -506,14 +508,15 @@ export class AgentLoop {
     if (cancelFlag?.get()) return;
     for (let i = 0; i < pendingCalls.length; i++) {
       const tc = pendingCalls[i];
-      const rawResult = results[i];
+      const result = results[i];
+      const rawResult = result.content;
       const toolSave = this.processToolResult(rawResult, tc, context);
       tc.summary = ToolResultSummarizer.summarize(
         tc.function?.name ?? '', tc.function?.arguments ?? '', toolSave.content,
       ) ?? undefined;
       if (tc.id) toolResults[tc.id] = rawResult;
       context.addToolResult(tc.id!, toolSave.content);
-      listener.onToolCallResult(tc.id!, rawResult);
+      listener.onToolCallResult(tc.id!, rawResult, toolResultMeta(result));
       pendingToolSaves.push(toolSave);
     }
   }
@@ -528,18 +531,30 @@ export class AgentLoop {
     return { toolCallId: tc.id!, content: processed.sanitizedContent ?? '', metadataJson: processed.metadataJson };
   }
 
-  private async dispatchTool(toolName: string, argumentsJson: string, context: AgentExecutionContext): Promise<string> {
+  private async dispatchTool(tc: ToolCall, context: AgentExecutionContext): Promise<ToolResult> {
+    const toolName = tc.function?.name ?? '';
+    const argumentsJson = tc.function?.arguments ?? '';
     if (!this.isToolAllowed(toolName, context)) {
-      return `Tool execution failed: 工具 '${toolName}' 不在当前允许的工具集内，无法调用。`;
+      return {
+        callId: tc.id ?? '',
+        status: 'error',
+        content: `Tool execution failed: 工具 '${toolName}' 不在当前允许的工具集内，无法调用。`,
+        errorMessage: 'tool not allowed',
+      };
     }
-    try {
-      return await Promise.resolve(this.toolDispatcher.dispatch(
-        toolName, argumentsJson, context.executionMode, context.sessionId, context.userId,
-        context.workspace, context.permissionLevel, context.modelConfig, context.tools, context.executionUserId,
-      ));
-    } catch (e) {
-      return 'Tool execution failed: ' + (e as Error).message;
-    }
+    return this.toolDispatcher.dispatchInvocation({
+      callId: tc.id ?? '',
+      toolName,
+      argumentsJson,
+      executionMode: context.executionMode ?? null,
+      sessionId: context.sessionId ?? null,
+      userId: context.userId ?? null,
+      executionUserId: context.executionUserId ?? null,
+      workspace: context.workspace ?? null,
+      permissionLevel: context.permissionLevel ?? null,
+      modelConfig: context.modelConfig ?? null,
+      sessionTools: context.tools ?? null,
+    });
   }
 
   private isToolAllowed(toolName: string, context: AgentExecutionContext): boolean {

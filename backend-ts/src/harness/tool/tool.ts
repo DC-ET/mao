@@ -1,3 +1,5 @@
+import type { ToolDescriptor } from './tool-descriptor.js';
+
 /**
  * Tool interface matching Java default-method overloads:
  * execute(args)
@@ -11,6 +13,8 @@ export interface Tool {
   getInputSchema(): Record<string, unknown>;
   getOutputSchema(): Record<string, unknown>;
   getToolPrompt?(): string | null;
+  /** 可选：静态描述元数据（来源/执行器）。缺省时由调用方按 builtin/server 兜底。 */
+  getDescriptor?(): ToolDescriptor;
   execute(argumentsJson: string, a?: unknown, b?: unknown, c?: unknown): string | Promise<string>;
 }
 
@@ -21,6 +25,10 @@ export abstract class BaseTool implements Tool {
   abstract getOutputSchema(): Record<string, unknown>;
   getToolPrompt(): string | null {
     return null;
+  }
+
+  getDescriptor(): ToolDescriptor {
+    return { name: this.getName(), source: 'builtin', executor: 'server' };
   }
 
   execute(argumentsJson: string, a?: unknown, b?: unknown, c?: unknown): string | Promise<string> {

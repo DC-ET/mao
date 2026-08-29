@@ -280,6 +280,57 @@ describe('ToolDispatcher', () => {
       'mcp__unregistered__tool', '{}', 'CLOUD', 7, 9, 'workspace', 'READ_ONLY', null, [serverTool],
     )).rejects.toThrow(/Unknown tool/);
   });
+
+  it('dispatchInvocationReturnsToolResultForCloudTool', async () => {
+    cloudTool.execute.mockResolvedValue('cloud-result');
+    const r = await dispatcher.dispatchInvocation({
+      callId: 'call-1', toolName: 'read_file', argumentsJson: '{}',
+      executionMode: 'CLOUD', sessionId: 7, userId: 9, executionUserId: null,
+      workspace: 'ws', permissionLevel: 'FULL', modelConfig: null, sessionTools: null,
+    });
+    expect(r.callId).toBe('call-1');
+    expect(r.status).toBe('success');
+    expect(r.content).toBe('cloud-result');
+    expect(r.durationMs).toBeTypeOf('number');
+  });
+
+  it('dispatchInvocationNormalizesErrorJsonResult', async () => {
+    cloudTool.execute.mockResolvedValue('{"error":"boom"}');
+    const r = await dispatcher.dispatchInvocation({
+      callId: 'c', toolName: 'read_file', argumentsJson: '{}',
+      executionMode: 'CLOUD', sessionId: 7, userId: 9, executionUserId: null,
+      workspace: 'w', permissionLevel: 'FULL', modelConfig: null, sessionTools: null,
+    });
+    expect(r.status).toBe('error');
+    expect(r.errorMessage).toBe('boom');
+  });
+
+  it('dispatchInvocationCatchesUnknownToolInsteadOfThrowing', async () => {
+    const r = await dispatcher.dispatchInvocation({
+      callId: 'c', toolName: 'missing', argumentsJson: '{}',
+      executionMode: 'CLOUD', sessionId: null, userId: null, executionUserId: null,
+      workspace: null, permissionLevel: null, modelConfig: null, sessionTools: null,
+    });
+    expect(r.status).toBe('error');
+    expect(r.content).toBe('Tool execution failed: Unknown tool: missing');
+  });
+
+  it('dispatchInvocationUsesDescriptorSourceMcpForApprovalEvenWithoutNamePrefix', async () => {
+    const descTool: Tool = {
+      ...mockTool('namespace_write'),
+      getDescriptor: () => ({
+        name: 'namespace_write', source: 'mcp', executor: 'desktop', serverId: 1, originalName: 'write',
+      }),
+    };
+    localToolExecutor.execute.mockResolvedValue('executed');
+    const r = await dispatcher.dispatchInvocation({
+      callId: 'c', toolName: 'namespace_write', argumentsJson: '{}',
+      executionMode: 'LOCAL', sessionId: 7, userId: 9, executionUserId: null,
+      workspace: 'w', permissionLevel: 'READ_ONLY', modelConfig: null, sessionTools: [descTool],
+    });
+    expect(r.status).toBe('success');
+    expect(localToolExecutor.execute).toHaveBeenCalledWith(7, 'namespace_write', '{}', 'w', true, null);
+  });
 });
 
 describe('ToolRegistry', () => {

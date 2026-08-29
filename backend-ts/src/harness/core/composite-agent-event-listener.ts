@@ -1,4 +1,5 @@
 import type { ChatRequest, ChatUsage, ToolCall } from '../llm/chat-request.js';
+import type { ToolCallResultMeta } from '../tool/tool-result.js';
 import type { AgentEventListener } from './agent-event-listener.js';
 import { harnessLog } from '../log.js';
 
@@ -22,8 +23,8 @@ export class CompositeAgentEventListener implements AgentEventListener {
   onToolCallStart(toolCall: ToolCall): void {
     this.forEach('onToolCallStart', (l) => l.onToolCallStart(toolCall));
   }
-  onToolCallResult(toolCallId: string, result: string): void {
-    this.forEach('onToolCallResult', (l) => l.onToolCallResult(toolCallId, result));
+  onToolCallResult(toolCallId: string, result: string, meta?: ToolCallResultMeta): void {
+    this.forEach('onToolCallResult', (l) => l.onToolCallResult(toolCallId, result, meta));
   }
   onMessageEnd(usage: ChatUsage): void {
     this.forEach('onMessageEnd', (l) => l.onMessageEnd(usage));

@@ -1,9 +1,10 @@
 import type { ChatRequest, ChatUsage, ToolCall } from '../llm/chat-request.js';
+import type { ToolCallResultMeta } from '../tool/tool-result.js';
 
 export interface AgentEventListener {
   onContentDelta(delta: string): void;
   onToolCallStart(toolCall: ToolCall): void;
-  onToolCallResult(toolCallId: string, result: string): void;
+  onToolCallResult(toolCallId: string, result: string, meta?: ToolCallResultMeta): void;
   onMessageEnd(usage: ChatUsage): void;
   onRoundStart?(round: number): void;
   onRoundEnd?(round: number): void;

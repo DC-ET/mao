@@ -21,6 +21,25 @@ function makeListener() {
 }
 
 describe('WsStreamingEventListener', () => {
+  it('prefers meta success status over heuristic for tool result', () => {
+    const { listener, registry } = makeListener();
+    listener.onToolCallStart({ id: 'tc-ok', function: { name: 'shell', arguments: '{"command":"ls"}' } } as never);
+    listener.onToolCallResult('tc-ok', JSON.stringify({ error: 'x' }), { status: 'success' });
+    const event = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'tool_call_result');
+    expect(event?.data?.status).toBe('success');
+  });
+
+  it('uses meta error status even when content looks successful', () => {
+    const { listener, registry } = makeListener();
+    listener.onToolCallStart({ id: 'tc-err', function: { name: 'read_file', arguments: '{}' } } as never);
+    listener.onToolCallResult('tc-err', '{"ok":true}', { status: 'error', errorMessage: 'boom' });
+    const event = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'tool_call_result');
+    expect(event?.data?.status).toBe('error');
+  });
   it('forwards stream events with executionId', () => {
     const { listener, registry } = makeListener();
     listener.onContentDelta('hi');

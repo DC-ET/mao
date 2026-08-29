@@ -21,7 +21,7 @@ describe('AgentLoop', () => {
   const llmAdapter = { stream: vi.fn(), chat: vi.fn() } as unknown as LlmAdapter & { stream: ReturnType<typeof vi.fn> };
   const promptEngine = { buildRequest: vi.fn() } as unknown as PromptEngine & { buildRequest: ReturnType<typeof vi.fn> };
   const contextManager = {} as ContextManager;
-  const toolDispatcher = { dispatch: vi.fn() } as unknown as ToolDispatcher & { dispatch: ReturnType<typeof vi.fn> };
+  const toolDispatcher = { dispatchInvocation: vi.fn() } as unknown as ToolDispatcher & { dispatchInvocation: ReturnType<typeof vi.fn> };
   const backgroundTaskManager = {
     consumeCompletedResults: vi.fn(),
   } as unknown as BackgroundTaskManager & { consumeCompletedResults: ReturnType<typeof vi.fn> };
@@ -61,6 +61,10 @@ describe('AgentLoop', () => {
     sessionService.loadContextAnchor.mockResolvedValue({ lastPromptTokens: 0, contextAnchorMsgId: 0 });
     sessionService.getMaxMessageId.mockResolvedValue(1);
     sessionService.getSession.mockResolvedValue({ phase: 'RUNNING' });
+  }
+
+  function toolResult(content: string, status: 'success' | 'error' = 'success') {
+    return { callId: 'call', status, content };
   }
 
   function listener(): AgentEventListener & Record<string, ReturnType<typeof vi.fn>> {
@@ -210,7 +214,7 @@ describe('AgentLoop', () => {
     promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
     stubActiveContext(5);
-    toolDispatcher.dispatch.mockResolvedValue('{"ok":true,"_private_diff":{"diff_mode":"PATCH"}}');
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true,"_private_diff":{"diff_mode":"PATCH"}}'));
     let call = 0;
     llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
       if (call++ === 0) {
@@ -238,7 +242,7 @@ describe('AgentLoop', () => {
       id: 'call-1',
       function: expect.objectContaining({ arguments: '{"path":"a"}' }),
     }));
-    expect(l.onToolCallResult).toHaveBeenCalledWith('call-1', expect.any(String));
+    expect(l.onToolCallResult).toHaveBeenCalledWith('call-1', expect.any(String), expect.objectContaining({ status: 'success' }));
     expect(ctx.messages.map((m) => m.role)).toEqual(expect.arrayContaining(['assistant', 'tool', 'assistant']));
   });
 
@@ -250,7 +254,7 @@ describe('AgentLoop', () => {
     promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
     stubActiveContext(5);
-    toolDispatcher.dispatch.mockResolvedValue('{"ok":true}');
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
     let call = 0;
     llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
       if (call++ === 0) {
@@ -280,19 +284,19 @@ describe('AgentLoop', () => {
       id: 'call_80eb756f08f94773b4f97c60',
       function: expect.objectContaining({ name: 'write_file', arguments: '{"path":"a.html","content":"x"}' }),
     }));
-    expect(toolDispatcher.dispatch).toHaveBeenCalledTimes(1);
-    expect(toolDispatcher.dispatch).toHaveBeenCalledWith(
-      'write_file',
-      '{"path":"a.html","content":"x"}',
-      'CLOUD',
-      11,
-      7,
-      '/repo',
-      'READ_ONLY',
-      undefined,
-      ctx.tools,
-      ctx.executionUserId,
-    );
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(1);
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledWith(expect.objectContaining({
+      callId: 'call_80eb756f08f94773b4f97c60',
+      toolName: 'write_file',
+      argumentsJson: '{"path":"a.html","content":"x"}',
+      executionMode: 'CLOUD',
+      sessionId: 11,
+      userId: 7,
+      executionUserId: ctx.executionUserId ?? null,
+      workspace: '/repo',
+      permissionLevel: 'READ_ONLY',
+      sessionTools: ctx.tools,
+    }));
     expect(p.onSaveAssistantMessage.mock.calls[0][2]).toHaveLength(1);
     expect(p.onSaveAssistantMessage.mock.calls[0][2][0]).toEqual(expect.objectContaining({
       id: 'call_80eb756f08f94773b4f97c60',
@@ -309,10 +313,11 @@ describe('AgentLoop', () => {
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
     stubActiveContext(5);
     const seen: string[] = [];
-    toolDispatcher.dispatch.mockImplementation(async (name: string) => {
+    toolDispatcher.dispatchInvocation.mockImplementation(async (inv: { toolName: string }) => {
+      const name = inv.toolName;
       await new Promise((r) => setTimeout(r, name === 'read_file' ? 25 : 5));
       seen.push(`${name}:${ToolCallContext.getToolCallId() ?? ''}`);
-      return '{"ok":true}';
+      return toolResult('{"ok":true}');
     });
     llmAdapter.stream.mockImplementationOnce(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
       callback.onChunk(toolChunk({ id: 'call-read', index: 0, function: { name: 'read_file', arguments: '{"path":"a"}' } }));
@@ -335,10 +340,10 @@ describe('AgentLoop', () => {
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
     stubActiveContext(5);
     let dispatchCount = 0;
-    toolDispatcher.dispatch.mockImplementation(async () => {
+    toolDispatcher.dispatchInvocation.mockImplementation(async () => {
       dispatchCount++;
       if (dispatchCount === 2) cancelFlag.set(true);
-      return dispatchCount === 1 ? '{"total_lines":2}' : '{"exit_code":0}';
+      return toolResult(dispatchCount === 1 ? '{"total_lines":2}' : '{"exit_code":0}');
     });
     llmAdapter.stream.mockImplementationOnce(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
       callback.onChunk(toolChunk({ id: 'call-read', index: 0, function: { name: 'read_file', arguments: '{"path":"a"}' } }));
@@ -363,7 +368,7 @@ describe('AgentLoop', () => {
     promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
     stubActiveContext(5);
-    toolDispatcher.dispatch.mockResolvedValue('{"ok":true}');
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
     let call = 0;
     llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
       if (call++ === 0) {
@@ -402,9 +407,17 @@ describe('AgentLoop', () => {
     }));
     expect(vi.mocked(l.onToolCallStart).mock.calls.filter(([tc]) => tc.id === 'call-shell')).toHaveLength(2);
     expect(vi.mocked(l.onToolCallStart).mock.calls.filter(([tc]) => tc.id === 'call-read')).toHaveLength(2);
-    expect(toolDispatcher.dispatch).toHaveBeenCalledWith(
-      'shell', '{"command":"pwd"}', 'CLOUD', 11, 7, '/repo', 'READ_ONLY', undefined, ctx.tools, ctx.executionUserId,
-    );
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'shell',
+      argumentsJson: '{"command":"pwd"}',
+      executionMode: 'CLOUD',
+      sessionId: 11,
+      userId: 7,
+      executionUserId: ctx.executionUserId ?? null,
+      workspace: '/repo',
+      permissionLevel: 'READ_ONLY',
+      sessionTools: ctx.tools,
+    }));
   });
 
   it('executeStripsImageDataUriFromPersistedToolMessage', async () => {
@@ -416,7 +429,7 @@ describe('AgentLoop', () => {
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
     stubActiveContext(5);
     const imageResult = '{"content":"图片读取成功：a.png","total_lines":0,"media_type":"image","mime":"image/png","path":"a.png","size_bytes":10,"data_uri":"data:image/png;base64,abc"}';
-    toolDispatcher.dispatch.mockResolvedValue(imageResult);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult(imageResult));
     let call = 0;
     llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
       if (call++ === 0) {
@@ -483,7 +496,7 @@ describe('AgentLoop', () => {
     promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
     stubActiveContext(80);
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
-    toolDispatcher.dispatch.mockResolvedValue('{"ok":true}');
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
     sessionCompactionOrchestrator.compact.mockResolvedValue(true);
     stubToolThenDone();
     await agentLoop.execute(ctx, l, p);
@@ -498,7 +511,7 @@ describe('AgentLoop', () => {
     promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
     stubActiveContext(80);
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
-    toolDispatcher.dispatch.mockResolvedValue('{"ok":true}');
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
     stubToolThenDone();
     await agentLoop.execute(ctx, l, null);
     expect(sessionCompactionOrchestrator.compact).not.toHaveBeenCalled();
@@ -511,7 +524,7 @@ describe('AgentLoop', () => {
     promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
     stubActiveContext(80);
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
-    toolDispatcher.dispatch.mockResolvedValue('{"ok":true}');
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
     sessionCompactionOrchestrator.compact.mockResolvedValue(false);
     let call = 0;
     llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
@@ -537,7 +550,7 @@ describe('AgentLoop', () => {
     promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
     stubActiveContext(50);
     backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
-    toolDispatcher.dispatch.mockResolvedValue('{"ok":true}');
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
     stubToolThenDone();
     await agentLoop.execute(ctx, l, p);
     expect(sessionCompactionOrchestrator.compact).not.toHaveBeenCalled();
