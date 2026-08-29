@@ -27,14 +27,6 @@
       <el-form-item label="供应商" prop="provider">
         <el-input v-model="form.provider" placeholder="例如: OpenAI, Anthropic" />
       </el-form-item>
-      <el-form-item label="API 协议">
-        <el-select v-model="form.apiProtocol" style="width: 100%">
-          <el-option label="OpenAI 兼容（ChatCompletions）" value="openai-compatible" />
-          <el-option label="Anthropic（Messages）" value="anthropic" />
-          <el-option label="OpenAI（Responses）" value="openai-responses" />
-        </el-select>
-        <span style="margin-left: 8px; color: #909399; font-size: 12px;">决定调用该模型使用的 API 协议，供应商仅作渠道标识</span>
-      </el-form-item>
       <el-form-item label="模型标识" prop="modelId">
         <el-input v-model="form.modelId" placeholder="例如: gpt-4o, mimo-v2.5-tts" />
       </el-form-item>
@@ -46,8 +38,17 @@
         </el-radio-group>
         <span style="margin-left: 8px; color: #909399; font-size: 12px;">调用该模型时模拟的客户端请求头</span>
       </el-form-item>
+      <el-form-item label="API 协议">
+        <el-select v-model="form.apiProtocol" style="width: 100%">
+          <el-option label="OpenAI 兼容（ChatCompletions）" value="openai-compatible" />
+          <el-option label="Anthropic（Messages）" value="anthropic" />
+          <el-option label="OpenAI（Responses）" value="openai-responses" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="API 地址" prop="baseUrl">
-        <el-input v-model="form.baseUrl" placeholder="例如: https://api.openai.com/v1" />
+        <el-input v-model="form.baseUrl" placeholder="例如: https://api.openai.com/v1">
+          <template #append><span style="font-family: monospace;">{{ apiProtocolSuffix }}</span></template>
+        </el-input>
       </el-form-item>
       <el-form-item label="API Key" prop="apiKey">
         <el-input v-model="form.apiKey" type="password" show-password :placeholder="isEdit ? '留空则不修改' : '请输入 API Key'" />
@@ -111,6 +112,15 @@ const dialogTitle = computed(() => {
 })
 const submitButtonText = computed(() => (isEdit.value ? '保存' : '添加'))
 const isTextType = computed(() => form.modelType === 'text')
+// 协议对应的调用路径后缀，与后端各 LLM 适配器实际拼接一致
+const apiProtocolSuffix = computed(() => {
+  const suffixes: Record<string, string> = {
+    'openai-compatible': '/chat/completions',
+    anthropic: '/messages',
+    'openai-responses': '/responses'
+  }
+  return suffixes[form.apiProtocol] ?? ''
+})
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 
