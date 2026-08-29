@@ -1580,16 +1580,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     activityService as never, activityHeartbeat, todoMapper, modelRepo as never,
     cfg.app.harness.runtimeDir,
     agentExecutor,
-    async (sessionId, userId) => {
-      void wsHandler.autoConsumeQueue(sessionId, userId);
+    async (sessionId, userId, phase) => {
+      // 崩溃恢复续跑以 FAILED 结束：上一个任务实际未执行完成，不自动消费下一条消息。
+      // 主队列与飞书队列均受此门禁约束；COMPLETED / CANCELLED 照常接力消费。
+      if (phase !== 'FAILED') void wsHandler.autoConsumeQueue(sessionId, userId);
       // 恢复终态后清理活跃进度卡片映射；必须先于队列接力消费（下一任务会写入新映射）。
       await feishuProgressCardRepo.deleteBySessionId(sessionId).catch((error) => {
         console.warn(`清理飞书进度卡片映射失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       });
-      // 崩溃恢复续跑结束后，若飞书队列仍有排队消息则接力消费。
-      await feishuInboundHandler.drainNextIfPending(sessionId).catch((error) => {
-        console.error(`飞书崩溃恢复后队列接力消费失败, sessionId=${sessionId}`, error);
-      });
+      // 崩溃恢复续跑结束后，若飞书队列仍有排队消息则接力消费（FAILED 时跳过）。
+      if (phase !== 'FAILED') {
+        await feishuInboundHandler.drainNextIfPending(sessionId).catch((error) => {
+          console.error(`飞书崩溃恢复后队列接力消费失败, sessionId=${sessionId}`, error);
+        });
+      }
     },
     subagentCoordinator,
     // 恢复续跑时挂载飞书进度卡片续更：崩溃前在途任务的卡片不会停留在「正在处理」。

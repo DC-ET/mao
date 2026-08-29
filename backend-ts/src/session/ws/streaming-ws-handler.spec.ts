@@ -465,6 +465,66 @@ describe('StreamingWsHandler', () => {
     vi.useRealTimers();
   });
 
+  it('doesNotAutoConsumeQueueWhenExecutionFails', async () => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'COMPLETED'));
+    messageQueueService.listPending.mockResolvedValue([
+      { id: 8, sessionId: 11, userId: 7, content: '#{do_something}#', sortOrder: 1, images: null },
+    ]);
+    messageQueueService.dequeue.mockResolvedValue(
+      { id: 8, sessionId: 11, userId: 7, content: '#{do_something}#', sortOrder: 1, images: null },
+    );
+    sessionService.saveMessage.mockResolvedValue(message(100, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-1');
+    harnessService.executeFromEvent.mockRejectedValue(new Error('boom'));
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11, data: { content: 'hello', eventId: 'event-1' },
+    }));
+    const running = executor.runAll();
+    await vi.advanceTimersByTimeAsync(500);
+    await running;
+    // FAILED 后不应自动出队/消费队列下一条
+    expect(messageQueueService.dequeue).not.toHaveBeenCalled();
+    expect(messageQueueService.listPending).not.toHaveBeenCalled();
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'FAILED', 'event-1', expect.any(String));
+    vi.useRealTimers();
+  });
+
+  it('autoConsumesQueueWhenExecutionCancelled', async () => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'COMPLETED'));
+    let pending = [
+      { id: 8, sessionId: 11, userId: 7, content: '#{next}#', sortOrder: 1, images: null },
+    ];
+    messageQueueService.listPending.mockImplementation(async () => pending);
+    messageQueueService.dequeue.mockImplementation(async () => {
+      const head = pending[0] ?? null;
+      pending = [];
+      return head;
+    });
+    sessionService.saveMessage.mockResolvedValue(message(100, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-1');
+    // 模拟执行中被取消：置位 cancelFlag，使 runExecution 走 CANCELLED 收尾。
+    harnessService.executeFromEvent.mockImplementation(async (_s: number, _e: string, _l: unknown, flag?: { set(v: boolean): void }) => {
+      flag?.set?.(true);
+    });
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11, data: { content: 'hello', eventId: 'event-1' },
+    }));
+    const running = executor.runAll();
+    await vi.advanceTimersByTimeAsync(500);
+    await running;
+    // CANCELLED 属用户主动决策：结束后照常自动消费下一条
+    expect(messageQueueService.dequeue).toHaveBeenCalledWith(11);
+    vi.useRealTimers();
+  });
+
   it('cancel insert skillSync mcpReport and sideTask', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);

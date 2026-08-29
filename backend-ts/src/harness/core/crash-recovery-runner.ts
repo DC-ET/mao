@@ -50,7 +50,7 @@ export class CrashRecoveryRunner {
     private readonly agentExecutor: { submit(fn: () => Promise<void>): void } = {
       submit: (fn) => { void fn(); },
     },
-    private readonly onExecutionFinished?: (sessionId: number, userId: number) => Promise<void>,
+    private readonly onExecutionFinished?: (sessionId: number, userId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>,
     private readonly subagentCoordinator?: SubagentRecoveryCoordinator,
     /** 恢复续跑时的额外事件监听（如飞书进度卡片续更）；返回 null 表示该会话无需额外监听。 */
     private readonly createExtraListeners?: (sessionId: number, userId: number | null, executionId: string) => Promise<RecoveryExtraListener | null>,
@@ -155,6 +155,8 @@ export class CrashRecoveryRunner {
     }
     const session = current;
     const executionId = randomUUID();
+    // 恢复续跑的实际终态：默认 FAILED，供收尾回调（onExecutionFinished）按终态决定队列是否接力消费。
+    let terminalPhase: 'COMPLETED' | 'FAILED' | 'CANCELLED' = 'FAILED';
     try {
       const deleted = await this.sessionService.cleanupIncompleteTail(sessionId);
       if (deleted > 0) {
@@ -187,14 +189,17 @@ export class CrashRecoveryRunner {
           harnessLog('warn', `Recovery extra cancel failed for session ${sessionId}`, e);
         }
         await this.taskTerminalService.finishExecution(sessionId, userId, 'CANCELLED', executionId);
+        terminalPhase = 'CANCELLED';
       } else {
         await this.taskTerminalService.finishExecution(sessionId, userId, 'COMPLETED', executionId);
+        terminalPhase = 'COMPLETED';
       }
       harnessLog('info', `Session ${sessionId}: recovery completed`);
     } catch (e) {
       // 恢复续跑异常：额外监听（如飞书卡片）同步收到 FAILED 终态，避免停留在「正在处理」。
       try { extra?.onError(e); } catch { /* extra 已尽力 */ }
       harnessLog('error', `Recovery failed for session ${sessionId}`, e);
+      terminalPhase = 'FAILED';
       try {
         await this.taskTerminalService.finishExecution(
           sessionId, userId, 'FAILED', executionId, (e as Error).message ?? 'Recovery failed');
@@ -204,7 +209,7 @@ export class CrashRecoveryRunner {
       this.activityHeartbeat.clear(sessionId);
       if (userId != null) {
         try {
-          await this.onExecutionFinished?.(sessionId, userId);
+          await this.onExecutionFinished?.(sessionId, userId, terminalPhase);
         } catch (e) {
           harnessLog('warn', `Auto-consume after recovery failed for session ${sessionId}`, e);
         }

@@ -360,6 +360,9 @@ export class StreamingWsHandler {
     cancelFlag: { get(): boolean; set(v: boolean): void }, clearTodos: boolean, futureRef: { current: unknown },
   ): Promise<void> {
     await this.withLock(this.sessionLocks, sessionId, async () => {
+      // 终态驱动消费门禁：FAILED 时不再自动消费队列下一条。默认 'FAILED' 保守兜底——
+      // 任何遗漏赋值的分支都倾向「不消费」，宁可暂停也不错误消耗用户消息。
+      let terminalPhase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
       try {
         await this.deps.sessionService.updatePhase(sessionId, 'RUNNING');
         this.deps.registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RUNNING', executionId }));
@@ -369,7 +372,7 @@ export class StreamingWsHandler {
         if (session.executionMode === 'LOCAL' && agent) {
           const synced = await this.syncSkillsToClient(userId, sessionId, session, agent);
           if (!synced) {
-            await this.finishFailedSession(sessionId, userId, executionId, 'Skill sync failed or timed out');
+            terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, 'Skill sync failed or timed out');
             this.deps.registry.send(userId, wsEvent('error', sessionId, { message: 'Skill sync failed or timed out' }));
             return;
           }
@@ -387,12 +390,16 @@ export class StreamingWsHandler {
           sessionId, userId, executionId, await this.resolveSupportsVision(session),
         );
         await this.deps.harnessService.executeFromEvent(sessionId, executionId, listener, cancelFlag);
-        if (cancelFlag.get()) await this.finishCancelledSession(sessionId, userId, executionId);
-        else await this.finishCompletedSession(sessionId, userId, executionId);
+        if (cancelFlag.get()) {
+          await this.finishCancelledSession(sessionId, userId, executionId);
+          terminalPhase = 'CANCELLED';
+        } else {
+          terminalPhase = await this.finishCompletedSession(sessionId, userId, executionId);
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Agent 执行异常';
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message, executionId }));
-        await this.finishFailedSession(sessionId, userId, executionId, message);
+        terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, message);
       } finally {
         try {
           this.releaseSessionExecutionResources(sessionId);
@@ -406,7 +413,7 @@ export class StreamingWsHandler {
         this.cancelFlags.delete(sessionId);
         this.deps.agentLoop.removeCancelFlag(sessionId);
         this.deps.activityHeartbeat.clear(sessionId);
-        await this.autoConsumeQueue(sessionId, userId);
+        if (terminalPhase !== 'FAILED') await this.autoConsumeQueue(sessionId, userId);
       }
     });
   }
@@ -620,6 +627,7 @@ export class StreamingWsHandler {
     try {
       const future = this.deps.agentExecutor(async () => {
       await this.withLock(this.sessionLocks, sideSessionId, async () => {
+        let terminalPhase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
         try {
           await this.deps.sessionService.updateField(sideSessionId, 'phase', 'RUNNING');
           this.deps.registry.send(userId, wsEvent('session_status', sideSessionId, { phase: 'RUNNING', executionId: sideExecutionId }));
@@ -629,7 +637,7 @@ export class StreamingWsHandler {
             if (sideAgent) {
               const synced = await this.syncSkillsToClient(userId, sideSessionId, sideSession, sideAgent);
               if (!synced) {
-                await this.finishFailedSession(sideSessionId, userId, sideExecutionId, 'Skill sync failed or timed out');
+                terminalPhase = await this.finishFailedSession(sideSessionId, userId, sideExecutionId, 'Skill sync failed or timed out');
                 this.deps.registry.send(userId, wsEvent('error', sideSessionId, { message: 'Skill sync failed or timed out' }));
                 return;
               }
@@ -641,11 +649,15 @@ export class StreamingWsHandler {
             sideSessionId, userId, sideExecutionId, await this.resolveSupportsVision(sideSession),
           );
           await this.deps.harnessService.executeSideFirstMessage(parentSessionId, sideSessionId, inheritContext, listener, flag);
-          if (flag.get()) await this.deps.taskTerminalService.finishExecution(sideSessionId, userId, 'CANCELLED', sideExecutionId);
-          else await this.finishCompletedSession(sideSessionId, userId, sideExecutionId);
+          if (flag.get()) {
+            await this.deps.taskTerminalService.finishExecution(sideSessionId, userId, 'CANCELLED', sideExecutionId);
+            terminalPhase = 'CANCELLED';
+          } else {
+            terminalPhase = await this.finishCompletedSession(sideSessionId, userId, sideExecutionId);
+          }
         } catch (e) {
           const message = e instanceof Error ? e.message : '未知错误';
-          await this.finishFailedSession(sideSessionId, userId, sideExecutionId, message);
+          terminalPhase = await this.finishFailedSession(sideSessionId, userId, sideExecutionId, message);
           this.deps.registry.send(userId, wsEvent('error', sideSessionId, { message }));
         } finally {
           try {
@@ -660,7 +672,7 @@ export class StreamingWsHandler {
           this.cancelFlags.delete(sideSessionId);
           this.deps.agentLoop.removeCancelFlag(sideSessionId);
           this.deps.activityHeartbeat.clear(sideSessionId);
-          await this.autoConsumeQueue(sideSessionId, userId);
+          if (terminalPhase !== 'FAILED') await this.autoConsumeQueue(sideSessionId, userId);
         }
       });
     });
@@ -746,6 +758,7 @@ export class StreamingWsHandler {
     cancelFlag: { get(): boolean; set(v: boolean): void }, futureRef: { current: unknown },
   ): Promise<void> {
     await this.withLock(this.sessionLocks, sessionId, async () => {
+      let terminalPhase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
       try {
         await this.deps.sessionService.updatePhase(sessionId, 'RUNNING');
         this.deps.registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RUNNING', executionId }));
@@ -757,12 +770,16 @@ export class StreamingWsHandler {
           sessionId, userId, executionId, await this.resolveSupportsVision(session),
         );
         await this.deps.harnessService.executeFromEvent(sessionId, executionId, listener, cancelFlag);
-        if (cancelFlag.get()) await this.finishCancelledSession(sessionId, userId, executionId);
-        else await this.finishCompletedSession(sessionId, userId, executionId);
+        if (cancelFlag.get()) {
+          await this.finishCancelledSession(sessionId, userId, executionId);
+          terminalPhase = 'CANCELLED';
+        } else {
+          terminalPhase = await this.finishCompletedSession(sessionId, userId, executionId);
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Agent 重试执行异常';
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message, executionId }));
-        await this.finishFailedSession(sessionId, userId, executionId, message);
+        terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, message);
       } finally {
         try {
           this.releaseSessionExecutionResources(sessionId);
@@ -776,7 +793,7 @@ export class StreamingWsHandler {
         this.cancelFlags.delete(sessionId);
         this.deps.agentLoop.removeCancelFlag(sessionId);
         this.deps.activityHeartbeat.clear(sessionId);
-        await this.autoConsumeQueue(sessionId, userId);
+        if (terminalPhase !== 'FAILED') await this.autoConsumeQueue(sessionId, userId);
       }
     });
   }
@@ -1133,23 +1150,34 @@ export class StreamingWsHandler {
     return !this.executionClaims.has(sessionId) && !this.runningTasks.has(sessionId);
   }
 
-  private async finishCompletedSession(sessionId: number, userId: number, executionId: string): Promise<void> {
+  /**
+   * 收尾任务为 COMPLETED；返回实际生效的终态：
+   * 会话已被并发取消（phase=CANCELLED）时返回 'CANCELLED'，供调用方（finally 消费门禁）准确判定。
+   */
+  private async finishCompletedSession(sessionId: number, userId: number, executionId: string): Promise<'COMPLETED' | 'CANCELLED'> {
     const session = await this.deps.sessionService.getSession(sessionId);
-    if (session?.phase === 'CANCELLED') return;
+    if (session?.phase === 'CANCELLED') return 'CANCELLED';
     await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'COMPLETED', executionId);
+    return 'COMPLETED';
   }
 
-  private async finishFailedSession(sessionId: number, userId: number, executionId: string, reason: string): Promise<void> {
+  /**
+   * 收尾任务为 FAILED；返回实际生效的终态：
+   * 会话已被并发取消（phase=CANCELLED）时返回 'CANCELLED'（此时队列消费不受阻）。
+   */
+  private async finishFailedSession(sessionId: number, userId: number, executionId: string, reason: string): Promise<'FAILED' | 'CANCELLED'> {
     const session = await this.deps.sessionService.getSession(sessionId);
-    if (session?.phase === 'CANCELLED') return;
+    if (session?.phase === 'CANCELLED') return 'CANCELLED';
     await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'FAILED', executionId, reason);
+    return 'FAILED';
   }
 
-  private async finishCancelledSession(sessionId: number, userId: number, executionId: string): Promise<void> {
+  private async finishCancelledSession(sessionId: number, userId: number, executionId: string): Promise<'CANCELLED'> {
     const session = await this.deps.sessionService.getSession(sessionId);
-    if (session && this.isTerminalPhase(session.phase)) return;
+    if (session && this.isTerminalPhase(session.phase)) return 'CANCELLED';
     await this.deps.sessionService.cleanupIncompleteTail(sessionId);
     await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'CANCELLED', executionId);
+    return 'CANCELLED';
   }
 
   private async resolveSessionModel(session: Session): Promise<LlmModel | null> {

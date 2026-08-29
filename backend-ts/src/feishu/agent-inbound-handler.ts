@@ -118,6 +118,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     }
     // 空闲路径：加锁 + 双重校验后执行；执行期间持有锁，保证 claim 语义与消息保序。
     let executed = false;
+    let phase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
     await this.withLock(sessionId, async () => {
       if (await this.isBusyOrRecovering(sessionId)) {
         await this.enqueueMessage(sessionId, context, message, session);
@@ -128,14 +129,15 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       // 时序契约：busy.add 必须先于 runExecution 内的 updatePhase(RUNNING)，否则会出现
       // 「phase 已 RUNNING 但 busy 未置位」的窗口，让并发消息误判为空闲而直接执行。
       try {
-        await this.executeDirect(sessionId, context, message, session);
+        phase = await this.executeDirect(sessionId, context, message, session);
       } finally {
         this.busy.delete(sessionId);
         this.interrupted.delete(sessionId);
       }
     });
-    // 本消息执行结束（或入队后队列需推进）时，尝试接力消费下一个排队任务。
-    if (executed) void this.drainNext(sessionId).catch((error) => {
+    // 本消息执行结束（或入队后队列需推进）时，尝试接力消费下一个排队任务；
+    // 上一任务 FAILED 时不再自动消费下一条（延续失败上下文执行会产生不可信结果）。
+    if (executed && phase !== 'FAILED') void this.drainNext(sessionId).catch((error) => {
       console.error(`飞书队列消费接力异常, sessionId=${sessionId}`, error);
     });
     return null;
@@ -156,12 +158,20 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   private async executeDirect(
     sessionId: number, context: FeishuInboundContext, message: unknown,
     session: { id: number; executionUserId?: number | null },
-  ): Promise<void> {
+  ): Promise<'COMPLETED' | 'CANCELLED' | 'FAILED'> {
     const cancelFlag = this.options.createCancelFlag?.(sessionId) ?? NOOP_CANCEL_FLAG;
     this.cancelFlags.set(sessionId, cancelFlag);
     try {
-      const reply = await this.runExecution(sessionId, context, message, session.executionUserId ?? context.maoUserId ?? null, cancelFlag);
-      if (reply?.text) await this.options.onReply?.(context, reply.text);
+      const result = await this.runExecution(sessionId, context, message, session.executionUserId ?? context.maoUserId ?? null, cancelFlag);
+      // 回复发送失败不影响执行终态：任务已完成，队列仍应按 result.phase 决策是否接力。
+      if (result.text) {
+        try {
+          await this.options.onReply?.(context, result.text);
+        } catch (error) {
+          console.error(`飞书回复发送失败, sessionId=${sessionId}`, error);
+        }
+      }
+      return result.phase;
     } finally {
       this.removeCancelFlag(sessionId, cancelFlag);
     }
@@ -170,21 +180,21 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   private async drainNext(sessionId: number): Promise<void> {
     const queueService = this.options.queueService;
     if (queueService == null) return;
-    const claimed = await this.withLock(sessionId, async () => {
-      if (await this.isBusyOrRecovering(sessionId)) return false;
+    const phase = await this.withLock(sessionId, async () => {
+      if (await this.isBusyOrRecovering(sessionId)) return null;
       const item = await queueService.claimNext(sessionId);
-      if (item == null) return false;
+      if (item == null) return null;
       this.busy.add(sessionId);
       try {
-        await this.executeQueued(sessionId, item);
+        return await this.executeQueued(sessionId, item);
       } finally {
         this.busy.delete(sessionId);
         this.interrupted.delete(sessionId);
       }
-      return true;
     });
-    // 仅当认领到任务时继续接力（队列空则停止，避免无限递归）。
-    if (claimed) {
+    // 仅当认领到任务且本轮执行未失败时继续接力（队列空则停止，避免无限递归；
+    // 失败则停止自动消费下一条，避免基于失败上下文继续执行）。
+    if (phase != null && phase !== 'FAILED') {
       void this.drainNext(sessionId).catch((error) => {
         console.error(`飞书队列消费接力异常, sessionId=${sessionId}`, error);
       });
@@ -200,17 +210,27 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     return phase === 'RUNNING' || phase === 'RESUMING';
   }
 
-  private async executeQueued(sessionId: number, row: FeishuInboundQueueRow): Promise<void> {
+  private async executeQueued(sessionId: number, row: FeishuInboundQueueRow): Promise<'COMPLETED' | 'CANCELLED' | 'FAILED'> {
     const cancelFlag = this.options.createCancelFlag?.(sessionId) ?? NOOP_CANCEL_FLAG;
     this.cancelFlags.set(sessionId, cancelFlag);
+    let phase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
     try {
       // reconstructFromQueue 内 JSON.parse 可能抛错：必须置于 try 内，确保 finally 清理队列行。
       const { context, message } = reconstructFromQueue(row);
-      const reply = await this.runExecution(sessionId, context, message, row.maoUserId, cancelFlag, row);
-      if (reply?.text) await this.options.onReply?.(context, reply.text);
+      const result = await this.runExecution(sessionId, context, message, row.maoUserId, cancelFlag, row);
+      phase = result.phase;
+      // 回复发送失败不影响执行终态：queueRow 仍会清理，且不把执行成功误判为 FAILED 而暂停队列。
+      if (result.text) {
+        try {
+          await this.options.onReply?.(context, result.text);
+        } catch (error) {
+          console.error(`飞书队列回复发送失败, queueId=${row.id}`, error);
+        }
+      }
     } catch (error) {
       console.error(`飞书队列消息执行失败, queueId=${row.id}`, error);
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
+      phase = 'FAILED';
     } finally {
       this.removeCancelFlag(sessionId, cancelFlag);
       try {
@@ -219,19 +239,21 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         console.error(`飞书队列行清理失败, queueId=${row.id}`, error);
       }
     }
+    return phase;
   }
 
   /** 标记「消息已由某条队列行消费」的 metadata 键（写入 message.metadata JSON）。 */
   private static readonly QUEUE_METADATA_KEY = 'feishuQueueId';
 
   /** 共享执行逻辑：进度卡片 → phase 重置 → 保存消息 → prepare → execute → 结果处理。
-   *  返回值 = 待发送的文本回复；返回 null 表示已通过进度卡片呈现（无需再发文本）。
+   *  返回 `{ text, phase }`：text = 待发送的文本回复（null 表示已通过进度卡片呈现，无需再发文本）；
+   *  phase = 本次执行的终态，供调用方决定队列是否接力消费（FAILED 时不消费下一条）。
    *  @param queueRow 若为队列消费执行，传入队列行，用于在保存用户消息时写入「消息已被该队列行消费」的标记，
    *                  供启动恢复时判断该消息是否已落库（已落库→删除行由崩溃恢复重放；未落库→复位排队重新消费）。 */
   private async runExecution(
     sessionId: number, context: FeishuInboundContext, message: unknown,
     executionUserId: number | null, cancelFlag: CancelFlag, queueRow?: FeishuInboundQueueRow | null,
-  ): Promise<FeishuReply | null> {
+  ): Promise<{ text: string | null; phase: 'COMPLETED' | 'CANCELLED' | 'FAILED' }> {
     let executionId = '';
     let cardListener: FeishuCardProgressListener | null = null;
     try {
@@ -259,21 +281,21 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
         await cardListener?.cancel(wasInterrupted);
         await this.options.onExecutionFinished?.(sessionId, context, executionId, 'CANCELLED');
-        if (cardListener == null) return { text: wasInterrupted ? '任务已被下一条消息中断。' : '任务已取消。' };
-        return null;
+        const text = cardListener == null ? (wasInterrupted ? '任务已被下一条消息中断。' : '任务已取消。') : null;
+        return { text, phase: 'CANCELLED' };
       }
       await this.options.onExecutionFinished?.(sessionId, context, executionId, 'COMPLETED');
       const text = await this.options.sessionService.getLatestAssistantReply(sessionId);
       const cardUpdated = await cardListener?.complete(text);
-      if (cardListener == null || cardUpdated === false) return { text };
-      return null;
+      const replyText = cardListener == null || cardUpdated === false ? text : null;
+      return { text: replyText, phase: 'COMPLETED' };
     } catch (error) {
       console.error(`飞书 Agent 执行失败, sessionId=${sessionId}`, error);
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
       const cardUpdated = await cardListener?.fail('抱歉，处理您的消息时出现了错误，请稍后再试。');
       await this.options.onExecutionFinished?.(sessionId, context, executionId, 'FAILED');
-      if (cardListener == null || cardUpdated === false) return { text: '抱歉，处理您的消息时出现了错误，请稍后再试。' };
-      return null;
+      const replyText = cardListener == null || cardUpdated === false ? '抱歉，处理您的消息时出现了错误，请稍后再试。' : null;
+      return { text: replyText, phase: 'FAILED' };
     }
   }
 

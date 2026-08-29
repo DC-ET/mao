@@ -47,6 +47,9 @@ function makeRunner(
     registerCancelFlag: vi.fn().mockReturnValue({ get: () => options.cancelled === true, set: () => undefined }),
     removeCancelFlag: vi.fn(),
   };
+  const onExecutionFinished = vi.fn().mockResolvedValue(undefined) as (
+    sessionId: number, userId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED',
+  ) => Promise<void>;
   const runner = new CrashRecoveryRunner(
     sessionMapper as never,
     sessionService as never,
@@ -60,11 +63,11 @@ function makeRunner(
     { selectById: vi.fn().mockResolvedValue(null), selectDefault: vi.fn().mockResolvedValue(null) } as never,
     '/tmp/mao-crash-recovery-spec-runtime-missing',
     { submit: (fn: () => Promise<void>) => { pending.push(fn()); } },
-    vi.fn().mockResolvedValue(undefined) as never,
+    onExecutionFinished,
     undefined,
     extra,
   );
-  return { runner, taskTerminalService, harnessService, pending };
+  return { runner, taskTerminalService, harnessService, pending, onExecutionFinished };
 }
 
 describe('CrashRecoveryRunner.createExtraListeners', () => {
@@ -115,5 +118,19 @@ describe('CrashRecoveryRunner.createExtraListeners', () => {
     await Promise.all(pending);
     expect(cancel).toHaveBeenCalled();
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(7, 42, 'CANCELLED', expect.any(String));
+  });
+
+  it('onExecutionFinishedReceivesPhaseFailedWhenRecoveryFails', async () => {
+    const { runner, onExecutionFinished, pending } = makeRunner(undefined, { executeError: new Error('llm down') });
+    await runner.run();
+    await Promise.all(pending);
+    expect(onExecutionFinished).toHaveBeenCalledWith(7, 42, 'FAILED');
+  });
+
+  it('onExecutionFinishedReceivesPhaseCompletedWhenRecoverySucceeds', async () => {
+    const { runner, onExecutionFinished, pending } = makeRunner();
+    await runner.run();
+    await Promise.all(pending);
+    expect(onExecutionFinished).toHaveBeenCalledWith(7, 42, 'COMPLETED');
   });
 });

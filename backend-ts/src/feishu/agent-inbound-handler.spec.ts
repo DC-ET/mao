@@ -363,4 +363,93 @@ describe('AgentFeishuInboundHandler', () => {
     expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, expect.stringContaining('@{/ws/a.pdf}@'), null);
     expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, expect.stringContaining('[以下文件接收失败：b.pdf（接收失败）]'), null);
   });
+
+  it('does not drain the queue when the direct message execution fails', async () => {
+    const sessionService = makeSessionService();
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { throw new Error('llm down'); }),
+    };
+    const queueService = makeQueueService();
+    const onReply = vi.fn(async () => undefined);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      queueService,
+      onReply,
+    });
+    await handler.onMessage(makeContext());
+    // FAILED 后不应触发队列接力消费
+    expect(queueService.claimNext).not.toHaveBeenCalled();
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), '抱歉，处理您的消息时出现了错误，请稍后再试。');
+  });
+
+  it('stops draining the queue after a queued message fails', async () => {
+    const sessionService = makeSessionService();
+    let execCount = 0;
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      // 第 1 条（直接执行）成功，第 2 条（排队执行）失败
+      execute: vi.fn(async () => {
+        execCount += 1;
+        if (execCount > 1) throw new Error('llm down on queued msg');
+      }),
+    };
+    const queueRow = {
+      id: 2, botId: 1, sessionId: 7, messageId: 'om_2', cardMessageId: null,
+      senderOpenId: 'ou_user', maoUserId: null, rankNo: 2, status: 'RUNNING',
+      payload: JSON.stringify({
+        message: 'm2',
+        context: { accountId: '1', chatType: 'group', chatId: 'oc_group', senderId: 'ou_user', senderUnionId: 'on_user', messageId: 'om_2', senderLabel: '李四', maoUserId: 42 },
+        botId: 1,
+      }),
+    };
+    let claims = 0;
+    const queueService = makeQueueService({
+      claimNext: vi.fn(async () => {
+        claims += 1;
+        return claims === 1 ? queueRow : null;
+      }),
+      hasPending: vi.fn(async () => true),
+    });
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      queueService,
+    });
+    // 第 1 条直接执行成功，触发 drainNext 消费队列中的第 2 条
+    await handler.onMessage(makeContext());
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // 排队消息失败后不再续接：claim 只发生一次，该失败队列行仍被清理
+    expect(claims).toBe(1);
+    expect(queueService.complete).toHaveBeenCalledWith(2);
+  });
+
+  it('still drains the queue when sending the reply fails after success', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const queueService = makeQueueService();
+    // onReply 发送失败不应把执行成功的终态误判为 FAILED
+    const onReply = vi.fn(async () => { throw new Error('send failed'); });
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      queueService,
+      onReply,
+    });
+    await handler.onMessage(makeContext());
+    // drainNext 为 fire-and-forget，等待其异步执行到 claimNext
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // 执行成功后即便 onReply 抛错，仍应尝试队列接力消费（claimNext 被调用；队列空则返回 null 停止）
+    expect(queueService.claimNext).toHaveBeenCalledTimes(1);
+  });
 });
