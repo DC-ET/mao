@@ -13,7 +13,7 @@ export default defineConfig({
   projects: [
     {
       name: 'admin',
-      testMatch: 'admin.spec.ts',
+      testMatch: /admin.*\.spec\.ts$/,
       use: { baseURL: 'http://localhost:5200' },
     },
     {
