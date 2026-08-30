@@ -1011,18 +1011,42 @@ export const useSessionStore = defineStore('session', () => {
         forgetLastSession()
       }
       // Clean up cached data
-      sessionMessages.value.delete(sid)
-      sessionTodos.value.delete(sid)
-      sessionActivities.value.delete(sid)
-      sessionContextWindow.value.delete(sid)
-      sessionCompactionEvents.value.delete(sid)
-      sessionQueueMessages.value.delete(sid)
-      sessionFileChanges.value.delete(sid)
+      clearSessionRuntimeState(sid)
       clearMessagePageState(sid)
       useDraftStore().clearDraft(`s:${sid}`)
     } catch {
       // ignore
     }
+  }
+
+  /**
+   * 删除会话后必须清掉该会话的全部运行态，否则残留的 phase/streaming/thinking
+   * 等 state 会在未来会话切换时命中（L-14）。
+   */
+  function clearSessionRuntimeState(sessionId: string) {
+    const sid = String(sessionId)
+    sessionMessages.value.delete(sid)
+    sessionTodos.value.delete(sid)
+    sessionActivities.value.delete(sid)
+    sessionContextWindow.value.delete(sid)
+    sessionCompactionEvents.value.delete(sid)
+    sessionCompacting.value.delete(sid)
+    sessionThinking.value.delete(sid)
+    sessionStreaming.value.delete(sid)
+    streamingAssistantMessageIds.delete(sid)
+    sessionLlmRetry.value.delete(sid)
+    sessionPendingApprovals.value.delete(sid)
+    sessionQueueMessages.value.delete(sid)
+    sessionFileChanges.value.delete(sid)
+    sessionPendingQuestions.value.delete(sid)
+    sessionExecutionErrors.value.delete(sid)
+    sessionMessageHasMore.value.delete(sid)
+    sessionMessageLoadingOlder.value.delete(sid)
+    sessionMessageNextBeforeId.value.delete(sid)
+    sessionPhases.value.delete(sid)
+    sideTaskCache.value.delete(sid)
+    subagentCache.value.delete(sid)
+    delegateToolCallBindings.value.delete(sid)
   }
 
   async function markAsRead(sessionId: string) {
@@ -1627,6 +1651,7 @@ export const useSessionStore = defineStore('session', () => {
     sideTaskCache.value = new Map()
     subagentCache.value = new Map()
     delegateToolCallBindings.value = new Map()
+    streamingAssistantMessageIds.clear()
   }
 
   return {

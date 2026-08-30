@@ -8,6 +8,11 @@ export interface SkillDocument {
   folderPath?: string | null;
 }
 
+/** 技能名必须是安全 slug：字母/数字开头，仅含字母/数字/-/_，最长 64。同时用作同步目标目录名，非法值会引发路径穿越。 */
+export function isValidSkillName(name: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name);
+}
+
 export function parseSkillMdContent(content: string): SkillDocument | null {
   if (!content.startsWith('---')) {
     return null;
@@ -58,6 +63,10 @@ export function validateSkillMd(content: string, expectedName: string): string |
   }
   if (metadata.name == null || String(metadata.name).trim().length === 0) {
     return `SKILL.md for skill '${expectedName}' is missing required field: name`;
+  }
+  const skillName = String(metadata.name).trim();
+  if (!isValidSkillName(skillName)) {
+    return `SKILL.md for skill '${expectedName}' has invalid name '${skillName}': name must match ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`;
   }
   if (metadata.description == null || String(metadata.description).trim().length === 0) {
     return `SKILL.md for skill '${expectedName}' is missing required field: description`;

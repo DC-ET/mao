@@ -126,6 +126,11 @@ function postJson(url: URL, body: string, apiKey: string, clientImpersonation?: 
       });
     });
     req.on('error', reject);
+    // M-8：timeout 选项只触发 'timeout' 事件，不监听则既不中止也不 reject，
+    // 图像 API 僵死时 Promise 永久挂起，整轮对话无限等待。
+    req.on('timeout', () => {
+      req.destroy(new Error('timeout'));
+    });
     req.write(body);
     req.end();
   });

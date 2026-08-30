@@ -57,7 +57,7 @@ export class WriteFileTool extends BaseTool {
         : { linesAdded: newLineCount, linesDeleted: 0 };
       return toJson({
         success: true,
-        bytes_written: content.length,
+        bytes_written: Buffer.byteLength(content, 'utf8'),
         file_change: {
           path: filePathArg,
           type: fileExisted ? 'MODIFIED' : 'CREATED',

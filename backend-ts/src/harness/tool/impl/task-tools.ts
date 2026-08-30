@@ -183,8 +183,12 @@ export class TaskUpdateTool extends BaseTool {
           return errorJson(`无效的待办事项 ID: ${item.id}`);
         }
         const newStatus = asText(item.status);
+        if (newStatus != null && newStatus !== '' && !['pending', 'in_progress', 'completed'].includes(newStatus)) {
+          return errorJson(`无效的任务状态: ${newStatus}（只能是 pending / in_progress / completed）`);
+        }
         if (newStatus === 'in_progress' && sessionId != null) {
-          await this.sessionTodoMapper.resetInProgress(sessionId, id);
+          // M-9：仅当目标存在时才降级其它 in_progress——不存在的 id 不得清掉真实运行中标记
+          await this.sessionTodoMapper.resetInProgressIfExists(sessionId, id);
         }
         const fields: Record<string, unknown> = {};
         if (newStatus != null) fields.status = newStatus;

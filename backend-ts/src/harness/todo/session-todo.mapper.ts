@@ -33,6 +33,17 @@ export class SessionTodoMapper {
     return id;
   }
 
+  /** 仅当目标待办确实存在时降级其它 in_progress；返回是否执行了降级。 */
+  async resetInProgressIfExists(sessionId: number, todoId: number): Promise<boolean> {
+    const target = await this.db.queryOne<{ id: number }>(
+      `SELECT id FROM session_todo WHERE id = ? AND session_id = ? AND ${notDeleted()} LIMIT 1`,
+      [todoId, sessionId],
+    );
+    if (target == null) return false;
+    await this.resetInProgress(sessionId, todoId);
+    return true;
+  }
+
   async resetInProgress(sessionId: number, exceptId?: number): Promise<void> {
     if (exceptId != null) {
       await this.db.execute(

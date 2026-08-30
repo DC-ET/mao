@@ -349,10 +349,18 @@ export async function askQuestionsInTty(questions: AskQuestion[]): Promise<AskAn
       });
       process.stderr.write(q.multiSelect ? '请输入序号（逗号分隔）或自定义文本: ' : '请输入序号或自定义文本: ');
       const raw = (await question('')).trim();
-      const nums = raw.split(/[,，\s]+/).map((s) => Number(s)).filter((n) => Number.isInteger(n) && n > 0);
+      // M-12：仅当 raw 是「完全由合法序号」组成的输入才走序号分支；
+      // 「1 补充说明」这类混合输入整段作为自定义文本（原实现 filter 掉 NaN 后把说明静默吞掉，
+      // 单选纯数字也永远按选项 label 提交，用户想自定义回答时语义相反）。
+      const tokens = raw.split(/[,，\s]+/).filter((s) => s !== '');
+      const allValidSeq = tokens.length > 0 && tokens.every((s) => {
+        const n = Number(s);
+        return Number.isInteger(n) && n >= 1 && n <= (q.options?.length ?? 0);
+      });
       const selectedLabels: string[] = [];
       let customInput: string | undefined;
-      if (nums.length > 0) {
+      if (allValidSeq) {
+        const nums = tokens.map(Number);
         for (const n of q.multiSelect ? nums : nums.slice(0, 1)) {
           const opt = q.options?.[n - 1];
           if (opt) selectedLabels.push(opt.label);

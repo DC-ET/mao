@@ -238,9 +238,13 @@ export function useStreamWS() {
         // 断线后内存中的瞬时 LLM 重试状态已不可信，全部清理避免重连后残留过期提示
         sessionStore.clearAllLlmRetry()
         if (initialConnect && !isReconnecting) {
-          // First-ever connection attempt failed — reject the promise
+          // First-ever connection attempt failed — keep trying via scheduleReconnect.
+          // (M-11) 首连失败不应放弃：服务端临时不可用/重启后应恢复会话。
+          // 若应用处于未登录态，scheduleReconnect 内部会停止重试。
           initialConnect = false
           connectPromise = null
+          isReconnecting = false
+          scheduleReconnect()
           reject(new Error('WebSocket connection failed'))
         } else if (!intentionalClose) {
           // Either a reconnect attempt failed, or an established connection dropped

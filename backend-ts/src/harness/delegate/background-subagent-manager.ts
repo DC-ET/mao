@@ -414,12 +414,22 @@ export class BackgroundSubagentManager {
       await this.deps.subagentExecutionMapper.updateById(execution.id, { deliveryStatus: 'PENDING' });
       return { ok: false, error: '纠偏请求已发出，但子代理未在 30 秒内结束，未创建新的追问任务' };
     }
-    await this.deps.subagentExecutionMapper.updateById(execution.id, {
-      status: 'CANCELLED',
-      result: '后台子代理因纠偏中断',
-      deliveryStatus: 'SUPPRESSED',
-      completedAt: nowSql(),
-    });
+    // L-13：check-then-act——等待期间子代理可能已正常收尾（COMPLETED 且结果已 DELIVERED），
+    // 必须按 DB 最新状态决定是否改写 CANCELLED，且仅 RUNNING/RECOVERING 可置 CANCELLED。
+    const latest = execution.id != null ? await this.deps.subagentExecutionMapper.findById(execution.id) : null;
+    if (latest == null || latest.status === 'RUNNING' || latest.status === 'RECOVERING') {
+      await this.deps.subagentExecutionMapper.updateById(execution.id, {
+        status: 'CANCELLED',
+        result: '后台子代理因纠偏中断',
+        deliveryStatus: 'SUPPRESSED',
+        completedAt: nowSql(),
+      });
+    } else if (latest.deliveryStatus === 'PENDING') {
+      // 已终态但结果未交付：纠偏打断了交付，保留终态结果并禁止交付。
+      await this.deps.subagentExecutionMapper.updateById(execution.id, { deliveryStatus: 'SUPPRESSED' });
+    }
+    // 清理纠偏注册的 cancel flag，避免泄漏影响后续执行。
+    try { loop.removeCancelFlag(execution.childSessionId); } catch { /* best-effort */ }
     return { ok: true, taskId: execution.id, childSessionId: execution.childSessionId };
   }
 

@@ -24,6 +24,8 @@ export class FeishuCardActionService {
     queuePort: FeishuCardActionPort;
     /** 中断当前会话执行（设置取消标志 + 关闭 shell）。 */
     interrupt: (sessionId: number) => void;
+    /** 中断后批量推进队列（含「中断未命中时兜底消费」与「命中后立即接力」）。 */
+    interruptAndDrain?: (sessionId: number) => void;
     /** 取消会话当前执行中的任务（进度卡「取消任务」按钮）；返回 false 表示当前无在执行任务。 */
     cancelRunning: (sessionId: number) => boolean;
     /** PATCH 卡片内容（botId 用于定位客户端）。 */
@@ -67,6 +69,14 @@ export class FeishuCardActionService {
     if (row.status !== 'QUEUED') return { toast: { type: 'info', content: '该消息已失效' } };
     const jumped = await this.options.queuePort.jumpToFront(row.id);
     if (!jumped) return { toast: { type: 'info', content: '该消息已开始执行' } };
+    // 先中断后排空，再 PATCH 卡片：若 PATCH（飞书 API 往返百毫秒）期间上一任务正好自然收尾、
+    // 队列接力已认领目标消息，插队回调再中断会误取消用户主动要求立即执行的消息。
+    const interruptAndDrain = this.options.interruptAndDrain;
+    if (interruptAndDrain != null) {
+      interruptAndDrain(row.sessionId);
+    } else {
+      this.options.interrupt(row.sessionId);
+    }
     if (row.cardMessageId != null) {
       try {
         await this.options.patchCard(row.botId, row.cardMessageId, buildQueueCardText('🚀 已插队', '正在中断当前任务并执行这条消息…'));
@@ -74,7 +84,6 @@ export class FeishuCardActionService {
         console.warn(`飞书排队卡片插队 PATCH 失败, cardMessageId=${row.cardMessageId}`, error);
       }
     }
-    this.options.interrupt(row.sessionId);
     return undefined;
   }
 

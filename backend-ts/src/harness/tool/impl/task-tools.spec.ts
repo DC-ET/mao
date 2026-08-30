@@ -10,6 +10,7 @@ function todo(id: number, content: string, status: string): SessionTodo {
 describe('TaskTools', () => {
   const mapper = {
     resetInProgress: vi.fn(),
+    resetInProgressIfExists: vi.fn(async () => true),
     insert: vi.fn(),
     selectBySessionId: vi.fn(),
     updateFields: vi.fn(),

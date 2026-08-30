@@ -118,11 +118,12 @@ async function connectStdio(server: McpServerSpec): Promise<{ conn: McpConn; too
   return { conn, tools };
 }
 
-async function connectHttp(server: McpServerSpec): Promise<McpToolDef[]> {
+async function connectHttp(server: McpServerSpec): Promise<{ tools: McpToolDef[]; sessionId?: string }> {
   if (!server.url) throw new Error(`MCP server "${server.name}": HTTP requires url`);
+  const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
   const res = await fetch(server.url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    headers,
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
@@ -135,26 +136,31 @@ async function connectHttp(server: McpServerSpec): Promise<McpToolDef[]> {
     }),
   });
   if (!res.ok) throw new Error(`HTTP MCP initialize failed: ${res.status}`);
+  // Streamable HTTP 会话协商：服务端通过 Mcp-Session-Id 响应头下发会话标识，
+  // 后续 tools/list 与 tools/call 必须原样回传，否则无状态服务端视为新会话。
+  const sessionId = res.headers.get('mcp-session-id') ?? undefined;
+  if (sessionId) headers['mcp-session-id'] = sessionId;
   const list = await fetch(server.url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
   });
   if (!list.ok) throw new Error(`HTTP MCP tools/list failed: ${list.status}`);
   const body = await list.json() as { result?: { tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> } };
-  return (body.result?.tools ?? []).map((t) => ({
+  const tools = (body.result?.tools ?? []).map((t) => ({
     name: t.name,
     description: t.description || '',
     schema: t.inputSchema || { type: 'object', properties: {} },
   }));
+  return { tools, sessionId };
 }
 
 export class McpManager {
-  private readonly sessions = new Map<number, Map<string, { conn?: McpConn; tools: McpToolDef[]; httpUrl?: string }>>();
+  private readonly sessions = new Map<number, Map<string, { conn?: McpConn; tools: McpToolDef[]; httpUrl?: string; mcpSessionId?: string }>>();
 
   async sync(sessionId: number, servers: McpServerSpec[]): Promise<McpServerReport[]> {
     await this.close(sessionId);
-    const map = new Map<string, { conn?: McpConn; tools: McpToolDef[]; httpUrl?: string }>();
+    const map = new Map<string, { conn?: McpConn; tools: McpToolDef[]; httpUrl?: string; mcpSessionId?: string }>();
     this.sessions.set(sessionId, map);
     const reports: McpServerReport[] = [];
     for (const server of servers) {
@@ -163,8 +169,8 @@ export class McpManager {
       try {
         const type = String(server.type || 'STDIO').toUpperCase();
         if (type === 'HTTP' || type === 'SSE') {
-          const tools = await connectHttp(server);
-          map.set(name, { tools, httpUrl: server.url });
+          const { tools, sessionId: mcpSessionId } = await connectHttp(server);
+          map.set(name, { tools, httpUrl: server.url, mcpSessionId });
           reports.push({ name, connected: true, tools, error: null });
         } else {
           const { conn, tools } = await connectStdio(server);
@@ -182,9 +188,11 @@ export class McpManager {
     const conn = this.sessions.get(sessionId)?.get(serverName);
     if (!conn) throw new Error(`MCP server "${serverName}" is not connected`);
     if (conn.httpUrl) {
+      const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
+      if (conn.mcpSessionId) headers['mcp-session-id'] = conn.mcpSessionId;
       const res = await fetch(conn.httpUrl, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers,
         body: JSON.stringify({
           jsonrpc: '2.0',
           id: Date.now(),

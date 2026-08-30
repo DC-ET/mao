@@ -53,17 +53,21 @@ export class FeishuInboundQueueRepository {
 
   /** CAS: status QUEUED → RUNNING，保证只有一方认领成功。 */
   async claimNextQueued(sessionId: number): Promise<FeishuInboundQueueRow | null> {
-    const row = await this.db.queryOne<FeishuInboundQueueRow>(
-      "SELECT * FROM feishu_inbound_queue WHERE session_id = ? AND status = 'QUEUED' ORDER BY rank_no ASC, id ASC LIMIT 1",
-      [sessionId],
-    );
-    if (row == null) return null;
-    const result = await this.db.execute(
-      'UPDATE feishu_inbound_queue SET status = ? WHERE id = ? AND status = ?',
-      ['RUNNING', row.id, 'QUEUED'],
-    );
-    if (result.affectedRows !== 1) return null;
-    return { ...row, status: 'RUNNING' };
+    // L-1：CAS 失败（如与该行卡片「取消」竞态，该行已被置 CANCELLED）不能当作「队列已空」——
+    // 否则后续仍 QUEUED 的消息会滞留到下一轮触发。循环重取下一条 QUEUED，直到没有可认领行。
+    for (;;) {
+      const row = await this.db.queryOne<FeishuInboundQueueRow>(
+        "SELECT * FROM feishu_inbound_queue WHERE session_id = ? AND status = 'QUEUED' ORDER BY rank_no ASC, id ASC LIMIT 1",
+        [sessionId],
+      );
+      if (row == null) return null;
+      const result = await this.db.execute(
+        'UPDATE feishu_inbound_queue SET status = ? WHERE id = ? AND status = ?',
+        ['RUNNING', row.id, 'QUEUED'],
+      );
+      if (result.affectedRows === 1) return { ...row, status: 'RUNNING' };
+      // CAS 失败：该行已被并发取消/认领，继续取下一条 QUEUED
+    }
   }
 
   /** CAS: status QUEUED → CANCELLED。 */

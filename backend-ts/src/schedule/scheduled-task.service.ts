@@ -210,6 +210,9 @@ export class ScheduledTaskService {
       this.agentExecutor(async () => {
         try {
           await withSessionLock(task.sessionId!, async () => {
+            // 进入执行阶段才算「运行中违纪」：入队失败/会话为空等未真正执行
+            // 的路径不得误标正在运行的其它执行（L-2）。
+            let executionStarted = false;
             let countThisRun = false;
             try {
               // 拿到锁后重读最新任务状态，排队期间可能已被更新/暂停/删除
@@ -240,6 +243,7 @@ export class ScheduledTaskService {
                 return;
               }
               await this.sessionService.updatePhase(task.sessionId!, 'RUNNING');
+              executionStarted = true;
               let savedMessage: Message;
               try {
                 savedMessage = await this.sessionService.saveMessage(task.sessionId!, 'USER', task.prompt, null, null, null, 0, null);
@@ -267,20 +271,32 @@ export class ScheduledTaskService {
               countThisRun = true;
             } catch (e) {
               countThisRun = true;
-              try {
-                await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'FAILED', executionId,
-                  e instanceof Error ? e.message : String(e));
-              } catch { /* ignore */ }
+              // L-2：仅本次确实进入执行阶段才落 FAILED 终态；
+              // busy 入队失败 / 会话为空等未执行路径不得改写同会话正在运行的执行。
+              if (executionStarted) {
+                try {
+                  await this.taskTerminalService.finishExecution(task.sessionId!, userId, 'FAILED', executionId,
+                    e instanceof Error ? e.message : String(e));
+                } catch { /* ignore */ }
+              }
               await this.markTaskResult(task, 'FAILED');
             } finally {
               if (!countThisRun) return;
-              task.lastFireTime = formatDateTime(new Date());
-              task.fireCount = (task.fireCount ?? 0) + 1;
-              if (this.calculateNextFireTime(task.cronExpression!) == null) {
-                task.finished = 1;
-                task.finishedAt = formatDateTime(new Date());
+              // M-5：执行收尾只做「增量更新」——仅写执行结果字段，避免整行回写
+              // T0 快照覆盖执行期间用户对 cron/prompt/name/status 的修改。
+              const patch: ScheduledTask = { id: task.id };
+              const now = formatDateTime(new Date());
+              patch.lastFireTime = now;
+              patch.fireCount = (task.fireCount ?? 0) + 1;
+              const latest = task.id != null ? await this.store.selectById(task.id) : null;
+              if (latest != null && latest.status === 'ACTIVE') {
+                const next = this.calculateNextFireTime(latest.cronExpression ?? task.cronExpression!);
+                if (next == null) {
+                  patch.finished = 1;
+                  patch.finishedAt = now;
+                }
               }
-              await this.store.updateById(task);
+              await this.store.updateById(patch);
             }
           });
         } finally {

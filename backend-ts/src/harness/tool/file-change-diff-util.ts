@@ -142,7 +142,9 @@ function buildUnifiedPatch(filePath: string, before: string, after: string): { c
   for (let i = prefix; i <= oldSuffix && i < oldLines.length; i++) append(`-${oldLines[i]}\n`);
   for (let i = prefix; i <= newSuffix && i < newLines.length; i++) append(`+${newLines[i]}\n`);
 
-  const sharedTailStart = Math.max(prefix, Math.max(oldSuffix + 1, newSuffix + 1));
+  // 尾部上下文：统一按旧序号从 oldSuffix+1 起输出。共享尾段在新旧文件中内容相同、仅索引错位
+  // （纯插入时 newSuffix 大于 oldSuffix），若取 max(oldSuffix+1, newSuffix+1) 会按旧序号跳过共享行。
+  const sharedTailStart = Math.max(prefix, oldSuffix + 1);
   const sharedTailEnd = Math.min(oldContextEnd, oldLines.length - 1);
   for (let i = sharedTailStart; i <= sharedTailEnd; i++) append(` ${oldLines[i]}\n`);
 

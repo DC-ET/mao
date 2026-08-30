@@ -157,10 +157,15 @@ function normalizeReasoning(raw: unknown): string | undefined {
 function parseUsage(raw: unknown): ChatUsage | undefined {
   if (!isPlainObject(raw)) return undefined;
   const details = raw.prompt_tokens_details ?? raw.promptTokensDetails;
+  const promptTokens = Number(raw.prompt_tokens ?? raw.promptTokens ?? 0);
+  const completionTokens = Number(raw.completion_tokens ?? raw.completionTokens ?? 0);
+  // L-6：部分网关只回 prompt/completion 不回 total_tokens，此处与 Responses 侧口径一致做兜底，
+  // 避免 total 记 0 导致用量统计口径分裂。
+  const hasTotal = raw.total_tokens != null || raw.totalTokens != null;
   const usage: ChatUsage = {
-    promptTokens: Number(raw.prompt_tokens ?? raw.promptTokens ?? 0),
-    completionTokens: Number(raw.completion_tokens ?? raw.completionTokens ?? 0),
-    totalTokens: Number(raw.total_tokens ?? raw.totalTokens ?? 0),
+    promptTokens,
+    completionTokens,
+    totalTokens: hasTotal ? Number(raw.total_tokens ?? raw.totalTokens) : promptTokens + completionTokens,
   };
   if (isPlainObject(details)) {
     const cached = details.cached_tokens ?? details.cachedTokens;

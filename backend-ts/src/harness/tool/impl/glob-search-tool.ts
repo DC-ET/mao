@@ -128,11 +128,34 @@ export class GlobSearchTool extends BaseTool {
 }
 
 function globToRegExp(pattern: string): RegExp {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, '::DS::')
-    .replace(/\*/g, '[^/]*')
-    .replace(/\?/g, '[^/]')
-    .replace(/::DS::/g, '.*');
-  return new RegExp(`^${escaped}$`);
+  // 单遍字符扫描：替换产物中不得再含 `*`/`?`，否则会被后续替换二次改写（如 `[^/]*` 里的 `*`），
+  // 因此对 `**/`、`**`、`*`、`?` 一次性按最长优先匹配转换，普通字符直接转义。
+  let out = '';
+  for (let i = 0; i < pattern.length; ) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      if (pattern[i + 1] === '*' && pattern[i + 2] === '/') {
+        // `**/` -> 零段或任意多段目录（src/**/*.ts 应匹配 src/foo.ts 与 src/a/b/foo.ts）
+        out += '(?:[^/]*/)*';
+        i += 3;
+      } else if (pattern[i + 1] === '*') {
+        // `**`（不再跟 /）-> 跨目录任意字符
+        out += '.*';
+        i += 2;
+      } else {
+        out += '[^/]*';
+        i += 1;
+      }
+    } else if (ch === '?') {
+      out += '[^/]';
+      i += 1;
+    } else if ('+^${}()|[\]'.includes(ch)) {
+      out += `\\${ch}`;
+      i += 1;
+    } else {
+      out += ch;
+      i += 1;
+    }
+  }
+  return new RegExp(`^${out}$`);
 }
