@@ -11,6 +11,7 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "axios": "^1.16.1",
+    "dompurify": "^3.4.14",
     "element-plus": "^2.14.0",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.5",

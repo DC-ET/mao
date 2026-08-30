@@ -125,7 +125,6 @@
     <div v-if="pendingFiles.length > 0" class="pending-files">
       <div v-for="(file, idx) in pendingFiles" :key="idx" class="pending-file">
         <img v-if="filePreviewUrls[idx]" :src="filePreviewUrls[idx]" class="file-preview-img" />
-        <el-icon v-else-if="uploadingFiles[idx]" class="is-loading"><Loading /></el-icon>
         <el-icon v-else><Document /></el-icon>
         <span class="file-name">{{ file.name }}</span>
         <el-icon class="remove-file" :class="{ disabled: disabled }" @click="!disabled && removeFile(idx)"><Close /></el-icon>
@@ -316,7 +315,6 @@ const unregisterChatInput = inject<(key: string) => void>('unregisterChatInput',
 const draftStore = useDraftStore()
 const pendingFiles = ref<File[]>([])
 const filePreviewUrls = ref<string[]>([])
-const uploadingFiles = ref<boolean[]>([])
 const draggingFile = ref(false)
 const editorContent = ref('')
 
@@ -592,16 +590,21 @@ const editor = useEditor({
       const items = event.clipboardData?.items
       if (items) {
         let handledFile = false
+        let warnedImageLimit = false
         for (const item of Array.from(items)) {
           if (item.type.startsWith('image/')) {
             const file = item.getAsFile()
             if (!file) continue
             if (pendingFiles.value.length >= 10) {
-              ElMessage.warning('最多上传 10 张图片')
-              break
+              // 每次粘贴只提示一次超限，剩余图片逐张计数提示会刷屏
+              if (!warnedImageLimit) {
+                ElMessage.warning('最多上传 10 张图片，超出部分已忽略')
+                warnedImageLimit = true
+              }
+              continue
             }
             if (file.size > 10 * 1024 * 1024) {
-              ElMessage.warning('粘贴的图片超过 10MB 限制')
+              ElMessage.warning(`图片 ${file.name} 超过 10MB 限制`)
               continue
             }
             addPendingImage(file)
@@ -712,6 +715,8 @@ const editor = useEditor({
         }
         if (event.key === 'Escape') {
           event.preventDefault()
+          // Esc 关闭后记住当前词：同一词继续输入不再自动弹出，词变化后才恢复
+          if (autoComplete.value) dismissedWord = currentFilterWord
           closePanel()
           return true
         }
@@ -772,7 +777,6 @@ function restoreDraft(key?: string | null) {
     pendingFiles.value = []
     filePreviewUrls.value = []
   }
-  uploadingFiles.value = pendingFiles.value.map(() => false)
 }
 
 watch(() => props.draftKey, (newKey, oldKey) => {
@@ -823,6 +827,10 @@ function detectSlashTrigger() {
 
 // ===== Auto-complete trigger detection =====
 
+// Esc 关闭记忆：同一词被手动关闭后不再自动弹出，直到词发生变化
+let dismissedWord = ''
+let currentFilterWord = ''
+
 function detectAutoComplete() {
   if (!editor.value) return
   // 如果面板已经打开但不是由自动补全触发的，不干扰
@@ -842,38 +850,40 @@ function detectAutoComplete() {
   const { from } = state.selection
   const textBefore = state.doc.textBetween(Math.max(0, from - 50), from, '\n', '\n')
   
-  // 获取最后输入的内容（取最后20个字符，避免匹配太长的文本）
-  const recentText = textBefore.slice(-20)
-  
+  // 最后一个词：只有整体作为指令名称前缀时才触发，避免正文常见词误触发面板劫持 Enter/方向键
+  const currentWord = textBefore.split(/\s/).pop() ?? ''
+  const lower = currentWord.toLowerCase()
+  if (lower !== currentFilterWord) {
+    // 词已变化，重置 Esc 记忆
+    dismissedWord = ''
+  }
+  currentFilterWord = lower
+
   // 如果文本长度不足，关闭自动补全面板
-  if (recentText.length < 2) {
+  if (currentWord.length < 2) {
     if (panelVisible.value && autoComplete.value) closePanel()
     return
   }
-  
-  // 检查是否与任何快捷指令匹配（名称或描述）
+
+  // 检查是否与任何快捷指令匹配（仅名称前缀整体匹配）
   let matched: any[] = []
   try {
     const allCommands = [...panelSkills.value, ...quickCommands.value.commands]
-    matched = allCommands.filter(cmd => {
-      const nameMatch = cmd.name.toLowerCase().includes(recentText.toLowerCase())
-      const descMatch = cmd.description && cmd.description.toLowerCase().includes(recentText.toLowerCase())
-      return nameMatch || descMatch
-    })
+    matched = allCommands.filter(cmd => cmd.name.toLowerCase().startsWith(lower))
   } catch (error) {
     return
   }
   
-  // 如果没有匹配，关闭自动补全面板
-  if (matched.length === 0) {
+  // 如果没有匹配，或该词已被 Esc 关闭过，关闭自动补全面板
+  if (matched.length === 0 || lower === dismissedWord) {
     if (panelVisible.value && autoComplete.value) closePanel()
     return
   }
   
-  // 设置面板：使用最近文本的范围
-  const matchStart = from - recentText.length
+  // 设置面板：使用当前词的范围
+  const matchStart = from - currentWord.length
   slashRange.value = { from: matchStart, to: from }
-  panelFilter.value = recentText
+  panelFilter.value = currentWord
   autoComplete.value = true
   if (!panelVisible.value) {
     ensureCommandsLoaded()
@@ -953,7 +963,6 @@ function addPendingImage(file: File) {
   const idx = pendingFiles.value.length
   pendingFiles.value.push(file)
   filePreviewUrls.value[idx] = URL.createObjectURL(file)
-  uploadingFiles.value[idx] = false
 }
 
 /** 非图片文件暂存到待发列表，发送时再上传（懒上传，无需预先创建会话）。 */
@@ -977,7 +986,6 @@ function addPendingFile(file: File) {
   const idx = pendingFiles.value.length
   pendingFiles.value.push(file)
   filePreviewUrls.value[idx] = ''
-  uploadingFiles.value[idx] = false
 }
 
 /** 移除指定下标的待发条目（图片或文件）。 */
@@ -987,7 +995,6 @@ function removePendingFileAt(idx: number) {
   }
   pendingFiles.value.splice(idx, 1)
   filePreviewUrls.value.splice(idx, 1)
-  uploadingFiles.value.splice(idx, 1)
 }
 
 function removeFile(index: number) {
@@ -1034,12 +1041,6 @@ async function handleSend() {
   if (props.disabled || !canSend.value || !editor.value) return
   if (props.executionMode === 'LOCAL' && !isElectronClient) {
     ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
-    return
-  }
-
-  // 若有文件正在上传，等待其完成后再发送，避免引用节点缺失
-  if (uploadingFiles.value.some(Boolean)) {
-    ElMessage.info('文件上传中，请稍候…')
     return
   }
 
@@ -1175,7 +1176,6 @@ function clearInput() {
   filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
   pendingFiles.value = []
   filePreviewUrls.value = []
-  uploadingFiles.value = []
   // 发送成功清空输入时同步清除对应草稿
   if (props.draftKey) draftStore.clearDraft(props.draftKey)
 }

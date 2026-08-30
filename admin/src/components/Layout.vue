@@ -54,7 +54,7 @@
       <el-main class="layout-main">
         <div class="layout-content">
           <router-view v-slot="{ Component, route: viewRoute }">
-            <keep-alive>
+            <keep-alive :max="8">
               <component :is="Component" :key="viewRoute.fullPath" />
             </keep-alive>
           </router-view>

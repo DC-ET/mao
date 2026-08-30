@@ -1,7 +1,7 @@
 <template>
   <div class="runtime-monitor">
     <el-row :gutter="16" class="metric-row">
-      <el-col :span="6" v-for="item in runtimeShortcuts" :key="item.phase || 'all'">
+      <el-col v-for="item in runtimeShortcuts" :key="item.phase || 'all'" :xs="24" :sm="12" :md="6">
         <el-card
           shadow="hover"
           class="clickable-card"
@@ -188,7 +188,9 @@ function phaseTag(phase: string) {
   return 'primary'
 }
 
+let fetchSessionsSeq = 0
 async function fetchSessions() {
+  const seq = ++fetchSessionsSeq
   loading.value = true
   try {
     const params: Record<string, unknown> = {
@@ -199,10 +201,11 @@ async function fetchSessions() {
     if (filters.phase) params.phase = filters.phase
     if (filters.keyword) params.keyword = filters.keyword
     const { data } = await api.get('/admin/runtime/sessions', { params })
+    if (seq !== fetchSessionsSeq) return
     sessions.value = data?.records || []
     total.value = data?.total || 0
-  } finally {
-    loading.value = false
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
+    if (seq === fetchSessionsSeq) loading.value = false
   }
 }
 
@@ -251,7 +254,7 @@ onActivated(() => {
 }
 
 .clickable-card.is-active {
-  border-color: #409eff;
+  border-color: var(--mao-accent);
 }
 
 .metric {
@@ -261,12 +264,12 @@ onActivated(() => {
 }
 
 .metric span {
-  color: #606266;
+  color: var(--el-text-color-regular);
 }
 
 .metric strong {
   font-size: 24px;
-  color: #303133;
+  color: var(--mao-ink);
 }
 
 .metric.danger strong {
@@ -276,7 +279,7 @@ onActivated(() => {
 .metric-hint {
   font-size: 14px !important;
   font-weight: 400 !important;
-  color: #909399 !important;
+  color: var(--mao-muted) !important;
 }
 
 .card-header {

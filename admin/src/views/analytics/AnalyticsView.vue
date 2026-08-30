@@ -14,7 +14,7 @@
     </el-card>
 
     <el-row :gutter="16" class="metric-row">
-      <el-col :span="6" v-for="item in overviewCards" :key="item.label">
+      <el-col v-for="item in overviewCards" :key="item.label" :xs="24" :sm="12" :md="6">
         <el-card
           shadow="hover"
           :class="{ 'clickable-card': !!item.path }"
@@ -29,7 +29,7 @@
     </el-row>
 
     <el-row :gutter="16">
-      <el-col :span="12">
+      <el-col :xs="24" :md="12">
         <el-card>
           <template #header><span>阶段分布</span></template>
           <el-table class="table-scroll" :data="summary.phaseDistribution || []" size="small" stripe>
@@ -43,7 +43,7 @@
           </el-table>
         </el-card>
       </el-col>
-      <el-col :span="12">
+      <el-col :xs="24" :md="12">
         <el-card>
           <template #header><span>模型调用</span></template>
           <el-table class="table-scroll" :data="summary.modelStats || []" size="small" stripe>
@@ -59,7 +59,7 @@
     </el-row>
 
     <el-row :gutter="16" style="margin-top: 16px">
-      <el-col :span="12">
+      <el-col :xs="24" :md="12">
         <el-card>
           <template #header><span>Token 消耗排行</span></template>
           <el-table class="table-scroll" :data="summary.tokenStats || []" size="small" stripe>
@@ -72,7 +72,7 @@
           </el-table>
         </el-card>
       </el-col>
-      <el-col :span="12">
+      <el-col :xs="24" :md="12">
         <el-card>
           <template #header><span>活跃用户</span></template>
           <el-table class="table-scroll" :data="summary.userActivity || []" size="small" stripe>
@@ -124,7 +124,7 @@ async function fetchSummary() {
   try {
     const { data } = await api.get('/admin/analytics/summary', { params: { days: days.value } })
     summary.value = data || {}
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loading.value = false
   }
 }
@@ -148,13 +148,13 @@ onMounted(fetchSummary)
 .toolbar-title {
   font-size: 15px;
   font-weight: 600;
-  color: #303133;
+  color: var(--mao-ink);
 }
 
 .toolbar-hint {
   margin-top: 4px;
   font-size: 13px;
-  color: #909399;
+  color: var(--mao-muted);
 }
 
 .toolbar-period {
@@ -175,12 +175,12 @@ onMounted(fetchSummary)
 }
 
 .metric span {
-  color: #606266;
+  color: var(--el-text-color-regular);
 }
 
 .metric strong {
   font-size: 24px;
-  color: #303133;
+  color: var(--mao-ink);
 }
 
 .metric.danger strong {

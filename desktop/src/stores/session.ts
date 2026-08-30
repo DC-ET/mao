@@ -990,6 +990,30 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /** 集中清理单个会话的全部运行态缓存（响应式 Map + 流式占位等普通容器）。 */
+  function purgeSessionRuntime(sid: string) {
+    sessionMessages.value.delete(sid)
+    sessionTodos.value.delete(sid)
+    sessionActivities.value.delete(sid)
+    sessionContextWindow.value.delete(sid)
+    sessionCompactionEvents.value.delete(sid)
+    sessionQueueMessages.value.delete(sid)
+    sessionFileChanges.value.delete(sid)
+    clearMessagePageState(sid)
+    sessionCompacting.value.delete(sid)
+    sessionThinking.value.delete(sid)
+    sessionStreaming.value.delete(sid)
+    sessionLlmRetry.value.delete(sid)
+    sessionPendingApprovals.value.delete(sid)
+    sessionPendingQuestions.value.delete(sid)
+    sessionExecutionErrors.value.delete(sid)
+    sessionPhases.value.delete(sid)
+    sideTaskCache.value.delete(sid)
+    subagentCache.value.delete(sid)
+    delegateToolCallBindings.value.delete(sid)
+    streamingAssistantMessageIds.delete(sid)
+  }
+
   async function deleteSession(id: string) {
     try {
       const existing = sessionEntities.value.get(String(id))
@@ -1011,14 +1035,10 @@ export const useSessionStore = defineStore('session', () => {
         forgetLastSession()
       }
       // Clean up cached data
-      sessionMessages.value.delete(sid)
-      sessionTodos.value.delete(sid)
-      sessionActivities.value.delete(sid)
-      sessionContextWindow.value.delete(sid)
-      sessionCompactionEvents.value.delete(sid)
-      sessionQueueMessages.value.delete(sid)
-      sessionFileChanges.value.delete(sid)
-      clearMessagePageState(sid)
+      purgeSessionRuntime(sid)
+      if (viewingSideTaskId.value === Number(id)) {
+        viewingSideTaskId.value = null
+      }
       useDraftStore().clearDraft(`s:${sid}`)
     } catch {
       // ignore
@@ -1154,21 +1174,31 @@ export const useSessionStore = defineStore('session', () => {
     return sessionMessages.value.get(String(sessionId)) ?? []
   }
 
+  // 流式期间数组引用替换节流：delta 高频到达时避免每字符 O(n) 复制整条消息数组。
+  // 元素本身深层响应式，原地修改即时生效；引用替换仅服务于以数组身份为依赖的 watcher（150ms 节流）。
+  const pendingArrayNotifyTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  function notifyMessagesUpdate(sid: string) {
+    if (pendingArrayNotifyTimers.has(sid)) return
+    pendingArrayNotifyTimers.set(sid, setTimeout(() => {
+      pendingArrayNotifyTimers.delete(sid)
+      const list = sessionMessages.value.get(sid)
+      if (list) sessionMessages.value.set(sid, [...list])
+    }, 150))
+  }
+
   function appendDelta(sessionId: string, delta: string) {
     const sid = String(sessionId)
     sessionStreaming.value.set(sid, true)
     const lastMsg = ensureStreamingAssistantMessage(sid)
     appendTextDelta(lastMsg, delta)
-    const list = sessionMessages.value.get(sid) ?? []
-    sessionMessages.value.set(sid, [...list])
+    notifyMessagesUpdate(sid)
   }
 
   function appendThinkingDelta(sessionId: string, delta: string) {
     const sid = String(sessionId)
     const lastMsg = ensureStreamingAssistantMessage(sid)
     appendThinkingDeltaUtil(lastMsg, delta)
-    const list = sessionMessages.value.get(sid) ?? []
-    sessionMessages.value.set(sid, [...list])
+    notifyMessagesUpdate(sid)
   }
 
   function resetStreamingAssistantMessage(sessionId: string) {
@@ -1270,8 +1300,7 @@ export const useSessionStore = defineStore('session', () => {
     const call = lastMsg.toolCalls.find(c => c.id === data.tool_call_id)
     if (call) {
       try { call.input = JSON.parse(data.arguments) } catch { call.input = {} }
-      const list = sessionMessages.value.get(sid) ?? []
-      sessionMessages.value.set(sid, [...list])
+      notifyMessagesUpdate(sid)
     }
   }
 
@@ -1627,6 +1656,10 @@ export const useSessionStore = defineStore('session', () => {
     sideTaskCache.value = new Map()
     subagentCache.value = new Map()
     delegateToolCallBindings.value = new Map()
+    // 非响应式容器与查看态也要清空，避免换号登录后残留幽灵流式气泡/已读错乱
+    streamingAssistantMessageIds.clear()
+    filteredToolCallIds.clear()
+    viewingSideTaskId.value = null
   }
 
   return {

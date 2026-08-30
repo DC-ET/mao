@@ -1,4 +1,4 @@
-import { ref, computed, watch, type Ref } from 'vue'
+import { ref, computed, watch, effectScope, type ComputedRef, type Ref } from 'vue'
 import type { Tab, SessionTabState } from '../types/file-browser'
 import type { FileChange } from '../types/chat'
 import { getClosedSideTaskIds, markSideTaskClosed, unmarkSideTaskClosed, normalizeSideTaskTitle, type SideTaskSummary } from '../utils/side-task-tabs'
@@ -54,8 +54,30 @@ export function updateSideTaskTabTitleFor(parentSessionId: string, sideSessionId
   sessionTabsMap.value = new Map(sessionTabsMap.value)
 }
 
-// 仅注册一次：激活边路任务 Tab 时清除该边路任务的未读标记（按 sideSessionId 独立已读）
+// 仅注册一次：激活边路任务 Tab 时清除该边路任务的未读标记（按 sideSessionId 独立已读）。
+// watch 注册在模块级 detached effectScope 中：否则它挂在首个调用组件的作用域上，
+// 组件卸载（如切到 Settings）后 watch 永久失效但标志位仍为 true，已读逻辑彻底停摆。
 let sideTaskReadWatchRegistered = false
+const sideTaskReadScope = effectScope(true)
+
+function ensureSideTaskReadWatch(activeTab: ComputedRef<Tab | undefined>) {
+  if (sideTaskReadWatchRegistered) return
+  sideTaskReadWatchRegistered = true
+  const sessionStore = useSessionStore()
+  sideTaskReadScope.run(() => {
+    watch(() => {
+      const tab = activeTab.value
+      if (!tab || tab.type !== 'side_task') return null
+      const sid = tab.sideSessionId
+      return sid && sid > 0 ? sid : null
+    }, (sid) => {
+      sessionStore.setViewingSideTask(sid)
+      if (sid != null) {
+        void sessionStore.markSideTaskRead(sid)
+      }
+    }, { immediate: true })
+  })
+}
 
 export function useCenterTabs(activeSessionId: Ref<string | null>) {
   // Sync currentSessionId with the provided ref
@@ -105,21 +127,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   // 注意：监听的是「激活 tab 的 sideSessionId」而非 activeTab 对象本身——
   // 占位 Tab（sideSessionId<=0）经 side_session_created 更新为真实 id 时 tab 对象引用不变，
   // 若只 watch activeTab 将不触发，导致 viewingSideTaskId 未同步、已查看的边路任务圆点无法消除。
-  if (!sideTaskReadWatchRegistered) {
-    sideTaskReadWatchRegistered = true
-    const sessionStore = useSessionStore()
-    watch(() => {
-      const tab = activeTab.value
-      if (!tab || tab.type !== 'side_task') return null
-      const sid = tab.sideSessionId
-      return sid && sid > 0 ? sid : null
-    }, (sid) => {
-      sessionStore.setViewingSideTask(sid)
-      if (sid != null) {
-        void sessionStore.markSideTaskRead(sid)
-      }
-    }, { immediate: true })
-  }
+  ensureSideTaskReadWatch(activeTab)
 
   function openFileTab(filePath: string, title: string) {
     const state = getSessionState()

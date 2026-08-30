@@ -19,7 +19,7 @@
                 clearable
                 placeholder="名称 / 描述"
                 style="width: 220px"
-                @input="loadData()"
+                @input="onKeywordInput"
               />
             </el-form-item>
           </template>
@@ -376,16 +376,29 @@ const toolsLoading = ref(false)
 const toolsError = ref('')
 const toolsList = ref<any[]>([])
 
+let loadDataSeq = 0
 async function loadData() {
+  const seq = ++loadDataSeq
   loading.value = true
   try {
     const { data } = await api.get('/mcp-servers', {
       params: { keyword: keyword.value || undefined, status: statusFilter.value || undefined }
     })
+    if (seq !== loadDataSeq) return
     servers.value = data || []
-  } finally {
-    loading.value = false
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
+    if (seq === loadDataSeq) loading.value = false
   }
+}
+
+// 关键词输入 300ms 防抖，避免逐字符触发请求风暴
+let keywordDebounceTimer: ReturnType<typeof setTimeout> | null = null
+function onKeywordInput() {
+  if (keywordDebounceTimer) clearTimeout(keywordDebounceTimer)
+  keywordDebounceTimer = setTimeout(() => {
+    keywordDebounceTimer = null
+    loadData()
+  }, 300)
 }
 
 function connectionSummary(row: any) {
@@ -484,7 +497,7 @@ async function handleSubmit() {
     }
     formVisible.value = false
     await loadData()
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     submitting.value = false
   }
 }

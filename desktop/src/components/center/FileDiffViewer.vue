@@ -34,6 +34,7 @@ import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useSessionStore } from '../../stores/session'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdown-link'
+import { openExternalUrl } from '../../utils/capacitor'
 
 const props = defineProps<{
   change: FileChange
@@ -204,7 +205,7 @@ async function handleMarkdownClick(e: MouseEvent) {
   e.preventDefault()
 
   if (isExternalMarkdownLink(href)) {
-    await window.electronAPI?.openExternal(href)
+    await openExternalUrl(href)
     return
   }
 

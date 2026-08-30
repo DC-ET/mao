@@ -50,6 +50,14 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = data
   }
 
+  /** 清理本地登录态（token 失效时使用，不调用服务端） */
+  function clearAuth() {
+    token.value = null
+    user.value = null
+    localStorage.removeItem('token')
+    localStorage.removeItem('refreshToken')
+  }
+
   return {
     token,
     user,
@@ -58,6 +66,7 @@ export const useAuthStore = defineStore('auth', () => {
     hasPermission,
     login,
     logout,
-    fetchUserInfo
+    fetchUserInfo,
+    clearAuth
   }
 })

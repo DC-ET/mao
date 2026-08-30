@@ -43,6 +43,17 @@
               >
                 <el-option v-for="opt in field.options || []" :key="opt.value" :label="opt.label" :value="opt.value" />
               </el-select>
+              <el-input-number
+                v-else-if="field.type === 'number'"
+                :model-value="toNumberOrNull(model[field.key])"
+                :min="field.min"
+                :max="field.max"
+                :step="1"
+                step-strictly
+                controls-position="right"
+                style="width: 100%"
+                @update:model-value="(val: number | undefined) => { model[field.key] = val == null ? '' : String(val) }"
+              />
               <el-input
                 v-else
                 v-model="model[field.key]"
@@ -77,11 +88,13 @@ interface SettingRow {
 interface FieldDef {
   key: string
   label: string
-  type?: 'switch' | 'select' | 'text'
+  type?: 'switch' | 'select' | 'number' | 'text'
   secret?: boolean
   set?: boolean
   placeholder?: string
   hint?: string
+  min?: number
+  max?: number
   options?: Array<{ label: string; value: string }>
 }
 
@@ -164,7 +177,7 @@ const groups = computed<GroupDef[]>(() => [
         ],
       },
       { key: 'upload.baseUrl', label: '访问基础地址', hint: '留空使用相对路径 /uploads/' },
-      { key: 'file.maxSizeMb', label: '单文件上限 (MB)' },
+      { key: 'file.maxSizeMb', label: '单文件上限 (MB)', type: 'number', min: 1, max: 102400 },
     ],
   },
   {
@@ -182,8 +195,8 @@ const groups = computed<GroupDef[]>(() => [
       { key: 'oss.sts.accessKeySecret', label: 'STS AccessKey Secret', secret: true, set: !!rowMap.value['oss.sts.accessKeySecret']?.value },
       { key: 'oss.sts.roleArn', label: 'STS Role ARN' },
       { key: 'oss.sts.roleSessionName', label: 'STS 会话名', hint: '默认 mao-sts' },
-      { key: 'oss.sts.expire', label: '凭证有效期 (秒)', hint: '默认 3600' },
-      { key: 'oss.sts.maxSizeMb', label: '直传上限 (MB)', hint: '默认 50' },
+      { key: 'oss.sts.expire', label: '凭证有效期 (秒)', hint: '默认 3600', type: 'number', min: 60, max: 86400 },
+      { key: 'oss.sts.maxSizeMb', label: '直传上限 (MB)', hint: '默认 50', type: 'number', min: 1, max: 51200 },
     ],
     testApi: '/system-settings/test/oss',
     testPayload: (m) => {
@@ -233,8 +246,25 @@ function clearSecret(key: string) {
   clearedSecrets.value = new Set([...clearedSecrets.value, key])
 }
 
+function toNumberOrNull(raw: string | undefined): number | undefined {
+  if (raw == null || String(raw).trim() === '') return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : undefined
+}
+
 async function saveGroup(group: GroupDef) {
   if (savingKeys.value.has(group.name)) return
+  // 数值字段校验：非法/越界直接拦截，禁止保存
+  for (const field of group.fields) {
+    if (field.type !== 'number') continue
+    const raw = model[field.key] ?? ''
+    if (String(raw).trim() === '') continue
+    const n = Number(raw)
+    if (!Number.isFinite(n) || (field.min != null && n < field.min) || (field.max != null && n > field.max)) {
+      ElMessage.error(`「${field.label}」需为 ${field.min ?? '任意'} ~ ${field.max ?? '任意'} 之间的数值`)
+      return
+    }
+  }
   const items = group.keys.map((key) => {
     const row = rowMap.value[key]
     const raw = model[key] ?? ''
@@ -264,7 +294,7 @@ async function saveGroup(group: GroupDef) {
     clearedSecrets.value = new Set()
     ElMessage.success('已保存，配置即时生效')
     emit('saved')
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     const next = new Set(savingKeys.value)
     next.delete(group.name)
     savingKeys.value = next
@@ -282,7 +312,7 @@ async function runTest(group: GroupDef) {
     } else {
       ElMessage.warning(data?.message || '连接失败')
     }
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     testing.value = ''
   }
 }

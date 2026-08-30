@@ -160,7 +160,9 @@ function actionType(action: string) {
   return 'info'
 }
 
+let fetchLogsSeq = 0
 async function fetchLogs() {
+  const seq = ++fetchLogsSeq
   loading.value = true
   try {
     const params: Record<string, unknown> = {
@@ -171,10 +173,11 @@ async function fetchLogs() {
     if (filters.objectType) params.objectType = filters.objectType
     if (filters.success !== undefined) params.success = filters.success
     const { data } = await api.get('/audit/logs', { params })
+    if (seq !== fetchLogsSeq) return
     logs.value = data?.records || []
     total.value = data?.total || 0
-  } finally {
-    loading.value = false
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
+    if (seq === fetchLogsSeq) loading.value = false
   }
 }
 
@@ -259,7 +262,7 @@ onMounted(fetchLogs)
 .audit-card-label {
   width: 40px;
   flex-shrink: 0;
-  color: #909399;
+  color: var(--mao-muted);
 }
 
 .audit-card-path {
@@ -268,7 +271,7 @@ onMounted(fetchLogs)
 
 .audit-card-actions {
   margin-top: 10px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--mao-border);
   padding-top: 10px;
 }
 </style>

@@ -38,22 +38,16 @@
 
 <script setup lang="ts">
 import { ArrowLeft } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
+import { goBackToWorkbench } from '../../utils/workbench-nav'
 
 const sessionStore = useSessionStore()
+const router = useRouter()
 
 function goBack() {
   const active = sessionStore.activeSession
-  if (active) {
-    window.location.href = `/tasks/${active.id}`
-    return
-  }
-  const latest = sessionStore.sessions[0]
-  if (latest) {
-    window.location.href = `/tasks/${latest.id}`
-    return
-  }
-  window.location.href = '/'
+  goBackToWorkbench(router, active?.id ?? sessionStore.sessions[0]?.id)
 }
 </script>
 

@@ -221,7 +221,9 @@ function phaseTagType(phase: string): 'primary' | 'success' | 'danger' | 'warnin
   }
 }
 
+let fetchSessionsSeq = 0
 async function fetchSessions() {
+  const seq = ++fetchSessionsSeq
   loading.value = true
   try {
     const params: Record<string, any> = {
@@ -236,10 +238,11 @@ async function fetchSessions() {
     if (filters.keyword) params.keyword = filters.keyword
 
     const { data } = await api.get('/admin/sessions', { params })
+    if (seq !== fetchSessionsSeq) return
     sessions.value = data?.records || []
     total.value = data?.total || 0
-  } finally {
-    loading.value = false
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
+    if (seq === fetchSessionsSeq) loading.value = false
   }
 }
 

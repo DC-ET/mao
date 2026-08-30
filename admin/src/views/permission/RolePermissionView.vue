@@ -13,7 +13,7 @@
             </div>
           </template>
 
-          <el-table :data="roles" v-loading="loading" stripe @row-click="selectRole">
+          <el-table :data="roles" v-loading="loading" stripe highlight-current-row @row-click="handleRoleRowClick">
             <el-table-column prop="name" label="角色" min-width="120" />
             <el-table-column prop="code" label="编码" width="110" />
             <el-table-column prop="userCount" label="用户数" width="80" align="right" />
@@ -41,7 +41,7 @@
               <strong>{{ currentRole.name }}</strong>
               <el-tag size="small">{{ currentRole.code }}</el-tag>
             </div>
-            <el-checkbox-group v-model="selectedPermissionIds" class="permission-grid">
+            <el-checkbox-group v-model="selectedPermissionIds" class="permission-grid" @change="onPermissionChange">
               <el-checkbox
                 v-for="permission in permissions"
                 :key="permission.id"
@@ -80,7 +80,7 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
@@ -107,6 +107,7 @@ const roles = ref<Role[]>([])
 const permissions = ref<Permission[]>([])
 const currentRole = ref<Role | null>(null)
 const selectedPermissionIds = ref<number[]>([])
+const dirtyPermissions = ref(false)
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
 const roleFormRef = ref<FormInstance>()
@@ -134,7 +135,7 @@ async function fetchAll() {
     if (!currentRole.value && roles.value.length > 0) {
       selectRole(roles.value[0])
     }
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loading.value = false
   }
 }
@@ -142,6 +143,32 @@ async function fetchAll() {
 function selectRole(role: Role) {
   currentRole.value = role
   selectedPermissionIds.value = [...(role.permissionIds || [])]
+  dirtyPermissions.value = false
+}
+
+/** 勾选变化置脏；row-click 切换角色时如有未保存修改先确认 */
+function onPermissionChange() {
+  dirtyPermissions.value = true
+}
+
+async function confirmDiscardUnsaved(): Promise<boolean> {
+  if (!dirtyPermissions.value) return true
+  try {
+    await ElMessageBox.confirm('当前角色的权限修改尚未保存，切换后将丢失，确认切换吗？', '未保存的修改', {
+      confirmButtonText: '放弃修改并切换',
+      cancelButtonText: '留在当前角色',
+      type: 'warning'
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function handleRoleRowClick(role: Role) {
+  if (role.id === currentRole.value?.id) return
+  if (!(await confirmDiscardUnsaved())) return
+  selectRole(role)
 }
 
 function handleCreateRole() {
@@ -176,7 +203,7 @@ async function saveRole() {
     }
     dialogVisible.value = false
     await fetchAll()
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     savingRole.value = false
   }
 }
@@ -189,12 +216,13 @@ async function savePermissions() {
       permissionIds: selectedPermissionIds.value
     })
     ElMessage.success('权限已保存')
+    dirtyPermissions.value = false
     // Keep the current role selected and refresh so checkbox state stays in sync
     const id = currentRole.value.id
     await fetchAll()
     const updated = roles.value.find(r => r.id === id)
     if (updated) selectRole(updated)
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     savingPermissions.value = false
   }
 }

@@ -9,11 +9,15 @@
     </div>
 
     <el-row :gutter="20" class="governance-cards">
-      <el-col :span="6" v-for="item in governanceCards" :key="item.label">
+      <el-col v-for="item in governanceCards" :key="item.label" :xs="24" :sm="12" :md="6">
         <el-card
           shadow="hover"
           :class="{ 'clickable-card': canSession }"
+          :role="canSession ? 'button' : undefined"
+          :tabindex="canSession ? 0 : undefined"
           @click="canSession && go(item.path, item.query)"
+          @keydown.enter="canSession && go(item.path, item.query)"
+          @keydown.space.prevent="canSession && go(item.path, item.query)"
         >
           <div class="governance-card" :class="{ danger: item.danger }">
             <span>{{ item.label }}</span>
@@ -24,11 +28,15 @@
     </el-row>
 
     <el-row :gutter="20" class="overview-cards">
-      <el-col :span="6" v-for="item in overviewCards" :key="item.label">
+      <el-col v-for="item in overviewCards" :key="item.label" :xs="24" :sm="12" :md="6">
         <el-card
           shadow="hover"
           :class="{ 'clickable-card': !!item.path }"
+          :role="item.path ? 'button' : undefined"
+          :tabindex="item.path ? 0 : undefined"
           @click="item.path && go(item.path)"
+          @keydown.enter="item.path && go(item.path)"
+          @keydown.space.prevent="item.path && go(item.path)"
         >
           <div class="stat-card">
             <div class="stat-icon"><el-icon size="22"><component :is="item.icon" /></el-icon></div>
@@ -42,7 +50,7 @@
     </el-row>
 
     <el-row :gutter="20" class="chart-row">
-      <el-col :span="14">
+      <el-col :xs="24" :md="14">
         <el-card>
           <template #header>
             <div class="card-header">
@@ -77,7 +85,7 @@
         </el-card>
       </el-col>
 
-      <el-col :span="10">
+      <el-col :xs="24" :md="10">
         <el-card>
           <template #header><span>Agent 使用排行</span></template>
           <div
@@ -150,7 +158,7 @@ async function fetchAll() {
     overview.value = data?.overview || {}
     trends.value = data?.trends || []
     agentStats.value = data?.agentStats || []
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loading.value = false
   }
 }
@@ -170,13 +178,13 @@ onMounted(fetchAll)
 .page-intro h3 {
   margin: 0 0 4px;
   font-size: 16px;
-  color: #303133;
+  color: var(--mao-ink);
 }
 
 .page-intro p {
   margin: 0;
   font-size: 13px;
-  color: #909399;
+  color: var(--mao-muted);
 }
 
 .clickable-card {
@@ -226,12 +234,12 @@ onMounted(fetchAll)
 .stat-value {
   font-size: 24px;
   font-weight: 700;
-  color: #303133;
+  color: var(--mao-ink);
 }
 
 .stat-label {
   font-size: 13px;
-  color: #909399;
+  color: var(--mao-muted);
   margin-top: 4px;
 }
 
@@ -287,11 +295,11 @@ onMounted(fetchAll)
 }
 
 .trend-bar.sessions .bar-inner { background: var(--mao-accent); }
-.trend-bar.messages .bar-inner { background: #67c23a; }
+.trend-bar.messages .bar-inner { background: var(--el-color-success); }
 
 .trend-label {
   font-size: 11px;
-  color: #909399;
+  color: var(--mao-muted);
 }
 
 .chart-legend {
@@ -306,7 +314,7 @@ onMounted(fetchAll)
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #606266;
+  color: var(--el-text-color-regular);
 }
 
 .legend-dot {
@@ -316,13 +324,13 @@ onMounted(fetchAll)
 }
 
 .legend-dot.sessions { background: var(--mao-accent); }
-.legend-dot.messages { background: #67c23a; }
+.legend-dot.messages { background: var(--el-color-success); }
 
 .rank-item {
   display: flex;
   align-items: center;
   padding: 8px 0;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--mao-border);
 }
 
 .rank-item.clickable {
@@ -330,24 +338,24 @@ onMounted(fetchAll)
 }
 
 .rank-item.clickable:hover {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
 }
 
 .rank-item.empty {
-  color: #909399;
+  color: var(--mao-muted);
 }
 
 .rank-num {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #f0f0f0;
+  background: var(--mao-border);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
   font-weight: 600;
-  color: #909399;
+  color: var(--mao-muted);
   margin-right: 12px;
 }
 
@@ -363,7 +371,7 @@ onMounted(fetchAll)
 
 .rank-value {
   font-size: 12px;
-  color: #909399;
+  color: var(--mao-muted);
 }
 
 @media (max-width: 768px) {

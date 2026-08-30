@@ -140,7 +140,7 @@ async function fetchDetail() {
     sessionInfo.value = sessionRes.data
     applyMessagePage(messagesRes.data, false)
     await scrollChatToBottom()
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     if (seq === latestFetchSeq) loading.value = false
   }
 }
@@ -161,7 +161,7 @@ async function loadMoreMessages() {
     })
     applyMessagePage(data, true)
     await keepChatViewport(previousScrollHeight, previousScrollTop)
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loadingMore.value = false
   }
 }
@@ -200,10 +200,15 @@ watch(() => route.params.id, (id, prev) => {
 })
 
 onMounted(fetchDetail)
-// keep-alive 首次激活时 onMounted 与 onActivated 都会触发；只在已挂载后重新激活时才刷新
-let mountedOnce = false
-onMounted(() => { mountedOnce = true })
-onActivated(() => { if (mountedOnce) fetchDetail() })
+// keep-alive 首次挂载：onActivated 紧随 onMounted 触发，首次跳过避免重复请求；之后每次重新激活刷新
+let activatedOnce = false
+onActivated(() => {
+  if (!activatedOnce) {
+    activatedOnce = true
+    return
+  }
+  fetchDetail()
+})
 </script>
 
 <style scoped>

@@ -405,7 +405,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Send message via WS
       const eventId = generateUUID()
       setActiveExecution(sid, eventId)
-      wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills, agentsMdContent)
+      const sent = await wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills, agentsMdContent)
+      if (!sent) {
+        throw new Error('消息发送失败，网络连接不可用，请重试')
+      }
 
       // Wait for completion (session_status reaches COMPLETED/FAILED)
       await new Promise<void>((resolve, reject) => {
@@ -584,7 +587,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Send message via WS
       const eventId = generateUUID()
       setActiveExecution(sid, eventId)
-      wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills, agentsMdContent)
+      const sent = await wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills, agentsMdContent)
+      if (!sent) {
+        throw new Error('消息发送失败，网络连接不可用，请重试')
+      }
 
       // 等待消息保存确认后立即返回，解锁输入框；Agent 在后台继续执行
       // 完成后的 sending / 刷新由 phase watcher 处理
@@ -762,7 +768,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         return
       }
       subscribe(sid)
-      sendEditMessage(sid, newContent, messageId, imagesToSend, localSkills, agentsMdContent)
+      const sent = await sendEditMessage(sid, newContent, messageId, imagesToSend, localSkills, agentsMdContent)
+      if (!sent) {
+        throw new Error('消息发送失败，网络连接不可用，请重试')
+      }
 
       // Wait for completion
       await new Promise<void>((resolve, reject) => {
@@ -872,26 +881,36 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     await connect()
     if (!requireCurrentSession(sid)) return false
     const eventId = generateUUID()
-    wsEnqueueMessage(sid, resolvedText, eventId, imageUrls)
+    const sent = await wsEnqueueMessage(sid, resolvedText, eventId, imageUrls)
+    if (!sent) {
+      ElMessage.error('消息发送失败，网络连接不可用，请重试')
+      return false
+    }
     return true
   }
 
   async function insertQueueMessage(queueId: string) {
     if (!sessionId.value) return
     await connect()
-    wsInsertMessage(sessionId.value, queueId)
+    if (!await wsInsertMessage(sessionId.value, queueId)) {
+      ElMessage.error('操作失败，网络连接不可用，请重试')
+    }
   }
 
   async function deleteQueueMessage(queueId: string) {
     if (!sessionId.value) return
     await connect()
-    wsDeleteQueueMessage(sessionId.value, queueId)
+    if (!await wsDeleteQueueMessage(sessionId.value, queueId)) {
+      ElMessage.error('操作失败，网络连接不可用，请重试')
+    }
   }
 
   async function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
     if (!sessionId.value) return
     await connect()
-    wsReorderQueueMessage(sessionId.value, queueId, direction)
+    if (!await wsReorderQueueMessage(sessionId.value, queueId, direction)) {
+      ElMessage.error('操作失败，网络连接不可用，请重试')
+    }
   }
 
   async function fetchQueue() {

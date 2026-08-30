@@ -38,8 +38,16 @@
             </button>
             <button class="cmd-link" @click.stop="copyText(item.description)">复制</button>
             <span class="actions-spacer" />
-            <button class="action-btn reject" @click="$emit('confirm', item.requestId, false)">拒绝</button>
-            <button class="action-btn approve" @click="$emit('confirm', item.requestId, true)">执行</button>
+            <button
+              class="action-btn reject"
+              :disabled="handledIds.has(item.requestId)"
+              @click="confirm(item.requestId, false)"
+            >拒绝</button>
+            <button
+              class="action-btn approve"
+              :disabled="handledIds.has(item.requestId)"
+              @click="confirm(item.requestId, true)"
+            >执行</button>
           </div>
         </template>
       </div>
@@ -72,9 +80,18 @@ defineProps<{
   items: ApprovalItem[]
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   confirm: [requestId: string, approved: boolean]
 }>()
+
+// 点击后立即标记已处理并禁用按钮：审批卡片保留到服务端响应前，防止重复提交
+const handledIds = ref(new Set<string>())
+
+function confirm(requestId: string, approved: boolean) {
+  if (handledIds.value.has(requestId)) return
+  handledIds.value = new Set([...handledIds.value, requestId])
+  emit('confirm', requestId, approved)
+}
 
 const expandedSet = ref(new Set<string>())
 

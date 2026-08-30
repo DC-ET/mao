@@ -64,11 +64,11 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase, type SubagentItem } from '../../stores/session'
 import { useDraftStore } from '../../stores/draft'
 import { usePanelLayout } from '../../composables/usePanelLayout'
-import { useTerminal } from '../../composables/useTerminal'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useWorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { useWorkspaceGitProvider } from '../../composables/workspace-git-provider'
@@ -415,14 +415,8 @@ const gitProvider = useWorkspaceGitProvider(executionMode, workspace, activeSess
 provide('fileProvider', fileProvider)
 
 // Terminal
-const { togglePanel } = useTerminal()
 
-function handleTerminalShortcut(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && e.key === '`') {
-    e.preventDefault()
-    togglePanel()
-  }
-}
+// Ctrl+` 终端快捷键已移至 TopNav 常驻注册
 
 // Handle side_session_created window event (from useStreamWS)
 function handleSideSessionCreated(e: Event) {
@@ -447,8 +441,10 @@ function handleSideSessionCreated(e: Event) {
   }
 }
 
+// Ctrl+` 终端快捷键已移至 TopNav 常驻注册（TopNav tooltip 对所有页面可见），
+// 注册在 TaskView 作用域时切到 Settings 后快捷键失效，与提示文案不一致
+
 onMounted(() => {
-  document.addEventListener('keydown', handleTerminalShortcut)
   window.addEventListener('side_session_created', handleSideSessionCreated)
   window.addEventListener('subagent_session_created', handleSubagentSessionCreated)
 })
@@ -577,9 +573,21 @@ async function handleDeleteSideTask(sideSessionId: number) {
   // 同样固定父会话 ID，避免删除返回时已切换主会话导致用错 ID 移除缓存
   const parentSessionId = activeSessionIdRef.value || ''
   try {
+    await ElMessageBox.confirm('删除后该边路任务的会话记录将一并删除，且不可恢复。确认删除？', '删除边路任务', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+  } catch {
+    return
+  }
+  try {
     await api.delete(`/sessions/${sideSessionId}`)
   } catch (e) {
+    // API 失败不动本地状态：否则 UI 已移除、刷新后任务「复活」
     console.warn('[side-task] Failed to delete side task:', e)
+    ElMessage.error('删除失败，请稍后重试')
+    return
   }
   const tab = tabs.value.find(t =>
     t.type === 'side_task' && (t.sideSessionId === sideSessionId || t.id === 'side:' + sideSessionId)
@@ -593,8 +601,15 @@ async function handleDeleteSideTask(sideSessionId: number) {
 
 async function handlePromoteSideTask(sideSessionId: number) {
   const parentSessionId = activeSessionIdRef.value || ''
-  const ok = window.confirm('升级后会创建一个新的主会话，并从当前主会话的边路任务列表中移除该边路任务。是否继续？')
-  if (!ok) return
+  try {
+    await ElMessageBox.confirm(
+      '升级后会创建一个新的主会话，并从当前主会话的边路任务列表中移除该边路任务。是否继续？',
+      '升级为主会话',
+      { confirmButtonText: '升级', cancelButtonText: '取消', type: 'info' }
+    )
+  } catch {
+    return
+  }
   try {
     const { data } = await api.post(`/sessions/${sideSessionId}/promote-side-task`)
     const tab = tabs.value.find(t =>
@@ -1041,7 +1056,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  document.removeEventListener('keydown', handleTerminalShortcut)
   window.removeEventListener('side_session_created', handleSideSessionCreated)
   window.removeEventListener('subagent_session_created', handleSubagentSessionCreated)
 })

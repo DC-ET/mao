@@ -400,8 +400,16 @@ function getToolCall(callId: string): ToolCall | undefined {
 const copied = ref(false)
 let copyTimer: ReturnType<typeof setTimeout> | null = null
 
+/** 复制时剥离内部标记语法：${skill}$、#{cmd}#、@{file}@ 只保留内容本身 */
+function stripInternalMarkers(text: string): string {
+  return text
+    .replace(/\$\{([^}]+)\}\$/g, '$1')
+    .replace(/#\{([^}]+)\}#/g, '$1')
+    .replace(/@\{([^}]+)\}@/g, '$1')
+}
+
 async function copyMessage() {
-  const text = props.message.content?.trim()
+  const text = stripInternalMarkers(props.message.content ?? '').trim()
   if (!text) return
   const ok = await copyText(text)
   if (!ok) return
@@ -739,7 +747,7 @@ async function copyMessage() {
 
 .copy-btn:hover {
   color: var(--aw-ink);
-  background: rgba(0, 0, 0, 0.04);
+  background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
 }
 
 .copy-btn.copied {
@@ -888,7 +896,7 @@ async function copyMessage() {
 
 .edit-btn:hover {
   color: var(--aw-primary);
-  background: rgba(0, 0, 0, 0.04);
+  background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
 }
 
 .add-command-btn {
@@ -907,6 +915,6 @@ async function copyMessage() {
 
 .add-command-btn:hover {
   color: var(--aw-primary);
-  background: rgba(0, 0, 0, 0.04);
+  background: color-mix(in srgb, var(--aw-ink) 5%, transparent);
 }
 </style>

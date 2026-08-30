@@ -403,6 +403,15 @@ onUnmounted(() => {
   const el = messagesContainer.value
   el?.removeEventListener('scroll', handleScroll)
   el?.removeEventListener('wheel', handleWheel)
+  // 组件卸载（KeepAlive 关 Tab / 切 Settings）必须退订 WS 并清理审批队列，
+  // 否则订阅与 pendingApprovals 一直残留，依赖 KeepAlive LRU 淘汰才释放
+  cleanup()
+  // 恢复期可能注册的渲染监听与收尾定时器一并清理
+  window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
+  if (markdownRenderTimer) {
+    clearTimeout(markdownRenderTimer)
+    markdownRenderTimer = null
+  }
 })
 
 // Edit message

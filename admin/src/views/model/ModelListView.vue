@@ -4,7 +4,7 @@
       <template #header>
         <div class="card-header">
           <span>模型配置</span>
-          <el-button type="primary" @click="handleCreate">
+          <el-button v-if="canWrite" type="primary" @click="handleCreate">
             <el-icon><Plus /></el-icon>
             添加模型
           </el-button>
@@ -90,25 +90,28 @@
         </el-table-column>
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
-            <el-button
-              type="primary"
-              link
-              size="small"
-              :loading="testingId === row.id"
-              :disabled="testingId === row.id"
-              @click="handleTest(row)"
-            >测试</el-button>
-            <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
-            <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button
-              :type="row.status === 1 ? 'danger' : 'success'"
-              link
-              size="small"
-              @click="handleToggleStatus(row)"
-            >
-              {{ row.status === 1 ? '停用' : '启用' }}
-            </el-button>
-            <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            <template v-if="canWrite">
+              <el-button
+                type="primary"
+                link
+                size="small"
+                :loading="testingId === row.id"
+                :disabled="testingId === row.id"
+                @click="handleTest(row)"
+              >测试</el-button>
+              <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
+              <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
+              <el-button
+                :type="row.status === 1 ? 'danger' : 'success'"
+                link
+                size="small"
+                @click="handleToggleStatus(row)"
+              >
+                {{ row.status === 1 ? '停用' : '启用' }}
+              </el-button>
+              <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            </template>
+            <span v-else class="op-muted">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -134,13 +137,15 @@
             <span>{{ row.supportsVision ? '支持' : '不支持' }}</span>
           </div>
           <div class="mobile-card-actions">
-            <el-button type="primary" link :loading="testingId === row.id" @click="handleTest(row)">测试</el-button>
-            <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
-            <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
-            <el-button :type="row.status === 1 ? 'danger' : 'success'" link @click="handleToggleStatus(row)">
-              {{ row.status === 1 ? '停用' : '启用' }}
-            </el-button>
-            <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+            <template v-if="canWrite">
+              <el-button type="primary" link :loading="testingId === row.id" @click="handleTest(row)">测试</el-button>
+              <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
+              <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
+              <el-button :type="row.status === 1 ? 'danger' : 'success'" link @click="handleToggleStatus(row)">
+                {{ row.status === 1 ? '停用' : '启用' }}
+              </el-button>
+              <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+            </template>
           </div>
         </el-card>
         <el-empty v-if="!loading && state.models.length === 0" description="暂无数据" />
@@ -250,6 +255,7 @@ import { computed, reactive, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 import ModelFormDialog from './ModelFormDialog.vue'
@@ -322,11 +328,16 @@ const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 const testingId = ref<number | null>(null)
 const testResultVisible = ref(false)
 const testResult = ref<any>(null)
+const loadingDetail = ref(false)
+const authStore = useAuthStore()
+const canWrite = computed(() => authStore.hasPermission('model:write'))
 
+let fetchModelsSeq = 0
 async function fetchModels() {
+  const seq = ++fetchModelsSeq
+  const tab = activeTab.value
   loading.value = true
   try {
-    const tab = activeTab.value
     const params: Record<string, string | number> = {
       page: tabStates[tab].currentPage,
       size: tabStates[tab].pageSize,
@@ -340,16 +351,19 @@ async function fetchModels() {
     if (filters.isDefault !== undefined) params.isDefault = filters.isDefault
 
     const { data } = await api.get('/models', { params })
+    if (seq !== fetchModelsSeq) return
     tabStates[tab].models = data?.records || []
     tabStates[tab].total = data?.total || 0
-  } finally {
-    loading.value = false
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
+    if (seq === fetchModelsSeq) loading.value = false
   }
 }
 
 async function fetchProviderOptions() {
-  const { data } = await api.get('/models/providers')
-  providerOptions.value = data || []
+  try {
+    const { data } = await api.get('/models/providers')
+    providerOptions.value = data || []
+  } catch { /* 拦截器已提示失败 */ }
 }
 
 function handleCreate() {
@@ -364,17 +378,29 @@ async function loadModelDetail(id: number) {
 }
 
 async function handleCopy(row: any) {
-  const detail = await loadModelDetail(row.id)
-  dialogMode.value = 'copy'
-  currentModel.value = detail
-  dialogVisible.value = true
+  if (loadingDetail.value) return
+  loadingDetail.value = true
+  try {
+    const detail = await loadModelDetail(row.id)
+    dialogMode.value = 'copy'
+    currentModel.value = detail
+    dialogVisible.value = true
+  } catch { /* 拦截器已提示失败 */ } finally {
+    loadingDetail.value = false
+  }
 }
 
 async function handleEdit(row: any) {
-  const detail = await loadModelDetail(row.id)
-  dialogMode.value = 'edit'
-  currentModel.value = detail
-  dialogVisible.value = true
+  if (loadingDetail.value) return
+  loadingDetail.value = true
+  try {
+    const detail = await loadModelDetail(row.id)
+    dialogMode.value = 'edit'
+    currentModel.value = detail
+    dialogVisible.value = true
+  } catch { /* 拦截器已提示失败 */ } finally {
+    loadingDetail.value = false
+  }
 }
 
 function handleSizeChange() {
@@ -558,6 +584,10 @@ onMounted(() => {
 
 .search-form {
   margin-bottom: 16px;
+}
+
+.op-muted {
+  color: var(--el-text-color-secondary);
 }
 
 .test-result-dialog {

@@ -101,6 +101,7 @@ import { usePanelLayout, isMobileDevice } from '../../composables/usePanelLayout
 import { useSkillDrawer } from '../../composables/useSkillDrawer'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useVersionCheck } from '../../composables/useVersionCheck'
+import { goBackToWorkbench } from '../../utils/workbench-nav'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
 
 const { theme, toggleTheme } = useTheme()
@@ -171,16 +172,7 @@ const updateTooltip = computed(() => {
 
 function goBackFromSettings() {
   const active = sessionStore.activeSession
-  if (active) {
-    window.location.href = `/tasks/${active.id}`
-    return
-  }
-  const latest = sessionStore.sessions[0]
-  if (latest) {
-    window.location.href = `/tasks/${latest.id}`
-    return
-  }
-  window.location.href = '/'
+  goBackToWorkbench(router, active?.id ?? sessionStore.sessions[0]?.id)
 }
 
 onMounted(() => {
@@ -195,12 +187,16 @@ onUnmounted(() => {
   document.removeEventListener('keydown', handleSearchShortcut)
 })
 
-/** Ctrl/Cmd+K：打开/关闭会话搜索浮窗。 */
+/** Ctrl/Cmd+K：打开/关闭会话搜索浮窗；Ctrl/Cmd+`：打开/关闭终端（常驻注册，不随页面切换失效）。 */
 function handleSearchShortcut(e: KeyboardEvent) {
   if (e.repeat) return
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault()
     searchPopoverRef.value?.toggle()
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+    e.preventDefault()
+    toggleTerminal()
   }
 }
 

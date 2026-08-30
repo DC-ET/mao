@@ -4,7 +4,7 @@
       <template #header>
         <div class="card-header">
           <span>Agent 列表</span>
-          <el-button type="primary" @click="handleCreate">
+          <el-button v-if="canWrite" type="primary" @click="handleCreate">
             <el-icon><Plus /></el-icon>
             创建 Agent
           </el-button>
@@ -47,9 +47,12 @@
         <el-table-column prop="createdAt" label="创建时间" width="180" />
         <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
-            <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            <template v-if="canWrite">
+              <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
+              <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
+              <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            </template>
+            <span v-else class="op-muted">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -69,9 +72,11 @@
             <span>{{ row.skillNames?.length || 0 }}</span>
           </div>
           <div class="mobile-card-actions">
-            <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
-            <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
-            <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+            <template v-if="canWrite">
+              <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
+              <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
+              <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+            </template>
           </div>
         </el-card>
         <el-empty v-if="!loading && filteredAgents.length === 0" description="暂无数据" />
@@ -104,20 +109,23 @@ import { computed, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import AgentFormDialog from './AgentFormDialog.vue'
 
 const { isMobile } = useBreakpoint()
 
 const loading = ref(false)
+const loadingDetail = ref(false)
 const allAgents = ref<any[]>([])
 const searchQuery = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
-const total = ref(0)
 const dialogVisible = ref(false)
 const currentAgent = ref<any>(null)
 const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
+const authStore = useAuthStore()
+const canWrite = computed(() => authStore.hasPermission('agent:write'))
 
 async function fetchAgents() {
   loading.value = true
@@ -126,13 +134,13 @@ async function fetchAgents() {
       params: { keyword: searchQuery.value }
     })
     allAgents.value = data || []
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loading.value = false
   }
 }
 
+const total = computed(() => allAgents.value.length)
 const filteredAgents = computed(() => {
-  total.value = allAgents.value.length
   const start = (currentPage.value - 1) * pageSize.value
   return allAgents.value.slice(start, start + pageSize.value)
 })
@@ -158,17 +166,29 @@ async function loadAgentDetail(id: number) {
 }
 
 async function handleCopy(row: any) {
-  const detail = await loadAgentDetail(row.id)
-  dialogMode.value = 'copy'
-  currentAgent.value = detail
-  dialogVisible.value = true
+  if (loadingDetail.value) return
+  loadingDetail.value = true
+  try {
+    const detail = await loadAgentDetail(row.id)
+    dialogMode.value = 'copy'
+    currentAgent.value = detail
+    dialogVisible.value = true
+  } catch { /* 拦截器已提示失败 */ } finally {
+    loadingDetail.value = false
+  }
 }
 
 async function handleEdit(row: any) {
-  const detail = await loadAgentDetail(row.id)
-  dialogMode.value = 'edit'
-  currentAgent.value = detail
-  dialogVisible.value = true
+  if (loadingDetail.value) return
+  loadingDetail.value = true
+  try {
+    const detail = await loadAgentDetail(row.id)
+    dialogMode.value = 'edit'
+    currentAgent.value = detail
+    dialogVisible.value = true
+  } catch { /* 拦截器已提示失败 */ } finally {
+    loadingDetail.value = false
+  }
 }
 
 async function handleDelete(row: any) {
@@ -178,6 +198,9 @@ async function handleDelete(row: any) {
     })
     await api.delete(`/agents/${row.id}`)
     ElMessage.success('删除成功')
+    // 当前页删空时回退页码，避免停留在空白页
+    const maxPage = Math.max(1, Math.ceil((total.value - 1) / pageSize.value))
+    if (currentPage.value > maxPage) currentPage.value = maxPage
     fetchAgents()
   } catch {
     // Cancelled
@@ -192,6 +215,9 @@ onMounted(fetchAgents)
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+.op-muted {
+  color: var(--el-text-color-secondary);
 }
 
 .search-form {

@@ -179,7 +179,7 @@ async function loadData() {
     bots.value = botData || []
     agents.value = agentData || []
     models.value = modelData || []
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loading.value = false
   }
 }
@@ -254,7 +254,7 @@ async function handleSubmit() {
     }
     formVisible.value = false
     await loadData()
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     submitting.value = false
   }
 }

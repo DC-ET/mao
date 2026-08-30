@@ -4,7 +4,7 @@
       <template #header>
         <div class="card-header">
           <span>用户管理</span>
-          <el-button type="primary" @click="handleCreate">
+          <el-button v-if="canWrite" type="primary" @click="handleCreate">
             <el-icon><Plus /></el-icon>
             新建用户
           </el-button>
@@ -30,7 +30,7 @@
             </el-form-item>
           </template>
           <el-form-item label="状态">
-            <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
+            <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px" @change="handleSearch">
               <el-option label="启用" :value="1" />
               <el-option label="禁用" :value="0" />
             </el-select>
@@ -77,33 +77,36 @@
         <el-table-column prop="createdAt" label="创建时间" width="170" />
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-tooltip
-              :disabled="row.authSource === 'LOCAL'"
-              content="LDAP 用户密码由目录服务管理"
-              placement="top"
-            >
-              <span>
-                <el-button
-                  type="primary"
-                  link
-                  size="small"
-                  :disabled="row.authSource !== 'LOCAL'"
-                  @click="handleResetPassword(row)"
-                >
-                  重置密码
-                </el-button>
-              </span>
-            </el-tooltip>
-            <el-button
-              :type="row.status === 1 ? 'danger' : 'success'"
-              link
-              size="small"
-              :disabled="isCurrentUser(row) && row.status === 1"
-              @click="handleToggleStatus(row)"
-            >
-              {{ row.status === 1 ? '禁用' : '启用' }}
-            </el-button>
+            <template v-if="canWrite">
+              <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
+              <el-tooltip
+                :disabled="row.authSource === 'LOCAL'"
+                content="LDAP 用户密码由目录服务管理"
+                placement="top"
+              >
+                <span>
+                  <el-button
+                    type="primary"
+                    link
+                    size="small"
+                    :disabled="row.authSource !== 'LOCAL'"
+                    @click="handleResetPassword(row)"
+                  >
+                    重置密码
+                  </el-button>
+                </span>
+              </el-tooltip>
+              <el-button
+                :type="row.status === 1 ? 'danger' : 'success'"
+                link
+                size="small"
+                :disabled="isCurrentUser(row) && row.status === 1"
+                @click="handleToggleStatus(row)"
+              >
+                {{ row.status === 1 ? '禁用' : '启用' }}
+              </el-button>
+            </template>
+            <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -146,25 +149,27 @@
             </el-tag>
           </div>
           <div class="user-card-actions">
-            <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button
-              type="primary"
-              link
-              size="small"
-              :disabled="row.authSource !== 'LOCAL'"
-              @click="handleResetPassword(row)"
-            >
-              重置密码
-            </el-button>
-            <el-button
-              :type="row.status === 1 ? 'danger' : 'success'"
-              link
-              size="small"
-              :disabled="isCurrentUser(row) && row.status === 1"
-              @click="handleToggleStatus(row)"
-            >
-              {{ row.status === 1 ? '禁用' : '启用' }}
-            </el-button>
+            <template v-if="canWrite">
+              <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
+              <el-button
+                type="primary"
+                link
+                size="small"
+                :disabled="row.authSource !== 'LOCAL'"
+                @click="handleResetPassword(row)"
+              >
+                重置密码
+              </el-button>
+              <el-button
+                :type="row.status === 1 ? 'danger' : 'success'"
+                link
+                size="small"
+                :disabled="isCurrentUser(row) && row.status === 1"
+                @click="handleToggleStatus(row)"
+              >
+                {{ row.status === 1 ? '禁用' : '启用' }}
+              </el-button>
+            </template>
           </div>
         </el-card>
         <el-empty v-if="!loading && users.length === 0" description="暂无数据" />
@@ -202,7 +207,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
@@ -229,6 +234,8 @@ const filters = reactive({
 const formDialogVisible = ref(false)
 const formMode = ref<'create' | 'edit'>('create')
 const currentUser = ref<any | null>(null)
+const loadingDetail = ref(false)
+const canWrite = computed(() => authStore.hasPermission('user:write'))
 
 const resetDialogVisible = ref(false)
 const resetUserId = ref<number | null>(null)
@@ -238,7 +245,9 @@ function isCurrentUser(row: any) {
   return row.id === authStore.user?.id
 }
 
+let fetchUsersSeq = 0
 async function fetchUsers() {
+  const seq = ++fetchUsersSeq
   loading.value = true
   try {
     const params: Record<string, unknown> = {
@@ -251,10 +260,11 @@ async function fetchUsers() {
     }
 
     const { data } = await api.get('/users', { params })
+    if (seq !== fetchUsersSeq) return
     users.value = data?.records || []
     total.value = data?.total || 0
-  } finally {
-    loading.value = false
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
+    if (seq === fetchUsersSeq) loading.value = false
   }
 }
 
@@ -282,10 +292,16 @@ function handleCreate() {
 }
 
 async function handleEdit(row: any) {
-  const { data } = await api.get(`/users/${row.id}`)
-  formMode.value = 'edit'
-  currentUser.value = data
-  formDialogVisible.value = true
+  if (loadingDetail.value) return
+  loadingDetail.value = true
+  try {
+    const { data } = await api.get(`/users/${row.id}`)
+    formMode.value = 'edit'
+    currentUser.value = data
+    formDialogVisible.value = true
+  } catch { /* 拦截器已提示失败 */ } finally {
+    loadingDetail.value = false
+  }
 }
 
 function handleResetPassword(row: any) {
@@ -330,7 +346,7 @@ onMounted(async () => {
 }
 
 .text-muted {
-  color: #909399;
+  color: var(--mao-muted);
 }
 
 .pagination {
@@ -358,7 +374,7 @@ onMounted(async () => {
 .user-card-name {
   font-size: 15px;
   font-weight: 600;
-  color: #303133;
+  color: var(--mao-ink);
 }
 
 .user-card-row {
@@ -372,14 +388,14 @@ onMounted(async () => {
 .user-card-label {
   width: 48px;
   flex-shrink: 0;
-  color: #909399;
+  color: var(--mao-muted);
 }
 
 .user-card-actions {
   display: flex;
   gap: 4px;
   margin-top: 10px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--mao-border);
   padding-top: 10px;
 }
 </style>

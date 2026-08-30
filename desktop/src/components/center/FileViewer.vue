@@ -67,6 +67,7 @@ import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
 import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdown-link'
+import { openExternalUrl } from '../../utils/capacitor'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { Refresh } from '@element-plus/icons-vue'
 
@@ -125,7 +126,7 @@ async function handleMarkdownClick(e: MouseEvent) {
   e.preventDefault()
 
   if (isExternalMarkdownLink(href)) {
-    await window.electronAPI?.openExternal(href)
+    await openExternalUrl(href)
     return
   }
 
@@ -163,6 +164,12 @@ function isPdfPath(filePath: string): boolean {
 
 // PDF 预览请求序号：快速切换文件时丢弃过期响应，防止旧 PDF 覆盖当前标签内容
 let pdfPreviewSeq = 0
+// 文本/图片读取请求序号：与 PDF 同样的过期响应保护（切换会话/文件时防旧响应覆盖新内容）
+let loadFileSeq = 0
+
+function isStaleLoad(seq: number): boolean {
+  return seq !== loadFileSeq
+}
 
 async function loadPdfPreview() {
   if (!props.provider?.previewFile) {
@@ -196,8 +203,9 @@ async function loadFile() {
     errorMsg.value = '工作区未就绪，请稍后再试'
     return
   }
-  // 作废旧 PDF 预览请求（路径切换/重载时丢弃过期响应）
-  pdfPreviewSeq++
+  // 作废旧请求（PDF 与文本/图片共用序号：路径切换/重载时丢弃过期响应）
+  const seq = ++loadFileSeq
+  pdfPreviewSeq = loadFileSeq
   state.value = 'loading'
   content.value = ''
   imageDataUri.value = ''
@@ -211,6 +219,7 @@ async function loadFile() {
     }
 
     const result = await props.provider.readFile(props.filePath, { limit: 5000 })
+    if (isStaleLoad(seq)) return
 
     if (result.error) {
       state.value = 'error'
@@ -242,6 +251,7 @@ async function loadFile() {
     truncated.value = result.total_lines > 5000
     state.value = 'ready'
   } catch (e: any) {
+    if (isStaleLoad(seq)) return
     state.value = 'error'
     errorMsg.value = e.message || '未知错误'
   }

@@ -118,6 +118,11 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '无权限' }
       },
     ]
+  },
+  {
+    // 404 兜底：未知路径回仪表盘，避免白屏
+    path: '/:pathMatch(.*)*',
+    redirect: '/dashboard'
   }
 ]
 
@@ -133,18 +138,21 @@ router.beforeEach(async (to, _from, next) => {
     next('/login')
     return
   }
-  if (to.path === '/login' && token) {
-    next('/')
-    return
-  }
 
   if (token && to.meta.requiresAuth !== false) {
     const authStore = useAuthStore()
     if (!authStore.user) {
       try {
         await authStore.fetchUserInfo()
-      } catch {
-        next('/login')
+      } catch (error: any) {
+        // 401/403：token 失效，清理后进登录页；网络异常：放行由页面内请求提示，
+        // 避免在 /login 与目标页之间无限重定向卡死
+        if (error?.response?.status === 401 || error?.response?.status === 403) {
+          authStore.clearAuth()
+          next('/login')
+        } else {
+          next()
+        }
         return
       }
     }
@@ -158,6 +166,23 @@ router.beforeEach(async (to, _from, next) => {
       next('/forbidden')
       return
     }
+    next()
+    return
+  }
+
+  // 已登录访问 /login：仅在用户信息可用时回工作台，避免拉取失败时与守卫互相踢
+  if (to.path === '/login' && token) {
+    const authStore = useAuthStore()
+    if (!authStore.user) {
+      try {
+        await authStore.fetchUserInfo()
+      } catch {
+        next()
+        return
+      }
+    }
+    next('/')
+    return
   }
 
   next()

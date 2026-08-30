@@ -197,7 +197,7 @@ async function fetchSettings() {
     if (!activeCategory.value || (activeCategory.value !== '__integration__' && !plainCategories.includes(activeCategory.value))) {
       activeCategory.value = integrationRows.value.length > 0 ? '__integration__' : (plainCategories[0] || '')
     }
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loading.value = false
   }
 }
@@ -223,7 +223,7 @@ async function persist(row: any, value: string | null) {
     await api.put(`/system-settings/${row.settingKey}`, { value })
     await fetchSettings()
     ElMessage.success('配置已更新')
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     saving.value = false
   }
 }

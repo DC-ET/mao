@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import router from '../router'
 import type { RouteLocationNormalized } from 'vue-router'
 
 export interface TabItem {
@@ -11,7 +11,7 @@ export interface TabItem {
 }
 
 export const useTabStore = defineStore('tabs', () => {
-  const router = useRouter()
+  // store 可能在任意时机（守卫/单测）被首次实例化，必须使用 router 单例而非 useRouter()
 
   const tabs = ref<TabItem[]>([
     { path: '/dashboard', title: '数据概览', name: 'Dashboard', closable: false }

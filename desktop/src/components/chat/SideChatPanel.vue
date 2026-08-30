@@ -537,7 +537,11 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
 
   // 边路任务正在执行中：将消息加入队列（不受 sending 状态阻塞）
   if (hasRealSession.value && isSideActive.value) {
-    enqueueMessage(String(realSessionId.value), resolvedText, generateUUID(), imageUrls)
+    const enqueued = await enqueueMessage(String(realSessionId.value), resolvedText, generateUUID(), imageUrls)
+    if (!enqueued) {
+      ElMessage.error('消息发送失败，网络连接不可用，请重试')
+      return
+    }
     draftStore.clearDraft(props.tabId)
     chatInputRef.value?.clearInput()
     return
@@ -568,9 +572,18 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
   }
 
   if (isFirstSideSend) {
-    // 首次发送：创建边路任务会话
+    // 首次发送：先校验父会话存在，再插乐观消息，避免校验失败后留下幽灵消息
+    const parentSessionId = sessionStore.activeSessionId
+    if (!parentSessionId) {
+      removeSideCreatedListener?.()
+      waitingForSave.value = false
+      ElMessage.warning('主会话不存在，无法创建边路任务')
+      return
+    }
+
+    const optimisticUserId = 'side_user_' + Date.now()
     sessionStore.addUserMessage(placeholderCacheKey.value, {
-      id: 'side_user_' + Date.now(),
+      id: optimisticUserId,
       role: 'user',
       content: resolvedText,
       createdAt: nowDateTime(),
@@ -578,14 +591,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
     })
     sessionStore.ensureStreamingAssistantMessage(placeholderCacheKey.value)
 
-    const parentSessionId = sessionStore.activeSessionId
-    if (!parentSessionId) {
-      removeSideCreatedListener?.()
-      waitingForSave.value = false
-      return
-    }
-
-    createSideSession(
+    const created = await createSideSession(
       parentSessionId,
       resolvedText,
       inheritContext.value,
@@ -594,19 +600,33 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
       agentsMdContent,
       imageUrls
     )
+    if (!created) {
+      rollbackOptimisticMessages(placeholderCacheKey.value, optimisticUserId)
+      removeSideCreatedListener?.()
+      waitingForSave.value = false
+      ElMessage.error('边路任务创建失败，网络连接不可用，请重试')
+      return
+    }
     sending.value = true
   } else {
     const sid = String(realSessionId.value)
 
+    const optimisticUserId = 'side_user_' + Date.now()
     sessionStore.addUserMessage(sid, {
-      id: 'side_user_' + Date.now(),
+      id: optimisticUserId,
       role: 'user',
       content: resolvedText,
       createdAt: nowDateTime(),
       images: imageUrls.length > 0 ? imageUrls : undefined,
     })
     sessionStore.ensureStreamingAssistantMessage(sid)
-    sendMessage(sid, resolvedText, generateUUID(), imageUrls, localSkills, agentsMdContent, currentModelId.value)
+    const sent = await sendMessage(sid, resolvedText, generateUUID(), imageUrls, localSkills, agentsMdContent, currentModelId.value)
+    if (!sent) {
+      rollbackOptimisticMessages(sid, optimisticUserId)
+      waitingForSave.value = false
+      ElMessage.error('消息发送失败，网络连接不可用，请重试')
+      return
+    }
     sending.value = true
   }
 
@@ -664,19 +684,37 @@ async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]
 
 // --- 消息队列操作 ---
 
-function insertQueueMessage(queueId: string) {
-  if (!hasRealSession.value) return
-  insertMessage(String(realSessionId.value), queueId)
+/** 发送失败时回滚乐观插入的用户消息与空 assistant 占位（二者必然位于列表尾部）。 */
+function rollbackOptimisticMessages(cacheKey: string, optimisticUserId: string) {
+  const list = sessionStore.getMessages(cacheKey)
+  if (!list || list.length < 2) return
+  const last = list[list.length - 1]
+  const prev = list[list.length - 2]
+  if (last.role === 'assistant' && !last.content && prev.id === optimisticUserId) {
+    list.pop()
+    list.pop()
+  }
 }
 
-function deleteQueueMessage(queueId: string) {
+async function insertQueueMessage(queueId: string) {
   if (!hasRealSession.value) return
-  wsDeleteQueueMessage(String(realSessionId.value), queueId)
+  if (!await insertMessage(String(realSessionId.value), queueId)) {
+    ElMessage.error('操作失败，网络连接不可用，请重试')
+  }
 }
 
-function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
+async function deleteQueueMessage(queueId: string) {
   if (!hasRealSession.value) return
-  wsReorderQueueMessage(String(realSessionId.value), queueId, direction)
+  if (!await wsDeleteQueueMessage(String(realSessionId.value), queueId)) {
+    ElMessage.error('操作失败，网络连接不可用，请重试')
+  }
+}
+
+async function reorderQueueMessage(queueId: string, direction: 'up' | 'down') {
+  if (!hasRealSession.value) return
+  if (!await wsReorderQueueMessage(String(realSessionId.value), queueId, direction)) {
+    ElMessage.error('操作失败，网络连接不可用，请重试')
+  }
 }
 
 // --- 队列消息撤回编辑 ---

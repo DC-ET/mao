@@ -178,7 +178,7 @@ async function fetchSkillDocs() {
     ])
     skillDocs.value = data || []
     agents.value = agentRes.data || []
-  } finally {
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loading.value = false
   }
 }

@@ -20,9 +20,11 @@
         v-if="tab.closable"
         class="tab-close"
         role="button"
-        tabindex="-1"
+        tabindex="0"
         aria-label="关闭标签"
         @click.stop="tabStore.removeTab(tab.path)"
+        @keydown.enter.stop.prevent="tabStore.removeTab(tab.path)"
+        @keydown.space.stop.prevent="tabStore.removeTab(tab.path)"
       >
         <Close />
       </el-icon>

@@ -89,10 +89,10 @@
         <button
           v-if="allAnswered"
           class="action-btn submit"
-          :disabled="!canSubmit"
+          :disabled="!canSubmit || alreadySubmitted"
           @click="handleSubmit"
         >
-          提交
+          {{ alreadySubmitted ? '已提交' : '提交' }}
         </button>
         <button
           v-else
@@ -223,8 +223,14 @@ function confirmAndNext() {
   }
 }
 
+// 已提交的 requestId：面板保留到服务端 ask_user_questions_cancelled 才移除，期间禁止重复提交
+const submittedRequestIds = ref<Set<string>>(new Set())
+const alreadySubmitted = computed(() => currentRequestId.value != null && submittedRequestIds.value.has(currentRequestId.value))
+
 function handleSubmit() {
   if (!canSubmit.value || !currentRequestId.value) return
+  if (submittedRequestIds.value.has(currentRequestId.value)) return
+  submittedRequestIds.value = new Set([...submittedRequestIds.value, currentRequestId.value])
 
   const answers: QuestionAnswer[] = currentQuestions.value.map((q, qi) => {
     const selectedLabels = selections.value[qi] ?? []

@@ -372,8 +372,7 @@ export function useStreamWS() {
         ...(agentsMdContent ? { agentsMdContent } : {})
       }
     }
-    send(payload)
-    return true
+    return sendReliable(payload)
   }
 
   async function sendEditMessage(sessionId: string, content: string, messageId: string, images?: string[], localSkills?: LocalSkillReport[], agentsMdContent?: string): Promise<boolean> {
@@ -386,8 +385,7 @@ export function useStreamWS() {
       ...(localSkills && localSkills.length > 0 ? { localSkills } : {}),
       ...(agentsMdContent ? { agentsMdContent } : {})
     }
-    send(payload)
-    return true
+    return sendReliable(payload)
   }
 
   function cancel(sessionId: string) {
@@ -406,20 +404,20 @@ export function useStreamWS() {
     })
   }
 
-  function enqueueMessage(sessionId: string, content: string, eventId: string, images: string[]) {
-    send({ type: 'enqueue_message', sessionId: Number(sessionId), data: { content, eventId, images } })
+  async function enqueueMessage(sessionId: string, content: string, eventId: string, images: string[]): Promise<boolean> {
+    return sendReliable({ type: 'enqueue_message', sessionId: Number(sessionId), data: { content, eventId, images } })
   }
 
-  function insertMessage(sessionId: string, queueId: string) {
-    send({ type: 'insert_message', sessionId: Number(sessionId), data: { queueId } })
+  async function insertMessage(sessionId: string, queueId: string): Promise<boolean> {
+    return sendReliable({ type: 'insert_message', sessionId: Number(sessionId), data: { queueId } })
   }
 
-  function deleteQueueMessage(sessionId: string, queueId: string) {
-    send({ type: 'delete_queue_message', sessionId: Number(sessionId), data: { queueId } })
+  async function deleteQueueMessage(sessionId: string, queueId: string): Promise<boolean> {
+    return sendReliable({ type: 'delete_queue_message', sessionId: Number(sessionId), data: { queueId } })
   }
 
-  function reorderQueueMessage(sessionId: string, queueId: string, direction: string) {
-    send({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, direction } })
+  async function reorderQueueMessage(sessionId: string, queueId: string, direction: string): Promise<boolean> {
+    return sendReliable({ type: 'reorder_queue_message', sessionId: Number(sessionId), data: { queueId, direction } })
   }
 
   async function sendToolApproval(sessionId: string, requestId: string, approved: boolean): Promise<boolean> {
@@ -452,8 +450,7 @@ export function useStreamWS() {
         ...(agentsMdContent ? { agentsMdContent } : {})
       }
     }
-    send(payload)
-    return true
+    return sendReliable(payload)
   }
 
   function routeEvent(msg: any) {
@@ -543,14 +540,6 @@ export function useStreamWS() {
 
           // Ignore stale CANCELLING after local optimistic cancel
           if (phase === 'CANCELLING' && !activeExecutionIds.has(sessionId)) {
-            break
-          }
-
-          if (terminalPhases.includes(phase) && isStaleExecution(sessionId, data)) {
-            sessionStore.finishInterruptedStreamingMessage(sessionId)
-            sessionStore.updateSessionPhase(sessionId, phase, startedAt)
-            sessionStore.updateSideTaskPhase(Number(sessionId), phase, startedAt)
-            sessionStore.updateSubagentPhase(Number(sessionId), phase)
             break
           }
 
@@ -985,7 +974,7 @@ export function useStreamWS() {
 
   // 消息保存确认的回调注册函数
   function onMessageSaved(callback: MessageSavedCallback): string {
-    const callbackId = `callback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const callbackId = `callback_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
     messageSavedCallbacks.set(callbackId, callback)
     return callbackId
   }

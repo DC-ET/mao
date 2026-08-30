@@ -70,6 +70,7 @@ const isOpen = ref(false)
 const instances = new Map<string, TerminalInstance>()
 
 let listenersInitialized = false
+let themeObserver: MutationObserver | null = null
 
 function isElectron(): boolean {
   return typeof window !== 'undefined' && !!(window as any).electronAPI
@@ -89,8 +90,9 @@ export function useTerminal() {
       }
     )
 
-    // Watch for theme changes and update all terminals
-    const observer = new MutationObserver((mutations) => {
+    // Watch for theme changes and update all terminals.
+    // Singleton lifecycle：随 listenersInitialized 只创建一次，引用保存在模块级（无叠加泄漏）。
+    themeObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (mutation.attributeName === 'data-theme') {
           const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
@@ -101,7 +103,7 @@ export function useTerminal() {
         }
       }
     })
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 
     window.electronAPI.terminal.onExit(
       ({ id }: { id: string; exitCode: number }) => {
@@ -136,7 +138,12 @@ export function useTerminal() {
 
     // Load WebGL renderer for better selection accuracy
     try {
-      terminal.loadAddon(new WebglAddon())
+      const webgl = new WebglAddon()
+      // 上下文丢失（GPU 重置/驱动故障）时释放 WebGL 渲染器，xterm 自动回落 DOM/canvas 渲染
+      webgl.onContextLoss(() => {
+        webgl.dispose()
+      })
+      terminal.loadAddon(webgl)
     } catch {
       // WebGL not supported, fall back to canvas renderer
     }

@@ -154,6 +154,7 @@ async function finishLogin() {
 }
 
 async function handleLogin() {
+  if (passwordLoading.value) return
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) {
     await nextTick()
@@ -173,6 +174,9 @@ async function handleLogin() {
     form.value.password = ''
     formRef.value?.clearValidate()
     await finishLogin()
+  } catch (error: any) {
+    // /auth/login 的 401 拦截器不弹 toast，这里兜底展示失败原因
+    ElMessage.error(error?.response?.data?.message || error?.message || '登录失败，请检查用户名和密码')
   } finally {
     passwordLoading.value = false
   }

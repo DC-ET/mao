@@ -27,7 +27,7 @@ function isAuthPath(url?: string): boolean {
 }
 
 let isRefreshing = false
-let pendingRequests: Array<(token: string) => void> = []
+let pendingRequests: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = []
 
 export async function doRefreshToken(): Promise<string> {
   const refreshToken = getRefreshToken()
@@ -84,10 +84,13 @@ api.interceptors.response.use(
 
       if (isRefreshing) {
         // Another request is already refreshing — queue this one
-        return new Promise((resolve) => {
-          pendingRequests.push((newToken: string) => {
-            originalRequest.headers.Authorization = `Bearer ${newToken}`
-            resolve(api(originalRequest))
+        return new Promise((resolve, reject) => {
+          pendingRequests.push({
+            resolve: (newToken: string) => {
+              originalRequest.headers.Authorization = `Bearer ${newToken}`
+              resolve(api(originalRequest))
+            },
+            reject
           })
         })
       }
@@ -96,12 +99,14 @@ api.interceptors.response.use(
       try {
         const newToken = await doRefreshToken()
         // Retry all queued requests with the new token
-        pendingRequests.forEach(cb => cb(newToken))
+        pendingRequests.forEach(cb => cb.resolve(newToken))
         pendingRequests = []
         // Retry the original request
         originalRequest.headers.Authorization = `Bearer ${newToken}`
         return api(originalRequest)
-      } catch {
+      } catch (refreshError) {
+        // refresh 失败必须 reject 排队请求，否则调用方 await 永久挂起
+        pendingRequests.forEach(cb => cb.reject(refreshError))
         pendingRequests = []
         // refresh 失败：清本地会话并回登录页（redirectToLogin 自带防抖与「已在登录页」判断）
         void forceRelogin()
