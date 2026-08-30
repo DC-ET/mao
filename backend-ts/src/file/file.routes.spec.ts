@@ -28,7 +28,9 @@ describe('file routes', () => {
     });
     const session = { id: 1, userId: 7, workspace: '/tmp/ws' };
     const fileService = {
-      listFiles: vi.fn(async () => []),
+      listFiles: vi.fn(async () => [
+        { id: 1, originalName: 'a.txt', storedName: 'x.txt', filePath: '/tmp/x.txt', fileSize: 1, uploaderId: 7, sessionId: 1 },
+      ]),
       listWorkspaceFiles: vi.fn(() => [{ path: 'a.txt', name: 'a.txt', size: 1 }]),
       getFile: vi.fn(async () => null),
       deleteFile: vi.fn(),
@@ -72,12 +74,15 @@ describe('file routes', () => {
     const runtimeDataResolver = new RuntimeDataResolver(runtimeDir, join(root, 'home'));
     registerFileRoutes(app, {
       fileService, sessionService, workspaceBrowseService, workspaceGitService,
-      gitCommitMessageService, gitWriteOperationService, pathSandbox, uploadBaseUrl: '',
+      gitCommitMessageService, gitWriteOperationService, pathSandbox, getUploadBaseUrl: async () => '',
       runtimeDataResolver,
     });
     const get = async (url: string) => JSON.parse((await app.inject({ method: 'GET', url })).body);
     const post = async (url: string, payload: object) => JSON.parse((await app.inject({ method: 'POST', url, payload })).body);
-    expect((await get('/v1/files')).code).toBe(0);
+    const fileListVo = await get('/v1/files');
+    expect(fileListVo.code).toBe(0);
+    expect(Array.isArray(fileListVo.data)).toBe(true);
+    expect(fileListVo.data[0]?.originalName).toBe('a.txt');
     expect((await get('/v1/files/workspace-list?sessionId=1')).data.files).toHaveLength(1);
     expect((await get('/v1/files/workspace-directory?sessionId=1')).code).toBe(0);
     expect((await get('/v1/files/workspace-read?sessionId=1&path=a.txt')).data.content).toBe('hi');

@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
 import { SystemSettingService } from './settings.service.js';
+import { encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type { AgentLookup, ModelLookup, SystemSetting, SystemSettingRepository } from './types.js';
 
 function setting(key: string, category: string, editable: number): SystemSetting {
@@ -8,6 +9,14 @@ function setting(key: string, category: string, editable: number): SystemSetting
 }
 
 describe('SystemSettingService', () => {
+  beforeEach(() => {
+    vi.mocked(mapper.list).mockReset();
+    vi.mocked(mapper.findByKey).mockReset();
+    vi.mocked(mapper.updateById).mockReset();
+    vi.mocked(agentLookup.findById).mockReset();
+    vi.mocked(modelLookup.findById).mockReset();
+  });
+
   const mapper: SystemSettingRepository = {
     list: vi.fn(),
     findByKey: vi.fn(),
@@ -18,10 +27,6 @@ describe('SystemSettingService', () => {
   const runtime = {
     workspaceRoot: '/workspace',
     skillsDir: '/skills',
-    ldapEnabled: false,
-    ldapUrl: '',
-    feishuEnabled: false,
-    feishuAppId: '',
   };
 
   function service(): SystemSettingService {
@@ -132,41 +137,133 @@ describe('SystemSettingService', () => {
     expect(updated.value).toBe('8');
   });
 
-  it('listShowsLdapEnabledOnlyWhenSwitchAndUrlArePresent', async () => {
-    const ldapSetting = setting('auth.ldap.enabled', '认证', 0);
-    vi.mocked(mapper.list).mockResolvedValue([ldapSetting]);
-
-    const disabled = new SystemSettingService(mapper, agentLookup, modelLookup, {
-      ...runtime,
-      ldapEnabled: true,
-      ldapUrl: '',
-    });
-    expect((await disabled.list(null))[0].value).toBe('false');
-
-    const enabled = new SystemSettingService(mapper, agentLookup, modelLookup, {
-      ...runtime,
-      ldapEnabled: true,
-      ldapUrl: 'ldap://example.test:389',
-    });
-    expect((await enabled.list(null))[0].value).toBe('true');
+  it('listReturnsLdapSwitchAsStoredDbValue', async () => {
+    vi.mocked(mapper.list).mockResolvedValue([setting('auth.ldap.enabled', '集成配置', 1)]);
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime });
+    expect((await svc.list(null))[0].value).toBe('20');
   });
 
-  it('listShowsFeishuEnabledOnlyWhenSwitchAndAppIdArePresent', async () => {
-    const feishuSetting = setting('auth.feishu.enabled', '认证', 0);
-    vi.mocked(mapper.list).mockResolvedValue([feishuSetting]);
+  it('listMasksSecretValues', async () => {
+    const secretRow = setting('auth.feishu.appSecret', '集成配置', 1);
+    secretRow.isSecret = 1;
+    secretRow.value = 'enc:v1:ciphertext';
+    vi.mocked(mapper.list).mockResolvedValue([secretRow]);
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'k');
+    expect((await svc.list(null))[0].value).toBe('******');
+  });
 
-    const disabled = new SystemSettingService(mapper, agentLookup, modelLookup, {
-      ...runtime,
-      feishuEnabled: true,
-      feishuAppId: '',
+  it('updateSecretEncryptsAndDecryptsRoundTrip', async () => {
+    const secretRow = setting('auth.feishu.appSecret', '集成配置', 1);
+    secretRow.isSecret = 1;
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (key === 'auth.feishu.appSecret') return secretRow;
+      return null;
     });
-    expect((await disabled.list(null))[0].value).toBe('false');
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'test-secret-key');
+    const updated = await svc.update('auth.feishu.appSecret', 'my-app-secret');
+    expect(updated.value).toBe('******');
+    expect(secretRow.value).not.toBe('my-app-secret');
+    expect(String(secretRow.value)).toContain(':');
+    const cfg = await svc.getFeishuOAuthConfig();
+    expect(cfg.appSecret).toBe('my-app-secret');
+    expect(cfg.redirectUri).toBe('http://localhost:9080/api/v1/auth/feishu/callback');
+  });
 
-    const enabled = new SystemSettingService(mapper, agentLookup, modelLookup, {
-      ...runtime,
-      feishuEnabled: true,
-      feishuAppId: 'cli_xxx',
+  it('updateSecretRejectsMaskSubmission', async () => {
+    const secretRow = setting('auth.ldap.password', '集成配置', 1);
+    secretRow.isSecret = 1;
+    secretRow.value = 'enc:v1:ciphertext';
+    vi.mocked(mapper.findByKey).mockResolvedValue(secretRow);
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'k');
+    await expect(svc.update('auth.ldap.password', '******')).rejects.toThrow(/掩码/);
+  });
+
+  it('updateSecretNullMeansNoChange', async () => {
+    const secretRow = setting('auth.ldap.password', '集成配置', 1);
+    secretRow.isSecret = 1;
+    secretRow.value = 'enc:v1:ciphertext';
+    vi.mocked(mapper.findByKey).mockResolvedValue(secretRow);
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'k');
+    const result = await svc.update('auth.ldap.password', null);
+    expect(result.value).toBe('******');
+    expect(mapper.updateById).not.toHaveBeenCalled();
+  });
+
+  it('updateSecretRejectsWhenSecretKeyMissing', async () => {
+    const secretRow = setting('tools.tavilyApiKey', '集成配置', 1);
+    secretRow.isSecret = 1;
+    vi.mocked(mapper.findByKey).mockResolvedValue(secretRow);
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, '');
+    await expect(svc.update('tools.tavilyApiKey', 'tvly-xxx')).rejects.toThrow(/SETTINGS_SECRET/);
+  });
+
+  it('updateValidatesStorageModeEnum', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('upload.storageMode', '集成配置', 1));
+    await expect(service().update('upload.storageMode', 's3')).rejects.toThrow(/local 或 oss/);
+  });
+
+  it('updateValidatesLdapUrlScheme', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('auth.ldap.url', '集成配置', 1));
+    await expect(service().update('auth.ldap.url', 'example.test')).rejects.toThrow(/ldap:\/\/ 或 ldaps:\/\//);
+  });
+
+  it('getUploadConfigAppliesDefaults', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    const cfg = await service().getUploadConfig();
+    expect(cfg).toEqual({ storageMode: 'local', baseUrl: '', maxSizeMb: 50 });
+  });
+
+  it('getOssConfigReturnsNullWhenUnconfigured', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    expect(await service().getOssConfig()).toBeNull();
+  });
+
+  it('getOssConfigReturnsFullConfigWhenSet', async () => {
+    const rows: Record<string, string> = {
+      'oss.region': 'cn-hangzhou',
+      'oss.accessKeyId': 'ak',
+      'oss.accessKeySecret': encryptAesGcmNonNull('sk', 'test-secret-key'),
+      'oss.bucket': 'bucket',
+      'oss.sts.roleArn': 'acs:ram::1:role/x',
+    };
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (rows[key] != null) return { id: 1, settingKey: key, value: rows[key], category: '集成配置', editable: 1 };
+      return null;
     });
-    expect((await enabled.list(null))[0].value).toBe('true');
+    const cfg = await new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'test-secret-key').getOssConfig();
+    expect(cfg).not.toBeNull();
+    expect(cfg!.region).toBe('cn-hangzhou');
+    expect(cfg!.sts.roleSessionName).toBe('mao-sts');
+    expect(cfg!.sts.expire).toBe(3600);
+  });
+
+  it('getLdapConfigReadsEnabledFlag', async () => {
+    const rows: Record<string, string> = {
+      'auth.ldap.enabled': 'true',
+      'auth.ldap.url': 'ldap://example.test:389',
+      'auth.ldap.baseDn': 'dc=example,dc=test',
+      'auth.ldap.userDn': 'cn=admin,dc=example,dc=test',
+    };
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (rows[key] != null) return { id: 1, settingKey: key, value: rows[key], category: '集成配置', editable: 1 };
+      return null;
+    });
+    const cfg = await service().getLdapConfig();
+    expect(cfg.enabled).toBe(true);
+    expect(cfg.url).toBe('ldap://example.test:389');
+    expect(cfg.userSearchBase).toBe('ou=users');
+  });
+
+  it('updateBatchValidatesAllBeforeApplying', async () => {
+    const okRow = setting('upload.storageMode', '集成配置', 1);
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (key === 'upload.storageMode') return okRow;
+      return null;
+    });
+    await expect(service().updateBatch([
+      { key: 'upload.storageMode', value: 'oss' },
+      { key: 'missing.key', value: 'x' },
+    ])).rejects.toThrow(/不存在/);
+    expect(mapper.updateById).not.toHaveBeenCalled();
   });
 });

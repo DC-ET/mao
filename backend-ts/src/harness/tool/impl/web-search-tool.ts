@@ -16,7 +16,7 @@ export interface TavilyConfig {
 }
 
 export class WebSearchTool extends BaseTool {
-  constructor(private readonly tavily: TavilyConfig) { super(); }
+  constructor(private readonly getConfig: () => Promise<TavilyConfig>) { super(); }
 
   getName(): string { return 'web_search'; }
   getDescription(): string {
@@ -59,19 +59,20 @@ export class WebSearchTool extends BaseTool {
       const args = parseObject(argumentsJson) ?? {};
       const query = asText(args.query);
       if (!query || query.trim() === '') return errorJson('搜索关键词不能为空');
-      if (!this.tavily.apiKey) return errorJson('Tavily API Key 未配置，请在环境变量 TAVILY_API_KEY 中设置');
+      const tavily = await this.getConfig();
+      if (!tavily.apiKey) return errorJson('Tavily API Key 未配置，请在管理后台"系统设置→集成配置"中填写');
       const maxResults = args.max_results != null
-        ? clamp(asInt(args.max_results, this.tavily.maxResults), MIN_RESULTS, MAX_RESULTS)
-        : this.tavily.maxResults;
+        ? clamp(asInt(args.max_results, tavily.maxResults), MIN_RESULTS, MAX_RESULTS)
+        : tavily.maxResults;
       const searchDepth = asText(args.search_depth) ?? 'basic';
       const body = JSON.stringify({
-        api_key: this.tavily.apiKey,
+        api_key: tavily.apiKey,
         query,
         max_results: maxResults,
         search_depth: searchDepth,
       });
-      const url = new URL((this.tavily.baseUrl.replace(/\/$/, '') || 'https://api.tavily.com') + '/search');
-      const json = await httpPost(url, body, this.tavily.connectTimeout, this.tavily.readTimeout);
+      const url = new URL((tavily.baseUrl.replace(/\/$/, '') || 'https://api.tavily.com') + '/search');
+      const json = await httpPost(url, body, tavily.connectTimeout, tavily.readTimeout);
       const tavilyResponse = JSON.parse(json) as { results?: Array<{ title?: string; url?: string; content?: string }> };
       const results = (tavilyResponse.results ?? []).map((item) => ({
         title: item.title ?? '',

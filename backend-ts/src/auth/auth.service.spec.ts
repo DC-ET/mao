@@ -33,7 +33,7 @@ describe('AuthService', () => {
     matches: vi.fn(),
   };
   const ldap = {
-    isConfigured: vi.fn(),
+    isConfigured: vi.fn(async () => false),
     authenticate: vi.fn(),
   } as unknown as LdapAuthService;
   const service = new AuthService(userRepo, jwtService, hasher, ldap);
@@ -58,7 +58,7 @@ describe('AuthService', () => {
     await expect(service.login('disabled', 'secret')).rejects.toBeInstanceOf(BusinessException);
 
     vi.mocked(userRepo.findByUsername).mockResolvedValue(null);
-    vi.mocked(ldap.isConfigured).mockReturnValue(true);
+    vi.mocked(ldap.isConfigured).mockResolvedValue(true);
     vi.mocked(ldap.authenticate).mockResolvedValue({ accessToken: 'ldap-access', refreshToken: 'r', expiresIn: 1, user: { username: 'ldap' } });
     expect((await service.login('ldap', 'secret')).accessToken).toBe('ldap-access');
 

@@ -1,4 +1,3 @@
-import type { AppConfig } from '../config/app-config.js';
 import { BusinessException } from '../common/business-exception.js';
 
 export interface StsTokenVO {
@@ -39,30 +38,21 @@ export interface AssumeRoleClient {
   }>;
 }
 
-export function ossConfigFromApp(cfg: AppConfig): OssStsConfig {
-  return {
-    region: cfg.oss.region,
-    bucket: cfg.oss.bucket,
-    sts: {
-      regionId: cfg.oss.sts.regionId,
-      endpoint: cfg.oss.sts.endpoint,
-      accessKeyId: cfg.oss.sts.accessKeyId,
-      accessKeySecret: cfg.oss.sts.accessKeySecret,
-      roleArn: cfg.oss.sts.roleArn,
-      roleSessionName: cfg.oss.sts.roleSessionName,
-      expire: cfg.oss.sts.expire,
-    },
-  };
-}
-
 export class OssStsService {
+  private cachedFingerprint = '';
+  private cachedClient: AssumeRoleClient | null = null;
+
   constructor(
-    private readonly oss: OssStsConfig,
-    private readonly client: AssumeRoleClient,
+    private readonly getConfig: () => Promise<OssStsConfig | null>,
+    private readonly createClient: (sts: OssStsConfig['sts']) => Promise<AssumeRoleClient>,
   ) {}
 
   async generateStsToken(userId: number, _sessionId?: number | null): Promise<StsTokenVO> {
-    const sts = this.oss.sts;
+    const config = await this.getConfig();
+    if (config == null) {
+      throw new BusinessException(5001, 'OSS 未配置，请在管理后台"系统设置→集成配置"中填写');
+    }
+    const sts = config.sts;
     const uploadDir = 'uploads/';
     const policy = `{
                       "Version": "1",
@@ -74,13 +64,14 @@ export class OssStsService {
                             "oss:PutObjectAcl"
                           ],
                           "Resource": [
-                            "acs:oss:*:*:${this.oss.bucket}/${uploadDir}*"
+                            "acs:oss:*:*:${config.bucket}/${uploadDir}*"
                           ]
                         }
                       ]
                     }`;
     try {
-      const creds = await this.client.assumeRole({
+      const client = await this.resolveClient(config);
+      const creds = await client.assumeRole({
         roleArn: sts.roleArn,
         roleSessionName: `User_${userId}`,
         durationSeconds: sts.expire,
@@ -91,14 +82,24 @@ export class OssStsService {
         accessKeySecret: creds.accessKeySecret,
         securityToken: creds.securityToken,
         expiration: creds.expiration,
-        bucket: this.oss.bucket,
-        region: this.oss.region,
+        bucket: config.bucket,
+        region: config.region,
         uploadDir,
       };
     } catch (e) {
+      if (e instanceof BusinessException) throw e;
       console.error(`Failed to generate STS token for userId=${userId}`, e);
       throw new BusinessException(5001, `生成 OSS 临时凭证失败: ${(e as Error).message}`);
     }
+  }
+
+  private async resolveClient(config: OssStsConfig): Promise<AssumeRoleClient> {
+    const fingerprint = JSON.stringify(config.sts);
+    if (this.cachedClient == null || this.cachedFingerprint !== fingerprint) {
+      this.cachedClient = await this.createClient(config.sts);
+      this.cachedFingerprint = fingerprint;
+    }
+    return this.cachedClient;
   }
 }
 

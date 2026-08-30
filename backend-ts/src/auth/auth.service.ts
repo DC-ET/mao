@@ -20,7 +20,7 @@ export class AuthService {
     if (user && user.passwordHash && (await this.passwordHasher.matches(password, user.passwordHash))) {
       return this.buildLoginResult(user);
     }
-    if (this.ldapAuthService?.isConfigured()) {
+    if (this.ldapAuthService != null && await this.ldapAuthService.isConfigured()) {
       try {
         return await this.ldapAuthService.authenticate(username, password);
       } catch {

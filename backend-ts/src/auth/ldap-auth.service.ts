@@ -2,8 +2,8 @@ import { Client } from 'ldapts';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { JwtService } from '../crypto/jwt.service.js';
-import type { AppConfig } from '../config/app-config.js';
 import { hasText } from '../common/case.js';
+import type { LdapSettings } from '../settings/types.js';
 import type { LoginVO, User, UserRepository, UserRoleRepository } from '../user/types.js';
 import { UserService } from '../user/user.service.js';
 import { formatNow } from './auth.service.js';
@@ -13,21 +13,23 @@ export class LdapAuthService {
     private readonly userRepo: UserRepository,
     private readonly userRoleRepo: UserRoleRepository,
     private readonly jwtService: JwtService,
-    private readonly cfg: AppConfig['ldap'],
+    private readonly getConfig: () => Promise<LdapSettings>,
   ) {}
 
-  isConfigured(): boolean {
-    return this.cfg.enabled && hasText(this.cfg.url);
+  async isConfigured(): Promise<boolean> {
+    const cfg = await this.getConfig();
+    return cfg.enabled && hasText(cfg.url);
   }
 
   async authenticate(username: string, password: string): Promise<LoginVO> {
-    if (!this.isConfigured()) {
+    const cfg = await this.getConfig();
+    if (!(cfg.enabled && hasText(cfg.url))) {
       throw new BusinessException(5003, 'LDAP 未配置');
     }
-    const admin = new Client({ url: this.cfg.url });
+    const admin = new Client({ url: cfg.url });
     try {
-      await admin.bind(this.cfg.userDn, this.cfg.password);
-      const searchBase = `${this.cfg.userSearchBase},${this.cfg.baseDn}`;
+      await admin.bind(cfg.userDn, cfg.password);
+      const searchBase = `${cfg.userSearchBase},${cfg.baseDn}`;
       const { searchEntries } = await admin.search(searchBase, {
         scope: 'sub',
         filter: `(sAMAccountName=${escapeFilter(username)})`,
@@ -39,7 +41,7 @@ export class LdapAuthService {
       }
       const entry = searchEntries[0];
       const userDnPath = String(entry.dn);
-      const userClient = new Client({ url: this.cfg.url });
+      const userClient = new Client({ url: cfg.url });
       try {
         await userClient.bind(userDnPath, password);
         const displayName = attr(entry, 'cn') ?? username;

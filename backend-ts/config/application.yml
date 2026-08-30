@@ -28,30 +28,36 @@ jwt:
   refresh-expiration: 604800000
   shell-expiration: ${JWT_SHELL_EXPIRATION:7200000}
 
-ldap:
-  enabled: ${LDAP_ENABLED:false}
-  url: ${LDAP_URL:}
-  base-dn: ${LDAP_BASE_DN:}
-  user-dn: ${LDAP_USER_DN:}
-  password: ${LDAP_PASSWORD:}
-  user-search-base: ${LDAP_USER_SEARCH_BASE:ou=users}
+# 集成配置（LDAP / 飞书OAuth登录 / 上传 / Tavily / OSS）已迁移至管理后台 system_setting，
+# 环境变量（LDAP_*、FEISHU_APP_*、UPLOAD_*、TAVILY_API_KEY、OSS_* 等）仅在升级首次启动时
+# 由 SettingsBootstrap 自动导入 DB（加密项需 SETTINGS_SECRET），之后一律以管理后台为准。
 
 feishu:
-  enabled: ${FEISHU_ENABLED:false}
-  app-id: ${FEISHU_APP_ID:}
-  app-secret: ${FEISHU_APP_SECRET:}
-  redirect-uri: ${FEISHU_REDIRECT_URI:http://localhost:9080/api/v1/auth/feishu/callback}
+  bot:
+    enabled: ${FEISHU_BOT_ENABLED:true}
+    # 回调签名密钥（APP_FEISHU_BOT_SECRET）
+    app-secret-key: ${APP_FEISHU_BOT_SECRET:}
+    long-connection:
+      enabled: true
+      reconcile-interval-ms: 5000
+      reconnect-base-ms: 1000
+      reconnect-max-ms: 30000
+      max-consecutive-failures: 5
+    group-context:
+      max-items: 20
+      max-minutes: 120
+      overflow-items: 100
+    reply:
+      max-length: 2000
+    file:
+      max-inbound-file-mb: 100
 
 app:
   root-dir: ${MAO_ROOT_DIR:/opt/mao}
   git-credential:
     secret-key: ${APP_GIT_CREDENTIAL_SECRET:}
-  upload:
-    storage-mode: ${UPLOAD_STORAGE_MODE:local}
-    base-url: ${UPLOAD_BASE_URL:}
   file:
     upload-dir: ${FILE_UPLOAD_DIR:./uploads}
-    max-size-mb: 50
   ws:
     idle-timeout-ms: ${APP_WS_IDLE_TIMEOUT_MS:90000}
     outbound-queue-capacity: 10000
@@ -85,9 +91,12 @@ app:
       call-timeout-seconds: 120
       http-call-timeout-seconds: 180
       stream-idle-timeout-seconds: 300
-    tavily:
-      api-key: ${TAVILY_API_KEY:}
-      base-url: https://api.tavily.com
+    web-page:
+      connect-timeout: 10000
+      read-timeout: 30000
+      max-raw-bytes: 1048576
+      max-output-length: 500000
+      user-agent: Mozilla/5.0 (compatible; AgentWorkbench/1.0)
     shell:
       max-sessions-per-conversation: 30
       session-idle-timeout-minutes: 30
@@ -107,17 +116,3 @@ weixin:
     silk-encoder-path: /usr/local/bin/silk-encoder
     ffmpeg-path: ffmpeg
     voice-max-seconds: 300
-
-oss:
-  region: ${OSS_REGION:}
-  access-key-id: ${OSS_ACCESS_KEY_ID:}
-  access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
-  bucket: ${OSS_BUCKET:}
-  sts:
-    region-id: ${OSS_STS_REGION_ID:}
-    endpoint: ${OSS_STS_ENDPOINT:}
-    access-key-id: ${OSS_STS_ACCESS_KEY_ID:}
-    access-key-secret: ${OSS_STS_ACCESS_KEY_SECRET:}
-    role-arn: ${OSS_STS_ROLE_ARN:}
-    role-session-name: ${OSS_STS_ROLE_SESSION_NAME:mao-sts}
-    expire: 3600

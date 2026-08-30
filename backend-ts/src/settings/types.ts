@@ -5,6 +5,7 @@ export interface SystemSetting {
   category: string;
   description?: string | null;
   editable?: number | null;
+  isSecret?: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -18,10 +19,6 @@ export interface SystemSettingRepository {
 export interface SettingsRuntimeConfig {
   workspaceRoot: string;
   skillsDir: string;
-  ldapEnabled: boolean;
-  ldapUrl: string;
-  feishuEnabled: boolean;
-  feishuAppId: string;
 }
 
 export interface AgentLookup {
@@ -30,4 +27,51 @@ export interface AgentLookup {
 
 export interface ModelLookup {
   findById(id: number): Promise<{ id?: number } | null>;
+}
+
+export interface LdapSettings {
+  enabled: boolean;
+  url: string;
+  baseDn: string;
+  userDn: string;
+  password: string;
+  userSearchBase: string;
+}
+
+export interface FeishuOAuthSettings {
+  enabled: boolean;
+  appId: string;
+  appSecret: string;
+  redirectUri: string;
+}
+
+export interface UploadSettings {
+  storageMode: string;
+  baseUrl: string;
+  maxSizeMb: number;
+}
+
+export interface TavilySettings {
+  apiKey: string;
+  baseUrl: string;
+  connectTimeout: number;
+  readTimeout: number;
+  maxResults: number;
+}
+
+export interface OssSettings {
+  region: string;
+  accessKeyId: string;
+  accessKeySecret: string;
+  bucket: string;
+  sts: {
+    regionId: string;
+    endpoint: string;
+    accessKeyId: string;
+    accessKeySecret: string;
+    roleArn: string;
+    roleSessionName: string;
+    expire: number;
+    maxSizeMb: number;
+  };
 }

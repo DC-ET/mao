@@ -27,7 +27,7 @@ describe('GenerateImageTool', () => {
       findFirstActiveImageModel: async () => ({
         modelId: 'gpt-image', baseUrl: `http://127.0.0.1:${port}`, apiKey: 'k',
       }),
-    }, dir, 'https://mao.example/uploads');
+    }, dir, async () => 'https://mao.example/uploads');
     expect(tool.getName()).toBe('generate_image');
     expect(tool.getToolPrompt()).toContain('prompt');
     const missing = JSON.parse(await tool.execute('{}', 1, null));

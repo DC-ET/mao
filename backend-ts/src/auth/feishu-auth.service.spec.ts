@@ -9,22 +9,19 @@ import {
   type FeishuHttp,
   type FeishuOauthStateRepository,
 } from './feishu-auth.service.js';
+import { FEISHU_AUTHORIZE_URL } from '../settings/settings-test.service.js';
 import type { UserRepository, UserRoleRepository } from '../user/types.js';
 
 const jwt = new JwtService('mao-dev-jwt-secret-change-me-32bytes!!', 86400000, 604800000, 7200000);
 
 function cfg(overrides: Record<string, unknown> = {}) {
-  return {
+  return async () => ({
     enabled: true,
     appId: 'app-id',
     appSecret: 'secret',
     redirectUri: 'http://localhost:9080/api/v1/auth/feishu/callback',
-    authorizeUrl: 'https://open.feishu.test/authorize',
-    tokenUrl: 'https://open.feishu.test/token',
-    userInfoUrl: 'https://open.feishu.test/user',
-    appTokenUrl: 'https://open.feishu.test/app-token',
     ...overrides,
-  };
+  }) as never;
 }
 
 function makeService(http?: FeishuHttp) {
@@ -49,7 +46,7 @@ function makeService(http?: FeishuHttp) {
     userRoleRepo as unknown as UserRoleRepository,
     stateRepo as unknown as FeishuOauthStateRepository,
     jwt,
-    cfg() as never,
+    cfg(),
     http ?? { postJson: vi.fn(), getJson: vi.fn() },
   );
   return { service, userRepo, userRoleRepo, stateRepo };
@@ -59,7 +56,7 @@ describe('FeishuAuthService', () => {
   it('qrcodeRejectsUnconfiguredApp', async () => {
     const { userRepo, userRoleRepo, stateRepo } = makeService();
     const service = new FeishuAuthService(
-      userRepo as never, userRoleRepo as never, stateRepo as never, jwt, cfg({ appId: '' }) as never,
+      userRepo as never, userRoleRepo as never, stateRepo as never, jwt, cfg({ appId: '' }),
     );
     await expect(service.getQrCodeUrl()).rejects.toBeInstanceOf(BusinessException);
   });
@@ -67,7 +64,7 @@ describe('FeishuAuthService', () => {
   it('qrcodeRejectsDisabledLogin', async () => {
     const { userRepo, userRoleRepo, stateRepo } = makeService();
     const service = new FeishuAuthService(
-      userRepo as never, userRoleRepo as never, stateRepo as never, jwt, cfg({ enabled: false }) as never,
+      userRepo as never, userRoleRepo as never, stateRepo as never, jwt, cfg({ enabled: false }),
     );
     await expect(service.getQrCodeUrl()).rejects.toBeInstanceOf(BusinessException);
   });
@@ -76,20 +73,20 @@ describe('FeishuAuthService', () => {
     const { service, stateRepo } = makeService();
     const vo = await service.getQrCodeUrl();
     expect(stateRepo.insert).toHaveBeenCalled();
-    expect(vo.authUrl).toContain('https://open.feishu.test/authorize');
+    expect(vo.authUrl).toContain(FEISHU_AUTHORIZE_URL);
     expect(vo.state).toBeTruthy();
     expect(vo.expiresIn).toBe(300);
   });
 
-  it('isEnabledRequiresRealAppId', () => {
+  it('isEnabledRequiresRealAppId', async () => {
     const { service } = makeService();
-    expect(service.isEnabled()).toBe(true);
+    expect(await service.isEnabled()).toBe(true);
   });
 
   it('completeStateWithCodeCreatesUserAndPollReturnsLogin', async () => {
     const http: FeishuHttp = {
       postJson: vi.fn(async (url: string) => {
-        if (url.includes('app-token')) return { ok: true, json: { code: 0, app_access_token: 'app' } };
+        if (url.includes('app_access_token')) return { ok: true, json: { code: 0, app_access_token: 'app' } };
         return { ok: true, json: { code: 0, data: { access_token: 'user' } } };
       }),
       getJson: vi.fn(async () => ({

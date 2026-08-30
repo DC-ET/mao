@@ -136,7 +136,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { index: '/system-commands', label: '系统指令', icon: Promotion, permission: 'user:write' },
       { index: '/feishu-bots', label: '飞书机器人', icon: ChatLineRound, adminOnly: true },
-      { index: '/settings', label: '系统设置', icon: Setting, permission: 'user:write' }
+      { index: '/settings', label: '系统设置', icon: Setting, permission: 'settings:read' }
     ]
   }
 ]

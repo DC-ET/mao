@@ -78,11 +78,11 @@ export class FileService {
   constructor(
     private readonly repo: FileEntityRepository,
     private readonly uploadDir: string,
-    private readonly maxSizeMb: number,
+    private readonly getMaxSizeMb: () => Promise<number>,
   ) {}
 
   async uploadFile(bytes: Buffer, originalFilename: string | null, declaredMime: string | null, userId: number, sessionId: number | null): Promise<FileEntity> {
-    this.assertUploadable(bytes);
+    await this.assertUploadable(bytes);
     const dir = this.uploadDir;
     try {
       const entity = this.buildFileEntity(bytes, originalFilename, declaredMime, userId, sessionId);
@@ -110,7 +110,7 @@ export class FileService {
     sessionId: number,
     incomingDir: string,
   ): Promise<FileEntity> {
-    this.assertUploadable(bytes);
+    await this.assertUploadable(bytes);
     try {
       const entity = this.buildFileEntity(bytes, originalFilename, declaredMime, userId, sessionId, true);
       mkdirSync(incomingDir, { recursive: true });
@@ -126,13 +126,14 @@ export class FileService {
     }
   }
 
-  private assertUploadable(bytes: Buffer): void {
+  private async assertUploadable(bytes: Buffer): Promise<void> {
     if (bytes.length === 0) {
       throw new BusinessException(4000, '文件不能为空');
     }
-    const maxSizeBytes = this.maxSizeMb * 1024 * 1024;
+    const maxSizeMb = await this.getMaxSizeMb();
+    const maxSizeBytes = maxSizeMb * 1024 * 1024;
     if (bytes.length > maxSizeBytes) {
-      throw new BusinessException(4001, `文件大小超过限制: ${this.maxSizeMb}MB`);
+      throw new BusinessException(4001, `文件大小超过限制: ${maxSizeMb}MB`);
     }
   }
 

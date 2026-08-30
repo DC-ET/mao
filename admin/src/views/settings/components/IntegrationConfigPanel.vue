@@ -1,0 +1,334 @@
+<template>
+  <div class="integration-panel">
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      title="集成配置保存后立即生效，无需重启服务。加密项保存后仅显示掩码，留空表示不修改。"
+      class="integration-tip"
+    />
+    <el-row :gutter="16">
+      <el-col v-for="group in groups" :key="group.name" :xs="24" :md="12">
+        <el-card class="group-card" shadow="never">
+          <template #header>
+            <div class="group-header">
+              <span class="group-title">{{ group.title }}</span>
+              <div class="group-actions">
+                <el-button
+                  v-if="group.testApi"
+                  size="small"
+                  :loading="testing === group.name"
+                  @click="runTest(group)"
+                >测试连接</el-button>
+                <el-button
+                  type="primary"
+                  size="small"
+                  :loading="savingKeys.has(group.name)"
+                  @click="saveGroup(group)"
+                >保存</el-button>
+              </div>
+            </div>
+          </template>
+          <el-form label-width="130px" label-position="left" class="group-form">
+            <el-form-item v-for="field in group.fields" :key="field.key" :label="field.label">
+              <el-switch
+                v-if="field.type === 'switch'"
+                :model-value="model[field.key] === 'true'"
+                @change="(val: string | number | boolean) => { model[field.key] = val === true ? 'true' : 'false' }"
+              />
+              <el-select
+                v-else-if="field.type === 'select'"
+                v-model="model[field.key]"
+                style="width: 100%"
+              >
+                <el-option v-for="opt in field.options || []" :key="opt.value" :label="opt.label" :value="opt.value" />
+              </el-select>
+              <el-input
+                v-else
+                v-model="model[field.key]"
+                :type="field.secret ? 'password' : 'text'"
+                :placeholder="field.secret ? (field.set ? '已设置，留空表示不修改' : '') : field.placeholder || ''"
+                autocomplete="new-password"
+              >
+                <template v-if="field.secret && field.set" #append>
+                  <el-button @click="clearSecret(field.key)">清空</el-button>
+                </template>
+              </el-input>
+              <div v-if="field.hint" class="field-hint">{{ field.hint }}</div>
+            </el-form-item>
+          </el-form>
+        </el-card>
+      </el-col>
+    </el-row>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import { api } from '../../../api'
+
+interface SettingRow {
+  settingKey: string
+  value: string | null
+  isSecret?: number | null
+}
+
+interface FieldDef {
+  key: string
+  label: string
+  type?: 'switch' | 'select' | 'text'
+  secret?: boolean
+  set?: boolean
+  placeholder?: string
+  hint?: string
+  options?: Array<{ label: string; value: string }>
+}
+
+interface GroupDef {
+  name: string
+  title: string
+  keys: string[]
+  fields: FieldDef[]
+  testApi?: string
+  testPayload?: (model: Record<string, string>) => Record<string, string>
+}
+
+const props = defineProps<{ rows: SettingRow[]; saving: boolean }>()
+const emit = defineEmits<{ (e: 'saved'): void }>()
+
+const rowMap = computed<Record<string, SettingRow>>(() => {
+  const map: Record<string, SettingRow> = {}
+  for (const row of props.rows) map[row.settingKey] = row
+  return map
+})
+
+/** 表单编辑副本：进入时从 rows 拷贝，保存成功后回写。secret 留空 = 不修改。 */
+const model = reactive<Record<string, string>>({})
+const savingKeys = ref(new Set<string>())
+const testing = ref('')
+/** 用户显式点了"清空"的 secret 键：保存时提交 ''（清空语义）而非 null（不修改）。 */
+const clearedSecrets = ref(new Set<string>())
+
+function syncFromRows() {
+  for (const row of props.rows) {
+    if (model[row.settingKey] === undefined) {
+      model[row.settingKey] = row.isSecret === 1 ? '' : (row.value ?? '')
+    }
+  }
+}
+
+watch(rowMap, syncFromRows, { immediate: true, deep: true })
+
+const groups = computed<GroupDef[]>(() => [
+  {
+    name: 'ldap',
+    title: 'LDAP 认证',
+    keys: ['auth.ldap.enabled', 'auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase'],
+    fields: [
+      { key: 'auth.ldap.enabled', label: '启用', type: 'switch' },
+      { key: 'auth.ldap.url', label: '服务地址', placeholder: 'ldap://或ldaps://开头' },
+      { key: 'auth.ldap.baseDn', label: 'Base DN' },
+      { key: 'auth.ldap.userDn', label: '绑定账号 DN' },
+      { key: 'auth.ldap.password', label: '绑定密码', secret: true, set: !!rowMap.value['auth.ldap.password']?.value },
+      { key: 'auth.ldap.userSearchBase', label: '用户搜索 Base', hint: '默认 ou=users' },
+    ],
+    testApi: '/system-settings/test/ldap',
+    testPayload: (m) => pickNonEmpty(m, ['auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase'], ['auth.ldap.url:url', 'auth.ldap.baseDn:baseDn', 'auth.ldap.userDn:userDn', 'auth.ldap.password:password', 'auth.ldap.userSearchBase:userSearchBase']),
+  },
+  {
+    name: 'feishu',
+    title: '飞书 OAuth 登录',
+    keys: ['auth.feishu.enabled', 'auth.feishu.appId', 'auth.feishu.appSecret', 'auth.feishu.redirectUri'],
+    fields: [
+      { key: 'auth.feishu.enabled', label: '启用', type: 'switch' },
+      { key: 'auth.feishu.appId', label: 'App ID' },
+      { key: 'auth.feishu.appSecret', label: 'App Secret', secret: true, set: !!rowMap.value['auth.feishu.appSecret']?.value },
+      { key: 'auth.feishu.redirectUri', label: '回调地址', hint: '需与飞书开放平台配置一致' },
+    ],
+    testApi: '/system-settings/test/feishu',
+    testPayload: (m) => pickNonEmpty(m, ['auth.feishu.appId', 'auth.feishu.appSecret'], ['auth.feishu.appId:appId', 'auth.feishu.appSecret:appSecret']),
+  },
+  {
+    name: 'upload',
+    title: '上传配置',
+    keys: ['upload.storageMode', 'upload.baseUrl', 'file.maxSizeMb'],
+    fields: [
+      {
+        key: 'upload.storageMode',
+        label: '存储模式',
+        type: 'select',
+        options: [
+          { label: '本地存储', value: 'local' },
+          { label: '阿里云 OSS 直传', value: 'oss' },
+        ],
+      },
+      { key: 'upload.baseUrl', label: '访问基础地址', hint: '留空使用相对路径 /uploads/' },
+      { key: 'file.maxSizeMb', label: '单文件上限 (MB)' },
+    ],
+  },
+  {
+    name: 'oss',
+    title: 'OSS 对象存储',
+    keys: ['oss.region', 'oss.accessKeyId', 'oss.accessKeySecret', 'oss.bucket', 'oss.sts.regionId', 'oss.sts.endpoint', 'oss.sts.accessKeyId', 'oss.sts.accessKeySecret', 'oss.sts.roleArn', 'oss.sts.roleSessionName', 'oss.sts.expire', 'oss.sts.maxSizeMb'],
+    fields: [
+      { key: 'oss.region', label: 'Region' },
+      { key: 'oss.bucket', label: 'Bucket' },
+      { key: 'oss.accessKeyId', label: 'AccessKey ID' },
+      { key: 'oss.accessKeySecret', label: 'AccessKey Secret', secret: true, set: !!rowMap.value['oss.accessKeySecret']?.value },
+      { key: 'oss.sts.regionId', label: 'STS Region ID' },
+      { key: 'oss.sts.endpoint', label: 'STS Endpoint', hint: '如 sts.cn-hangzhou.aliyuncs.com' },
+      { key: 'oss.sts.accessKeyId', label: 'STS AccessKey ID' },
+      { key: 'oss.sts.accessKeySecret', label: 'STS AccessKey Secret', secret: true, set: !!rowMap.value['oss.sts.accessKeySecret']?.value },
+      { key: 'oss.sts.roleArn', label: 'STS Role ARN' },
+      { key: 'oss.sts.roleSessionName', label: 'STS 会话名', hint: '默认 mao-sts' },
+      { key: 'oss.sts.expire', label: '凭证有效期 (秒)', hint: '默认 3600' },
+      { key: 'oss.sts.maxSizeMb', label: '直传上限 (MB)', hint: '默认 50' },
+    ],
+    testApi: '/system-settings/test/oss',
+    testPayload: (m) => {
+      const map: Record<string, string> = {
+        'oss.region': 'region',
+        'oss.accessKeyId': 'accessKeyId',
+        'oss.accessKeySecret': 'accessKeySecret',
+        'oss.bucket': 'bucket',
+        'oss.sts.regionId': 'stsRegionId',
+        'oss.sts.endpoint': 'stsEndpoint',
+        'oss.sts.accessKeyId': 'stsAccessKeyId',
+        'oss.sts.accessKeySecret': 'stsAccessKeySecret',
+        'oss.sts.roleArn': 'stsRoleArn',
+      }
+      const out: Record<string, string> = {}
+      for (const [src, dst] of Object.entries(map)) {
+        const value = m[src]
+        if (value != null && value.trim() !== '') out[dst] = value
+      }
+      return out
+    },
+  },
+  {
+    name: 'tools',
+    title: '网络工具',
+    keys: ['tools.tavilyApiKey'],
+    fields: [
+      { key: 'tools.tavilyApiKey', label: 'Tavily API Key', secret: true, set: !!rowMap.value['tools.tavilyApiKey']?.value, hint: 'web_search 工具使用' },
+    ],
+  },
+])
+
+function pickNonEmpty(m: Record<string, string>, keys: string[], mapping: string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (let i = 0; i < keys.length; i++) {
+    const value = m[keys[i]]
+    if (value != null && value.trim() !== '') {
+      out[mapping[i].split(':')[1]] = value
+    }
+  }
+  return out
+}
+
+/** 标记 secret 待清空：保存时提交空串（后端 ''=清空语义），输入新值则自动覆盖清空标记。 */
+function clearSecret(key: string) {
+  model[key] = ''
+  clearedSecrets.value = new Set([...clearedSecrets.value, key])
+}
+
+async function saveGroup(group: GroupDef) {
+  if (savingKeys.value.has(group.name)) return
+  const items = group.keys.map((key) => {
+    const row = rowMap.value[key]
+    const raw = model[key] ?? ''
+    if (row?.isSecret === 1) {
+      // secret 语义：非空=保存新值；空串+点了"清空"=清空已存值；空串未点清空=不修改（null）
+      if (raw !== '') return { key, value: raw }
+      return { key, value: clearedSecrets.value.has(key) ? '' : null }
+    }
+    return { key, value: raw }
+  })
+  savingKeys.value = new Set([...savingKeys.value, group.name])
+  try {
+    await api.put('/system-settings/batch', { items })
+    for (const item of items) {
+      const row = rowMap.value[item.key]
+      if (row) {
+        if (row.isSecret === 1) {
+          // ''=已清空；null=未修改保持掩码；新值=掩码
+          row.value = item.value === '' ? '' : (item.value == null ? row.value : '******')
+          model[item.key] = ''
+        } else {
+          model[item.key] = item.value ?? ''
+          row.value = item.value ?? ''
+        }
+      }
+    }
+    clearedSecrets.value = new Set()
+    ElMessage.success('已保存，配置即时生效')
+    emit('saved')
+  } finally {
+    const next = new Set(savingKeys.value)
+    next.delete(group.name)
+    savingKeys.value = next
+  }
+}
+
+async function runTest(group: GroupDef) {
+  if (!group.testApi || testing.value) return
+  testing.value = group.name
+  try {
+    const payload = group.testPayload ? group.testPayload(model) : {}
+    const { data } = await api.post(group.testApi, payload)
+    if (data?.ok) {
+      ElMessage.success('连接成功')
+    } else {
+      ElMessage.warning(data?.message || '连接失败')
+    }
+  } finally {
+    testing.value = ''
+  }
+}
+</script>
+
+<style scoped>
+.integration-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.integration-tip {
+  border-radius: 8px;
+}
+
+.group-card {
+  margin-bottom: 16px;
+  border-radius: 10px;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.group-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--mao-ink);
+}
+
+.group-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.group-form :deep(.el-form-item) {
+  margin-bottom: 14px;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--mao-muted);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+</style>

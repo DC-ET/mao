@@ -17,7 +17,7 @@ export class GenerateImageTool extends BaseTool {
   constructor(
     private readonly modelService: ImageModelLookup,
     private readonly uploadDir: string,
-    private readonly baseUrl = '',
+    private readonly getBaseUrl: () => Promise<string> = async () => '',
   ) { super(); }
 
   getName(): string { return 'generate_image'; }
@@ -77,8 +77,9 @@ export class GenerateImageTool extends BaseTool {
         if (item.b64_json) {
           const buf = Buffer.from(item.b64_json, 'base64');
           writeFileSync(filePath, buf);
+          const baseUrl = await this.getBaseUrl();
           images.push({
-            image_url: this.baseUrl ? `${this.baseUrl.replace(/\/$/, '')}/${fileName}` : filePath,
+            image_url: baseUrl ? `${baseUrl.replace(/\/$/, '')}/${fileName}` : filePath,
             image_path: filePath,
             size_bytes: buf.length,
           });

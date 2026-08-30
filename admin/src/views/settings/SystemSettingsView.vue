@@ -14,6 +14,9 @@
       </template>
 
       <el-tabs v-model="activeCategory" v-loading="loading">
+        <el-tab-pane v-if="integrationRows.length > 0" label="集成配置" name="__integration__">
+          <IntegrationConfigPanel :rows="integrationRows" :saving="saving" @saved="fetchSettings" />
+        </el-tab-pane>
         <el-tab-pane
           v-for="category in categories"
           :key="category"
@@ -68,7 +71,7 @@
                   />
                 </el-select>
                 <template v-else>
-                  <span class="setting-value">{{ row.value || '未设置' }}</span>
+                  <span class="setting-value">{{ row.isSecret === 1 && row.value ? '******' : (row.value || '未设置') }}</span>
                   <el-button type="primary" link size="small" :disabled="row.editable !== 1" @click="handleEdit(row)">编辑</el-button>
                 </template>
               </div>
@@ -84,7 +87,11 @@
           <el-input :model-value="currentSetting?.description" disabled />
         </el-form-item>
         <el-form-item label="配置值">
-          <el-input v-model="settingValue" />
+          <el-input
+            v-model="settingValue"
+            :type="currentSetting?.isSecret === 1 ? 'password' : 'text'"
+            :placeholder="currentSetting?.isSecret === 1 && currentSetting?.value ? '已设置，留空表示不修改' : ''"
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -98,10 +105,21 @@
 <script setup lang="ts">
 import { computed, ref, onActivated } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
+import IntegrationConfigPanel from './components/IntegrationConfigPanel.vue'
 
 const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId'])
+const INTEGRATION_KEYS = new Set([
+  'auth.ldap.enabled', 'auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase',
+  'auth.feishu.enabled', 'auth.feishu.appId', 'auth.feishu.appSecret', 'auth.feishu.redirectUri',
+  'upload.storageMode', 'upload.baseUrl', 'file.maxSizeMb',
+  'tools.tavilyApiKey',
+  'oss.region', 'oss.accessKeyId', 'oss.accessKeySecret', 'oss.bucket',
+  'oss.sts.regionId', 'oss.sts.endpoint', 'oss.sts.accessKeyId', 'oss.sts.accessKeySecret',
+  'oss.sts.roleArn', 'oss.sts.roleSessionName', 'oss.sts.expire', 'oss.sts.maxSizeMb',
+])
 
 const loading = ref(false)
 const settings = ref<any[]>([])
@@ -121,11 +139,14 @@ function isModelSetting(key: string | undefined | null) {
   return !!key && MODEL_SELECT_KEYS.has(key)
 }
 
+const integrationRows = computed(() => settings.value.filter((item) => INTEGRATION_KEYS.has(item.settingKey)))
+
 const categories = computed(() => {
   const seen = new Set<string>()
   const list: string[] = []
   for (const item of settings.value) {
     const category = item.category || '未分类'
+    if (INTEGRATION_KEYS.has(item.settingKey)) continue
     if (!seen.has(category)) {
       seen.add(category)
       list.push(category)
@@ -137,6 +158,7 @@ const categories = computed(() => {
 const settingsByCategory = computed(() => {
   const map: Record<string, any[]> = {}
   for (const item of settings.value) {
+    if (INTEGRATION_KEYS.has(item.settingKey)) continue
     const category = item.category || '未分类'
     if (!map[category]) map[category] = []
     map[category].push(item)
@@ -171,8 +193,9 @@ async function fetchSettings() {
       fetchModels()
     ])
     settings.value = data || []
-    if (!activeCategory.value || !categories.value.includes(activeCategory.value)) {
-      activeCategory.value = categories.value[0] || ''
+    const plainCategories = categories.value
+    if (!activeCategory.value || (activeCategory.value !== '__integration__' && !plainCategories.includes(activeCategory.value))) {
+      activeCategory.value = integrationRows.value.length > 0 ? '__integration__' : (plainCategories[0] || '')
     }
   } finally {
     loading.value = false
@@ -189,16 +212,16 @@ function modelLabel(model: any) {
 
 function handleEdit(row: any) {
   currentSetting.value = row
-  settingValue.value = row.value || ''
+  settingValue.value = row.isSecret === 1 ? '' : (row.value || '')
   dialogVisible.value = true
 }
 
-async function persist(row: any, value: string) {
+async function persist(row: any, value: string | null) {
   if (row.editable !== 1 || saving.value) return
   saving.value = true
   try {
     await api.put(`/system-settings/${row.settingKey}`, { value })
-    row.value = value
+    await fetchSettings()
     ElMessage.success('配置已更新')
   } finally {
     saving.value = false
@@ -215,7 +238,10 @@ async function saveSelect(row: any, value: string) {
 
 async function saveSetting() {
   if (!currentSetting.value) return
-  await persist(currentSetting.value, settingValue.value)
+  const isSecret = currentSetting.value.isSecret === 1
+  // secret 行留空 = 不修改（null 语义）
+  const value = isSecret && settingValue.value === '' ? null : settingValue.value
+  await persist(currentSetting.value, value)
   dialogVisible.value = false
 }
 

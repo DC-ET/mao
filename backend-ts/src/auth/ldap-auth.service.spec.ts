@@ -19,7 +19,7 @@ import { LdapAuthService } from './ldap-auth.service.js';
 const jwt = new JwtService('mao-dev-jwt-secret-change-me-32bytes!!', 86400000, 604800000, 7200000);
 
 function cfg(overrides: Record<string, unknown> = {}) {
-  return {
+  return async () => ({
     enabled: true,
     url: 'ldap://example.test:389',
     baseDn: 'dc=example,dc=test',
@@ -27,7 +27,7 @@ function cfg(overrides: Record<string, unknown> = {}) {
     password: 'secret',
     userSearchBase: 'ou=users',
     ...overrides,
-  };
+  }) as never;
 }
 
 describe('LdapAuthService', () => {
@@ -39,12 +39,12 @@ describe('LdapAuthService', () => {
     unbind.mockResolvedValue(undefined);
   });
 
-  it('isConfiguredRequiresEnabledAndUrl', () => {
+  it('isConfiguredRequiresEnabledAndUrl', async () => {
     const userRepo = { findByUsername: vi.fn(), insert: vi.fn(), updateById: vi.fn() };
     const userRoleRepo = { insert: vi.fn() };
-    expect(new LdapAuthService(userRepo as never, userRoleRepo as never, jwt, cfg({ enabled: false }) as never).isConfigured()).toBe(false);
-    expect(new LdapAuthService(userRepo as never, userRoleRepo as never, jwt, cfg({ url: '' }) as never).isConfigured()).toBe(false);
-    expect(new LdapAuthService(userRepo as never, userRoleRepo as never, jwt, cfg() as never).isConfigured()).toBe(true);
+    expect(await new LdapAuthService(userRepo as never, userRoleRepo as never, jwt, cfg({ enabled: false }) as never).isConfigured()).toBe(false);
+    expect(await new LdapAuthService(userRepo as never, userRoleRepo as never, jwt, cfg({ url: '' }) as never).isConfigured()).toBe(false);
+    expect(await new LdapAuthService(userRepo as never, userRoleRepo as never, jwt, cfg() as never).isConfigured()).toBe(true);
   });
 
   it('authenticateCreatesUserOnFirstLogin', async () => {

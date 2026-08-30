@@ -26,7 +26,7 @@ describe('FileService', () => {
       list: vi.fn(),
       logicalDelete: vi.fn(),
     } as unknown as FileEntityRepository;
-    const service = new FileService(repo, join(dir, 'uploads'), 1);
+    const service = new FileService(repo, join(dir, 'uploads'), async () => 1);
     return { dir, repo, service };
   }
 

@@ -47,6 +47,7 @@ import { ModelService } from './model/model.service.js';
 import { registerModelRoutes } from './model/model.routes.js';
 import { MysqlSystemSettingRepository } from './settings/settings.repository.js';
 import { SystemSettingService } from './settings/settings.service.js';
+import { runSettingsBootstrap } from './settings/settings-bootstrap.js';
 import { registerSystemSettingRoutes } from './settings/settings.routes.js';
 import { MysqlUserCommandRepository } from './command/command.repository.js';
 import { UserCommandService } from './command/command.service.js';
@@ -89,7 +90,7 @@ import { WorkspaceGitService } from './file/workspace-git.service.js';
 import { GitWriteOperationService } from './file/git-write-operation.service.js';
 import { GitCommitMessageService } from './file/git-commit-message.service.js';
 import { registerFileRoutes } from './file/file.routes.js';
-import { OssStsService, createAliyunAssumeRoleClient, ossConfigFromApp } from './oss/oss-sts.service.js';
+import { OssStsService, createAliyunAssumeRoleClient } from './oss/oss-sts.service.js';
 import { registerOssRoutes } from './oss/oss.routes.js';
 import { registerSkillRoutes } from './skill/skill.routes.js';
 import { UserSkillService } from './skill/user-skill.service.js';
@@ -292,7 +293,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   await runFlywayIfEnabled(cfg);
   const pool = createPool(cfg);
   const db = new Db(pool);
-  const app = existing ?? Fastify({ logger: true, bodyLimit: 52 * 1024 * 1024 });
+  const settingsSecret = process.env.SETTINGS_SECRET ?? '';
+  const settingRepo = new MysqlSystemSettingRepository(db);
+  await runSettingsBootstrap(settingRepo, settingsSecret);
+  // 上传上限后台可配：multipart 截断阈值取配置值与默认 50MB 的较大者，避免后台调大后被 multipart 层先截断
+  const bootstrapUploadCfg = await new SystemSettingService(settingRepo, { findById: async () => null }, { findById: async () => null }, { workspaceRoot: '', skillsDir: '' }, settingsSecret).getUploadConfig();
+  const multipartLimitMb = Math.max(50, bootstrapUploadCfg.maxSizeMb);
+  const app = existing ?? Fastify({ logger: true, bodyLimit: Math.max(52, multipartLimitMb + 2) * 1024 * 1024 });
   const hasher = { hash: hashPassword, matches: matchesPassword };
   const jwt = new JwtService(cfg.jwt.secret, cfg.jwt.expiration, cfg.jwt.refreshExpiration, cfg.jwt.shellExpiration);
 
@@ -303,7 +310,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     allowedHeaders: '*',
     maxAge: 3600,
   });
-  await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024, files: 500 } });
+  await app.register(multipart, { limits: { fileSize: multipartLimitMb * 1024 * 1024, files: 500 } });
   const apiPrefix = cfg.server.servlet.contextPath || '/api';
   const uploadDir = resolve(expandHome(cfg.app.file.uploadDir));
   mkdirSync(uploadDir, { recursive: true });
@@ -320,13 +327,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const userRoleRepo = new MysqlUserRoleRepository(db);
   const permissionService = new PermissionService(roleRepo, permRepo, rolePermRepo, userRoleRepo, userRepo);
   const userService = new UserService(userRepo, permissionService, hasher);
-  const ldap = new LdapAuthService(userRepo, userRoleRepo, jwt, cfg.ldap);
+  const ldap = new LdapAuthService(userRepo, userRoleRepo, jwt, async () => (await settingService.getLdapConfig()));
   const authService = new AuthService(userRepo, jwt, hasher, ldap, permissionService);
   const earlyFeishuBinding = new MysqlFeishuBindingRepository(db);
   const pendingBindingMessages = new MysqlFeishuPendingBindingRepository(db);
   let pendingBindingProcessor: FeishuInboundProcessor | undefined;
   const feishu = new FeishuAuthService(
-    userRepo, userRoleRepo, new MysqlFeishuOauthStateRepository(db), jwt, cfg.feishu,
+    userRepo, userRoleRepo, new MysqlFeishuOauthStateRepository(db), jwt, async () => (await settingService.getFeishuOAuthConfig()),
     undefined,
     async (user, targetUserId, state) => {
       if (user.id != null && user.feishuUserId != null && user.feishuUserId !== '') {
@@ -402,17 +409,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
 
   const settingService = new SystemSettingService(
-    new MysqlSystemSettingRepository(db),
+    settingRepo,
     { findById: (id) => agentRepo.findById(id) },
     { findById: (id) => modelRepo.findById(id) },
     {
       workspaceRoot: cfg.app.harness.workspaceRoot,
       skillsDir: cfg.app.harness.skillsDir,
-      ldapEnabled: cfg.ldap.enabled,
-      ldapUrl: cfg.ldap.url,
-      feishuEnabled: cfg.feishu.enabled,
-      feishuAppId: cfg.feishu.appId,
     },
+    settingsSecret,
   );
   const commandRepo = new MysqlUserCommandRepository(db);
   const commandService = new UserCommandService(commandRepo);
@@ -454,17 +458,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const activityHeartbeat = new SessionActivityHeartbeat(sessionService);
 
   const fileRepo = new FileEntityRepository(db);
-  const fileService = new FileService(fileRepo, uploadDir, cfg.app.file.maxSizeMb);
+  const fileService = new FileService(fileRepo, uploadDir, async () => (await settingService.getUploadConfig()).maxSizeMb);
   const workspaceBrowse = new WorkspaceBrowseService(pathSandbox);
   const workspaceGit = new WorkspaceGitService(pathSandbox);
 
-  const ossConfig = ossConfigFromApp(cfg);
-  const ossClient = await createAliyunAssumeRoleClient(ossConfig.sts).catch(() => ({
-    assumeRole: async () => {
-      throw new Error('OSS STS 客户端不可用');
-    },
-  }));
-  const ossSts = new OssStsService(ossConfig, ossClient);
+  const ossSts = new OssStsService(
+    () => settingService.getOssConfig(),
+    async (sts) => createAliyunAssumeRoleClient(sts).catch(() => ({
+      assumeRole: async () => {
+        throw new Error('OSS STS 客户端不可用');
+      },
+    })),
+  );
 
   const userSkillsDir = cfg.app.harness.userSkillsDir || resolve(process.env.HOME ?? '/tmp', '.mao/data/userskills');
   const skillLoader = new SkillLoader(pathSandbox, cfg.app.harness.skillsDir, cfg.app.harness.skillsCacheSeconds);
@@ -661,11 +666,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     gitCredentialService: gitLookup,
     jwtService: jwt,
     shellUserLookup: { findById: (id: number) => userRepo.findById(id) },
-    tavily: cfg.app.harness.tavily,
+    tavily: () => settingService.getTavilyConfig(),
     webPage: cfg.app.harness.webPage,
     imageModelLookup: modelService,
     uploadDir,
-    imageBaseUrl: cfg.app.upload.baseUrl,
+    getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
     weixinToolSupport: wechatBridges.toolSupport,
     weixinUploadService: wechatBridges.uploadService,
     weixinSendService: wechatBridges.sendService,
@@ -1394,7 +1399,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         : '请先完成飞书账号绑定后再试。';
       let link = '';
       try {
-        if (feishu.isEnabled()) {
+        if (await feishu.isEnabled()) {
           const qr = await feishu.getQrCodeUrl();
           link = qr.authUrl ?? '';
         }
@@ -1443,7 +1448,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       permissionService,
     });
     registerModelRoutes(api, { modelService, permissionService });
-    registerSystemSettingRoutes(api, { systemSettingService: settingService });
+    registerSystemSettingRoutes(api, { systemSettingService: settingService, permissionService });
     registerCommandRoutes(api, {
       userCommandService: commandService,
       agentService,
@@ -1457,7 +1462,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
     registerToolRoutes(api, { toolService: restToolService });
     registerAuditLogRoutes(api, { auditLogService: auditService });
-    registerUploadRoutes(api, cfg.app.upload.storageMode, cfg.app.upload.baseUrl);
+    registerUploadRoutes(api, () => settingService.getUploadConfig());
     registerSessionRoutes(api, {
       sessionService, activityService, messageQueueService,
       agentLookup: {
@@ -1501,7 +1506,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerFileRoutes(api, {
       fileService, sessionService, workspaceBrowseService: workspaceBrowse,
       workspaceGitService: workspaceGit, gitCommitMessageService: gitCommitMsg,
-      gitWriteOperationService: gitWrite, pathSandbox, uploadBaseUrl: cfg.app.upload.baseUrl,
+      gitWriteOperationService: gitWrite, pathSandbox, getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
       runtimeDataResolver: runtimeResolver,
     });
     registerOssRoutes(api, { ossStsService: ossSts });

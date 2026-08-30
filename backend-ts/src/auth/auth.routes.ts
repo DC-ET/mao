@@ -17,7 +17,7 @@ export function registerAuthRoutes(app: FastifyInstance, auth: AuthService, feis
   });
 
   app.get('/v1/auth/features', async (_request, reply) => {
-    return sendOk(reply, { feishuEnabled: feishu.isEnabled() });
+    return sendOk(reply, { feishuEnabled: await feishu.isEnabled() });
   });
 
   app.get('/v1/auth/feishu/qrcode', async (_request, reply) => {

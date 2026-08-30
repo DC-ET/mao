@@ -50,30 +50,13 @@ export interface AppConfig {
     refreshExpiration: number;
     shellExpiration: number;
   };
-  ldap: {
-    enabled: boolean;
-    url: string;
-    baseDn: string;
-    userDn: string;
-    password: string;
-    userSearchBase: string;
-  };
   feishu: {
-    enabled: boolean;
     bot: FeishuBotConfig;
-    appId: string;
-    appSecret: string;
-    redirectUri: string;
-    authorizeUrl: string;
-    tokenUrl: string;
-    userInfoUrl: string;
-    appTokenUrl: string;
   };
   app: {
     rootDir: string;
     gitCredential: { secretKey: string };
-    upload: { storageMode: string; baseUrl: string };
-    file: { uploadDir: string; maxSizeMb: number };
+    file: { uploadDir: string };
     ws: { idleTimeoutMs: number; outboundQueueCapacity: number };
     taskNotification: {
       secretKey: string;
@@ -109,13 +92,6 @@ export interface AppConfig {
         callTimeoutSeconds: number;
         httpCallTimeoutSeconds: number;
         streamIdleTimeoutSeconds: number;
-      };
-      tavily: {
-        apiKey: string;
-        baseUrl: string;
-        connectTimeout: number;
-        readTimeout: number;
-        maxResults: number;
       };
       webPage: {
         connectTimeout: number;
@@ -155,23 +131,6 @@ export interface AppConfig {
       };
     };
   };
-  oss: {
-    region: string;
-    accessKeyId: string;
-    accessKeySecret: string;
-    bucket: string;
-    maxKeys: number;
-    sts: {
-      regionId: string;
-      endpoint: string;
-      accessKeyId: string;
-      accessKeySecret: string;
-      roleArn: string;
-      roleSessionName: string;
-      expire: number;
-      maxSizeMb: number;
-    };
-  };
 }
 
 const DEFAULTS: AppConfig = {
@@ -206,16 +165,7 @@ const DEFAULTS: AppConfig = {
     refreshExpiration: 604800000,
     shellExpiration: 7200000,
   },
-  ldap: {
-    enabled: false,
-    url: '',
-    baseDn: '',
-    userDn: '',
-    password: '',
-    userSearchBase: 'ou=users',
-  },
   feishu: {
-    enabled: false,
     bot: {
       enabled: false,
       appSecretKey: '',
@@ -230,19 +180,11 @@ const DEFAULTS: AppConfig = {
       reply: { maxLength: 2000 },
       file: { maxInboundFileMb: 100 },
     },
-    appId: '',
-    appSecret: '',
-    redirectUri: 'http://localhost:9080/api/v1/auth/feishu/callback',
-    authorizeUrl: 'https://open.feishu.cn/open-apis/authen/v1/authorize',
-    tokenUrl: 'https://open.feishu.cn/open-apis/authen/v1/oidc/access_token',
-    userInfoUrl: 'https://open.feishu.cn/open-apis/authen/v1/user_info',
-    appTokenUrl: 'https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal',
   },
   app: {
     rootDir: '/opt/mao',
     gitCredential: { secretKey: '' },
-    upload: { storageMode: 'local', baseUrl: '' },
-    file: { uploadDir: './uploads', maxSizeMb: 50 },
+    file: { uploadDir: './uploads' },
     ws: { idleTimeoutMs: 90000, outboundQueueCapacity: 10000 },
     taskNotification: {
       secretKey: 'mao-task-notification-default-key-v1-20260713',
@@ -278,13 +220,6 @@ const DEFAULTS: AppConfig = {
         callTimeoutSeconds: 120,
         httpCallTimeoutSeconds: 180,
         streamIdleTimeoutSeconds: 300,
-      },
-      tavily: {
-        apiKey: '',
-        baseUrl: 'https://api.tavily.com',
-        connectTimeout: 10000,
-        readTimeout: 30000,
-        maxResults: 5,
       },
       webPage: {
         connectTimeout: 10000,
@@ -322,23 +257,6 @@ const DEFAULTS: AppConfig = {
         longPollTimeoutMs: 35000,
         maxConsecutiveFailures: 3,
       },
-    },
-  },
-  oss: {
-    region: '',
-    accessKeyId: '',
-    accessKeySecret: '',
-    bucket: '',
-    maxKeys: 1000,
-    sts: {
-      regionId: '',
-      endpoint: '',
-      accessKeyId: '',
-      accessKeySecret: '',
-      roleArn: '',
-      roleSessionName: 'mao-sts',
-      expire: 3600,
-      maxSizeMb: 50,
     },
   },
 };
@@ -456,8 +374,6 @@ function coerceTypes(cfg: AppConfig): AppConfig {
     cfg.app.harness.userHomeDir = process.env.MAO_USER_HOME_DIR;
   }
   cfg.spring.flyway.enabled = b(process.env.FLYWAY_ENABLED ?? cfg.spring.flyway.enabled, true);
-  cfg.ldap.enabled = b(cfg.ldap.enabled, false);
-  cfg.feishu.enabled = b(process.env.FEISHU_ENABLED ?? cfg.feishu.enabled, false);
   cfg.feishu.bot.enabled = b(process.env.FEISHU_BOT_ENABLED ?? cfg.feishu.bot.enabled, false);
   cfg.feishu.bot.longConnection.enabled = b(process.env.FEISHU_BOT_LC_ENABLED ?? cfg.feishu.bot.longConnection.enabled, true);
   cfg.feishu.bot.longConnection.reconcileIntervalMs = n(process.env.FEISHU_BOT_RECONCILE_INTERVAL_MS ?? cfg.feishu.bot.longConnection.reconcileIntervalMs, 5000);

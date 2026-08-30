@@ -28,7 +28,7 @@ export interface FileRouteDeps {
   gitCommitMessageService: GitCommitMessageService;
   gitWriteOperationService: GitWriteOperationService;
   pathSandbox: PathSandbox;
-  uploadBaseUrl?: string | null;
+  getUploadBaseUrl?: () => Promise<string | null>;
   runtimeDataResolver?: RuntimeDataResolver;
 }
 
@@ -49,8 +49,8 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return session;
   }
 
-  function toVO(file: FileEntity) {
-    const baseUrl = deps.uploadBaseUrl;
+  async function toVO(file: FileEntity) {
+    const baseUrl = deps.getUploadBaseUrl != null ? await deps.getUploadBaseUrl() : null;
     const isIncoming = file.filePath != null && file.filePath.indexOf(`${sep}incoming${sep}`) >= 0;
     // incoming 文件位于 runtime 目录而非静态 uploads 目录，静态 url 不可达，改用下载端点
     const url = isIncoming
@@ -91,14 +91,14 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       file.buffer, file.filename, file.mimetype, userId, sessionId, incomingDir,
     );
     const absPath = resolve(incomingDir, entity.storedName);
-    return sendOk(reply, { ...toVO(entity), absolutePath: absPath });
+    return sendOk(reply, { ...(await toVO(entity)), absolutePath: absPath });
   });
 
   app.post('/v1/files/upload', async (request, reply) => {
     const userId = requireUserId(request);
     const { file, sessionId } = await readUpload(request);
     const entity = await fileService.uploadFile(file.buffer, file.filename, file.mimetype, userId, sessionId);
-    return sendOk(reply, toVO(entity));
+    return sendOk(reply, await toVO(entity));
   });
 
   app.get('/v1/files/workspace-list', async (request, reply) => {
@@ -253,7 +253,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const userId = requireUserId(request);
     const sessionId = queryOptInt(request, 'sessionId') ?? null;
     const files = await fileService.listFiles(userId, sessionId);
-    return sendOk(reply, files.map(toVO));
+    return sendOk(reply, await Promise.all(files.map((f) => toVO(f))));
   });
 
   app.get('/v1/files/:id/download', async (request, reply) => {

@@ -2,10 +2,11 @@ import { randomUUID, createHash } from 'node:crypto';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
-import type { AppConfig } from '../config/app-config.js';
 import { JwtService } from '../crypto/jwt.service.js';
 import { UserService } from '../user/user.service.js';
 import type { LoginVO, User, UserRepository, UserRoleRepository } from '../user/types.js';
+import type { FeishuOAuthSettings } from '../settings/types.js';
+import { FEISHU_APP_TOKEN_URL, FEISHU_AUTHORIZE_URL, FEISHU_TOKEN_URL, FEISHU_USER_INFO_URL } from '../settings/settings-test.service.js';
 import { formatNow } from './auth.service.js';
 
 export const FEISHU_PENDING = 'PENDING';
@@ -45,18 +46,19 @@ export class FeishuAuthService {
     private readonly userRoleRepo: UserRoleRepository,
     private readonly stateRepo: FeishuOauthStateRepository,
     private readonly jwtService: JwtService,
-    private readonly cfg: AppConfig['feishu'],
+    private readonly getConfig: () => Promise<FeishuOAuthSettings>,
     private readonly http: FeishuHttp = defaultFeishuHttp(),
     private readonly onUserAuthenticated?: (user: User, targetUserId?: number, state?: string) => Promise<void>,
   ) {}
 
-  isEnabled(): boolean {
-    return this.cfg.enabled && hasText(this.cfg.appId) && this.cfg.appId !== '1234567890';
+  async isEnabled(): Promise<boolean> {
+    const cfg = await this.getConfig();
+    return cfg.enabled && hasText(cfg.appId) && cfg.appId !== '1234567890';
   }
 
   async getQrCodeUrl(userId?: number) {
-    this.ensureEnabled();
-    this.ensureAppIdConfigured();
+    await this.ensureEnabled();
+    await this.ensureAppIdConfigured();
     const state = randomUUID();
     const expiresAt = plusSeconds(STATE_EXPIRES_SECONDS);
     await this.stateRepo.insert({
@@ -65,7 +67,7 @@ export class FeishuAuthService {
       userId,
       expiresAt,
     });
-    const authUrl = this.buildAuthorizeUrl(state);
+    const authUrl = this.buildAuthorizeUrl(state, await this.getConfig());
     return {
       authUrl,
       qrCodeUrl: authUrl,
@@ -76,16 +78,16 @@ export class FeishuAuthService {
   }
 
   async handleCallback(code: string): Promise<LoginVO> {
-    this.ensureEnabled();
-    this.ensureFullyConfigured();
+    await this.ensureEnabled();
+    await this.ensureFullyConfigured();
     const user = await this.authenticateByCode(code);
     await this.onUserAuthenticated?.(user);
     return this.buildLoginVO(user);
   }
 
   async completeStateWithCode(state: string | undefined, code: string | undefined): Promise<User> {
-    this.ensureEnabled();
-    this.ensureFullyConfigured();
+    await this.ensureEnabled();
+    await this.ensureFullyConfigured();
     if (!hasText(state)) {
       throw new BusinessException(5002, '飞书登录 state 不能为空');
     }
@@ -136,7 +138,7 @@ export class FeishuAuthService {
   }
 
   async getLoginStatus(state: string | undefined) {
-    if (!this.cfg.enabled) {
+    if (!(await this.isEnabled())) {
       return { status: FEISHU_FAILED, message: '飞书登录未启用' };
     }
     if (!hasText(state)) {
@@ -197,7 +199,7 @@ export class FeishuAuthService {
       throw new BusinessException(5002, '授权码不能为空');
     }
     try {
-      const appAccessToken = await this.getAppAccessToken();
+      const appAccessToken = await this.getAppAccessToken(await this.getConfig());
       const userAccessToken = await this.getUserAccessToken(code, appAccessToken);
       const userInfo = await this.getUserInfo(userAccessToken);
       return this.findOrCreateUser(userInfo);
@@ -331,12 +333,12 @@ export class FeishuAuthService {
     }
   }
 
-  private buildAuthorizeUrl(state: string): string {
-    return `${this.cfg.authorizeUrl}?app_id=${encodeURIComponent(this.cfg.appId)}&redirect_uri=${encodeURIComponent(this.cfg.redirectUri)}&state=${encodeURIComponent(state)}`;
+  private buildAuthorizeUrl(state: string, cfg: FeishuOAuthSettings): string {
+    return `${FEISHU_AUTHORIZE_URL}?app_id=${encodeURIComponent(cfg.appId)}&redirect_uri=${encodeURIComponent(cfg.redirectUri)}&state=${encodeURIComponent(state)}`;
   }
 
-  private async getAppAccessToken(): Promise<string> {
-    const res = await this.http.postJson(this.cfg.appTokenUrl, { app_id: this.cfg.appId, app_secret: this.cfg.appSecret });
+  private async getAppAccessToken(cfg: FeishuOAuthSettings): Promise<string> {
+    const res = await this.http.postJson(FEISHU_APP_TOKEN_URL, { app_id: cfg.appId, app_secret: cfg.appSecret });
     if (!res.ok) {
       throw new BusinessException(5002, '获取飞书应用 Token 失败');
     }
@@ -348,7 +350,7 @@ export class FeishuAuthService {
 
   private async getUserAccessToken(code: string, appAccessToken: string): Promise<string> {
     const res = await this.http.postJson(
-      this.cfg.tokenUrl,
+      FEISHU_TOKEN_URL,
       { grant_type: 'authorization_code', code },
       { Authorization: `Bearer ${appAccessToken}` },
     );
@@ -363,7 +365,7 @@ export class FeishuAuthService {
   }
 
   private async getUserInfo(userAccessToken: string): Promise<Record<string, unknown>> {
-    const res = await this.http.getJson(this.cfg.userInfoUrl, { Authorization: `Bearer ${userAccessToken}` });
+    const res = await this.http.getJson(FEISHU_USER_INFO_URL, { Authorization: `Bearer ${userAccessToken}` });
     if (!res.ok) {
       throw new BusinessException(5002, '获取用户信息失败');
     }
@@ -394,21 +396,23 @@ export class FeishuAuthService {
     });
   }
 
-  private ensureAppIdConfigured(): void {
-    if (!hasText(this.cfg.appId) || this.cfg.appId === '1234567890') {
+  private async ensureAppIdConfigured(): Promise<void> {
+    const cfg = await this.getConfig();
+    if (!hasText(cfg.appId) || cfg.appId === '1234567890') {
       throw new BusinessException(ErrorCode.INTERNAL_ERROR, '飞书应用未配置');
     }
   }
 
-  private ensureEnabled(): void {
-    if (!this.cfg.enabled) {
+  private async ensureEnabled(): Promise<void> {
+    if (!(await this.isEnabled())) {
       throw new BusinessException(ErrorCode.INTERNAL_ERROR, '飞书登录未启用');
     }
   }
 
-  private ensureFullyConfigured(): void {
-    this.ensureAppIdConfigured();
-    if (!hasText(this.cfg.appSecret) || this.cfg.appSecret === '1234567890') {
+  private async ensureFullyConfigured(): Promise<void> {
+    const cfg = await this.getConfig();
+    await this.ensureAppIdConfigured();
+    if (!hasText(cfg.appSecret) || cfg.appSecret === '1234567890') {
       throw new BusinessException(ErrorCode.INTERNAL_ERROR, '飞书应用未配置');
     }
   }

@@ -103,7 +103,7 @@ const routes: RouteRecordRaw[] = [
         path: 'settings',
         name: 'SystemSettings',
         component: () => import('../views/settings/SystemSettingsView.vue'),
-        meta: { title: '系统设置', keepAlive: true, permission: 'user:write' }
+        meta: { title: '系统设置', keepAlive: true, permission: 'settings:read' }
       },
       {
         path: 'sessions/:id',

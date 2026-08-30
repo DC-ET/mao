@@ -26,7 +26,7 @@ describe('OssStsService', () => {
         expiration: '2026-08-13T12:00:00Z',
       })),
     };
-    const service = new OssStsService(oss, client);
+    const service = new OssStsService(async () => oss, async () => client);
     const vo = await service.generateStsToken(7, 11);
     expect(vo.accessKeyId).toBe('tmp-ak');
     expect(vo.bucket).toBe('mao-bucket');
@@ -40,10 +40,32 @@ describe('OssStsService', () => {
   });
 
   it('wrapsAssumeRoleFailureAsBusinessException', async () => {
-    const service = new OssStsService(oss, {
+    const service = new OssStsService(async () => oss, async () => ({
       assumeRole: vi.fn(async () => { throw new Error('denied'); }),
-    });
+    }));
     await expect(service.generateStsToken(1)).rejects.toBeInstanceOf(BusinessException);
+  });
+
+  it('rejectsWhenOssNotConfigured', async () => {
+    const service = new OssStsService(async () => null, async () => {
+      throw new Error('should not be called');
+    });
+    await expect(service.generateStsToken(1)).rejects.toThrow(/OSS 未配置/);
+  });
+
+  it('reusesClientWhenStsConfigUnchanged', async () => {
+    const assumeRole = vi.fn(async () => ({
+      accessKeyId: 'a', accessKeySecret: 'b', securityToken: 'c', expiration: 'd',
+    }));
+    let createCalls = 0;
+    const service = new OssStsService(async () => oss, async () => {
+      createCalls += 1;
+      return { assumeRole };
+    });
+    await service.generateStsToken(1);
+    await service.generateStsToken(2);
+    expect(createCalls).toBe(1);
+    expect(assumeRole).toHaveBeenCalledTimes(2);
   });
 });
 
