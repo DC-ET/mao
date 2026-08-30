@@ -100,9 +100,29 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   /** 中断指定会话的当前执行（由卡片动作服务在「立即发送」时调用）。 */
   interrupt(sessionId: number): void {
     const flag = this.cancelFlags.get(sessionId);
-    if (flag != null) flag.set(true);
-    this.interrupted.add(sessionId);
-    this.options.onInterruptRunning?.(sessionId);
+    if (flag != null) {
+      flag.set(true);
+      this.interrupted.add(sessionId);
+      this.options.onInterruptRunning?.(sessionId);
+    }
+  }
+
+  /**
+   * M-6：插队按钮的「中断 + 接力」原子路径。
+   * - 命中当前执行：置取消标志，并在下一条消息/队列接力时机由 onExecutionFinished/onMessage 驱动；
+   * - 未命中（会话已空闲）：说明上一任务已终态收尾，无人再调度队列 → 立即兜底排空，
+   *   避免排队消息永久滞留；同时避免「PATCH 卡片等待窗口内被接力认领的目标消息」被本点击误取消。
+   */
+  interruptAndDrain(sessionId: number): void {
+    const flag = this.cancelFlags.get(sessionId);
+    if (flag != null) {
+      flag.set(true);
+      this.interrupted.add(sessionId);
+      this.options.onInterruptRunning?.(sessionId);
+    }
+    void this.drainNextIfPending(sessionId).catch((error) => {
+      console.error(`飞书插队后排空异常, sessionId=${sessionId}`, error);
+    });
   }
 
   async onMessage(context: FeishuInboundContext): Promise<FeishuReply | null> {

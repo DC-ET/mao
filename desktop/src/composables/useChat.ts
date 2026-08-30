@@ -733,25 +733,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     // 未显式传入图片时保留原消息图片
     const imagesToSend = images.length > 0 ? images : (lastUserMsg.images ?? [])
 
-    // 乐观更新：截断后续消息，更新编辑内容
-    sessionStore.truncateMessagesAfter(sid, messageId)
-    sessionStore.updateMessageContent(
-      sid,
-      messageId,
-      newContent,
-      imagesToSend.length > 0 ? imagesToSend : undefined
-    )
-
-    // 添加空 assistant 占位消息
-    const placeholderMsg: ChatMessage = {
-      id: `msg_${Date.now()}_assistant`,
-      role: 'assistant',
-      content: '',
-      createdAt: nowDateTime(),
-      toolCalls: [],
-      segments: []
-    }
-    sessionStore.appendMessage(sid, placeholderMsg)
+    // 快照用于失败回滚：乐观截断/更新仅在连接成功后执行，失败时恢复原消息列表
+    const sidMessagesBeforeEdit = [...(sessionStore.getMessages(sid) ?? [])]
 
     sending.value = true
     startedAt.value = new Date().toISOString()
@@ -759,6 +742,26 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     try {
       // Ensure WS connection is established
       await connect()
+
+      // 连接成功后乐观更新：截断后续消息，更新编辑内容
+      sessionStore.truncateMessagesAfter(sid, messageId)
+      sessionStore.updateMessageContent(
+        sid,
+        messageId,
+        newContent,
+        imagesToSend.length > 0 ? imagesToSend : undefined
+      )
+
+      // 添加空 assistant 占位消息
+      const placeholderMsg: ChatMessage = {
+        id: `msg_${Date.now()}_assistant`,
+        role: 'assistant',
+        content: '',
+        createdAt: nowDateTime(),
+        toolCalls: [],
+        segments: []
+      }
+      sessionStore.appendMessage(sid, placeholderMsg)
 
       // 通过 WS 发送编辑请求
       const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
@@ -795,11 +798,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
     } catch (error: any) {
       sending.value = false
-      // Remove empty assistant message if it was added
-      const list = sessionId.value ? sessionStore.getMessages(sessionId.value) : messages.value
-      const lastMsg = list[list.length - 1]
-      if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
-        list.pop()
+      // M-10：失败时回滚乐观编辑——恢复截断/更新前的完整消息列表。
+      // messages 为 computed（sessionStore.activeMessages），不能直接赋值，
+      // 统一通过 setMessages 写回 store。
+      if (sessionId.value) {
+        sessionStore.setMessages(sessionId.value, sidMessagesBeforeEdit)
       }
       ElMessage.error(error?.message || '编辑重新发送失败')
       if (sessionId.value) {

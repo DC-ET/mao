@@ -79,10 +79,25 @@ function parseContent(raw: string | null | undefined): unknown {
   const trimmed = raw.trim();
   if (trimmed.startsWith('[')) {
     try {
-      return JSON.parse(trimmed);
+      const parsed = JSON.parse(trimmed) as unknown;
+      // 只有每个元素都是含 type 的多模态 content part 才按数组解析；
+      // 用户发送的纯文本 JSON 数组（如 [1,2,3]、["a","b"]、[]）在 DB 中与多模态数组无法区分，
+      // 若不校验结构会被误当作 content part 数组发给 LLM，产生 400 或内容损毁。
+      if (isMultimodalContentParts(parsed)) return parsed;
+      return raw;
     } catch {
       return raw;
     }
   }
   return raw;
+}
+
+/** 每个元素必须是含 type（text/image_url）的对象，且任一元素不满足则整体按原始字符串返回。 */
+function isMultimodalContentParts(parsed: unknown): parsed is Array<Record<string, unknown>> {
+  if (!Array.isArray(parsed) || parsed.length === 0) return false;
+  return parsed.every((part) => {
+    if (part == null || typeof part !== 'object' || Array.isArray(part)) return false;
+    const map = part as Record<string, unknown>;
+    return map.type === 'text' || map.type === 'image_url';
+  });
 }

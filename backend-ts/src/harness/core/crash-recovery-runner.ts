@@ -61,15 +61,18 @@ export class CrashRecoveryRunner {
   }
 
   private async runPass(deferred: boolean): Promise<void> {
-    const blocked = this.subagentCoordinator
+    const deployLock = readDeployLock(this.runtimeDir);
+    const deferAll = !deferred && shouldDeferAllRecoveryDuringDeploy(deployLock);
+    const skipDeployActive = !deferred && isRecentDeployLock(deployLock);
+    // 蓝绿部署窗口内不得执行子代理协调器恢复：协调器会直接 claim RUNNING 中的
+    // 子代理 execution 并重跑父会话，绕过 deploy defer 守卫导致新旧实例对同一会话
+    // 双实例并发执行。统一推迟到 deferred pass（此时 deployLock 已过窗口）。
+    const deferCoordinator = !deferred && (deferAll || skipDeployActive);
+    const blocked = !deferCoordinator && this.subagentCoordinator
       ? await this.subagentCoordinator.schedule((session) => this.recoverSession(session))
       : new Set<number>();
     // 延迟恢复复用初始扫描快照，避免把重启后新建的活跃会话误判为崩溃遗留会话。
     const candidates = deferred ? this.deferredCandidates : await this.collectCandidates(blocked);
-
-    const deployLock = readDeployLock(this.runtimeDir);
-    const deferAll = !deferred && shouldDeferAllRecoveryDuringDeploy(deployLock);
-    const skipDeployActive = !deferred && isRecentDeployLock(deployLock);
     const { recover, skipped } = deferAll
       ? { recover: [], skipped: candidates }
       : this.partitionForDeploy(candidates, skipDeployActive, deployLock);

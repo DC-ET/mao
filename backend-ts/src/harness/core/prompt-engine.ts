@@ -59,8 +59,12 @@ export class PromptEngine {
     const messages: ChatMessage[] = [];
     messages.push({ role: 'system', content: this.buildSystemPrompt(context) });
     const history = context.messages;
-    await this.replaceQuickCommandMarkers(history, context);
-    messages.push(...history);
+    // M-13：浅拷贝一份消息数组供标记展开，展开结果只作用于本次请求的副本，
+    // 不写回 context.messages——否则命令内容嵌套其它 #{...}# 时多轮 buildRequest 会逐层展开，
+    // 同一用户消息在每次 LLM 请求中内容漂移，且与崩溃恢复后单遍展开的首轮内容不一致。
+    const historyCopy = history.map((m) => ({ ...m }));
+    await this.replaceQuickCommandMarkers(historyCopy, context);
+    messages.push(...historyCopy);
     const injected = this.toolMediaInjector.inject(messages, context.toolAttachments, context.modelConfig) ?? messages;
     const tools = this.buildToolDefinitions(context);
     const request: ChatRequest = {
@@ -84,6 +88,9 @@ export class PromptEngine {
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
       if (msg.role !== 'user' || typeof msg.content !== 'string') continue;
+      // M-13：展开只基于「DB 原始内容」副本，绝不写回 context.messages。
+      // 若展开结果写回，命令内容嵌套其它 #{...}# 时会在多轮 buildRequest 中逐层再展开，
+      // 同一用户消息在每次 LLM 请求中内容不同，且与崩溃恢复后单遍展开的首轮内容不一致。
       const content = msg.content;
       let replaced = content.replace(SKILL_PATTERN, (match, skillName: string) => {
         if (this.skillLoader.hasSkill(skillName) || this.hasUserSkill(skillName, userId)

@@ -167,6 +167,8 @@ function summarizeShell(argumentsJson: string | null | undefined, result: string
   const node = asObj(parseJson(result));
   if (!node) return label;
   if (node.async === true) return `${label} (后台)`;
+  // L-16：exec 超时未完成时 completed=false，与 write_stdin 分支口径一致，避免把超时误报为真实退出码 -1
+  if (has(node, 'completed') && !node.completed) return `${label} (未完成/超时)`;
   const exitCode = has(node, 'exit_code') ? Number(node.exit_code) : -1;
   const output = has(node, 'output') ? String(node.output) : '';
   if (exitCode !== 0) return `${label} (exit ${exitCode})`;

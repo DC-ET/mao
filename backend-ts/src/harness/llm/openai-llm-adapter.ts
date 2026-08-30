@@ -106,7 +106,14 @@ export class OpenAiLlmAdapter implements LlmAdapter {
           awaited.body, cancelFlag, awaited.started + this.retry.httpCallTimeoutSeconds * 1000, awaited.req,
         );
         if (this.isCancelled(cancelFlag)) throw this.cancelledException();
-        return parseChatResponse(JSON.parse(json));
+        const parsed = JSON.parse(json) as unknown;
+        // L-7：部分网关以 200 + body 内嵌 {error:{...}} 返回错误，直接按业务错误抛出，
+        // 避免被当作空响应走 10 次空响应退避重试、掩盖真实原因。
+        const embeddedError = parseEmbeddedError(parsed);
+        if (embeddedError != null) {
+          throw new Error(`LLM API returned error: ${embeddedError}`);
+        }
+        return parseChatResponse(parsed);
       } catch (e) {
         if (this.isCancelled(cancelFlag)) throw this.cancelledException();
         if (e instanceof Error && e.message.startsWith('LLM API returned')) throw e;
@@ -273,9 +280,9 @@ export class OpenAiLlmAdapter implements LlmAdapter {
 
     /** 处理一整行 SSE；返回 true 表示读到了 [DONE]。 */
     const handleLine = (line: string): boolean => {
-      if (!line.startsWith('data: ')) return false;
+      if (!line.startsWith('data:')) return false;
       lastData = Date.now();
-      const data = line.slice(6).trim();
+      const data = line.slice(5).replace(/^ /, '').trim();
       if (data === '[DONE]') return true;
       try {
         const parsed = JSON.parse(data) as unknown;
@@ -739,4 +746,18 @@ function buildTextFromParts(parts: unknown[]): string {
     }
   }
   return sb.trim();
+}
+
+/** 解析 200 响应体内嵌的 { error: { message } } 结构（部分网关错误形态），无则返回 null。 */
+function parseEmbeddedError(parsed: unknown): string | null {
+  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const root = parsed as Record<string, unknown>;
+  const error = root.error;
+  if (error == null) return null;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object' && !Array.isArray(error)) {
+    const detail = (error as Record<string, unknown>).message;
+    if (typeof detail === 'string' && detail !== '') return detail;
+  }
+  return null;
 }

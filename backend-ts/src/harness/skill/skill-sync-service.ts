@@ -8,7 +8,7 @@ import type { Agent } from '../deps.js';
 import type { PathSandbox } from '../safety/path-sandbox.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import type { SkillLoader } from './skill-loader.js';
-import { parseSkillMdContent, type SkillDocument } from './skill-md.js';
+import { isValidSkillName, parseSkillMdContent, type SkillDocument } from './skill-md.js';
 
 export class SkillSyncService {
   private readonly syncState = new Map<string, Map<string, number>>();
@@ -50,7 +50,12 @@ export class SkillSyncService {
       const lastSynced = state.get(skillName);
       if (lastSynced != null && lastSynced >= sourceModified) continue;
       try {
+        if (!isValidSkillName(skillName)) {
+          harnessLog('warn', `Skip syncing skill with unsafe name: ${skillName}`);
+          continue;
+        }
         const targetFolder = path.join(skillsDir, skillName);
+        assertInside(skillsDir, targetFolder);
         copyDirectory(sourceFolder, targetFolder);
         state.set(skillName, sourceModified);
         harnessLog('info', `Synced skill ${skillName} to ${targetFolder}`);
@@ -60,7 +65,10 @@ export class SkillSyncService {
     }
     for (const name of toRemove) {
       try {
-        rmSync(path.join(skillsDir, name), { recursive: true, force: true });
+        if (!isValidSkillName(name)) continue;
+        const target = path.join(skillsDir, name);
+        assertInside(skillsDir, target);
+        rmSync(target, { recursive: true, force: true });
       } catch { /* ignore */ }
       state.delete(name);
     }
@@ -107,7 +115,7 @@ export class SkillSyncService {
         const skillMd = path.join(folder, 'SKILL.md');
         if (!existsSync(skillMd) || !statSync(skillMd).isFile()) continue;
         const doc = parseSkillMdContent(readFileSync(skillMd, 'utf8'));
-        if (doc?.name) {
+        if (doc?.name && isValidSkillName(doc.name)) {
           doc.filePath = path.resolve(skillMd);
           doc.folderPath = path.resolve(folder);
           result[doc.name] = doc;
@@ -122,7 +130,7 @@ export class SkillSyncService {
     if (!raw || raw.trim() === '') return [];
     try {
       const parsed = JSON.parse(raw) as string[];
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed) ? parsed.filter(isValidSkillName) : [];
     } catch {
       return [];
     }
@@ -207,4 +215,12 @@ function getLastModified(folder: string): number {
 function copyDirectory(src: string, dest: string): void {
   mkdirSync(dest, { recursive: true });
   cpSync(src, dest, { recursive: true });
+}
+
+/** 断言 target 严格位于 root 之内，防止技能名路径穿越。 */
+function assertInside(root: string, target: string): void {
+  const rel = path.relative(root, target);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Unsafe skill target path: ${target} (outside ${root})`);
+  }
 }

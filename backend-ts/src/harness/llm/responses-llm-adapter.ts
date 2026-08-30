@@ -432,9 +432,9 @@ export class ResponsesLlmAdapter implements LlmAdapter {
 
     /** 处理一整行 SSE；返回 true 表示流正常终止。 */
     const handleLine = (line: string): boolean => {
-      if (!line.startsWith('data: ')) return false;
+      if (!line.startsWith('data:')) return false;
       lastData = Date.now();
-      const data = line.slice(6).trim();
+      const data = line.slice(5).replace(/^ /, '').trim();
       if (data === '[DONE]') return true;
       try {
         const parsed = JSON.parse(data) as unknown;

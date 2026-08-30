@@ -111,10 +111,13 @@ export class FeishuMessageService {
     }
     const record = renderOverflowRecord(overflow);
     if (record === '') return null;
+    // L-3：渲染可能因超长丢弃最旧行，记账水位必须以「实际参与摘要的最大消息 id」为准，
+    // 否则被丢弃的最旧消息既不会增量注入、也永远进不了溢出查询，永久丢失于上下文。
+    const keptMaxId = keptMaxOverflowId(overflow, record);
     const summary = await this.summarizer.summarize(record, conversation.sessionId);
     if (summary == null || summary.trim() === '') return null;
     const trimmed = summary.trim();
-    await this.repository.updateGroupContextSummary(accountId, chatId, trimmed, maxOverflowId);
+    await this.repository.updateGroupContextSummary(accountId, chatId, trimmed, keptMaxId > 0 ? keptMaxId : maxOverflowId);
     return `[更早历史消息摘要]\n${trimmed}`;
   }
 
@@ -187,6 +190,29 @@ function renderOverflowRecord(messages: FeishuGroupMessage[]): string {
     kept.unshift(lines[i]);
   }
   return kept.join('\n');
+}
+
+/** 被 renderOverflowRecord 实际保留（未因超长丢弃）的消息中最大的 id；0 表示无法判定。 */
+function keptMaxOverflowId(messages: FeishuGroupMessage[], rendered: string): number {
+  // 渲染为空 → 无保留；否则取 messages 中最后一个能「复原」到 rendered 的行近似——
+  // 更稳妥做法：按与渲染相同的保留策略逆推（保留尾部直到总长超限）。
+  if (rendered.trim() === '') return 0;
+  const maxContentChars = 200;
+  const maxTotalChars = 16000;
+  const lines = messages.map((message) => {
+    const content = message.content ?? '';
+    const trimmed = content.length > maxContentChars ? `${content.slice(0, maxContentChars)}…` : content;
+    return `[${formatGroupTime(message.createdAt)}] ${message.senderName}：${trimmed}`;
+  });
+  let total = 0;
+  let keptMax = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    total += lines[i].length + 1;
+    if (total > maxTotalChars) break;
+    const id = messages[i]?.id ?? 0;
+    if (id > keptMax) keptMax = id;
+  }
+  return keptMax;
 }
 
 export { senderName, isBotSender, botSenderLabel, formatGroupTime, p2pChatIdOf };

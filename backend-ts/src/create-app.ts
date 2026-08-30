@@ -1411,6 +1411,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const feishuCardActionService = new FeishuCardActionService({
     queuePort: feishuTaskQueue,
     interrupt: (sessionId) => feishuInboundHandler.interrupt(sessionId),
+    // M-6：插队按钮「中断+接力」收敛为一条原子路径——空闲时由 interrupt 内部排空兜底，
+    // 命中时中断后立即排空，避免与 onMessage 接力窗口相互踩踏/滞留。
+    interruptAndDrain: (sessionId) => feishuInboundHandler.interruptAndDrain(sessionId),
     // 进度卡「取消任务」：经 AgentLoop 会话取消标志置位（覆盖执行中与崩溃恢复续跑两种场景）+ 关闭会话 shell，与桌面端「停止」同语义。
     cancelRunning: (sessionId) => {
       const flag = agentLoop.getCancelFlag(sessionId);

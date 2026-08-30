@@ -1,3 +1,4 @@
+import { displayWidth } from '../ui/width.js';
 export function shouldUseColor(opts: { colorFlag?: boolean; printMode: boolean; stdoutIsTty: boolean }): boolean {
   if (opts.colorFlag === false) return false;
   if (opts.colorFlag === true) return true;
@@ -74,7 +75,8 @@ export function countVisualRows(text: string, columns: number): number {
   for (let i = 0; i < lines.length; i++) {
     const isTrailingEmpty = i === lines.length - 1 && lines[i] === '' && text.endsWith('\n');
     if (isTrailingEmpty) continue;
-    const width = [...lines[i]].length;
+    // L-15：CJK 按码点估宽会低估回退行数（终端按 2 列 wrap 长中文），改用 displayWidth 计列宽
+    const width = displayWidth(lines[i]);
     rows += Math.max(1, Math.ceil(width / cols) || 1);
   }
   return rows;

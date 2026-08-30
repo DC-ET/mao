@@ -62,6 +62,11 @@ export class DelegateTool extends BaseTool {
   getOutputSchema(): Record<string, unknown> { return { type: 'object' }; }
 
   protected async executeWithSession(argumentsJson: string, sessionId: number | null): Promise<string> {
+    // M-7：异常兜底需访问 childSession/execution/parentSession，必须在 try 之外声明（catch 属于 try 子句作用域外）。
+    let childSession: Session | null = null;
+    let execution: SubagentExecution | null = null;
+    let parentSession: Session | null = null;
+    let executionStarted = false;
     try {
       const args = parseObject(argumentsJson);
       if (!args) return toJson({ error: '无效的JSON参数' });
@@ -75,14 +80,12 @@ export class DelegateTool extends BaseTool {
           available_types: this.definitionRegistry.getAllDefinitions().map((d) => d.name),
         });
       }
-      const parentSession = sessionId != null ? await this.sessionMapper.selectById(sessionId) : null;
+      parentSession = sessionId != null ? await this.sessionMapper.selectById(sessionId) : null;
       if (!parentSession) return toJson({ error: '父会话不存在: ' + sessionId });
       const toolCallId = ToolCallContext.getToolCallId()
         ?? (this.invocationService ? null : `legacy_delegate_${Date.now()}`);
       if (!toolCallId) return errorJson('缺少父工具调用 ID');
       const childTitle = '子代理(' + agentType + '): ' + (task.length > 40 ? task.slice(0, 40) + '...' : task);
-      let childSession: Session;
-      let execution: SubagentExecution;
       if (this.invocationService) {
         ({ child: childSession, execution } = await this.invocationService.createDelegate(
           parentSession, agentType, task, childTitle, toolCallId,
@@ -121,6 +124,7 @@ export class DelegateTool extends BaseTool {
         if (parentCancel.get()) childCancel.set(true);
       }
       let runResult;
+      executionStarted = true;
       try {
         runResult = await this.visibilityService.executeVisible(
           childSession, subContext, childCancel.get(),
@@ -179,7 +183,34 @@ export class DelegateTool extends BaseTool {
       }
       return toJson(response);
     } catch (e) {
-      return errorJson((e as Error).message);
+      // M-7：delegate 异常路径必须落终态——execution 已创建（DB RUNNING）但 buildContext/执行
+      // 前序步骤抛错时，若不清理，execution 永久 RUNNING，后续 subagent_followup 每次纠偏都 30s 超时。
+      harnessLog('error', 'DelegateTool execution failed', e);
+      const cause = e as Error;
+      const err: Record<string, unknown> = { error: '委派执行失败: ' + (cause.message || cause.name) };
+      if (childSession != null) {
+        const failedChild = childSession;
+        err.child_session_id = failedChild.id;
+        err.success = false;
+        try {
+          if (executionStarted) {
+            // 执行已启动：仅保存失败结果消息（终态由 executeVisible 的 finally/正常收尾负责）。
+            await this.sessionService.saveMessage(
+              failedChild.id!, 'ASSISTANT', '子代理执行失败: ' + (cause.message || cause.name),
+              null, null, null, 0, null,
+            );
+          } else if (execution?.id != null) {
+            // 执行未启动：恢复链路会把这批 RUNNING 子代理整体重跑，为避免重复消耗，
+            // 直接落 FAILED 终态并关停子会话，与 followup 的 failCreatedSubagent 对齐。
+            await this.failCreatedSubagent(failedChild, parentSession, execution, null, cause);
+          }
+          try { this.agentLoop.removeCancelFlag(failedChild.id!); } catch { /* best-effort */ }
+          try { this.localToolSessionRegistry.removeSession?.(failedChild.id!); } catch { /* best-effort */ }
+        } catch (cleanupErr) {
+          harnessLog('error', 'DelegateTool failure cleanup failed', cleanupErr);
+        }
+      }
+      return toJson(err);
     }
   }
 
@@ -200,6 +231,38 @@ export class DelegateTool extends BaseTool {
     ctx.availableSkillNames = [];
     ctx.availableSkillDocs.clear();
     return ctx;
+  }
+
+  /** 委派异常兜底：execution 已创建但执行未启动时落 FAILED 终态并关停子会话，避免永久 RUNNING。 */
+  private async failCreatedSubagent(
+    childSession: Session, parentSession: Session | null, execution: SubagentExecution | null,
+    runExecutionId: string | null, cause: Error,
+  ): Promise<void> {
+    const resultText = '子代理执行失败: ' + (cause.message || cause.name);
+    if (execution?.id != null) {
+      await this.markExecutionTerminal(execution, 'FAILED', resultText, null, null);
+    }
+    await this.sessionService.saveMessage(childSession.id!, 'ASSISTANT', resultText, null, null, null, 0, null);
+    const userId = parentSession?.userId ?? childSession.userId;
+    await this.visibilityService.finishSubagent(childSession.id!, userId, 'FAILED', runExecutionId ?? '');
+  }
+
+  private async markExecutionTerminal(
+    execution: SubagentExecution, status: string, resultText: string,
+    rounds: number | null, collector: SubAgentResultCollector | null,
+  ): Promise<void> {
+    execution.status = status;
+    execution.result = resultText.slice(0, 65000);
+    execution.completedAt = nowSql();
+    if (rounds != null) execution.totalRounds = rounds;
+    if (collector) execution.totalToolCalls = collector.toolCallCount;
+    if (collector?.totalUsage) {
+      execution.totalPromptTokens = collector.totalUsage.promptTokens;
+      execution.totalCompletionTokens = collector.totalUsage.completionTokens;
+    }
+    if (execution.id != null) {
+      await this.subagentExecutionMapper.updateById(execution.id, execution);
+    }
   }
 }
 

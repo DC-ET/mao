@@ -118,10 +118,12 @@ export class StreamingWsHandler {
   private readonly runningExecutionIds = new Map<number, string>();
   private readonly executionClaims = new Set<number>();
   private readonly sessionLocks = new Map<number, Promise<void>>();
-  private readonly pendingSkillSyncs = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
+  private readonly pendingSkillSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
   private readonly pendingMcpSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
   private readonly autoConsumingSessionIds = new Set<number>();
   private readonly suppressAutoConsumeSend = new Set<number>();
+  /** 用户已点「停止」但 cancel flag 尚未注册（执行提交前的窗口期）的会话；注册标志时立即消费。 */
+  private readonly pendingCancels = new Set<number>();
   private readonly insertLocks = new Map<number, Promise<void>>();
   private readonly mcpSyncTimeoutSeconds: number;
 
@@ -309,15 +311,39 @@ export class StreamingWsHandler {
     }
     const messageContent: unknown = images.length === 0 ? content : contentParts(content, images);
     if (!isAutoConsume) {
-      const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
-      this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
-      this.deps.registry.send(userId, wsEvent('user_message_saved', sessionId, { tempEventId: eventId ?? '', messageId: savedMessage.id }));
+      try {
+        const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
+        this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
+        this.deps.registry.send(userId, wsEvent('user_message_saved', sessionId, { tempEventId: eventId ?? '', messageId: savedMessage.id }));
+      } catch (e) {
+        // M-4：claim 添加后、执行提交前的异常路径必须释放占位，否则会话永久判定 busy。
+        this.executionClaims.delete(sessionId);
+        this.pendingCancels.delete(sessionId);
+        if (claimAlreadyHeld) {
+          await requeueIfClaimed().catch((requeueErr) => {
+            console.error(`Failed to re-enqueue auto-consumed message for session ${sessionId}`, requeueErr);
+          });
+        }
+        throw e;
+      }
     }
     const resolvedEventId = eventId && eventId.trim() !== '' ? eventId : await this.deps.harnessService.prepareMessage(sessionId, messageContent);
-    this.deps.registry.subscribe(userId, sessionId);
+    // 注册 cancel flag 前消费窗口期内到达的「停止」请求（M-2 竞态修复）：
+    // 注册完成后回调在下一个微任务执行，但此刻仍在同一同步段内，
+    // 通过注册时返回值立即消费，避免用户点「停止」后任务照常跑完。
     const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
+    if (this.pendingCancels.delete(sessionId)) {
+      // 用户已在执行提交前点「停止」：释放占位并落 CANCELLED 终态，不提交执行。
+      flag.set(true);
+      this.executionClaims.delete(sessionId);
+      this.autoConsumingSessionIds.delete(sessionId);
+      this.runningExecutionIds.delete(sessionId);
+      await this.finishCancelledSession(sessionId, userId, resolvedEventId ?? randomUUID());
+      return;
+    }
     this.cancelFlags.set(sessionId, flag);
     this.runningExecutionIds.set(sessionId, resolvedEventId);
+    this.deps.registry.subscribe(userId, sessionId);
     this.submitExecution(sessionId, userId, resolvedEventId, (futureRef) =>
       this.runExecution(session, userId, sessionId, resolvedEventId, flag, clearTodos, futureRef), requeueIfClaimed);
   }
@@ -411,6 +437,7 @@ export class StreamingWsHandler {
         if (this.runningExecutionIds.get(sessionId) === executionId) this.runningExecutionIds.delete(sessionId);
         this.executionClaims.delete(sessionId);
         this.cancelFlags.delete(sessionId);
+        this.pendingCancels.delete(sessionId);
         this.deps.agentLoop.removeCancelFlag(sessionId);
         this.deps.activityHeartbeat.clear(sessionId);
         if (terminalPhase !== 'FAILED') await this.autoConsumeQueue(sessionId, userId);
@@ -791,6 +818,7 @@ export class StreamingWsHandler {
         if (this.runningExecutionIds.get(sessionId) === executionId) this.runningExecutionIds.delete(sessionId);
         this.executionClaims.delete(sessionId);
         this.cancelFlags.delete(sessionId);
+        this.pendingCancels.delete(sessionId);
         this.deps.agentLoop.removeCancelFlag(sessionId);
         this.deps.activityHeartbeat.clear(sessionId);
         if (terminalPhase !== 'FAILED') await this.autoConsumeQueue(sessionId, userId);
@@ -802,6 +830,15 @@ export class StreamingWsHandler {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
+    if (!this.cancelFlags.has(sessionId) && !this.executionClaims.has(sessionId)) {
+      // 执行尚未提交（send 的模型校验/LOCAL 检查/saveMessage await 期间，或 autoConsume 的 500ms 延迟窗口）：
+      // cancel flag 尚未注册，直接 set(true) 会空转。记录待取消标记（注册标志时消费），
+      // 同时落 CANCELLED 终态，保证 DB 状态收敛。
+      this.pendingCancels.add(sessionId);
+      this.deps.registry.send(userId, wsEvent('cancelled', sessionId, { pending: true, executionId: this.runningExecutionIds.get(sessionId) ?? '' }));
+      await this.finishCancelledSession(sessionId, userId, this.runningExecutionIds.get(sessionId) ?? randomUUID());
+      return;
+    }
     const executionId = this.runningExecutionIds.get(sessionId) ?? '';
     this.abortRunningExecution(sessionId, userId);
     await this.finishCancelledSession(sessionId, userId, executionId);
@@ -842,6 +879,12 @@ export class StreamingWsHandler {
           }
           if (this.executionClaims.has(sessionId)) {
             this.sendSessionAlreadyRunning(userId, sessionId);
+            return;
+          }
+          if (this.pendingCancels.delete(sessionId)) {
+            // 窗口期内有过「停止」：不执行插队消息，保留在队列
+            this.executionClaims.delete(sessionId);
+            await this.sendQueueUpdated(sessionId, userId);
             return;
           }
           this.executionClaims.add(sessionId);
@@ -946,7 +989,18 @@ export class StreamingWsHandler {
         try { imageList = JSON.parse(head.images) as string[]; } catch { /* ignore */ }
       }
       const messageContent: unknown = imageList.length === 0 ? content : contentParts(content, imageList);
-      const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
+      let savedMessage;
+      try {
+        savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
+      } catch (e) {
+        // M-3：队列行已出队（dequeue 已删除），saveMessage 失败必须回补队首，否则消息静默丢失。
+        console.error(`Failed to save auto-consumed message for session ${sessionId}, re-enqueueing`, e);
+        await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, head.images ?? null);
+        this.executionClaims.delete(sessionId);
+        this.autoConsumingSessionIds.delete(sessionId);
+        await this.sendQueueUpdated(sessionId, userId);
+        return;
+      }
       this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
       const consumed: Record<string, unknown> = { messageId: String(savedMessage.id), content };
       if (imageList.length > 0) consumed.images = imageList;
@@ -975,13 +1029,17 @@ export class StreamingWsHandler {
     const sessionId = this.getLong(root, 'sessionId');
     const success = root.success !== false;
     const error = typeof root.error === 'string' ? root.error : null;
-    console.info(`Received skill_sync_done from userId=${userId}, sessionId=${sessionId}, success=${success}`);
+    const reportSyncId = typeof root.syncId === 'string' ? root.syncId : null;
+    console.info(`Received skill_sync_done from userId=${userId}, sessionId=${sessionId}, success=${success}, syncId=${reportSyncId ?? ''}`);
     if (sessionId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
     const pending = this.pendingSkillSyncs.get(sessionId);
-    if (pending) {
+    // L-8：按 syncId 匹配轮次——迟到的旧轮次信号不得放行新一轮技能同步（MCP 侧已用 syncId，技能侧对齐）
+    if (pending && reportSyncId != null && reportSyncId === pending.syncId) {
       if (success) pending.resolve();
       else pending.reject(new Error(error && error.trim() !== '' ? error : 'Skill sync failed on client'));
+    } else if (pending && reportSyncId == null) {
+      console.warn(`skill_sync_done without syncId ignored for session=${sessionId}`);
     } else {
       console.warn(`No pending skill sync for session=${sessionId}`);
     }
@@ -1033,11 +1091,12 @@ export class StreamingWsHandler {
     const syncUrl = `/v1/skills/sync-package?sessionId=${sessionId}`;
     const removed = this.deps.skillSyncService.getRemovedSkillNames(agent, userId, sessionId);
     console.info(`Syncing skills to client for session=${sessionId}, userId=${userId}, syncUrl=${syncUrl}, workspace=${session.workspace ?? ''}, removed=${JSON.stringify(removed)}`);
+    const syncId = randomUUID();
     const done = new Promise<void>((resolve, reject) => {
-      this.pendingSkillSyncs.set(sessionId, { resolve, reject });
+      this.pendingSkillSyncs.set(sessionId, { syncId, resolve, reject });
     });
     this.deps.registry.sendToLocalClients(userId, wsEvent('skill_sync_required', sessionId, {
-      syncUrl, removed, workspace: session.workspace ?? '',
+      syncUrl, removed, workspace: session.workspace ?? '', syncId,
     }));
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
