@@ -210,6 +210,7 @@ import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 import { FeishuCardProgressListener, type FeishuCardProgress } from './feishu/card-progress-listener.js';
 import { inboundImageKeys } from './feishu/event-normalizer.js';
+import { chatFilesDirOf } from './feishu/chat-files.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 
@@ -1193,8 +1194,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
                 errors.push(context.fileName ?? '文件（接收失败）');
               } else {
                 const fileName = sanitizeFeishuFileName(context.fileName, `feishu-${context.fileKey}`);
-                mkdirSync(workspace, { recursive: true });
-                const target = resolve(workspace, fileName);
+                const dir = chatFilesDirOf(workspace);
+                mkdirSync(dir, { recursive: true });
+                const target = resolve(dir, fileName);
                 await writeFile(target, buffer);
                 filePaths.push(target);
               }
@@ -1308,10 +1310,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
     const { buffer, contentType } = await downloadFeishuMediaBuffer(client, event.messageId, imageKey, 'image', maxBytes);
     if (buffer.length === 0) return null;
-    mkdirSync(workspace, { recursive: true });
+    const dir = chatFilesDirOf(workspace);
+    mkdirSync(dir, { recursive: true });
     const ext = IMAGE_EXT_BY_CONTENT_TYPE[contentType] ?? '.jpg';
     // 同一 post 消息可能含多图：首图沿用原命名，其余追加序号防覆盖。
-    const target = resolve(workspace, index > 0 ? `feishu-image-${event.messageId}-${index + 1}${ext}` : `feishu-image-${event.messageId}${ext}`);
+    const target = resolve(dir, index > 0 ? `feishu-image-${event.messageId}-${index + 1}${ext}` : `feishu-image-${event.messageId}${ext}`);
     await writeFile(target, buffer);
     return target;
   };

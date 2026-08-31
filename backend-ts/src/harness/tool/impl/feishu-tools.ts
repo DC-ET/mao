@@ -9,6 +9,7 @@ import { ImageFileSupport } from '../image-file-support.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import type { FeishuChannelTool } from '../feishu-channel-tool.js';
 import type { FeishuSendTarget } from '../../../feishu/media-sender.js';
+import { chatFilesDirOf } from '../../../feishu/chat-files.js';
 import { harnessLog } from '../../log.js';
 
 /** 会话 → 飞书 Bot 解析：返回该会话所属 bot 的 app_id；非飞书通道会话返回 null。 */
@@ -161,14 +162,15 @@ export class FeishuDownloadFileTool extends BaseTool implements FeishuChannelToo
         media.appId, messageId, fileKey, isImage ? 'image' : 'file', this.maxBytes,
       );
       if (buffer.length === 0) return errorJson('文件下载失败：内容为空（可能已过期或无权限）');
-      mkdirSync(workspace, { recursive: true });
+      const dir = chatFilesDirOf(workspace);
+      mkdirSync(dir, { recursive: true });
       const suffix = messageId.slice(-8);
       const fallback = `feishu-${isImage ? 'img' : 'file'}-${suffix}`;
       const baseName = sanitizeFileName(isImage ? null : media.fileName, fallback);
       const ext = isImage ? imageExtensionOf(contentType) : extnameOf(baseName);
       const stem = isImage ? baseName : baseName.slice(0, baseName.length - ext.length);
-      let target = resolve(workspace, `${stem}${ext}`);
-      if (existsSync(target)) target = resolve(workspace, `${stem}-${suffix}${ext}`);
+      let target = resolve(dir, `${stem}${ext}`);
+      if (existsSync(target)) target = resolve(dir, `${stem}-${suffix}${ext}`);
       await writeFile(target, buffer);
       return toJson({ success: true, path: target });
     } catch (e) {

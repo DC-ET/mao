@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { writeFile as writeFileAsync } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeishuDownloadFileTool, ReadFeishuDocTool, SendFeishuFileTool, SendFeishuImageTool } from './feishu-tools.js';
+import { chatFilesDirOf } from '../../../feishu/chat-files.js';
 import type { FeishuMediaSendSupport } from './feishu-tools.js';
 import { isFeishuChannelSession } from '../feishu-channel-tool.js';
 import { PathSandbox } from '../../safety/path-sandbox.js';
@@ -79,20 +80,21 @@ describe('FeishuDownloadFileTool', () => {
     options.detailFetcher,
   );
 
-  it('downloads a group file into the workspace and returns the path', async () => {
+  it('downloads a group file into the workspace chat-files date directory and returns the path', async () => {
     const result = await makeTool().execute(JSON.stringify({ message_id: 'om_123' }), 9, 1, workspace);
     const parsed = JSON.parse(result);
     expect(parsed.success).toBe(true);
-    expect(parsed.path).toBe(join(workspace, '说明.md'));
+    expect(parsed.path).toBe(join(chatFilesDirOf(workspace), '说明.md'));
     expect(existsSync(parsed.path)).toBe(true);
   });
 
   it('avoids overwriting an existing file with the same name', async () => {
-    writeFileSync(join(workspace, '说明.md'), 'old');
+    mkdirSync(chatFilesDirOf(workspace), { recursive: true });
+    writeFileSync(join(chatFilesDirOf(workspace), '说明.md'), 'old');
     const result = await makeTool().execute(JSON.stringify({ message_id: 'om_123' }), 9, 1, workspace);
     const parsed = JSON.parse(result);
     expect(parsed.success).toBe(true);
-    expect(parsed.path).toBe(join(workspace, '说明-om_123.md'));
+    expect(parsed.path).toBe(join(chatFilesDirOf(workspace), '说明-om_123.md'));
   });
 
   it('falls back to message detail API when the log has no such media', async () => {
@@ -107,7 +109,7 @@ describe('FeishuDownloadFileTool', () => {
     const result = await tool.execute(JSON.stringify({ message_id: 'om_bot_msg' }), 9, 1, workspace);
     const parsed = JSON.parse(result);
     expect(parsed.success).toBe(true);
-    expect(parsed.path).toBe(join(workspace, 'robot-file.pdf'));
+    expect(parsed.path).toBe(join(chatFilesDirOf(workspace), 'robot-file.pdf'));
   });
 
   it('rejects messages without a downloadable file', async () => {
