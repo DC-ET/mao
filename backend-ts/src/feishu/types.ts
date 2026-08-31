@@ -21,7 +21,7 @@ export interface FeishuBotRepository {
 import type { AgentEventListener } from '../harness/core/agent-event-listener.js';
 export type FeishuChatType = 'p2p' | 'group' | 'unknown';
 export interface FeishuEventHeader { eventId?: string; eventType?: string; createTime?: string; tenantKey?: string; appId?: string; token?: string; }
-export interface FeishuNormalizedMessage { eventId: string | null; messageId: string | null; parentId?: string | null; rootId?: string | null; chatId: string | null; chatType: FeishuChatType; senderId: string | null; senderUnionId: string | null; senderName?: string; maoUserId?: number; senderType: string | null; messageType: string; imageKey?: string | null; fileKey?: string | null; fileName?: string | null; text: string; mentions: string[]; isBotMentioned: boolean; content: unknown; rawEvent: unknown; header?: FeishuEventHeader; progressCardMessageId?: string | null; }
+export interface FeishuNormalizedMessage { eventId: string | null; messageId: string | null; parentId?: string | null; rootId?: string | null; chatId: string | null; chatType: FeishuChatType; senderId: string | null; senderUnionId: string | null; senderName?: string; maoUserId?: number; senderType: string | null; messageType: string; imageKey?: string | null; /** post 富文本内嵌图片 key（image 消息也含单元素数组）；imageKey 为首个，兼容群媒体单值落库。 */ imageKeys?: string[] | null; fileKey?: string | null; fileName?: string | null; text: string; mentions: string[]; isBotMentioned: boolean; content: unknown; rawEvent: unknown; header?: FeishuEventHeader; progressCardMessageId?: string | null; }
 export interface FeishuInboundContext extends FeishuNormalizedMessage {
   accountId: string;
   /** Group messages are annotated before reaching the agent handler. */

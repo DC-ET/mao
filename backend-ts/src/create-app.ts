@@ -209,6 +209,7 @@ import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 import { FeishuCardProgressListener, type FeishuCardProgress } from './feishu/card-progress-listener.js';
+import { inboundImageKeys } from './feishu/event-normalizer.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
 import { WsStreamingEventListener } from './session/ws/ws-streaming-event-listener.js';
 
@@ -1163,24 +1164,26 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const botId = Number(context.accountId);
       const client = await getFeishuClient(botId);
       if (client == null) return null;
-      const isMedia = context.messageType === 'image' && context.imageKey != null
-        || context.messageType === 'file' && context.fileKey != null;
+      // image：独立图片消息；post：图片+文字富文本，imageKeys 含全部内嵌图片。
+      const inboundKeys = inboundImageKeys(context);
+      const isMedia = inboundKeys.length > 0 || context.messageType === 'file' && context.fileKey != null;
       if (!isMedia || context.messageId == null) return null;
       const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
       const images: string[] = [];
       const filePaths: string[] = [];
       const errors: string[] = [];
       try {
-        if (context.messageType === 'image' && context.imageKey != null) {
+        for (const imageKey of inboundKeys) {
           try {
-            const { buffer, contentType } = await downloadFeishuMediaBuffer(client, context.messageId, context.imageKey, 'image', maxBytes);
+            const { buffer, contentType } = await downloadFeishuMediaBuffer(client, context.messageId, imageKey, 'image', maxBytes);
             if (buffer.length === 0) errors.push('图片（接收失败）');
             else images.push(dataUriOf(contentType, buffer));
           } catch (error) {
             console.error(`飞书图片下载失败, bot=${botId}, messageId=${context.messageId}`, error);
             errors.push('图片（接收失败）');
           }
-        } else if (context.messageType === 'file' && context.fileKey != null) {
+        }
+        if (context.messageType === 'file' && context.fileKey != null) {
           if (workspace == null || workspace === '') {
             errors.push(context.fileName ?? '文件（接收失败）');
           } else {
@@ -1297,17 +1300,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       return null;
     }
   };
-  const downloadFeishuGroupImage = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
-    if (event.chatType !== 'group' || event.chatId == null || event.messageId == null || event.imageKey == null) return null;
+  const downloadFeishuGroupImage = async (accountId: string, event: FeishuNormalizedMessage, imageKey: string, index = 0): Promise<string | null> => {
+    if (event.chatType !== 'group' || event.chatId == null || event.messageId == null) return null;
     const client = await getFeishuClient(Number(accountId));
     if (client == null) return null;
     const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, event.chatId);
     const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
-    const { buffer, contentType } = await downloadFeishuMediaBuffer(client, event.messageId, event.imageKey, 'image', maxBytes);
+    const { buffer, contentType } = await downloadFeishuMediaBuffer(client, event.messageId, imageKey, 'image', maxBytes);
     if (buffer.length === 0) return null;
     mkdirSync(workspace, { recursive: true });
     const ext = IMAGE_EXT_BY_CONTENT_TYPE[contentType] ?? '.jpg';
-    const target = resolve(workspace, `feishu-image-${event.messageId}${ext}`);
+    // 同一 post 消息可能含多图：首图沿用原命名，其余追加序号防覆盖。
+    const target = resolve(workspace, index > 0 ? `feishu-image-${event.messageId}-${index + 1}${ext}` : `feishu-image-${event.messageId}${ext}`);
     await writeFile(target, buffer);
     return target;
   };

@@ -58,6 +58,18 @@ describe('fetchFeishuMessageDetail 卡片文本提取', () => {
     expect(detail?.text).toContain('来自监控平台');
   });
 
+  it('extracts post rich text with image placeholders instead of dropping media', async () => {
+    const post = {
+      title: '',
+      content: [
+        [{ tag: 'text', text: '这个图片的内容是什么?' }, { tag: 'img', image_key: 'img_v3_abc' }],
+      ],
+    };
+    const detail = await fetchDetail({ msg_type: 'post', body: { content: JSON.stringify(post) } });
+    expect(detail?.msgType).toBe('post');
+    expect(detail?.text).toBe('这个图片的内容是什么? [图片]');
+  });
+
   it('falls back to placeholder when card has no text elements', async () => {
     const card = { elements: [{ tag: 'img', img_key: 'img_v3_x' }, { tag: 'hr' }] };
     const detail = await fetchDetail({ msg_type: 'interactive', body: { content: JSON.stringify(card) } });

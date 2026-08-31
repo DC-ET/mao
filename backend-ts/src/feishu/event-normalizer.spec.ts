@@ -241,6 +241,44 @@ describe('normalizeFeishuEvent', () => {
     expect(event!.fileName).toBe('report.pdf');
   });
 
+  it('parses post rich text message with embedded images (图片+文字)', () => {
+    // 飞书发送图片+文字时消息类型是 post（富文本），图片以内嵌 img 元素存在。
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_post', chat_type: 'p2p', message_type: 'post',
+          content: JSON.stringify({
+            title: '',
+            content: [
+              [{ tag: 'text', text: '这个图片的内容是什么?' }, { tag: 'img', image_key: 'img_a' }],
+              [{ tag: 'img', image_key: 'img_b' }],
+            ],
+          }),
+        },
+      },
+    });
+    expect(event!.messageType).toBe('post');
+    expect(event!.imageKey).toBe('img_a');
+    expect(event!.imageKeys).toEqual(['img_a', 'img_b']);
+  });
+
+  it('post message without images has no image keys', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_post_text', chat_type: 'p2p', message_type: 'post',
+          content: '{"title":"","content":[[{"tag":"text","text":"纯文字"}]]}',
+        },
+      },
+    });
+    expect(event!.imageKey).toBeNull();
+    expect(event!.imageKeys).toBeUndefined();
+  });
+
   it('falls back to is_at_me true when mentions exist', () => {
     const event = normalizeFeishuEvent({
       header: { app_id: 'cli_mybot' },

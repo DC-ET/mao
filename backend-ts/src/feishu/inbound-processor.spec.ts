@@ -248,6 +248,50 @@ describe('FeishuInboundProcessor', () => {
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '[文件:a.pdf msg=om_1]' }));
   });
 
+  it('normalizes p2p post image+text keeping text and image keys (图片+文字)', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.text }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+    });
+    await processor.process('1', {
+      ...makeEvent({ chatType: 'p2p', messageType: 'post', text: '', isBotMentioned: false }),
+      imageKey: 'img_a',
+      imageKeys: ['img_a'],
+      content: { title: '', content: [[{ tag: 'text', text: '这个图片的内容是什么?' }, { tag: 'img', image_key: 'img_a' }]] },
+    } as FeishuNormalizedMessage);
+    // post 占位文本 = 原文字 + [图片] 占位；图片由 downloadMedia 按 imageKeys 注入。
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: '这个图片的内容是什么? [图片]',
+      imageKeys: ['img_a'],
+    }));
+  });
+
+  it('pre-downloads post rich-text images in group and appends refs without dropping text', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(103);
+    const downloadGroupImage = vi.fn(async (_accountId: string, _event: FeishuNormalizedMessage, imageKey: string, index: number) =>
+      `/ws/feishu-image-${imageKey}-${index}.png`);
+    const processor = new FeishuInboundProcessor(makeHandler(), {
+      messageService,
+      downloadGroupImage,
+    });
+    await processor.process('1', makeEvent({
+      messageId: 'om_post',
+      messageType: 'post',
+      text: '这个图片的内容是什么? [图片]',
+      imageKey: 'img_a',
+      imageKeys: ['img_a', 'img_b'],
+      isBotMentioned: false,
+    }));
+    await vi.waitFor(() => expect(messageService.updateGroupMessageContent).toHaveBeenCalledWith(103,
+      '这个图片的内容是什么? [图片]\n@{/ws/feishu-image-img_a-0.png}@\n@{/ws/feishu-image-img_b-1.png}@'));
+    expect(downloadGroupImage).toHaveBeenCalledTimes(2);
+    expect(downloadGroupImage).toHaveBeenCalledWith('1', expect.anything(), 'img_a', 0);
+    expect(downloadGroupImage).toHaveBeenCalledWith('1', expect.anything(), 'img_b', 1);
+  });
+
   it('releases claim when handler throws', async () => {
     messageService.claimInboundMessage.mockResolvedValueOnce(true);
     const processor = new FeishuInboundProcessor(makeHandler(async () => { throw new Error('boom'); }), {

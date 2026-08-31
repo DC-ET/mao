@@ -79,7 +79,11 @@ function collectText(node: unknown): string {
   if (Array.isArray(node)) return node.map(collectText).join('');
   if (node != null && typeof node === 'object') {
     const record = node as Record<string, unknown>;
-    if (record.tag === 'img' || record.tag === 'media' || record.tag === 'emotion') return ' ';
+    // 图片/视频/表情输出占位符（而非丢弃），让 Agent 知道消息中存在媒体；
+    // 图片本体由 downloadMedia / prewarmGroupImage 按 imageKeys 下载注入。
+    if (record.tag === 'img') return ' [图片] ';
+    if (record.tag === 'media') return ' [视频] ';
+    if (record.tag === 'emotion') return ' ';
     const own = typeof record.text === 'string' ? record.text : '';
     return own + collectText(record.content);
   }

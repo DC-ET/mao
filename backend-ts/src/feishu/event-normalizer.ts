@@ -48,6 +48,7 @@ export function normalizeFeishuEvent(input: unknown, botOpenId?: string): Feishu
     senderType: firstString(sender.sender_type, event.sender_type) ?? null,
     messageType,
     imageKey: media.imageKey ?? null,
+    imageKeys: media.imageKeys,
     fileKey: media.fileKey ?? null,
     fileName: media.fileName ?? null,
     // 文本中的 @提及 是 @_user_N 占位符，需用 mentions 的姓名还原，否则 Agent 不知道 @ 的是谁。
@@ -114,11 +115,31 @@ function replaceMentionKeys(text: string, mentionItems: MentionItem[]): string {
   return replaced;
 }
 
-function extractMedia(messageType: string, content: unknown): { imageKey?: string; fileKey?: string; fileName?: string } {
+function extractMedia(messageType: string, content: unknown): { imageKey?: string; imageKeys?: string[]; fileKey?: string; fileName?: string } {
   const record = asRecord(content);
-  if (messageType === 'image') return { imageKey: firstString(record.image_key) };
+  if (messageType === 'image') return { imageKey: firstString(record.image_key), imageKeys: [firstString(record.image_key)].filter((k): k is string => k != null) };
+  // 图片+文字在飞书以富文本（post）发送：递归收集 img 元素的 image_key，否则 Agent 收不到图。
+  if (messageType === 'post') {
+    const imageKeys = collectPostImageKeys(record.content);
+    return imageKeys.length > 0 ? { imageKey: imageKeys[0], imageKeys } : {};
+  }
   if (messageType === 'file') return { fileKey: firstString(record.file_key), fileName: firstString(record.file_name) };
   return {};
+}
+
+function collectPostImageKeys(node: unknown): string[] {
+  if (Array.isArray(node)) return node.flatMap(collectPostImageKeys);
+  if (node == null || typeof node !== 'object') return [];
+  const record = node as Record<string, unknown>;
+  if (record.tag === 'img' && typeof record.image_key === 'string' && record.image_key !== '') return [record.image_key];
+  return Object.values(record).flatMap(collectPostImageKeys);
+}
+
+/** 入站消息待下载图片 key 列表：独立图片消息取 image_key；post 富文本取全部内嵌 img（图片+文字场景）。 */
+export function inboundImageKeys(event: Pick<FeishuNormalizedMessage, 'messageType' | 'imageKey' | 'imageKeys'>): string[] {
+  if (event.messageType === 'image') return event.imageKeys ?? (event.imageKey != null ? [event.imageKey] : []);
+  if (event.messageType === 'post') return event.imageKeys ?? [];
+  return [];
 }
 
 function asRecord(value: unknown): Record<string, any> {

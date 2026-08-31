@@ -1,4 +1,5 @@
 import type { FeishuInboundHandler, FeishuNormalizedMessage, FeishuInboundContext, FeishuReply } from './types.js';
+import { inboundImageKeys } from './event-normalizer.js';
 import type { FeishuMessageService } from './message.service.js';
 import { botSenderLabel, isBotSender } from './message.service.js';
 import { describeMessageText } from './message-detail.js';
@@ -17,8 +18,8 @@ export interface FeishuInboundProcessorOptions {
   resolveSenderName?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
   /** 解析被引用/回复消息的内容文本（含 [引用消息] 前缀）；返回 null 表示无法解析。 */
   resolveQuotedMessage?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
-  /** 群聊图片入站即下载（非懒加载）：返回落盘绝对路径嵌入占位文本；null/抛错表示失败，保留懒加载占位符。 */
-  downloadGroupImage?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
+  /** 群聊图片入站即下载（非懒加载）：按 imageKey 下载并返回落盘绝对路径嵌入占位文本；null/抛错表示失败，保留懒加载占位符。 */
+  downloadGroupImage?: (accountId: string, event: FeishuNormalizedMessage, imageKey: string, index: number) => Promise<string | null>;
 }
 
 export class FeishuInboundProcessor {
@@ -150,17 +151,25 @@ export class FeishuInboundProcessor {
     }
   }
 
-  /** 群图片预下载：成功回填日志行内容为本地路径引用；失败保留 msg 占位符走 feishu_download_file 懒加载兜底。 */
+  /** 群图片预下载：成功回填日志行内容为本地路径引用；失败保留 msg 占位符走 feishu_download_file 懒加载兜底。
+   *  独立图片消息整体替换占位文本；post 富文本（图片+文字）在原文后追加图片引用，保留文字内容。 */
   private async prewarmGroupImage(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
-    if (event.messageType !== 'image' || this.options.downloadGroupImage == null) return;
-    try {
-      const path = await this.options.downloadGroupImage(accountId, event);
-      if (path == null || path === '') return;
-      // 飞书图片消息无文本，text 此时只可能是懒加载占位符，直接整体替换。
-      await this.options.messageService?.updateGroupMessageContent(logId, `[图片已保存: @{${path}}@]`);
-    } catch (error) {
-      console.warn(`飞书群图片预下载失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+    const keys = inboundImageKeys(event);
+    if (keys.length === 0 || this.options.downloadGroupImage == null) return;
+    const refs: string[] = [];
+    for (let i = 0; i < keys.length; i++) {
+      try {
+        const path = await this.options.downloadGroupImage(accountId, event, keys[i], i);
+        if (path != null && path !== '') refs.push(`@{${path}}@`);
+      } catch (error) {
+        console.warn(`飞书群图片预下载失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
+    if (refs.length === 0) return;
+    const content = event.messageType === 'image'
+      ? `[图片已保存: ${refs.join(' ')}]`
+      : `${event.text}\n${refs.join('\n')}`;
+    await this.options.messageService?.updateGroupMessageContent(logId, content);
   }
 
   private normalizeText(event: FeishuNormalizedMessage): FeishuNormalizedMessage {
