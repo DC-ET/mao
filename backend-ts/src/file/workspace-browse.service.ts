@@ -16,6 +16,7 @@ const MAX_ENTRIES = 500;
 const DEFAULT_READ_LIMIT = 5000;
 const MAX_READ_LIMIT = 5000;
 const MAX_CONTENT_BYTES = 512 * 1024;
+const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_ZIP_BYTES = 1024 * 1024 * 1024;
 
 export interface DirectoryEntryDTO {
@@ -227,6 +228,13 @@ export class WorkspaceBrowseService {
     this.assertRealPathInWorkspace(filePath, sessionWorkspace, relativePath);
     if (ImageFileSupport.mimeFromPath(relativePath)) {
       return this.readImageFile(filePath, relativePath);
+    }
+    // 文本预览整文件读入内存，必须先做大小上限（与图片/PDF 路径对齐），防止大文件触发 OOM
+    if (lst.size > MAX_TEXT_PREVIEW_BYTES) {
+      throw new BusinessException(
+        ErrorCode.PARAM_INVALID,
+        `文件过大（${formatSize(lst.size)}），文本预览上限为 ${formatSize(MAX_TEXT_PREVIEW_BYTES)}，请下载后查看`,
+      );
     }
     const effectiveOffset = Math.max(offset, 0);
     const effectiveLimit = limit > 0 ? Math.min(limit, MAX_READ_LIMIT) : DEFAULT_READ_LIMIT;

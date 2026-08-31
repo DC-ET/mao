@@ -77,9 +77,12 @@ export class UserService {
     if (status != null) {
       user.status = status;
     }
-    await this.userRepo.updateById(user);
+    // 角色变更校验必须前置于用户行持久化：断言失败时不得留下已写入的半截修改（无事务回滚）
     if (roleIds != null) {
       await this.permissionService.assertCanChangeRoles(id, roleIds);
+    }
+    await this.userRepo.updateById(user);
+    if (roleIds != null) {
       await this.permissionService.assignRoles(id, roleIds);
     }
     return user;

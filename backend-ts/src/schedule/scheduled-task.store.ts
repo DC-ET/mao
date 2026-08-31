@@ -9,8 +9,8 @@ export class ScheduledTaskDbStore implements ScheduledTaskStore {
     return this.db.insert('scheduled_task', task);
   }
 
-  updateById(task: ScheduledTask): Promise<void> {
-    return this.db.updateById('scheduled_task', task.id!, task);
+  updateById(task: Partial<ScheduledTask> & { id: number }): Promise<void> {
+    return this.db.updateById('scheduled_task', task.id, task);
   }
 
   async deleteById(id: number): Promise<void> {

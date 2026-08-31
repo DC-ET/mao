@@ -27,6 +27,13 @@ export class MessageQueueRepository {
     return this.db.queryOne<MessageQueue>(`SELECT * FROM message_queue WHERE id = ? AND ${notDeleted()}`, [id]);
   }
 
+  findByIdForUpdate(id: number): Promise<MessageQueue | null> {
+    return this.db.queryOne<MessageQueue>(
+      `SELECT * FROM message_queue WHERE id = ? AND ${notDeleted()} FOR UPDATE`,
+      [id],
+    );
+  }
+
   async insert(item: MessageQueue): Promise<number> {
     const id = await this.db.insert('message_queue', {
       sessionId: item.sessionId,
@@ -77,6 +84,20 @@ export class MessageQueueRepository {
   findNeighborDown(sessionId: number, sortOrder: number): Promise<MessageQueue | null> {
     return this.db.queryOne<MessageQueue>(
       `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} AND sort_order > ? ORDER BY sort_order ASC, id ASC LIMIT 1`,
+      [sessionId, sortOrder],
+    );
+  }
+
+  findNeighborUpForUpdate(sessionId: number, sortOrder: number): Promise<MessageQueue | null> {
+    return this.db.queryOne<MessageQueue>(
+      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} AND sort_order < ? ORDER BY sort_order DESC, id DESC LIMIT 1 FOR UPDATE`,
+      [sessionId, sortOrder],
+    );
+  }
+
+  findNeighborDownForUpdate(sessionId: number, sortOrder: number): Promise<MessageQueue | null> {
+    return this.db.queryOne<MessageQueue>(
+      `SELECT * FROM message_queue WHERE session_id = ? AND status = 'PENDING' AND ${notDeleted()} AND sort_order > ? ORDER BY sort_order ASC, id ASC LIMIT 1 FOR UPDATE`,
       [sessionId, sortOrder],
     );
   }

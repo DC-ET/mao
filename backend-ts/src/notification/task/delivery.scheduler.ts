@@ -70,8 +70,11 @@ export interface TaskNotificationProperties {
   maxAttempts: number;
 }
 
+/** SENDING 卡死行恢复的执行间隔：每 tick 一次代价过高，节流为每分钟。 */
+const RECOVERY_INTERVAL_MS = 60_000;
+
 export class WebhookDeliveryScheduler {
-  private recoveryCompleted = false;
+  private lastRecoveryAt = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -107,8 +110,11 @@ export class WebhookDeliveryScheduler {
   }
 
   async dispatchDueDeliveries(): Promise<void> {
-    if (!this.recoveryCompleted) {
-      this.recoveryCompleted = true;
+    // 恢复逻辑周期化执行（原先仅进程首个 tick 一次）：卡死在 SENDING 的行可在运行期被复位，
+    // 不必等到进程重启。updated_at 带 ON UPDATE CURRENT_TIMESTAMP，5 分钟 cutoff 不会误伤在途发送。
+    const nowMs = Date.now();
+    if (nowMs - this.lastRecoveryAt >= RECOVERY_INTERVAL_MS) {
+      this.lastRecoveryAt = nowMs;
       await this.recoverInterruptedDeliveries();
     }
     const now = formatDateTime(new Date());

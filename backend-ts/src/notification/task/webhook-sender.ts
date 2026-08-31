@@ -1,7 +1,15 @@
 import type { NotificationChannel, WebhookSendResult } from './types.js';
 import { webhookFailure, webhookSuccess } from './types.js';
 
-export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{
+/** Webhook 请求显式超时：不依赖 undici 默认空闲超时，慢速滴流对端也将在此时限内失败并进入重试。 */
+const REQUEST_TIMEOUT_MS = 10_000;
+
+export type FetchLike = (url: string, init: {
+  method: string;
+  headers: Record<string, string>;
+  body: string;
+  signal?: AbortSignal;
+}) => Promise<{
   ok: boolean;
   status: number;
   text(): Promise<string>;
@@ -26,6 +34,7 @@ export class DingTalkWebhookSender implements WebhookSender {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
         body: json,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const body = await response.text();
       const root = body.trim() === '' ? {} : JSON.parse(body) as Record<string, unknown>;
@@ -56,6 +65,7 @@ export class FeishuWebhookSender implements WebhookSender {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
         body: json,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const body = await response.text();
       const root = body.trim() === '' ? {} : JSON.parse(body) as Record<string, unknown>;

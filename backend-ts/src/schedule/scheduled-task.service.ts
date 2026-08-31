@@ -30,7 +30,8 @@ export interface ScheduledTask {
 
 export interface ScheduledTaskStore {
   insert(task: ScheduledTask): Promise<number>;
-  updateById(task: ScheduledTask): Promise<void>;
+  /** 支持增量 patch：仅更新传入字段，避免调用方用旧快照整行回写覆盖并发修改。 */
+  updateById(task: Partial<ScheduledTask> & { id: number }): Promise<void>;
   deleteById(id: number): Promise<void>;
   selectById(id: number): Promise<ScheduledTask | null>;
   listByUser(userId: number): Promise<ScheduledTask[]>;
@@ -91,13 +92,16 @@ async function withSessionLock<T>(sessionId: number, fn: () => Promise<T>): Prom
   const prev = sessionLocks.get(sessionId) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((r) => { release = r; });
-  sessionLocks.set(sessionId, prev.then(() => current));
+  // Map 中存链式 Promise（同 GitWriteOperationService.withRepoLock），清理时按同一引用比较，
+  // 否则清理条件永假导致 Map 条目按 sessionId 泄漏。
+  const chained = prev.then(() => current, () => current);
+  sessionLocks.set(sessionId, chained);
   await prev;
   try {
     return await fn();
   } finally {
     release();
-    if (sessionLocks.get(sessionId) === current) {
+    if (sessionLocks.get(sessionId) === chained) {
       sessionLocks.delete(sessionId);
     }
   }
@@ -172,7 +176,18 @@ export class ScheduledTaskService {
         task.finishedAt = null;
       }
     }
-    await this.store.updateById(task);
+    // 显式字段 patch：不回写 created_at/updated_at 等只读列，
+    // 让 updated_at 由 ON UPDATE CURRENT_TIMESTAMP 依据真实修改时刻刷新。
+    await this.store.updateById({
+      id: task.id!,
+      name: task.name,
+      prompt: task.prompt,
+      cronExpression: task.cronExpression,
+      status: task.status,
+      nextFireTime: task.nextFireTime,
+      finished: task.finished,
+      finishedAt: task.finishedAt,
+    });
     return task;
   }
 
@@ -203,8 +218,11 @@ export class ScheduledTaskService {
     if (task.id != null) this.inFlight.add(task.id);
     let submitted = false;
     try {
-      task.nextFireTime = this.calculateNextFireTime(task.cronExpression!);
-      await this.store.updateById(task);
+      // M-5 同类约束：此处仅增量写 nextFireTime，禁止用 listDue 的 T0 快照整行回写，
+      // 否则会覆盖扫描到执行之间用户对 name/prompt/cron/status 的修改。
+      const nextFireTime = this.calculateNextFireTime(task.cronExpression!);
+      task.nextFireTime = nextFireTime;
+      await this.store.updateById({ id: task.id!, nextFireTime });
       const executionId = randomUUID();
       const userId = task.userId!;
       this.agentExecutor(async () => {
@@ -284,7 +302,7 @@ export class ScheduledTaskService {
               if (!countThisRun) return;
               // M-5：执行收尾只做「增量更新」——仅写执行结果字段，避免整行回写
               // T0 快照覆盖执行期间用户对 cron/prompt/name/status 的修改。
-              const patch: ScheduledTask = { id: task.id };
+              const patch: Partial<ScheduledTask> & { id: number } = { id: task.id! };
               const now = formatDateTime(new Date());
               patch.lastFireTime = now;
               patch.fireCount = (task.fireCount ?? 0) + 1;
@@ -330,7 +348,9 @@ export class ScheduledTaskService {
 
   private async markTaskResult(task: ScheduledTask, status: string): Promise<void> {
     task.lastExecutionStatus = status;
-    await this.store.updateById(task);
+    // 增量写：避免用可能过期的 task 对象整行回写（同 executeTask 开头，见 M-5 注释）
+    if (task.id == null) return;
+    await this.store.updateById({ id: task.id, lastExecutionStatus: status });
   }
 
   private async sendWeixinReplyIfApplicable(sessionId: number, userId: number): Promise<void> {
@@ -437,9 +457,12 @@ export class ScheduledTaskScheduler {
           await this.service.executeTask(task);
         } catch (e) {
           console.error(`Failed to execute scheduled task: id=${task.id}, name=${task.name}`, e);
-          task.lastExecutionStatus = 'FAILED';
-          task.nextFireTime = this.service.calculateNextFireTime(task.cronExpression!);
-          await this.store.updateById(task);
+          // 增量写：task 是 listDue 的 T0 快照，整行回写会覆盖用户并发修改
+          await this.store.updateById({
+            id: task.id!,
+            lastExecutionStatus: 'FAILED',
+            nextFireTime: this.service.calculateNextFireTime(task.cronExpression!),
+          });
         }
       }
     } finally {

@@ -10,6 +10,7 @@ function queue(id: number, sessionId: number, order: number, status: string): Me
 describe('MessageQueueService', () => {
   const repo = {
     findById: vi.fn(),
+    findByIdForUpdate: vi.fn(),
     insert: vi.fn(async (item) => {
       item.id = 99;
       return 99;
@@ -19,6 +20,8 @@ describe('MessageQueueService', () => {
     findHeadPending: vi.fn(),
     findNeighborUp: vi.fn(),
     findNeighborDown: vi.fn(),
+    findNeighborUpForUpdate: vi.fn(),
+    findNeighborDownForUpdate: vi.fn(),
     listPending: vi.fn(),
     clearPending: vi.fn(),
     findLastPendingForUpdate: vi.fn(),
@@ -71,8 +74,8 @@ describe('MessageQueueService', () => {
   it('reorderSwapsSortOrderWithNeighbor', async () => {
     const current = queue(3, 10, 2, 'PENDING');
     const neighbor = queue(4, 10, 1, 'PENDING');
-    vi.mocked(repo.findById).mockResolvedValue(current);
-    vi.mocked(repo.findNeighborUp).mockResolvedValue(neighbor);
+    vi.mocked(repo.findByIdForUpdate).mockResolvedValue(current);
+    vi.mocked(repo.findNeighborUpForUpdate).mockResolvedValue(neighbor);
     await service.reorder(3, 'up');
     expect(current.sortOrder).toBe(1);
     expect(neighbor.sortOrder).toBe(2);
@@ -82,17 +85,48 @@ describe('MessageQueueService', () => {
 
   it('reorderIgnoresMissingDeletedOrEdgeItem', async () => {
     vi.mocked(repo.updateById).mockClear();
-    vi.mocked(repo.findById).mockResolvedValueOnce(null);
+    vi.mocked(repo.findByIdForUpdate).mockResolvedValueOnce(null);
     await service.reorder(10, 'down');
 
-    vi.mocked(repo.findById).mockResolvedValueOnce(queue(11, 10, 2, 'DELETED'));
+    vi.mocked(repo.findByIdForUpdate).mockResolvedValueOnce(queue(11, 10, 2, 'DELETED'));
     await service.reorder(11, 'down');
 
     const current = queue(12, 10, 2, 'PENDING');
-    vi.mocked(repo.findById).mockResolvedValueOnce(current);
-    vi.mocked(repo.findNeighborDown).mockResolvedValueOnce(null);
+    vi.mocked(repo.findByIdForUpdate).mockResolvedValueOnce(current);
+    vi.mocked(repo.findNeighborDownForUpdate).mockResolvedValueOnce(null);
     await service.reorder(12, 'down');
     expect(repo.updateById).not.toHaveBeenCalled();
+  });
+
+  it('reorderRetriesOnLockDeadlockAndSucceeds', async () => {
+    const deadlock = Object.assign(new Error('Deadlock'), { code: 'ER_LOCK_DEADLOCK' });
+    vi.mocked(repo.transaction).mockClear();
+    vi.mocked(repo.transaction).mockImplementationOnce(async () => { throw deadlock; });
+    const current = queue(3, 10, 2, 'PENDING');
+    const neighbor = queue(4, 10, 1, 'PENDING');
+    vi.mocked(repo.findByIdForUpdate).mockResolvedValue(current);
+    vi.mocked(repo.findNeighborUpForUpdate).mockResolvedValue(neighbor);
+    await service.reorder(3, 'up');
+    expect(current.sortOrder).toBe(1);
+    expect(repo.transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('reorderRethrowsAfterRetriesExhausted', async () => {
+    const deadlock = Object.assign(new Error('Deadlock'), { code: 'ER_LOCK_DEADLOCK' });
+    vi.mocked(repo.transaction).mockClear();
+    vi.mocked(repo.transaction).mockImplementationOnce(async () => { throw deadlock; });
+    vi.mocked(repo.transaction).mockImplementationOnce(async () => { throw deadlock; });
+    vi.mocked(repo.transaction).mockImplementationOnce(async () => { throw deadlock; });
+    await expect(service.reorder(3, 'up')).rejects.toBe(deadlock);
+    expect(repo.transaction).toHaveBeenCalledTimes(3);
+  });
+
+  it('reorderDoesNotRetryOnNonLockErrors', async () => {
+    const boom = new Error('boom');
+    vi.mocked(repo.transaction).mockClear();
+    vi.mocked(repo.transaction).mockImplementationOnce(async () => { throw boom; });
+    await expect(service.reorder(3, 'up')).rejects.toBe(boom);
+    expect(repo.transaction).toHaveBeenCalledTimes(1);
   });
 
   it('listGetAndClearDelegateToMapper', async () => {

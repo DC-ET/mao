@@ -55,20 +55,39 @@ export class MessageQueueService {
   }
 
   async reorder(queueId: number, direction: string): Promise<void> {
-    const current = await this.repo.findById(queueId);
-    if (current == null || current.status !== 'PENDING' || current.sessionId == null || current.sortOrder == null) {
-      return;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.reorderOnce(queueId, direction);
+        return;
+      } catch (e) {
+        // 相反方向并发操作同一对相邻行时锁序相反，可能触发 InnoDB 死锁；
+        // 死锁由 InnoDB 即时检测并回滚一侧，基于最新状态有限重试，避免 WS 层表现为静默失败。
+        // 锁等待超时不重试：等待本身已耗时 innodb_lock_wait_timeout，立即重试会进一步挂起请求。
+        if (attempt < 2 && isLockConflictError(e)) continue;
+        throw e;
+      }
     }
-    const neighbor = direction === 'up'
-      ? await this.repo.findNeighborUp(current.sessionId, current.sortOrder)
-      : await this.repo.findNeighborDown(current.sessionId, current.sortOrder);
-    if (neighbor != null && neighbor.sortOrder != null) {
-      const tempOrder = current.sortOrder;
-      current.sortOrder = neighbor.sortOrder;
-      neighbor.sortOrder = tempOrder;
-      await this.repo.updateById(current);
-      await this.repo.updateById(neighbor);
-    }
+  }
+
+  private async reorderOnce(queueId: number, direction: string): Promise<void> {
+    // 事务 + FOR UPDATE 锁定 current 与 neighbor（同 enqueue 的队尾锁策略），
+    // 防止并发 reorder 读到相同快照导致交换丢失或重复 sort_order。
+    await this.repo.transaction(async (tx) => {
+      const current = await tx.findByIdForUpdate(queueId);
+      if (current == null || current.status !== 'PENDING' || current.sessionId == null || current.sortOrder == null) {
+        return;
+      }
+      const neighbor = direction === 'up'
+        ? await tx.findNeighborUpForUpdate(current.sessionId, current.sortOrder)
+        : await tx.findNeighborDownForUpdate(current.sessionId, current.sortOrder);
+      if (neighbor != null && neighbor.sortOrder != null) {
+        const tempOrder = current.sortOrder;
+        current.sortOrder = neighbor.sortOrder;
+        neighbor.sortOrder = tempOrder;
+        await tx.updateById(current);
+        await tx.updateById(neighbor);
+      }
+    });
   }
 
   listPending(sessionId: number): Promise<MessageQueue[]> {
@@ -82,4 +101,12 @@ export class MessageQueueService {
   clear(sessionId: number): Promise<void> {
     return this.repo.clearPending(sessionId);
   }
+}
+
+/** MySQL 死锁错误码：InnoDB 即时检测并自动回滚一侧，可基于最新状态立即重试。 */
+function isLockConflictError(e: unknown): boolean {
+  if (typeof e !== 'object' || e == null || !('code' in e)) {
+    return false;
+  }
+  return (e as { code?: unknown }).code === 'ER_LOCK_DEADLOCK';
 }

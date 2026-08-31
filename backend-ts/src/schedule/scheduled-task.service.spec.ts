@@ -241,6 +241,38 @@ describe('ScheduledTaskService', () => {
     expect(persisted.some((row) => row.fireCount === 6)).toBe(true);
   });
 
+  it('executeTask start patches only nextFireTime, not the stale full row', async () => {
+    const localStore: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', prompt: 'hello', fireCount: 0,
+      })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    stubs.getSession.mockResolvedValue({ id: 11, phase: 'IDLE' });
+    stubs.saveMessage.mockResolvedValue({ id: 88, content: 'hello' });
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      localStore, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn() },
+      { finishExecution: vi.fn() }, { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    // T0 快照携带与库中不同的 name/prompt，若被整行回写将覆盖用户并发修改
+    await svc.executeTask({
+      id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'stale-prompt', name: 'stale-name', fireCount: 0,
+    });
+    await ran;
+    const persisted = vi.mocked(localStore.updateById).mock.calls.map(([row]) => row);
+    const first = persisted[0];
+    expect(Object.keys(first).sort()).toEqual(['id', 'nextFireTime']);
+    expect(persisted.some((row) => row.prompt === 'stale-prompt' || row.name === 'stale-name')).toBe(false);
+  });
+
   it('scanAndExecute skips overlapping scans', async () => {
     let resolveList!: (v: Array<{ id: number }>) => void;
     const listDue = vi.fn(() => new Promise<Array<{ id: number }>>((r) => { resolveList = r; }));

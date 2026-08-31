@@ -943,8 +943,17 @@ export class StreamingWsHandler {
     if (!data || data.queueId == null || typeof data.direction !== 'string') return;
     const item = await this.deps.messageQueueService.getById(Number(data.queueId));
     if (!item || item.sessionId !== sessionId) return;
-    await this.deps.messageQueueService.reorder(Number(data.queueId), data.direction);
-    await this.sendQueueUpdated(sessionId, userId);
+    try {
+      await this.deps.messageQueueService.reorder(Number(data.queueId), data.direction);
+    } finally {
+      // 失败（如死锁重试耗尽）也推送一次队列刷新，保证前端状态与库内收敛；
+      // 推送自身失败仅记日志，避免替换 reorder 的原始异常导致归因失真
+      try {
+        await this.sendQueueUpdated(sessionId, userId);
+      } catch (e) {
+        console.error(`Failed to push queue update after reorder for session ${sessionId}`, e);
+      }
+    }
   }
 
   private async sendQueueUpdated(sessionId: number, userId: number): Promise<void> {
