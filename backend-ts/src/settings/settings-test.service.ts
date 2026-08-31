@@ -79,11 +79,12 @@ export async function testOssCredentials(
   }
   try {
     const client = await createClient(cfg.sts);
+    // 试签不携带 policy：空对象 '{}' 不合 RAM Policy 语法会触发
+    // InvalidParameter.PolicyGrammar；不传即沿用角色自身权限，仅校验凭证有效性。
     await client.assumeRole({
       roleArn: cfg.sts.roleArn,
       roleSessionName: 'mao-test',
       durationSeconds: Math.min(Math.max(cfg.sts.expire, 900), 3600),
-      policy: '{}',
     });
   } catch (e) {
     fail(`OSS STS 试签失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -91,7 +92,7 @@ export async function testOssCredentials(
 }
 
 export interface OssTestClient {
-  assumeRole(input: { roleArn: string; roleSessionName: string; durationSeconds: number; policy: string }): Promise<unknown>;
+  assumeRole(input: { roleArn: string; roleSessionName: string; durationSeconds: number; policy?: string }): Promise<unknown>;
 }
 
 export function defaultLdapClientFactory(): LdapClientFactory {
