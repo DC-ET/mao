@@ -595,7 +595,7 @@ async function handleDeleteSideTask(sideSessionId: number) {
   )
   if (tab) {
     closeTab(tab.id)
-    draftStore.clearDraft(tab.id)
+    draftStore.clearDraftAndMark(tab.id)
   }
   sessionStore.removeSideTask(parentSessionId, sideSessionId)
 }
@@ -618,7 +618,7 @@ async function handlePromoteSideTask(sideSessionId: number) {
     )
     if (tab) {
       closeTab(tab.id)
-      draftStore.clearDraft(tab.id)
+      draftStore.clearDraftAndMark(tab.id)
     }
     sessionStore.removeSideTask(parentSessionId, sideSessionId)
     if (data?.id != null) {

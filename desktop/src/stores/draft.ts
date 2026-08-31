@@ -48,8 +48,21 @@ export const useDraftStore = defineStore('draft', () => {
     return drafts.value.has(String(key))
   }
 
-  /** 显式清除（删除会话/任务、发送成功）。记录键标记，晚到的卸载兜底保存不再写回。 */
+  /**
+   * 显式清除（发送成功、清空输入、队列回填）。仅删除条目、不记录标记——
+   * 发送成功后用户重新输入的内容需能再次保存，不能被永久拦截。
+   */
   function clearDraft(key: string): void {
+    const k = String(key)
+    drafts.value = new Map(drafts.value)
+    drafts.value.delete(k)
+  }
+
+  /**
+   * 删除类清除（删除会话/边路任务、晋升边路任务）。删除条目并记录键标记，
+   * 晚到的卸载兜底保存不再写回，防止已删除会话/任务的草稿复活。
+   */
+  function clearDraftAndMark(key: string): void {
     const k = String(key)
     drafts.value = new Map(drafts.value)
     drafts.value.delete(k)
@@ -66,5 +79,5 @@ export const useDraftStore = defineStore('draft', () => {
     return clearedKeys.has(String(key))
   }
 
-  return { drafts, getDraft, setDraft, hasDraft, clearDraft, reset, isCleared }
+  return { drafts, getDraft, setDraft, hasDraft, clearDraft, clearDraftAndMark, reset, isCleared }
 })

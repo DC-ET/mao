@@ -41,19 +41,35 @@ describe('draft store', () => {
     expect(store.hasDraft('s:1')).toBe(false)
   })
 
-  it('clearDraft 后标记已清除，重新写入后解除标记', () => {
+  it('clearDraft 仅删条目不标记：发送成功后重新输入可再次保存', () => {
     const store = useDraftStore()
     store.setDraft('s:1', makeEntry('a'))
+    // 发送成功清除
     store.clearDraft('s:1')
-    expect(store.isCleared('s:1')).toBe(true)
+    expect(store.hasDraft('s:1')).toBe(false)
+    expect(store.isCleared('s:1')).toBe(false)
+    // 用户重新输入后切走会话，可再次保存
     store.setDraft('s:1', makeEntry('b'))
     expect(store.isCleared('s:1')).toBe(false)
     expect(store.getDraft('s:1')?.text).toBe('b')
   })
 
+  it('clearDraftAndMark 删除条目并标记，晚到的兜底保存不再写回', () => {
+    const store = useDraftStore()
+    store.setDraft('s:1', makeEntry('a'))
+    // 删除会话
+    store.clearDraftAndMark('s:1')
+    expect(store.hasDraft('s:1')).toBe(false)
+    expect(store.isCleared('s:1')).toBe(true)
+    // 模拟 saveDraft 的防复活检查：isCleared 时跳过写入
+    const saved = !store.isCleared('s:1')
+    if (saved) store.setDraft('s:1', makeEntry('b'))
+    expect(store.hasDraft('s:1')).toBe(false)
+  })
+
   it('reset 同时清空清除标记', () => {
     const store = useDraftStore()
-    store.clearDraft('s:1')
+    store.clearDraftAndMark('s:1')
     store.reset()
     expect(store.isCleared('s:1')).toBe(false)
   })

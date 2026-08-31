@@ -1039,7 +1039,7 @@ export const useSessionStore = defineStore('session', () => {
       if (viewingSideTaskId.value === Number(id)) {
         viewingSideTaskId.value = null
       }
-      useDraftStore().clearDraft(`s:${sid}`)
+      useDraftStore().clearDraftAndMark(`s:${sid}`)
     } catch {
       // ignore
     }
