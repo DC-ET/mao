@@ -76,6 +76,7 @@ import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import type { GitChangedFile } from '../../types/git'
 import type { FileChange } from '../../types/chat'
 import { getToken } from '../../utils/auth-storage'
+import { nowDateTime } from '../../utils/datetime'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
 import { api } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
@@ -475,7 +476,7 @@ function handleSubagentSessionCreated(e: Event) {
       id: `subagent-user-${detail.childSessionId}`,
       role: 'user',
       content: String(detail.task),
-      createdAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      createdAt: nowDateTime(),
     })
   }
   // 自动打开 Tab：事件属于当前主会话，或属于当前主会话的边路任务（边路任务触发子代理同样自动跳转）
