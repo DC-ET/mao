@@ -693,4 +693,10 @@ onMounted(() => {
 .test-result-error {
   margin-top: 4px;
 }
+
+.test-result-error :deep(.el-alert__title) {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
 </style>
