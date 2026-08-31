@@ -7,9 +7,14 @@
       title="集成配置保存后立即生效，无需重启服务。加密项保存后仅显示掩码，留空表示不修改。"
       class="integration-tip"
     />
-    <el-row :gutter="16">
-      <el-col v-for="group in groups" :key="group.name" :xs="24" :md="12">
-        <el-card class="group-card" shadow="never">
+    <div class="group-list">
+      <el-card
+        v-for="group in groups"
+        :key="group.name"
+        :id="`setting-group-${group.name}`"
+        class="group-card"
+        shadow="never"
+      >
           <template #header>
             <div class="group-header">
               <span class="group-title">{{ group.title }}</span>
@@ -69,8 +74,7 @@
             </el-form-item>
           </el-form>
         </el-card>
-      </el-col>
-    </el-row>
+    </div>
   </div>
 </template>
 
@@ -329,9 +333,15 @@ async function runTest(group: GroupDef) {
   border-radius: 8px;
 }
 
+.group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .group-card {
-  margin-bottom: 16px;
   border-radius: 10px;
+  scroll-margin-top: 12px;
 }
 
 .group-header {
