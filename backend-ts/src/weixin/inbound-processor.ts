@@ -1,5 +1,7 @@
 import type { ContextTokenRepository } from './context-token.repository.js';
+import { randomUUID } from 'node:crypto';
 import type { WeixinMediaService, DownloadedMedia } from './media.service.js';
+import { extensionForMime } from './media-crypto.js';
 import type { WeixinSendService } from './send.service.js';
 import type {
   InboundFile,
@@ -30,18 +32,18 @@ export class InboundProcessor {
         await this.contextTokenRepository.saveOrUpdate(accountId, fromUserId, contextToken);
       }
       const body = this.extractMessageBody(message);
-      const images = await this.downloadImages(message);
+      const imageResult = await this.downloadImages(message);
       const fileResult = await this.downloadFiles(message);
-      const files = fileResult.files;
-      if ((body == null || body.trim() === '') && images.length === 0
-        && files.length === 0 && fileResult.failedNames.length === 0) {
+      const files = [...imageResult.files, ...fileResult.files];
+      if ((body == null || body.trim() === '') && imageResult.files.length === 0
+        && fileResult.files.length === 0 && fileResult.failedNames.length === 0) {
         console.info(`忽略空消息（无文本无图片无文件）, accountId=${accountId}, fromUserId=${fromUserId}`);
         return;
       }
       const imageDataUris: string[] = [];
       let mediaPath: string | null = null;
       let mediaType: string | null = null;
-      for (const media of images) {
+      for (const media of imageResult.media) {
         imageDataUris.push(media.dataUri);
         if (mediaPath == null) {
           mediaPath = media.path;
@@ -56,6 +58,7 @@ export class InboundProcessor {
         mediaPath,
         mediaType,
         imageDataUris,
+        imageFileNames: imageResult.fileNames,
         files,
         fileDownloadErrors: fileResult.failedNames,
         rawMessage: message,
@@ -108,18 +111,35 @@ export class InboundProcessor {
     }
   }
 
-  private async downloadImages(message: Record<string, unknown>): Promise<DownloadedMedia[]> {
-    const result: DownloadedMedia[] = [];
+  private async downloadImages(message: Record<string, unknown>): Promise<{ media: DownloadedMedia[]; files: InboundFile[]; fileNames: string[] }> {
+    const media: DownloadedMedia[] = [];
+    const files: InboundFile[] = [];
+    const fileNames: string[] = [];
     const itemList = message.item_list as unknown[] | undefined;
-    if (!Array.isArray(itemList)) return result;
+    if (!Array.isArray(itemList)) return { media, files, fileNames };
     for (const item of itemList) {
       const rec = item as Record<string, unknown>;
       if (Number(rec.type ?? -1) !== ITEM_TYPE_IMAGE) continue;
       const downloaded = await this.weixinMediaService.downloadImage(rec.image_item as Record<string, unknown>);
-      if (downloaded != null) result.push(downloaded);
-      else console.warn('微信图片下载失败，跳过该图片项');
+      if (downloaded != null) {
+        media.push(downloaded);
+        const fileName = this.buildImageFileName(downloaded.mimeType);
+        files.push({
+          fileName,
+          bytes: downloaded.bytes,
+          mimeType: downloaded.mimeType,
+        });
+        fileNames.push(fileName);
+      } else {
+        console.warn('微信图片下载失败，跳过该图片项');
+      }
     }
-    return result;
+    return { media, files, fileNames };
+  }
+
+  private buildImageFileName(mimeType: string): string {
+    const ext = extensionForMime(mimeType);
+    return `image-${randomUUID()}${ext}`;
   }
 
   private async downloadFiles(message: Record<string, unknown>): Promise<{ files: InboundFile[]; failedNames: string[] }> {

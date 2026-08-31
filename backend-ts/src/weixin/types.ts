@@ -89,6 +89,7 @@ export interface WeixinInboundMessageContext {
   mediaPath?: string | null;
   mediaType?: string | null;
   imageDataUris?: string[];
+  imageFileNames?: string[];
   files?: InboundFile[];
   fileDownloadErrors?: string[];
   rawMessage?: unknown;

@@ -100,7 +100,9 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     const downloadErrors = context.fileDownloadErrors ?? [];
     const files = context.files ?? [];
     const storageErrors: string[] = [];
-    const savedFilePaths = this.saveInboundFiles(session.workspace ?? null, files, storageErrors);
+    const saved = this.saveInboundFiles(session.workspace ?? null, files, context.imageFileNames ?? [], storageErrors);
+    const savedFilePaths = saved.paths;
+    const savedImagePaths = saved.imagePaths;
     const allErrors = [...downloadErrors, ...storageErrors];
     const hasSavedFiles = savedFilePaths.length > 0;
     const hasBody = context.body != null && context.body.trim() !== '';
@@ -114,7 +116,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
       context.body = appendDownloadErrorNotice(context.body, allErrors);
     }
 
-    const messageContent = this.buildMessageContent(context, savedFilePaths);
+    const messageContent = this.buildMessageContent(context, savedFilePaths, savedImagePaths);
     let savedMessage: Message;
     try {
       savedMessage = await this.deps.sessionService!.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
@@ -283,22 +285,28 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     }
   }
 
-  buildMessageContent(context: WeixinInboundMessageContext, filePaths: string[]): unknown {
+  buildMessageContent(context: WeixinInboundMessageContext, filePaths: string[], imagePaths: string[] = []): unknown {
     const imageDataUris = context.imageDataUris;
     const hasImages = imageDataUris != null && imageDataUris.length > 0;
     const hasFiles = filePaths != null && filePaths.length > 0;
     let text = context.body != null ? context.body.trim() : '';
-    if (hasFiles) {
-      if (!hasImages) return this.buildFileText(text, filePaths);
-      const parts: ContentPart[] = [{ type: 'text', text: this.buildMixedText(text, filePaths) }];
+    if (hasImages) {
+      if (text === '' && !hasFiles) text = DEFAULT_IMAGE_PROMPT;
+      const parts: ContentPart[] = [];
+      const textParts: string[] = [];
+      if (text !== '') textParts.push(text);
+      if (hasFiles) {
+        textParts.push(this.buildMixedText('', filePaths));
+      }
+      if (imagePaths != null && imagePaths.length > 0) {
+        textParts.push(`图片已保存到会话工作区：${imagePaths.join('、')}`);
+      }
+      parts.push({ type: 'text', text: textParts.join('\n') });
       this.appendImageParts(parts, imageDataUris!);
       return parts;
     }
-    if (!hasImages) return text;
-    if (text === '') text = DEFAULT_IMAGE_PROMPT;
-    const parts: ContentPart[] = [{ type: 'text', text }];
-    this.appendImageParts(parts, imageDataUris!);
-    return parts;
+    if (hasFiles) return this.buildFileText(text, filePaths);
+    return text;
   }
 
   private buildFileText(text: string, filePaths: string[]): string {
@@ -322,13 +330,21 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     }
   }
 
-  private saveInboundFiles(workspace: string | null, files: InboundFile[], storageErrors: string[]): string[] {
+  private saveInboundFiles(
+    workspace: string | null,
+    files: InboundFile[],
+    imageFileNames: string[],
+    storageErrors: string[],
+  ): { paths: string[]; imagePaths: string[] } {
     const paths: string[] = [];
+    const imagePaths: string[] = [];
+    const imageNameSet = new Set(imageFileNames);
     for (const file of files) {
       try {
         const saved = this.deps.weixinFileStorageService!.saveFile(workspace, file.fileName, file.bytes);
         console.info(`微信入站文件已保存, workspace=${workspace}, file=${saved}`);
         paths.push(saved);
+        if (imageNameSet.has(file.fileName)) imagePaths.push(saved);
       } catch (e) {
         if (e instanceof StorageException) {
           console.warn(`微信入站文件保存失败, workspace=${workspace}, file=${file.fileName}: ${e.message}`);
@@ -338,7 +354,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
         }
       }
     }
-    return paths;
+    return { paths, imagePaths };
   }
 
   private async replyFileError(

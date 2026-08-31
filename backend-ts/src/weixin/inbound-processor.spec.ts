@@ -64,6 +64,26 @@ describe('InboundProcessor', () => {
     expect(inboundHandler.onMessage).not.toHaveBeenCalled();
   });
 
+  it('imageMessage_triggersHandlerWithImageFileAndDataUri', async () => {
+    inboundHandler.onMessage.mockResolvedValue({ text: '' });
+    const message = baseMessage();
+    (message.item_list as unknown[]).push({ type: 2, image_item: { media: { encrypt_query_param: 'img-q' } } });
+    weixinMediaService.downloadImage.mockResolvedValue({
+      path: '/tmp/weixin-media/abc.jpg',
+      bytes: Buffer.from('jpeg-bytes'),
+      mimeType: 'image/jpeg',
+      dataUri: 'data:image/jpeg;base64,anBlZy1ieXRlcw==',
+    });
+    await processor.processInboundMessage('acc-1', message);
+    const ctx = inboundHandler.onMessage.mock.calls.at(-1)![0];
+    expect(ctx.files).toHaveLength(1);
+    expect(ctx.files[0].fileName).toMatch(/^image-[0-9a-f-]+\.jpg$/);
+    expect(ctx.files[0].mimeType).toBe('image/jpeg');
+    expect(ctx.files[0].bytes.toString()).toBe('jpeg-bytes');
+    expect(ctx.imageDataUris).toEqual(['data:image/jpeg;base64,anBlZy1ieXRlcw==']);
+    expect(ctx.imageFileNames).toEqual([ctx.files[0].fileName]);
+  });
+
   it('fileDownloadFailure_notTreatedAsEmpty', async () => {
     inboundHandler.onMessage.mockResolvedValue({ text: '' });
     const message = baseMessage();

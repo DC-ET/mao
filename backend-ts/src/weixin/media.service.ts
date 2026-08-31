@@ -29,6 +29,7 @@ export {
 
 export interface DownloadedMedia {
   path: string;
+  bytes: Buffer;
   mimeType: string;
   dataUri: string;
 }
@@ -84,7 +85,7 @@ export class WeixinMediaService {
       const path = join(dir, `${randomUUID()}${ext}`);
       writeFileSync(path, outBytes);
       const dataUri = `data:${outMime};base64,${outBytes.toString('base64')}`;
-      return { path, mimeType: outMime, dataUri };
+      return { path, bytes: outBytes, mimeType: outMime, dataUri };
     } catch (e) {
       console.error('下载或解密微信图片失败', e);
       return null;
