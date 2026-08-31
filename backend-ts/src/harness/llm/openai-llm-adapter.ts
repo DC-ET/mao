@@ -100,6 +100,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         }
         if (awaited.status < 200 || awaited.status >= 300) {
           const detail = await this.readErrorBody(awaited.body);
+          this.logRequestError(payload, config, `LLM API returned ${awaited.status}: ${detail}`);
           throw new Error(`LLM API returned ${awaited.status}: ${detail}`);
         }
         const json = await this.readBodyRespectingCancel(
@@ -111,6 +112,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         // 避免被当作空响应走 10 次空响应退避重试、掩盖真实原因。
         const embeddedError = parseEmbeddedError(parsed);
         if (embeddedError != null) {
+          this.logRequestError(payload, config, `LLM API returned error: ${embeddedError}`);
           throw new Error(`LLM API returned error: ${embeddedError}`);
         }
         return parseChatResponse(parsed);
@@ -118,6 +120,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         if (this.isCancelled(cancelFlag)) throw this.cancelledException();
         if (e instanceof Error && e.message.startsWith('LLM API returned')) throw e;
         if (!this.isRetryableNetworkFailure(e) || attempt > this.retry.rateLimitMaxRetries) {
+          this.logRequestError(payload, config, `LLM call failed: ${this.networkReason(e)}`);
           throw new Error(`LLM call failed: ${this.networkReason(e)}`, { cause: e });
         }
         const delaySeconds = this.resolveRetryDelaySeconds(null, attempt);
@@ -169,10 +172,12 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         if (this.isRetryableStatus(awaited.status)) {
           if (attempt > this.retry.rateLimitMaxRetries) {
             const detail = await this.readErrorBody(awaited.body);
+            this.logRequestError(payload, config, `LLM API returned ${awaited.status} after ${this.retry.rateLimitMaxRetries} retries: ${detail}`);
             callback.onError(new Error(`LLM API returned ${awaited.status} after ${this.retry.rateLimitMaxRetries} retries: ${detail}`));
             return;
           }
           const delaySeconds = this.resolveRetryDelaySeconds(awaited.headers, attempt);
+          await this.logRequestErrorOnStreamFailure(payload, config, 'http_status', awaited.status, attempt);
           awaited.body.resume();
           if (!(await this.notifyAndWaitForRetry(callback, cancelFlag, config.modelId, 'http_status', awaited.status, attempt, delaySeconds, attemptStarted, totalStarted))) {
             callback.onError(this.cancelledException());
@@ -182,6 +187,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         }
         if (awaited.status < 200 || awaited.status >= 300) {
           const detail = await this.readErrorBody(awaited.body);
+          this.logRequestError(payload, config, `LLM API returned ${awaited.status}: ${detail}`);
           callback.onError(new Error(`LLM API returned ${awaited.status}: ${detail}`));
           return;
         }
@@ -201,8 +207,10 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         const truncated = e instanceof StreamInterruptedAfterOutputException
           || e instanceof StreamThinkingTruncatedException;
         const retryable = streamError != null ? streamError.retryable : this.isRetryableNetworkFailure(e);
+        const terminalFailure = this.describeStreamFailure(e, streamError, truncated, retryable);
         if (!retryable || attempt > this.retry.rateLimitMaxRetries) {
-          callback.onError(this.describeStreamFailure(e, streamError, truncated, retryable));
+          this.logRequestError(payload, config, this.failureMessage(terminalFailure));
+          callback.onError(terminalFailure);
           return;
         }
         if (truncated || streamError != null) {
@@ -537,6 +545,30 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     return `data:${mimeType};base64,${bytes.toString('base64')}`;
   }
 
+  /** 请求异常告警日志：带上完整请求体（base64 图片等敏感数据脱敏），错误在适配器只会走到一个出口，无需去重。 */
+  private logRequestError(payload: string, config: LlmModelConfig, detail: string): void {
+    const url = (config.baseUrl ?? '').replace(/\/$/, '');
+    harnessLog('error', `LLM request failed model=${config.modelId} baseUrl=${url} error=${detail} payload=${redactRequestPayload(payload)}`);
+  }
+
+  /** 流式进入重试路径时的请求日志（终态失败已由 logRequestError 记录）。 */
+  private async logRequestErrorOnStreamFailure(
+    payload: string,
+    config: LlmModelConfig,
+    reason: string,
+    statusCode: number | null,
+    attempt: number,
+  ): Promise<void> {
+    const url = (config.baseUrl ?? '').replace(/\/$/, '');
+    harnessLog('warn', `LLM request failed model=${config.modelId} baseUrl=${url} attempt=${attempt} reason=${reason} statusCode=${statusCode} payload=${redactRequestPayload(payload)}`);
+    await Promise.resolve();
+  }
+
+  /** 统一错误对象 → 日志 message（Error 取 message，其余按字符串化）。 */
+  private failureMessage(failure: unknown): string {
+    return failure instanceof Error ? failure.message : String(failure);
+  }
+
   private resolveRetryDelaySeconds(headers: http.IncomingHttpHeaders | null, attempt: number): number {
     const maxDelay = this.retry.rateLimitMaxRetryDelaySeconds;
     if (headers) {
@@ -760,4 +792,9 @@ function parseEmbeddedError(parsed: unknown): string | null {
     if (typeof detail === 'string' && detail !== '') return detail;
   }
   return null;
+}
+
+/** 日志脱敏：把请求体里的 base64 图片数据替换为占位符，其余内容原样保留。 */
+function redactRequestPayload(payload: string): string {
+  return payload.replace(/data:([^;,]+);base64,[A-Za-z0-9+/=]+/g, 'data:$1;base64,[REDACTED]');
 }
