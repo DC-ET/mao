@@ -17,7 +17,10 @@ export interface FeishuSessionAdapter {
 }
 
 export interface FeishuMediaDownload {
+  /** 图片 data URI（多模态直传模型）。 */
   images: string[];
+  /** 图片落盘路径（{workspace}/chat-files/{日期}/，供 Agent 工具二次读取）。 */
+  imagePaths: string[];
   filePaths: string[];
   errors: string[];
 }
@@ -389,6 +392,11 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     if (media.filePaths.length > 0) {
       const refs = media.filePaths.map((path) => `@{${path}}@`).join('\n');
       body = body.trim() === '' ? refs : `${body}\n${refs}`;
+    }
+    // 图片已 data URI 直传模型，落盘路径仅作提示，供 Agent 后续用工具二次读取（同微信）。
+    if (media.imagePaths.length > 0) {
+      const hint = `图片已保存到会话工作区：${media.imagePaths.join('、')}`;
+      body = body.trim() === '' ? hint : `${body}\n${hint}`;
     }
     if (media.images.length === 0) return body;
     const parts: FeishuContentPart[] = [{ type: 'text', text: body.trim() === '' ? '请查看图片' : body }];

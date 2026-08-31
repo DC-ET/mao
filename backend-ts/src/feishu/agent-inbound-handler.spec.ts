@@ -336,12 +336,33 @@ describe('AgentFeishuInboundHandler', () => {
     const handler = new AgentFeishuInboundHandler({
       sessionService,
       harnessService: harness as never,
-      downloadMedia: async () => ({ images: ['data:image/jpeg;base64,AAA'], filePaths: [], errors: [] }),
+      downloadMedia: async () => ({ images: ['data:image/jpeg;base64,AAA'], imagePaths: [], filePaths: [], errors: [] }),
       listenerFactory: async () => listener,
     });
     await handler.onMessage(makeContext({ messageType: 'image', imageKey: 'img_1', text: '[图片]' }));
     expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, [
       { type: 'text', text: '【用户消息】\n未知用户：[图片]' },
+      { type: 'image_url', imageUrl: { url: 'data:image/jpeg;base64,AAA' } },
+    ], null);
+  });
+
+  it('appends saved-image path hint to the text part when images persisted', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      downloadMedia: async () => ({
+        images: ['data:image/jpeg;base64,AAA'],
+        imagePaths: ['/ws/feishu-chat/1/private-2/chat-files/2026-08-31/feishu-image-om_1.jpg'],
+        filePaths: [],
+        errors: [],
+      }),
+      listenerFactory: async () => listener,
+    });
+    await handler.onMessage(makeContext({ chatType: 'p2p', messageType: 'image', imageKey: 'img_1', text: '' }));
+    expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, [
+      { type: 'text', text: '图片已保存到会话工作区：/ws/feishu-chat/1/private-2/chat-files/2026-08-31/feishu-image-om_1.jpg' },
       { type: 'image_url', imageUrl: { url: 'data:image/jpeg;base64,AAA' } },
     ], null);
   });
@@ -354,6 +375,7 @@ describe('AgentFeishuInboundHandler', () => {
       harnessService: harness as never,
       downloadMedia: async () => ({
         images: [],
+        imagePaths: [],
         filePaths: ['/ws/a.pdf'],
         errors: ['b.pdf（接收失败）'],
       }),

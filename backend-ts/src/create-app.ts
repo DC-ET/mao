@@ -1171,14 +1171,35 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       if (!isMedia || context.messageId == null) return null;
       const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
       const images: string[] = [];
+      const imagePaths: string[] = [];
       const filePaths: string[] = [];
       const errors: string[] = [];
       try {
+        let imageIndex = 0;
         for (const imageKey of inboundKeys) {
           try {
             const { buffer, contentType } = await downloadFeishuMediaBuffer(client, context.messageId, imageKey, 'image', maxBytes);
-            if (buffer.length === 0) errors.push('图片（接收失败）');
-            else images.push(dataUriOf(contentType, buffer));
+            if (buffer.length === 0) {
+              errors.push('图片（接收失败）');
+              continue;
+            }
+            images.push(dataUriOf(contentType, buffer));
+            // 图片同时落盘 chat-files/{日期}/（同微信）：模型视觉直传之外，Agent 仍可用工具读取原图。
+            if (workspace != null && workspace !== '') {
+              try {
+                const ext = IMAGE_EXT_BY_CONTENT_TYPE[contentType] ?? '.jpg';
+                const dir = chatFilesDirOf(workspace);
+                mkdirSync(dir, { recursive: true });
+                // 同一消息多图追加序号防覆盖；与群图片预下载命名一致。
+                const name = imageIndex === 0 ? `feishu-image-${context.messageId}${ext}` : `feishu-image-${context.messageId}-${imageIndex + 1}${ext}`;
+                const target = resolve(dir, name);
+                await writeFile(target, buffer);
+                imagePaths.push(target);
+              } catch (error) {
+                console.warn(`飞书图片落盘失败（不影响直传）, bot=${botId}, messageId=${context.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+              }
+            }
+            imageIndex++;
           } catch (error) {
             console.error(`飞书图片下载失败, bot=${botId}, messageId=${context.messageId}`, error);
             errors.push('图片（接收失败）');
@@ -1207,7 +1228,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
           }
         }
       } finally { /* 下载失败已收集 errors */ }
-      return { images, filePaths, errors };
+      return { images, imagePaths, filePaths, errors };
     },
     listenerFactory: async (sessionId, context, executionId) => {
       const session = await sessionService.getSession(sessionId);

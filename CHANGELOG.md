@@ -28,6 +28,7 @@
 - 修复管理后台「OSS/STS 试签」报 `InvalidParameter.PolicyGrammar` 的问题：试签请求携带了空对象 `{}` 作为 Policy，不符合 RAM Policy 语法（缺 `Version`/`Statement`），现试签不再携带 Policy，仅校验凭证与角色有效性
 - 修复飞书通道发送「图片+文字」时 Agent 收不到图片的问题：该类消息以富文本（post）到达，链路此前仅处理独立图片消息，图片 key 被丢弃。现从 post 内容递归提取全部内嵌图片（私聊下载为图片消息直传模型；群聊预下载落盘并在日志行追加引用），富文本占位文本同时保留 `[图片]` 标注
 - 飞书入站图片/文件改存到会话工作区 `chat-files/{yyyy-MM-dd}/` 按日期归档，不再散落工作区根目录（含入站预下载、`feishu_download_file` 懒加载两条链路）
+- 飞书私聊/群聊触发的图片在 data URI 直传模型的基础上同时落盘到 `chat-files/{yyyy-MM-dd}/`，消息文本追加「图片已保存到会话工作区：{路径}」提示，Agent 可用工具二次读取原图（同微信图片处理逻辑）；日期归档时区与微信对齐为 Asia/Shanghai
 
 ### 前端（桌面 / Web / 安卓）
 
