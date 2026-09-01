@@ -26,6 +26,8 @@ export interface WeixinHandlerSessionService {
   getMessages(sessionId: number): Promise<Message[]>;
   cleanupIncompleteTail(sessionId: number): Promise<number>;
   updateContextTokens(sessionId: number, tokens: number): Promise<void>;
+  /** 按会话范围回滚单条消息（消息被更新消息取代时清理孤立 USER，可选）。 */
+  deleteMessageById?(sessionId: number, messageId: number): Promise<void>;
 }
 
 export interface AgentWeixinInboundHandlerDeps {
@@ -127,7 +129,7 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     this.deps.registry?.send(userId, wsEvent('user_message_saved', sessionId, this.buildRemoteUserMessageEvent(savedMessage, messageContent)));
     const executionId = await this.deps.harnessService!.prepareMessage(sessionId, messageContent);
     return new Promise<WeixinReply | null>((resolve) => {
-      this.agentExecutor(() => this.runAgent(session, userId, generation, executionId, resolve));
+      this.agentExecutor(() => this.runAgent(session, userId, generation, executionId, savedMessage.id ?? null, resolve));
     });
   }
 
@@ -136,12 +138,22 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     userId: number,
     generation: number,
     executionId: string,
+    savedMessageId: number | null,
     resolve: (reply: WeixinReply | null) => void,
   ): Promise<void> {
     const sessionId = session.id!;
     await this.withSessionLock(sessionId, async () => {
       if (this.stopped || !this.isCurrentGeneration(sessionId, generation)) {
         console.info(`微信消息已被更新消息取代, sessionId=${sessionId}, gen=${generation}`);
+        // 本条消息已被更新的消息取代且不会被执行：回滚刚落库的 USER 消息，
+        // 否则历史中留下没有回复的孤立 USER，持续污染后续 LLM 上下文。
+        if (savedMessageId != null) {
+          try {
+            await this.deps.sessionService?.deleteMessageById?.(sessionId, savedMessageId);
+          } catch (e) {
+            console.warn(`回滚被取代的微信用户消息失败, sessionId=${sessionId}, messageId=${savedMessageId}`, e);
+          }
+        }
         resolve(null);
         return;
       }
@@ -275,13 +287,16 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     const prev = this.sessionLocks.get(sessionId) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((r) => { release = r; });
-    this.sessionLocks.set(sessionId, prev.then(() => current));
+    // Map 中存链式 Promise（同 scheduled-task.service / git-write-operation.withRepoLock），
+    // 清理时按同一引用比较；若与 current 比较，条件永假导致 Map 条目按 sessionId 泄漏。
+    const chained = prev.then(() => current, () => current);
+    this.sessionLocks.set(sessionId, chained);
     await prev;
     try {
       await fn();
     } finally {
       release();
-      if (this.sessionLocks.get(sessionId) === current) this.sessionLocks.delete(sessionId);
+      if (this.sessionLocks.get(sessionId) === chained) this.sessionLocks.delete(sessionId);
     }
   }
 

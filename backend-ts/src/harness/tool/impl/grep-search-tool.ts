@@ -10,6 +10,8 @@ import { harnessLog } from '../../log.js';
 import { IGNORED_DIRS } from './glob-search-tool.js';
 
 const DEFAULT_MAX_OUTPUT_CHARS = 10000;
+/** 回退分支单文件读取上限（与 rg 分支 maxBuffer 同量级），超过则跳过，避免超大文件 OOM。 */
+const MAX_SCAN_FILE_BYTES = 10 * 1024 * 1024;
 
 export class GrepSearchTool extends BaseTool {
   private rgAvailable: boolean | null = null;
@@ -134,6 +136,16 @@ export class GrepSearchTool extends BaseTool {
     let totalMatches = 0;
     let charsUsed = 0;
     let truncated = false;
+    const pushEntry = (entry: Record<string, unknown>): boolean => {
+      const entrySize = JSON.stringify(entry).length;
+      if (charsUsed + entrySize > maxOutputChars) {
+        truncated = true;
+        return false;
+      }
+      matches.push(entry);
+      charsUsed += entrySize;
+      return true;
+    };
     const files: string[] = [];
     if (scope.isSingleFile() && scope.singleFile) files.push(scope.singleFile);
     else collectFiles(scope.cwd, globRe, files, scope.cwd);
@@ -141,24 +153,35 @@ export class GrepSearchTool extends BaseTool {
       if (truncated) break;
       const relativePath = scope.outputFilePath(file, workspaceRoot);
       let lines: string[];
-      try { lines = readFileSync(file, 'utf8').split('\n'); } catch { continue; }
+      try {
+        if (statSync(file).size > MAX_SCAN_FILE_BYTES) continue;
+        lines = readFileSync(file, 'utf8').split('\n');
+      } catch { continue; }
+      // 与 rg --context 输出对齐：上下文行作为独立条目（contextual: true），
+      // 顺序为「前上下文 → 命中行 → 后上下文」，相邻命中的上下文重叠只输出一次
+      const matchIndices: number[] = [];
       for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (!compiled.test(line)) continue;
+        if (compiled.test(lines[i])) matchIndices.push(i);
         compiled.lastIndex = 0;
-        const match: Record<string, unknown> = { file: relativePath, line: i + 1, content: line };
-        if (contextLines > 0) {
-          match.context_before = lines.slice(Math.max(0, i - contextLines), i);
-          match.context_after = lines.slice(i + 1, Math.min(lines.length, i + 1 + contextLines));
+      }
+      let lastPrinted = -1;
+      const emitContext = (from: number, to: number): boolean => {
+        for (let j = Math.max(from, lastPrinted + 1, 0); j <= to && j < lines.length; j++) {
+          if (!pushEntry({ file: relativePath, line: j + 1, content: lines[j], contextual: true })) return false;
+          lastPrinted = j;
         }
-        const entrySize = JSON.stringify(match).length;
-        if (charsUsed + entrySize > maxOutputChars) {
-          truncated = true;
-          break;
-        }
-        matches.push(match);
+        return true;
+      };
+      for (let k = 0; k < matchIndices.length; k++) {
+        const m = matchIndices[k];
+        if (contextLines > 0 && !emitContext(m - contextLines, m - 1)) break;
+        if (!pushEntry({ file: relativePath, line: m + 1, content: lines[m] })) break;
         totalMatches++;
-        charsUsed += entrySize;
+        lastPrinted = m;
+        // 后上下文不越过下一个命中行（该行会以 match 身份输出，与 rg 一致）
+        const next = k + 1 < matchIndices.length ? matchIndices[k + 1] : lines.length;
+        if (contextLines > 0 && !emitContext(m + 1, Math.min(m + contextLines, next - 1))) break;
+        if (truncated) break;
       }
     }
     return { matches, totalMatches, truncated };
@@ -175,9 +198,25 @@ export class GrepSearchTool extends BaseTool {
   }
 }
 
+// 把 glob 编译为整路径正则：'*' 不跨目录段，'**' 匹配零层或多层目录段
+// （对齐 rg --glob 的 gitignore 语义：'**/*.md' 也要命中根目录文件；注意块注释里
+// 不能出现该序列，'**/' 含 '*/' 会提前终止注释，故此处用行注释）。
 function globToFileRe(glob: string): RegExp {
-  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
-  return new RegExp(`^${escaped}$`);
+  const segments = glob.split('/');
+  let source = '';
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (segment === '**') {
+      source += i === segments.length - 1 ? '.*' : '(?:[^/]+/)*';
+      continue;
+    }
+    source += segment
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '[^/]*')
+      .replace(/\?/g, '[^/]');
+    if (i < segments.length - 1) source += '/';
+  }
+  return new RegExp(`^${source}$`);
 }
 
 function collectFiles(dir: string, globRe: RegExp | null, out: string[], root: string): void {

@@ -741,43 +741,68 @@ export class StreamingWsHandler {
       }));
       return;
     }
+    // 入口保证为终态（COMPLETED/FAILED/CANCELLED），供异常路径收敛回该状态。
+    const entryPhase: string = session.phase!;
     if (this.executionClaims.has(sessionId)) {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
     }
     this.executionClaims.add(sessionId);
-    // 防御性订阅，确保客户端能收到流式事件
-    this.deps.registry.subscribe(userId, sessionId);
-    // LOCAL 模式：注册会话到用户映射并检查桌面端连接
-    if (session.executionMode === 'LOCAL') {
-      this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
-      if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
-        this.executionClaims.delete(sessionId);
-        this.deps.registry.send(userId, wsEvent('error', sessionId, {
-          message: 'Local client is not connected. Please ensure the desktop app is running.',
-        }));
-        return;
+    let phaseAdvanced = false;
+    try {
+      // 防御性订阅，确保客户端能收到流式事件
+      this.deps.registry.subscribe(userId, sessionId);
+      // LOCAL 模式：注册会话到用户映射并检查桌面端连接
+      if (session.executionMode === 'LOCAL') {
+        this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
+        if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
+          this.executionClaims.delete(sessionId);
+          this.deps.registry.send(userId, wsEvent('error', sessionId, {
+            message: 'Local client is not connected. Please ensure the desktop app is running.',
+          }));
+          return;
+        }
+        // 注意：不重新同步 skills — 复用已有会话上下文（有意为之）
       }
-      // 注意：不重新同步 skills — 复用已有会话上下文（有意为之）
+      // 清理未完成尾巴消息（与 CrashRecoveryRunner 一致）
+      const deleted = await this.deps.sessionService.cleanupIncompleteTail(sessionId);
+      if (deleted > 0) {
+        console.info(`Session ${sessionId}: cleaned up ${deleted} incomplete tail messages before retry`);
+      }
+      // 置为 RESUMING 状态
+      await this.deps.sessionService.updatePhase(sessionId, 'RESUMING');
+      phaseAdvanced = true;
+      this.deps.registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RESUMING' }));
+      // 分配新的 executionId
+      const executionId = randomUUID();
+      const cancelFlag = this.deps.agentLoop.registerCancelFlag(sessionId);
+      this.cancelFlags.set(sessionId, cancelFlag);
+      this.runningExecutionIds.set(sessionId, executionId);
+      // 清除残留的 tool calls 和 ask questions 状态
+      this.deps.registry.clearActiveToolCalls(sessionId);
+      this.deps.askUserQuestionsRegistry.failAllForSession(sessionId);
+      this.submitExecution(sessionId, userId, executionId, (futureRef) =>
+        this.runRetryExecution(session, userId, sessionId, executionId, cancelFlag, futureRef));
+    } catch (e) {
+      // claim 添加后、执行提交前的异常路径必须释放占位（同 M-4），否则会话永久判定 busy。
+      // submitExecution 提交被拒时已自行回滚并发事件，这里仅在实际删除到 claim 时才补发 error，避免重复。
+      if (phaseAdvanced) {
+        // 置为 RESUMING 后、提交执行前异常：收敛回进入时的终态（入口已校验 isTerminalPhase），
+        // 避免会话永久卡在 RESUMING。先恢复再释放 claim，缩小并发窗口。
+        try {
+          await this.deps.sessionService.updatePhase(sessionId, entryPhase);
+        } catch { /* ignore */ }
+      }
+      this.cancelFlags.delete(sessionId);
+      this.runningExecutionIds.delete(sessionId);
+      this.deps.agentLoop.removeCancelFlag(sessionId);
+      if (this.executionClaims.delete(sessionId)) {
+        console.error(`Retry execution setup failed for session ${sessionId}`, e);
+        this.deps.registry.send(userId, wsEvent('error', sessionId, {
+          message: e instanceof Error ? e.message : '重试执行失败',
+        }));
+      }
     }
-    // 清理未完成尾巴消息（与 CrashRecoveryRunner 一致）
-    const deleted = await this.deps.sessionService.cleanupIncompleteTail(sessionId);
-    if (deleted > 0) {
-      console.info(`Session ${sessionId}: cleaned up ${deleted} incomplete tail messages before retry`);
-    }
-    // 置为 RESUMING 状态
-    await this.deps.sessionService.updatePhase(sessionId, 'RESUMING');
-    this.deps.registry.send(userId, wsEvent('session_status', sessionId, { phase: 'RESUMING' }));
-    // 分配新的 executionId
-    const executionId = randomUUID();
-    const cancelFlag = this.deps.agentLoop.registerCancelFlag(sessionId);
-    this.cancelFlags.set(sessionId, cancelFlag);
-    this.runningExecutionIds.set(sessionId, executionId);
-    // 清除残留的 tool calls 和 ask questions 状态
-    this.deps.registry.clearActiveToolCalls(sessionId);
-    this.deps.askUserQuestionsRegistry.failAllForSession(sessionId);
-    this.submitExecution(sessionId, userId, executionId, (futureRef) =>
-      this.runRetryExecution(session, userId, sessionId, executionId, cancelFlag, futureRef));
   }
 
   private async runRetryExecution(

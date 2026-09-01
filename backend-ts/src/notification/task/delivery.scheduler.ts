@@ -1,5 +1,5 @@
 import { formatDateTime } from '../../common/json.js';
-import { hasText } from '../../common/case.js';
+import { hasText, toSnakeRow } from '../../common/case.js';
 import type { Db } from '../../db/db.js';
 import { DeliveryStatus, parseNotificationChannel, type TaskNotificationDelivery } from './types.js';
 import type { WebhookSecretCipher } from './webhook-secret-cipher.js';
@@ -15,6 +15,10 @@ export interface DeliverySchedulerStore {
   countPending(): Promise<number>;
   updateById(row: Partial<TaskNotificationDelivery> & { id: number }): Promise<void>;
   deleteHistory(cutoff: string): Promise<void>;
+  /** 按 id 读取（deliver 发送前重查状态用，可选）。 */
+  findById?(id: number): Promise<TaskNotificationDelivery | null>;
+  /** 终态回写带状态 CAS（WHERE id=? AND status=?，可选；未提供时 deliver 走 updateById 旧行为）。 */
+  updateIfStatus?(id: number, expectedStatus: string, row: Partial<TaskNotificationDelivery>): Promise<boolean>;
 }
 
 export class DeliverySchedulerDbStore implements DeliverySchedulerStore {
@@ -44,6 +48,10 @@ export class DeliverySchedulerDbStore implements DeliverySchedulerStore {
     return result.affectedRows === 1;
   }
 
+  findById(id: number): Promise<TaskNotificationDelivery | null> {
+    return this.db.queryOne('SELECT * FROM task_notification_delivery WHERE id = ?', [id]);
+  }
+
   async countPending(): Promise<number> {
     const row = await this.db.queryOne<{ c: number }>(
       `SELECT COUNT(*) AS c FROM task_notification_delivery WHERE status IN (?, ?, ?)`,
@@ -54,6 +62,19 @@ export class DeliverySchedulerDbStore implements DeliverySchedulerStore {
 
   async updateById(row: Partial<TaskNotificationDelivery> & { id: number }): Promise<void> {
     await this.db.updateById('task_notification_delivery', row.id, row);
+  }
+
+  async updateIfStatus(id: number, expectedStatus: string, row: Partial<TaskNotificationDelivery>): Promise<boolean> {
+    const data = toSnakeRow(row as Record<string, unknown>);
+    delete data.id;
+    const entries = Object.entries(data);
+    if (entries.length === 0) return false;
+    const setSql = entries.map(([c]) => `\`${c}\` = ?`).join(', ');
+    const result = await this.db.execute(
+      `UPDATE task_notification_delivery SET ${setSql} WHERE id = ? AND status = ?`,
+      [...entries.map(([, v]) => v), id, expectedStatus],
+    );
+    return result.affectedRows === 1;
   }
 
   async deleteHistory(cutoff: string): Promise<void> {
@@ -134,6 +155,15 @@ export class WebhookDeliveryScheduler {
   }
 
   private async deliver(delivery: TaskNotificationDelivery): Promise<void> {
+    // WS 结果晚到的竞态兜底：resolveWebSocket 可能已把该行从 SENDING 抑制为 SUPPRESSED_WS，
+    // 此时 webhook 不应再发，否则用户会收到「WS + webhook」重复通知。
+    if (this.store.findById) {
+      const latest = await this.store.findById(delivery.id!);
+      if (latest?.status === DeliveryStatus.SUPPRESSED_WS) {
+        this.metrics.sent(delivery.channel!, 'suppressed_by_ws');
+        return;
+      }
+    }
     const attempt = (delivery.attemptCount ?? 0) + 1;
     let result;
     try {
@@ -164,6 +194,16 @@ export class WebhookDeliveryScheduler {
       update.status = DeliveryStatus.FAILED;
       update.nextRetryAt = null;
       this.metrics.sent(delivery.channel!, 'failed');
+    }
+    if (this.store.updateIfStatus) {
+      // 终态回写走状态 CAS（SENDING）：webhook 发送期间 resolveWebSocket 可能已把该行
+      // 抑制为 SUPPRESSED_WS，无条件 updateById 会把抑制态覆盖回 PENDING/SUCCEEDED，
+      // 造成 webhook 与 WS 重复通知。
+      const casOk = await this.store.updateIfStatus(delivery.id!, DeliveryStatus.SENDING, update);
+      if (!casOk) {
+        console.info(`任务通知终态回写 CAS 失败（发送期间已被 WS 抑制），放弃覆盖, id=${delivery.id}, intended=${update.status}`);
+      }
+      return;
     }
     await this.store.updateById(update);
   }

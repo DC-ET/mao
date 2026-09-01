@@ -335,6 +335,14 @@ export class MessageRepository {
     await this.db.execute(`UPDATE \`message\` SET deleted = 1 WHERE id = ? AND ${notDeleted()}`, [id]);
   }
 
+  /** 限会话范围的按 id 逻辑删除：id 落在其他会话时不误删（微信入站消息被取代时回滚用）。 */
+  async logicalDeleteByIdInSession(sessionId: number, id: number): Promise<void> {
+    await this.db.execute(
+      `UPDATE \`message\` SET deleted = 1 WHERE id = ? AND session_id = ? AND ${notDeleted()}`,
+      [id, sessionId],
+    );
+  }
+
   deleteById(id: number): Promise<void> {
     return this.logicalDeleteById(id);
   }

@@ -64,6 +64,39 @@ describe('AgentWeixinInboundHandler cancel replace', () => {
     expect(secondReply?.text).toBe('latest-reply');
     handler.shutdown();
   });
+
+  it('shutdownSkipsPendingMessageAndRollbacksOrphanUserMessage', async () => {
+    const sessionService = {
+      saveMessage: vi.fn(async () => ({ id: 10, content: 'msg' })),
+      updatePhase: vi.fn(),
+      getMessages: vi.fn(async () => []),
+      cleanupIncompleteTail: vi.fn(async () => 0),
+      updateContextTokens: vi.fn(),
+      deleteMessageById: vi.fn(async () => {}),
+    };
+    const handler = new AgentWeixinInboundHandler({
+      weixinSessionService: { getOrCreateWeixinSession: vi.fn(async () => ({ id: 100, userId: 1 })) },
+      harnessService: { prepareMessage: vi.fn(async () => 'exec-1'), execute: vi.fn(async () => {}) },
+      sessionService,
+      accountRepository: { findByAccountId: vi.fn(async () => ({ userId: 1 })) },
+      agentLoop: { registerCancelFlag: vi.fn(() => new AtomicBoolean(false)) },
+      shellSessionManager: { closeByConversation: vi.fn() },
+      registry: { send: vi.fn() },
+      taskTerminalService: { finishExecution: vi.fn() },
+      activityService: { record: vi.fn(async () => ({ id: 1 })) },
+      activityHeartbeat: { touch: vi.fn() },
+      sessionTodoMapper: { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) },
+      modelService: { getModel: vi.fn(async () => ({ supportsVision: 0 })) },
+      weixinFileStorageService: { saveFile: vi.fn() },
+    } as unknown as AgentWeixinInboundHandlerDeps);
+    // 停机后到达的消息不会被执行：走跳过分支，需回滚本轮孤立 USER 消息并 resolve null。
+    handler.shutdown();
+    const reply = await handler.onMessage({ accountId: 'acc-1', body: 'msg-1' } as WeixinInboundMessageContext);
+    expect(reply).toBeNull();
+    expect(sessionService.deleteMessageById).toHaveBeenCalledWith(100, 10);
+    expect(sessionService.updatePhase).not.toHaveBeenCalled();
+    handler.shutdown();
+  });
 });
 
 describe('AgentWeixinInboundHandler file error', () => {

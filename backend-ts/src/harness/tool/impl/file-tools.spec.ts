@@ -308,10 +308,27 @@ describe('SearchTools', () => {
       pattern: 'needle', glob: '*.txt', ignore_case: true, context_lines: 1,
     })));
     expect(result.total_matches).toBe(1);
+    expect(result.matches.length).toBe(3);
     expect(result.matches[0].file).toContain('a.txt');
-    expect(result.matches[0].line).toBe(2);
-    expect(result.matches[0].context_before[0]).toBe('before');
-    expect(result.matches[0].context_after[0]).toBe('after');
+    expect(result.matches[0].line).toBe(1);
+    expect(result.matches[0].contextual).toBe(true);
+    expect(result.matches[1].line).toBe(2);
+    expect(result.matches[1].contextual).toBeUndefined();
+    expect(result.matches[2].line).toBe(3);
+    expect(result.matches[2].contextual).toBe(true);
+  });
+
+  it('grepSearchRecursiveGlobMatchesRootFilesWithoutRg', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'README.md'), 'needle root\n');
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    writeFileSync(join(dir, 'docs/guide.md'), 'needle nested\n');
+    const tool = new GrepSearchTool(new PathSandbox(dir));
+    (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      pattern: 'needle', glob: '**/*.md',
+    })));
+    expect(result.total_matches).toBe(2);
   });
 
   it('grepSearchMarksTruncatedWhenOutputLimitIsExceeded', async () => {

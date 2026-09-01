@@ -108,6 +108,20 @@ export class TaskNotificationDeliveryService {
       : (await this.store.updateById({ id: delivery.id, ...patch }), true);
     if (updated && delivered) {
       this.metrics.suppressedByWebSocket(delivery.channel!);
+      return;
+    }
+    if (!updated && delivered && this.store.updateIfStatus) {
+      // WS 结果晚到的竞态补救：行可能已被 scheduler 从 WAITING_WS claim 成 SENDING（抑制窗口内过期）。
+      // 若 webhook 尚未发出，直接抑制为 SUPPRESSED_WS；deliver() 发送前会重查状态做最后兜底。
+      const suppressed = await this.store.updateIfStatus(delivery.id, DeliveryStatus.SENDING, {
+        status: DeliveryStatus.SUPPRESSED_WS,
+        nextRetryAt: null,
+      });
+      if (suppressed) {
+        this.metrics.suppressedByWebSocket(delivery.channel!);
+      } else {
+        console.warn(`Task notification ${delivery.id}: WS result arrived after webhook dispatch, duplicate notification possible`);
+      }
     }
   }
 

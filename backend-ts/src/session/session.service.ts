@@ -886,6 +886,11 @@ export class SessionService {
     return totalCount;
   }
 
+  /** 按会话范围回滚单条消息：入站消息被更新消息取代时清理，避免历史中留下无回复的孤立 USER。 */
+  async deleteMessageById(sessionId: number, messageId: number): Promise<void> {
+    await this.messageRepo.logicalDeleteByIdInSession(sessionId, messageId);
+  }
+
   async editMessageAndTruncate(sessionId: number, messageId: number, newContent: string | null, images: string[] | null): Promise<Message> {
     const message = await this.messageRepo.findById(messageId);
     if (message == null || message.role !== 'USER') {
