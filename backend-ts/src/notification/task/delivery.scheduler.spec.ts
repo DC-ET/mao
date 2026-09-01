@@ -104,6 +104,48 @@ describe('WebhookDeliveryScheduler', () => {
     }
   });
 
+  it('dispatchDueDeliveries_swallowsStoreErrors', async () => {
+    const store = {
+      recoverInterrupted: vi.fn(async () => undefined),
+      listDue: vi.fn(async () => { throw new Error('ECONNREFUSED'); }),
+      claim: vi.fn(),
+      countPending: vi.fn(async () => 0),
+      updateById: vi.fn(),
+      deleteHistory: vi.fn(),
+    };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const scheduler = new WebhookDeliveryScheduler(
+      store as never,
+      { workerDelayMs: 1000, batchSize: 10, maxAttempts: 3 },
+      { decrypt: vi.fn() } as never,
+      { get: vi.fn() } as never,
+    );
+    await expect(scheduler.dispatchDueDeliveries()).resolves.toBeUndefined();
+    expect(errorSpy).toHaveBeenCalledWith('任务通知投递调度异常', expect.any(Error));
+    errorSpy.mockRestore();
+  });
+
+  it('cleanupHistory_swallowsStoreErrors', async () => {
+    const store = {
+      recoverInterrupted: vi.fn(),
+      listDue: vi.fn(),
+      claim: vi.fn(),
+      countPending: vi.fn(),
+      updateById: vi.fn(),
+      deleteHistory: vi.fn(async () => { throw new Error('ECONNREFUSED'); }),
+    };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const scheduler = new WebhookDeliveryScheduler(
+      store as never,
+      { workerDelayMs: 1000, batchSize: 10, maxAttempts: 3 },
+      { decrypt: vi.fn() } as never,
+      { get: vi.fn() } as never,
+    );
+    await expect(scheduler.cleanupHistory()).resolves.toBeUndefined();
+    expect(errorSpy).toHaveBeenCalledWith('任务通知历史清理异常', expect.any(Error));
+    errorSpy.mockRestore();
+  });
+
   it('deliverTerminalWriteFallsBackToUpdateByIdWithoutCasSupport', async () => {
     const delivery = {
       id: 7, userId: 1, channel: 'FEISHU', webhookCiphertext: 'enc',

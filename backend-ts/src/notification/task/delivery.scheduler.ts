@@ -131,81 +131,93 @@ export class WebhookDeliveryScheduler {
   }
 
   async dispatchDueDeliveries(): Promise<void> {
-    // 恢复逻辑周期化执行（原先仅进程首个 tick 一次）：卡死在 SENDING 的行可在运行期被复位，
-    // 不必等到进程重启。updated_at 带 ON UPDATE CURRENT_TIMESTAMP，5 分钟 cutoff 不会误伤在途发送。
-    const nowMs = Date.now();
-    if (nowMs - this.lastRecoveryAt >= RECOVERY_INTERVAL_MS) {
-      this.lastRecoveryAt = nowMs;
-      await this.recoverInterruptedDeliveries();
-    }
-    const now = formatDateTime(new Date());
-    const due = await this.store.listDue(now, Math.max(1, this.properties.batchSize));
-    for (const delivery of due) {
-      const claimed = await this.store.claim(delivery.id!, delivery.status!);
-      if (claimed) {
-        this.execute(() => { void this.deliver(delivery); });
+    try {
+      // 恢复逻辑周期化执行（原先仅进程首个 tick 一次）：卡死在 SENDING 的行可在运行期被复位，
+      // 不必等到进程重启。updated_at 带 ON UPDATE CURRENT_TIMESTAMP，5 分钟 cutoff 不会误伤在途发送。
+      const nowMs = Date.now();
+      if (nowMs - this.lastRecoveryAt >= RECOVERY_INTERVAL_MS) {
+        this.lastRecoveryAt = nowMs;
+        await this.recoverInterruptedDeliveries();
       }
+      const now = formatDateTime(new Date());
+      const due = await this.store.listDue(now, Math.max(1, this.properties.batchSize));
+      for (const delivery of due) {
+        const claimed = await this.store.claim(delivery.id!, delivery.status!);
+        if (claimed) {
+          this.execute(() => { void this.deliver(delivery); });
+        }
+      }
+      this.metrics.pending(await this.store.countPending());
+    } catch (e) {
+      console.error('任务通知投递调度异常', e);
     }
-    this.metrics.pending(await this.store.countPending());
   }
 
   async cleanupHistory(): Promise<void> {
-    const cutoff = formatDateTime(new Date(Date.now() - 90 * 24 * 3600 * 1000));
-    await this.store.deleteHistory(cutoff);
+    try {
+      const cutoff = formatDateTime(new Date(Date.now() - 90 * 24 * 3600 * 1000));
+      await this.store.deleteHistory(cutoff);
+    } catch (e) {
+      console.error('任务通知历史清理异常', e);
+    }
   }
 
   private async deliver(delivery: TaskNotificationDelivery): Promise<void> {
-    // WS 结果晚到的竞态兜底：resolveWebSocket 可能已把该行从 SENDING 抑制为 SUPPRESSED_WS，
-    // 此时 webhook 不应再发，否则用户会收到「WS + webhook」重复通知。
-    if (this.store.findById) {
-      const latest = await this.store.findById(delivery.id!);
-      if (latest?.status === DeliveryStatus.SUPPRESSED_WS) {
-        this.metrics.sent(delivery.channel!, 'suppressed_by_ws');
+    try {
+      // WS 结果晚到的竞态兜底：resolveWebSocket 可能已把该行从 SENDING 抑制为 SUPPRESSED_WS，
+      // 此时 webhook 不应再发，否则用户会收到「WS + webhook」重复通知。
+      if (this.store.findById) {
+        const latest = await this.store.findById(delivery.id!);
+        if (latest?.status === DeliveryStatus.SUPPRESSED_WS) {
+          this.metrics.sent(delivery.channel!, 'suppressed_by_ws');
+          return;
+        }
+      }
+      const attempt = (delivery.attemptCount ?? 0) + 1;
+      let result;
+      try {
+        const channel = parseNotificationChannel(delivery.channel);
+        const url = this.cipher.decrypt(delivery.webhookCiphertext!);
+        result = await this.senderRegistry.get(channel).send(url, this.buildContent(delivery));
+      } catch {
+        result = webhookFailure(false, null, null, '通知配置不可用');
+      }
+      const update: Partial<TaskNotificationDelivery> & { id: number } = {
+        id: delivery.id!,
+        attemptCount: attempt,
+        lastHttpStatus: result.httpStatus,
+        lastProviderCode: this.truncate(result.providerCode, 64),
+        lastError: this.truncate(result.error, 1000),
+      };
+      if (result.success) {
+        update.status = DeliveryStatus.SUCCEEDED;
+        update.sentAt = formatDateTime(new Date());
+        update.nextRetryAt = null;
+        this.metrics.sent(delivery.channel!, 'success');
+      } else if (result.retryable && attempt < this.properties.maxAttempts) {
+        update.status = DeliveryStatus.PENDING;
+        update.nextRetryAt = formatDateTime(new Date(Date.now() + this.retryDelayMinutes(attempt) * 60_000));
+        this.metrics.sent(delivery.channel!, 'retryable_failure');
+        this.metrics.retried(delivery.channel!);
+      } else {
+        update.status = DeliveryStatus.FAILED;
+        update.nextRetryAt = null;
+        this.metrics.sent(delivery.channel!, 'failed');
+      }
+      if (this.store.updateIfStatus) {
+        // 终态回写走状态 CAS（SENDING）：webhook 发送期间 resolveWebSocket 可能已把该行
+        // 抑制为 SUPPRESSED_WS，无条件 updateById 会把抑制态覆盖回 PENDING/SUCCEEDED，
+        // 造成 webhook 与 WS 重复通知。
+        const casOk = await this.store.updateIfStatus(delivery.id!, DeliveryStatus.SENDING, update);
+        if (!casOk) {
+          console.info(`任务通知终态回写 CAS 失败（发送期间已被 WS 抑制），放弃覆盖, id=${delivery.id}, intended=${update.status}`);
+        }
         return;
       }
+      await this.store.updateById(update);
+    } catch (e) {
+      console.error(`任务通知发送异常, id=${delivery.id}`, e);
     }
-    const attempt = (delivery.attemptCount ?? 0) + 1;
-    let result;
-    try {
-      const channel = parseNotificationChannel(delivery.channel);
-      const url = this.cipher.decrypt(delivery.webhookCiphertext!);
-      result = await this.senderRegistry.get(channel).send(url, this.buildContent(delivery));
-    } catch {
-      result = webhookFailure(false, null, null, '通知配置不可用');
-    }
-    const update: Partial<TaskNotificationDelivery> & { id: number } = {
-      id: delivery.id!,
-      attemptCount: attempt,
-      lastHttpStatus: result.httpStatus,
-      lastProviderCode: this.truncate(result.providerCode, 64),
-      lastError: this.truncate(result.error, 1000),
-    };
-    if (result.success) {
-      update.status = DeliveryStatus.SUCCEEDED;
-      update.sentAt = formatDateTime(new Date());
-      update.nextRetryAt = null;
-      this.metrics.sent(delivery.channel!, 'success');
-    } else if (result.retryable && attempt < this.properties.maxAttempts) {
-      update.status = DeliveryStatus.PENDING;
-      update.nextRetryAt = formatDateTime(new Date(Date.now() + this.retryDelayMinutes(attempt) * 60_000));
-      this.metrics.sent(delivery.channel!, 'retryable_failure');
-      this.metrics.retried(delivery.channel!);
-    } else {
-      update.status = DeliveryStatus.FAILED;
-      update.nextRetryAt = null;
-      this.metrics.sent(delivery.channel!, 'failed');
-    }
-    if (this.store.updateIfStatus) {
-      // 终态回写走状态 CAS（SENDING）：webhook 发送期间 resolveWebSocket 可能已把该行
-      // 抑制为 SUPPRESSED_WS，无条件 updateById 会把抑制态覆盖回 PENDING/SUCCEEDED，
-      // 造成 webhook 与 WS 重复通知。
-      const casOk = await this.store.updateIfStatus(delivery.id!, DeliveryStatus.SENDING, update);
-      if (!casOk) {
-        console.info(`任务通知终态回写 CAS 失败（发送期间已被 WS 抑制），放弃覆盖, id=${delivery.id}, intended=${update.status}`);
-      }
-      return;
-    }
-    await this.store.updateById(update);
   }
 
   private buildContent(delivery: TaskNotificationDelivery): string {
