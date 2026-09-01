@@ -300,7 +300,11 @@ watch(visible, (val) => {
 })
 
 async function fetchAll() {
-  await Promise.all([fetchSkills(), fetchSystemSkills(), fetchLocalSkills()])
+  try {
+    await Promise.all([fetchSkills(), fetchSystemSkills(), fetchLocalSkills()])
+  } catch {
+    // 拦截器已统一 toast，避免 watch 回调 unhandledrejection
+  }
 }
 
 async function fetchSkills() {
@@ -308,6 +312,8 @@ async function fetchSkills() {
   try {
     const { data } = await api.get('/user-skills')
     skills.value = data || []
+  } catch {
+    // 拦截器已统一 toast
   } finally {
     loading.value = false
   }
@@ -318,6 +324,8 @@ async function fetchSystemSkills() {
   try {
     const { data } = await api.get('/skill-docs')
     systemSkills.value = data || []
+  } catch {
+    // 拦截器已统一 toast
   } finally {
     systemLoading.value = false
   }

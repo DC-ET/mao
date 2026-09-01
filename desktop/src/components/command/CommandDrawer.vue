@@ -95,8 +95,8 @@
       </el-form>
       <template #footer>
         <button class="dialog-btn dialog-btn-cancel" @click="dialogVisible = false">取消</button>
-        <button class="dialog-btn dialog-btn-confirm" :disabled="!canSubmit" @click="handleSubmit">
-          {{ isEditing ? '保存' : '创建' }}
+        <button class="dialog-btn dialog-btn-confirm" :disabled="!canSubmit || submitting" @click="handleSubmit">
+          {{ submitting ? '保存中…' : (isEditing ? '保存' : '创建') }}
         </button>
       </template>
     </el-dialog>
@@ -142,6 +142,7 @@ const editingId = ref<number | null>(null)
 const form = ref({ name: '', content: '' })
 const nameError = ref('')
 const deletingId = ref<number | null>(null)
+const submitting = ref(false)
 
 const namePattern = /^[a-zA-Z0-9一-龥_-]+$/
 
@@ -179,6 +180,8 @@ async function fetchCommands() {
     ])
     commands.value = personalResponse.data || []
     systemCommands.value = systemResponse.data || []
+  } catch {
+    // 拦截器已统一 toast，避免 watch 回调 unhandledrejection
   } finally {
     loading.value = false
   }
@@ -208,7 +211,8 @@ function resetForm() {
 }
 
 async function handleSubmit() {
-  if (!canSubmit.value) return
+  if (!canSubmit.value || submitting.value) return
+  submitting.value = true
 
   try {
     if (isEditing.value) {
@@ -228,6 +232,8 @@ async function handleSubmit() {
     await fetchCommands()
   } catch {
     // Error handled by interceptor
+  } finally {
+    submitting.value = false
   }
 }
 

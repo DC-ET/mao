@@ -34,8 +34,8 @@ function toWsBase(httpBase: string): string {
   return httpBase.replace(/^http/i, 'ws').replace(/\/+$/, '');
 }
 
-export function buildStreamUrl(baseUrl: string, token: string, client: string, localCapable?: boolean): string {
-  let url = `${toWsBase(baseUrl)}/ws/stream?token=${encodeURIComponent(token)}&client=${encodeURIComponent(client)}`;
+export function buildStreamUrl(baseUrl: string, client: string, localCapable?: boolean): string {
+  let url = `${toWsBase(baseUrl)}/ws/stream?client=${encodeURIComponent(client)}`;
   if (localCapable) url += '&local=1';
   return url;
 }
@@ -195,8 +195,8 @@ export class WsClient {
     const token = await this.opts.getToken();
     if (!token) throw new Error('No token');
     const client = this.opts.client ?? WS_CLIENT_TYPE;
-    const url = buildStreamUrl(this.opts.baseUrl, token, client, this.opts.localCapable);
-    this.opts.debug?.(`ws connect ${url.replace(token, '***')}`);
+    const url = buildStreamUrl(this.opts.baseUrl, client, this.opts.localCapable);
+    this.opts.debug?.(`ws connect ${url}`);
 
     const wasReconnect = this.consecutiveFailures > 0 || this.ws != null;
     if (this.ws) {
@@ -216,6 +216,8 @@ export class WsClient {
         this.reconnectDelay = this.reconnectInitialMs;
         this.consecutiveFailures = 0;
         this.lastServerMessageAt = Date.now();
+        // 鉴权首帧：token 不进握手 URL，连接后第一条消息必须先于任何业务帧（subscribe 等）
+        this.send({ type: 'auth', token, client });
         this.startHeartbeat();
         for (const sid of this.subscribed) {
           this.send({ type: 'subscribe', sessionId: sid });

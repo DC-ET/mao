@@ -101,7 +101,7 @@
       v-model="formVisible"
       :title="isEdit ? `编辑服务器：${form.name}` : '新增 MCP 服务器'"
       width="640px"
-      class="mcp-server-dialog"
+      class="mcp-server-dialog management-dialog"
       :close-on-click-modal="false"
     >
       <el-form ref="formRef" :model="form" :rules="formRules" label-width="90px">
@@ -166,6 +166,7 @@
       v-model="testVisible"
       :title="`测试连接：${currentServer?.name || ''}`"
       width="640px"
+      class="management-dialog"
     >
       <div v-loading="testing" class="test-content">
         <template v-if="!testing">
@@ -297,6 +298,8 @@ async function load() {
         userEnabled: pref ? pref.userEnabled : cfg.status === 'ENABLED'
       }
     })
+  } catch {
+    // 拦截器已统一 toast，这里避免 unhandledrejection
   } finally {
     loading.value = false
   }
@@ -394,6 +397,8 @@ async function handleSubmit() {
     }
     formVisible.value = false
     await load()
+  } catch {
+    // 保存成功但列表刷新失败：拦截器已 toast，避免 handleSubmit 整体 reject
   } finally {
     submitting.value = false
   }

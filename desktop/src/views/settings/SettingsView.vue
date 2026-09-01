@@ -117,7 +117,7 @@ function goBack() {
 
 .settings-nav-item.active {
   color: var(--aw-primary);
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-accent-bg);
   font-weight: 500;
 }
 

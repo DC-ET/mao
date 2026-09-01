@@ -1,6 +1,6 @@
 <template>
   <nav class="top-nav">
-    <div class="nav-left">
+    <div class="nav-left" :class="{ 'is-mac': isMacPlatform }">
       <div class="nav-left-actions">
         <el-tooltip v-if="isSettingsRoute" content="返回工作台" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
           <div class="theme-toggle" @click="goBackFromSettings">
@@ -105,6 +105,9 @@ import { goBackToWorkbench } from '../../utils/workbench-nav'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
 
 const { theme, toggleTheme } = useTheme()
+
+// macOS 红绿灯按钮需要为标题栏预留空间；Web/Win/Linux 无此需求
+const isMacPlatform = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || '')
 
 const searchPopoverRef = ref()
 
@@ -339,8 +342,12 @@ async function handleCommand(command: string) {
   display: flex;
   align-items: center;
   gap: 24px;
-  padding-left: 78px; /* space for macOS traffic lights */
   -webkit-app-region: no-drag;
+}
+
+/* 仅 macOS 有红绿灯按钮，需要预留标题栏空间 */
+.nav-left.is-mac {
+  padding-left: 78px;
 }
 
 .nav-logo {

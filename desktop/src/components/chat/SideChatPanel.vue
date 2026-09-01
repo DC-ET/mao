@@ -782,7 +782,7 @@ async function handleQueueEdit(msg: QueueMessage) {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #909399;
+  color: var(--aw-ink-muted-48);
   gap: 12px;
 }
 
@@ -793,7 +793,7 @@ async function handleQueueEdit(msg: QueueMessage) {
 
 .inherit-bar {
   padding: 6px 0 8px;
-  border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-top: 1px solid var(--aw-hairline);
   background: var(--aw-canvas);
 }
 
@@ -881,6 +881,6 @@ async function handleQueueEdit(msg: QueueMessage) {
 }
 
 .empty-icon {
-  color: #c0c4cc;
+  color: var(--aw-ink-muted-48);
 }
 </style>

@@ -66,6 +66,7 @@
           class="feishu-entry"
           size="large"
           plain
+          :loading="feishuLoading"
           @click="startFeishuLogin"
         >
           飞书登录
@@ -136,6 +137,10 @@ const formRules: FormRules = {
 let pollTimer: number | null = null
 let polling = false
 let feishuState = ''
+/** 飞书轮询取消标志：返回密码登录/卸载时终止仍在进行的 pollFeishuResult 循环 */
+let pollCancelled = false
+/** 飞书状态轮询连续失败计数：达到阈值才停止，瞬时网络错误继续重试 */
+let feishuPollFailures = 0
 
 onMounted(() => {
   void authStore.fetchAuthFeatures().catch(() => {
@@ -217,7 +222,8 @@ async function startFeishuLogin() {
     } else {
       // Web / 安卓: 新窗口打开飞书授权页，轮询状态
       feishuStatusText.value = '请在打开的飞书授权页面中完成登录'
-      window.open(authUrl, '_blank')
+      // noopener 防止新窗口反向操纵登录页（window.opener）
+      window.open(authUrl, '_blank', 'noopener,noreferrer')
       startPolling(qr.pollInterval || 2)
     }
   } catch (error) {
@@ -230,6 +236,8 @@ async function startFeishuLogin() {
 
 function startPolling(intervalSeconds: number) {
   clearPollTimer()
+  pollCancelled = false
+  feishuPollFailures = 0
   pollTimer = window.setInterval(() => {
     void checkFeishuStatus()
   }, Math.max(1, intervalSeconds) * 1000)
@@ -240,6 +248,7 @@ async function checkFeishuStatus() {
   polling = true
   try {
     const result = await authStore.pollFeishuLogin(feishuState)
+    feishuPollFailures = 0
     if (result.status === 'PENDING') {
       feishuStatusText.value = '等待飞书确认'
       return
@@ -253,9 +262,13 @@ async function checkFeishuStatus() {
     }
     feishuStatusText.value = result.message || statusText(result.status)
   } catch (error) {
-    clearPollTimer()
-    feishuStatusText.value = '登录状态获取失败'
-    showError(error, '飞书登录状态获取失败')
+    // 瞬时网络错误不应永久停止轮询；连续失败达到阈值才停止并提示
+    feishuPollFailures += 1
+    if (feishuPollFailures >= 5) {
+      clearPollTimer()
+      feishuStatusText.value = '登录状态获取失败'
+      showError(error, '飞书登录状态获取失败')
+    }
   } finally {
     polling = false
   }
@@ -263,13 +276,17 @@ async function checkFeishuStatus() {
 
 async function pollFeishuResult(state: string) {
   // Wait for the server-side callback to complete, then poll for result
+  pollCancelled = false
   await new Promise(resolve => setTimeout(resolve, 1500))
+  if (pollCancelled) return
   let attempts = 0
   const maxAttempts = 30
   while (attempts < maxAttempts) {
+    if (pollCancelled) return
     attempts++
     try {
       const result = await authStore.pollFeishuLogin(state)
+      if (pollCancelled) return
       if (result.status === 'SUCCESS') {
         feishuStatusText.value = '登录成功'
         await finishLogin()
@@ -291,6 +308,7 @@ async function pollFeishuResult(state: string) {
 }
 
 function backToPasswordLogin() {
+  pollCancelled = true
   clearPollTimer()
   mode.value = 'password'
   feishuState = ''
@@ -317,6 +335,7 @@ function showError(error: unknown, fallback: string) {
 }
 
 onBeforeUnmount(() => {
+  pollCancelled = true
   clearPollTimer()
 })
 </script>

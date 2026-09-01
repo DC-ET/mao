@@ -27,6 +27,8 @@ export const SETTINGS_BOOTSTRAP_ENTRIES: SettingsBootstrapEntry[] = [
   { settingKey: 'upload.baseUrl', envName: 'UPLOAD_BASE_URL' },
   { settingKey: 'file.maxSizeMb', envName: 'FILE_MAX_SIZE_MB' },
   { settingKey: 'tools.tavilyApiKey', envName: 'TAVILY_API_KEY', secret: true },
+  { settingKey: 'tools.webSearchProvider', envName: 'WEB_SEARCH_PROVIDER' },
+  { settingKey: 'tools.tinyfishApiKey', envName: 'TINYFISH_API_KEY', secret: true },
   { settingKey: 'oss.region', envName: 'OSS_REGION' },
   { settingKey: 'oss.accessKeyId', envName: 'OSS_ACCESS_KEY_ID' },
   { settingKey: 'oss.accessKeySecret', envName: 'OSS_ACCESS_KEY_SECRET', secret: true },

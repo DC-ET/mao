@@ -48,7 +48,7 @@
         v-model="dialogVisible"
         title="绑定微信Bot"
         width="480px"
-        class="weixin-bot-dialog"
+        class="weixin-bot-dialog management-dialog"
         append-to-body
         @closed="resetQrcode"
       >
@@ -122,6 +122,7 @@ const qrcodeData = ref<QrcodeData>({ sessionKey: '', qrDataUrl: '', message: '' 
 const scanStatus = ref('')
 let statusPollingTimer: number | null = null
 let pollingActive = false
+let confirmFailures = 0
 
 function formatTime(value?: string) {
   if (!value) return '-'
@@ -136,6 +137,8 @@ async function fetchBindingStatus() {
     if (bindingStatus.value.bound) {
       await loadVoicePreference()
     }
+  } catch {
+    // 拦截器已统一 toast，避免 onMounted 回调 unhandledrejection
   } finally {
     loading.value = false
   }
@@ -190,6 +193,7 @@ async function fetchQrcode() {
 function startStatusPolling() {
   stopStatusPolling()
   pollingActive = true
+  confirmFailures = 0
   pollStatus()
 }
 
@@ -202,23 +206,38 @@ async function pollStatus() {
       timeout: 12000,
       skipErrorToast: true
     } as any)
-    scanStatus.value = data.status
+    // confirmed 需等 confirm POST 成功后再置：失败重试期间不能误显示「绑定成功」
+    if (data.status !== 'confirmed') scanStatus.value = data.status
 
     if (data.status === 'confirmed') {
-      stopStatusPolling()
-
-      // 确认绑定
+      // 确认绑定：confirm POST 成功后才把状态置为 confirmed 并结束轮询；
+      // 失败时保持轮询与「请确认登录」提示，避免 UI 误报「绑定成功！」
       if (data.botToken && data.baseUrl && data.ilinkUserId) {
-        await api.post('/weixin/binding/confirm', null, {
-          params: {
-            sessionKey: qrcodeData.value.sessionKey,
-            botToken: data.botToken,
-            baseUrl: data.baseUrl,
-            ilinkUserId: data.ilinkUserId
+        try {
+          await api.post('/weixin/binding/confirm', null, {
+            params: {
+              sessionKey: qrcodeData.value.sessionKey,
+              botToken: data.botToken,
+              baseUrl: data.baseUrl,
+              ilinkUserId: data.ilinkUserId
+            }
+          })
+        } catch (confirmError) {
+          console.error('确认绑定失败:', confirmError)
+          confirmFailures++
+          // 后端 confirm 幂等，持续重试即可；仅前两次弹提示，避免后端不可用时每 3s 刷屏
+          if (confirmFailures <= 2) {
+            ElMessage.error('绑定确认失败，正在重试…')
           }
-        })
+          if (pollingActive) {
+            statusPollingTimer = window.setTimeout(pollStatus, 3000)
+          }
+          return
+        }
       }
 
+      scanStatus.value = data.status
+      stopStatusPolling()
       ElMessage.success('微信Bot绑定成功！')
       dialogVisible.value = false
       await fetchBindingStatus()
@@ -447,7 +466,7 @@ onUnmounted(() => {
 }
 
 .retry-btn:hover {
-  background: rgba(0, 102, 204, 0.08);
+  background: var(--aw-accent-bg);
 }
 
 .qrcode-image {

@@ -31,6 +31,7 @@
           <button
             class="action-btn"
             title="编辑"
+            :disabled="reordering"
             @click="emit('edit', item.msg)"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
@@ -39,7 +40,8 @@
             v-if="index > 0"
             class="action-btn"
             title="上移"
-            @click="emit('reorder', item.msg.id, 'up')"
+            :disabled="reordering"
+            @click="handleReorder(item.msg.id, 'up')"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
           </button>
@@ -47,7 +49,8 @@
             v-if="index < queueMessages.length - 1"
             class="action-btn"
             title="下移"
-            @click="emit('reorder', item.msg.id, 'down')"
+            :disabled="reordering"
+            @click="handleReorder(item.msg.id, 'down')"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
           </button>
@@ -86,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { useSessionStore } from '../../stores/session'
 import type { QueueMessage } from '../../types/chat'
@@ -116,6 +119,9 @@ const queueMessages = computed(() => {
 
 const expanded = ref(false)
 const insertingQueueId = ref<string | null>(null)
+/** 排序 in-flight 防重：禁用编辑/上移/下移，列表刷新或超时后解除 */
+const reordering = ref(false)
+let reorderResetTimer: ReturnType<typeof setTimeout> | null = null
 
 // Reset inserting state when the target message leaves the queue
 // (consumed by backend, or deleted by user/error)
@@ -123,6 +129,7 @@ watch(queueMessages, (newMessages) => {
   if (insertingQueueId.value && !newMessages.some(m => m.id === insertingQueueId.value)) {
     insertingQueueId.value = null
   }
+  reordering.value = false
 })
 
 // Also reset on session phase change (handles insert timeout/error case
@@ -188,6 +195,22 @@ function handleInsert(queueId: string) {
   insertingQueueId.value = queueId
   emit('insert', queueId)
 }
+
+/** 排序防重：in-flight 期间禁用按钮；列表刷新即复位，兜底 2s 超时防卡死。 */
+function handleReorder(queueId: string, direction: 'up' | 'down') {
+  if (reordering.value) return
+  reordering.value = true
+  if (reorderResetTimer) clearTimeout(reorderResetTimer)
+  reorderResetTimer = setTimeout(() => {
+    reordering.value = false
+    reorderResetTimer = null
+  }, 2000)
+  emit('reorder', queueId, direction)
+}
+
+onBeforeUnmount(() => {
+  if (reorderResetTimer) clearTimeout(reorderResetTimer)
+})
 
 async function handleDelete(queueId: string) {
   try {

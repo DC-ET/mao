@@ -29,7 +29,7 @@
             </el-form-item>
           </template>
           <el-form-item label="对象">
-            <el-input v-model="filters.objectType" clearable placeholder="users / agents" style="width: 160px" @keyup.enter="handleSearch" />
+            <el-input v-model="filters.objectType" clearable placeholder="users / agents" style="width: 160px" @keyup.enter="handleSearch" @clear="handleSearch" />
           </el-form-item>
           <el-form-item label="结果">
             <el-select v-model="filters.success" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
@@ -199,9 +199,11 @@ function handleSizeChange() {
 }
 
 async function showDetail(row: any) {
-  const { data } = await api.get(`/audit/logs/${row.id}`)
-  currentLog.value = data
-  detailVisible.value = true
+  try {
+    const { data } = await api.get(`/audit/logs/${row.id}`)
+    currentLog.value = data
+    detailVisible.value = true
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ }
 }
 
 onMounted(fetchLogs)

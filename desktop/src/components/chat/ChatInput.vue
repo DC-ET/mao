@@ -123,10 +123,10 @@
 
     <!-- Pending files -->
     <div v-if="pendingFiles.length > 0" class="pending-files">
-      <div v-for="(file, idx) in pendingFiles" :key="idx" class="pending-file">
-        <img v-if="filePreviewUrls[idx]" :src="filePreviewUrls[idx]" class="file-preview-img" />
+      <div v-for="(item, idx) in pendingFiles" :key="idx" class="pending-file">
+        <img v-if="item.previewUrl" :src="item.previewUrl" class="file-preview-img" />
         <el-icon v-else><Document /></el-icon>
-        <span class="file-name">{{ file.name }}</span>
+        <span class="file-name">{{ item.file.name }}</span>
         <el-icon class="remove-file" :class="{ disabled: disabled }" @click="!disabled && removeFile(idx)"><Close /></el-icon>
       </div>
     </div>
@@ -135,7 +135,8 @@
     <div class="toolbar">
       <div class="toolbar-left">
         <label class="add-btn" title="上传图片或文件" :class="{ disabled: disabled }">
-          <input type="file" multiple :accept="''" :disabled="disabled" @change="handleFileSelect" style="display: none" />
+          <!-- LOCAL 模式不支持非图片文件上传，收窄 accept 避免选完才被拒 -->
+          <input type="file" multiple :accept="executionMode === 'LOCAL' ? 'image/*' : ''" :disabled="disabled" @change="handleFileSelect" style="display: none" />
           <el-icon :size="16"><Plus /></el-icon>
         </label>
         <div class="workspace-indicator" :class="{ 'has-workspace': !!workspace || executionMode === 'CLOUD', 'cloud-mode': executionMode === 'CLOUD' }" @click="executionMode !== 'CLOUD' && openWorkspace()">
@@ -313,8 +314,7 @@ const unregisterChatInput = inject<(key: string) => void>('unregisterChatInput',
 
 // ===== State =====
 const draftStore = useDraftStore()
-const pendingFiles = ref<File[]>([])
-const filePreviewUrls = ref<string[]>([])
+const pendingFiles = ref<{ file: File; previewUrl: string }[]>([])
 const draggingFile = ref(false)
 const editorContent = ref('')
 
@@ -598,7 +598,7 @@ const editor = useEditor({
             if (pendingFiles.value.length >= 10) {
               // 每次粘贴只提示一次超限，剩余图片逐张计数提示会刷屏
               if (!warnedImageLimit) {
-                ElMessage.warning('最多上传 10 张图片，超出部分已忽略')
+                ElMessage.warning('最多上传 10 个附件，超出部分已忽略')
                 warnedImageLimit = true
               }
               continue
@@ -747,8 +747,7 @@ function buildCurrentDraft(): DraftEntry {
   return {
     html: editor.value?.getHTML() ?? '',
     text: editorContent.value,
-    files: [...pendingFiles.value],
-    filePreviewUrls: [...filePreviewUrls.value],
+    files: pendingFiles.value.map((item) => ({ file: item.file, previewUrl: item.previewUrl })),
   }
 }
 
@@ -769,13 +768,11 @@ function restoreDraft(key?: string | null) {
     editor.value.commands.setContent(d.html || '')
     editorContent.value = d.text
     // 浅拷贝隔离 store 快照：移除待发文件时的 splice/revoke 不影响草稿槽位
-    pendingFiles.value = [...d.files]
-    filePreviewUrls.value = [...d.filePreviewUrls]
+    pendingFiles.value = d.files.map((item) => ({ ...item }))
   } else {
     editor.value.commands.clearContent()
     editorContent.value = ''
     pendingFiles.value = []
-    filePreviewUrls.value = []
   }
 }
 
@@ -953,16 +950,14 @@ function handleFileSelect(event: Event) {
 
 function addPendingImage(file: File) {
   if (pendingFiles.value.length >= 10) {
-    ElMessage.warning('最多上传 10 张图片')
+    ElMessage.warning('最多上传 10 个附件')
     return
   }
   if (file.size > 10 * 1024 * 1024) {
     ElMessage.warning(`图片 ${file.name} 超过 10MB 限制`)
     return
   }
-  const idx = pendingFiles.value.length
-  pendingFiles.value.push(file)
-  filePreviewUrls.value[idx] = URL.createObjectURL(file)
+  pendingFiles.value.push({ file, previewUrl: URL.createObjectURL(file) })
 }
 
 /** 非图片文件暂存到待发列表，发送时再上传（懒上传，无需预先创建会话）。 */
@@ -972,7 +967,7 @@ function addPendingFile(file: File) {
     return
   }
   if (pendingFiles.value.length >= 10) {
-    ElMessage.warning('最多上传 10 个文件')
+    ElMessage.warning('最多上传 10 个附件')
     return
   }
   if (file.size > 10 * 1024 * 1024) {
@@ -983,18 +978,16 @@ function addPendingFile(file: File) {
     ElMessage.warning(`文件 ${file.name} 为空`)
     return
   }
-  const idx = pendingFiles.value.length
-  pendingFiles.value.push(file)
-  filePreviewUrls.value[idx] = ''
+  pendingFiles.value.push({ file, previewUrl: '' })
 }
 
 /** 移除指定下标的待发条目（图片或文件）。 */
 function removePendingFileAt(idx: number) {
-  if (filePreviewUrls.value[idx]) {
-    URL.revokeObjectURL(filePreviewUrls.value[idx])
+  const item = pendingFiles.value[idx]
+  if (item?.previewUrl) {
+    URL.revokeObjectURL(item.previewUrl)
   }
   pendingFiles.value.splice(idx, 1)
-  filePreviewUrls.value.splice(idx, 1)
 }
 
 function removeFile(index: number) {
@@ -1045,8 +1038,8 @@ async function handleSend() {
   }
 
   // 图片之外的「文件」走懒上传：发送时由父组件 ensureSession 后再上传
-  const imageFiles = pendingFiles.value.filter((f) => f.type.startsWith('image/'))
-  const pendingUploads = pendingFiles.value.filter((f) => !f.type.startsWith('image/'))
+  const imageFiles = pendingFiles.value.filter((item) => item.file.type.startsWith('image/')).map((item) => item.file)
+  const pendingUploads = pendingFiles.value.filter((item) => !item.file.type.startsWith('image/')).map((item) => item.file)
   const text = editor.value.getText({ blockSeparator: '\n' }).trim()
   if (!text && imageFiles.length === 0 && pendingUploads.length === 0) return
 
@@ -1173,9 +1166,8 @@ function clearInput() {
     editor.value.commands.clearContent()
     editorContent.value = ''
   }
-  filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
+  pendingFiles.value.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl) })
   pendingFiles.value = []
-  filePreviewUrls.value = []
   // 发送成功清空输入时同步清除对应草稿
   if (props.draftKey) draftStore.clearDraft(props.draftKey)
 }
@@ -1245,14 +1237,18 @@ defineExpose({ focusInput, insertFileReference, clearInput, hasDraft, restoreCon
 
 onBeforeUnmount(() => {
   unregisterChatInput(props.registerKey)
+  if (fileSearchDebounce) {
+    clearTimeout(fileSearchDebounce)
+    fileSearchDebounce = null
+  }
   // 兜底保存当前草稿（覆盖 KeepAlive 淘汰 / 路由离开）
   saveDraft(props.draftKey)
   const entry = props.draftKey ? draftStore.getDraft(props.draftKey) : undefined
   // 预览 URL 所有权已随草稿转移：仍有草稿条目时不 revoke，避免切回后预览失效
   if (!entry) {
-    filePreviewUrls.value.forEach(url => { if (url) URL.revokeObjectURL(url) })
+    pendingFiles.value.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl) })
   }
-  filePreviewUrls.value = []
+  pendingFiles.value = []
   editor.value?.destroy()
 })
 </script>
@@ -1340,33 +1336,18 @@ onBeforeUnmount(() => {
 }
 
 :deep(.editor-tag-skill) {
-  background: #0066cc;
-  color: white;
+  background: var(--aw-tag-skill);
+  color: var(--aw-tag-fg);
 }
 
 :deep(.editor-tag-command) {
-  background: #7c3aed;
-  color: white;
+  background: var(--aw-tag-command);
+  color: var(--aw-tag-fg);
 }
 
 :deep(.editor-tag-file) {
-  background: #0d9488;
-  color: white;
-}
-
-:global([data-theme="dark"] .editor-tag-skill) {
-  background: #5b9bd5;
-  color: white;
-}
-
-:global([data-theme="dark"] .editor-tag-command) {
-  background: #a78bfa;
-  color: white;
-}
-
-:global([data-theme="dark"] .editor-tag-file) {
-  background: #2dd4bf;
-  color: #134e4a;
+  background: var(--aw-tag-file);
+  color: var(--aw-tag-file-ink);
 }
 
 /* Pending files */

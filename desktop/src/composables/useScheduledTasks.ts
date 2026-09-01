@@ -22,6 +22,8 @@ export interface ScheduledTask {
 
 const tasks = ref<ScheduledTask[]>([])
 const loading = ref(false)
+/** 启停请求 in-flight 的任务 id 集合：el-switch 据此禁用/显示 loading，防连点且互不影响其他任务 */
+const togglingIds = ref<Set<number>>(new Set())
 
 // 进行中 / 已完结 分组
 const activeTasks = computed(() => tasks.value.filter(t => !t.finished))
@@ -42,12 +44,20 @@ export function useScheduledTasks() {
   }
 
   async function toggleStatus(task: ScheduledTask) {
+    if (togglingIds.value.has(task.id)) return
     const newStatus = task.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'
+    const next = new Set(togglingIds.value)
+    next.add(task.id)
+    togglingIds.value = next
     try {
       await api.put(`/scheduled-tasks/${task.id}`, { status: newStatus })
       task.status = newStatus
     } catch {
       // interceptor handles toast
+    } finally {
+      const settled = new Set(togglingIds.value)
+      settled.delete(task.id)
+      togglingIds.value = settled
     }
   }
 
@@ -105,6 +115,7 @@ export function useScheduledTasks() {
     activeTasks,
     finishedTasks,
     loading,
+    togglingIds,
     fetchTasks,
     toggleStatus,
     deleteTask,

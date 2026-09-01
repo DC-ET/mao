@@ -111,14 +111,13 @@ defineExpose({ moveUp, moveDown, confirmSelection })
   background: var(--aw-canvas);
   border: 1px solid var(--aw-hairline);
   border-radius: var(--aw-radius-sm);
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--aw-shadow-popover);
   z-index: 100;
   margin-bottom: 4px;
 }
 
 [data-theme="dark"] .file-reference-panel {
   background: var(--aw-canvas-parchment);
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.4);
 }
 
 .panel-loading,

@@ -59,6 +59,22 @@ export interface TavilySettings {
   maxResults: number;
 }
 
+export interface TinyFishSettings {
+  apiKey: string;
+  baseUrl: string;
+  connectTimeout: number;
+  readTimeout: number;
+}
+
+export type WebSearchProvider = 'tavily' | 'tinyfish';
+
+/** 全网搜索（web_search 工具）统一配置：由后台系统设置切换 provider。 */
+export interface WebSearchConfig {
+  provider: WebSearchProvider;
+  tavily: TavilySettings;
+  tinyfish: TinyFishSettings;
+}
+
 export interface OssSettings {
   region: string;
   accessKeyId: string;

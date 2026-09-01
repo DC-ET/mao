@@ -168,19 +168,26 @@ export function useStreamWS() {
     if (!token) return Promise.reject(new Error('No token'))
 
     const client = isAndroidCapacitor() ? 'android' : (isElectronClient() ? 'electron' : 'browser')
-    const url = `${wsBase}/ws/stream?token=${token}&client=${client}`
-    ws = new WebSocket(url)
+    // token 不进握手 URL（避免被代理/日志记录），改为连接成功后的首帧 auth 消息
+    const url = `${wsBase}/ws/stream?client=${client}`
+    // 局部引用：disconnect() 将模块级 ws 置空后，迟到回调仍能安全访问自身 socket
+    const socket = new WebSocket(url)
+    ws = socket
     intentionalClose = false
 
     let initialConnect = true
 
     connectPromise = new Promise<void>((resolve, reject) => {
-      ws!.onopen = () => {
+      socket.onopen = () => {
+        // 已被更新的连接或 disconnect() 取代：本轮握手结果不再有效
+        if (socket !== ws) return
         connected.value = true
         reconnectDelay.value = 1000
         connectPromise = null
         initialConnect = false
         isReconnecting = false
+        // 鉴权首帧：必须是新连接发出的第一条消息，先于任何 subscribe 等业务帧
+        socket.send(JSON.stringify({ type: 'auth', token, client }))
         // Re-subscribe all tracked sessions (main + open side tasks).
         // Server-side subscriptions are tied to the previous socket and are lost on reconnect.
         const toResubscribe = new Set(subscribedSessionIds)
@@ -214,7 +221,7 @@ export function useStreamWS() {
         resolve()
       }
 
-      ws!.onmessage = (event) => {
+      socket.onmessage = (event) => {
         if (event.target !== ws) return
         lastServerMessageAt = Date.now()
         let msg: any
@@ -228,7 +235,7 @@ export function useStreamWS() {
 
       // 只处理当前活跃连接的关闭事件：重连后旧 socket 的迟到 onclose
       // 不能清掉新连接的心跳/状态，也不能再排一次多余重连
-      ws!.onclose = (event) => {
+      socket.onclose = (event) => {
         if (event.target !== ws) {
           initialConnect = false
           return
@@ -256,7 +263,7 @@ export function useStreamWS() {
         }
       }
 
-      ws!.onerror = () => {
+      socket.onerror = () => {
         // onclose will fire after onerror, which handles the reject/reconnect
       }
     })
@@ -327,7 +334,9 @@ export function useStreamWS() {
       return true
     }
     try {
-      await connect()
+      // connect() 在 TCP 黑洞下可能挂起很久（浏览器无内建握手超时），
+      // 超时后按发送失败处理，让调用方（停止/重试/发送）给出明确提示
+      await withTimeout(connect(), 15_000)
     } catch {
       console.warn('[ws] sendReliable failed to reconnect for', msg.type)
       return false
@@ -339,6 +348,16 @@ export function useStreamWS() {
     return false
   }
 
+  function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms)
+      promise.then(
+        (v) => { clearTimeout(timer); resolve(v) },
+        (e) => { clearTimeout(timer); reject(e) }
+      )
+    })
+  }
+
   function resetSessionStreamState(sessionId: string) {
     sessionStore.setStreaming(sessionId, false)
     sessionStore.setThinking(sessionId, false)
@@ -347,20 +366,22 @@ export function useStreamWS() {
     clearActiveExecution(sessionId)
   }
 
-  function subscribe(sessionId: string | null) {
+  async function subscribe(sessionId: string | null): Promise<boolean> {
     if (sessionId) {
       const sid = String(sessionId)
-      if (subscribedSessionIds.has(sid)) return
+      if (subscribedSessionIds.has(sid)) return true
       subscribedSessionIds.add(sid)
-      send({ type: 'subscribe', sessionId: Number(sid) })
+      return sendReliable({ type: 'subscribe', sessionId: Number(sid) })
     }
+    return false
   }
 
-  function unsubscribe(sessionId: string | null) {
+  async function unsubscribe(sessionId: string | null): Promise<boolean> {
     if (sessionId) {
       subscribedSessionIds.delete(String(sessionId))
-      send({ type: 'unsubscribe', sessionId: Number(sessionId) })
+      return sendReliable({ type: 'unsubscribe', sessionId: Number(sessionId) })
     }
+    return false
   }
 
   async function sendMessage(sessionId: string, content: string, eventId: string, images?: string[], localSkills?: LocalSkillReport[], agentsMdContent?: string, modelId?: number): Promise<boolean> {
@@ -392,12 +413,12 @@ export function useStreamWS() {
     return sendReliable(payload)
   }
 
-  function cancel(sessionId: string) {
-    send({ type: 'cancel', sessionId: Number(sessionId) })
+  async function cancel(sessionId: string): Promise<boolean> {
+    return sendReliable({ type: 'cancel', sessionId: Number(sessionId) })
   }
 
-  function retryExecution(sessionId: string) {
-    send({ type: 'retry_execution', sessionId: Number(sessionId), data: {} })
+  async function retryExecution(sessionId: string): Promise<boolean> {
+    return sendReliable({ type: 'retry_execution', sessionId: Number(sessionId), data: {} })
   }
 
   async function sendAskUserQuestionsResult(sessionId: string, requestId: string, answers: any[]): Promise<boolean> {

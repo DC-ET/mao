@@ -73,13 +73,13 @@ const routes: RouteRecordRaw[] = [
         path: 'runtime',
         name: 'RuntimeMonitor',
         component: () => import('../views/runtime/RuntimeMonitorView.vue'),
-        meta: { title: '运行监控', keepAlive: true, permission: 'session:read' }
+        meta: { title: '运行监控', keepAlive: true, adminOnly: true }
       },
       {
         path: 'analytics',
         name: 'Analytics',
         component: () => import('../views/analytics/AnalyticsView.vue'),
-        meta: { title: '用量分析', keepAlive: true, permission: 'session:read' }
+        meta: { title: '用量分析', keepAlive: true, adminOnly: true }
       },
       {
         path: 'scheduled-tasks',
@@ -91,7 +91,7 @@ const routes: RouteRecordRaw[] = [
         path: 'system-commands',
         name: 'SystemCommands',
         component: () => import('../views/system-commands/SystemCommandListView.vue'),
-        meta: { title: '系统指令', keepAlive: true, permission: 'user:write' }
+        meta: { title: '系统指令', keepAlive: true, adminOnly: true }
       },
       {
         path: 'feishu-bots',

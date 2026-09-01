@@ -13,6 +13,10 @@
       }"
       @click="handleClick(task)"
       @contextmenu.prevent="openContextMenu($event, task)"
+      @touchstart.passive="onTouchStart($event, task)"
+      @touchmove.passive="onTouchMove"
+      @touchend="onTouchEnd"
+      @touchcancel="onTouchEnd"
     >
       <div class="side-task-item-main">
         <span class="side-task-phase-dot" :class="phaseClass(task.phase)"></span>
@@ -91,8 +95,9 @@ const emit = defineEmits<{
 const sortedTasks = computed<SideTaskItem[]>(() => {
   const list = props.tasks ?? []
   if (props.listMode !== 'focus') return list
+  const byId = new Map(list.map((t) => [String(t.id), t]))
   return sortByFocusPriority(list.map(sideTaskToFocusCandidate)).map(
-    c => list.find(t => String(t.id) === String(c.id))!
+    (c) => byId.get(String(c.id))!
   )
 })
 
@@ -156,13 +161,14 @@ function formatElapsed(time?: string) {
 }
 
 function handleClick(task: SideTaskItem) {
+  if (Date.now() < suppressClickUntil) return
   if (editingId.value === task.id || confirmingDeleteId.value === task.id) return
   closeContextMenu()
   confirmingDeleteId.value = null
   emit('open-side-task', { sideSessionId: task.id, title: task.title || '任务' })
 }
 
-function openContextMenu(e: MouseEvent, task: SideTaskItem) {
+function openContextMenu(e: { clientX: number; clientY: number }, task: SideTaskItem) {
   if (editingId.value === task.id || confirmingDeleteId.value === task.id) return
   const menuWidth = 150
   const menuHeight = 112
@@ -172,6 +178,52 @@ function openContextMenu(e: MouseEvent, task: SideTaskItem) {
   contextMenu.x = Math.max(4, x)
   contextMenu.y = Math.max(4, y)
   contextMenu.visible = true
+}
+
+/** 触屏长按唤出上下文菜单（500ms，移动超过 10px 或提前松手取消） */
+let longPressTimer: number | null = null
+let longPressStart = { clientX: 0, clientY: 0 }
+let longPressTriggered = false
+/** 长按触发后松手：锚定 touchend 时刻的短时间窗，抑制紧随其后的合成 click */
+let suppressClickUntil = 0
+
+function clearLongPress() {
+  if (longPressTimer !== null) {
+    clearTimeout(longPressTimer)
+    longPressTimer = null
+  }
+}
+
+function onTouchStart(e: TouchEvent, task: SideTaskItem) {
+  const touch = e.touches[0]
+  if (!touch) return
+  longPressStart = { clientX: touch.clientX, clientY: touch.clientY }
+  longPressTriggered = false
+  clearLongPress()
+  longPressTimer = window.setTimeout(() => {
+    longPressTimer = null
+    longPressTriggered = true
+    openContextMenu(longPressStart, task)
+  }, 500)
+}
+
+function onTouchMove(e: TouchEvent) {
+  const touch = e.touches[0]
+  if (!touch) return
+  if (longPressTriggered) return
+  if (Math.hypot(touch.clientX - longPressStart.clientX, touch.clientY - longPressStart.clientY) > 10) {
+    clearLongPress()
+  }
+}
+
+function onTouchEnd() {
+  clearLongPress()
+  if (longPressTriggered) {
+    longPressTriggered = false
+    // 部分浏览器（如 Android Chrome）长按后不派发合成 click，用时间窗而非一次性标志，
+    // 避免标志残留吞掉用户的下一次真实点击；锚定 touchend 保证长按浏览菜单后松手也不误触
+    suppressClickUntil = Date.now() + 400
+  }
 }
 
 function closeContextMenu() {
@@ -269,6 +321,7 @@ onUnmounted(() => {
   window.removeEventListener('click', closeContextMenu)
   window.removeEventListener('resize', closeContextMenu)
   window.removeEventListener('scroll', closeContextMenu, true)
+  clearLongPress()
 })
 </script>
 
@@ -328,7 +381,7 @@ onUnmounted(() => {
   animation: pulse-running 1.5s ease-in-out infinite;
 }
 
-.side-task-phase-dot.waiting { background: #b37400; }
+.side-task-phase-dot.waiting { background: var(--aw-status-waiting); }
 .side-task-phase-dot.completed { background: var(--aw-success); }
 .side-task-phase-dot.failed { background: var(--aw-danger); }
 .side-task-phase-dot.idle { background: var(--aw-hairline); }

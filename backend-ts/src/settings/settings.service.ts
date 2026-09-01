@@ -4,7 +4,7 @@ import { hasText } from '../common/case.js';
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
   AgentLookup, FeishuOAuthSettings, LdapSettings, ModelLookup, OssSettings, SettingsRuntimeConfig,
-  SystemSetting, SystemSettingRepository, TavilySettings, UploadSettings,
+  SystemSetting, SystemSettingRepository, TavilySettings, TinyFishSettings, UploadSettings, WebSearchConfig, WebSearchProvider,
 } from './types.js';
 
 export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
@@ -26,6 +26,8 @@ export const UPLOAD_STORAGE_MODE_KEY = 'upload.storageMode';
 export const UPLOAD_BASE_URL_KEY = 'upload.baseUrl';
 export const FILE_MAX_SIZE_MB_KEY = 'file.maxSizeMb';
 export const TAVILY_API_KEY_KEY = 'tools.tavilyApiKey';
+export const TINYFISH_API_KEY_KEY = 'tools.tinyfishApiKey';
+export const WEB_SEARCH_PROVIDER_KEY = 'tools.webSearchProvider';
 export const OSS_REGION_KEY = 'oss.region';
 export const OSS_ACCESS_KEY_ID_KEY = 'oss.accessKeyId';
 export const OSS_ACCESS_KEY_SECRET_KEY = 'oss.accessKeySecret';
@@ -50,6 +52,10 @@ const DEFAULT_TAVILY_BASE_URL = 'https://api.tavily.com';
 const DEFAULT_TAVILY_CONNECT_TIMEOUT = 10000;
 const DEFAULT_TAVILY_READ_TIMEOUT = 30000;
 const DEFAULT_TAVILY_MAX_RESULTS = 5;
+const DEFAULT_TINYFISH_BASE_URL = 'https://api.search.tinyfish.ai';
+const DEFAULT_TINYFISH_CONNECT_TIMEOUT = 10000;
+const DEFAULT_TINYFISH_READ_TIMEOUT = 30000;
+const DEFAULT_WEB_SEARCH_PROVIDER: WebSearchProvider = 'tavily';
 const DEFAULT_OSS_STS_ROLE_SESSION_NAME = 'mao-sts';
 const DEFAULT_OSS_STS_EXPIRE = 3600;
 const DEFAULT_OSS_STS_MAX_SIZE_MB = 50;
@@ -176,6 +182,27 @@ export class SystemSettingService {
       readTimeout: DEFAULT_TAVILY_READ_TIMEOUT,
       maxResults: DEFAULT_TAVILY_MAX_RESULTS,
     };
+  }
+
+  async getTinyFishConfig(): Promise<TinyFishSettings> {
+    const apiKey = await this.getSecret(TINYFISH_API_KEY_KEY);
+    return {
+      apiKey,
+      baseUrl: DEFAULT_TINYFISH_BASE_URL,
+      connectTimeout: DEFAULT_TINYFISH_CONNECT_TIMEOUT,
+      readTimeout: DEFAULT_TINYFISH_READ_TIMEOUT,
+    };
+  }
+
+  /** 全网搜索统一配置：provider 由后台「网络工具 → 搜索实现」切换，默认 tavily（向后兼容）。 */
+  async getWebSearchConfig(): Promise<WebSearchConfig> {
+    const [providerRaw, tavily, tinyfish] = await Promise.all([
+      this.getText(WEB_SEARCH_PROVIDER_KEY, DEFAULT_WEB_SEARCH_PROVIDER),
+      this.getTavilyConfig(),
+      this.getTinyFishConfig(),
+    ]);
+    const provider: WebSearchProvider = providerRaw === 'tinyfish' ? 'tinyfish' : 'tavily';
+    return { provider, tavily, tinyfish };
   }
 
   /** OSS 未配置（region/AK/SK/bucket 任一为空）时返回 null，消费方按"未配置"处理。 */
@@ -337,6 +364,9 @@ export class SystemSettingService {
     }
     if (key === UPLOAD_STORAGE_MODE_KEY && value !== 'local' && value !== 'oss') {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '上传存储模式仅支持 local 或 oss');
+    }
+    if (key === WEB_SEARCH_PROVIDER_KEY && value !== 'tavily' && value !== 'tinyfish') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索实现仅支持 tavily 或 tinyfish');
     }
     if (key === LDAP_URL_KEY && !/^ldaps?:\/\//i.test(value!)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'LDAP 服务地址必须以 ldap:// 或 ldaps:// 开头');

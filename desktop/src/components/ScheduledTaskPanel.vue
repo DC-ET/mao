@@ -58,7 +58,8 @@
             <el-switch
               :model-value="task.status === 'ACTIVE'"
               size="small"
-              :disabled="task.finished"
+              :loading="togglingIds.has(task.id)"
+              :disabled="task.finished || togglingIds.has(task.id)"
               @change="toggleStatus(task)"
             />
             <el-popconfirm title="确认删除此定时任务？" @confirm="deleteTask(task.id)">
@@ -77,7 +78,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useScheduledTasks } from '../composables/useScheduledTasks'
 
-const { tasks, activeTasks, finishedTasks, loading, fetchTasks, toggleStatus, deleteTask, formatNextFire, formatFinishedAt, statusLabel } = useScheduledTasks()
+const { tasks, activeTasks, finishedTasks, loading, togglingIds, fetchTasks, toggleStatus, deleteTask, formatNextFire, formatFinishedAt, statusLabel } = useScheduledTasks()
 
 const activeTab = ref<'active' | 'finished'>('active')
 const currentTasks = computed(() => activeTab.value === 'active' ? activeTasks.value : finishedTasks.value)
@@ -164,15 +165,15 @@ onMounted(fetchTasks)
 }
 
 .status-dot.active {
-  background: #67c23a;
+  background: var(--aw-status-success);
 }
 
 .status-dot.paused {
-  background: #909399;
+  background: var(--aw-ink-muted);
 }
 
 .status-dot.finished {
-  background: #c0c4cc;
+  background: var(--aw-ink-muted-40);
 }
 
 .task-meta {
@@ -196,7 +197,7 @@ onMounted(fetchTasks)
 }
 
 .cron {
-  font-family: monospace;
+  font-family: var(--aw-font-mono);
 }
 
 .task-status {
@@ -206,19 +207,19 @@ onMounted(fetchTasks)
 }
 
 .exec-completed {
-  color: #67c23a;
+  color: var(--aw-status-success);
 }
 
 .exec-failed {
-  color: #f56c6c;
+  color: var(--aw-status-danger);
 }
 
 .exec-skipped {
-  color: #e6a23c;
+  color: var(--aw-warning);
 }
 
 .exec-queued {
-  color: #409eff;
+  color: var(--aw-primary);
 }
 
 .fire-count {

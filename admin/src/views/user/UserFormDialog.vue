@@ -187,8 +187,10 @@ function resetForm() {
 }
 
 async function fetchRoles() {
-  const { data } = await api.get('/roles')
-  roleOptions.value = data || []
+  try {
+    const { data } = await api.get('/roles')
+    roleOptions.value = data || []
+  } catch { /* 拦截器已提示失败，角色下拉留空 */ }
 }
 
 watch(() => props.visible, async (val) => {

@@ -316,11 +316,17 @@ export function useVersionCheck() {
     const plugin = getAndroidPlugin()
     if (!plugin || !url) return { success: false, error: '当前环境不支持客户端升级' }
 
-    // 监听下载进度
-    const listener = plugin.addListener?.('downloadProgress', (data: { percent?: number }) => {
-      appUpdateStatus.value = 'downloading'
-      appUpdateProgress.value = data?.percent ?? null
-    })
+    // 监听下载进度（Capacitor 返回 Promise<PluginListenerHandle>，需 await 后才能 remove）
+    let listener: { remove: () => Promise<void> } | null = null
+    try {
+      const handle = await plugin.addListener?.('downloadProgress', (data: { percent?: number }) => {
+        appUpdateStatus.value = 'downloading'
+        appUpdateProgress.value = data?.percent ?? null
+      })
+      listener = (handle ?? null) as { remove: () => Promise<void> } | null
+    } catch {
+      listener = null
+    }
 
     try {
       appUpdateStatus.value = 'downloading'
@@ -343,7 +349,7 @@ export function useVersionCheck() {
       appUpdateError.value = msg || '下载安装失败'
       return { success: false, error: msg }
     } finally {
-      listener?.remove?.()
+      try { await listener?.remove() } catch { /* ignore */ }
     }
   }
 

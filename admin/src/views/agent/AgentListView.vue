@@ -127,15 +127,18 @@ const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('agent:write'))
 
+let fetchAgentsSeq = 0
 async function fetchAgents() {
+  const seq = ++fetchAgentsSeq
   loading.value = true
   try {
     const { data } = await api.get('/agents', {
       params: { keyword: searchQuery.value }
     })
+    if (seq !== fetchAgentsSeq) return
     allAgents.value = data || []
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
-    loading.value = false
+    if (seq === fetchAgentsSeq) loading.value = false
   }
 }
 

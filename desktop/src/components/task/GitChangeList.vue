@@ -58,7 +58,7 @@
       :visible="ctxMenu.visible"
       :x="ctxMenu.x"
       :y="ctxMenu.y"
-      :show-open-in-finder="executionMode !== 'CLOUD'"
+      :show-open-in-finder="executionMode !== 'CLOUD' && canOpenInFinder"
       :show-download-actions="executionMode === 'CLOUD'"
       @hide="ctxMenu.visible = false"
       @copy-absolute="handleCopyAbsolute"
@@ -119,6 +119,8 @@ const emit = defineEmits<{
   'add-file-to-chat': [filePath: string]
 }>()
 
+const canOpenInFinder = computed(() => typeof window !== 'undefined' && !!window.electronAPI?.showItemInFolder)
+
 const ctxMenu = reactive({
   visible: false,
   x: 0,
@@ -166,9 +168,13 @@ function handleCopyRelative() {
 
 function handleOpenInFinder() {
   if (!ctxMenu.node) return
+  if (!canOpenInFinder.value) {
+    ElMessage.info('当前环境不支持在文件管理器中打开')
+    return
+  }
   const path = ctxMenu.node.kind === 'file' ? ctxMenu.node.file.path : ctxMenu.node.path
   const absPath = getAbsolutePath(path)
-  window.electronAPI.showItemInFolder(absPath)
+  window.electronAPI?.showItemInFolder?.(absPath)
 }
 
 function handleAddToChat() {

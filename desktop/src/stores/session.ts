@@ -1014,7 +1014,7 @@ export const useSessionStore = defineStore('session', () => {
     streamingAssistantMessageIds.delete(sid)
   }
 
-  async function deleteSession(id: string) {
+  async function deleteSession(id: string): Promise<boolean> {
     try {
       const existing = sessionEntities.value.get(String(id))
       await api.delete(`/sessions/${id}`)
@@ -1040,8 +1040,10 @@ export const useSessionStore = defineStore('session', () => {
         viewingSideTaskId.value = null
       }
       useDraftStore().clearDraftAndMark(`s:${sid}`)
+      return true
     } catch {
-      // ignore
+      // 拦截器已提示失败；返回 false 供调用方停止后续跳转，避免删除失败仍表现为成功
+      return false
     }
   }
 
@@ -1173,6 +1175,19 @@ export const useSessionStore = defineStore('session', () => {
    */
   function getMessages(sessionId: string): ChatMessage[] {
     return sessionMessages.value.get(String(sessionId)) ?? []
+  }
+
+  /** 发送失败回滚：移除尾部空 assistant 占位气泡（无内容且无工具调用），并清理其流式登记。 */
+  function removeTrailingEmptyAssistant(sessionId: string) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid)
+    if (!list || list.length === 0) return
+    const lastMsg = list[list.length - 1]
+    if (lastMsg?.role !== 'assistant' || lastMsg.content || (lastMsg.toolCalls?.length)) return
+    list.pop()
+    if (streamingAssistantMessageIds.get(sid) === String(lastMsg.id)) {
+      streamingAssistantMessageIds.delete(sid)
+    }
   }
 
   // 流式期间数组引用替换节流：delta 高频到达时避免每字符 O(n) 复制整条消息数组。
@@ -1745,6 +1760,7 @@ export const useSessionStore = defineStore('session', () => {
     addAssistantMessage,
     ensureStreamingAssistantMessage,
     getMessages,
+    removeTrailingEmptyAssistant,
     appendDelta,
     appendThinkingDelta,
     resetStreamingAssistantMessage,

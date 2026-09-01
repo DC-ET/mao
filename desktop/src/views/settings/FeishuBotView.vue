@@ -29,7 +29,7 @@
       </div>
     </div>
 
-    <el-dialog v-model="dialogVisible" title="绑定飞书账号" width="460px" append-to-body>
+    <el-dialog v-model="dialogVisible" title="绑定飞书账号" width="460px" class="management-dialog" append-to-body @closed="clearPollTimer">
       <div class="dialog-content">
         <el-icon class="dialog-icon" :size="42"><Connection /></el-icon>
         <p class="dialog-title">请在打开的飞书页面中完成授权</p>

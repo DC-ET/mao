@@ -135,17 +135,6 @@ export class StreamingWsHandler {
     return this.executionClaims.has(sessionId) || this.runningTasks.has(sessionId);
   }
 
-  async afterConnectionEstablished(session: WsSocket, query: Record<string, string>): Promise<void> {
-    const userId = this.parseUserIdFromToken(query.token);
-    if (userId == null) {
-      session.close(1003, 'Missing or invalid token');
-      return;
-    }
-    const clientType = this.normalizeClient(query.client);
-    this.deps.registry.register(session, userId, clientType);
-    this.deps.registry.send(userId, wsEvent('connected', null, { userId }));
-  }
-
   afterConnectionClosed(session: WsSocket): void {
     const userId = this.deps.registry.getUserId(session);
     this.deps.registry.unregister(session);
@@ -159,8 +148,6 @@ export class StreamingWsHandler {
   }
 
   async handleTextMessage(session: WsSocket, payload: string): Promise<void> {
-    const userId = this.deps.registry.getUserId(session);
-    if (userId == null) return;
     let root: Record<string, unknown>;
     try {
       root = JSON.parse(payload) as Record<string, unknown>;
@@ -169,6 +156,25 @@ export class StreamingWsHandler {
     }
     const type = typeof root.type === 'string' ? root.type : null;
     if (!type) return;
+    // 鉴权改为首帧 auth 消息：token 不再出现在握手 URL（避免进日志/代理记录）。
+    // 未注册连接仅接受 auth 帧；其余消息 fail fast 关闭，防止无凭据占用连接。
+    const userId = this.deps.registry.getUserId(session);
+    if (userId == null) {
+      if (type !== 'auth') {
+        session.close(1003, 'Not authenticated');
+        return;
+      }
+      const token = typeof root.token === 'string' ? root.token : undefined;
+      const authedUserId = this.parseUserIdFromToken(token);
+      if (authedUserId == null) {
+        session.close(1003, 'Missing or invalid token');
+        return;
+      }
+      const clientType = this.normalizeClient(typeof root.client === 'string' ? root.client : undefined);
+      this.deps.registry.register(session, authedUserId, clientType);
+      this.deps.registry.send(authedUserId, wsEvent('connected', null, { userId: authedUserId }));
+      return;
+    }
     try {
       await this.dispatch(userId, type, root);
     } catch (e) {

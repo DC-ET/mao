@@ -7,7 +7,7 @@ import type { ScheduledTaskService } from '../../schedule/scheduled-task.service
 import type { ShellSessionManager, OutputManager } from '../shell/shell-session-manager.js';
 import type { BackgroundTaskManager } from '../core/background-task-manager.js';
 import type { GitCredentialLookup } from '../../session/types.js';
-import type { TavilySettings } from '../../settings/types.js';
+import type { WebSearchConfig } from '../../settings/types.js';
 import type { WebPageConfig } from './impl/open-web-page-tool.js';
 import type { ImageModelLookup } from './impl/generate-image-tool.js';
 import type { WeixinMediaToolSupport, WeixinMediaUploadService, WeixinSendService } from './impl/wechat-tools.js';
@@ -55,7 +55,7 @@ export interface DefaultToolRegistryDeps {
   gitCredentialService?: GitCredentialLookup | null;
   jwtService?: ShellTokenIssuer | null;
   shellUserLookup?: ShellUserLookup | null;
-  tavily: () => Promise<TavilySettings>;
+  webSearch: () => Promise<WebSearchConfig>;
   webPage: WebPageConfig;
   imageModelLookup: ImageModelLookup;
   uploadDir: string;
@@ -96,7 +96,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       deps.backgroundTaskManager, deps.gitCredentialService,
       deps.jwtService, deps.shellUserLookup,
     ),
-    new WebSearchTool(deps.tavily),
+    new WebSearchTool(deps.webSearch),
     new OpenWebPageTool(deps.webPage),
     new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => '')),
     new TaskCreateTool(deps.sessionTodoMapper),

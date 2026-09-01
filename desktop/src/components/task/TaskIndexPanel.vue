@@ -418,7 +418,7 @@
 <script setup lang="ts">
 import { computed, ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Refresh, Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, FolderChecked, RefreshLeft, Clock, Bell, BellFilled } from '@element-plus/icons-vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
@@ -475,11 +475,13 @@ const contextMenu = reactive({
 })
 
 /** 聚焦模式：全量 ACTIVE 主会话按优先级排序（服务端 tree* 信号 + 实时信号）。 */
-const focusedSessions = computed<Session[]>(() =>
-  sortByFocusPriority(sessionStore.focusedSessions.map(sessionToFocusCandidate))
-    .map(c => sessionStore.focusedSessions.find(s => String(s.id) === String(c.id)))
+const focusedSessions = computed<Session[]>(() => {
+  const all = sessionStore.focusedSessions
+  const byId = new Map(all.map((s) => [String(s.id), s]))
+  return sortByFocusPriority(all.map(sessionToFocusCandidate))
+    .map((c) => byId.get(String(c.id)))
     .filter((s): s is Session => !!s)
-)
+})
 
 /** 历史折叠：已完成且超过 3 天无更新的任务 */
 const historySessions = computed(() => focusedSessions.value.filter(s => isHistoryEligible(s, HISTORY_DAYS)))
@@ -568,7 +570,39 @@ function menuEditTitle() {
 function menuDelete() {
   const id = contextMenu.sessionId
   closeContextMenu()
-  if (id) confirmingDeleteId.value = id
+  if (!id) return
+  // 窄面板（<200px）没有行内确认按钮宿主：改走确认弹窗完成删除
+  if (!showItemActions.value) {
+    void deleteSessionViaDialog(id)
+    return
+  }
+  confirmingDeleteId.value = id
+}
+
+/** 窄面板删除兜底：确认弹窗 + 与行内确认相同的删除/跳转逻辑。 */
+async function deleteSessionViaDialog(sessionId: string) {
+  try {
+    await ElMessageBox.confirm('确定删除该任务吗？删除后无法恢复。', '确认删除', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return // 用户取消
+  }
+  const wasActive = sessionStore.activeSessionId === sessionId
+  const deleted = await sessionStore.deleteSession(sessionId)
+  if (!deleted) {
+    ElMessage.error('删除失败，请稍后重试')
+    return
+  }
+  if (wasActive && sessionStore.sessions.length > 0) {
+    const next = sessionStore.sessions[0]
+    sessionStore.setActiveSession(next.id)
+    router.push(`/tasks/${next.id}`)
+  } else if (wasActive) {
+    router.push({ name: 'Home', query: { newTask: '1' } })
+  }
 }
 
 function startArchive(e: MouseEvent, session: Session) {
@@ -797,6 +831,10 @@ function openGroupFolder(group: { key: string }) {
 }
 
 function openTerminal(group: { key: string }) {
+  if (typeof window === 'undefined' || !window.electronAPI?.openTerminal) {
+    ElMessage.info('终端仅在桌面客户端可用')
+    return
+  }
   const workspace = group.key.startsWith('LOCAL:') ? group.key.substring(6) : ''
   if (!terminalOpen.value) {
     terminalOpen.value = true
@@ -950,8 +988,12 @@ function cancelDelete(e?: MouseEvent) {
 async function confirmDelete(e: MouseEvent, sessionId: string) {
   e.stopPropagation()
   const wasActive = sessionStore.activeSessionId === sessionId
-  await sessionStore.deleteSession(sessionId)
+  const deleted = await sessionStore.deleteSession(sessionId)
   confirmingDeleteId.value = null
+  if (!deleted) {
+    ElMessage.error('删除失败，请稍后重试')
+    return
+  }
   if (wasActive && sessionStore.sessions.length > 0) {
     const next = sessionStore.sessions[0]
     sessionStore.setActiveSession(next.id)
@@ -982,9 +1024,14 @@ async function confirmEdit(e?: MouseEvent) {
     cancelEdit()
     return
   }
-  await sessionStore.renameSession(id, title)
-  editingSessionId.value = null
-  editingTitle.value = ''
+  try {
+    await sessionStore.renameSession(id, title)
+    editingSessionId.value = null
+    editingTitle.value = ''
+  } catch {
+    // 失败保持编辑态让用户重试；store/拦截器已提示
+    ElMessage.error('重命名失败')
+  }
 }
 
 function cancelEdit(e?: MouseEvent) {
@@ -1038,14 +1085,18 @@ function showLess(key: string) {
 
 async function refreshSessions() {
   expandedCounts.value = new Map()
-  await sessionStore.fetchSessions()
-  // 聚焦数据已加载过 → 同步静默刷新（保持聚焦列表实时）
-  if (sessionStore.focusLoaded) {
-    await sessionStore.fetchFocusSessions(true)
-  }
-  // 已归档区已加载过 → 同步静默刷新
-  if (sessionStore.archivedLoaded) {
-    await sessionStore.fetchArchivedSessions(true)
+  try {
+    // 三个刷新相互独立：任一失败不应中断其余刷新，也不应让调用方出现 unhandledrejection
+    const results = await Promise.allSettled([
+      sessionStore.fetchSessions(),
+      sessionStore.focusLoaded ? sessionStore.fetchFocusSessions(true) : Promise.resolve(),
+      sessionStore.archivedLoaded ? sessionStore.fetchArchivedSessions(true) : Promise.resolve(),
+    ])
+    if (results.some((r) => r.status === 'rejected')) {
+      ElMessage.error('刷新任务列表失败，请稍后重试')
+    }
+  } catch {
+    ElMessage.error('刷新任务列表失败，请稍后重试')
   }
 }
 
@@ -1070,9 +1121,6 @@ function onGroupDragStart(e: DragEvent, index: number) {
   dragIndex.value = index
   e.dataTransfer!.effectAllowed = 'move'
   e.dataTransfer!.setData('text/plain', String(index))
-  // 添加拖拽时的半透明效果
-  const target = e.target as HTMLElement
-  target.classList.add('dragging')
 }
 
 function onGroupDragOver(e: DragEvent, index: number) {
@@ -1158,6 +1206,10 @@ function onGroupDragEnd() {
 .refresh-btn:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.06);
   color: var(--aw-primary);
+}
+
+[data-theme="dark"] .refresh-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .refresh-btn:disabled {
@@ -1383,7 +1435,7 @@ function onGroupDragEnd() {
 }
 
 .session-phase-dot.running { background: var(--aw-primary); }
-.session-phase-dot.waiting { background: #b37400; }
+.session-phase-dot.waiting { background: var(--aw-status-waiting); }
 .session-phase-dot.completed { background: var(--aw-success); }
 .session-phase-dot.failed { background: var(--aw-danger); }
 .session-phase-dot.idle { background: var(--aw-hairline); }
@@ -1796,7 +1848,7 @@ function onGroupDragEnd() {
   letter-spacing: -0.1px;
 }
 
-.focus-status-label.status-waiting { color: #b37400; }
+.focus-status-label.status-waiting { color: var(--aw-status-waiting); }
 .focus-status-label.status-failed { color: var(--aw-danger); }
 .focus-status-label.status-running { color: var(--aw-primary); }
 .focus-status-label.status-completed { color: var(--aw-ink-muted-48); }

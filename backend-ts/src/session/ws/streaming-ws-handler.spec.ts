@@ -366,17 +366,31 @@ describe('StreamingWsHandler', () => {
 
   it('connectionLifecycleUsesTokenAndCleanupHooks', async () => {
     vi.clearAllMocks();
-    jwtService.validateToken.mockReturnValue(true);
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    jwtService.validateAccessToken.mockReturnValue(true);
     jwtService.getUserIdFromToken.mockReturnValue(7);
-    registry.getUserId.mockReturnValue(7);
     registry.hasLocalClientConnection.mockReturnValue(false);
     const connected: WsSocket = { id: 'ws-1', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
-    await handler.afterConnectionEstablished(connected, { token: 'valid.jwt.token', client: 'electron' });
+    await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'valid.jwt.token', client: 'electron' }));
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'electron');
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({ type: 'connected' }));
+    // 已认证连接再次发 auth 应为无害 no-op（不重复注册）
+    registry.register.mockClear();
+    await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'valid.jwt.token', client: 'electron' }));
+    expect(registry.register).not.toHaveBeenCalled();
     handler.afterConnectionClosed(connected);
     handler.handleTransportError(connected);
-    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'electron');
     expect(localToolSessionRegistry.failAllForUser).toHaveBeenCalledTimes(2);
     expect(askUserQuestionsRegistry.failAllForSession).not.toHaveBeenCalled();
+  });
+
+  it('closes unauthenticated connections that send non-auth messages', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(null);
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    expect(ws.close).toHaveBeenCalledWith(1003, 'Not authenticated');
+    expect(registry.subscribe).not.toHaveBeenCalled();
+    expect(registry.register).not.toHaveBeenCalled();
   });
 
   it('subscribeRePushesPendingAskUserQuestionsOnReconnect', async () => {
@@ -415,10 +429,10 @@ describe('StreamingWsHandler', () => {
 
   it('connectionRejectsForgedOrInvalidJwt', async () => {
     vi.clearAllMocks();
-    jwtService.validateToken.mockReturnValue(false);
+    registry.getUserId.mockReturnValue(null);
     jwtService.validateAccessToken.mockReturnValue(false);
     const connected: WsSocket = { id: 'ws-x', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
-    await handler.afterConnectionEstablished(connected, { token: 'forged', client: 'browser' });
+    await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'forged', client: 'browser' }));
     expect(connected.close).toHaveBeenCalled();
     expect(registry.register).not.toHaveBeenCalled();
     expect(jwtService.getUserIdFromToken).not.toHaveBeenCalled();
@@ -426,10 +440,10 @@ describe('StreamingWsHandler', () => {
 
   it('keeps client=cli instead of silently mapping to browser', async () => {
     vi.clearAllMocks();
-    jwtService.validateToken.mockReturnValue(true);
+    registry.getUserId.mockReturnValue(null);
     jwtService.validateAccessToken.mockReturnValue(true);
     jwtService.getUserIdFromToken.mockReturnValue(7);
-    await handler.afterConnectionEstablished(ws, { token: 'ok', client: 'cli' });
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'auth', token: 'ok', client: 'cli' }));
     expect(registry.register).toHaveBeenCalledWith(ws, 7, 'cli');
   });
 

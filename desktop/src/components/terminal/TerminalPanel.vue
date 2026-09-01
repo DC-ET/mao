@@ -1,6 +1,6 @@
 <template>
   <div v-show="isOpen" class="terminal-panel" :style="{ height: panelHeight + 'px' }">
-    <div class="terminal-resize-handle" @mousedown="startResize" />
+    <div class="terminal-resize-handle" @mousedown="startResize" @touchstart.prevent="startResize" />
     <div class="terminal-header">
       <TerminalTabs
         :tabs="tabs"
@@ -108,13 +108,14 @@ function handleSwitch(id: string) {
   switchTab(id)
 }
 
-function startResize(e: MouseEvent) {
+function startResize(e: MouseEvent | TouchEvent) {
   e.preventDefault()
-  const startY = e.clientY
+  const touch = 'touches' in e ? e.touches[0] : null
+  const startY = touch ? touch.clientY : (e as MouseEvent).clientY
   const startHeight = panelHeight.value
 
-  function onMove(e: MouseEvent) {
-    const delta = startY - e.clientY
+  function applyResize(clientY: number) {
+    const delta = startY - clientY
     const maxHeight = window.innerHeight * MAX_HEIGHT_RATIO
     panelHeight.value = Math.max(MIN_HEIGHT, Math.min(maxHeight, startHeight + delta))
     if (activeTabId.value) {
@@ -122,15 +123,28 @@ function startResize(e: MouseEvent) {
     }
   }
 
+  function onMove(e: MouseEvent) {
+    applyResize(e.clientY)
+  }
+
+  function onTouchMove(e: TouchEvent) {
+    const t = e.touches[0]
+    if (t) applyResize(t.clientY)
+  }
+
   function onUp() {
     document.removeEventListener('mousemove', onMove)
     document.removeEventListener('mouseup', onUp)
+    document.removeEventListener('touchmove', onTouchMove)
+    document.removeEventListener('touchend', onUp)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
   }
 
   document.addEventListener('mousemove', onMove)
   document.addEventListener('mouseup', onUp)
+  document.addEventListener('touchmove', onTouchMove, { passive: true })
+  document.addEventListener('touchend', onUp)
   document.body.style.cursor = 'row-resize'
   document.body.style.userSelect = 'none'
 }
@@ -171,6 +185,13 @@ onUnmounted(() => {
 .terminal-resize-handle:hover {
   background: var(--aw-primary);
   opacity: 0.2;
+}
+
+@media (pointer: coarse) {
+  .terminal-resize-handle {
+    top: -8px;
+    height: 16px;
+  }
 }
 
 .terminal-header {

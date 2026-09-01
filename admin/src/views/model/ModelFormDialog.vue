@@ -141,6 +141,7 @@ const form = reactive({
 const rules = computed<FormRules>(() => ({
   name: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
   modelId: [{ required: true, message: '请输入模型标识', trigger: 'blur' }],
+  baseUrl: [{ pattern: /^https?:\/\//, message: '需以 http:// 或 https:// 开头', trigger: 'blur' }],
   apiKey: isEdit.value
     ? []
     : [{ required: true, message: '请输入 API Key', trigger: 'blur' }]

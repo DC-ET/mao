@@ -6,7 +6,11 @@
           shadow="hover"
           class="clickable-card"
           :class="{ 'is-active': filters.phase === item.phase }"
+          role="button"
+          tabindex="0"
           @click="selectPhase(item.phase)"
+          @keydown.enter="selectPhase(item.phase)"
+          @keydown.space.prevent="selectPhase(item.phase)"
         >
           <div class="metric" :class="{ danger: item.phase === 'FAILED' }">
             <span>{{ item.label }}</span>
@@ -31,7 +35,7 @@
         <FilterPanel>
           <template #always>
             <el-form-item label="关键词">
-              <el-input v-model="filters.keyword" clearable placeholder="标题/摘要" style="width: 180px" @keyup.enter="handleSearch" />
+              <el-input v-model="filters.keyword" clearable placeholder="标题/摘要" style="width: 180px" @keyup.enter="handleSearch" @clear="handleSearch" />
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="handleSearch">查询</el-button>
@@ -226,14 +230,12 @@ function handleSizeChange() {
   fetchSessions()
 }
 
-// keep-alive 下首次挂载 onMounted 与 onActivated 同时触发，跳过首次避免重复请求
+// keep-alive 下首次挂载 onMounted 与 onActivated 同时触发：onMounted 负责首刷，
+// onActivated 仅在再次激活（从其他页面切回）时刷新
 let activatedOnce = false
 onMounted(() => {
-  if (!activatedOnce) {
-    activatedOnce = true
-    applyRouteQuery()
-    fetchSessions()
-  }
+  applyRouteQuery()
+  fetchSessions()
 })
 onActivated(() => {
   if (!activatedOnce) {

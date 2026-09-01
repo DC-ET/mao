@@ -34,6 +34,7 @@
             v-if="integrationRows.length > 0"
             :rows="integrationRows"
             :saving="saving"
+            :can-write="canWrite"
             @saved="fetchSettings"
           />
           <section
@@ -53,13 +54,13 @@
                   <el-switch
                     v-if="isBooleanSetting(row.settingKey)"
                     :model-value="row.value === 'true'"
-                    :disabled="row.editable !== 1"
+                    :disabled="row.editable !== 1 || !canWrite"
                     @change="(val: string | number | boolean) => saveBoolean(row, val === true)"
                   />
                   <el-select
                     v-else-if="row.settingKey === 'weixin.agentId'"
                     :model-value="row.value || ''"
-                    :disabled="row.editable !== 1"
+                    :disabled="row.editable !== 1 || !canWrite"
                     clearable
                     filterable
                     placeholder="默认 Agent"
@@ -76,7 +77,7 @@
                   <el-select
                     v-else-if="isModelSetting(row.settingKey)"
                     :model-value="row.value || ''"
-                    :disabled="row.editable !== 1"
+                    :disabled="row.editable !== 1 || !canWrite"
                     clearable
                     filterable
                     placeholder="默认模型"
@@ -92,7 +93,7 @@
                   </el-select>
                   <template v-else>
                     <span class="setting-value">{{ row.isSecret === 1 && row.value ? '******' : (row.value || '未设置') }}</span>
-                    <el-button type="primary" link size="small" :disabled="row.editable !== 1" @click="handleEdit(row)">编辑</el-button>
+                    <el-button type="primary" link size="small" :disabled="row.editable !== 1 || !canWrite" @click="handleEdit(row)">编辑</el-button>
                   </template>
                 </div>
               </div>
@@ -128,15 +129,20 @@ import { computed, ref, nextTick, onBeforeUnmount, onActivated } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import { useAuthStore } from '../../stores/auth'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import IntegrationConfigPanel from './components/IntegrationConfigPanel.vue'
+
+const authStore = useAuthStore()
+/** 后端 PUT /system-settings/:key 需 settings:write，无权限时禁用全部写控件 */
+const canWrite = computed(() => authStore.hasPermission('settings:write'))
 
 const MODEL_SELECT_KEYS = new Set(['weixin.modelId', 'session.titleModelId', 'git.commitMessageModelId'])
 const INTEGRATION_KEYS = new Set([
   'auth.ldap.enabled', 'auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase',
   'auth.feishu.enabled', 'auth.feishu.appId', 'auth.feishu.appSecret', 'auth.feishu.redirectUri',
   'upload.storageMode', 'upload.baseUrl', 'file.maxSizeMb',
-  'tools.tavilyApiKey',
+  'tools.webSearchProvider', 'tools.tavilyApiKey', 'tools.tinyfishApiKey',
   'oss.region', 'oss.accessKeyId', 'oss.accessKeySecret', 'oss.bucket',
   'oss.sts.regionId', 'oss.sts.endpoint', 'oss.sts.accessKeyId', 'oss.sts.accessKeySecret',
   'oss.sts.roleArn', 'oss.sts.roleSessionName', 'oss.sts.expire', 'oss.sts.maxSizeMb',
@@ -287,14 +293,15 @@ function handleEdit(row: any) {
   dialogVisible.value = true
 }
 
-async function persist(row: any, value: string | null) {
-  if (row.editable !== 1 || saving.value) return
+async function persist(row: any, value: string | null): Promise<boolean> {
+  if (row.editable !== 1 || saving.value) return false
   saving.value = true
   try {
     await api.put(`/system-settings/${row.settingKey}`, { value })
     await fetchSettings()
     ElMessage.success('配置已更新')
-  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
+    return true
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ return false } finally {
     saving.value = false
   }
 }
@@ -312,13 +319,12 @@ async function saveSetting() {
   const isSecret = currentSetting.value.isSecret === 1
   // secret 行留空 = 不修改（null 语义）
   const value = isSecret && settingValue.value === '' ? null : settingValue.value
-  await persist(currentSetting.value, value)
-  dialogVisible.value = false
+  const ok = await persist(currentSetting.value, value)
+  if (ok) dialogVisible.value = false
 }
 
-onActivated(async () => {
-  await Promise.all([fetchAgents(), fetchModels()])
-  await fetchSettings()
+onActivated(() => {
+  void fetchSettings()
 })
 </script>
 

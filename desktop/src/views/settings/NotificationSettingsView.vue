@@ -96,6 +96,9 @@ const testing = ref(false)
 const showWebhook = ref(false)
 const webhookError = ref('')
 const savedChannel = ref<NotificationChannel | null>(null)
+/** 已保存配置的快照：切走渠道后再切回时恢复「已配置」展示状态 */
+const savedConfigured = ref(false)
+const savedMaskedWebhook = ref<string | null>(null)
 const preference = reactive<TaskNotificationPreference>({
   enabled: false,
   channel: null,
@@ -146,6 +149,10 @@ function handleChannelChange(value: string | number | boolean) {
   if (next !== savedChannel.value) {
     preference.webhookConfigured = false
     preference.maskedWebhook = null
+  } else {
+    // 切回已保存渠道：恢复快照，让「已配置地址」状态与占位提示回归
+    preference.webhookConfigured = savedConfigured.value
+    preference.maskedWebhook = savedMaskedWebhook.value
   }
 }
 
@@ -158,6 +165,8 @@ async function loadPreference() {
     form.channel = data.channel
     form.webhookUrl = ''
     savedChannel.value = data.channel
+    savedConfigured.value = data.webhookConfigured
+    savedMaskedWebhook.value = data.maskedWebhook
   } finally {
     loading.value = false
   }
@@ -190,6 +199,8 @@ async function handleSave() {
     })
     Object.assign(preference, data)
     savedChannel.value = data.channel
+    savedConfigured.value = data.webhookConfigured
+    savedMaskedWebhook.value = data.maskedWebhook
     form.channel = data.channel
     form.webhookUrl = ''
     showWebhook.value = false

@@ -321,6 +321,8 @@ const pendingInspectorMeta = new Map<string, Promise<void>>()
 const pendingInspectorTodos = new Map<string, Promise<void>>()
 const autoRetriedMeta = new Set<string>()
 const autoRetriedTodos = new Set<string>()
+/** 组件卸载后置 true：重试 sleep 返回后不再发起请求 */
+let disposed = false
 
 function ensureInspectorMeta(sid: string, viewType: 'side_task' | 'subagent', parentId: string): Promise<void> {
   if (fetchedInspectorMeta.has(sid)) return Promise.resolve()
@@ -362,6 +364,7 @@ function ensureInspectorMeta(sid: string, viewType: 'side_task' | 'subagent', pa
       if (!autoRetriedMeta.has(sid) && inspectorSessionId.value === sid) {
         autoRetriedMeta.add(sid)
         await new Promise(resolve => setTimeout(resolve, 600))
+        if (disposed) return
         if (inspectorSessionId.value === sid) {
           await ensureInspectorMeta(sid, viewType, parentId)
         }
@@ -389,6 +392,7 @@ function ensureInspectorTodos(sid: string): Promise<void> {
       if (!autoRetriedTodos.has(sid) && inspectorSessionId.value === sid) {
         autoRetriedTodos.add(sid)
         await new Promise(resolve => setTimeout(resolve, 600))
+        if (disposed) return
         if (inspectorSessionId.value === sid) {
           await ensureInspectorTodos(sid)
         }
@@ -567,6 +571,7 @@ async function handleEditSideTaskTitle(payload: { sideSessionId: number; title: 
     }
   } catch (e) {
     console.warn('[side-task] Failed to rename side task:', e)
+    ElMessage.error('重命名失败，请稍后重试')
   }
 }
 
@@ -626,6 +631,7 @@ async function handlePromoteSideTask(sideSessionId: number) {
     }
   } catch (e) {
     console.warn('[side-task] Failed to promote side task:', e)
+    ElMessage.error('升级失败，请稍后重试')
   }
 }
 
@@ -858,6 +864,7 @@ async function loadSession(sid: string) {
   // Restore open side task tabs (excluding user-closed ones)
   try {
     const res = await api.get(`/sessions/${sid}/side-tasks`)
+    if (gen !== loadGeneration) return
     const sideTasksData = res?.data
     const items = Array.isArray(sideTasksData)
       ? sideTasksData.map((st: { id: number; title: string; modelId?: number; phase?: string; createdAt?: string; unread?: boolean }) => ({
@@ -881,6 +888,7 @@ async function loadSession(sid: string) {
   // Restore subagent list (tabs opened on demand / via live event)
   try {
     const res = await api.get(`/sessions/${sid}/subagents`)
+    if (gen !== loadGeneration) return
     const subagentsData = res?.data
     const items = Array.isArray(subagentsData)
       ? subagentsData.map((sa: {
@@ -905,7 +913,9 @@ async function loadSession(sid: string) {
     sessionStore.setSubagents(sid, [])
   }
 
-  initialLoading.value = false
+  if (gen === loadGeneration) {
+    initialLoading.value = false
+  }
 }
 
 async function navigateToLatestSession(): Promise<string | null> {
@@ -1057,6 +1067,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true
   window.removeEventListener('side_session_created', handleSideSessionCreated)
   window.removeEventListener('subagent_session_created', handleSubagentSessionCreated)
 })

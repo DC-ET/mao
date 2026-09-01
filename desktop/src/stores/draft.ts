@@ -1,16 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
-/** 单个输入框草稿：文本 + 待发文件。按会话/新建任务/边路任务键隔离。 */
+/** 单个输入框草稿：文本 + 待发附件。按会话/新建任务/边路任务键隔离。 */
 export interface DraftEntry {
   /** TipTap 编辑器 HTML（含 quickCommand / fileReference 自定义节点） */
   html: string
   /** 纯文本（用于空判断） */
   text: string
-  /** 待发图片/文件（File 对象引用，内存缓存不序列化） */
-  files: File[]
-  /** 与 files 一一对应的 blob 预览 URL（'' 表示非图片）；所有权随草稿转移 */
-  filePreviewUrls: string[]
+  /** 待发图片/文件及其 blob 预览 URL（previewUrl '' 表示非图片）；所有权随草稿转移 */
+  files: Array<{ file: File; previewUrl: string }>
 }
 
 /** TipTap 空文档 getHTML() 的残留结构（空段落/空行），视为无内容 */

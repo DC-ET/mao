@@ -260,8 +260,10 @@ watch(() => props.visible, async (val) => {
 }, { immediate: true })
 
 async function loadOptions() {
-  const { data } = await api.get('/skill-docs')
-  skillDocs.value = data || []
+  try {
+    const { data } = await api.get('/skill-docs')
+    skillDocs.value = data || []
+  } catch { /* 拦截器已提示失败，技能下拉留空 */ }
   try {
     const { data: mcpData } = await api.get('/mcp-servers/enabled')
     mcpServers.value = mcpData || []

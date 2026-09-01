@@ -28,8 +28,8 @@ jwt:
   refresh-expiration: 604800000
   shell-expiration: ${JWT_SHELL_EXPIRATION:7200000}
 
-# 集成配置（LDAP / 飞书OAuth登录 / 上传 / Tavily / OSS）已迁移至管理后台 system_setting，
-# 环境变量（LDAP_*、FEISHU_APP_*、UPLOAD_*、TAVILY_API_KEY、OSS_* 等）仅在升级首次启动时
+# 集成配置（LDAP / 飞书OAuth登录 / 上传 / Tavily/TinyFish 搜索 / OSS）已迁移至管理后台 system_setting，
+# 环境变量（LDAP_*、FEISHU_APP_*、UPLOAD_*、TAVILY_API_KEY、TINYFISH_API_KEY、WEB_SEARCH_PROVIDER、OSS_* 等）仅在升级首次启动时
 # 由 SettingsBootstrap 自动导入 DB（加密项需 SETTINGS_SECRET），之后一律以管理后台为准。
 
 feishu:

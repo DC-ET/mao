@@ -6,24 +6,30 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
   const treeData = ref<FileNode[]>([])
   const loading = ref(false)
   const expandedPaths = ref<Set<string>>(new Set())
+  /** 根加载竞态序号：provider 快速切换/refresh 并发时丢弃过期结果 */
+  let rootRequestSeq = 0
 
   async function loadRoot() {
+    const seq = ++rootRequestSeq
     if (!provider.value) {
       treeData.value = []
+      loading.value = false
       return
     }
     loading.value = true
     try {
       const result = await provider.value.listDirectory('')
+      if (seq !== rootRequestSeq) return
       if (result.error) {
         treeData.value = [{ name: '', path: '', isDirectory: false, error: result.error }]
       } else {
         treeData.value = (result.entries || []).map(entryToNode)
       }
     } catch (e: any) {
+      if (seq !== rootRequestSeq) return
       treeData.value = [{ name: '', path: '', isDirectory: false, error: e.message }]
     } finally {
-      loading.value = false
+      if (seq === rootRequestSeq) loading.value = false
     }
   }
 
@@ -113,29 +119,33 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
 
   async function refresh() {
     if (!provider.value) return
+    const seq = ++rootRequestSeq
     const pathsToRefresh = Array.from(expandedPaths.value)
 
     loading.value = true
     try {
       const result = await provider.value.listDirectory('')
+      if (seq !== rootRequestSeq) return
       if (result.error) {
         treeData.value = [{ name: '', path: '', isDirectory: false, error: result.error }]
         return
       }
       treeData.value = (result.entries || []).map(entryToNode)
+      // 旧树已替换：清空展开集合，仅恢复本次刷新前已展开且仍存在的路径
+      expandedPaths.value.clear()
     } catch (e: any) {
+      if (seq !== rootRequestSeq) return
       treeData.value = [{ name: '', path: '', isDirectory: false, error: e.message }]
       return
     } finally {
-      loading.value = false
+      if (seq === rootRequestSeq) loading.value = false
     }
 
-    expandedPaths.value.clear()
     for (const relPath of pathsToRefresh) {
+      if (seq !== rootRequestSeq) return
       await restoreExpandedPath(relPath)
     }
   }
-
   /**
    * Restore an expanded folder after refresh. Handles compacted package paths
    * by walking segments and re-running compaction on each expand.
@@ -192,7 +202,10 @@ export function useFileBrowser(provider: Ref<WorkspaceFileProvider | null>) {
   }
 
   watch(provider, () => {
+    // provider 变更（切换会话/工作区）：立即失效进行中的请求并清空旧树，避免闪现上一工作区内容
+    rootRequestSeq++
     expandedPaths.value.clear()
+    treeData.value = []
     loadRoot()
   }, { immediate: true })
 

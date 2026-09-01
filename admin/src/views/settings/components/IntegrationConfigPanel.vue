@@ -23,12 +23,14 @@
                   v-if="group.testApi"
                   size="small"
                   :loading="testing === group.name"
+                  :disabled="!canWrite"
                   @click="runTest(group)"
                 >测试连接</el-button>
                 <el-button
                   type="primary"
                   size="small"
                   :loading="savingKeys.has(group.name)"
+                  :disabled="!canWrite"
                   @click="saveGroup(group)"
                 >保存</el-button>
               </div>
@@ -39,11 +41,13 @@
               <el-switch
                 v-if="field.type === 'switch'"
                 :model-value="model[field.key] === 'true'"
+                :disabled="!canWrite"
                 @change="(val: string | number | boolean) => { model[field.key] = val === true ? 'true' : 'false' }"
               />
               <el-select
                 v-else-if="field.type === 'select'"
                 v-model="model[field.key]"
+                :disabled="!canWrite"
                 style="width: 100%"
               >
                 <el-option v-for="opt in field.options || []" :key="opt.value" :label="opt.label" :value="opt.value" />
@@ -56,6 +60,7 @@
                 :step="1"
                 step-strictly
                 controls-position="right"
+                :disabled="!canWrite"
                 style="width: 100%"
                 @update:model-value="(val: number | undefined) => { model[field.key] = val == null ? '' : String(val) }"
               />
@@ -64,9 +69,10 @@
                 v-model="model[field.key]"
                 :type="field.secret ? 'password' : 'text'"
                 :placeholder="field.secret ? (field.set ? '已设置，留空表示不修改' : '') : field.placeholder || ''"
+                :disabled="!canWrite"
                 autocomplete="new-password"
               >
-                <template v-if="field.secret && field.set" #append>
+                <template v-if="field.secret && field.set && canWrite" #append>
                   <el-button @click="clearSecret(field.key)">清空</el-button>
                 </template>
               </el-input>
@@ -100,6 +106,9 @@ interface FieldDef {
   min?: number
   max?: number
   options?: Array<{ label: string; value: string }>
+  /** URL 类字段格式校验：非空值必须匹配该正则 */
+  pattern?: RegExp
+  patternMessage?: string
 }
 
 interface GroupDef {
@@ -111,7 +120,7 @@ interface GroupDef {
   testPayload?: (model: Record<string, string>) => Record<string, string>
 }
 
-const props = defineProps<{ rows: SettingRow[]; saving: boolean }>()
+const props = defineProps<{ rows: SettingRow[]; saving: boolean; canWrite?: boolean }>()
 const emit = defineEmits<{ (e: 'saved'): void }>()
 
 const rowMap = computed<Record<string, SettingRow>>(() => {
@@ -144,7 +153,7 @@ const groups = computed<GroupDef[]>(() => [
     keys: ['auth.ldap.enabled', 'auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase'],
     fields: [
       { key: 'auth.ldap.enabled', label: '启用', type: 'switch' },
-      { key: 'auth.ldap.url', label: '服务地址', placeholder: 'ldap://或ldaps://开头' },
+      { key: 'auth.ldap.url', label: '服务地址', placeholder: 'ldap://或ldaps://开头', pattern: /^ldaps?:\/\//, patternMessage: '需以 ldap:// 或 ldaps:// 开头' },
       { key: 'auth.ldap.baseDn', label: 'Base DN' },
       { key: 'auth.ldap.userDn', label: '绑定账号 DN' },
       { key: 'auth.ldap.password', label: '绑定密码', secret: true, set: !!rowMap.value['auth.ldap.password']?.value },
@@ -161,7 +170,7 @@ const groups = computed<GroupDef[]>(() => [
       { key: 'auth.feishu.enabled', label: '启用', type: 'switch' },
       { key: 'auth.feishu.appId', label: 'App ID' },
       { key: 'auth.feishu.appSecret', label: 'App Secret', secret: true, set: !!rowMap.value['auth.feishu.appSecret']?.value },
-      { key: 'auth.feishu.redirectUri', label: '回调地址', hint: '需与飞书开放平台配置一致' },
+      { key: 'auth.feishu.redirectUri', label: '回调地址', hint: '需与飞书开放平台配置一致', pattern: /^https?:\/\//, patternMessage: '需以 http:// 或 https:// 开头' },
     ],
     testApi: '/system-settings/test/feishu',
     testPayload: (m) => pickNonEmpty(m, ['auth.feishu.appId', 'auth.feishu.appSecret'], ['auth.feishu.appId:appId', 'auth.feishu.appSecret:appSecret']),
@@ -180,7 +189,7 @@ const groups = computed<GroupDef[]>(() => [
           { label: '阿里云 OSS 直传', value: 'oss' },
         ],
       },
-      { key: 'upload.baseUrl', label: '访问基础地址', hint: '留空使用相对路径 /uploads/' },
+      { key: 'upload.baseUrl', label: '访问基础地址', hint: '留空使用相对路径 /uploads/', pattern: /^https?:\/\//, patternMessage: '需以 http:// 或 https:// 开头' },
       { key: 'file.maxSizeMb', label: '单文件上限 (MB)', type: 'number', min: 1, max: 102400 },
     ],
   },
@@ -226,9 +235,20 @@ const groups = computed<GroupDef[]>(() => [
   {
     name: 'tools',
     title: '网络工具',
-    keys: ['tools.tavilyApiKey'],
+    keys: ['tools.webSearchProvider', 'tools.tavilyApiKey', 'tools.tinyfishApiKey'],
     fields: [
-      { key: 'tools.tavilyApiKey', label: 'Tavily API Key', secret: true, set: !!rowMap.value['tools.tavilyApiKey']?.value, hint: 'web_search 工具使用' },
+      {
+        key: 'tools.webSearchProvider',
+        label: '搜索实现',
+        type: 'select',
+        options: [
+          { label: 'Tavily（默认）', value: 'tavily' },
+          { label: 'TinyFish', value: 'tinyfish' },
+        ],
+        hint: 'Web 搜索（web_search 工具）的底层实现，保存后即时生效',
+      },
+      { key: 'tools.tavilyApiKey', label: 'Tavily API Key', secret: true, set: !!rowMap.value['tools.tavilyApiKey']?.value, hint: '搜索实现为 Tavily 时使用' },
+      { key: 'tools.tinyfishApiKey', label: 'TinyFish API Key', secret: true, set: !!rowMap.value['tools.tinyfishApiKey']?.value, hint: '搜索实现为 TinyFish 时使用' },
     ],
   },
 ])
@@ -257,6 +277,7 @@ function toNumberOrNull(raw: string | undefined): number | undefined {
 }
 
 async function saveGroup(group: GroupDef) {
+  if (!props.canWrite) return
   if (savingKeys.value.has(group.name)) return
   // 数值字段校验：非法/越界直接拦截，禁止保存
   for (const field of group.fields) {
@@ -266,6 +287,16 @@ async function saveGroup(group: GroupDef) {
     const n = Number(raw)
     if (!Number.isFinite(n) || (field.min != null && n < field.min) || (field.max != null && n > field.max)) {
       ElMessage.error(`「${field.label}」需为 ${field.min ?? '任意'} ~ ${field.max ?? '任意'} 之间的数值`)
+      return
+    }
+  }
+  // URL 类字段格式校验：留空跳过，非空必须匹配
+  for (const field of group.fields) {
+    if (!field.pattern) continue
+    const raw = (model[field.key] ?? '').trim()
+    if (raw === '') continue
+    if (!field.pattern.test(raw)) {
+      ElMessage.error(`「${field.label}」${field.patternMessage || '格式不正确'}`)
       return
     }
   }
@@ -295,7 +326,10 @@ async function saveGroup(group: GroupDef) {
         }
       }
     }
-    clearedSecrets.value = new Set()
+    // 仅移除本组已保存的键：其他组未保存的「清空」标记必须保留
+    const nextCleared = new Set(clearedSecrets.value)
+    for (const item of items) nextCleared.delete(item.key)
+    clearedSecrets.value = nextCleared
     ElMessage.success('已保存，配置即时生效')
     emit('saved')
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
@@ -306,7 +340,7 @@ async function saveGroup(group: GroupDef) {
 }
 
 async function runTest(group: GroupDef) {
-  if (!group.testApi || testing.value) return
+  if (!group.testApi || testing.value || !props.canWrite) return
   testing.value = group.name
   try {
     const payload = group.testPayload ? group.testPayload(model) : {}

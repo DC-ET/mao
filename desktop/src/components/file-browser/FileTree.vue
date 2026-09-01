@@ -39,7 +39,7 @@
       :show-local-actions="executionMode !== 'CLOUD'"
       :show-download-actions="executionMode === 'CLOUD'"
       :is-directory="ctxMenu.node?.isDirectory ?? false"
-      :show-open-in-finder="executionMode !== 'CLOUD'"
+      :show-open-in-finder="executionMode !== 'CLOUD' && canOpenInFinder"
       @hide="ctxMenu.visible = false"
       @copy-absolute="handleCopyAbsolute"
       @copy-relative="handleCopyRelative"
@@ -59,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, toRef, watch } from 'vue'
+import { ref, reactive, computed, toRef, watch, onUnmounted } from 'vue'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useFileBrowser } from '../../composables/useFileBrowser'
@@ -83,6 +83,8 @@ const emit = defineEmits<{
   'open-file': [payload: { path: string; title: string }]
   'add-file-to-chat': [filePath: string]
 }>()
+
+const canOpenInFinder = computed(() => typeof window !== 'undefined' && !!window.electronAPI?.showItemInFolder)
 
 const providerRef = toRef(props, 'provider')
 const { treeData, loading, expandDir, refresh, loadAllDirectories } = useFileBrowser(providerRef)
@@ -137,8 +139,12 @@ function handleCopyRelative() {
 
 function handleOpenInFinder() {
   if (!ctxMenu.node) return
+  if (!canOpenInFinder.value) {
+    ElMessage.info('当前环境不支持在文件管理器中打开')
+    return
+  }
   const absPath = getAbsolutePath(ctxMenu.node.path)
-  window.electronAPI.showItemInFolder(absPath)
+  window.electronAPI?.showItemInFolder?.(absPath)
 }
 
 function handleAddToChat() {
@@ -221,13 +227,25 @@ async function handleDownloadDirectory() {
 }
 
 let filterSeq = 0
-watch(filterText, async (val) => {
+let filterDebounceTimer: ReturnType<typeof setTimeout> | null = null
+watch(filterText, (val) => {
   const keyword = val.trim()
+  if (filterDebounceTimer) {
+    clearTimeout(filterDebounceTimer)
+    filterDebounceTimer = null
+  }
+  // 清空关键词：仅复位过滤视图，无需加载目录
   if (!keyword) return
-  const seq = ++filterSeq
-  await loadAllDirectories(treeData.value, 0, 6)
-  if (seq !== filterSeq) return
-  filterVersion.value++
+  // 逐字符输入会触发 6 层全树并发加载（请求风暴）：
+  // 至少 2 个字符且 300ms 防抖后才执行全树加载
+  if (keyword.length < 2) return
+  filterDebounceTimer = setTimeout(async () => {
+    filterDebounceTimer = null
+    const seq = ++filterSeq
+    await loadAllDirectories(treeData.value, 0, 6)
+    if (seq !== filterSeq) return
+    filterVersion.value++
+  }, 300)
 })
 
 const filterVersion = ref(0)
@@ -275,6 +293,13 @@ function handleRefresh() {
   if (loading.value) return
   refresh()
 }
+
+onUnmounted(() => {
+  if (filterDebounceTimer) {
+    clearTimeout(filterDebounceTimer)
+    filterDebounceTimer = null
+  }
+})
 </script>
 
 <style scoped>

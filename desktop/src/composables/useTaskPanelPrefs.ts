@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
 
@@ -11,6 +12,8 @@ const loading = ref(false)
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let savePromise: Promise<void> | null = null
+/** 首次加载去重：多组件同时调用 loadPrefs 只发一次请求 */
+let loadPromise: Promise<void> | null = null
 
 function readLegacyOrder(): string[] {
   try {
@@ -46,7 +49,7 @@ async function persistPrefs() {
   }).then(() => {
     clearLegacyOrder()
   }).catch(() => {
-    // 静默失败，下次操作会重试
+    ElMessage.warning('任务面板偏好保存失败，稍后将自动重试')
   }).finally(() => {
     savePromise = null
   })
@@ -60,6 +63,9 @@ async function persistPrefs() {
  */
 export function useTaskPanelPrefs() {
   async function loadPrefs() {
+    if (loadPromise) return loadPromise
+    if (loaded.value) return
+
     if (!getToken()) {
       groupOrder.value = readLegacyOrder()
       loaded.value = true
@@ -67,29 +73,33 @@ export function useTaskPanelPrefs() {
     }
 
     loading.value = true
-    try {
-      const { data } = await api.get('/user-preferences/task-panel')
-      const serverOrder = Array.isArray(data?.groupOrder) ? data.groupOrder : []
-      const serverCollapsed = Array.isArray(data?.collapsedGroups) ? data.collapsedGroups : []
+    loadPromise = (async () => {
+      try {
+        const { data } = await api.get('/user-preferences/task-panel')
+        const serverOrder = Array.isArray(data?.groupOrder) ? data.groupOrder : []
+        const serverCollapsed = Array.isArray(data?.collapsedGroups) ? data.collapsedGroups : []
 
-      if (serverOrder.length > 0 || serverCollapsed.length > 0) {
-        groupOrder.value = serverOrder
-        collapsedGroups.value = new Set(serverCollapsed)
-        clearLegacyOrder()
-      } else {
-        const legacyOrder = readLegacyOrder()
-        groupOrder.value = legacyOrder
-        collapsedGroups.value = new Set()
-        if (legacyOrder.length > 0) {
-          scheduleSave()
+        if (serverOrder.length > 0 || serverCollapsed.length > 0) {
+          groupOrder.value = serverOrder
+          collapsedGroups.value = new Set(serverCollapsed)
+          clearLegacyOrder()
+        } else {
+          const legacyOrder = readLegacyOrder()
+          groupOrder.value = legacyOrder
+          collapsedGroups.value = new Set()
+          if (legacyOrder.length > 0) {
+            scheduleSave()
+          }
         }
+      } catch {
+        groupOrder.value = readLegacyOrder()
+      } finally {
+        loaded.value = true
+        loading.value = false
+        loadPromise = null
       }
-    } catch {
-      groupOrder.value = readLegacyOrder()
-    } finally {
-      loaded.value = true
-      loading.value = false
-    }
+    })()
+    await loadPromise
   }
 
   function saveOrder(order: string[]) {

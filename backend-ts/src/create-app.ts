@@ -669,7 +669,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     gitCredentialService: gitLookup,
     jwtService: jwt,
     shellUserLookup: { findById: (id: number) => userRepo.findById(id) },
-    tavily: () => settingService.getTavilyConfig(),
+    webSearch: () => settingService.getWebSearchConfig(),
     webPage: cfg.app.harness.webPage,
     imageModelLookup: modelService,
     uploadDir,

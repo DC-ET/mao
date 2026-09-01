@@ -171,7 +171,7 @@ function handleCopyRelative() {
 
 function handleOpenInFinder() {
   if (!ctxMenu.change) return
-  if (!canOpenInFinder.value) {
+  if (!canOpenInFinder) {
     ElMessage.info('当前环境不支持在文件管理器中打开')
     return
   }

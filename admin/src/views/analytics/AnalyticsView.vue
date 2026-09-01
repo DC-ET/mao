@@ -18,7 +18,11 @@
         <el-card
           shadow="hover"
           :class="{ 'clickable-card': !!item.path }"
+          :role="item.path ? 'button' : undefined"
+          :tabindex="item.path ? 0 : undefined"
           @click="go(item.path)"
+          @keydown.enter="go(item.path)"
+          @keydown.space.prevent="go(item.path)"
         >
           <div class="metric" :class="{ danger: item.danger }">
             <span>{{ item.label }}</span>
@@ -119,13 +123,16 @@ function go(path: string) {
   if (path) router.push(path)
 }
 
+let fetchSummarySeq = 0
 async function fetchSummary() {
+  const seq = ++fetchSummarySeq
   loading.value = true
   try {
     const { data } = await api.get('/admin/analytics/summary', { params: { days: days.value } })
+    if (seq !== fetchSummarySeq) return
     summary.value = data || {}
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
-    loading.value = false
+    if (seq === fetchSummarySeq) loading.value = false
   }
 }
 

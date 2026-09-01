@@ -47,8 +47,13 @@
         />
         <div v-if="displayResultText" class="code-block-wrapper">
           <pre class="result-content"><code>{{ displayResultText }}</code></pre>
-          <button class="copy-btn" title="复制" @click="copyText(displayResultText)">
+          <button class="copy-btn" title="复制完整输出" @click="copyText(fullResultText)">
             <el-icon :size="14"><CopyDocument /></el-icon>
+          </button>
+        </div>
+        <div v-if="isResultTruncated" class="result-expand-row">
+          <button class="expand-result-btn" @click="showFullResult = !showFullResult">
+            {{ showFullResult ? '收起完整输出' : '展开完整输出' }}
           </button>
         </div>
       </div>
@@ -194,7 +199,8 @@ const imagePreviewUrl = computed(() => {
   return ''
 })
 
-const displayResultText = computed(() => {
+/** 未截断的完整输出文本（图片结果展示 content 字段，其余展示原文）。 */
+const fullResultText = computed(() => {
   if (imagePreviewUrl.value) {
     const r = props.toolCall.result || ''
     try {
@@ -203,16 +209,20 @@ const displayResultText = computed(() => {
     } catch {
       // fall through
     }
-    return truncatedResult.value
   }
-  return truncatedResult.value
+  return props.toolCall.result || ''
 })
 
-const truncatedResult = computed(() => {
-  const r = props.toolCall.result || ''
-  const max = 4000
-  if (r.length <= max) return r
-  return r.slice(0, max) + '\n…（输出已截断）'
+const isResultTruncated = computed(() => fullResultText.value.length > 4000)
+
+const showFullResult = ref(false)
+
+const displayResultText = computed(() => {
+  const full = fullResultText.value
+  if (isResultTruncated.value && !showFullResult.value) {
+    return full.slice(0, 4000) + '\n…（输出已截断）'
+  }
+  return full
 })
 
 async function copyText(text: string) {
@@ -374,6 +384,23 @@ function toggleExpand() {
   margin-bottom: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.result-expand-row {
+  margin-top: 2px;
+}
+
+.expand-result-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-primary);
+  cursor: pointer;
+}
+
+.expand-result-btn:hover {
+  text-decoration: underline;
 }
 
 .result-content {

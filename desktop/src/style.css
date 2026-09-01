@@ -58,8 +58,21 @@
   --aw-warning: #ff9f0a;
   --aw-danger: #ff3b30;
 
+  /* Colors — Tag chips (editor/file reference) */
+  --aw-tag-skill: #0066cc;
+  --aw-tag-command: #7c3aed;
+  --aw-tag-file: #0d9488;
+  --aw-tag-fg: #ffffff;
+  --aw-tag-file-ink: #ffffff;
+
+  /* Colors — List status dots */
+  --aw-status-waiting: #b37400;
+  --aw-status-success: var(--aw-success);
+  --aw-status-danger: var(--aw-danger);
+
   /* Shadows — Single product shadow only */
   --aw-shadow-product: 3px 5px 30px 0 rgba(0, 0, 0, 0.22);
+  --aw-shadow-popover: 0 -4px 16px rgba(0, 0, 0, 0.1);
 
   /* Border Radius */
   --aw-radius-xs: 5px;
@@ -232,6 +245,18 @@ html.android-capacitor .management-dialog .el-dialog__body {
   --aw-nav-bg: #000000;
   --aw-nav-text: #f5f5f7;
   --aw-nav-text-muted: #a1a1a6;
+
+  /* Colors — Tag chips (editor/file reference) */
+  --aw-tag-skill: #5b9bd5;
+  --aw-tag-command: #a78bfa;
+  --aw-tag-file: #2dd4bf;
+  --aw-tag-fg: #ffffff;
+  --aw-tag-file-ink: #134e4a;
+
+  /* Colors — List status dots */
+  --aw-status-waiting: #e6b84c;
+  --aw-status-success: var(--aw-success);
+  --aw-status-danger: var(--aw-danger);
 
   /* Terminal */
   --aw-terminal-bg: #1a1a22;

@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import type { StreamingWsHandler } from './streaming-ws-handler.js';
 import type { WsSocket } from './streaming-ws-registry.js';
@@ -17,8 +17,7 @@ export async function attachWebSocket(app: FastifyInstance, deps: AttachWebSocke
   });
   const idleTimeoutMs = deps.idleTimeoutMs ?? 90_000;
 
-  app.get('/ws/stream', { websocket: true }, (socket, request: FastifyRequest) => {
-    const query = request.query as Record<string, string>;
+  app.get('/ws/stream', { websocket: true }, (socket) => {
     const wrapped: WsSocket = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       get readyState() { return socket.readyState === socket.OPEN ? WS_OPEN : socket.readyState; },
@@ -31,7 +30,6 @@ export async function attachWebSocket(app: FastifyInstance, deps: AttachWebSocke
         socket.close(1001, 'idle timeout');
       }
     }, 15_000);
-    void deps.handler.afterConnectionEstablished(wrapped, query);
     socket.on('message', (raw: Buffer | string) => {
       lastActivity = Date.now();
       const text = typeof raw === 'string' ? raw : raw.toString('utf8');

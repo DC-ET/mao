@@ -103,9 +103,9 @@ function formatElapsed(createdAt?: string) {
 }
 
 .subagent-phase-dot.running { background: var(--aw-primary); }
-.subagent-phase-dot.waiting { background: #d4a017; }
-.subagent-phase-dot.completed { background: #3a8f5c; }
-.subagent-phase-dot.failed { background: #c44; }
+.subagent-phase-dot.waiting { background: var(--aw-status-waiting); }
+.subagent-phase-dot.completed { background: var(--aw-status-success); }
+.subagent-phase-dot.failed { background: var(--aw-status-danger); }
 .subagent-phase-dot.cancelled { background: var(--aw-ink-muted-48); }
 
 .subagent-title {

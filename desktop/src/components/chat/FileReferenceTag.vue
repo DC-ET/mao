@@ -43,12 +43,7 @@ const fileName = computed(() => {
   line-height: 1.4;
   vertical-align: baseline;
   white-space: nowrap;
-  background: #0d9488;
-  color: white;
-}
-
-:root[data-theme="dark"] .file-reference-tag {
-  background: #2dd4bf;
-  color: #134e4a;
+  background: var(--aw-tag-file);
+  color: var(--aw-tag-file-ink);
 }
 </style>

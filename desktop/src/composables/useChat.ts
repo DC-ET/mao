@@ -220,25 +220,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
   }
 
-  async function updateTodoManually(todoId: number, action: 'start' | 'complete' | 'delete') {
-    if (!sessionId.value) return
-    const statusMap: Record<string, string> = {
-      start: 'in_progress',
-      complete: 'completed'
-    }
-    try {
-      if (action === 'delete') {
-        await api.delete(`/sessions/${sessionId.value}/todos/${todoId}`)
-      } else {
-        await api.patch(`/sessions/${sessionId.value}/todos/${todoId}`, { status: statusMap[action] })
-      }
-      // Refresh todos after update
-      await fetchTodos()
-    } catch {
-      // ignore
-    }
-  }
-
   function uploadChatImages(files: File[]): Promise<string[]> {
     return uploadImages(files, sessionId.value)
   }
@@ -279,13 +260,18 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     return false
   }
 
-  async function sendMessage(text: string, files?: File[], pendingUploads?: File[]) {
-    if ((!text && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) || sending.value) return
+  /**
+   * 两个发送入口（sendMessage / sendMessageAndWaitForSave）的公共前置：
+   * 上传附件 → 连接 WS → 按需建会话 → 解析文本/收集本地技能 → 注册流式气泡 → WS 发送。
+   * 任一步骤失败时统一清理（复位 sending、移除尾部空 assistant、提示、刷新会话）并返回 null。
+   */
+  async function prepareAndSendMessage(text: string, files?: File[], pendingUploads?: File[]): Promise<string | null> {
+    if ((!text && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) || sending.value) return null
     syncMissingSessionFromStore()
     const targetSessionId = sessionStore.activeSessionId
     if (sessionId.value !== targetSessionId) {
       ElMessage.warning('会话已切换，请重新发送')
-      return
+      return null
     }
 
     sending.value = true
@@ -294,7 +280,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     if (executionMode.value === 'LOCAL' && !isElectron) {
       ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
       sending.value = false
-      return
+      return null
     }
 
     try {
@@ -306,7 +292,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
       if (!requireCurrentSession(targetSessionId)) {
         sending.value = false
-        return
+        return null
       }
 
       // Create session if needed
@@ -316,7 +302,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
           if (dir) workspace.value = dir
           else {
             sending.value = false
-            return
+            return null
           }
         }
 
@@ -330,7 +316,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
           if (gitError) {
             ElMessage.error(gitError)
             sending.value = false
-            return
+            return null
           }
         }
 
@@ -376,7 +362,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
       if (!requireCurrentSession(sid)) {
         sending.value = false
-        return false
+        return null
       }
 
       // Track which session is sending (set AFTER session creation so ID is correct)
@@ -410,9 +396,35 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         throw new Error('消息发送失败，网络连接不可用，请重试')
       }
 
+      return sid
+    } catch (error: any) {
+      sending.value = false
+      initializingWorkspace.value = false
+      initializingWorkspaceLabel.value = ''
+      if (sessionId.value) {
+        sessionStore.removeTrailingEmptyAssistant(sessionId.value)
+        sessionStore.fetchSession(sessionId.value)
+      }
+      if (!(error as Error & { toastShown?: boolean }).toastShown) {
+        const failedBeforeSession = !sessionId.value
+        ElMessage.error(
+          error?.response?.data?.message
+          || error?.message
+          || (failedBeforeSession ? '任务创建失败' : 'Agent 执行中断')
+        )
+      }
+      return null
+    }
+  }
+
+  async function sendMessage(text: string, files?: File[], pendingUploads?: File[]) {
+    const sid = await prepareAndSendMessage(text, files, pendingUploads)
+    if (!sid) return
+
+    try {
       // Wait for completion (session_status reaches COMPLETED/FAILED)
       await new Promise<void>((resolve, reject) => {
-        pendingCallbacks.set(sessionId.value!, { resolve, reject })
+        pendingCallbacks.set(sid, { resolve, reject })
       })
 
       sending.value = false
@@ -437,11 +449,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       sending.value = false
       initializingWorkspace.value = false
       initializingWorkspaceLabel.value = ''
-      // Remove empty assistant message if it was added
-      const list = sessionId.value ? sessionStore.getMessages(sessionId.value) : messages.value
-      const lastMsg = list[list.length - 1]
-      if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
-        list.pop()
+      if (sessionId.value) {
+        sessionStore.removeTrailingEmptyAssistant(sessionId.value)
       }
       if (!(error as Error & { toastShown?: boolean }).toastShown) {
         const failedBeforeSession = !sessionId.value
@@ -462,218 +471,73 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
    * @returns true 表示消息已发出（可清空输入框）；false 表示发送失败（保留输入以便重试）
    */
   async function sendMessageAndWaitForSave(text: string, files?: File[], pendingUploads?: File[]): Promise<boolean> {
-    if ((!text && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) || sending.value) return false
-    syncMissingSessionFromStore()
-    const targetSessionId = sessionStore.activeSessionId
-    if (sessionId.value !== targetSessionId) {
-      ElMessage.warning('会话已切换，请重新发送')
+    const sid = await prepareAndSendMessage(text, files, pendingUploads)
+    if (!sid) return false
+
+    // 等待消息保存确认后立即返回，解锁输入框；Agent 在后台继续执行
+    // 完成后的 sending / 刷新由 phase watcher 处理
+    // 超时不得当作保存成功，否则 ChatPanel 会误清空输入并表现为「发送成功」
+    const saved = await new Promise<boolean>((resolve) => {
+      let settled = false
+      let timeoutId: ReturnType<typeof setTimeout>
+      let callbackId = ''
+      const finish = (ok: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeoutId)
+        offMessageSaved(callbackId)
+        resolve(ok)
+      }
+      callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
+        if (callbackSessionId === sid) {
+          finish(true)
+        }
+      })
+      timeoutId = setTimeout(() => finish(false), 60000)
+    })
+
+    // 保存确认后按实际 phase 同步 sending：
+    // - Agent 尚未进入 RUNNING 时复位，避免误显示停止按钮
+    // - 若 RUNNING 已先到达则保持 true；后续由 phase watcher 接管
+    // 必须用本次发送的 sid，而非 activeSession（等待期间用户可能已切走会话）
+    if (String(sessionId.value) === String(sid)) {
+      sending.value = isActivePhase(sessionStore.getSessionPhase(sid))
+    }
+
+    if (!saved) {
       return false
     }
 
-    sending.value = true
-    startedAt.value = new Date().toISOString()
-
-    if (executionMode.value === 'LOCAL' && !isElectron) {
-      ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
-      sending.value = false
-      return false
-    }
-
-    try {
-      // Upload images to OSS
-      const imageUrls = await uploadChatImages(files || [])
-
-      // Ensure WS connection is established
-      await connect()
-
-      if (!requireCurrentSession(targetSessionId)) {
-        sending.value = false
-        return false
-      }
-
-      // Create session if needed
-      if (!sessionId.value) {
-        if (executionMode.value === 'LOCAL' && isElectron && !workspace.value) {
-          const dir = await (window as any).electronAPI.selectDirectory()
-          if (dir) workspace.value = dir
-          else {
-            sending.value = false
-            return false
+    // Fire-and-forget：记录本轮执行耗时（不阻塞返回）
+    if (!pendingCallbacks.has(sid)) {
+      new Promise<void>((resolve, reject) => {
+        pendingCallbacks.set(sid, { resolve, reject })
+      }).then(() => {
+        if (startedAt.value) {
+          const lastMsg = messages.value[messages.value.length - 1]
+          if (lastMsg && lastMsg.role === 'assistant') {
+            lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
           }
-        }
-
-        let environmentInfo: SessionEnvironmentInfo | undefined
-        if (executionMode.value === 'LOCAL' && isElectron && (window as any).electronAPI?.getEnvironmentInfo) {
-          environmentInfo = await (window as any).electronAPI.getEnvironmentInfo(workspace.value || undefined)
-        }
-
-        if (executionMode.value === 'CLOUD' && workspaceMode.value === 'git') {
-          const gitError = validateHttpsGitUrl(gitCloneUrl.value)
-          if (gitError) {
-            ElMessage.error(gitError)
-            sending.value = false
-            return false
-          }
-        }
-
-        initializingWorkspace.value = true
-        initializingWorkspaceLabel.value = resolveWorkspaceInitLabel()
-        try {
-          const sessionData = await sessionStore.createSession(
-            agentId.value,
-            executionMode.value,
-            executionMode.value === 'LOCAL' ? workspace.value || undefined : undefined,
-            environmentInfo,
-            selectedModelId?.value,
-            permissionLevel?.value,
-            executionMode.value === 'CLOUD' ? cloudProjectKey.value || undefined : undefined,
-            executionMode.value === 'CLOUD' ? workspaceMode.value : undefined,
-            executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? gitCloneUrl.value : undefined,
-            executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? (gitBranch.value || undefined) : undefined
-          )
-          sessionId.value = sessionData.id
-          sessionStore.setActiveSession(sessionData.id)
-          if (sessionData.workspace) {
-            workspace.value = sessionData.workspace
-          }
-          if (sessionData.agentName) {
-            agentName.value = sessionData.agentName
-          }
-        } finally {
-          initializingWorkspace.value = false
-          initializingWorkspaceLabel.value = ''
-        }
-      }
-
-      const sid = sessionId.value!
-      // Upload non-image files to runtime incoming now that session exists
-      let resolvedText = text || ''
-      if (pendingUploads && pendingUploads.length > 0) {
-        resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, sid)
-      }
-      // Resolve file reference relative paths to absolute paths — before both
-      // the optimistic UI insert and the WS send so they stay consistent
-      resolvedText = resolveFileRefPaths(resolvedText, workspace.value)
-      const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
-      const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
-      if (!requireCurrentSession(sid)) {
-        sending.value = false
-        return false
-      }
-
-      // Track which session is sending (set AFTER session creation so ID is correct)
-      sendingSessionId.value = sid
-
-      // Clear previous turn's todos / execution error banner
-      sessionStore.clearTodos(sid)
-      sessionStore.clearExecutionError(sid)
-
-      // Add user message to store
-      sessionStore.addUserMessage(sid, {
-        id: `msg_${Date.now()}_user`,
-        role: 'user',
-        content: resolvedText,
-        createdAt: nowDateTime(),
-        images: imageUrls.length > 0 ? imageUrls : undefined
-      })
-
-      // Register streaming assistant bubble so WS deltas attach here instead of inserting a second bubble
-      sessionStore.ensureStreamingAssistantMessage(sid)
-
-      // Subscribe to this session's events
-      subscribe(sid)
-
-
-      // Send message via WS
-      const eventId = generateUUID()
-      setActiveExecution(sid, eventId)
-      const sent = await wsSendMessage(sid, resolvedText, eventId, imageUrls, localSkills, agentsMdContent)
-      if (!sent) {
-        throw new Error('消息发送失败，网络连接不可用，请重试')
-      }
-
-      // 等待消息保存确认后立即返回，解锁输入框；Agent 在后台继续执行
-      // 完成后的 sending / 刷新由 phase watcher 处理
-      // 超时不得当作保存成功，否则 ChatPanel 会误清空输入并表现为「发送成功」
-      const saved = await new Promise<boolean>((resolve) => {
-        let settled = false
-        let timeoutId: ReturnType<typeof setTimeout>
-        let callbackId = ''
-        const finish = (ok: boolean) => {
-          if (settled) return
-          settled = true
-          clearTimeout(timeoutId)
-          offMessageSaved(callbackId)
-          resolve(ok)
-        }
-        callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
-          if (callbackSessionId === sid) {
-            finish(true)
-          }
-        })
-        timeoutId = setTimeout(() => finish(false), 60000)
-      })
-
-      // 保存确认后按实际 phase 同步 sending：
-      // - Agent 尚未进入 RUNNING 时复位，避免误显示停止按钮
-      // - 若 RUNNING 已先到达则保持 true；后续由 phase watcher 接管
-      // 必须用本次发送的 sid，而非 activeSession（等待期间用户可能已切走会话）
-      if (String(sessionId.value) === String(sid)) {
-        sending.value = isActivePhase(sessionStore.getSessionPhase(sid))
-      }
-
-      if (!saved) {
-        return false
-      }
-
-      // Fire-and-forget：记录本轮执行耗时（不阻塞返回）
-      if (!pendingCallbacks.has(sid)) {
-        new Promise<void>((resolve, reject) => {
-          pendingCallbacks.set(sid, { resolve, reject })
-        }).then(() => {
-          if (startedAt.value) {
-            const lastMsg = messages.value[messages.value.length - 1]
-            if (lastMsg && lastMsg.role === 'assistant') {
-              lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
-            }
-            startedAt.value = null
-          }
-        }).catch(() => {
           startedAt.value = null
-        })
-      }
-      return true
-    } catch (error: any) {
-      sending.value = false
-      initializingWorkspace.value = false
-      initializingWorkspaceLabel.value = ''
-      // Remove empty assistant message if it was added
-      const list = sessionId.value ? sessionStore.getMessages(sessionId.value) : messages.value
-      const lastMsg = list[list.length - 1]
-      if (lastMsg?.role === 'assistant' && !lastMsg.content && !(lastMsg.toolCalls?.length)) {
-        list.pop()
-      }
-      if (!(error as Error & { toastShown?: boolean }).toastShown) {
-        const failedBeforeSession = !sessionId.value
-        ElMessage.error(
-          error?.response?.data?.message
-          || error?.message
-          || (failedBeforeSession ? '任务创建失败' : 'Agent 执行中断')
-        )
-      }
-      if (sessionId.value) {
-        sessionStore.fetchSession(sessionId.value)
-      }
-      return false
+        }
+      }).catch(() => {
+        startedAt.value = null
+      })
     }
+    return true
   }
 
-  function stopExecution() {
+  async function stopExecution() {
     if (!sessionId.value) return
     const sid = sessionId.value
 
+    const cancelled = await wsCancel(sid)
+    if (!cancelled) {
+      ElMessage.error('停止失败，网络连接不可用，请重试')
+      return
+    }
+
     clearActiveExecution(sid)
-    wsCancel(sid)
 
     sending.value = false
     sendingSessionId.value = null
@@ -701,8 +565,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sending.value = true
     // 清理前端错误状态
     sessionStore.clearExecutionError(sid)
-    // 发送重试消息（宕机恢复语义）
-    wsRetryExecution(sid)
+    // 发送重试消息（宕机恢复语义）；发送失败不进入执行态
+    const ok = await wsRetryExecution(sid)
+    if (!ok) {
+      sending.value = false
+      ElMessage.error('重试失败，网络连接不可用，请重试')
+      return
+    }
     // 确保 assistant 占位消息存在以便流式输出
     sessionStore.ensureStreamingAssistantMessage(sid)
   }
@@ -1077,7 +946,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     restoreSession,
     confirmApproval,
     submitQuestionAnswer,
-    updateTodoManually,
     fetchTodos,
     cleanup,
     // Queue

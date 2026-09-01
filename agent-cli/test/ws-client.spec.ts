@@ -20,12 +20,12 @@ describe('WS constants (aligned with desktop useStreamWS)', () => {
 });
 
 describe('buildStreamUrl', () => {
-  it('appends local=1 only for LOCAL capable clients', () => {
-    expect(buildStreamUrl('https://mao.etarch.cn/api', 'tok', 'cli')).toBe(
-      'wss://mao.etarch.cn/api/ws/stream?token=tok&client=cli',
+  it('appends local=1 only for LOCAL capable clients (token moves to first auth frame)', () => {
+    expect(buildStreamUrl('https://mao.etarch.cn/api', 'cli')).toBe(
+      'wss://mao.etarch.cn/api/ws/stream?client=cli',
     );
-    expect(buildStreamUrl('https://mao.etarch.cn/api', 'tok', 'cli', true)).toBe(
-      'wss://mao.etarch.cn/api/ws/stream?token=tok&client=cli&local=1',
+    expect(buildStreamUrl('https://mao.etarch.cn/api', 'cli', true)).toBe(
+      'wss://mao.etarch.cn/api/ws/stream?client=cli&local=1',
     );
   });
 });
@@ -45,6 +45,26 @@ describe('WsClient', () => {
   afterEach(async () => {
     if (server) await server.close();
     server = undefined;
+  });
+
+  it('sends auth as first message on open (before resubscribe)', async () => {
+    server = await startMockWsServer();
+    const client = new WsClient({
+      baseUrl: server.httpBase,
+      getToken: async () => 'tok',
+      client: 'cli',
+      heartbeatIntervalMs: 10_000,
+    });
+    await client.connect();
+    client.subscribe(7);
+    await new Promise((r) => setTimeout(r, 20));
+    const authIndex = server.received.findIndex((m) => (m as { type?: string }).type === 'auth');
+    const subscribeIndex = server.received.findIndex((m) => (m as { type?: string }).type === 'subscribe');
+    expect(authIndex).toBeGreaterThanOrEqual(0);
+    expect((server.received[authIndex] as { token?: string }).token).toBe('tok');
+    expect((server.received[authIndex] as { client?: string }).client).toBe('cli');
+    expect(subscribeIndex).toBeGreaterThan(authIndex);
+    client.close();
   });
 
   it('sends 5s-class heartbeat (injected short interval) as ping', async () => {

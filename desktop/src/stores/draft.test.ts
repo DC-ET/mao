@@ -7,9 +7,11 @@ function makeEntry(text: string, fileCount = 0): DraftEntry {
     html: `<p>${text}</p>`,
     text,
     files: fileCount > 0
-      ? Array.from({ length: fileCount }, (_, i) => new File(['x'], `f${i}.txt`))
+      ? Array.from({ length: fileCount }, (_, i) => ({
+          file: new File(['x'], `f${i}.txt`),
+          previewUrl: i === 0 ? 'blob:preview' : '',
+        }))
       : [],
-    filePreviewUrls: fileCount > 0 ? Array.from({ length: fileCount }, (_, i) => (i === 0 ? 'blob:preview' : '')) : [],
   }
 }
 
@@ -37,7 +39,7 @@ describe('draft store', () => {
 
   it('仅剩空文档 HTML 结构时也视为空内容', () => {
     const store = useDraftStore()
-    store.setDraft('s:1', { html: '<p></p>', text: '', files: [], filePreviewUrls: [] })
+    store.setDraft('s:1', { html: '<p></p>', text: '', files: [] })
     expect(store.hasDraft('s:1')).toBe(false)
   })
 
@@ -96,8 +98,8 @@ describe('draft store', () => {
     const entry = makeEntry('带附件', 2)
     store.setDraft('side:9', entry)
     const restored = store.getDraft('side:9')
-    expect(restored?.files[0]).toBe(entry.files[0])
-    expect(restored?.filePreviewUrls[0]).toBe('blob:preview')
+    expect(restored?.files[0]?.file).toBe(entry.files[0]?.file)
+    expect(restored?.files[0]?.previewUrl).toBe('blob:preview')
   })
 
   it('键统一按字符串处理', () => {

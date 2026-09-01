@@ -202,6 +202,30 @@ describe('SystemSettingService', () => {
     await expect(service().update('upload.storageMode', 's3')).rejects.toThrow(/local 或 oss/);
   });
 
+  it('updateValidatesWebSearchProviderEnum', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('tools.webSearchProvider', '集成配置', 1));
+    await expect(service().update('tools.webSearchProvider', 'bing')).rejects.toThrow(/tavily 或 tinyfish/);
+  });
+
+  it('getWebSearchConfigDefaultsToTavily', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    const cfg = await service().getWebSearchConfig();
+    expect(cfg.provider).toBe('tavily');
+    expect(cfg.tavily.apiKey).toBe('');
+    expect(cfg.tavily.maxResults).toBe(5);
+    expect(cfg.tinyfish.apiKey).toBe('');
+    expect(cfg.tinyfish.baseUrl).toBe('https://api.search.tinyfish.ai');
+  });
+
+  it('getWebSearchConfigReadsTinyfishProvider', async () => {
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (key === 'tools.webSearchProvider') return { id: 1, settingKey: key, value: 'tinyfish', category: '集成配置', editable: 1 } as SystemSetting;
+      return null;
+    });
+    const cfg = await service().getWebSearchConfig();
+    expect(cfg.provider).toBe('tinyfish');
+  });
+
   it('updateValidatesLdapUrlScheme', async () => {
     vi.mocked(mapper.findByKey).mockResolvedValue(setting('auth.ldap.url', '集成配置', 1));
     await expect(service().update('auth.ldap.url', 'example.test')).rejects.toThrow(/ldap:\/\/ 或 ldaps:\/\//);

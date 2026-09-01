@@ -658,9 +658,9 @@ async function handleSend(text: string, files: File[], pendingUploads?: File[]) 
       const entry = draftStore.getDraft('new')
       if (entry && !chatInputRef.value?.hasDraft()) {
         // 回填时按文件类型重建预览 URL，旧 blob URL 不再使用，先释放
-        entry.filePreviewUrls.forEach(url => { if (url) URL.revokeObjectURL(url) })
+        entry.files.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl) })
         draftStore.clearDraft('new')
-        chatInputRef.value?.restoreContent(entry.text, entry.files)
+        chatInputRef.value?.restoreContent(entry.text, entry.files.map((item) => item.file))
       }
     }
   } finally {
@@ -693,13 +693,18 @@ function handleModelSelect(modelId: number, _modelIdStr: string) {
 }
 
 async function handlePermissionLevelChange(level: string) {
+  const prevLevel = permissionLevel.value
   permissionLevel.value = level
   if (!sessionStore.activeSessionId) return
-  sessionStore.updateSession(sessionStore.activeSessionId, { permissionLevel: level })
+  const sid = sessionStore.activeSessionId
+  sessionStore.updateSession(sid, { permissionLevel: level })
   try {
-    await api.patch(`/sessions/${sessionStore.activeSessionId}`, { permissionLevel: level })
+    await api.patch(`/sessions/${sid}`, { permissionLevel: level })
   } catch (e) {
-    console.error('Failed to update permission level:', e)
+    // 失败回滚本地乐观修改，避免 UI 与服务端不一致
+    permissionLevel.value = prevLevel
+    sessionStore.updateSession(sid, { permissionLevel: prevLevel })
+    ElMessage.error('权限级别更新失败，请重试')
   }
 }
 

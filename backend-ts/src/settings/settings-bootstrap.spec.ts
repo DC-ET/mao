@@ -49,6 +49,20 @@ describe('runSettingsBootstrap', () => {
     expect(updateById).not.toHaveBeenCalled();
   });
 
+  it('encryptsTinyfishSecretAndImportsProvider', async () => {
+    findByKey.mockImplementation(async (key: string) => {
+      if (key === 'tools.tinyfishApiKey' || key === 'tools.webSearchProvider') return row(key, null);
+      return row('tools.tavilyApiKey', null);
+    });
+    await runSettingsBootstrap(repo, 'k', { TINYFISH_API_KEY: 'tf-secret', WEB_SEARCH_PROVIDER: 'tinyfish' });
+    const calls = updateById.mock.calls;
+    const tinyfish = calls.find(([s]) => s.settingKey === 'tools.tinyfishApiKey');
+    expect(tinyfish).toBeDefined();
+    expect(String(tinyfish![0].value)).not.toBe('tf-secret');
+    const provider = calls.find(([s]) => s.settingKey === 'tools.webSearchProvider');
+    expect(provider![0].value).toBe('tinyfish');
+  });
+
   it('survivesIndividualImportFailure', async () => {
     findByKey.mockImplementation(async (key: string) => {
       if (key === 'auth.ldap.url') throw new Error('db down');
