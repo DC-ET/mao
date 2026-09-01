@@ -87,8 +87,11 @@ export class SubagentInvocationService {
       if (!child || child.sessionType !== 'SUBAGENT' || child.parentSessionId !== parent.id) return null;
       if (child.phase === 'RUNNING' || child.phase === 'RESUMING'
         || child.phase === 'WAITING_APPROVAL' || child.phase === 'CANCELLING') return null;
-      await tx.execute("UPDATE session SET phase = 'RUNNING' WHERE id = ?", [childSessionId]);
+      // 追问/纠偏时让子代理跟随主代理当前模型：主代理切换模型后，子代理复用其既有上下文、但改用主代理正在用的新模型。
+      // 首次 spawn 时子代理继承 parent.modelId；追问时需要重新同步，否则子代理会一直用创建时绑定的旧模型。
+      await tx.execute("UPDATE session SET phase = 'RUNNING', model_id = ? WHERE id = ?", [parent.modelId, childSessionId]);
       child.phase = 'RUNNING';
+      child.modelId = parent.modelId;
       if (beforeUserMessage && beforeUserMessage.trim() !== '') {
         await tx.insert('message', assistantMessage(childSessionId, beforeUserMessage));
       }
