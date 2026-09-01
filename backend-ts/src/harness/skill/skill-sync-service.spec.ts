@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -54,6 +54,32 @@ describe('SkillSyncService', () => {
     utimesSync(join(systemFolder, 'scripts', 'run.sh'), future, future);
     await svc.syncToSession(agent, 7, 13);
     expect(readFileSync(synced, 'utf8')).toBe('echo v2');
+  });
+
+  it('re-syncs when the target skill dir was cleaned up', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'skills-cleaned-'));
+    const systemFolder = join(root, 'system', 'java');
+    mkdirSync(systemFolder, { recursive: true });
+    writeFileSync(join(systemFolder, 'SKILL.md'), '---\nname: java\ndescription: Java\n---\nbody');
+    const runtime = RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'home'));
+    const skillLoader = {
+      getAllNames: () => ['java'],
+      getSkillFolder: (name: string) => (name === 'java' ? systemFolder : null),
+    };
+    const svc = new SkillSyncService(skillLoader as never, { addAllowedRoot: vi.fn() } as never, runtime, join(root, 'users'));
+    const agent = { id: 5, name: 'a', systemPrompt: 'p', skillNames: '["java"]' };
+    await svc.syncToSession(agent, 7, 21);
+    const target = join(runtime.resolveSkillsDir(7, 21), 'java', 'SKILL.md');
+    expect(existsSync(target)).toBe(true);
+
+    // 模拟定时清理删除 runtime 下的 skills 目录（源未变化）
+    rmSync(join(runtime.resolveSkillsDir(7, 21), 'java'), { recursive: true, force: true });
+    expect(existsSync(target)).toBe(false);
+
+    // 再次同步：目标缺失时应强制重新复制
+    await svc.syncToSession(agent, 7, 21);
+    expect(existsSync(target)).toBe(true);
+    expect(readFileSync(target, 'utf8')).toContain('name: java');
   });
 
   it('reports skills removed from agent config after a prior sync', async () => {

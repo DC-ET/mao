@@ -106,6 +106,11 @@ export interface AppConfig {
         sessionMaxLifetimeHours: number;
         output: { maxPreviewLines: number; maxPreviewChars: number };
       };
+      cleanup: {
+        intervalMs: number;
+        shellOutputMaxAgeDays: number;
+        cleanupSkills: boolean;
+      };
     };
     mcp: {
       secretKey: string;
@@ -233,6 +238,11 @@ const DEFAULTS: AppConfig = {
         sessionIdleTimeoutMinutes: 30,
         sessionMaxLifetimeHours: 2,
         output: { maxPreviewLines: 100, maxPreviewChars: 10000 },
+      },
+      cleanup: {
+        intervalMs: 24 * 3600 * 1000,
+        shellOutputMaxAgeDays: 7,
+        cleanupSkills: true,
       },
     },
     mcp: {
@@ -373,6 +383,9 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   if (process.env.MAO_USER_HOME_DIR) {
     cfg.app.harness.userHomeDir = process.env.MAO_USER_HOME_DIR;
   }
+  cfg.app.harness.cleanup.intervalMs = n(process.env.MAO_CLEANUP_INTERVAL_MS ?? cfg.app.harness.cleanup.intervalMs, 24 * 3600 * 1000);
+  cfg.app.harness.cleanup.shellOutputMaxAgeDays = n(process.env.MAO_CLEANUP_SHELL_MAX_AGE_DAYS ?? cfg.app.harness.cleanup.shellOutputMaxAgeDays, 7);
+  cfg.app.harness.cleanup.cleanupSkills = b(process.env.MAO_CLEANUP_SKILLS ?? cfg.app.harness.cleanup.cleanupSkills, true);
   cfg.spring.flyway.enabled = b(process.env.FLYWAY_ENABLED ?? cfg.spring.flyway.enabled, true);
   cfg.feishu.bot.enabled = b(process.env.FEISHU_BOT_ENABLED ?? cfg.feishu.bot.enabled, false);
   cfg.feishu.bot.longConnection.enabled = b(process.env.FEISHU_BOT_LC_ENABLED ?? cfg.feishu.bot.longConnection.enabled, true);
