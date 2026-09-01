@@ -138,6 +138,7 @@ import { CrashRecoveryRunner } from './harness/core/crash-recovery-runner.js';
 import { createAgentExecutor } from './harness/core/agent-executor.js';
 import { LocalAgentsMdRegistry } from './harness/core/local-agents-md-registry.js';
 import { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
+import { RuntimeCleanupScheduler } from './harness/runtime/runtime-cleanup-scheduler.js';
 import { ShellSessionManager, OutputManager } from './harness/shell/shell-session-manager.js';
 import { SessionTodoMapper } from './harness/todo/session-todo.mapper.js';
 import { LocalSkillRegistry } from './harness/skill/local-skill-registry.js';
@@ -1602,6 +1603,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     }
   }).catch((error) => console.error('恢复飞书待绑定消息列表失败', error));
   shellManager.startCleanup();
+  const runtimeCleanup = new RuntimeCleanupScheduler(
+    cfg.app.harness.runtimeDir,
+    cfg.app.harness.cleanup,
+    (userId, sessionId) => wsHandler.hasExecutionClaim(sessionId),
+  );
+  runtimeCleanup.start();
   const subagentExecutionRecovery = new SubagentExecutionRecoveryService(
     subagentMapper, sessionMap, sessionSvc, compactionSvc, definitionRegistry,
     (childSession, definition) => backgroundSubagentManager.buildSubContext(childSession, definition),
@@ -1657,6 +1664,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       scheduler.stop();
       deliveryScheduler.stop();
       shellManager.stopCleanup();
+      runtimeCleanup.stop();
       weixinMonitor.shutdown();
       feishuMonitor.shutdown();
       weixinInboundHandler.shutdown();

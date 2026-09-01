@@ -48,13 +48,14 @@ export class SkillSyncService {
       toRemove.delete(skillName);
       const sourceModified = getLastModified(sourceFolder);
       const lastSynced = state.get(skillName);
-      if (lastSynced != null && lastSynced >= sourceModified) continue;
+      const targetFolder = path.join(skillsDir, skillName);
+      // 源未变化时仍校验目标目录：若已被清理（如定时清理删除），则强制重新同步，避免 agent 读不到技能文件
+      if (lastSynced != null && lastSynced >= sourceModified && existsSync(targetFolder)) continue;
       try {
         if (!isValidSkillName(skillName)) {
           harnessLog('warn', `Skip syncing skill with unsafe name: ${skillName}`);
           continue;
         }
-        const targetFolder = path.join(skillsDir, skillName);
         assertInside(skillsDir, targetFolder);
         copyDirectory(sourceFolder, targetFolder);
         state.set(skillName, sourceModified);
