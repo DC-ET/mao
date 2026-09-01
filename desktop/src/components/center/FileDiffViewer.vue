@@ -56,6 +56,9 @@ let originalModel: MonacoEditor.ITextModel | null = null
 let modifiedModel: MonacoEditor.ITextModel | null = null
 let patchModel: MonacoEditor.ITextModel | null = null
 let diffUpdateDisposable: { dispose: () => void } | null = null
+// 乱序保护：syncViewer 含多个 await（nextTick/loadMonaco/applyTheme），旧调用可能在
+// 新 change 生效后落地并覆盖模型，seq 检查确保只有最新一轮 sync 能写编辑器
+let syncSeq = 0
 
 const mode = computed(() => props.change.diffMode || 'UNSUPPORTED')
 const unavailableText = computed(() => {
@@ -115,9 +118,13 @@ function disposeAll() {
 }
 
 async function syncViewer() {
+  const seq = ++syncSeq
   await nextTick()
+  if (seq !== syncSeq) return
   const monaco = await loadMonaco()
+  if (seq !== syncSeq) return
   await applyMonacoTheme(isDark.value)
+  if (seq !== syncSeq) return
 
   if (mode.value === 'SNAPSHOT') {
     disposePatchEditor()

@@ -48,9 +48,9 @@
           ref="editInput"
           v-model="editContent"
           class="edit-textarea"
-          @keydown.escape="$emit('cancelEdit')"
-          @keydown.enter.ctrl="handleConfirm"
-          @keydown.enter.meta="handleConfirm"
+          @keydown.escape="onEditKeydown($event, 'escape')"
+          @keydown.enter.ctrl="onEditKeydown($event, 'confirm')"
+          @keydown.enter.meta="onEditKeydown($event, 'confirm')"
           rows="3"
         />
         <div class="edit-actions">
@@ -225,6 +225,17 @@ watch(() => props.isEditing, async (editing) => {
 function handleConfirm() {
   if (editContent.value.trim()) {
     emit('confirmEdit', editContent.value)
+  }
+}
+
+/** 编辑态键盘处理：IME 组合态（中文候选上屏）不触发确认/取消，避免误提交或丢失未保存内容 */
+function onEditKeydown(event: KeyboardEvent, action: 'confirm' | 'escape') {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  if (action === 'confirm') {
+    handleConfirm()
+  } else {
+    emit('cancelEdit')
   }
 }
 

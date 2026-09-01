@@ -103,6 +103,7 @@
       width="640px"
       class="mcp-server-dialog management-dialog"
       :close-on-click-modal="false"
+      @closed="onFormDialogClosed"
     >
       <el-form ref="formRef" :model="form" :rules="formRules" label-width="90px">
         <el-form-item label="名称" prop="name">
@@ -193,7 +194,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import {
@@ -352,6 +353,7 @@ function openCreate() {
     url: '',
     envList: []
   })
+  clearFormValidate()
   formVisible.value = true
 }
 
@@ -369,7 +371,18 @@ function openEdit(server: MyMcpServer) {
     envList: []
   })
   // 编辑时环境变量不回传明文（安全策略），用户可重新填写；为空则保持原值
+  clearFormValidate()
   formVisible.value = true
+}
+
+/** 弹窗无 destroy-on-close，打开前清掉上一次残留的校验错误状态 */
+function clearFormValidate() {
+  nextTick(() => formRef.value?.clearValidate())
+}
+
+/** 弹窗关闭后兜底清理校验状态（点遮罩/X 关闭不走 openCreate/openEdit） */
+function onFormDialogClosed() {
+  formRef.value?.clearValidate()
 }
 
 async function handleSubmit() {

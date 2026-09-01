@@ -194,8 +194,17 @@ function startStatusPolling() {
   stopStatusPolling()
   pollingActive = true
   confirmFailures = 0
+  consecutiveErrors = 0
+  pollStartedAt = Date.now()
   pollStatus()
 }
+
+// 二维码本身约 5 分钟过期；轮询总时长超限后停止并提示重新获取，避免后台无限打接口
+const POLL_TOTAL_TIMEOUT_MS = 5 * 60 * 1000
+// 连续网络错误达到该次数后停止轮询，避免断网期间无限重试
+const POLL_MAX_CONSECUTIVE_ERRORS = 5
+let pollStartedAt = 0
+let consecutiveErrors = 0
 
 async function pollStatus() {
   if (!pollingActive) return
@@ -206,6 +215,7 @@ async function pollStatus() {
       timeout: 12000,
       skipErrorToast: true
     } as any)
+    consecutiveErrors = 0
     // confirmed 需等 confirm POST 成功后再置：失败重试期间不能误显示「绑定成功」
     if (data.status !== 'confirmed') scanStatus.value = data.status
 
@@ -229,8 +239,12 @@ async function pollStatus() {
           if (confirmFailures <= 2) {
             ElMessage.error('绑定确认失败，正在重试…')
           }
-          if (pollingActive) {
+          // confirm 失败重试同样受总时长上限约束
+          if (pollingActive && Date.now() - pollStartedAt <= POLL_TOTAL_TIMEOUT_MS) {
             statusPollingTimer = window.setTimeout(pollStatus, 3000)
+          } else if (pollingActive) {
+            stopStatusPolling()
+            scanStatus.value = 'expired'
           }
           return
         }
@@ -244,6 +258,12 @@ async function pollStatus() {
     } else if (data.status === 'expired') {
       stopStatusPolling()
     } else {
+      // 总时长超限：停止轮询并提示重新获取（wait/scaned 一直不 confirmed 的兜底）
+      if (Date.now() - pollStartedAt > POLL_TOTAL_TIMEOUT_MS) {
+        stopStatusPolling()
+        scanStatus.value = 'expired'
+        return
+      }
       // 继续轮询（等上一轮完成后再发起下一轮，避免请求堆积）
       if (pollingActive) {
         statusPollingTimer = window.setTimeout(pollStatus, 2000)
@@ -251,10 +271,15 @@ async function pollStatus() {
     }
   } catch (error) {
     console.error('查询扫码状态失败:', error)
-    // 超时或网络错误时继续轮询，不中断等待流程
-    if (pollingActive) {
-      statusPollingTimer = window.setTimeout(pollStatus, 3000)
+    // 网络错误时继续轮询，不中断等待流程；但连续失败达到上限或总时长超限则停止
+    consecutiveErrors++
+    if (!pollingActive) return
+    if (consecutiveErrors >= POLL_MAX_CONSECUTIVE_ERRORS || Date.now() - pollStartedAt > POLL_TOTAL_TIMEOUT_MS) {
+      stopStatusPolling()
+      scanStatus.value = 'expired'
+      return
     }
+    statusPollingTimer = window.setTimeout(pollStatus, 3000)
   }
 }
 

@@ -422,6 +422,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useSessionStore, type Session, type TaskPhase } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
+import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { cloudGroupKey, formatCloudGroupLabel, isSharedCloudProject, FEISHU_PLACEHOLDER_TITLE } from '../../utils/cloud-project'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
@@ -596,6 +597,8 @@ async function deleteSessionViaDialog(sessionId: string) {
     ElMessage.error('删除失败，请稍后重试')
     return
   }
+  // 删除成功后清理该会话的 Tab 状态，避免模块级 Map 无界增长 / 恢复归档时串出旧 Tab
+  removeSessionTabsFor(sessionId)
   if (wasActive && sessionStore.sessions.length > 0) {
     const next = sessionStore.sessions[0]
     sessionStore.setActiveSession(next.id)
@@ -711,13 +714,22 @@ function onGlobalClick() {
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && contextMenu.visible) closeContextMenu()
 }
+/** 滚动时关闭右键菜单：菜单是 fixed 定位不随内容滚动，残留在旧位置会误点中无关会话 */
+function onGlobalScroll() {
+  if (contextMenu.visible) closeContextMenu()
+}
 onMounted(() => {
   document.addEventListener('click', onGlobalClick)
   document.addEventListener('keydown', onGlobalKeydown)
+  // capture 捕获面板内部滚动；window resize 同样会使 fixed 坐标失效
+  window.addEventListener('scroll', onGlobalScroll, true)
+  window.addEventListener('resize', onGlobalScroll)
 })
 onUnmounted(() => {
   document.removeEventListener('click', onGlobalClick)
   document.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('scroll', onGlobalScroll, true)
+  window.removeEventListener('resize', onGlobalScroll)
 })
 
 // Drag state
@@ -994,6 +1006,8 @@ async function confirmDelete(e: MouseEvent, sessionId: string) {
     ElMessage.error('删除失败，请稍后重试')
     return
   }
+  // 删除成功后清理该会话的 Tab 状态，避免模块级 Map 无界增长 / 恢复归档时串出旧 Tab
+  removeSessionTabsFor(sessionId)
   if (wasActive && sessionStore.sessions.length > 0) {
     const next = sessionStore.sessions[0]
     sessionStore.setActiveSession(next.id)

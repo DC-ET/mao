@@ -2,6 +2,7 @@ import { Marked } from 'marked'
 import hljs from 'highlight.js'
 import DOMPurify from 'dompurify'
 import 'highlight.js/styles/github-dark.css'
+import { ensureCodeCopyDelegation } from '../../../utils/codeCopy'
 
 function escapeHtml(text: string): string {
   return text
@@ -27,7 +28,8 @@ const marked = new Marked({
     code({ text, lang }: { text: string; lang?: string }) {
       const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
       const highlighted = hljs.highlight(text, { language }).value
-      return `<pre class="code-block"><div class="code-block-header"><span class="code-lang">${language}</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block').querySelector('code').textContent)">复制</button></div><code class="hljs language-${language}">${highlighted}</code></pre>`
+      const encoded = btoa(unescape(encodeURIComponent(text)))
+      return `<pre class="code-block" data-code="${encoded}"><div class="code-block-header"><span class="code-lang">${language}</span><button class="code-copy-btn" type="button">复制</button></div><code class="hljs language-${language}">${highlighted}</code></pre>`
     },
     link({ href, text }: { href: string; text: string }) {
       if (!isSafeHref(href)) {
@@ -40,8 +42,9 @@ const marked = new Marked({
 
 export function renderMarkdown(text: string): string {
   if (!text) return ''
+  ensureCodeCopyDelegation()
   const result = marked.parse(text)
   if (typeof result !== 'string') return escapeHtml(text)
-  // 统一消毒：防御各 renderer 之外的残留注入面（onclick 为代码块复制按钮自带，内容侧已全部转义）
-  return DOMPurify.sanitize(result, { ADD_ATTR: ['onclick', 'target'] })
+  // 复制按钮走事件委托（utils/codeCopy），sanitize 保持默认严格白名单，不放行事件属性
+  return DOMPurify.sanitize(result, { ADD_ATTR: ['target'] })
 }

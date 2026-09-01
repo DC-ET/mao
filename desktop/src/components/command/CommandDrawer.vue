@@ -121,6 +121,12 @@ const { visible, prefillContent, clearPrefill } = useCommandDrawer()
 // When opened with prefill content (from chat message "add to command"), auto-open create dialog
 watch(prefillContent, (content) => {
   if (content) {
+    // 用户正在编辑弹窗中未保存的内容时，不强行覆盖：toast 提示先完成/关闭当前编辑
+    if (dialogVisible.value) {
+      clearPrefill()
+      ElMessage.warning('请先完成或关闭当前正在编辑的指令，再添加新指令')
+      return
+    }
     activeTab.value = 'personal'
     isEditing.value = false
     editingId.value = null

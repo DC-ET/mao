@@ -293,16 +293,22 @@ async function loadPdf() {
     pdfDoc = doc
     numPages.value = doc.numPages
 
-    // 预取每页基础尺寸（scale=1），用于 slot 布局
+    // 预取每页基础尺寸（scale=1），用于 slot 布局；分批并发，避免大文档串行等待或一次发出全部请求
     const sizes: Array<{ width: number; height: number }> = []
-    for (let i = 1; i <= doc.numPages; i++) {
-      const page = await doc.getPage(i)
+    const PREFETCH_BATCH_SIZE = 20
+    for (let start = 1; start <= doc.numPages; start += PREFETCH_BATCH_SIZE) {
+      const end = Math.min(start + PREFETCH_BATCH_SIZE - 1, doc.numPages)
+      const pages = await Promise.all(
+        Array.from({ length: end - start + 1 }, (_, k) => doc.getPage(start + k)),
+      )
       if (seq !== loadSeq) {
         doc.destroy()
         return
       }
-      const vp = page.getViewport({ scale: 1 })
-      sizes.push({ width: vp.width, height: vp.height })
+      for (const page of pages) {
+        const vp = page.getViewport({ scale: 1 })
+        sizes.push({ width: vp.width, height: vp.height })
+      }
     }
     pageBaseSizes.value = sizes
     loadProgress.value = 100

@@ -570,10 +570,45 @@ async function uploadAllLocalSkills() {
 
 async function uploadFiles(files: File[], options?: { refreshLocal?: boolean; silentSuccess?: boolean }): Promise<boolean> {
   if (uploading.value) return false
+
+  // 上传前校验：后端 bodyLimit 52MB，超限请求直接 413 且提示不明确，前端先拦并给出明确原因
+  const MAX_FILE_COUNT = 500
+  const MAX_TOTAL_SIZE = 50 * 1024 * 1024
+  const MAX_SINGLE_SIZE = 20 * 1024 * 1024
+  const EXCLUDED_DIRS = ['node_modules/', '.git/', '.svn/', 'dist/', '__MACOSX/']
+  const valid: File[] = []
+  let totalSize = 0
+  let excludedCount = 0
+  for (const file of files) {
+    const relativePath = ((file as any).webkitRelativePath || file.name).replace(/\\/g, '/')
+    if (EXCLUDED_DIRS.some(dir => relativePath.includes(dir))) {
+      excludedCount++
+      continue
+    }
+    if (file.size > MAX_SINGLE_SIZE) {
+      ElMessage.error(`文件过大（${formatBytes(file.size)}）：${relativePath}，单文件上限 ${formatBytes(MAX_SINGLE_SIZE)}`)
+      return false
+    }
+    totalSize += file.size
+    if (totalSize > MAX_TOTAL_SIZE) {
+      ElMessage.error(`上传总大小超过 ${formatBytes(MAX_TOTAL_SIZE)} 上限，请精简技能目录后重试`)
+      return false
+    }
+    valid.push(file)
+  }
+  if (valid.length > MAX_FILE_COUNT) {
+    ElMessage.error(`文件数量超过 ${MAX_FILE_COUNT} 上限（当前 ${valid.length} 个），请精简技能目录后重试`)
+    return false
+  }
+  if (valid.length === 0) {
+    ElMessage.error(excludedCount > 0 ? '所选内容中无可上传的文件（已排除 node_modules/.git 等目录）' : '未选择任何文件')
+    return false
+  }
+
   uploading.value = true
 
   const formData = new FormData()
-  for (const file of files) {
+  for (const file of valid) {
     const relativePath = (file as any).webkitRelativePath || file.name
     formData.append('files', file, relativePath)
   }
@@ -600,6 +635,12 @@ async function uploadFiles(files: File[], options?: { refreshLocal?: boolean; si
   } finally {
     uploading.value = false
   }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
 </script>
 

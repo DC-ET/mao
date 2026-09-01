@@ -34,6 +34,14 @@ let lastServerMessageAt = 0
 const SERVER_SILENCE_TIMEOUT_MS = 30_000
 let intentionalClose = false
 let connectPromise: Promise<void> | null = null
+// 在途 connect() 的 settle 句柄与 socket 归属：与 connectPromise 同层级（模块级）。
+// disconnect 可能来自另一个 useStreamWS() 实例（如登出时新建实例调用），旧 socket 的
+// 迟到 onclose 也必须能跨实例 settle 本轮 Promise——放实例级会句柄错位导致 Promise 永不 settle
+let pendingSettle: {
+  resolve: () => void
+  reject: (err: Error) => void
+  socket: WebSocket
+} | null = null
 let isReconnecting = false
 
 // Active execution ID per session — used to discard stale stream events after cancel
@@ -178,12 +186,14 @@ export function useStreamWS() {
     let initialConnect = true
 
     connectPromise = new Promise<void>((resolve, reject) => {
+      pendingSettle = { resolve, reject, socket }
       socket.onopen = () => {
         // 已被更新的连接或 disconnect() 取代：本轮握手结果不再有效
         if (socket !== ws) return
         connected.value = true
         reconnectDelay.value = 1000
         connectPromise = null
+        pendingSettle = null
         initialConnect = false
         isReconnecting = false
         // 鉴权首帧：必须是新连接发出的第一条消息，先于任何 subscribe 等业务帧
@@ -237,7 +247,19 @@ export function useStreamWS() {
       // 不能清掉新连接的心跳/状态，也不能再排一次多余重连
       socket.onclose = (event) => {
         if (event.target !== ws) {
+          // 旧 socket 的迟到关闭：若模块级在途 Promise 仍属于本 socket（未被新 connect
+          // 取代、未被 disconnect settle），必须就地 settle，否则调用方 await 永久挂起
           initialConnect = false
+          if (connectPromise && pendingSettle?.socket === socket) {
+            connectPromise = null
+            const settle = pendingSettle
+            pendingSettle = null
+            if (intentionalClose) {
+              settle.resolve()
+            } else {
+              settle.reject(new Error('WebSocket connection closed'))
+            }
+          }
           return
         }
         connected.value = false
@@ -250,6 +272,7 @@ export function useStreamWS() {
           // 若应用处于未登录态，scheduleReconnect 内部会停止重试。
           initialConnect = false
           connectPromise = null
+          pendingSettle = null
           isReconnecting = false
           scheduleReconnect()
           reject(new Error('WebSocket connection failed'))
@@ -258,6 +281,7 @@ export function useStreamWS() {
           // In both cases, schedule the next reconnect
           initialConnect = false
           connectPromise = null
+          pendingSettle = null
           isReconnecting = false
           scheduleReconnect()
         }
@@ -284,6 +308,25 @@ export function useStreamWS() {
       ws = null
     }
     connected.value = false
+    // 复位未 settle 的连接 Promise：disconnect 后 socket 迟到 onclose 会走早退分支，
+    // 若 connectPromise 残留，后续 connect() 会返回永不 settle 的死 Promise（输入框锁死）
+    if (connectPromise) {
+      connectPromise = null
+      const settle = pendingSettle
+      pendingSettle = null
+      settle?.reject(new Error('WebSocket connection cancelled'))
+    }
+    // 登出/强制下线：清空跨会话残留状态，避免换号登录后串用户；
+    // pendingCallbacks 先 reject 等待中的 Promise 再清空，否则等待执行终态的调用方永久悬挂
+    for (const cb of pendingCallbacks.values()) {
+      cb.reject?.(new Error('已登出，执行已中断'))
+    }
+    pendingCallbacks.clear()
+    activeExecutionIds.clear()
+    cancelledExecutionIds.clear()
+    suppressedStreamSessions.clear()
+    messageSavedCallbacks.clear()
+    pendingSkillSyncDones.clear()
     // 关闭已订阅会话在桌面端的 MCP 连接（stdio 子进程 / HTTP 会话）
     const mcpSessionIds = Array.from(subscribedSessionIds)
     subscribedSessionIds.clear()
@@ -300,7 +343,8 @@ export function useStreamWS() {
     isReconnecting = true
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
-      connect()
+      // 未登录窗口 connect() 会立即 reject，吞掉避免 unhandled rejection
+      connect().catch(() => {})
     }, reconnectDelay.value)
     reconnectDelay.value = Math.min(reconnectDelay.value * 2, 30_000)
   }

@@ -699,16 +699,28 @@ const editor = useEditor({
       if (panelVisible.value) {
         if (event.key === 'ArrowUp') {
           event.preventDefault()
+          userNavigatedPanel = true
           quickCommandPanelRef.value?.moveUp()
           return true
         }
         if (event.key === 'ArrowDown') {
           event.preventDefault()
+          userNavigatedPanel = true
           quickCommandPanelRef.value?.moveDown()
           return true
         }
         if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
           if (imeComposing) return false
+          // 面板由输入自动弹出且用户未用方向键浏览时，Enter 应发送消息而非确认选中项；
+          // 记忆当前词与 Esc 关闭语义一致：同一词继续输入不再自动弹出
+          if (!userNavigatedPanel) {
+            if (autoComplete.value) dismissedWord = currentFilterWord
+            closePanel()
+            if (isTouchDevice) return false
+            event.preventDefault()
+            handleSend()
+            return true
+          }
           event.preventDefault()
           quickCommandPanelRef.value?.confirmSelection()
           return true
@@ -819,6 +831,8 @@ function detectSlashTrigger() {
   if (!panelVisible.value) {
     ensureCommandsLoaded()
     panelVisible.value = true
+    // 显式 `/` 触发的面板：允许 Enter 直接确认选中项（用户主动唤起即有明确意图）
+    userNavigatedPanel = true
   }
 }
 
@@ -827,6 +841,9 @@ function detectSlashTrigger() {
 // Esc 关闭记忆：同一词被手动关闭后不再自动弹出，直到词发生变化
 let dismissedWord = ''
 let currentFilterWord = ''
+// 用户是否在面板中用方向键浏览过：仅此状态下 Enter 才确认选中项，
+// 否则自动弹出的面板会劫持 Enter，导致用户无法正常发送消息
+let userNavigatedPanel = false
 
 function detectAutoComplete() {
   if (!editor.value) return
@@ -846,18 +863,27 @@ function detectAutoComplete() {
   const { state } = editor.value.view
   const { from } = state.selection
   const textBefore = state.doc.textBetween(Math.max(0, from - 50), from, '\n', '\n')
-  
+
   // 最后一个词：只有整体作为指令名称前缀时才触发，避免正文常见词误触发面板劫持 Enter/方向键
   const currentWord = textBefore.split(/\s/).pop() ?? ''
   const lower = currentWord.toLowerCase()
   if (lower !== currentFilterWord) {
-    // 词已变化，重置 Esc 记忆
+    // 词已变化，重置 Esc 记忆与浏览标记
     dismissedWord = ''
+    userNavigatedPanel = false
   }
   currentFilterWord = lower
 
   // 如果文本长度不足，关闭自动补全面板
   if (currentWord.length < 2) {
+    if (panelVisible.value && autoComplete.value) closePanel()
+    return
+  }
+
+  // URL / 邮箱 / 文件路径不触发自动补全：贴链接是高频操作，误弹面板会劫持 Enter 与方向键。
+  // 但以显式触发符（/ 、）开头的词是快捷指令语法本身（指令名可含 . 等），放行不做排除
+  if (!currentWord.startsWith('/') && !currentWord.startsWith('、')
+    && (/^(https?|ftp|file):\/\//i.test(currentWord) || /[/.@:\\]/.test(currentWord))) {
     if (panelVisible.value && autoComplete.value) closePanel()
     return
   }
@@ -885,6 +911,8 @@ function detectAutoComplete() {
   if (!panelVisible.value) {
     ensureCommandsLoaded()
     panelVisible.value = true
+    // 自动补全弹出的面板：用户未浏览前 Enter 不应确认选中项（应发送消息）
+    userNavigatedPanel = false
   }
 }
 

@@ -50,8 +50,8 @@
             placeholder="请输入显示名称"
           />
         </el-form-item>
-        <el-form-item label="邮箱">
-          <el-input v-model="form.email" :disabled="!isLocalUser" placeholder="请输入邮箱" />
+        <el-form-item label="邮箱" :error="emailError">
+          <el-input v-model="form.email" :disabled="!isLocalUser" :maxlength="128" placeholder="请输入邮箱" @blur="validateEmail" />
         </el-form-item>
         <div v-if="!isLocalUser" class="profile-tip">
           LDAP / 飞书账号的显示名称与邮箱由系统维护，仅可修改头像。
@@ -82,6 +82,24 @@ const form = reactive({
   displayName: authStore.user?.displayName ?? '',
   email: authStore.user?.email ?? ''
 })
+
+// 与后端 user.service.ts EMAIL_PATTERN 保持一致，保存前先做前端校验
+const EMAIL_PATTERN = /^[\w.+-]+@[\w-]+(\.[\w-]+)+$/
+const emailError = ref('')
+
+function validateEmail(): boolean {
+  const mail = form.email.trim()
+  if (mail.length === 0) {
+    emailError.value = ''
+    return true
+  }
+  if (!EMAIL_PATTERN.test(mail)) {
+    emailError.value = '邮箱格式不正确'
+    return false
+  }
+  emailError.value = ''
+  return true
+}
 
 const previewUrl = ref('')
 const selectedFile = ref<File | null>(null)
@@ -142,6 +160,10 @@ async function save() {
   if (saving.value) return
   if (isLocalUser.value && !form.displayName.trim()) {
     ElMessage.error('显示名称不能为空')
+    return
+  }
+  if (isLocalUser.value && !validateEmail()) {
+    ElMessage.error(emailError.value)
     return
   }
   saving.value = true

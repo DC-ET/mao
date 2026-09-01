@@ -98,6 +98,9 @@ api.interceptors.response.use(
       isRefreshing = true
       try {
         const newToken = await doRefreshToken()
+        // isRefreshing 必须在 flush 排队请求之前复位：若等重试请求完成才复位，
+        // 窗口期内到达的 401 会继续入队，但队列已被 flush，这些请求将永久挂起
+        isRefreshing = false
         // Retry all queued requests with the new token
         pendingRequests.forEach(cb => cb.resolve(newToken))
         pendingRequests = []
@@ -105,14 +108,13 @@ api.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${newToken}`
         return api(originalRequest)
       } catch (refreshError) {
+        isRefreshing = false
         // refresh 失败必须 reject 排队请求，否则调用方 await 永久挂起
         pendingRequests.forEach(cb => cb.reject(refreshError))
         pendingRequests = []
         // refresh 失败：清本地会话并回登录页（redirectToLogin 自带防抖与「已在登录页」判断）
         void forceRelogin()
         return Promise.reject(error)
-      } finally {
-        isRefreshing = false
       }
     }
 

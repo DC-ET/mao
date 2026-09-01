@@ -54,6 +54,14 @@ export function updateSideTaskTabTitleFor(parentSessionId: string, sideSessionId
   sessionTabsMap.value = new Map(sessionTabsMap.value)
 }
 
+/** 会话删除后清理其 Tab 状态（模块级单例 Map，供删除入口直接调用，无需组件上下文）。 */
+export function removeSessionTabsFor(sessionId: string) {
+  if (!sessionTabsMap.value.has(sessionId)) return
+  sessionTabsMap.value.delete(sessionId)
+  // Map 内部变更不会自动触发 computed，需要替换 Map 引用
+  sessionTabsMap.value = new Map(sessionTabsMap.value)
+}
+
 // 仅注册一次：激活边路任务 Tab 时清除该边路任务的未读标记（按 sideSessionId 独立已读）。
 // watch 注册在模块级 detached effectScope 中：否则它挂在首个调用组件的作用域上，
 // 组件卸载（如切到 Settings）后 watch 永久失效但标志位仍为 true，已读逻辑彻底停摆。
@@ -358,7 +366,10 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
 
   // Clean up tab state when session is deleted
   function removeSessionTabs(sessionId: string) {
+    if (!sessionTabsMap.value.has(sessionId)) return
     sessionTabsMap.value.delete(sessionId)
+    // Map 内部变更不会自动触发 computed，需要替换 Map 引用
+    sessionTabsMap.value = new Map(sessionTabsMap.value)
   }
 
   return {

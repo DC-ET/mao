@@ -612,6 +612,16 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       // Ensure WS connection is established
       await connect()
 
+      // 通过 WS 发送编辑请求（先收集本地技能/AGENTS.md 再做乐观更新：
+      // 收集期间会话可能被切走，乐观更新先行会让截断/改写无法回滚）
+      const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
+      const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
+      if (!requireCurrentSession(sid)) {
+        sending.value = false
+        startedAt.value = null
+        return
+      }
+
       // 连接成功后乐观更新：截断后续消息，更新编辑内容
       sessionStore.truncateMessagesAfter(sid, messageId)
       sessionStore.updateMessageContent(
@@ -632,13 +642,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       }
       sessionStore.appendMessage(sid, placeholderMsg)
 
-      // 通过 WS 发送编辑请求
-      const localSkills = await collectLocalUnsyncedSkills(executionMode.value, isElectron)
-      const agentsMdContent = await collectAgentsMdContent(workspace.value, executionMode.value, isElectron)
-      if (!requireCurrentSession(sid)) {
-        sending.value = false
-        return
-      }
       subscribe(sid)
       const sent = await sendEditMessage(sid, newContent, messageId, imagesToSend, localSkills, agentsMdContent)
       if (!sent) {
