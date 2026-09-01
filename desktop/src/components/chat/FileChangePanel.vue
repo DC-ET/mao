@@ -36,7 +36,7 @@
     :visible="ctxMenu.visible"
     :x="ctxMenu.x"
     :y="ctxMenu.y"
-    :show-open-in-finder="executionMode !== 'CLOUD'"
+    :show-open-in-finder="executionMode !== 'CLOUD' && canOpenInFinder"
     :show-download-actions="executionMode === 'CLOUD'"
     @hide="ctxMenu.visible = false"
     @copy-absolute="handleCopyAbsolute"
@@ -79,6 +79,7 @@ const activeSessionIdRef = computed(() => sessionStore.activeSessionId)
 const { openDiffTab } = useCenterTabs(activeSessionIdRef)
 
 const executionMode = inject<string>('executionMode', 'CLOUD')
+const canOpenInFinder = typeof window !== 'undefined' && !!window.electronAPI?.showItemInFolder
 const fileProvider = inject<WorkspaceFileProvider | null>('fileProvider', null)
 const addFileToChat = inject<(filePath: string) => void>('addFileToChat', () => {})
 
@@ -165,12 +166,16 @@ function handleCopyAbsolute() {
 
 function handleCopyRelative() {
   if (!ctxMenu.change) return
-  copyText(ctxMenu.change.path)
+  copyText(ctxMenu.change.displayPath)
 }
 
 function handleOpenInFinder() {
   if (!ctxMenu.change) return
-  window.electronAPI.showItemInFolder(resolveWorkspaceFilePath(workspace.value || '', ctxMenu.change.path))
+  if (!canOpenInFinder.value) {
+    ElMessage.info('当前环境不支持在文件管理器中打开')
+    return
+  }
+  window.electronAPI?.showItemInFolder?.(resolveWorkspaceFilePath(workspace.value || '', ctxMenu.change.path))
 }
 
 function handleAddToChat() {
