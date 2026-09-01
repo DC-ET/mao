@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /** 引用消息内联长度阈值：超出部分不进上下文，全文落盘供 Agent 按需读取。 */
-const INLINE_LIMIT = 100;
+const INLINE_LIMIT = 500;
 /** 落盘失败时的降级内联截断长度（防超长引用撑爆用户消息）。 */
 const FALLBACK_LIMIT = 1500;
 
@@ -13,7 +13,7 @@ export interface QuotedInjectionTarget {
   workspace: string | null;
 }
 
-/** 引用消息注入文本：超过 100 字仅保留前缀，全文写入会话工作区 quoted/ 目录，
+/** 引用消息注入文本：超过 500 字仅保留前缀，全文写入会话工作区 quoted/ 目录，
  *  以 @{路径}@ 引用提示 Agent 按需读取；落盘失败降级为 1500 字截断，不阻塞触发链路。 */
 export async function buildQuotedInjection(text: string, target: QuotedInjectionTarget): Promise<string> {
   if (text.length <= INLINE_LIMIT) return text;

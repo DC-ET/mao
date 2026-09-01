@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildQuotedInjection } from './quoted-injection.js';
 
-const LONG_TEXT = '长'.repeat(150);
+const LONG_TEXT = '长'.repeat(600);
 const PARENT_ID = 'om_test_parent';
 
 const workspaces: string[] = [];
@@ -29,13 +29,13 @@ describe('buildQuotedInjection', () => {
     expect(await readdir(workspace)).toHaveLength(0);
   });
 
-  it('writes full text to quoted dir and injects a file hint when over 100 chars', async () => {
+  it('writes full text to quoted dir and injects a file hint when over 500 chars', async () => {
     const workspace = await makeWorkspace();
     const result = await buildQuotedInjection(LONG_TEXT, { parentMessageId: PARENT_ID, workspace });
     expect(result).toContain('引用内容过长已截断，全文见文件');
     expect(result).toContain(`@{${join(workspace, 'quoted', `quoted-${PARENT_ID}.txt`)}}@`);
-    expect(result).toContain('长'.repeat(100));
-    expect(result).not.toContain('长'.repeat(101));
+    expect(result).toContain('长'.repeat(500));
+    expect(result).not.toContain('长'.repeat(501));
     const written = await readFile(join(workspace, 'quoted', `quoted-${PARENT_ID}.txt`), 'utf8');
     expect(written).toBe(LONG_TEXT);
   });
