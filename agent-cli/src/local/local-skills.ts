@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 const LOCAL_SKILLS_DIR = path.join(os.homedir(), '.agents', 'skills');
+/** 与后端 LocalAgentsMdRegistry.MAX_CONTENT_LENGTH 对齐，超出部分不注入系统提示。 */
+const MAX_AGENTS_MD_CHARS = 100 * 1024;
 
 export interface LocalSkillReport {
   name: string;
@@ -50,7 +52,11 @@ export function readAgentsMd(workspace: string | undefined): string | undefined 
   try {
     if (!fs.existsSync(p) || !fs.statSync(p).isFile()) return undefined;
     const content = fs.readFileSync(p, 'utf8');
-    return content || undefined;
+    if (!content) return undefined;
+    if (content.length > MAX_AGENTS_MD_CHARS) {
+      return content.slice(0, MAX_AGENTS_MD_CHARS) + '\n…[AGENTS.md 已截断]';
+    }
+    return content;
   } catch {
     return undefined;
   }

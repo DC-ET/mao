@@ -1,4 +1,4 @@
-import { matchDenyList, describeToolForDeny } from './deny-list';
+import { checkToolDeny } from './deny-list';
 import * as trust from './trust';
 
 export type OnApproval = 'ask' | 'fail';
@@ -12,6 +12,12 @@ export interface ApprovalRequest {
   description: string;
 }
 
+/** 选择「总是允许」时记下的免审条目：只对完全相同的工具 + 参数文本生效，不放开整类工具。 */
+export interface AlwaysAllowEntry {
+  toolName: string;
+  description: string;
+}
+
 export interface ApprovalPolicy {
   yolo: boolean;
   force: boolean;
@@ -20,6 +26,9 @@ export interface ApprovalPolicy {
   strictDangerCheck: boolean;
   iKnowWhatImDoing: boolean;
   stdoutIsTty: boolean;
+  /** 缺省时按真实 stdin 判定：stdin 是管道/已关闭时不能交互提问。 */
+  stdinIsTty?: boolean;
+  alwaysAllow?: AlwaysAllowEntry[];
 }
 
 export type ApprovalDecision =
@@ -27,36 +36,81 @@ export type ApprovalDecision =
   | { action: 'deny'; reason: string; exitApproval: boolean }
   | { action: 'ask'; reason: string };
 
-const MUTATING = new Set(['shell', 'write_file', 'edit_file']);
+/** `*` / `?` 不得跨越 shell 元字符，避免 `shell:ls *` 匹配到 `ls ; rm -rf ~/x`。 */
+const WILDCARD_STOP = ';&|<>$`()\n\r';
+const REGEX_META = '.*+?^${}()|[]\\/-';
 
-function isMutating(toolName: string): boolean {
-  return MUTATING.has(toolName) || toolName.startsWith('mcp__');
+function charClass(): string {
+  const escaped = [...WILDCARD_STOP].map((c) => (REGEX_META.includes(c) ? `\\${c}` : c)).join('');
+  return `[^${escaped}]`;
 }
 
-function globToRegExp(pattern: string): RegExp {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, '::DS::')
-    .replace(/\*/g, '.*')
-    .replace(/::DS::/g, '.*')
-    .replace(/\?/g, '.');
-  return new RegExp('^' + escaped + '$', 'i');
+export function globToRegExp(pattern: string): RegExp {
+  const stop = charClass();
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      while (pattern[i + 1] === '*') i++;
+      out += `${stop}*`;
+    } else if (ch === '?') {
+      out += stop;
+    } else if (REGEX_META.includes(ch)) {
+      out += `\\${ch}`;
+    } else {
+      out += ch;
+    }
+  }
+  return new RegExp(`^${out}$`);
+}
+
+/** 规则形如 `tool:pattern`；裸 `*`、裸工具名、通配工具名都不接受。 */
+export function validateApproveRule(rule: string): string | null {
+  const trimmed = rule.trim();
+  if (!trimmed) return '--approve-rule 不能为空';
+  const colon = trimmed.indexOf(':');
+  if (colon <= 0) return `--approve-rule 必须写成 tool:pattern（收到 ${JSON.stringify(rule)}）`;
+  const tool = trimmed.slice(0, colon).trim();
+  const pattern = trimmed.slice(colon + 1).trim();
+  if (!tool || tool === '*') return `--approve-rule 必须指定具体工具名，不接受通配（收到 ${JSON.stringify(rule)}）`;
+  if (!pattern) return `--approve-rule 缺少 pattern（收到 ${JSON.stringify(rule)}）`;
+  return null;
 }
 
 function ruleMatches(rule: string, toolName: string, description: string): boolean {
   const trimmed = rule.trim();
-  if (!trimmed) return false;
   const colon = trimmed.indexOf(':');
-  if (colon <= 0) return trimmed === toolName || trimmed === '*';
   const tool = trimmed.slice(0, colon).trim();
-  const rest = trimmed.slice(colon + 1).trim();
-  if (tool !== '*' && tool !== toolName) return false;
-  if (!rest || rest === '*') return true;
-  return globToRegExp(rest).test(description) || globToRegExp(rest).test(toolName + ' ' + description);
+  const pattern = trimmed.slice(colon + 1).trim();
+  if (tool !== toolName) return false;
+  return globToRegExp(pattern).test(description);
 }
 
-export function evaluateApproval(req: ApprovalRequest, policy: ApprovalPolicy): ApprovalDecision {
-  if (isMutating(req.toolName) && !trust.isWorkspaceTrusted(req.workspace)) {
+export function recordAlwaysAllow(policy: ApprovalPolicy, req: ApprovalRequest): void {
+  const list = policy.alwaysAllow ?? (policy.alwaysAllow = []);
+  if (list.some((e) => e.toolName === req.toolName && e.description === req.description)) return;
+  list.push({ toolName: req.toolName, description: req.description });
+}
+
+function matchesAlwaysAllow(policy: ApprovalPolicy, req: ApprovalRequest): boolean {
+  return (policy.alwaysAllow ?? []).some((e) => e.toolName === req.toolName && e.description === req.description);
+}
+
+export function canPrompt(policy: ApprovalPolicy): boolean {
+  return policy.stdoutIsTty && (policy.stdinIsTty ?? Boolean(process.stdin.isTTY));
+}
+
+/**
+ * 硬门禁：规则合法性 + 工作区信任 + 默认拒绝清单。
+ * 与「是否需要人工确认」分层：未信任的工作区一律拒绝（读类工具同样受限），--yolo 不能豁免。
+ */
+function evaluateHardGates(req: ApprovalRequest, policy: ApprovalPolicy): ApprovalDecision | null {
+  for (const rule of policy.approveRules) {
+    const invalid = validateApproveRule(rule);
+    if (invalid) return { action: 'deny', reason: `已拦截：${invalid}`, exitApproval: true };
+  }
+
+  if (!trust.isWorkspaceTrusted(req.workspace)) {
     return {
       action: 'deny',
       reason:
@@ -67,8 +121,7 @@ export function evaluateApproval(req: ApprovalRequest, policy: ApprovalPolicy): 
     };
   }
 
-  const denySample = describeToolForDeny(req.toolName, req.args);
-  const denied = matchDenyList(denySample);
+  const denied = checkToolDeny(req.args);
   if (denied && !policy.iKnowWhatImDoing) {
     return {
       action: 'deny',
@@ -78,13 +131,19 @@ export function evaluateApproval(req: ApprovalRequest, policy: ApprovalPolicy): 
       exitApproval: true,
     };
   }
+  return null;
+}
+
+export function evaluateApproval(req: ApprovalRequest, policy: ApprovalPolicy): ApprovalDecision {
+  const hard = evaluateHardGates(req, policy);
+  if (hard) return hard;
 
   if (!req.needApproval && !(policy.strictDangerCheck && req.dangerReason)) {
     return { action: 'allow', reason: '服务端未要求审批' };
   }
 
   if (policy.strictDangerCheck && req.dangerReason) {
-    if (!policy.stdoutIsTty || policy.onApproval === 'fail') {
+    if (!canPrompt(policy) || policy.onApproval === 'fail') {
       return { action: 'deny', reason: `危险操作（${req.dangerReason}）且 --strict-danger-check，非 TTY 拒绝`, exitApproval: true };
     }
     return { action: 'ask', reason: req.dangerReason };
@@ -94,12 +153,16 @@ export function evaluateApproval(req: ApprovalRequest, policy: ApprovalPolicy): 
     return { action: 'allow', reason: '命中 --approve-rule' };
   }
 
+  if (matchesAlwaysAllow(policy, req)) {
+    return { action: 'allow', reason: '本次会话已选择「总是允许」该操作' };
+  }
+
   if (policy.yolo || policy.force) {
     return { action: 'allow', reason: '--yolo/--force 自动放行' };
   }
 
-  if (policy.onApproval === 'fail' || !policy.stdoutIsTty) {
-    return { action: 'deny', reason: '需要审批但当前为 --on-approval=fail 或非 TTY', exitApproval: true };
+  if (policy.onApproval === 'fail' || !canPrompt(policy)) {
+    return { action: 'deny', reason: '需要审批但当前为 --on-approval=fail 或 stdin/stdout 非 TTY', exitApproval: true };
   }
 
   return { action: 'ask', reason: req.dangerReason || '需要用户确认' };

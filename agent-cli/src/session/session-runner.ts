@@ -1,4 +1,4 @@
-import type { AgentVO, CreateSessionRequest, MessageVO, SessionVO } from '../rest/types';
+import type { AgentVO, CreateSessionRequest, SessionVO } from '../rest/types';
 import type { RestClient } from '../rest/rest-client';
 import type { WsClient } from '../ws/ws-client';
 import type { AskAnswer, AskQuestion, TodoItem, WsEvent } from '../ws/event-types';
@@ -29,9 +29,10 @@ const CANCEL_WAIT_MS = 5000;
 
 export class SessionRunner {
   private sessionId = 0;
+  private renderer: Renderer;
   private executionId: string | null = null;
   private seenRunning = false;
-  private alreadyRunningRetried = false;
+  private busyRejectedEid: string | null = null;
   private reconnected = false;
   private currentText = '';
   private lastAssistantText = '';
@@ -51,8 +52,6 @@ export class SessionRunner {
   private questionFailedFlag = false;
   private approvalFailedFlag = false;
   private session: SessionVO | null = null;
-  private pendingContent: string | null = null;
-  private pendingModelId?: number;
   private snapshotPhase: string | null = null;
   private snapshotWaiters: Array<() => void> = [];
   private busy = false;
@@ -60,8 +59,14 @@ export class SessionRunner {
   private readonly now: () => number;
 
   constructor(private readonly opts: SessionRunnerOptions) {
+    this.renderer = opts.renderer;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = opts.now ?? (() => Date.now());
+  }
+
+  /** 交互模式挂载 Ink 后替换渲染链（trace + TUI）。 */
+  setRenderer(renderer: Renderer): void {
+    this.renderer = renderer;
   }
 
   getSession(): SessionVO | null {
@@ -131,8 +136,6 @@ export class SessionRunner {
       const wasActive = isRunningPhase(this.snapshotPhase ?? this.session?.phase);
       const activeEid = this.executionId;
       this.resetRound();
-      this.pendingContent = content;
-      this.pendingModelId = modelId;
       this.startedAt = this.now();
       this.armMaxDuration();
 
@@ -142,18 +145,43 @@ export class SessionRunner {
         await this.handleAlreadyActive(this.snapshotPhase ?? this.session?.phase);
       }
 
-      this.executionId = randomUUID();
-      this.emit({ type: 'session_started', sessionId: this.sessionId, executionId: this.executionId });
-      const sent = await this.sendMessage(content, modelId);
-      if (!sent) {
-        return this.finishWith('FAILED', '发送失败');
+      // 服务端可能以 session_already_running 拒收（会话被别的客户端占用）。
+      // 此时等占用方结束再重发一次，重试只做一次以免死循环。
+      for (let attempt = 0; ; attempt++) {
+        this.resetRound();
+        this.executionId = randomUUID();
+        this.emit({ type: 'session_started', sessionId: this.sessionId, executionId: this.executionId });
+        const sent = await this.sendMessage(content, modelId);
+        if (!sent) {
+          return this.finishWith('FAILED', '发送失败');
+        }
+        await this.waitUntilSettled();
+        if (attempt > 0 || this.terminal?.phase !== 'ALREADY_RUNNING' || !this.busyRetryMode()) {
+          return this.buildResult();
+        }
+        await this.awaitBusyRun(this.busyRejectedEid, this.busyRetryMode() === 'cancel');
+        if (this.cancelledByUserFlag || this.timedOutFlag) {
+          return this.buildResult();
+        }
       }
-
-      await this.waitUntilSettled();
-      return this.buildResult();
     } finally {
       this.busy = false;
     }
+  }
+
+  /** 被拒后是否重发：REPL 一律重发；-p 由 --if-running 决定。 */
+  private busyRetryMode(): 'wait' | 'cancel' | null {
+    if (!this.opts.printMode) return 'wait';
+    return this.opts.ifRunning === 'fail' ? null : this.opts.ifRunning;
+  }
+
+  /** 盯住占用方的执行直到它落终态（cancel 模式先发取消）。 */
+  private async awaitBusyRun(busyEid: string | null, cancelFirst: boolean): Promise<void> {
+    this.terminal = null;
+    this.executionId = busyEid;
+    this.seenRunning = true;
+    if (cancelFirst) await this.sendCancel();
+    await this.waitUntilSettled(cancelFirst ? CANCEL_WAIT_MS : undefined);
   }
 
   async waitForCurrentRun(): Promise<RunResult> {
@@ -221,7 +249,7 @@ export class SessionRunner {
   private resetRound(): void {
     this.executionId = null;
     this.seenRunning = false;
-    this.alreadyRunningRetried = false;
+    this.busyRejectedEid = null;
     this.currentText = '';
     this.lastAssistantText = '';
     this.usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -276,8 +304,8 @@ export class SessionRunner {
       this.resetRound();
       return;
     }
-    // REPL：会话忙时不做特殊处理，消息照常发送；服务端回 session_already_running
-    // 后由 handleAlreadyRunningEvent 等待当前执行结束并自动重发
+    // REPL：会话忙时消息照常发送；服务端回 session_already_running 后
+    // 由 runPrompt 的重试循环等占用执行结束再重发
   }
 
   private handleWs(evt: WsEvent): void {
@@ -285,14 +313,18 @@ export class SessionRunner {
     if (evt.sessionId == null && evt.type !== 'error') return;
 
     // 该事件是服务端对我们 send_message 的拒绝回执，收件人就是发送方本人，
-    // 其 data.executionId 指向占用方，不能走按自身 executionId 的过滤
+    // 其 data.executionId 指向占用方，不能走按自身 executionId 的过滤。
+    // 这里只记录并结束本次等待，重发逻辑放在 runPrompt 主流程里（避免两处并发等同一个 waiters 队列）
     if (evt.type === 'session_already_running' && (evt.sessionId == null || evt.sessionId === this.sessionId)) {
+      const busyEid = evt.data?.executionId != null ? String(evt.data.executionId) : undefined;
       this.emit({
         type: 'session_already_running',
         message: String(evt.data?.message ?? '该会话仍在执行'),
-        executionId: evt.data?.executionId != null ? String(evt.data.executionId) : undefined,
+        executionId: busyEid,
       });
-      void this.handleAlreadyRunningEvent(evt.data?.executionId != null ? String(evt.data.executionId) : undefined);
+      this.busyRejectedEid = busyEid ?? null;
+      this.terminal = { phase: 'ALREADY_RUNNING' };
+      this.flushWaiters();
       return;
     }
 
@@ -330,88 +362,7 @@ export class SessionRunner {
       return;
     }
 
-    if (evt.type === 'session_already_running') {
-      this.emit({
-        type: 'session_already_running',
-        message: String(evt.data?.message ?? '该会话仍在执行'),
-        executionId: evt.data?.executionId != null ? String(evt.data.executionId) : undefined,
-      });
-      void this.handleAlreadyRunningEvent(evt.data?.executionId != null ? String(evt.data.executionId) : undefined);
-      return;
-    }
-
     this.routeStream(evt);
-  }
-
-  private async handleAlreadyRunningEvent(runningEid?: string): Promise<void> {
-    if (!this.opts.printMode) {
-      // REPL：会话忙时不丢弃输入。接管本轮：摘走主流程 waiter，
-      // 等占用执行结束后以新 executionId 重发输入，待新轮结束后放行主流程
-      if (this.alreadyRunningRetried || !this.pendingContent) {
-        this.terminal = { phase: 'ALREADY_RUNNING' };
-        this.flushWaiters();
-        return;
-      }
-      this.alreadyRunningRetried = true;
-      const parked = this.waiters.splice(0);
-      this.executionId = runningEid ?? null;
-      this.seenRunning = true;
-      this.terminal = null;
-      await this.waitUntilSettled();
-      this.currentText = '';
-      this.lastAssistantText = '';
-      this.usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-      this.toolCalls.clear();
-      this.fileChanges = [];
-      this.seenRunning = false;
-      const content = this.pendingContent;
-      this.pendingContent = null;
-      this.executionId = randomUUID();
-      this.startedAt = this.now();
-      this.emit({ type: 'session_started', sessionId: this.sessionId, executionId: this.executionId });
-      const sent = await this.sendMessage(content, this.pendingModelId);
-      if (!sent) {
-        this.terminal = { phase: 'FAILED' };
-        this.flushWaiters();
-        return;
-      }
-      await this.waitUntilSettled();
-      this.flushWaiters();
-      return;
-    }
-    if (this.alreadyRunningRetried) {
-      this.terminal = { phase: 'ALREADY_RUNNING' };
-      this.flushWaiters();
-      return;
-    }
-    this.alreadyRunningRetried = true;
-    if (this.opts.ifRunning === 'fail') {
-      this.terminal = { phase: 'ALREADY_RUNNING' };
-      this.flushWaiters();
-      return;
-    }
-    const parked = this.waiters.splice(0);
-    this.executionId = runningEid ?? null;
-    this.seenRunning = true;
-    this.terminal = null;
-    if (this.opts.ifRunning === 'cancel') {
-      await this.sendCancel();
-    }
-    await this.waitUntilSettled(this.opts.ifRunning === 'cancel' ? CANCEL_WAIT_MS : undefined);
-    this.terminal = null;
-    this.currentText = '';
-    this.lastAssistantText = '';
-    this.usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-    this.toolCalls.clear();
-    this.fileChanges = [];
-    this.seenRunning = false;
-    this.executionId = randomUUID();
-    this.startedAt = this.now();
-    this.waiters.push(...parked);
-    this.emit({ type: 'session_started', sessionId: this.sessionId, executionId: this.executionId });
-    if (this.pendingContent) {
-      await this.sendMessage(this.pendingContent, this.pendingModelId);
-    }
   }
 
   private routeStream(evt: WsEvent): void {
@@ -617,7 +568,7 @@ export class SessionRunner {
   }
 
   private emit(evt: CliEvent): void {
-    this.opts.renderer.onEvent(evt);
+    this.renderer.onEvent(evt);
   }
 
   private waitUntilSettled(timeoutMs?: number): Promise<void> {
@@ -694,23 +645,9 @@ export class SessionRunner {
       durationMs: Math.max(0, this.now() - this.startedAt),
     };
     if (this.reconnected) result.reconnected = true;
-    this.opts.renderer.finish?.(result);
+    this.renderer.finish?.(result);
     return result;
   }
-}
-
-export function resultToExitCode(result: RunResult, extras?: { questionFailed?: boolean; timedOut?: boolean; cancelled?: boolean; approvalFailed?: boolean }): number {
-  if (extras?.approvalFailed) return EXIT.APPROVAL;
-  if (extras?.questionFailed) return EXIT.QUESTION;
-  if (extras?.timedOut) return EXIT.TIMEOUT;
-  if (result.status === 'ALREADY_RUNNING') return EXIT.GENERAL;
-  if (result.status === 'COMPLETED') return EXIT.SUCCESS;
-  if (result.status === 'FAILED') return EXIT.FAILED;
-  if (result.status === 'CANCELLED') {
-    if (extras?.cancelled) return EXIT.CANCELLED;
-    return EXIT.CANCELLED;
-  }
-  return EXIT.GENERAL;
 }
 
 export function exitCodeFor(result: RunResult, flags: { questionFailed: boolean; timedOut: boolean; interrupted: boolean; approvalFailed?: boolean }): number {
@@ -778,28 +715,6 @@ export function pickLatestSession(sessions: SessionVO[]): SessionVO | null {
     if (tb !== ta) return tb - ta;
     return (b.id ?? 0) - (a.id ?? 0);
   })[0];
-}
-
-export function summarizeMessages(messages: MessageVO[], full: boolean): string[] {
-  const lines: string[] = [];
-  for (const m of messages) {
-    const role = m.role ?? '?';
-    const content = (m.content ?? '').replace(/\s+/g, ' ').trim();
-    if (full) {
-      lines.push(`[${role}] ${m.content ?? ''}`);
-      continue;
-    }
-    const first = content.split('\n')[0]?.slice(0, 120) ?? '';
-    let tools = '';
-    if (Array.isArray(m.toolCalls)) {
-      const names = (m.toolCalls as Array<{ name?: string; toolName?: string }>)
-        .map((t) => t.name || t.toolName)
-        .filter(Boolean);
-      if (names.length) tools = `  (${names.join(', ')})`;
-    }
-    lines.push(`[${role}] ${first}${tools}`);
-  }
-  return lines;
 }
 
 export type { AskAnswer };

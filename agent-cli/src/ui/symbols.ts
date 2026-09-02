@@ -9,7 +9,7 @@ export interface UiSymbols {
   spin: string[];
 }
 
-export const UNICODE_SYMBOLS: UiSymbols = {
+const UNICODE_SYMBOLS: UiSymbols = {
   tool: '⏺',
   toolTail: '⎿',
   ok: '✔',
@@ -20,7 +20,7 @@ export const UNICODE_SYMBOLS: UiSymbols = {
   spin: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
 };
 
-export const ASCII_SYMBOLS: UiSymbols = {
+const ASCII_SYMBOLS: UiSymbols = {
   tool: '*',
   toolTail: '|',
   ok: '+',

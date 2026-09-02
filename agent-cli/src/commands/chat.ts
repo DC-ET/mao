@@ -22,7 +22,8 @@ import { collectLocalUnsyncedSkills, readAgentsMd } from '../local/local-skills'
 import { buildOsVersion, detectShell, isGitWorkspace } from '../local/paths';
 import type { ApprovalPolicy } from '../local/approval';
 import { formatHistorySummary, formatSessionBanner, formatWelcomeHints } from '../ui/welcome';
-import { InkTuiRenderer } from '../tui/ink-renderer';
+import type { InkTuiRenderer } from '../tui/ink-renderer';
+import type { TuiHandle } from '../tui/types';
 
 export interface ChatContext {
   rest: RestClient;
@@ -77,13 +78,12 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
   let inkRenderer: InkTuiRenderer | undefined;
   const runnerHolder: { current?: SessionRunner } = {};
   const tuiHolder: { ink?: InkTuiRenderer } = {};
-  const tuiHandleHolder: { handle?: import('../tui/types').InkTuiHandle } = {};
+  const tuiHandleHolder: { handle?: TuiHandle } = {};
 
   const localMode = session.executionMode === 'LOCAL' || (cfg.local && session.executionMode !== 'CLOUD');
   const ws = new WsClient({
     baseUrl: normalizeBaseUrl(resolved.baseUrl),
     getToken: ctx.getToken,
-    localCapable: localMode,
     debug: cfg.debug ? (m, extra) => logger.debug(m, extra) : undefined,
     onConsecutiveReconnectFailures: (n) => {
       logger.warn(`连不上服务器（已重试 ${n} 次）。检查网络，或 mao-agent login 后重试。`);
@@ -94,7 +94,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     process.stderr.write(`⚠ 该会话是 ${session.executionMode ?? 'CLOUD'} 模式，忽略 --local，按会话原模式运行。\n`);
   }
   if (localMode) {
-    await ensureWorkspaceTrusted(localWorkspace, cfg.stdoutIsTty && !cfg.print);
+    await ensureWorkspaceTrusted(localWorkspace, cfg.stdoutIsTty && cfg.stdinIsTty && !cfg.print);
   }
 
   // 事件渲染链：trace（可选）+ 打印模式 renderer；交互模式会在 attach 前追加 inkRenderer
@@ -122,6 +122,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       strictDangerCheck: cfg.strictDangerCheck,
       iKnowWhatImDoing: cfg.iKnowWhatImDoing,
       stdoutIsTty: cfg.stdoutIsTty,
+      stdinIsTty: cfg.stdinIsTty,
     };
     localExecutor = new LocalExecutor({
       ws,
@@ -192,6 +193,8 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     // 重放 ask_user_questions）askHandler/审批回调能访问到 tuiHolder.ink。
     const resumed = Boolean(cfg.resumeSessionId || cfg.continueLast || cfg.command === 'resume');
     if (!cfg.print) {
+      // 交互模式才加载 TUI：它会拉起 React + Ink，打印模式与子命令不必付这笔启动成本
+      const { InkTuiRenderer } = await import('../tui/ink-renderer');
       inkRenderer = new InkTuiRenderer({
         agentName: session.agentName,
         modelName: session.modelName,
@@ -199,27 +202,26 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
         contextWindowTokens,
         verboseTools: resolved.ui.verboseTools,
         asciiOnly: resolved.ui.asciiOnly,
+        showTurnDividers: resolved.ui.showTurnDividers,
+        colorFlag: cfg.colorFlag,
+        thinking: cfg.thinking,
         welcomeLines: [formatSessionBanner(session, { resumed }), formatWelcomeHints()],
-        historyLines: [],
         modelNames,
       });
       tuiHolder.ink = inkRenderer;
       // SessionRunner 事件 → MultiRenderer（TraceRenderer + inkRenderer），
       // 保证 --trace-file 在交互模式仍记录完整执行事件，同时 Ink 正常渲染。
-      (runner as unknown as { opts: { renderer: Renderer } }).opts.renderer =
-        new MultiRenderer([...renderers, inkRenderer]);
+      runner.setRenderer(new MultiRenderer([...renderers, inkRenderer]));
       tuiHandleHolder.handle = inkRenderer.mount();
     }
 
     await runner.attach(session);
 
     let historyLines: string[] = [];
-    if (!cfg.print && (cfg.replayFull || cfg.resumeSessionId || cfg.continueLast || cfg.command === 'resume')) {
+    if (!cfg.print && (cfg.replayFull || resumed)) {
       historyLines = await loadHistory(rest, session.id!, cfg.replayFull);
-      if (inkRenderer && historyLines.length > 0) {
-        inkRenderer.setHistoryLines(historyLines);
-      }
     }
+    inkRenderer?.seedChrome(historyLines);
 
     if (cfg.print) {
       if (!cfg.prompt) throw new CliError('打印模式需要 prompt（位置参数、-p 参数或 stdin）');
@@ -235,8 +237,6 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
         approvalFailed: runner.approvalFailed,
       });
     }
-
-    const resumed2 = Boolean(cfg.resumeSessionId || cfg.continueLast || cfg.command === 'resume');
 
     const tuiHandle = tuiHandleHolder.handle!;
 
@@ -265,10 +265,6 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       },
       firstPrompt: cfg.prompt || undefined,
       queuedInput: resolved.ui.queuedInput,
-      asciiOnly: resolved.ui.asciiOnly,
-      welcomeLines: [formatSessionBanner(session, { resumed: resumed2 }), formatWelcomeHints()],
-      historyLines,
-      modelNames,
     });
     return 0;
   } finally {

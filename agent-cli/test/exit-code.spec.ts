@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EXIT, CliError } from '../src/util/exit-codes';
-import { exitCodeFor, resultToExitCode } from '../src/session/session-runner';
+import { CliError, EXIT } from '../src/util/exit-codes';
+import { exitCodeFor } from '../src/session/session-runner';
 import type { RunResult } from '../src/render/types';
 
 function result(status: string): RunResult {
@@ -30,7 +30,7 @@ describe('exit codes', () => {
   });
   it('3 CANCELLED / interrupted', () => {
     expect(exitCodeFor(result('CANCELLED'), { questionFailed: false, timedOut: false, interrupted: true })).toBe(EXIT.CANCELLED);
-    expect(resultToExitCode(result('CANCELLED'))).toBe(EXIT.CANCELLED);
+    expect(exitCodeFor(result('CANCELLED'), { questionFailed: false, timedOut: false, interrupted: false })).toBe(EXIT.CANCELLED);
   });
   it('4 approval denied', () => {
     expect(exitCodeFor(result('CANCELLED'), { questionFailed: false, timedOut: false, interrupted: false, approvalFailed: true })).toBe(EXIT.APPROVAL);

@@ -1,6 +1,6 @@
 {
   "name": "mao-agent",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "mao-agent — 无 GUI 终端对话式 Agent 客户端（CLOUD / LOCAL）",
   "bin": {
     "mao-agent": "bin/mao-agent.js"
@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "prepare": "node scripts/prepare.cjs",
     "dev": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "sync:shell": "cp ../desktop/electron/localShell.cjs vendor/localShell.cjs"

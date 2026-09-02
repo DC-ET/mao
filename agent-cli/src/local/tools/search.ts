@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process';
+import { execFile, type ExecFileException } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveWorkspacePath } from '../paths';
+import { resolveSandboxPath } from '../sandbox';
 
 function globToRegExp(pattern: string): RegExp {
   const escaped = pattern
@@ -81,22 +81,33 @@ function globWithNode(pattern: string, scope: SearchScope, headLimit: number): s
 
 function globWithRg(pattern: string, scope: SearchScope, headLimit: number): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    execFile('rg', ['--files', '--glob', pattern, scope.rgTarget], { cwd: scope.cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
-      if (err && !stdout) return reject(err);
+    execFile('rg', ['--files', '--glob', pattern, scope.rgTarget], { cwd: scope.cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && !stdout) {
+        // rg 对「零匹配」用 exit 1 且无 stderr；其余（参数错误 / maxBuffer 溢出）必须冒泡成搜索失败。
+        if (isRgNoMatch(err, stderr)) return resolve([]);
+        return reject(rgFailure(err, stderr));
+      }
       const lines = (stdout || '').split('\n').filter(Boolean).slice(0, headLimit);
       resolve(lines.map((l) => relativizeRgPath(l, scope.cwd)));
     });
   });
 }
 
+function isRgNoMatch(err: ExecFileException, stderr: string): boolean {
+  return err.code === 1 && (stderr ?? '').trim() === '';
+}
+
+function rgFailure(err: ExecFileException, stderr: string): Error {
+  const detail = (stderr ?? '').trim() || err.message;
+  return new Error(`搜索失败（rg exit ${String(err.code ?? '?')}）：${detail}`);
+}
+
 export async function handleGlobSearch(args: Record<string, unknown>, workspace: string | undefined, sessionId: number): Promise<Record<string, unknown>> {
   const pattern = typeof args.pattern === 'string' ? args.pattern : '';
   if (!pattern) return { files: [], error: 'pattern is required' };
   const headLimit = Number(args.head_limit ?? 100) || 100;
-  const resolvedPath = typeof args.path === 'string'
-    ? resolveWorkspacePath(args.path, workspace, sessionId)
-    : (workspace || '.');
   try {
+    const resolvedPath = resolveSearchRoot(args.path, workspace, sessionId);
     const scope = resolveSearchScope(resolvedPath);
     const files = (await isRgAvailable())
       ? await globWithRg(pattern, scope, headLimit)
@@ -107,6 +118,14 @@ export async function handleGlobSearch(args: Record<string, unknown>, workspace:
   }
 }
 
+/** 搜索根同样受沙箱约束：缺省用工作区自身，服务端给的 path 必须落在工作区/runtime 内。 */
+function resolveSearchRoot(rawPath: unknown, workspace: string | undefined, sessionId: number): string {
+  if (typeof rawPath === 'string' && rawPath.trim() !== '') {
+    return resolveSandboxPath(rawPath, workspace, sessionId);
+  }
+  return resolveSandboxPath('.', workspace, sessionId);
+}
+
 interface GrepMatch {
   file: string;
   line: number;
@@ -114,18 +133,39 @@ interface GrepMatch {
   contextual?: boolean;
 }
 
+function compilePattern(pattern: string, ignoreCase: boolean): RegExp {
+  try {
+    return new RegExp(pattern, ignoreCase ? 'i' : undefined);
+  } catch (e) {
+    throw new Error(`无效的正则表达式：${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 function grepWithNode(
   pattern: string,
   scope: SearchScope,
   glob: string | null,
   ignoreCase: boolean,
+  contextLines: number,
   maxOutputChars: number,
 ): { matches: GrepMatch[]; truncated: boolean; total_matches: number } {
-  const re = new RegExp(pattern, ignoreCase ? 'i' : undefined);
+  const re = compilePattern(pattern, ignoreCase);
   const globRe = glob ? globToRegExp(glob) : null;
   const matches: GrepMatch[] = [];
   let charsUsed = 0;
   let truncated = false;
+  let totalMatches = 0;
+
+  function push(row: GrepMatch): boolean {
+    const add = JSON.stringify(row).length + 1;
+    if (charsUsed + add > maxOutputChars) {
+      truncated = true;
+      return false;
+    }
+    matches.push(row);
+    charsUsed += add;
+    return true;
+  }
 
   function consider(filePath: string, rel: string): void {
     if (truncated || (globRe && !globRe.test(rel) && !globRe.test(path.basename(rel)))) return;
@@ -135,23 +175,34 @@ function grepWithNode(
     } catch {
       return;
     }
-    const lines = text.split('\n');
+    const lines = text.split(/\r\n|\r|\n/);
+    // 文件以换行结尾时 split 会多出一个空串，rg 不会把它算作一行，这里对齐。
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+    const hits: number[] = [];
     for (let i = 0; i < lines.length; i++) {
-      if (!re.test(lines[i])) continue;
-      const row = { file: rel, line: i + 1, content: lines[i] };
-      const add = JSON.stringify(row).length + 1;
-      if (charsUsed + add > maxOutputChars) {
-        truncated = true;
-        return;
+      if (re.test(lines[i])) hits.push(i);
+    }
+    if (hits.length === 0) return;
+    // 与 rg --context 对齐：命中行前后各 contextLines 行以 contextual:true 输出；
+    // 落在别的命中行上下文范围内的命中行仍算命中，且每行只输出一次。
+    const hitSet = new Set(hits);
+    let lastEmitted = -1;
+    for (const i of hits) {
+      const from = Math.max(contextLines > 0 ? i - contextLines : i, lastEmitted + 1);
+      const to = Math.min(contextLines > 0 ? i + contextLines : i, lines.length - 1);
+      for (let j = from; j <= to; j++) {
+        const row: GrepMatch = { file: rel, line: j + 1, content: lines[j] };
+        if (!hitSet.has(j)) row.contextual = true;
+        if (!push(row)) return;
+        if (hitSet.has(j)) totalMatches++;
+        lastEmitted = j;
       }
-      matches.push(row);
-      charsUsed += add;
     }
   }
 
   if (scope.singleFile) {
     consider(scope.singleFile, path.basename(scope.singleFile));
-    return { matches, truncated, total_matches: matches.length };
+    return { matches, truncated, total_matches: totalMatches };
   }
 
   function walk(dir: string): void {
@@ -171,7 +222,7 @@ function grepWithNode(
     }
   }
   walk(scope.cwd);
-  return { matches, truncated, total_matches: matches.length };
+  return { matches, truncated, total_matches: totalMatches };
 }
 
 export function parseRgJsonLine(line: string, scope: SearchScope): GrepMatch | null {
@@ -200,14 +251,17 @@ function grepWithRg(
   contextLines: number,
   maxOutputChars: number,
 ): Promise<{ matches: GrepMatch[]; truncated: boolean; total_matches: number }> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const cmd = ['--json'];
     if (ignoreCase) cmd.push('--ignore-case');
     if (contextLines > 0) cmd.push('--context', String(contextLines));
     if (glob) cmd.push('--glob', glob);
     cmd.push(pattern, scope.rgTarget);
-    execFile('rg', cmd, { cwd: scope.cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
-      if (err && !stdout) return resolve({ matches: [], truncated: false, total_matches: 0 });
+    execFile('rg', cmd, { cwd: scope.cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && !stdout) {
+        if (isRgNoMatch(err, stderr)) return resolve({ matches: [], truncated: false, total_matches: 0 });
+        return reject(rgFailure(err, stderr));
+      }
       const matches: GrepMatch[] = [];
       let charsUsed = 0;
       let truncated = false;
@@ -235,17 +289,15 @@ export async function handleGrepSearch(args: Record<string, unknown>, workspace:
   const glob = typeof args.glob === 'string' ? args.glob : null;
   const ignoreCase = args.ignore_case === true || args.ignore_case === 1
     || args.ignore_case === 'true' || args.ignore_case === '1';
-  const contextLines = Number(args.context_lines ?? 0) || 0;
+  const contextLines = Math.max(0, Number(args.context_lines ?? 0) || 0);
   const maxOutputChars = Number(args.max_output_chars ?? 10000) || 10000;
-  const resolvedPath = typeof args.path === 'string'
-    ? resolveWorkspacePath(args.path, workspace, sessionId)
-    : (workspace || '.');
   try {
+    const resolvedPath = resolveSearchRoot(args.path, workspace, sessionId);
     const scope = resolveSearchScope(resolvedPath);
     if (await isRgAvailable()) {
       return await grepWithRg(pattern, scope, glob, ignoreCase, contextLines, maxOutputChars);
     }
-    return grepWithNode(pattern, scope, glob, ignoreCase, maxOutputChars);
+    return grepWithNode(pattern, scope, glob, ignoreCase, contextLines, maxOutputChars);
   } catch (e) {
     return { matches: [], error: e instanceof Error ? e.message : String(e) };
   }

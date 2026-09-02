@@ -2,18 +2,23 @@ export interface SlashItem {
   cmd: string;
   hint: string;
   needsArg?: boolean;
+  /** 帮助里展示的参数占位与说明，缺省用 hint。 */
+  usage?: string;
+  help?: string;
 }
 
+/** 斜杠命令的唯一数据源：补全面板、/help、REPL 分发校验都读这里。 */
 export const SLASH_ITEMS: SlashItem[] = [
   { cmd: 'help', hint: '查看斜杠命令' },
-  { cmd: 'session', hint: '当前会话信息' },
-  { cmd: 'model', hint: '切换模型', needsArg: true },
+  { cmd: 'session', hint: '当前会话信息', help: 'sessionId、Agent、模型、workspace、phase' },
+  { cmd: 'model', hint: '切换模型', needsArg: true, usage: '<id|name>', help: '切换当前会话模型（持久写库）' },
   { cmd: 'todo', hint: '查看 Todo' },
-  { cmd: 'context', hint: '上下文占用' },
+  { cmd: 'context', hint: '上下文占用', help: '最近一次 context_window 用量' },
   { cmd: 'verbose', hint: '展开/折叠工具输出' },
-  { cmd: 'queue', hint: '查看或清空队列', needsArg: true },
+  { cmd: 'thinking', hint: '展开/折叠思考内容' },
+  { cmd: 'queue', hint: '查看或清空队列', needsArg: true, usage: '[clear]' },
   { cmd: 'cancel', hint: '取消当前任务' },
-  { cmd: 'clear', hint: '清屏' },
+  { cmd: 'clear', hint: '清屏', help: '清屏与滚动缓冲，不删除服务端历史' },
   { cmd: 'copy', hint: '复制上一回合回复' },
   { cmd: 'agent', hint: '如何换 Agent' },
   { cmd: 'exit', hint: '退出' },
@@ -22,7 +27,30 @@ export const SLASH_ITEMS: SlashItem[] = [
 
 export const SLASH_COMMANDS = SLASH_ITEMS.map((i) => i.cmd);
 
-const NEEDS_ARG = new Set(SLASH_ITEMS.filter((i) => i.needsArg).map((i) => i.cmd));
+const BY_CMD = new Map(SLASH_ITEMS.map((i) => [i.cmd, i]));
+
+export function findSlashItem(cmd: string): SlashItem | undefined {
+  return BY_CMD.get(cmd);
+}
+
+/** /help 正文：与补全面板同源，不会出现「补全有、帮助没有」。 */
+export function formatSlashHelp(): string {
+  const width = Math.max(...SLASH_ITEMS.map((i) => `/${i.cmd} ${i.usage ?? ''}`.trimEnd().length));
+  const rows = SLASH_ITEMS.map((i) => {
+    const left = `/${i.cmd}${i.usage ? ` ${i.usage}` : ''}`;
+    return `  ${left.padEnd(width)}  ${i.help ?? i.hint}`;
+  });
+  return [
+    '斜杠命令（本地拦截，不发给 Agent）:',
+    ...rows,
+    '',
+    '输入 / 弹出命令面板，↑↓ 选择、Enter 执行、Tab 填入；/model 可补全模型名。',
+    '多行输入：Ctrl+J 换行；行尾 \\ 续行；未闭合的 ``` 自动续行。',
+    '编辑键：← → 移动，Alt+← / Alt+→ 按词，Ctrl+A/E 行首尾，Ctrl+W 删词，Ctrl+U 删到行首，Ctrl+K 删到行尾，Ctrl+L 清屏。',
+    '执行中可继续输入，回车后进入队列，本轮结束自动发送。',
+    'Ctrl+C：有草稿时清空草稿；任务在跑时取消（并清空队列）；空闲时连按两次退出。',
+  ].join('\n');
+}
 
 export interface SlashCompleteOptions {
   models?: string[];

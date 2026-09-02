@@ -6,38 +6,40 @@ export interface MdLine {
   level?: number;
 }
 
+/**
+ * 单行分类。fence 状态由调用方持有：流式渲染时逐行定稿，
+ * 代码块的开闭必须跨调用保持，否则块内的 `#`、`-` 会被当成标题/列表。
+ */
+export function classifyMdLine(line: string, inFence: boolean): { line: MdLine; inFence: boolean } {
+  if (line.trim().startsWith('```')) {
+    return { line: { kind: 'fence', text: line }, inFence: !inFence };
+  }
+  if (inFence) {
+    return { line: { kind: 'code', text: line }, inFence };
+  }
+  if (line.length === 0) {
+    return { line: { kind: 'empty', text: '' }, inFence };
+  }
+  const heading = line.match(/^(#{1,6})\s+(.*)$/);
+  if (heading) {
+    return { line: { kind: 'heading', text: heading[2], level: heading[1].length }, inFence };
+  }
+  if (/^\s*(?:[-*]|\d+[.)])\s+/.test(line)) {
+    return { line: { kind: 'list', text: line }, inFence };
+  }
+  if (/^\s*\|/.test(line)) {
+    return { line: { kind: 'table', text: line }, inFence };
+  }
+  return { line: { kind: 'text', text: line }, inFence };
+}
+
 export function consumeMarkdownLines(source: string): MdLine[] {
-  const lines = source.split('\n');
   let inFence = false;
   const out: MdLine[] = [];
-  for (const line of lines) {
-    if (line.trim().startsWith('```')) {
-      inFence = !inFence;
-      out.push({ kind: 'fence', text: line });
-      continue;
-    }
-    if (inFence) {
-      out.push({ kind: 'code', text: line });
-      continue;
-    }
-    if (line.length === 0) {
-      out.push({ kind: 'empty', text: '' });
-      continue;
-    }
-    const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    if (heading) {
-      out.push({ kind: 'heading', text: heading[2], level: heading[1].length });
-      continue;
-    }
-    if (/^\s*[-*]\s+/.test(line)) {
-      out.push({ kind: 'list', text: line });
-      continue;
-    }
-    if (/^\s*\|/.test(line)) {
-      out.push({ kind: 'table', text: line });
-      continue;
-    }
-    out.push({ kind: 'text', text: line });
+  for (const raw of source.split('\n')) {
+    const res = classifyMdLine(raw, inFence);
+    inFence = res.inFence;
+    out.push(res.line);
   }
   return out;
 }

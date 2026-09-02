@@ -26,24 +26,34 @@ export function formatRuntimeDisplay(sessionId: number, ...segments: string[]): 
   return ['~/.mao/agent-cli/runtime', String(sessionId), ...segments].join('/');
 }
 
-export function isUnderRuntime(absolutePath: string, sessionId: number): boolean {
-  const runtimeDir = path.resolve(resolveRuntimeDir(sessionId));
-  const resolved = path.resolve(absolutePath);
-  return resolved === runtimeDir || resolved.startsWith(runtimeDir + path.sep);
+const BASH_FALLBACK_DIRS = ['/bin', '/usr/bin', '/usr/local/bin', '/opt/homebrew/bin'];
+
+/** LOCAL shell 工具固定 spawn bash（vendor/localShell.cjs），因此这里解析的就是实际执行体。 */
+export function findBash(): string | null {
+  const exeName = process.platform === 'win32' ? 'bash.exe' : 'bash';
+  const fromPath = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  for (const dir of [...fromPath, ...BASH_FALLBACK_DIRS]) {
+    const candidate = path.join(dir, exeName);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // 继续找下一个候选
+    }
+  }
+  return null;
 }
 
-export function resolveWorkspacePath(filePath: string, workspace: string | undefined, sessionId: number): string {
-  const expanded = expandHome(filePath);
-  if (path.isAbsolute(expanded)) {
-    if (isUnderRuntime(expanded, sessionId)) return expanded;
-    return expanded;
+export function requireBash(): string {
+  const bash = findBash();
+  if (!bash) {
+    throw new Error('LOCAL shell 工具需要 bash，但当前 PATH 与常见安装目录中都没找到可执行的 bash，请先安装 bash 后重试');
   }
-  if (!workspace) return expanded;
-  return path.join(workspace, expanded);
+  return bash;
 }
 
 export function detectShell(): string {
-  return process.env.SHELL || process.env.ComSpec || (process.platform === 'win32' ? 'cmd.exe' : '/bin/bash');
+  return findBash() ?? 'bash（未找到，LOCAL shell 工具不可用）';
 }
 
 export function buildOsVersion(): string {

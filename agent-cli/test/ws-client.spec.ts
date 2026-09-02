@@ -20,12 +20,12 @@ describe('WS constants (aligned with desktop useStreamWS)', () => {
 });
 
 describe('buildStreamUrl', () => {
-  it('appends local=1 only for LOCAL capable clients (token moves to first auth frame)', () => {
+  it('carries only client type; LOCAL capability is decided by client type server-side', () => {
     expect(buildStreamUrl('https://mao.etarch.cn/api', 'cli')).toBe(
       'wss://mao.etarch.cn/api/ws/stream?client=cli',
     );
-    expect(buildStreamUrl('https://mao.etarch.cn/api', 'cli', true)).toBe(
-      'wss://mao.etarch.cn/api/ws/stream?client=cli&local=1',
+    expect(buildStreamUrl('http://127.0.0.1:9080/api/', 'cli')).toBe(
+      'ws://127.0.0.1:9080/api/ws/stream?client=cli',
     );
   });
 });

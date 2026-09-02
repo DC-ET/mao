@@ -26,21 +26,22 @@ node "$BIN" -p "请只回复一个字：好" --output-format json --max-duration
 node -e 'const r=JSON.parse(require("fs").readFileSync("/tmp/mao-agent-e2e.json","utf8")); if(r.type!=="result") throw new Error("not result"); if(r.status!=="COMPLETED") throw new Error("status="+r.status); console.log("E2E CLOUD ok session="+r.sessionId);'
 
 if [[ "${MAO_AGENT_E2E_LOCAL:-1}" == "1" ]]; then
-  python3 - <<PY
-import json, os, pathlib
-p = pathlib.Path.home() / ".mao" / "agent-cli" / "config.json"
-p.parent.mkdir(parents=True, exist_ok=True)
-cfg = {}
-if p.exists():
-    cfg = json.loads(p.read_text() or "{}")
-trusted = cfg.get("trustedWorkspaces") or []
-cwd = "$ROOT"
-if cwd not in trusted:
-    trusted.append(cwd)
-    cfg["trustedWorkspaces"] = trusted
-    p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
-print("trusted", cwd)
-PY
+  MAO_AGENT_E2E_ROOT="$ROOT" node -e '
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const file = path.join(os.homedir(), ".mao", "agent-cli", "config.json");
+fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(file, "utf8") || "{}"); } catch { cfg = {}; }
+const trusted = Array.isArray(cfg.trustedWorkspaces) ? cfg.trustedWorkspaces : [];
+const cwd = process.env.MAO_AGENT_E2E_ROOT;
+if (!trusted.includes(cwd)) {
+  cfg.trustedWorkspaces = [...trusted, cwd];
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
+}
+console.log("trusted", cwd);
+'
   node "$BIN" --local --yolo --workspace "$ROOT" -p "只在当前仓库用 shell 执行 echo mao-local-e2e，然后原样把输出告诉我。不要做其它事。" \
     --output-format json --max-duration 180 --on-question fail --base-url "$BASE" | tee /tmp/mao-agent-e2e-local.json
   node -e 'const r=JSON.parse(require("fs").readFileSync("/tmp/mao-agent-e2e-local.json","utf8")); if(r.type!=="result") throw new Error("not result"); if(r.status!=="COMPLETED") throw new Error("status="+r.status); console.log("E2E LOCAL ok session="+r.sessionId+" tools="+r.toolCalls.length);'

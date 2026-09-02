@@ -55,14 +55,3 @@ export function truncateToWidth(text: string, max: number): string {
   }
   return out + ellipsis;
 }
-
-export function padToWidth(text: string, width: number): string {
-  const w = displayWidth(text);
-  if (w >= width) return text;
-  return text + ' '.repeat(width - w);
-}
-
-export function truncateOneLine(text: string, max: number): string {
-  const one = text.replace(/\s+/g, ' ').trim();
-  return one.length > max ? `${one.slice(0, max)}…` : one;
-}

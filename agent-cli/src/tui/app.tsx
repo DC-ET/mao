@@ -1,130 +1,94 @@
 import React from 'react';
-import { Text, Box, Static, render as inkRender } from 'ink';
-import { pickSymbols } from '../ui/symbols';
+import { Box, Static, Text, render as inkRender } from 'ink';
 import type { TuiAppProps } from './types';
-import { InkInput } from './ink-input';
-import { AskModal, ApprovalModal } from './modals';
-import { FooterBar, ToolCallView, TranscriptItemView, UserMessage } from './widgets';
-import { MarkdownBlock } from './markdown';
+import { InputBox } from './input-box';
+import { FooterBar, PanelLines, TranscriptItemView, borderStyleFor } from './widgets';
+import { MdLineView } from './markdown';
 
+/**
+ * 渲染树只有两层：<Static> 承载已定稿内容（写一次不再重绘），
+ * 其余 live 区高度由 renderer 预先裁剪过，恒小于终端行数，
+ * 因此不会触发 Ink 的 clearTerminal 全屏重绘分支。
+ */
 export function TuiApp(props: TuiAppProps): React.ReactElement {
-  const {
-    staticRounds,
-    live,
-    modal,
-    continuation,
-    footer,
-    verboseTools,
-    asciiOnly,
-    onSubmit,
-    onCancel,
-    onExit,
-    onAskResponse,
-    onApprovalResponse,
-  } = props;
-
-  const symbols = pickSymbols(asciiOnly);
+  const { staticBlocks, live, input, panel, footer, asciiOnly, columns } = props;
 
   return (
     <Box flexDirection="column">
-      <Static items={staticRounds}>
-        {(round) => (
-          <Box flexDirection="column" key={round.id} marginBottom={1}>
-            {round.items.map((item, i) => (
+      <Static items={staticBlocks}>
+        {(block) => (
+          <Box flexDirection="column" key={block.id} marginBottom={block.spaced ? 1 : 0}>
+            {block.items.map((item, i) => (
               <TranscriptItemView
-                key={`${round.id}-${i}`}
+                key={`${block.id}-${i}`}
                 item={item}
                 ascii={asciiOnly}
-                verbose={verboseTools}
+                verbose={props.verboseTools}
+                columns={columns}
               />
             ))}
           </Box>
         )}
       </Static>
 
-      {live.userText ? <UserMessage text={live.userText} ascii={asciiOnly} /> : null}
+      {live.thinking.map((line, i) => (
+        <Text key={`think-${i}`} dimColor italic>{line || ' '}</Text>
+      ))}
 
-      {live.running ? (
-        <Box flexDirection="column" marginTop={live.userText ? 0 : 1}>
-          <Text color="cyan">
-            {symbols.spin[live.spinnerFrame % symbols.spin.length]} {live.status || '思考中…'}
-          </Text>
-          {live.segmentRaw ? <MarkdownBlock text={live.segmentRaw} /> : null}
-          {live.toolCalls.map((tc) => (
-            <ToolCallView
-              key={tc.toolCallId}
-              name={tc.toolName}
-              args={tc.arguments}
-              result={tc.summary || tc.preview || tc.result}
-              running={tc.status === 'RUNNING'}
-              verbose={verboseTools}
-              ascii={asciiOnly}
-            />
-          ))}
-          {live.error ? <Text color="red">{symbols.err} {live.error}</Text> : null}
-          {live.warnings.map((w, i) => (
-            <Text key={`warn-${i}`} color="yellow">{w}</Text>
-          ))}
+      {live.tail.map((line, i) => (
+        <MdLineView key={`tail-${i}`} line={line} />
+      ))}
+
+      {live.tools.map((t) => (
+        <Text key={t.id} color="cyan">{t.text}</Text>
+      ))}
+
+      {live.status ? <Text color="cyan">{live.status}</Text> : null}
+
+      {live.announce.map((line, i) => (
+        <Text key={`ann-${i}`} dimColor>{line || ' '}</Text>
+      ))}
+
+      {panel ? (
+        <Box flexDirection="column" borderStyle={borderStyleFor(asciiOnly)} borderColor={panel.borderColor} paddingX={1}>
+          <PanelLines lines={panel.lines} />
         </Box>
       ) : null}
 
-      {live.announce.length > 0 ? (
-        <Box flexDirection="column" marginTop={1}>
-          {live.announce.map((line, i) => (
-            <Text key={`announce-${i}`} dimColor>{line || ' '}</Text>
-          ))}
-        </Box>
-      ) : null}
-
-      {modal?.type === 'ask' ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginTop={1}>
-          <AskModal
-            key={modal.requestId}
-            questions={modal.questions}
-            symbols={symbols}
-            onResolve={(answers) => onAskResponse(modal.requestId, answers)}
-            onExit={() => {}}
-          />
-        </Box>
-      ) : null}
-      {modal?.type === 'approval' ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginTop={1}>
-          <ApprovalModal
-            request={modal.request}
-            reason={modal.reason}
-            symbols={symbols}
-            onResolve={onApprovalResponse}
-            onExit={() => {}}
-          />
-        </Box>
-      ) : null}
-
-      <Box flexDirection="column" marginTop={1}>
-        <InkInput
-          enabled={!modal}
-          continuation={continuation}
-          asciiOnly={asciiOnly}
-          modelNames={props.modelNames}
-          onSubmit={onSubmit}
-          onCancel={onCancel}
-          onExit={onExit}
-        />
-        <FooterBar footer={footer} running={live.running} />
-      </Box>
+      {input ? <InputBox view={input} ascii={asciiOnly} enabled={!panel} /> : null}
+      <FooterBar footer={footer} hint={live.status ? 'Ctrl+C 取消' : undefined} />
     </Box>
   );
 }
 
-export function createTuiApp(initialProps: TuiAppProps): { update: (patch: Partial<TuiAppProps>) => void; unmount: () => void } {
-  let props = initialProps;
-  const { rerender, unmount } = inkRender(React.createElement(TuiApp, props), { exitOnCtrlC: false });
+export interface TuiMount {
+  update: (props: TuiAppProps) => void;
+  unmount: () => void;
+  /** 把实例从 Ink 的 stdout→instance 缓存里摘掉，下一次 render 才会真正新建。 */
+  cleanup: () => void;
+}
+
+export interface TuiMountOptions {
+  /** 必须与 renderer 计算布局预算时用的同一个流：Ink 用它的 rows/columns 判断是否整屏重绘。 */
+  stdout: NodeJS.WriteStream;
+  stdin: NodeJS.ReadStream;
+}
+
+export function createTuiApp(initialProps: TuiAppProps, opts: TuiMountOptions): TuiMount {
+  const { rerender, unmount, cleanup } = inkRender(React.createElement(TuiApp, initialProps), {
+    stdout: opts.stdout,
+    stdin: opts.stdin,
+    exitOnCtrlC: false,
+    patchConsole: false,
+  });
   return {
-    update(patch: Partial<TuiAppProps>) {
-      props = { ...props, ...patch };
-      rerender(React.createElement(TuiApp, props));
+    update(next: TuiAppProps) {
+      rerender(React.createElement(TuiApp, next));
     },
     unmount() {
       unmount();
+      cleanup();
     },
+    cleanup,
   };
 }

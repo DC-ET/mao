@@ -1,7 +1,7 @@
 # mao-agent CLI 用户体验专项优化设计
 
 > 版本: v0.1 | 更新时间: 2026-08-20  
-> 状态: U0/U1/U2 已落地；U3（ink）评估后不引入，保持自研轻交互层  
+> 状态: **本文档为历史设计记录，当前实现以根 `CHANGELOG.md` 与 `skills/mao-cli/reference/mao-agent.md` 为准。** U0/U1/U2 已落地；U3 的「不引入 ink」结论后续被推翻——交互层已改为 ink + React（自研按键解码器 + 行编辑器 + 布局预算，见 `agent-cli/src/tui/`），下文 §8.1 / §9 / §11 相关判断已过时  
 > 定位: 在协议闭环已跑通的前提下，专项提升**交互式 REPL**的可读性、可控性与「像在对话」的体感  
 > 关联文档: [mao-agent-cli-technical-design.md](./mao-agent-cli-technical-design.md)、[ask-user-questions-design.md](./ask-user-questions-design.md)、[center-panel-approval-design.md](./center-panel-approval-design.md)  
 > 实现目录: `agent-cli/`（`repl/`、`render/`、`commands/`）

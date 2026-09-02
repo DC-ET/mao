@@ -1,35 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseKey, parseKeys } from '../src/ui/keys';
 import { PromptQueue } from '../src/ui/prompt-queue';
 import { formatRelativeTime } from '../src/ui/relative-time';
 import { formatHistorySummary, formatSessionBanner } from '../src/ui/welcome';
-import { completeSlash, slashPalette } from '../src/ui/slash-complete';
+import { completeSlash, findSlashItem, formatSlashHelp, slashPalette, SLASH_ITEMS } from '../src/ui/slash-complete';
 import { formatTodoSummary } from '../src/ui/todo-summary';
-import { formatToolStart, formatUserBlock, formatUserTurn, summarizeToolArgs } from '../src/ui/box';
-import { Composer } from '../src/ui/composer';
-import { countRewindRows, countVisualRows, createAnsi, renderMarkdownLite } from '../src/util/ansi';
-import { consumeMarkdownLines, splitInline } from '../src/tui/markdown-parse';
-
-describe('parseKey', () => {
-  it('parses arrows, enter, esc, digits', () => {
-    expect(parseKey('\u001b[A').name).toBe('up');
-    expect(parseKey('\u001b[B').name).toBe('down');
-    expect(parseKey('\r').name).toBe('enter');
-    expect(parseKey('\u001b').name).toBe('esc');
-    expect(parseKey('3')).toEqual({ name: 'digit', digit: 3, raw: '3' });
-    expect(parseKey('\t').name).toBe('tab');
-    expect(parseKey('\u0003').name).toBe('ctrl-c');
-  });
-
-  it('splits pasted / burst input into per-key events', () => {
-    const keys = parseKeys('bbbbbb\r');
-    expect(keys.filter((k) => k.name === 'char')).toHaveLength(6);
-    expect(keys.at(-1)?.name).toBe('enter');
-    const zh = parseKeys('队列成功\r');
-    expect(zh.filter((k) => k.name === 'char').map((k) => k.raw).join('')).toBe('队列成功');
-    expect(zh.at(-1)?.name).toBe('enter');
-  });
-});
+import { summarizeToolArgs, truncate } from '../src/ui/tool-format';
+import { displayWidth, truncateToWidth } from '../src/ui/width';
+import { consumeMarkdownLines, classifyMdLine, splitInline } from '../src/tui/markdown-parse';
 
 describe('PromptQueue', () => {
   it('pushes, lists and clears', () => {
@@ -77,7 +54,7 @@ describe('welcome / history', () => {
   });
 });
 
-describe('completeSlash', () => {
+describe('slash commands', () => {
   it('completes command names', () => {
     const [hits, prefix] = completeSlash('/mo');
     expect(prefix).toBe('/mo');
@@ -94,9 +71,7 @@ describe('completeSlash', () => {
     const [hits] = completeSlash('/queue c');
     expect(hits).toEqual(['clear']);
   });
-});
 
-describe('slashPalette', () => {
   it('lists commands when typing /', () => {
     const picks = slashPalette('/');
     expect(picks.some((p) => p.label === '/help')).toBe(true);
@@ -111,6 +86,19 @@ describe('slashPalette', () => {
     expect(models.map((p) => p.label)).toContain('gpt-4o');
     expect(slashPalette('/model gp', { models: ['gpt-4o', 'mimo'] }).map((p) => p.value)).toEqual(['/model gpt-4o']);
   });
+
+  it('findSlashItem only matches known commands', () => {
+    expect(findSlashItem('help')?.cmd).toBe('help');
+    expect(findSlashItem('thinking')?.cmd).toBe('thinking');
+    expect(findSlashItem('nope')).toBeUndefined();
+  });
+
+  it('/help lists every command from the single source of truth', () => {
+    const help = formatSlashHelp();
+    for (const item of SLASH_ITEMS) {
+      expect(help).toContain(`/${item.cmd}`);
+    }
+  });
 });
 
 describe('formatTodoSummary', () => {
@@ -124,18 +112,11 @@ describe('formatTodoSummary', () => {
   });
 });
 
-describe('visual rows / markdown lite', () => {
-  it('counts rewind rows for partial vs complete lines', () => {
-    expect(countVisualRows('hello', 80)).toBe(1);
-    expect(countRewindRows('hello', 80)).toBe(0);
-    expect(countRewindRows('hello\n', 80)).toBe(1);
-    expect(countVisualRows('a'.repeat(20), 10)).toBe(2);
-  });
-
-  it('does not transform partial markdown mid-line', () => {
-    const ansi = createAnsi(true);
-    expect(renderMarkdownLite('**ab', ansi)).toBe('**ab');
-    expect(renderMarkdownLite('**ab**', ansi)).toContain('\x1b[1mab\x1b[0m');
+describe('width helpers', () => {
+  it('counts CJK as two columns and truncates by width', () => {
+    expect(displayWidth('中文abc')).toBe(7);
+    expect(displayWidth('\x1b[1mabc\x1b[0m')).toBe(3);
+    expect(truncateToWidth('中文中文', 5)).toBe('中文…');
   });
 });
 
@@ -145,6 +126,20 @@ describe('markdown-parse', () => {
     expect(lines.map((l) => l.kind)).toEqual(['heading', 'list', 'table', 'fence', 'code', 'fence', 'empty']);
     expect(lines[0].text).toBe('Title');
     expect(lines[0].level).toBe(1);
+  });
+
+  it('classifyMdLine keeps fence state with the caller', () => {
+    const open = classifyMdLine('```ts', false);
+    expect(open.inFence).toBe(true);
+    expect(open.line.kind).toBe('fence');
+    const inside = classifyMdLine('# not a heading', open.inFence);
+    expect(inside.line.kind).toBe('code');
+    expect(classifyMdLine('```', inside.inFence).inFence).toBe(false);
+  });
+
+  it('recognises ordered lists', () => {
+    expect(classifyMdLine('1. first', false).line.kind).toBe('list');
+    expect(classifyMdLine('2) second', false).line.kind).toBe('list');
   });
 
   it('splits bold and inline code', () => {
@@ -157,64 +152,15 @@ describe('markdown-parse', () => {
   });
 });
 
-describe('tool / user cards', () => {
+describe('tool formatting', () => {
   it('summarizes json tool args', () => {
     expect(summarizeToolArgs('{"command":"ls -la"}')).toBe('ls -la');
     expect(summarizeToolArgs('{"path":"README.md"}')).toBe('README.md');
+    expect(summarizeToolArgs('')).toBe('');
   });
 
-  it('formats user and tool lines', () => {
-    expect(formatUserTurn('hello', {})).toBe('❯ hello');
-    const block = formatUserBlock('hello', { cols: 20 });
-    expect(block.trim()).toBe('hello');
-    expect(block.length).toBe(20);
-    expect(formatToolStart('shell', 'ls', {})).toContain('⏺ shell');
-  });
-});
-
-describe('composer', () => {
-  it('draws a boxed idle prompt', () => {
-    const c = new Composer({
-      write: () => undefined,
-      rows: () => 24,
-      columns: () => 40,
-      dim: (s) => s,
-      cyan: (s) => s,
-      frames: ['⠋'],
-      getMeta: () => '氛围编程 · CLOUD',
-    });
-    const lines = c.renderLines();
-    expect(lines[0]).toMatch(/^╭─+╮$/);
-    expect(lines[1]).toContain('→');
-    expect(lines[1]).toContain('继续对话');
-    expect(lines[2]).toMatch(/^╰─+╯$/);
-    expect(lines[3]).toContain('氛围编程');
-  });
-
-  it('paints the box with DEC save/restore so transcript cursor is kept', () => {
-    let out = '';
-    const c = new Composer({
-      write: (s) => { out += s; },
-      rows: () => 24,
-      columns: () => 40,
-      dim: (s) => s,
-      cyan: (s) => s,
-      frames: ['⠋'],
-      getMeta: () => 'meta',
-    });
-    expect(c.tryStart()).toBe(true);
-    try {
-      c.setIdle('hello');
-      expect(out).not.toContain('\x1b[?1049h');
-      expect(out).toContain('\x1b[2J');
-      expect(out).toContain('\x1b7');
-      expect(out).toContain('\x1b8');
-      expect(out).not.toMatch(/\x1b\[s/);
-      c.sealHeader(2);
-      expect(out).toMatch(/\x1b\[3;\d+r/);
-    } finally {
-      c.stop();
-    }
-    expect(out).not.toContain('\x1b[?1049l');
+  it('truncates by lines then chars', () => {
+    expect(truncate('a\nb\nc', 100, 2)).toBe('a\nb\n…');
+    expect(truncate('abcdef', 3, 10)).toBe('abc…');
   });
 });

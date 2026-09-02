@@ -123,9 +123,47 @@ describe('SessionRunner', () => {
     await new Promise((r) => setTimeout(r, 10));
     // 占用会话的执行结束，CLI 应自动重发此前被拒的输入
     terminal(ws, 'other-eid', 'COMPLETED');
+    await new Promise((r) => setTimeout(r, 10));
+    const sends = ws.sent.filter((m) => (m as { type: string }).type === 'send_message');
+    expect(sends.length).toBe(2);
+    // 本轮结果取决于重发执行的终态，而不是占用方的终态
+    const resentEid = (sends[1] as { data: { eventId: string } }).data.eventId;
+    expect(resentEid).not.toBe((sends[0] as { data: { eventId: string } }).data.eventId);
+    terminal(ws, resentEid, 'COMPLETED');
     const result = await p;
     expect(result.status).toBe('COMPLETED');
+    expect(result.executionId).toBe(resentEid);
     expect(renderer.events.some((e) => e.type === 'session_already_running')).toBe(true);
+  });
+
+  it('REPL resend keeps waiting when the resent run fails', async () => {
+    const { ws, runner } = await attached({ printMode: false });
+    const p = runner.runPrompt('x');
+    await Promise.resolve();
+    ws.emit({ type: 'session_already_running', sessionId: 11, data: { code: 'session_already_running', message: 'busy', executionId: 'other-eid' } });
+    await new Promise((r) => setTimeout(r, 10));
+    terminal(ws, 'other-eid', 'COMPLETED');
+    await new Promise((r) => setTimeout(r, 10));
+    let settled = false;
+    void p.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+    const sends = ws.sent.filter((m) => (m as { type: string }).type === 'send_message');
+    terminal(ws, (sends[1] as { data: { eventId: string } }).data.eventId, 'FAILED');
+    expect((await p).status).toBe('FAILED');
+  });
+
+  it('REPL gives up when the resend is rejected again', async () => {
+    const { ws, runner } = await attached({ printMode: false });
+    const p = runner.runPrompt('x');
+    await Promise.resolve();
+    const busy = { type: 'session_already_running', sessionId: 11, data: { code: 'session_already_running', message: 'busy', executionId: 'other-eid' } };
+    ws.emit(busy as WsEvent);
+    await new Promise((r) => setTimeout(r, 10));
+    terminal(ws, 'other-eid', 'COMPLETED');
+    await new Promise((r) => setTimeout(r, 10));
+    ws.emit(busy as WsEvent);
+    expect((await p).status).toBe('ALREADY_RUNNING');
     const sends = ws.sent.filter((m) => (m as { type: string }).type === 'send_message');
     expect(sends.length).toBe(2);
   });

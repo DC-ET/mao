@@ -1,7 +1,7 @@
 # mao-agent（终端 Agent CLI）功能设计与技术方案
 
 > 版本: v0.3（可落地版） | 更新时间: 2026-08-20
-> 状态: Phase 1/2（CLOUD）与 Phase 3（LOCAL）已落地
+> 状态: Phase 1/2（CLOUD）与 Phase 3（LOCAL）已落地。**本文档为历史设计记录，当前实现以根 `CHANGELOG.md` 与 `skills/mao-cli/reference/mao-agent.md` 为准**；§9.1「不引入 ink」的结论已被推翻，交互层现为 ink + React（自研按键解码器 + 行编辑器 + 布局预算，见 `agent-cli/src/tui/`）
 > 定位: 对齐 `cursor-agent` 的无 GUI 终端对话式 Agent 客户端，对接 mao 后端（`backend-ts`）
 > 关联文档: [technical-design.md](./technical-design.md)、[android-app-technical-design.md](./android-app-technical-design.md)、[local-tool-ws-merge.md](./local-tool-ws-merge.md)、[shell-session-design.md](./shell-session-design.md)、[shell-unification-design.md](./shell-unification-design.md)、[mao-agent-cli-ux-design.md](./mao-agent-cli-ux-design.md)（交互体验专项）、[skills/mao-cli](../skills/mao-cli/SKILL.md)
 

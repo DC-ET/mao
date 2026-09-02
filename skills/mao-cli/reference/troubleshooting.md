@@ -83,6 +83,14 @@
 | `command not found: mao` | 在 mao-cli 目录 `npm install . -g` 或 `node bin/mao-cli.js` |
 | mao-agent 退出码 4 | LOCAL 非 TTY 需审批；用 `--on-approval` 或 TTY |
 | 对话应用 mao 发消息 | 错用工具，应换 mao-agent |
+| mao-agent 界面错乱 / 边框乱码 | 终端不支持 Unicode 或宽字符：加 `--ascii`；日志采集场景用 `-p --output-format json` |
+| mao-agent 终端太小报错 | 交互模式最低 8 行 × 20 列，放大窗口或改用 `-p` |
+| mao-agent 提示「会话忙，已排队」 | 该会话有执行在跑，REPL 会自动重发；`-p` 用 `--if-running cancel` 抢占或 `fail` 直接退出 |
+| mao-agent LOCAL 报「拒绝访问工作区外的路径」 | 路径沙箱：文件/搜索/`workdir` 必须在信任工作区或本会话 runtime 内，符号链接指向外部同样被拒。到目标目录重新启动 `mao-agent --local` |
+| mao-agent LOCAL 报「拒绝服务端下发的工作区」 | 会话 workspace 被改到本地工作区之外。改回本地路径，或在目标目录新建会话 |
+| mao-agent LOCAL 报找不到 bash | shell 工具固定用 bash；容器/精简系统需安装 bash |
+| LOCAL shell 里 `mao` 报 401 | shell 子进程有意不注入 `MAO_TOKEN`，先在该机 `mao login` 写入 `~/.mao/auth.json` |
+| `--approve-rule` 报错退出码 4 | 必须写成 `tool:pattern`；`*`、`*:*`、只写工具名都会被拒绝 |
 
 ## 获取日志
 

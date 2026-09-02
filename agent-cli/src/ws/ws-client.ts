@@ -16,8 +16,6 @@ export interface WsClientOptions {
   baseUrl: string;
   getToken: () => Promise<string | null>;
   client?: string;
-  /** LOCAL 模式握手带 local=1，服务端才会把 cli 当成工具执行端。 */
-  localCapable?: boolean;
   heartbeatIntervalMs?: number;
   silenceTimeoutMs?: number;
   reconnectInitialMs?: number;
@@ -34,10 +32,8 @@ function toWsBase(httpBase: string): string {
   return httpBase.replace(/^http/i, 'ws').replace(/\/+$/, '');
 }
 
-export function buildStreamUrl(baseUrl: string, client: string, localCapable?: boolean): string {
-  let url = `${toWsBase(baseUrl)}/ws/stream?client=${encodeURIComponent(client)}`;
-  if (localCapable) url += '&local=1';
-  return url;
+export function buildStreamUrl(baseUrl: string, client: string): string {
+  return `${toWsBase(baseUrl)}/ws/stream?client=${encodeURIComponent(client)}`;
 }
 
 export function serializePayload(payload: object, truncateAtBytes: number, maxBytes: number): string {
@@ -195,7 +191,7 @@ export class WsClient {
     const token = await this.opts.getToken();
     if (!token) throw new Error('No token');
     const client = this.opts.client ?? WS_CLIENT_TYPE;
-    const url = buildStreamUrl(this.opts.baseUrl, client, this.opts.localCapable);
+    const url = buildStreamUrl(this.opts.baseUrl, client);
     this.opts.debug?.(`ws connect ${url}`);
 
     const wasReconnect = this.consecutiveFailures > 0 || this.ws != null;

@@ -38,6 +38,14 @@ function ensureDir(dir: string, mode: number): void {
   }
 }
 
+function envBool(raw: string | undefined): boolean | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+  return undefined;
+}
+
 export function findProjectConfig(startDir = process.cwd()): AgentCliConfigFile | null {
   let dir = path.resolve(startDir);
   const home = os.homedir();
@@ -62,7 +70,20 @@ export function saveUserConfig(patch: Partial<AgentCliConfigFile>): AgentCliConf
   ensureDir(CONFIG_DIR, 0o700);
   const current = loadUserConfig();
   const next = { ...current, ...patch };
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
+  // 原子写：多个 mao-agent 进程可能同时追加 trustedWorkspaces / lastSessionId，
+  // 直接就地写会在中途崩溃时留下截断的 JSON（下次 readJson 静默回落成 {}，信任列表整体丢失）。
+  const tmp = `${CONFIG_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
+  try {
+    fs.renameSync(tmp, CONFIG_FILE);
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // ignore
+    }
+    throw e;
+  }
   try {
     fs.chmodSync(CONFIG_FILE, 0o600);
   } catch {
@@ -107,7 +128,7 @@ export function resolveConfig(cli: {
   const project = findProjectConfig() ?? {};
   const envBase = process.env.MAO_AGENT_BASE_URL;
   const envFormat = process.env.MAO_AGENT_OUTPUT_FORMAT as OutputFormat | undefined;
-  const envVerbose = process.env.MAO_AGENT_VERBOSE === '1' || process.env.MAO_AGENT_VERBOSE === 'true';
+  const envVerbose = envBool(process.env.MAO_AGENT_VERBOSE);
   const baseUrl = cli.baseUrl || envBase || project.baseUrl || user.baseUrl || DEFAULT_BASE_URL;
   return {
     baseUrl,
@@ -117,10 +138,10 @@ export function resolveConfig(cli: {
     outputFormat: cli.outputFormat || envFormat || project.outputFormat || user.outputFormat || 'text',
     lastSessionId: user.lastSessionId ?? undefined,
     ui: {
-      verboseTools: cli.verboseTools ?? envVerbose ?? user.ui?.verboseTools ?? false,
-      showTurnDividers: user.ui?.showTurnDividers ?? true,
-      asciiOnly: cli.asciiOnly ?? user.ui?.asciiOnly ?? false,
-      queuedInput: cli.queuedInput ?? user.ui?.queuedInput ?? true,
+      verboseTools: cli.verboseTools ?? envVerbose ?? project.ui?.verboseTools ?? user.ui?.verboseTools ?? false,
+      showTurnDividers: project.ui?.showTurnDividers ?? user.ui?.showTurnDividers ?? true,
+      asciiOnly: cli.asciiOnly ?? project.ui?.asciiOnly ?? user.ui?.asciiOnly ?? false,
+      queuedInput: cli.queuedInput ?? project.ui?.queuedInput ?? user.ui?.queuedInput ?? true,
     },
   };
 }
