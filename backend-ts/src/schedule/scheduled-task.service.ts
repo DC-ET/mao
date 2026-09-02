@@ -107,6 +107,16 @@ async function withSessionLock<T>(sessionId: number, fn: () => Promise<T>): Prom
   }
 }
 
+/** Trigger envelope injected around task.prompt so the agent executes the task itself instead of re-creating it. */
+export function buildScheduledPrompt(task: Pick<ScheduledTask, 'name'>, prompt: string): string {
+  return [
+    `[系统提示：本消息由定时任务「${task.name}」按 cron 计划自动触发，当前时间 ${formatDateTime(new Date())}。`,
+    '请直接执行下面分隔线之后的任务内容本身；除非用户在任务内容中明确要求，不要创建、修改、暂停或删除任何定时任务，也不要重新调度自己。',
+    '---',
+    prompt,
+  ].join('\n');
+}
+
 export class ScheduledTaskService {
   /** 正在排队/执行中的任务 id → 计数，防止锁等待期间重复触发连环补发。 */
   private readonly inFlight = new Set<number>();
@@ -256,7 +266,7 @@ export class ScheduledTaskService {
               const busy = this.isSessionBusy?.(task.sessionId!) === true || isActivePhase(phase);
               if (busy) {
                 // 仅入队未执行：不计入 fireCount/lastFireTime，待消息队列消费真正执行
-                await this.messageQueueService.enqueue(task.sessionId!, userId, task.prompt!, null);
+                await this.messageQueueService.enqueue(task.sessionId!, userId, buildScheduledPrompt(task, task.prompt!), null);
                 await this.markTaskResult(task, 'QUEUED');
                 return;
               }
@@ -264,7 +274,7 @@ export class ScheduledTaskService {
               executionStarted = true;
               let savedMessage: Message;
               try {
-                savedMessage = await this.sessionService.saveMessage(task.sessionId!, 'USER', task.prompt, null, null, null, 0, null);
+                savedMessage = await this.sessionService.saveMessage(task.sessionId!, 'USER', buildScheduledPrompt(task, task.prompt!), null, null, null, 0, null);
               } catch {
                 await this.sessionService.updatePhase(task.sessionId!, 'IDLE');
                 await this.markTaskResult(task, 'FAILED');

@@ -16,6 +16,10 @@ describe('ScheduledTaskTools', () => {
     const create = new CreateScheduledTaskTool(scheduled as never, sessions as never);
     expect(create.getName()).toBe('create_scheduled_task');
     expect(create.getToolPrompt()).toContain('cron');
+    expect(create.getToolPrompt()).toContain('任务本体');
+    expect(create.getToolPrompt()).toContain('严禁在 prompt 中要求创建、修改或删除定时任务');
+    expect(create.getDescription()).toContain('创建时的会话');
+    expect(create.getInputSchema().properties.prompt.description).toContain('不要包含执行频率');
     const created = JSON.parse(await create.execute(JSON.stringify({
       name: 'n', prompt: 'p', cron_expression: '0 0 9 * * *',
     }), 11, 7, null));

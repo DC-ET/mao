@@ -12,15 +12,15 @@ export class CreateScheduledTaskTool extends BaseTool {
 
   getName(): string { return 'create_scheduled_task'; }
   getDescription(): string {
-    return '创建定时任务。任务将按照指定的 cron 计划自动执行 Agent。适用于：定时检查新股、每日生成报告、定期巡检等场景。任务创建后会绑定当前 Agent，拥有专属 Session 用于累积执行历史。';
+    return '创建定时任务。任务将按照指定的 cron 计划自动执行 Agent。适用于：定时检查新股、每日生成报告、定期巡检等场景。任务创建后会绑定当前 Agent，并在创建时的会话中累积执行历史。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
       properties: {
         name: { type: 'string', description: '任务名称，如\'新股申购检查\'' },
-        prompt: { type: 'string', description: '任务触发时执行的 prompt。应完整、自包含，包含足够上下文。' },
-        cron_expression: { type: 'string', description: 'Spring cron 表达式（6位：秒 分 时 日 月 周）。' },
+        prompt: { type: 'string', description: '触发时执行的任务本体：只描述要做的具体工作与输出要求，不要包含执行频率或调度措辞（频率由 cron_expression 控制）。' },
+        cron_expression: { type: 'string', description: 'Spring cron 表达式（6位：秒 分 时 日 月 周），控制执行频率。' },
       },
       required: ['name', 'prompt', 'cron_expression'],
     };
@@ -32,7 +32,7 @@ export class CreateScheduledTaskTool extends BaseTool {
 当用户希望创建定时自动执行的任务时使用此工具。
 
 ### 执行方式
-- 任务在当前对话 Session 中执行，结果会直接出现在当前对话中
+- 任务触发时在创建时的会话中执行，结果会出现在该会话中
 - 如果触发时用户正在对话，任务消息会自动排队，等当前对话结束后执行
 
 ### cron 表达式规则
@@ -43,11 +43,15 @@ export class CreateScheduledTaskTool extends BaseTool {
 - "每周一上午10点" → "0 0 10 * * MON"
 - "每月1号早上9点" → "0 0 9 1 * ?"
 
-### prompt 编写要求
+### prompt 编写要求（重要）
+- prompt 是触发时 Agent 要执行的**任务本体**，不是对任务的描述或设置请求
+- 执行频率只写在 cron_expression 里，prompt 中不要出现"每天/每小时/每周"等调度措辞
+- 严禁在 prompt 中要求创建、修改或删除定时任务——触发时的系统提示会要求 Agent 直接执行任务本身
+- 不要引用本会话的临时文件路径（如 runtime 目录下的 skills），触发执行时这些路径可能已失效；技能请写技能名称
 - 必须完整、自包含，因为执行时 Agent 只有任务历史，没有用户实时对话
 - 应包含明确的输出要求
-- 好的示例："检查今日是否有新股可申购。如果有，列出新股代码、名称、申购价格和申购上限；如果没有新股，简要说明今日无新股即可。"
-- 差的示例："检查新股"（太简短，缺少上下文和输出要求）
+- 好的示例："查询昨日 GMV 总额。使用 bigdata-cli 技能（按其 SKILL.md 流程）查询官方 GMV 指标，报告统计日期、GMV 总额、币种、口径摘要；无法确认口径时说明阻塞原因，不编造金额。"
+- 差的示例："每天执行一次，向当前飞书用户报告前一天的 GMV 总额"（"每天"属于 cron；"向当前飞书用户报告"在定时触发上下文中含义不明，结果会自动推送回创建会话的渠道）
 `;
   }
 

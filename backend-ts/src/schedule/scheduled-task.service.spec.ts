@@ -87,8 +87,40 @@ describe('ScheduledTaskService', () => {
     expect(send.sendText).toHaveBeenCalled();
   });
 
-  it('pushesFinalAssistantReplyToFeishuPusher', async () => {
-    stubs.getSession.mockResolvedValue({ id: 11, phase: 'IDLE' });
+  it('saves scheduled prompt with trigger envelope so agent executes instead of re-creating', async () => {
+    const localStubs = {
+      getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE' })),
+      updatePhase: vi.fn(),
+      saveMessage: vi.fn(async () => ({ id: 88, content: 'hello' })),
+      getMessages: vi.fn(async () => []),
+    };
+    const localStore: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', name: 'daily', prompt: 'hello', fireCount: 0,
+      })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      localStore, localStubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn() }, { finishExecution: vi.fn() },
+      { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', name: 'daily', prompt: 'hello', fireCount: 0 });
+    await ran;
+    const savedContent = String(vi.mocked(localStubs.saveMessage).mock.calls[0][2]);
+    expect(savedContent).toContain('定时任务「daily」');
+    expect(savedContent).toContain('不要创建、修改、暂停或删除任何定时任务');
+    expect(savedContent).toContain('---\nhello');
+  });
+
+  it('pushesFinalAssistantReplyToFeishuPusher', async () => {    stubs.getSession.mockResolvedValue({ id: 11, phase: 'IDLE' });
     stubs.saveMessage.mockResolvedValue({ id: 88, content: 'hello' });
     stubs.getMessages.mockResolvedValue([
       { role: 'USER', content: 'hello' },
