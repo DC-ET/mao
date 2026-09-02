@@ -1,9 +1,10 @@
-# 指令模块（command / quick-command）
+# 指令模块（command / quick-command / system-command）
 
 ## 模块职责
 
 - `quick-command`：聚合可在输入框快速选用的 skills + commands
 - `command`：用户个人指令（user-commands）CRUD
+- `system-command`：系统指令（admin/system-commands）管理 CRUD，需管理员权限
 
 ## 命令选择
 
@@ -128,4 +129,25 @@ mao command update --id 5 --content '请用五句话总结' --name '五句总结
 
 ```bash
 mao command delete --id 5
+```
+
+---
+
+## system-command — 系统指令管理（管理员）
+
+`/v1/admin/system-commands` 系列，需管理员权限。系统指令对全体用户可见（用户视角经 `GET /v1/user-commands/system`，CLI 暂未单独封装）。
+
+### 命令
+
+| 场景 | 命令 |
+|------|------|
+| 系统指令列表 | `system-command list` |
+| 详情 | `system-command get --id` |
+| 新建 | `system-command create --name --content` |
+| 更新 | `system-command update --id --content [--name]` |
+| 删除 | `system-command delete --id` |
+
+```bash
+mao system-command list --json
+mao system-command create --name '代码审查' --content '对当前工作区做代码审查'
 ```

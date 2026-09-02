@@ -28,6 +28,7 @@ const HELP = `用法:
   mao session cloud-projects
   mao session side-tasks --id <id>
   mao session subagents --id <id>
+  mao session promote-side-task --id <id>   将边路任务会话提升为主会话
 `;
 
 const PERMISSION_LEVELS = new Set(['READ_ONLY', 'READ_WRITE', 'SMART', 'FULL']);
@@ -209,6 +210,12 @@ async function handle(ctx) {
     case 'subagents': {
       const id = requireNumber(flags, 'id', '父会话 ID');
       const result = await request({ ...common, method: 'GET', path: `/sessions/${id}/subagents` });
+      outputResult(result, globals);
+      return;
+    }
+    case 'promote-side-task': {
+      const id = requireNumber(flags, 'id', '边路任务会话 ID');
+      const result = await request({ ...common, method: 'POST', path: `/sessions/${id}/promote-side-task` });
       outputResult(result, globals);
       return;
     }

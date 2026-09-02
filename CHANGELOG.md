@@ -15,6 +15,15 @@
 
 ---
 
+## 0.0.85 (2026-09-02)
+
+### 终端 CLI（mao-cli）
+
+- settings 新增 `batch`（批量保存）与 `test ldap|feishu|oss`（集成配置测试连接，留空参数回落已存配置），对齐 0.0.82 集成配置后台化的全部端点
+- scheduled-task 新增 `list-all`（跨用户全量列表，需 `session:read` 权限）
+- session 新增 `promote-side-task`（边路任务会话提升为主会话）
+- 新增 `system-command` 管理端模块：系统指令 CRUD（需管理员权限），并同步知识库文档
+
 ## 0.0.84 (2026-09-02)
 
 ### 后端

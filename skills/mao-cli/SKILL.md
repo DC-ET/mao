@@ -44,6 +44,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 - `/v1/statistics/*` 用量统计（管理后台 UI 可用）
 - 会话 `search` / `messages` 全文检索（管理端 UI 可用）
 - 工作区 Git 写操作（commit/push 等，CLI 仅只读诊断）
+- 飞书机器人管理端 CRUD（`/v1/admin/feishu-bots`，见 [reference/feishu-bot.md](reference/feishu-bot.md) 直接调 REST）
 
 ## 安装与就绪（Agent 执行，勿让用户安装）
 
@@ -105,7 +106,7 @@ mao auth login --username <用户名> --password <密码>
 | 定时任务 | [reference/scheduled-task.md](reference/scheduled-task.md) |
 | 个人 Skill | [reference/skill.md](reference/skill.md) |
 | 全局 Skill 文档 | [reference/skill-docs.md](reference/skill-docs.md) |
-| 个人指令 | [reference/command.md](reference/command.md) |
+| 个人指令 / 系统指令 | [reference/command.md](reference/command.md) |
 | 附件与工作区 | [reference/file.md](reference/file.md) |
 | OSS / 上传配置 | [reference/oss.md](reference/oss.md) |
 | 任务面板/通知偏好 | [reference/pref.md](reference/pref.md) |

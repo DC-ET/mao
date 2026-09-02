@@ -26,6 +26,7 @@ const runtime = require('./commands/runtime');
 const analytics = require('./commands/analytics');
 const audit = require('./commands/audit');
 const settings = require('./commands/settings');
+const systemCommand = require('./commands/system-command');
 const mcp = require('./commands/mcp');
 
 const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
@@ -70,6 +71,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   analytics       分析汇总
   audit           审计日志
   settings        系统设置
+  system-command  系统指令管理（管理员）
 
 环境变量:
   MAO_BASE_URL
@@ -141,6 +143,7 @@ const MODULES = {
   analytics,
   audit,
   settings,
+  'system-command': systemCommand,
   mcp,
 };
 

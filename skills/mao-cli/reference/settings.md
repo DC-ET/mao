@@ -12,6 +12,8 @@
 |------|------|
 | 列出设置 | `settings list` |
 | 更新某项 | `settings set` |
+| 批量保存 | `settings batch` |
+| 测试集成配置连通性 | `settings test ldap\|feishu\|oss` |
 
 ## 命令：settings list
 
@@ -40,9 +42,36 @@ Body: `{ "value": "..." }`
 mao settings set --key some.key --value '123'
 ```
 
-> 后端另有 `PUT /system-settings/batch`（批量保存）与 `POST /system-settings/test/{ldap|feishu|oss}`（集成配置测试连接，需 `settings:write`），mao-cli 暂未封装，可用 `--raw` 场景外直接调 REST。
+## 命令：settings batch
+
+| 参数 | 必填 | 类型 | 含义 | 后端字段 |
+|------|------|------|------|----------|
+| `--items` | 是 | JSON 数组 | 批量项，如 `'[{"key":"a.b","value":"1"}]'` | body `items: [{key, value}]` |
+
+`PUT /system-settings/batch`
+
+```bash
+mao settings batch --items '[{"key":"weixin.agentId","value":"1"},{"key":"session.titleModelId","value":"2"}]'
+```
+
+## 命令：settings test
+
+测试集成配置连通性，需 `settings:write`。所有参数可省略：留空回落已存配置，仅传部分参数可测「未保存的修改」。
+
+| 目标 | 参数（均可选） | 说明 |
+|------|----------------|------|
+| `ldap` | `--url` `--base-dn` `--user-dn` `--password` `--user-search-base` | LDAP 连接测试 |
+| `feishu` | `--app-id` `--app-secret` | 飞书 OAuth 凭证测试 |
+| `oss` | `--region` `--access-key-id` `--access-key-secret` `--bucket` `--sts-region-id` `--sts-endpoint` `--sts-access-key-id` `--sts-access-key-secret` `--sts-role-arn` | OSS 凭证与 STS 试签 |
+
+`POST /system-settings/test/{ldap|feishu|oss}`
+
+```bash
+mao settings test ldap
+mao settings test oss --region cn-hangzhou --access-key-id AK --access-key-secret SK
+```
 
 ## 成功失败判断
 
-- 成功：返回更新后的设置对象
+- 成功：`settings test *` 返回 `{ ok: true }`；set/batch 返回更新后的设置对象
 - key 不存在或无权限：业务错误

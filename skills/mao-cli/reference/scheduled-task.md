@@ -13,6 +13,7 @@
 | 场景 | 命令 |
 |------|------|
 | 列出任务 | `scheduled-task list` |
+| 全量列表（跨用户） | `scheduled-task list-all` |
 | 查看详情 | `scheduled-task get` |
 | 更新任务 | `scheduled-task update` |
 | 删除任务 | `scheduled-task delete` |
@@ -29,6 +30,30 @@
 
 ```bash
 mao scheduled-task list --json
+```
+
+---
+
+## 命令：mao scheduled-task list-all
+
+### 用途
+
+全量列出所有用户的定时任务（分页），需 `session:read` 权限。管理排查用。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 默认 | 含义 |
+|------|------|------|------|------|
+| `--page-num` | 否 | 数字 | 1 | 页码 |
+| `--page-size` | 否 | 数字 | 20 | 每页数量 |
+
+`GET /scheduled-tasks/all`
+
+### 示例
+
+```bash
+mao scheduled-task list-all --json
+mao scheduled-task list-all --page-num 2 --page-size 50
 ```
 
 ---

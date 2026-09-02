@@ -5,6 +5,7 @@ const {
   requireString,
   requireNumber,
   optionalString,
+  optionalNumber,
   hasHelp,
 } = require('../args');
 const { request } = require('../http');
@@ -12,6 +13,7 @@ const { outputResult } = require('../output');
 
 const HELP = `用法:
   mao scheduled-task list
+  mao scheduled-task list-all [--page-num] [--page-size]   全量列表（需 session:read 权限）
   mao scheduled-task get --id <id>
   mao scheduled-task update --id <id> [--name] [--prompt] [--cron-expression] [--status ACTIVE|PAUSED]
   mao scheduled-task delete --id <id>
@@ -38,6 +40,19 @@ async function handle(ctx) {
   switch (subcommand) {
     case 'list': {
       const result = await request({ ...common, method: 'GET', path: '/scheduled-tasks' });
+      outputResult(result, globals);
+      return;
+    }
+    case 'list-all': {
+      const result = await request({
+        ...common,
+        method: 'GET',
+        path: '/scheduled-tasks/all',
+        query: {
+          pageNum: optionalNumber(flags, 'page-num'),
+          pageSize: optionalNumber(flags, 'page-size'),
+        },
+      });
       outputResult(result, globals);
       return;
     }

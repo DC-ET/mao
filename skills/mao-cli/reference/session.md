@@ -27,6 +27,7 @@
 | 云端项目列表 | `session cloud-projects` |
 | 边路任务 | `session side-tasks` |
 | 子智能体 | `session subagents` |
+| 边路任务转主会话 | `session promote-side-task` |
 
 ---
 
@@ -283,4 +284,28 @@ mao session side-tasks --id 12
 
 ```bash
 mao session subagents --id 12 --json
+```
+
+---
+
+## 命令：mao session promote-side-task
+
+### 用途
+
+将一条边路任务（side task）会话提升为独立主会话。提升后原边路任务从父会话树中脱离，成为顶层会话。
+
+### 参数说明
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--id` | 是 | 数字 | 边路任务会话 ID |
+
+### 返回结果
+
+提升后的会话对象。
+
+### 示例
+
+```bash
+mao session promote-side-task --id 15 --json
 ```
