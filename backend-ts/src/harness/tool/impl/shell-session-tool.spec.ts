@@ -73,6 +73,25 @@ describe('ShellSessionTool', () => {
     const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', workdir: '/etc' }), 11, 7, '/tmp'));
     expect(result.error).toContain('blocked');
   });
+
+  it('blocks pkill node and killall via deny-list', async () => {
+    session.writeStdin.mockClear();
+    const pkill = JSON.parse(await tool.execute(JSON.stringify({ command: 'pkill -f node' }), 11, 7, '/tmp'));
+    expect(pkill.error).toContain('命令被拒绝');
+    expect(pkill.error).toContain('pkill');
+    expect(session.writeStdin).not.toHaveBeenCalled();
+
+    session.writeStdin.mockClear();
+    const killall = JSON.parse(await tool.execute(JSON.stringify({ command: 'killall node' }), 11, 7, '/tmp'));
+    expect(killall.error).toContain('命令被拒绝');
+    expect(killall.error).toContain('killall');
+    expect(session.writeStdin).not.toHaveBeenCalled();
+
+    session.writeStdin.mockClear();
+    const ok = JSON.parse(await tool.execute(JSON.stringify({ command: 'pkill bash' }), 11, 7, '/tmp'));
+    expect(ok.error).toBeUndefined();
+    expect(session.writeStdin).toHaveBeenCalled();
+  });
 });
 
 describe('ShellSessionTool marker and environment handling', () => {

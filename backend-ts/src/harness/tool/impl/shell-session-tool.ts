@@ -6,6 +6,7 @@ import { SecurityException } from '../../safety/path-sandbox.js';
 import type { ShellSession, ShellSessionManager, OutputManager, OutputResult } from '../../shell/shell-session-manager.js';
 import type { BackgroundTaskManager } from '../../core/background-task-manager.js';
 import type { GitCredentialLookup } from '../../../session/types.js';
+import { matchShellDenyList } from '../../shell/command-deny-list.js';
 import { harnessLog } from '../../log.js';
 
 const MAX_COMMAND_LENGTH = 10000;
@@ -108,6 +109,11 @@ export class ShellSessionTool extends BaseTool {
     const command = asText(args.command);
     if (!command || command.trim() === '') return errorJson('exec 动作必须提供 command');
     if (command.length > MAX_COMMAND_LENGTH) return errorJson(`命令过长（最多 ${MAX_COMMAND_LENGTH} 个字符）`);
+    const denied = matchShellDenyList(command);
+    if (denied) {
+      harnessLog('warn', `Shell command blocked by deny-list [${denied.id}]: ${command}`);
+      return errorJson(`命令被拒绝：${denied.reason}`);
+    }
     const keepSession = args.keep_session === true;
     const isAsync = args.async === true;
     const yieldTimeMs = args.yield_time_ms != null ? asInt(args.yield_time_ms, 300_000) : 300_000;
@@ -181,6 +187,11 @@ export class ShellSessionTool extends BaseTool {
     const shellId = asText(args.session_id);
     const input = asText(args.input) ?? '';
     if (!shellId) return errorJson('write_stdin 必须提供 session_id');
+    const denied = matchShellDenyList(input);
+    if (denied) {
+      harnessLog('warn', `Shell stdin blocked by deny-list [${denied.id}]: ${input}`);
+      return errorJson(`命令被拒绝：${denied.reason}`);
+    }
     const session = this.sessionManager.getSession(shellId);
     if (!session) return errorJson('会话不存在或已关闭：' + shellId);
     const releaseCommand = await session.acquireCommand?.() ?? (() => undefined);
