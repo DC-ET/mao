@@ -87,7 +87,7 @@
 
       <el-col :xs="24" :md="10">
         <el-card>
-          <template #header><span>Agent 使用排行</span></template>
+          <template #header><span>Agent 使用排行 (近 7 天)</span></template>
           <div
             v-for="(agent, idx) in agentStats"
             :key="agent.agentId"

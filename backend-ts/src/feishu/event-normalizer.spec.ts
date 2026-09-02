@@ -55,8 +55,8 @@ describe('normalizeFeishuEvent', () => {
     expect(event!.isBotMentioned).toBe(true);
   });
 
-  it('detects bot mention by mentioned_type app even when botOpenId does not match mention id', () => {
-    // 线上漏判场景：botOpenId 已获取但与事件中 mention 的 id 形态不一致，mentioned_type 仍应命中。
+  it('detects bot mention by mentioned_type app when botOpenId is unknown (fallback)', () => {
+    // botOpenId 获取失败/连接初期竞态时无法精确比对，保留"宁可误触发"兜底避免漏判。
     const event = normalizeFeishuEvent({
       header: { app_id: 'cli_mybot' },
       event: {
@@ -67,7 +67,58 @@ describe('normalizeFeishuEvent', () => {
           mentions: [{ key: '@_user_1', id: { union_id: 'on_bot' }, mentioned_type: 'app', name: 'Eter' }],
         },
       },
-    }, 'ou_other_bot');
+    });
+    expect(event!.isBotMentioned).toBe(true);
+  });
+
+  it('does not treat mention of another bot with open_id identity as own bot mention', () => {
+    // 线上实测：@机器人 的 mention id 即该机器人应用的 open_id。botOpenId 已知而未匹配
+    // 说明 @ 的是群里其他机器人，不得触发（此前该场景被 mentioned_type=app 兜底误判为命中）。
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_g_other_bot', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_1 看看这个异常"}',
+          mentions: [{ key: '@_user_1', id: { open_id: 'ou_xxljob_bot', union_id: 'on_xxljob' }, mentioned_type: 'app', name: 'XXLJOB' }],
+        },
+      },
+    }, 'ou_my_bot');
+    expect(event!.isBotMentioned).toBe(false);
+  });
+
+  it('does not treat mention of another bot without mentioned_type as own bot mention', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_g_other_bot_v2', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_1 hi"}',
+          mentions: [{ key: '@_user_1', id: { open_id: 'ou_other_bot' }, name: '其他机器人' }],
+        },
+      },
+    }, 'ou_my_bot');
+    expect(event!.isBotMentioned).toBe(false);
+  });
+
+  it('detects own bot mention when message mentions other bots too', () => {
+    // 真实事件形态：@XXLJOB @Aier-dev ...，其中 Aier-dev 的 mention id 即 botOpenId。
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_g_multi', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_1 @_user_2 你能看见我引用的消息吗？"}',
+          mentions: [
+            { key: '@_user_1', id: { open_id: 'ou_xxljob_bot' }, mentioned_type: 'app', name: 'XXLJOB' },
+            { key: '@_user_2', id: { open_id: 'ou_my_bot' }, mentioned_type: 'app', name: 'Aier-dev' },
+          ],
+        },
+      },
+    }, 'ou_my_bot');
     expect(event!.isBotMentioned).toBe(true);
   });
   it('does not treat mention of another app with cli_ key as own bot mention', () => {

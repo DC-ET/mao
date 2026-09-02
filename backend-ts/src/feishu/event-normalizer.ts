@@ -18,18 +18,21 @@ export function normalizeFeishuEvent(input: unknown, botOpenId?: string): Feishu
   const mentions = mentionItems.map((item) => item.id ?? item.key).filter((id): id is string => id != null);
   const appId = header?.appId ?? null;
   // 飞书 im.message.receive_v1 事件体不含 is_at_me 字段，群聊 @机器人必须通过
-  // mentions 中携带的身份确认。识别顺序（宁可误触发不可漏触发）：
+  // mentions 中携带的身份确认。识别顺序：
   // 1. mention key 直接等于应用 id（cli_xxx，旧格式）；
-  // 2. botOpenId（/bot/v3/info 获取）与 mention 的 open_id/union_id/key 精确匹配；
-  // 3. mentioned_type 标记为 bot/app 的提及：仅当 key 是其他应用的 cli_ id 时才排除，
-  //    否则视为命中——线上曾出现 botOpenId 与 mention id 形态不一致导致 @机器人全部漏判；
+  // 2. botOpenId（/bot/v3/info 获取）与 mention 的 open_id/union_id/key 精确匹配
+  //    （线上实测事件中 @机器人 的 mention id 即该机器人应用的 open_id）；
+  // 3. mentioned_type 标记为 bot/app 的提及：key 是 cli_ id 时精确比较应用身份；
+  //    key 为 @_user_N 等无法识别形态时，身份比对已由第 2 步完成——botOpenId 已知
+  //    而未匹配，说明 @ 的是群里其他机器人，不得触发；仅当 botOpenId 未知（获取
+  //    失败/连接初期竞态）无法判断时才兜底命中，避免回归 @机器人全部漏判；
   // 4. 仅当 app_id 缺失（极端格式）时，以 key 的 cli_ 前缀作为兜底。
   const isBotMentioned = mentionItems.some((item) => {
     if (appId != null && item.key === appId) return true;
     if (botOpenId != null && (item.id === botOpenId || item.unionId === botOpenId || item.key === botOpenId)) return true;
     if (item.mentionedType === 'bot' || item.mentionedType === 'app') {
       if (appId != null && item.key != null && item.key.startsWith('cli_')) return item.key === appId;
-      return true;
+      return botOpenId == null;
     }
     if (appId == null) return item.key != null && item.key.startsWith('cli_');
     return false;

@@ -8,6 +8,7 @@ const EXECUTION_MODE_LABELS: Record<string, string> = {
 const PHASE_LABELS: Record<string, string> = {
   IDLE: '空闲',
   RUNNING: '运行中',
+  RESUMING: '恢复中',
   COMPLETED: '已完成',
   FAILED: '失败',
   CANCELLED: '已取消',
