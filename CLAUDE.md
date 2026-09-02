@@ -8,6 +8,7 @@
 
 ## CHANGELOG
 根 CHANGELOG.md 唯一发版说明。用户/运维可见改动须同任务写入顶部 `## x.y.z (日期)`（无则新建）；内部重构/单测/注释/无行为依赖升级可不记。打包/发版/OTA 前先写完。
+每次功能变更除补 CHANGELOG 外，还须同任务同步更新对应文档（README.md、DEPLOY.md 等；历史设计与 review 文档除外），并保持 mao-cli（skills/mao-cli/）同步更新。
 小节：backend-ts→后端；admin→管理后台；desktop 共用 UI→前端（桌面 / Web / 安卓）；desktop/electron→桌面 Electron；android/android/app→安卓原生；agent-cli→终端 CLI（mao-agent）；skills/mao-cli→终端 CLI（mao-cli）。
 `./scripts/changelog-extract.sh {version|body 0.0.x --section 后端|ota-text 0.0.x|sync-desktop}`。desktop/package.json 版本用 sync-desktop，勿手改。
 
