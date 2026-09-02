@@ -506,7 +506,7 @@ export class SystemSettingService {
     if (!hasText(value)) {
       return;
     }
-    if (key.endsWith('Days') || key.endsWith('Size') || key.endsWith('SizeMb') || key === 'ui.defaultPageSize'
+    if (key.endsWith('Days') || key.endsWith('Size') || key.endsWith('SizeMb')
       || key === OSS_STS_EXPIRE_KEY || key.endsWith('TimeoutMs') || key.endsWith('DelayMs')
       || key === NOTIFY_BATCH_SIZE_KEY || key === NOTIFY_MAX_ATTEMPTS_KEY
       || key === AGENT_THREAD_POOL_SIZE_KEY || key === AGENT_THREAD_POOL_MAX_KEY || key === AGENT_THREAD_POOL_QUEUE_KEY) {

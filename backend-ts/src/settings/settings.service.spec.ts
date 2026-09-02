@@ -45,10 +45,10 @@ describe('SystemSettingService', () => {
   });
 
   it('updatePersistsEditableSetting', async () => {
-    const row = setting('ui.defaultPageSize', '界面', 1);
+    const row = setting('audit.retentionDays', '审计', 1);
     vi.mocked(mapper.findByKey).mockResolvedValue(row);
-    const updated = await service().update('ui.defaultPageSize', '50');
-    expect(updated.value).toBe('50');
+    const updated = await service().update('audit.retentionDays', '365');
+    expect(updated.value).toBe('365');
     expect(mapper.updateById).toHaveBeenCalledWith(row);
   });
 

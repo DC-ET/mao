@@ -26,7 +26,7 @@ test('plain categories render as card forms', async ({ page }) => {
   await page.goto('/admin/settings')
   await page.waitForSelector('.settings-layout', { timeout: 10_000 })
 
-  for (const title of ['代码', '会话', '审计', '微信', '界面', '运行环境']) {
+  for (const title of ['代码', '会话', '审计', '微信', '运行环境']) {
     await expect(page.locator('.group-title', { hasText: title })).toBeVisible()
   }
 
@@ -45,12 +45,12 @@ test('category card batch save round-trip', async ({ page }) => {
   await page.goto('/admin/settings')
   await page.waitForSelector('.settings-layout', { timeout: 10_000 })
 
-  const uiCard = page.locator('.group-card', { hasText: '界面' })
+  const uiCard = page.locator('.group-card', { hasText: '审计' })
   const input = uiCard.locator('input').first()
   const original = await input.inputValue()
   expect(Number(original)).toBeGreaterThan(0)
 
-  await input.fill('25')
+  await input.fill('365')
   await uiCard.locator('button', { hasText: '保存' }).click()
   await expect(page.locator('.el-message', { hasText: '已保存' })).toBeVisible({ timeout: 10_000 })
 
@@ -60,9 +60,9 @@ test('category card batch save round-trip', async ({ page }) => {
       headers: { Authorization: `Bearer ${token}` },
     })
     const json = await resp.json()
-    return json.data.find((r: { settingKey: string }) => r.settingKey === 'ui.defaultPageSize').value
+    return json.data.find((r: { settingKey: string }) => r.settingKey === 'audit.retentionDays').value
   }
-  expect(await read()).toBe('25')
+  expect(await read()).toBe('365')
 
   await input.fill(original)
   await uiCard.locator('button', { hasText: '保存' }).click()
