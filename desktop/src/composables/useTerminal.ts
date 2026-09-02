@@ -5,11 +5,11 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 
 const DARK_THEME = {
-  background: '#1a1a22',
+  background: '#252525',
   foreground: '#cccccc',
   cursor: '#ffffff',
   selectionBackground: '#264f78',
-  black: '#1a1a22',
+  black: '#252525',
   red: '#f44747',
   green: '#6a9955',
   yellow: '#d7ba7d',

@@ -1704,7 +1704,6 @@ function onGroupDragEnd() {
 /* Dark mode */
 [data-theme="dark"] .task-index-panel {
   background: var(--aw-canvas-parchment);
-  border-right-color: var(--aw-hairline);
 }
 
 [data-theme="dark"] .session-item:hover {

@@ -1171,7 +1171,6 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 
 [data-theme="dark"] .task-inspector {
   background: var(--aw-canvas);
-  border-left-color: var(--aw-hairline);
 }
 
 [data-theme="dark"] .git-repo-select-row {

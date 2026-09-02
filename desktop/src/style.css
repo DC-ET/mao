@@ -208,9 +208,9 @@ html.android-capacitor .management-dialog .el-dialog__body {
    ============================================ */
 
 [data-theme="dark"] {
-  --aw-canvas: #0f0f17;
-  --aw-canvas-parchment: #1a1a22;
-  --aw-surface: #1a1a22;
+  --aw-canvas: #1a1a1a;
+  --aw-canvas-parchment: #252525;
+  --aw-surface: #252525;
   --aw-surface-hover: #252530;
   --aw-surface-glass: rgba(30, 30, 40, 0.72);
   --aw-surface-pearl: #1e1e28;
@@ -259,8 +259,8 @@ html.android-capacitor .management-dialog .el-dialog__body {
   --aw-status-danger: var(--aw-danger);
 
   /* Terminal */
-  --aw-terminal-bg: #1a1a22;
-  --aw-terminal-header-bg: #1a1a22;
+  --aw-terminal-bg: #252525;
+  --aw-terminal-header-bg: #252525;
 }
 
 /* ============================================
@@ -358,12 +358,12 @@ a:hover {
 /* Element Plus Dark Mode */
 [data-theme="dark"] {
   --el-bg-color: #141416;
-  --el-bg-color-page: #0f0f17;
+  --el-bg-color-page: #1a1a1a;
   --el-bg-color-overlay: #1d1d20;
   --el-fill-color: #2a2a2e;
   --el-fill-color-light: #1e1e22;
   --el-fill-color-lighter: #161618;
-  --el-fill-color-blank: #0f0f17;
+  --el-fill-color-blank: #1a1a1a;
   --el-border-color: #38383a;
   --el-border-color-light: #2a2a2e;
   --el-border-color-lighter: #1e1e22;
