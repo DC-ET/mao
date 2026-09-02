@@ -15,7 +15,13 @@
 
 ---
 
-## 0.0.86 (2026-09-02)
+## 0.0.87 (2026-09-02)
+
+### 后端
+
+- `.env.example` 精简：移除已迁移至管理后台的集成配置环境变量（LDAP_*、FEISHU_ENABLED/APP_ID/APP_SECRET/REDIRECT_URI、UPLOAD_STORAGE_MODE/UPLOAD_BASE_URL、TAVILY_API_KEY、OSS_* 含 OSS_STS_*），补充 `SETTINGS_SECRET` 说明与旧版升级自动导入指引；本地磁盘路径与运行参数类变量不变
+
+
 
 ### 后端
 
