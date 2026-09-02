@@ -302,6 +302,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 上传上限后台可配：multipart 截断阈值取配置值与默认 50MB 的较大者，避免后台调大后被 multipart 层先截断
   const bootstrapUploadCfg = await new SystemSettingService(settingRepo, { findById: async () => null }, { findById: async () => null }, { workspaceRoot: '', skillsDir: '' }, settingsSecret).getUploadConfig();
   const multipartLimitMb = Math.max(50, bootstrapUploadCfg.maxSizeMb);
+  // Agent 线程池/WS 超时启动时从 DB 构建，后台改动需重启生效；调度参数走 getter 即时生效
+  const agentRuntimeCfg = await new SystemSettingService(settingRepo, { findById: async () => null }, { findById: async () => null }, { workspaceRoot: '', skillsDir: '' }, settingsSecret).getAgentRuntimeConfig();
   const app = existing ?? Fastify({ logger: true, bodyLimit: Math.max(52, multipartLimitMb + 2) * 1024 * 1024 });
   const hasher = { hash: hashPassword, matches: matchesPassword };
   const jwt = new JwtService(cfg.jwt.secret, cfg.jwt.expiration, cfg.jwt.refreshExpiration, cfg.jwt.shellExpiration);
@@ -598,9 +600,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
   const dangerAssessor = new DangerAssessor(llmAdapter);
   const agentExecutor = createAgentExecutor(
-    cfg.app.harness.agentThreadPoolSize,
-    cfg.app.harness.agentThreadPoolMax,
-    cfg.app.harness.agentThreadPoolQueue,
+    agentRuntimeCfg.threadPoolSize,
+    agentRuntimeCfg.threadPoolMax,
+    agentRuntimeCfg.threadPoolQueue,
   );
 
   const holder: { harness?: HarnessService; loop?: AgentLoop } = {};
@@ -1574,14 +1576,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
     registerFeishuBindingRoutes(api, { jwt, repository: feishuBinding, auth: feishu });
     registerTaskNotificationPreferenceRoutes(api, { preference: notifPref, jwt });
-    await attachWebSocket(api, { handler: wsHandler, idleTimeoutMs: cfg.app.ws.idleTimeoutMs });
+    await attachWebSocket(api, { handler: wsHandler, idleTimeoutMs: agentRuntimeCfg.wsIdleTimeoutMs });
   }, { prefix: apiPrefix });
 
   const scheduler = new ScheduledTaskScheduler(scheduledStore, scheduledService);
   scheduler.start();
   const deliveryScheduler = new WebhookDeliveryScheduler(
     new DeliverySchedulerDbStore(db),
-    cfg.app.taskNotification,
+    () => settingService.getNotificationTuningConfig(),
     notifCipher,
     senderRegistry,
   );
