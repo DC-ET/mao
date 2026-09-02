@@ -5,8 +5,9 @@
 
 > **文档状态（2026-07）**：本文档为早期技术方案，部分模块已变更。产品说明、部署与使用手册以 [skills/mao-cli/SKILL.md](../skills/mao-cli/SKILL.md) 为准；架构概览亦见 [project.md](../skills/mao-cli/reference/project.md)。源码与下列差异：
 > - **Hub 模块**已删除（`V017__remove_hub.sql`）
-> - 前端流式通道为 **WebSocket**（`StreamingWsHandler`），LLM 内部仍通过 OkHttp SSE 拉流
+> - 前端流式通道为 **WebSocket**（`StreamingWsHandler`），LLM 内部仍通过 OkHttp SSE 拉流；**0.0.82 起 WS 改为首帧鉴权**（`auth` 帧携带 token，URL 不再传 token）
 > - 对象存储支持 **本地文件系统** 与 **阿里云 OSS**
+> - **集成配置（LDAP/飞书登录/上传/Tavily·TinyFish 搜索/OSS）0.0.82 起迁入 `system_setting` 表**，管理后台可视化编辑、热生效；新增 `settings:read`/`settings:write` 权限与 `SETTINGS_SECRET` 加密主密钥
 > - Flyway 迁移脚本现为 **46 个**（非文档初稿中的 24 个）
 > - 开源协议：**MIT**，仅提供自部署
 

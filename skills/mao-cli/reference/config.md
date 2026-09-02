@@ -41,20 +41,21 @@
 | `WORKSPACE_ROOT` | **是** | 工作区根 |
 | `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录 |
 | `FILE_UPLOAD_DIR` | **是** | 本地上传目录 |
-| `UPLOAD_STORAGE_MODE` | 否 | `local` 或 `oss` |
-| `UPLOAD_BASE_URL` | local 建议 | 公网访问前缀，如 `https://mao.example.com/api` |
 | `MAO_RUNTIME_DIR` | 否 | 运行时目录 |
 | `MAO_USER_HOME_DIR` | 否 | CLOUD 用户 HOME |
 | `MAO_BLUE_GREEN_DRAIN_SEC` | 否 | 蓝绿切换后停旧实例延迟，默认 60s |
-| `TAVILY_API_KEY` | 否 | Tavily 搜索（可选） |
 
-### LDAP（可选）
+### 集成配置（0.0.82 起迁移至管理后台，勿再改环境变量）
 
-`LDAP_ENABLED`（默认 false）、`LDAP_URL` 等。启用后支持 LDAP 登录。
+LDAP 认证、飞书 OAuth 登录、上传方式（`UPLOAD_STORAGE_MODE` / `UPLOAD_BASE_URL`）、Tavily/TinyFish 搜索（`tools.tavilyApiKey` / `tools.tinyfishApiKey` / `tools.webSearchProvider`）、OSS 及 STS 凭证，已全部迁入管理后台「系统设置 → 集成配置」，保存后**即时生效、无需重启**，密钥 AES-GCM 加密入库。旧环境变量（`LDAP_*`、`FEISHU_ENABLED`、`FEISHU_APP_*`、`TAVILY_API_KEY`、`TINYFISH_API_KEY`、`WEB_SEARCH_PROVIDER`、`OSS_*` 等）仅在升级首次启动时由 SettingsBootstrap 自动导入 DB，之后一律以管理后台为准。
 
-### 飞书 SSO（可选）
+| 变量 | 必需 | 说明 |
+|------|------|------|
+| `SETTINGS_SECRET` | 加密项建议 | 集成配置密钥（LDAP 密码、飞书 Secret、搜索 Key、OSS 凭证）的 AES 主密钥；未配置时加密项无法保存，可稍后在后台以明文项先行使用 |
 
-`FEISHU_ENABLED`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REDIRECT_URI`（后端公网回调，如 `https://your-domain/api/v1/auth/feishu/callback`）。
+### 全网搜索实现（0.0.83 新增）
+
+web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统设置 → 集成配置 → 网络工具」切换：`tools.webSearchProvider`（`tavily` 默认 / `tinyfish`）+ `tools.tinyfishApiKey`（AES 加密），切换即时生效无需重启。
 
 ### 飞书机器人通道（可选）
 
@@ -67,26 +68,33 @@
 | `FEISHU_BOT_RECONNECT_BASE_MS` | 1000 | 重连初始退避 |
 | `FEISHU_BOT_RECONNECT_MAX_MS` | 30000 | 重连最大退避 |
 | `FEISHU_BOT_MAX_CONSECUTIVE_FAILURES` | 5 | 连续失败告警阈值 |
-| `FEISHU_BOT_GROUP_CONTEXT_MAX_ITEMS` | 30 | 群聊上下文注入的最大消息条数 |
+| `FEISHU_BOT_GROUP_CONTEXT_MAX_ITEMS` | 20 | 群聊上下文注入的最大消息条数 |
 
 注意：飞书应用需开通「获取用户 union_id」权限，否则无法识别发送者身份，全员按未绑定处理。使用详见 [feishu-bot.md](feishu-bot.md)。
 
-### 微信 Bot（可选，默认多项开启）
+### 微信 Bot（可选，默认开启）
 
-`WEIXIN_BOT_ENABLED`、`WEIXIN_BOT_MONITOR_ENABLED` 等。管理后台系统设置可指定 `weixin.agentId`、`weixin.modelId`。
+`WEIXIN_BOT_ENABLED`（默认 true）为微信 Bot 总开关；语音回复依赖本机 `silk-encoder` / `ffmpeg`。绑定流程见 [weixin.md](weixin.md)。管理后台系统设置可指定 `weixin.agentId`、`weixin.modelId`。
 
 ### 任务通知 Worker
 
 `TASK_NOTIFICATION_WORKER_DELAY_MS`、`TASK_NOTIFICATION_BATCH_SIZE`、`TASK_NOTIFICATION_MAX_ATTEMPTS`。
 
-### 阿里云 OSS（可选）
+### 运维清理调度器（0.0.76 新增）
 
-`OSS_*` 系列变量，`UPLOAD_STORAGE_MODE=oss` 时使用。
+系统级定时清理 `MAO_RUNTIME_DIR` 下的临时数据（不跑 LLM、不产生消息）：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `MAO_CLEANUP_INTERVAL_MS` | 86400000（1 天） | 清理调度间隔 |
+| `MAO_CLEANUP_SHELL_MAX_AGE_DAYS` | 7 | shell 输出文件（`runtime/<uid>/<sid>/shellOutput/`）保留天数 |
+| `MAO_CLEANUP_SKILLS` | true | 是否清理会话 runtime 下的 skills 同步副本目录（活跃会话跳过） |
 
 ### 密钥轮换注意
 
 - 更换 `APP_GIT_CREDENTIAL_SECRET` 前需用旧密钥解密、新密钥重加密 `user_git_credential` 表。
 - 更换 `APP_NOTIFICATION_WEBHOOK_SECRET` 前需重加密通知偏好与未完成投递记录。
+- 更换 `SETTINGS_SECRET` 会导致集成配置中已加密的密钥项解密失败（视为未设置），需在管理后台重新填写各密钥。
 
 ## 前端环境变量
 

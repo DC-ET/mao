@@ -95,6 +95,7 @@ JWT_SECRET=$(openssl rand -base64 32)
 APP_GIT_CREDENTIAL_SECRET=$(openssl rand -base64 32)
 APP_NOTIFICATION_WEBHOOK_SECRET=$(openssl rand -base64 32)
 APP_MCP_SECRET=$(openssl rand -base64 32)
+SETTINGS_SECRET=$(openssl rand -base64 32)
 
 cat > /opt/mao/backend-ts/.env <<EOF
 MAO_TS_PORT=9080
@@ -108,6 +109,7 @@ JWT_SECRET=${JWT_SECRET}
 APP_GIT_CREDENTIAL_SECRET=${APP_GIT_CREDENTIAL_SECRET}
 APP_NOTIFICATION_WEBHOOK_SECRET=${APP_NOTIFICATION_WEBHOOK_SECRET}
 APP_MCP_SECRET=${APP_MCP_SECRET}
+SETTINGS_SECRET=${SETTINGS_SECRET}
 UPLOAD_STORAGE_MODE=local
 UPLOAD_BASE_URL=https://mao.example.com/api
 FILE_UPLOAD_DIR=/opt/mao-data/uploads
@@ -121,6 +123,8 @@ chmod 600 /opt/mao/backend-ts/.env
 ```
 
 首次启动创建 `admin/admin123`，**立即改密**。LLM Key 在管理后台「模型管理」配置。
+
+**集成配置说明（0.0.82+）**：LDAP、飞书登录、上传、Tavily/TinyFish 搜索、OSS 已迁入管理后台「系统设置 → 集成配置」，运行期修改无需重启、不改 `.env`。`SETTINGS_SECRET` 用于这些配置中密钥项的 AES 加密，建议首次部署即配置。升级部署时旧环境变量值会在首次启动自动导入 DB，此后以管理后台为准。
 
 ### 4. 启动后端
 

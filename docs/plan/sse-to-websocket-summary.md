@@ -72,13 +72,13 @@
 
 ## 4. WS 协议
 
-### 4.1 连接
+### 4.1 连接与首帧鉴权
 
 ```
-ws://host/ws/stream?token={jwt}
+ws://host/api/ws/stream
 ```
 
-JWT 解析 `sub` claim 获取 `userId`，建立连接后发送 `{ type: "connected", data: { userId } }`。
+> **0.0.82 起改为首帧鉴权**：连接建立后客户端必须先发送 `{"type":"auth","token":"<jwt>"}` 完成认证；URL 不再携带 `?token=` 明文，避免令牌泄漏到访问/代理日志。未认证连接发送任何其他消息会被立即关闭（close code 1003），认证成功后服务端回发 `{ type: "connected", data: { userId } }`。
 
 ### 4.2 客户端→服务端消息
 

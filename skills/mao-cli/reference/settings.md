@@ -2,7 +2,9 @@
 
 ## 用途
 
-列出系统配置项，并按 key 更新 value。
+列出系统配置项，并按 key 更新 value。需 `settings:read` / `settings:write` 权限（0.0.82 起）。
+
+集成配置类 key（`auth.ldap.*`、`auth.feishu.*`、`upload.*`、`tools.*`、`oss.*` 等）已支持后台可视化编辑与热生效；secret 类项（`is_secret`）写入后仅返回掩码，不可读回明文。
 
 ## 命令选择
 
@@ -37,6 +39,8 @@ Body: `{ "value": "..." }`
 ```bash
 mao settings set --key some.key --value '123'
 ```
+
+> 后端另有 `PUT /system-settings/batch`（批量保存）与 `POST /system-settings/test/{ldap|feishu|oss}`（集成配置测试连接，需 `settings:write`），mao-cli 暂未封装，可用 `--raw` 场景外直接调 REST。
 
 ## 成功失败判断
 

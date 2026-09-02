@@ -179,7 +179,7 @@ mao model create \
 | `--name` | 否 | 字符串 | 显示名 | `name` |
 | `--provider` | 否 | 字符串 | 提供商 | `provider` |
 | `--base-url` | 否 | 字符串 | 模型 API 地址 | `baseUrl` |
-| `--api-key` | 否 | 字符串 | API Key | `apiKey` |
+| `--api-key` | 否 | 字符串 | API Key；**留空表示不修改**（0.0.84 起编辑弹窗不回填掩码值，误提交掩码会被拦截提示） | `apiKey` |
 | `--model-id` | 否 | 字符串 | 模型 ID | `modelId` |
 | `--context-window-tokens` | 否 | 整数 | 上下文窗口 | `contextWindowTokens` |
 | `--supports-vision` | 否 | `0`/`1` | 视觉 | `supportsVision` |

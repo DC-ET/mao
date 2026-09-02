@@ -104,3 +104,9 @@ mao weixin binding-confirm --session-key abc --bot-token token --ilink-base-url 
 ```bash
 mao weixin unbind
 ```
+
+---
+
+## 消息媒体处理（0.0.77 起）
+
+微信入站图片转多模态直传模型，同时落盘会话工作区 `chat-files/{yyyy-MM-dd}/` 按日期归档，消息文本追加「图片已保存到会话工作区：{路径}」提示，Agent 可用工具二次读取原图。

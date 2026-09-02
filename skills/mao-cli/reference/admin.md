@@ -97,11 +97,16 @@ CLI：`mao runtime ...`（见 [runtime.md](runtime.md)）。
 
 平台级配置，例如：
 
+- **集成配置**（卡片分组，保存即时生效，密钥 AES 加密存储，LDAP/飞书登录/OSS 提供一键测试连接）：
+  - LDAP 认证、飞书 OAuth 登录（0.0.82 起由环境变量迁入）
+  - 上传：存储方式（local/OSS）、访问前缀、单文件大小上限
+  - 网络工具：Tavily / TinyFish 搜索实现切换与各自 API Key（0.0.83 新增双实现）
+  - 阿里云 OSS 对象存储与 STS 临时凭证
 - `weixin.agentId` / `weixin.modelId`：微信通道 Agent 与模型
 - `session.titleModelId`：会话标题生成模型
 - `git.commitMessageModelId`：Git 提交信息生成模型
 
-CLI：`mao settings list|set`（见 [settings.md](settings.md)）。
+读写需 `settings:read` / `settings:write` 权限；页面左侧目录索引可快速跳转分组。CLI：`mao settings list|set`（见 [settings.md](settings.md)）。
 
 ## 飞书机器人通道
 
