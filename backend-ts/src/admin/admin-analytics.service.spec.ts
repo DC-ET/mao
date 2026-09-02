@@ -39,11 +39,13 @@ function buildStore() {
     ]),
     selectSessionCountsByUser: vi.fn(async () => [{ id: 1, sessionCount: 3 }]),
     selectMessageStatsByUser: vi.fn(async () => [{ id: 1, messageCount: 7, totalTokens: 700 }]),
-    listModelsOrderByCreatedDesc: vi.fn(async () => [{ id: 3, name: 'gpt' }]),
+    listModelsOrderByCreatedDesc: vi.fn(async () => [
+      { id: 3, name: 'gpt' },
+      { id: 4, name: 'idle-model' },
+    ]),
     selectSessionCountsByModel: vi.fn(async () => [{ id: 3, sessionCount: 2 }]),
     selectMessageStatsByModel: vi.fn(async () => [{ id: 3, messageCount: 4, totalTokens: 400 }]),
     selectUsageStatsByModel: vi.fn(async () => [{ id: 3, totalTokens: 90, callCount: 2 }]),
-    listRecentFailedSessions: vi.fn(async () => [{ id: 11, title: 'boom', userId: 1, agentId: 9 }]),
   };
 }
 
@@ -80,7 +82,16 @@ describe('AdminAnalyticsService', () => {
     ]));
     expect(result.agentStats[0]).toMatchObject({ agentName: 'Coder', totalTokens: 800, sessionCount: 4 });
     expect(result.modelStats[0]).toMatchObject({ modelName: 'gpt', chatTokens: 400, backgroundTokens: 90, totalTokens: 490 });
-    expect(result.recentFailures[0]).toMatchObject({ id: 11 });
+  });
+
+  it('modelStatsDropsModelsWithoutPeriodUsage', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const service = new AdminAnalyticsService(statistics as never, buildStore() as never);
+
+    const result = (await service.summary(7)) as Record<string, any>;
+
+    expect(result.modelStats).toHaveLength(1);
+    expect(result.modelStats[0]).toMatchObject({ modelId: 3 });
   });
 
   it('userActivityDropsUsersWithoutPeriodActivity', async () => {
@@ -125,9 +136,8 @@ describe('AdminAnalyticsDbStore', () => {
     await store.listAgents();
     await store.listUsers();
     await store.listModelsOrderByCreatedDesc();
-    await store.listRecentFailedSessions(range, 10);
 
-    expect(db.query).toHaveBeenCalledTimes(16);
+    expect(db.query).toHaveBeenCalledTimes(15);
     for (const call of db.query.mock.calls) {
       const params = (call as unknown[])[1] as unknown[] | undefined;
       if (params && params.length >= 2) {

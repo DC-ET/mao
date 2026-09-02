@@ -99,7 +99,7 @@
           <template #header>
             <div class="card-header">
               <span>模型 Token 占比</span>
-              <span class="card-hint">Top 6 + 其他</span>
+              <span class="card-hint">Top 10 + 其他</span>
             </div>
           </template>
           <BaseChart
@@ -187,32 +187,6 @@
         </el-table-column>
       </el-table>
     </el-card>
-
-    <el-card v-if="recentFailures.length > 0" class="detail-card">
-      <template #header>
-        <div class="card-header">
-          <span>窗口内失败会话</span>
-          <el-button type="primary" link @click="go('/runtime?phase=FAILED')">运行监控</el-button>
-        </div>
-      </template>
-      <el-table :data="recentFailures" size="small" stripe>
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
-        <el-table-column label="模式" width="90">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.executionMode === 'LOCAL' ? 'warning' : 'primary'">
-              {{ executionModeLabel(row.executionMode) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="updatedAt" label="失败时间" width="170" class-name="hide-on-mobile" />
-        <el-table-column label="操作" width="80" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="router.push(`/sessions/${row.id}`)">查看</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
   </div>
 </template>
 
@@ -222,7 +196,6 @@ import { useRouter } from 'vue-router'
 import { api } from '../../api'
 import BaseChart from '../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../utils/echarts'
-import { executionModeLabel } from '../../utils/labels'
 import {
   donutOption,
   formatCompact,
@@ -275,7 +248,6 @@ const trends = computed<TrendPoint[]>(() => (summary.value.trends || []) as Tren
 const periodTotals = computed<PeriodTotals>(() => ({ ...EMPTY_TOTALS, ...(summary.value.periodTotals || {}) }))
 const previousTotals = computed<Record<string, number>>(() => summary.value.previousTotals || {})
 const modelStats = computed<any[]>(() => summary.value.modelStats || [])
-const recentFailures = computed<any[]>(() => summary.value.recentFailures || [])
 
 const hasTraffic = computed(() => trends.value.some((t) => t.sessions > 0 || t.messages > 0))
 const hasTokens = computed(() => trends.value.some((t) => t.totalTokens > 0))
@@ -295,7 +267,7 @@ const phaseTotal = computed(() => phaseItems.value.reduce((sum, item) => sum + i
 const modelTokenItems = computed<RankItem[]>(() =>
   topWithOthers(
     modelStats.value.map((row) => ({ name: row.modelName || '未命名', value: Number(row.totalTokens || 0) })),
-    6
+    10
   )
 )
 

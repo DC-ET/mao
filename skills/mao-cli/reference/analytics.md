@@ -35,8 +35,7 @@
 | `phaseDistribution[]` | 窗口内创建会话的阶段分布，固定 7 个阶段（IDLE / RUNNING / RESUMING / WAITING_APPROVAL / COMPLETED / FAILED / CANCELLED），无数据为 0 |
 | `agentStats[]` | `agentId` / `agentName` / `sessionCount` / `messageCount` / `totalTokens`，按会话数降序，Top 20 |
 | `userActivity[]` | `userId` / `username` / `displayName` / `sessionCount` / `messageCount` / `totalTokens` / `lastLoginAt`，剔除窗口内零活跃用户，按消息数降序，Top 20 |
-| `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `contextWindowTokens`，按 Token 合计降序，返回全部模型 |
-| `recentFailures[]` | 窗口内失败会话（最多 10 条）：`id` / `title` / `agentId` / `userId` / `executionMode` / `updatedAt` |
+| `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `contextWindowTokens`，按 Token 合计降序；窗口内完全未被调用的模型不返回 |
 
 ### 成功失败判断
 

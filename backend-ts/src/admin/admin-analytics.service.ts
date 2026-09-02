@@ -1,6 +1,6 @@
 import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
-import type { Agent, LlmModel, Session, UserRow } from '../domain/types.js';
+import type { Agent, LlmModel, UserRow } from '../domain/types.js';
 import { addDaysYmd, shanghaiYmd } from '../common/json.js';
 import type { StatisticsService } from '../statistics/statistics.service.js';
 
@@ -72,7 +72,6 @@ export interface AdminAnalyticsStore {
   listAgents(): Promise<Agent[]>;
   listUsers(): Promise<UserRow[]>;
   listModelsOrderByCreatedDesc(): Promise<LlmModel[]>;
-  listRecentFailedSessions(range: AnalyticsRange, limit: number): Promise<Session[]>;
 }
 
 export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
@@ -245,15 +244,6 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
   listModelsOrderByCreatedDesc(): Promise<LlmModel[]> {
     return this.db.query(`SELECT * FROM llm_model WHERE ${notDeleted()} ORDER BY created_at DESC`);
   }
-
-  listRecentFailedSessions(range: AnalyticsRange, limit: number): Promise<Session[]> {
-    return this.db.query(
-      `SELECT * FROM session
-       WHERE phase = 'FAILED' AND updated_at >= ? AND updated_at < ? AND ${notDeleted()}
-       ORDER BY updated_at DESC LIMIT ?`,
-      [range.startAt, range.endAtExclusive, limit],
-    );
-  }
 }
 
 const PHASES = ['IDLE', 'RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'COMPLETED', 'FAILED', 'CANCELLED'];
@@ -282,7 +272,6 @@ export class AdminAnalyticsService {
       agentStats,
       userActivity,
       modelStats,
-      recentFailures,
     ] = await Promise.all([
       this.statisticsService.getOverview(),
       this.store.selectLivePhaseCounts(),
@@ -293,7 +282,6 @@ export class AdminAnalyticsService {
       this.agentStats(range),
       this.userActivity(range),
       this.modelStats(range),
-      this.recentFailures(range),
     ]);
 
     const livePhases = phaseMap(livePhaseRows);
@@ -326,7 +314,6 @@ export class AdminAnalyticsService {
       agentStats,
       userActivity,
       modelStats,
-      recentFailures,
     };
   }
 
@@ -447,35 +434,30 @@ export class AdminAnalyticsService {
     for (const model of models) {
       const chat = chatTokens.get(model.id!) ?? 0;
       const background = backgroundTokens.get(model.id!) ?? 0;
+      const sessionCount = sessionCounts.get(model.id!) ?? 0;
+      const messageCount = messageCounts.get(model.id!) ?? 0;
+      const calls = backgroundCalls.get(model.id!) ?? 0;
+      // 窗口内完全未被调用的模型不返回，避免明细表被大量全零行淹没
+      if (sessionCount === 0 && messageCount === 0 && chat === 0 && background === 0 && calls === 0) {
+        continue;
+      }
       rows.push({
         modelId: model.id,
         modelName: model.name,
         provider: model.provider,
         status: model.status,
         isDefault: model.isDefault,
-        sessionCount: sessionCounts.get(model.id!) ?? 0,
-        messageCount: messageCounts.get(model.id!) ?? 0,
+        sessionCount,
+        messageCount,
         chatTokens: chat,
         backgroundTokens: background,
         totalTokens: chat + background,
-        backgroundCalls: backgroundCalls.get(model.id!) ?? 0,
+        backgroundCalls: calls,
         contextWindowTokens: model.contextWindowTokens,
       });
     }
     rows.sort(byNumberDesc('totalTokens', 'messageCount'));
     return rows;
-  }
-
-  private async recentFailures(range: AnalyticsRange): Promise<Array<Record<string, unknown>>> {
-    const sessions = await this.store.listRecentFailedSessions(range, 10);
-    return sessions.map((session) => ({
-      id: session.id,
-      title: session.title,
-      agentId: session.agentId,
-      userId: session.userId,
-      executionMode: session.executionMode,
-      updatedAt: session.updatedAt != null ? String(session.updatedAt) : null,
-    }));
   }
 }
 

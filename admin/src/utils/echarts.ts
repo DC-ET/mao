@@ -43,7 +43,7 @@ export type ChartOption = ComposeOption<
   | DataZoomComponentOption
 >
 
-/** 与管理后台主色一致的分类色板。 */
+/** 与管理后台主色一致的分类色板；灰色留给「其他」等聚合项，此处不占用。 */
 export const CHART_PALETTE = [
   '#0066cc',
   '#34c759',
@@ -54,7 +54,7 @@ export const CHART_PALETTE = [
   '#ffcc00',
   '#5856d6',
   '#00c7be',
-  '#8e8e93'
+  '#a2845e'
 ]
 
 export { echarts }
