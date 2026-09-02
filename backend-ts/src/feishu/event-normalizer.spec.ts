@@ -24,6 +24,23 @@ describe('normalizeFeishuEvent', () => {
     expect(event!.isBotMentioned).toBe(false);
   });
 
+  it('extracts sticker file_key and leaves text empty for placeholder generation', () => {
+    const event = normalizeFeishuEvent({
+      header: { event_id: 'evt2', event_type: 'im.message.receive_v1', app_id: 'cli_app' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' }, sender_type: 'user' },
+        message: {
+          message_id: 'om_sticker', chat_id: 'oc_p2p', chat_type: 'p2p', message_type: 'sticker',
+          content: '{"file_key":"v3_0013m_abc"}', create_time: '2',
+        },
+      },
+    });
+    expect(event).not.toBeNull();
+    expect(event!.messageType).toBe('sticker');
+    expect(event!.fileKey).toBe('v3_0013m_abc');
+    expect(event!.text).toBe('');
+  });
+
   it('detects bot mention by mention key matching header app_id', () => {
     const event = normalizeFeishuEvent({
       header: { app_id: 'cli_mybot' },

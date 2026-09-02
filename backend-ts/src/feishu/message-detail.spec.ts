@@ -75,4 +75,11 @@ describe('fetchFeishuMessageDetail 卡片文本提取', () => {
     const detail = await fetchDetail({ msg_type: 'interactive', body: { content: JSON.stringify(card) } });
     expect(detail?.text).toBe('[卡片消息]');
   });
+
+  it('extracts sticker placeholder with message id and file_key', async () => {
+    const detail = await fetchDetail({ msg_type: 'sticker', body: { content: JSON.stringify({ file_key: 'v3_0013m_abc' }) } });
+    expect(detail?.msgType).toBe('sticker');
+    expect(detail?.text).toBe('[表情包 msg=om_card]');
+    expect(detail?.fileKey).toBe('v3_0013m_abc');
+  });
 });

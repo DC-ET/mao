@@ -118,6 +118,28 @@ describe('FeishuDownloadFileTool', () => {
     expect(JSON.parse(result).error).toContain('未找到包含文件/图片的群聊消息');
   });
 
+  it('rejects sticker messages with an explicit unsupported notice', async () => {
+    const download = vi.fn();
+    const result = await makeTool({ media: { appId: '1', fileKey: 'v3_sticker', fileName: null, msgType: 'sticker' }, download })
+      .execute(JSON.stringify({ message_id: 'om_sticker' }), 9, 1, workspace);
+    expect(JSON.parse(result).error).toContain('暂不支持下载表情包');
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it('rejects sticker messages resolved via the detail API fallback', async () => {
+    const download = vi.fn();
+    const tool = new FeishuDownloadFileTool(
+      { resolveBotAppId: vi.fn(async () => 'cli_bot') },
+      { findMediaByMessageId: vi.fn(async () => null) },
+      { download },
+      100 * 1024 * 1024,
+      { fetchMessageDetail: vi.fn(async () => ({ fileKey: 'v3_sticker', fileName: null, msgType: 'sticker' })) },
+    );
+    const result = await tool.execute(JSON.stringify({ message_id: 'om_sticker' }), 9, 1, workspace);
+    expect(JSON.parse(result).error).toContain('暂不支持下载表情包');
+    expect(download).not.toHaveBeenCalled();
+  });
+
   it('rejects when the session is not a feishu channel session', async () => {
     const result = await makeTool({ appId: null }).execute(JSON.stringify({ message_id: 'om_123' }), 9, 1, workspace);
     expect(JSON.parse(result).error).toContain('不是飞书通道会话');

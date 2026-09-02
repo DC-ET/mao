@@ -125,7 +125,7 @@ export class FeishuDownloadFileTool extends BaseTool implements FeishuChannelToo
 
   getName(): string { return 'feishu_download_file'; }
   getDescription(): string {
-    return '下载飞书群聊消息中的文件或图片到当前会话工作区（仅飞书通道会话可用，按需懒加载）。群聊上下文中形如 [文件:xxx msg=om_xxx] 或 [图片 msg=om_xxx] 的占位消息，将其中的消息 ID 传入 message_id 即可下载；返回本地路径后可用 read_file 读取内容（图片可直接查看）。';
+    return '下载飞书群聊消息中的文件或图片到当前会话工作区（仅飞书通道会话可用，按需懒加载）。群聊上下文中形如 [文件:xxx msg=om_xxx] 或 [图片 msg=om_xxx] 的占位消息，将其中的消息 ID 传入 message_id 即可下载；返回本地路径后可用 read_file 读取内容（图片可直接查看）。注意：飞书平台暂不支持下载表情包（sticker）资源，此类消息无法获取图片本体。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
@@ -155,6 +155,8 @@ export class FeishuDownloadFileTool extends BaseTool implements FeishuChannelToo
         if (detail?.fileKey == null) return errorJson(`未找到包含文件/图片的群聊消息: ${messageId}`);
         media = { appId, fileKey: detail.fileKey, fileName: detail.fileName ?? null, msgType: detail.msgType };
       }
+      // 飞书开放平台暂不支持表情包资源下载（resources 接口返回空占位/500），直接明确报错。
+      if (media.msgType === 'sticker') return errorJson(`飞书平台暂不支持下载表情包资源，无法获取该表情包图片: ${messageId}`);
       const isImage = media.msgType === 'image';
       const fileKey = media.fileKey;
       if (fileKey == null) return errorJson(`未找到包含文件/图片的群聊消息: ${messageId}`);

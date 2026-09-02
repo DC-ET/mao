@@ -41,6 +41,7 @@ export async function fetchFeishuMessageDetail(client: Lark.Client, messageId: s
   const msgType = raw.msg_type ?? 'text';
   let content: Record<string, unknown> = {};
   try { content = raw.body?.content ? JSON.parse(raw.body.content) as Record<string, unknown> : {}; } catch { content = {}; }
+  // sticker（表情包）消息的媒体键也是 file_key（实测 v3_ 前缀），仅 image 用 image_key。
   const mediaKey = msgType === 'image' ? 'image_key' : 'file_key';
   return {
     messageId: raw.message_id,
@@ -62,7 +63,7 @@ export function describeMessageText(msgType: string, content: Record<string, unk
   if (msgType === 'file') return `[文件:${typeof content.file_name === 'string' ? content.file_name : '未知文件'} msg=${messageId}]`;
   if (msgType === 'audio') return `[语音 msg=${messageId}]`;
   if (msgType === 'media') return `[视频 msg=${messageId}]`;
-  if (msgType === 'sticker') return '[表情包]';
+  if (msgType === 'sticker') return `[表情包 msg=${messageId}]`;
   if (msgType === 'post') return extractPostText(content);
   if (msgType === 'interactive') return extractInteractiveText(content);
   return `[${msgType} msg=${messageId}]`;

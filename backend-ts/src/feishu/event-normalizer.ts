@@ -127,6 +127,8 @@ function extractMedia(messageType: string, content: unknown): { imageKey?: strin
     return imageKeys.length > 0 ? { imageKey: imageKeys[0], imageKeys } : {};
   }
   if (messageType === 'file') return { fileKey: firstString(record.file_key), fileName: firstString(record.file_name) };
+  // sticker（表情包）媒体键同为 file_key（实测 v3_ 前缀）；落库供下载工具识别消息类型。
+  if (messageType === 'sticker') return { fileKey: firstString(record.file_key) };
   return {};
 }
 
