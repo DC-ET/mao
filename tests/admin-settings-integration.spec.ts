@@ -25,12 +25,11 @@ async function login(page: import('@playwright/test').Page) {
 test('settings integration panel renders with masked secrets and feishu test passes', async ({ page }) => {
   await login(page)
   await page.goto('/admin/settings')
-  await page.waitForSelector('.el-tabs', { timeout: 10_000 })
+  await page.waitForSelector('.integration-panel', { timeout: 10_000 })
 
-  // 1. 集成配置 Tab 存在且为默认激活
-  const integrationTab = page.locator('.el-tabs__item', { hasText: '集成配置' })
-  await expect(integrationTab).toBeVisible()
-  await expect(integrationTab).toHaveClass(/is-active/)
+  // 1. 集成配置分组存在（目录侧栏含"集成配置"各卡片锚点）
+  const feishuTitle = page.locator('.group-title', { hasText: '飞书 OAuth 登录' })
+  await expect(feishuTitle).toBeVisible()
 
   // 2. 五张分组卡片
   for (const title of ['LDAP 认证', '飞书 OAuth 登录', '上传配置', 'OSS 对象存储', '网络工具']) {
@@ -51,7 +50,7 @@ test('settings integration panel renders with masked secrets and feishu test pas
 test('settings batch save round-trip persists and restores value', async ({ page }) => {
   await login(page)
   await page.goto('/admin/settings')
-  await page.waitForSelector('.el-tabs', { timeout: 10_000 })
+  await page.waitForSelector('.integration-panel', { timeout: 10_000 })
 
   const ossCard = page.locator('.group-card', { hasText: 'OSS 对象存储' })
   const sessionInput = ossCard.locator('input').nth(0) // oss.region 第一个文本输入

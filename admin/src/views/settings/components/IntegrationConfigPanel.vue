@@ -120,7 +120,7 @@ interface GroupDef {
   testPayload?: (model: Record<string, string>) => Record<string, string>
 }
 
-const props = defineProps<{ rows: SettingRow[]; saving: boolean; canWrite?: boolean }>()
+const props = defineProps<{ rows: SettingRow[]; canWrite?: boolean }>()
 const emit = defineEmits<{ (e: 'saved'): void }>()
 
 const rowMap = computed<Record<string, SettingRow>>(() => {

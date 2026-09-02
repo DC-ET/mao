@@ -366,7 +366,7 @@ test.describe('Governance Console', () => {
     await page.click('span:has-text("系统设置")')
     await page.waitForURL(/\/settings$/)
     await expect(page.locator('.system-settings')).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('.setting-row').first()).toBeVisible()
+    await expect(page.locator('.group-card').first()).toBeVisible()
   })
 })
 

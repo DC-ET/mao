@@ -33,7 +33,6 @@
           <IntegrationConfigPanel
             v-if="integrationRows.length > 0"
             :rows="integrationRows"
-            :saving="saving"
             :can-write="canWrite"
             @saved="fetchSettings"
           />
@@ -43,94 +42,93 @@
             :id="`setting-cat-${category}`"
             class="setting-section"
           >
-            <h3 class="section-title">{{ category }}</h3>
-            <div class="setting-list">
-              <div v-for="row in settingsByCategory[category] || []" :key="row.settingKey" class="setting-row">
-                <div class="setting-copy">
-                  <div class="setting-name">{{ row.description || row.settingKey }}</div>
-                  <code class="setting-key">{{ row.settingKey }}</code>
+            <el-card class="group-card" shadow="never">
+              <template #header>
+                <div class="group-header">
+                  <span class="group-title">{{ category }}</span>
+                  <el-button
+                    v-if="hasEditable(category)"
+                    type="primary"
+                    size="small"
+                    :loading="savingKeys.has(category)"
+                    :disabled="!canWrite"
+                    @click="saveCategory(category)"
+                  >保存</el-button>
                 </div>
-                <div class="setting-control">
-                  <el-switch
-                    v-if="isBooleanSetting(row.settingKey)"
-                    :model-value="row.value === 'true'"
-                    :disabled="row.editable !== 1 || !canWrite"
-                    @change="(val: string | number | boolean) => saveBoolean(row, val === true)"
-                  />
-                  <el-select
-                    v-else-if="row.settingKey === 'weixin.agentId'"
-                    :model-value="row.value || ''"
-                    :disabled="row.editable !== 1 || !canWrite"
-                    clearable
-                    filterable
-                    placeholder="默认 Agent"
-                    style="width: 240px"
-                    @change="(val: string) => saveSelect(row, val)"
-                  >
-                    <el-option
-                      v-for="agent in agents"
-                      :key="agent.id"
-                      :label="agentLabel(agent)"
-                      :value="String(agent.id)"
-                    />
-                  </el-select>
-                  <el-select
-                    v-else-if="isModelSetting(row.settingKey)"
-                    :model-value="row.value || ''"
-                    :disabled="row.editable !== 1 || !canWrite"
-                    clearable
-                    filterable
-                    placeholder="默认模型"
-                    style="width: 240px"
-                    @change="(val: string) => saveSelect(row, val)"
-                  >
-                    <el-option
-                      v-for="model in models"
-                      :key="model.id"
-                      :label="modelLabel(model)"
-                      :value="String(model.id)"
-                    />
-                  </el-select>
+              </template>
+              <el-form label-position="top" class="group-form">
+                <el-form-item
+                  v-for="row in settingsByCategory[category]"
+                  :key="row.settingKey"
+                  :label="row.description || row.settingKey"
+                >
+                  <div v-if="row.editable !== 1" class="field-readonly">{{ row.value || '未设置' }}</div>
                   <template v-else>
-                    <span class="setting-value">{{ row.isSecret === 1 && row.value ? '******' : (row.value || '未设置') }}</span>
-                    <el-button type="primary" link size="small" :disabled="row.editable !== 1 || !canWrite" @click="handleEdit(row)">编辑</el-button>
+                    <el-switch
+                      v-if="isBooleanSetting(row.settingKey)"
+                      :model-value="plainModel[row.settingKey] === 'true'"
+                      :disabled="!canWrite"
+                      @change="(val: string | number | boolean) => { plainModel[row.settingKey] = val === true ? 'true' : 'false' }"
+                    />
+                    <el-select
+                      v-else-if="row.settingKey === 'weixin.agentId'"
+                      v-model="plainModel[row.settingKey]"
+                      :disabled="!canWrite"
+                      clearable
+                      filterable
+                      placeholder="默认 Agent"
+                      style="width: 100%"
+                    >
+                      <el-option v-for="agent in agents" :key="agent.id" :label="agentLabel(agent)" :value="String(agent.id)" />
+                    </el-select>
+                    <el-select
+                      v-else-if="isModelSetting(row.settingKey)"
+                      v-model="plainModel[row.settingKey]"
+                      :disabled="!canWrite"
+                      clearable
+                      filterable
+                      placeholder="默认模型"
+                      style="width: 100%"
+                    >
+                      <el-option v-for="model in models" :key="model.id" :label="modelLabel(model)" :value="String(model.id)" />
+                    </el-select>
+                    <el-input-number
+                      v-else-if="isNumericKey(row.settingKey)"
+                      :model-value="toNumberOrNull(plainModel[row.settingKey])"
+                      :min="1"
+                      :step="1"
+                      step-strictly
+                      controls-position="right"
+                      :disabled="!canWrite"
+                      style="width: 100%"
+                      @update:model-value="(val: number | undefined) => { plainModel[row.settingKey] = val == null ? '' : String(val) }"
+                    />
+                    <el-input
+                      v-else
+                      v-model="plainModel[row.settingKey]"
+                      :type="row.isSecret === 1 ? 'password' : 'text'"
+                      :placeholder="row.isSecret === 1 && row.value ? '已设置，留空表示不修改' : ''"
+                      :disabled="!canWrite"
+                      autocomplete="new-password"
+                    />
+                    <div class="field-hint">{{ row.settingKey }}</div>
                   </template>
-                </div>
-              </div>
-            </div>
+                </el-form-item>
+              </el-form>
+            </el-card>
           </section>
         </div>
       </div>
     </el-card>
-
-    <ResponsiveDialog v-if="dialogVisible" v-model="dialogVisible" title="编辑配置" width="480px">
-      <el-form label-width="90px">
-        <el-form-item label="说明">
-          <el-input :model-value="currentSetting?.description" disabled />
-        </el-form-item>
-        <el-form-item label="配置值">
-          <el-input
-            v-model="settingValue"
-            :type="currentSetting?.isSecret === 1 ? 'password' : 'text'"
-            :placeholder="currentSetting?.isSecret === 1 && currentSetting?.value ? '已设置，留空表示不修改' : ''"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveSetting">保存</el-button>
-      </template>
-    </ResponsiveDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, onBeforeUnmount, onActivated } from 'vue'
+import { computed, reactive, ref, nextTick, onBeforeUnmount, onActivated } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
-import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import IntegrationConfigPanel from './components/IntegrationConfigPanel.vue'
 
 const authStore = useAuthStore()
@@ -165,11 +163,82 @@ const loading = ref(false)
 const settings = ref<any[]>([])
 const agents = ref<any[]>([])
 const models = ref<any[]>([])
-const dialogVisible = ref(false)
-const currentSetting = ref<any | null>(null)
-const settingValue = ref('')
-const saving = ref(false)
 const activeSection = ref('')
+/** 分类卡片表单编辑副本：进入/刷新时从 rows 拷贝，保存成功后回写。secret 留空 = 不修改。 */
+const plainModel = reactive<Record<string, string>>({})
+const savingKeys = ref(new Set<string>())
+
+/** 数值类配置键：渲染为数字输入。 */
+const NUMERIC_KEYS = new Set(['audit.retentionDays', 'ui.defaultPageSize', 'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts', 'file.maxSizeMb'])
+
+function isNumericKey(key: string): boolean {
+  return NUMERIC_KEYS.has(key)
+}
+
+function toNumberOrNull(raw: string | undefined): number | undefined {
+  if (raw == null || String(raw).trim() === '') return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : undefined
+}
+
+function syncPlainModel() {
+  for (const row of settings.value) {
+    if (INTEGRATION_KEYS.has(row.settingKey)) continue
+    if (plainModel[row.settingKey] === undefined) {
+      plainModel[row.settingKey] = row.isSecret === 1 ? '' : (row.value ?? '')
+    }
+  }
+}
+
+function hasEditable(category: string): boolean {
+  return (settingsByCategory.value[category] || []).some((row) => row.editable === 1)
+}
+
+/** 分类卡片批量保存：先整体校验数值，再走 batch 接口，失败任一条则整体报错。 */
+async function saveCategory(category: string) {
+  if (!canWrite.value || savingKeys.value.has(category)) return
+  const rows = settingsByCategory.value[category] || []
+  const items: Array<{ key: string; value: string | null }> = []
+  for (const row of rows) {
+    if (row.editable !== 1) continue
+    const raw = plainModel[row.settingKey] ?? ''
+    if (row.isSecret === 1) {
+      // secret 语义：非空=保存新值；空串=不修改（null）
+      items.push({ key: row.settingKey, value: raw !== '' ? raw : null })
+      continue
+    }
+    if (isNumericKey(row.settingKey) && String(raw).trim() !== '') {
+      const n = Number(raw)
+      if (!Number.isInteger(n) || n <= 0) {
+        ElMessage.error(`「${row.description || row.settingKey}」需为正整数`)
+        return
+      }
+    }
+    items.push({ key: row.settingKey, value: raw })
+  }
+  if (items.length === 0) return
+  savingKeys.value = new Set([...savingKeys.value, category])
+  try {
+    await api.put('/system-settings/batch', { items })
+    for (const item of items) {
+      const row = rows.find((r: any) => r.settingKey === item.key)
+      if (row) {
+        if (row.isSecret === 1) {
+          row.value = item.value == null ? row.value : '******'
+          plainModel[row.settingKey] = ''
+        } else {
+          row.value = item.value ?? ''
+          plainModel[row.settingKey] = item.value ?? ''
+        }
+      }
+    }
+    ElMessage.success('已保存，配置即时生效')
+  } finally {
+    const next = new Set(savingKeys.value)
+    next.delete(category)
+    savingKeys.value = next
+  }
+}
 
 function isBooleanSetting(key: string | undefined | null) {
   return !!key && key.endsWith('enabled')
@@ -277,6 +346,7 @@ async function fetchSettings() {
       fetchModels()
     ])
     settings.value = data || []
+    syncPlainModel()
     await nextTick(setupObserver)
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loading.value = false
@@ -289,42 +359,6 @@ function agentLabel(agent: any) {
 
 function modelLabel(model: any) {
   return model.isDefault ? `${model.name}（默认）` : model.name
-}
-
-function handleEdit(row: any) {
-  currentSetting.value = row
-  settingValue.value = row.isSecret === 1 ? '' : (row.value || '')
-  dialogVisible.value = true
-}
-
-async function persist(row: any, value: string | null): Promise<boolean> {
-  if (row.editable !== 1 || saving.value) return false
-  saving.value = true
-  try {
-    await api.put(`/system-settings/${row.settingKey}`, { value })
-    await fetchSettings()
-    ElMessage.success('配置已更新')
-    return true
-  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ return false } finally {
-    saving.value = false
-  }
-}
-
-async function saveBoolean(row: any, enabled: boolean) {
-  await persist(row, enabled ? 'true' : 'false')
-}
-
-async function saveSelect(row: any, value: string) {
-  await persist(row, value || '')
-}
-
-async function saveSetting() {
-  if (!currentSetting.value) return
-  const isSecret = currentSetting.value.isSecret === 1
-  // secret 行留空 = 不修改（null 语义）
-  const value = isSecret && settingValue.value === '' ? null : settingValue.value
-  const ok = await persist(currentSetting.value, value)
-  if (ok) dialogVisible.value = false
 }
 
 onActivated(() => {
@@ -418,63 +452,42 @@ onActivated(() => {
   scroll-margin-top: 12px;
 }
 
-.section-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--mao-ink);
-  margin: 0 0 4px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--mao-border);
+/* 分类卡片：与 IntegrationConfigPanel 的 group-card 同款风格 */
+.group-card {
+  border-radius: 10px;
 }
 
-.setting-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.setting-row {
+.group-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  padding: 16px 4px;
-  border-bottom: 1px solid var(--mao-border);
 }
 
-.setting-row:last-child {
-  border-bottom: none;
-}
-
-.setting-copy {
-  min-width: 0;
-}
-
-.setting-name {
+.group-title {
+  font-weight: 600;
   font-size: 14px;
   color: var(--mao-ink);
 }
 
-.setting-key {
-  display: block;
-  margin-top: 4px;
+.group-form :deep(.el-form-item) {
+  margin-bottom: 16px;
+}
+
+.group-form :deep(.el-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+.field-hint {
   font-size: 12px;
   color: var(--mao-muted);
+  line-height: 1.4;
+  margin-top: 2px;
 }
 
-.setting-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.setting-value {
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
+.field-readonly {
+  font-size: 14px;
   color: var(--mao-ink);
+  padding: 6px 0;
 }
 
 @media (max-width: 768px) {
@@ -495,20 +508,6 @@ onActivated(() => {
     border-left: none;
     padding-left: 0;
     gap: 6px;
-  }
-
-  .setting-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
-  }
-
-  .setting-control {
-    width: 100%;
-  }
-
-  .setting-control :deep(.el-select) {
-    width: 100% !important;
   }
 }
 </style>
