@@ -115,23 +115,33 @@ const pendingSkillSyncDones = new Map<number, {
   sessionId: number
   success: boolean
   error?: string
+  syncId?: string
 }>()
 
+/**
+ * skill_sync_required 下发的轮次 ID：主进程的完成回调只带 sessionId，
+ * 而后端按 syncId 匹配轮次（不带则忽略该信号并等到 60s 超时判会话失败）。
+ */
+const activeSkillSyncIds = new Map<number, string>()
+
 function sendOrQueueSkillSyncDone(data: { sessionId: number; success: boolean; error?: string }) {
+  const payload = { ...data, syncId: activeSkillSyncIds.get(data.sessionId) }
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
       type: 'skill_sync_done',
-      sessionId: data.sessionId,
-      success: data.success,
-      error: data.error
+      sessionId: payload.sessionId,
+      success: payload.success,
+      error: payload.error,
+      syncId: payload.syncId ?? null
     }))
-    pendingSkillSyncDones.delete(data.sessionId)
+    pendingSkillSyncDones.delete(payload.sessionId)
+    activeSkillSyncIds.delete(payload.sessionId)
     return
   }
   console.warn(
     '[skill-sync] WS not open, queue skill_sync_done for flush on reconnect, readyState=' + ws?.readyState
   )
-  pendingSkillSyncDones.set(data.sessionId, data)
+  pendingSkillSyncDones.set(payload.sessionId, payload)
 }
 
 function flushPendingSkillSyncDones() {
@@ -144,8 +154,10 @@ function flushPendingSkillSyncDones() {
       type: 'skill_sync_done',
       sessionId: data.sessionId,
       success: data.success,
-      error: data.error
+      error: data.error,
+      syncId: data.syncId ?? null
     }))
+    activeSkillSyncIds.delete(data.sessionId)
   }
   console.info(`[skill-sync] flushed ${pending.length} pending skill_sync_done after reconnect`)
 }
@@ -888,6 +900,9 @@ export function useStreamWS() {
         // Server requests skill sync — trigger main process to download & extract zip
         const syncUrl = data?.syncUrl
         const workspace = data?.workspace
+        if (sessionId && typeof data?.syncId === 'string') {
+          activeSkillSyncIds.set(Number(sessionId), data.syncId)
+        }
         if (sessionId && syncUrl && isElectronClient()) {
           const token = getToken() || ''
           const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1')
