@@ -18,12 +18,18 @@ describe('ScheduledTaskTools', () => {
     expect(create.getToolPrompt()).toContain('cron');
     expect(create.getToolPrompt()).toContain('任务本体');
     expect(create.getToolPrompt()).toContain('严禁在 prompt 中要求创建、修改或删除定时任务');
-    expect(create.getDescription()).toContain('创建时的会话');
+    expect(create.getToolPrompt()).toContain('一次性任务');
+    expect(create.getDescription()).toContain('自动完结');
     expect(create.getInputSchema().properties.prompt.description).toContain('不要包含执行频率');
+    expect(create.getInputSchema().properties.once.description).toContain('一次性');
     const created = JSON.parse(await create.execute(JSON.stringify({
-      name: 'n', prompt: 'p', cron_expression: '0 0 9 * * *',
+      name: 'n', prompt: 'p', cron_expression: '0 0 9 * * *', once: true,
     }), 11, 7, null));
     expect(created.success).toBe(true);
+    expect(scheduled.createTask).toHaveBeenCalledWith(7, 5, 11, 'n', 'p', '0 0 9 * * *', true);
+    const updated = new UpdateScheduledTaskTool(scheduled as never);
+    await updated.execute(JSON.stringify({ task_id: 3, once: false }), 11, 7, null);
+    expect(scheduled.updateTask).toHaveBeenCalledWith(3, 7, null, null, null, null, false);
     sessions.getSession.mockResolvedValueOnce(null);
     expect(JSON.parse(await create.execute(JSON.stringify({
       name: 'n', prompt: 'p', cron_expression: '0 0 9 * * *',

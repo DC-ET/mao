@@ -12,7 +12,7 @@ export class CreateScheduledTaskTool extends BaseTool {
 
   getName(): string { return 'create_scheduled_task'; }
   getDescription(): string {
-    return '创建定时任务。任务将按照指定的 cron 计划自动执行 Agent。适用于：定时检查新股、每日生成报告、定期巡检等场景。任务创建后会绑定当前 Agent，并在创建时的会话中累积执行历史。';
+    return '创建定时任务。任务将按照指定的 cron 计划自动执行 Agent。适用于：定时检查新股、每日生成报告、定期巡检等场景。一次性提醒（固定某月某日执行一次）执行后会自动完结。任务创建后绑定当前 Agent，并在创建时的会话中累积执行历史。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
@@ -21,6 +21,7 @@ export class CreateScheduledTaskTool extends BaseTool {
         name: { type: 'string', description: '任务名称，如\'新股申购检查\'' },
         prompt: { type: 'string', description: '触发时执行的任务本体：只描述要做的具体工作与输出要求，不要包含执行频率或调度措辞（频率由 cron_expression 控制）。' },
         cron_expression: { type: 'string', description: 'Spring cron 表达式（6位：秒 分 时 日 月 周），控制执行频率。' },
+        once: { type: 'boolean', description: '是否一次性任务（执行一次后自动完结）。固定某月某日的提醒类任务应传 true；不传时按 cron 形态自动判定。' },
       },
       required: ['name', 'prompt', 'cron_expression'],
     };
@@ -43,6 +44,10 @@ export class CreateScheduledTaskTool extends BaseTool {
 - "每周一上午10点" → "0 0 10 * * MON"
 - "每月1号早上9点" → "0 0 9 1 * ?"
 
+### 一次性任务规则
+- 只执行一次的提醒（如"8月15日早上8点提醒我"）用固定月+日的 cron："0 0 8 15 8 ?"，并传 once=true
+- 一次性任务执行一次后自动完结（finished），不会再触发，也无需用户手动删除
+
 ### prompt 编写要求（重要）
 - prompt 是触发时 Agent 要执行的**任务本体**，不是对任务的描述或设置请求
 - 执行频率只写在 cron_expression 里，prompt 中不要出现"每天/每小时/每周"等调度措辞
@@ -61,6 +66,7 @@ export class CreateScheduledTaskTool extends BaseTool {
       const name = asText(args.name);
       const prompt = asText(args.prompt);
       const cronExpression = asText(args.cron_expression);
+      const once = typeof args.once === 'boolean' ? args.once : undefined;
       let agentId: number | null = null;
       let resolvedUserId = userId;
       if (sessionId != null) {
@@ -72,7 +78,7 @@ export class CreateScheduledTaskTool extends BaseTool {
       }
       if (agentId == null) return errorJson('无法获取当前 Agent 信息，请确保在有效会话中创建定时任务');
       if (resolvedUserId == null) return errorJson('无法获取当前用户信息');
-      const task = await this.scheduledTaskService.createTask(resolvedUserId, agentId, sessionId!, name!, prompt!, cronExpression!);
+      const task = await this.scheduledTaskService.createTask(resolvedUserId, agentId, sessionId!, name!, prompt!, cronExpression!, once);
       return toJson({
         success: true,
         task_id: task.id,
@@ -114,7 +120,7 @@ export class ListScheduledTasksTool extends BaseTool {
 export class UpdateScheduledTaskTool extends BaseTool {
   constructor(private readonly scheduledTaskService: ScheduledTaskService) { super(); }
   getName(): string { return 'update_scheduled_task'; }
-  getDescription(): string { return '更新已有定时任务的名称、prompt、cron 或状态。'; }
+  getDescription(): string { return '更新已有定时任务的名称、prompt、cron、once 或状态。'; }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
@@ -124,6 +130,7 @@ export class UpdateScheduledTaskTool extends BaseTool {
         prompt: { type: 'string' },
         cron_expression: { type: 'string' },
         status: { type: 'string' },
+        once: { type: 'boolean', description: '是否一次性任务（执行一次后自动完结）。' },
       },
       required: ['task_id'],
     };
@@ -137,7 +144,8 @@ export class UpdateScheduledTaskTool extends BaseTool {
       if (!Number.isFinite(taskId)) return errorJson('缺少必填参数: task_id');
       if (userId == null) return errorJson('无法获取当前用户信息');
       const task = await this.scheduledTaskService.updateTask(
-        taskId, userId, asText(args.name), asText(args.prompt), asText(args.cron_expression), asText(args.status));
+        taskId, userId, asText(args.name), asText(args.prompt), asText(args.cron_expression), asText(args.status),
+        typeof args.once === 'boolean' ? args.once : null);
       return toJson({ success: true, task });
     } catch (e) {
       return errorJson((e as Error).message);

@@ -19,7 +19,12 @@
         <el-table-column label="Agent" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ agentName(row.agentId) }}</template>
         </el-table-column>
-        <el-table-column prop="cronExpression" label="Cron 表达式" width="150" />
+        <el-table-column prop="cronExpression" label="Cron 表达式" width="150">
+          <template #default="{ row }">
+            <span>{{ row.cronExpression }}</span>
+            <el-tag v-if="row.once" type="warning" size="small" style="margin-left: 4px">一次</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="status" label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" size="small">
@@ -109,7 +114,7 @@
           </div>
           <div class="mobile-card-row">
             <span class="mobile-card-label">Cron</span>
-            <span>{{ row.cronExpression }}</span>
+            <span>{{ row.cronExpression }}<el-tag v-if="row.once" type="warning" size="small" style="margin-left: 4px">一次</el-tag></span>
           </div>
           <div class="mobile-card-row">
             <span class="mobile-card-label">上次</span>
@@ -183,6 +188,7 @@ interface ScheduledTask {
   prompt: string
   cronExpression: string
   status: string
+  once: number
   lastFireTime: string | null
   lastExecutionStatus: string | null
   nextFireTime: string | null

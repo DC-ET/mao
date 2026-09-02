@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
-import { normalizeSpringCron, ScheduledTaskScheduler, ScheduledTaskService, type ScheduledTaskStore } from './scheduled-task.service.js';
+import { isOneShotCron, normalizeSpringCron, ScheduledTaskScheduler, ScheduledTaskService, type ScheduledTaskStore } from './scheduled-task.service.js';
 
 describe('ScheduledTaskService', () => {
   const store: ScheduledTaskStore = {
@@ -118,6 +118,52 @@ describe('ScheduledTaskService', () => {
     expect(savedContent).toContain('定时任务「daily」');
     expect(savedContent).toContain('不要创建、修改、暂停或删除任何定时任务');
     expect(savedContent).toContain('---\nhello');
+  });
+
+  it('auto-finishes one-shot task after a single run', async () => {
+    const localStubs = {
+      getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE' })),
+      updatePhase: vi.fn(),
+      saveMessage: vi.fn(async () => ({ id: 88, content: 'hello' })),
+      getMessages: vi.fn(async () => []),
+    };
+    const localStore: ScheduledTaskStore = {
+      insert: vi.fn(),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 8 15 8 ?', status: 'ACTIVE',
+        name: '提醒', prompt: 'hello', once: 1, fireCount: 0,
+      })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    };
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      localStore, localStubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn() }, { finishExecution: vi.fn() },
+      { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 8 15 8 ?', prompt: 'hello', fireCount: 0 });
+    await ran;
+    const persisted = vi.mocked(localStore.updateById).mock.calls.map(([row]) => row);
+    const final = persisted.at(-1)!;
+    expect(final.finished).toBe(1);
+    expect(final.finishedAt).toBeTruthy();
+    expect(final.nextFireTime).toBeNull();
+  });
+
+  it('detects one-shot cron shapes', () => {
+    expect(isOneShotCron('0 0 8 15 8 ?')).toBe(true);
+    expect(isOneShotCron('23 0 18 13 8 *')).toBe(true);
+    expect(isOneShotCron('0 0 9 * * ?')).toBe(false);
+    expect(isOneShotCron('0 0 10 ? * MON-FRI')).toBe(false);
+    expect(isOneShotCron('0 0 9 1 * ?')).toBe(false);
+    expect(isOneShotCron('0 */30 * * * ?')).toBe(false);
+    expect(isOneShotCron('0 0 10 * * MON')).toBe(false);
+    expect(isOneShotCron('bad cron')).toBe(false);
   });
 
   it('pushesFinalAssistantReplyToFeishuPusher', async () => {    stubs.getSession.mockResolvedValue({ id: 11, phase: 'IDLE' });

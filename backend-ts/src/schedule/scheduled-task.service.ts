@@ -17,6 +17,8 @@ export interface ScheduledTask {
   prompt?: string;
   cronExpression?: string;
   status?: string;
+  /** 一次性任务：true=执行一次后自动完结；null 时按 cron 形态自动判定。 */
+  once?: number | null;
   lastFireTime?: string | null;
   lastExecutionStatus?: string | null;
   nextFireTime?: string | null;
@@ -68,6 +70,20 @@ export type ScheduledFeishuResultPusher = (sessionId: number, text: string) => P
 /** Spring cron uses `?` in DOM/DOW; Croner needs `*`. Also trim trailing spaces. */
 export function normalizeSpringCron(expression: string): string {
   return expression.trim().replace(/\?/g, '*').replace(/\s+/g, ' ');
+}
+
+/**
+ * 判断 cron 是否为一次性任务：固定了「日」与「月」且「周」为通配（如 `0 0 8 15 8 ?`）。
+ * 这类表达式下一次触发永远在明年同一天，任务实际只会执行一次。
+ */
+export function isOneShotCron(expression: string): boolean {
+  const parts = expression.trim().replace(/\s+/g, ' ').split(' ');
+  if (parts.length !== 6) return false;
+  const [sec, min, hour, dom, month, dow] = parts;
+  const fixed = (p: string) => /^\d+$/.test(p);
+  const any = (p: string) => p === '*' || p === '?';
+  // 秒/分/时/日/月全部固定、周为通配，才会只触发一次
+  return fixed(sec) && fixed(min) && fixed(hour) && fixed(dom) && fixed(month) && any(dow);
 }
 
 export interface ScheduleTaskTerminalService {
@@ -147,10 +163,12 @@ export class ScheduledTaskService {
     this.isSessionBusy = isSessionBusy;
   }
 
-  async createTask(userId: number, agentId: number, sessionId: number, name: string, prompt: string, cronExpression: string): Promise<ScheduledTask> {
+  async createTask(userId: number, agentId: number, sessionId: number, name: string, prompt: string, cronExpression: string, once?: boolean): Promise<ScheduledTask> {
     this.parseCron(cronExpression);
     const task: ScheduledTask = {
       userId, agentId, sessionId, name, prompt, cronExpression,
+      // 显式 once 优先；未指定时按 cron 形态自动判定（固定月+日视为一次性）
+      once: once != null ? (once ? 1 : 0) : (isOneShotCron(cronExpression) ? 1 : 0),
       status: 'ACTIVE', fireCount: 0,
       nextFireTime: this.calculateNextFireTime(cronExpression),
     };
@@ -158,10 +176,11 @@ export class ScheduledTaskService {
     return task;
   }
 
-  async updateTask(taskId: number, userId: number, name?: string | null, prompt?: string | null, cronExpression?: string | null, status?: string | null): Promise<ScheduledTask> {
+  async updateTask(taskId: number, userId: number, name?: string | null, prompt?: string | null, cronExpression?: string | null, status?: string | null, once?: boolean | null): Promise<ScheduledTask> {
     const task = await this.getTaskOwnedByUser(taskId, userId);
     if (name != null) task.name = name;
     if (prompt != null) task.prompt = prompt;
+    if (once != null) task.once = once ? 1 : 0;
     if (status != null) {
       if (status !== 'ACTIVE' && status !== 'PAUSED') {
         throw new BusinessException(ErrorCode.PARAM_INVALID, '状态只能为 ACTIVE 或 PAUSED');
@@ -171,6 +190,8 @@ export class ScheduledTaskService {
     if (cronExpression != null) {
       this.parseCron(cronExpression);
       task.cronExpression = cronExpression;
+      // 未显式指定 once 时，换 cron 后按新形态重判一次性属性
+      if (once == null && task.once == null) task.once = isOneShotCron(cronExpression) ? 1 : 0;
       const next = this.calculateNextFireTime(cronExpression);
       task.nextFireTime = next;
       if (next != null) {
@@ -194,6 +215,7 @@ export class ScheduledTaskService {
       prompt: task.prompt,
       cronExpression: task.cronExpression,
       status: task.status,
+      once: task.once,
       nextFireTime: task.nextFireTime,
       finished: task.finished,
       finishedAt: task.finishedAt,
@@ -319,9 +341,11 @@ export class ScheduledTaskService {
               const latest = task.id != null ? await this.store.selectById(task.id) : null;
               if (latest != null && latest.status === 'ACTIVE') {
                 const next = this.calculateNextFireTime(latest.cronExpression ?? task.cronExpression!);
-                if (next == null) {
+                // 一次性任务执行过一次即完结（cron 固定月+日时 next 永远是明年同一天，不能靠 next==null 判定）
+                if (next == null || latest.once === 1) {
                   patch.finished = 1;
                   patch.finishedAt = now;
+                  patch.nextFireTime = null;
                 }
               }
               await this.store.updateById(patch);

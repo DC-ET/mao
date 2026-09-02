@@ -47,8 +47,8 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, deps: Schedule
   app.put('/v1/scheduled-tasks/:id', async (req, reply) => {
     const userId = requireUserId(req, deps.jwt);
     const id = Number((req.params as { id: string }).id);
-    const body = (req.body ?? {}) as { name?: string; prompt?: string; cronExpression?: string; status?: string };
-    sendJson(reply, 200, ok(await deps.service.updateTask(id, userId, body.name, body.prompt, body.cronExpression, body.status)));
+    const body = (req.body ?? {}) as { name?: string; prompt?: string; cronExpression?: string; status?: string; once?: boolean };
+    sendJson(reply, 200, ok(await deps.service.updateTask(id, userId, body.name, body.prompt, body.cronExpression, body.status, body.once)));
   });
 
   app.delete('/v1/scheduled-tasks/:id', async (req, reply) => {
