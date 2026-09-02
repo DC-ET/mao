@@ -51,7 +51,7 @@
         </el-input>
       </el-form-item>
       <el-form-item label="API Key" prop="apiKey">
-        <el-input v-model="form.apiKey" type="password" show-password :placeholder="isEdit ? '留空则不修改；已设置的 Key 不会回填' : '请输入 API Key'" />
+        <el-input v-model="form.apiKey" type="password" show-password :placeholder="isEdit ? '已回填当前 Key，可查看或修改；留空则不修改' : '请输入 API Key'" />
       </el-form-item>
       <el-form-item v-if="isTextType" label="上下文窗口">
         <el-input-number
@@ -124,6 +124,11 @@ const apiProtocolSuffix = computed(() => {
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 
+// 后端掩码格式固定为 ****xxxx（或 ****），以此区分明文 Key 与掩码串
+function isMaskedApiKey(apiKey?: string | null): boolean {
+  return !!apiKey && apiKey.startsWith('****')
+}
+
 const form = reactive({
   modelType: 'text',
   name: '',
@@ -174,10 +179,10 @@ watch(() => props.visible, (val) => {
       modelId: props.modelData.modelId || '',
       clientImpersonation: props.modelData.clientImpersonation || 'none',
       baseUrl: props.modelData.baseUrl || '',
-      // 恒为空：后端可能返回明文（有 model:write）也可能返回掩码串（无权限/旧数据），
-      // 回填掩码串再原样提交会把掩码写成新密钥，导致模型调用全部鉴权失败。
-      // 编辑时留空 = 不修改，由后端保留原值。
-      apiKey: '',
+      // 编辑/复制按钮仅对 model:write 可见，该权限下后端返回明文 Key，直接回填
+      // 供查看与复制；掩码串（****xxxx，无权限/旧数据）不回填，以免原样提交把
+      // 掩码写成新密钥导致模型调用全部鉴权失败。编辑时留空 = 不修改，由后端保留原值。
+      apiKey: isMaskedApiKey(props.modelData.apiKey) ? '' : props.modelData.apiKey || '',
       contextWindowTokens: props.modelData.contextWindowTokens || 256000,
       supportsVision: !!props.modelData.supportsVision,
       isDefault: !!props.modelData.isDefault
@@ -193,8 +198,8 @@ async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
 
-  // 防御：掩码串（****xxxx）不应被当作新密钥提交
-  if (form.apiKey && /\*{3,}/.test(form.apiKey)) {
+  // 防御：掩码串不应被当作新密钥提交
+  if (isMaskedApiKey(form.apiKey)) {
     ElMessage.error('API Key 含掩码字符，请重新填写完整密钥')
     return
   }
