@@ -237,6 +237,51 @@ describe('SystemSettingService', () => {
     expect(cfg).toEqual({ storageMode: 'local', baseUrl: '', maxSizeMb: 50 });
   });
 
+  it('getAgentRuntimeConfigAppliesDefaults', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    const cfg = await service().getAgentRuntimeConfig();
+    expect(cfg).toEqual({ threadPoolSize: 20, threadPoolMax: 100, threadPoolQueue: 200, wsIdleTimeoutMs: 90000 });
+  });
+
+  it('getAgentRuntimeConfigReadsStoredValues', async () => {
+    const rows: Record<string, string> = {
+      'agent.threadPoolSize': '8',
+      'agent.threadPoolMax': '16',
+      'agent.threadPoolQueue': '32',
+      'ws.idleTimeoutMs': '60000',
+    };
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (rows[key] != null) return { id: 1, settingKey: key, value: rows[key], category: '运行参数', editable: 1 };
+      return null;
+    });
+    const cfg = await service().getAgentRuntimeConfig();
+    expect(cfg).toEqual({ threadPoolSize: 8, threadPoolMax: 16, threadPoolQueue: 32, wsIdleTimeoutMs: 60000 });
+  });
+
+  it('getNotificationTuningConfigAppliesDefaultsAndReadsValues', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    expect(await service().getNotificationTuningConfig()).toEqual({ workerDelayMs: 30000, batchSize: 100, maxAttempts: 4 });
+
+    const rows: Record<string, string> = {
+      'notify.workerDelayMs': '5000',
+      'notify.batchSize': '20',
+      'notify.maxAttempts': '6',
+    };
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (rows[key] != null) return { id: 1, settingKey: key, value: rows[key], category: '运行参数', editable: 1 };
+      return null;
+    });
+    expect(await service().getNotificationTuningConfig()).toEqual({ workerDelayMs: 5000, batchSize: 20, maxAttempts: 6 });
+  });
+
+  it('updateRejectsInvalidRuntimeTuningValues', async () => {
+    for (const key of ['agent.threadPoolSize', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts']) {
+      vi.mocked(mapper.findByKey).mockResolvedValue(setting(key, '运行参数', 1));
+      await expect(service().update(key, '0')).rejects.toThrow(/正整数/);
+      await expect(service().update(key, 'abc')).rejects.toThrow(/正整数/);
+    }
+  });
+
   it('getOssConfigReturnsNullWhenUnconfigured', async () => {
     vi.mocked(mapper.findByKey).mockResolvedValue(null);
     expect(await service().getOssConfig()).toBeNull();

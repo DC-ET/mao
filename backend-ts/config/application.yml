@@ -28,9 +28,12 @@ jwt:
   refresh-expiration: 604800000
   shell-expiration: ${JWT_SHELL_EXPIRATION:7200000}
 
-# 集成配置（LDAP / 飞书OAuth登录 / 上传 / Tavily/TinyFish 搜索 / OSS）已迁移至管理后台 system_setting，
-# 环境变量（LDAP_*、FEISHU_APP_*、UPLOAD_*、TAVILY_API_KEY、TINYFISH_API_KEY、WEB_SEARCH_PROVIDER、OSS_* 等）仅在升级首次启动时
+# 集成配置（LDAP / 飞书OAuth登录 / 上传 / Tavily/TinyFish 搜索 / OSS）与运行参数（Agent 线程池、
+# WS 空闲超时、任务通知调度参数）已迁移至管理后台 system_setting，
+# 环境变量（LDAP_*、FEISHU_APP_*、UPLOAD_*、TAVILY_API_KEY、TINYFISH_API_KEY、WEB_SEARCH_PROVIDER、OSS_*、
+# AGENT_THREAD_POOL_*、APP_WS_IDLE_TIMEOUT_MS、TASK_NOTIFICATION_* 等）仅在升级首次启动时
 # 由 SettingsBootstrap 自动导入 DB（加密项需 SETTINGS_SECRET），之后一律以管理后台为准。
+# MAX_CONCURRENT_AGENTS / DEFAULT_MAX_ROUNDS / DEFAULT_CONTEXT_ROUNDS 在 TS 后端无消费点，已废弃。
 
 feishu:
   bot:
@@ -59,23 +62,13 @@ app:
   file:
     upload-dir: ${FILE_UPLOAD_DIR:./uploads}
   ws:
-    idle-timeout-ms: ${APP_WS_IDLE_TIMEOUT_MS:90000}
     outbound-queue-capacity: 10000
   task-notification:
     secret-key: ${APP_NOTIFICATION_WEBHOOK_SECRET:mao-task-notification-default-key-v1-20260713}
-    worker-delay-ms: ${TASK_NOTIFICATION_WORKER_DELAY_MS:30000}
-    batch-size: ${TASK_NOTIFICATION_BATCH_SIZE:100}
-    max-attempts: ${TASK_NOTIFICATION_MAX_ATTEMPTS:4}
   harness:
     workspace-root: ${WORKSPACE_ROOT:./workspace}
     runtime-dir: ${MAO_RUNTIME_DIR:/opt/mao-data/runtime}
     user-home-dir: ${MAO_USER_HOME_DIR:/opt/mao-data/users}
-    max-concurrent-agents: ${MAX_CONCURRENT_AGENTS:20}
-    agent-thread-pool-size: ${AGENT_THREAD_POOL_SIZE:20}
-    agent-thread-pool-max: ${AGENT_THREAD_POOL_MAX:100}
-    agent-thread-pool-queue: ${AGENT_THREAD_POOL_QUEUE:200}
-    default-max-rounds: ${DEFAULT_MAX_ROUNDS:0}
-    default-context-rounds: ${DEFAULT_CONTEXT_ROUNDS:0}
     skills-dir: ${SKILLS_DIR:./skills}
     user-skills-dir: ${USER_SKILLS_DIR:}
     compaction:

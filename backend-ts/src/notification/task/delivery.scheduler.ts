@@ -91,38 +91,61 @@ export interface TaskNotificationProperties {
   maxAttempts: number;
 }
 
+/** 调度参数来源：静态对象（默认值/测试）或动态 getter（后台配置，保存后即时生效）。 */
+export type TaskNotificationPropertiesSource = TaskNotificationProperties | (() => Promise<TaskNotificationProperties>);
+
 /** SENDING 卡死行恢复的执行间隔：每 tick 一次代价过高，节流为每分钟。 */
 const RECOVERY_INTERVAL_MS = 60_000;
 
 export class WebhookDeliveryScheduler {
   private lastRecoveryAt = 0;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private stopped = false;
 
   constructor(
     private readonly store: DeliverySchedulerStore,
-    private readonly properties: TaskNotificationProperties,
+    private readonly propertiesSource: TaskNotificationPropertiesSource,
     private readonly cipher: WebhookSecretCipher,
     private readonly senderRegistry: WebhookSenderRegistry,
     private readonly metrics: TaskNotificationMetrics = new InMemoryTaskNotificationMetrics(),
     private readonly execute: (fn: () => void) => void = (fn) => { void Promise.resolve().then(fn); },
   ) {}
 
+  private async resolveProperties(): Promise<TaskNotificationProperties> {
+    const source = this.propertiesSource;
+    return typeof source === 'function' ? await source() : source;
+  }
+
   start(): void {
-    const delay = Math.max(1000, this.properties.workerDelayMs);
-    this.timer = setInterval(() => { void this.dispatchDueDeliveries(); }, delay);
+    this.stopped = false;
     this.cleanupTimer = setInterval(() => { void this.cleanupHistory(); }, 60 * 60 * 1000);
+    this.scheduleNext();
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
     }
+  }
+
+  /** setTimeout 链轮询：每轮重新读取 workerDelayMs，后台改轮询间隔无需重启。 */
+  private scheduleNext(): void {
+    void this.resolveProperties()
+      .then((p) => {
+        if (this.stopped) return;
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          void this.dispatchDueDeliveries().finally(() => this.scheduleNext());
+        }, Math.max(1000, p.workerDelayMs));
+      })
+      .catch((e) => console.error('任务通知调度参数读取失败，1 分钟后重试', e));
   }
 
   async recoverInterruptedDeliveries(): Promise<void> {
@@ -140,7 +163,8 @@ export class WebhookDeliveryScheduler {
         await this.recoverInterruptedDeliveries();
       }
       const now = formatDateTime(new Date());
-      const due = await this.store.listDue(now, Math.max(1, this.properties.batchSize));
+      const properties = await this.resolveProperties();
+      const due = await this.store.listDue(now, Math.max(1, properties.batchSize));
       for (const delivery of due) {
         const claimed = await this.store.claim(delivery.id!, delivery.status!);
         if (claimed) {
@@ -173,6 +197,7 @@ export class WebhookDeliveryScheduler {
           return;
         }
       }
+      const properties = await this.resolveProperties();
       const attempt = (delivery.attemptCount ?? 0) + 1;
       let result;
       try {
@@ -194,7 +219,7 @@ export class WebhookDeliveryScheduler {
         update.sentAt = formatDateTime(new Date());
         update.nextRetryAt = null;
         this.metrics.sent(delivery.channel!, 'success');
-      } else if (result.retryable && attempt < this.properties.maxAttempts) {
+      } else if (result.retryable && attempt < properties.maxAttempts) {
         update.status = DeliveryStatus.PENDING;
         update.nextRetryAt = formatDateTime(new Date(Date.now() + this.retryDelayMinutes(attempt) * 60_000));
         this.metrics.sent(delivery.channel!, 'retryable_failure');

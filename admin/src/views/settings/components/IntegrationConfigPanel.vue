@@ -251,6 +251,27 @@ const groups = computed<GroupDef[]>(() => [
       { key: 'tools.tinyfishApiKey', label: 'TinyFish API Key', secret: true, set: !!rowMap.value['tools.tinyfishApiKey']?.value, hint: '搜索实现为 TinyFish 时使用' },
     ],
   },
+  {
+    name: 'agent',
+    title: 'Agent 运行',
+    keys: ['agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs'],
+    fields: [
+      { key: 'agent.threadPoolSize', label: '线程池核心数', type: 'number', min: 1, max: 10000, hint: '默认 20，重启后端后生效' },
+      { key: 'agent.threadPoolMax', label: '线程池最大数', type: 'number', min: 1, max: 10000, hint: '默认 100，重启后端后生效' },
+      { key: 'agent.threadPoolQueue', label: '线程池队列容量', type: 'number', min: 1, max: 100000, hint: '默认 200，重启后端后生效' },
+      { key: 'ws.idleTimeoutMs', label: 'WS 空闲超时 (ms)', type: 'number', min: 1000, max: 3600000, hint: '默认 90000，重启后端后生效' },
+    ],
+  },
+  {
+    name: 'notify',
+    title: '任务通知',
+    keys: ['notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts'],
+    fields: [
+      { key: 'notify.workerDelayMs', label: '轮询间隔 (ms)', type: 'number', min: 1000, max: 3600000, hint: '默认 30000，保存后即时生效' },
+      { key: 'notify.batchSize', label: '每轮批量拉取条数', type: 'number', min: 1, max: 10000, hint: '默认 100，保存后即时生效' },
+      { key: 'notify.maxAttempts', label: '最大重试次数', type: 'number', min: 1, max: 100, hint: '默认 4，保存后即时生效' },
+    ],
+  },
 ])
 
 function pickNonEmpty(m: Record<string, string>, keys: string[], mapping: string[]): Record<string, string> {

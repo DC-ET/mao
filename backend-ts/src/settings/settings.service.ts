@@ -3,8 +3,9 @@ import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
-  AgentLookup, FeishuOAuthSettings, LdapSettings, ModelLookup, OssSettings, SettingsRuntimeConfig,
-  SystemSetting, SystemSettingRepository, TavilySettings, TinyFishSettings, UploadSettings, WebSearchConfig, WebSearchProvider,
+  AgentLookup, AgentRuntimeSettings, FeishuOAuthSettings, LdapSettings, ModelLookup, NotificationTuningSettings,
+  OssSettings, SettingsRuntimeConfig, SystemSetting, SystemSettingRepository, TavilySettings, TinyFishSettings,
+  UploadSettings, WebSearchConfig, WebSearchProvider,
 } from './types.js';
 
 export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
@@ -40,6 +41,13 @@ export const OSS_STS_ROLE_ARN_KEY = 'oss.sts.roleArn';
 export const OSS_STS_ROLE_SESSION_NAME_KEY = 'oss.sts.roleSessionName';
 export const OSS_STS_EXPIRE_KEY = 'oss.sts.expire';
 export const OSS_STS_MAX_SIZE_MB_KEY = 'oss.sts.maxSizeMb';
+export const AGENT_THREAD_POOL_SIZE_KEY = 'agent.threadPoolSize';
+export const AGENT_THREAD_POOL_MAX_KEY = 'agent.threadPoolMax';
+export const AGENT_THREAD_POOL_QUEUE_KEY = 'agent.threadPoolQueue';
+export const WS_IDLE_TIMEOUT_MS_KEY = 'ws.idleTimeoutMs';
+export const NOTIFY_WORKER_DELAY_MS_KEY = 'notify.workerDelayMs';
+export const NOTIFY_BATCH_SIZE_KEY = 'notify.batchSize';
+export const NOTIFY_MAX_ATTEMPTS_KEY = 'notify.maxAttempts';
 
 /** 掩码回显占位符：secret 行已设置时返回该值。 */
 export const SECRET_MASK = '******';
@@ -59,6 +67,13 @@ const DEFAULT_WEB_SEARCH_PROVIDER: WebSearchProvider = 'tavily';
 const DEFAULT_OSS_STS_ROLE_SESSION_NAME = 'mao-sts';
 const DEFAULT_OSS_STS_EXPIRE = 3600;
 const DEFAULT_OSS_STS_MAX_SIZE_MB = 50;
+const DEFAULT_AGENT_THREAD_POOL_SIZE = 20;
+const DEFAULT_AGENT_THREAD_POOL_MAX = 100;
+const DEFAULT_AGENT_THREAD_POOL_QUEUE = 200;
+const DEFAULT_WS_IDLE_TIMEOUT_MS = 90000;
+const DEFAULT_NOTIFY_WORKER_DELAY_MS = 30000;
+const DEFAULT_NOTIFY_BATCH_SIZE = 100;
+const DEFAULT_NOTIFY_MAX_ATTEMPTS = 4;
 
 export class SystemSettingService {
   static readonly WEIXIN_AGENT_ID_KEY = WEIXIN_AGENT_ID_KEY;
@@ -205,9 +220,38 @@ export class SystemSettingService {
     return { provider, tavily, tinyfish };
   }
 
+  /** Agent 运行参数：线程池与 WS 超时均在启动时构建，修改后需重启后端生效。 */
+  async getAgentRuntimeConfig(): Promise<AgentRuntimeSettings> {
+    const [sizeRaw, maxRaw, queueRaw, idleRaw] = await Promise.all([
+      this.getText(AGENT_THREAD_POOL_SIZE_KEY),
+      this.getText(AGENT_THREAD_POOL_MAX_KEY),
+      this.getText(AGENT_THREAD_POOL_QUEUE_KEY),
+      this.getText(WS_IDLE_TIMEOUT_MS_KEY),
+    ]);
+    return {
+      threadPoolSize: parsePositiveInt(sizeRaw) ?? DEFAULT_AGENT_THREAD_POOL_SIZE,
+      threadPoolMax: parsePositiveInt(maxRaw) ?? DEFAULT_AGENT_THREAD_POOL_MAX,
+      threadPoolQueue: parsePositiveInt(queueRaw) ?? DEFAULT_AGENT_THREAD_POOL_QUEUE,
+      wsIdleTimeoutMs: parsePositiveInt(idleRaw) ?? DEFAULT_WS_IDLE_TIMEOUT_MS,
+    };
+  }
+
+  /** 任务通知调度参数：调度器每轮读取，保存后即时生效。 */
+  async getNotificationTuningConfig(): Promise<NotificationTuningSettings> {
+    const [delayRaw, batchRaw, attemptsRaw] = await Promise.all([
+      this.getText(NOTIFY_WORKER_DELAY_MS_KEY),
+      this.getText(NOTIFY_BATCH_SIZE_KEY),
+      this.getText(NOTIFY_MAX_ATTEMPTS_KEY),
+    ]);
+    return {
+      workerDelayMs: parsePositiveInt(delayRaw) ?? DEFAULT_NOTIFY_WORKER_DELAY_MS,
+      batchSize: parsePositiveInt(batchRaw) ?? DEFAULT_NOTIFY_BATCH_SIZE,
+      maxAttempts: parsePositiveInt(attemptsRaw) ?? DEFAULT_NOTIFY_MAX_ATTEMPTS,
+    };
+  }
+
   /** OSS 未配置（region/AK/SK/bucket 任一为空）时返回 null，消费方按"未配置"处理。 */
-  async getOssConfig(): Promise<OssSettings | null> {
-    const [region, accessKeyId, accessKeySecret, bucket] = await Promise.all([
+  async getOssConfig(): Promise<OssSettings | null> {    const [region, accessKeyId, accessKeySecret, bucket] = await Promise.all([
       this.getText(OSS_REGION_KEY),
       this.getText(OSS_ACCESS_KEY_ID_KEY),
       this.getSecret(OSS_ACCESS_KEY_SECRET_KEY),
@@ -353,7 +397,9 @@ export class SystemSettingService {
       return;
     }
     if (key.endsWith('Days') || key.endsWith('Size') || key.endsWith('SizeMb') || key === 'ui.defaultPageSize'
-      || key === OSS_STS_EXPIRE_KEY) {
+      || key === OSS_STS_EXPIRE_KEY || key.endsWith('TimeoutMs') || key.endsWith('DelayMs')
+      || key === NOTIFY_BATCH_SIZE_KEY || key === NOTIFY_MAX_ATTEMPTS_KEY
+      || key === AGENT_THREAD_POOL_SIZE_KEY || key === AGENT_THREAD_POOL_MAX_KEY || key === AGENT_THREAD_POOL_QUEUE_KEY) {
       const number = Number(value);
       if (!Number.isInteger(number) || number <= 0) {
         throw new BusinessException(ErrorCode.PARAM_INVALID, '配置值必须为正整数');

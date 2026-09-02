@@ -57,23 +57,14 @@ export interface AppConfig {
     rootDir: string;
     gitCredential: { secretKey: string };
     file: { uploadDir: string };
-    ws: { idleTimeoutMs: number; outboundQueueCapacity: number };
+    ws: { outboundQueueCapacity: number };
     taskNotification: {
       secretKey: string;
-      workerDelayMs: number;
-      batchSize: number;
-      maxAttempts: number;
     };
     harness: {
       workspaceRoot: string;
       runtimeDir: string;
       userHomeDir: string;
-      maxConcurrentAgents: number;
-      agentThreadPoolSize: number;
-      agentThreadPoolMax: number;
-      agentThreadPoolQueue: number;
-      defaultMaxRounds: number;
-      defaultContextRounds: number;
       localToolTimeoutSeconds: number;
       skillsDir: string;
       userSkillsDir: string;
@@ -190,23 +181,14 @@ const DEFAULTS: AppConfig = {
     rootDir: '/opt/mao',
     gitCredential: { secretKey: '' },
     file: { uploadDir: './uploads' },
-    ws: { idleTimeoutMs: 90000, outboundQueueCapacity: 10000 },
+    ws: { outboundQueueCapacity: 10000 },
     taskNotification: {
       secretKey: 'mao-task-notification-default-key-v1-20260713',
-      workerDelayMs: 30000,
-      batchSize: 100,
-      maxAttempts: 4,
     },
     harness: {
       workspaceRoot: './workspace',
       runtimeDir: '/opt/mao-data/runtime',
       userHomeDir: '/opt/mao-data/users',
-      maxConcurrentAgents: 20,
-      agentThreadPoolSize: 20,
-      agentThreadPoolMax: 100,
-      agentThreadPoolQueue: 200,
-      defaultMaxRounds: 0,
-      defaultContextRounds: 0,
       localToolTimeoutSeconds: 900,
       skillsDir: './skills',
       userSkillsDir: join(process.env.HOME ?? '/tmp', '.mao/data/userskills'),
@@ -401,12 +383,6 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.jwt.expiration = n(cfg.jwt.expiration, 86400000);
   cfg.jwt.refreshExpiration = n(cfg.jwt.refreshExpiration, 604800000);
   cfg.jwt.shellExpiration = n(cfg.jwt.shellExpiration, 7200000);
-  cfg.app.harness.maxConcurrentAgents = n(cfg.app.harness.maxConcurrentAgents, 20);
-  cfg.app.harness.agentThreadPoolSize = n(cfg.app.harness.agentThreadPoolSize, 20);
-  cfg.app.harness.agentThreadPoolMax = n(cfg.app.harness.agentThreadPoolMax, 100);
-  cfg.app.harness.agentThreadPoolQueue = n(cfg.app.harness.agentThreadPoolQueue, 200);
-  cfg.app.harness.defaultMaxRounds = n(cfg.app.harness.defaultMaxRounds, 0);
-  cfg.app.harness.defaultContextRounds = n(cfg.app.harness.defaultContextRounds, 0);
   return cfg;
 }
 

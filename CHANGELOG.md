@@ -15,6 +15,19 @@
 
 ---
 
+## 0.0.88 (2026-09-02)
+
+### 后端
+
+- Agent 运行参数与任务通知调度参数后台化：线程池三元组（`agent.threadPoolSize/Max/Queue`）、WS 空闲超时（`ws.idleTimeoutMs`）、任务通知轮询间隔/批量/重试次数（`notify.workerDelayMs/batchSize/maxAttempts`）迁入 system_setting（V095），升级时由环境变量自动导入，此后以管理后台为准
+- 任务通知调度器改为每轮动态读取配置：轮询间隔、批量条数、最大重试次数保存后即时生效，无需重启
+- Agent 线程池与 WS 空闲超时在启动时从 DB 构建，后台修改后需重启后端生效（UI 已标注）
+- 废弃无消费点的死配置 `MAX_CONCURRENT_AGENTS`、`DEFAULT_MAX_ROUNDS`、`DEFAULT_CONTEXT_ROUNDS`（yml/env 不再读取）
+
+### 管理后台
+
+- 「集成配置」Tab 新增「Agent 运行」「任务通知」两张卡片（数值输入 + 范围校验），目录锚点同步
+
 ## 0.0.87 (2026-09-02)
 
 ### 后端

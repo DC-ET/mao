@@ -91,3 +91,18 @@ export interface OssSettings {
     maxSizeMb: number;
   };
 }
+
+/** Agent 运行参数：线程池三元组启动时构建（改后需重启），WS 空闲超时同理。 */
+export interface AgentRuntimeSettings {
+  threadPoolSize: number;
+  threadPoolMax: number;
+  threadPoolQueue: number;
+  wsIdleTimeoutMs: number;
+}
+
+/** 任务通知调度参数：每次调度循环读取，保存后即时生效。 */
+export interface NotificationTuningSettings {
+  workerDelayMs: number;
+  batchSize: number;
+  maxAttempts: number;
+}

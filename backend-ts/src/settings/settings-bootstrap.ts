@@ -41,6 +41,13 @@ export const SETTINGS_BOOTSTRAP_ENTRIES: SettingsBootstrapEntry[] = [
   { settingKey: 'oss.sts.roleSessionName', envName: 'OSS_STS_ROLE_SESSION_NAME' },
   { settingKey: 'oss.sts.expire', envName: 'OSS_STS_EXPIRE' },
   { settingKey: 'oss.sts.maxSizeMb', envName: 'OSS_STS_MAX_SIZE_MB' },
+  { settingKey: 'agent.threadPoolSize', envName: 'AGENT_THREAD_POOL_SIZE' },
+  { settingKey: 'agent.threadPoolMax', envName: 'AGENT_THREAD_POOL_MAX' },
+  { settingKey: 'agent.threadPoolQueue', envName: 'AGENT_THREAD_POOL_QUEUE' },
+  { settingKey: 'ws.idleTimeoutMs', envName: 'APP_WS_IDLE_TIMEOUT_MS' },
+  { settingKey: 'notify.workerDelayMs', envName: 'TASK_NOTIFICATION_WORKER_DELAY_MS' },
+  { settingKey: 'notify.batchSize', envName: 'TASK_NOTIFICATION_BATCH_SIZE' },
+  { settingKey: 'notify.maxAttempts', envName: 'TASK_NOTIFICATION_MAX_ATTEMPTS' },
 ];
 
 /**

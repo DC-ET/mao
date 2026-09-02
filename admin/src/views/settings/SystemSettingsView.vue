@@ -146,6 +146,8 @@ const INTEGRATION_KEYS = new Set([
   'oss.region', 'oss.accessKeyId', 'oss.accessKeySecret', 'oss.bucket',
   'oss.sts.regionId', 'oss.sts.endpoint', 'oss.sts.accessKeyId', 'oss.sts.accessKeySecret',
   'oss.sts.roleArn', 'oss.sts.roleSessionName', 'oss.sts.expire', 'oss.sts.maxSizeMb',
+  'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs',
+  'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts',
 ])
 
 /** 集成配置目录条目：锚点 id 与 IntegrationConfigPanel 内 group-card 的 id 保持一致。 */
@@ -155,6 +157,8 @@ const INTEGRATION_TOC = [
   { id: 'setting-group-upload', label: '上传配置' },
   { id: 'setting-group-oss', label: 'OSS 对象存储' },
   { id: 'setting-group-tools', label: '网络工具' },
+  { id: 'setting-group-agent', label: 'Agent 运行' },
+  { id: 'setting-group-notify', label: '任务通知' },
 ]
 
 const loading = ref(false)

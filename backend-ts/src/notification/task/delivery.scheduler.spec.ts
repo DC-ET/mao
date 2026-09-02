@@ -68,6 +68,30 @@ describe('WebhookDeliveryScheduler', () => {
     scheduler.stop();
   });
 
+  it('dispatchUsesDynamicPropertiesProvider', async () => {
+    const store = {
+      recoverInterrupted: vi.fn(async () => undefined),
+      listDue: vi.fn(async () => []),
+      claim: vi.fn(),
+      countPending: vi.fn(async () => 0),
+      updateById: vi.fn(),
+      deleteHistory: vi.fn(),
+    };
+    let batchSize = 5;
+    const scheduler = new WebhookDeliveryScheduler(
+      store as never,
+      async () => ({ workerDelayMs: 1000, batchSize, maxAttempts: 3 }),
+      { decrypt: vi.fn() } as never,
+      { get: vi.fn() } as never,
+    );
+    await scheduler.dispatchDueDeliveries();
+    expect(store.listDue).toHaveBeenCalledWith(expect.anything(), 5);
+    batchSize = 9;
+    await scheduler.dispatchDueDeliveries();
+    expect(store.listDue).toHaveBeenLastCalledWith(expect.anything(), 9);
+    scheduler.stop();
+  });
+
   it('deliverTerminalWriteUsesStatusCasWhenStoreSupportsIt', async () => {
     for (const casOk of [true, false]) {
       const delivery = {
