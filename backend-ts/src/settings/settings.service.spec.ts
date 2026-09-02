@@ -282,6 +282,50 @@ describe('SystemSettingService', () => {
     }
   });
 
+  it('getHarnessTuningConfigAppliesDefaults', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    const cfg = await service().getHarnessTuningConfig();
+    expect(cfg).toEqual({
+      compaction: { enabled: true, contextWindowTokens: 256000, triggerRatio: 0.8, maxSummaryTokens: 12000, loopMidwayCompact: true },
+      llm: { rateLimitMaxRetries: 10, rateLimitRetryDelaySeconds: 2, rateLimitMaxRetryDelaySeconds: 30, callTimeoutSeconds: 120, httpCallTimeoutSeconds: 180, streamIdleTimeoutSeconds: 300 },
+      webPage: { connectTimeout: 10000, readTimeout: 30000, maxRawBytes: 1048576, maxOutputLength: 500000, userAgent: 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)' },
+      shell: { maxSessionsPerConversation: 30, sessionIdleTimeoutMinutes: 30, sessionMaxLifetimeHours: 2 },
+      delegate: { timeoutSeconds: 3600, cancelGraceSeconds: 30 },
+    });
+  });
+
+  it('getHarnessTuningConfigReadsStoredValues', async () => {
+    const rows: Record<string, string> = {
+      'harness.compaction.enabled': 'false',
+      'harness.compaction.contextWindowTokens': '128000',
+      'harness.compaction.triggerRatio': '0.9',
+      'harness.llm.callTimeoutSeconds': '60',
+      'harness.webPage.userAgent': 'TestUA/2.0',
+      'harness.delegate.timeoutSeconds': '600',
+    };
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (rows[key] != null) return { id: 1, settingKey: key, value: rows[key], category: '运行参数', editable: 1 };
+      return null;
+    });
+    const cfg = await service().getHarnessTuningConfig();
+    expect(cfg.compaction.enabled).toBe(false);
+    expect(cfg.compaction.contextWindowTokens).toBe(128000);
+    expect(cfg.compaction.triggerRatio).toBe(0.9);
+    expect(cfg.llm.callTimeoutSeconds).toBe(60);
+    expect(cfg.webPage.userAgent).toBe('TestUA/2.0');
+    expect(cfg.delegate.timeoutSeconds).toBe(600);
+  });
+
+  it('updateRejectsInvalidHarnessTuningValues', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('harness.compaction.contextWindowTokens', '运行参数', 1));
+    await expect(service().update('harness.compaction.contextWindowTokens', '0')).rejects.toThrow(/正整数/);
+    await expect(service().update('harness.compaction.contextWindowTokens', 'abc')).rejects.toThrow(/正整数/);
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('harness.compaction.triggerRatio', '运行参数', 1));
+    await expect(service().update('harness.compaction.triggerRatio', '1.5')).rejects.toThrow(/0~1/);
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('harness.compaction.enabled', '运行参数', 1));
+    await expect(service().update('harness.compaction.enabled', 'yes')).rejects.toThrow(/true 或 false/);
+  });
+
   it('getOssConfigReturnsNullWhenUnconfigured', async () => {
     vi.mocked(mapper.findByKey).mockResolvedValue(null);
     expect(await service().getOssConfig()).toBeNull();

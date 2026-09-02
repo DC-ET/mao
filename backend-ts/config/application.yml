@@ -29,7 +29,8 @@ jwt:
   shell-expiration: ${JWT_SHELL_EXPIRATION:7200000}
 
 # 集成配置（LDAP / 飞书OAuth登录 / 上传 / Tavily/TinyFish 搜索 / OSS）与运行参数（Agent 线程池、
-# WS 空闲超时、任务通知调度参数）已迁移至管理后台 system_setting，
+# WS 空闲超时、任务通知调度参数、harness 调参：上下文压缩 / LLM 超时重试 / 网页抓取 / Shell 会话 / 子代理超时）
+# 已迁移至管理后台 system_setting，
 # 环境变量（LDAP_*、FEISHU_APP_*、UPLOAD_*、TAVILY_API_KEY、TINYFISH_API_KEY、WEB_SEARCH_PROVIDER、OSS_*、
 # AGENT_THREAD_POOL_*、APP_WS_IDLE_TIMEOUT_MS、TASK_NOTIFICATION_* 等）仅在升级首次启动时
 # 由 SettingsBootstrap 自动导入 DB（加密项需 SETTINGS_SECRET），之后一律以管理后台为准。
@@ -71,32 +72,6 @@ app:
     user-home-dir: ${MAO_USER_HOME_DIR:/opt/mao-data/users}
     skills-dir: ${SKILLS_DIR:./skills}
     user-skills-dir: ${USER_SKILLS_DIR:}
-    compaction:
-      enabled: true
-      context-window-tokens: 256000
-      trigger-ratio: 0.8
-      max-summary-tokens: 12000
-      loop-midway-compact: true
-    llm:
-      rate-limit-max-retries: 10
-      rate-limit-retry-delay-seconds: 2
-      rate-limit-max-retry-delay-seconds: 30
-      call-timeout-seconds: 120
-      http-call-timeout-seconds: 180
-      stream-idle-timeout-seconds: 300
-    web-page:
-      connect-timeout: 10000
-      read-timeout: 30000
-      max-raw-bytes: 1048576
-      max-output-length: 500000
-      user-agent: Mozilla/5.0 (compatible; AgentWorkbench/1.0)
-    shell:
-      max-sessions-per-conversation: 30
-      session-idle-timeout-minutes: 30
-      session-max-lifetime-hours: 2
-    delegate:
-      timeout-seconds: 3600
-      cancel-grace-seconds: 30
   mcp:
     secret-key: ${APP_MCP_SECRET:mao-mcp-default-secret-change-me}
     client-timeout-seconds: ${APP_MCP_CLIENT_TIMEOUT_SECONDS:120}

@@ -80,6 +80,10 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 
 `TASK_NOTIFICATION_WORKER_DELAY_MS`、`TASK_NOTIFICATION_BATCH_SIZE`、`TASK_NOTIFICATION_MAX_ATTEMPTS`。
 
+### Harness 调参（0.0.89 起迁移至管理后台，勿再改 yml）
+
+上下文压缩（`harness.compaction.*`：开关/上下文窗口/触发比例/摘要上限/循环中途压缩）、LLM 超时与限流重试（`harness.llm.*`）、网页抓取（`harness.webPage.*`）、Shell 会话（`harness.shell.*`）、子代理执行超时（`harness.delegate.timeoutSeconds/cancelGraceSeconds`），已全部迁入管理后台「系统设置 → 集成配置」。均为启动时构建，**保存后需重启后端生效**；`application.yml` 不再读取这些键。Agent 级压缩覆盖（agent `configJson` 的 `compaction` 节点）优先于全局默认值。
+
 ### 运维清理调度器（0.0.76 新增）
 
 系统级定时清理 `MAO_RUNTIME_DIR` 下的临时数据（不跑 LLM、不产生消息）：

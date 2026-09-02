@@ -106,3 +106,38 @@ export interface NotificationTuningSettings {
   batchSize: number;
   maxAttempts: number;
 }
+
+/** harness 调参：均在启动时构建（改后需重启后端）。 */
+export interface HarnessTuningSettings {
+  compaction: {
+    enabled: boolean;
+    contextWindowTokens: number;
+    triggerRatio: number;
+    maxSummaryTokens: number;
+    loopMidwayCompact: boolean;
+  };
+  llm: {
+    rateLimitMaxRetries: number;
+    rateLimitRetryDelaySeconds: number;
+    rateLimitMaxRetryDelaySeconds: number;
+    callTimeoutSeconds: number;
+    httpCallTimeoutSeconds: number;
+    streamIdleTimeoutSeconds: number;
+  };
+  webPage: {
+    connectTimeout: number;
+    readTimeout: number;
+    maxRawBytes: number;
+    maxOutputLength: number;
+    userAgent: string;
+  };
+  shell: {
+    maxSessionsPerConversation: number;
+    sessionIdleTimeoutMinutes: number;
+    sessionMaxLifetimeHours: number;
+  };
+  delegate: {
+    timeoutSeconds: number;
+    cancelGraceSeconds: number;
+  };
+}

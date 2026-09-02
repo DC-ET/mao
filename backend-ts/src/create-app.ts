@@ -300,10 +300,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const settingRepo = new MysqlSystemSettingRepository(db);
   await runSettingsBootstrap(settingRepo, settingsSecret);
   // 上传上限后台可配：multipart 截断阈值取配置值与默认 50MB 的较大者，避免后台调大后被 multipart 层先截断
-  const bootstrapUploadCfg = await new SystemSettingService(settingRepo, { findById: async () => null }, { findById: async () => null }, { workspaceRoot: '', skillsDir: '' }, settingsSecret).getUploadConfig();
+  const bootstrapSettings = new SystemSettingService(settingRepo, { findById: async () => null }, { findById: async () => null }, { workspaceRoot: '', skillsDir: '' }, settingsSecret);
+  const bootstrapUploadCfg = await bootstrapSettings.getUploadConfig();
   const multipartLimitMb = Math.max(50, bootstrapUploadCfg.maxSizeMb);
-  // Agent 线程池/WS 超时启动时从 DB 构建，后台改动需重启生效；调度参数走 getter 即时生效
-  const agentRuntimeCfg = await new SystemSettingService(settingRepo, { findById: async () => null }, { findById: async () => null }, { workspaceRoot: '', skillsDir: '' }, settingsSecret).getAgentRuntimeConfig();
+  // Agent 线程池/WS 超时/harness 调参启动时从 DB 构建，后台改动需重启生效；调度参数走 getter 即时生效
+  const agentRuntimeCfg = await bootstrapSettings.getAgentRuntimeConfig();
+  const harnessTuning = await bootstrapSettings.getHarnessTuningConfig();
   const app = existing ?? Fastify({ logger: true, bodyLimit: Math.max(52, multipartLimitMb + 2) * 1024 * 1024 });
   const hasher = { hash: hashPassword, matches: matchesPassword };
   const jwt = new JwtService(cfg.jwt.secret, cfg.jwt.expiration, cfg.jwt.refreshExpiration, cfg.jwt.shellExpiration);
@@ -393,9 +395,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const experienceService = new AgentExperienceService(new MysqlAgentExperienceRepository(db));
   const agentService = new AgentService(agentRepo, experienceService);
   const modelRepo = new MysqlLlmModelRepository(db);
-  const modelChatClient = new OpenAiChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
-  const anthropicChatClient = new AnthropicChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
-  const responsesChatClient = new ResponsesChatClient({ timeoutMs: cfg.app.harness.llm.callTimeoutSeconds * 1000 });
+  const modelChatClient = new OpenAiChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
+  const anthropicChatClient = new AnthropicChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
+  const responsesChatClient = new ResponsesChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
   const llmChatClients = new Map<string, LlmChatClient>([
     ['anthropic', anthropicChatClient],
     ['openai-responses', responsesChatClient],
@@ -525,28 +527,28 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const mcpSync = new McpSyncService(mcpMapper, mcpServerService, mcpToolsRegistry, mcpPref);
 
   const openAiLlmAdapter = new OpenAiLlmAdapter({
-    rateLimitMaxRetries: cfg.app.harness.llm.rateLimitMaxRetries,
-    rateLimitRetryDelaySeconds: cfg.app.harness.llm.rateLimitRetryDelaySeconds,
-    rateLimitMaxRetryDelaySeconds: cfg.app.harness.llm.rateLimitMaxRetryDelaySeconds,
-    callTimeoutSeconds: cfg.app.harness.llm.callTimeoutSeconds,
-    httpCallTimeoutSeconds: cfg.app.harness.llm.httpCallTimeoutSeconds,
-    streamIdleTimeoutSeconds: cfg.app.harness.llm.streamIdleTimeoutSeconds,
+    rateLimitMaxRetries: harnessTuning.llm.rateLimitMaxRetries,
+    rateLimitRetryDelaySeconds: harnessTuning.llm.rateLimitRetryDelaySeconds,
+    rateLimitMaxRetryDelaySeconds: harnessTuning.llm.rateLimitMaxRetryDelaySeconds,
+    callTimeoutSeconds: harnessTuning.llm.callTimeoutSeconds,
+    httpCallTimeoutSeconds: harnessTuning.llm.httpCallTimeoutSeconds,
+    streamIdleTimeoutSeconds: harnessTuning.llm.streamIdleTimeoutSeconds,
   });
   const anthropicLlmAdapter = new AnthropicLlmAdapter({
-    rateLimitMaxRetries: cfg.app.harness.llm.rateLimitMaxRetries,
-    rateLimitRetryDelaySeconds: cfg.app.harness.llm.rateLimitRetryDelaySeconds,
-    rateLimitMaxRetryDelaySeconds: cfg.app.harness.llm.rateLimitMaxRetryDelaySeconds,
-    callTimeoutSeconds: cfg.app.harness.llm.callTimeoutSeconds,
-    httpCallTimeoutSeconds: cfg.app.harness.llm.httpCallTimeoutSeconds,
-    streamIdleTimeoutSeconds: cfg.app.harness.llm.streamIdleTimeoutSeconds,
+    rateLimitMaxRetries: harnessTuning.llm.rateLimitMaxRetries,
+    rateLimitRetryDelaySeconds: harnessTuning.llm.rateLimitRetryDelaySeconds,
+    rateLimitMaxRetryDelaySeconds: harnessTuning.llm.rateLimitMaxRetryDelaySeconds,
+    callTimeoutSeconds: harnessTuning.llm.callTimeoutSeconds,
+    httpCallTimeoutSeconds: harnessTuning.llm.httpCallTimeoutSeconds,
+    streamIdleTimeoutSeconds: harnessTuning.llm.streamIdleTimeoutSeconds,
   });
   const responsesLlmAdapter = new ResponsesLlmAdapter({
-    rateLimitMaxRetries: cfg.app.harness.llm.rateLimitMaxRetries,
-    rateLimitRetryDelaySeconds: cfg.app.harness.llm.rateLimitRetryDelaySeconds,
-    rateLimitMaxRetryDelaySeconds: cfg.app.harness.llm.rateLimitMaxRetryDelaySeconds,
-    callTimeoutSeconds: cfg.app.harness.llm.callTimeoutSeconds,
-    httpCallTimeoutSeconds: cfg.app.harness.llm.httpCallTimeoutSeconds,
-    streamIdleTimeoutSeconds: cfg.app.harness.llm.streamIdleTimeoutSeconds,
+    rateLimitMaxRetries: harnessTuning.llm.rateLimitMaxRetries,
+    rateLimitRetryDelaySeconds: harnessTuning.llm.rateLimitRetryDelaySeconds,
+    rateLimitMaxRetryDelaySeconds: harnessTuning.llm.rateLimitMaxRetryDelaySeconds,
+    callTimeoutSeconds: harnessTuning.llm.callTimeoutSeconds,
+    httpCallTimeoutSeconds: harnessTuning.llm.httpCallTimeoutSeconds,
+    streamIdleTimeoutSeconds: harnessTuning.llm.streamIdleTimeoutSeconds,
   });
   const llmAdapter = new LlmAdapterFacade(
     new Map<string, LlmAdapter>([
@@ -560,11 +562,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const compactionService = new CompactionService(llmAdapter, tokenEstimator);
   const contextManager = new ContextManager(tokenEstimator, compactionService);
   const compactionConfig = new CompactionConfig();
-  compactionConfig.enabled = cfg.app.harness.compaction.enabled;
-  compactionConfig.contextWindowTokens = cfg.app.harness.compaction.contextWindowTokens;
-  compactionConfig.triggerRatio = cfg.app.harness.compaction.triggerRatio;
-  compactionConfig.maxSummaryTokens = cfg.app.harness.compaction.maxSummaryTokens;
-  compactionConfig.loopMidwayCompact = cfg.app.harness.compaction.loopMidwayCompact;
+  compactionConfig.enabled = harnessTuning.compaction.enabled;
+  compactionConfig.contextWindowTokens = harnessTuning.compaction.contextWindowTokens;
+  compactionConfig.triggerRatio = harnessTuning.compaction.triggerRatio;
+  compactionConfig.maxSummaryTokens = harnessTuning.compaction.maxSummaryTokens;
+  compactionConfig.loopMidwayCompact = harnessTuning.compaction.loopMidwayCompact;
   const historyLoader = new SessionHistoryLoader(sessionSvc, contextManager);
   const activeContext = new ActiveContextCalculator(tokenEstimator);
   const orchestrator = new SessionCompactionOrchestrator(
@@ -574,9 +576,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const backgroundTasks = new BackgroundTaskManager();
   const shellManager = new ShellSessionManager(
     pathSandbox, runtimeResolver,
-    cfg.app.harness.shell.maxSessionsPerConversation,
-    cfg.app.harness.shell.sessionIdleTimeoutMinutes,
-    cfg.app.harness.shell.sessionMaxLifetimeHours,
+    harnessTuning.shell.maxSessionsPerConversation,
+    harnessTuning.shell.sessionIdleTimeoutMinutes,
+    harnessTuning.shell.sessionMaxLifetimeHours,
   );
   const outputManager = new OutputManager(
     cfg.app.harness.shell.output.maxPreviewLines,
@@ -672,7 +674,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     jwtService: jwt,
     shellUserLookup: { findById: (id: number) => userRepo.findById(id) },
     webSearch: () => settingService.getWebSearchConfig(),
-    webPage: cfg.app.harness.webPage,
+    webPage: harnessTuning.webPage,
     imageModelLookup: modelService,
     uploadDir,
     getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
@@ -1615,6 +1617,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     subagentMapper, sessionMap, sessionSvc, compactionSvc, definitionRegistry,
     (childSession, definition) => backgroundSubagentManager.buildSubContext(childSession, definition),
     agentLoop, visibility, localToolSessions,
+    harnessTuning.delegate.timeoutSeconds, harnessTuning.delegate.cancelGraceSeconds,
   );
   const subagentCoordinator = new SubagentRecoveryCoordinator(
     subagentMapper, subagentExecutionRecovery, subagentResultDelivery,

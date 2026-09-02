@@ -102,6 +102,8 @@ CLI：`mao runtime ...`（见 [runtime.md](runtime.md)）。
   - 上传：存储方式（local/OSS）、访问前缀、单文件大小上限
   - 网络工具：Tavily / TinyFish 搜索实现切换与各自 API Key（0.0.83 新增双实现）
   - 阿里云 OSS 对象存储与 STS 临时凭证
+  - Agent 运行 / 任务通知（0.0.88 迁入；通知即时生效，线程池与 WS 超时重启生效）
+  - Harness 调参（0.0.89 迁入）：上下文压缩、LLM 超时与重试、网页抓取、Shell 会话、子代理执行超时，保存后重启后端生效
 - `weixin.agentId` / `weixin.modelId`：微信通道 Agent 与模型
 - `session.titleModelId`：会话标题生成模型
 - `git.commitMessageModelId`：Git 提交信息生成模型

@@ -69,32 +69,7 @@ export interface AppConfig {
       skillsDir: string;
       userSkillsDir: string;
       skillsCacheSeconds: number;
-      compaction: {
-        enabled: boolean;
-        contextWindowTokens: number;
-        triggerRatio: number;
-        maxSummaryTokens: number;
-        loopMidwayCompact: boolean;
-      };
-      llm: {
-        rateLimitMaxRetries: number;
-        rateLimitRetryDelaySeconds: number;
-        rateLimitMaxRetryDelaySeconds: number;
-        callTimeoutSeconds: number;
-        httpCallTimeoutSeconds: number;
-        streamIdleTimeoutSeconds: number;
-      };
-      webPage: {
-        connectTimeout: number;
-        readTimeout: number;
-        maxRawBytes: number;
-        maxOutputLength: number;
-        userAgent: string;
-      };
       shell: {
-        maxSessionsPerConversation: number;
-        sessionIdleTimeoutMinutes: number;
-        sessionMaxLifetimeHours: number;
         output: { maxPreviewLines: number; maxPreviewChars: number };
       };
       cleanup: {
@@ -193,32 +168,7 @@ const DEFAULTS: AppConfig = {
       skillsDir: './skills',
       userSkillsDir: join(process.env.HOME ?? '/tmp', '.mao/data/userskills'),
       skillsCacheSeconds: 300,
-      compaction: {
-        enabled: true,
-        contextWindowTokens: 256000,
-        triggerRatio: 0.8,
-        maxSummaryTokens: 12000,
-        loopMidwayCompact: true,
-      },
-      llm: {
-        rateLimitMaxRetries: 10,
-        rateLimitRetryDelaySeconds: 2,
-        rateLimitMaxRetryDelaySeconds: 30,
-        callTimeoutSeconds: 120,
-        httpCallTimeoutSeconds: 180,
-        streamIdleTimeoutSeconds: 300,
-      },
-      webPage: {
-        connectTimeout: 10000,
-        readTimeout: 30000,
-        maxRawBytes: 1048576,
-        maxOutputLength: 500000,
-        userAgent: 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)',
-      },
       shell: {
-        maxSessionsPerConversation: 30,
-        sessionIdleTimeoutMinutes: 30,
-        sessionMaxLifetimeHours: 2,
         output: { maxPreviewLines: 100, maxPreviewChars: 10000 },
       },
       cleanup: {

@@ -15,6 +15,17 @@
 
 ---
 
+## 0.0.89 (2026-09-02)
+
+### 后端
+
+- Harness 调参后台化：上下文压缩（`harness.compaction.*` 5 项）、LLM 超时与限流重试（`harness.llm.*` 6 项）、网页抓取（`harness.webPage.*` 5 项）、Shell 会话（`harness.shell.*` 3 项）、子代理执行超时（`harness.delegate.timeoutSeconds/cancelGraceSeconds`）从 `application.yml` 迁入 system_setting（V097），管理后台可视化编辑；均为启动时构建，保存后需重启后端生效
+- 修复死配置：yml 中 `app.harness.delegate` 此前无消费点（`SubagentExecutionRecoveryService` 内硬编码 3600/30），本次接线后后台修改可生效；触发比例（0~1 小数）与布尔项新增入库校验
+
+### 管理后台
+
+- 「集成配置」新增「上下文压缩」「LLM 超时与重试」「网页抓取」「Shell 会话」「子代理执行」五张卡片与目录锚点；顶部提示改为区分即时生效与重启生效配置
+
 ## 0.0.88 (2026-09-02)
 
 ### 后端

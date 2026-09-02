@@ -4,7 +4,7 @@
       type="info"
       :closable="false"
       show-icon
-      title="集成配置保存后立即生效，无需重启服务。加密项保存后仅显示掩码，留空表示不修改。"
+      title="集成配置保存后即时生效；Agent 运行 / Harness 调参为启动时构建，保存后需重启后端生效。加密项保存后仅显示掩码，留空表示不修改。"
       class="integration-tip"
     />
     <div class="group-list">
@@ -270,6 +270,62 @@ const groups = computed<GroupDef[]>(() => [
       { key: 'notify.workerDelayMs', label: '轮询间隔 (ms)', type: 'number', min: 1000, max: 3600000, hint: '默认 30000，保存后即时生效' },
       { key: 'notify.batchSize', label: '每轮批量拉取条数', type: 'number', min: 1, max: 10000, hint: '默认 100，保存后即时生效' },
       { key: 'notify.maxAttempts', label: '最大重试次数', type: 'number', min: 1, max: 100, hint: '默认 4，保存后即时生效' },
+    ],
+  },
+  {
+    name: 'harness-compaction',
+    title: '上下文压缩',
+    keys: ['harness.compaction.enabled', 'harness.compaction.contextWindowTokens', 'harness.compaction.triggerRatio', 'harness.compaction.maxSummaryTokens', 'harness.compaction.loopMidwayCompact'],
+    fields: [
+      { key: 'harness.compaction.enabled', label: '启用', type: 'switch', hint: '会话上下文自动压缩总开关' },
+      { key: 'harness.compaction.contextWindowTokens', label: '上下文窗口 (tokens)', type: 'number', min: 1000, max: 10000000, hint: '默认 256000' },
+      { key: 'harness.compaction.triggerRatio', label: '触发比例', hint: '0~1 之间的小数，默认 0.8' },
+      { key: 'harness.compaction.maxSummaryTokens', label: '摘要上限 (tokens)', type: 'number', min: 1000, max: 1000000, hint: '默认 12000' },
+      { key: 'harness.compaction.loopMidwayCompact', label: '循环中途压缩', type: 'switch', hint: '默认开启' },
+    ],
+  },
+  {
+    name: 'harness-llm',
+    title: 'LLM 超时与重试',
+    keys: ['harness.llm.rateLimitMaxRetries', 'harness.llm.rateLimitRetryDelaySeconds', 'harness.llm.rateLimitMaxRetryDelaySeconds', 'harness.llm.callTimeoutSeconds', 'harness.llm.httpCallTimeoutSeconds', 'harness.llm.streamIdleTimeoutSeconds'],
+    fields: [
+      { key: 'harness.llm.rateLimitMaxRetries', label: '限流最大重试次数', type: 'number', min: 1, max: 100, hint: '默认 10' },
+      { key: 'harness.llm.rateLimitRetryDelaySeconds', label: '限流重试基础间隔 (s)', type: 'number', min: 1, max: 600, hint: '默认 2' },
+      { key: 'harness.llm.rateLimitMaxRetryDelaySeconds', label: '限流重试最大间隔 (s)', type: 'number', min: 1, max: 3600, hint: '默认 30' },
+      { key: 'harness.llm.callTimeoutSeconds', label: '单次调用超时 (s)', type: 'number', min: 1, max: 3600, hint: '默认 120' },
+      { key: 'harness.llm.httpCallTimeoutSeconds', label: 'HTTP 请求超时 (s)', type: 'number', min: 1, max: 3600, hint: '默认 180' },
+      { key: 'harness.llm.streamIdleTimeoutSeconds', label: '流式空闲超时 (s)', type: 'number', min: 1, max: 3600, hint: '默认 300' },
+    ],
+  },
+  {
+    name: 'harness-webpage',
+    title: '网页抓取',
+    keys: ['harness.webPage.connectTimeout', 'harness.webPage.readTimeout', 'harness.webPage.maxRawBytes', 'harness.webPage.maxOutputLength', 'harness.webPage.userAgent'],
+    fields: [
+      { key: 'harness.webPage.connectTimeout', label: '连接超时 (ms)', type: 'number', min: 1000, max: 120000, hint: '默认 10000' },
+      { key: 'harness.webPage.readTimeout', label: '读取超时 (ms)', type: 'number', min: 1000, max: 600000, hint: '默认 30000' },
+      { key: 'harness.webPage.maxRawBytes', label: '原始内容上限 (字节)', type: 'number', min: 1024, max: 104857600, hint: '默认 1048576 (1MB)' },
+      { key: 'harness.webPage.maxOutputLength', label: '输出字符上限', type: 'number', min: 1000, max: 10000000, hint: '默认 500000' },
+      { key: 'harness.webPage.userAgent', label: 'User-Agent' },
+    ],
+  },
+  {
+    name: 'harness-shell',
+    title: 'Shell 会话',
+    keys: ['harness.shell.maxSessionsPerConversation', 'harness.shell.sessionIdleTimeoutMinutes', 'harness.shell.sessionMaxLifetimeHours'],
+    fields: [
+      { key: 'harness.shell.maxSessionsPerConversation', label: '每会话最大 Shell 数', type: 'number', min: 1, max: 1000, hint: '默认 30' },
+      { key: 'harness.shell.sessionIdleTimeoutMinutes', label: '空闲超时 (分钟)', type: 'number', min: 1, max: 1440, hint: '默认 30' },
+      { key: 'harness.shell.sessionMaxLifetimeHours', label: '最长存活 (小时)', type: 'number', min: 1, max: 168, hint: '默认 2' },
+    ],
+  },
+  {
+    name: 'harness-delegate',
+    title: '子代理执行',
+    keys: ['harness.delegate.timeoutSeconds', 'harness.delegate.cancelGraceSeconds'],
+    fields: [
+      { key: 'harness.delegate.timeoutSeconds', label: '执行超时 (s)', type: 'number', min: 60, max: 86400, hint: '默认 3600' },
+      { key: 'harness.delegate.cancelGraceSeconds', label: '取消宽限 (s)', type: 'number', min: 1, max: 600, hint: '默认 30' },
     ],
   },
 ])

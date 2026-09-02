@@ -146,6 +146,11 @@ const INTEGRATION_KEYS = new Set([
   'oss.sts.roleArn', 'oss.sts.roleSessionName', 'oss.sts.expire', 'oss.sts.maxSizeMb',
   'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs',
   'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts',
+  'harness.compaction.enabled', 'harness.compaction.contextWindowTokens', 'harness.compaction.triggerRatio', 'harness.compaction.maxSummaryTokens', 'harness.compaction.loopMidwayCompact',
+  'harness.llm.rateLimitMaxRetries', 'harness.llm.rateLimitRetryDelaySeconds', 'harness.llm.rateLimitMaxRetryDelaySeconds', 'harness.llm.callTimeoutSeconds', 'harness.llm.httpCallTimeoutSeconds', 'harness.llm.streamIdleTimeoutSeconds',
+  'harness.webPage.connectTimeout', 'harness.webPage.readTimeout', 'harness.webPage.maxRawBytes', 'harness.webPage.maxOutputLength', 'harness.webPage.userAgent',
+  'harness.shell.maxSessionsPerConversation', 'harness.shell.sessionIdleTimeoutMinutes', 'harness.shell.sessionMaxLifetimeHours',
+  'harness.delegate.timeoutSeconds', 'harness.delegate.cancelGraceSeconds',
 ])
 
 /** 集成配置目录条目：锚点 id 与 IntegrationConfigPanel 内 group-card 的 id 保持一致。 */
@@ -157,6 +162,11 @@ const INTEGRATION_TOC = [
   { id: 'setting-group-tools', label: '网络工具' },
   { id: 'setting-group-agent', label: 'Agent 运行' },
   { id: 'setting-group-notify', label: '任务通知' },
+  { id: 'setting-group-harness-compaction', label: '上下文压缩' },
+  { id: 'setting-group-harness-llm', label: 'LLM 超时与重试' },
+  { id: 'setting-group-harness-webpage', label: '网页抓取' },
+  { id: 'setting-group-harness-shell', label: 'Shell 会话' },
+  { id: 'setting-group-harness-delegate', label: '子代理执行' },
 ]
 
 const loading = ref(false)

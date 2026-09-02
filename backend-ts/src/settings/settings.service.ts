@@ -3,9 +3,9 @@ import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
-  AgentLookup, AgentRuntimeSettings, FeishuOAuthSettings, LdapSettings, ModelLookup, NotificationTuningSettings,
-  OssSettings, SettingsRuntimeConfig, SystemSetting, SystemSettingRepository, TavilySettings, TinyFishSettings,
-  UploadSettings, WebSearchConfig, WebSearchProvider,
+  AgentLookup, AgentRuntimeSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
+  NotificationTuningSettings, OssSettings, SettingsRuntimeConfig, SystemSetting, SystemSettingRepository,
+  TavilySettings, TinyFishSettings, UploadSettings, WebSearchConfig, WebSearchProvider,
 } from './types.js';
 
 export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
@@ -49,6 +49,41 @@ export const NOTIFY_WORKER_DELAY_MS_KEY = 'notify.workerDelayMs';
 export const NOTIFY_BATCH_SIZE_KEY = 'notify.batchSize';
 export const NOTIFY_MAX_ATTEMPTS_KEY = 'notify.maxAttempts';
 
+const HARNESS_COMPACTION_ENABLED_KEY = 'harness.compaction.enabled';
+const HARNESS_COMPACTION_CONTEXT_WINDOW_TOKENS_KEY = 'harness.compaction.contextWindowTokens';
+const HARNESS_COMPACTION_TRIGGER_RATIO_KEY = 'harness.compaction.triggerRatio';
+const HARNESS_COMPACTION_MAX_SUMMARY_TOKENS_KEY = 'harness.compaction.maxSummaryTokens';
+const HARNESS_COMPACTION_LOOP_MIDWAY_KEY = 'harness.compaction.loopMidwayCompact';
+const HARNESS_LLM_RATE_LIMIT_MAX_RETRIES_KEY = 'harness.llm.rateLimitMaxRetries';
+const HARNESS_LLM_RATE_LIMIT_RETRY_DELAY_SECONDS_KEY = 'harness.llm.rateLimitRetryDelaySeconds';
+const HARNESS_LLM_RATE_LIMIT_MAX_RETRY_DELAY_SECONDS_KEY = 'harness.llm.rateLimitMaxRetryDelaySeconds';
+const HARNESS_LLM_CALL_TIMEOUT_SECONDS_KEY = 'harness.llm.callTimeoutSeconds';
+const HARNESS_LLM_HTTP_CALL_TIMEOUT_SECONDS_KEY = 'harness.llm.httpCallTimeoutSeconds';
+const HARNESS_LLM_STREAM_IDLE_TIMEOUT_SECONDS_KEY = 'harness.llm.streamIdleTimeoutSeconds';
+const HARNESS_WEB_PAGE_CONNECT_TIMEOUT_KEY = 'harness.webPage.connectTimeout';
+const HARNESS_WEB_PAGE_READ_TIMEOUT_KEY = 'harness.webPage.readTimeout';
+const HARNESS_WEB_PAGE_MAX_RAW_BYTES_KEY = 'harness.webPage.maxRawBytes';
+const HARNESS_WEB_PAGE_MAX_OUTPUT_LENGTH_KEY = 'harness.webPage.maxOutputLength';
+const HARNESS_WEB_PAGE_USER_AGENT_KEY = 'harness.webPage.userAgent';
+const HARNESS_SHELL_MAX_SESSIONS_KEY = 'harness.shell.maxSessionsPerConversation';
+const HARNESS_SHELL_IDLE_TIMEOUT_MINUTES_KEY = 'harness.shell.sessionIdleTimeoutMinutes';
+const HARNESS_SHELL_MAX_LIFETIME_HOURS_KEY = 'harness.shell.sessionMaxLifetimeHours';
+const HARNESS_DELEGATE_TIMEOUT_SECONDS_KEY = 'harness.delegate.timeoutSeconds';
+const HARNESS_DELEGATE_CANCEL_GRACE_SECONDS_KEY = 'harness.delegate.cancelGraceSeconds';
+
+const HARNESS_INT_KEYS = new Set([
+  HARNESS_COMPACTION_CONTEXT_WINDOW_TOKENS_KEY, HARNESS_COMPACTION_MAX_SUMMARY_TOKENS_KEY,
+  HARNESS_LLM_RATE_LIMIT_MAX_RETRIES_KEY, HARNESS_LLM_RATE_LIMIT_RETRY_DELAY_SECONDS_KEY,
+  HARNESS_LLM_RATE_LIMIT_MAX_RETRY_DELAY_SECONDS_KEY, HARNESS_LLM_CALL_TIMEOUT_SECONDS_KEY,
+  HARNESS_LLM_HTTP_CALL_TIMEOUT_SECONDS_KEY, HARNESS_LLM_STREAM_IDLE_TIMEOUT_SECONDS_KEY,
+  HARNESS_WEB_PAGE_CONNECT_TIMEOUT_KEY, HARNESS_WEB_PAGE_READ_TIMEOUT_KEY,
+  HARNESS_WEB_PAGE_MAX_RAW_BYTES_KEY, HARNESS_WEB_PAGE_MAX_OUTPUT_LENGTH_KEY,
+  HARNESS_SHELL_MAX_SESSIONS_KEY, HARNESS_SHELL_IDLE_TIMEOUT_MINUTES_KEY,
+  HARNESS_SHELL_MAX_LIFETIME_HOURS_KEY, HARNESS_DELEGATE_TIMEOUT_SECONDS_KEY,
+  HARNESS_DELEGATE_CANCEL_GRACE_SECONDS_KEY,
+]);
+const HARNESS_BOOL_KEYS = new Set([HARNESS_COMPACTION_ENABLED_KEY, HARNESS_COMPACTION_LOOP_MIDWAY_KEY]);
+
 /** 掩码回显占位符：secret 行已设置时返回该值。 */
 export const SECRET_MASK = '******';
 
@@ -74,6 +109,7 @@ const DEFAULT_WS_IDLE_TIMEOUT_MS = 90000;
 const DEFAULT_NOTIFY_WORKER_DELAY_MS = 30000;
 const DEFAULT_NOTIFY_BATCH_SIZE = 100;
 const DEFAULT_NOTIFY_MAX_ATTEMPTS = 4;
+const DEFAULT_HARNESS_WEB_PAGE_USER_AGENT = 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)';
 
 export class SystemSettingService {
   static readonly WEIXIN_AGENT_ID_KEY = WEIXIN_AGENT_ID_KEY;
@@ -250,6 +286,73 @@ export class SystemSettingService {
     };
   }
 
+  /** harness 调参：压缩 / LLM / 网页抓取 / Shell 会话 / 子代理超时。均启动时构建，修改后需重启后端生效。 */
+  async getHarnessTuningConfig(): Promise<HarnessTuningSettings> {
+    const [
+      compactionEnabledRaw, contextWindowRaw, triggerRatioRaw, maxSummaryRaw, loopMidwayRaw,
+      rateLimitMaxRetriesRaw, rateLimitRetryDelayRaw, rateLimitMaxRetryDelayRaw,
+      callTimeoutRaw, httpCallTimeoutRaw, streamIdleTimeoutRaw,
+      webPageConnectRaw, webPageReadRaw, webPageMaxRawBytesRaw, webPageMaxOutputRaw, webPageUserAgentRaw,
+      shellMaxSessionsRaw, shellIdleTimeoutRaw, shellMaxLifetimeRaw,
+      delegateTimeoutRaw, delegateGraceRaw,
+    ] = await Promise.all([
+      this.getOpt(HARNESS_COMPACTION_ENABLED_KEY),
+      this.getOpt(HARNESS_COMPACTION_CONTEXT_WINDOW_TOKENS_KEY),
+      this.getOpt(HARNESS_COMPACTION_TRIGGER_RATIO_KEY),
+      this.getOpt(HARNESS_COMPACTION_MAX_SUMMARY_TOKENS_KEY),
+      this.getOpt(HARNESS_COMPACTION_LOOP_MIDWAY_KEY),
+      this.getOpt(HARNESS_LLM_RATE_LIMIT_MAX_RETRIES_KEY),
+      this.getOpt(HARNESS_LLM_RATE_LIMIT_RETRY_DELAY_SECONDS_KEY),
+      this.getOpt(HARNESS_LLM_RATE_LIMIT_MAX_RETRY_DELAY_SECONDS_KEY),
+      this.getOpt(HARNESS_LLM_CALL_TIMEOUT_SECONDS_KEY),
+      this.getOpt(HARNESS_LLM_HTTP_CALL_TIMEOUT_SECONDS_KEY),
+      this.getOpt(HARNESS_LLM_STREAM_IDLE_TIMEOUT_SECONDS_KEY),
+      this.getOpt(HARNESS_WEB_PAGE_CONNECT_TIMEOUT_KEY),
+      this.getOpt(HARNESS_WEB_PAGE_READ_TIMEOUT_KEY),
+      this.getOpt(HARNESS_WEB_PAGE_MAX_RAW_BYTES_KEY),
+      this.getOpt(HARNESS_WEB_PAGE_MAX_OUTPUT_LENGTH_KEY),
+      this.getOpt(HARNESS_WEB_PAGE_USER_AGENT_KEY),
+      this.getOpt(HARNESS_SHELL_MAX_SESSIONS_KEY),
+      this.getOpt(HARNESS_SHELL_IDLE_TIMEOUT_MINUTES_KEY),
+      this.getOpt(HARNESS_SHELL_MAX_LIFETIME_HOURS_KEY),
+      this.getOpt(HARNESS_DELEGATE_TIMEOUT_SECONDS_KEY),
+      this.getOpt(HARNESS_DELEGATE_CANCEL_GRACE_SECONDS_KEY),
+    ]);
+    return {
+      compaction: {
+        enabled: optBool(compactionEnabledRaw, true),
+        contextWindowTokens: optPositiveInt(contextWindowRaw, 256000),
+        triggerRatio: optRatio(triggerRatioRaw, 0.8),
+        maxSummaryTokens: optPositiveInt(maxSummaryRaw, 12000),
+        loopMidwayCompact: optBool(loopMidwayRaw, true),
+      },
+      llm: {
+        rateLimitMaxRetries: optPositiveInt(rateLimitMaxRetriesRaw, 10),
+        rateLimitRetryDelaySeconds: optPositiveInt(rateLimitRetryDelayRaw, 2),
+        rateLimitMaxRetryDelaySeconds: optPositiveInt(rateLimitMaxRetryDelayRaw, 30),
+        callTimeoutSeconds: optPositiveInt(callTimeoutRaw, 120),
+        httpCallTimeoutSeconds: optPositiveInt(httpCallTimeoutRaw, 180),
+        streamIdleTimeoutSeconds: optPositiveInt(streamIdleTimeoutRaw, 300),
+      },
+      webPage: {
+        connectTimeout: optPositiveInt(webPageConnectRaw, 10000),
+        readTimeout: optPositiveInt(webPageReadRaw, 30000),
+        maxRawBytes: optPositiveInt(webPageMaxRawBytesRaw, 1048576),
+        maxOutputLength: optPositiveInt(webPageMaxOutputRaw, 500000),
+        userAgent: webPageUserAgentRaw ?? DEFAULT_HARNESS_WEB_PAGE_USER_AGENT,
+      },
+      shell: {
+        maxSessionsPerConversation: optPositiveInt(shellMaxSessionsRaw, 30),
+        sessionIdleTimeoutMinutes: optPositiveInt(shellIdleTimeoutRaw, 30),
+        sessionMaxLifetimeHours: optPositiveInt(shellMaxLifetimeRaw, 2),
+      },
+      delegate: {
+        timeoutSeconds: optPositiveInt(delegateTimeoutRaw, 3600),
+        cancelGraceSeconds: optPositiveInt(delegateGraceRaw, 30),
+      },
+    };
+  }
+
   /** OSS 未配置（region/AK/SK/bucket 任一为空）时返回 null，消费方按"未配置"处理。 */
   async getOssConfig(): Promise<OssSettings | null> {    const [region, accessKeyId, accessKeySecret, bucket] = await Promise.all([
       this.getText(OSS_REGION_KEY),
@@ -346,6 +449,13 @@ export class SystemSettingService {
     return hasText(value) ? value : fallback;
   }
 
+  /** 未设置（NULL/空串）返回 null，由消费方回落代码默认值。 */
+  private async getOpt(key: string): Promise<string | null> {
+    const setting = await this.settingRepo.findByKey(key);
+    const value = setting?.value ?? '';
+    return hasText(value) ? value : null;
+  }
+
   private async getSecret(key: string): Promise<string> {
     const setting = await this.settingRepo.findByKey(key);
     const stored = setting?.value ?? '';
@@ -408,6 +518,18 @@ export class SystemSettingService {
     if (key.endsWith('enabled') && !(value!.toLowerCase() === 'true' || value!.toLowerCase() === 'false')) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '开关值必须为 true 或 false');
     }
+    if (HARNESS_INT_KEYS.has(key) && (parsePositiveInt(value) == null)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '配置值必须为正整数');
+    }
+    if (key === HARNESS_COMPACTION_TRIGGER_RATIO_KEY) {
+      const ratio = Number(value);
+      if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 1) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '压缩触发比例必须为 0~1 之间的小数');
+      }
+    }
+    if (HARNESS_BOOL_KEYS.has(key) && !(value!.toLowerCase() === 'true' || value!.toLowerCase() === 'false')) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '开关值必须为 true 或 false');
+    }
     if (key === UPLOAD_STORAGE_MODE_KEY && value !== 'local' && value !== 'oss') {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '上传存储模式仅支持 local 或 oss');
     }
@@ -440,4 +562,19 @@ function parsePositiveInt(value: string | null | undefined): number | null {
   }
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function optBool(raw: string | null, fallback: boolean): boolean {
+  if (raw == null) return fallback;
+  return raw === 'true' || raw === '1';
+}
+
+function optPositiveInt(raw: string | null, fallback: number): number {
+  return parsePositiveInt(raw) ?? fallback;
+}
+
+function optRatio(raw: string | null, fallback: number): number {
+  if (raw == null) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : fallback;
 }

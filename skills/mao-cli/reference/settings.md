@@ -4,7 +4,7 @@
 
 列出系统配置项，并按 key 更新 value。需 `settings:read` / `settings:write` 权限（0.0.82 起）。
 
-集成配置类 key（`auth.ldap.*`、`auth.feishu.*`、`upload.*`、`tools.*`、`oss.*` 等）已支持后台可视化编辑与热生效；secret 类项（`is_secret`）写入后仅返回掩码，不可读回明文。
+集成配置类 key（`auth.ldap.*`、`auth.feishu.*`、`upload.*`、`tools.*`、`oss.*`、`agent.*`、`notify.*`、`harness.*` 等）已支持后台可视化编辑（`agent.*`/`ws.*`/`harness.*` 为启动时构建，保存后需重启后端生效，其余即时生效）；secret 类项（`is_secret`）写入后仅返回掩码，不可读回明文。
 
 ## 命令选择
 
