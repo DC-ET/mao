@@ -136,8 +136,4 @@ export interface HarnessTuningSettings {
     sessionIdleTimeoutMinutes: number;
     sessionMaxLifetimeHours: number;
   };
-  delegate: {
-    timeoutSeconds: number;
-    cancelGraceSeconds: number;
-  };
 }

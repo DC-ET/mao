@@ -290,7 +290,6 @@ describe('SystemSettingService', () => {
       llm: { rateLimitMaxRetries: 10, rateLimitRetryDelaySeconds: 2, rateLimitMaxRetryDelaySeconds: 30, callTimeoutSeconds: 120, httpCallTimeoutSeconds: 180, streamIdleTimeoutSeconds: 300 },
       webPage: { connectTimeout: 10000, readTimeout: 30000, maxRawBytes: 1048576, maxOutputLength: 500000, userAgent: 'Mozilla/5.0 (compatible; AgentWorkbench/1.0)' },
       shell: { maxSessionsPerConversation: 30, sessionIdleTimeoutMinutes: 30, sessionMaxLifetimeHours: 2 },
-      delegate: { timeoutSeconds: 3600, cancelGraceSeconds: 30 },
     });
   });
 
@@ -301,7 +300,7 @@ describe('SystemSettingService', () => {
       'harness.compaction.triggerRatio': '0.9',
       'harness.llm.callTimeoutSeconds': '60',
       'harness.webPage.userAgent': 'TestUA/2.0',
-      'harness.delegate.timeoutSeconds': '600',
+      'harness.shell.maxSessionsPerConversation': '8',
     };
     vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
       if (rows[key] != null) return { id: 1, settingKey: key, value: rows[key], category: '运行参数', editable: 1 };
@@ -313,7 +312,7 @@ describe('SystemSettingService', () => {
     expect(cfg.compaction.triggerRatio).toBe(0.9);
     expect(cfg.llm.callTimeoutSeconds).toBe(60);
     expect(cfg.webPage.userAgent).toBe('TestUA/2.0');
-    expect(cfg.delegate.timeoutSeconds).toBe(600);
+    expect(cfg.shell.maxSessionsPerConversation).toBe(8);
   });
 
   it('updateRejectsInvalidHarnessTuningValues', async () => {

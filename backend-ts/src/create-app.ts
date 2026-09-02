@@ -1617,7 +1617,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     subagentMapper, sessionMap, sessionSvc, compactionSvc, definitionRegistry,
     (childSession, definition) => backgroundSubagentManager.buildSubContext(childSession, definition),
     agentLoop, visibility, localToolSessions,
-    harnessTuning.delegate.timeoutSeconds, harnessTuning.delegate.cancelGraceSeconds,
   );
   const subagentCoordinator = new SubagentRecoveryCoordinator(
     subagentMapper, subagentExecutionRecovery, subagentResultDelivery,

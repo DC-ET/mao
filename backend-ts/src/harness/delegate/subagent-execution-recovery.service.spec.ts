@@ -19,7 +19,7 @@ function harness(claimed: boolean) {
   const definitionRegistry = { getDefinition: vi.fn(() => ({ name: 'coder' })) };
   const buildSubContext = vi.fn(async () => ({ currentRound: 0 }));
   const agentLoop = { registerCancelFlag: vi.fn(() => ({ get: () => false })), removeCancelFlag: vi.fn() };
-  const visibilityService = { executeVisibleWithTimeout: vi.fn(), finishSubagent: vi.fn(async () => undefined) };
+  const visibilityService = { executeVisible: vi.fn(), finishSubagent: vi.fn(async () => undefined) };
   const localRegistry = { isConnected: vi.fn(async () => true), setUserForSession: vi.fn(), removeSession: vi.fn() };
   const service = new SubagentExecutionRecoveryService(
     executionMapper as never, sessionMapper as never, sessionService as never,

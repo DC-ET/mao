@@ -68,8 +68,6 @@ const HARNESS_WEB_PAGE_USER_AGENT_KEY = 'harness.webPage.userAgent';
 const HARNESS_SHELL_MAX_SESSIONS_KEY = 'harness.shell.maxSessionsPerConversation';
 const HARNESS_SHELL_IDLE_TIMEOUT_MINUTES_KEY = 'harness.shell.sessionIdleTimeoutMinutes';
 const HARNESS_SHELL_MAX_LIFETIME_HOURS_KEY = 'harness.shell.sessionMaxLifetimeHours';
-const HARNESS_DELEGATE_TIMEOUT_SECONDS_KEY = 'harness.delegate.timeoutSeconds';
-const HARNESS_DELEGATE_CANCEL_GRACE_SECONDS_KEY = 'harness.delegate.cancelGraceSeconds';
 
 const HARNESS_INT_KEYS = new Set([
   HARNESS_COMPACTION_CONTEXT_WINDOW_TOKENS_KEY, HARNESS_COMPACTION_MAX_SUMMARY_TOKENS_KEY,
@@ -79,8 +77,7 @@ const HARNESS_INT_KEYS = new Set([
   HARNESS_WEB_PAGE_CONNECT_TIMEOUT_KEY, HARNESS_WEB_PAGE_READ_TIMEOUT_KEY,
   HARNESS_WEB_PAGE_MAX_RAW_BYTES_KEY, HARNESS_WEB_PAGE_MAX_OUTPUT_LENGTH_KEY,
   HARNESS_SHELL_MAX_SESSIONS_KEY, HARNESS_SHELL_IDLE_TIMEOUT_MINUTES_KEY,
-  HARNESS_SHELL_MAX_LIFETIME_HOURS_KEY, HARNESS_DELEGATE_TIMEOUT_SECONDS_KEY,
-  HARNESS_DELEGATE_CANCEL_GRACE_SECONDS_KEY,
+  HARNESS_SHELL_MAX_LIFETIME_HOURS_KEY,
 ]);
 const HARNESS_BOOL_KEYS = new Set([HARNESS_COMPACTION_ENABLED_KEY, HARNESS_COMPACTION_LOOP_MIDWAY_KEY]);
 
@@ -286,7 +283,7 @@ export class SystemSettingService {
     };
   }
 
-  /** harness 调参：压缩 / LLM / 网页抓取 / Shell 会话 / 子代理超时。均启动时构建，修改后需重启后端生效。 */
+  /** harness 调参：压缩 / LLM / 网页抓取 / Shell 会话。均启动时构建，修改后需重启后端生效。 */
   async getHarnessTuningConfig(): Promise<HarnessTuningSettings> {
     const [
       compactionEnabledRaw, contextWindowRaw, triggerRatioRaw, maxSummaryRaw, loopMidwayRaw,
@@ -294,7 +291,6 @@ export class SystemSettingService {
       callTimeoutRaw, httpCallTimeoutRaw, streamIdleTimeoutRaw,
       webPageConnectRaw, webPageReadRaw, webPageMaxRawBytesRaw, webPageMaxOutputRaw, webPageUserAgentRaw,
       shellMaxSessionsRaw, shellIdleTimeoutRaw, shellMaxLifetimeRaw,
-      delegateTimeoutRaw, delegateGraceRaw,
     ] = await Promise.all([
       this.getOpt(HARNESS_COMPACTION_ENABLED_KEY),
       this.getOpt(HARNESS_COMPACTION_CONTEXT_WINDOW_TOKENS_KEY),
@@ -315,8 +311,6 @@ export class SystemSettingService {
       this.getOpt(HARNESS_SHELL_MAX_SESSIONS_KEY),
       this.getOpt(HARNESS_SHELL_IDLE_TIMEOUT_MINUTES_KEY),
       this.getOpt(HARNESS_SHELL_MAX_LIFETIME_HOURS_KEY),
-      this.getOpt(HARNESS_DELEGATE_TIMEOUT_SECONDS_KEY),
-      this.getOpt(HARNESS_DELEGATE_CANCEL_GRACE_SECONDS_KEY),
     ]);
     return {
       compaction: {
@@ -345,10 +339,6 @@ export class SystemSettingService {
         maxSessionsPerConversation: optPositiveInt(shellMaxSessionsRaw, 30),
         sessionIdleTimeoutMinutes: optPositiveInt(shellIdleTimeoutRaw, 30),
         sessionMaxLifetimeHours: optPositiveInt(shellMaxLifetimeRaw, 2),
-      },
-      delegate: {
-        timeoutSeconds: optPositiveInt(delegateTimeoutRaw, 3600),
-        cancelGraceSeconds: optPositiveInt(delegateGraceRaw, 30),
       },
     };
   }

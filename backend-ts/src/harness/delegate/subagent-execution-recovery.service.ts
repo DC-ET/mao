@@ -20,8 +20,6 @@ export class SubagentExecutionRecoveryService {
     private readonly agentLoop: AgentLoop,
     private readonly visibilityService: SubAgentVisibilityService,
     private readonly localRegistry: LocalToolSessionRegistry,
-    private readonly timeoutSeconds = 3600,
-    private readonly cancelGraceSeconds = 30,
   ) {}
 
   async recover(execution: SubagentExecution): Promise<void> {
@@ -69,27 +67,15 @@ export class SubagentExecutionRecoveryService {
       const context = await this.buildSubContext(child, definition);
       const cancel = this.agentLoop.registerCancelFlag(child.id!);
       context.cancelFlag = cancel;
-      const isAsyncSubagentExecution = execution.invocationType === 'BACKGROUND' || execution.invocationType === 'FOLLOWUP';
       if (child.executionMode?.toUpperCase() === 'LOCAL') {
         if (parent.userId != null) {
           this.localRegistry.setUserForSession(parent.id!, parent.userId);
           this.localRegistry.setUserForSession(child.id!, parent.userId);
         }
-        const connected = isAsyncSubagentExecution
-          ? await this.waitForLocalNoDeadline(child.id!, cancel)
-          : await this.waitForLocal(child.id!, startedDeadline(execution.startedAt, this.timeoutSeconds), cancel);
-        if (!connected) throw new Error('子代理恢复失败：LOCAL 客户端未在恢复超时内连接');
+        const connected = await this.waitForLocal(child.id!, cancel);
+        if (!connected) throw new Error('子代理恢复失败：LOCAL 客户端未在恢复等待期内连接');
       }
-      const run = isAsyncSubagentExecution
-        ? await this.visibilityService.executeVisible(child, context, false)
-        : await (async () => {
-          const deadline = startedDeadline(execution.startedAt, this.timeoutSeconds);
-          if (deadline <= Date.now()) throw new Error('子代理恢复失败：原委派执行已超时');
-          const remainingSeconds = Math.max(1, Math.floor((deadline - Date.now()) / 1000));
-          return this.visibilityService.executeVisibleWithTimeout(
-            child, context, false, cancel, remainingSeconds, this.cancelGraceSeconds,
-          );
-        })();
+      const run = await this.visibilityService.executeVisible(child, context, false);
       const collector = run.collector;
       const cancelled = cancel.get();
       let status = cancelled ? 'CANCELLED' : collector.error ? 'FAILED' : 'COMPLETED';
@@ -141,23 +127,9 @@ export class SubagentExecutionRecoveryService {
 
   private async waitForLocal(
     childSessionId: number,
-    deadline: number,
     cancel: { get(): boolean },
   ): Promise<boolean> {
-    while (!cancel.get() && Date.now() < deadline) {
-      if (await this.localRegistry.isConnected(childSessionId)) return true;
-      await sleep(Math.min(1000, Math.max(1, deadline - Date.now())));
-    }
-    return false;
-  }
-
-  private async waitForLocalNoDeadline(
-    childSessionId: number,
-    cancel: { get(): boolean },
-    timeoutMs = 3_600_000,
-  ): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (!cancel.get() && Date.now() < deadline) {
+    while (!cancel.get()) {
       if (await this.localRegistry.isConnected(childSessionId)) return true;
       await sleep(1000);
     }
@@ -191,12 +163,6 @@ function terminalStatus(metadata: string | null | undefined): 'COMPLETED' | 'FAI
   } catch {
     return 'COMPLETED';
   }
-}
-
-function startedDeadline(startedAt: string | null | undefined, timeoutSeconds: number): number {
-  // started_at 由 MySQL 以服务器本地时间写入，按本地时间解析（不能补 'Z'）
-  const started = startedAt ? new Date(startedAt.replace(' ', 'T')).getTime() : Date.now();
-  return (Number.isFinite(started) ? started : Date.now()) + timeoutSeconds * 1000;
 }
 
 function isTerminal(phase: string | null | undefined): boolean {

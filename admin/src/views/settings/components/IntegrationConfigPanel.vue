@@ -319,15 +319,6 @@ const groups = computed<GroupDef[]>(() => [
       { key: 'harness.shell.sessionMaxLifetimeHours', label: '最长存活 (小时)', type: 'number', min: 1, max: 168, hint: '默认 2' },
     ],
   },
-  {
-    name: 'harness-delegate',
-    title: '子代理执行',
-    keys: ['harness.delegate.timeoutSeconds', 'harness.delegate.cancelGraceSeconds'],
-    fields: [
-      { key: 'harness.delegate.timeoutSeconds', label: '执行超时 (s)', type: 'number', min: 60, max: 86400, hint: '默认 3600' },
-      { key: 'harness.delegate.cancelGraceSeconds', label: '取消宽限 (s)', type: 'number', min: 1, max: 600, hint: '默认 30' },
-    ],
-  },
 ])
 
 function pickNonEmpty(m: Record<string, string>, keys: string[], mapping: string[]): Record<string, string> {

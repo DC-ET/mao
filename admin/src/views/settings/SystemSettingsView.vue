@@ -150,7 +150,6 @@ const INTEGRATION_KEYS = new Set([
   'harness.llm.rateLimitMaxRetries', 'harness.llm.rateLimitRetryDelaySeconds', 'harness.llm.rateLimitMaxRetryDelaySeconds', 'harness.llm.callTimeoutSeconds', 'harness.llm.httpCallTimeoutSeconds', 'harness.llm.streamIdleTimeoutSeconds',
   'harness.webPage.connectTimeout', 'harness.webPage.readTimeout', 'harness.webPage.maxRawBytes', 'harness.webPage.maxOutputLength', 'harness.webPage.userAgent',
   'harness.shell.maxSessionsPerConversation', 'harness.shell.sessionIdleTimeoutMinutes', 'harness.shell.sessionMaxLifetimeHours',
-  'harness.delegate.timeoutSeconds', 'harness.delegate.cancelGraceSeconds',
 ])
 
 /** 集成配置目录条目：锚点 id 与 IntegrationConfigPanel 内 group-card 的 id 保持一致。 */
@@ -166,7 +165,6 @@ const INTEGRATION_TOC = [
   { id: 'setting-group-harness-llm', label: 'LLM 超时与重试' },
   { id: 'setting-group-harness-webpage', label: '网页抓取' },
   { id: 'setting-group-harness-shell', label: 'Shell 会话' },
-  { id: 'setting-group-harness-delegate', label: '子代理执行' },
 ]
 
 const loading = ref(false)
