@@ -9,7 +9,7 @@ import type { GitCredentialLookup } from '../../../session/types.js';
 import { matchShellDenyList } from '../../shell/command-deny-list.js';
 import { harnessLog } from '../../log.js';
 
-const MAX_COMMAND_LENGTH = 10000;
+const MAX_COMMAND_LENGTH = 20000;
 const MARKER_PREFIX = '__CMD_DONE_';
 const MARKER_SUFFIX = '__';
 const WORKDIR_TIMEOUT_MS = 5000;
