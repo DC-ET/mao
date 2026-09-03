@@ -64,7 +64,7 @@ import { ToolService } from './tool/tool.service.js';
 import { registerToolRoutes } from './tool/tool.routes.js';
 import { MysqlAuditLogRepository } from './audit/audit.repository.js';
 import { AuditLogService } from './audit/audit.service.js';
-import { recordAudit } from './audit/audit.interceptor.js';
+import { recordAudit, truncateAuditError } from './audit/audit.interceptor.js';
 import { registerAuditLogRoutes } from './audit/audit.routes.js';
 import { registerUploadRoutes } from './config/upload.routes.js';
 import { PathSandbox } from './harness/safety/path-sandbox.js';
@@ -159,6 +159,9 @@ import { SessionTreeSignalPublisher } from './harness/approval/session-tree-sign
 import { StreamingWsRegistry } from './session/ws/streaming-ws-registry.js';
 import { StreamingWsHandler } from './session/ws/streaming-ws-handler.js';
 import { attachWebSocket } from './session/ws/attach-websocket.js';
+import { TerminalManager, TERMINAL_AUDIT_META, type TerminalAuditRecorder } from './harness/terminal/terminal-manager.js';
+import { TerminalWsHandler } from './harness/terminal/terminal-ws-handler.js';
+import { registerTerminalRoutes } from './session/terminal.routes.js';
 import { WeixinAccountRepository } from './weixin/account.repository.js';
 import { ContextTokenRepository } from './weixin/context-token.repository.js';
 import { WeixinSessionPeerRepository } from './weixin/session-peer.repository.js';
@@ -307,6 +310,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // Agent 线程池/WS 超时/harness 调参启动时从 DB 构建，后台改动需重启生效；调度参数走 getter 即时生效
   const agentRuntimeCfg = await bootstrapSettings.getAgentRuntimeConfig();
   const harnessTuning = await bootstrapSettings.getHarnessTuningConfig();
+  const terminalCfg = await bootstrapSettings.getTerminalConfig();
   const app = existing ?? Fastify({ logger: true, bodyLimit: Math.max(52, multipartLimitMb + 2) * 1024 * 1024 });
   const hasher = { hash: hashPassword, matches: matchesPassword };
   const jwt = new JwtService(cfg.jwt.secret, cfg.jwt.expiration, cfg.jwt.refreshExpiration, cfg.jwt.shellExpiration);
@@ -445,6 +449,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const gitOps = new GitOperationService(gitLookup);
   const todoMapper = new SessionTodoMapper(db);
   const todoRepo = new SessionTodoRepository(db);
+  // TerminalManager 依赖 runtimeResolver（稍后构造），此处先占位，供会话删除回调延迟解引用
+  let terminalManagerRef: TerminalManager | null = null;
   const sessionService = new SessionService(
     sessionRepo, messageRepo, fileChangeRepo,
     {
@@ -455,6 +461,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     pathSandbox, envInfo, commandService, gitOps, sessionCompactionService, sessionCompactionEventService, todoRepo,
     runtimeSessionCleanup(runtimeRoot),
+    (sessionId) => { terminalManagerRef?.closeBySession(sessionId); },
   );
   const sessionSvc = sessionService as never;
   const sessionMap = sessionRepo as never;
@@ -582,6 +589,39 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     harnessTuning.shell.sessionIdleTimeoutMinutes,
     harnessTuning.shell.sessionMaxLifetimeHours,
   );
+  // 云端终端：与 shellManager 并列（后者是 Agent 的管道 shell，本类是用户的交互式 PTY）
+  const terminalAudit: TerminalAuditRecorder = (event, terminal, ctx) => {
+    const meta = TERMINAL_AUDIT_META[event];
+    void auditService.record({
+      action: meta.action,
+      objectType: 'terminal',
+      objectId: terminal.terminalId,
+      method: meta.method,
+      path: meta.path(terminal.sessionId, terminal.terminalId),
+      userId: terminal.userId,
+      username: ctx?.username ?? null,
+      ip: ctx?.ip ?? null,
+      status: ctx?.errorMessage == null ? 200 : 500,
+      success: ctx?.errorMessage == null ? 1 : 0,
+      errorMessage: truncateAuditError(ctx?.errorMessage),
+    }).catch((e) => console.error('Failed to record terminal audit log', e));
+  };
+  const terminalManager = new TerminalManager({
+    pathSandbox,
+    runtimeResolver,
+    gitCredentials: gitLookup,
+    shellToken: jwt,
+    userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
+    config: terminalCfg,
+    audit: terminalAudit,
+  });
+  terminalManagerRef = terminalManager;
+  const terminalWsHandler = new TerminalWsHandler({
+    terminalManager,
+    jwtService: jwt,
+    permissionService,
+    audit: terminalAudit,
+  });
   const outputManager = new OutputManager(
     cfg.app.harness.shell.output.maxPreviewLines,
     cfg.app.harness.shell.output.maxPreviewChars,
@@ -1541,6 +1581,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       } as never,
       permissionService,
     });
+    registerTerminalRoutes(api, {
+      terminalManager,
+      sessionService,
+      permissionService,
+      userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
+    });
     registerFileRoutes(api, {
       fileService, sessionService, workspaceBrowseService: workspaceBrowse,
       workspaceGitService: workspaceGit, gitCommitMessageService: gitCommitMsg,
@@ -1580,7 +1626,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
     registerFeishuBindingRoutes(api, { jwt, repository: feishuBinding, auth: feishu });
     registerTaskNotificationPreferenceRoutes(api, { preference: notifPref, jwt });
-    await attachWebSocket(api, { handler: wsHandler, idleTimeoutMs: agentRuntimeCfg.wsIdleTimeoutMs });
+    await attachWebSocket(api, {
+      handler: wsHandler,
+      idleTimeoutMs: agentRuntimeCfg.wsIdleTimeoutMs,
+      terminalHandler: terminalWsHandler,
+    });
   }, { prefix: apiPrefix });
 
   const scheduler = new ScheduledTaskScheduler(scheduledStore, scheduledService);
@@ -1609,6 +1659,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     }
   }).catch((error) => console.error('恢复飞书待绑定消息列表失败', error));
   shellManager.startCleanup();
+  terminalManager.startCleanup();
   const runtimeCleanup = new RuntimeCleanupScheduler(
     cfg.app.harness.runtimeDir,
     cfg.app.harness.cleanup,
@@ -1670,6 +1721,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       scheduler.stop();
       deliveryScheduler.stop();
       shellManager.stopCleanup();
+      terminalManager.stopCleanup();
+      terminalManager.closeAll();
       runtimeCleanup.stop();
       weixinMonitor.shutdown();
       feishuMonitor.shutdown();

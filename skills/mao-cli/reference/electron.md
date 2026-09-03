@@ -61,6 +61,10 @@ Web 前端更新：部署 `desktop/dist` 后刷新；Electron 壳更新需用户
 
 LOCAL 会话启动时 Electron 可同步技能 zip 与用户 MCP 配置，与云端 Harness 工具列表对齐。
 
+## 终端面板
+
+底部终端按任务模式分流：LOCAL 任务开本机 shell（Electron 独有），CLOUD 任务开服务端 bash（0.0.97 起，需 `terminal:use` 权限）。两者共用同一面板与标签，标签按任务隔离。详见 [desktop.md](desktop.md#终端)。
+
 ## 与 mao-agent LOCAL 的区别
 
 | | Electron | mao-agent --local |

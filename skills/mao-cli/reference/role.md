@@ -78,6 +78,8 @@ mao permission list
 
 返回权限点：`id`、`name`、`code`、`description`。
 
+`terminal:use`（0.0.97 起）授予云端终端使用权，等同于给出后端服务账号的 shell，默认只有 ADMIN 角色拥有，赋予他人前请确认信任边界。
+
 ## 成功失败判断
 
 - `code===0` 成功

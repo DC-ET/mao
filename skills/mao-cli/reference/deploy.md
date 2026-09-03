@@ -53,7 +53,7 @@ mkdir -p /opt/mao-data/{workspace,skills,userskills,uploads,users,runtime}
 ```bash
 # Node.js 22+
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs nginx git
+sudo apt install -y nodejs nginx git python3 make g++
 
 node -v    # >= 22
 nginx -v
@@ -61,6 +61,8 @@ git --version
 ```
 
 **Git 说明**：CLOUD 模式通过 HTTPS Git 初始化工作区需要 `git` 命令。仅支持 HTTPS 地址；私有仓库用户在桌面端配置 Git 凭证（完整主机名）。
+
+**构建工具链说明**：`python3 make g++` 用于后端安装 `node-pty`（云端终端的 PTY 支持）时编译原生模块，缺失会导致 `npm ci` 失败。
 
 ## 二、首次部署
 
@@ -232,6 +234,8 @@ server {
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+`location /api/ws/` 覆盖全部 WebSocket 通道：Agent 流式 `/api/ws/stream` 与云端终端 `/api/ws/terminal`，新增终端功能无需改 Nginx。
 
 ## 四、HTTPS
 

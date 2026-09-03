@@ -105,6 +105,21 @@
 | LOCAL 任务报「技能同步失败：没有可执行本机工具的客户端连接」 | 桌面端 / `mao-agent --local` 未连上或已退出；重新启动客户端后重发 |
 | `--model` / `/model` 报「多个模型名为 X」或「找不到名为 X 的模型」 | 取值优先按显示名匹配、厂商串兜底，见 [mao-agent.md](mao-agent.md) 的「模型解析」。用 `mao model list-active` 查候选，必要时直接给 `--model <id>` |
 
+## 云端终端（0.0.97 起）
+
+| 现象 | 排查 |
+|------|------|
+| 终端按钮置灰 | 悬浮看 tooltip：未打开任务 / 无 `terminal:use` 权限（默认只授管理员）/ 任务工作区不可用 / LOCAL 任务在 Web 或安卓上不支持 |
+| 新建终端报「仅云端任务支持远程终端」 | 当前任务是 LOCAL；LOCAL 终端只在 Electron 里可用 |
+| 新建终端报数量上限 | 达到 `terminal.maxSessionsPerTask` / `terminal.maxSessionsGlobal`，关掉不用的终端或调大配置（需重启后端） |
+| 打开终端后立刻报错/后端 `npm ci` 失败 | 服务器缺 `python3 make g++`，`node-pty` 原生模块没编译成功，装好后重新 `npm ci && npm run build` |
+| 终端全部消失 | 后端重启不恢复终端（预期）；或触发空闲/存活回收（`terminal.idleTimeoutMinutes`、`terminal.maxLifetimeHours`；切走任务或收起面板后终端开始计空闲）；任务被删除也会关闭其终端 |
+| 提示「终端已在其他窗口打开」 | 同一终端只能被一个连接接入，新连接会顶替旧连接。在新窗口继续用，或在旧窗口点面板顶部的「重新接管」夺回 |
+| 输出里出现「输出过快，已丢弃部分内容」 | 客户端消费不及时触发背压丢帧；减少 `cat` 大文件这类刷屏输出 |
+| 输出里出现「终端连接超时，若未自动恢复请重新打开终端面板」 | attach 15 秒未收到服务端回帧；断线场景会自动重连重绑，此提示表示未自动恢复，收起再打开面板或点「重新接管」 |
+| 输出里出现「历史输出过长，已截断前面部分」 | 断线回放缓冲只保留最近 `terminal.outputBufferBytes` 字节 |
+| 反复断连 | 同 WebSocket 排查：Nginx `location /api/ws/` 的升级头与 `proxy_read_timeout` |
+
 ## 获取日志
 
 ```bash

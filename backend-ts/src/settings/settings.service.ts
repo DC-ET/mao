@@ -5,7 +5,7 @@ import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
   AgentLookup, AgentRuntimeSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
   NotificationTuningSettings, OssSettings, SettingsRuntimeConfig, SystemSetting, SystemSettingRepository,
-  TavilySettings, TinyFishSettings, UploadSettings, WebSearchConfig, WebSearchProvider,
+  TavilySettings, TerminalSettings, TinyFishSettings, UploadSettings, WebSearchConfig, WebSearchProvider,
 } from './types.js';
 
 export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
@@ -80,6 +80,18 @@ const HARNESS_INT_KEYS = new Set([
   HARNESS_SHELL_MAX_LIFETIME_HOURS_KEY,
 ]);
 const HARNESS_BOOL_KEYS = new Set([HARNESS_COMPACTION_ENABLED_KEY, HARNESS_COMPACTION_LOOP_MIDWAY_KEY]);
+
+const TERMINAL_MAX_SESSIONS_PER_TASK_KEY = 'terminal.maxSessionsPerTask';
+const TERMINAL_MAX_SESSIONS_GLOBAL_KEY = 'terminal.maxSessionsGlobal';
+const TERMINAL_IDLE_TIMEOUT_MINUTES_KEY = 'terminal.idleTimeoutMinutes';
+const TERMINAL_MAX_LIFETIME_HOURS_KEY = 'terminal.maxLifetimeHours';
+const TERMINAL_OUTPUT_BUFFER_BYTES_KEY = 'terminal.outputBufferBytes';
+
+const TERMINAL_INT_KEYS = new Set([
+  TERMINAL_MAX_SESSIONS_PER_TASK_KEY, TERMINAL_MAX_SESSIONS_GLOBAL_KEY,
+  TERMINAL_IDLE_TIMEOUT_MINUTES_KEY, TERMINAL_MAX_LIFETIME_HOURS_KEY,
+  TERMINAL_OUTPUT_BUFFER_BYTES_KEY,
+]);
 
 /** 掩码回显占位符：secret 行已设置时返回该值。 */
 export const SECRET_MASK = '******';
@@ -343,6 +355,26 @@ export class SystemSettingService {
     };
   }
 
+  /** 云端终端参数：启动时读取一次并固化到 TerminalManager，改后需重启后端。 */
+  async getTerminalConfig(): Promise<TerminalSettings> {
+    const [
+      maxPerTaskRaw, maxGlobalRaw, idleTimeoutRaw, maxLifetimeRaw, outputBufferRaw,
+    ] = await Promise.all([
+      this.getOpt(TERMINAL_MAX_SESSIONS_PER_TASK_KEY),
+      this.getOpt(TERMINAL_MAX_SESSIONS_GLOBAL_KEY),
+      this.getOpt(TERMINAL_IDLE_TIMEOUT_MINUTES_KEY),
+      this.getOpt(TERMINAL_MAX_LIFETIME_HOURS_KEY),
+      this.getOpt(TERMINAL_OUTPUT_BUFFER_BYTES_KEY),
+    ]);
+    return {
+      maxSessionsPerTask: optPositiveInt(maxPerTaskRaw, 5),
+      maxSessionsGlobal: optPositiveInt(maxGlobalRaw, 50),
+      idleTimeoutMinutes: optPositiveInt(idleTimeoutRaw, 120),
+      maxLifetimeHours: optPositiveInt(maxLifetimeRaw, 24),
+      outputBufferBytes: optPositiveInt(outputBufferRaw, 262144),
+    };
+  }
+
   /** OSS 未配置（region/AK/SK/bucket 任一为空）时返回 null，消费方按"未配置"处理。 */
   async getOssConfig(): Promise<OssSettings | null> {    const [region, accessKeyId, accessKeySecret, bucket] = await Promise.all([
       this.getText(OSS_REGION_KEY),
@@ -508,7 +540,7 @@ export class SystemSettingService {
     if (key.endsWith('enabled') && !(value!.toLowerCase() === 'true' || value!.toLowerCase() === 'false')) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '开关值必须为 true 或 false');
     }
-    if (HARNESS_INT_KEYS.has(key) && (parsePositiveInt(value) == null)) {
+    if ((HARNESS_INT_KEYS.has(key) || TERMINAL_INT_KEYS.has(key)) && (parsePositiveInt(value) == null)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '配置值必须为正整数');
     }
     if (key === HARNESS_COMPACTION_TRIGGER_RATIO_KEY) {

@@ -5,6 +5,7 @@ import { getToken } from '../utils/auth-storage'
 import { nowDateTime } from '../utils/datetime'
 import { mapCompactionEvents } from '../utils/chatMessage'
 import { isAndroidCapacitor } from '../utils/capacitor'
+import { isElectronClient } from '../utils/platform'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
 
 /// <reference types="vite/client" />
@@ -160,10 +161,6 @@ function flushPendingSkillSyncDones() {
     activeSkillSyncIds.delete(data.sessionId)
   }
   console.info(`[skill-sync] flushed ${pending.length} pending skill_sync_done after reconnect`)
-}
-
-function isElectronClient(): boolean {
-  return typeof window !== 'undefined' && !!(window as any).electronAPI
 }
 
 export function useStreamWS() {

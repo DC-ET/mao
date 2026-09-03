@@ -319,6 +319,18 @@ const groups = computed<GroupDef[]>(() => [
       { key: 'harness.shell.sessionMaxLifetimeHours', label: '最长存活 (小时)', type: 'number', min: 1, max: 168, hint: '默认 2' },
     ],
   },
+  {
+    name: 'terminal',
+    title: '云端终端',
+    keys: ['terminal.maxSessionsPerTask', 'terminal.maxSessionsGlobal', 'terminal.idleTimeoutMinutes', 'terminal.maxLifetimeHours', 'terminal.outputBufferBytes'],
+    fields: [
+      { key: 'terminal.maxSessionsPerTask', label: '每任务终端上限', type: 'number', min: 1, max: 100, hint: '默认 5' },
+      { key: 'terminal.maxSessionsGlobal', label: '全局终端上限', type: 'number', min: 1, max: 1000, hint: '默认 50' },
+      { key: 'terminal.idleTimeoutMinutes', label: '空闲回收 (分钟)', type: 'number', min: 1, max: 10080, hint: '默认 120' },
+      { key: 'terminal.maxLifetimeHours', label: '最长存活 (小时)', type: 'number', min: 1, max: 720, hint: '默认 24' },
+      { key: 'terminal.outputBufferBytes', label: '输出缓冲上限 (字节)', type: 'number', min: 1024, max: 10485760, hint: '默认 262144 (256KB)' },
+    ],
+  },
 ])
 
 function pickNonEmpty(m: Record<string, string>, keys: string[], mapping: string[]): Record<string, string> {

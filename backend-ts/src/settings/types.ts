@@ -137,3 +137,12 @@ export interface HarnessTuningSettings {
     sessionMaxLifetimeHours: number;
   };
 }
+
+/** 云端终端参数：启动时构建（改后需重启后端）。 */
+export interface TerminalSettings {
+  maxSessionsPerTask: number;
+  maxSessionsGlobal: number;
+  idleTimeoutMinutes: number;
+  maxLifetimeHours: number;
+  outputBufferBytes: number;
+}

@@ -7,6 +7,7 @@
 - Node.js 22+
 - npm 10+
 - MySQL 8.x
+- C/C++ 构建工具链（Linux 装 `python3 make g++`；macOS 装 Xcode Command Line Tools）：后端 `node-pty` 需要编译原生模块
 
 ## 仅对话、不部署整套平台
 

@@ -203,6 +203,20 @@ html.android-capacitor .management-dialog .el-dialog__body {
   -webkit-overflow-scrolling: touch;
 }
 
+/* 安卓终端：面板随软键盘避让（margin-bottom 由 JS 设置），内容区收窄留白并放大触控目标。 */
+html.android-capacitor .terminal-panel {
+  transition: margin-bottom 0.12s ease-out;
+}
+
+html.android-capacitor .terminal-container {
+  padding: 4px 8px;
+}
+
+html.android-capacitor .terminal-keybar-btn {
+  min-width: 44px;
+  height: 36px;
+}
+
 /* ============================================
    Dark Mode — Apple Near-Black Surfaces
    ============================================ */

@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "private": true,
-  "version": "0.0.84",
+  "version": "0.0.97",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -36,6 +36,7 @@
     "@vue/tsconfig": "^0.9.1",
     "@vueuse/core": "^14.3.0",
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "ali-oss": "^6.23.0",
