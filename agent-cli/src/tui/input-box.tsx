@@ -67,7 +67,10 @@ export function InputBox({ view, ascii, enabled }: {
         </Box>
         <Box flexDirection="column" flexGrow={1}>
           {view.placeholder ? (
-            <Text dimColor>{enabled ? '继续对话，或输入 / 查看命令' : '等待上方确认…'}</Text>
+            <Text>
+              {enabled ? <Text inverse>{' '}</Text> : null}
+              <Text dimColor>{enabled ? '继续对话，或输入 / 查看命令' : '等待上方确认…'}</Text>
+            </Text>
           ) : (
             view.rows.map((row, i) => <CursorRow key={i} row={row} ascii={ascii} />)
           )}
