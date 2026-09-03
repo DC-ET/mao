@@ -35,6 +35,7 @@ export interface Message {
   metadata?: string | null;
   tokenCount?: number | null;
   modelId?: number | null;
+  createdAt?: string | null;
 }
 
 export interface Agent {

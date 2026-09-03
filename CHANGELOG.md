@@ -19,6 +19,8 @@
 
 ### 后端
 
+- 会话压缩新增「历史消息归档」（仅云端 CLOUD 会话）：压缩成功后，本次被压缩区间的全部原始消息（含 thinking、工具调用、metadata 等全字段）按压缩批次写入会话 runtime 目录 `compaction/compaction-NNN.jsonl`（NNN 为压缩序号），内联图片 base64 替换为占位符并保留原图路径；交接消息由系统自动附加归档目录与回查指引，Agent 可用 `read_file` / `grep_search` / `shell` 回读被压缩细节，不再因有损摘要永久丢失信息。LOCAL 会话行为不变，归档随会话删除自动清理
+
 - Shell 工具新增「等待语义」：`wait_for`（正则，命中输出即提前返回）与 `action:'await_async'`（继续等待未结束的命令）。长时构建、`npm run dev` 这类命令不再只能死等 `yield_time_ms` 或丢失输出——命中/超时后立刻拿到已有输出，命令继续在后台跑，后续用 `await_async` + `session_id` 接着读，`output_file` 始终是完整输出
 - Shell 会话改为常驻读取输出：提前返回后剩余输出会缓冲在会话中而不再被丢弃；命令未结束时不再按 `keep_session` 回收会话（此前会 SIGKILL 掉进程组导致剩余输出永久丢失）
 - `write_stdin` 在有命令正在运行时把输入直接喂给该命令，不再排一条只能在其结束后才执行的新命令

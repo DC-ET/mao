@@ -128,6 +128,7 @@ import { HarnessService } from './harness/core/harness-service.js';
 import { PromptEngine } from './harness/core/prompt-engine.js';
 import { ContextManager } from './harness/core/context-manager.js';
 import { CompactionService } from './harness/core/compaction-service.js';
+import { CompactionArchiveService } from './harness/core/compaction-archive.service.js';
 import { SessionCompactionOrchestrator } from './harness/core/session-compaction-orchestrator.js';
 import { SessionHistoryLoader } from './harness/core/session-history-loader.js';
 import { TokenEstimator } from './harness/core/token-estimator.js';
@@ -561,17 +562,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const tokenEstimator = new TokenEstimator();
   const compactionService = new CompactionService(llmAdapter, tokenEstimator);
   const contextManager = new ContextManager(tokenEstimator, compactionService);
+  const compactionArchiveService = new CompactionArchiveService(runtimeResolver);
   const compactionConfig = new CompactionConfig();
   compactionConfig.enabled = harnessTuning.compaction.enabled;
   compactionConfig.contextWindowTokens = harnessTuning.compaction.contextWindowTokens;
   compactionConfig.triggerRatio = harnessTuning.compaction.triggerRatio;
   compactionConfig.maxSummaryTokens = harnessTuning.compaction.maxSummaryTokens;
   compactionConfig.loopMidwayCompact = harnessTuning.compaction.loopMidwayCompact;
-  const historyLoader = new SessionHistoryLoader(sessionSvc, contextManager);
+  const historyLoader = new SessionHistoryLoader(sessionSvc, contextManager, compactionArchiveService);
   const activeContext = new ActiveContextCalculator(tokenEstimator);
   const orchestrator = new SessionCompactionOrchestrator(
     compactionSvc, sessionCompactionEventService, historyLoader,
-    contextManager, sessionSvc, activeContext, promptEngine,
+    contextManager, sessionSvc, activeContext, promptEngine, compactionArchiveService,
   );
   const backgroundTasks = new BackgroundTaskManager();
   const shellManager = new ShellSessionManager(

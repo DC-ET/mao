@@ -188,4 +188,36 @@ describe('CompactionService', () => {
     expect(text).toContain('立即接手');
     expect(text).toContain('历史交接');
   });
+
+  it('virtualSummaryAppendsArchiveHintAfterClosingInstruction', () => {
+    const hint = '## 已压缩历史消息归档\n\n目录：`/opt/mao-data/runtime/7/5/compaction`';
+    const result = service.prependSessionSummary('历史交接', [{ role: 'assistant', content: 'next' }], hint);
+    expect(result.map((m) => m.role)).toEqual(['user', 'assistant']);
+    const text = String(result[0].content);
+    expect(text.indexOf('立即接手')).toBeLessThan(text.indexOf('## 已压缩历史消息归档'));
+    expect(text.trimEnd().endsWith('`/opt/mao-data/runtime/7/5/compaction`')).toBe(true);
+  });
+
+  it('emptyOrMissingArchiveHintKeepsLegacyOutput', () => {
+    const legacy = service.prependSessionSummary('历史交接', null);
+    const withNull = service.prependSessionSummary('历史交接', null, null);
+    const withEmpty = service.prependSessionSummary('历史交接', null, '   ');
+    expect(String(withNull[0].content)).toBe(String(legacy[0].content));
+    expect(String(withEmpty[0].content)).toBe(String(legacy[0].content));
+  });
+
+  it('handoffInstructionMentionsArchiveAndForbidsFabricatedPath', async () => {
+    tokenEstimator.estimateRequestTokens.mockReturnValueOnce(800).mockReturnValueOnce(900);
+    tokenEstimator.estimateMessages.mockReturnValue(10);
+    let instruction = '';
+    llmAdapter.stream.mockImplementationOnce(async (request: ChatRequest, _m: unknown, cb: StreamCallback) => {
+      const last = request.messages?.[request.messages.length - 1];
+      instruction = typeof last?.content === 'string' ? last.content : JSON.stringify(last?.content);
+      cb.onChunk(chunk('<handoff>ok</handoff>'));
+      cb.onComplete(usage(1, null, 1));
+    });
+    await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null);
+    expect(instruction).toContain('系统会在交接消息后自动附上被压缩原始消息的归档目录说明');
+    expect(instruction).toContain('不要编造归档路径');
+  });
 });

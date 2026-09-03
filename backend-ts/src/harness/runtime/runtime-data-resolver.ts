@@ -28,6 +28,10 @@ export class RuntimeDataResolver {
     return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'shellOutput');
   }
 
+  resolveCompactionDir(userId: number, sessionId: number): string {
+    return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'compaction');
+  }
+
   resolveIncomingDir(userId: number, sessionId: number): string {
     return path.join(this.resolveSessionRuntimeDir(userId, sessionId), 'incoming');
   }

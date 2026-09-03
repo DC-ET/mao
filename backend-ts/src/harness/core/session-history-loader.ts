@@ -1,6 +1,7 @@
 import type { ChatMessage, ChatRequest, ToolCall } from '../llm/chat-request.js';
 import type { Message, SessionService } from '../deps.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
+import type { CompactionArchiveService } from './compaction-archive.service.js';
 import type { ContextManager } from './context-manager.js';
 import { MessageHistoryNormalizer } from './message-history-normalizer.js';
 import { PersistedChatMessage } from './persisted-chat-message.js';
@@ -17,6 +18,7 @@ export class SessionHistoryLoader {
   constructor(
     private readonly sessionService: SessionService,
     private readonly contextManager: ContextManager,
+    private readonly compactionArchiveService: CompactionArchiveService,
   ) {}
 
   async loadHistoryAfterBoundary(sessionId: number, boundary: number): Promise<HistorySnapshot> {
@@ -33,8 +35,10 @@ export class SessionHistoryLoader {
 
   applyHistory(context: AgentExecutionContext, summary: string | null | undefined, history: HistorySnapshot): void {
     const incremental = history.persistedMessages.map((p) => p.chatMessage);
+    const archiveHint = this.compactionArchiveService.buildArchiveHint(
+      context.executionMode, context.userId, context.sessionId);
     context.messages.length = 0;
-    context.messages.push(...this.contextManager.prependSessionSummary(summary, incremental));
+    context.messages.push(...this.contextManager.prependSessionSummary(summary, incremental, archiveHint));
     if (context.ephemeralSystemMessages.length > 0) {
       context.messages.push(...context.ephemeralSystemMessages);
     }

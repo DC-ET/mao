@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { ActiveContextCalculator } from './active-context-calculator.js';
 import { TokenEstimator } from './token-estimator.js';
 import { SessionHistoryLoader } from './session-history-loader.js';
+import { CompactionArchiveService } from './compaction-archive.service.js';
+import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import { ToolMediaInjector, SYNTHETIC_ATTACHMENT_PROMPT } from './tool-media-injector.js';
 import { AgentExecutionContext } from './agent-execution-context.js';
 import { PersistedChatMessage } from './persisted-chat-message.js';
@@ -51,6 +53,9 @@ describe('ActiveContextCalculator', () => {
 });
 
 describe('SessionHistoryLoader', () => {
+  const archiveService = new CompactionArchiveService(
+    RuntimeDataResolver.forTest('/nonexistent-mao-test-root', '/nonexistent-mao-test-home'));
+
   it('applyHistoryRestoresEphemeralSystemMessagesAtTail', () => {
     const contextManager = {
       prependSessionSummary: vi.fn((summary: string | null, increment: ChatMessage[]) => {
@@ -60,7 +65,7 @@ describe('SessionHistoryLoader', () => {
         return result;
       }),
     } as unknown as ContextManager;
-    const loader = new SessionHistoryLoader({} as SessionService, contextManager);
+    const loader = new SessionHistoryLoader({} as SessionService, contextManager, archiveService);
     const context = new AgentExecutionContext();
     const messagesRef = context.messages;
     context.addSystemMessage('background task result');
@@ -83,7 +88,7 @@ describe('SessionHistoryLoader', () => {
     const sessionService = {
       getMessagesAfterId: vi.fn().mockResolvedValue([{ id: 5, role: 'USER', content: 'hi' }]),
     } as unknown as SessionService;
-    const loader = new SessionHistoryLoader(sessionService, {} as ContextManager);
+    const loader = new SessionHistoryLoader(sessionService, {} as ContextManager, archiveService);
     const snapshot = await loader.loadHistoryAfterBoundary(3, 0);
     expect(snapshot.snapshotMessageIds).toEqual([5]);
     expect(snapshot.persistedMessages).toHaveLength(1);
@@ -96,7 +101,7 @@ describe('SessionHistoryLoader', () => {
         { id: 7, role: 'ASSISTANT', content: '答案', thinkingContent: '思考过程' },
       ]),
     } as unknown as SessionService;
-    const loader = new SessionHistoryLoader(sessionService, {} as ContextManager);
+    const loader = new SessionHistoryLoader(sessionService, {} as ContextManager, archiveService);
     const snapshot = await loader.loadHistoryAfterBoundary(3, 0);
     expect(snapshot.persistedMessages[0].chatMessage.reasoningContent).toBe('思考过程');
   });

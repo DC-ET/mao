@@ -37,7 +37,11 @@ export class ContextManager {
     );
   }
 
-  prependSessionSummary(summary: string | null | undefined, incrementalMessages: ChatMessage[] | null): ChatMessage[] {
-    return this.compactionService.prependSessionSummary(summary, incrementalMessages);
+  prependSessionSummary(
+    summary: string | null | undefined,
+    incrementalMessages: ChatMessage[] | null,
+    archiveHint?: string | null,
+  ): ChatMessage[] {
+    return this.compactionService.prependSessionSummary(summary, incrementalMessages, archiveHint);
   }
 }

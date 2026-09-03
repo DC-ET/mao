@@ -1,6 +1,7 @@
 import type { ChatRequest } from '../llm/chat-request.js';
 import type { AgentEventListener } from './agent-event-listener.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
+import type { CompactionArchiveService } from './compaction-archive.service.js';
 import type { CompactionConfig } from './compaction-config.js';
 import type { ActiveContextCalculator } from './active-context-calculator.js';
 import type { ContextManager } from './context-manager.js';
@@ -26,6 +27,7 @@ export class SessionCompactionOrchestrator {
     private readonly sessionService: SessionService,
     private readonly activeContextCalculator: ActiveContextCalculator,
     private readonly promptEngine: PromptEngine,
+    private readonly compactionArchiveService: CompactionArchiveService,
   ) {}
 
   async compact(
@@ -80,6 +82,12 @@ export class SessionCompactionOrchestrator {
         compactionEnded = true;
         return false;
       }
+      this.compactionArchiveService.writeArchive(
+        context.executionMode, context.userId, context.sessionId,
+        latest?.compactCount ?? 1,
+        history.normalizedEntities.filter((m) => m.id != null
+          && m.id > boundary && m.id <= result.newLastCompactedMessageId),
+      );
       const savedTokens = Math.max(0, result.beforeRequestTokens - afterRequestTokens);
       const triggerMode = compactCurrentTurn ? 'mid_loop' : 'request_start';
       const event = await this.sessionCompactionEventService.record(
