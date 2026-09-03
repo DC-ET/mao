@@ -80,7 +80,10 @@ function setup(deps: {
   context.userId = 7;
   context.executionMode = 'CLOUD';
   const listener = { onCompactionEnd: vi.fn(), onCompactionPersisted: vi.fn(), onContextWindow: vi.fn() };
-  return { orchestrator, context, listener, compactionArchiveService, sessionCompactionEventService };
+  return {
+    orchestrator, context, listener, compactionArchiveService,
+    sessionCompactionEventService, sessionHistoryLoader,
+  };
 }
 
 function runCompact(setupResult: ReturnType<typeof setup>) {
@@ -114,6 +117,9 @@ describe('SessionCompactionOrchestrator compaction archive', () => {
     expect(sessionId).toBe(42);
     expect(seq).toBe(2);
     expect(archived.map((m: Message) => m.id)).toEqual([11, 15, 20]);
+    // 归档必须先于 applyHistory：首次压缩时 hint 构建依赖归档目录已非空
+    expect(s.compactionArchiveService.writeArchive.mock.invocationCallOrder[0])
+      .toBeLessThan((s.sessionHistoryLoader.applyHistory as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]);
     expect(s.sessionCompactionEventService.record).toHaveBeenCalledOnce();
     expect(s.listener.onCompactionPersisted).toHaveBeenCalledOnce();
   });
@@ -132,16 +138,22 @@ describe('SessionCompactionOrchestrator compaction archive', () => {
     expect(s.listener.onCompactionEnd).toHaveBeenCalledWith('session', 0, 0, 5);
   });
 
-  it('doesNotWriteArchiveWhenAnotherThreadAdvancedBeyondCandidate', async () => {
-    // CAS 失败且他人推进到了更大边界：advanced=false（本线程不是赢家），不写归档
+  it('writesArchiveByPersistedEvenWhenAnotherThreadAdvancedBeyondCandidate', async () => {
+    // 本线程 CAS 获胜（persisted=true）但他人随后推进到更大边界：advanced=false 不记事件，
+    // 但本线程的压缩区间 (10,20] 已真实落库，归档仍须写入（判据=persisted，避免区间缺口）
     const s = setup({
       loadValidatedCalls: [record(10, 1), record(30, 2)],
       histories: [history(entityMessages()), history([])],
-      persisted: false,
+      persisted: true,
       compactResult: compactionResult(),
     });
     const advanced = await runCompact(s);
     expect(advanced).toBe(false);
-    expect(s.compactionArchiveService.writeArchive).not.toHaveBeenCalled();
+    expect(s.compactionArchiveService.writeArchive).toHaveBeenCalledOnce();
+    const [mode, userId, sessionId, seq, archived] = s.compactionArchiveService.writeArchive.mock.calls[0];
+    expect(mode).toBe('CLOUD');
+    expect(seq).toBe(2);
+    expect(archived.map((m: Message) => m.id)).toEqual([11, 15, 20]);
+    expect(s.sessionCompactionEventService.record).not.toHaveBeenCalled();
   });
 });

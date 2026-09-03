@@ -77,6 +77,12 @@ describe('CompactionArchiveService', () => {
     expect(existsSync(join(runtimeRoot, '7', '5', 'compaction'))).toBe(false);
   });
 
+  it('emptyMessagesWritesNothing', () => {
+    const { service, runtimeRoot } = makeService();
+    service.writeArchive('CLOUD', 7, 5, 1, []);
+    expect(existsSync(join(runtimeRoot, '7', '5', 'compaction'))).toBe(false);
+  });
+
   it('skipsWhenUserIdOrSessionIdMissing', () => {
     const { service, runtimeRoot } = makeService();
     service.writeArchive('CLOUD', null, 5, 1, messages() as never);

@@ -66,6 +66,16 @@ export class SessionCompactionOrchestrator {
       const latestBoundary = this.sessionCompactionService.boundaryOf(latest);
       const latestSummary = latest?.summaryText ?? null;
       const latestHistory = await this.sessionHistoryLoader.loadHistoryAfterBoundary(sessionId, latestBoundary);
+      // 归档必须先于 applyHistory：首次压缩时 hint 构建依赖归档目录已非空；
+      // 判据用 persisted（CAS 获胜），即使随后被并发压缩超越，本线程区间也已落档
+      if (persisted) {
+        this.compactionArchiveService.writeArchive(
+          context.executionMode, context.userId, context.sessionId,
+          latest?.compactCount ?? 1,
+          history.normalizedEntities.filter((m) => m.id != null
+            && m.id > boundary && m.id <= result.newLastCompactedMessageId),
+        );
+      }
       this.sessionHistoryLoader.applyHistory(context, latestSummary, latestHistory);
       contextApplied = true;
 
@@ -82,12 +92,6 @@ export class SessionCompactionOrchestrator {
         compactionEnded = true;
         return false;
       }
-      this.compactionArchiveService.writeArchive(
-        context.executionMode, context.userId, context.sessionId,
-        latest?.compactCount ?? 1,
-        history.normalizedEntities.filter((m) => m.id != null
-          && m.id > boundary && m.id <= result.newLastCompactedMessageId),
-      );
       const savedTokens = Math.max(0, result.beforeRequestTokens - afterRequestTokens);
       const triggerMode = compactCurrentTurn ? 'mid_loop' : 'request_start';
       const event = await this.sessionCompactionEventService.record(
