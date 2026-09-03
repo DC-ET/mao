@@ -636,4 +636,110 @@ describe('StreamingWsHandler', () => {
     registry.hasLocalClientConnection.mockReset();
     localToolSessionRegistry.isConnected.mockReset();
   });
+
+  describe('retry_execution for SUBAGENT sessions', () => {
+    function subagentSession(mode: string, phase: string): Session {
+      return {
+        ...session(mode, phase),
+        sessionType: 'SUBAGENT',
+        parentSessionId: 10,
+      };
+    }
+
+    function buildManagerMock() {
+      return {
+        cancelAllForParent: vi.fn(),
+        beginRetry: vi.fn(async () => ({ ok: true, taskId: 55 })),
+        completeRetry: vi.fn(),
+      };
+    }
+
+    function resetQueue() {
+      messageQueueService.listPending.mockResolvedValue([]);
+      messageQueueService.dequeue.mockResolvedValue(null);
+    }
+
+    function buildSubagentHandler(manager: ReturnType<typeof buildManagerMock>) {
+      return new StreamingWsHandler({
+        registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
+        localToolSessionRegistry, askUserQuestionsRegistry, treeSignalPublisher, approvalRegistry, activityService,
+        activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
+        localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
+        llmModelMapper, jwtService, agentExecutor: (fn) => executor.submit(fn),
+        backgroundSubagentManager: manager,
+      } as unknown as WsHandlerDeps);
+    }
+
+    it('forwards retry to subagent manager: begin before run and complete with final phase', async () => {
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      resetQueue();
+      const manager = buildManagerMock();
+      const subHandler = buildSubagentHandler(manager);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(subagentSession('CLOUD', 'FAILED'));
+      harnessService.executeFromEvent.mockResolvedValue(undefined);
+
+      await subHandler.handleTextMessage(ws, JSON.stringify({ type: 'retry_execution', sessionId: 11 }));
+      await executor.runAll();
+
+      expect(manager.beginRetry).toHaveBeenCalledWith(10, 11);
+      expect(harnessService.executeFromEvent).toHaveBeenCalled();
+      expect(manager.completeRetry).toHaveBeenCalledWith(10, 55, 'COMPLETED');
+    });
+
+    it('marks FAILED when retry execution throws', async () => {
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      resetQueue();
+      const manager = buildManagerMock();
+      const subHandler = buildSubagentHandler(manager);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(subagentSession('CLOUD', 'FAILED'));
+      harnessService.executeFromEvent.mockRejectedValue(new Error('boom'));
+
+      await subHandler.handleTextMessage(ws, JSON.stringify({ type: 'retry_execution', sessionId: 11 }));
+      await executor.runAll();
+
+      expect(manager.completeRetry).toHaveBeenCalledWith(10, 55, 'FAILED');
+    });
+
+    it('rejects retry when beginRetry fails without running execution', async () => {
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      const manager = buildManagerMock();
+      manager.beginRetry.mockResolvedValue({ ok: false, error: '任务尚未结束，无法重试' });
+      const subHandler = buildSubagentHandler(manager);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(subagentSession('CLOUD', 'FAILED'));
+
+      await subHandler.handleTextMessage(ws, JSON.stringify({ type: 'retry_execution', sessionId: 11 }));
+      await executor.runAll();
+
+      expect(manager.beginRetry).toHaveBeenCalledWith(10, 11);
+      expect(harnessService.executeFromEvent).not.toHaveBeenCalled();
+      expect(manager.completeRetry).not.toHaveBeenCalled();
+      expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+        type: 'error', sessionId: 11,
+        data: expect.objectContaining({ message: '任务尚未结束，无法重试' }),
+      }));
+    });
+
+    it('rolls back subagent execution to FAILED when setup fails after beginRetry', async () => {
+      vi.clearAllMocks();
+      executor.tasks.length = 0;
+      resetQueue();
+      const manager = buildManagerMock();
+      const subHandler = buildSubagentHandler(manager);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(subagentSession('CLOUD', 'FAILED'));
+      // LOCAL 检查失败，模拟 beginRetry 成功后、执行提交前的失败出口
+      sessionService.updatePhase.mockRejectedValue(new Error('db down'));
+
+      await subHandler.handleTextMessage(ws, JSON.stringify({ type: 'retry_execution', sessionId: 11 }));
+      await executor.runAll();
+
+      expect(manager.completeRetry).toHaveBeenCalledWith(10, 55, 'FAILED');
+    });
+  });
 });

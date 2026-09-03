@@ -75,6 +75,8 @@ export interface WsHandlerDeps {
   };
   backgroundSubagentManager?: {
     cancelAllForParent(parentSessionId: number): Promise<void>;
+    beginRetry(parentSessionId: number, childSessionId: number): Promise<{ ok: boolean; taskId?: number; error?: string }>;
+    completeRetry(parentSessionId: number, taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED'): Promise<void>;
   };
   shellSessionManager: { closeByConversation(sessionId: number): void };
   skillSyncService: {
@@ -757,7 +759,27 @@ export class StreamingWsHandler {
     }
     this.executionClaims.add(sessionId);
     let phaseAdvanced = false;
+    // beginRetry 成功后 execution 已置 RUNNING 并纳入跟踪；此后任何失败出口
+    // （LOCAL 检查/提交前异常）都必须收敛回 FAILED，否则记录永久卡 RUNNING。
+    let retryTaskId: number | null = null;
     try {
+      // 后台子代理会话的重试：先在子代理管理器做开始簿记（execution 置回 RUNNING 并纳入
+      // 运行跟踪），否则主代理 check_subagent/wait_subagents 感知不到这次重试执行。
+      if (session.sessionType === 'SUBAGENT' && session.parentSessionId != null) {
+        const manager = this.deps.backgroundSubagentManager;
+        if (!manager?.beginRetry || !manager.completeRetry) {
+          this.executionClaims.delete(sessionId);
+          this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '子代理重试功能不可用' }));
+          return;
+        }
+        const began = await manager.beginRetry(session.parentSessionId, sessionId);
+        if (!began.ok) {
+          this.executionClaims.delete(sessionId);
+          this.deps.registry.send(userId, wsEvent('error', sessionId, { message: began.error ?? '无法重试该子代理' }));
+          return;
+        }
+        retryTaskId = began.taskId ?? null;
+      }
       // 防御性订阅，确保客户端能收到流式事件
       this.deps.registry.subscribe(userId, sessionId);
       // LOCAL 模式：注册会话到用户映射并检查桌面端连接
@@ -765,6 +787,7 @@ export class StreamingWsHandler {
         this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
         if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
           this.executionClaims.delete(sessionId);
+          await this.rollbackSubagentRetry(session, retryTaskId);
           this.deps.registry.send(userId, wsEvent('error', sessionId, {
             message: 'Local client is not connected. Please ensure the desktop app is running.',
           }));
@@ -790,7 +813,7 @@ export class StreamingWsHandler {
       this.deps.registry.clearActiveToolCalls(sessionId);
       this.deps.askUserQuestionsRegistry.failAllForSession(sessionId);
       this.submitExecution(sessionId, userId, executionId, (futureRef) =>
-        this.runRetryExecution(session, userId, sessionId, executionId, cancelFlag, futureRef));
+        this.runRetryExecution(session, userId, sessionId, executionId, cancelFlag, futureRef, retryTaskId));
     } catch (e) {
       // claim 添加后、执行提交前的异常路径必须释放占位（同 M-4），否则会话永久判定 busy。
       // submitExecution 提交被拒时已自行回滚并发事件，这里仅在实际删除到 claim 时才补发 error，避免重复。
@@ -804,6 +827,7 @@ export class StreamingWsHandler {
       this.cancelFlags.delete(sessionId);
       this.runningExecutionIds.delete(sessionId);
       this.deps.agentLoop.removeCancelFlag(sessionId);
+      await this.rollbackSubagentRetry(session, retryTaskId);
       if (this.executionClaims.delete(sessionId)) {
         console.error(`Retry execution setup failed for session ${sessionId}`, e);
         this.deps.registry.send(userId, wsEvent('error', sessionId, {
@@ -816,6 +840,7 @@ export class StreamingWsHandler {
   private async runRetryExecution(
     session: Session, userId: number, sessionId: number, executionId: string,
     cancelFlag: { get(): boolean; set(v: boolean): void }, futureRef: { current: unknown },
+    retryTaskId: number | null,
   ): Promise<void> {
     await this.withLock(this.sessionLocks, sessionId, async () => {
       let terminalPhase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
@@ -854,9 +879,28 @@ export class StreamingWsHandler {
         this.pendingCancels.delete(sessionId);
         this.deps.agentLoop.removeCancelFlag(sessionId);
         this.deps.activityHeartbeat.clear(sessionId);
+        if (retryTaskId != null && session.parentSessionId != null) {
+          // 重试结束后收敛子代理 execution 记录并按需向主代理投递结果；
+          // 簿记失败不影响会话终态（session.phase 已由 finishXxxSession 落库）。
+          try {
+            await this.deps.backgroundSubagentManager?.completeRetry?.(session.parentSessionId, retryTaskId, terminalPhase);
+          } catch (e) {
+            console.error(`Failed to finalize subagent retry for task ${retryTaskId}`, e);
+          }
+        }
         if (terminalPhase !== 'FAILED') await this.autoConsumeQueue(sessionId, userId);
       }
     });
+  }
+
+  /** beginRetry 成功但重试未能启动时的收敛：execution 置回 FAILED，释放运行跟踪。 */
+  private async rollbackSubagentRetry(session: Session, retryTaskId: number | null): Promise<void> {
+    if (retryTaskId == null || session.parentSessionId == null) return;
+    try {
+      await this.deps.backgroundSubagentManager?.completeRetry?.(session.parentSessionId, retryTaskId, 'FAILED');
+    } catch (e) {
+      console.error(`Failed to roll back subagent retry for task ${retryTaskId}`, e);
+    }
   }
 
   private async handleCancel(userId: number, root: Record<string, unknown>): Promise<void> {

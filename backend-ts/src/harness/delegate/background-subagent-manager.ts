@@ -254,6 +254,87 @@ export class BackgroundSubagentManager {
     return response;
   }
 
+  /**
+   * 用户点击「重试」后的开始簿记：将子代理最新一次后台执行记录置回 RUNNING 并纳入运行跟踪。
+   * 重试复用同一 execution 记录（task_id 不变），主代理 check_subagent 才能感知到重新执行；
+   * 否则 WS 重试路径只更新 session.phase，execution 永远停留在旧终态（如 FAILED）。
+   */
+  async beginRetry(
+    parentSessionId: number,
+    childSessionId: number,
+  ): Promise<BackgroundSpawnResult> {
+    const childSession = await this.deps.sessionMapper.selectById(childSessionId);
+    if (!childSession || childSession.sessionType !== 'SUBAGENT') {
+      return { ok: false, error: '会话不是子代理会话，无法重试' };
+    }
+    if (childSession.parentSessionId !== parentSessionId) {
+      return { ok: false, error: '子代理会话不属于当前会话，无法重试' };
+    }
+    const execution = await this.deps.subagentExecutionMapper.findByChildSessionId(childSessionId);
+    if (!execution || execution.id == null || !isAsyncInvocation(execution.invocationType)) {
+      return { ok: false, error: '子代理无后台执行记录，无法重试' };
+    }
+    if (!isTerminal(execution.status)) {
+      return { ok: false, error: '任务尚未结束，无法重试' };
+    }
+    // 丢弃上一轮已投递但主代理未消费的旧结果，避免重试后主代理收到过期的失败结果
+    const pending = this.resultsByParent.get(parentSessionId);
+    if (pending) {
+      const kept = pending.filter((entry) => entry.executionId !== execution.id);
+      if (kept.length > 0) this.resultsByParent.set(parentSessionId, kept);
+      else this.resultsByParent.delete(parentSessionId);
+    }
+    await this.deps.subagentExecutionMapper.updateById(execution.id, {
+      status: 'RUNNING',
+      result: null,
+      completedAt: null,
+      deliveryStatus: 'PENDING',
+    });
+    this.trackRunning(parentSessionId, execution.id);
+    return { ok: true, taskId: execution.id, childSessionId };
+  }
+
+  /**
+   * 用户重试执行结束后的收敛簿记：按最终状态写回 execution 记录，
+   * 并在父会话仍活跃时向主代理投递结果（与 spawn 路径交付语义一致）。
+   */
+  async completeRetry(
+    parentSessionId: number,
+    taskId: number,
+    status: 'COMPLETED' | 'FAILED' | 'CANCELLED',
+  ): Promise<void> {
+    this.untrackRunning(parentSessionId, taskId);
+    this.runningRefsByTask.delete(taskId);
+    const execution = await this.deps.subagentExecutionMapper.findById(taskId);
+    if (!execution || execution.parentSessionId !== parentSessionId) return;
+    // 条件更新：仅 RUNNING/RECOVERING 可收敛为终态。若已被并发收敛
+    // （如父会话取消触发 cancelAllForParent 置 CANCELLED），保持库内现状不覆盖。
+    const resultText = status === 'COMPLETED'
+      ? await this.recentOutput(execution.childSessionId ?? null) ?? '(子代理未产生文本输出)'
+      : status === 'CANCELLED' ? '后台子代理已取消' : '后台子代理重试执行失败';
+    const applied = await this.deps.subagentExecutionMapper.updateTerminal(taskId, {
+      status,
+      result: resultText,
+      completedAt: nowSql(),
+    });
+    if (!applied) return;
+    const parent = await this.deps.sessionMapper.selectById(parentSessionId);
+    if (!parent || isTerminal(parent.phase)) {
+      await this.deps.subagentExecutionMapper.updateById(taskId, { deliveryStatus: 'SUPPRESSED' });
+      return;
+    }
+    const entries = this.resultsByParent.get(parentSessionId) ?? [];
+    entries.push({
+      executionId: taskId,
+      resultJson: JSON.stringify(this.buildResultPayload(execution, status, resultText, null, null)),
+    });
+    this.resultsByParent.set(parentSessionId, entries);
+    if (execution.childSessionId != null) {
+      await this.persistCompletionNotice(execution, { id: execution.childSessionId } as Session, status, resultText);
+    }
+    await this.deps.subagentExecutionMapper.updateById(taskId, { deliveryStatus: 'DELIVERED' });
+  }
+
   async cancelAllForParent(parentSessionId: number): Promise<void> {
     const executions = await this.deps.subagentExecutionMapper.listByParent(parentSessionId);
     const backgrounds = executions.filter((e) => isAsyncInvocation(e.invocationType) && !isTerminal(e.status));
