@@ -44,7 +44,7 @@ resolve_pkg() {
     git -C "${WORKDIR}" checkout --force FETCH_HEAD
     git -C "${WORKDIR}" sparse-checkout set agent-cli >/dev/null 2>&1 || true
   else
-    rm -rf "${WORKDIR}"
+    rm -rf "${WORKDIR}" >/dev/null
     echo "克隆 ${REPO} (${REF}) → ${WORKDIR} ..." >&2
     git clone --depth 1 --filter=blob:none --sparse --branch "${REF}" "${REPO}" "${WORKDIR}"
     git -C "${WORKDIR}" sparse-checkout set agent-cli
