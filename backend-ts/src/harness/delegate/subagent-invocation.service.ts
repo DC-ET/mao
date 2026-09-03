@@ -40,7 +40,10 @@ export class SubagentInvocationService {
         platform: parent.platform,
         shellPath: parent.shellPath,
         osVersion: parent.osVersion,
-        phase: null,
+        // 创建即 RUNNING：execution 已是 RUNNING，与 followup 路径一致。
+        // 若先建 NULL 等 runBackground 启动再置 RUNNING，窗口期内详情接口
+        // 会把 NULL 映射为 IDLE 并被前端补拉覆盖，且 RUNNING 事件只推一次，界面永久卡 IDLE。
+        phase: 'RUNNING',
         projectKey: parent.projectKey,
         parentSessionId: parent.id,
         sessionType: 'SUBAGENT',
