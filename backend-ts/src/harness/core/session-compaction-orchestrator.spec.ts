@@ -124,6 +124,22 @@ describe('SessionCompactionOrchestrator compaction archive', () => {
     expect(s.listener.onCompactionPersisted).toHaveBeenCalledOnce();
   });
 
+  it('usesRecordBasedSeqForFirstCompactionWithoutPriorRecord', async () => {
+    // 首次压缩：无既有记录 record=null，序号应为 1（而非依赖 latest 重载值）
+    const messages = entityMessages().filter((m) => m.id! <= 20);
+    const s = setup({
+      loadValidatedCalls: [null, record(20, 1)],
+      histories: [history(messages), history([])],
+      persisted: true,
+      compactResult: { ...compactionResult(), expectedOldBoundary: 0 },
+    });
+    const advanced = await runCompact(s);
+    expect(advanced).toBe(true);
+    const [, , , seq, archived] = s.compactionArchiveService.writeArchive.mock.calls[0];
+    expect(seq).toBe(1);
+    expect(archived.map((m: Message) => m.id)).toEqual([11, 15, 20]);
+  });
+
   it('doesNotWriteArchiveWhenCasPersistFails', async () => {
     const s = setup({
       loadValidatedCalls: [record(10, 1), record(10, 1)],
@@ -140,9 +156,10 @@ describe('SessionCompactionOrchestrator compaction archive', () => {
 
   it('writesArchiveByPersistedEvenWhenAnotherThreadAdvancedBeyondCandidate', async () => {
     // 本线程 CAS 获胜（persisted=true）但他人随后推进到更大边界：advanced=false 不记事件，
-    // 但本线程的压缩区间 (10,20] 已真实落库，归档仍须写入（判据=persisted，避免区间缺口）
+    // 但本线程的压缩区间 (10,20] 已真实落库，归档仍须写入（判据=persisted，避免区间缺口）。
+    // 他人线程基于 record(20,2) 推进 20→30，落库后 count=3
     const s = setup({
-      loadValidatedCalls: [record(10, 1), record(30, 2)],
+      loadValidatedCalls: [record(10, 1), record(30, 3)],
       histories: [history(entityMessages()), history([])],
       persisted: true,
       compactResult: compactionResult(),

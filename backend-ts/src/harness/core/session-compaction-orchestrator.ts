@@ -67,11 +67,13 @@ export class SessionCompactionOrchestrator {
       const latestSummary = latest?.summaryText ?? null;
       const latestHistory = await this.sessionHistoryLoader.loadHistoryAfterBoundary(sessionId, latestBoundary);
       // 归档必须先于 applyHistory：首次压缩时 hint 构建依赖归档目录已非空；
-      // 判据用 persisted（CAS 获胜），即使随后被并发压缩超越，本线程区间也已落档
+      // 判据用 persisted（CAS 获胜），即使随后被并发压缩超越，本线程区间也已落档。
+      // 序号 = 本线程 CAS 推进后的确定性值（旧记录 compactCount + 1），
+      // 不依赖 latest 重载（并发场景下 latest 可能是他人记录，存在同名覆盖风险）
       if (persisted) {
         this.compactionArchiveService.writeArchive(
           context.executionMode, context.userId, context.sessionId,
-          latest?.compactCount ?? 1,
+          (record?.compactCount ?? 0) + 1,
           history.normalizedEntities.filter((m) => m.id != null
             && m.id > boundary && m.id <= result.newLastCompactedMessageId),
         );
