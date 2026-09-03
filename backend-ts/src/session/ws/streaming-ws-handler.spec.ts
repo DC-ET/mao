@@ -582,4 +582,58 @@ describe('StreamingWsHandler', () => {
     expect(harnessService.executeFromEvent).toHaveBeenCalled();
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'COMPLETED', 'sched-1');
   });
+
+  it('localSessionFailsImmediatelyWhenClientReportsSkillSyncWithoutSyncId', async () => {
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(120, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('local-event');
+    localToolSessionRegistry.isConnected.mockResolvedValue(true);
+    registry.hasLocalClientConnection.mockReturnValue(true);
+    // 旧版客户端（mao-agent ≤ 0.1.2 / 旧桌面端）回报的 skill_sync_done 不带 syncId
+    registry.sendToLocalClients.mockImplementationOnce(() => {
+      void handler.handleTextMessage(ws, JSON.stringify({ type: 'skill_sync_done', sessionId: 11, success: true }));
+    });
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11, data: { content: '看下我电脑的硬盘情况' },
+    }));
+    await executor.runAll();
+
+    expect(harnessService.executeFromEvent).not.toHaveBeenCalled();
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(
+      11, 7, 'FAILED', 'local-event', expect.stringContaining('syncId'),
+    );
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'error', sessionId: 11,
+      data: expect.objectContaining({ message: expect.stringContaining('syncId'), executionId: 'local-event' }),
+    }));
+    registry.hasLocalClientConnection.mockReset();
+    localToolSessionRegistry.isConnected.mockReset();
+  });
+
+  it('localSessionFailsWithConnectionReasonWhenNoLocalClientIsRegistered', async () => {
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(121, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('local-event-2');
+    localToolSessionRegistry.isConnected.mockResolvedValue(true);
+    registry.hasLocalClientConnection.mockReturnValue(false);
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11, data: { content: 'hello' },
+    }));
+    await executor.runAll();
+
+    expect(registry.sendToLocalClients).not.toHaveBeenCalled();
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(
+      11, 7, 'FAILED', 'local-event-2', expect.stringContaining('客户端连接'),
+    );
+    registry.hasLocalClientConnection.mockReset();
+    localToolSessionRegistry.isConnected.mockReset();
+  });
 });

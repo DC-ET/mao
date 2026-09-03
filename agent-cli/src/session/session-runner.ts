@@ -1,4 +1,4 @@
-import type { AgentVO, CreateSessionRequest, SessionVO } from '../rest/types';
+import type { AgentVO, CreateSessionRequest, SafeModelVO, SessionVO } from '../rest/types';
 import type { RestClient } from '../rest/rest-client';
 import type { WsClient } from '../ws/ws-client';
 import type { AskAnswer, AskQuestion, TodoItem, WsEvent } from '../ws/event-types';
@@ -689,6 +689,18 @@ export async function resolveAgent(rest: RestClient, spec?: string, fallbackId?:
   throw new CliError('没有默认 Agent，请用 --agent <id|name> 指定');
 }
 
+/** 模型显示名/厂商串归一化：库里存在带尾随空格的显示名，用户手输与 Tab 补全都不会带。 */
+function normalizeModelKey(raw: string | null | undefined): string {
+  return String(raw ?? '').trim();
+}
+
+/**
+ * 解析 --model / `/model` 的取值。
+ *
+ * 匹配优先级：纯数字按 id → 显示名 `name`（精确、再大小写不敏感）→ 厂商串 `modelId` 兜底。
+ * name 是用户在管理后台看到并输入的那一个，同一 `modelId` 常对应多条配置（不同 key / 网关），
+ * 因此两者不能并列比较，否则唯一的显示名会被同厂商的多条配置挤成「多个同名」而无法切换。
+ */
 export async function resolveModelId(rest: RestClient, spec?: string, fallbackId?: number): Promise<number | undefined> {
   if (!spec && fallbackId == null) return undefined;
   const models = await rest.listActiveModels();
@@ -698,12 +710,26 @@ export async function resolveModelId(rest: RestClient, spec?: string, fallbackId
       if (!found) throw new CliError(`找不到模型 id=${spec}`);
       return found.id;
     }
-    const exact = models.filter((m) => m.name === spec || m.modelId === spec);
-    if (exact.length === 1) return exact[0].id;
-    if (exact.length > 1) throw new CliError(`多个模型名为「${spec}」，请改用 --model <id>`);
+    const want = normalizeModelKey(spec);
+    const byName = models.filter((m) => normalizeModelKey(m.name) === want);
+    const nameHits = byName.length > 0
+      ? byName
+      : models.filter((m) => normalizeModelKey(m.name).toLowerCase() === want.toLowerCase());
+    if (nameHits.length === 1) return nameHits[0].id;
+    if (nameHits.length > 1) throw new CliError(`多个模型名为「${spec}」，请改用 --model <id>：${formatModelChoices(nameHits)}`);
+    const byModelId = models.filter((m) => normalizeModelKey(m.modelId).toLowerCase() === want.toLowerCase());
+    if (byModelId.length === 1) return byModelId[0].id;
+    if (byModelId.length > 1) {
+      throw new CliError(`「${spec}」是厂商模型串，对应多条模型配置，请改用显示名或 --model <id>：${formatModelChoices(byModelId)}`);
+    }
     throw new CliError(`找不到名为「${spec}」的模型`);
   }
   return fallbackId;
+}
+
+/** 消歧提示：列出候选的 id 与显示名，用户可直接照抄 id。 */
+function formatModelChoices(models: SafeModelVO[]): string {
+  return models.map((m) => `${m.id}=${normalizeModelKey(m.name) || m.modelId || '?'}`).join('、');
 }
 
 export function pickLatestSession(sessions: SessionVO[]): SessionVO | null {

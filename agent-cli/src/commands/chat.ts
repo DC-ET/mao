@@ -66,7 +66,9 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
   let modelNames: string[] = [];
   try {
     const models = await rest.listActiveModels();
-    modelNames = models.flatMap((m) => [m.name, m.modelId].filter((n): n is string => Boolean(n)));
+    // 只放显示名：同一厂商串常对应多条配置，混进补全会让用户选到无法唯一定位的候选。
+    // 同时 trim，库里有带尾随空格的显示名，补全填进去会与解析侧的归一化不一致。
+    modelNames = [...new Set(models.map((m) => (m.name ?? '').trim()).filter((n) => n !== ''))];
     if (!(session.contextWindowTokens != null && session.contextWindowTokens > 0)) {
       contextWindowTokens = resolveContextWindowTokens(session, models, modelId);
     }

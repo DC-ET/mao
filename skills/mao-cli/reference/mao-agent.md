@@ -78,6 +78,16 @@ mao-agent -p "检查本次 PR 是否有明显的安全问题" \
 - 打印模式（`-p`）+ 非 TTY + 显式 `--on-approval=ask` 会报错：非 TTY 无法弹审批，请改 `fail` 或提供 TTY
 - `--permission-level` 缺省为 `READ_WRITE`，会写入会话并覆盖服务端默认值（服务端默认 `READ_ONLY`）；只影响 LOCAL 审批
 
+## 模型解析
+
+`--model` 与 `/model` 的取值按以下顺序解析（`mao model list-active` 可查全部候选）：
+
+1. 纯数字 → 模型配置 `id`
+2. 显示名 `name` 精确匹配（忽略首尾空格），再退一级大小写不敏感
+3. 厂商模型串 `modelId` 兜底（大小写不敏感）
+
+显示名是管理后台里看到、也是 REPL 底部状态栏显示的那一个，优先级高于厂商串——同一厂商串（如 `deepseek-v4-flash`）常对应多条模型配置（不同 key / 网关），此时按串匹配无法唯一定位，会提示 `「X」是厂商模型串，对应多条模型配置，请改用显示名或 --model <id>` 并列出候选 `id=名称`；真有多条同显示名时提示 `多个模型名为「X」，请改用 --model <id>`。Tab 补全只给显示名。
+
 ## 交互 REPL
 
 已定稿的对话逐行写入终端 scrollback（可用终端原生滚动回看，**不使用备用屏**），只有输入框、状态行和正在流式输出的尾部属于活动区，活动区高度始终小于终端高度，所以不会整屏重绘、也不会清掉历史。用户消息以 `❯` 回显；工具调用显示为 `⏺ name  args` + `⎿` 摘要。
@@ -95,7 +105,7 @@ mao-agent -p "检查本次 PR 是否有明显的安全问题" \
 |------|------|
 | `/help` | 查看斜杠命令 |
 | `/session` | 当前会话信息（sessionId、Agent、模型、workspace、phase） |
-| `/model <id\|name>` | 切换当前会话模型（持久写库）；无参数显示当前模型 |
+| `/model <id\|name>` | 切换当前会话模型（持久写库）；无参数显示当前模型。`name` 按显示名匹配，见「模型解析」 |
 | `/todo` | 查看 Todo |
 | `/context` | 最近一次上下文占用（≥80% 会提示接近上限） |
 | `/verbose` | 展开 / 折叠工具输出 |
@@ -138,7 +148,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 | `-p, --print [prompt]` | 打印模式：发一条消息，等任务终态后退出 |
 | `--local` | 工具在本机工作区执行（executionMode=LOCAL） |
 | `--agent <id\|name>` | 指定 Agent；缺省用 isDefault=true 的那个 |
-| `--model <id\|name>` | 指定模型（会持久修改会话模型） |
+| `--model <id\|name>` | 指定模型（会持久修改会话模型），见「模型解析」 |
 | `--workspace <path>` | CLOUD：服务端工作区路径；LOCAL：本机工作区（默认 cwd） |
 | `--thinking` | 展开思考内容（默认折叠） |
 | `--ascii` | 纯 ASCII 输出：直角边框 + 无 emoji/宽字符 |

@@ -30,6 +30,7 @@
 - 是否 Electron 或 `mao-agent --local`，而非纯浏览器
 - Electron/CLI 是否保持运行、是否选了工作区
 - 权限档位与审批是否拒绝
+- 任务毫无回复且约 60 秒后失败：客户端版本过旧（技能同步信号缺 `syncId`），升级桌面端或 `mao-agent update`
 
 ## Git
 
@@ -91,6 +92,9 @@
 | mao-agent LOCAL 报找不到 bash | shell 工具固定用 bash；容器/精简系统需安装 bash |
 | LOCAL shell 里 `mao` 报 401 | shell 子进程有意不注入 `MAO_TOKEN`，先在该机 `mao login` 写入 `~/.mao/auth.json` |
 | `--approve-rule` 报错退出码 4 | 必须写成 `tool:pattern`；`*`、`*:*`、只写工具名都会被拒绝 |
+| LOCAL 任务无任何回复、约 60 秒后失败 | 客户端版本过旧：技能同步完成信号未带 `syncId`，服务端等到超时才判失败。升级桌面端或 `mao-agent update`（修复见 0.0.94）。新版服务端会直接提示「技能同步失败：客户端未回带技能同步标识 syncId」 |
+| LOCAL 任务报「技能同步失败：没有可执行本机工具的客户端连接」 | 桌面端 / `mao-agent --local` 未连上或已退出；重新启动客户端后重发 |
+| `--model` / `/model` 报「多个模型名为 X」或「找不到名为 X 的模型」 | 取值优先按显示名匹配、厂商串兜底，见 [mao-agent.md](mao-agent.md) 的「模型解析」。用 `mao model list-active` 查候选，必要时直接给 `--model <id>` |
 
 ## 获取日志
 

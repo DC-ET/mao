@@ -54,6 +54,14 @@ describe('parseCliConfig', () => {
     expect(cfg.prompt).toBe('写点东西');
   });
 
+  it('sends the prompt that directly follows --local instead of eating it as a value', () => {
+    const cfg = parseCliConfig(['--local', '你好'], tty);
+    expect(cfg.command).toBe('chat');
+    expect(cfg.local).toBe(true);
+    expect(cfg.prompt).toBe('你好');
+    expect(cfg.print).toBe(false);
+  });
+
   it('order does not matter for trailing flags', () => {
     const cfg = parseCliConfig(['-p', 'hello', '--verbose-tools'], tty);
     expect(cfg.prompt).toBe('hello');

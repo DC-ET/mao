@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { SessionRunner } from '../src/session/session-runner';
+import { SessionRunner, resolveModelId } from '../src/session/session-runner';
 import type { WsClient } from '../src/ws/ws-client';
 import type { RestClient } from '../src/rest/rest-client';
 import type { AskHandler, CliEvent, Renderer } from '../src/render/types';
-import type { SessionVO } from '../src/rest/types';
+import type { SafeModelVO, SessionVO } from '../src/rest/types';
 import type { WsEvent } from '../src/ws/event-types';
 
 class CollectingRenderer implements Renderer {
@@ -248,5 +248,67 @@ describe('SessionRunner', () => {
     terminal(ws, eid);
     expect((await p).status).toBe('COMPLETED');
     expect(runner.isRunning()).toBe(false);
+  });
+});
+
+/** 取自线上活跃 text 模型的真实形态：显示名带尾随空格，且同一 modelId 对应多条配置。 */
+const MODELS: SafeModelVO[] = [
+  { id: 5, name: 'ds-v4-pro（official）', modelId: 'deepseek-v4-pro' },
+  { id: 69, name: 'glm-5.3-flash（free）', modelId: 'glm-5.3-flash' },
+  { id: 78, name: 'ds-v4-vision（free） ', modelId: 'deepseek-v4-flash-vision-exp' },
+  { id: 58, name: 'ds-v4-vision（agentrouter）', modelId: 'deepseek-v4-flash-vision-exp' },
+  { id: 60, name: 'ds-v4-flash（free）', modelId: 'deepseek-v4-flash' },
+  { id: 50, name: 'ds-v4-flash（official）', modelId: 'deepseek-v4-flash' },
+  { id: 54, name: 'ds-v4-flash（agentrouter）', modelId: 'deepseek-v4-flash' },
+];
+
+function modelRest(models: SafeModelVO[] = MODELS): RestClient {
+  return { listActiveModels: async () => models } as unknown as RestClient;
+}
+
+describe('resolveModelId', () => {
+  it('matches a display name whose stored value has trailing whitespace', async () => {
+    // 用户手输 / Tab 补全都不会带尾随空格，严格全等会判「找不到」
+    expect(await resolveModelId(modelRest(), 'ds-v4-vision（free）')).toBe(78);
+  });
+
+  it('prefers the display name over another row sharing that vendor model id', async () => {
+    // 78 与 58 同 modelId：按显示名仍应唯一命中，而不是报「多个同名」
+    expect(await resolveModelId(modelRest(), 'ds-v4-vision（agentrouter）')).toBe(58);
+  });
+
+  it('falls back to the vendor model id only when no display name matches', async () => {
+    expect(await resolveModelId(modelRest(), 'glm-5.3-flash')).toBe(69);
+  });
+
+  it('asks for an id when a vendor model id maps to several configurations', async () => {
+    await expect(resolveModelId(modelRest(), 'deepseek-v4-flash')).rejects.toThrow(/厂商模型串/);
+    await expect(resolveModelId(modelRest(), 'deepseek-v4-flash')).rejects.toThrow(/60=|50=|54=/);
+  });
+
+  it('asks for an id when two rows really share a display name', async () => {
+    const dup: SafeModelVO[] = [
+      { id: 1, name: '同名', modelId: 'a' },
+      { id: 2, name: '同名 ', modelId: 'b' },
+    ];
+    await expect(resolveModelId(modelRest(dup), '同名')).rejects.toThrow(/多个模型名/);
+  });
+
+  it('matches a display name case-insensitively as a fallback', async () => {
+    expect(await resolveModelId(modelRest(), 'GLM-5.3-FLASH（FREE）')).toBe(69);
+  });
+
+  it('resolves a numeric spec as an id and reports a missing one', async () => {
+    expect(await resolveModelId(modelRest(), '5')).toBe(5);
+    await expect(resolveModelId(modelRest(), '999')).rejects.toThrow(/找不到模型 id=999/);
+  });
+
+  it('reports an unknown name instead of silently falling back', async () => {
+    await expect(resolveModelId(modelRest(), '不存在的模型')).rejects.toThrow(/找不到名为/);
+  });
+
+  it('returns the fallback id without a spec and undefined with neither', async () => {
+    expect(await resolveModelId(modelRest(), undefined, 50)).toBe(50);
+    expect(await resolveModelId(modelRest())).toBeUndefined();
   });
 });

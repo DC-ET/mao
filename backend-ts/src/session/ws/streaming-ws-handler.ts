@@ -402,10 +402,11 @@ export class StreamingWsHandler {
         if (session.sessionType === 'SIDE_TASK') this.deps.treeSignalPublisher.publishIfSideTask(sessionId);
         const agent = session.agentId != null ? await this.deps.agentMapper.selectById(session.agentId) : null;
         if (session.executionMode === 'LOCAL' && agent) {
-          const synced = await this.syncSkillsToClient(userId, sessionId, session, agent);
-          if (!synced) {
-            terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, 'Skill sync failed or timed out');
-            this.deps.registry.send(userId, wsEvent('error', sessionId, { message: 'Skill sync failed or timed out' }));
+          const syncFailure = await this.syncSkillsToClient(userId, sessionId, session, agent);
+          if (syncFailure) {
+            const message = `技能同步失败：${syncFailure}`;
+            terminalPhase = await this.finishFailedSession(sessionId, userId, executionId, message);
+            this.deps.registry.send(userId, wsEvent('error', sessionId, { message, executionId }));
             return;
           }
           await this.syncMcpServersToClient(userId, sessionId, session, agent);
@@ -668,10 +669,11 @@ export class StreamingWsHandler {
           if (sideSession.executionMode === 'LOCAL' && sideSession.agentId != null) {
             const sideAgent = await this.deps.agentMapper.selectById(sideSession.agentId);
             if (sideAgent) {
-              const synced = await this.syncSkillsToClient(userId, sideSessionId, sideSession, sideAgent);
-              if (!synced) {
-                terminalPhase = await this.finishFailedSession(sideSessionId, userId, sideExecutionId, 'Skill sync failed or timed out');
-                this.deps.registry.send(userId, wsEvent('error', sideSessionId, { message: 'Skill sync failed or timed out' }));
+              const syncFailure = await this.syncSkillsToClient(userId, sideSessionId, sideSession, sideAgent);
+              if (syncFailure) {
+                const message = `技能同步失败：${syncFailure}`;
+                terminalPhase = await this.finishFailedSession(sideSessionId, userId, sideExecutionId, message);
+                this.deps.registry.send(userId, wsEvent('error', sideSessionId, { message, executionId: sideExecutionId }));
                 return;
               }
               await this.syncMcpServersToClient(userId, sideSessionId, sideSession, sideAgent);
@@ -1079,7 +1081,9 @@ export class StreamingWsHandler {
       if (success) pending.resolve();
       else pending.reject(new Error(error && error.trim() !== '' ? error : 'Skill sync failed on client'));
     } else if (pending && reportSyncId == null) {
-      console.warn(`skill_sync_done without syncId ignored for session=${sessionId}`);
+      // 无法判定属于哪一轮同步，但客户端确实回过信号：立即以真实原因结束本轮，
+      // 否则会空等到 60s 超时并报出误导性的「超时」（真实原因是客户端版本过旧）。
+      pending.reject(new Error('客户端未回带技能同步标识 syncId，请升级桌面端或 mao-agent 后重试'));
     } else {
       console.warn(`No pending skill sync for session=${sessionId}`);
     }
@@ -1123,10 +1127,11 @@ export class StreamingWsHandler {
     if (current && current.syncId === reportSyncId) current.resolve();
   }
 
-  private async syncSkillsToClient(userId: number, sessionId: number, session: Session, agent: Agent): Promise<boolean> {
+  /** 成功返回 null；失败返回具体原因（同时用于终态失败原因与前端 error 文案）。 */
+  private async syncSkillsToClient(userId: number, sessionId: number, session: Session, agent: Agent): Promise<string | null> {
     if (!this.deps.registry.hasLocalClientConnection(userId)) {
-      console.warn(`Skip skill sync for session ${sessionId}: no Electron client connected`);
-      return false;
+      console.warn(`Skip skill sync for session ${sessionId}: no local client connected`);
+      return '没有可执行本机工具的客户端连接（桌面端 / mao-agent 未连接）';
     }
     const syncUrl = `/v1/skills/sync-package?sessionId=${sessionId}`;
     const removed = this.deps.skillSyncService.getRemovedSkillNames(agent, userId, sessionId);
@@ -1143,14 +1148,14 @@ export class StreamingWsHandler {
       await Promise.race([
         done,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('timeout')), 60_000);
+          timer = setTimeout(() => reject(new Error('客户端 60 秒内未回报技能同步结果')), 60_000);
         }),
       ]);
-      return true;
+      return null;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.warn(`Skill sync failed for session ${sessionId}: ${message}`);
-      return false;
+      return message;
     } finally {
       if (timer) clearTimeout(timer);
       this.pendingSkillSyncs.delete(sessionId);
@@ -1202,9 +1207,9 @@ export class StreamingWsHandler {
     this.deps.shellSessionManager.closeByConversation(sessionId);
     this.deps.localToolSessionRegistry.failAllForSession(sessionId);
     const skillSync = this.pendingSkillSyncs.get(sessionId);
-    if (skillSync) skillSync.reject(new Error('Session aborted'));
+    if (skillSync) skillSync.reject(new Error('会话已被取消'));
     const mcpSync = this.pendingMcpSyncs.get(sessionId);
-    if (mcpSync) mcpSync.reject(new Error('Session aborted'));
+    if (mcpSync) mcpSync.reject(new Error('会话已被取消'));
     void aggressive;
     this.deps.askUserQuestionsRegistry.failAllForSession(sessionId);
     void this.abortSubagentChildren(sessionId);
