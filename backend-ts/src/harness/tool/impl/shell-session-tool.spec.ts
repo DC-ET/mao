@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ShellSessionTool } from './shell-session-tool.js';
 import { SecurityException } from '../../safety/path-sandbox.js';
 
@@ -15,6 +15,10 @@ describe('ShellSessionTool', () => {
     currentWorkdir: '/tmp',
     outputFile: '/tmp/out.log',
     isAlive: () => true,
+    pendingCommand: null as { marker: string; keepSession: boolean; persist: boolean; taskId: string | null } | null,
+    beginCommand(marker: string, keepSession: boolean, persist = true, taskId: string | null = null) {
+      session.pendingCommand = { marker, keepSession, persist, taskId };
+    },
   };
   const sessionManager = {
     getOrCreate: vi.fn(() => session),
@@ -23,11 +27,20 @@ describe('ShellSessionTool', () => {
     listByConversation: vi.fn(() => [session]),
   };
   const outputManager = {
-    readUntilMarker: vi.fn(async () => ({ output: 'hello\n', truncated: false, completed: true })),
+    readUntilMarker: vi.fn(async () => {
+      // 真实实现读到 marker 后会 finishCommand，mock 也要清掉 pending
+      session.pendingCommand = null;
+      return { output: 'hello\n', truncated: false, completed: true, exitCode: null, matched: null };
+    }),
   };
   const background = { submit: vi.fn(() => 'task-1') };
   const git = { getTokenMapByUser: vi.fn(async () => ({ 'github.com': 'tok' })) };
   const tool = new ShellSessionTool(pathSandbox as never, sessionManager as never, outputManager as never, background as never, git);
+
+  beforeEach(() => {
+    // submit 是 mock，后台读取任务不会真的跑，pending 需要在用例间复位
+    session.pendingCommand = null;
+  });
 
   it('executes lists closes and writes stdin', async () => {
     expect(tool.getName()).toBe('shell');
@@ -95,7 +108,7 @@ describe('ShellSessionTool', () => {
 });
 
 describe('ShellSessionTool marker and environment handling', () => {
-  function harness(readResult: Partial<{ output: string; truncated: boolean; completed: boolean; exitCode: number | null }> = {}) {
+  function harness(readResult: Partial<{ output: string; truncated: boolean; completed: boolean; exitCode: number | null; matched: string | null }> = {}) {
     const shellSession = {
       sessionId: 'sh-1',
       writeStdin: vi.fn(),
@@ -105,6 +118,11 @@ describe('ShellSessionTool marker and environment handling', () => {
       currentWorkdir: '/tmp',
       outputFile: '/tmp/out.log',
       isAlive: () => true,
+      peekBuffer: () => '',
+      pendingCommand: null as { marker: string; keepSession: boolean; persist: boolean; taskId: string | null } | null,
+      beginCommand(marker: string, keepSession: boolean, persist = true, taskId: string | null = null) {
+        shellSession.pendingCommand = { marker, keepSession, persist, taskId };
+      },
     };
     const sessionManager = {
       getOrCreate: vi.fn(() => shellSession),
@@ -113,9 +131,14 @@ describe('ShellSessionTool marker and environment handling', () => {
       listByConversation: vi.fn(() => [shellSession]),
     };
     const outputManager = {
-      readUntilMarker: vi.fn(async () => ({
-        output: 'hello\n', truncated: false, completed: true, exitCode: null, ...readResult,
-      })),
+      readUntilMarker: vi.fn(async () => {
+        const result = {
+          output: 'hello\n', truncated: false, completed: true, exitCode: null, matched: null, ...readResult,
+        };
+        // 只有读到 marker 才算命令结束，未完成时 pending 必须保留供续等
+        if (result.completed) shellSession.pendingCommand = null;
+        return result;
+      }),
     };
     const tool = new ShellSessionTool(
       { resolve: vi.fn((p: string) => p), resolveLenient: vi.fn((p: string) => p) } as never,
@@ -176,10 +199,97 @@ describe('ShellSessionTool marker and environment handling', () => {
   it('refreshes current_workdir from pwd once the command completes', async () => {
     const { tool, shellSession, outputManager } = harness();
     outputManager.readUntilMarker
-      .mockImplementationOnce(async () => ({ output: 'done\n', truncated: false, completed: true, exitCode: 0 }))
-      .mockImplementationOnce(async () => ({ output: '/tmp/sub\n', truncated: false, completed: true, exitCode: null }));
+      .mockImplementationOnce(async () => ({ output: 'done\n', truncated: false, completed: true, exitCode: 0, matched: null }))
+      .mockImplementationOnce(async () => ({ output: '/tmp/sub\n', truncated: false, completed: true, exitCode: null, matched: null }));
     const result = JSON.parse(await tool.execute(JSON.stringify({ command: 'cd sub' }), 11, 7, '/tmp'));
     expect(result.current_workdir).toBe('/tmp/sub');
     expect(shellSession.setCurrentWorkdir).toHaveBeenCalledWith('/tmp/sub');
+  });
+
+  it('keeps the session and reports how to resume when wait_for fires early', async () => {
+    const { tool, sessionManager, outputManager } = harness({
+      output: 'Listening on 3000\n', completed: false, matched: 'Listening on',
+    });
+    const result = JSON.parse(await tool.execute(
+      JSON.stringify({ command: 'npm run dev', wait_for: 'Listening on' }), 11, 7, '/tmp',
+    ));
+    expect(result.completed).toBe(false);
+    expect(result.matched).toBe('Listening on');
+    expect(result.exit_code).toBe(-1);
+    expect(result.message).toContain('await_async');
+    // 命令仍在运行：即使没有 keep_session 也不能回收会话，否则剩余输出会被 SIGKILL 丢掉
+    expect(sessionManager.close).not.toHaveBeenCalled();
+    expect(outputManager.readUntilMarker.mock.calls[0][3]).toBeInstanceOf(RegExp);
+  });
+
+  it('resumes an unfinished command through await_async and settles the session afterwards', async () => {
+    const { tool, shellSession, sessionManager, outputManager } = harness({ completed: false });
+    const first = JSON.parse(await tool.execute(
+      JSON.stringify({ command: 'sleep 99', yield_time_ms: 10 }), 11, 7, '/tmp',
+    ));
+    expect(first.completed).toBe(false);
+    const pendingMarker = shellSession.pendingCommand?.marker;
+    expect(pendingMarker).toBeTruthy();
+    outputManager.readUntilMarker.mockImplementationOnce(async () => {
+      shellSession.pendingCommand = null;
+      return { output: 'finally\n', truncated: false, completed: true, exitCode: 0, matched: null };
+    });
+    const resumed = JSON.parse(await tool.execute(
+      JSON.stringify({ action: 'await_async', session_id: 'sh-1' }), 11, 7, '/tmp',
+    ));
+    expect(resumed.completed).toBe(true);
+    expect(resumed.exit_code).toBe(0);
+    expect(resumed.output).toContain('finally');
+    // 续读用的是原命令的 marker，否则会读到别的命令的输出
+    expect(outputManager.readUntilMarker.mock.calls[1][1]).toBe(pendingMarker);
+    expect(sessionManager.close).toHaveBeenCalledWith('sh-1');
+  });
+
+  it('refuses a new exec while the session still has an unfinished command', async () => {
+    const { tool } = harness({ completed: false });
+    await tool.execute(JSON.stringify({ command: 'sleep 99', yield_time_ms: 10 }), 11, 7, '/tmp');
+    const blocked = JSON.parse(await tool.execute(JSON.stringify({ command: 'echo hi', session_id: 'sh-1' }), 11, 7, '/tmp'));
+    expect(blocked.error).toContain('未结束的命令');
+  });
+
+  it('rejects an invalid or over-long wait_for before touching the shell', async () => {
+    const { tool, shellSession } = harness();
+    const invalid = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', wait_for: '([' }), 11, 7, '/tmp'));
+    expect(invalid.error).toContain('wait_for 不是合法正则');
+    const tooLong = JSON.parse(await tool.execute(JSON.stringify({ command: 'ls', wait_for: 'x'.repeat(201) }), 11, 7, '/tmp'));
+    expect(tooLong.error).toContain('wait_for 过长');
+    expect(shellSession.writeStdin).not.toHaveBeenCalled();
+  });
+
+  it('reports await_async without a pending command or with a background owner', async () => {
+    const { tool, shellSession } = harness();
+    const none = JSON.parse(await tool.execute(JSON.stringify({ action: 'await_async', session_id: 'sh-1' }), 11, 7, '/tmp'));
+    expect(none.error).toContain('没有未结束的命令');
+    shellSession.pendingCommand = { marker: 'm', keepSession: true, persist: true, taskId: 'bg-9' };
+    const owned = JSON.parse(await tool.execute(JSON.stringify({ action: 'await_async', session_id: 'sh-1' }), 11, 7, '/tmp'));
+    expect(owned.error).toContain('bg-9');
+    const stdinBlocked = JSON.parse(await tool.execute(
+      JSON.stringify({ action: 'write_stdin', session_id: 'sh-1', input: 'y' }), 11, 7, '/tmp',
+    ));
+    expect(stdinBlocked.error).toContain('bg-9');
+  });
+
+  it('feeds write_stdin to the running command instead of queueing a new marker', async () => {
+    const { tool, shellSession, outputManager } = harness({ completed: false });
+    await tool.execute(JSON.stringify({ command: 'read -r x', yield_time_ms: 10 }), 11, 7, '/tmp');
+    const pendingMarker = shellSession.pendingCommand?.marker;
+    shellSession.writeStdin.mockClear();
+    outputManager.readUntilMarker.mockClear();
+    outputManager.readUntilMarker.mockImplementationOnce(async () => {
+      shellSession.pendingCommand = null;
+      return { output: 'got:y\n', truncated: false, completed: true, exitCode: 0, matched: null };
+    });
+    const answered = JSON.parse(await tool.execute(
+      JSON.stringify({ action: 'write_stdin', session_id: 'sh-1', input: 'y' }), 11, 7, '/tmp',
+    ));
+    expect(answered.completed).toBe(true);
+    // 只写输入本身，不能再排一个 marker（它只会在当前命令结束后才执行）
+    expect(shellSession.writeStdin.mock.calls[0][0]).toBe('y\n');
+    expect(outputManager.readUntilMarker.mock.calls[0][1]).toBe(pendingMarker);
   });
 });

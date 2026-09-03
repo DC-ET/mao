@@ -144,6 +144,138 @@ describe('ShellSessionManager', () => {
     expect(() => process.kill(childPid, 0)).toThrow();
   });
 
+  it('returns early on wait_for and keeps the rest of the output for the next read', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(15, 'sh-wait', 7, dir, {});
+    const output = new OutputManager();
+
+    const marker = '__WAIT__';
+    session.beginCommand(marker, true);
+    session.writeStdin(`printf 'Listening on 3000\\n'; sleep 1; printf 'done\\n'\necho ${marker} $?\n`);
+    const early = await output.readUntilMarker(session, marker, 5000, /Listening on/);
+    expect(early.completed).toBe(false);
+    expect(early.matched).toBe('Listening on');
+    expect(early.output).toContain('Listening on 3000');
+    expect(session.pendingCommand?.marker).toBe(marker);
+
+    const rest = await output.readUntilMarker(session, marker, 5000, /Listening on/);
+    expect(rest.completed).toBe(true);
+    expect(rest.exitCode).toBe(0);
+    expect(rest.output).toContain('done');
+    // 已交付过的部分不再重复返回，wait_for 也不会被它二次命中
+    expect(rest.output).not.toContain('Listening on');
+    expect(session.pendingCommand).toBeNull();
+    // 提前放行不影响落盘的完整性
+    expect(readFileSync(session.outputFile, 'utf8')).toBe('Listening on 3000\ndone\n');
+    manager.close('sh-wait');
+  });
+
+  it('keeps buffering output while nobody reads so a resumed read still sees it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(16, 'sh-buffer', 7, dir, {});
+    const output = new OutputManager();
+
+    const marker = '__RESUME__';
+    session.beginCommand(marker, true);
+    session.writeStdin(`printf 'first\\n'; sleep 0.4; printf 'second\\n'\necho ${marker} $?\n`);
+    const timedOut = await output.readUntilMarker(session, marker, 100);
+    expect(timedOut.completed).toBe(false);
+
+    // 读取者已退出，这段时间的输出必须留在会话缓冲区里
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const resumed = await output.readUntilMarker(session, marker, 2000);
+    expect(resumed.completed).toBe(true);
+    expect(resumed.output).toContain('second');
+    manager.close('sh-buffer');
+  });
+
+  it('does not re-register a consumed marker as a fake pending command', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir), RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(17, 'sh-consumed', 7, dir, {});
+    const output = new OutputManager();
+
+    const marker = '__CONSUMED__';
+    session.beginCommand(marker, true);
+    session.writeStdin(`echo done\necho ${marker} $?\n`);
+    const first = await output.readUntilMarker(session, marker, 2000);
+    expect(first.completed).toBe(true);
+    expect(session.pendingCommand).toBeNull();
+
+    // 模拟过期调用方拿着已消费的 marker 再来读：绝不能登记成永不结束的假命令把会话卡死
+    const stale = await output.readUntilMarker(session, marker, 300);
+    expect(stale.completed).toBe(true);
+    expect(session.pendingCommand).toBeNull();
+
+    // 会话必须仍然可用
+    const nextMarker = '__NEXT__';
+    session.beginCommand(nextMarker, true);
+    session.writeStdin(`echo alive\necho ${nextMarker} $?\n`);
+    const next = await output.readUntilMarker(session, nextMarker, 2000);
+    expect(next.completed).toBe(true);
+    expect(next.output).toContain('alive');
+    manager.close('sh-consumed');
+  });
+
+  it('stops waiting as soon as the session is closed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(17, 'sh-abort', 7, dir, {});
+    const output = new OutputManager();
+
+    session.beginCommand('__NEVER__', true);
+    session.writeStdin('sleep 30\necho __NEVER__ $?\n');
+    const started = Date.now();
+    const pending = output.readUntilMarker(session, '__NEVER__', 30_000);
+    setTimeout(() => manager.close('sh-abort'), 100);
+    const result = await pending;
+    expect(result.completed).toBe(false);
+    // 会话关闭要立刻唤醒读取者，而不是空等到 yield 超时
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it('does not leak a marker that arrives split across two chunks', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(18, 'sh-split', 7, dir, {});
+    const output = new OutputManager();
+
+    session.beginCommand('__SPLIT__', true);
+    session.process.stdout.emit('data', 'partial-output\n__SPL');
+    const early = await output.readUntilMarker(session, '__SPLIT__', 50);
+    expect(early.completed).toBe(false);
+    expect(early.output).toBe('partial-output\n');
+
+    session.process.stdout.emit('data', 'IT__ 5\n');
+    const done = await output.readUntilMarker(session, '__SPLIT__', 50);
+    expect(done.completed).toBe(true);
+    expect(done.exitCode).toBe(5);
+    expect(done.output).toBe('');
+    expect(readFileSync(session.outputFile, 'utf8')).toBe('partial-output\n');
+    manager.close('sh-split');
+  });
+
   it('shellSessionManagerEnforcesLimitsAndCleanup', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
     const manager = new ShellSessionManager(

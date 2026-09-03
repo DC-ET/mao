@@ -266,6 +266,29 @@ describe('ToolDispatcher', () => {
     expect(localToolExecutor.execute).toHaveBeenCalledWith(7, 'shell', '{"action":"list","async":true}', 'workspace', false, null);
   });
 
+  it('localShellAsyncForwardsWaitSemanticsToTheDesktopAwait', async () => {
+    const backgroundTasks = new BackgroundTaskManager();
+    const asyncDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher, backgroundTasks,
+    );
+    localToolExecutor.execute
+      .mockResolvedValueOnce(JSON.stringify({ async: true, session_id: 'sh-dev', output_file: 'out.out' }))
+      .mockResolvedValueOnce('{"exit_code":-1,"completed":false,"output":"Listening on 3000"}');
+    await asyncDispatcher.dispatch(
+      'shell',
+      '{"command":"npm run dev","async":true,"yield_time_ms":1500,"wait_for":"Listening on"}',
+      'LOCAL', 7, 'workspace', 'FULL', null,
+    );
+    await vi.waitFor(() => expect(localToolExecutor.execute).toHaveBeenCalledTimes(2));
+    // 不透传的话桌面端会用它自己的 await 默认值，wait_for 也会丢
+    expect(localToolExecutor.execute).toHaveBeenNthCalledWith(
+      2, 7, 'shell',
+      JSON.stringify({ action: 'await_async', session_id: 'sh-dev', yield_time_ms: 1500, wait_for: 'Listening on' }),
+      'workspace', false, null,
+    );
+  });
+
   it('cloudModeMcpToolExecutesViaSessionToolsWhenNotInGlobalRegistry', async () => {
     mcpTool.execute.mockResolvedValue('cloud-mcp-result');
     const result = await dispatcher.dispatch(

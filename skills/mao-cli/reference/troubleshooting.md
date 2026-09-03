@@ -49,6 +49,15 @@
 
 与 LOCAL 权限档位有关；提高档位减少审批但增加风险。敏感操作建议保留审批。
 
+## Shell 命令超时 / 长时命令
+
+返回 `completed:false` 表示命令仍在跑、会话已保留，不是失败：
+
+- 用 `action:'await_async'` + `session_id` 接着等（`async` 提交的用 `task_id`）
+- 已知关键输出（如 `Listening on`）时给 `wait_for` 正则，命中即提前返回，不必等满 `yield_time_ms`
+- 提前返回后剩余输出会缓冲在会话里，`output_file` 始终是完整输出
+- 提示「会话仍有未结束的命令」是因为一个会话同一时刻只跑一条命令，先 `await_async` 收完再发下一条；要给运行中的命令喂输入用 `write_stdin`
+
 ## 找不到文件
 
 - CLOUD vs LOCAL 工作区位置不同

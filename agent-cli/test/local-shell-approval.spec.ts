@@ -145,4 +145,25 @@ describe('shell approval is re-checked for every action', () => {
     expect(String(result.error)).toMatch(/拒绝访问工作区外路径/);
     await h.exec.close(SESSION_ID);
   }, 60_000);
+
+  it('does not ask again when await_async only collects buffered output', async () => {
+    vi.spyOn(trust, 'isWorkspaceTrusted').mockReturnValue(true);
+    const workspace = tempWorkspace();
+    const h = harness(workspace);
+
+    const started = await runShell(h, 'sh-1', {
+      command: "printf 'chunk\\n'; sleep 0.3", async: true, keep_session: true,
+    }, workspace);
+    const shellSession = String(started.session_id);
+    expect(started.async).toBe(true);
+
+    const collected = await runShell(h, 'sh-2', {
+      action: 'await_async', session_id: shellSession, yield_time_ms: 5000,
+    }, workspace);
+    expect(collected.completed).toBe(true);
+    expect(String(collected.output)).toContain('chunk');
+    // await_async 只是领取已有输出，不会把任何新文本交给 bash，因此不该再问一次
+    expect(h.asked).toEqual(["printf 'chunk\\n'; sleep 0.3"]);
+    await h.exec.close(SESSION_ID);
+  }, 60_000);
 });

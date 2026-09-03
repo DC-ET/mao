@@ -201,19 +201,49 @@ describe('BackgroundTaskManager', () => {
     expect(await manager.consumeCompletedResults(9)).toEqual({});
   });
 
-  it('getResultHandlesMissingTimeoutSuccessAndFailure', async () => {
+  it('awaitResultHandlesMissingTimeoutSuccessAndFailure', async () => {
     const manager = new BackgroundTaskManager();
-    expect(await manager.getResult('missing', 0)).toContain('task not found');
+    expect(await manager.awaitResult('missing', 0)).toEqual({ status: 'not_found' });
     const slow = manager.submit(7, async () => {
       await new Promise((r) => setTimeout(r, 400));
       return 'late';
     });
-    expect(await manager.getResult(slow, 0)).toContain('timed out');
+    // 超时不消费：结果仍留给下一轮自动注入
+    expect(await manager.awaitResult(slow, 0)).toEqual({ status: 'pending' });
+    expect(await manager.awaitResult(slow, 1000)).toEqual({ status: 'done', result: 'late' });
     const ok = manager.submit(7, () => 'ok');
-    expect(await manager.getResult(ok, 1)).toBe('ok');
-    expect(await manager.getResult(ok, 1)).toContain('task not found');
+    expect(await manager.awaitResult(ok, 1)).toEqual({ status: 'done', result: 'ok' });
+    expect(await manager.awaitResult(ok, 1)).toEqual({ status: 'not_found' });
     const failed = manager.submit(7, () => { throw new Error('bad'); });
-    expect(await manager.getResult(failed, 1)).toContain('Error: bad');
+    const failure = await manager.awaitResult(failed, 1);
+    expect(failure.status).toBe('done');
+    expect(failure.status === 'done' && failure.result).toContain('Error: bad');
+    // 归属校验：其他会话不得领取
+    const owned = manager.submit(7, () => 'mine');
+    expect(await manager.awaitResult(owned, 1, 8)).toEqual({ status: 'not_found' });
+    expect(await manager.awaitResult(owned, 1, 7)).toEqual({ status: 'done', result: 'mine' });
+  });
+
+  it('keepsSessionIdAndResumeHintForUnfinishedShellResults', async () => {
+    const manager = new BackgroundTaskManager();
+    const task = manager.submit(5, () => JSON.stringify({
+      exit_code: -1,
+      completed: false,
+      output: 'Listening on 3000\n',
+      session_id: 'sh-dev',
+      matched: 'Listening on',
+      message: "等待超时，命令仍在运行。用 action:'await_async' 继续等待。",
+    }));
+    const awaited = await manager.awaitResult(task, 1000, 5);
+    expect(awaited.status).toBe('done');
+    const payload = JSON.parse(awaited.status === 'done' ? awaited.result : '{}');
+    expect(payload).toMatchObject({
+      exit_code: -1,
+      completed: false,
+      session_id: 'sh-dev',
+      matched: 'Listening on',
+    });
+    expect(payload.message).toContain('await_async');
   });
 
   it('normalizesShellJsonResultsWithExitCodeAndCompleted', async () => {

@@ -233,7 +233,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 
 CLOUD 无工具审批；只读排障请用工具集受限的 Agent。
 
-LOCAL 审批链：工作区信任（含 `read_file` / `glob_search` / `grep_search`）→ 默认拒绝清单 → `--approve-rule` → 本次会话选过「总是允许」的**精确**工具+命令 → `--yolo`/`--force` → TTY 确认。`--yolo` 不能豁免工作区信任与默认拒绝（如 `rm -rf /`）。shell 的每次 exec / `write_stdin`、以及每个 MCP stdio 进程启动都各自过一遍这条链——复用已有 shell 会话不会沿用首次批准。ask 需要 stdin 与 stdout 同为 TTY，否则按 `--on-approval=fail` 处理（退出码 4）。
+LOCAL 审批链：工作区信任（含 `read_file` / `glob_search` / `grep_search`）→ 默认拒绝清单 → `--approve-rule` → 本次会话选过「总是允许」的**精确**工具+命令 → `--yolo`/`--force` → TTY 确认。`--yolo` 不能豁免工作区信任与默认拒绝（如 `rm -rf /`）。shell 的每次 exec / `write_stdin`、以及每个 MCP stdio 进程启动都各自过一遍这条链——复用已有 shell 会话不会沿用首次批准。`action:'await_async'` 只领取该会话已缓冲的输出、不向 bash 交付新文本，因此不触发审批。ask 需要 stdin 与 stdout 同为 TTY，否则按 `--on-approval=fail` 处理（退出码 4）。
 
 ## 退出码
 

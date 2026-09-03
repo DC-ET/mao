@@ -2,6 +2,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const childProcess = require('child_process')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
@@ -227,4 +228,184 @@ test('timeout seconds maps to yield_time_ms when yield_time_ms is omitted', asyn
   assert.ok(elapsed < 1800, `expected timeout around 1s, took ${elapsed}ms`)
   assert.equal(result.completed, false)
   assert.equal(result.exit_code, -1)
+})
+
+test('wait_for returns early while the command keeps running, await_async collects the rest', async (t) => {
+  const { runtime, dir } = createRuntime(t)
+  const startedAt = Date.now()
+  const early = await runtime.handle(
+    {
+      command: "printf 'Listening on 3000\\n'; sleep 1; printf 'done\\n'",
+      wait_for: 'Listening on',
+      keep_session: true,
+      session_id: 'sh-wait',
+    },
+    { conversationId: 23, workspace: dir, needApproval: false },
+  )
+  assert.ok(Date.now() - startedAt < 900, 'wait_for should return before the command finishes')
+  assert.equal(early.completed, false)
+  assert.equal(early.matched, 'Listening on')
+  assert.match(early.output, /Listening on 3000/)
+  assert.match(early.message, /await_async/)
+  const alive = await runtime.handle({ action: 'list' }, { conversationId: 23 })
+  assert.equal(alive.sessions.length, 1)
+  const rest = await runtime.handle(
+    { action: 'await_async', session_id: 'sh-wait', yield_time_ms: 5000 },
+    { conversationId: 23 },
+  )
+  assert.equal(rest.completed, true)
+  assert.equal(rest.exit_code, 0)
+  // 提前放行后的输出不会丢，且不会重复交付已返回的部分
+  assert.match(rest.output, /done/)
+  assert.equal(/Listening on/.test(rest.output), false)
+})
+
+test('await_async resumes a timed-out command without losing output', async (t) => {
+  const { runtime, dir } = createRuntime(t)
+  const first = await runtime.handle(
+    { command: "sleep 1; printf 'late-line\\n'", yield_time_ms: 200, session_id: 'sh-resume' },
+    { conversationId: 24, workspace: dir, needApproval: false },
+  )
+  assert.equal(first.completed, false)
+  const second = await runtime.handle(
+    { action: 'await_async', session_id: 'sh-resume', yield_time_ms: 5000 },
+    { conversationId: 24 },
+  )
+  assert.equal(second.completed, true)
+  assert.equal(second.exit_code, 0)
+  assert.match(second.output, /late-line/)
+  // keep_session 未开启且命令已结束，此时才回收会话
+  const listed = await runtime.handle({ action: 'list' }, { conversationId: 24 })
+  assert.equal(listed.sessions.length, 0)
+})
+
+test('write_stdin feeds a running command instead of queueing a new marker', async (t) => {
+  const { runtime, dir } = createRuntime(t)
+  // 只回显长度：避免命令把 stdin 里排队的 marker 回显行原样打出来，被误判为命令结束
+  const started = await runtime.handle(
+    {
+      command: 'while read -r line; do printf \'len:%s\\n\' "${#line}"; done',
+      yield_time_ms: 300,
+      keep_session: true,
+      session_id: 'sh-stdin',
+    },
+    { conversationId: 25, workspace: dir, needApproval: false },
+  )
+  assert.equal(started.completed, false)
+  const answered = await runtime.handle(
+    { action: 'write_stdin', session_id: 'sh-stdin', input: 'hello', yield_time_ms: 800 },
+    { conversationId: 25, workspace: dir, needApproval: false },
+  )
+  // 输入交给了正在运行的循环，而不是排在它后面等一个新 marker
+  assert.equal(answered.completed, false)
+  assert.match(answered.output, /len:5/)
+  const listed = await runtime.handle({ action: 'list' }, { conversationId: 25 })
+  assert.equal(listed.sessions.length, 1)
+})
+
+test('exec refuses to start while the session still has an unfinished command', async (t) => {
+  const { runtime, dir } = createRuntime(t)
+  const pending = await runtime.handle(
+    { command: 'sleep 2', yield_time_ms: 150, keep_session: true, session_id: 'sh-busy' },
+    { conversationId: 26, workspace: dir, needApproval: false },
+  )
+  assert.equal(pending.completed, false)
+  const rejected = await runtime.handle(
+    { command: 'echo nope', keep_session: true, session_id: 'sh-busy' },
+    { conversationId: 26, workspace: dir, needApproval: false },
+  )
+  assert.match(rejected.error, /未结束的命令/)
+})
+
+test('rejects an invalid or over-long wait_for pattern', async (t) => {
+  const { runtime, dir } = createRuntime(t)
+  const invalid = await runtime.handle(
+    { command: 'true', wait_for: '([' },
+    { conversationId: 27, workspace: dir, needApproval: false },
+  )
+  assert.match(invalid.error, /wait_for 不是合法正则/)
+  const tooLong = await runtime.handle(
+    { command: 'true', wait_for: 'x'.repeat(201) },
+    { conversationId: 27, workspace: dir, needApproval: false },
+  )
+  assert.match(tooLong.error, /wait_for 过长/)
+})
+
+test('does not leak a marker that arrives split across two chunks', async (t) => {
+  const spawned = []
+  const { runtime, dir } = createRuntime(t, {
+    spawn: (command, args, options) => {
+      const child = childProcess.spawn(command, args, options)
+      spawned.push(child)
+      return child
+    },
+  })
+  const pending = runtime.handle(
+    { command: 'sleep 5', yield_time_ms: 300, keep_session: true, session_id: 'sh-split' },
+    { conversationId: 28, workspace: dir, needApproval: false },
+  )
+  // spawn 发生在 handle 内部的 await 之后，先等到子进程创建
+  while (spawned.length === 0) await new Promise((resolve) => setImmediate(resolve))
+  // 结束标记被拆成两个 chunk 到达：前半段不能作为正文交给模型，也不能落盘
+  spawned[0].stdout.emit('data', 'partial-output\n__CMD')
+  const early = await pending
+  assert.equal(early.completed, false)
+  assert.equal(early.output, 'partial-output\n')
+  assert.equal(fs.readFileSync(early.output_file, 'utf8'), 'partial-output\n')
+  await runtime.handle({ action: 'close', session_id: 'sh-split' }, { conversationId: 28 })
+})
+
+test('write_stdin on a finished-but-unconsumed command is rejected instead of mis-answered', async (t) => {
+  const { runtime, dir } = createRuntime(t)
+  const early = await runtime.handle(
+    { command: 'sleep 0.4; echo finished', yield_time_ms: 150, keep_session: true, session_id: 'sh-stale' },
+    { conversationId: 29, workspace: dir, needApproval: false },
+  )
+  assert.equal(early.completed, false)
+  // 命令自然结束后 marker 已在缓冲区但无人消费：输入若被直喂会被 bash 当作新命令，
+  // 而续读会立刻命中旧 marker，把旧输出误当成输入的应答
+  await new Promise((resolve) => setTimeout(resolve, 700))
+  const stale = await runtime.handle(
+    { action: 'write_stdin', session_id: 'sh-stale', input: 'echo next', yield_time_ms: 2000 },
+    { conversationId: 29, workspace: dir, needApproval: false },
+  )
+  assert.match(stale.error, /已结束但结果尚未收取/)
+  // 输入不能被执行：结果仍可正常收取，且后续输出里没有 next 的痕迹
+  const collected = await runtime.handle(
+    { action: 'await_async', session_id: 'sh-stale', yield_time_ms: 2000 },
+    { conversationId: 29, workspace: dir },
+  )
+  assert.equal(collected.completed, true)
+  assert.match(collected.output, /finished/)
+  const probe = await runtime.handle(
+    { command: 'echo probe', keep_session: true, session_id: 'sh-stale', yield_time_ms: 2000 },
+    { conversationId: 29, workspace: dir, needApproval: false },
+  )
+  assert.equal(probe.output.includes('next'), false)
+})
+
+test('double await_async cannot fake success or lose the session', async (t) => {
+  const { runtime, dir } = createRuntime(t)
+  const early = await runtime.handle(
+    { command: 'sleep 0.4; echo done', yield_time_ms: 150, keep_session: true, session_id: 'sh-race' },
+    { conversationId: 30, workspace: dir, needApproval: false },
+  )
+  assert.equal(early.completed, false)
+  await new Promise((resolve) => setTimeout(resolve, 700))
+  const [first, second] = await Promise.all([
+    runtime.handle({ action: 'await_async', session_id: 'sh-race', yield_time_ms: 3000 }, { conversationId: 30, workspace: dir }),
+    runtime.handle({ action: 'await_async', session_id: 'sh-race', yield_time_ms: 3000 }, { conversationId: 30, workspace: dir }),
+  ])
+  const got = [first, second].find((r) => !r.error)
+  const other = [first, second].find((r) => r !== got)
+  assert.equal(got.completed, true)
+  assert.match(got.output, /done/)
+  assert.match(other.error, /(没有未结束的命令|已被并行调用收取)/)
+  // 会话必须仍然可用，不能被假 pending 卡死
+  const probe = await runtime.handle(
+    { command: 'echo alive', keep_session: true, session_id: 'sh-race', yield_time_ms: 2000 },
+    { conversationId: 30, workspace: dir, needApproval: false },
+  )
+  assert.equal(probe.error, undefined)
+  assert.match(probe.output, /alive/)
 })

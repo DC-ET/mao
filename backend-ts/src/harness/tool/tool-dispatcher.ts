@@ -265,10 +265,15 @@ export class ToolDispatcher {
       return startResult;
     }
     const shellId = parsed.session_id;
+    // 桌面端的 await_async 默认 yield 是它自己的值，必须把本次调用的等待语义透传过去
+    const startArgs = parseObject(argumentsJson) ?? {};
+    const awaitArgs: Record<string, unknown> = { action: 'await_async', session_id: shellId };
+    if (startArgs.yield_time_ms != null) awaitArgs.yield_time_ms = startArgs.yield_time_ms;
+    if (typeof startArgs.wait_for === 'string' && startArgs.wait_for !== '') awaitArgs.wait_for = startArgs.wait_for;
+    const awaitArgsJson = JSON.stringify(awaitArgs);
     const taskId = this.backgroundTaskManager!.submit(sessionId, async () => {
       const awaited = await this.localToolExecutor.execute(
-        sessionId, 'shell', JSON.stringify({ action: 'await_async', session_id: shellId }),
-        workspace, false, null,
+        sessionId, 'shell', awaitArgsJson, workspace, false, null,
       );
       // 桌面端返回的是结构化 JSON（exit_code/completed/output），原样交给后台任务管理器归一化
       return awaited;
