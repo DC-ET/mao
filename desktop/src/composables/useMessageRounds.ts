@@ -70,7 +70,15 @@ function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage 
         const diff = end.getTime() - start.getTime()
         if (diff > 0) {
           const s = Math.floor(diff / 1000)
-          durationText = s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分${s % 60}秒`
+          if (s < 60) {
+            durationText = `${s}秒`
+          } else if (s < 3600) {
+            durationText = `${Math.floor(s / 60)}分${s % 60}秒`
+          } else {
+            const h = Math.floor(s / 3600)
+            const m = Math.floor((s % 3600) / 60)
+            durationText = `${h}小时${m}分钟`
+          }
         }
       }
     }
