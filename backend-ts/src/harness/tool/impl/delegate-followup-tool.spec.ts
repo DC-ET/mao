@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DelegateFollowupTool, DelegateTool } from './delegate-tool.js';
 import { AgentExecutionContext } from '../../core/agent-execution-context.js';
-import type { AgentDefinitionRegistry } from '../../delegate/agent-definition-registry.js';
+import { AgentDefinitionRegistry } from '../../delegate/agent-definition-registry.js';
 import type { HarnessService } from '../../core/harness-service.js';
 import type { AgentLoop } from '../../core/agent-loop.js';
 import type { MessageMapper, SessionCompactionService, SessionMapper, SessionService } from '../../deps.js';
@@ -190,23 +190,34 @@ describe('DelegateFollowupTool', () => {
     expect(visibilityService.ensureSubscribed).toHaveBeenCalledWith(7, 100);
   });
 
-  it('buildSubContextExcludesDelegateAndFollowupTools', async () => {
+  it('buildSubContextPreservesWriteFileAndExcludesEditFileForReviewer', async () => {
     const fakeDelegate = { getName: () => 'delegate' } as Tool;
     const fakeFollowup = { getName: () => 'delegate_followup' } as Tool;
     const fakeRead = { getName: () => 'read_file' } as Tool;
+    const fakeWrite = { getName: () => 'write_file' } as Tool;
+    const fakeEdit = { getName: () => 'edit_file' } as Tool;
     const ctx = new AgentExecutionContext();
-    ctx.tools = [fakeDelegate, fakeFollowup, fakeRead];
+    ctx.tools = [fakeDelegate, fakeFollowup, fakeRead, fakeWrite, fakeEdit];
     const hs = { buildContext: vi.fn().mockResolvedValue(ctx) } as unknown as HarnessService;
     const realDelegate = new DelegateTool(
       {} as AgentDefinitionRegistry, hs, {} as AgentLoop, {} as SessionService,
       {} as SessionMapper, {} as SubagentExecutionMapper, {} as LocalToolSessionRegistry,
       {} as SubAgentVisibilityService,
     );
-    const subCtx = await realDelegate.buildSubContext({ id: 100 }, { name: 'reviewer' });
+    const definition = new AgentDefinitionRegistry().getDefinition('reviewer')!;
+    const subCtx = await realDelegate.buildSubContext({ id: 100 }, definition);
     const names = subCtx.tools.map((t) => t.getName());
     expect(names).toContain('read_file');
+    expect(names).toContain('write_file');
+    expect(names).not.toContain('edit_file');
     expect(names).not.toContain('delegate');
     expect(names).not.toContain('delegate_followup');
+  });
+
+  it('researcherAllowsWriteFileAndExcludesEditFile', () => {
+    const definition = new AgentDefinitionRegistry().getDefinition('researcher')!;
+    expect(definition.excludedToolNames).not.toContain('write_file');
+    expect(definition.excludedToolNames).toContain('edit_file');
   });
 });
 

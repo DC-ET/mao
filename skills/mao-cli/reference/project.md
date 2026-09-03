@@ -95,7 +95,7 @@ flowchart TB
 - **双执行模式** — CLOUD / LOCAL；LOCAL 支持权限档位与工具审批
 - **MCP** — 管理后台全局 MCP；桌面端用户级私有 MCP；按 Agent 注入 `mcp__{server}__{tool}`
 - **多模态** — 模型类型分类；文生图；微信语音/图片/文件
-- **协作** — Side Task、Delegate 子代理、文件系统 Skill
+- **协作** — Side Task、Delegate 子代理、文件系统 Skill；内置 `researcher` / `reviewer` 可写新文件但不能编辑已有文件，`coder` 可完成编码修改
 - **任务自动化** — 定时任务；钉钉/飞书 Webhook 或微信通知
 - **工作区** — 云端新建/复用/Git HTTPS 初始化；Git 只读诊断
 - **WebSocket** — 流式对话、Token 追踪、上下文压缩提示

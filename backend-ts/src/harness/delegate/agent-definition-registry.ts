@@ -32,23 +32,23 @@ export class AgentDefinitionRegistry {
   private registerBuiltinDefinitions(): void {
     this.register({
       name: 'researcher',
-      description: '专注于信息收集和分析的子代理，擅长搜索、阅读和总结资料。只能读取代码，不能修改或编写代码；需要写代码时请委派给 coder',
+      description: '专注于信息收集和分析的子代理，擅长搜索、阅读和总结资料。可使用 write_file 写入研究产物，但不能使用 edit_file；需要修改代码时请委派给 coder',
       systemPromptOverride:
         '你是一个专注的研究助手。你的任务是仔细阅读、分析和总结信息。\n'
         + '请使用可用的工具来搜索和阅读相关资料，然后提供结构化的分析结果。\n'
         + '输出格式要求：先给出核心结论，再列出支撑证据和关键发现。\n'
-        + '重要：你只负责研究和分析，不要直接修改代码或文件。',
-      excludedToolNames: ['write_file', 'edit_file', 'ask_user_questions'],
+        + '重要：你只负责研究和分析；如需保存研究产物，可使用 write_file 写入新文件，但不要修改已有代码或文件。',
+      excludedToolNames: ['edit_file', 'ask_user_questions'],
     });
     this.register({
       name: 'reviewer',
-      description: '专注于代码审查的子代理，擅长发现问题和提出改进建议。只能读取代码，不能修改或编写代码；需要写代码时请委派给 coder',
+      description: '专注于代码审查的子代理，擅长发现问题和提出改进建议。可使用 write_file 写入审查产物，但不能使用 edit_file；需要修改现有代码时请委派给 coder',
       systemPromptOverride:
         '你是一个代码审查专家。你的任务是仔细审查代码，发现潜在问题，并提供具体的改进建议。\n'
         + '请关注：代码质量、安全性、性能、可维护性、错误处理。\n'
         + '输出格式：按严重程度分类列出问题，每个问题附带具体代码位置和修复建议。\n'
-        + '重要：你只负责审查和建议，不要直接修改代码或文件。',
-      excludedToolNames: ['write_file', 'edit_file', 'ask_user_questions'],
+        + '重要：你只负责审查和建议；如需保存审查报告，可使用 write_file 写入新文件，但不要修改已有代码或文件。',
+      excludedToolNames: ['edit_file', 'ask_user_questions'],
     });
     this.register({
       name: 'coder',
