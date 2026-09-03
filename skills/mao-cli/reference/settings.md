@@ -71,6 +71,20 @@ mao settings test ldap
 mao settings test oss --region cn-hangzhou --access-key-id AK --access-key-secret SK
 ```
 
+## 云端终端配置（`terminal.*`，0.0.97 起）
+
+管理后台「系统设置 → 集成配置 → 云端终端」，均为**启动时构建，保存后需重启后端生效**。
+
+| key | 默认 | 说明 |
+|-----|------|------|
+| `terminal.maxSessionsPerTask` | 5 | 单个任务同时存在的终端数上限 |
+| `terminal.maxSessionsGlobal` | 50 | 全局终端数上限 |
+| `terminal.idleTimeoutMinutes` | 120 | 无客户端接入且无输入的空闲回收时间（分钟） |
+| `terminal.maxLifetimeHours` | 24 | 终端最长存活时间（小时），到点强制回收 |
+| `terminal.outputBufferBytes` | 262144 | 断线重连回放用的输出环形缓冲字节数 |
+
+值必须为正整数。终端使用还需 `terminal:use` 权限（默认只授管理员角色），详见 [desktop.md](desktop.md#终端)。
+
 ## 成功失败判断
 
 - 成功：`settings test *` 返回 `{ ok: true }`；set/batch 返回更新后的设置对象

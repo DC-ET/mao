@@ -99,6 +99,7 @@ flowchart TB
 - **任务自动化** — 定时任务；钉钉/飞书 Webhook 或微信通知
 - **工作区** — 云端新建/复用/Git HTTPS 初始化；Git 只读诊断
 - **WebSocket** — 流式对话、Token 追踪、上下文压缩提示
+- **云端终端** — CLOUD 任务可直接打开跑在服务端的交互式 bash（需 `terminal:use` 权限，默认只授管理员）
 - **微信通道**（可选）— 扫码绑定后在微信中与 Agent 对话
 - **mao-cli** — 本 Skill：产品文档 + REST CLI
 - **mao-agent** — 终端对话客户端（见 [mao-agent.md](mao-agent.md)）
@@ -112,7 +113,7 @@ flowchart TB
 | 桌面 | Electron 28 |
 | 安卓 | Capacitor 7，远程加载生产 Web |
 | API | `/api/v1/`，Swagger `/api/swagger-ui.html` |
-| 流式 | WebSocket `/api/ws/stream` |
+| 流式 | WebSocket `/api/ws/stream`；云端终端 `/api/ws/terminal` |
 
 ## 五端分工
 

@@ -25,8 +25,12 @@
           </svg>
         </div>
       </el-tooltip>
-      <el-tooltip content="终端 (Ctrl+`)" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-        <div class="theme-toggle terminal-toggle" :class="{ active: terminalOpen }" @click="toggleTerminal">
+      <el-tooltip :content="terminalAvailability.tooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+        <div
+          class="theme-toggle terminal-toggle"
+          :class="{ active: terminalOpen, disabled: !terminalAvailability.enabled }"
+          @click="toggleTerminal"
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
           </svg>
@@ -101,6 +105,7 @@ import { usePanelLayout, isMobileDevice } from '../../composables/usePanelLayout
 import { useSkillDrawer } from '../../composables/useSkillDrawer'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useVersionCheck } from '../../composables/useVersionCheck'
+import { isElectronClient } from '../../utils/platform'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
 
@@ -117,12 +122,28 @@ const themeTooltip = computed(() => {
   return '深色（点击跟随系统）'
 })
 const sessionStore = useSessionStore()
+const authStore = useAuthStore()
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
 const { leftCollapsed, rightCollapsed, toggleLeft, toggleRight } = usePanelLayout()
 const { toggle: toggleSkillDrawer } = useSkillDrawer()
 const { toggle: toggleCommandDrawer } = useCommandDrawer()
 
+/** 终端按钮可用性矩阵：CLOUD 走云端终端（需 terminal:use），LOCAL 仅 Electron 可用。 */
+const terminalAvailability = computed<{ enabled: boolean; tooltip: string }>(() => {
+  const session = sessionStore.activeSession
+  if (!session) return { enabled: false, tooltip: '请先打开一个任务' }
+  if (session.executionMode === 'CLOUD') {
+    if (!authStore.hasPermission('terminal:use')) return { enabled: false, tooltip: '没有终端使用权限' }
+    if (!session.workspace) return { enabled: false, tooltip: '任务工作区不可用' }
+    return { enabled: true, tooltip: '终端 (Ctrl+`)' }
+  }
+  // LOCAL：Web 与安卓 Capacitor 都没有 electronAPI，无法开本机终端
+  if (!isElectronClient()) return { enabled: false, tooltip: '本地任务的终端仅在桌面客户端可用' }
+  return { enabled: true, tooltip: '终端 (Ctrl+`)' }
+})
+
 function toggleTerminal() {
+  if (!terminalAvailability.value.enabled) return
   const session = sessionStore.activeSession
   let cwd: string | undefined
   if (session?.executionMode === 'LOCAL' && session.workspace) {
@@ -131,7 +152,6 @@ function toggleTerminal() {
   togglePanel(cwd)
 }
 
-const authStore = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 const {
@@ -477,6 +497,16 @@ async function handleCommand(command: string) {
 
 [data-theme="dark"] .theme-toggle:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.terminal-toggle.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.terminal-toggle.disabled:hover {
+  color: var(--aw-nav-text-muted);
+  background: transparent;
 }
 
 .refresh-btn {

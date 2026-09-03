@@ -15,6 +15,32 @@
 
 ---
 
+## 0.0.97 (2026-09-03)
+
+### 后端
+
+- 云端任务支持远程终端：CLOUD 任务可在客户端直接打开一个跑在服务端的交互式 bash，工作目录为任务工作区，环境变量与 Agent 的 Shell 工具一致（虚拟 HOME、`GIT_TOKEN_*`、`GIT_ASKPASS`、`MAO_TOKEN`、`MAO_TASK_NAME`），首次使用会写入一份默认 `.bashrc`
+- 新增权限 `terminal:use`（默认仅管理员角色拥有），REST 接口与 WebSocket 接入都会校验；终端归属校验到「当前用户 + 当前任务」
+- 新增终端接口：`POST/GET /api/v1/sessions/{id}/terminals`、`DELETE /api/v1/sessions/{id}/terminals/{terminalId}`；新增 WebSocket 通道 `/api/ws/terminal`（首帧鉴权，单连接可复用多个终端）
+- 断线不杀终端：网络抖动或切页后重连会自动重新接入原终端，并回放最近输出（默认 256KB 环形缓冲，超出会提示已截断）；输出过快时丢弃部分内容并提示，避免连接被压垮
+- 终端自动回收：空闲超时、最长存活时间、每任务与全局数量上限均可在管理后台配置；删除任务会一并关闭其终端。后端重启后已有终端不会恢复
+- 终端的创建、关闭、接入、回收写入审计日志
+- 新增系统设置项 `terminal.maxSessionsPerTask`（5）、`terminal.maxSessionsGlobal`（50）、`terminal.idleTimeoutMinutes`（120）、`terminal.maxLifetimeHours`（24）、`terminal.outputBufferBytes`（262144），修改后需重启后端生效
+
+### 前端（桌面 / Web / 安卓）
+
+- 终端按钮在云端任务下可用（此前仅桌面客户端的本地任务可用）：Web、安卓与 Electron 均可使用云端终端；无 `terminal:use` 权限或未打开任务时按钮置灰并说明原因
+- 终端标签按任务隔离：切换任务只显示该任务的终端，并自动与服务端对齐（已被回收的终端会提示并移除）
+- 切换任务或收起终端面板时会解绑云端终端（服务端进程继续运行），切回后自动重新接入并回放输出；同一终端被其他窗口接管时，面板顶部提供「重新接管」按钮
+- 终端内搜索：面板内 `Ctrl+F` 打开搜索栏，支持上一个 / 下一个与结果计数，`Esc` 关闭
+- 安卓终端新增虚拟按键条（Esc / Tab / Ctrl 粘滞 / 方向键 / Ctrl+C / Ctrl+D / 粘贴），并在软键盘弹出时自动避让
+
+### 管理后台
+
+- 系统设置新增「云端终端」配置分组（5 个运行参数）
+
+---
+
 ## 0.0.96 (2026-09-03)
 
 ### 后端

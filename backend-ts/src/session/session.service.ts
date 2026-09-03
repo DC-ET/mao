@@ -58,6 +58,8 @@ export class SessionService {
     private readonly todoRepo?: SessionTodoRepository,
     /** 会话删除时清理 runtime 目录（含上传的 incoming 文件）的回调，可选。 */
     private readonly cleanupRuntimeDir?: (userId: number, sessionId: number) => void,
+    /** 会话删除时关闭其全部云端终端的回调，可选。 */
+    private readonly closeSessionTerminals?: (sessionId: number) => void,
   ) {}
 
   async createSession(
@@ -420,6 +422,11 @@ export class SessionService {
         this.cleanupRuntimeDir?.(session.userId, id);
       } catch (e) {
         console.error(`Failed to clean runtime incoming dir for session ${id}`, e);
+      }
+      try {
+        this.closeSessionTerminals?.(id);
+      } catch (e) {
+        console.error(`Failed to close cloud terminals for session ${id}`, e);
       }
       if (session.workspace != null && session.workspace.trim() !== '') {
         this.deleteRuntimeWorkspaceFiles(session.workspace);

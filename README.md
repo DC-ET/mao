@@ -24,7 +24,7 @@
 
 > **重要提示**：当前项目尚未经过企业级生产环境验证。部署前请充分了解功能限制与适用边界，自行评估风险后再决定是否上线。
 
-Mao 提供可私有化部署的 AI Agent 管理与协作：内置 Think-Act-Observe 引擎，支持 CLOUD / LOCAL 双执行模式、MCP、Skill、定时任务与多端客户端（管理后台、Web/Electron 桌面、安卓 APP、`mao-agent` 终端 CLI）。数据与模型密钥留在你自己的环境。
+Mao 提供可私有化部署的 AI Agent 管理与协作：内置 Think-Act-Observe 引擎，支持 CLOUD / LOCAL 双执行模式、MCP、Skill、定时任务与多端客户端（管理后台、Web/Electron 桌面、安卓 APP、`mao-agent` 终端 CLI）。云端任务还可直接打开跑在服务端的交互式终端（需 `terminal:use` 权限，默认只授管理员）。数据与模型密钥留在你自己的环境。
 
 > **开源说明**：MIT 许可证，仅提供源码与自部署文档。LLM 需在管理后台配置 API Key；界面语言为中文。
 

@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { api } from '../api'
 import { useSessionStore } from './session'
 import { useDraftStore } from './draft'
 import { useStreamWS } from '../composables/useStreamWS'
+import { useTerminalWS } from '../composables/useTerminalWS'
 import { clearTokens, getToken, setTokens } from '../utils/auth-storage'
 import { redirectToLogin } from '../utils/login-redirect'
 
@@ -14,6 +15,9 @@ interface User {
   email: string
   avatarUrl: string
   authSource: 'LOCAL' | 'LDAP' | 'FEISHU' | string
+  /** GET /users/me 返回；登录响应不含，需登录后补拉一次 */
+  permissions?: string[]
+  isAdmin?: boolean
 }
 
 interface LoginResponse {
@@ -46,12 +50,23 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const features = ref<AuthFeatures>({ feishuEnabled: false })
 
+  const permissions = computed(() => user.value?.permissions ?? [])
+  const isAdmin = computed(() => Boolean(user.value?.isAdmin))
+
+  function hasPermission(code: string): boolean {
+    return permissions.value.includes(code)
+  }
+
   /** 清掉本地会话状态（token、WS、会话与草稿）。不调用后端，供登出与 401 强制下线共用。 */
   async function clearLocalSession() {
     token.value = null
     user.value = null
     await clearTokens()
     useStreamWS().disconnect()
+    useTerminalWS().disconnect()
+    // 动态引入：useTerminal 依赖 api，静态引入会与 api → auth 形成模块环
+    const { useTerminal } = await import('../composables/useTerminal')
+    useTerminal().reset()
     useSessionStore().reset()
     useDraftStore().reset()
   }
@@ -60,6 +75,9 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = data.accessToken
     user.value = data.user
     await setTokens(data.accessToken, data.refreshToken)
+    // 登录响应不含 permissions/isAdmin，进入应用前补拉完整档案（权限门禁依赖它）。
+    // 失败不阻断登录：router 守卫会再补拉，缺 permissions 时按钮按不可用渲染
+    await fetchUserInfo().catch(() => {})
   }
 
   async function login(username: string, password: string) {
@@ -111,6 +129,9 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     user,
     features,
+    permissions,
+    isAdmin,
+    hasPermission,
     login,
     fetchAuthFeatures,
     startFeishuLogin,

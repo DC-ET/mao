@@ -13,6 +13,10 @@
 
 安卓专用 UI 在 `desktop/` 中用 `android-capacitor` / `Capacitor.isNativePlatform()` 守卫。
 
+## 云端终端（0.0.97 起）
+
+CLOUD 任务可用云端终端（需 `terminal:use` 权限），安卓端额外提供底部虚拟按键条（Esc / Tab / Ctrl 粘滞 / 方向键 / Ctrl+C / Ctrl+D / 粘贴），软键盘弹出时面板自动避让。属纯前端能力，随 Web 部署生效，无需打 APK。LOCAL 任务的本地终端在安卓上仍不可用。详见 [desktop.md](desktop.md#终端)。
+
 ## 构建 APK（仅原生壳变更）
 
 环境：JDK 21、Android SDK（`platforms;android-35`、`build-tools;34.0.0`）。

@@ -105,6 +105,11 @@ function truncate(value: string | null | undefined, max: number): string | null 
   return value.slice(0, max);
 }
 
+/** 供拦截器之外的审计写入方（如云端终端）复用同一截断策略。 */
+export function truncateAuditError(value: string | null | undefined): string | null {
+  return truncate(value, MAX_ERROR_LENGTH) ?? null;
+}
+
 function headerValue(
   headers: Record<string, string | string[] | undefined>,
   name: string,
