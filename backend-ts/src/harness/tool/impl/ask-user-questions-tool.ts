@@ -22,7 +22,7 @@ export class AskUserQuestionsTool extends BaseTool {
       properties: {
         questions: {
           type: 'array',
-          description: '包含 1–4 个问题对象的数组',
+          description: '包含 1–4 个问题对象的数组。必须是 JSON 数组本身，严禁序列化为字符串或双重编码',
           minItems: 1,
           maxItems: 4,
           items: {

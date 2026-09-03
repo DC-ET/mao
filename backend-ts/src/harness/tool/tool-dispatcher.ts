@@ -6,6 +6,7 @@ import type { LocalToolExecutor } from '../local/local-tool-executor.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
 import type { SessionTreeSignalPublisher } from '../approval/session-tree-signal-publisher.js';
 import type { AskUserQuestionsRegistry } from './ask-user-questions-registry.js';
+import { normalizeAskUserQuestionsArgs } from './ask-user-questions-normalize.js';
 import type { DangerAssessor } from './danger-assessor.js';
 import type { Tool } from './tool.js';
 import { callTool } from './tool.js';
@@ -184,12 +185,12 @@ export class ToolDispatcher {
     let questions: Array<Record<string, unknown>> = [];
     let metadata: Record<string, unknown> | null = null;
     try {
-      const parsed = JSON.parse(argumentsJson) as Record<string, unknown>;
-      if (Array.isArray(parsed.questions)) {
-        questions = parsed.questions.filter((q) => q && typeof q === 'object') as Array<Record<string, unknown>>;
-      }
-      if (parsed.metadata && typeof parsed.metadata === 'object') {
-        metadata = parsed.metadata as Record<string, unknown>;
+      // 模型偶发把 questions 输出成字符串化 JSON / unicode 转义，统一在此归一化
+      const args = normalizeAskUserQuestionsArgs(argumentsJson);
+      questions = args.questions;
+      metadata = args.metadata;
+      if (questions.length === 0) {
+        harnessLog('warn', `ask_user_questions normalized to 0 questions, raw: ${argumentsJson.slice(0, 200)}`);
       }
     } catch (e) {
       harnessLog('warn', `Failed to parse ask_user_questions arguments: ${(e as Error).message}`);
