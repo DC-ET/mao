@@ -23,23 +23,23 @@ export function feishuSendTargetOf(appId: string, chatId: string): FeishuSendTar
   return { appId, receiveId: trimmed, receiveIdType: 'chat_id' };
 }
 
-/** 上传图片并作为图片消息发送到目标会话（图片 ≤10MB，支持 PNG/JPEG/GIF/WebP/BMP）。 */
-export async function sendFeishuImage(client: Lark.Client, target: FeishuSendTarget, image: Buffer): Promise<void> {
+/** 上传图片并作为图片消息发送到目标会话（图片 ≤10MB，支持 PNG/JPEG/GIF/WebP/BMP）。返回飞书 message_id。 */
+export async function sendFeishuImage(client: Lark.Client, target: FeishuSendTarget, image: Buffer): Promise<string | null> {
   const response = await client.im.v1.image.create({ data: { image_type: 'message', image } });
   const imageKey = response?.image_key;
   if (imageKey == null || imageKey === '') throw new Error('飞书图片上传失败，请检查机器人权限与图片格式');
-  await sendFeishuMediaMessage(client, target, 'image', JSON.stringify({ image_key: imageKey }), '图片');
+  return sendFeishuMediaMessage(client, target, 'image', JSON.stringify({ image_key: imageKey }), '图片');
 }
 
-/** 上传文件并作为文件消息发送到目标会话（文件 ≤30MB）。 */
-export async function sendFeishuFile(client: Lark.Client, target: FeishuSendTarget, fileName: string, file: Buffer): Promise<void> {
+/** 上传文件并作为文件消息发送到目标会话（文件 ≤30MB）。返回飞书 message_id。 */
+export async function sendFeishuFile(client: Lark.Client, target: FeishuSendTarget, fileName: string, file: Buffer): Promise<string | null> {
   const baseName = fileName.replace(/\\/g, '/').split('/').pop()?.trim() || 'file';
   const response = await client.im.v1.file.create({
     data: { file_type: feishuFileTypeOf(baseName), file_name: baseName, file },
   });
   const fileKey = response?.file_key;
   if (fileKey == null || fileKey === '') throw new Error('飞书文件上传失败，请检查机器人权限与文件大小');
-  await sendFeishuMediaMessage(client, target, 'file', JSON.stringify({ file_key: fileKey }), '文件');
+  return sendFeishuMediaMessage(client, target, 'file', JSON.stringify({ file_key: fileKey }), '文件');
 }
 
 /** 飞书文件上传的 file_type 枚举映射，未知扩展名归入 stream。 */
@@ -54,31 +54,20 @@ export function feishuFileTypeOf(fileName: string): 'opus' | 'mp4' | 'pdf' | 'do
   return 'stream';
 }
 
-type MessageCreateFailure = { code?: number; msg?: string };
-
-async function sendMessageOnce(
-  client: Lark.Client,
-  target: FeishuSendTarget,
-  msgType: 'image' | 'file',
-  content: string,
-): Promise<MessageCreateFailure | null> {
-  const response = await client.im.v1.message.create({
-    params: { receive_id_type: target.receiveIdType },
-    data: { receive_id: target.receiveId, msg_type: msgType, content },
-  });
-  return Number(response.code ?? 0) === 0 ? null : { code: response.code, msg: response.msg };
-}
-
-/** 发送媒体消息；receiveIdType 在建会话时已随 chat_id 前缀确定，失败即抛出真实错误码。 */
+/** 发送媒体消息；receiveIdType 在建会话时已随 chat_id 前缀确定，失败即抛出真实错误码。成功返回飞书 message_id。 */
 async function sendFeishuMediaMessage(
   client: Lark.Client,
   target: FeishuSendTarget,
   msgType: 'image' | 'file',
   content: string,
   label: string,
-): Promise<void> {
-  const failure = await sendMessageOnce(client, target, msgType, content);
-  if (failure != null) {
-    throw new Error(`飞书${label}消息发送失败: code=${failure.code ?? 'unknown'}, msg=${failure.msg ?? 'no message'}`);
+): Promise<string | null> {
+  const response = await client.im.v1.message.create({
+    params: { receive_id_type: target.receiveIdType },
+    data: { receive_id: target.receiveId, msg_type: msgType, content },
+  });
+  if (Number(response.code ?? 0) !== 0) {
+    throw new Error(`飞书${label}消息发送失败: code=${response.code ?? 'unknown'}, msg=${response.msg ?? 'no message'}`);
   }
+  return (response as { data?: { message_id?: string } }).data?.message_id ?? null;
 }

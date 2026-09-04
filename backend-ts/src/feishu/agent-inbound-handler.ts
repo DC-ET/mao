@@ -25,6 +25,32 @@ export interface FeishuMediaDownload {
   errors: string[];
 }
 
+/** 私聊多会话控制端口：活跃指针查询/新建/切换、消息→会话映射、新会话命名。 */
+export interface FeishuP2pSessionControl {
+  /** 当前活跃会话（不创建）；null=尚未建会话。 */
+  findActiveSession(accountId: string, context: FeishuInboundContext): Promise<{ id: number } | null>;
+  /** `---` 新建会话：创建 session 并把活跃指针切到它，返回新会话。 */
+  createSession(accountId: string, context: FeishuInboundContext): Promise<{ id: number }>;
+  /** 引用切换：把活跃指针切到目标会话；指针行不存在或目标即当前 → null。 */
+  switchSession(accountId: string, context: FeishuInboundContext, targetSessionId: number): Promise<{ id: number } | null>;
+  /** 按飞书消息 ID 查归属会话；未记录返回 null。 */
+  findSessionByMessageId(accountId: string, messageId: string): Promise<number | null>;
+  /** 记录消息 → 会话映射（INSERT IGNORE 防重，内部容错不抛）。 */
+  recordMessageMapping(accountId: string, messageId: string | null | undefined, sessionId: number, direction: 'IN' | 'OUT'): Promise<void>;
+  /** 新会话首条消息命名（实现方需守卫默认标题，避免覆盖用户/LLM 改名）。 */
+  renameSessionFromFirstMessage?(sessionId: number, title: string): Promise<void>;
+}
+
+/** `---` 新建会话指令：trim 后为 3 个及以上半角连字符或全角破折号的宽松变体集合。 */
+export function isNewSessionCommand(text: string | null | undefined): boolean {
+  return /^[-—]{3,}$/u.test((text ?? '').trim());
+}
+
+const NEW_SESSION_CONFIRM_TEXT = '已开启新会话，后续消息将在新的上下文中处理。';
+const SWITCH_SESSION_CONFIRM_TEXT = '已切换到该消息所在的会话，后续消息将以该会话上下文为准。';
+const NEW_SESSION_FAILED_TEXT = '开启新会话失败，请稍后再试。';
+const NEW_SESSION_TITLE_MAX_CHARS = 20;
+
 type FeishuContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; imageUrl: { url: string } };
@@ -76,6 +102,10 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   private readonly cancelFlags = new Map<number, CancelFlag>();
   /** 被按钮「立即发送」中断的会话标记，用于卡片文案区分。 */
   private readonly interrupted = new Set<number>();
+  /** p2p chat 级互斥：序列化指令判定→指针切换→归属确定的临界区（key = accountId:sender）。 */
+  private readonly p2pChatMutex = new Map<string, Promise<void>>();
+  /** `---` 新建、等待首条消息命名的会话集合。 */
+  private readonly pendingTitleSessionIds = new Set<number>();
 
   constructor(private readonly options: {
     sessionService: FeishuSessionAdapter;
@@ -89,13 +119,16 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     listenerFactory?: (sessionId: number, context: FeishuInboundContext, executionId: string) => Parameters<FeishuHarnessService['execute']>[2] | Promise<Parameters<FeishuHarnessService['execute']>[2]>;
     onExecutionFinished?: (sessionId: number, context: FeishuInboundContext, executionId: string, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>;
     createProgressCard?: (context: FeishuInboundContext, sessionId: number) => Promise<FeishuCardProgress | null>;
-    onReply?: (context: FeishuInboundContext, text: string) => Promise<void>;
     // 队列支持
     queueService?: FeishuTaskQueuePort;
     /** 发送排队交互卡片并返回其 message_id（null=发送失败，降级为文本提示）。 */
     createQueueCard?: (context: FeishuInboundContext, queueId: number, sessionId: number) => Promise<string | null>;
     /** botId 解析（accountId → feishu_bot.id）。 */
     resolveBotId?: (accountId: string) => number;
+    /** 私聊多会话控制（未配置时 `---`/引用切换不生效，行为与旧版一致）。 */
+    p2pSessionControl?: FeishuP2pSessionControl;
+    /** 文本回复发送：成功返回飞书 message_id（供出站映射），失败返回 null（内部可抛错，由 reply 统一容错）。 */
+    onReply?: (context: FeishuInboundContext, text: string, sessionId?: number) => Promise<string | null>;
   }) {}
 
   authorizeDirectMessage(): boolean { return true; }
@@ -129,6 +162,130 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   }
 
   async onMessage(context: FeishuInboundContext): Promise<FeishuReply | null> {
+    if (context.chatType === 'p2p' && this.options.p2pSessionControl != null) {
+      return this.onP2pMessage(context);
+    }
+    return this.onGroupMessage(context);
+  }
+
+  /**
+   * p2p 入站：chat 级锁内完成「指令判定 → 指针切换/新建 → 会话归属确定 + 映射记录」，
+   * 保证同一用户的消息按到达顺序归属（并发下不会出现后发消息读到旧指针）。
+   * 执行/入队在锁外按 sessionId 粒度互斥，旧会话执行不阻塞新会话消息（允许并行）。
+   */
+  private async onP2pMessage(context: FeishuInboundContext): Promise<FeishuReply | null> {
+    const outcome = await this.withP2pChatLock(context, () => this.resolveP2pInbound(context));
+    if (outcome.confirm != null) {
+      await this.reply(context, outcome.confirm.text, outcome.confirm.sessionId ?? undefined);
+    }
+    if (outcome.intercepted) return null;
+    const session = outcome.session!;
+    const sessionId = session.id;
+    const message = await this.buildMessage(context, session.workspace ?? null);
+
+    // 忙时立即入队（不等待锁）：同一会话执行中（含崩溃恢复中的 RUNNING/RESUMING），
+    // 新消息直接排队并返回，避免持有 inbound claim 阻塞或与恢复任务并发执行。
+    if (await this.isBusyOrRecovering(sessionId)) {
+      await this.enqueueMessage(sessionId, context, message, session);
+      return null;
+    }
+    // 空闲路径：加锁 + 双重校验后执行；执行期间持有锁，保证 claim 语义与消息保序。
+    let executed = false;
+    let phase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
+    await this.withLock(sessionId, async () => {
+      if (await this.isBusyOrRecovering(sessionId)) {
+        await this.enqueueMessage(sessionId, context, message, session);
+        return;
+      }
+      this.busy.add(sessionId);
+      executed = true;
+      // 时序契约：busy.add 必须先于 runExecution 内的 updatePhase(RUNNING)，否则会出现
+      // 「phase 已 RUNNING 但 busy 未置位」的窗口，让并发消息误判为空闲而直接执行。
+      try {
+        phase = await this.executeDirect(sessionId, context, message, session);
+      } finally {
+        this.busy.delete(sessionId);
+        this.interrupted.delete(sessionId);
+      }
+    });
+    // 本消息执行结束（或入队后队列需推进）时，尝试接力消费下一个排队任务；
+    // 上一任务 FAILED 时不再自动消费下一条（延续失败上下文执行会产生不可信结果）。
+    if (executed && phase !== 'FAILED') void this.drainNext(sessionId).catch((error) => {
+      console.error(`飞书队列消费接力异常, sessionId=${sessionId}`, error);
+    });
+    return null;
+  }
+
+  /** p2p 临界区：只做 DB 决策与映射记录，网络发送（确认文案）由调用方在锁外执行。 */
+  private async resolveP2pInbound(context: FeishuInboundContext): Promise<{
+    intercepted: boolean;
+    confirm?: { text: string; sessionId: number | null };
+    session?: { id: number; workspace?: string | null; executionUserId?: number | null };
+  }> {
+    const control = this.options.p2pSessionControl!;
+    const accountId = context.accountId;
+    // 1) `---` 新建会话：创建新 session + 指针切换 + 拦截本消息（不入会话消息流）。
+    if (isNewSessionCommand(context.text)) {
+      try {
+        const created = await control.createSession(accountId, context);
+        this.pendingTitleSessionIds.add(created.id);
+        await control.recordMessageMapping(accountId, context.messageId, created.id, 'IN');
+        return { intercepted: true, confirm: { text: NEW_SESSION_CONFIRM_TEXT, sessionId: created.id } };
+      } catch (error) {
+        console.error(`飞书私聊新建会话失败, accountId=${accountId}, messageId=${context.messageId}`, error);
+        return { intercepted: true, confirm: { text: NEW_SESSION_FAILED_TEXT, sessionId: null } };
+      }
+    }
+    // 2) 引用切换：parentId 查映射定位归属会话；命中且 ≠ 当前活跃 → 切指针并回复确认；
+    //    未命中（历史消息/跨聊天/映射缺失）→ 静默保持当前会话，仅记日志。
+    let confirm: { text: string; sessionId: number } | null = null;
+    if (context.parentId != null && context.parentId !== '') {
+      const targetSessionId = await control.findSessionByMessageId(accountId, context.parentId);
+      if (targetSessionId != null) {
+        const active = await control.findActiveSession(accountId, context);
+        if (active == null) {
+          console.warn(`飞书引用切换跳过: 活跃会话不存在, appId=${accountId}, parentId=${context.parentId}, target=${targetSessionId}`);
+        } else if (active.id === targetSessionId) {
+          // 已在目标会话：静默。
+        } else {
+          const switched = await control.switchSession(accountId, context, targetSessionId);
+          if (switched != null) {
+            console.info(`飞书引用切换会话, appId=${accountId}, ${active.id} -> ${targetSessionId}, messageId=${context.messageId}`);
+            confirm = { text: SWITCH_SESSION_CONFIRM_TEXT, sessionId: switched.id };
+            // 不提前返回：继续走正常路径取会话行（workspace）并记录映射。
+          }
+        }
+      }
+    }
+    // 3) 正常路径：指针会话（可能已被上面切换）→ 记录入站映射 → 新会话首条消息命名。
+    const session = await this.options.sessionService.getOrCreateSession(accountId, context);
+    await control.recordMessageMapping(accountId, context.messageId, session.id, 'IN');
+    await this.renameNewP2pSessionIfNeeded(session.id, context);
+    return { intercepted: false, ...(confirm != null ? { confirm } : {}), session };
+  }
+
+  /** 新会话首条消息命名：取消息文本前 20 字（仅 `---` 新建的会话触发一次）。 */
+  private async renameNewP2pSessionIfNeeded(sessionId: number, context: FeishuInboundContext): Promise<void> {
+    if (!this.pendingTitleSessionIds.has(sessionId)) return;
+    this.pendingTitleSessionIds.delete(sessionId);
+    const rename = this.options.p2pSessionControl?.renameSessionFromFirstMessage;
+    if (rename == null) return;
+    const text = context.text?.trim() ?? '';
+    if (text === '') return;
+    const title = text.length > NEW_SESSION_TITLE_MAX_CHARS ? text.slice(0, NEW_SESSION_TITLE_MAX_CHARS) : text;
+    try {
+      await rename(sessionId, title);
+    } catch (error) {
+      console.warn(`飞书新会话命名失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async recordInboundMapping(context: FeishuInboundContext, sessionId: number): Promise<void> {
+    await this.options.p2pSessionControl?.recordMessageMapping(context.accountId, context.messageId, sessionId, 'IN');
+  }
+
+  /** 群聊入站：原逻辑不变（`---` 作为普通文本进入群会话，引用消息只注入内容不做切换）。 */
+  private async onGroupMessage(context: FeishuInboundContext): Promise<FeishuReply | null> {
     const session = await this.options.sessionService.getOrCreateSession(context.accountId, context);
     const sessionId = session.id;
     const message = await this.buildMessage(context, session.workspace ?? null);
@@ -188,11 +345,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       const result = await this.runExecution(sessionId, context, message, session.executionUserId ?? context.maoUserId ?? null, cancelFlag);
       // 回复发送失败不影响执行终态：任务已完成，队列仍应按 result.phase 决策是否接力。
       if (result.text) {
-        try {
-          await this.options.onReply?.(context, result.text);
-        } catch (error) {
-          console.error(`飞书回复发送失败, sessionId=${sessionId}`, error);
-        }
+        await this.reply(context, result.text, sessionId);
       }
       return result.phase;
     } finally {
@@ -245,7 +398,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       // 回复发送失败不影响执行终态：queueRow 仍会清理，且不把执行成功误判为 FAILED 而暂停队列。
       if (result.text) {
         try {
-          await this.options.onReply?.(context, result.text);
+          await this.reply(context, result.text, sessionId);
         } catch (error) {
           console.error(`飞书队列回复发送失败, queueId=${row.id}`, error);
         }
@@ -331,7 +484,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     const queueService = this.options.queueService;
     if (queueService == null) {
       // 队列未配置：无法排队，回退为文本提示。
-      await this.options.onReply?.(context, '当前任务正在执行中，请稍后再发消息。');
+      await this.reply(context, '当前任务正在执行中，请稍后再发消息。', sessionId);
       return;
     }
     const botId = this.options.resolveBotId?.(context.accountId) ?? Number(context.accountId);
@@ -344,7 +497,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       });
     } catch (error) {
       console.error(`飞书消息入队失败, sessionId=${sessionId}`, error);
-      await this.options.onReply?.(context, '当前任务正在执行中，消息排队失败，请稍后重试。');
+      await this.reply(context, '当前任务正在执行中，消息排队失败，请稍后重试。', sessionId);
       return;
     }
     try {
@@ -353,12 +506,12 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         await queueService.setCardMessageId(queueId, cardMessageId);
       } else {
         // 卡片发送失败：降级文本提示。
-        await this.options.onReply?.(context, '当前任务执行中，你的消息已排队等待处理。');
+        await this.reply(context, '当前任务执行中，你的消息已排队等待处理。', sessionId);
       }
     } catch (error) {
       console.error(`飞书排队卡片发送失败, sessionId=${sessionId}, queueId=${queueId}`, error);
       // 卡片失败不影响入队成功，用户至少有文本提示。
-      await this.options.onReply?.(context, '当前任务执行中，你的消息已排队等待处理。');
+      await this.reply(context, '当前任务执行中，你的消息已排队等待处理。', sessionId);
     }
   }
 
@@ -420,6 +573,37 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     } finally {
       release();
       if (this.mutex.get(sessionId) === current) this.mutex.delete(sessionId);
+    }
+  }
+
+  /** p2p chat 级互斥：同一用户的指令判定与归属确定串行（key 与 p2pChatIdOf 的 union 优先策略一致）。 */
+  private async withP2pChatLock<T>(context: FeishuInboundContext, fn: () => Promise<T>): Promise<T> {
+    const key = `${context.accountId}:${context.senderUnionId ?? context.senderId ?? ''}`;
+    const previous = this.p2pChatMutex.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.then(() => current);
+    this.p2pChatMutex.set(key, queued);
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.p2pChatMutex.get(key) === queued) this.p2pChatMutex.delete(key);
+    }
+  }
+
+  /** 统一文本回复：容错发送（失败仅记日志，不影响执行终态）；p2p 出站成功消息记录归属映射。 */
+  private async reply(context: FeishuInboundContext, text: string, sessionId?: number): Promise<void> {
+    let messageId: string | null = null;
+    try {
+      messageId = (await this.options.onReply?.(context, text, sessionId)) ?? null;
+    } catch (error) {
+      console.error(`飞书回复发送失败, sessionId=${sessionId ?? '-'}`, error);
+      return;
+    }
+    if (messageId != null && sessionId != null && context.chatType === 'p2p') {
+      await this.options.p2pSessionControl?.recordMessageMapping(context.accountId, messageId, sessionId, 'OUT');
     }
   }
 

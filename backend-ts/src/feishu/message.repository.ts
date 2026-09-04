@@ -54,6 +54,10 @@ export interface FeishuMessageRepository {
   /** 回填群消息行的发送人显示名（入站时原始事件可能缺少姓名）。 */
   updateGroupMessageSenderName(id: number, senderName: string): Promise<void>;
   addGroupMember(appId: string, chatId: string, userId: number, openId: string, displayName: string): Promise<void>;
+  /** 记录飞书私聊消息 → 会话归属映射（INSERT IGNORE 防重；direction: IN=入站 / OUT=出站）。 */
+  recordP2pMessage(appId: string, messageId: string, sessionId: number, direction: 'IN' | 'OUT'): Promise<void>;
+  /** 按飞书消息 ID 查询归属会话 ID；未记录返回 null。 */
+  findP2pMessageSession(appId: string, messageId: string): Promise<number | null>;
 }
 
 /** Persistence boundary for Feishu conversations. Session creation is deliberately
@@ -189,5 +193,22 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
 
   updateGroupMessageSenderName(id: number, senderName: string): Promise<void> {
     return this.db.execute('UPDATE feishu_group_message_log SET sender_name = ? WHERE id = ?', [senderName, id]).then(() => undefined);
+  }
+
+  async recordP2pMessage(appId: string, messageId: string, sessionId: number, direction: 'IN' | 'OUT'): Promise<void> {
+    if (messageId == null || messageId === '') return;
+    await this.db.execute(
+      'INSERT IGNORE INTO feishu_p2p_message (app_id, message_id, session_id, direction) VALUES (?, ?, ?, ?)',
+      [appId, messageId, sessionId, direction],
+    );
+  }
+
+  async findP2pMessageSession(appId: string, messageId: string): Promise<number | null> {
+    if (messageId == null || messageId === '') return null;
+    const row = await this.db.queryOne<{ session_id: number }>(
+      'SELECT session_id FROM feishu_p2p_message WHERE app_id = ? AND message_id = ? LIMIT 1',
+      [appId, messageId],
+    );
+    return row?.session_id ?? null;
   }
 }

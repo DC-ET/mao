@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AgentFeishuInboundHandler } from './agent-inbound-handler.js';
+import { AgentFeishuInboundHandler, isNewSessionCommand } from './agent-inbound-handler.js';
 import type { CancelFlag, FeishuInboundContext, FeishuInboundQueueRow, FeishuTaskQueuePort } from './types.js';
 import type { AgentEventListener } from '../harness/core/agent-event-listener.js';
 
@@ -132,7 +132,7 @@ describe('AgentFeishuInboundHandler', () => {
     expect(sessionService.saveUserMessage).toHaveBeenCalledWith(7, '【用户消息】\n未知用户：hello', null);
     expect(harness.execute).toHaveBeenCalledWith(7, 'exec-1', expect.anything(), expect.anything(), 42);
     expect(onExecutionFinished).toHaveBeenCalledWith(7, expect.anything(), 'exec-1', 'COMPLETED');
-    expect(onReply).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello' }), 'assistant text');
+    expect(onReply).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello' }), 'assistant text', 7);
   });
 
   it('prepends group context to the user message', async () => {
@@ -285,7 +285,7 @@ describe('AgentFeishuInboundHandler', () => {
     });
     const reply = await handler.onMessage(makeContext());
     expect(reply).toBeNull();
-    expect(onReply).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello' }), '任务已取消。');
+    expect(onReply).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello' }), '任务已取消。', 7);
     expect(onExecutionFinished).toHaveBeenCalledWith(7, expect.anything(), 'e', 'CANCELLED');
   });
 
@@ -406,7 +406,7 @@ describe('AgentFeishuInboundHandler', () => {
     await handler.onMessage(makeContext());
     // FAILED 后不应触发队列接力消费
     expect(queueService.claimNext).not.toHaveBeenCalled();
-    expect(onReply).toHaveBeenCalledWith(expect.anything(), '抱歉，处理您的消息时出现了错误，请稍后再试。');
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), '抱歉，处理您的消息时出现了错误，请稍后再试。', 7);
   });
 
   it('stops draining the queue after a queued message fails', async () => {
@@ -473,5 +473,247 @@ describe('AgentFeishuInboundHandler', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     // 执行成功后即便 onReply 抛错，仍应尝试队列接力消费（claimNext 被调用；队列空则返回 null 停止）
     expect(queueService.claimNext).toHaveBeenCalledTimes(1);
+  });
+});
+
+function makeP2pControl(overrides: Record<string, unknown> = {}) {
+  return {
+    findActiveSession: vi.fn(async () => ({ id: 7 })),
+    createSession: vi.fn(async () => ({ id: 8 })),
+    switchSession: vi.fn(async () => ({ id: 5 })),
+    findSessionByMessageId: vi.fn(async () => null),
+    recordMessageMapping: vi.fn(async () => undefined),
+    renameSessionFromFirstMessage: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
+
+describe('AgentFeishuInboundHandler p2p multi-session', () => {
+  function makeP2pContext(overrides: Partial<FeishuInboundContext> = {}): FeishuInboundContext {
+    return makeContext({ chatType: 'p2p', chatId: null, ...overrides });
+  }
+
+  it('matches the --- new-session command variants strictly', () => {
+    expect(isNewSessionCommand('---')).toBe(true);
+    expect(isNewSessionCommand('———')).toBe(true);
+    expect(isNewSessionCommand('-----')).toBe(true);
+    expect(isNewSessionCommand('  ---  ')).toBe(true);
+    expect(isNewSessionCommand('-—-')).toBe(true);
+    expect(isNewSessionCommand('--')).toBe(false);
+    expect(isNewSessionCommand('--- abc')).toBe(false);
+    expect(isNewSessionCommand('')).toBe(false);
+    expect(isNewSessionCommand(null)).toBe(false);
+  });
+
+  it('creates a new session on --- and intercepts the message', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl();
+    const onReply = vi.fn(async () => 'om_confirm');
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+      onReply,
+    });
+    const reply = await handler.onMessage(makeP2pContext({ text: '---', messageId: 'om_new' }));
+    expect(reply).toBeNull();
+    expect(control.createSession).toHaveBeenCalledWith('1', expect.objectContaining({ messageId: 'om_new' }));
+    // `---` 消息本身不入会话消息流、不触发执行。
+    expect(sessionService.saveUserMessage).not.toHaveBeenCalled();
+    expect(harness.execute).not.toHaveBeenCalled();
+    // `---` 消息归属新会话（IN），确认文案归属新会话（OUT）。
+    expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_new', 8, 'IN');
+    expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_confirm', 8, 'OUT');
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), '已开启新会话，后续消息将在新的上下文中处理。', 8);
+  });
+
+  it('replies failure text and still intercepts when session creation fails', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl({ createSession: vi.fn(async () => { throw new Error('db down'); }) });
+    const onReply = vi.fn(async () => 'om_err');
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+      onReply,
+    });
+    await handler.onMessage(makeP2pContext({ text: '---' }));
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), '开启新会话失败，请稍后再试。', undefined);
+  });
+
+  it('switches session and confirms when the quoted message belongs to another session', async () => {
+    const sessionService = makeSessionService({ getOrCreateSession: vi.fn(async () => ({ id: 5, executionUserId: 42 })) });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl({
+      findSessionByMessageId: vi.fn(async () => 5),
+      findActiveSession: vi.fn(async () => ({ id: 7 })),
+      switchSession: vi.fn(async () => ({ id: 5 })),
+    });
+    const onReply = vi.fn(async () => 'om_switch');
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+      onReply,
+    });
+    await handler.onMessage(makeP2pContext({ parentId: 'om_quoted' }));
+    expect(control.switchSession).toHaveBeenCalledWith('1', expect.anything(), 5);
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), '已切换到该消息所在的会话，后续消息将以该会话上下文为准。', 5);
+    // 本条消息继续执行并归属切换后的目标会话。
+    expect(harness.execute).toHaveBeenCalledWith(5, 'e', expect.anything(), expect.anything(), 42);
+    expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_1', 5, 'IN');
+  });
+
+  it('stays silent when the quoted message is not found in the mapping', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl({ findSessionByMessageId: vi.fn(async () => null) });
+    const onReply = vi.fn(async () => null);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+      onReply,
+    });
+    await handler.onMessage(makeP2pContext({ parentId: 'om_legacy' }));
+    expect(control.switchSession).not.toHaveBeenCalled();
+    // 未切换：不应有切换确认文案；消息正常执行照常回复。
+    expect(onReply).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('已切换'), expect.anything());
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), 'assistant text', 7);
+    // 保持当前活跃会话执行。
+    expect(harness.execute).toHaveBeenCalledWith(7, 'e', expect.anything(), expect.anything(), 42);
+    expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_1', 7, 'IN');
+  });
+
+  it('stays silent when the quoted message already belongs to the active session', async () => {
+    const sessionService = makeSessionService({ getOrCreateSession: vi.fn(async () => ({ id: 5, executionUserId: 42 })) });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl({
+      findSessionByMessageId: vi.fn(async () => 5),
+      findActiveSession: vi.fn(async () => ({ id: 5 })),
+    });
+    const onReply = vi.fn(async () => null);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+      onReply,
+    });
+    await handler.onMessage(makeP2pContext({ parentId: 'om_same' }));
+    expect(control.switchSession).not.toHaveBeenCalled();
+    expect(onReply).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('已切换'), expect.anything());
+    expect(harness.execute).toHaveBeenCalledWith(5, 'e', expect.anything(), expect.anything(), 42);
+  });
+
+  it('records inbound mapping for ordinary p2p messages without control actions', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+    });
+    await handler.onMessage(makeP2pContext({ text: '继续这个任务' }));
+    expect(control.createSession).not.toHaveBeenCalled();
+    expect(control.switchSession).not.toHaveBeenCalled();
+    expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_1', 7, 'IN');
+    expect(harness.execute).toHaveBeenCalledWith(7, 'e', expect.anything(), expect.anything(), 42);
+  });
+
+  it('records outbound mapping when the reply message id is returned', async () => {
+    const sessionService = makeSessionService({ getLatestAssistantReply: vi.fn(async () => 'done') });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl();
+    const onReply = vi.fn(async () => 'om_reply');
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+      onReply,
+    });
+    await handler.onMessage(makeP2pContext());
+    expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_reply', 7, 'OUT');
+  });
+
+  it('renames a freshly created session from its first following message', async () => {
+    const sessionService = makeSessionService({ getOrCreateSession: vi.fn(async () => ({ id: 8 })) });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+    });
+    // `---` 新建 → 下一条消息进入新会话并触发命名。
+    await handler.onMessage(makeP2pContext({ text: '---', messageId: 'om_new' }));
+    const longText = '帮我把这份需求文档整理成一份可以直接给开发看的任务拆解清单，越细越好';
+    await handler.onMessage(makeP2pContext({ text: longText, messageId: 'om_first' }));
+    expect(control.renameSessionFromFirstMessage).toHaveBeenCalledWith(8, longText.slice(0, 20));
+    // 命名只发生一次（第二条消息不再重复命名）。
+    await handler.onMessage(makeP2pContext({ text: '第二条', messageId: 'om_second' }));
+    expect(control.renameSessionFromFirstMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats --- in group chat as ordinary text (no session switch)', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+    });
+    await handler.onMessage(makeContext({ text: '---' }));
+    expect(control.createSession).not.toHaveBeenCalled();
+    expect(control.switchSession).not.toHaveBeenCalled();
+    expect(harness.execute).toHaveBeenCalledWith(7, 'e', expect.anything(), expect.anything(), 42);
+    expect(control.recordMessageMapping).not.toHaveBeenCalled();
+  });
+
+  it('executes a new-session message immediately while the previous session is busy', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const sessionService = makeSessionService({ getOrCreateSession: vi.fn(async () => ({ id: 7, executionUserId: 42 })) });
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async (_sessionId: number, _eventId: string) => {
+        // 旧会话(7)执行中阻塞；新会话(8)应可并行执行。
+        if (harness.execute.mock.calls[harness.execute.mock.calls.length - 1]?.[0] === 7) await firstGate;
+      }),
+    };
+    const control = makeP2pControl();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+    });
+    const first = handler.onMessage(makeP2pContext({ text: '长任务', messageId: 'om_m1' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // `---` 新建会话：旧会话忙碌时也立即生效。
+    await handler.onMessage(makeP2pContext({ text: '---', messageId: 'om_cmd' }));
+    expect(control.createSession).toHaveBeenCalled();
+    // 新会话消息：sessionService 返回新会话 8，且旧会话阻塞中仍立即执行。
+    sessionService.getOrCreateSession.mockImplementation(async () => ({ id: 8, executionUserId: 42 }));
+    await handler.onMessage(makeP2pContext({ text: '新任务', messageId: 'om_m2' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(harness.execute).toHaveBeenCalledWith(8, 'e', expect.anything(), expect.anything(), 42);
+    releaseFirst();
+    await first;
   });
 });

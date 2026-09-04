@@ -210,4 +210,82 @@ describe('FeishuMessageService', () => {
     // 用户发送者不受影响。
     expect(senderName({ senderType: 'user', senderId: 'ou_user1', rawEvent: {} } as never)).toBe('ou_user1');
   });
+
+  it('creates a p2p session and switches the active pointer to it', async () => {
+    const repository = makeRepo({
+      saveConversation: vi.fn(async (c: unknown) => ({ id: 9, ...c })),
+    });
+    const sessionFactory = { create: vi.fn(async () => ({ sessionId: 20, ownerUserId: 3, workspace: '/ws/private-3' })) };
+    const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
+    const conv = await service.createP2pSession('1', makeContext({ chatType: 'p2p' }), 3);
+    expect(conv.sessionId).toBe(20);
+    expect(sessionFactory.create).toHaveBeenCalledWith('1', expect.objectContaining({ chatType: 'p2p' }));
+    // 指针更新 = saveConversation upsert（唯一键 app_id+chat_id，保留 owner 与 workspace）。
+    expect(repository.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+      appId: '1', chatId: 'p2p:union:on_user', sessionId: 20, ownerUserId: 3, workspace: '/ws/private-3',
+    }));
+  });
+
+  it('switches the p2p active pointer preserving owner and workspace', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'p2p:union:on_user', sessionId: 7, ownerUserId: 3, workspace: '/ws/private-3' })),
+      saveConversation: vi.fn(async (c: unknown) => ({ id: 1, ...c })),
+    });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    const conv = await service.switchP2pSession('1', makeContext({ chatType: 'p2p' }), 5, 3);
+    expect(conv?.sessionId).toBe(5);
+    expect(repository.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+      appId: '1', chatId: 'p2p:union:on_user', sessionId: 5, ownerUserId: 3, workspace: '/ws/private-3',
+    }));
+  });
+
+  it('returns null when switching without a pointer row or onto the current session', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'p2p:union:on_user', sessionId: 7, ownerUserId: 3 })),
+      saveConversation: vi.fn(),
+    });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    // 目标即当前会话：不切换。
+    expect(await service.switchP2pSession('1', makeContext({ chatType: 'p2p' }), 7, 3)).toBeNull();
+    // 指针行不存在（换绑/未建会话）：不切换。
+    const repositoryEmpty = makeRepo({ findGroupConversation: vi.fn(async () => null) });
+    const serviceEmpty = new FeishuMessageService(repositoryEmpty as never, { create: vi.fn() } as never, 20, 120);
+    expect(await serviceEmpty.switchP2pSession('1', makeContext({ chatType: 'p2p' }), 5, 3)).toBeNull();
+    expect(repository.saveConversation).not.toHaveBeenCalled();
+    expect(repositoryEmpty.saveConversation).not.toHaveBeenCalled();
+  });
+
+  it('finds the active p2p conversation without creating one', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'p2p:union:on_user', sessionId: 7, ownerUserId: 3 })),
+    });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    const conv = await service.findActiveP2p('1', makeContext({ chatType: 'p2p' }), 3);
+    expect(conv?.sessionId).toBe(7);
+    expect(repository.findGroupConversation).toHaveBeenCalledWith('1', 'p2p:union:on_user', 3);
+  });
+
+  it('records p2p message mapping tolerantly and skips empty message ids', async () => {
+    const repository = makeRepo({ recordP2pMessage: vi.fn(async () => undefined) });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    await service.recordP2pMessage('1', 'om_1', 7, 'IN');
+    expect(repository.recordP2pMessage).toHaveBeenCalledWith('1', 'om_1', 7, 'IN');
+    // 空消息 ID 直接跳过。
+    await service.recordP2pMessage('1', null, 7, 'IN');
+    expect(repository.recordP2pMessage).toHaveBeenCalledTimes(1);
+    // DB 异常不向上抛（映射失败不阻断主流程）。
+    const failing = makeRepo({ recordP2pMessage: vi.fn(async () => { throw new Error('db down'); }) });
+    const serviceFailing = new FeishuMessageService(failing as never, { create: vi.fn() } as never, 20, 120);
+    await expect(serviceFailing.recordP2pMessage('1', 'om_2', 7, 'OUT')).resolves.toBeUndefined();
+  });
+
+  it('finds p2p message session and degrades to null on failure', async () => {
+    const repository = makeRepo({ findP2pMessageSession: vi.fn(async () => 7) });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    expect(await service.findP2pMessageSession('1', 'om_1')).toBe(7);
+    expect(await service.findP2pMessageSession('1', null)).toBeNull();
+    const failing = makeRepo({ findP2pMessageSession: vi.fn(async () => { throw new Error('db down'); }) });
+    const serviceFailing = new FeishuMessageService(failing as never, { create: vi.fn() } as never, 20, 120);
+    expect(await serviceFailing.findP2pMessageSession('1', 'om_1')).toBeNull();
+  });
 });

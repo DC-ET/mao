@@ -218,7 +218,7 @@ describe('SendFeishuFileTool', () => {
     await writeFileAsync(join(workspace, 'sub', 'report.docx'), Buffer.from('doc'));
     const result = await tool.execute(JSON.stringify({ file: 'sub/report.docx' }), 9, 1, workspace);
     expect(JSON.parse(result).success).toBe(true);
-    expect(support.sendFile).toHaveBeenCalledWith({ appId: '2', receiveId: 'ou_user', receiveIdType: 'union_id' }, 'report.docx', expect.any(Buffer));
+    expect(support.sendFile).toHaveBeenCalledWith({ appId: '2', receiveId: 'ou_user', receiveIdType: 'union_id' }, 'report.docx', expect.any(Buffer), 9);
   });
 
   it('honors a custom filename override', async () => {
@@ -226,7 +226,7 @@ describe('SendFeishuFileTool', () => {
     const tool = new SendFeishuFileTool(sandbox, support);
     await writeFileAsync(join(workspace, 'out.bin'), Buffer.from('data'));
     await tool.execute(JSON.stringify({ file: 'out.bin', filename: '结果.bin' }), 9, 1, workspace);
-    expect(support.sendFile).toHaveBeenCalledWith(expect.anything(), '结果.bin', expect.any(Buffer));
+    expect(support.sendFile).toHaveBeenCalledWith(expect.anything(), '结果.bin', expect.any(Buffer), 9);
   });
 
   it('rejects when the session is not a feishu channel session', async () => {

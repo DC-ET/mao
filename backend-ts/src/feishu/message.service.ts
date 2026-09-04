@@ -27,7 +27,59 @@ export class FeishuMessageService {
     // 私聊会话按当前绑定用户隔离：同一身份换绑到其他用户时不会复用原会话/工作区。
     const existing = await this.repository.findGroupConversation(accountId, chatId, userId);
     if (existing != null) return existing;
-    return this.createConversation(accountId, chatId, context, userId);
+    return this.withChatLock(`${accountId}:${chatId}`, () => this.createConversation(accountId, chatId, context, userId));
+  }
+
+  /** 查询私聊当前活跃会话（不动指针、不创建）。 */
+  async findActiveP2p(accountId: string, context: FeishuInboundContext, userId?: number): Promise<FeishuConversation | null> {
+    return this.repository.findGroupConversation(accountId, p2pChatIdOf(context), userId);
+  }
+
+  /**
+   * `---` 新建私聊会话：创建新 session 并把活跃指针切到它（chat 级锁内）。
+   * 工作区由 sessionFactory 按 `private-{userId}` 固定分配，同一私聊所有会话天然共享根工作区。
+   * 返回新会话行；sessionFactory 抛错时向上传播（调用方回复失败提示）。
+   */
+  async createP2pSession(accountId: string, context: FeishuInboundContext, userId?: number): Promise<FeishuConversation> {
+    const chatId = p2pChatIdOf(context);
+    return this.withChatLock(`${accountId}:${chatId}`, async () => {
+      const session = await this.sessionFactory.create(accountId, context);
+      return this.repository.saveConversation({ appId: accountId, chatId, sessionId: session.sessionId, ownerUserId: session.ownerUserId, workspace: session.workspace });
+    });
+  }
+
+  /**
+   * 引用消息自动切换：把活跃指针切到 targetSessionId（chat 级锁内）。
+   * 指针行不存在（如未建过会话/换绑后首条消息）或目标与当前相同 → 返回 null（调用方静默）。
+   */
+  async switchP2pSession(accountId: string, context: FeishuInboundContext, targetSessionId: number, userId?: number): Promise<FeishuConversation | null> {
+    const chatId = p2pChatIdOf(context);
+    return this.withChatLock(`${accountId}:${chatId}`, async () => {
+      const existing = await this.repository.findGroupConversation(accountId, chatId, userId);
+      if (existing == null || existing.sessionId === targetSessionId) return null;
+      return this.repository.saveConversation({ appId: accountId, chatId, sessionId: targetSessionId, ownerUserId: existing.ownerUserId, workspace: existing.workspace });
+    });
+  }
+
+  /** 记录私聊消息 → 会话映射（INSERT IGNORE 防重，失败不阻断主流程）。 */
+  async recordP2pMessage(accountId: string, messageId: string | null | undefined, sessionId: number, direction: 'IN' | 'OUT'): Promise<void> {
+    if (messageId == null || messageId === '') return;
+    try {
+      await this.repository.recordP2pMessage(accountId, messageId, sessionId, direction);
+    } catch (error) {
+      console.warn(`飞书私聊消息映射记录失败, appId=${accountId}, messageId=${messageId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** 按飞书消息 ID 查归属会话；查询失败降级为 null（调用方静默保持当前会话）。 */
+  async findP2pMessageSession(accountId: string, messageId: string | null | undefined): Promise<number | null> {
+    if (messageId == null || messageId === '') return null;
+    try {
+      return await this.repository.findP2pMessageSession(accountId, messageId);
+    } catch (error) {
+      console.warn(`飞书私聊消息映射查询失败, appId=${accountId}, messageId=${messageId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
   }
 
   async getOrCreateGroup(accountId: string, context: FeishuInboundContext): Promise<FeishuConversation> {
@@ -123,8 +175,8 @@ export class FeishuMessageService {
 
   private readonly locks = new Map<string, Promise<void>>();
 
-  private async createConversation(accountId: string, chatId: string, context: FeishuInboundContext, ownerUserId?: number): Promise<FeishuConversation> {
-    const lockKey = `${accountId}:${chatId}`;
+  /** chat 级互斥（指针创建/切换/新建的临界区），key 为 `${accountId}:${chatId}`。 */
+  private async withChatLock<T>(lockKey: string, fn: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(lockKey) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolve) => { release = resolve; });
@@ -132,15 +184,19 @@ export class FeishuMessageService {
     this.locks.set(lockKey, queued);
     await previous;
     try {
-      // 锁内重查同样携带 owner 过滤，避免换绑场景命中旧用户会话。
-      const existing = await this.repository.findGroupConversation(accountId, chatId, ownerUserId);
-      if (existing != null) return existing;
-      const session = await this.sessionFactory.create(accountId, context);
-      return this.repository.saveConversation({ appId: accountId, chatId, sessionId: session.sessionId, ownerUserId: session.ownerUserId, workspace: session.workspace });
+      return await fn();
     } finally {
       release();
       if (this.locks.get(lockKey) === queued) this.locks.delete(lockKey);
     }
+  }
+
+  private async createConversation(accountId: string, chatId: string, context: FeishuInboundContext, ownerUserId?: number): Promise<FeishuConversation> {
+    // 锁内重查同样携带 owner 过滤，避免换绑场景命中旧用户会话。
+    const existing = await this.repository.findGroupConversation(accountId, chatId, ownerUserId);
+    if (existing != null) return existing;
+    const session = await this.sessionFactory.create(accountId, context);
+    return this.repository.saveConversation({ appId: accountId, chatId, sessionId: session.sessionId, ownerUserId: session.ownerUserId, workspace: session.workspace });
   }
 }
 

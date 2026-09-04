@@ -21,8 +21,8 @@ export interface FeishuChannelToolSupport {
 export interface FeishuMediaSendSupport {
   /** 返回当前会话对应的飞书用户/群聊发送目标；非飞书通道会话返回 null。 */
   resolveSendTarget(sessionId: number | null): Promise<FeishuSendTarget | null>;
-  sendImage(target: FeishuSendTarget, image: Buffer): Promise<void>;
-  sendFile(target: FeishuSendTarget, fileName: string, file: Buffer): Promise<void>;
+  sendImage(target: FeishuSendTarget, image: Buffer, sessionId?: number | null): Promise<void>;
+  sendFile(target: FeishuSendTarget, fileName: string, file: Buffer, sessionId?: number | null): Promise<void>;
 }
 
 const MAX_FEISHU_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -219,7 +219,7 @@ export class SendFeishuImageTool extends BaseTool implements FeishuChannelTool {
       if (bytes.length > MAX_FEISHU_IMAGE_BYTES) return errorJson('图片超过 10MB 上限');
       const mime = ImageFileSupport.detectMimeFromBytes(bytes);
       if (!mime || !ALLOWED_FEISHU_IMAGE_MIMES.has(mime)) return errorJson('不支持的图片格式，仅支持 PNG/JPG/JPEG/GIF/WebP');
-      await this.support.sendImage(target, bytes);
+      await this.support.sendImage(target, bytes, sessionId);
       return toJson({ success: true });
     } catch (e) {
       harnessLog('warn', 'feishu_send_image failed', e);
@@ -265,7 +265,7 @@ export class SendFeishuFileTool extends BaseTool implements FeishuChannelTool {
       if (bytes.length === 0) return errorJson('文件内容为空');
       if (bytes.length > MAX_FEISHU_FILE_BYTES) return errorJson('文件超过 30MB 上限');
       const fileName = asText(args.filename) || file.replace(/\\/g, '/').split('/').pop() || 'file';
-      await this.support.sendFile(target, fileName, bytes);
+      await this.support.sendFile(target, fileName, bytes, sessionId);
       return toJson({ success: true });
     } catch (e) {
       harnessLog('warn', 'feishu_send_file failed', e);
