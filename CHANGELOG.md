@@ -15,6 +15,21 @@
 
 ---
 
+## 0.0.101 (2026-09-04)
+
+### Embed SDK（新增）
+
+- 新增 Web Embed SDK：内部 Web 系统引入一个 `<script>` 即可在页面右下角获得 Mao agent 对话浮窗（浮动按钮 + 会话浮窗），支持流式输出、思考过程、工具执行状态、工具审批、追问作答、手动停止、"新对话"与页面上下文注入（`context()` 变化检测 + 选中文本引用）。产物 `https://mao.etarch.cn/embed/mao-chat.js`（含 `mao-chat.v0.1.0.js` 版本锁定副本），接入示例见 README「Web Embed SDK」章节
+- 会话为"每用户每 agent 一个常驻会话"（仅复用 SDK 自建会话），desktop 端会话列表可见并可继续同一会话；同一浏览器多页签通过 BroadcastChannel 协调避免重复建会话
+
+### 前端（桌面 / Web / 安卓）
+
+- 任务阶段枚举 `TaskPhase` 收口至共享契约包 `@mao/contracts`（`ws.ts` 模块），desktop 与 embed SDK 单一来源；纯类型重构，行为不变
+
+### 后端
+
+- WS `auth` 帧的 `client` 字段新增 `embed` 类型（大小写不敏感归一化），仅用于连接注册表与日志识别，无行为差异
+
 ## 0.0.100 (2026-09-04)
 
 ### 前端（桌面 / Web / 安卓）

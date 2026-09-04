@@ -1385,6 +1385,7 @@ export class StreamingWsHandler {
     if (client?.toLowerCase() === 'electron') return 'electron';
     if (client?.toLowerCase() === 'android') return 'android';
     if (client?.toLowerCase() === 'cli') return 'cli';
+    if (client?.toLowerCase() === 'embed') return 'embed';
     return 'browser';
   }
 

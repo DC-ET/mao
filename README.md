@@ -75,6 +75,30 @@ cd skills/mao-cli && npm install . -g
 mao auth login
 ```
 
+## Web Embed SDK
+
+在任意内部 Web 系统中一行接入 Mao agent 对话浮窗（详细设计见 [docs/plan/embed-sdk-technical-design.md](docs/plan/embed-sdk-technical-design.md)）：
+
+```html
+<script src="https://mao.etarch.cn/embed/mao-chat.js"></script>
+<script>
+  MaoChat.init({
+    serverUrl: 'https://mao.etarch.cn',
+    agentId: 1,                       // 页面助手绑定的 agent
+    getToken: () => fetch('/your-backend/embed-token').then(r => r.json()).then(d => d.accessToken),
+    context: () => ({ page: location.pathname, orderId: window.__orderId }),
+  });
+</script>
+```
+
+- **凭据**：宿主后端持有 Mao 凭据，仅向页面下发短期 access token；SDK 不落盘，过期时回调 `getToken()` 重取
+- **上下文**：`context()` 返回值变化时自动拼入下一条消息（8KB 上限）；页面上选中文本自动成为引用
+- **会话**：每用户每 agent 一个常驻会话，desktop 端会话列表可见、可继续
+- **宿主 CSP**：需放行 Mao 域名 `connect-src`（wss / https）
+- **注意**：`context()` 中的业务数据会随消息发送至 LLM，请勿放入敏感信息
+
+本地验收：`cd sdk/embed && npm install && npm run dev`（demo 页模拟宿主，见 `sdk/embed/demo/`）。
+
 ## 测试
 
 ```bash
@@ -82,6 +106,7 @@ cd backend-ts && npm test && npm run build
 cd admin && npm run build
 cd desktop && npm run build
 cd agent-cli && npm test
+cd sdk/embed && npm test && npm run build
 ```
 
 根目录 `npm test` 为 Playwright E2E（需先启动三端）。

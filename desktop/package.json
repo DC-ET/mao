@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "dev:electron": "concurrently \"vite --port 5201\" \"wait-on http://localhost:5201 && env -u ELECTRON_RUN_AS_NODE NODE_ENV=development electron .\"",
+    "prebuild": "node scripts/build-embed-sdk.cjs",
     "build": "vue-tsc -b && vite build",
     "dist": "electron-builder",
     "preview": "vite preview",
