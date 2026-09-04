@@ -15,7 +15,6 @@ describe('FeishuMessageService', () => {
   function makeRepo(overrides: Partial<Record<string, unknown>> = {}) {
     return {
       findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3, lastContextLogId: 0 })),
-      findConversationBySessionId: vi.fn(),
       findMediaByMessageId: vi.fn(),
       saveConversation: vi.fn(),
       claimInboundMessage: vi.fn(),

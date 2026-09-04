@@ -54,9 +54,11 @@ export interface FeishuMessageRepository {
   addGroupMember(appId: string, chatId: string, userId: number, openId: string, displayName: string): Promise<void>;
   /** 记录飞书私聊消息 → 会话归属映射（INSERT IGNORE 防重；direction: IN=入站 / OUT=出站）。 */
   recordP2pMessage(appId: string, messageId: string, sessionId: number, direction: 'IN' | 'OUT'): Promise<void>;
+
   /** 按飞书消息 ID 查询归属会话 ID；未记录返回 null。 */
   findP2pMessageSession(appId: string, messageId: string): Promise<number | null>;
-  /** 会话 → 飞书通道绑定（创建时落行、不可变）：session_id 唯一， upsert 幂等。 */
+  /** 会话 → 飞书通道绑定（创建时落行、不可变）：session_id 唯一，upsert 幂等；
+   *  awaiting_first_message_title 用 GREATEST「只进不清」——指针切换的 upsert(false) 不会清掉 `---` 置上的待命名标志。 */
   upsertSessionChannel(sessionId: number, appId: string, chatId: string, chatType: 'p2p' | 'group', awaitingFirstMessageTitle?: boolean): Promise<void>;
   /** 按会话查通道绑定；非飞书会话返回 null。 */
   findSessionChannel(sessionId: number): Promise<{ sessionId: number; appId: string; chatId: string; chatType: 'p2p' | 'group'; awaitingFirstMessageTitle: number } | null>;
@@ -222,7 +224,8 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     await this.db.execute(
       `INSERT INTO feishu_session_channel (session_id, app_id, chat_id, chat_type, awaiting_first_message_title)
        VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE app_id = VALUES(app_id), chat_id = VALUES(chat_id), chat_type = VALUES(chat_type)`,
+       ON DUPLICATE KEY UPDATE app_id = VALUES(app_id), chat_id = VALUES(chat_id), chat_type = VALUES(chat_type),
+        awaiting_first_message_title = GREATEST(awaiting_first_message_title, VALUES(awaiting_first_message_title))`,
       [sessionId, appId, chatId, chatType, awaitingFirstMessageTitle ? 1 : 0],
     );
   }

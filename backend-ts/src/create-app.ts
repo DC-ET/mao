@@ -1229,10 +1229,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       switchSession: async (accountId, context, targetSessionId) => {
         const triggerUserId = await resolveFeishuUserId(accountId, context);
         // 换绑越权守卫：目标会话必须属于当前绑定的 mao 用户（引用旧消息不能切入他人会话）。
+        // findById 对不存在/已软删会话返回 null（getSession 会抛 SESSION_NOT_FOUND），空目标同样拒绝。
         if (triggerUserId != null) {
-          const targetSession = await sessionService.getSession(targetSessionId);
-          if (targetSession?.userId != null && targetSession.userId !== triggerUserId) {
-            console.warn(`飞书引用切换拒绝: 目标会话归属其他用户, sessionId=${targetSessionId}, owner=${targetSession.userId}, trigger=${triggerUserId}`);
+          const targetSession = await sessionRepo.findById(targetSessionId);
+          if (targetSession == null || targetSession.userId !== triggerUserId) {
+            console.warn(`飞书引用切换拒绝: 目标会话不存在或归属其他用户, sessionId=${targetSessionId}, trigger=${triggerUserId}`);
             return null;
           }
         }

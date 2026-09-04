@@ -46,7 +46,13 @@ export class FeishuMessageService {
     return this.withChatLock(`${accountId}:${chatId}`, async () => {
       const session = await this.sessionFactory.create(accountId, context);
       const conversation = await this.repository.saveConversation({ appId: accountId, chatId, sessionId: session.sessionId, ownerUserId: session.ownerUserId, workspace: session.workspace });
-      await this.repository.upsertSessionChannel(session.sessionId, accountId, chatId, 'p2p', true);
+      // 标记「等待首条消息命名」。GREATEST 语义下 saveConversation 刚落的 awaiting=0 行会被置 1；
+      // 失败仅记日志（会话已建成，命名是体验增强，不应让创建整体报失败）。
+      try {
+        await this.repository.upsertSessionChannel(session.sessionId, accountId, chatId, 'p2p', true);
+      } catch (error) {
+        console.warn(`飞书新会话待命名标记失败, sessionId=${session.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
       return conversation;
     });
   }
