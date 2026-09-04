@@ -1,0 +1,41 @@
+{
+  "name": "@mao/chat-embed",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/mao-chat.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite --port 5300 --config vite.demo.config.ts",
+    "build": "vue-tsc --noEmit -p tsconfig.build.json && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "size": "size-limit"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.14",
+    "marked": "^18.0.4",
+    "vue": "^3.5.34"
+  },
+  "devDependencies": {
+    "@size-limit/preset-small-lib": "^11.2.0",
+    "@vitejs/plugin-vue": "^6.0.6",
+    "@vue/tsconfig": "^0.9.1",
+    "size-limit": "^11.2.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.12",
+    "vite-plugin-css-injected-by-js": "^3.5.2",
+    "vitest": "^4.1.10",
+    "vue-tsc": "^3.2.8"
+  },
+  "size-limit": [
+    {
+      "path": "dist/mao-chat.js",
+      "gzip": true,
+      "limit": "200 KB"
+    }
+  ]
+}

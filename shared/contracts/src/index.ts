@@ -20,3 +20,32 @@ export type { ExperienceVO, AgentVO } from './agent';
 export type { WeixinPreferenceVO, TaskPanelPreferenceState } from './preference';
 export type { AuditLog, AuditListFilter } from './audit';
 export type { MessageSearchItem } from './session';
+export type {
+  WsClientType,
+  WsAuthFrame,
+  WsPingFrame,
+  WsSubscribeFrame,
+  WsUnsubscribeFrame,
+  WsSendMessageData,
+  WsSendMessageFrame,
+  WsCancelFrame,
+  WsToolApprovalFrame,
+  WsAskUserQuestionsResultFrame,
+  WsEmbedOutboundFrame,
+  WsConnectedData,
+  WsTaskPhase,
+  WsSessionStatusData,
+  WsSessionSnapshotData,
+  WsSessionTitleUpdatedData,
+  WsAskUserQuestionOption,
+  WsAskUserQuestionItem,
+  WsAskUserQuestionsData,
+  WsAskUserQuestionsCancelledData,
+  WsLlmWaitingData,
+  WsLlmRetryData,
+  WsErrorData,
+  WsServerEvent,
+  EmbedSessionVO,
+  EmbedCreateSessionRequest,
+  EmbedMessageVO,
+} from './ws';

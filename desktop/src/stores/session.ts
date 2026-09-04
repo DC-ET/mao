@@ -7,10 +7,12 @@ import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, append
 import { nowDateTime } from '../utils/datetime'
 import { cloudGroupKey } from '../utils/cloud-project'
 import { sortByFocusPriority, sessionToFocusCandidate } from '../utils/focusSort'
+import type { WsTaskPhase } from '@mao/contracts'
 
 export type SessionStatus = 'ACTIVE' | 'ARCHIVED'
 
-export type TaskPhase = 'IDLE' | 'RUNNING' | 'RESUMING' | 'WAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING'
+/** 任务阶段枚举收口至 @mao/contracts（desktop / sdk/embed 单一来源） */
+export type TaskPhase = WsTaskPhase
 
 const ACTIVE_PHASES = new Set<TaskPhase>(['RUNNING', 'RESUMING', 'WAITING_APPROVAL', 'CANCELLING'])
 

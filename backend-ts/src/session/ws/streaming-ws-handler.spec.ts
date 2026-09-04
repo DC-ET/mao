@@ -393,6 +393,17 @@ describe('StreamingWsHandler', () => {
     expect(registry.register).not.toHaveBeenCalled();
   });
 
+  it('normalizesEmbedClientType', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    jwtService.validateAccessToken.mockReturnValue(true);
+    jwtService.getUserIdFromToken.mockReturnValue(7);
+    const connected: WsSocket = { id: 'ws-embed', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    // 大小写不敏感归一化为 'embed'
+    await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'valid.jwt.token', client: 'Embed' }));
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed');
+  });
+
   it('subscribeRePushesPendingAskUserQuestionsOnReconnect', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);

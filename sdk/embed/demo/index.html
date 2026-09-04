@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mao Chat Embed — Demo 宿主页</title>
+  <style>
+    body { font-family: -apple-system, 'PingFang SC', sans-serif; margin: 0; background: #f2f3f5; }
+    .nav { background: #1f2329; color: #fff; padding: 12px 24px; display: flex; gap: 20px; }
+    .nav a { color: #bbb; text-decoration: none; cursor: pointer; }
+    .nav a.active { color: #fff; font-weight: 600; }
+    .main { max-width: 860px; margin: 32px auto; background: #fff; border-radius: 12px; padding: 32px; }
+    .kv { display: grid; grid-template-columns: 140px 1fr; row-gap: 8px; font-size: 14px; }
+    .kv dt { color: #646a73; }
+    .kv dd { margin: 0; }
+    select, input { padding: 6px 10px; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .hint { color: #646a73; font-size: 13px; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <a data-page="order" class="active">订单详情</a>
+    <a data-page="user">用户列表</a>
+  </nav>
+  <div class="main">
+    <h2 id="page-title">订单详情</h2>
+    <dl class="kv">
+      <dt>订单号</dt><dd id="order-id">SO-20260904-0042</dd>
+      <dt>客户</dt><dd>华东机械制造有限公司</dd>
+      <dt>金额</dt><dd>¥ 128,400.00</dd>
+      <dt>状态</dt><dd><select id="order-status">
+        <option>待审核</option><option>已发货</option><option>已完成</option>
+      </select></dd>
+    </dl>
+    <p class="hint">
+      1. 修改 serverUrl / agentId / token 下方脚本里的配置后刷新。<br />
+      2. 点击右下角浮动按钮展开对话；切换页面导航或修改状态后，下一条消息会携带新的页面上下文。<br />
+      3. 在页面上选中一段文字再发送，消息会携带引用。<br />
+      4. 双页签打开本页可验证多 tab 会话协调（两个 tab 共享同一会话）。
+    </p>
+  </div>
+  <script type="module" src="/main.ts"></script>
+</body>
+</html>
