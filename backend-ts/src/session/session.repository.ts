@@ -201,12 +201,11 @@ export class SessionRepository {
 
   selectMessageSearchCandidates(userId: number, escapedKeyword: string): Promise<Session[]> {
     return this.db.query<Session>(
-      `SELECT DISTINCT s.id, s.title, s.session_type, s.parent_session_id, s.phase, s.updated_at, s.agent_id
+      `SELECT DISTINCT s.id, s.title, s.session_type, s.parent_session_id, s.phase, s.status, s.updated_at, s.agent_id
        FROM session s
        JOIN message m ON m.session_id = s.id AND m.deleted = 0
        WHERE s.user_id = ? AND s.deleted = 0
          AND s.session_type IN ('NORMAL', 'SIDE_TASK')
-         AND s.status = 'ACTIVE'
          AND m.role = 'USER'
          AND m.content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'
          AND (
@@ -216,7 +215,6 @@ export class SessionRepository {
              WHERE p.id = s.parent_session_id
                AND p.user_id = s.user_id
                AND p.deleted = 0
-               AND p.status = 'ACTIVE'
                AND p.session_type = 'NORMAL'
            )
          )

@@ -9,6 +9,7 @@ export interface MessageSearchItem {
   parentSessionId?: number | null;
   updatedAt?: string | null;
   phase?: string | null;
+  status?: string | null;
   agentName?: string | null;
   snippet?: string | null;
 }

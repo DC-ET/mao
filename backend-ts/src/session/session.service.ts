@@ -615,6 +615,7 @@ export class SessionService {
         parentSessionId: s.parentSessionId,
         updatedAt: javaLocalDateTimeString(s.updatedAt),
         phase: s.phase != null ? s.phase : 'IDLE',
+        status: s.status ?? 'ACTIVE',
         agentName: agent?.name ?? null,
         snippet,
       });

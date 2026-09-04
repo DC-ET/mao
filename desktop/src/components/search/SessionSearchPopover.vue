@@ -58,6 +58,7 @@
             >
               <div class="result-line1">
                 <span class="result-title">{{ item.title || '未命名会话' }}</span>
+                <el-tag v-if="item.status === 'ARCHIVED'" size="small" type="info" class="result-tag">已归档</el-tag>
                 <el-tag v-if="item.sessionType === 'SIDE_TASK'" size="small" type="warning" class="result-tag">边路</el-tag>
                 <span class="result-time">{{ formatRelativeTime(item.updatedAt) }}</span>
               </div>
