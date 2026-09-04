@@ -5,6 +5,13 @@
         <span v-if="streaming" class="thinking-spinner"></span>
         <el-icon v-else class="thinking-icon" :size="14"><ChatDotRound /></el-icon>
         <span class="thinking-label">{{ streaming ? '思考中...' : '思考完成' }}</span>
+        <div
+          v-if="streaming && !isExpanded && thinking"
+          ref="previewRef"
+          class="thinking-preview"
+        >
+          <span class="thinking-preview-text">{{ previewText }}</span>
+        </div>
       </div>
       <el-icon
         class="expand-icon"
@@ -18,7 +25,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
 
 const props = defineProps<{
@@ -28,6 +35,47 @@ const props = defineProps<{
 
 const isExpanded = ref(false)
 const bodyRef = ref<HTMLElement>()
+const previewRef = ref<HTMLElement>()
+
+// 思考中未展开时，头部空白区滚动展示最新思考片段：
+// 文本始终取末尾片段，scrollLeft 缓动跟随尾部，形成连续滑动效果。
+const PREVIEW_MAX_CHARS = 2000
+const previewText = computed(() => {
+  const t = props.thinking || ''
+  return t.length > PREVIEW_MAX_CHARS ? t.slice(-PREVIEW_MAX_CHARS) : t
+})
+
+let previewRaf = 0
+
+function stopPreviewEase() {
+  if (previewRaf) {
+    cancelAnimationFrame(previewRaf)
+    previewRaf = 0
+  }
+}
+
+function startPreviewEase() {
+  if (previewRaf) return
+  const step = () => {
+    const el = previewRef.value
+    if (el) {
+      const target = el.scrollWidth - el.clientWidth
+      if (target > 0) {
+        const diff = target - el.scrollLeft
+        el.scrollLeft = Math.abs(diff) < 1 ? target : el.scrollLeft + diff * 0.1
+      }
+    }
+    previewRaf = requestAnimationFrame(step)
+  }
+  previewRaf = requestAnimationFrame(step)
+}
+
+watch([() => props.streaming, isExpanded], ([streaming, expanded]) => {
+  if (streaming && !expanded) startPreviewEase()
+  else stopPreviewEase()
+}, { immediate: true })
+
+onBeforeUnmount(stopPreviewEase)
 
 function toggleExpand() {
   isExpanded.value = !isExpanded.value
@@ -98,6 +146,26 @@ watch(() => props.thinking, async () => {
   text-overflow: ellipsis;
   white-space: nowrap;
   letter-spacing: -0.12px;
+}
+
+.thinking-preview {
+  flex: 1;
+  min-width: 24px;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 24px), transparent);
+}
+
+.thinking-preview-text {
+  display: inline-block;
+  font-size: var(--aw-text-fine);
+  line-height: 1.6;
+  color: var(--aw-ink-muted-48);
+  opacity: 0.65;
+  letter-spacing: -0.12px;
+  vertical-align: middle;
 }
 
 .expand-icon {
