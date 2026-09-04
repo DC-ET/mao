@@ -44,6 +44,25 @@ describe('UserSkillService', () => {
     expect(existsSync(join(dir, '7', 'new'))).toBe(false);
   });
 
+  it('restoresExecutableBitsForUploadedScripts', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-uskill-'));
+    const service = new UserSkillService(dir);
+    const uploaded = service.uploadUserSkill(7, [
+      { originalFilename: 'cli/SKILL.md', buffer: Buffer.from(skill('cli', 'CLI', 'Body')) },
+      { originalFilename: 'cli/run.sh', buffer: Buffer.from('#!/bin/sh\necho hi') },
+      { originalFilename: 'cli/tools/exec-py', buffer: Buffer.from('#!/usr/bin/env python3\nprint(1)') },
+      { originalFilename: 'cli/tools/plain.txt', buffer: Buffer.from('text') },
+    ]);
+    expect(uploaded.code).toBe(0);
+    const { statSync } = await import('node:fs');
+    const base = join(dir, '7', 'cli');
+    // 执行位断言不受进程 umask 影响
+    expect(statSync(join(base, 'run.sh')).mode & 0o111).toBe(0o111);
+    expect(statSync(join(base, 'tools', 'exec-py')).mode & 0o111).toBe(0o111);
+    expect(statSync(join(base, 'SKILL.md')).mode & 0o111).toBe(0);
+    expect(statSync(join(base, 'tools', 'plain.txt')).mode & 0o111).toBe(0);
+  });
+
   it('returnsFailuresForInvalidUploadReadAndDeleteRequests', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mao-uskill-'));
     const service = new UserSkillService(dir);

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { dirname, join, resolve, sep } from 'node:path';
 import { fail } from '../common/result.js';
 import { parseSkillMdContent, validateSkillMd } from '../harness/skill/skill-md.js';
+import { uploadFileMode } from './upload-file-mode.js';
 
 export interface UploadedSkillFile {
   originalFilename: string | null;
@@ -148,7 +149,7 @@ export class UserSkillService {
         const targetFile = join(userDir, skillName, relativePath);
         try {
           mkdirSync(dirname(targetFile), { recursive: true });
-          writeFileSync(targetFile, file.buffer);
+          writeFileSync(targetFile, file.buffer, { mode: uploadFileMode(relativePath, file.buffer) });
         } catch (e) {
           console.error(`Failed to write file ${targetFile}: ${(e as Error).message}`);
           return fail(500, `Failed to write file: ${(e as Error).message}`);

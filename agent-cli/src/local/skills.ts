@@ -92,7 +92,10 @@ export function extractZip(zipBuffer: Buffer, destDir: string): string[] {
       continue;
     }
     ensureDir(path.dirname(target));
-    fs.writeFileSync(target, entryData(zipBuffer, entry), { mode: 0o600 });
+    // zip 条目携带 Unix mode（服务端 archiver 会写入）；有任一执行位的条目落盘为 0o700，
+    // 其余保持 0o600，避免技能内 CLI 脚本解压后不可执行。
+    const mode = (entry.unixMode & 0o111) !== 0 ? 0o700 : 0o600;
+    fs.writeFileSync(target, entryData(zipBuffer, entry), { mode });
     written.push(rel);
   }
   return written;

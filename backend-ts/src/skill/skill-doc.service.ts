@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fail } from '../common/result.js';
 import type { SkillLoader } from '../harness/skill/skill-loader.js';
 import type { SkillDocDetailVO, SkillDocVO, SkillResult, UploadedSkillFile } from './user-skill.service.js';
+import { uploadFileMode } from './upload-file-mode.js';
 
 export class SkillDocService {
   constructor(private readonly skillLoader: SkillLoader) {}
@@ -65,7 +66,7 @@ export class SkillDocService {
         const targetFile = join(skillsDir, skillName, relativePath);
         try {
           mkdirSync(dirname(targetFile), { recursive: true });
-          writeFileSync(targetFile, file.buffer);
+          writeFileSync(targetFile, file.buffer, { mode: uploadFileMode(relativePath, file.buffer) });
         } catch (e) {
           console.error(`Failed to write file ${targetFile}: ${(e as Error).message}`);
           return fail(500, `Failed to write file: ${(e as Error).message}`);

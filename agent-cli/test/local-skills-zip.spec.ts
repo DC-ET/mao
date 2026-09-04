@@ -93,6 +93,18 @@ describe('extractZip', () => {
     fs.rmSync(dest, { recursive: true, force: true });
   });
 
+  it('restores executable mode from zip unixMode', () => {
+    const dest = tempDir();
+    const zip = buildZip([
+      { name: 'sk/tool.sh', data: '#!/bin/sh\necho hi', unixMode: 0o100755 },
+      { name: 'sk/doc.md', data: 'x', unixMode: 0o100644 },
+    ]);
+    extractZip(zip, dest);
+    expect(fs.statSync(path.join(dest, 'sk', 'tool.sh')).mode & 0o100).toBe(0o100);
+    expect(fs.statSync(path.join(dest, 'sk', 'doc.md')).mode & 0o111).toBe(0);
+    fs.rmSync(dest, { recursive: true, force: true });
+  });
+
   it('rejects zip-slip entries with ../', () => {
     const dest = tempDir();
     const zip = buildZip([{ name: '../evil.txt', data: 'pwned' }]);
