@@ -308,10 +308,15 @@ describe('ResponsesLlmAdapter - chat（非流式）', () => {
     expect(response.usage?.promptTokensDetails?.cachedTokens).toBe(4);
   });
 
-  it('gpt-* 模型的 reasoning effort 下发到请求体', async () => {
+  it('request.reasoning 序列化为 Responses reasoning 对象（effort 默认 high）', async () => {
     server = new QueueServer();
     server.enqueueJson(JSON.stringify({
       id: 'resp_2', status: 'completed',
+      output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    }));
+    server.enqueueJson(JSON.stringify({
+      id: 'resp_2b', status: 'completed',
       output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }],
       usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
     }));
@@ -320,6 +325,11 @@ describe('ResponsesLlmAdapter - chat（非流式）', () => {
     await adapter().chat(request('hi', { reasoning: { effort: 'high' } }), configOf(server));
     const body = parseBody(server.bodies[0]);
     expect(body.reasoning).toEqual({ effort: 'high' });
+
+    // effort 缺失时兜底 high
+    await adapter().chat(request('hi', { reasoning: {} }), configOf(server));
+    const body2 = parseBody(server.bodies[1]);
+    expect(body2.reasoning).toEqual({ effort: 'high' });
   });
 
   it('响应含 reasoning + function_call 时把 reasoning 引用挂到首个 toolCall', async () => {

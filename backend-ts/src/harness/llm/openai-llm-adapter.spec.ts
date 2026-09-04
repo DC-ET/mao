@@ -261,7 +261,7 @@ describe('OpenAiLlmAdapter', () => {
     await expect(adapter(0, 0).chat(request('cancel'), configOf(server), cancelled)).rejects.toThrow(/Cancelled by user/);
   }, 10_000);
 
-  it('chatIncludesReasoningWhenPresentOnRequest', async () => {
+  it('chatSendsReasoningEffortAsStringWhenPresentOnRequest', async () => {
     server = new QueueServer();
     server.enqueueJson('{"id":"ok","choices":[]}');
     await server.start();
@@ -269,7 +269,9 @@ describe('OpenAiLlmAdapter', () => {
       messages: [{ role: 'user', content: 'hello' }],
       reasoning: { effort: 'high' },
     }, configOf(server));
-    expect(server.bodies[0]).toContain('"reasoning":{"effort":"high"}');
+    // ChatCompletions API 规格为顶层字符串参数 reasoning_effort，而非 reasoning 对象
+    expect(server.bodies[0]).toContain('"reasoning_effort":"high"');
+    expect(server.bodies[0]).not.toContain('"reasoning":');
   });
 
   it('chatParsesOpenRouterReasoningFields', async () => {
@@ -324,6 +326,7 @@ describe('OpenAiLlmAdapter', () => {
       thinking: { type: 'disabled' },
       enableThinking: false,
     }, configOf(server));
+    expect(server.bodies[0]).toContain('"reasoning_effort":"none"');
     expect(server.bodies[0]).toContain('"thinking":{"type":"disabled"}');
     expect(server.bodies[0]).toContain('"enable_thinking":false');
   });

@@ -2,7 +2,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { hasText } from '../../common/case.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
-import type { ChatMessage, ChatRequest, LlmModelConfig, ToolDefinition } from '../llm/chat-request.js';
+import type { ChatMessage, ChatRequest, ToolDefinition } from '../llm/chat-request.js';
 import type { PathSandbox } from '../safety/path-sandbox.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import type { SkillLoader } from '../skill/skill-loader.js';
@@ -72,8 +72,14 @@ export class PromptEngine {
       tools: tools.length === 0 ? undefined : tools,
       stream: true,
     };
-    if (isGptModel(context.modelConfig)) {
-      request.reasoning = { effort: 'high' };
+    // reasoning effort：按协议类型驱动。Anthropic 协议不支持 reasoning effort，不设置；
+    // OpenAI 兼容与 Responses 协议按模型配置的 effort 发送，留空使用默认值 high。
+    // modelConfig 缺失时保持旧行为不设置（isGptModel 对缺失配置同样返回 false）。
+    const modelConfig = context.modelConfig;
+    const protocol = modelConfig?.apiProtocol?.trim().toLowerCase();
+    if (modelConfig != null && protocol !== 'anthropic') {
+      const effort = modelConfig.effort?.trim() || 'high';
+      request.reasoning = { effort };
     }
     // 会话级缓存路由键：Responses 网关按 prompt_cache_key 做上游粘性路由，
     // 缺失时前缀缓存命中随机（实测无 key 连发 4 次仅 1 次命中）
@@ -354,10 +360,6 @@ export class PromptEngine {
     if (truncated) ruleContent += AGENTS_MD_TRUNCATED_HINT;
     return '## 工作区规则\n\n' + ruleContent + '\n';
   }
-}
-
-function isGptModel(modelConfig: LlmModelConfig | null | undefined): boolean {
-  return modelConfig?.modelId?.startsWith('gpt-') === true;
 }
 
 function formatChineseWeekday(isoDate: string | null | undefined): string | null {

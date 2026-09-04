@@ -820,7 +820,8 @@ function buildResponsesBody(request: ChatRequest, config: LlmModelConfig, messag
       parameters: t.function?.parameters,
     }));
   }
-  // reasoning effort：PromptEngine 已对 gpt-* 模型下发 {effort:'high'}；Responses 网关同样按 gpt-* 前缀判断
+  // reasoning effort：PromptEngine 按协议与模型 effort 配置下发 request.reasoning；此处按
+  // Responses API 规格序列化为 reasoning 对象（ChatCompletions 由 json.ts 序列化为顶层 reasoning_effort 字符串）
   if (request.reasoning != null) {
     body.reasoning = { effort: request.reasoning.effort ?? 'high' };
   }

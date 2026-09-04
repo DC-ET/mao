@@ -61,7 +61,7 @@ describe('PromptEngine', () => {
     context.availableSkillDocs.set('java', { name: 'java', description: 'Java skill' });
     context.availableSkillDocs.set('mine', { name: 'mine', description: 'user skill' });
     context.tools = [tool('read_file'), tool('task_create'), tool('spawn_subagent'), tool('subagent_followup')];
-    context.modelConfig = { modelId: 'gpt-5', id: 1 };
+    context.modelConfig = { modelId: 'gpt-5', id: 1, apiProtocol: 'openai-responses', effort: 'high' };
     context.messages = [
       { role: 'user', content: 'use ${java}$ and #{review}# and @{src/App.ts}@' },
     ];
@@ -151,6 +151,43 @@ describe('PromptEngine', () => {
     context.messages = [{ role: 'user', content: 'hi' }];
     const request = await engine.buildRequest(context);
     expect(request.promptCacheKey).toBe('mao-session-42');
+  });
+
+  it('reasoningEffortFollowsProtocolAndModelConfig', async () => {
+    const engine = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const build = async (modelConfig: Record<string, unknown> | null) => {
+      const context = new AgentExecutionContext();
+      context.userId = 1;
+      context.modelConfig = modelConfig as never;
+      context.messages = [{ role: 'user', content: 'hi' }];
+      return engine.buildRequest(context);
+    };
+
+    // Responses 协议 + 显式 effort
+    const responses = await build({ modelId: 'gpt-5', apiProtocol: 'openai-responses', effort: 'medium' });
+    expect(responses.reasoning).toEqual({ effort: 'medium' });
+
+    // Responses 协议 + effort 留空 → 默认 high
+    const responsesDefault = await build({ modelId: 'gpt-5', apiProtocol: 'openai-responses' });
+    expect(responsesDefault.reasoning).toEqual({ effort: 'high' });
+
+    // OpenAI 兼容（apiProtocol 为空串）+ 自定义 effort
+    const compatible = await build({ modelId: 'my-model', apiProtocol: '', effort: 'low' });
+    expect(compatible.reasoning).toEqual({ effort: 'low' });
+
+    // Anthropic 协议 → 不设置 reasoning
+    const anthropic = await build({ modelId: 'claude-x', apiProtocol: 'anthropic', effort: 'high' });
+    expect(anthropic.reasoning).toBeUndefined();
+
+    // modelConfig 缺失 → 不设置 reasoning（旧行为）
+    const missing = await build(null);
+    expect(missing.reasoning).toBeUndefined();
   });
 });
 void mkdirSync;

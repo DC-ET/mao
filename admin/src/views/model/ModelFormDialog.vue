@@ -45,6 +45,18 @@
           <el-option label="OpenAI（Responses）" value="openai-responses" />
         </el-select>
       </el-form-item>
+      <el-form-item v-if="supportsEffort" label="推理力度">
+        <el-select v-model="form.effort" style="width: 100%">
+          <el-option label="默认（high）" value="" />
+          <el-option label="None" value="none" />
+          <el-option label="Low" value="low" />
+          <el-option label="Medium" value="medium" />
+          <el-option label="High" value="high" />
+          <el-option label="X-High" value="xhigh" />
+          <el-option label="Max" value="max" />
+        </el-select>
+        <span style="margin-left: 8px; color: #909399; font-size: 12px;">控制模型 reasoning token 预算，留空使用协议默认值</span>
+      </el-form-item>
       <el-form-item label="API 地址" prop="baseUrl">
         <el-input v-model="form.baseUrl" placeholder="例如: https://api.openai.com/v1">
           <template #append><span style="font-family: monospace;">{{ apiProtocolSuffix }}</span></template>
@@ -112,6 +124,8 @@ const dialogTitle = computed(() => {
 })
 const submitButtonText = computed(() => (isEdit.value ? '保存' : '添加'))
 const isTextType = computed(() => form.modelType === 'text')
+// 推理力度仅对 OpenAI 兼容 / Responses 协议的文本模型有意义，Anthropic 协议不支持该参数
+const supportsEffort = computed(() => isTextType.value && form.apiProtocol !== 'anthropic')
 // 协议对应的调用路径后缀，与后端各 LLM 适配器实际拼接一致
 const apiProtocolSuffix = computed(() => {
   const suffixes: Record<string, string> = {
@@ -134,6 +148,7 @@ const form = reactive({
   name: '',
   provider: '',
   apiProtocol: 'openai-compatible',
+  effort: '',
   modelId: '',
   clientImpersonation: 'none',
   baseUrl: '',
@@ -158,6 +173,7 @@ function resetForm() {
     name: '',
     provider: '',
     apiProtocol: 'openai-compatible',
+    effort: '',
     modelId: '',
     clientImpersonation: 'none',
     baseUrl: '',
@@ -176,6 +192,7 @@ watch(() => props.visible, (val) => {
       name: props.mode === 'copy' ? `${props.modelData.name || ''} - 副本` : props.modelData.name || '',
       provider: props.modelData.provider || '',
       apiProtocol: props.modelData.apiProtocol || 'openai-compatible',
+      effort: props.modelData.effort || '',
       modelId: props.modelData.modelId || '',
       clientImpersonation: props.modelData.clientImpersonation || 'none',
       baseUrl: props.modelData.baseUrl || '',

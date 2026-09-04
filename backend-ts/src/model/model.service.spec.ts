@@ -293,6 +293,40 @@ describe('ModelService', () => {
     expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
   });
 
+  it('createModelValidatesEffortAndNormalizesBlankToEmptyString', async () => {
+    await expect(
+      service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', 'bogus'),
+    ).rejects.toThrow(/effort 只能是/);
+
+    const withEffort = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', 'xhigh');
+    expect(withEffort.effort).toBe('xhigh');
+
+    const blank = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', '  ');
+    expect(blank.effort).toBe('');
+
+    const omitted = await service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses');
+    expect(omitted.effort).toBe('');
+  });
+
+  it('updateModelValidatesEffortAndKeepsExistingWhenOmitted', async () => {
+    const existing = model(13, 'old', 0, 1);
+    existing.effort = 'low';
+    vi.mocked(modelRepo.findById).mockResolvedValue(existing);
+
+    await expect(
+      service.updateModel(13, null, null, null, null, null, null, null, null, null, null, null, 'ultra'),
+    ).rejects.toThrow(/effort 只能是/);
+
+    // 不传表示不修改
+    await service.updateModel(13, null, null, null, null, null, null, null, null, null, null, null, null);
+    expect(existing.effort).toBe('low');
+
+    // 显式传空串表示回到协议默认
+    await service.updateModel(13, null, null, null, null, null, null, null, null, null, null, null, 'high');
+    expect(existing.effort).toBe('high');
+    expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
+  });
+
   it('testConnectivityRoutesByApiProtocolNotProvider', async () => {
     const anthropicClient: LlmChatClient = { chat: vi.fn() };
     const responsesClient: LlmChatClient = { chat: vi.fn() };

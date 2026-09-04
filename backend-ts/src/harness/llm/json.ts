@@ -83,7 +83,8 @@ export function serializeChatRequest(request: ChatRequest, modelId: string, stre
         : undefined,
     }));
   }
-  if (request.reasoning != null) body.reasoning = request.reasoning;
+  // ChatCompletions API 规格为顶层字符串参数；effort 缺失时与 Responses 路径一致兜底 high
+  if (request.reasoning != null) body.reasoning_effort = request.reasoning.effort ?? 'high';
   if (request.thinking != null) body.thinking = request.thinking;
   if (request.enableThinking != null) body.enable_thinking = request.enableThinking;
   if (request.audio != null && Object.keys(request.audio).length > 0) body.audio = request.audio;
