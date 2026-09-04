@@ -100,7 +100,7 @@ export class EmbedController {
   private booted = false;
 
   constructor(
-    private readonly options: MaoChatInitOptions,
+    public readonly options: MaoChatInitOptions,
     public readonly ui: UiState,
     private readonly emitEvent: (e: MaoChatEvent) => void,
     private readonly cleanupFn: () => void,
@@ -153,7 +153,6 @@ export class EmbedController {
       this.ui.pendingQuestion = v;
     });
   }
-
   /** 首次展开浮窗时执行：会话恢复/创建 + 懒连接 */
   private async boot() {
     if (this.booted || this.destroyed) return;
@@ -161,7 +160,7 @@ export class EmbedController {
     this.ui.sessionError = null;
     try {
       // 多 tab 竞态：先问其他 tab 是否已有会话
-      const claimed = await this.tabs.inquire(this.options.agentId);
+      const claimed = await this.tabs.inquire();
       if (claimed != null) {
         this.sessions.writeStoredSessionId(claimed);
       }
@@ -209,6 +208,13 @@ export class EmbedController {
       case 'connected':
         this.ui.connected = true;
         return;
+      case 'message_end':
+      case 'user_message_saved':
+        // 收起浮窗时来新消息 → 未读计数（展开时由 open() 清零）
+        if (!this.ui.panelOpen && msg.sessionId === this.store.sessionId()) {
+          this.store.unread.value++;
+        }
+        break;
       case 'ask_user_questions': {
         const data = msg.data as { requestId?: string; questions?: unknown[] } | undefined;
         if (data?.requestId) {

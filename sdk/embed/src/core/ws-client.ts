@@ -6,7 +6,6 @@ import type {
   WsSendMessageFrame,
   WsServerEvent,
   WsSubscribeFrame,
-  WsToolApprovalFrame,
 } from '@mao/contracts';
 import {
   DEFAULT_WS_SILENCE_TIMEOUT_MS,
@@ -102,6 +101,8 @@ export class WsClient {
         }
         if (msg.type === 'connected') {
           this.hooks.onAuthenticated();
+          // 继续转发：controller 依赖该帧置 ui.connected（否则输入框永久禁用）
+          this.hooks.onEvent(msg);
           return;
         }
         this.hooks.onEvent(msg);
@@ -121,9 +122,9 @@ export class WsClient {
         if (event.code === 1003) {
           this.hooks.onAuthFailed();
         }
+        // 无条件 settle：intentionalClose（disconnect）打断在途 connect 时等待方也不能悬挂
+        reject(new Error('WebSocket closed'));
         if (!this.intentionalClose) {
-          // 首连失败时通知等待方（不 reject 整个 promise 的调用链——由 scheduleReconnect 续命）
-          reject(new Error('WebSocket closed'));
           this.scheduleReconnect();
         }
       };
@@ -173,6 +174,14 @@ export class WsClient {
       this.reconnectTimer = null;
     }
     this.stopHeartbeat();
+    // 在途 connect 的等待方必须被 reject，否则调用方 await 永久悬挂
+    if (this.connectPromise && this.socket) {
+      try {
+        this.socket.close();
+      } catch {
+        /* ignore */
+      }
+    }
     if (this.socket) {
       this.socket.close();
       this.socket = null;
@@ -218,11 +227,6 @@ export class WsClient {
 
   cancel(sessionId: number): Promise<boolean> {
     const frame: WsCancelFrame = { type: 'cancel', sessionId };
-    return this.sendReliable(frame);
-  }
-
-  sendToolApproval(sessionId: number, requestId: string, approved: boolean): Promise<boolean> {
-    const frame: WsToolApprovalFrame = { type: 'tool_approval', sessionId, requestId, approved };
     return this.sendReliable(frame);
   }
 
