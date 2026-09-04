@@ -11,6 +11,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -31,8 +32,10 @@ import com.getcapacitor.BridgeActivity;
 /**
  * 主 Activity（Capacitor 壳）：
  * - 远程加载 https://mao.etarch.cn，AppUpdatePlugin OTA 升级
- * - 回前台 WebView 无响应兜底：onStart 延迟探测 evaluateJavascript，超时无回调则自动 reload
- *   （后台冻结 / 渲染进程异常 / 主线程卡死时，JS 层无法自愈，由原生兜底恢复，无需用户退出重开）
+ * - 首屏加载走标准 HTTP 缓存（弱网复用已缓存资源），完成判定以「Vue 真正渲染」为准，
+ *   8s 未完成显示重试入口（重试绕过缓存重拉入口文档）
+ * - 回前台 WebView 无响应 / 页面空白兜底：onStart 延迟探测 evaluateJavascript，
+ *   JS 无回调或应用未挂载则自动 reload（后台冻结 / 渲染进程异常 / 资源加载失败时自愈）
  */
 public class MainActivity extends BridgeActivity {
     private static final String TAG = "MaoMain";
@@ -41,20 +44,28 @@ public class MainActivity extends BridgeActivity {
 
     /** 回前台探测：延迟等待 WebView 恢复后再探测 */
     private static final long RECOVERY_PROBE_DELAY_MS = 2_000;
-    /** 探测超时：无回调判定无响应 */
+    /** 探测超时：JS 无回调判定无响应 */
     private static final long RECOVERY_PROBE_TIMEOUT_MS = 3_000;
+    /** 挂载验证轮询间隔：progress=100 后每 250ms 探测一次 Vue 是否真正渲染 */
+    private static final long MOUNT_VERIFY_INTERVAL_MS = 250;
     /** reload 防抖：10s 内不重复刷新，避免快速前后台切换连环刷新 */
     private static final long RELOAD_DEBOUNCE_MS = 10_000;
     /** 冷启动防护：首屏加载（远程 SPA 弱网可能较慢）期间不探测，避免误判无响应而 reload */
     private static final long COLD_START_GUARD_MS = 10_000;
     /** 冷启动弱网提示：超过该时间仍未加载完成时展示重试入口 */
     private static final long LOADING_TIMEOUT_MS = 8_000;
+    /** 重试绕过缓存后恢复默认缓存策略的延迟：需大于主文档请求的发起时机 */
+    private static final long RESTORE_CACHE_DELAY_MS = 3_000;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long lastReloadAt = 0;
     private long firstStartAt = 0;
     /** 探测进行中：防重复调度 / 重复探测 */
     private boolean probing = false;
+    /** 重试时绕过 HTTP 缓存重新拉取入口文档（防止陈旧 index.html 反复失败） */
+    private boolean bypassCacheOnce = false;
+    /** 缓存绕过进行中：onStop 会清空 Handler，回前台需重新排定恢复任务 */
+    private boolean cacheBypassActive = false;
     private FrameLayout loadingOverlay;
     private TextView loadingTitle;
     private TextView loadingMessage;
@@ -83,6 +94,15 @@ public class MainActivity extends BridgeActivity {
                     + "var splash=document.getElementById('splash');if(splash)splash.remove();"
                     + "})();";
 
+    /**
+     * 应用挂载探测：Vue mount 成功后 main.ts 会置 window.__MAO_APP_MOUNTED=true；
+     * 兜底检查 #app 是否渲染出元素。evaluateJavascript 回调以 "true"/"false" 判定。
+     */
+    private static final String APP_MOUNTED_PROBE_JS =
+            "(function(){try{return (window.__MAO_APP_MOUNTED===true)"
+                    + "||!!(document.getElementById('app')&&document.getElementById('app').children.length>0);"
+                    + "}catch(e){return false}})()";
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // 必须在 super.onCreate() 之前调用：正确关闭 Android 12+ SplashScreen。
@@ -103,6 +123,10 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onStart() {
         super.onStart();
+        if (cacheBypassActive && bridge != null && bridge.getWebView() != null) {
+            // onStop 清空了 Handler，重试的缓存恢复任务需重新排定
+            scheduleRestoreCacheMode(bridge.getWebView());
+        }
         if (!firstPageLoaded && bridge != null && bridge.getWebView() != null && loadingOverlay != null) {
             loadingAttempt++;
             scheduleLoadingTimeout(bridge.getWebView(), loadingAttempt);
@@ -134,23 +158,27 @@ public class MainActivity extends BridgeActivity {
         handler.postDelayed(() -> probeWebViewAlive(webView), RECOVERY_PROBE_DELAY_MS);
     }
 
-    /** 探测 WebView 是否响应：evaluateJavascript 3s 内无回调判定无响应。 */
+    /**
+     * 探测 WebView 是否响应且页面应用仍挂载：3s 内无 JS 回调判定无响应；有回调但应用未挂载
+     * （资源加载失败/空白页）同样视为异常。仅靠 evaluateJavascript 回调无法区分
+     * 「引擎活着但页面空白」与「应用健康」，这里统一用应用级探测脚本。
+     */
     private void probeWebViewAlive(WebView webView) {
         if (probing || isFinishing() || isDestroyed() || webView == null) return;
         // 页面仍在加载/重载中（progress<100）：跳过本次探测，避免弱网首屏被误判无响应；
         // 冻结/卡死时 progress 保持 100，仍可正常触发 reload
         if (webView.getProgress() < 100) return;
         probing = true;
-        final boolean[] responded = {false};
+        final boolean[] appAlive = {false};
         try {
-            webView.evaluateJavascript("1;", value -> responded[0] = true);
+            webView.evaluateJavascript(APP_MOUNTED_PROBE_JS, value -> appAlive[0] = value != null && value.contains("true"));
         } catch (Exception e) {
             // evaluateJavascript 失败（如渲染进程已死）视为无响应，交给下方超时处理
             Log.w(TAG, "probe evaluateJavascript failed: " + e.getMessage());
         }
         handler.postDelayed(() -> {
             probing = false;
-            if (!responded[0] && !isFinishing() && !isDestroyed() && webView != null) {
+            if (!appAlive[0] && !isFinishing() && !isDestroyed() && webView != null) {
                 reloadWebView(webView);
             }
         }, RECOVERY_PROBE_TIMEOUT_MS);
@@ -162,14 +190,33 @@ public class MainActivity extends BridgeActivity {
         if (now - lastReloadAt < RELOAD_DEBOUNCE_MS) return;
         lastReloadAt = now;
         Log.i(TAG, "webview unresponsive, auto reload");
-        firstPageLoaded = false;
+        reloadWebViewInternal(webView);
+    }
+
+    /** 统一重载入口：绕过缓存重拉主文档（仅用户手动重试时）+ 恢复遮罩/监听/注入。 */
+    private void reloadWebViewInternal(WebView webView) {        firstPageLoaded = false;
         showLoadingOverlay();
+        if (bypassCacheOnce) {
+            webView.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE);
+            cacheBypassActive = true;
+            scheduleRestoreCacheMode(webView);
+            bypassCacheOnce = false;
+        }
         webView.reload();
         // reload 后页面重新加载，onCreate 的注入不会再次执行，重新注入顶部导航修复
         Runnable inject = () -> webView.evaluateJavascript(FORCE_TOP_NAV_JS, null);
         webView.post(inject);
         webView.postDelayed(inject, 300);
         webView.postDelayed(inject, 1000);
+    }
+
+    /** 恢复默认缓存策略（NO_CACHE 仅作用于重试拉取主文档这一次）。 */
+    private void scheduleRestoreCacheMode(WebView webView) {
+        handler.postDelayed(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            webView.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
+            cacheBypassActive = false;
+        }, RESTORE_CACHE_DELAY_MS);
     }
 
     private void showLoadingOverlay() {
@@ -234,15 +281,11 @@ public class MainActivity extends BridgeActivity {
             loadingRetryButton.setPadding(dp(18), 0, dp(18), 0);
             loadingRetryButton.setVisibility(View.GONE);
             loadingRetryButton.setOnClickListener(v -> {
-                firstPageLoaded = false;
+                bypassCacheOnce = true;
+                reloadWebViewInternal(webView);
+                // showLoadingOverlay 会重置文案，这里覆盖为重试提示
                 loadingTitle.setText("正在重新连接 Mao");
                 loadingMessage.setText("请保持网络连接，马上回来");
-                loadingProgress.setVisibility(View.VISIBLE);
-                loadingRetryButton.setVisibility(View.GONE);
-                webView.reload();
-                loadingAttempt++;
-                scheduleLoadingTimeout(webView, loadingAttempt);
-                watchInitialPageLoad(webView, loadingAttempt);
             });
             LinearLayout.LayoutParams retryParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, dp(40));
@@ -272,16 +315,41 @@ public class MainActivity extends BridgeActivity {
         watchInitialPageLoad(webView, loadingAttempt);
     }
 
+    /**
+     * 首屏监听：先等 progress 到 100（主文档与资源加载结束），再轮询验证 Vue 真正渲染出内容。
+     * progress=100 不代表首屏成功——弱网下 chunk 加载失败也会到 100，页面仍是空白；
+     * 只有 #app 有内容（或 __MAO_APP_MOUNTED）才隐藏遮罩，失败由 8s 超时的重试入口兜底。
+     */
     private void watchInitialPageLoad(WebView webView, int attempt) {
         handler.postDelayed(() -> {
-            if (attempt != loadingAttempt || firstPageLoaded || isFinishing() || isDestroyed() || webView == null) return;
-            if (webView.getProgress() >= 100) {
-                firstPageLoaded = true;
-                hideLoadingOverlay();
+            if (attempt != loadingAttempt || isFinishing() || isDestroyed() || webView == null) return;
+            if (webView.getProgress() < 100) {
+                watchInitialPageLoad(webView, attempt);
                 return;
             }
-            watchInitialPageLoad(webView, attempt);
+            verifyAppMounted(webView, attempt);
         }, 250);
+    }
+
+    /** 轮询探测应用是否真正挂载渲染；未挂载则继续等待（遮罩保持，超时后显示重试按钮）。 */
+    private void verifyAppMounted(WebView webView, int attempt) {
+        handler.postDelayed(() -> {
+            if (attempt != loadingAttempt || isFinishing() || isDestroyed() || webView == null) return;
+            try {
+                webView.evaluateJavascript(APP_MOUNTED_PROBE_JS, value -> {
+                    if (attempt != loadingAttempt || isFinishing() || isDestroyed() || webView == null) return;
+                    if (value != null && value.contains("true")) {
+                        firstPageLoaded = true;
+                        hideLoadingOverlay();
+                        return;
+                    }
+                    verifyAppMounted(webView, attempt);
+                });
+            } catch (Exception e) {
+                Log.w(TAG, "mount probe failed: " + e.getMessage());
+                verifyAppMounted(webView, attempt);
+            }
+        }, MOUNT_VERIFY_INTERVAL_MS);
     }
 
     private void scheduleLoadingTimeout(WebView webView, int attempt) {
@@ -317,7 +385,9 @@ public class MainActivity extends BridgeActivity {
         }
         WebView webView = bridge.getWebView();
         // 不替换 Capacitor 自己的 WebViewClient（否则会打断 bridge / 路由）。
-        webView.getSettings().setCacheMode(android.webkit.WebSettings.LOAD_NO_CACHE);
+        // 标准 HTTP 缓存：弱网冷启动复用已缓存资源（此前 LOAD_NO_CACHE 每次启动全量重下数 MB，
+        // 是弱网白屏的根因）；入口与版本一致性由 version.json 比对、APK 升级清缓存、重试绕缓存兜底。
+        webView.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
         webView.setBackgroundColor(Color.parseColor("#f5f5f7"));
 
         // 系统栏避让交给 Capacitor 的 adjustMarginsForEdgeToEdge=force（用 margin，WebView.setPadding 无效）。

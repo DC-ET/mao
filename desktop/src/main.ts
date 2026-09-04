@@ -46,6 +46,8 @@ async function bootstrap() {
   app.use(ElementPlus, { locale: zhCn })
 
   app.mount('#app')
+  // 挂载成功标记：安卓原生壳回前台存活探测（MainActivity APP_MOUNTED_PROBE_JS）使用
+  ;(window as any).__MAO_APP_MOUNTED = true
 
   // Initialize theme after mount
   useTheme()

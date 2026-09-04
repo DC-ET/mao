@@ -154,6 +154,31 @@ sudo nginx -t && sudo systemctl reload nginx
 
 回滚后若后台仍是新构建（资源在 `/admin/assets/`），旧「根路径托管 admin」的 vhost 会 404。应修好单域 location，不要把 `base` 改回去。
 
+## 8. 桌面入口文档缓存头（安卓壳依赖）
+
+桌面 SPA 的入口 `index.html`（`location /` 返回的文档）必须带 `Cache-Control: no-cache`，hashed 静态资源（`/assets/`）保持长缓存：
+
+```nginx
+    location / {
+        root /opt/mao/desktop/dist;
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
+
+    location ^~ /assets/ {
+        root /opt/mao/desktop/dist;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+```
+
+`no-cache` 允许缓存但要求每次回源校验 ETag/Last-Modified，弱网下 304 开销极小。安卓 App 壳（远程加载桌面 Web）依赖入口文档每次新鲜来保证版本一致：浏览器用户有 `version.json` 轮询提示刷新，App 无地址栏、reload 后不弹「有更新」；若入口被强缓存，安卓端会出现升级后仍加载旧 HTML、引用已删除 chunk 而白屏的问题。验收：
+
+```bash
+curl -sI "$HOST/" | grep -i cache-control   # 应含 no-cache
+curl -sI "$HOST/assets/$(grep -oE 'assets/[^"]+\.js' /opt/mao/desktop/dist/index.html | head -1 | sed 's|assets/||')" | grep -i cache-control
+```
+
 ## 不要做
 
 - 不要在 `/opt/mao-data/workspace/...` 里 `git pull` 或改 `/etc/nginx`

@@ -113,6 +113,16 @@ fi
 APK_SIZE=$(du -h "$APK_OUT" | cut -f1)
 echo "      构建完成: $APK_SIZE"
 
+# ---- dry-run：到此为止，不发布 ----
+if $DRY_RUN; then
+  echo ""
+  echo "=========================================="
+  echo "  DRY-RUN：仅构建，未发布"
+  echo "  APK:  $APK_OUT"
+  echo "=========================================="
+  exit 0
+fi
+
 # ---- Step 3: 发布 ----
 echo "[3/3] 发布 APK + 清单..."
 mkdir -p "$RELEASES_DIR"

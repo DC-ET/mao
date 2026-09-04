@@ -127,7 +127,8 @@ Mao 客户端目前支持两种访问形态：
 1. **生产环境**：Capacitor `server.url` 指向 `https://mao.etarch.cn`，WebView 加载与 Web/Electron 相同的远程 SPA；
 2. `android/web-stub/` 仅作 Capacitor 占位，**不打包** `desktop/dist`；
 3. 前端更新：部署 Nginx 上的 `desktop/dist`，用户顶栏刷新或 `version.json` 轮询提示（`useVersionCheck.startPolling`）；
-4. `npx cap sync android` 同步 `web-stub` 与配置到安卓工程（发原生壳时执行，非每次前端发版必需）。
+4. `npx cap sync android` 同步 `web-stub` 与配置到安卓工程（发原生壳时执行，非每次前端发版必需）；
+5. WebView 采用标准 HTTP 缓存（`LOAD_DEFAULT`）：入口文档靠服务端 `Cache-Control: no-cache` 保证新鲜（见 `docs/guides/single-domain-nginx-migration.md` 第 7 节），hashed 资源长缓存；首屏完成以原生轮询验证 Vue 挂载（`window.__MAO_APP_MOUNTED` / `#app` 内容）为准，8s 未完成显示重试（重试绕过缓存重拉入口文档）；回前台存活探测用应用级标记判定，页面空白也会自动 reload。
 
 ### 4.4 release 签名
 
