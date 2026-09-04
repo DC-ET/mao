@@ -240,7 +240,7 @@ export class EmbedController {
           if (msg.sessionId != null) {
             this.emitEvent({ type: 'phase', phase, sessionId: msg.sessionId });
           }
-          if (phase === 'IDLE' || phase === 'COMPLETED') this.ui.unread = 0;
+          // COMPLETED 不清未读：任务完成提示应保留至用户展开浮窗（open→markRead）
         }
         break;
       }
@@ -260,8 +260,8 @@ export class EmbedController {
 
   open() {
     this.ui.panelOpen = true;
+    // 未读清零唯一入口：展开浮窗（store/ui 单源，watch 投影同步）
     this.store.markRead();
-    this.ui.unread = 0;
     void this.boot();
   }
 

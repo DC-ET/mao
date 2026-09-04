@@ -35,6 +35,8 @@ export class WsClient {
   readonly connected = ref(false);
   private socket: WebSocket | null = null;
   private connectPromise: Promise<void> | null = null;
+  /** 在途 connect 的 reject 句柄：disconnect 打断时同步 settle，避免等待方悬挂 */
+  private pendingReject: ((err: Error) => void) | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectDelayMs = 1_000;
@@ -60,6 +62,10 @@ export class WsClient {
     this.socket = socket;
 
     this.connectPromise = new Promise<void>((resolve, reject) => {
+      this.pendingReject = (err) => {
+        this.pendingReject = null;
+        reject(err);
+      };
       const timeout = setTimeout(() => {
         try {
           socket.close();
@@ -74,6 +80,7 @@ export class WsClient {
         this.connected.value = true;
         this.reconnectDelayMs = 1_000;
         this.lastServerMessageAt = Date.now();
+        this.pendingReject = null;
         void this.hooks.getToken().then(
           (token) => {
             // 鉴权首帧：必须先于任何业务帧
@@ -174,14 +181,10 @@ export class WsClient {
       this.reconnectTimer = null;
     }
     this.stopHeartbeat();
-    // 在途 connect 的等待方必须被 reject，否则调用方 await 永久悬挂
-    if (this.connectPromise && this.socket) {
-      try {
-        this.socket.close();
-      } catch {
-        /* ignore */
-      }
-    }
+    // 在途 connect 的等待方必须被同步 settle（对齐 desktop pendingSettle 语义），
+    // 因为 disconnect 置 socket=null 后异步 onclose 的归属校验会早退、无法到达 reject
+    this.pendingReject?.(new Error('WebSocket connection cancelled'));
+    this.pendingReject = null;
     if (this.socket) {
       this.socket.close();
       this.socket = null;
