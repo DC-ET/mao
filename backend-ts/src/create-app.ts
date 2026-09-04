@@ -303,10 +303,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const settingsSecret = process.env.SETTINGS_SECRET ?? '';
   const settingRepo = new MysqlSystemSettingRepository(db);
   await runSettingsBootstrap(settingRepo, settingsSecret);
-  // 上传上限后台可配：multipart 截断阈值取配置值与默认 50MB 的较大者，避免后台调大后被 multipart 层先截断
+  // 上传上限后台可配：multipart 截断阈值取配置值与默认 1GB 的较大者，避免后台调大后被 multipart 层先截断
   const bootstrapSettings = new SystemSettingService(settingRepo, { findById: async () => null }, { findById: async () => null }, { workspaceRoot: '', skillsDir: '' }, settingsSecret);
   const bootstrapUploadCfg = await bootstrapSettings.getUploadConfig();
-  const multipartLimitMb = Math.max(50, bootstrapUploadCfg.maxSizeMb);
+  const multipartLimitMb = Math.max(1024, bootstrapUploadCfg.maxSizeMb);
   // Agent 线程池/WS 超时/harness 调参启动时从 DB 构建，后台改动需重启生效；调度参数走 getter 即时生效
   const agentRuntimeCfg = await bootstrapSettings.getAgentRuntimeConfig();
   const harnessTuning = await bootstrapSettings.getHarnessTuningConfig();

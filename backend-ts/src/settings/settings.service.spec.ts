@@ -234,7 +234,7 @@ describe('SystemSettingService', () => {
   it('getUploadConfigAppliesDefaults', async () => {
     vi.mocked(mapper.findByKey).mockResolvedValue(null);
     const cfg = await service().getUploadConfig();
-    expect(cfg).toEqual({ storageMode: 'local', baseUrl: '', maxSizeMb: 50 });
+    expect(cfg).toEqual({ storageMode: 'local', baseUrl: '', maxSizeMb: 1024 });
   });
 
   it('getAgentRuntimeConfigAppliesDefaults', async () => {

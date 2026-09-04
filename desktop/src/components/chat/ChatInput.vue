@@ -232,6 +232,7 @@ import { useSessionStore, type CloudProject } from '../../stores/session'
 import { useDraftStore, type DraftEntry } from '../../stores/draft'
 import { api } from '../../api'
 import { cloudWorkspaceIndicator, extractGitRepoSlug, isHttpsGitUrl } from '../../utils/cloud-project'
+import { getUploadConfig } from '../../utils/storageMode'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -603,10 +604,6 @@ const editor = useEditor({
               }
               continue
             }
-            if (file.size > 10 * 1024 * 1024) {
-              ElMessage.warning(`图片 ${file.name} 超过 10MB 限制`)
-              continue
-            }
             addPendingImage(file)
             handledFile = true
           } else if (item.kind === 'file') {
@@ -976,20 +973,28 @@ function handleFileSelect(event: Event) {
   input.value = ''
 }
 
+/** 校验文件大小是否在后台配置的上限内。 */
+async function checkFileSize(file: File): Promise<{ ok: boolean; limitMb: number }> {
+  const { maxSizeMb } = await getUploadConfig()
+  return { ok: file.size <= maxSizeMb * 1024 * 1024, limitMb: maxSizeMb }
+}
+
 function addPendingImage(file: File) {
   if (pendingFiles.value.length >= 10) {
     ElMessage.warning('最多上传 10 个附件')
     return
   }
-  if (file.size > 10 * 1024 * 1024) {
-    ElMessage.warning(`图片 ${file.name} 超过 10MB 限制`)
-    return
-  }
-  pendingFiles.value.push({ file, previewUrl: URL.createObjectURL(file) })
+  checkFileSize(file).then(({ ok, limitMb }) => {
+    if (!ok) {
+      ElMessage.warning(`图片 ${file.name} 超过 ${limitMb}MB 限制`)
+      return
+    }
+    pendingFiles.value.push({ file, previewUrl: URL.createObjectURL(file) })
+  })
 }
 
 /** 非图片文件暂存到待发列表，发送时再上传（懒上传，无需预先创建会话）。 */
-function addPendingFile(file: File) {
+async function addPendingFile(file: File) {
   if (props.executionMode === 'LOCAL') {
     ElMessage.warning('本地模式不支持文件上传，请使用 @ 引用工作区文件')
     return
@@ -998,8 +1003,9 @@ function addPendingFile(file: File) {
     ElMessage.warning('最多上传 10 个附件')
     return
   }
-  if (file.size > 10 * 1024 * 1024) {
-    ElMessage.warning(`文件 ${file.name} 超过 10MB 限制`)
+  const { ok, limitMb } = await checkFileSize(file)
+  if (!ok) {
+    ElMessage.warning(`文件 ${file.name} 超过 ${limitMb}MB 限制`)
     return
   }
   if (file.size === 0) {

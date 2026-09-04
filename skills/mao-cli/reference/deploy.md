@@ -165,7 +165,7 @@ upstream mao_backend {
 server {
     listen 80;
     server_name mao.example.com;
-    client_max_body_size 50m;
+    client_max_body_size 1024m;
 
     location /api/ws/ {
         proxy_pass http://mao_backend;

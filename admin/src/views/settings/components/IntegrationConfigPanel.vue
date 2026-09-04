@@ -190,7 +190,7 @@ const groups = computed<GroupDef[]>(() => [
         ],
       },
       { key: 'upload.baseUrl', label: '访问基础地址', hint: '留空使用相对路径 /uploads/', pattern: /^https?:\/\//, patternMessage: '需以 http:// 或 https:// 开头' },
-      { key: 'file.maxSizeMb', label: '单文件上限 (MB)', type: 'number', min: 1, max: 102400 },
+      { key: 'file.maxSizeMb', label: '单文件上限 (MB)', type: 'number', min: 1, max: 102400, hint: '默认 1024（1GB）' },
     ],
   },
   {

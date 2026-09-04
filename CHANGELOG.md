@@ -21,6 +21,14 @@
 
 ### 后端
 
+- 文件上传大小上限默认值从 50MB 提升到 1GB（1024MB）；`/upload/config` 接口新增返回 `maxSizeMb` 字段，前端据此动态显示限制而非硬编码；管理后台「单文件上限」配置项补充默认值提示；Nginx `client_max_body_size` 部署模板同步从 `50m` 改为 `1024m`（线上需手动改 `/etc/nginx/conf.d/mao.conf` 后 `nginx -t && systemctl reload nginx`）
+
+### 前端（桌面 / Web / 安卓）
+
+- 输入框粘贴/拖拽文件的大小限制从硬编码 10MB 改为读取管理后台 `file.maxSizeMb` 配置（默认 1GB），超限提示动态显示配置值
+
+### 后端
+
 - 修复管理后台/Skill 页面重新上传技能后，技能内 CLI 脚本丢失可执行权限（Agent 调用报 Permission denied）的问题：上传落盘时按扩展名（`.sh`）与文件头（shebang `#!` / ELF）恢复 0755 执行位
 
 ### 终端 CLI（mao-agent）

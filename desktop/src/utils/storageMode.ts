@@ -3,6 +3,7 @@ import { api } from '../api'
 export interface UploadConfig {
   storageMode: 'oss' | 'local'
   baseUrl: string
+  maxSizeMb: number
 }
 
 const CACHE_TTL_MS = 60_000
@@ -24,7 +25,6 @@ export async function getUploadConfig(): Promise<UploadConfig> {
     cachedAt = Date.now()
     return cachedConfig!
   } catch {
-    // Default to OSS if config endpoint fails
-    return { storageMode: 'oss', baseUrl: '' }
+    return { storageMode: 'oss', baseUrl: '', maxSizeMb: 1024 }
   }
 }

@@ -99,7 +99,7 @@ export const SECRET_MASK = '******';
 const DEFAULT_LDAP_USER_SEARCH_BASE = 'ou=users';
 const DEFAULT_FEISHU_REDIRECT_URI = 'http://localhost:9080/api/v1/auth/feishu/callback';
 const DEFAULT_UPLOAD_STORAGE_MODE = 'local';
-const DEFAULT_FILE_MAX_SIZE_MB = 50;
+const DEFAULT_FILE_MAX_SIZE_MB = 1024;
 const DEFAULT_TAVILY_BASE_URL = 'https://api.tavily.com';
 const DEFAULT_TAVILY_CONNECT_TIMEOUT = 10000;
 const DEFAULT_TAVILY_READ_TIMEOUT = 30000;
