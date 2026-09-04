@@ -12,7 +12,6 @@ defineEmits<{
   newSession: [];
   send: [content: string];
   stop: [];
-  approve: [requestId: string, approved: boolean];
   answer: [requestId: string, answers: unknown[]];
   clearSelection: [];
   retry: [];
@@ -22,7 +21,7 @@ const phaseRef = toRef(() => props.ui.phase);
 const running = computed(
   () => phaseRef.value === 'RUNNING' || phaseRef.value === 'RESUMING' || phaseRef.value === 'WAITING_APPROVAL',
 );
-const attention = computed(() => props.ui.unread > 0 || props.ui.phase === 'WAITING_APPROVAL' || props.ui.pendingQuestion != null);
+const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion != null);
 </script>
 
 <template>
@@ -42,14 +41,12 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.phase === 'WAIT
     :session-error="ui.sessionError"
     :llm-retry-text="ui.llmRetryText"
     :messages="ui.messages"
-    :pending-approval="ui.pendingApproval"
     :pending-question="ui.pendingQuestion"
     :quoted-selection="ui.quotedSelection"
     @close="$emit('close')"
     @new-session="$emit('newSession')"
     @send="(c) => $emit('send', c)"
     @stop="$emit('stop')"
-    @approve="(id, ok) => $emit('approve', id, ok)"
     @answer="(id, a) => $emit('answer', id, a)"
     @clear-selection="$emit('clearSelection')"
     @retry="$emit('retry')"

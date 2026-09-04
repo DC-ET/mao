@@ -50,11 +50,14 @@ export class WsClient {
   /** 幂等连接；已连接或连接中直接复用。首连超时/失败抛错由调用方决定兜底 */
   connect(): Promise<void> {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) return Promise.resolve();
-    if (this.connectPromise) return this.connectPromise;
+    if (this.connectPromise) {
+      // 归属校验：connectPromise 只在仍属于存活 socket 时复用
+      if (this.socket && this.socket.readyState <= WebSocket.OPEN) return this.connectPromise;
+      this.connectPromise = null;
+    }
 
     this.intentionalClose = false;
     const socket = new WebSocket(resolveWsUrl(this.serverUrl));
-    const prevSocket = this.socket;
     this.socket = socket;
 
     this.connectPromise = new Promise<void>((resolve, reject) => {
@@ -109,6 +112,8 @@ export class WsClient {
         clearTimeout(timeout);
         this.connected.value = false;
         this.stopHeartbeat();
+        // 清引用：后续 connect() 不会误判复用已关闭的 socket
+        if (this.socket === socket) this.socket = null;
         if (this.connectPromise) {
           this.connectPromise = null;
         }
@@ -126,7 +131,6 @@ export class WsClient {
       socket.onerror = () => {
         /* onclose 随后触发，统一处理 */
       };
-      void prevSocket;
     });
 
     return this.connectPromise;

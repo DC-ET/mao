@@ -48,7 +48,7 @@ describe('ChatStore', () => {
     const store = new ChatStore();
     store.bindSession(1);
     store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
-    store.handleEvent(ev('tool_call_start', 1, { toolCallId: 't1', toolName: 'fs.read' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'fs.read' }));
     store.handleEvent(ev('session_status', 1, { phase: 'CANCELLED' }));
     const m = store.messages.value[0];
     expect(m.streaming).toBe(false);
@@ -56,17 +56,29 @@ describe('ChatStore', () => {
     expect(store.phase.value).toBe('CANCELLED');
   });
 
-  it('tool_call_args_delta / result 更新对应卡片', () => {
+  it('tool_call_args_delta / result 更新对应卡片（后端 snake_case 字段）', () => {
     const store = new ChatStore();
     store.bindSession(1);
     store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
-    store.handleEvent(ev('tool_call_start', 1, { toolCallId: 't1', toolName: 'web_search' }));
-    store.handleEvent(ev('tool_call_args_delta', 1, { toolCallId: 't1', delta: '{"q":"mao"}' }));
-    store.handleEvent(ev('tool_call_result', 1, { toolCallId: 't1', result: 'ok' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'web_search', arguments: '{"q"' }));
+    store.handleEvent(ev('tool_call_args_delta', 1, { tool_call_id: 't1', arguments: ':"mao"}' }));
+    store.handleEvent(ev('tool_call_result', 1, { tool_call_id: 't1', result: 'raw', summary: 'ok', status: 'success' }));
     const tc = store.messages.value[0].toolCalls[0];
+    expect(tc.toolCallId).toBe('t1');
     expect(tc.argsText).toBe('{"q":"mao"}');
     expect(tc.status).toBe('done');
     expect(tc.resultText).toBe('ok');
+  });
+
+  it('tool_call_result error 状态标记卡片失败', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't2', tool_name: 'fs.write' }));
+    store.handleEvent(ev('tool_call_result', 1, { tool_call_id: 't2', result: 'boom', status: 'error' }));
+    const tc = store.messages.value[0].toolCalls[0];
+    expect(tc.status).toBe('error');
+    expect(tc.resultText).toBe('boom');
   });
 
   it('其他会话的事件被忽略', () => {

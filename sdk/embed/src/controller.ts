@@ -1,4 +1,4 @@
-import { createApp, reactive, type App as VueApp } from 'vue';
+import { createApp, reactive, watch, type App as VueApp } from 'vue';
 import type { MaoChatEvent, MaoChatInitOptions, PendingQuestion } from './types';
 import { resolveApiBase } from './types';
 import RootApp from './ui/RootApp.vue';
@@ -11,8 +11,8 @@ import { TokenProvider } from './core/token-provider';
 import { TabsCoordinator } from './core/tabs';
 import { ContextCollector } from './context/collector';
 import { SelectionTracker } from './context/selection';
-import type { ChatMessage, PendingApproval } from './types';
-import type { WsTaskPhase, WsServerEvent } from '@mao/contracts';
+import type { ChatMessage } from './types';
+import type { EmbedMessageVO, WsTaskPhase, WsServerEvent } from '@mao/contracts';
 
 /** 传给 RootApp 的响应式 UI 状态（reactive 深层，RootApp 内直接引用字段） */
 export interface UiState {
@@ -25,7 +25,6 @@ export interface UiState {
   sessionError: string | null;
   llmRetryText: string | null;
   messages: ChatMessage[];
-  pendingApproval: PendingApproval | null;
   pendingQuestion: PendingQuestion | null;
   quotedSelection: string | null;
   position: 'right' | 'left';
@@ -42,7 +41,6 @@ export function createUiState(options: MaoChatInitOptions): UiState {
     sessionError: null,
     llmRetryText: null,
     messages: [],
-    pendingApproval: null,
     pendingQuestion: null,
     quotedSelection: null,
     position: options.position ?? 'right',
@@ -70,7 +68,6 @@ export function mountApp(ui: UiState): { app: VueApp; host: HTMLElement; cleanup
     onNewSession: () => void getController()?.newSession(),
     onSend: (content: string) => void getController()?.send(content),
     onStop: () => void getController()?.stop(),
-    onApprove: (requestId: string, approved: boolean) => void getController()?.decide(requestId, approved),
     onAnswer: (requestId: string, answers: unknown[]) => void getController()?.answer(requestId, answers),
     onClearSelection: () => getController()?.clearSelection(),
     onRetry: () => getController()?.retry(),
@@ -96,7 +93,7 @@ export class EmbedController {
   private readonly ws: WsClient;
   readonly store = new ChatStore();
   private readonly sessions: SessionManager;
-  private readonly tabs = new TabsCoordinator();
+  private readonly tabs: TabsCoordinator;
   private readonly contextCollector: ContextCollector;
   private selectionTracker: SelectionTracker | null = null;
   private destroyed = false;
@@ -110,7 +107,9 @@ export class EmbedController {
   ) {
     setController(this);
     this.tokens = new TokenProvider(options.getToken);
-    this.rest = new RestClient(resolveApiBase(options.serverUrl), () => this.tokens.get());
+    this.rest = new RestClient(resolveApiBase(options.serverUrl), () => this.tokens.get(), () =>
+      this.tokens.invalidate(),
+    );
     this.ws = new WsClient(options.serverUrl, {
       getToken: () => this.tokens.get(),
       onAuthenticated: () => {
@@ -124,9 +123,34 @@ export class EmbedController {
       onEvent: (event) => this.onWsEvent(event),
     });
     this.sessions = new SessionManager({ rest: this.rest, agentId: options.agentId });
+    this.tabs = new TabsCoordinator(options.agentId, () => this.sessions.readStoredSessionId());
     this.contextCollector = new ContextCollector(options.context);
     this.selectionTracker = new SelectionTracker((sel) => {
       this.ui.quotedSelection = sel;
+    });
+    // store → ui 投影：消息流/phase/错误/重试提示的唯一真源在 store，
+    // reactive ui 由 watch 深度同步（delta 高频但消息量小，可接受）
+    watch(
+      this.store.messages,
+      (v) => {
+        this.ui.messages = v;
+      },
+      { deep: true },
+    );
+    watch(this.store.phase, (v) => {
+      this.ui.phase = v;
+    });
+    watch(this.store.sessionError, (v) => {
+      this.ui.sessionError = v;
+    });
+    watch(this.store.llmRetryText, (v) => {
+      this.ui.llmRetryText = v;
+    });
+    watch(this.store.unread, (v) => {
+      this.ui.unread = v;
+    });
+    watch(this.store.pendingQuestion, (v) => {
+      this.ui.pendingQuestion = v;
     });
   }
 
@@ -142,29 +166,32 @@ export class EmbedController {
         this.sessions.writeStoredSessionId(claimed);
       }
       const session = await this.sessions.resolveSession();
-      this.tabs.claim(this.options.agentId, session.id);
+      this.tabs.claim(session.id);
       this.store.bindSession(session.id);
       this.ui.sessionTitle = session.title || 'Mao 助手';
       this.ui.connected = false;
-      await this.ws.connect();
-      this.ws.subscribe(session.id);
+      // 历史先于 WS subscribe 拉取：避免流事件先到导致 messages 非空而跳过历史补齐
       await this.store.ensureHistory(async (sid) => {
-        const list = await this.rest.request<Array<{ id: number | string; role: string; content?: string; thinking?: string | null }>>(
-          'GET',
-          `/sessions/${sid}/messages`,
-        );
-        return list
+        // 后端响应结构：{ messages: EmbedMessageVO[], hasMore, nextBeforeMessageId }
+        const page = await this.rest.request<{
+          messages: EmbedMessageVO[];
+          hasMore?: boolean;
+        }>('GET', `/sessions/${sid}/messages`, { query: { roundLimit: 20 } });
+        return (page.messages ?? [])
           .filter((m) => m.role === 'USER' || m.role === 'ASSISTANT')
           .map((m) => ({
             id: `h_${m.id}`,
             role: m.role === 'USER' ? ('user' as const) : ('assistant' as const),
             content: m.content ?? '',
-            thinking: m.thinking ?? '',
+            thinking: m.thinkingContent ?? '',
             streaming: false,
             error: false,
             toolCalls: [] as never[],
           }));
       });
+      // 连接 + 订阅在历史之后，保证首帧事件不抢在历史前渲染
+      await this.ws.connect();
+      this.ws.subscribe(session.id);
     } catch (err) {
       this.booted = false;
       if (err instanceof AuthError) {
@@ -244,7 +271,7 @@ export class EmbedController {
   async newSession() {
     try {
       const session = await this.sessions.startNewSession();
-      this.tabs.claim(this.options.agentId, session.id);
+      this.tabs.claim(session.id);
       this.store.reset();
       this.store.bindSession(session.id);
       this.ui.sessionTitle = session.title || 'Mao 助手';
@@ -301,13 +328,6 @@ export class EmbedController {
     if (!ok) this.ui.sessionError = '停止失败：连接不可用';
   }
 
-  async decide(requestId: string, approved: boolean) {
-    const sid = this.store.sessionId();
-    if (sid == null) return;
-    this.ui.pendingApproval = null;
-    await this.ws.sendToolApproval(sid, requestId, approved);
-  }
-
   async answer(requestId: string, answers: unknown[]) {
     const sid = this.store.sessionId();
     if (sid == null) return;
@@ -321,7 +341,9 @@ export class EmbedController {
   }
 
   retry() {
+    this.store.sessionError.value = null;
     this.ui.sessionError = null;
-    void this.boot();
+    // 运行中（session_already_running 提示）无需重新 boot；IDLE 且已 boot 过也无需
+    if (!this.booted) void this.boot();
   }
 }

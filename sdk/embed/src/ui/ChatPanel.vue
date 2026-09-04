@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import type { ChatMessage, PendingApproval, PendingQuestion } from '../types';
+import type { ChatMessage, PendingQuestion } from '../types';
 import MessageBubble from './MessageBubble.vue';
 import Composer from './Composer.vue';
-import ApprovalCard from './ApprovalCard.vue';
 import QuestionCard from './QuestionCard.vue';
 
 const props = defineProps<{
@@ -15,7 +14,6 @@ const props = defineProps<{
   sessionError: string | null;
   llmRetryText: string | null;
   messages: ChatMessage[];
-  pendingApproval: PendingApproval | null;
   pendingQuestion: PendingQuestion | null;
   quotedSelection: string | null;
 }>();
@@ -25,7 +23,6 @@ const emit = defineEmits<{
   newSession: [];
   send: [content: string];
   stop: [];
-  approve: [requestId: string, approved: boolean];
   answer: [requestId: string, answers: unknown[]];
   clearSelection: [];
   retry: [];
@@ -80,11 +77,6 @@ function onEmptySlot(): boolean {
       <button v-if="!running" class="mao-banner__retry" type="button" @click="emit('retry')">重试</button>
     </div>
 
-    <ApprovalCard
-      v-if="pendingApproval"
-      :approval="pendingApproval"
-      @decide="(id, ok) => emit('approve', id, ok)"
-    />
     <QuestionCard
       v-if="pendingQuestion"
       :pending="pendingQuestion"

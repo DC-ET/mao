@@ -17,15 +17,16 @@ export function utf8ByteLength(s: string): number {
   return new TextEncoder().encode(s).length;
 }
 
-/** 按字节截断（不切断多字节字符），保证 <= limit 且尽量填满 */
+/** 按字节截断（不切断多字节字符），保证 <= limit；按码点线性累积，避免 O(n²) */
 export function truncateByBytes(s: string, limit: number): string {
   if (utf8ByteLength(s) <= limit) return s;
-  const enc = new TextEncoder();
-  const maxCharBytes = Math.max(1, enc.encode(s).byteLength > 0 ? 4 : 1);
-  // 从保守下限开始逐字符补足
-  let end = Math.max(0, Math.floor(limit / maxCharBytes));
-  while (end < s.length && utf8ByteLength(s.slice(0, end + 1)) <= limit) {
-    end++;
+  let bytes = 0;
+  let end = 0;
+  for (const ch of s) {
+    const len = utf8ByteLength(ch);
+    if (bytes + len > limit) break;
+    bytes += len;
+    end += ch.length;
   }
   return s.slice(0, end);
 }

@@ -72,16 +72,8 @@ export interface ChatUiState {
   executionError: string | null;
   unread: number;
   pendingQuestion: PendingQuestion | null;
-  pendingApproval: PendingApproval | null;
   quotedSelection: string | null;
   sessionError: string | null;
-}
-
-export interface PendingApproval {
-  requestId: string;
-  toolName: string;
-  summary: string;
-  dangerReason?: string | null;
 }
 
 export const DEFAULT_WS_SILENCE_TIMEOUT_MS = 30_000;

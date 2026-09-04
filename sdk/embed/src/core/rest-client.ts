@@ -24,6 +24,8 @@ export class RestClient {
   constructor(
     private readonly apiBase: string,
     private readonly getToken: () => Promise<string>,
+    /** 401 时回调：使 TokenProvider 缓存失效，重试才真正取到新 token */
+    private readonly onUnauthorized?: () => void,
   ) {}
 
   async request<T>(method: 'GET' | 'POST', path: string, opts: RestOptions = {}, retry = true): Promise<T> {
@@ -41,8 +43,11 @@ export class RestClient {
       ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
     });
     if (resp.status === 401) {
-      // token 过期：重取一次再试，仍 401 才判定凭据失效
-      if (retry) return this.request<T>(method, path, opts, false);
+      // token 过期：先失效缓存再重取一次，仍 401 才判定凭据失效
+      if (retry) {
+        this.onUnauthorized?.();
+        return this.request<T>(method, path, opts, false);
+      }
       throw new AuthError();
     }
     const text = await resp.text();

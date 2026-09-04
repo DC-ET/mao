@@ -6,7 +6,7 @@
 
 Mao 的 agent 对话能力目前已覆盖 desktop（Electron / Web）、android 壳、agent-cli（mao-agent）、weixin / feishu bot。但内部 Web 业务系统想把 agent 对话能力嵌入自己的页面时，没有任何轻量途径——要么引导用户跳转 Mao，要么整页复制 desktop。
 
-本需求提供 **Web Embed SDK**：内部 Web 系统引入一个脚本文件、调用一次 `MaoChat.init()`，页面即出现浮动入口按钮，点击展开对话浮窗，终端用户可与 Mao agent 就当前页面内容进行完整对话（含流式输出、思考过程、工具执行状态、工具审批、追问回答、手动停止）。
+本需求提供 **Web Embed SDK**：内部 Web 系统引入一个脚本文件、调用一次 `MaoChat.init()`，页面即出现浮动入口按钮，点击展开对话浮窗，终端用户可与 Mao agent 就当前页面内容进行完整对话（含流式输出、思考过程、工具执行状态、追问回答、手动停止；工具审批仅 LOCAL 链路存在，embed 会话默认 CLOUD，无审批环节）。
 
 ### 已否决的备选方案
 
@@ -38,7 +38,7 @@ Mao 的 agent 对话能力目前已覆盖 desktop（Electron / Web）、android 
 
 - 浮动按钮：右下角固定，展示运行状态（空闲 / 执行中转圈 / 需要处理红点）。
 - 对话浮窗：Shadow DOM 挂载，含消息流（用户 / 助手气泡、Markdown 渲染、思考过程折叠、工具调用状态卡片）、文本输入框、发送、**手动停止执行**、"新对话"按钮、错误与重连提示。
-- 工具审批卡片：`WAITING_APPROVAL` 时浮窗内展示并回传审批结果。
+- 注：工具审批仅存在于 LOCAL 执行链路（Electron 客户端弹窗处理），embed 会话默认 CLOUD、服务端执行工具，无审批环节，浮窗不提供审批 UI。
 - 追问卡片：`ask_user_questions` 事件驱动，浮窗内作答并回传。
 - 页面上下文：`context()` 返回值做变更检测，变化时以引用块前缀拼入下一条用户消息；宿主页面选中文本自动出现"讨论：xxx"引用 chip。
 - 会话：每 (用户, agent) 一个常驻会话，sessionId 持久化于 localStorage，仅复用 SDK 自己创建的会话；desktop 端会话列表可见该会话并可继续（共享列表作为跨端连续性 feature 保留）。
@@ -134,7 +134,7 @@ data: {"page":"order-detail","orderId":"12345"}
 2. **sdk/embed 脚手架 + ws-client**：Vite lib mode、Shadow DOM 挂载骨架；裁剪复制 ws-client（保留 4.2 全部"必须继承"行为），vitest 覆盖状态机（重连、去重、cancel 抑制、快照对账）。
 3. **会话管理 + REST**：创建 / 复用 / 新对话 / 历史拉取；localStorage key `mao_embed_session_{agentId}`；BroadcastChannel 协调。
 4. **UI 壳**：launcher（状态点）、浮窗、消息流、输入框、停止按钮、新对话、错误 / 重连横幅；`onEvent` 透传 phase / error。
-5. **审批与答问卡片**：`tool_approval` / `ask_user_questions` 请求-回传，复用 desktop 的交互语义。
+5. **答问卡片**：`ask_user_questions` 请求-回传，复用 desktop 的交互语义（工具审批仅 LOCAL 链路，不实现）。
 6. **上下文采集**：collector（hash 检测、8KB 截断）+ selection chip + 发送前拼装。
 7. **构建 / 部署接线 + demo 页**：产物双格式输出、size-limit、desktop public 接线、deploy-desktop.sh 验证（dry-run）；demo/index.html 模拟宿主（含路由切换与 context 变化）。
 8. **后端 `embed` client 类型**：normalizeClient 一行 + 单测。
@@ -178,7 +178,7 @@ data: {"page":"order-detail","orderId":"12345"}
 
 ### 6.4 验收标准
 
-1. demo 页（vite dev）引入 `mao-chat.js` 后，浮窗可完成：创建会话 → 流式对话 → 工具审批 → 追问作答 → 手动停止 → "新对话" → 刷新页面复用同一会话（localStorage）。
+1. demo 页（vite dev）引入 `mao-chat.js` 后，浮窗可完成：创建会话 → 流式对话 → 追问作答 → 手动停止 → "新对话" → 刷新页面复用同一会话（localStorage）。
 2. 双页签同时初始化不产生重复会话（BroadcastChannel 生效）。
 3. 断网 30s 内恢复后，WS 自动重连、re-subscribe、`session_snapshot` 对账，无残留转圈；跨该过程的 stale 事件被丢弃。
 4. `context()` 返回值变化后，下一条用户消息携带新引用块；未变化则不携带；超 8KB 截断。

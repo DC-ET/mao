@@ -7,6 +7,10 @@ import { resolve } from 'node:path';
 // 产物部署到 https://mao.etarch.cn/embed/mao-chat.js（见 desktop/public/embed 接线）。
 export default defineConfig({
   plugins: [vue(), cssInjectedByJsPlugin({ styleId: 'mao-chat-embed-style' })],
+  // IIFE 浏览器产物：必须内联替换，否则 Vue 内部的 process.env.NODE_ENV 在浏览器顶层执行即崩溃
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production'),
+  },
   resolve: {
     alias: {
       '@mao/contracts': resolve(__dirname, '../../shared/contracts/src/index.ts'),

@@ -1,6 +1,6 @@
 import { computed, reactive, ref } from 'vue';
 import type { WsTaskPhase, WsServerEvent } from '@mao/contracts';
-import type { ChatMessage, PendingApproval, PendingQuestion, ToolCallItem } from '../types';
+import type { ChatMessage, PendingQuestion, ToolCallItem } from '../types';
 
 const TERMINAL_PHASES: WsTaskPhase[] = ['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE'];
 // 对齐 desktop：session_status / session_snapshot 不经 executionId 门禁
@@ -35,7 +35,7 @@ export class ChatStore {
   readonly sessionError = ref<string | null>(null);
   readonly llmRetryText = ref<string | null>(null);
   readonly unread = ref(0);
-  readonly pendingApproval = ref<PendingApproval | null>(null);
+  
   readonly pendingQuestion = ref<PendingQuestion | null>(null);
   readonly busy = computed(() => this.phase.value === 'RUNNING' || this.phase.value === 'RESUMING');
 
@@ -81,7 +81,6 @@ export class ChatStore {
     this.phase.value = null;
     this.sessionError.value = null;
     this.llmRetryText.value = null;
-    this.pendingApproval.value = null;
     this.pendingQuestion.value = null;
   }
 
@@ -110,10 +109,11 @@ export class ChatStore {
       case 'tool_call_start': {
         const msg0 = this.ensureStreamingAssistant();
         const tc: ToolCallItem = reactive({
-          toolCallId: String(data.toolCallId ?? genId('tc')),
-          toolName: String(data.toolName ?? ''),
-          displayName: String(data.displayName ?? data.toolName ?? ''),
-          argsText: '',
+          toolCallId: String(data.tool_call_id ?? genId('tc')),
+          toolName: String(data.tool_name ?? ''),
+          displayName: String(data.tool_name ?? ''),
+          // 后端 start 帧即携带完整初始 arguments
+          argsText: String(data.arguments ?? ''),
           status: 'running',
           resultText: '',
         });
@@ -121,15 +121,17 @@ export class ChatStore {
         break;
       }
       case 'tool_call_args_delta': {
+        // 后端字段：{tool_call_id, arguments}（arguments 为增量文本）
         const tc = this.findToolCall(data);
-        if (tc) tc.argsText += String(data.delta ?? '');
-        break
+        if (tc) tc.argsText += String(data.arguments ?? '');
+        break;
       }
       case 'tool_call_result': {
+        // 后端字段：{tool_call_id, result, status:'success'|'error', summary?}
         const tc = this.findToolCall(data);
         if (tc) {
-          tc.status = data.error ? 'error' : 'done';
-          tc.resultText = String(data.result ?? data.error ?? '');
+          tc.status = data.status === 'error' ? 'error' : 'done';
+          tc.resultText = String(data.summary ?? data.result ?? '');
         }
         break;
       }
@@ -148,7 +150,6 @@ export class ChatStore {
           }
           this.activeExecutionId = phase === 'IDLE' ? this.activeExecutionId : null;
           this.llmRetryText.value = null;
-          this.pendingApproval.value = null;
           this.pendingQuestion.value = null;
         }
         break;
@@ -198,11 +199,6 @@ export class ChatStore {
       default:
         break;
     }
-  }
-
-  /** 服务端触发的审批请求（WAITING_APPROVAL 时由 status 事件先行，requestId 由 error/session 之外的通道下发） */
-  setPendingApproval(p: PendingApproval | null) {
-    this.pendingApproval.value = p;
   }
 
   /** 用户主动发送后立即上屏 */
@@ -297,7 +293,7 @@ export class ChatStore {
   }
 
   private findToolCall(data: Record<string, unknown>): ToolCallItem | undefined {
-    const id = data.toolCallId != null ? String(data.toolCallId) : null;
+    const id = data.tool_call_id != null ? String(data.tool_call_id) : null;
     const m = this.lastAssistant();
     if (!m) return undefined;
     if (id == null) return m.toolCalls[m.toolCalls.length - 1];

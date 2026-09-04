@@ -179,6 +179,6 @@ export interface EmbedMessageVO {
   id: number | string;
   role: 'USER' | 'ASSISTANT' | 'SYSTEM' | string;
   content?: string;
-  thinking?: string | null;
+  thinkingContent?: string | null;
   createdAt?: string;
 }
