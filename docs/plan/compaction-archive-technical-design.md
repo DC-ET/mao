@@ -35,7 +35,7 @@
 | 1 | 文件组织 | **每次压缩一个增量文件**，目录 `runtime/<uid>/<sid>/compaction/` |
 | 2 | 命名与写入时机 | 文件名 `compaction-NNN.jsonl`（NNN = DB `compact_count`，零填充 3 位）；**CAS 持久化成功且边界确认推进后**写入；CAS 冲突/压缩失败不产生文件 |
 | 3 | 路径注入方式 | **动态注入**：`summaryText` 保持纯 LLM 产物存库，注入发生在构建交接消息时（`prependSessionSummary` 链路），由代码实时拼接 |
-| 4 | 行内容保真度 | **全字段 dump**（id/role/content/toolCallId/toolCalls/thinkingContent/metadata/tokenCount/modelId/createdAt）；content 与 metadata 中的图片 base64 data URI 替换为占位符，保留附件磁盘路径 |
+| 4 | 行内容保真度 | **全字段 dump**（id/role/content/toolCallId/toolCalls/metadata/tokenCount/modelId/createdAt，不含 thinkingContent——体积大且回查价值低）；content 与 metadata 中的图片 base64 data URI 替换为占位符，保留附件磁盘路径 |
 | 5 | 执行模式范围 | **仅 CLOUD 启用**：LOCAL 会话不写文件、不注入指引（LOCAL 下工具在用户桌面执行，服务端 runtime 路径不可达，注入会误导 Agent） |
 | 6 | 压缩指令 | 在 `buildHandoffInstruction` 末尾**微调一句说明**：告知系统会自动附加归档目录，正文无需提及归档机制、不得编造归档路径 |
 | 7 | 范围边界 | UI/admin 展示、DB schema 变更、归档定期清理、加密脱敏、专用回读工具、存量会话补录——**全部不做**（详见第 8 节） |
@@ -96,7 +96,6 @@ record() 压缩事件 + onCompactionEnd / onCompactionPersisted（现有，不�
 | `content` | `message.content` | 消息内容（含占位符替换，见 4.4） |
 | `toolCallId` | `message.toolCallId` | TOOL 消息的关联调用 ID |
 | `toolCalls` | `message.toolCalls` | 原始 JSON 字符串（assistant 工具调用列表） |
-| `thinkingContent` | `message.thinkingContent` | 推理过程原文 |
 | `metadata` | `message.metadata` | 原始 JSON 字符串（含占位符替换，见 4.4） |
 | `tokenCount` | `message.tokenCount` | 消息 token 数 |
 | `modelId` | `message.modelId` | 使用的模型 |
@@ -143,7 +142,7 @@ record() 压缩事件 + onCompactionEnd / onCompactionPersisted（现有，不�
 
 此前被压缩的全部会话消息已按压缩批次归档为 JSONL 文件，目录：`<归档目录绝对路径>`。
 - 文件命名：compaction-NNN.jsonl（NNN 为压缩序号，升序即时间顺序）；每个文件包含该次压缩区间内的全部原始消息。
-- 每行一个 JSON 对象，字段：id、role、content、toolCallId、toolCalls、thinkingContent、metadata、tokenCount、modelId、createdAt；内联图片 base64 已替换为占位符，原图路径见 metadata 内 attachments 的 path 字段。
+- 每行一个 JSON 对象，字段：id、role、content、toolCallId、toolCalls、metadata、tokenCount、modelId、createdAt（不含 thinkingContent）；内联图片 base64 已替换为占位符，原图路径见 metadata 内 attachments 的 path 字段。
 
 当本交接内容缺少你需要的细节（历史用户原话、文件路径、命令输出、错误信息、已确认决策依据等）时，用 read_file（支持 offset/limit 分页）、grep_search 或 shell 工具检索上述目录回读原始消息，不要凭摘要猜测或臆造细节。
 ```

@@ -53,14 +53,16 @@ describe('CompactionArchiveService', () => {
     expect(lines).toHaveLength(3);
     expect(lines[0]).toEqual({
       id: 11, role: 'USER', content: '你好', toolCallId: null, toolCalls: null,
-      thinkingContent: null, metadata: null, tokenCount: null, modelId: null,
+      metadata: null, tokenCount: null, modelId: null,
       createdAt: '2026-09-03 10:00:00',
     });
     const meta = JSON.parse(lines[1].metadata as string) as { attachments: Array<Record<string, string>> };
     expect(meta.attachments[0].data_uri).toBe('[image data URI omitted: image/png]');
     expect(meta.attachments[0].path).toBe('a.png');
     expect(meta.attachments[0].mime).toBe('image/png');
-    expect(lines[2]).toMatchObject({ id: 20, role: 'ASSISTANT', content: '完成', thinkingContent: '推理', modelId: 3 });
+    expect(lines[2]).toMatchObject({ id: 20, role: 'ASSISTANT', content: '完成', modelId: 3 });
+    // thinkingContent 体积大且回查价值低，明确不写入归档
+    expect(lines[2]).not.toHaveProperty('thinkingContent');
   });
 
   it('padsSeqNumberAndLeavesNoTmpResidue', () => {

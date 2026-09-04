@@ -74,7 +74,7 @@ export class CompactionArchiveService {
       '',
       '此前被压缩的全部会话消息已按压缩批次归档为 JSONL 文件，目录：`' + this.resolveDir(userId, sessionId) + '`。',
       '- 文件命名：compaction-NNN.jsonl（NNN 为压缩序号，序号越大越新）；每个文件包含该次压缩区间内的全部原始消息。',
-      '- 每行一个 JSON 对象，字段：id、role、content、toolCallId、toolCalls、thinkingContent、metadata、tokenCount、modelId、createdAt；'
+      '- 每行一个 JSON 对象，字段：id、role、content、toolCallId、toolCalls、metadata、tokenCount、modelId、createdAt（不含 thinkingContent）；'
         + '内联图片 base64 已替换为占位符，原图路径见 metadata 内 attachments 的 path 字段（通常为工作区相对路径）。',
       '',
       '当本交接内容缺少你需要的细节（历史用户原话、文件路径、命令输出、错误信息、已确认决策依据等）时，'
@@ -89,7 +89,6 @@ export class CompactionArchiveService {
       content: m.content == null ? null : this.replaceImageDataUris(m.content),
       toolCallId: m.toolCallId ?? null,
       toolCalls: m.toolCalls ?? null,
-      thinkingContent: m.thinkingContent ?? null,
       metadata: this.sanitizeMetadata(m.metadata),
       tokenCount: m.tokenCount ?? null,
       modelId: m.modelId ?? null,
