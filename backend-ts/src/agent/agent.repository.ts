@@ -55,6 +55,7 @@ export class MysqlAgentRepository implements AgentRepository {
       configJson: agent.configJson,
       skillNames: agent.skillNames,
       mcpServerIds: agent.mcpServerIds,
+      defaultModelId: agent.defaultModelId ?? null,
       isDefault: agent.isDefault ?? 0,
       deleted: 0,
     });
@@ -74,6 +75,7 @@ export class MysqlAgentRepository implements AgentRepository {
       configJson: agent.configJson,
       skillNames: agent.skillNames ?? null,
       mcpServerIds: agent.mcpServerIds ?? null,
+      defaultModelId: agent.defaultModelId ?? null,
       isDefault: agent.isDefault,
     });
   }

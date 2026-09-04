@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { requireAdmin, sendOk } from '../common/http-error.js';
 import { collectEntityIds, parseEntityId, pathId, queryInt, queryOptInt, queryOptStr } from '../common/request.js';
 import type { SessionService } from './session.service.js';
-import type { AgentLookup, LlmModelLookup, Session, UserLookup } from './types.js';
+import type { AgentLookup, AgentRef, LlmModelLookup, Session, UserLookup } from './types.js';
 import { toAdminSessionVO, toMessageVOList } from './session-vo.js';
 
 export interface AdminSessionRouteDeps {
@@ -26,14 +26,18 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
 
   async function batchLoadAgents(sessions: Session[]) {
     const ids = collectEntityIds(sessions.map((s) => s.agentId));
-    if (ids.length === 0) return new Map<number, { id: number; name: string }>();
+    if (ids.length === 0) return new Map<number, AgentRef>();
     const agents = await agentLookup.findByIds(ids);
     return new Map(agents.map((a) => [parseEntityId(a.id) ?? a.id, a]));
   }
 
-  async function batchLoadModels(sessions: Session[]) {
+  async function batchLoadModels(sessions: Session[], agentMap: Map<number, AgentRef>) {
     const map = new Map<number, NonNullable<Awaited<ReturnType<LlmModelLookup['findById']>>>>();
-    const ids = collectEntityIds(sessions.map((s) => s.modelId));
+    // 会话显式模型 + Agent 默认模型一并加载（VO 展示回退链需要）
+    const agentModelIds = [...agentMap.values()]
+      .map((a) => a.defaultModelId)
+      .filter((id): id is number => id != null);
+    const ids = collectEntityIds([...sessions.map((s) => s.modelId), ...agentModelIds]);
     if (ids.length > 0) {
       for (const m of await modelLookup.findByIds(ids)) map.set(parseEntityId(m.id) ?? m.id, m);
     }
@@ -75,7 +79,7 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
     const records = pageResult.records;
     const userMap = await batchLoadUsers(records);
     const agentMap = await batchLoadAgents(records);
-    const modelMap = await batchLoadModels(records);
+    const modelMap = await batchLoadModels(records, agentMap);
     const voList = records.map((s) => toAdminSessionVO(s, userMap, agentMap, modelMap));
     return sendOk(reply, {
       records: voList,
@@ -89,11 +93,12 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
     await requireAdminUser(request);
     const session = await sessionService.getSession(pathId(request));
     const single = [session];
+    const agentMap = await batchLoadAgents(single);
     return sendOk(reply, toAdminSessionVO(
       session,
       await batchLoadUsers(single),
-      await batchLoadAgents(single),
-      await batchLoadModels(single),
+      agentMap,
+      await batchLoadModels(single, agentMap),
     ));
   });
 

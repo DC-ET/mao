@@ -8,10 +8,16 @@ import type {
   ExperienceInput,
 } from './types.js';
 
+/** Agent 默认模型校验所需的最小模型查询能力 */
+export interface AgentModelLookup {
+  findById(id: number): Promise<{ id?: number; status?: number | null } | null>;
+}
+
 export class AgentService {
   constructor(
     private readonly agentRepo: AgentRepository,
     private readonly experienceService: AgentExperienceService,
+    private readonly modelLookup?: AgentModelLookup,
   ) {}
 
   listAgents(_userId: number, keyword?: string | null): Promise<Agent[]> {
@@ -47,15 +53,18 @@ export class AgentService {
     mcpServerIds: number[] | null | undefined,
     experiences: ExperienceInput[] | null | undefined,
     isDefault: number | null | undefined,
+    defaultModelId: number | null | undefined,
   ): Promise<Agent> {
     if (isDefault != null && isDefault === 1) {
       await this.agentRepo.clearDefaultFlag();
     }
+    await this.requireEnabledModel(defaultModelId);
     const agent: Agent = {
       name,
       description,
       systemPrompt,
       creatorId: userId,
+      defaultModelId: defaultModelId ?? null,
       isDefault: isDefault != null ? isDefault : 0,
     };
     if (skillNames != null && skillNames.length > 0) {
@@ -82,6 +91,7 @@ export class AgentService {
     mcpServerIds: number[] | null | undefined,
     experiences: ExperienceInput[] | null | undefined,
     isDefault: number | null | undefined,
+    defaultModelId: number | null | undefined,
   ): Promise<Agent> {
     const agent = await this.getAgent(id);
     if (name != null) agent.name = name;
@@ -92,6 +102,10 @@ export class AgentService {
     }
     if (mcpServerIds != null) {
       agent.mcpServerIds = mcpServerIds.length === 0 ? null : JSON.stringify(mcpServerIds);
+    }
+    if (defaultModelId !== undefined) {
+      await this.requireEnabledModel(defaultModelId);
+      agent.defaultModelId = defaultModelId;
     }
     if (isDefault != null) {
       if (isDefault === 1) {
@@ -112,6 +126,16 @@ export class AgentService {
     }
     await this.experienceService.deleteByAgentId(id);
     await this.agentRepo.deleteById(id);
+  }
+
+  /** 默认模型必须存在且启用；null/undefined 表示未配置，直接跳过 */
+  private async requireEnabledModel(defaultModelId: number | null | undefined): Promise<void> {
+    if (defaultModelId == null) return;
+    if (this.modelLookup == null) return;
+    const model = await this.modelLookup.findById(defaultModelId);
+    if (model == null || model.status !== 1) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '默认模型不存在或未启用');
+    }
   }
 
   async removeSkillNameFromAll(skillName: string): Promise<number> {

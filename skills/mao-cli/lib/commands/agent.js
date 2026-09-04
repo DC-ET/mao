@@ -35,6 +35,7 @@ function buildAgentBody(flags, { requireCore = false } = {}) {
   const skillNames = parseCsv(optionalString(flags, 'skill-names'));
   const experiences = parseJsonFlag(flags, 'experiences-json');
   const isDefault = optionalBoolean(flags, 'is-default');
+  const defaultModelId = optionalNumber(flags, 'default-model-id');
 
   if (requireCore) {
     body.name = requireString(flags, 'name', 'Agent 名称');
@@ -48,6 +49,7 @@ function buildAgentBody(flags, { requireCore = false } = {}) {
   if (skillNames !== undefined) body.skillNames = skillNames;
   if (experiences !== undefined) body.experiences = experiences;
   if (isDefault !== undefined) body.isDefault = isDefault ? 1 : 0;
+  if (defaultModelId !== undefined) body.defaultModelId = defaultModelId || null;
   return body;
 }
 

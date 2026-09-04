@@ -125,7 +125,11 @@ export function visiblePhase(phase: string | null | undefined): string {
   return phase === 'RESUMING' ? 'RUNNING' : phase ?? 'IDLE';
 }
 
-export function toSessionVO(session: Session, agentMap: Map<number, { name: string }>, modelMap: Map<number, LlmModelRef>): SessionVO {
+export function toSessionVO(
+  session: Session,
+  agentMap: Map<number, { name: string; defaultModelId?: number | null }>,
+  modelMap: Map<number, LlmModelRef>,
+): SessionVO {
   const vo: SessionVO = {
     id: session.id,
     agentId: session.agentId,
@@ -171,7 +175,12 @@ export function toSessionVO(session: Session, agentMap: Map<number, { name: stri
   if (agent) {
     vo.agentName = agent.name;
   }
-  let model = idMapGet(modelMap, session.modelId);
+  let model: LlmModelRef | null | undefined = idMapGet(modelMap, session.modelId);
+  if (model == null) {
+    // 未显式选模型：优先展示 Agent 默认模型，再回退全局默认
+    const agent = idMapGet(agentMap, session.agentId);
+    model = agent?.defaultModelId != null ? idMapGet(modelMap, agent.defaultModelId) ?? null : null;
+  }
   if (model == null) {
     model = modelMap.get(0);
   }
@@ -186,7 +195,7 @@ export function toSessionVO(session: Session, agentMap: Map<number, { name: stri
 export function toAdminSessionVO(
   session: Session,
   userMap: Map<number, { displayName?: string | null; username: string }>,
-  agentMap: Map<number, { name: string }>,
+  agentMap: Map<number, { name: string; defaultModelId?: number | null }>,
   modelMap: Map<number, LlmModelRef>,
 ): AdminSessionVO {
   const vo: AdminSessionVO = {
@@ -217,7 +226,12 @@ export function toAdminSessionVO(
       vo.agentName = agent.name;
     }
   }
-  let model = idMapGet(modelMap, session.modelId);
+  let model: LlmModelRef | null | undefined = idMapGet(modelMap, session.modelId);
+  if (model == null) {
+    // 未显式选模型：优先展示 Agent 默认模型，再回退全局默认
+    const agent = idMapGet(agentMap, session.agentId);
+    model = agent?.defaultModelId != null ? idMapGet(modelMap, agent.defaultModelId) ?? null : null;
+  }
   if (model == null) {
     model = modelMap.get(0);
   }

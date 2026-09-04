@@ -14,6 +14,7 @@ import type { SessionCompactionEventService } from './session-compaction-event.s
 import type { SessionTodoRepository, SubagentExecutionRepository } from './activity.repository.js';
 import type {
   AgentLookup,
+  AgentRef,
   ApprovalRegistry,
   AskUserQuestionsRegistry,
   LlmModelLookup,
@@ -88,16 +89,20 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     return session;
   }
 
-  async function batchLoadAgents(sessions: Session[]): Promise<Map<number, { id: number; name: string }>> {
+  async function batchLoadAgents(sessions: Session[]): Promise<Map<number, AgentRef>> {
     const ids = collectEntityIds(sessions.map((s) => s.agentId));
     if (ids.length === 0) return new Map();
     const agents = await agentLookup.findByIds(ids);
     return new Map(agents.map((a) => [parseEntityId(a.id) ?? a.id, a]));
   }
 
-  async function batchLoadModels(sessions: Session[]): Promise<Map<number, Awaited<ReturnType<LlmModelLookup['findById']>> & object>> {
+  async function batchLoadModels(sessions: Session[], agentMap: Map<number, AgentRef>): Promise<Map<number, Awaited<ReturnType<LlmModelLookup['findById']>> & object>> {
     const map = new Map<number, NonNullable<Awaited<ReturnType<LlmModelLookup['findById']>>>>();
-    const ids = collectEntityIds(sessions.map((s) => s.modelId));
+    // 会话显式模型 + Agent 默认模型一并加载（VO 展示回退链需要）
+    const agentModelIds = [...agentMap.values()]
+      .map((a) => a.defaultModelId)
+      .filter((id): id is number => id != null);
+    const ids = collectEntityIds([...sessions.map((s) => s.modelId), ...agentModelIds]);
     if (ids.length > 0) {
       const models = await modelLookup.findByIds(ids);
       for (const m of models) map.set(parseEntityId(m.id) ?? m.id, m);
@@ -111,7 +116,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 
   async function enrichSessions(sessions: Session[]): Promise<SessionVO[]> {
     const agentMap = await batchLoadAgents(sessions);
-    const modelMap = await batchLoadModels(sessions);
+    const modelMap = await batchLoadModels(sessions, agentMap);
     const vos = sessions.map((s) => toSessionVO(s, agentMap, modelMap));
     const mainIds = sessions.map((s) => s.id!).filter((id) => id != null);
     const sides = await sessionService.listSideTasksByParentIds(mainIds);

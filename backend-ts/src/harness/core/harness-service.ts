@@ -263,7 +263,16 @@ export class HarnessService {
     if (session == null) throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
     const agent = await this.agentMapper.selectById(session.agentId!);
     if (agent == null) throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
-    const llmModel = await this.resolveModel(session.modelId ?? null);
+    // 模型解析链：会话显式指定优先（不可解析保持报错）；未指定时 Agent 默认模型（不可解析时跳过）→ 全局默认模型
+    let llmModel: LlmModel | null;
+    if (session.modelId != null) {
+      llmModel = await this.resolveModel(session.modelId);
+    } else {
+      llmModel = agent.defaultModelId != null ? await this.llmModelMapper.selectById(agent.defaultModelId) : null;
+      if (llmModel == null) {
+        llmModel = await this.resolveModel(null);
+      }
+    }
     if (llmModel == null) throw new BusinessException(ErrorCode.MODEL_NOT_FOUND);
 
     const executionMode = session.executionMode ?? 'CLOUD';

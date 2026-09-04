@@ -47,6 +47,7 @@ export interface Agent {
   skillNames?: string | null;
   configJson?: string | null;
   mcpServerIds?: string | null;
+  defaultModelId?: number | null;
   compactionEnabled?: number | boolean | null;
   compactionContextWindowTokens?: number | null;
   compactionTriggerRatio?: number | null;

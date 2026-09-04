@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../../common/business-exception.js';
+import { ErrorCode } from '../../common/error-code.js';
 import { shanghaiYmd } from '../../common/json.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { AgentExecutionContext } from './agent-execution-context.js';
@@ -247,8 +248,36 @@ describe('HarnessService.buildContext and execute', () => {
     await expect(missingModel.service.buildContext(10)).rejects.toBeInstanceOf(BusinessException);
   });
 
-  it('buildContextLoadsCloudSessionAndFiltersWeixinTools', async () => {
-    const { service, skillSync, promptEngine, toolRegistry } = makeHarness();
+  it('modelResolutionPrefersAgentDefaultForSessionsWithoutExplicitModel', async () => {
+    // 会话未显式选模型：Agent 默认模型存在时优先于全局默认
+    const { service } = makeHarness();
+    service['llmModelMapper'].selectById.mockImplementation(async (id: number) =>
+      id === 9 ? { ...model(), id: 9, name: 'agent-model' } : null,
+    );
+    (service['agentMapper'].selectById as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 2, name: 'Coder', systemPrompt: 'You are a coder', defaultModelId: 9,
+    });
+    const session: Record<string, unknown> = {
+      id: 10, userId: 7, agentId: 2, executionMode: 'CLOUD',
+      projectKey: 'proj', workspace: '/ws', permissionLevel: 'READ_WRITE', modelId: null,
+    };
+    (service['sessionMapper'].selectById as ReturnType<typeof vi.fn>).mockResolvedValue(session);
+    const ctx = await service.buildContext(10);
+    expect(ctx.modelConfig?.id).toBe(9);
+
+    // Agent 默认模型不可解析：回退全局默认
+    service['llmModelMapper'].selectById.mockResolvedValue(null);
+    const ctxFallback = await service.buildContext(10);
+    expect(ctxFallback.modelConfig?.id).toBe(3);
+
+    // 会话显式指定模型但不可解析：保持报错，不静默回退
+    (session as { modelId: number | null }).modelId = 77;
+    await expect(service.buildContext(10)).rejects.toMatchObject({
+      code: ErrorCode.MODEL_NOT_FOUND.code,
+    });
+  });
+
+  it('buildContextLoadsCloudSessionAndFiltersWeixinTools', async () => {    const { service, skillSync, promptEngine, toolRegistry } = makeHarness();
     const ctx = await service.buildContext(10);
     expect(ctx.sessionId).toBe(10);
     expect(ctx.agentName).toBe('Coder');

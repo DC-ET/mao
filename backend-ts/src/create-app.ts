@@ -398,8 +398,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const agentRepo = new MysqlAgentRepository(db);
   const experienceService = new AgentExperienceService(new MysqlAgentExperienceRepository(db));
-  const agentService = new AgentService(agentRepo, experienceService);
   const modelRepo = new MysqlLlmModelRepository(db);
+  const agentService = new AgentService(agentRepo, experienceService, modelRepo);
   const modelChatClient = new OpenAiChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
   const anthropicChatClient = new AnthropicChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
   const responsesChatClient = new ResponsesChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });

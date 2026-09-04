@@ -33,6 +33,7 @@ interface CreateAgentRequest {
   mcpServerIds?: number[];
   experiences?: ExperienceVO[];
   isDefault?: number | null;
+  defaultModelId?: number | null;
 }
 
 interface UpdateAgentRequest {
@@ -43,6 +44,7 @@ interface UpdateAgentRequest {
   mcpServerIds?: number[] | null;
   experiences?: ExperienceVO[] | null;
   isDefault?: number | null;
+  defaultModelId?: number | null;
 }
 
 interface ExperienceRequest {
@@ -93,6 +95,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       mcpServerIds,
       toExperienceInputs(body.experiences),
       body.isDefault,
+      body.defaultModelId,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -110,6 +113,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       mcpServerIds,
       toExperienceInputs(body.experiences),
       body.isDefault,
+      body.defaultModelId,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -179,6 +183,7 @@ async function toVO(agent: Agent, agentService: AgentService, userRepo: UserRepo
     systemPrompt: agent.systemPrompt,
     creatorId: agent.creatorId,
     isDefault: agent.isDefault != null && agent.isDefault === 1,
+    defaultModelId: agent.defaultModelId ?? null,
     createdAt: agent.createdAt ?? null,
     experiences: [],
   };

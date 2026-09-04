@@ -100,6 +100,23 @@
         <el-switch v-model="form.isDefault" />
         <span class="form-hint">开启后，新建会话未指定 Agent 时将使用该智能体</span>
       </el-form-item>
+      <el-form-item label="默认模型">
+        <el-select
+          v-model="form.defaultModelId"
+          filterable
+          clearable
+          placeholder="跟随系统默认模型"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="m in models"
+            :key="m.id"
+            :label="m.name"
+            :value="m.id"
+          />
+        </el-select>
+        <div class="form-hint">该 Agent 的会话未手动选择模型时优先使用；留空则跟随系统默认模型</div>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="$emit('update:visible', false)">取消</el-button>
@@ -150,6 +167,7 @@ const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const skillDocs = ref<any[]>([])
 const mcpServers = ref<any[]>([])
+const models = ref<any[]>([])
 let experienceKeySeq = 0
 
 const form = reactive({
@@ -159,7 +177,8 @@ const form = reactive({
   skillNames: [] as string[],
   mcpServerIds: [] as number[],
   experiences: [] as ExperienceFormItem[],
-  isDefault: false
+  isDefault: false,
+  defaultModelId: null as number | null
 })
 
 const rules: FormRules = {
@@ -191,7 +210,8 @@ function resetForm() {
     skillNames: [],
     mcpServerIds: [],
     experiences: [],
-    isDefault: false
+    isDefault: false,
+    defaultModelId: null
   })
 }
 
@@ -250,7 +270,8 @@ watch(() => props.visible, async (val) => {
       skillNames: props.agentData.skillNames || [],
       mcpServerIds: props.agentData.mcpServerIds || [],
       experiences: mapExperiences(props.agentData.experiences, props.mode === 'edit'),
-      isDefault: props.mode === 'copy' ? false : !!props.agentData.isDefault
+      isDefault: props.mode === 'copy' ? false : !!props.agentData.isDefault,
+      defaultModelId: props.mode === 'copy' ? null : props.agentData.defaultModelId ?? null
     })
   } else {
     resetForm()
@@ -270,6 +291,12 @@ async function loadOptions() {
   } catch {
     mcpServers.value = []
   }
+  try {
+    const { data: modelData } = await api.get('/models/active')
+    models.value = modelData || []
+  } catch {
+    models.value = []
+  }
 }
 
 async function handleSubmit() {
@@ -284,6 +311,7 @@ async function handleSubmit() {
     skillNames: form.skillNames,
     mcpServerIds: form.mcpServerIds,
     isDefault: form.isDefault ? 1 : 0,
+    defaultModelId: form.defaultModelId || null,
     experiences: form.experiences.map((item, index) => ({
       id: isEdit.value ? item.id ?? null : null,
       content: item.content.trim(),

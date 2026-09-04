@@ -10,6 +10,7 @@ export interface Agent {
   configJson?: string | null;
   skillNames?: string | null;
   mcpServerIds?: string | null;
+  defaultModelId?: number | null;
   isDefault?: number | null;
   deleted?: number;
   createdAt?: string | null;

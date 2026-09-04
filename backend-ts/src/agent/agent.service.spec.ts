@@ -102,4 +102,53 @@ describe('AgentService', () => {
     vi.mocked(agentRepo.findDefault).mockResolvedValue(null);
     await expect(service.requireDefaultAgent()).rejects.toBeInstanceOf(BusinessException);
   });
+
+  describe('defaultModelId', () => {
+    const modelLookup = {
+      findById: vi.fn(async (id: number) =>
+        id === 7 ? { id: 7, status: 1 } : id === 8 ? { id: 8, status: 0 } : null,
+      ),
+    };
+    const serviceWithLookup = new AgentService(agentRepo, experienceService, modelLookup);
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      vi.mocked(agentRepo.findById).mockResolvedValue(agent(1, 'a', 0));
+    });
+
+    it('createRejectsMissingOrDisabledModel', async () => {
+      await expect(
+        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, 0, 404),
+      ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+      await expect(
+        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, 0, 8),
+      ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+      expect(agentRepo.insert).not.toHaveBeenCalled();
+    });
+
+    it('createAcceptsEnabledModelAndNullClearsOnUpdate', async () => {
+      const created = await serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, 0, 7);
+      expect(created.defaultModelId).toBe(7);
+
+      await serviceWithLookup.updateAgent(1, null, null, null, null, null, null, null, null);
+      const updated = vi.mocked(agentRepo.updateById).mock.calls.at(-1)![0] as Agent;
+      expect(updated.defaultModelId).toBeNull();
+    });
+
+    it('updateKeepsValueWhenUndefinedAndValidatesWhenSet', async () => {
+      const existing = agent(1, 'a', 0);
+      existing.defaultModelId = 7;
+      vi.mocked(agentRepo.findById).mockResolvedValue(existing);
+
+      // undefined：不改动
+      await serviceWithLookup.updateAgent(1, 'renamed', null, null, null, null, null, null, undefined);
+      expect(existing.defaultModelId).toBe(7);
+
+      // 非法值：报错且不落库
+      await expect(
+        serviceWithLookup.updateAgent(1, null, null, null, null, null, null, null, 404),
+      ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+      expect(agentRepo.updateById).toHaveBeenCalledTimes(1);
+    });
+  });
 });
