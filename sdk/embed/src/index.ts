@@ -21,7 +21,11 @@ function createInstance(options: MaoChatInitOptions): MaoChatInstance {
   }
 
   const ui = createUiState(options);
-  const { cleanup } = mountApp(ui);
+  const { cleanup, root } = mountApp(ui);
+  // 主题主色：内联覆写 .mao-root 的 --mao-primary（规则内默认值优先级高于 host 继承）
+  if (options.theme?.primary) {
+    root.style.setProperty('--mao-primary', options.theme.primary);
+  }
   const controller = new EmbedController(options, ui, (event) => {
     try {
       options.onEvent?.(event);

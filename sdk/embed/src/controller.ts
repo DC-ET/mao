@@ -48,7 +48,7 @@ export function createUiState(options: MaoChatInitOptions): UiState {
 }
 
 /** Shadow DOM 挂载：launcher 与 panel 同挂一个 host */
-export function mountApp(ui: UiState): { app: VueApp; host: HTMLElement; cleanup: () => void } {
+export function mountApp(ui: UiState): { app: VueApp; host: HTMLElement; root: HTMLElement; cleanup: () => void } {
   const host = document.createElement('div');
   host.id = 'mao-chat-embed-host';
   document.body.appendChild(host);
@@ -59,8 +59,8 @@ export function mountApp(ui: UiState): { app: VueApp; host: HTMLElement; cleanup
   shadow.appendChild(styleEl);
 
   const mountEl = document.createElement('div');
+  mountEl.className = 'mao-root';
   shadow.appendChild(mountEl);
-
   const app = createApp(RootApp, {
     ui,
     onLauncherClick: () => getController()?.toggle(),
@@ -74,7 +74,7 @@ export function mountApp(ui: UiState): { app: VueApp; host: HTMLElement; cleanup
   });
   app.mount(mountEl);
 
-  return { app, host, cleanup: () => { app.unmount(); host.remove(); } };
+  return { app, host, root: mountEl, cleanup: () => { app.unmount(); host.remove(); } };
 }
 
 // 模块级单例：RootApp 的 props 回调经 getController() 转发
