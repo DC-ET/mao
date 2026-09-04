@@ -7,6 +7,7 @@ import { ElMessage } from 'element-plus'
 import '@xterm/xterm/css/xterm.css'
 import { api } from '../api'
 import { useSessionStore } from '../stores/session'
+import { installImeTextareaSweeper, shouldInstallImeSweeper } from '../utils/terminal-ime-guard'
 import { useTerminalWS } from './useTerminalWS'
 
 const DARK_THEME = {
@@ -402,6 +403,11 @@ export function useTerminal() {
       if (element.parentElement !== container) container.appendChild(element)
     } else {
       inst.terminal.open(container)
+      // textarea 只在 open() 之后存在；移动端输入法会让其累积值被整段重发（见 terminal-ime-guard）
+      const textarea = inst.terminal.textarea
+      if (textarea && shouldInstallImeSweeper()) {
+        inst.disposers.push(installImeTextareaSweeper(textarea))
+      }
     }
     nextTick(() => {
       inst.fitAddon.fit()

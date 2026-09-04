@@ -81,6 +81,7 @@ CLI 只读诊断：`mao file workspace-*`（见 [file.md](file.md)）。
 - **自动回收**：空闲超时、最长存活、每任务/全局上限见 [settings.md](settings.md) 的 `terminal.*`；删除任务会一并关闭其终端。
 - **搜索**：面板内 `Ctrl+F` 打开搜索栏（上一个 / 下一个 / 结果计数，`Esc` 关闭）。
 - **安卓**：底部虚拟按键条（Esc / Tab / Ctrl 粘滞 / 方向键 / Ctrl+C / Ctrl+D / 粘贴），软键盘弹出时面板自动避让。
+- **移动端输入法**：xterm 的隐藏输入框会累积已输入内容，移动端输入法提交字符时可能被整段重发（[xterm.js#6078](https://github.com/xtermjs/xterm.js/issues/6078)）。触屏端已安装清扫器（`desktop/src/utils/terminal-ime-guard.ts`）在按键后清空该累积值，桌面端保持 xterm 原生行为。
 
 云端终端没有路径沙箱与命令白名单，权限等同后端服务账号，仅应授予受信任的管理员。
 
