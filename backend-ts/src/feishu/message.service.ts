@@ -70,7 +70,8 @@ export class FeishuMessageService {
     });
   }
 
-  /** 记录私聊消息 → 会话映射（INSERT IGNORE 防重，失败不阻断主流程）。 */  async recordP2pMessage(accountId: string, messageId: string | null | undefined, sessionId: number, direction: 'IN' | 'OUT'): Promise<void> {
+  /** 记录私聊消息 → 会话映射（INSERT IGNORE 防重，失败不阻断主流程）。 */
+  async recordP2pMessage(accountId: string, messageId: string | null | undefined, sessionId: number, direction: 'IN' | 'OUT'): Promise<void> {
     if (messageId == null || messageId === '') return;
     try {
       await this.repository.recordP2pMessage(accountId, messageId, sessionId, direction);
