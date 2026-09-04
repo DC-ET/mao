@@ -54,6 +54,22 @@ function normalizeApiProtocol(value: string | null | undefined): string | null {
   return trimmed === 'openai-compatible' ? '' : trimmed;
 }
 
+const EFFORT_VALUES = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+/** 校验并归一 reasoning effort：空串表示使用协议默认值；null/undefined 表示未提供。 */
+function normalizeEffort(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (trimmed === '') return '';
+  if (!(EFFORT_VALUES as readonly string[]).includes(trimmed)) {
+    throw new BusinessException(
+      ErrorCode.PARAM_INVALID.code,
+      `effort 只能是 ${EFFORT_VALUES.join(' / ')} 或留空`,
+    );
+  }
+  return trimmed;
+}
+
 export class ModelService {
   constructor(
     private readonly modelRepo: LlmModelRepository,
@@ -128,6 +144,7 @@ export class ModelService {
     modelType: string | null | undefined,
     clientImpersonation: string | null | undefined,
     apiProtocol: string | null | undefined,
+    effort: string | null | undefined,
   ): Promise<LlmModel> {
     if (isDefault != null && isDefault === 1) {
       await this.modelRepo.clearDefaultFlag();
@@ -136,6 +153,7 @@ export class ModelService {
       name,
       provider,
       apiProtocol: normalizeApiProtocol(apiProtocol) ?? '',
+      effort: normalizeEffort(effort) ?? '',
       baseUrl,
       apiKey,
       modelId,
@@ -163,12 +181,15 @@ export class ModelService {
     modelType: string | null | undefined,
     clientImpersonation: string | null | undefined,
     apiProtocol: string | null | undefined,
+    effort: string | null | undefined,
   ): Promise<LlmModel> {
     const model = await this.getModel(id);
     if (name != null) model.name = name;
     if (provider != null) model.provider = provider;
     const apiProtocolValue = normalizeApiProtocol(apiProtocol);
     if (apiProtocolValue != null) model.apiProtocol = apiProtocolValue;
+    const effortValue = normalizeEffort(effort);
+    if (effortValue != null) model.effort = effortValue;
     if (baseUrl != null) model.baseUrl = baseUrl;
     if (apiKey != null) model.apiKey = apiKey;
     if (modelId != null) model.modelId = modelId;

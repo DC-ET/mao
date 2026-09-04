@@ -17,6 +17,18 @@
 
 ---
 
+## 0.0.104 (2026-09-04)
+
+### 后端
+
+- 模型「推理力度」（reasoning effort）配置化：`llm_model` 表新增 `effort` 字段（可选值 `none` / `low` / `medium` / `high` / `xhigh` / `max`，留空使用协议默认值 `high`），创建/更新模型接口支持传入并严格校验；主对话请求的 reasoning effort 改为按模型「API 协议」驱动——OpenAI 兼容与 Responses 协议按模型配置发送（替代此前按模型 ID `gpt-` 前缀硬编码 `high` 的判断），Anthropic 协议不发送；修正 ChatCompletions 序列化格式：`reasoning.effort` 对象改为 OpenAI 官方规格的顶层字符串参数 `reasoning_effort`，Responses 协议仍为 `reasoning: { effort }` 对象；Git 提交信息、会话标题等辅助调用的推理禁用行为不变
+
+### 管理后台
+
+- 模型表单新增「推理力度」下拉框（默认（high）/ None / Low / Medium / High / X-High / Max），仅当模型类型为文本且 API 协议非 Anthropic 时显示
+
+---
+
 ## 0.0.103 (2026-09-04)
 
 ### 后端

@@ -14,6 +14,7 @@ interface CreateModelRequest {
   name?: string;
   provider?: string;
   apiProtocol?: string;
+  effort?: string;
   baseUrl?: string;
   apiKey?: string;
   modelId?: string;
@@ -100,6 +101,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.modelType,
       body.clientImpersonation,
       body.apiProtocol,
+      body.effort,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -120,6 +122,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.modelType,
       body.clientImpersonation,
       body.apiProtocol,
+      body.effort,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -155,6 +158,7 @@ function toVO(entity: LlmModel, revealApiKey: boolean): ModelVO {
     name: entity.name,
     provider: entity.provider,
     apiProtocol: entity.apiProtocol,
+    effort: entity.effort,
     baseUrl: entity.baseUrl,
     apiKey: revealApiKey ? entity.apiKey : maskApiKey(entity.apiKey),
     modelId: entity.modelId,

@@ -134,6 +134,8 @@ export interface LlmModelConfig {
   name?: string;
   provider?: string;
   apiProtocol?: string;
+  /** reasoning effort：none/low/medium/high/xhigh/max，缺失/空串=协议默认值（high） */
+  effort?: string;
   baseUrl?: string;
   apiKey?: string;
   modelId?: string;

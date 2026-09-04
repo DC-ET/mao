@@ -6,6 +6,8 @@ export interface LlmModel {
   name: string;
   provider?: string | null;
   apiProtocol?: string | null;
+  /** reasoning effort：none/low/medium/high/xhigh/max，空串=协议默认值（high） */
+  effort?: string | null;
   baseUrl: string;
   apiKey: string;
   modelId: string;
@@ -88,6 +90,7 @@ export interface LlmModelConfig {
   name?: string;
   provider?: string | null;
   apiProtocol?: string | null;
+  effort?: string | null;
   baseUrl: string;
   apiKey: string;
   modelId: string;
