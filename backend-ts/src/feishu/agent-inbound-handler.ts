@@ -37,8 +37,8 @@ export interface FeishuP2pSessionControl {
   findSessionByMessageId(accountId: string, messageId: string): Promise<number | null>;
   /** 记录消息 → 会话映射（INSERT IGNORE 防重，内部容错不抛）。 */
   recordMessageMapping(accountId: string, messageId: string | null | undefined, sessionId: number, direction: 'IN' | 'OUT'): Promise<void>;
-  /** 新会话首条消息命名（实现方需守卫默认标题，避免覆盖用户/LLM 改名）。 */
-  renameSessionFromFirstMessage?(sessionId: number, title: string): Promise<void>;
+  /** 新会话首条消息命名（持久化待命名标志驱动，非新会话/已命名时为 no-op）。 */
+  finalizeNewSessionTitle?(sessionId: number, title: string): Promise<boolean>;
 }
 
 /** `---` 新建会话指令：trim 后为 3 个及以上半角连字符或全角破折号的宽松变体集合。 */
@@ -104,8 +104,6 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   private readonly interrupted = new Set<number>();
   /** p2p chat 级互斥：序列化指令判定→指针切换→归属确定的临界区（key = accountId:sender）。 */
   private readonly p2pChatMutex = new Map<string, Promise<void>>();
-  /** `---` 新建、等待首条消息命名的会话集合。 */
-  private readonly pendingTitleSessionIds = new Set<number>();
 
   constructor(private readonly options: {
     sessionService: FeishuSessionAdapter;
@@ -228,7 +226,6 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     if (isNewSessionCommand(context.text)) {
       try {
         const created = await control.createSession(accountId, context);
-        this.pendingTitleSessionIds.add(created.id);
         await control.recordMessageMapping(accountId, context.messageId, created.id, 'IN');
         return { intercepted: true, confirm: { text: NEW_SESSION_CONFIRM_TEXT, sessionId: created.id } };
       } catch (error) {
@@ -264,24 +261,18 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     return { intercepted: false, ...(confirm != null ? { confirm } : {}), session };
   }
 
-  /** 新会话首条消息命名：取消息文本前 20 字（仅 `---` 新建的会话触发一次）。 */
+  /** 新会话首条消息命名：取消息文本前 20 字（由持久化待命名标志驱动，非新会话为 no-op）。 */
   private async renameNewP2pSessionIfNeeded(sessionId: number, context: FeishuInboundContext): Promise<void> {
-    if (!this.pendingTitleSessionIds.has(sessionId)) return;
-    this.pendingTitleSessionIds.delete(sessionId);
-    const rename = this.options.p2pSessionControl?.renameSessionFromFirstMessage;
-    if (rename == null) return;
+    const finalize = this.options.p2pSessionControl?.finalizeNewSessionTitle;
+    if (finalize == null) return;
     const text = context.text?.trim() ?? '';
     if (text === '') return;
     const title = text.length > NEW_SESSION_TITLE_MAX_CHARS ? text.slice(0, NEW_SESSION_TITLE_MAX_CHARS) : text;
     try {
-      await rename(sessionId, title);
+      await finalize(sessionId, title);
     } catch (error) {
       console.warn(`飞书新会话命名失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }
-
-  private async recordInboundMapping(context: FeishuInboundContext, sessionId: number): Promise<void> {
-    await this.options.p2pSessionControl?.recordMessageMapping(context.accountId, context.messageId, sessionId, 'IN');
   }
 
   /** 群聊入站：原逻辑不变（`---` 作为普通文本进入群会话，引用消息只注入内容不做切换）。 */

@@ -27,6 +27,11 @@ describe('FeishuMessageService', () => {
       listGroupMessages: vi.fn(async () => []),
       listOverflowGroupMessages: vi.fn(async () => []),
       addGroupMember: vi.fn(),
+      recordP2pMessage: vi.fn(async () => undefined),
+      findP2pMessageSession: vi.fn(async () => null),
+      upsertSessionChannel: vi.fn(async () => undefined),
+      findSessionChannel: vi.fn(async () => null),
+      clearAwaitingFirstMessageTitle: vi.fn(async () => undefined),
       ...overrides,
     };
   }
@@ -224,6 +229,26 @@ describe('FeishuMessageService', () => {
     expect(repository.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
       appId: '1', chatId: 'p2p:union:on_user', sessionId: 20, ownerUserId: 3, workspace: '/ws/private-3',
     }));
+    // 新会话标记「等待首条消息命名」（持久化，重启安全）。
+    expect(repository.upsertSessionChannel).toHaveBeenCalledWith(20, '1', 'p2p:union:on_user', 'p2p', true);
+  });
+
+  it('finds session channel and clears the awaiting-title flag tolerantly', async () => {
+    const repository = makeRepo({
+      findSessionChannel: vi.fn(async () => ({ sessionId: 7, appId: '1', chatId: 'p2p:union:on_user', chatType: 'p2p', awaitingFirstMessageTitle: 1 })),
+    });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    expect(await service.findSessionChannel(7)).toEqual(expect.objectContaining({ awaitingFirstMessageTitle: 1 }));
+    await service.clearAwaitingFirstMessageTitle(7);
+    expect(repository.clearAwaitingFirstMessageTitle).toHaveBeenCalledWith(7);
+    // DB 异常降级 null / 不抛。
+    const failing = makeRepo({
+      findSessionChannel: vi.fn(async () => { throw new Error('db down'); }),
+      clearAwaitingFirstMessageTitle: vi.fn(async () => { throw new Error('db down'); }),
+    });
+    const serviceFailing = new FeishuMessageService(failing as never, { create: vi.fn() } as never, 20, 120);
+    expect(await serviceFailing.findSessionChannel(7)).toBeNull();
+    await expect(serviceFailing.clearAwaitingFirstMessageTitle(7)).resolves.toBeUndefined();
   });
 
   it('switches the p2p active pointer preserving owner and workspace', async () => {

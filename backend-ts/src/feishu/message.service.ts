@@ -39,12 +39,15 @@ export class FeishuMessageService {
    * `---` 新建私聊会话：创建新 session 并把活跃指针切到它（chat 级锁内）。
    * 工作区由 sessionFactory 按 `private-{userId}` 固定分配，同一私聊所有会话天然共享根工作区。
    * 返回新会话行；sessionFactory 抛错时向上传播（调用方回复失败提示）。
+   * 新会话标记「等待首条消息命名」（持久化，重启安全）。
    */
   async createP2pSession(accountId: string, context: FeishuInboundContext, userId?: number): Promise<FeishuConversation> {
     const chatId = p2pChatIdOf(context);
     return this.withChatLock(`${accountId}:${chatId}`, async () => {
       const session = await this.sessionFactory.create(accountId, context);
-      return this.repository.saveConversation({ appId: accountId, chatId, sessionId: session.sessionId, ownerUserId: session.ownerUserId, workspace: session.workspace });
+      const conversation = await this.repository.saveConversation({ appId: accountId, chatId, sessionId: session.sessionId, ownerUserId: session.ownerUserId, workspace: session.workspace });
+      await this.repository.upsertSessionChannel(session.sessionId, accountId, chatId, 'p2p', true);
+      return conversation;
     });
   }
 
@@ -61,8 +64,7 @@ export class FeishuMessageService {
     });
   }
 
-  /** 记录私聊消息 → 会话映射（INSERT IGNORE 防重，失败不阻断主流程）。 */
-  async recordP2pMessage(accountId: string, messageId: string | null | undefined, sessionId: number, direction: 'IN' | 'OUT'): Promise<void> {
+  /** 记录私聊消息 → 会话映射（INSERT IGNORE 防重，失败不阻断主流程）。 */  async recordP2pMessage(accountId: string, messageId: string | null | undefined, sessionId: number, direction: 'IN' | 'OUT'): Promise<void> {
     if (messageId == null || messageId === '') return;
     try {
       await this.repository.recordP2pMessage(accountId, messageId, sessionId, direction);
@@ -79,6 +81,25 @@ export class FeishuMessageService {
     } catch (error) {
       console.warn(`飞书私聊消息映射查询失败, appId=${accountId}, messageId=${messageId}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
+    }
+  }
+
+  /** 按会话查飞书通道绑定（创建时落行、不可变，活跃指针切换不影响）；查询失败降级 null。 */
+  async findSessionChannel(sessionId: number): Promise<{ sessionId: number; appId: string; chatId: string; chatType: 'p2p' | 'group'; awaitingFirstMessageTitle: number } | null> {
+    try {
+      return await this.repository.findSessionChannel(sessionId);
+    } catch (error) {
+      console.warn(`飞书会话通道绑定查询失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  /** 清除「等待首条消息命名」标志（命名完成后由装配层调用，失败仅记日志）。 */
+  async clearAwaitingFirstMessageTitle(sessionId: number): Promise<void> {
+    try {
+      await this.repository.clearAwaitingFirstMessageTitle(sessionId);
+    } catch (error) {
+      console.warn(`清除飞书待命名标志失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

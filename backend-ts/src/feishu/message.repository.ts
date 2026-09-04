@@ -31,8 +31,6 @@ export interface FeishuGroupMessage {
 
 export interface FeishuMessageRepository {
   findGroupConversation(appId: string, chatId: string, ownerUserId?: number): Promise<FeishuConversation | null>;
-  /** 按会话 ID 反查飞书会话（工具层用于定位会话所属 bot）。 */
-  findConversationBySessionId(sessionId: number): Promise<FeishuConversation | null>;
   /** 按消息 ID 查询群消息中的媒体元数据（下载工具用）。 */
   findMediaByMessageId(messageId: string): Promise<{ appId: string; fileKey: string | null; fileName: string | null; msgType: string | null } | null>;
   /** 按消息 ID 查询群消息完整记录（引用消息内容预取优先走日志，免 API 调用）。 */
@@ -58,6 +56,12 @@ export interface FeishuMessageRepository {
   recordP2pMessage(appId: string, messageId: string, sessionId: number, direction: 'IN' | 'OUT'): Promise<void>;
   /** 按飞书消息 ID 查询归属会话 ID；未记录返回 null。 */
   findP2pMessageSession(appId: string, messageId: string): Promise<number | null>;
+  /** 会话 → 飞书通道绑定（创建时落行、不可变）：session_id 唯一， upsert 幂等。 */
+  upsertSessionChannel(sessionId: number, appId: string, chatId: string, chatType: 'p2p' | 'group', awaitingFirstMessageTitle?: boolean): Promise<void>;
+  /** 按会话查通道绑定；非飞书会话返回 null。 */
+  findSessionChannel(sessionId: number): Promise<{ sessionId: number; appId: string; chatId: string; chatType: 'p2p' | 'group'; awaitingFirstMessageTitle: number } | null>;
+  /** 清除「等待首条消息命名」标志（命名完成后调用，幂等）。 */
+  clearAwaitingFirstMessageTitle(sessionId: number): Promise<void>;
 }
 
 /** Persistence boundary for Feishu conversations. Session creation is deliberately
@@ -71,10 +75,6 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
       : 'SELECT * FROM feishu_chat WHERE app_id = ? AND chat_id = ? AND owner_user_id = ? LIMIT 1';
     const params = ownerUserId == null ? [appId, chatId] : [appId, chatId, ownerUserId];
     return this.db.queryOne<FeishuConversation>(sql, params);
-  }
-
-  findConversationBySessionId(sessionId: number): Promise<FeishuConversation | null> {
-    return this.db.queryOne<FeishuConversation>('SELECT * FROM feishu_chat WHERE session_id = ? LIMIT 1', [sessionId]);
   }
 
   findMediaByMessageId(messageId: string): Promise<{ appId: string; fileKey: string | null; fileName: string | null; msgType: string | null } | null> {
@@ -97,6 +97,12 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
        VALUES (?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE session_id = VALUES(session_id), owner_user_id = VALUES(owner_user_id), workspace = VALUES(workspace)`,
       [conversation.appId, conversation.chatId, conversation.sessionId, conversation.ownerUserId, conversation.workspace ?? null],
+    );
+    // 会话 → 通道绑定（不可变）：任何会话行写入路径同步落绑定，活跃指针切换不影响反查。
+    // awaiting_first_message_title 不在 ON DUPLICATE 中重置（`---` 新建的待命名标志只由命名动作清除）。
+    await this.upsertSessionChannel(
+      conversation.sessionId, conversation.appId, conversation.chatId,
+      conversation.chatId.startsWith('p2p:') ? 'p2p' : 'group',
     );
     const saved = await this.findGroupConversation(conversation.appId, conversation.chatId);
     if (saved == null) throw new Error('Failed to save Feishu conversation');
@@ -210,5 +216,28 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
       [appId, messageId],
     );
     return row?.session_id ?? null;
+  }
+
+  async upsertSessionChannel(sessionId: number, appId: string, chatId: string, chatType: 'p2p' | 'group', awaitingFirstMessageTitle = false): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO feishu_session_channel (session_id, app_id, chat_id, chat_type, awaiting_first_message_title)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE app_id = VALUES(app_id), chat_id = VALUES(chat_id), chat_type = VALUES(chat_type)`,
+      [sessionId, appId, chatId, chatType, awaitingFirstMessageTitle ? 1 : 0],
+    );
+  }
+
+  findSessionChannel(sessionId: number): Promise<{ sessionId: number; appId: string; chatId: string; chatType: 'p2p' | 'group'; awaitingFirstMessageTitle: number } | null> {
+    return this.db.queryOne(
+      'SELECT session_id, app_id, chat_id, chat_type, awaiting_first_message_title FROM feishu_session_channel WHERE session_id = ? LIMIT 1',
+      [sessionId],
+    );
+  }
+
+  async clearAwaitingFirstMessageTitle(sessionId: number): Promise<void> {
+    await this.db.execute(
+      'UPDATE feishu_session_channel SET awaiting_first_message_title = 0 WHERE session_id = ?',
+      [sessionId],
+    );
   }
 }

@@ -726,8 +726,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     feishuToolSupport: {
       resolveBotAppId: async (sessionId) => {
         if (sessionId == null) return null;
-        const conversation = await feishuMessageRepository.findConversationBySessionId(sessionId);
-        return conversation?.appId ?? null;
+        // 会话 → 通道绑定（创建时落行、不可变）：多会话并行下活跃指针行查不到非活跃会话，必须走绑定表。
+        const channel = await feishuMessageService.findSessionChannel(sessionId);
+        return channel?.appId ?? null;
       },
     },
     feishuDocReader: {
@@ -757,8 +758,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     feishuMediaSendSupport: {
       resolveSendTarget: async (sessionId) => {
         if (sessionId == null) return null;
-        const conversation = await feishuMessageRepository.findConversationBySessionId(sessionId);
-        return conversation == null ? null : feishuSendTargetOf(conversation.appId, conversation.chatId);
+        // 会话 → 通道绑定（创建时落行、不可变）：多会话并行下活跃指针行查不到非活跃会话，必须走绑定表。
+        const channel = await feishuMessageService.findSessionChannel(sessionId);
+        return channel == null ? null : feishuSendTargetOf(channel.appId, channel.chatId);
       },
       sendImage: async (target, image, sessionId) => {
         const client = await getFeishuClient(Number(target.appId));
@@ -766,8 +768,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         const messageId = await sendFeishuImage(client, target, image);
         // 私聊图片出站消息可被回复/引用，记录归属映射供引用切换定位。
         if (messageId != null && sessionId != null && target.receiveIdType !== 'chat_id') {
-          const conversation = await feishuMessageRepository.findConversationBySessionId(sessionId);
-          if (conversation != null) await feishuMessageService.recordP2pMessage(conversation.appId, messageId, sessionId, 'OUT');
+          await feishuMessageService.recordP2pMessage(target.appId, messageId, sessionId, 'OUT');
         }
       },
       sendFile: async (target, fileName, file, sessionId) => {
@@ -775,8 +776,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         if (client == null) throw new Error(`飞书Bot不存在或未启用: ${target.appId}`);
         const messageId = await sendFeishuFile(client, target, fileName, file);
         if (messageId != null && sessionId != null && target.receiveIdType !== 'chat_id') {
-          const conversation = await feishuMessageRepository.findConversationBySessionId(sessionId);
-          if (conversation != null) await feishuMessageService.recordP2pMessage(conversation.appId, messageId, sessionId, 'OUT');
+          await feishuMessageService.recordP2pMessage(target.appId, messageId, sessionId, 'OUT');
         }
       },
     },
@@ -1228,6 +1228,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       },
       switchSession: async (accountId, context, targetSessionId) => {
         const triggerUserId = await resolveFeishuUserId(accountId, context);
+        // 换绑越权守卫：目标会话必须属于当前绑定的 mao 用户（引用旧消息不能切入他人会话）。
+        if (triggerUserId != null) {
+          const targetSession = await sessionService.getSession(targetSessionId);
+          if (targetSession?.userId != null && targetSession.userId !== triggerUserId) {
+            console.warn(`飞书引用切换拒绝: 目标会话归属其他用户, sessionId=${targetSessionId}, owner=${targetSession.userId}, trigger=${triggerUserId}`);
+            return null;
+          }
+        }
         const conversation = await feishuMessageService.switchP2pSession(accountId, context, targetSessionId, triggerUserId);
         if (conversation == null) return null;
         await applyFeishuBotConfig(conversation.sessionId, Number(accountId));
@@ -1235,11 +1243,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       },
       findSessionByMessageId: (accountId, messageId) => feishuMessageService.findP2pMessageSession(accountId, messageId),
       recordMessageMapping: (accountId, messageId, sessionId, direction) => feishuMessageService.recordP2pMessage(accountId, messageId, sessionId, direction),
-      renameSessionFromFirstMessage: async (sessionId, title) => {
+      finalizeNewSessionTitle: async (sessionId, title) => {
+        // 持久化待命名标志驱动（重启安全）：非新会话/标题已被改过时为 no-op。
+        const channel = await feishuMessageService.findSessionChannel(sessionId);
+        if (channel?.awaitingFirstMessageTitle !== 1) return false;
         const session = await sessionService.getSession(sessionId);
-        // 仅替换默认标题（飞书Bot会话），不覆盖用户/LLM 已改过的名字。
-        if (session == null || (session.title != null && session.title !== '飞书Bot会话')) return;
+        if (session == null) return false;
+        await feishuMessageService.clearAwaitingFirstMessageTitle(sessionId);
+        // 仅替换默认标题，不覆盖用户/LLM 已改过的名字。
+        if (session.title != null && session.title !== '飞书Bot会话') return false;
         await sessionRepo.updateFields(sessionId, { title });
+        return true;
       },
     },
     onReply: async (context, text, sessionId) => {
@@ -1354,11 +1368,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 定时任务结果回流飞书通道：按会话反查 feishu_chat 定位 bot 与会话（群聊 chat_id / 私聊身份键），
   // 非飞书会话查不到 conversation，自然跳过；卡片复用进度卡片的 COMPLETED 终态样式。
   scheduledService.setFeishuResultPusher(async (sessionId, text) => {
-    const conversation = await feishuMessageRepository.findConversationBySessionId(sessionId);
-    if (conversation == null) return;
-    const client = await getFeishuClient(Number(conversation.appId));
+    // 会话 → 通道绑定（创建时落行、不可变）：多会话并行下活跃指针行查不到非活跃会话，必须走绑定表。
+    const channel = await feishuMessageService.findSessionChannel(sessionId);
+    if (channel == null) return;
+    const client = await getFeishuClient(Number(channel.appId));
     if (client == null) return;
-    const target = feishuSendTargetOf(conversation.appId, conversation.chatId);
+    const target = feishuSendTargetOf(channel.appId, channel.chatId);
     const response = await client.im.v1.message.create({
       params: { receive_id_type: target.receiveIdType },
       data: {
@@ -1369,8 +1384,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
     // 私聊定时任务结果卡片可被回复/引用，记录卡片消息 → 会话映射供引用切换定位。
     const pushedMessageId = (response as { data?: { message_id?: string } }).data?.message_id ?? null;
-    if (pushedMessageId != null && target.receiveIdType === 'open_id') {
-      await feishuMessageService.recordP2pMessage(conversation.appId, pushedMessageId, sessionId, 'OUT');
+    if (pushedMessageId != null && channel.chatType === 'p2p') {
+      await feishuMessageService.recordP2pMessage(channel.appId, pushedMessageId, sessionId, 'OUT');
     }
   });
   const resolveFeishuSenderName = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {

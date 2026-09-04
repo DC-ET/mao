@@ -483,7 +483,7 @@ function makeP2pControl(overrides: Record<string, unknown> = {}) {
     switchSession: vi.fn(async () => ({ id: 5 })),
     findSessionByMessageId: vi.fn(async () => null),
     recordMessageMapping: vi.fn(async () => undefined),
-    renameSessionFromFirstMessage: vi.fn(async () => undefined),
+    finalizeNewSessionTitle: vi.fn(async () => true),
     ...overrides,
   };
 }
@@ -648,7 +648,7 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
   });
 
   it('renames a freshly created session from its first following message', async () => {
-    const sessionService = makeSessionService({ getOrCreateSession: vi.fn(async () => ({ id: 8 })) });
+    const sessionService = makeSessionService({ getOrCreateSession: vi.fn(async () => ({ id: 8, executionUserId: 42 })) });
     const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
     const control = makeP2pControl();
     const handler = new AgentFeishuInboundHandler({
@@ -657,14 +657,14 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
       listenerFactory: async () => listener,
       p2pSessionControl: control as never,
     });
-    // `---` 新建 → 下一条消息进入新会话并触发命名。
+    // `---` 新建 → 下一条消息进入新会话并触发命名（持久化标志驱动，handler 每条消息都尝试）。
     await handler.onMessage(makeP2pContext({ text: '---', messageId: 'om_new' }));
     const longText = '帮我把这份需求文档整理成一份可以直接给开发看的任务拆解清单，越细越好';
     await handler.onMessage(makeP2pContext({ text: longText, messageId: 'om_first' }));
-    expect(control.renameSessionFromFirstMessage).toHaveBeenCalledWith(8, longText.slice(0, 20));
-    // 命名只发生一次（第二条消息不再重复命名）。
-    await handler.onMessage(makeP2pContext({ text: '第二条', messageId: 'om_second' }));
-    expect(control.renameSessionFromFirstMessage).toHaveBeenCalledTimes(1);
+    expect(control.finalizeNewSessionTitle).toHaveBeenCalledWith(8, longText.slice(0, 20));
+    // 空文本消息不触发命名。
+    await handler.onMessage(makeP2pContext({ text: '', messageId: 'om_empty', messageType: 'image' }));
+    expect(control.finalizeNewSessionTitle).toHaveBeenCalledTimes(1);
   });
 
   it('treats --- in group chat as ordinary text (no session switch)', async () => {
