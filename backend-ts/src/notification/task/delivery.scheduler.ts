@@ -246,6 +246,9 @@ export class WebhookDeliveryScheduler {
   }
 
   private buildContent(delivery: TaskNotificationDelivery): string {
+    if (delivery.terminalPhase === 'ASK_USER') {
+      return `Mao Agent 提问通知\n任务：${delivery.titleSnapshot}\nAgent 向你发起了提问，正在等待回答\n请回到对话页面查看并回复\n时间：${formatDateTime(new Date())}`;
+    }
     const result = delivery.terminalPhase === 'COMPLETED' ? '已完成' : '执行失败';
     let content = `Mao Agent 任务通知\n任务：${delivery.titleSnapshot}\n结果：${result}\n时间：${formatDateTime(new Date())}`;
     if (delivery.terminalPhase === 'FAILED' && hasText(delivery.failureReason)) {

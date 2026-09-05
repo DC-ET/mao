@@ -54,6 +54,7 @@ describe('ToolDispatcher', () => {
   beforeEach(() => {
     localToolExecutor.execute.mockReset();
     sessionMapper.selectById.mockReset();
+    sessionMapper.selectById.mockResolvedValue(null);
     streamingWsRegistry.hasConnection.mockReset();
     streamingWsRegistry.send.mockReset();
     askUserQuestionsRegistry.register.mockReset();
@@ -126,12 +127,81 @@ describe('ToolDispatcher', () => {
     );
   });
 
-  it('askUserQuestionsFallsBackToSessionLookupAndReportsMissingClient', async () => {
+  it('askUserQuestionsFallsBackToSessionLookupAndWaitsOfflineWithoutNotifier', async () => {
     localToolSessionRegistry.getUserIdForSession.mockResolvedValue(null);
-    sessionMapper.selectById.mockResolvedValue({ userId: 9 });
+    sessionMapper.selectById.mockResolvedValue({ userId: 9, title: '任务A' });
     streamingWsRegistry.hasConnection.mockReturnValue(false);
+    askUserQuestionsRegistry.register.mockReturnValue('req-offline');
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[{}]}' });
     const result = await dispatcher.dispatch('ask_user_questions', '{}', 'CLOUD', 7, 'workspace');
-    expect(result).toContain('No connected client');
+    expect(result).toBe('{"answers":[{}]}');
+    expect(askUserQuestionsRegistry.register).toHaveBeenCalled();
+    // 未注入 notifier 时离线也照常等待（不报错），只是不发 Webhook
+    expect(streamingWsRegistry.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('askUserQuestionsOfflinePreparesWebhookNotificationAndSuppressesAfterAnswer', async () => {
+    const notifier = {
+      prepareAskUser: vi.fn().mockResolvedValue({ id: 5 }),
+      suppressPending: vi.fn().mockResolvedValue(undefined),
+    };
+    const offlineDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher, null, notifier,
+    );
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(false);
+    askUserQuestionsRegistry.register.mockReturnValue('req-1');
+    sessionMapper.selectById.mockResolvedValue({ userId: 9, title: '任务A' });
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[{}]}' });
+    const result = await offlineDispatcher.dispatch(
+      'ask_user_questions', '{"questions":[{"id":"q1"}]}', 'CLOUD', 7, 'workspace',
+    );
+    expect(result).toBe('{"answers":[{}]}');
+    expect(notifier.prepareAskUser).toHaveBeenCalledWith(7, 9, 'req-1', '任务A');
+    expect(notifier.suppressPending).toHaveBeenCalledWith({ id: 5 });
+    // 已回答：不广播取消事件
+    expect(streamingWsRegistry.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('askUserQuestionsOfflineStillSuppressesWhenUnansweredAndNotifiesCancelled', async () => {
+    const notifier = {
+      prepareAskUser: vi.fn().mockResolvedValue({ id: 6 }),
+      suppressPending: vi.fn().mockResolvedValue(undefined),
+    };
+    const offlineDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher, null, notifier,
+    );
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(false);
+    askUserQuestionsRegistry.register.mockReturnValue('req-2');
+    sessionMapper.selectById.mockResolvedValue({ userId: 9, title: '任务B' });
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: false, cancelled: false, resultJson: '{"error":"timeout"}' });
+    const result = await offlineDispatcher.dispatch('ask_user_questions', '{}', 'CLOUD', 7, 'workspace');
+    expect(result).toContain('timeout');
+    expect(notifier.prepareAskUser).toHaveBeenCalledWith(7, 9, 'req-2', '任务B');
+    expect(notifier.suppressPending).toHaveBeenCalledWith({ id: 6 });
+    expect(streamingWsRegistry.send).toHaveBeenCalledTimes(2);
+  });
+
+  it('askUserQuestionsOfflineContinuesToWaitWhenWebhookPreparationFails', async () => {
+    const notifier = {
+      prepareAskUser: vi.fn().mockRejectedValue(new Error('db down')),
+      suppressPending: vi.fn().mockResolvedValue(undefined),
+    };
+    const offlineDispatcher = new ToolDispatcher(
+      registry, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher, null, notifier,
+    );
+    localToolSessionRegistry.getUserIdForSession.mockResolvedValue(9);
+    streamingWsRegistry.hasConnection.mockReturnValue(false);
+    askUserQuestionsRegistry.register.mockReturnValue('req-3');
+    sessionMapper.selectById.mockResolvedValue({ userId: 9, title: '任务C' });
+    askUserQuestionsRegistry.waitForAnswer.mockResolvedValue({ answered: true, cancelled: false, resultJson: '{"answers":[{}]}' });
+    const result = await offlineDispatcher.dispatch('ask_user_questions', '{}', 'CLOUD', 7, 'workspace');
+    expect(result).toBe('{"answers":[{}]}');
+    expect(notifier.suppressPending).not.toHaveBeenCalled();
   });
 
   it('unknownToolThrowsException', async () => {

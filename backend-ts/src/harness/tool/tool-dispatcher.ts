@@ -1,6 +1,6 @@
 import { harnessLog } from '../log.js';
 import type { LlmModelConfig } from '../llm/chat-request.js';
-import type { SessionMapper, StreamingWsRegistry } from '../deps.js';
+import type { Session, SessionMapper, StreamingWsRegistry } from '../deps.js';
 import { wsEvent } from '../deps.js';
 import type { LocalToolExecutor } from '../local/local-tool-executor.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
@@ -18,6 +18,13 @@ import { normalizeToolResult } from './tool-result.js';
 import { permissionLevelFromString, type PermissionLevel } from './permission-level.js';
 import type { BackgroundTaskManager } from '../core/background-task-manager.js';
 import { parseObject } from './json.js';
+import type { TaskNotificationDelivery } from '../../notification/task/types.js';
+
+/** 用户离线时 ask_user_questions 的 Webhook 通知能力（由 notification/task 提供）。 */
+export interface AskUserOfflineNotifier {
+  prepareAskUser(sessionId: number, userId: number, requestId: string, title: string | null): Promise<TaskNotificationDelivery | null>;
+  suppressPending(delivery: TaskNotificationDelivery | null): Promise<void>;
+}
 
 const ASK_USER_QUESTIONS = 'ask_user_questions';
 const MCP_TOOL_PREFIX = 'mcp__';
@@ -47,6 +54,7 @@ export class ToolDispatcher {
     private readonly localToolSessionRegistry: LocalToolSessionRegistry,
     private readonly treeSignalPublisher: SessionTreeSignalPublisher,
     private readonly backgroundTaskManager?: BackgroundTaskManager | null,
+    private readonly askUserOfflineNotifier?: AskUserOfflineNotifier | null,
   ) {}
 
   /**
@@ -174,14 +182,16 @@ export class ToolDispatcher {
 
   private async dispatchAskUserQuestions(argumentsJson: string, sessionId: number | null): Promise<string> {
     let userId = sessionId != null ? await this.localToolSessionRegistry.getUserIdForSession(sessionId) : null;
+    let session: Session | null = null;
     if (userId == null && sessionId != null) {
-      const session = await this.sessionMapper.selectById(sessionId);
+      session = await this.sessionMapper.selectById(sessionId);
       if (session == null) return JSON.stringify({ error: `Session not found: ${sessionId}` });
       userId = session.userId ?? null;
     }
-    if (userId == null || !this.streamingWsRegistry.hasConnection(userId)) {
+    if (userId == null) {
       return JSON.stringify({ error: 'No connected client to receive questions' });
     }
+    const userOnline = this.streamingWsRegistry.hasConnection(userId);
     let questions: Array<Record<string, unknown>> = [];
     let metadata: Record<string, unknown> | null = null;
     try {
@@ -197,10 +207,29 @@ export class ToolDispatcher {
     }
     const requestId = this.askUserQuestionsRegistry.register(sessionId!, questions, metadata);
     this.treeSignalPublisher.publishForSession(sessionId!);
+    // 用户离线：复用任务通知的 Webhook 投递管道提醒用户回来回答；
+    // 重连后 handleSubscribe 会重推 pending 问题，用户可直接作答。
+    let offlineDelivery: TaskNotificationDelivery | null = null;
+    if (!userOnline && sessionId != null && this.askUserOfflineNotifier) {
+      session ??= await this.sessionMapper.selectById(sessionId);
+      try {
+        offlineDelivery = await this.askUserOfflineNotifier.prepareAskUser(sessionId, userId, requestId, session?.title ?? null);
+      } catch (e) {
+        harnessLog('warn', `Failed to prepare ask_user webhook notification: sessionId=${sessionId}, error=${(e as Error).message}`);
+      }
+    }
     const data: Record<string, unknown> = { requestId, questions };
     if (metadata) data.metadata = metadata;
     this.streamingWsRegistry.send(userId, wsEvent('ask_user_questions', sessionId, data));
     const result = await this.askUserQuestionsRegistry.waitForAnswer(sessionId!, requestId);
+    if (offlineDelivery) {
+      const deliveryToSuppress = offlineDelivery;
+      try {
+        await this.askUserOfflineNotifier?.suppressPending(deliveryToSuppress);
+      } catch (e) {
+        harnessLog('warn', `Failed to suppress ask_user webhook notification: deliveryId=${deliveryToSuppress.id}, error=${(e as Error).message}`);
+      }
+    }
     if (!result.answered || result.cancelled) {
       this.streamingWsRegistry.send(userId, wsEvent('ask_user_questions_cancelled', sessionId, { requestId }));
       this.treeSignalPublisher.publishForSession(sessionId!);

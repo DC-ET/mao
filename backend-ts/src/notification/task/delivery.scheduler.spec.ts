@@ -198,4 +198,40 @@ describe('WebhookDeliveryScheduler', () => {
       expect.objectContaining({ id: 7, status: DeliveryStatus.SUCCEEDED }),
     );
   });
+
+  it('deliverAskUserSendsQuestionNotificationContent', async () => {
+    const delivery = {
+      id: 9, userId: 1, channel: 'FEISHU', webhookCiphertext: 'enc',
+      titleSnapshot: '任务B', terminalPhase: 'ASK_USER', status: DeliveryStatus.PENDING, attemptCount: 0,
+    };
+    const store = {
+      recoverInterrupted: vi.fn(async () => undefined),
+      listDue: vi.fn(async () => [delivery]),
+      claim: vi.fn(async () => true),
+      countPending: vi.fn(async () => 0),
+      updateById: vi.fn(async () => undefined),
+      deleteHistory: vi.fn(async () => undefined),
+    };
+    const send = vi.fn(async () => webhookSuccess(200, 'ok'));
+    const executed: Promise<void>[] = [];
+    const scheduler = new WebhookDeliveryScheduler(
+      store as never,
+      { workerDelayMs: 1000, batchSize: 10, maxAttempts: 3 },
+      { decrypt: vi.fn(() => 'https://hook') } as never,
+      { get: vi.fn(() => ({ send })) } as never,
+      undefined,
+      (fn: () => void) => { executed.push(fn()); },
+    );
+    await scheduler.dispatchDueDeliveries();
+    await Promise.all(executed);
+    expect(send).toHaveBeenCalledTimes(1);
+    const content = send.mock.calls[0][1] as string;
+    expect(content).toContain('提问通知');
+    expect(content).toContain('任务B');
+    expect(content).toContain('正在等待回答');
+    expect(content).not.toContain('已完成');
+    expect(store.updateById).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 9, status: DeliveryStatus.SUCCEEDED }),
+    );
+  });
 });

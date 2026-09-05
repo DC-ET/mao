@@ -93,6 +93,8 @@ Agent 可用自然语言创建定时任务；「设置 → 定时任务」查看
 
 「设置 → 消息通知」：钉钉或飞书机器人 Webhook；先「发送测试通知」再保存。Webhook 加密保存，生产配置 `APP_NOTIFICATION_WEBHOOK_SECRET`。
 
+开启后除任务完成/失败通知外，Agent 发起提问（`ask_user_questions`）且你不在线（无客户端连接）时，也会收到"提问通知"，提醒回到对话页面回答；回到会话后问题自动重新展示。
+
 ## 微信 Bot（可选）
 
 「设置 → 微信Bot」扫码绑定；微信内对话，CLOUD 执行工具。Agent/模型由系统设置 `weixin.agentId` / `weixin.modelId` 或默认项决定。

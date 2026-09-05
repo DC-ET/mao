@@ -94,6 +94,50 @@ export class TaskNotificationDeliveryService {
     }
   }
 
+  /** 用户离线时的 ask_user_questions 通知：直接 PENDING，由调度器发送（离线时不存在 WS 抑制窗口）。 */
+  async prepareAskUser(sessionId: number, userId: number, requestId: string, title: string | null): Promise<TaskNotificationDelivery | null> {
+    const preference = await this.preferenceService.findEnabled(userId);
+    if (preference == null) {
+      return null;
+    }
+    const delivery: TaskNotificationDelivery = {
+      eventKey: `ask-user:${sessionId}:${requestId}`,
+      userId,
+      sessionId,
+      executionId: requestId.slice(0, 64),
+      terminalPhase: 'ASK_USER',
+      channel: preference.channel!,
+      webhookCiphertext: preference.webhookCiphertext!,
+      titleSnapshot: this.normalizeTitle(title),
+      status: DeliveryStatus.PENDING,
+      attemptCount: 0,
+      nextRetryAt: formatDateTime(new Date()),
+    };
+    try {
+      delivery.id = await this.store.insert(delivery);
+      this.metrics.created(delivery.channel!, 'ASK_USER');
+      return delivery;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('Duplicate') || msg.includes('ER_DUP_ENTRY')) {
+        console.info(`Task notification delivery already exists: eventKey=${delivery.eventKey}`);
+        return null;
+      }
+      throw e;
+    }
+  }
+
+  /** 问题已回答/取消/超时后，抑制仍未发出的提问通知（仅 PENDING 行，已发出的不受影响）。 */
+  async suppressPending(delivery: TaskNotificationDelivery | null): Promise<void> {
+    if (delivery?.id == null || !this.store.updateIfStatus) {
+      return;
+    }
+    await this.store.updateIfStatus(delivery.id, DeliveryStatus.PENDING, {
+      status: DeliveryStatus.SUPPRESSED_WS,
+      nextRetryAt: null,
+    });
+  }
+
   async resolveWebSocket(delivery: TaskNotificationDelivery | null, delivered: boolean): Promise<void> {
     if (delivery == null || delivery.id == null) {
       return;

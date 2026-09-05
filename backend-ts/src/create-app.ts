@@ -798,7 +798,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const toolDispatcher = new ToolDispatcher(
     toolRegistry, localToolExecutor, dangerAssessor, sessionMap,
     wsRegistry, askUserQuestionsRegistry, localToolSessions, treeSignalPublisher,
-    backgroundTasks,
+    backgroundTasks, deliveryService,
   );
   const agentLoop = new AgentLoop(
     llmAdapter, promptEngine, contextManager, toolDispatcher, backgroundTasks,
