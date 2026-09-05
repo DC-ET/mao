@@ -3,6 +3,7 @@
  * 复用策略（设计文档 2.2）：仅复用 SDK 自己创建的会话，localStorage 持久化，key 含 agentId。
  */
 import type { EmbedCreateSessionRequest, EmbedSessionVO } from '@mao/contracts';
+import { ApiError } from './rest-client';
 import type { RestClient } from './rest-client';
 
 export interface SessionManagerDeps {
@@ -14,12 +15,28 @@ function storageKey(agentId: number): string {
   return `mao_embed_session_${agentId}`;
 }
 
+/** 后端业务码：会话不存在 */
+const CODE_SESSION_NOT_FOUND = 3002;
+/** 后端业务码：无权访问（归属校验失败，HTTP 403） */
+const CODE_FORBIDDEN = 1002;
+
+/**
+ * 会话记录是否已失效（应清除 localStorage 并新建）。
+ * 后端 handleError 语义：业务异常走 HTTP 200 + body.code，仅 1002/403 提升为 HTTP 403，
+ * 因此不能用 HTTP 404 判定（后端从不返回 404）。
+ */
+function isSessionGone(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  if (err.code === CODE_SESSION_NOT_FOUND || err.code === CODE_FORBIDDEN) return true;
+  return err.status === 403 || err.status === 404;
+}
+
 export class SessionManager {
   constructor(private readonly deps: SessionManagerDeps) {}
 
   /**
    * 恢复或创建常驻会话。
-   * localStorage 中的会话：归属校验失败 / 已删除（GET 404）→ 清除记录并新建。
+   * localStorage 中的会话：已删除（code 3002）/ 归属校验失败（code 1002 或 HTTP 403）→ 清除记录并新建。
    */
   async resolveSession(): Promise<EmbedSessionVO> {
     const stored = this.readStoredSessionId();
@@ -28,7 +45,7 @@ export class SessionManager {
         const session = await this.deps.rest.request<EmbedSessionVO>('GET', `/sessions/${stored}`);
         return session;
       } catch (err) {
-        if (!(err instanceof Error) || (err as { status?: number }).status !== 404) {
+        if (!isSessionGone(err)) {
           // 网络/服务端异常：不当作会话丢失，向上抛出由 UI 提示重试
           throw err;
         }

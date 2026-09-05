@@ -22,7 +22,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | Electron LOCAL、工具审批、打包与自动更新 | [reference/electron.md](reference/electron.md) |
 | 安卓壳、远程前端、APK OTA | [reference/android.md](reference/android.md) |
 | 终端对话客户端 mao-agent | [reference/mao-agent.md](reference/mao-agent.md) |
-| Web 页面嵌入对话浮窗（Embed SDK 接入） | 仓库 [docs/plan/embed-sdk-technical-design.md](../../docs/plan/embed-sdk-technical-design.md)、[README「Web Embed SDK」](../../README.md#web-embed-sdk) |
+| Web 页面嵌入对话浮窗（Embed SDK 接入） | [reference/embed-sdk.md](reference/embed-sdk.md)（设计细节见仓库 [docs/plan/embed-sdk-technical-design.md](../../docs/plan/embed-sdk-technical-design.md)） |
 | 部署/登录/LOCAL/Git/通知等 FAQ | [reference/troubleshooting.md](reference/troubleshooting.md) |
 | 首次部署、管理员上线、日常任务 + CLI | [business_process.md](business_process.md) |
 

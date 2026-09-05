@@ -1,16 +1,18 @@
 /**
  * 上下文采集（设计文档 4.4）：
- * - context() 结果 JSON 序列化 + hash 变更检测，变化才拼引用块
- * - 上限 8KB（UTF-8 字节），超限截断并附提示
+ * - context() 结果 + url/title 一起 hash 做变更检测，变化才拼引用块
+ * - 拼装后的总前缀统一受 8KB（UTF-8 字节）上限约束，超限截断并附提示
  * - 选中文本由 selection.ts 采集，这里负责拼装
  */
 import { CONTEXT_LIMIT_BYTES } from '../types';
+
+/** 截断提示后缀：附在被截断内容末尾 */
+const TRUNCATED_SUFFIX = '…(已截断)';
 
 export interface PageContextPayload {
   url: string;
   title: string;
   data: Record<string, unknown>;
-  truncated: boolean;
 }
 
 export function utf8ByteLength(s: string): number {
@@ -65,38 +67,63 @@ export class ContextCollector {
     this.lastHash = null;
   }
 
+  /** 取当前变更检测基线：发送失败时配合 restoreHash 回滚，避免重发丢失上下文 */
+  snapshotHash(): string | null {
+    return this.lastHash;
+  }
+
+  /** 回滚变更检测基线（发送失败时调用），使下次发送重新携带同一份上下文 */
+  restoreHash(hash: string | null) {
+    this.lastHash = hash;
+  }
+
   /**
    * 组装本次发送的上下文前缀；返回 null 表示无变化、无选中文本，不拼。
    * selection 独立于 hash 判断：每次有选中内容都拼。
+   * 总长度（含两个块与分隔符）统一受 CONTEXT_LIMIT_BYTES 约束。
    */
   async buildPrefix(selection: string | null): Promise<string | null> {
     const payload = await this.collect();
+    const sel = selection && selection.trim() ? selection.trim() : null;
     const parts: string[] = [];
+    // 选中文本是用户显式指定的，先保底一半预算；剩余额度全部留给页面上下文
+    const selBudget = sel ? Math.min(utf8ByteLength(sel), Math.floor(CONTEXT_LIMIT_BYTES / 2)) : 0;
 
     if (payload) {
-      const serialized = stableStringify(payload.data);
-      const h = hashString(serialized);
+      // hash 覆盖 {url,title,data} 整体：SPA 路由切换后 data 不变也要重新注入新 url
+      const fingerprint = stableStringify({ url: payload.url, title: payload.title, data: payload.data });
+      const h = hashString(fingerprint);
       if (h !== this.lastHash) {
         this.lastHash = h;
-        const dataJson = payload.truncated
-          ? truncateByBytes(serialized, CONTEXT_LIMIT_BYTES - 512) + '…(已截断)'
-          : serialized;
-        parts.push(
-          [
-            '[页面上下文]',
-            `url: ${payload.url}`,
-            `title: ${payload.title}`,
-            `data: ${dataJson}`,
-          ].join('\n'),
-        );
+        const header = `[页面上下文]\nurl: ${payload.url}\ntitle: ${payload.title}\ndata: `;
+        const serialized = stableStringify(payload.data);
+        const dataBudget =
+          CONTEXT_LIMIT_BYTES -
+          selBudget -
+          utf8ByteLength(header) -
+          utf8ByteLength(TRUNCATED_SUFFIX) -
+          // 块间分隔符 '\n\n' 与选中块标头的余量
+          64;
+        const dataJson =
+          dataBudget > 0 && utf8ByteLength(serialized) <= dataBudget
+            ? serialized
+            : truncateByBytes(serialized, Math.max(dataBudget, 0)) + TRUNCATED_SUFFIX;
+        parts.push(header + dataJson);
       }
     }
 
-    if (selection && selection.trim()) {
-      parts.push(`[用户选中文本]\n${truncateByBytes(selection.trim(), CONTEXT_LIMIT_BYTES / 2)}`);
+    if (sel) {
+      const kept = truncateByBytes(sel, selBudget);
+      parts.push(`[用户选中文本]\n${kept}${kept.length < sel.length ? TRUNCATED_SUFFIX : ''}`);
     }
 
-    return parts.length > 0 ? parts.join('\n\n') : null;
+    if (parts.length === 0) return null;
+    const joined = parts.join('\n\n');
+    // 兜底硬上限：标头累计仍可能超出预算时整体截断
+    if (utf8ByteLength(joined) <= CONTEXT_LIMIT_BYTES) return joined;
+    return (
+      truncateByBytes(joined, CONTEXT_LIMIT_BYTES - utf8ByteLength(TRUNCATED_SUFFIX)) + TRUNCATED_SUFFIX
+    );
   }
 
   private async collect(): Promise<PageContextPayload | null> {
@@ -115,12 +142,6 @@ export class ContextCollector {
       return null;
     }
     const full = { url: window.location.href, title: document.title, data };
-    const serializedFull = stableStringify(full);
-    return {
-      url: full.url,
-      title: full.title,
-      data,
-      truncated: utf8ByteLength(serializedFull) > CONTEXT_LIMIT_BYTES,
-    };
+    return { url: full.url, title: full.title, data };
   }
 }

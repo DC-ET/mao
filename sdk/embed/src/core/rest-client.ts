@@ -6,12 +6,21 @@ export class AuthError extends Error {
   }
 }
 
+/**
+ * 业务错误：同时携带 HTTP 状态码与后端业务 code。
+ * 后端契约（backend-ts/src/common/http-error.ts handleError）：
+ * - 业务异常默认 HTTP 200 + body.code（如会话不存在 = 3002）
+ * - 仅 1001/401 → HTTP 401，1002/403 → HTTP 403
+ * 因此判定"资源不存在/无权访问"必须看 code，不能只看 status。
+ */
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  readonly code: number | null;
+  constructor(status: number, message: string, code: number | null = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -58,7 +67,11 @@ export class RestClient {
       throw new ApiError(resp.status, `Invalid response from ${path}`);
     }
     if (!resp.ok || (payload.code != null && payload.code !== 0)) {
-      throw new ApiError(resp.status, payload.message || `${method} ${path} failed (${resp.status})`);
+      throw new ApiError(
+        resp.status,
+        payload.message || `${method} ${path} failed (${resp.status})`,
+        payload.code ?? null,
+      );
     }
     return payload.data as T;
   }

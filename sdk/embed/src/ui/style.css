@@ -2,6 +2,8 @@
    仅依赖继承属性与自定义属性从宿主透传；全部类名 mao- 前缀。 */
 
 .mao-root {
+  all: initial;
+
   --mao-primary: #4f6ef7;
   --mao-bg: #ffffff;
   --mao-panel: #f7f8fa;
@@ -14,7 +16,6 @@
   --mao-shadow: 0 8px 32px rgba(0, 0, 0, 0.14);
   --mao-z: 2147483000;
 
-  all: initial;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   color: var(--mao-text);
@@ -68,7 +69,8 @@
 .mao-panel {
   position: fixed;
   bottom: 88px;
-  width: 400px;
+  /* 窄视口不横向溢出（移动端完整适配为二期，此处只避免可见破损） */
+  width: min(400px, calc(100vw - 32px));
   height: min(620px, calc(100vh - 120px));
   background: var(--mao-bg);
   border-radius: var(--mao-radius);
@@ -237,6 +239,8 @@
 }
 .mao-banner--error { background: #fdeceb; color: var(--mao-danger); }
 .mao-banner--info { background: #eef2ff; color: var(--mao-primary); }
+/* composer 内嵌的断连提示：不占用外层 banner 的左右内边距 */
+.mao-banner--inline { padding: 6px 0 0; }
 .mao-banner__retry {
   margin-left: auto;
   border: 1px solid currentColor;
@@ -286,6 +290,19 @@
 .mao-q__opt--checked { border-color: var(--mao-primary); }
 .mao-q__opt input { margin-top: 3px; accent-color: var(--mao-primary); }
 .mao-q__desc { color: var(--mao-text-secondary); font-size: 12px; }
+.mao-q__custom {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--mao-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--mao-bg);
+  color: var(--mao-text);
+}
+.mao-q__custom:focus { outline: 1px solid var(--mao-primary); }
+.mao-q__custom:disabled { background: var(--mao-panel); color: var(--mao-text-secondary); }
 
 /* ── composer ── */
 .mao-composer {

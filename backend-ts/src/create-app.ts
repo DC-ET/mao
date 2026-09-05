@@ -319,7 +319,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: '*',
+    // Authorization 属 CORS non-wildcard request-header：'*' 对它无效，必须显式列出。
+    // @fastify/cors 在 allowedHeaders 非 null 时直接回写字面量、不再反射请求头，
+    // 因此嵌入式 SDK（跨源 + Bearer token）的预检会失败。
+    allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Requested-With'],
     maxAge: 3600,
   });
   await app.register(multipart, { limits: { fileSize: multipartLimitMb * 1024 * 1024, files: 500 } });

@@ -269,6 +269,8 @@ export class StreamingWsRegistry {
     if (clientType?.toLowerCase() === 'electron') return 'electron';
     if (clientType?.toLowerCase() === 'android') return 'android';
     if (clientType?.toLowerCase() === 'cli') return 'cli';
+    // 与 StreamingWsHandler.normalizeClient 口径一致：embed 连接不应被记成 browser
+    if (clientType?.toLowerCase() === 'embed') return 'embed';
     return 'browser';
   }
 }

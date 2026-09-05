@@ -1,6 +1,6 @@
 # Embed SDK（Web 嵌入式对话组件）技术方案
 
-> 状态：设计定稿，未开工。本文档为唯一实现依据；开工后如与实现冲突，先改本文档。
+> 状态：**已实现并上线**（产物 `desktop/public/embed/mao-chat.js`）。本文档为设计依据；实现细节以源码 `sdk/embed/` 为准，行为差异见 `docs/plan/embed-sdk-review.md`。
 
 ## 1. 需求背景
 
@@ -91,13 +91,15 @@ sdk/embed/                        # @mao/chat-embed（仓内标识，不发包�
 
 ### 4.2 WS 协议子集（client = `embed`）
 
-**发送帧（保留）**：`auth`（首帧，token 不进握手 URL）、`ping`、`subscribe`、`unsubscribe`、`send_message`、`cancel`（手动停止）、`tool_approval`、`ask_user_questions_result`。
+**发送帧（保留）**：`auth`（首帧，token 不进握手 URL）、`ping`、`subscribe`、`unsubscribe`、`send_message`、`cancel`（手动停止）、`ask_user_questions_result`。（`tool_approval` 不实现：工具审批仅存在于 LOCAL 链路，embed 会话固定 CLOUD，见 §2.2。）
 
 **接收事件（保留并渲染）**：`connected`、`pong`、`content_delta`、`thinking_start/delta/end`、`tool_call_start`、`tool_call_args_delta`、`tool_call_result`、`session_status`（phase 驱动按钮状态与输入框启停）、`message_end`、`user_message_saved`、`error`、`session_snapshot`（重连终态对账）、`ask_user_questions`、`ask_user_questions_cancelled`、`llm_waiting` / `llm_retry` / `llm_stream_reset`、`session_title_updated`。
 
 **明确剔除（不进 SDK）**：`tool_execute`（CLOUD 服务端执行，桌面 LOCAL 专属）、`skill_sync_required` / `mcp_sync_required` / `skill_sync_done`（Electron 专属）、`tool_result` / `tool_error`（同上）、`file_change` / `compaction_*`（一期不做 diff 面板与压缩可视化）、`side_session_created` / `subagent_*` / `session_tree_status`（Side Task 体系不暴露）、`queue_updated` / `queue_message_consumed`（一期不做排队）、`edit_and_resend` / `enqueue_message` / `insert_message` / `delete_queue_message` / `reorder_queue_message` / `retry_execution` / `create_side_session` 发送帧。
 
 **必须继承的 desktop 行为**（裁剪时不可省略）：executionId 去重（stale 事件丢弃）、cancel 后的会话级事件抑制、重连后全量 re-subscribe、`session_snapshot` 终态对账（终结残留工具转圈）、30s 静默判定 + 心跳。
+
+**重连历史对账**：断线期间的产出不会补推，重连后必须 `GET /messages` 重拉并与本地消息**合并**（`store.mergeHistory`），不能整体替换——subscribe 重放先于 REST 返回，覆盖会擦掉本轮流式气泡与工具卡。合并规则：本地流式气泡原样保留（保 reactive 引用）；本地已确认（`s_<id>`）或按文本命中历史的副本丢弃；服务端 `persistToolRound` 每个工具轮次都会落一条 ASSISTANT（单轮片段），与本地全轮拼接气泡内容重复，故本轮范围内（历史最后一条 user 之后、且本轮用户消息已落库时）被本地气泡内容包含的历史 assistant 行剔除；无正文的 ASSISTANT 行在 `fetchHistory` 就过滤掉（历史不渲染工具卡，上屏即空泡）。
 
 ### 4.3 REST 子集（全部现成接口，零后端新增）
 
@@ -107,7 +109,7 @@ sdk/embed/                        # @mao/chat-embed（仓内标识，不发包�
 
 ### 4.4 上下文注入格式
 
-`context()` 结果 JSON 序列化后计算 hash，**仅当 hash 与上一条消息不同**才拼入下一条用户消息（引用块形式，整体上限 8KB，超限截断并附提示）：
+`context()` 结果与页面 `url` / `title` 一并 JSON 序列化后计算 hash，**仅当 hash 与上一条消息不同**才拼入下一条用户消息（引用块形式，**拼装后的总前缀**上限 8KB，超限截断并附提示；发送失败时 hash 会回滚，重发仍携带同一份上下文）：
 
 ```
 [页面上下文]
@@ -116,7 +118,7 @@ title: 页面标题
 data: {"page":"order-detail","orderId":"12345"}
 ```
 
-选中文本作为独立引用块 `quotedSelection` 与上下文块一并拼入。二者均为 SDK 侧文本拼装，**不落独立字段、不进消息 metadata**。
+选中文本作为独立引用块 `quotedSelection` 与上下文块一并拼入（浮窗自身 Shadow DOM 内的选中不采集；用户关闭引用 chip 后该段文本不再携带）。二者均为 SDK 侧文本拼装，**不落独立字段、不进消息 metadata**。
 
 ### 4.5 多 tab 竞态
 
@@ -126,7 +128,7 @@ data: {"page":"order-detail","orderId":"12345"}
 
 - 构建输出：`mao-chat.v{version}.js`（版本锁定）与 `mao-chat.js`（latest 副本），托管路径 `https://mao.etarch.cn/embed/`。
 - 接线方式：sdk/embed 构建产物复制到 `desktop/public/embed/`，由 desktop build 打包，随 `scripts/deploy-desktop.sh` rsync 上线。根/CI 的 desktop build 前置 `sdk/embed` build。
-- 后端改动仅一处：`streaming-ws-handler.ts` 的 `normalizeClient` 增加 `'embed'` 分支（日志与注册表识别）。
+- 后端改动仅一处：`streaming-ws-handler.ts` 的 `normalizeClient` 增加 `'embed'` 分支（日志与注册表识别；`streaming-ws-registry.ts` 的同名归一化函数亦已对齐）。
 
 ## 5. 实现步骤
 

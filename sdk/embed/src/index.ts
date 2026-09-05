@@ -21,7 +21,7 @@ function createInstance(options: MaoChatInitOptions): MaoChatInstance {
   }
 
   const ui = createUiState(options);
-  const { cleanup, root } = mountApp(ui);
+  const { cleanup, root, host } = mountApp(ui);
   // 主题主色：内联覆写 .mao-root 的 --mao-primary（规则内默认值优先级高于 host 继承）
   if (options.theme?.primary) {
     root.style.setProperty('--mao-primary', options.theme.primary);
@@ -32,7 +32,7 @@ function createInstance(options: MaoChatInitOptions): MaoChatInstance {
     } catch {
       /* 宿主回调异常不阻断 SDK */
     }
-  }, cleanup);
+  }, cleanup, host);
   const instance: EmbeddedInstance = {
     open: () => controller.open(),
     close: () => controller.close(),

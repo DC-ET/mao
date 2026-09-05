@@ -87,4 +87,44 @@ describe('ContextCollector', () => {
     expect(t).toBe('中文中');
     expect(truncateByBytes('abc', 10)).toBe('abc');
   });
+
+  it('url 变化即使 data 不变也重新注入（SPA 路由切换）', async () => {
+    const c = new ContextCollector(() => ({ orderId: '1' }));
+    const first = await c.buildPrefix(null);
+    expect(first).toContain('url: https://host/path?x=1');
+    // data 完全不变，只有 url 变
+    (globalThis as Record<string, unknown>).window = {
+      location: { href: 'https://host/other?x=2' },
+      localStorage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
+    };
+    const second = await c.buildPrefix(null);
+    expect(second).toContain('url: https://host/other?x=2');
+  });
+
+  it('title 变化也重新注入', async () => {
+    const c = new ContextCollector(() => ({ orderId: '1' }));
+    await c.buildPrefix(null);
+    (globalThis as Record<string, unknown>).document = { title: '新标题' };
+    const second = await c.buildPrefix(null);
+    expect(second).toContain('title: 新标题');
+  });
+
+  it('上下文与选中文本同时超限时总前缀仍不超过 8KB', async () => {
+    const c = new ContextCollector(() => ({ blob: 'x'.repeat(20_000) }));
+    const prefix = await c.buildPrefix('选中'.repeat(5_000));
+    expect(prefix).toContain('[页面上下文]');
+    expect(prefix).toContain('[用户选中文本]');
+    expect(utf8ByteLength(prefix ?? '')).toBeLessThanOrEqual(8 * 1024);
+  });
+
+  it('restoreHash 回滚变更基线后重发仍携带上下文', async () => {
+    const c = new ContextCollector(() => ({ orderId: '1' }));
+    const before = c.snapshotHash();
+    const first = await c.buildPrefix(null);
+    expect(first).toContain('[页面上下文]');
+    // 发送失败：回滚基线
+    c.restoreHash(before);
+    const retry = await c.buildPrefix(null);
+    expect(retry).toContain('[页面上下文]');
+  });
 });

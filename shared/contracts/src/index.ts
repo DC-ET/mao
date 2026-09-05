@@ -39,6 +39,7 @@ export type {
   WsSessionTitleUpdatedData,
   WsAskUserQuestionOption,
   WsAskUserQuestionItem,
+  WsAskUserQuestionAnswer,
   WsAskUserQuestionsData,
   WsAskUserQuestionsCancelledData,
   WsLlmWaitingData,

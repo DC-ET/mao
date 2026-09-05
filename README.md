@@ -92,10 +92,20 @@ mao auth login
 ```
 
 - **凭据**：宿主后端持有 Mao 凭据，仅向页面下发短期 access token；SDK 不落盘，过期时回调 `getToken()` 重取
-- **上下文**：`context()` 返回值变化时自动拼入下一条消息（8KB 上限）；页面上选中文本自动成为引用
-- **会话**：每用户每 agent 一个常驻会话，desktop 端会话列表可见、可继续
+- **上下文**：`context()` 返回值（连同 url / title）变化时自动拼入下一条消息，前缀总长上限 8KB；页面上选中文本自动成为引用（浮窗内部的选中不会被采集，同一段文本不会被连续两条消息重复携带）
+- **会话**：每用户每 agent 一个常驻会话，desktop 端会话列表可见、可继续；本地记录的会话被删除或不归属当前用户时自动新建
 - **宿主 CSP**：需放行 Mao 域名 `connect-src`（wss / https）
 - **注意**：`context()` 中的业务数据会随消息发送至 LLM，请勿放入敏感信息
+
+### 安全边界（接入前必读）
+
+以下三项为当前既定设计，接入方必须知情：
+
+1. **WS 握手不校验 origin**：`/api/ws/stream` 在公开前缀内，鉴权完全依赖连接后的首帧 `auth`；结合 CORS 反射任意 origin，安全边界全部落在 **token 发放侧**。
+2. **后端不校验 agent 归属**：任何已登录用户可用任意 `agentId` 建会话，embed 的权限边界只靠 `agentId` 保密。
+3. **登录接口返回的 access token 默认有效期 24 小时**：请勿把它直接交给页面。宿主后端应自行签发**更短有效期的专用 token**，并在 `getToken()` 中返回。
+
+宿主可通过 `onEvent` 接收 `phase` / `error` / `unread` 事件做埋点与状态联动；`error` 事件携带的是原始错误信息（浮窗内展示的是中文可读文案）。
 
 本地验收：`cd sdk/embed && npm install && npm run dev`（demo 页模拟宿主，见 `sdk/embed/demo/`）。
 

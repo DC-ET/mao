@@ -1,11 +1,11 @@
 import { ref } from 'vue';
 import type {
+  WsAskUserQuestionAnswer,
   WsAskUserQuestionsResultFrame,
   WsCancelFrame,
   WsEmbedOutboundFrame,
   WsSendMessageFrame,
   WsServerEvent,
-  WsSubscribeFrame,
 } from '@mao/contracts';
 import {
   DEFAULT_WS_SILENCE_TIMEOUT_MS,
@@ -16,10 +16,12 @@ import {
 export interface WsClientHooks {
   /** token 供给（连接与重连时取最新） */
   getToken: () => Promise<string>;
-  /** 认证通过后的回调：重订阅会话在此进行 */
-  onAuthenticated: () => void;
+  /** 认证通过（收到 connected 帧）后的回调：断线重连后的会话对账在此进行 */
+  onAuthenticated: (isReconnect: boolean) => void;
   /** 认证失败（token 无效） */
   onAuthFailed: () => void;
+  /** 连接断开（socket close）：UI 需要据此显示断线态 */
+  onDisconnected: () => void;
   /** 业务事件入口 */
   onEvent: (event: WsServerEvent) => void;
 }
@@ -32,7 +34,10 @@ const CONNECT_TIMEOUT_MS = 15_000;
  * executionId 去重与 cancel 抑制在 store 层实现（本层只负责连接与帧收发）。
  */
 export class WsClient {
+  /** socket 已 OPEN（未必已鉴权） */
   readonly connected = ref(false);
+  /** 已收到服务端 connected 帧：业务帧此时才真正可用，UI 的"在线"应以此为准 */
+  readonly authenticated = ref(false);
   private socket: WebSocket | null = null;
   private connectPromise: Promise<void> | null = null;
   /** 在途 connect 的 reject 句柄：disconnect 打断时同步 settle，避免等待方悬挂 */
@@ -42,9 +47,11 @@ export class WsClient {
   private reconnectDelayMs = 1_000;
   private lastServerMessageAt = 0;
   private intentionalClose = false;
-  /** 会话订阅集合，重连后 re-subscribe 用 */
+  /** 订阅意图：跨连接存活，每次鉴权成功后据此恢复 */
   private readonly subscribedSessionIds = new Set<number>();
-  private readonly pendingSends: WsEmbedOutboundFrame[] = [];
+  /** 当前 socket 上已实际发出 subscribe 的会话：防止同一连接重复订阅（服务端会重放快照） */
+  private readonly liveSubscriptions = new Set<number>();
+  private authenticatedOnce = false;
 
   constructor(private readonly serverUrl: string, private readonly hooks: WsClientHooks) {}
 
@@ -58,7 +65,16 @@ export class WsClient {
     }
 
     this.intentionalClose = false;
-    const socket = new WebSocket(resolveWsUrl(this.serverUrl));
+    // new WebSocket 可能同步抛错（非法 URL、CSP 拦截）：转成 rejected promise，
+    // 否则 boot()/sendReliable() 的调用方会收到同步异常而非可控失败
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(resolveWsUrl(this.serverUrl));
+    } catch (err) {
+      this.connected.value = false;
+      this.authenticated.value = false;
+      return Promise.reject(err instanceof Error ? err : new Error('WebSocket 构造失败'));
+    }
     this.socket = socket;
 
     this.connectPromise = new Promise<void>((resolve, reject) => {
@@ -92,7 +108,13 @@ export class WsClient {
           (err) => {
             this.connectPromise = null;
             clearTimeout(timeout);
-            reject(err instanceof Error ? err : new Error('getToken failed'));
+            const error = err instanceof Error ? err : new Error('getToken failed');
+            // 先 settle 再关闭：close 触发的 onclose 会用 'WebSocket closed' 抢先 reject，
+            // 掩盖真实失败原因（宿主 token 端点错误），使 UI 提示不可诊断
+            reject(error);
+            // 未鉴权的 socket 必须关闭：否则它停在 OPEN，下次 connect() 直接 resolve，
+            // 业务帧发到未鉴权连接会被服务端 close(1003)
+            this.closeSocket(socket);
           },
         );
       };
@@ -107,8 +129,13 @@ export class WsClient {
           return;
         }
         if (msg.type === 'connected') {
-          this.hooks.onAuthenticated();
-          // 继续转发：controller 依赖该帧置 ui.connected（否则输入框永久禁用）
+          this.authenticated.value = true;
+          const isReconnect = this.authenticatedOnce;
+          this.authenticatedOnce = true;
+          // 服务端订阅不跨连接存活：每次鉴权成功后按意图集合重建（本连接内幂等）
+          this.restoreSubscriptions();
+          this.hooks.onAuthenticated(isReconnect);
+          // 继续转发：controller 依赖该帧做会话级恢复
           this.hooks.onEvent(msg);
           return;
         }
@@ -119,12 +146,15 @@ export class WsClient {
         if (event.target !== this.socket) return;
         clearTimeout(timeout);
         this.connected.value = false;
+        this.authenticated.value = false;
+        this.liveSubscriptions.clear();
         this.stopHeartbeat();
         // 清引用：后续 connect() 不会误判复用已关闭的 socket
         if (this.socket === socket) this.socket = null;
         if (this.connectPromise) {
           this.connectPromise = null;
         }
+        this.hooks.onDisconnected();
         // 服务端对无效 token 的处理是 close(1003)（见 streaming-ws-handler），据此触发重取 token
         if (event.code === 1003) {
           this.hooks.onAuthFailed();
@@ -142,6 +172,17 @@ export class WsClient {
     });
 
     return this.connectPromise;
+  }
+
+  private closeSocket(socket: WebSocket) {
+    try {
+      socket.close();
+    } catch {
+      /* ignore */
+    }
+    if (this.socket === socket) this.socket = null;
+    this.connected.value = false;
+    this.authenticated.value = false;
   }
 
   private startHeartbeat() {
@@ -168,7 +209,8 @@ export class WsClient {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect().catch(() => {
-        /* 重连失败由下一次 onclose 继续排程 */
+        // 构造即抛（非法 URL / CSP）时没有 onclose 兜底，需在此继续排程
+        this.scheduleReconnect();
       });
     }, this.reconnectDelayMs);
     this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, 30_000);
@@ -190,33 +232,43 @@ export class WsClient {
       this.socket = null;
     }
     this.connected.value = false;
+    this.authenticated.value = false;
+    this.authenticatedOnce = false;
     this.connectPromise = null;
     this.subscribedSessionIds.clear();
-    this.pendingSends.length = 0;
+    this.liveSubscriptions.clear();
   }
 
-  /** 认证成功后回调：重连后恢复订阅 */
-  resubscribe(sessionIds: Iterable<number>) {
-    for (const sid of sessionIds) {
-      this.subscribedSessionIds.add(sid);
-      this.sendNow({ type: 'subscribe', sessionId: sid });
-    }
-  }
-
+  /**
+   * 声明订阅意图。socket 尚未鉴权时不发帧：服务端订阅本就不跨连接存活，
+   * 鉴权成功后由 restoreSubscriptions 统一补发（避免"立刻发一次 + 鉴权后再发一次"导致快照重放两遍）。
+   */
   subscribe(sessionId: number): void {
-    if (this.subscribedSessionIds.has(sessionId)) return;
     this.subscribedSessionIds.add(sessionId);
-    const frame: WsSubscribeFrame = { type: 'subscribe', sessionId };
-    this.sendOrQueue(frame);
+    if (!this.authenticated.value || this.liveSubscriptions.has(sessionId)) return;
+    if (this.sendNow({ type: 'subscribe', sessionId })) {
+      this.liveSubscriptions.add(sessionId);
+    }
   }
 
   unsubscribe(sessionId: number): void {
     if (!this.subscribedSessionIds.delete(sessionId)) return;
-    this.sendOrQueue({ type: 'unsubscribe', sessionId });
+    this.liveSubscriptions.delete(sessionId);
+    // socket 不在时无需补发：服务端订阅随连接销毁，重连时也不会恢复该会话
+    this.sendNow({ type: 'unsubscribe', sessionId });
   }
 
   trackedSessionIds(): number[] {
     return Array.from(this.subscribedSessionIds);
+  }
+
+  private restoreSubscriptions(): void {
+    this.liveSubscriptions.clear();
+    for (const sid of this.subscribedSessionIds) {
+      if (this.sendNow({ type: 'subscribe', sessionId: sid })) {
+        this.liveSubscriptions.add(sid);
+      }
+    }
   }
 
   sendMessage(sessionId: number, content: string, eventId: string): Promise<boolean> {
@@ -236,7 +288,7 @@ export class WsClient {
   sendAskUserQuestionsResult(
     sessionId: number,
     requestId: string,
-    answers: unknown[],
+    answers: WsAskUserQuestionAnswer[],
   ): Promise<boolean> {
     const frame: WsAskUserQuestionsResultFrame = {
       type: 'ask_user_questions_result',
@@ -252,11 +304,6 @@ export class WsClient {
     return this.connect()
       .then(() => this.sendNow(frame))
       .catch(() => false);
-  }
-
-  private sendOrQueue(frame: WsEmbedOutboundFrame) {
-    if (this.sendNow(frame)) return;
-    this.pendingSends.push(frame);
   }
 
   private sendNow(frame: WsEmbedOutboundFrame): boolean {

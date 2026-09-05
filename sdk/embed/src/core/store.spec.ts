@@ -56,18 +56,42 @@ describe('ChatStore', () => {
     expect(store.phase.value).toBe('CANCELLED');
   });
 
-  it('tool_call_args_delta / result 更新对应卡片（后端 snake_case 字段）', () => {
+  it('tool_call_args_delta 用累积全量覆盖（后端 arguments 是快照而非增量）', () => {
     const store = new ChatStore();
     store.bindSession(1);
     store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    // 后端 agent-loop 内部已累加，每帧下发的都是当前完整 arguments
     store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'web_search', arguments: '{"q"' }));
-    store.handleEvent(ev('tool_call_args_delta', 1, { tool_call_id: 't1', arguments: ':"mao"}' }));
+    store.handleEvent(ev('tool_call_args_delta', 1, { tool_call_id: 't1', arguments: '{"q":' }));
+    store.handleEvent(ev('tool_call_args_delta', 1, { tool_call_id: 't1', arguments: '{"q":"mao"}' }));
     store.handleEvent(ev('tool_call_result', 1, { tool_call_id: 't1', result: 'raw', summary: 'ok', status: 'success' }));
     const tc = store.messages.value[0].toolCalls[0];
     expect(tc.toolCallId).toBe('t1');
     expect(tc.argsText).toBe('{"q":"mao"}');
     expect(tc.status).toBe('done');
     expect(tc.resultText).toBe('ok');
+  });
+
+  it('重复 tool_call_start（subscribe 重放）不产生重复卡片', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'shell', arguments: '{"cmd"' }));
+    store.handleEvent(ev('tool_call_args_delta', 1, { tool_call_id: 't1', arguments: '{"cmd":"ls"}' }));
+    // 服务端重放（同 id，arguments 为重放时刻快照）
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'shell', arguments: '{"cmd":"ls"}' }));
+    const calls = store.messages.value[0].toolCalls;
+    expect(calls.length).toBe(1);
+    expect(calls[0].argsText).toBe('{"cmd":"ls"}');
+  });
+
+  it('重放帧不回退已累积的 arguments', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'shell', arguments: '{"cmd":"ls -la"}' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'shell', arguments: '{"cmd"' }));
+    expect(store.messages.value[0].toolCalls[0].argsText).toBe('{"cmd":"ls -la"}');
   });
 
   it('tool_call_result error 状态标记卡片失败', () => {
@@ -111,5 +135,245 @@ describe('ChatStore', () => {
     expect(store.messages.value.length).toBe(0);
     store.handleEvent(ev('content_delta', 1, { delta: 'fresh' }));
     expect(store.messages.value[0].content).toBe('fresh');
+  });
+
+  it('session_snapshot 终态终结残留 running 工具与流式光标', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'shell' }));
+    store.handleEvent(ev('content_delta', 1, { delta: '处理中' }));
+    // 断线重连后 subscribe 回放终态
+    store.handleEvent(ev('session_snapshot', 1, { phase: 'FAILED' }));
+    const m = store.messages.value[0];
+    expect(m.streaming).toBe(false);
+    expect(m.toolCalls[0].status).toBe('error');
+    expect(store.phase.value).toBe('FAILED');
+  });
+
+  it('session_snapshot COMPLETED 收口流式气泡但不改工具状态', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'shell' }));
+    store.handleEvent(ev('tool_call_result', 1, { tool_call_id: 't1', result: 'ok', status: 'success' }));
+    store.handleEvent(ev('session_snapshot', 1, { phase: 'COMPLETED' }));
+    const m = store.messages.value[0];
+    expect(m.streaming).toBe(false);
+    expect(m.toolCalls[0].status).toBe('done');
+  });
+
+  it('终态后旧轮次迟到事件被丢弃（cancelledExecutionId 转存）', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('content_delta', 1, { delta: 'a', executionId: 'e1' }));
+    store.handleEvent(ev('session_status', 1, { phase: 'COMPLETED' }));
+    // 服务端重放/迟到的同轮事件不得重新拉出流式气泡
+    store.handleEvent(ev('content_delta', 1, { delta: 'late', executionId: 'e1' }));
+    expect(store.messages.value.length).toBe(1);
+    expect(store.messages.value[0].content).toBe('a');
+  });
+
+  it('stale CANCELLING 不把已收口的 UI 打回执行中', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.markCancelled();
+    store.handleEvent(ev('session_status', 1, { phase: 'CANCELLING' }));
+    expect(store.phase.value).not.toBe('CANCELLING');
+  });
+
+  it('CANCELLED 终态不解除 cancel 抑制', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('content_delta', 1, { delta: 'x' }));
+    store.markCancelled();
+    store.handleEvent(ev('session_status', 1, { phase: 'CANCELLED' }));
+    // 抑制仍在：服务端续推的同轮内容必须被丢弃
+    store.handleEvent(ev('content_delta', 1, { delta: 'after-cancel' }));
+    expect(store.messages.value.map((m) => m.content).join('')).toBe('x');
+  });
+
+  it('llm_retry 提示在收到内容后自动清除', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('llm_retry', 1, { reason: 'timeout', attempt: 2, maxRetries: 5 }));
+    expect(store.llmRetryText.value).toContain('LLM 重试中');
+    store.handleEvent(ev('content_delta', 1, { delta: 'ok' }));
+    expect(store.llmRetryText.value).toBeNull();
+  });
+
+  it('llm_stream_reset 清空当前流式气泡的内容与工具卡', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'shell' }));
+    store.handleEvent(ev('content_delta', 1, { delta: 'partial' }));
+    store.handleEvent(ev('thinking_delta', 1, { delta: 'think' }));
+    store.handleEvent(ev('llm_stream_reset', 1, {}));
+    const m = store.messages.value[0];
+    expect(m.content).toBe('');
+    expect(m.thinking).toBe('');
+    expect(m.toolCalls.length).toBe(0);
+  });
+
+  it('llm_stream_reset 不误擦非流式的历史助手消息', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('content_delta', 1, { delta: '上一轮回答' }));
+    store.handleEvent(ev('message_end', 1, {}));
+    store.handleEvent(ev('llm_stream_reset', 1, {}));
+    expect(store.messages.value[0].content).toBe('上一轮回答');
+  });
+
+  it('发送失败回滚：移除乐观用户气泡与空助手气泡', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const localId = store.appendLocalUserMessage('你好');
+    expect(store.messages.value.length).toBe(2);
+    store.rollbackLocalUserMessage(localId);
+    expect(store.messages.value.length).toBe(0);
+  });
+
+  it('回滚时若助手已有内容则只收口不删除', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const localId = store.appendLocalUserMessage('你好');
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('content_delta', 1, { delta: '已开始回答' }));
+    store.rollbackLocalUserMessage(localId);
+    expect(store.messages.value.length).toBe(2);
+    expect(store.messages.value[1].streaming).toBe(false);
+  });
+
+  it('confirmLocalUserMessage 换成服务端消息 id', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const localId = store.appendLocalUserMessage('你好');
+    store.confirmLocalUserMessage(localId, '9527');
+    expect(store.messages.value[0].id).toBe('s_9527');
+  });
+
+  it('reloadHistory 保留未落库的本地尾部消息', async () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    // 刚发出、尚未落库确认的用户气泡 + 本轮流式 assistant 气泡
+    store.appendLocalUserMessage('新问题');
+    await store.reloadHistory(async () => [
+      { id: 'h_1', role: 'user', content: 'A', thinking: '', streaming: false, error: false, toolCalls: [] },
+      { id: 'h_2', role: 'assistant', content: 'B', thinking: '', streaming: false, error: false, toolCalls: [] },
+    ]);
+    expect(store.messages.value.map((m) => m.content)).toEqual(['A', 'B', '新问题', '']);
+    // 流式气泡必须是原对象（延续 delta 写入），否则回答会掐头
+    expect(store.messages.value[3].streaming).toBe(true);
+  });
+
+  it('reloadHistory 不重复上屏已落库确认的消息', async () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const localId = store.appendLocalUserMessage('你好');
+    store.confirmLocalUserMessage(localId, '7');
+    await store.reloadHistory(async () => [
+      { id: 'h_7', role: 'user', content: '你好', thinking: '', streaming: false, error: false, toolCalls: [] },
+      { id: 'h_8', role: 'assistant', content: '回答', thinking: '', streaming: false, error: false, toolCalls: [] },
+    ]);
+    // 历史已含该消息（h_7 ↔ s_7 同一条），本地副本不再重复
+    expect(store.messages.value.map((m) => m.content)).toEqual(['你好', '回答', '']);
+  });
+
+  it('reloadHistory 按文本后缀识别带上下文前缀的已落库消息', async () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.appendLocalUserMessage('帮我看下');
+    await store.reloadHistory(async () => [
+      {
+        id: 'h_9',
+        role: 'user',
+        content: '[页面上下文]\nurl: x\n\n---\n\n帮我看下',
+        thinking: '',
+        streaming: false,
+        error: false,
+        toolCalls: [],
+      },
+    ]);
+    // 服务端存的是带前缀的完整内容，本地只存用户输入：不能重复上屏
+    expect(store.messages.value.filter((m) => m.role === 'user')).toHaveLength(1);
+  });
+
+  it('markSendUnconfirmed 不删除消息，只收口空的流式气泡', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const localId = store.appendLocalUserMessage('你好');
+    store.markSendUnconfirmed(localId);
+    expect(store.messages.value).toHaveLength(2);
+    expect(store.messages.value[1].streaming).toBe(false);
+
+    // 已有产出时保持流式态，等真实事件收口
+    const store2 = new ChatStore();
+    store2.bindSession(1);
+    const id2 = store2.appendLocalUserMessage('你好');
+    store2.handleEvent(ev('content_delta', 1, { delta: '正在回答' }));
+    store2.markSendUnconfirmed(id2);
+    expect(store2.messages.value[1].streaming).toBe(true);
+  });
+
+  it('hasLocalUserMessage 反映乐观气泡是否仍在', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const localId = store.appendLocalUserMessage('你好');
+    expect(store.hasLocalUserMessage(localId)).toBe(true);
+    store.confirmLocalUserMessage(localId, '3');
+    expect(store.hasLocalUserMessage(localId)).toBe(false);
+  });
+
+  it('reloadHistory 剔除与本轮流式气泡重复的中间轮次落库行', async () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const localId = store.appendLocalUserMessage('查一下');
+    store.confirmLocalUserMessage(localId, '11');
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('content_delta', 1, { delta: '我先查一下' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'grep' }));
+    store.handleEvent(ev('content_delta', 1, { delta: '查完了' }));
+    // 服务端每个工具轮次结束就落一条 ASSISTANT（单轮片段），本地气泡是全轮拼接
+    await store.reloadHistory(async () => [
+      { id: 'h_11', role: 'user', content: '查一下', thinking: '', streaming: false, error: false, toolCalls: [] },
+      { id: 'h_12', role: 'assistant', content: '我先查一下', thinking: '', streaming: false, error: false, toolCalls: [] },
+    ]);
+    // 片段行不重复上屏，工具卡随本地气泡保留
+    expect(store.messages.value.map((m) => m.content)).toEqual(['查一下', '我先查一下查完了']);
+    expect(store.messages.value[1].toolCalls).toHaveLength(1);
+  });
+
+  it('reloadHistory 尾部仍有未落库用户消息时不做本轮剪裁', async () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    // 未落库确认的新用户消息 + 本轮流式气泡（文本恰与上一轮历史回答相同）
+    store.appendLocalUserMessage('新问题');
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('content_delta', 1, { delta: '旧回答' }));
+    await store.reloadHistory(async () => [
+      { id: 'h_1', role: 'user', content: '旧问题', thinking: '', streaming: false, error: false, toolCalls: [] },
+      { id: 'h_2', role: 'assistant', content: '旧回答', thinking: '', streaming: false, error: false, toolCalls: [] },
+    ]);
+    // 本轮用户消息还没落库 → 历史里最后一条 user 之后的行属于上一轮，不能剪
+    expect(store.messages.value.map((m) => m.content)).toEqual(['旧问题', '旧回答', '新问题', '旧回答']);
+  });
+
+  it('reloadHistory 期间会话被切换则丢弃结果', async () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const load = async () => {
+      store.bindSession(2);
+      return [
+        { id: 'h_1', role: 'user' as const, content: 'A', thinking: '', streaming: false, error: false, toolCalls: [] },
+      ];
+    };
+    await store.reloadHistory(load);
+    expect(store.messages.value.length).toBe(0);
   });
 });

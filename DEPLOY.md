@@ -10,7 +10,7 @@
 | Electron / 安卓可选部署 | [skills/mao-cli/reference/electron.md](skills/mao-cli/reference/electron.md)、[skills/mao-cli/reference/android.md](skills/mao-cli/reference/android.md) |
 | 部署排障 | [skills/mao-cli/reference/troubleshooting.md](skills/mao-cli/reference/troubleshooting.md) |
 | 首次部署与上线清单 | [skills/mao-cli/business_process.md](skills/mao-cli/business_process.md) |
-| Web Embed SDK 产物上线 | [docs/plan/embed-sdk-technical-design.md](docs/plan/embed-sdk-technical-design.md) §4.6 |
+| Web Embed SDK 接入与产物上线 | [skills/mao-cli/reference/embed-sdk.md](skills/mao-cli/reference/embed-sdk.md)、[docs/plan/embed-sdk-technical-design.md](docs/plan/embed-sdk-technical-design.md) §4.6 |
 
 **维护者注意**：服务器上真实部署目录为 `/opt/mao`（与云端 Agent 会话工作区路径不同）。`git pull`、构建、`restart.sh` 应在 `/opt/mao` 执行。
 

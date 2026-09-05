@@ -63,7 +63,7 @@ export interface WsToolApprovalFrame {
 export interface WsAskUserQuestionsResultFrame {
   type: 'ask_user_questions_result';
   sessionId: number;
-  data: { requestId: string; answers: unknown[] };
+  data: { requestId: string; answers: WsAskUserQuestionAnswer[] };
 }
 
 /** embed 实际发送的帧集合 */
@@ -121,6 +121,17 @@ export interface WsAskUserQuestionItem {
   header?: string;
   multiSelect?: boolean;
   options: WsAskUserQuestionOption[];
+}
+
+/**
+ * 追问回答项：形状必须与 ask_user_questions 工具的 outputSchema 一致
+ * （backend-ts/src/harness/tool/impl/ask-user-questions-tool.ts getOutputSchema），
+ * 否则 LLM 拿不到问题与答案的对应关系。desktop / embed / mao-agent 三端共用。
+ */
+export interface WsAskUserQuestionAnswer {
+  question: string;
+  selectedLabels: string[];
+  customInput?: string | null;
 }
 
 export interface WsAskUserQuestionsData {

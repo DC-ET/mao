@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionManager } from './session-manager';
-import { RestClient, ApiError } from './rest-client';
+import { RestClient } from './rest-client';
 import type { EmbedSessionVO } from '@mao/contracts';
 
 // 最小 localStorage stub
@@ -12,44 +12,66 @@ class MemStorage {
 }
 
 const sessions = new Map<number, EmbedSessionVO>();
+let nextCreatedId = 100;
 
-function fakeRest(): RestClient {
-  const rest = Object.create(RestClient.prototype) as RestClient;
-  (rest as unknown as { request: <T>(method: string, path: string) => Promise<T> }).request =
-    async <T,>(method: string, path: string): Promise<T> => {
-      if (method === 'GET' && path.startsWith('/sessions/')) {
-        const id = Number(path.split('/')[2]);
-        const s = sessions.get(id);
-        if (!s) throw new ApiError(404, 'not found');
-        return s as T;
-      }
-      if (method === 'POST' && path === '/sessions') {
-        const id = sessions.size + 100;
-        const s = { id, title: '网页助手' } as EmbedSessionVO;
-        sessions.set(id, s);
-        return s as T;
-      }
-      throw new ApiError(500, 'unexpected');
-    };
-  return rest;
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status });
+}
+
+/**
+ * 复刻后端真实响应形态（backend-ts/src/common/http-error.ts handleError）：
+ * - 会话不存在 → HTTP 200 + {code:3002}
+ * - 归属校验失败 → HTTP 403 + {code:1002}
+ * 用真实 RestClient 走 fetch，避免 mock 直接抛错时掩盖判据 bug。
+ */
+function stubFetch(handler?: (url: string, method: string) => Response | undefined) {
+  const fn = vi.fn(async (input: string | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const custom = handler?.(url, method);
+    if (custom) return custom;
+    const getMatch = /\/sessions\/(\d+)$/.exec(url);
+    if (method === 'GET' && getMatch) {
+      const id = Number(getMatch[1]);
+      const s = sessions.get(id);
+      if (!s) return jsonResponse(200, { code: 3002, message: '会话不存在' });
+      return jsonResponse(200, { code: 0, data: s });
+    }
+    if (method === 'POST' && url.endsWith('/sessions')) {
+      const id = nextCreatedId++;
+      const s = { id, title: '网页助手' } as EmbedSessionVO;
+      sessions.set(id, s);
+      return jsonResponse(200, { code: 0, data: s });
+    }
+    return jsonResponse(500, { code: 5000, message: 'unexpected' });
+  });
+  (globalThis as unknown as { fetch: unknown }).fetch = fn;
+  return fn;
+}
+
+function newRest(): RestClient {
+  return new RestClient('https://mao.example.com/api/v1', async () => 'token');
 }
 
 describe('SessionManager', () => {
-  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
   let storage: MemStorage;
 
   beforeEach(() => {
     storage = new MemStorage();
     sessions.clear();
-    (globalThis as Record<string, unknown>).window = { localStorage: storage };
+    nextCreatedId = 100;
+    (globalThis as unknown as { window: { localStorage: MemStorage } }).window =
+      { localStorage: storage };
   });
 
   afterEach(() => {
-    (globalThis as Record<string, unknown>).window = originalWindow;
+    (globalThis as unknown as { fetch: unknown }).fetch = originalFetch;
   });
 
   it('首次 resolve 创建会话并写入 localStorage', async () => {
-    const mgr = new SessionManager({ rest: fakeRest(), agentId: 3 });
+    stubFetch();
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     const s = await mgr.resolveSession();
     expect(s.id).toBe(100);
     expect(storage.getItem('mao_embed_session_3')).toBe('100');
@@ -58,32 +80,49 @@ describe('SessionManager', () => {
   it('有记录且会话存在时复用', async () => {
     sessions.set(42, { id: 42, title: 'T' } as EmbedSessionVO);
     storage.setItem('mao_embed_session_3', '42');
-    const mgr = new SessionManager({ rest: fakeRest(), agentId: 3 });
+    stubFetch();
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     const s = await mgr.resolveSession();
     expect(s.id).toBe(42);
   });
 
-  it('会话 404（被删除）时清除并新建', async () => {
+  it('会话不存在（HTTP 200 + code 3002）时清除记录并新建', async () => {
     storage.setItem('mao_embed_session_3', '999');
-    const mgr = new SessionManager({ rest: fakeRest(), agentId: 3 });
+    stubFetch();
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     const s = await mgr.resolveSession();
     expect(s.id).toBe(100);
     expect(storage.getItem('mao_embed_session_3')).toBe('100');
   });
 
-  it('网络异常向上抛出不丢记录', async () => {
+  it('归属校验失败（HTTP 403 + code 1002）时清除记录并新建', async () => {
+    storage.setItem('mao_embed_session_3', '888');
+    stubFetch((url, method) =>
+      method === 'GET' && url.includes('/sessions/888')
+        ? jsonResponse(403, { code: 1002, message: '无权访问' })
+        : undefined,
+    );
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
+    const s = await mgr.resolveSession();
+    expect(s.id).toBe(100);
+    expect(storage.getItem('mao_embed_session_3')).toBe('100');
+  });
+
+  it('服务端异常（HTTP 500）向上抛出且不丢记录', async () => {
     storage.setItem('mao_embed_session_3', '7');
-    const rest = Object.create(RestClient.prototype) as RestClient;
-    (rest as unknown as { request: () => Promise<never> }).request = async () => {
-      throw new ApiError(503, 'down');
-    };
-    const mgr = new SessionManager({ rest, agentId: 3 });
+    stubFetch((url, method) =>
+      method === 'GET' && url.includes('/sessions/7')
+        ? jsonResponse(500, { code: 5000, message: 'down' })
+        : undefined,
+    );
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     await expect(mgr.resolveSession()).rejects.toThrow('down');
     expect(storage.getItem('mao_embed_session_3')).toBe('7');
   });
 
   it('startNewSession 替换记录', async () => {
-    const mgr = new SessionManager({ rest: fakeRest(), agentId: 3 });
+    stubFetch();
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     const first = await mgr.resolveSession();
     const second = await mgr.startNewSession();
     expect(second.id).not.toBe(first.id);

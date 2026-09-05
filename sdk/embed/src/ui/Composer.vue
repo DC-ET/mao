@@ -39,6 +39,13 @@ function onKeydown(e: KeyboardEvent) {
     onSend();
   }
 }
+
+/** 供 ChatPanel 在浮窗展开时调用 */
+function focus() {
+  inputEl.value?.focus();
+}
+
+defineExpose({ focus });
 </script>
 
 <template>
@@ -54,6 +61,7 @@ function onKeydown(e: KeyboardEvent) {
         v-model="text"
         class="mao-composer__input"
         rows="1"
+        aria-label="消息输入框"
         :disabled="disabled"
         :placeholder="disabled ? (running ? '执行中…' : '连接中…') : '输入消息，Enter 发送，Shift+Enter 换行'"
         @keydown="onKeydown"
@@ -63,7 +71,7 @@ function onKeydown(e: KeyboardEvent) {
         <svg viewBox="0 0 24 24"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
       </button>
     </div>
-    <div v-if="connectionError" class="mao-banner mao-banner--error" style="padding: 6px 0 0">
+    <div v-if="connectionError" class="mao-banner mao-banner--error mao-banner--inline">
       连接已断开，发送时将自动重连
     </div>
   </div>

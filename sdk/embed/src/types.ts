@@ -1,4 +1,4 @@
-import type { WsAskUserQuestionItem, WsClientType, WsTaskPhase } from '@mao/contracts';
+import type { WsAskUserQuestionItem, WsTaskPhase } from '@mao/contracts';
 
 export interface MaoChatTheme {
   /** 主色，默认取 Mao 品牌蓝 */
@@ -35,6 +35,7 @@ export interface MaoChatInstance {
 export type MaoChatEvent =
   | { type: 'phase'; phase: WsTaskPhase; sessionId: number }
   | { type: 'error'; message: string }
+  /** 未读数变化（收起浮窗时收到新消息 / 展开时清零） */
   | { type: 'unread'; count: number };
 
 /** 浮窗内一条消息的运行时形态 */
@@ -63,19 +64,6 @@ export interface PendingQuestion {
   questions: WsAskUserQuestionItem[];
 }
 
-/** 连接/会话生命周期驱动 UI 的一组响应式状态 */
-export interface ChatUiState {
-  connected: boolean;
-  open: boolean;
-  phase: WsTaskPhase | null;
-  llmRetryText: string | null;
-  executionError: string | null;
-  unread: number;
-  pendingQuestion: PendingQuestion | null;
-  quotedSelection: string | null;
-  sessionError: string | null;
-}
-
 export const DEFAULT_WS_SILENCE_TIMEOUT_MS = 30_000;
 export const HEARTBEAT_INTERVAL_MS = 5_000;
 export const CONTEXT_LIMIT_BYTES = 8 * 1024;
@@ -89,9 +77,4 @@ export function resolveWsUrl(serverUrl: string): string {
 export function resolveApiBase(serverUrl: string): string {
   const trimmed = serverUrl.replace(/\/+$/, '');
   return trimmed.endsWith('/api/v1') ? trimmed : `${trimmed}/api/v1`;
-}
-
-export function normalizeClientType(client: string | undefined): WsClientType {
-  if (client?.toLowerCase() === 'embed') return 'embed';
-  return 'browser';
 }

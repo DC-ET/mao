@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import DOMPurify from 'dompurify';
-import { marked } from 'marked';
+import { computed, ref, watch } from 'vue';
 import type { ChatMessage } from '../types';
+import { renderMarkdown } from './markdown';
 
 const props = defineProps<{ message: ChatMessage }>();
 
-marked.setOptions({ async: false, gfm: true, breaks: true });
-
 const md = computed(() => {
   if (props.message.role !== 'assistant') return '';
-  const raw = marked.parse(props.message.content) as string;
-  return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+  return renderMarkdown(props.message.content);
 });
 
-const thinkingOpen = ref(false);
+// 思考流式期间默认展开（长思考时界面否则像卡住），本轮结束后自动折叠
+const thinkingOpen = ref(props.message.streaming && !props.message.content);
+watch(
+  () => props.message.streaming,
+  (streaming, prev) => {
+    if (streaming && !prev) thinkingOpen.value = !props.message.content;
+    else if (!streaming && prev) thinkingOpen.value = false;
+  },
+);
 </script>
 
 <template>

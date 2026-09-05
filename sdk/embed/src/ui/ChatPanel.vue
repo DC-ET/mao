@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { WsAskUserQuestionAnswer } from '@mao/contracts';
 import type { ChatMessage, PendingQuestion } from '../types';
 import MessageBubble from './MessageBubble.vue';
 import Composer from './Composer.vue';
@@ -15,6 +16,7 @@ const props = defineProps<{
   llmRetryText: string | null;
   messages: ChatMessage[];
   pendingQuestion: PendingQuestion | null;
+  questionSubmitting: boolean;
   quotedSelection: string | null;
 }>();
 
@@ -23,34 +25,59 @@ const emit = defineEmits<{
   newSession: [];
   send: [content: string];
   stop: [];
-  answer: [requestId: string, answers: unknown[]];
+  answer: [requestId: string, answers: WsAskUserQuestionAnswer[]];
   clearSelection: [];
   retry: [];
 }>();
 
 const listEl = ref<HTMLElement | null>(null);
+const composerEl = ref<InstanceType<typeof Composer> | null>(null);
 
-const running = computed(
-  () =>
-    props.phase === 'RUNNING' ||
-    props.phase === 'RESUMING' ||
-    props.phase === 'WAITING_APPROVAL',
-);
-const inputDisabled = computed(() => !props.connected || running.value);
+// embed 会话固定为 CLOUD，无工具审批环节，故不含 WAITING_APPROVAL
+const running = computed(() => props.phase === 'RUNNING' || props.phase === 'RESUMING');
+// 断线不禁用输入：sendReliable 会先重连再补发（Composer 内已有对应提示）
+const inputDisabled = computed(() => running.value);
+const isEmpty = computed(() => props.messages.length === 0);
+
+/** 距底部阈值内才自动跟随，避免打断用户上滚回看 */
+const FOLLOW_THRESHOLD_PX = 40;
+
+function scrollToBottom() {
+  const el = listEl.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
 
 watch(
   () => props.messages.map((m) => (m.role === 'assistant' ? m.content.length + m.thinking.length + m.toolCalls.length : 1)),
   () => {
-    void nextTick(() => {
-      const el = listEl.value;
-      if (el) el.scrollTop = el.scrollHeight;
-    });
+    const el = listEl.value;
+    // 计算必须在 DOM 更新前取旧的滚动位置：更新后 scrollHeight 已变大
+    const nearBottom = !el || el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_THRESHOLD_PX;
+    if (!nearBottom) return;
+    void nextTick(scrollToBottom);
   },
 );
 
-function onEmptySlot(): boolean {
-  return props.messages.length === 0;
+// 打开浮窗：滚到底并聚焦输入框（省掉用户一次点击）
+watch(
+  () => props.open,
+  (v) => {
+    if (!v) return;
+    void nextTick(() => {
+      scrollToBottom();
+      composerEl.value?.focus();
+    });
+  },
+  { immediate: true },
+);
+
+function onKeydown(e: KeyboardEvent) {
+  // 不调 stopPropagation：SDK 挂在宿主 document 上监听，拦截会吞掉宿主页自己的 Escape 处理
+  if (e.key === 'Escape' && props.open) emit('close');
 }
+
+onMounted(() => document.addEventListener('keydown', onKeydown));
+onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 </script>
 
 <template>
@@ -66,9 +93,9 @@ function onEmptySlot(): boolean {
       </button>
     </div>
 
-    <div ref="listEl" class="mao-messages">
+    <div ref="listEl" class="mao-messages" aria-live="polite">
       <MessageBubble v-for="m in messages" :key="m.id" :message="m" />
-      <div v-if="onEmptySlot()" class="mao-empty">向 Agent 提问，它会结合当前页面内容回答</div>
+      <div v-if="isEmpty" class="mao-empty">向 Agent 提问，它会结合当前页面内容回答</div>
     </div>
 
     <div v-if="llmRetryText" class="mao-banner mao-banner--info">{{ llmRetryText }}</div>
@@ -80,10 +107,12 @@ function onEmptySlot(): boolean {
     <QuestionCard
       v-if="pendingQuestion"
       :pending="pendingQuestion"
+      :submitting="questionSubmitting"
       @submit="(id, answers) => emit('answer', id, answers)"
     />
 
     <Composer
+      ref="composerEl"
       :disabled="inputDisabled"
       :running="running"
       :quoted-selection="quotedSelection"
