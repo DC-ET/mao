@@ -299,4 +299,49 @@ describe('CrashRecoveryRunner deferred rescan', () => {
       vi.useRealTimers();
     }
   });
+
+  it('rescanDoesNotDoubleRunSessionStillRecovering', async () => {
+    vi.useFakeTimers();
+    try {
+      const dir = join(tmpdir(), `mao-crash-rescan-inflight-${Date.now()}`);
+      writeDeployLock(dir, 0);
+      // 首轮恢复仍在执行（harness 长时挂起）时补扫再次扫到同一会话：
+      // 此时 DB phase 已被恢复流程写回 RUNNING，只靠 phase 重查无法区分「崩溃遗留」，
+      // 必须靠 in-flight 去重拦住，否则同一会话并发跑两次执行。
+      const pending: Promise<void>[] = [];
+      const sessionMapper = {
+        selectByPhase: vi.fn().mockImplementation(async (phase: string) =>
+          phase === 'RUNNING'
+            ? [{ id: 1, userId: 42, sessionType: 'DEFAULT', phase, modelId: null }]
+            : []),
+        selectById: vi.fn().mockResolvedValue({ id: 1, userId: 42, sessionType: 'DEFAULT', phase: 'RUNNING', modelId: null }),
+      };
+      let releaseExecute: (() => void) | null = null;
+      const harnessExecute = vi.fn().mockImplementation(() => new Promise<void>((resolve) => { releaseExecute = resolve; }));
+      const runner = new CrashRecoveryRunner(
+        sessionMapper as never,
+        { cleanupIncompleteTail: vi.fn().mockResolvedValue(0), updatePhase: vi.fn().mockResolvedValue(undefined) } as never,
+        { finishExecution: vi.fn().mockResolvedValue(undefined) } as never,
+        { execute: harnessExecute } as never,
+        { registerCancelFlag: vi.fn().mockReturnValue({ get: () => false }), removeCancelFlag: vi.fn() } as never,
+        { send: vi.fn() } as never,
+        {} as never,
+        { clear: vi.fn() } as never,
+        { selectBySessionId: vi.fn().mockResolvedValue([]) } as never,
+        { selectById: vi.fn().mockResolvedValue(null), selectDefault: vi.fn().mockResolvedValue(null) } as never,
+        dir,
+        { submit: (fn: () => Promise<void>) => { pending.push(fn()); } },
+      );
+      await runner.run();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(harnessExecute).toHaveBeenCalledTimes(1);
+      releaseExecute?.();
+      await Promise.all(pending);
+      expect(harnessExecute).toHaveBeenCalledTimes(1);
+      rmSync(dir, { recursive: true, force: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

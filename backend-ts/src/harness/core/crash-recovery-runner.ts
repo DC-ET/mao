@@ -37,6 +37,12 @@ export class CrashRecoveryRunner {
   private deferredCandidates: Session[] = [];
   /** 延迟恢复是否已完成快照后的全库补扫（仅补扫一次，避免把活跃会话误判为遗留）。 */
   private deferredScan = false;
+  /**
+   * 本实例正在恢复中的会话。延迟恢复的「快照重放」与随后的「全库补扫」两轮可能命中同一会话：
+   * 首轮恢复已把 phase 置回 RUNNING，recoverSession 的 phase 重查无法识别，会对同一会话
+   * 并发跑两次 harness 执行（同一批消息重复执行、终态互相覆盖）。
+   */
+  private readonly recovering = new Set<number>();
   /** 快照重放与全库补扫的间隔秒数：补扫前旧实例 drain 必须已收尾。 */
   private static readonly RESCAN_DELAY_SEC = 15;
 
@@ -123,6 +129,8 @@ export class CrashRecoveryRunner {
       session.sessionType !== 'SUBAGENT'
       && session.id != null
       && !blocked.has(session.id)
+      // 本实例已在恢复中的会话：其 phase 被恢复流程置为 RUNNING，重查无法与「崩溃遗留」区分
+      && !this.recovering.has(session.id)
       && all.findIndex((item) => item.id === session.id) === index);
   }
 
@@ -165,6 +173,21 @@ export class CrashRecoveryRunner {
 
   private async recoverSession(snapshot: Session): Promise<void> {
     const sessionId = snapshot.id!;
+    // 同一实例内的恢复去重：延迟恢复的快照重放与全库补扫两轮可能命中同一会话，
+    // 首轮已把 phase 置回 RUNNING，靠下面的 phase 重查无法拦住并发第二次执行。
+    if (this.recovering.has(sessionId)) {
+      harnessLog('info', `Skip recovery for session ${sessionId}: recovery already in flight`);
+      return;
+    }
+    this.recovering.add(sessionId);
+    try {
+      await this.runRecovery(snapshot, sessionId);
+    } finally {
+      this.recovering.delete(sessionId);
+    }
+  }
+
+  private async runRecovery(snapshot: Session, sessionId: number): Promise<void> {
     const userId = snapshot.userId ?? null;
     let extra: RecoveryExtraListener | null = null;
     // 恢复前重查当前状态：候选来自启动时（或延迟恢复的初始）快照，蓝绿排空期间
