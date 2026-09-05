@@ -51,7 +51,7 @@ defineExpose({ focus });
 <template>
   <div class="mao-composer">
     <div v-if="quotedSelection" class="mao-chip">
-      <span>讨论：</span>
+      <span class="mao-chip__label">讨论</span>
       <span class="mao-chip__text">{{ quotedSelection }}</span>
       <button class="mao-chip__close" type="button" aria-label="移除引用" @click="emit('clearSelection')">×</button>
     </div>
@@ -63,7 +63,7 @@ defineExpose({ focus });
         rows="1"
         aria-label="消息输入框"
         :disabled="disabled"
-        :placeholder="disabled ? (running ? '执行中…' : '连接中…') : '输入消息，Enter 发送，Shift+Enter 换行'"
+        :placeholder="disabled ? (running ? '执行中…' : '连接中…') : '输入消息，Enter 发送'"
         @keydown="onKeydown"
       />
       <button v-if="running" class="mao-composer__stop" type="button" @click="emit('stop')">停止</button>

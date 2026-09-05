@@ -28,13 +28,14 @@ watch(
       <template v-else>
         <div v-if="message.thinking" class="mao-thinking">
           <div class="mao-thinking__summary" @click="thinkingOpen = !thinkingOpen">
+            <span class="mao-thinking__caret" :class="{ 'mao-thinking__caret--open': thinkingOpen }" />
             {{ thinkingOpen ? '收起思考' : '思考过程' }}
           </div>
           <div v-if="thinkingOpen" class="mao-thinking__body">{{ message.thinking }}</div>
         </div>
         <div v-for="tc in message.toolCalls" :key="tc.toolCallId" class="mao-toolcard">
           <div class="mao-toolcard__head">
-            <span>{{ tc.displayName || tc.toolName }}</span>
+            <span class="mao-toolcard__name">{{ tc.displayName || tc.toolName }}</span>
             <span
               class="mao-toolcard__status"
               :class="`mao-toolcard__status--${tc.status}`"

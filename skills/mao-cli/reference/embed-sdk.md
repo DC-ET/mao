@@ -15,7 +15,7 @@
     getToken: () => fetch('/your-backend/embed-token').then(r => r.json()).then(d => d.accessToken),
     context: () => ({ page: location.pathname, orderId: window.__orderId }),
     position: 'right',              // 可选：'right' | 'left'
-    theme: { primary: '#4f6ef7' },  // 可选：仅主色
+    theme: { primary: '#0066cc' },  // 可选：仅主色，默认与 Mao 桌面端一致
     launcher: { visible: true },    // 可选：false 时隐藏自带按钮，用 chat.open() 打开
     onEvent: (e) => console.log(e), // 可选：phase / error / unread
   });
@@ -35,6 +35,7 @@
 | 连接 | 懒连接（首次展开浮窗才连）；首帧 `auth`、5s 心跳、30s 静默判定、1s→30s 指数退避重连；重连后自动恢复订阅并重拉历史与本地未落库消息合并对账；断线期间仍可输入，发送时自动重连补发 |
 | 发送 | 帧写入 socket 后仍需等服务端 `user_message_saved` 落库确认；发送失败与服务端拒绝会回滚气泡并复原上下文与引用；60s 未回执只提示「发送未确认」而不删除消息（可能已在执行），服务端一旦有产出或回执迟到，提示自动撤下 |
 | 样式隔离 | 全部渲染在 Shadow DOM 内，`all: initial` 重置继承；宿主的 `!important` 全局样式不侵入 |
+| 视觉与主题 | 设计语言对齐 Mao 桌面端：默认主色 `#0066cc`、发丝描边、分层阴影、8/10/14/16px 圆角阶梯。`theme.primary` 只需给一个色值，hover 色 / 浅底色 / 聚焦环由 `color-mix` 自动派生（老浏览器落回静态默认值）；动效在 `prefers-reduced-motion: reduce` 下自动关闭。暗色模式暂未支持 |
 | 全局污染 | 只挂 `window.MaoChat` 与 `window.__maoChatInstance` |
 | 桌面端可见 | SDK 建的会话在 desktop 会话列表可见、可继续；双端同时发送时另一端收到"该任务仍在运行"提示 |
 
