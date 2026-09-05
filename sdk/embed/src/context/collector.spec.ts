@@ -1,5 +1,37 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ContextCollector, hashString, stableStringify, truncateByBytes, utf8ByteLength } from './collector';
+import {
+  ContextCollector,
+  hashString,
+  stableStringify,
+  stripContextPrefix,
+  truncateByBytes,
+  utf8ByteLength,
+} from './collector';
+
+describe('stripContextPrefix', () => {
+  it('剥掉页面上下文块，只留用户输入', () => {
+    const full = '[页面上下文]\nurl: https://x/y\ntitle: T\ndata: {"a":1}\n\n---\n\n这单什么状态？';
+    expect(stripContextPrefix(full)).toBe('这单什么状态？');
+  });
+
+  it('剥掉选中引用块', () => {
+    expect(stripContextPrefix('[用户选中文本]\n合同条款片段\n\n---\n\n帮我解释')).toBe('帮我解释');
+  });
+
+  it('正文里含 --- 分隔符时只切第一处', () => {
+    const full = '[页面上下文]\nurl: x\n\n---\n\n前\n\n---\n\n后';
+    expect(stripContextPrefix(full)).toBe('前\n\n---\n\n后');
+  });
+
+  it('无前缀的内容原样返回', () => {
+    expect(stripContextPrefix('普通消息')).toBe('普通消息');
+    expect(stripContextPrefix('包含 --- 的普通消息')).toBe('包含 --- 的普通消息');
+  });
+
+  it('只有前缀没有分隔符时保留原文（不产出空气泡）', () => {
+    expect(stripContextPrefix('[页面上下文]\nurl: x')).toBe('[页面上下文]\nurl: x');
+  });
+});
 
 // node 环境无 window/document：stub 最小面
 describe('ContextCollector', () => {

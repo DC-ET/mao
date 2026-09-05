@@ -326,6 +326,30 @@ describe('EmbedController', () => {
     h.ctl.destroy();
   });
 
+  it('历史里的用户消息剥掉上下文前缀后上屏（不回显 JSON 上下文块）', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    historyMessages = [
+      {
+        id: 1,
+        role: 'USER',
+        content: '[页面上下文]\nurl: https://erp.example.com/order\ntitle: 订单\ndata: {"orderId":"SO-1"}\n\n---\n\n这单什么状态？',
+      },
+    ];
+    socket.close(1006);
+    await vi.waitFor(() => expect(FakeWebSocket.instances.length).toBe(2), { timeout: 3000 });
+    const s2 = h.socket();
+    s2.open();
+    await vi.waitFor(() => expect(s2.framesOfType('auth').length).toBe(1));
+    s2.emit({ type: 'connected', sessionId: null, data: { userId: 1 } });
+    await vi.waitFor(() =>
+      expect(h.ctl.store.messages.value.filter((m) => m.role === 'user').map((m) => m.content)).toEqual([
+        '这单什么状态？',
+      ]),
+    );
+    h.ctl.destroy();
+  });
+
   it('重连重拉历史不擦掉本轮流式内容与工具卡', async () => {
     const h = await makeHarness();
     const socket = await boot(h);

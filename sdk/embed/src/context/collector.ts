@@ -8,6 +8,11 @@ import { CONTEXT_LIMIT_BYTES } from '../types';
 
 /** 截断提示后缀：附在被截断内容末尾 */
 const TRUNCATED_SUFFIX = '…(已截断)';
+/** 上下文块标头：拼装与还原（历史回显）共用 */
+const CONTEXT_HEADER = '[页面上下文]';
+const SELECTION_HEADER = '[用户选中文本]';
+/** 上下文前缀与用户正文之间的分隔符 */
+export const PREFIX_SEPARATOR = '\n\n---\n\n';
 
 export interface PageContextPayload {
   url: string;
@@ -54,6 +59,19 @@ export function hashString(s: string): string {
   return (h >>> 0).toString(16);
 }
 
+/**
+ * 剥掉发送时拼在正文前的上下文/选中引用块，还原用户真正输入的文本。
+ * 历史消息从服务端取回的是拼装后的完整内容，直接上屏会让用户看到一整坨
+ * `[页面上下文] url:… data:{…}` JSON（乐观气泡显示的是纯输入，两者必须一致）。
+ */
+export function stripContextPrefix(content: string): string {
+  if (!content.startsWith(CONTEXT_HEADER) && !content.startsWith(SELECTION_HEADER)) return content;
+  const idx = content.indexOf(PREFIX_SEPARATOR);
+  // 只有前缀没有正文（理论上不会发生：send() 要求 content 非空）时保留原文，不返回空气泡
+  if (idx < 0) return content;
+  return content.slice(idx + PREFIX_SEPARATOR.length);
+}
+
 export class ContextCollector {
   private lastHash: string | null = null;
   /** 宿主通过 chat.setContext() 命令式覆盖的上下文 */
@@ -95,7 +113,7 @@ export class ContextCollector {
       const h = hashString(fingerprint);
       if (h !== this.lastHash) {
         this.lastHash = h;
-        const header = `[页面上下文]\nurl: ${payload.url}\ntitle: ${payload.title}\ndata: `;
+        const header = `${CONTEXT_HEADER}\nurl: ${payload.url}\ntitle: ${payload.title}\ndata: `;
         const serialized = stableStringify(payload.data);
         const dataBudget =
           CONTEXT_LIMIT_BYTES -
@@ -114,7 +132,7 @@ export class ContextCollector {
 
     if (sel) {
       const kept = truncateByBytes(sel, selBudget);
-      parts.push(`[用户选中文本]\n${kept}${kept.length < sel.length ? TRUNCATED_SUFFIX : ''}`);
+      parts.push(`${SELECTION_HEADER}\n${kept}${kept.length < sel.length ? TRUNCATED_SUFFIX : ''}`);
     }
 
     if (parts.length === 0) return null;

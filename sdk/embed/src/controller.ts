@@ -9,7 +9,7 @@ import { SessionManager } from './core/session-manager';
 import { RestClient, AuthError } from './core/rest-client';
 import { TokenProvider } from './core/token-provider';
 import { TabsCoordinator } from './core/tabs';
-import { ContextCollector } from './context/collector';
+import { ContextCollector, PREFIX_SEPARATOR, stripContextPrefix } from './context/collector';
 import { SelectionTracker } from './context/selection';
 import type { ChatMessage } from './types';
 import type {
@@ -243,7 +243,8 @@ export class EmbedController {
       .map((m) => ({
         id: `h_${m.id}`,
         role: m.role === 'USER' ? ('user' as const) : ('assistant' as const),
-        content: m.content ?? '',
+        // 服务端存的是拼了页面上下文/选中引用的完整内容，气泡只显示用户真正输入的部分
+        content: m.role === 'USER' ? stripContextPrefix(m.content ?? '') : m.content ?? '',
         thinking: m.thinkingContent ?? '',
         streaming: false,
         error: false,
@@ -548,7 +549,7 @@ export class EmbedController {
     // 选中文本已随本条消息发出：一次性标记为已消费（用户重新选中同一段仍可再次引用）
     if (selection) this.selectionTracker?.consume(selection);
     this.ui.quotedSelection = null;
-    const full = prefix ? `${prefix}\n\n---\n\n${content}` : content;
+    const full = prefix ? `${prefix}${PREFIX_SEPARATOR}${content}` : content;
     const localId = this.store.appendLocalUserMessage(content);
     this.ui.sessionError = null;
     this.store.sessionError.value = null;

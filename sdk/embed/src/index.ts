@@ -1,5 +1,6 @@
 import type { MaoChatInitOptions, MaoChatInstance } from './types';
 import { EmbedController, createUiState, mountApp, type UiState } from './controller';
+import { applyTheme } from './ui/theme';
 
 export type { MaoChatInitOptions, MaoChatInstance, MaoChatEvent } from './types';
 
@@ -22,9 +23,10 @@ function createInstance(options: MaoChatInitOptions): MaoChatInstance {
 
   const ui = createUiState(options);
   const { cleanup, root, host } = mountApp(ui);
-  // 主题主色：内联覆写 .mao-root 的 --mao-primary（规则内默认值优先级高于 host 继承）
+  // 主题主色：内联覆写 .mao-root 的 --mao-primary（规则内默认值优先级高于 host 继承）。
+  // 同时按主色亮度派生前景色/描边，浅色主色（白、浅黄）下文字才不会消失。
   if (options.theme?.primary) {
-    root.style.setProperty('--mao-primary', options.theme.primary);
+    applyTheme(root, options.theme.primary);
   }
   const controller = new EmbedController(options, ui, (event) => {
     try {

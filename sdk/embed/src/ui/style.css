@@ -8,6 +8,11 @@
 
   /* 品牌主色：theme.primary 经内联 style 覆写本变量（勿加 !important，勿移到 :host） */
   --mao-primary: #0066cc;
+  /* 压在主色底上的前景色 / 主色当文字用时的可读版本 / 主色过浅时补的描边。
+     由 ui/theme.ts 按主色亮度内联覆写；默认值对应默认蓝 */
+  --mao-on-primary: #ffffff;
+  --mao-primary-ink: var(--mao-primary);
+  --mao-primary-edge: transparent;
   /* 主色派生量：默认给静态值，支持 color-mix 的浏览器在文件末尾按 --mao-primary 重算 */
   --mao-primary-hover: #005ab7;
   --mao-primary-soft: rgba(0, 102, 204, 0.09);
@@ -48,7 +53,7 @@
     'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   color: var(--mao-text);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.5;
   letter-spacing: -0.1px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -70,10 +75,10 @@
   padding: 0;
   border-radius: 50%;
   background: var(--mao-primary);
-  color: #fff;
+  color: var(--mao-on-primary);
   border: none;
   cursor: pointer;
-  box-shadow: var(--mao-shadow-launcher);
+  box-shadow: var(--mao-shadow-launcher), inset 0 0 0 1px var(--mao-primary-edge);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -83,7 +88,7 @@
 .mao-launcher:hover {
   transform: translateY(-2px);
   background: var(--mao-primary-hover);
-  box-shadow: var(--mao-shadow-launcher-hover);
+  box-shadow: var(--mao-shadow-launcher-hover), inset 0 0 0 1px var(--mao-primary-edge);
 }
 .mao-launcher:active { transform: translateY(0) scale(0.95); }
 .mao-launcher:focus-visible {
@@ -109,7 +114,7 @@
   inset: -5px;
   border-radius: 50%;
   border: 2.5px solid transparent;
-  border-top-color: var(--mao-primary);
+  border-top-color: var(--mao-primary-ink);
   opacity: 0.55;
   animation: mao-spin 0.9s linear infinite;
 }
@@ -132,6 +137,10 @@
   z-index: var(--mao-z);
   animation: mao-panel-in 0.24s var(--mao-ease);
 }
+/* 移动端浏览器地址栏会让 100vh 大于实际可视高度，浮窗底部被顶出屏幕 */
+@supports (height: 100dvh) {
+  .mao-panel { height: min(640px, calc(100dvh - 132px)); }
+}
 @keyframes mao-panel-in {
   from { opacity: 0; transform: translateY(10px) scale(0.985); }
 }
@@ -152,7 +161,7 @@
   height: 30px;
   border-radius: 9px;
   background: var(--mao-primary-soft);
-  color: var(--mao-primary);
+  color: var(--mao-primary-ink);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -211,7 +220,7 @@
 }
 .mao-panel__btn:hover { background: rgba(0, 0, 0, 0.05); color: var(--mao-text); }
 .mao-panel__btn:active { background: rgba(0, 0, 0, 0.09); }
-.mao-panel__btn:focus-visible { outline: 2px solid var(--mao-primary); outline-offset: -2px; }
+.mao-panel__btn:focus-visible { outline: 2px solid var(--mao-primary-ink); outline-offset: -2px; }
 .mao-panel__btn svg { width: 17px; height: 17px; fill: currentColor; }
 .mao-panel__btn:disabled { opacity: 0.3; cursor: not-allowed; background: transparent; }
 
@@ -239,13 +248,16 @@
   min-width: 0;
   border-radius: var(--mao-radius-lg);
   word-break: break-word;
-  line-height: 1.65;
+  line-height: 1.55;
 }
 .mao-msg--user .mao-msg__bubble {
   max-width: 86%;
-  padding: 9px 13px;
+  padding: 8px 13px;
   background: var(--mao-primary);
-  color: #fff;
+  /* 前景色随主色亮度切换：浅色主色下用深墨色，否则白字 */
+  color: var(--mao-on-primary);
+  /* 主色接近白时补一圈描边，气泡才不会与面板融成一片 */
+  box-shadow: inset 0 0 0 1px var(--mao-primary-edge);
   border-bottom-right-radius: var(--mao-radius-xs);
   /* 用户消息是纯文本：换行与缩进按原样保留（助手侧交给 markdown，勿开 pre-wrap） */
   white-space: pre-wrap;
@@ -261,34 +273,36 @@
   box-shadow: inset 0 0 0 1px rgba(215, 0, 21, 0.22);
 }
 
-/* ── markdown ── */
+/* ── markdown ──
+   行距与段距按"信息密度优先"收紧：浮窗宽度只有 400px，
+   1.6 行高 + 8px 段距会让三行回答占满半屏。 */
 .mao-msg__md > :first-child { margin-top: 0; }
 .mao-msg__md > :last-child { margin-bottom: 0; }
-.mao-msg__md p { margin: 0 0 8px; }
+.mao-msg__md p { margin: 0 0 6px; }
 .mao-msg__md h1,
 .mao-msg__md h2,
 .mao-msg__md h3,
 .mao-msg__md h4 {
-  margin: 12px 0 6px;
+  margin: 10px 0 4px;
   font-weight: 600;
   letter-spacing: -0.2px;
-  line-height: 1.4;
+  line-height: 1.35;
 }
-.mao-msg__md h1 { font-size: 17px; }
-.mao-msg__md h2 { font-size: 16px; }
-.mao-msg__md h3 { font-size: 15px; }
-.mao-msg__md h4 { font-size: 14px; }
-.mao-msg__md a { color: var(--mao-primary); text-decoration: none; }
+.mao-msg__md h1 { font-size: 16px; }
+.mao-msg__md h2 { font-size: 15px; }
+.mao-msg__md h3 { font-size: 14px; }
+.mao-msg__md h4 { font-size: 13.5px; }
+.mao-msg__md a { color: var(--mao-primary-ink); text-decoration: none; }
 .mao-msg__md a:hover { text-decoration: underline; }
 .mao-msg__md pre {
-  margin: 8px 0;
+  margin: 6px 0;
   background: #1d1d1f;
   color: #e8e8ed;
-  padding: 10px 12px;
+  padding: 9px 11px;
   border-radius: var(--mao-radius-md);
   overflow-x: auto;
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 .mao-msg__md code {
   font-family: var(--mao-font-mono);
@@ -301,22 +315,25 @@
 }
 .mao-msg__md table {
   border-collapse: collapse;
-  margin: 8px 0;
+  margin: 6px 0;
   font-size: 13px;
 }
 .mao-msg__md th,
-.mao-msg__md td { border: 1px solid var(--mao-border); padding: 5px 9px; text-align: left; }
+.mao-msg__md td { border: 1px solid var(--mao-border); padding: 4px 8px; text-align: left; }
 .mao-msg__md th { background: rgba(0, 0, 0, 0.03); font-weight: 600; }
 .mao-msg__md blockquote {
-  margin: 8px 0;
-  padding: 2px 12px;
+  margin: 6px 0;
+  padding: 1px 11px;
   border-left: 2px solid var(--mao-border-strong);
   color: var(--mao-text-secondary);
 }
 .mao-msg__md ul,
-.mao-msg__md ol { margin: 8px 0; padding-left: 20px; }
-.mao-msg__md li { margin: 2px 0; }
-.mao-msg__md hr { border: none; border-top: 1px solid var(--mao-border); margin: 12px 0; }
+.mao-msg__md ol { margin: 6px 0; padding-left: 19px; }
+.mao-msg__md li { margin: 1px 0; }
+.mao-msg__md li > p { margin: 0; }
+.mao-msg__md li > ul,
+.mao-msg__md li > ol { margin: 1px 0; }
+.mao-msg__md hr { border: none; border-top: 1px solid var(--mao-border); margin: 10px 0; }
 .mao-msg__md img { max-width: 100%; border-radius: var(--mao-radius-sm); }
 
 /* ── thinking ── */
@@ -392,7 +409,7 @@
   color: var(--mao-text-tertiary);
   font-weight: 500;
 }
-.mao-toolcard__status--running { background: var(--mao-primary-soft); color: var(--mao-primary); }
+.mao-toolcard__status--running { background: var(--mao-primary-soft); color: var(--mao-primary-ink); }
 .mao-toolcard__status--done { background: rgba(36, 138, 61, 0.1); color: var(--mao-success); }
 .mao-toolcard__status--error { background: var(--mao-danger-soft); color: var(--mao-danger); }
 .mao-toolcard__args,
@@ -422,7 +439,7 @@
   margin-left: 3px;
   vertical-align: -0.12em;
   border-radius: 1px;
-  background: var(--mao-primary);
+  background: var(--mao-primary-ink);
   animation: mao-blink 1.1s step-start infinite;
 }
 @keyframes mao-blink { 50% { opacity: 0; } }
@@ -446,7 +463,7 @@
 }
 .mao-banner--info {
   background: var(--mao-primary-soft);
-  color: var(--mao-primary);
+  color: var(--mao-primary-ink);
   box-shadow: inset 0 0 0 1px var(--mao-primary-soft-strong);
 }
 /* composer 内嵌的断连提示：贴在输入框下方，不占外层 banner 的外边距 */
@@ -492,7 +509,7 @@
   width: 3px;
   height: 13px;
   border-radius: 2px;
-  background: var(--mao-primary);
+  background: var(--mao-primary-ink);
 }
 .mao-card__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 .mao-btn {
@@ -505,9 +522,13 @@
   font-weight: 500;
   transition: background 0.15s ease, opacity 0.15s ease;
 }
-.mao-btn--primary { background: var(--mao-primary); color: #fff; }
+.mao-btn--primary {
+  background: var(--mao-primary);
+  color: var(--mao-on-primary);
+  box-shadow: inset 0 0 0 1px var(--mao-primary-edge);
+}
 .mao-btn--primary:hover:not(:disabled) { background: var(--mao-primary-hover); }
-.mao-btn:focus-visible { outline: 2px solid var(--mao-primary); outline-offset: 2px; }
+.mao-btn:focus-visible { outline: 2px solid var(--mao-primary-ink); outline-offset: 2px; }
 .mao-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .mao-q__item { margin-bottom: 12px; }
@@ -534,11 +555,11 @@
 }
 .mao-q__opt:hover { border-color: var(--mao-border-strong); background: var(--mao-sunken); }
 .mao-q__opt--checked {
-  border-color: var(--mao-primary);
+  border-color: var(--mao-primary-ink);
   background: var(--mao-primary-soft);
 }
 .mao-q__opt--checked:hover { background: var(--mao-primary-soft); }
-.mao-q__opt input { margin: 4px 0 0; accent-color: var(--mao-primary); flex-shrink: 0; }
+.mao-q__opt input { margin: 4px 0 0; accent-color: var(--mao-primary-ink); flex-shrink: 0; }
 .mao-q__desc { color: var(--mao-text-tertiary); font-size: 12px; }
 .mao-q__custom {
   width: 100%;
@@ -555,7 +576,7 @@
 .mao-q__custom::placeholder { color: var(--mao-text-tertiary); }
 .mao-q__custom:focus {
   outline: none;
-  border-color: var(--mao-primary);
+  border-color: var(--mao-primary-ink);
   box-shadow: 0 0 0 3px var(--mao-focus-ring);
 }
 .mao-q__custom:disabled { background: var(--mao-panel); color: var(--mao-text-tertiary); }
@@ -572,7 +593,7 @@
   align-items: center;
   gap: 6px;
   background: var(--mao-primary-soft);
-  color: var(--mao-primary);
+  color: var(--mao-primary-ink);
   border-radius: var(--mao-radius-sm);
   padding: 5px 6px 5px 9px;
   font-size: 12px;
@@ -626,14 +647,15 @@
 .mao-composer__input:focus {
   outline: none;
   background: var(--mao-bg);
-  border-color: var(--mao-primary);
+  border-color: var(--mao-primary-ink);
   box-shadow: 0 0 0 3px var(--mao-focus-ring);
 }
 .mao-composer__input:disabled { background: var(--mao-panel); color: var(--mao-text-tertiary); }
 .mao-composer__send {
   border: none;
   background: var(--mao-primary);
-  color: #fff;
+  color: var(--mao-on-primary);
+  box-shadow: inset 0 0 0 1px var(--mao-primary-edge);
   border-radius: 50%;
   width: 34px;
   height: 34px;
@@ -647,7 +669,7 @@
 }
 .mao-composer__send:hover:not(:disabled) { background: var(--mao-primary-hover); }
 .mao-composer__send:active:not(:disabled) { transform: scale(0.92); }
-.mao-composer__send:focus-visible { outline: 2px solid var(--mao-primary); outline-offset: 2px; }
+.mao-composer__send:focus-visible { outline: 2px solid var(--mao-primary-ink); outline-offset: 2px; }
 .mao-composer__send:disabled { opacity: 0.32; cursor: not-allowed; }
 .mao-composer__send svg { width: 16px; height: 16px; fill: currentColor; }
 .mao-composer__stop {
@@ -695,7 +717,7 @@
   height: 52px;
   border-radius: 15px;
   background: var(--mao-primary-soft);
-  color: var(--mao-primary);
+  color: var(--mao-primary-ink);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -714,14 +736,39 @@
   max-width: 260px;
 }
 
+/* 窄屏（手机）触控尺寸：只放大点击目标，不改布局与字号。
+   44px 是 iOS/Android 的推荐最小触控边长；桌面端保持紧凑。 */
+@media (max-width: 480px) {
+  .mao-panel { bottom: 84px; }
+  .mao-launcher { width: 52px; height: 52px; bottom: 20px; }
+  .mao-launcher[data-pos='right'] { right: 16px; }
+  .mao-launcher[data-pos='left'] { left: 16px; }
+  .mao-panel[data-pos='right'] { right: 16px; }
+  .mao-panel[data-pos='left'] { left: 16px; }
+  .mao-panel__btn { width: 36px; height: 36px; }
+  .mao-panel__btn svg { width: 19px; height: 19px; }
+  .mao-composer { padding: 10px 12px 14px; }
+  .mao-composer__send { width: 40px; height: 40px; }
+  .mao-composer__send svg { width: 18px; height: 18px; }
+  .mao-composer__stop { height: 40px; padding: 0 16px; }
+  .mao-composer__input { padding: 10px 12px; }
+  .mao-chip { padding: 6px 6px 6px 10px; }
+  .mao-chip__close { width: 26px; height: 26px; font-size: 16px; }
+  .mao-thinking__summary { padding: 5px 10px 5px 8px; }
+  .mao-q__opt { padding: 10px 12px; }
+  .mao-btn { padding: 9px 18px; }
+  .mao-banner__retry { padding: 5px 12px; }
+}
+
 /* 主色派生量按 --mao-primary 实时重算：宿主传任意 theme.primary 时 hover/浅底/聚焦环同步变化。
    放在文件末尾，覆盖 .mao-root 里的静态回退值（不支持 color-mix 的浏览器保留回退）。 */
 @supports (color: color-mix(in srgb, red, blue)) {
   .mao-root {
     --mao-primary-hover: color-mix(in srgb, var(--mao-primary) 88%, #000);
-    --mao-primary-soft: color-mix(in srgb, var(--mao-primary) 9%, transparent);
-    --mao-primary-soft-strong: color-mix(in srgb, var(--mao-primary) 18%, transparent);
-    --mao-focus-ring: color-mix(in srgb, var(--mao-primary) 22%, transparent);
+    /* 浅底色与聚焦环基于 primary-ink（已保证对白底可读），否则白色主色下这些提示完全看不见 */
+    --mao-primary-soft: color-mix(in srgb, var(--mao-primary-ink) 9%, transparent);
+    --mao-primary-soft-strong: color-mix(in srgb, var(--mao-primary-ink) 18%, transparent);
+    --mao-focus-ring: color-mix(in srgb, var(--mao-primary-ink) 22%, transparent);
   }
 }
 
