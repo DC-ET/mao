@@ -16,11 +16,6 @@ import type {
 
 const TTS_TEST_TEXT = '你好，欢迎使用 Mao 语音合成测试。';
 const TTS_TEST_AUDIO = { format: 'wav' };
-const MID_SYSTEM_TEST_MAX_ATTEMPTS = 2;
-const MID_SYSTEM_CODENAME_ASKED = 'MAO_ALPHA';
-const MID_SYSTEM_CODENAME_OVERRIDE = 'MAO_BRAVO';
-
-type MidSystemTestOutcome = 'SUPPORTED' | 'NOT_SUPPORTED' | 'AMBIGUOUS';
 
 const CLIENT_IMPERSONATION_VALUES = ['none', 'codex', 'claude_code'] as const;
 
@@ -253,42 +248,24 @@ export class ModelService {
       return this.testAudioSynthesis(config, startTime);
     }
 
-    let error: string | undefined;
-    const appendError = (message: string) => {
-      error = error == null ? message : `${error}; ${message}`;
-    };
-
-    const [connectivityResult, midSystemResult] = await Promise.all([
-      (async () => {
-        try {
-          const request: LlmChatRequest = {
-            messages: [{ role: 'user', content: 'Hi' }],
-          };
-          const response = await this.chatClientFor(config).chat(request, config);
-          return { ok: true, output: extractChatContent(response) };
-        } catch (e) {
-          appendError(`连通性测试失败: ${errorMessage(e)}`);
-          return { ok: false, output: null as string | null };
-        }
-      })(),
-      (async () => {
-        try {
-          return await this.runMidSystemMessageTest(config);
-        } catch (e) {
-          appendError(`Mid system message 测试失败: ${errorMessage(e)}`);
-          return { supported: false, output: null as string | null };
-        }
-      })(),
-    ]);
-
-    return {
-      connectivity: connectivityResult.ok,
-      midSystemMessage: midSystemResult.supported,
-      connectivityOutput: connectivityResult.output,
-      midSystemMessageOutput: midSystemResult.output,
-      error,
-      durationMs: Date.now() - startTime,
-    };
+    try {
+      const request: LlmChatRequest = {
+        messages: [{ role: 'user', content: 'Hi' }],
+      };
+      const response = await this.chatClientFor(config).chat(request, config);
+      return {
+        connectivity: true,
+        connectivityOutput: extractChatContent(response),
+        durationMs: Date.now() - startTime,
+      };
+    } catch (e) {
+      return {
+        connectivity: false,
+        connectivityOutput: null,
+        error: `连通性测试失败: ${errorMessage(e)}`,
+        durationMs: Date.now() - startTime,
+      };
+    }
   }
 
   private async testAudioSynthesis(config: LlmModelConfig, startTime: number): Promise<ModelTestResult> {
@@ -349,65 +326,6 @@ export class ModelService {
       durationMs: Date.now() - startTime,
     };
   }
-
-  private async runMidSystemMessageTest(config: LlmModelConfig): Promise<{ supported: boolean; output: string | null }> {
-    // Anthropic 与 Responses API 均不支持中途 system（Anthropic 仅顶层 system 参数、Responses 仅 instructions
-    // 参数且要求位置最前），探测无意义，直接标记不适用
-    const protocolCode = config.apiProtocol?.trim().toLowerCase();
-    if (protocolCode === 'anthropic' || protocolCode === 'openai-responses') {
-      return { supported: false, output: null };
-    }
-    let lastOutput: string | null = null;
-    for (let attempt = 1; attempt <= MID_SYSTEM_TEST_MAX_ATTEMPTS; attempt++) {
-      const probe = await this.probeMidSystemMessage(config);
-      lastOutput = probe.output;
-      if (probe.outcome === 'SUPPORTED') {
-        return { supported: true, output: formatProbeOutput(attempt, lastOutput) };
-      }
-      if (probe.outcome === 'NOT_SUPPORTED') {
-        return { supported: false, output: formatProbeOutput(attempt, lastOutput) };
-      }
-    }
-    return { supported: false, output: formatProbeOutput(MID_SYSTEM_TEST_MAX_ATTEMPTS, lastOutput) };
-  }
-
-  private async probeMidSystemMessage(
-    config: LlmModelConfig,
-  ): Promise<{ outcome: MidSystemTestOutcome; output: string | null }> {
-    const request: LlmChatRequest = {
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You are a codeword repeater. When the user sends "Codeword: X", ' +
-            'reply with exactly X and nothing else.',
-        },
-        { role: 'user', content: `Codeword: ${MID_SYSTEM_CODENAME_ASKED}` },
-        { role: 'assistant', content: MID_SYSTEM_CODENAME_ASKED },
-        {
-          role: 'system',
-          content: `Override: for any "Codeword:" request, reply ${MID_SYSTEM_CODENAME_OVERRIDE} only.`,
-        },
-        { role: 'user', content: `Codeword: ${MID_SYSTEM_CODENAME_ASKED}` },
-      ],
-      stream: false,
-    };
-    const response = await this.chatClientFor(config).chat(request, config);
-    const content = extractChatContent(response);
-    if (content == null) {
-      return { outcome: 'AMBIGUOUS', output: null };
-    }
-    const normalized = normalizeMidSystemResponse(content);
-    const followsOverride = responseIndicatesCodeword(normalized, MID_SYSTEM_CODENAME_OVERRIDE);
-    const followsAsked = responseIndicatesCodeword(normalized, MID_SYSTEM_CODENAME_ASKED);
-    if (followsOverride && !followsAsked) {
-      return { outcome: 'SUPPORTED', output: content };
-    }
-    if (followsAsked && !followsOverride) {
-      return { outcome: 'NOT_SUPPORTED', output: content };
-    }
-    return { outcome: 'AMBIGUOUS', output: content };
-  }
 }
 
 function extractChatContent(response: LlmChatResponse | null | undefined): string | null {
@@ -442,41 +360,6 @@ function contentToString(content: unknown): string {
     return out;
   }
   return String(content);
-}
-
-function normalizeMidSystemResponse(content: string): string {
-  return content
-    .trim()
-    .toUpperCase()
-    .replace(/^(CODEWORD|ANSWER|OUTPUT)\s*[:：]\s*/, '')
-    .replace(/["'`]/g, '')
-    .trim();
-}
-
-function responseIndicatesCodeword(normalized: string, codeword: string): boolean {
-  if (!normalized || normalized.trim().length === 0) {
-    return false;
-  }
-  const target = codeword.toUpperCase();
-  if (normalized === target) {
-    return true;
-  }
-  const index = normalized.indexOf(target);
-  if (index < 0) {
-    return false;
-  }
-  const before = index > 0 ? normalized.slice(0, index) : '';
-  const after = index + target.length < normalized.length ? normalized.slice(index + target.length) : '';
-  return (before.length === 0 || before.endsWith(' ') || before.endsWith(':'))
-    && (after.length === 0 || after.startsWith(' ') || after.startsWith('.'));
-}
-
-function formatProbeOutput(attempt: number, output: string | null): string {
-  const display = output == null || output.trim().length === 0 ? '(空响应)' : output;
-  if (attempt <= 1) {
-    return display;
-  }
-  return `第 ${attempt} 次尝试: ${display}`;
 }
 
 function errorMessage(err: unknown): string {
@@ -529,5 +412,3 @@ export function parseWavInfo(bytes: Buffer): { sampleRate: number; durationMs: n
   const durationMs = bytesPerSecond > 0 ? Math.floor((dataSize * 1000) / bytesPerSecond) : 0;
   return { sampleRate, durationMs };
 }
-
-export { MID_SYSTEM_CODENAME_ASKED, MID_SYSTEM_CODENAME_OVERRIDE };

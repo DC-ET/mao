@@ -24,9 +24,7 @@ export interface LlmModel {
 
 export interface ModelTestResult {
   connectivity: boolean;
-  midSystemMessage?: boolean;
   connectivityOutput?: string | null;
-  midSystemMessageOutput?: string | null;
   error?: string | null;
   durationMs: number;
   audioTest?: boolean;

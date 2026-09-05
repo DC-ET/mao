@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
-import { MID_SYSTEM_CODENAME_ASKED, ModelService } from './model.service.js';
+import { ModelService } from './model.service.js';
 import type {
   LlmChatClient,
-  LlmChatRequest,
   LlmModel,
   LlmModelRepository,
   SessionModelRepository,
@@ -20,14 +19,6 @@ function model(id: number, name: string, isDefault: number, status: number): Llm
     isDefault,
     status,
   };
-}
-
-function isConnectivityProbe(request: LlmChatRequest): boolean {
-  const messages = request.messages;
-  return messages != null
-    && messages.length === 1
-    && messages[0].role === 'user'
-    && messages[0].content === 'Hi';
 }
 
 describe('ModelService', () => {
@@ -194,29 +185,30 @@ describe('ModelService', () => {
   it('testConnectivityCallsAdapterAndWrapsFailure', async () => {
     const llmModel = model(8, 'ok', 0, 1);
     vi.mocked(modelRepo.findById).mockResolvedValue(llmModel);
-    vi.mocked(llmClient.chat).mockImplementation(async (request) => {
-      if (isConnectivityProbe(request)) {
-        return { choices: [] };
-      }
-      return {
-        choices: [{ message: { role: 'assistant', content: MID_SYSTEM_CODENAME_ASKED } }],
-      };
-    });
+    vi.mocked(llmClient.chat).mockResolvedValue({ choices: [] });
 
     let result = await service.testConnectivity(8);
-    expect(result.connectivity).toBe(true);
-    expect(result.midSystemMessage).toBe(false);
-    expect(result.connectivityOutput).toBeNull();
-    expect(result.midSystemMessageOutput).toBe(MID_SYSTEM_CODENAME_ASKED);
-    expect(llmClient.chat).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(llmClient.chat).mock.calls[0][1].modelId).toBe('model-ok');
-
-    vi.mocked(llmClient.chat).mockImplementation(async () => {
-      throw new Error('boom');
+    expect(result).toEqual({
+      connectivity: true,
+      connectivityOutput: null,
+      durationMs: expect.any(Number),
     });
+    expect(llmClient.chat).toHaveBeenCalledTimes(1);
+    expect(llmClient.chat).toHaveBeenCalledWith(
+      { messages: [{ role: 'user', content: 'Hi' }] },
+      expect.objectContaining({ modelId: 'model-ok' }),
+    );
+
+    vi.mocked(llmClient.chat).mockClear();
+    vi.mocked(llmClient.chat).mockRejectedValue(new Error('boom'));
     result = await service.testConnectivity(8);
-    expect(result.connectivity).toBe(false);
-    expect(result.error).toContain('连通性测试失败');
+    expect(result).toEqual({
+      connectivity: false,
+      connectivityOutput: null,
+      error: '连通性测试失败: boom',
+      durationMs: expect.any(Number),
+    });
+    expect(llmClient.chat).toHaveBeenCalledTimes(1);
   });
 
   it('lists creates updates and lookups', async () => {
@@ -244,14 +236,13 @@ describe('ModelService', () => {
     const llmModel = model(9, 'impersonated', 0, 1);
     llmModel.clientImpersonation = 'claude_code';
     vi.mocked(modelRepo.findById).mockResolvedValue(llmModel);
-    vi.mocked(llmClient.chat).mockImplementation(async (request) => {
-      if (isConnectivityProbe(request)) {
-        return { choices: [{ message: { role: 'assistant', content: 'hey' } }] };
-      }
-      return { choices: [{ message: { role: 'assistant', content: MID_SYSTEM_CODENAME_ASKED } }] };
+    vi.mocked(llmClient.chat).mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: 'hey' } }],
     });
 
-    await service.testConnectivity(9);
+    const result = await service.testConnectivity(9);
+    expect(result.connectivityOutput).toBe('hey');
+    expect(llmClient.chat).toHaveBeenCalledTimes(1);
     expect(vi.mocked(llmClient.chat).mock.calls[0][1].clientImpersonation).toBe('claude_code');
   });
 
@@ -370,18 +361,33 @@ describe('ModelService', () => {
     expect(responsesClient.chat).not.toHaveBeenCalled();
   });
 
-  it('midSystemTestSkipsResponsesProtocol', async () => {
-    const responsesClient: LlmChatClient = { chat: vi.fn() };
-    const routedService = new ModelService(modelRepo, sessionRepo, llmClient, new Map([['openai-responses', responsesClient]]));
-    vi.mocked(llmClient.chat).mockImplementation(async () => ({ choices: [{ message: { role: 'assistant', content: 'hey' } }] }));
+  it.each(['openai-compatible', 'anthropic', 'openai-responses'])(
+    'testConnectivityMakesOnlyOneBasicCallForProtocol %s',
+    async (apiProtocol) => {
+      const client: LlmChatClient = {
+        chat: vi.fn().mockResolvedValue({
+          choices: [{ message: { role: 'assistant', content: 'Hello' } }],
+        }),
+      };
+      const routedService = new ModelService(modelRepo, sessionRepo, llmClient, new Map([[apiProtocol, client]]));
+      const llmModel = model(15, 'test', 0, 1);
+      llmModel.apiProtocol = apiProtocol;
+      llmModel.modelType = 'text';
+      vi.mocked(modelRepo.findById).mockResolvedValue(llmModel);
 
-    const responsesModel = model(15, 'gpt-5', 0, 1);
-    responsesModel.apiProtocol = 'openai-responses';
-    responsesModel.modelType = 'text';
-    vi.mocked(modelRepo.findById).mockResolvedValue(responsesModel);
-    const result = await routedService.testConnectivity(15);
-    expect(result.connectivity).toBe(true);
-    expect(result.midSystemMessage).toBe(false);
-    expect(responsesClient.chat).toHaveBeenCalledTimes(1);
-  });
+      const result = await routedService.testConnectivity(15);
+
+      expect(result).toEqual({
+        connectivity: true,
+        connectivityOutput: 'Hello',
+        durationMs: expect.any(Number),
+      });
+      expect(client.chat).toHaveBeenCalledTimes(1);
+      expect(client.chat).toHaveBeenCalledWith(
+        { messages: [{ role: 'user', content: 'Hi' }] },
+        expect.objectContaining({ apiProtocol }),
+      );
+      expect(llmClient.chat).not.toHaveBeenCalled();
+    },
+  );
 });

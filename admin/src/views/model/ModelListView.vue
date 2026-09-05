@@ -219,18 +219,6 @@
             <div class="test-result-label">模型输出</div>
             <pre class="test-result-output">{{ formatTestOutput(testResult.connectivityOutput) }}</pre>
           </div>
-
-          <div class="test-result-section">
-            <div class="test-result-section__header">
-              <span class="test-result-section__title">Mid System Message</span>
-              <el-tag :type="testResult.midSystemMessage ? 'success' : 'warning'" size="small">
-                {{ testResult.midSystemMessage ? '支持' : '不支持' }}
-              </el-tag>
-            </div>
-            <div class="test-result-label">模型输出</div>
-            <pre class="test-result-output">{{ formatTestOutput(testResult.midSystemMessageOutput) }}</pre>
-            <div class="test-result-hint">期望输出：MAO_BRAVO（而非 MAO_ALPHA）</div>
-          </div>
         </template>
 
         <el-alert
@@ -455,27 +443,17 @@ function formatDuration(ms: number) {
   return `${(ms / 1000).toFixed(2)} s`
 }
 
-const testResultType = computed(() => {
-  if (!testResult.value) return 'error'
-  if (testResult.value.audioTest) {
-    return testResult.value.connectivity ? 'success' : 'error'
-  }
-  if (testResult.value.connectivity && testResult.value.midSystemMessage) return 'success'
-  if (testResult.value.connectivity) return 'warning'
-  return 'error'
-})
+const testResultType = computed(() => testResult.value?.connectivity ? 'success' : 'error')
 
 const testResultTitle = computed(() => {
   if (testResultType.value === 'success') {
     return testResult.value?.audioTest ? '合成成功' : '测试通过'
   }
-  if (testResultType.value === 'warning') return '部分通过'
   return testResult.value?.audioTest ? '合成失败' : '测试失败'
 })
 
 const testResultTagType = computed(() => {
   if (testResultType.value === 'success') return 'success'
-  if (testResultType.value === 'warning') return 'warning'
   return 'danger'
 })
 
@@ -610,10 +588,6 @@ onMounted(() => {
   background: var(--el-color-success-light-9);
 }
 
-.test-result-summary.is-warning {
-  background: var(--el-color-warning-light-9);
-}
-
 .test-result-summary.is-error {
   background: var(--el-color-danger-light-9);
 }
@@ -663,12 +637,6 @@ onMounted(() => {
   word-break: break-word;
   max-height: 180px;
   overflow: auto;
-}
-
-.test-result-hint {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
 }
 
 .test-result-audio {

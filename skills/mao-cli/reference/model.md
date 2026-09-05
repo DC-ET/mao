@@ -234,7 +234,7 @@ mao model set-status --id 1 --status 1
 
 ### 用途
 
-测试模型连通性。需要管理权限。
+测试模型连通性。需要管理权限。文本模型仅发送一条 `Hi` 用户消息进行基础调用，不探测 mid system message 支持；返回 `connectivity`、`connectivityOutput`、`durationMs`，失败时包含 `error`。语音模型仍执行语音合成测试。
 
 | 参数 | 必填 | 类型 | 含义 |
 |------|------|------|------|

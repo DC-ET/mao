@@ -23,7 +23,7 @@
 | 支持视觉 | 是否接受图片 |
 | 默认模型 | 新会话默认 |
 
-注意：初始化占位模型须替换 Key；不支持视觉的模型勿开视觉；保存后可用「测试连接」。
+注意：初始化占位模型须替换 Key；不支持视觉的模型勿开视觉；保存后可用「测试连接」。文本模型仅测试基础调用，展示通过或失败、模型输出及耗时，不再检测 mid system message 支持；语音模型仍测试合成与试听。
 
 CLI：`mao model list|create|update|delete|set-status|test`（见 [model.md](model.md)）。
 
