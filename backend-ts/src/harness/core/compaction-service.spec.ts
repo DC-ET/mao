@@ -36,7 +36,7 @@ describe('CompactionService', () => {
         { role: 'user', content: 'question' },
         { role: 'assistant', content: '', toolCalls: [{ id: 'c1', type: 'function' }] },
         { role: 'tool', toolCallId: 'c1', content: 'result' },
-        { role: 'system', content: 'ephemeral' },
+        { role: 'user', content: '<system-notice>\nephemeral\n</system-notice>' },
       ],
       tools: [{ type: 'function', function: { name: 'tool' } }],
       temperature: 0.2,

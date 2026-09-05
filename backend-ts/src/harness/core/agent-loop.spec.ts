@@ -154,7 +154,7 @@ describe('AgentLoop', () => {
 
     await agentLoop.execute(ctx, l, p);
 
-    expect(ctx.messages.map((m) => m.role)).toEqual(expect.arrayContaining(['system', 'assistant']));
+    expect(ctx.messages.map((m) => m.role)).toEqual(expect.arrayContaining(['user', 'assistant']));
     expect(l.onThinkingDelta).toHaveBeenCalledWith('thinking');
     expect(l.onContentDelta).toHaveBeenCalledWith('hello');
     expect(l.onMessageEnd).toHaveBeenCalled();
@@ -579,11 +579,11 @@ describe('AgentLoop', () => {
     expect(l.onMessageEnd).toHaveBeenCalled();
     expect(l.onError).not.toHaveBeenCalled();
     expect(call).toBe(2);
-    // 空响应后应重试，不再注入系统提示
+    // 空响应后应重试，不再注入系统提示（addSystemMessage 现在使用 user role）
     expect(promptEngine.buildRequest).toHaveBeenCalled();
     const secondCallMessages = promptEngine.buildRequest.mock.calls[0][0]?.messages;
-    const systemMsgs = secondCallMessages?.filter((m: { role: string }) => m.role === 'system');
-    expect(systemMsgs?.some((m: { content: string }) => m.content.includes('上一轮模型未产生有效输出'))).toBe(false);
+    const allMsgs = secondCallMessages ?? [];
+    expect(allMsgs.some((m: { content: string }) => String(m.content).includes('上一轮模型未产生有效输出'))).toBe(false);
   });
 
   it('throwsFriendlyErrorAfterTenConsecutiveEmptyResponses', async () => {

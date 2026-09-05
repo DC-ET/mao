@@ -79,8 +79,11 @@ describe('SessionHistoryLoader', () => {
     });
 
     expect(context.messages).toBe(messagesRef);
-    expect(context.messages.map((m) => m.role)).toEqual(['system', 'user', 'system']);
+    // addSystemMessage 现在注入 user role（外裹 <system-notice> 标签），
+    // 避免许多模型不支持中途 system message 的问题
+    expect(context.messages.map((m) => m.role)).toEqual(['system', 'user', 'user']);
     expect(String(context.messages[2].content)).toContain('background task result');
+    expect(String(context.messages[2].content)).toContain('<system-notice>');
     expect(context.sessionSummary).toBe('summary text');
   });
 

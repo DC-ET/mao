@@ -50,9 +50,14 @@ export class AgentExecutionContext {
   }
 
   addSystemMessage(content: string): void {
-    const systemMessage: ChatMessage = { role: 'system', content };
-    this.messages.push(systemMessage);
-    this.ephemeralSystemMessages.push(systemMessage);
+    // 使用 user role 避免许多模型不支持中途 system message 的问题；
+    // 外裹 <system-notice> 标签帮助模型区分系统注入的通知与真实用户输入。
+    const msg: ChatMessage = {
+      role: 'user',
+      content: `<system-notice>\n${content}\n</system-notice>`,
+    };
+    this.messages.push(msg);
+    this.ephemeralSystemMessages.push(msg);
   }
 
   addAssistantMessage(content: string | null | undefined, toolCalls?: ToolCall[] | null, reasoningContent?: string | null): void {
