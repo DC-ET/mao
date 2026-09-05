@@ -15,6 +15,14 @@
 
 ---
 
+## 0.0.106 (2026-09-05)
+
+### 后端
+
+- 修复蓝绿部署窗口内新建的会话随旧实例停止而永久卡 RUNNING 的边界问题：崩溃恢复延迟阶段在快照重放后新增一次全库补扫（15s 后触发），兜住「部署窗口内新建、随后随旧实例排空死亡」且不在初始快照里的会话；补扫仅执行一次，恢复前仍重查会话终态，不影响新实例上活跃执行的会话。
+
+---
+
 ## 0.0.105 (2026-09-04)
 
 ### 前端（桌面 / Web / 安卓）
@@ -42,6 +50,7 @@
 
 - 修复跨源预检可能拒绝 `Authorization` 头的问题：CORS `allowedHeaders` 由 `'*'` 改为显式列出 `Authorization, Content-Type, Accept, X-Requested-With`（`Authorization` 属 CORS non-wildcard request-header，`*` 对它无效），影响第三方域名下嵌入式 SDK 的 REST 调用
 - WS 连接注册表的客户端类型归一化补充 `embed` 分支，与握手处理口径一致（此前 embed 连接在注册表统计里被记成 browser）
+- 修复许多模型不支持中途 system message 导致请求 400 的问题：Agent 执行过程中注入的后台任务结果、后台子代理结果、MCP 警告等临时通知由 `role: 'system'` 改为 `role: 'user'`，并在内容外包裹 `<system-notice>` 标签帮助模型区分系统注入与真实用户输入
 
 ## 0.0.104 (2026-09-04)
 

@@ -28,12 +28,17 @@ export interface RecoveryExtraListener extends AgentEventListener {
 export class CrashRecoveryRunner {
   private deferredTimer: ReturnType<typeof setTimeout> | null = null;
   /**
-   * 初始扫描时被推迟恢复的会话快照。蓝绿部署下延迟恢复若重新扫描 DB，
-   * 会把「重启后刚创建并正在活跃执行的会话」误判为崩溃遗留的 RUNNING 会话，
-   * 从而对同一会话再次启动一次 harness 执行，造成消息重复执行（飞书已回复但任务一直运行中）。
-   * 因此延迟恢复只复用初始扫描的快照，不再重新扫描。
+   * 初始扫描时被推迟恢复的会话快照。蓝绿部署下延迟恢复首次只重放该快照，不重新扫描
+   * DB——否则会把「重启后刚创建并正在活跃执行的会话」误判为崩溃遗留的 RUNNING 会话，
+   * 对同一会话再次启动一次 harness 执行，造成消息重复执行。
+   * 快照重放完成后（runPass 内）会触发一次全库补扫（deferredScan），此时部署窗口
+   * 已过、旧实例已停，补扫兜住「窗口内新建、随后随旧实例排空死亡」的漏网会话。
    */
   private deferredCandidates: Session[] = [];
+  /** 延迟恢复是否已完成快照后的全库补扫（仅补扫一次，避免把活跃会话误判为遗留）。 */
+  private deferredScan = false;
+  /** 快照重放与全库补扫的间隔秒数：补扫前旧实例 drain 必须已收尾。 */
+  private static readonly RESCAN_DELAY_SEC = 15;
 
   constructor(
     private readonly sessionMapper: SessionMapper,
@@ -71,8 +76,12 @@ export class CrashRecoveryRunner {
     const blocked = !deferCoordinator && this.subagentCoordinator
       ? await this.subagentCoordinator.schedule((session) => this.recoverSession(session))
       : new Set<number>();
-    // 延迟恢复复用初始扫描快照，避免把重启后新建的活跃会话误判为崩溃遗留会话。
-    const candidates = deferred ? this.deferredCandidates : await this.collectCandidates(blocked);
+    // 延迟恢复分两步：首次 pass 只重放初始扫描快照（deferredScan=false），避免把
+    // 重启后新建的活跃会话误判为崩溃遗留；第二次 pass（deferredScan=true，旧实例
+    // drain 收尾后触发）做全库补扫，兜住「部署窗口内新建、随旧实例排空死亡」的会话。
+    const candidates = deferred && !this.deferredScan
+      ? this.deferredCandidates
+      : await this.collectCandidates(blocked);
     const { recover, skipped } = deferAll
       ? { recover: [], skipped: candidates }
       : this.partitionForDeploy(candidates, skipDeployActive, deployLock);
@@ -84,9 +93,7 @@ export class CrashRecoveryRunner {
         'info',
         `Deferring crash recovery for ${candidates.length} session(s) during blue-green deploy (status=${deployLock?.status})`,
       );
-      if (deployLock != null) {
-        this.scheduleDeferredRecovery(deployDrainSec(deployLock));
-      }
+      this.scheduleDeferredRecovery(deployDrainSec(deployLock));
     } else if (skipped.length > 0) {
       // 蓝绿部署中仍在排空实例上活跃的会话：记录快照，延迟恢复只重试这批，不重新全库扫描。
       this.deferredCandidates = skipped;
@@ -94,7 +101,7 @@ export class CrashRecoveryRunner {
         'info',
         `Skipping crash recovery for ${skipped.length} session(s) still active on draining instance during blue-green deploy`,
       );
-      if (!deferred && deployLock != null) {
+      if (!deferred) {
         this.scheduleDeferredRecovery(deployDrainSec(deployLock));
       }
     }
@@ -141,7 +148,18 @@ export class CrashRecoveryRunner {
     harnessLog('info', `Scheduling deferred crash recovery in ${delaySec}s after blue-green drain`);
     this.deferredTimer = setTimeout(() => {
       this.deferredTimer = null;
-      void this.runPass(true).catch((e) => harnessLog('error', 'Deferred crash recovery failed', e));
+      // 第一步：重放初始扫描快照（此时 deferredScan 仍为 false，runPass 用快照作候选）。
+      void this.runPass(true).then(() => {
+        // 第二步：快照重放完成后置位并延迟一轮全库补扫——此时旧实例 drain 已收尾，
+        // 补扫才能安全捕获窗口内新建、随旧实例排空死亡但不在快照里的会话。
+        if (!this.deferredScan) {
+          this.deferredScan = true;
+          this.deferredTimer = setTimeout(() => {
+            this.deferredTimer = null;
+            void this.runPass(true).catch((e) => harnessLog('error', 'Post-drain crash rescan failed', e));
+          }, CrashRecoveryRunner.RESCAN_DELAY_SEC * 1000);
+        }
+      }).catch((e) => harnessLog('error', 'Deferred crash recovery failed', e));
     }, delaySec * 1000);
   }
 

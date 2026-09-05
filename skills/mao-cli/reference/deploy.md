@@ -137,6 +137,8 @@ chmod +x /opt/mao/backend-ts/restart.sh
 
 **蓝绿部署**：在 9080↔9081 备用端口启动新实例 → 健康检查 → 切换 Nginx upstream → 延迟停旧进程（`MAO_BLUE_GREEN_DRAIN_SEC` 默认 60s）。
 
+崩溃恢复：新实例启动时若处于部署窗口，仅推迟恢复初始扫描到的 RUNNING 会话（快照重放）；快照重放后 15s 做一次全库补扫，兜住部署窗口内新建、随旧实例停止而卡 RUNNING 的会话。
+
 状态文件在 `MAO_RUNTIME_DIR`：`active-backend-port`、`deploy.lock`、`deploy.flock`。
 
 验证：
