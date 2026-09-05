@@ -69,7 +69,7 @@
           <ThinkingBlock
             v-if="seg.type === 'thinking' && seg.content"
             :thinking="seg.content"
-            :streaming="isAssistantRunning && idx === lastThinkingIdx"
+            :streaming="isAssistantRunning && sessionThinkingActive && idx === lastThinkingIdx"
           />
           <MarkdownContent
             v-else-if="seg.type === 'text'"
@@ -293,6 +293,13 @@ const showStreamIndicator = computed(() =>
   (props.sessionId
     ? sessionStore.isSessionStreaming(props.sessionId)
     : sessionStore.activeStreaming)
+)
+
+/** 当前会话是否处于思考阶段（thinking_start ~ thinking_end），用于区分“正在流式”与“已流完”的思考段 */
+const sessionThinkingActive = computed(() =>
+  props.sessionId
+    ? sessionStore.isSessionThinking(props.sessionId)
+    : sessionStore.activeThinking
 )
 
 /** 重试状态按消息所属会话读取，避免多会话（边路/子代理）串扰 */
