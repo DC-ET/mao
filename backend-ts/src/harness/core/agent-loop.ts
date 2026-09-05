@@ -202,9 +202,11 @@ export class AgentLoop {
         let emptyResponseEncountered = false;
         const emptyBackoffMs = { v: 0 };
         const emptyRetryInfo = { attempt: 0, maxRetries: 10 };
-        const thinkingEnded = { v: false };
+        const thinkingActive = { v: false };
         const emittedEarlyStarts = new Set<string>();
-        listener.onThinkingStart?.();
+        // thinking_start 惰性发送：仅当模型真正输出首个推理增量时才标记思考开始。
+        // 之前在每轮 LLM 调用前无条件发送，模型不输出推理内容时（纯工具调用轮很常见），
+        // thinking 状态会横跨整轮，导致前端把上一轮已完成的思考块重新点亮为“思考中”。
         try {
           const contentBuilder: string[] = [];
           const thinkingBuilder: string[] = [];
@@ -216,12 +218,16 @@ export class AgentLoop {
               const delta = chunk.choices?.[0]?.delta;
               if (!delta) return;
               if (delta.reasoningContent) {
+                if (!thinkingActive.v) {
+                  thinkingActive.v = true;
+                  listener.onThinkingStart?.();
+                }
                 thinkingBuilder.push(delta.reasoningContent);
                 listener.onThinkingDelta?.(delta.reasoningContent);
               }
               if (delta.content) {
-                if (!thinkingEnded.v) {
-                  thinkingEnded.v = true;
+                if (thinkingActive.v) {
+                  thinkingActive.v = false;
                   listener.onThinkingEnd?.();
                 }
                 contentBuilder.push(delta.content);
@@ -237,8 +243,8 @@ export class AgentLoop {
               }
             },
             onComplete: (usage: ChatUsage) => {
-              if (!thinkingEnded.v) {
-                thinkingEnded.v = true;
+              if (thinkingActive.v) {
+                thinkingActive.v = false;
                 listener.onThinkingEnd?.();
               }
               context.addUsage(usage);
@@ -300,11 +306,14 @@ export class AgentLoop {
               throw new Error('LLM call failed: ' + (t as Error).message, { cause: t });
             },
             onStreamReset: () => {
+              if (thinkingActive.v) {
+                thinkingActive.v = false;
+                listener.onThinkingEnd?.();
+              }
               contentBuilder.length = 0;
               thinkingBuilder.length = 0;
               toolCalls.length = 0;
               emittedEarlyStarts.clear();
-              thinkingEnded.v = false;
               listener.onLlmStreamReset?.();
             },
             onWaiting: (phase, elapsed) => listener.onLlmWaiting?.(phase, elapsed),
@@ -316,8 +325,8 @@ export class AgentLoop {
           await this.llmAdapter.stream(request, context.modelConfig!, callback, cancelFlag ?? null);
           await Promise.all(afterStream);
         } catch (e) {
-          if (!thinkingEnded.v) {
-            thinkingEnded.v = true;
+          if (thinkingActive.v) {
+            thinkingActive.v = false;
             listener.onThinkingEnd?.();
           }
           if (e instanceof Error && e.message.includes('Cancelled by user')) {
