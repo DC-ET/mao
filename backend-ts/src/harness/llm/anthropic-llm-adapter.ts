@@ -786,14 +786,8 @@ export function convertMessages(messages: ChatMessage[]): { messages: AnthropicM
   for (const msg of messages) {
     const role = msg.role ?? 'user';
     if (role === 'system') {
-      // Anthropic 仅支持顶层 system 参数；首条外的 system 降级为 user 文本（防御，正常历史不会出现）
-      if (systemParts.length === 0 && converted.length === 0) {
-        const text = extractMessageText(msg.content);
-        if (text !== '') systemParts.push(text);
-      } else {
-        const text = extractMessageText(msg.content);
-        if (text !== '') pushBlocks('user', [{ type: 'text', text }]);
-      }
+      const text = extractMessageText(msg.content);
+      if (text !== '') systemParts.push(text);
       continue;
     }
     if (role === 'tool') {

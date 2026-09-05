@@ -56,7 +56,7 @@
 
 - 修复跨源预检可能拒绝 `Authorization` 头的问题：CORS `allowedHeaders` 由 `'*'` 改为显式列出 `Authorization, Content-Type, Accept, X-Requested-With`（`Authorization` 属 CORS non-wildcard request-header，`*` 对它无效），影响第三方域名下嵌入式 SDK 的 REST 调用
 - WS 连接注册表的客户端类型归一化补充 `embed` 分支，与握手处理口径一致（此前 embed 连接在注册表统计里被记成 browser）
-- 修复许多模型不支持中途 system message 导致请求 400 的问题：Agent 执行过程中注入的后台任务结果、后台子代理结果、MCP 警告等临时通知由 `role: 'system'` 改为 `role: 'user'`，并在内容外包裹 `<system-notice>` 标签帮助模型区分系统注入与真实用户输入
+- 修复许多模型不支持中途 system message 导致请求 400 的问题：Agent 执行过程中注入的后台任务结果、后台子代理结果、MCP 警告等临时通知由 `role: 'system'` 改为 `role: 'user'`，并在内容外包裹 `<system-notice>` 标签帮助模型区分系统注入与真实用户输入；同步清理 Anthropic 与 Responses 适配器中已无需要的中途 system message 降级逻辑
 
 ## 0.0.104 (2026-09-04)
 

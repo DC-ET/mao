@@ -843,8 +843,7 @@ function buildResponsesBody(request: ChatRequest, config: LlmModelConfig, messag
  * - 历史 assistant 消息转为 message 项（role:'assistant'），其 toolCalls 平铺为后续 function_call 项；
  * - tool 消息 → function_call_output（同轮多个 tool 结果全部输出后再进入下一轮）；
  * - 网关要求「function_call 项与其 function_call_output 项之间不得插入其他输出类型」，
- *   因此先平铺全部 function_call，再统一输出全部 function_call_output（并行多工具场景）；
- * - 中途 system（防御）降级为 user 文本。
+ *   因此先平铺全部 function_call，再统一输出全部 function_call_output（并行多工具场景）。
  */
 export function convertMessages(messages: ChatMessage[]): { instructions: string | null; input: Record<string, unknown>[] } {  const instructionsParts: string[] = [];
   const input: Record<string, unknown>[] = [];
@@ -863,14 +862,7 @@ export function convertMessages(messages: ChatMessage[]): { instructions: string
     const role = msg.role ?? 'user';
     if (role === 'system') {
       const text = extractMessageText(msg.content);
-      if (text === '') continue;
-      if (input.length === 0) {
-        instructionsParts.push(text);
-      } else {
-        // 非 instructions 位置的 system：先冲刷工具缓冲，降级为 user 文本
-        flushToolBuffer();
-        input.push({ role: 'user', content: [{ type: 'input_text', text }] });
-      }
+      if (text !== '') instructionsParts.push(text);
       continue;
     }
     if (role === 'tool') {

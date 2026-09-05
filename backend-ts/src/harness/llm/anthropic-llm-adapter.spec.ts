@@ -178,7 +178,7 @@ describe('AnthropicLlmAdapter - chat (non-stream)', () => {
     expect(messages[0].role).toBe('user');
   });
 
-  it('多段 system：首条拆出，非首条降级为 user 消息并入相邻文本', async () => {
+  it('多段 system 合并到顶层 system 参数', async () => {
     server = new QueueServer();
     server.enqueueJson('{"id":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
     await server.start();
@@ -192,15 +192,11 @@ describe('AnthropicLlmAdapter - chat (non-stream)', () => {
     }, configOf(server));
 
     const body = JSON.parse(server.bodies[0]) as Record<string, unknown>;
-    expect(body.system).toBe('第一段');
-    // 非首条 system 降级为 user 文本，与相邻 user 消息合并为一条（保证严格交替）
-    const messages = body.messages as Array<{ role: string; content: Array<Record<string, unknown>> }>;
+    // 所有 system 消息合并为顶层 system 参数
+    expect(body.system).toBe('第一段\n\n第二段');
+    const messages = body.messages as Array<{ role: string }>;
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe('user');
-    expect(messages[0].content).toEqual([
-      { type: 'text', text: 'hi' },
-      { type: 'text', text: '第二段' },
-    ]);
   });
 
   it('assistant toolCalls 转换为 tool_use block，tool 消息合并为 user tool_result block', async () => {

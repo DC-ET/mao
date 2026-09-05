@@ -227,14 +227,15 @@ describe('convertMessages（请求转换）', () => {
     expect(input[0]).toMatchObject({ type: 'reasoning', id: 'rs_toolcall' });
   });
 
-  it('首条之后的 system 消息：首位被 user 占据时降级为 user 文本', () => {
+  it('多段 system 合并到 instructions', () => {
     const { instructions, input } = convertMessages([
       { role: 'system', content: 'first' },
       { role: 'user', content: 'hi' },
       { role: 'system', content: 'mid' },
     ]);
-    expect(instructions).toBe('first');
-    expect(input[1]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'mid' }] });
+    expect(instructions).toBe('first\n\nmid');
+    expect(input).toHaveLength(1);
+    expect(input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'hi' }] });
   });
 
   it('无 user 消息时连续 system 合并为 instructions', () => {
