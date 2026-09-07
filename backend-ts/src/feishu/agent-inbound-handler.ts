@@ -512,10 +512,10 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     const isGroup = context.chatType === 'group';
     const senderLabel = context.senderLabel?.trim() || '未知用户';
     const sections: string[] = [];
-    const quoted = context.quotedContext?.trim();
-    if (quoted != null && quoted !== '') sections.push(`【引用的消息】\n${quoted}`);
     const groupContext = context.groupContext?.trim();
     if (isGroup && groupContext != null && groupContext !== '') sections.push(`【群内最近消息】\n${groupContext}`);
+    const quoted = context.quotedContext?.trim();
+    if (quoted != null && quoted !== '') sections.push(`【引用的消息】\n${quoted}`);
     if (isGroup) {
       sections.push(`【用户消息】\n${senderLabel}：${context.text}`);
     } else {
