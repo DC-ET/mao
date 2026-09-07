@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { BaseTool } from '../tool.js';
 import { asInt, asText, parseObject, toJson } from '../json.js';
@@ -10,8 +12,6 @@ import { harnessLog } from '../../log.js';
 import { IGNORED_DIRS } from './glob-search-tool.js';
 
 const DEFAULT_MAX_OUTPUT_CHARS = 10000;
-/** 回退分支单文件读取上限（与 rg 分支 maxBuffer 同量级），超过则跳过，避免超大文件 OOM。 */
-const MAX_SCAN_FILE_BYTES = 10 * 1024 * 1024;
 
 export class GrepSearchTool extends BaseTool {
   private rgAvailable: boolean | null = null;
@@ -49,7 +49,7 @@ export class GrepSearchTool extends BaseTool {
     };
   }
 
-  protected executeWithWorkspace(argumentsJson: string, workspace: string | null): string {
+  protected async executeWithWorkspace(argumentsJson: string, workspace: string | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson);
       if (!args) return toJson({ matches: [], error: '无效的JSON参数' });
@@ -67,7 +67,7 @@ export class GrepSearchTool extends BaseTool {
       const scope = SearchScope.from(resolvedPath);
       const result = this.isRgAvailable()
         ? this.searchWithRg(pattern, scope, workspaceRoot, glob, ignoreCase, contextLines, maxOutputChars)
-        : this.searchWithJs(pattern, scope, workspaceRoot, glob, ignoreCase, contextLines, maxOutputChars);
+        : await this.searchWithJs(pattern, scope, workspaceRoot, glob, ignoreCase, contextLines, maxOutputChars);
       return toJson({ matches: result.matches, truncated: result.truncated, total_matches: result.totalMatches });
     } catch (e) {
       if (e instanceof SecurityException) harnessLog('warn', `GrepSearchTool blocked by sandbox: ${(e as Error).message}`);
@@ -125,10 +125,10 @@ export class GrepSearchTool extends BaseTool {
     return { matches, totalMatches, truncated };
   }
 
-  private searchWithJs(
+  private async searchWithJs(
     pattern: string, scope: SearchScope, workspaceRoot: string, glob: string | null,
     ignoreCase: boolean, contextLines: number, maxOutputChars: number,
-  ): { matches: Record<string, unknown>[]; totalMatches: number; truncated: boolean } {
+  ): Promise<{ matches: Record<string, unknown>[]; totalMatches: number; truncated: boolean }> {
     const flags = ignoreCase ? 'mi' : 'm';
     const compiled = new RegExp(pattern, flags);
     const globRe = glob ? globToFileRe(glob) : null;
@@ -146,43 +146,40 @@ export class GrepSearchTool extends BaseTool {
       charsUsed += entrySize;
       return true;
     };
-    const files: string[] = [];
-    if (scope.isSingleFile() && scope.singleFile) files.push(scope.singleFile);
-    else collectFiles(scope.cwd, globRe, files, scope.cwd);
-    for (const file of files) {
-      if (truncated) break;
+    const files = scope.isSingleFile() && scope.singleFile
+      ? [scope.singleFile]
+      : collectFiles(scope.cwd, globRe, scope.cwd);
+    for await (const file of files) {
       const relativePath = scope.outputFilePath(file, workspaceRoot);
-      let lines: string[];
+      const input = createReadStream(file, { encoding: 'utf8' });
+      const reader = createInterface({ input, crlfDelay: Infinity });
+      const before: { line: number; content: string }[] = [];
+      let lineNumber = 0;
+      let afterUntil = 0;
       try {
-        if (statSync(file).size > MAX_SCAN_FILE_BYTES) continue;
-        lines = readFileSync(file, 'utf8').split('\n');
-      } catch { continue; }
-      // 与 rg --context 输出对齐：上下文行作为独立条目（contextual: true），
-      // 顺序为「前上下文 → 命中行 → 后上下文」，相邻命中的上下文重叠只输出一次
-      const matchIndices: number[] = [];
-      for (let i = 0; i < lines.length; i++) {
-        if (compiled.test(lines[i])) matchIndices.push(i);
-        compiled.lastIndex = 0;
-      }
-      let lastPrinted = -1;
-      const emitContext = (from: number, to: number): boolean => {
-        for (let j = Math.max(from, lastPrinted + 1, 0); j <= to && j < lines.length; j++) {
-          if (!pushEntry({ file: relativePath, line: j + 1, content: lines[j], contextual: true })) return false;
-          lastPrinted = j;
+        for await (const content of reader) {
+          lineNumber++;
+          const matched = compiled.test(content);
+          if (matched) {
+            for (const previous of before) {
+              if (!pushEntry({ file: relativePath, ...previous, contextual: true })) break;
+            }
+            before.length = 0;
+            if (truncated || !pushEntry({ file: relativePath, line: lineNumber, content })) break;
+            totalMatches++;
+            afterUntil = lineNumber + contextLines;
+          } else if (lineNumber <= afterUntil) {
+            if (!pushEntry({ file: relativePath, line: lineNumber, content, contextual: true })) break;
+          } else if (contextLines > 0) {
+            before.push({ line: lineNumber, content });
+            if (before.length > contextLines) before.shift();
+          }
         }
-        return true;
-      };
-      for (let k = 0; k < matchIndices.length; k++) {
-        const m = matchIndices[k];
-        if (contextLines > 0 && !emitContext(m - contextLines, m - 1)) break;
-        if (!pushEntry({ file: relativePath, line: m + 1, content: lines[m] })) break;
-        totalMatches++;
-        lastPrinted = m;
-        // 后上下文不越过下一个命中行（该行会以 match 身份输出，与 rg 一致）
-        const next = k + 1 < matchIndices.length ? matchIndices[k + 1] : lines.length;
-        if (contextLines > 0 && !emitContext(m + 1, Math.min(m + contextLines, next - 1))) break;
-        if (truncated) break;
+      } finally {
+        reader.close();
+        input.destroy();
       }
+      if (truncated) break;
     }
     return { matches, totalMatches, truncated };
   }
@@ -219,19 +216,16 @@ function globToFileRe(glob: string): RegExp {
   return new RegExp(`^${source}$`);
 }
 
-function collectFiles(dir: string, globRe: RegExp | null, out: string[], root: string): void {
-  let entries: string[] = [];
-  try { entries = readdirSync(dir); } catch { return; }
-  for (const name of entries) {
+async function* collectFiles(dir: string, globRe: RegExp | null, root: string): AsyncGenerator<string> {
+  for (const name of await readdir(dir)) {
     const full = path.join(dir, name);
-    let st;
-    try { st = statSync(full); } catch { continue; }
+    const st = await stat(full);
     if (st.isDirectory()) {
       if (IGNORED_DIRS.has(name)) continue;
-      collectFiles(full, globRe, out, root);
+      yield* collectFiles(full, globRe, root);
     } else if (st.isFile()) {
       const rel = path.relative(root, full).split(path.sep).join('/');
-      if (!globRe || globRe.test(rel) || globRe.test(name)) out.push(full);
+      if (!globRe || globRe.test(rel) || globRe.test(name)) yield full;
     }
   }
 }

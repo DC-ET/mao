@@ -26,7 +26,7 @@ LOCAL 本机工具需 Electron，见 [electron.md](electron.md)。对话执行�
 
 ## CLOUD 云端模式
 
-工具在服务器执行，工作区在 `WORKSPACE_ROOT` 下。
+工具在服务器执行，工作区在 `WORKSPACE_ROOT` 下。云端文件内容搜索的无 `rg` 分支支持异步逐行读取大文件，错误会明确返回；详见 [grep_search 使用说明](tool.md)。
 
 | 工作区来源 | 说明 |
 |------------|------|

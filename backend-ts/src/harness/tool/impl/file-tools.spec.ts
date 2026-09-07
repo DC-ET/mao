@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -329,6 +329,69 @@ describe('SearchTools', () => {
       pattern: 'needle', glob: '**/*.md',
     })));
     expect(result.total_matches).toBe(2);
+  });
+
+  it('grepSearchStreamsLargeLogsWithoutRg', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'fin.log'), `${'ordinary log line\n'.repeat(700000)}before\nNeedle 中文\nafter`);
+    const tool = new GrepSearchTool(new PathSandbox(dir));
+    (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      path: dir, glob: 'fin.log', pattern: '^needle 中文$', ignore_case: true, context_lines: 1,
+    })));
+    expect(result.error).toBeUndefined();
+    expect(result.total_matches).toBe(1);
+    expect(result.matches.map((entry: { line: number }) => entry.line)).toEqual([700001, 700002, 700003]);
+    expect(result.matches.map((entry: { content: string }) => entry.content)).toEqual(['before', 'Needle 中文', 'after']);
+  });
+
+  it('grepSearchDeduplicatesOverlappingContextWithoutRg', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'a.txt'), 'before\r\nneedle\r\nneedle\r\nbetween\r\nneedle\r\nafter\r\n');
+    const tool = new GrepSearchTool(new PathSandbox(dir));
+    (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
+    const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: '^needle$', context_lines: 2 })));
+    expect(result.total_matches).toBe(3);
+    expect(result.matches.map((entry: { line: number }) => entry.line)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(result.matches.map((entry: { contextual?: boolean }) => !!entry.contextual)).toEqual([true, false, false, true, false, true]);
+  });
+
+  it('grepSearchDoesNotInventAnEmptyLineAtEofWithoutRg', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'a.txt'), 'text\n');
+    const tool = new GrepSearchTool(new PathSandbox(dir));
+    (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
+    const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: '^$' })));
+    expect(result.total_matches).toBe(0);
+  });
+
+  it('grepSearchReportsMissingPathsWithoutRg', async () => {
+    const dir = await tmp();
+    const tool = new GrepSearchTool(new PathSandbox(dir));
+    (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
+    const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: 'needle', path: join(dir, 'missing') })));
+    expect(result.error).toBeTruthy();
+    expect(result.total_matches).toBeUndefined();
+  });
+
+  it('grepSearchReportsTraversalErrorsWithoutRg', async () => {
+    const dir = await tmp();
+    symlinkSync(join(dir, 'missing'), join(dir, 'broken.txt'));
+    const tool = new GrepSearchTool(new PathSandbox(dir));
+    (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
+    const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: 'needle' })));
+    expect(result.error).toContain('ENOENT');
+  });
+
+  it('grepSearchStopsBeforeTraversingMoreFilesOnceTruncated', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'a.txt'), 'needle\n');
+    symlinkSync(join(dir, 'missing'), join(dir, 'z.txt'));
+    const tool = new GrepSearchTool(new PathSandbox(dir));
+    (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
+    const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: 'needle', max_output_chars: 1 })));
+    expect(result.error).toBeUndefined();
+    expect(result.truncated).toBe(true);
   });
 
   it('grepSearchMarksTruncatedWhenOutputLimitIsExceeded', async () => {
