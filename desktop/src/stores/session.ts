@@ -1265,7 +1265,8 @@ export const useSessionStore = defineStore('session', () => {
       input,
       status: 'running',
       isExpanded: false,
-      argsStreaming: true
+      argsStreaming: true,
+      argumentsText: data.arguments || ''
     })
     const list = sessionMessages.value.get(sid) ?? []
     sessionMessages.value.set(sid, [...list])
@@ -1317,6 +1318,7 @@ export const useSessionStore = defineStore('session', () => {
     if (!lastMsg.toolCalls) lastMsg.toolCalls = []
     const call = lastMsg.toolCalls.find(c => c.id === data.tool_call_id)
     if (call) {
+      call.argumentsText = data.arguments
       try { call.input = JSON.parse(data.arguments) } catch { call.input = {} }
       notifyMessagesUpdate(sid)
     }

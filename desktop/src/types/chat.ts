@@ -14,6 +14,8 @@ export interface ToolCall {
   status: 'pending' | 'running' | 'success' | 'error'
   isExpanded: boolean
   argsStreaming: boolean
+  /** 参数尚未组成完整 JSON 时保留的原始流式内容 */
+  argumentsText?: string
 }
 
 export type FileChangeType = 'CREATED' | 'MODIFIED' | 'DELETED' | 'RENAMED' | 'COPIED' | string

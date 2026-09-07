@@ -133,6 +133,8 @@ const displaySummary = computed(() => {
   if (props.toolCall.summary) return props.toolCall.summary
   const displayName = getToolDisplayName(props.toolCall.name)
   if (props.toolCall.argsStreaming && !inputPreview.value) {
+    const raw = props.toolCall.argumentsText || ''
+    if (raw) return `${displayName} · ${raw.slice(-80)}`
     return `${displayName} · 参数加载中...`
   }
   const preview = inputPreview.value
