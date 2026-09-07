@@ -1,0 +1,31 @@
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import { describe, expect, it } from 'vitest';
+import { corsForRequest } from './cors-policy.js';
+
+const path = '/api/v1/auth/sso/exchange';
+describe('SSO exchange CORS boundary', () => {
+  it('allows the configured origin and Authorization preflight only', async () => {
+    const app = Fastify();
+    await app.register(cors, { delegator: async (req) => corsForRequest(req, path, true, ['https://portal.example.test']) });
+    app.post(path, () => ({ ok: true }));
+    app.get('/api/v1/users/me', () => ({ ok: true }));
+    try {
+      const preflight = await app.inject({ method: 'OPTIONS', url: path, headers: {
+        origin: 'https://portal.example.test',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'Authorization',
+      } });
+      expect(preflight.statusCode).toBe(204);
+      expect(preflight.headers['access-control-allow-origin']).toBe('https://portal.example.test');
+      expect(preflight.headers['access-control-allow-headers']).toContain('Authorization');
+      expect(preflight.headers['access-control-allow-credentials']).toBeUndefined();
+      for (const origin of ['https://evil.example.test', 'null', 'https://portal.example.test.evil']) {
+        const response = await app.inject({ method: 'POST', url: path, headers: { origin } });
+        expect(response.headers['access-control-allow-origin']).toBeUndefined();
+      }
+      const regular = await app.inject({ url: '/api/v1/users/me', headers: { origin: 'https://existing.example.test' } });
+      expect(regular.headers['access-control-allow-origin']).toBe('https://existing.example.test');
+    } finally { await app.close(); }
+  });
+});

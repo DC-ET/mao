@@ -41,7 +41,7 @@ describe('SubAgentVisibilityService', () => {
     }));
   });
 
-  it('notifies frontend with subagent_followup_created including start message id and subscribes child', () => {
+  it.each([false, true])('clears child progress and notifies followup (corrected=%s)', (corrected) => {
     const d = deps();
     const service = new SubAgentVisibilityService(d);
     service.notifySubagentFollowup(
@@ -50,10 +50,13 @@ describe('SubAgentVisibilityService', () => {
       'coder',
       '再核查一遍 tsconfig',
       9001,
-      true,
+      corrected,
     );
     expect(d.registry.subscribe).toHaveBeenCalledWith(7, 42);
-    expect(d.registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+    expect(d.registry.send).toHaveBeenNthCalledWith(1, 7, expect.objectContaining({
+      type: 'todo_updated', sessionId: 42, data: { todos: [] },
+    }));
+    expect(d.registry.send).toHaveBeenNthCalledWith(2, 7, expect.objectContaining({
       type: 'subagent_followup_created',
       sessionId: 10,
       data: expect.objectContaining({
@@ -61,7 +64,7 @@ describe('SubAgentVisibilityService', () => {
         agentType: 'coder',
         task: '再核查一遍 tsconfig',
         messageId: 9001,
-        corrected: true,
+        ...(corrected ? { corrected: true } : {}),
       }),
     }));
   });

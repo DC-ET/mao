@@ -74,12 +74,12 @@ describe('SessionManager', () => {
     const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     const s = await mgr.resolveSession();
     expect(s.id).toBe(100);
-    expect(storage.getItem('mao_embed_session_3')).toBe('100');
+    expect(storage.getItem('mao_embed_session_isolated_3')).toBe('100');
   });
 
   it('有记录且会话存在时复用', async () => {
     sessions.set(42, { id: 42, title: 'T' } as EmbedSessionVO);
-    storage.setItem('mao_embed_session_3', '42');
+    storage.setItem('mao_embed_session_isolated_3', '42');
     stubFetch();
     const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     const s = await mgr.resolveSession();
@@ -87,16 +87,16 @@ describe('SessionManager', () => {
   });
 
   it('会话不存在（HTTP 200 + code 3002）时清除记录并新建', async () => {
-    storage.setItem('mao_embed_session_3', '999');
+    storage.setItem('mao_embed_session_isolated_3', '999');
     stubFetch();
     const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     const s = await mgr.resolveSession();
     expect(s.id).toBe(100);
-    expect(storage.getItem('mao_embed_session_3')).toBe('100');
+    expect(storage.getItem('mao_embed_session_isolated_3')).toBe('100');
   });
 
   it('归属校验失败（HTTP 403 + code 1002）时清除记录并新建', async () => {
-    storage.setItem('mao_embed_session_3', '888');
+    storage.setItem('mao_embed_session_isolated_3', '888');
     stubFetch((url, method) =>
       method === 'GET' && url.includes('/sessions/888')
         ? jsonResponse(403, { code: 1002, message: '无权访问' })
@@ -105,11 +105,11 @@ describe('SessionManager', () => {
     const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     const s = await mgr.resolveSession();
     expect(s.id).toBe(100);
-    expect(storage.getItem('mao_embed_session_3')).toBe('100');
+    expect(storage.getItem('mao_embed_session_isolated_3')).toBe('100');
   });
 
   it('服务端异常（HTTP 500）向上抛出且不丢记录', async () => {
-    storage.setItem('mao_embed_session_3', '7');
+    storage.setItem('mao_embed_session_isolated_3', '7');
     stubFetch((url, method) =>
       method === 'GET' && url.includes('/sessions/7')
         ? jsonResponse(500, { code: 5000, message: 'down' })
@@ -117,7 +117,7 @@ describe('SessionManager', () => {
     );
     const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     await expect(mgr.resolveSession()).rejects.toThrow('down');
-    expect(storage.getItem('mao_embed_session_3')).toBe('7');
+    expect(storage.getItem('mao_embed_session_isolated_3')).toBe('7');
   });
 
   it('startNewSession 替换记录', async () => {
@@ -126,6 +126,6 @@ describe('SessionManager', () => {
     const first = await mgr.resolveSession();
     const second = await mgr.startNewSession();
     expect(second.id).not.toBe(first.id);
-    expect(storage.getItem('mao_embed_session_3')).toBe(String(second.id));
+    expect(storage.getItem('mao_embed_session_isolated_3')).toBe(String(second.id));
   });
 });

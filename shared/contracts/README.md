@@ -35,7 +35,10 @@ import type { NotificationChannel } from '@mao/contracts';
 - 头像是公开展示资源，不应上传敏感内容；替换或删除 Agent 不自动删除旧文件，沿用通用文件管理机制。
 - 部署后端时执行迁移 `V105__agent_avatar_url.sql`。
 
-## 演进原则
+- SSO 换票响应：`SsoExchangeVO`（accessToken、expiresIn、expiresAt、refreshAfter、user）。
+- WS 在线换票：客户端发送顶层 `auth_refresh`（requestId、token），服务端返回顶层 `auth_refreshed`（requestId、expiresAt）；requestId 用于幂等确认，不广播 token。
+- SDK 公司 SSO 模式与传统 `getToken` 模式互斥，凭证仅内存保存，支持主动续期、single-flight、有限重试及账号切换隔离。
+
 
 - 新契约先确认「前后端语义完全一致」再下沉，避免把一端私有形状污染为公共契约。
 - 命名以后端 VO 为准（后端是 API 真相源），前端适配时用别名或小范围改名。

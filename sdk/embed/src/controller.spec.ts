@@ -93,7 +93,7 @@ function installFetch(fetchCalls: string[]) {
   }) as unknown as typeof fetch;
 }
 
-async function makeHarness(overrides: Partial<MaoChatInitOptions> = {}): Promise<Harness> {
+async function makeHarness(overrides: Partial<Extract<MaoChatInitOptions, { getToken: () => Promise<string> }>> = {}): Promise<Harness> {
   const events: MaoChatEvent[] = [];
   const fetchCalls: string[] = [];
   installFetch(fetchCalls);

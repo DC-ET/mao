@@ -3,7 +3,7 @@ import { StreamingWsHandler, type WsHandlerDeps } from './streaming-ws-handler.j
 import type { WsEvent } from './ws-event.js';
 import type { Session } from '../../domain/types.js';
 import type { WsSocket } from './streaming-ws-registry.js';
-import { WS_OPEN } from './streaming-ws-registry.js';
+import { StreamingWsRegistry, WS_OPEN } from './streaming-ws-registry.js';
 
 class CapturingExecutor {
   readonly tasks: Array<() => void | Promise<void>> = [];
@@ -33,6 +33,8 @@ function message(id: number, role: string) {
 describe('StreamingWsHandler', () => {
   const executor = new CapturingExecutor();
   const registry = {
+    isConnectionAuthorized: vi.fn(() => true), sendToConnection: vi.fn(),
+    closeConnection: vi.fn((socket: WsSocket, reason: string) => socket.close(1003, reason)),
     getUserId: vi.fn(), send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
     sendToLocalClients: vi.fn(), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
@@ -78,7 +80,8 @@ describe('StreamingWsHandler', () => {
   const mcpClientManager = { closeSession: vi.fn() };
   const agentMapper = { selectById: vi.fn(async () => ({ id: 5, name: 'Coder' })) };
   const llmModelMapper = { selectById: vi.fn(), selectDefault: vi.fn() };
-  const jwtService = { validateToken: vi.fn(), validateAccessToken: vi.fn(() => true), getUserIdFromToken: vi.fn() };
+  const authMetadata = { userId: 7, expiresAt: Date.now() + 60_000 };
+  const jwtService = { getAccessTokenMetadata: vi.fn<typeof import('../../crypto/jwt.service.js').JwtService.prototype.getAccessTokenMetadata>() };
   const ws: WsSocket = { id: 'ws-1', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
 
   const handler = new StreamingWsHandler({
@@ -106,6 +109,40 @@ describe('StreamingWsHandler', () => {
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'COMPLETED', 'event-1');
     expect(activityHeartbeat.clear).toHaveBeenCalledWith(11);
     expect(agentLoop.removeCancelFlag).toHaveBeenCalledWith(11);
+  });
+
+  it('finishes an accepted CLOUD task after its SSO connection expires', async () => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    const realRegistry = new StreamingWsRegistry();
+    const socket: WsSocket = { id: 'accepted-task', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    const taskExecutor = new CapturingExecutor();
+    const taskHandler = new StreamingWsHandler({
+      registry: realRegistry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
+      localToolSessionRegistry, askUserQuestionsRegistry, treeSignalPublisher, approvalRegistry, activityService,
+      activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
+      localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
+      llmModelMapper, jwtService, agentExecutor: (fn) => taskExecutor.submit(fn),
+    } as unknown as WsHandlerDeps);
+    try {
+      realRegistry.register(socket, 7, 'embed', { userId: 7, authSource: 'company_sso', expiresAt: Date.now() + 1000 });
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+      sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+      harnessService.prepareMessage.mockResolvedValue('accepted-event');
+      messageQueueService.listPending.mockResolvedValue([]);
+      await taskHandler.handleTextMessage(socket, JSON.stringify({ type: 'send_message', sessionId: 11, data: { content: 'continue in background' } }));
+      expect(taskExecutor.tasks).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(socket.close).toHaveBeenCalledWith(1003, 'Authentication expired');
+      taskHandler.afterConnectionClosed(socket);
+      await taskExecutor.runAll();
+      expect(harnessService.executeFromEvent).toHaveBeenCalled();
+      expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(11, 7, 'COMPLETED', 'accepted-event');
+      expect(agentLoop.requestCancel).not.toHaveBeenCalled();
+    } finally {
+      realRegistry.shutdown();
+      vi.useRealTimers();
+    }
   });
 
   it('subscribe sends a terminal snapshot so reconnecting clients can reconcile missed completion', async () => {
@@ -367,13 +404,12 @@ describe('StreamingWsHandler', () => {
   it('connectionLifecycleUsesTokenAndCleanupHooks', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
-    jwtService.validateAccessToken.mockReturnValue(true);
-    jwtService.getUserIdFromToken.mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
     registry.hasLocalClientConnection.mockReturnValue(false);
     const connected: WsSocket = { id: 'ws-1', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
     await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'valid.jwt.token', client: 'electron' }));
-    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'electron');
-    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({ type: 'connected' }));
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'electron', authMetadata);
+    expect(registry.sendToConnection).toHaveBeenCalledWith(connected, expect.objectContaining({ type: 'connected' }));
     // 已认证连接再次发 auth 应为无害 no-op（不重复注册）
     registry.register.mockClear();
     await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'valid.jwt.token', client: 'electron' }));
@@ -396,12 +432,11 @@ describe('StreamingWsHandler', () => {
   it('normalizesEmbedClientType', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
-    jwtService.validateAccessToken.mockReturnValue(true);
-    jwtService.getUserIdFromToken.mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
     const connected: WsSocket = { id: 'ws-embed', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
     // 大小写不敏感归一化为 'embed'
     await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'valid.jwt.token', client: 'Embed' }));
-    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed');
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata);
   });
 
   it('subscribeRePushesPendingAskUserQuestionsOnReconnect', async () => {
@@ -441,21 +476,20 @@ describe('StreamingWsHandler', () => {
   it('connectionRejectsForgedOrInvalidJwt', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(null);
-    jwtService.validateAccessToken.mockReturnValue(false);
+    jwtService.getAccessTokenMetadata.mockReturnValue(null);
     const connected: WsSocket = { id: 'ws-x', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
     await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'forged', client: 'browser' }));
     expect(connected.close).toHaveBeenCalled();
     expect(registry.register).not.toHaveBeenCalled();
-    expect(jwtService.getUserIdFromToken).not.toHaveBeenCalled();
+    expect(jwtService.getAccessTokenMetadata).toHaveBeenCalledWith('forged');
   });
 
   it('keeps client=cli instead of silently mapping to browser', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(null);
-    jwtService.validateAccessToken.mockReturnValue(true);
-    jwtService.getUserIdFromToken.mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'auth', token: 'ok', client: 'cli' }));
-    expect(registry.register).toHaveBeenCalledWith(ws, 7, 'cli');
+    expect(registry.register).toHaveBeenCalledWith(ws, 7, 'cli', authMetadata);
   });
 
   it('autoConsumesQueuedMessageAfterExecutionCompletes', async () => {

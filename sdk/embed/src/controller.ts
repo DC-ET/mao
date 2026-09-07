@@ -7,7 +7,7 @@ import { WsClient } from './core/ws-client';
 import { ChatStore } from './core/store';
 import { SessionManager } from './core/session-manager';
 import { RestClient, AuthError } from './core/rest-client';
-import { TokenProvider } from './core/token-provider';
+import { TokenProvider, AUTH_MESSAGES, tokenSubject } from './core/token-provider';
 import { TabsCoordinator } from './core/tabs';
 import { ContextCollector, PREFIX_SEPARATOR, stripContextPrefix } from './context/collector';
 import { SelectionTracker } from './context/selection';
@@ -33,6 +33,8 @@ interface HistoryToolCall {
 
 /** 传给 RootApp 的响应式 UI 状态（reactive 深层，RootApp 内直接引用字段） */
 export interface UiState {
+  /** Remount the panel only on account changes, clearing its private input draft. */
+  identityVersion: number;
   launcherVisible: boolean;
   panelOpen: boolean;
   /** 已鉴权可用（socket OPEN 且收到 connected 帧） */
@@ -53,6 +55,7 @@ export interface UiState {
 
 export function createUiState(options: MaoChatInitOptions): UiState {
   return reactive({
+    identityVersion: 0,
     launcherVisible: options.launcher?.visible !== false,
     panelOpen: false,
     connected: false,
@@ -155,6 +158,10 @@ export class EmbedController {
   private selectionTracker: SelectionTracker | null = null;
   private destroyed = false;
   private booted = false;
+  private identity: string | null = null;
+  private identityVersion = 0;
+  private readonly anonymousScope = crypto.randomUUID();
+  private scope = () => JSON.stringify([resolveApiBase(this.options.serverUrl), this.identity ?? this.anonymousScope]);
   /** 等待 user_message_saved 落库确认的本地消息：key 为 eventId */
   private readonly pendingSaves = new Map<
     string,
@@ -180,14 +187,48 @@ export class EmbedController {
     host: HTMLElement | null = null,
   ) {
     setController(this);
-    this.tokens = new TokenProvider(options.getToken);
-    this.rest = new RestClient(resolveApiBase(options.serverUrl), () => this.tokens.get(), () =>
-      this.tokens.invalidate(),
-    );
+    this.tokens = options.auth ? new TokenProvider(options.auth.getSsoToken, {
+      apiBase: resolveApiBase(options.serverUrl),
+      checkUrl: options.auth.checkUrl,
+      onUpdate: (update) => {
+        const changed = this.setIdentity(update.userId);
+        if (!changed) void this.ws.refreshAuth(update.token, update.expiresAt).catch(() => {
+          if (!this.destroyed) {
+            this.store.sessionError.value = '连接认证更新未确认，请重试';
+            this.emitEvent({ type: 'auth', status: 'service_unavailable', message: '连接认证更新未确认，请重试' });
+          }
+        });
+      },
+      onStatus: (status) => {
+        const message = AUTH_MESSAGES[status];
+        this.emitEvent({ type: 'auth', status, message, ...(this.identity ? { userId: Number(this.identity) } : {}) });
+        this.ui.sessionError = message || null;
+        this.store.sessionError.value = message || null;
+        if (status !== 'authenticated' && status !== 'service_unavailable') this.ws.disconnect(true);
+        if (status === 'authenticated') this.resumeAuthenticatedPanel();
+      },
+    }) : new TokenProvider(async () => {
+      const token = await options.getToken();
+      this.setIdentity(tokenSubject(token));
+      return token;
+    });
+    this.rest = new RestClient(resolveApiBase(options.serverUrl), () => this.tokens.get(), (token, final) => {
+      if (final && options.auth) this.tokens.rejectAuthentication(token);
+      else this.tokens.invalidate(token);
+    }, () => this.identity);
     this.ws = new WsClient(options.serverUrl, {
       getToken: () => this.tokens.get(),
+      getExpiresAt: (token) => this.tokens.getExpiresAt(token),
+      beforeSend: options.auth ? async () => { await this.tokens.get(); } : undefined,
+      identity: () => this.identity,
       onAuthenticated: (isReconnect) => this.onAuthenticated(isReconnect),
       onAuthFailed: () => {
+        if (options.auth) {
+          // A rejected/expired Mao access token is not proof that the host SSO has expired.
+          this.tokens.invalidate();
+          void this.tokens.get().catch(() => {});
+          return;
+        }
         this.tokens.invalidate();
         this.ui.sessionError = AUTH_ERROR_TEXT;
         this.store.sessionError.value = AUTH_ERROR_TEXT;
@@ -200,8 +241,8 @@ export class EmbedController {
       },
       onEvent: (event) => this.onWsEvent(event),
     });
-    this.sessions = new SessionManager({ rest: this.rest, agentId: options.agentId });
-    this.tabs = new TabsCoordinator(options.agentId, () => this.sessions.readStoredSessionId());
+    this.sessions = new SessionManager({ rest: this.rest, agentId: options.agentId, scope: this.scope });
+    this.tabs = new TabsCoordinator(options.agentId, () => this.sessions.readStoredSessionId(), this.scope);
     this.contextCollector = new ContextCollector(options.context);
     this.selectionTracker = new SelectionTracker((sel) => {
       this.ui.quotedSelection = sel;
@@ -243,6 +284,45 @@ export class EmbedController {
         this.ui.questionSubmitting = false;
       }
     });
+  }
+
+  /** Resume initialization/reconnection after background exchange success, once its flight settles. */
+  private resumeAuthenticatedPanel() {
+    queueMicrotask(() => {
+      if (this.destroyed || !this.ui.panelOpen) return;
+      void this.tokens.get().then(async () => {
+        if (this.destroyed || !this.ui.panelOpen) return;
+        if (!this.booted) await this.boot();
+        else if (this.store.sessionId() != null && !this.ws.connected.value) await this.ws.connect();
+      }).catch(() => {});
+    });
+  }
+
+  private setIdentity(user: string | null): boolean {
+    if (this.destroyed || this.identity === user) return false;
+    const changed = this.identity !== null;
+    this.identity = user;
+    if (!changed) return false;
+    this.identityVersion++;
+    this.ui.identityVersion++;
+    this.ws.disconnect();
+    this.tabs.close();
+    this.clearPendingSaves();
+    this.submittedQuestionIds.clear();
+    this.store.reset();
+    this.store.markRead();
+    this.ui.messages = [];
+    this.ui.pendingQuestion = null;
+    this.ui.questionSubmitting = false;
+    this.ui.quotedSelection = null;
+    this.selectionTracker?.dismiss(this.selectionTracker.peek());
+    this.contextCollector.restoreHash(null);
+    this.ui.sessionTitle = 'Mao 助手';
+    this.ui.agentAvatarUrl = null;
+    this.booted = false;
+    // Run after the single-flight token acquisition settles; never reuse old session requests.
+    if (this.ui.panelOpen) this.resumeAuthenticatedPanel();
+    return true;
   }
 
   /** 历史加载器：boot 首次加载与重连对账共用同一映射逻辑 */
@@ -335,30 +415,36 @@ export class EmbedController {
   private async boot() {
     if (this.booted || this.destroyed) return;
     this.booted = true;
+    const version = this.identityVersion;
+    const stale = () => this.destroyed || version !== this.identityVersion;
     this.ui.sessionError = null;
     this.store.sessionError.value = null;
     try {
       const agent = await this.rest.request<AgentVO>('GET', `/agents/${this.options.agentId}`);
-      if (this.destroyed) return;
+      if (stale()) return;
       // SDK 嵌在第三方页面：上传路径必须指向 Mao 服务，不能落到宿主域名。
       this.ui.agentAvatarUrl = agent.avatarUrl
         ? new URL(agent.avatarUrl, resolveApiBase(this.options.serverUrl)).href
         : null;
       // 多 tab 竞态：先问其他 tab 是否已有会话
       const claimed = await this.tabs.inquire();
+      if (stale()) return;
       if (claimed != null) {
         this.sessions.writeStoredSessionId(claimed);
       }
       const session = await this.sessions.resolveSession();
+      if (stale()) return;
       this.tabs.claim(session.id);
       this.store.bindSession(session.id);
       this.ui.sessionTitle = session.title || 'Mao 助手';
       // 历史先于 WS subscribe 拉取：避免流事件先到导致 messages 非空而跳过历史补齐
       await this.store.ensureHistory(this.fetchHistory);
+      if (stale()) return;
       // subscribe 只登记意图，真正发帧由 WsClient 在鉴权成功后统一执行（不会双发）
       this.ws.subscribe(session.id);
       await this.ws.connect();
     } catch (err) {
+      if (stale()) return;
       this.booted = false;
       const raw = err instanceof Error ? err.message : '初始化失败';
       if (err instanceof AuthError) {
@@ -487,7 +573,9 @@ export class EmbedController {
     this.ui.panelOpen = true;
     // 未读清零唯一入口：展开浮窗（store/ui 单源，watch 投影同步）
     this.store.markRead();
-    void this.boot();
+    if (this.options.auth) {
+      this.resumeAuthenticatedPanel();
+    } else void this.boot();
   }
 
   close() {
@@ -531,6 +619,8 @@ export class EmbedController {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.tokens.destroy();
+    this.store.reset();
     this.clearPendingSaves();
     this.selectionTracker?.destroy();
     this.selectionTracker = null;
@@ -595,6 +685,11 @@ export class EmbedController {
   // ─── UI 事件 ───
 
   async send(content: string) {
+    const version = this.identityVersion;
+    if (this.options.auth) {
+      try { await this.tokens.get(); } catch { return; }
+      if (this.destroyed || version !== this.identityVersion) return;
+    }
     if (this.store.sessionId() == null) {
       await this.boot();
       if (this.store.sessionId() == null) return;
@@ -605,6 +700,7 @@ export class EmbedController {
     const selection = this.ui.quotedSelection ?? this.selectionTracker?.peek() ?? null;
     const contextHash = this.contextCollector.snapshotHash();
     const prefix = await this.contextCollector.buildPrefix(selection);
+    if (this.destroyed || version !== this.identityVersion) return;
     // 选中文本已随本条消息发出：一次性标记为已消费（用户重新选中同一段仍可再次引用）
     if (selection) this.selectionTracker?.consume(selection);
     this.ui.quotedSelection = null;
@@ -614,6 +710,7 @@ export class EmbedController {
     this.store.sessionError.value = null;
     const eventId = `ev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     const ok = await this.ws.sendMessage(sid, full, eventId);
+    if (this.destroyed || version !== this.identityVersion) return;
     if (!ok) {
       this.rollbackSend(localId, contextHash, selection);
       const message = '发送失败：连接不可用，请稍后重试';
@@ -703,6 +800,14 @@ export class EmbedController {
   }
 
   retry() {
+    if (this.options.auth) {
+      this.tokens.resume();
+      void this.tokens.get().then(async () => {
+        if (!this.booted) await this.boot();
+        else await this.ws.connect();
+      }).catch(() => {});
+      return;
+    }
     this.store.sessionError.value = null;
     this.ui.sessionError = null;
     // 运行中（session_already_running 提示）无需重新 boot；IDLE 且已 boot 过也无需

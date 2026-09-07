@@ -3,13 +3,16 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { mkdirSync, existsSync, rmSync, lstatSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve, relative } from 'node:path';
 import { fail } from './common/result.js';
+import { fastifyLoggerOptions, redactCredentialQuery } from './common/structured-logger.js';
 import { sendJson, handleError } from './common/http-error.js';
 import { loadConfig, type AppConfig } from './config/app-config.js';
+import { corsForRequest } from './config/cors-policy.js';
+import { loadTrustedProxyAddresses } from './config/trusted-proxy.js';
 import { createPool, Db } from './db/db.js';
 import { runFlywayIfEnabled } from './db/flyway.js';
 import { JwtService } from './crypto/jwt.service.js';
@@ -20,6 +23,11 @@ import { LdapAuthService } from './auth/ldap-auth.service.js';
 import { FeishuAuthService } from './auth/feishu-auth.service.js';
 import { MysqlFeishuOauthStateRepository } from './auth/feishu-oauth.repository.js';
 import { registerAuthRoutes } from './auth/auth.routes.js';
+import { CompanySsoClient } from './auth/company-sso.client.js';
+import { CompanySsoIdentityRepository } from './auth/company-sso-identity.repository.js';
+import { CompanySsoService } from './auth/company-sso.service.js';
+import { registerCompanySsoRoutes } from './auth/company-sso.routes.js';
+import { CompanySsoError } from './auth/company-sso.error.js';
 import { MysqlUserRepository } from './user/user.repository.js';
 import { UserService } from './user/user.service.js';
 import { registerUserRoutes } from './user/user.routes.js';
@@ -312,22 +320,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const agentRuntimeCfg = await bootstrapSettings.getAgentRuntimeConfig();
   const harnessTuning = await bootstrapSettings.getHarnessTuningConfig();
   const terminalCfg = await bootstrapSettings.getTerminalConfig();
-  const app = existing ?? Fastify({ logger: true, bodyLimit: Math.max(52, multipartLimitMb + 2) * 1024 * 1024 });
+  const app = existing ?? Fastify({ logger: fastifyLoggerOptions, trustProxy: loadTrustedProxyAddresses(), bodyLimit: Math.max(52, multipartLimitMb + 2) * 1024 * 1024 });
   const hasher = { hash: hashPassword, matches: matchesPassword };
   const jwt = new JwtService(cfg.jwt.secret, cfg.jwt.expiration, cfg.jwt.refreshExpiration, cfg.jwt.shellExpiration);
 
+  const apiPrefix = cfg.server.servlet.contextPath || '/api';
+  const ssoExchangePath = `${apiPrefix}/v1/auth/sso/exchange`;
   await app.register(cors, {
-    origin: true,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    // Authorization 属 CORS non-wildcard request-header：'*' 对它无效，必须显式列出。
-    // @fastify/cors 在 allowedHeaders 非 null 时直接回写字面量、不再反射请求头，
-    // 因此嵌入式 SDK（跨源 + Bearer token）的预检会失败。
-    allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Requested-With'],
-    maxAge: 3600,
+    delegator: async (request: FastifyRequest) => corsForRequest(request, ssoExchangePath, cfg.sso.enabled, cfg.sso.allowedOrigins),
   });
   await app.register(multipart, { limits: { fileSize: multipartLimitMb * 1024 * 1024, files: 500 } });
-  const apiPrefix = cfg.server.servlet.contextPath || '/api';
   const uploadDir = resolve(expandHome(cfg.app.file.uploadDir));
   mkdirSync(uploadDir, { recursive: true });
   await registerUploadStatic(app, uploadDir, apiPrefix);
@@ -378,7 +380,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const auditService = new AuditLogService(auditRepo);
 
   app.addHook('preHandler', async (request, reply) => {
-    if (request.method === 'OPTIONS') return;
+    if (request.method === 'OPTIONS' || request.url.split('?')[0] === ssoExchangePath) return;
     const userId = authenticateRequest(request, jwt);
     if (userId != null) request.userId = userId;
     if (!isPublicPath(request.method, request.url) && userId == null) {
@@ -392,7 +394,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     void recordAudit(auditService, {
       method: request.method,
       path,
-      queryString: request.url.includes('?') ? request.url.slice(request.url.indexOf('?') + 1) : undefined,
+      queryString: request.url.includes('?') ? redactCredentialQuery(request.url).split('?')[1] : undefined,
       ip: request.ip,
       status: reply.statusCode,
       userId: request.userId,
@@ -1600,6 +1602,23 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       return reply.send(app.swagger());
     });
     registerAuthRoutes(api, authService, feishu);
+    registerCompanySsoRoutes(api, new CompanySsoService(
+      cfg.sso, new CompanySsoClient(cfg.sso), new CompanySsoIdentityRepository(db), jwt,
+    ), cfg.sso, async (event) => {
+      await auditService.record({
+        action: event.action === 'created' ? 'CREATE' : event.action === 'bound' ? 'UPDATE' : 'LOGIN',
+        objectType: 'sso.identity',
+        objectId: event.userId == null ? null : String(event.userId),
+        userId: event.userId,
+        method: 'POST',
+        path: '/v1/auth/sso/exchange',
+        ip: event.ip,
+        status: event.outcome === 'success' ? 200 : new CompanySsoError(event.outcome).status,
+        success: event.outcome === 'success' ? 1 : 0,
+        errorMessage: event.outcome === 'success' ? null : event.outcome,
+        queryString: JSON.stringify({ requestId: event.requestId, provider: event.provider, durationMs: event.durationMs }),
+      });
+    });
     registerUserRoutes(api, userService, userRepo, permissionService);
     registerPermissionRoutes(api, permissionService);
     registerGitCredentialRoutes(api, gitCredentials);

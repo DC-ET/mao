@@ -45,6 +45,29 @@
 | `MAO_USER_HOME_DIR` | 否 | CLOUD 用户 HOME |
 | `MAO_BLUE_GREEN_DRAIN_SEC` | 否 | 蓝绿切换后停旧实例延迟，默认 60s |
 
+### 公司 SSO（Web Embed SDK）
+
+此集成使用部署配置，不属于管理后台的 LDAP/飞书设置。默认关闭；业务系统在 `MaoChat.init` 的 `auth.checkUrl` 指定校验地址，服务端按 `SSO_ALLOWED_DOMAINS` 检查目标域名，校验协议仍为公司 checkToken 协议。
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `SSO_ENABLED` | false | 必须为 `true`/`false` |
+| `SSO_ALLOWED_ORIGINS` | 空 | 启用时必填，逗号分隔的完整 HTTPS Origin，无路径或尾斜杠，不支持通配符 |
+| `SSO_ALLOWED_DOMAINS` | 空 | 启用时必填，逗号分隔域名，如 `acg.team,sso.example.com`；每项允许自身及其所有子域名，不填协议、路径、端口或通配符 |
+| `SSO_ACCESS_TTL_SECONDS` | 1800 | 60～3600 秒；实际不超过官方返回的 SSO 剩余有效期，不限制连续使用时长 |
+| `SSO_TIMEOUT_MS` | 3000 | 单次官方校验超时，1～30000 毫秒 |
+| `TRUSTED_PROXY_ADDRESSES` | 空，不信任代理 | TLS 在 Nginx 终止时必须填直连 Mao 的代理精确 IP，如 `127.0.0.1,::1`；禁止 `true`、通配符、任意来源转发头 |
+
+域名白名单支持完整域名或上级域名：`acg.team` 匹配 `acg.team`、`a.acg.team`、`b.acg.team` 及更深子域，不匹配 `evilacg.team` 或 `acg.team.evil.com`；`sso.acg.team` 仅覆盖自身及其下级子域。所有匹配域名及其路径的身份校验信任由配置人员判定；不另做 DNS 私网地址过滤。不同校验地址必须属于同一员工身份体系，身份源仍为 `company_sso`，不会按 URL 创建新身份源。
+
+`auth.checkUrl` 必须为 HTTPS URL，不带用户名密码、片段或已有 `token` 查询参数；请求不跟随重定向。SDK 每次换票以 JSON `{checkUrl}` 传入地址，SSO Token 仍仅放在 Authorization Header。原 `SSO_CHECK_URL` 不再使用。
+
+配置变更需重启。Nginx 必须覆盖 `X-Forwarded-Proto` 为 `$scheme` 并设置正确客户端转发链；后端监听端口须受防火墙保护。没有精确信任代理时，HTTP 后端不会因为来路提供 `X-Forwarded-Proto: https` 就接受 SSO 换票。
+
+每 IP 每分钟最多 60 次换票、每个已校验身份每分钟最多 20 次，计数为进程内；多副本必须在网关加聚合限流。换票响应不缓存，SDK Token 不持久化。当前官方协议不要求另加应用密钥；不要把用户 Token 写入 `.env`。
+
+上线前核实 `claims.id` 永不复用、邮箱可信且不重分配，完成成功/失效/停用实测。SSO 协议将 Token 放在 query 中，SSO 服务和网关必须对 query 脱敏；Mao 不输出完整上游 URL。接入及限制见 [embed-sdk.md](embed-sdk.md#公司-sso-接入)。
+
 ### 集成配置（0.0.82 起迁移至管理后台，勿再改环境变量）
 
 LDAP 认证、飞书 OAuth 登录、上传方式（`UPLOAD_STORAGE_MODE` / `UPLOAD_BASE_URL`）、Tavily/TinyFish 搜索（`tools.tavilyApiKey` / `tools.tinyfishApiKey` / `tools.webSearchProvider`）、OSS 及 STS 凭证，已全部迁入管理后台「系统设置 → 集成配置」，保存后**即时生效、无需重启**，密钥 AES-GCM 加密入库。旧环境变量（`LDAP_*`、`FEISHU_ENABLED`、`FEISHU_APP_*`、`TAVILY_API_KEY`、`TINYFISH_API_KEY`、`WEB_SEARCH_PROVIDER`、`OSS_*` 等）仅在升级首次启动时由 SettingsBootstrap 自动导入 DB，之后一律以管理后台为准。
@@ -124,6 +147,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 | 本地密码 | 默认 |
 | LDAP | 部署配置启用 |
 | 飞书 OAuth | 部署配置启用 |
+| 公司 SSO 换票 | Web Embed SDK 回调提供公司 Token，Mao 官方校验后签发 access，自动续期，不签发 refresh |
 | JWT | 桌面/管理后台/CLI 共用；管理接口看权限不看 token 来源 |
 
 云端 CLOUD shell 会为当前会话用户注入短效 `MAO_TOKEN`，供 `mao` CLI 免登录。

@@ -18,6 +18,19 @@ export interface WsAuthFrame {
   client: WsClientType;
 }
 
+export interface WsAuthRefreshFrame {
+  type: 'auth_refresh';
+  requestId: string;
+  token: string;
+}
+
+/** Top-level fields, not a business-event data envelope. Epoch milliseconds. */
+export interface WsAuthRefreshedFrame {
+  type: 'auth_refreshed';
+  requestId: string;
+  expiresAt: number;
+}
+
 export interface WsPingFrame {
   type: 'ping';
 }
@@ -69,6 +82,7 @@ export interface WsAskUserQuestionsResultFrame {
 /** embed 实际发送的帧集合 */
 export type WsEmbedOutboundFrame =
   | WsAuthFrame
+  | WsAuthRefreshFrame
   | WsPingFrame
   | WsSubscribeFrame
   | WsUnsubscribeFrame

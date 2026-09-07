@@ -1,3 +1,4 @@
+import { assertEmailAvailable, lockUserIdentityWrites } from './user-email.js';
 import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
 import type { User, UserRepository } from './types.js';
@@ -46,22 +47,26 @@ export class MysqlUserRepository implements UserRepository {
 
   async countByEmailExcept(email: string, userId: number): Promise<number> {
     const row = await this.db.queryOne<{ cnt: number }>(
-      `SELECT COUNT(*) AS cnt FROM \`user\` WHERE email = ? AND id <> ? AND ${notDeleted()}`,
+      'SELECT COUNT(*) AS cnt FROM `user` WHERE BINARY email = BINARY ? AND id <> ?',
       [email, userId],
     );
     return Number(row?.cnt ?? 0);
   }
 
   async insert(user: User): Promise<number> {
-    const id = await this.db.insert('user', {
-      username: user.username,
-      displayName: user.displayName,
-      email: user.email,
-      avatarUrl: user.avatarUrl,
-      passwordHash: user.passwordHash,
-      feishuUserId: user.feishuUserId,
-      status: user.status ?? 1,
-      deleted: 0,
+    const id = await this.db.transaction(async (tx) => {
+      await lockUserIdentityWrites(tx);
+      await assertEmailAvailable(tx, user.email);
+      return tx.insert('user', {
+        username: user.username,
+        displayName: user.displayName,
+        email: user.email,
+        avatarUrl: user.avatarUrl,
+        passwordHash: user.passwordHash,
+        feishuUserId: user.feishuUserId,
+        status: user.status ?? 1,
+        deleted: 0,
+      });
     });
     user.id = id;
     return id;
@@ -71,7 +76,7 @@ export class MysqlUserRepository implements UserRepository {
     if (user.id == null) {
       return;
     }
-    await this.db.updateById('user', user.id, {
+    await this.updateFields(user.id, {
       username: user.username,
       displayName: user.displayName,
       email: user.email,
@@ -84,7 +89,14 @@ export class MysqlUserRepository implements UserRepository {
   }
 
   async updateFields(id: number, fields: Record<string, unknown>): Promise<void> {
-    await this.db.updateById('user', id, fields);
+    await this.db.transaction(async (tx) => {
+      await lockUserIdentityWrites(tx);
+      if (fields.email !== undefined) {
+        const current = await tx.queryOne<User>('SELECT * FROM `user` WHERE id = ? FOR UPDATE', [id]);
+        if (current?.email !== fields.email) await assertEmailAvailable(tx, fields.email, id);
+      }
+      await tx.updateById('user', id, fields);
+    });
   }
 
   async selectPage(page: number, size: number, keyword?: string, status?: number | null): Promise<{ records: User[]; total: number }> {

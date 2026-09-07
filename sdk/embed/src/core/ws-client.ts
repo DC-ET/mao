@@ -14,8 +14,12 @@ import {
 } from '../types';
 
 export interface WsClientHooks {
+  beforeSend?: () => Promise<void>;
+  identity?: () => string | null;
   /** token 供给（连接与重连时取最新） */
   getToken: () => Promise<string>;
+  /** Expiry of the exact credential returned for the initial auth frame. */
+  getExpiresAt?: (token: string) => number;
   /** 认证通过（收到 connected 帧）后的回调：断线重连后的会话对账在此进行 */
   onAuthenticated: (isReconnect: boolean) => void;
   /** 认证失败（token 无效） */
@@ -52,6 +56,52 @@ export class WsClient {
   /** 当前 socket 上已实际发出 subscribe 的会话：防止同一连接重复订阅（服务端会重放快照） */
   private readonly liveSubscriptions = new Set<number>();
   private authenticatedOnce = false;
+  private authToken: string | null = null;
+  private authExpiresAt = Infinity;
+  private refresh: { requestId: string; token: string; promise: Promise<void>; resolve: () => void;
+    reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> | null } | null = null;
+
+  /** Online renewal never replays business frames. Confirmation retries keep the same requestId. */
+  refreshAuth(token: string, expiresAt: number): Promise<void> {
+    if (!this.authenticated.value || !this.socket) {
+      this.authExpiresAt = expiresAt;
+      return Promise.resolve();
+    }
+    if (this.refresh?.token === token) return this.refresh.promise;
+    if (this.authToken === token) return Promise.resolve();
+    this.clearRefresh(new Error('WebSocket authentication superseded'));
+    const socket = this.socket;
+    const requestId = crypto.randomUUID();
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((ok, fail) => { resolve = ok; reject = fail; });
+    const pending = { requestId, token, promise, resolve, reject, timer: null as ReturnType<typeof setTimeout> | null };
+    this.refresh = pending;
+    let attempts = 0;
+    const send = () => {
+      if (this.refresh !== pending) return;
+      if (socket !== this.socket || socket.readyState !== WebSocket.OPEN || attempts >= 3 || Date.now() >= this.authExpiresAt) {
+        this.clearRefresh(new Error('WebSocket authentication confirmation timeout'));
+        this.authenticated.value = false;
+        socket.close();
+        return;
+      }
+      attempts++;
+      socket.send(JSON.stringify({ type: 'auth_refresh', requestId, token }));
+      pending.timer = setTimeout(send, Math.min(5_000, Math.max(1, this.authExpiresAt - Date.now())));
+    };
+    send();
+    return promise;
+  }
+
+  private clearRefresh(error?: Error) {
+    const pending = this.refresh;
+    if (!pending) return;
+    this.refresh = null;
+    if (pending.timer) clearTimeout(pending.timer);
+    if (error) pending.reject(error);
+    else pending.resolve();
+  }
 
   constructor(private readonly serverUrl: string, private readonly hooks: WsClientHooks) {}
 
@@ -99,6 +149,12 @@ export class WsClient {
         this.pendingReject = null;
         void this.hooks.getToken().then(
           (token) => {
+            if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) {
+              reject(new Error('WebSocket connection cancelled'));
+              return;
+            }
+            this.authToken = token;
+            this.authExpiresAt = this.hooks.getExpiresAt?.(token) ?? Infinity;
             // 鉴权首帧：必须先于任何业务帧
             socket.send(JSON.stringify({ type: 'auth', token, client: 'embed' }));
             this.startHeartbeat();
@@ -128,6 +184,15 @@ export class WsClient {
         } catch {
           return;
         }
+        if (msg.type === 'auth_refreshed') {
+          const frame = msg as unknown as { requestId: string; expiresAt: number };
+          if (this.refresh?.requestId === frame.requestId && Number.isFinite(frame.expiresAt) && frame.expiresAt > Date.now()) {
+            this.authToken = this.refresh.token;
+            this.authExpiresAt = frame.expiresAt;
+            this.clearRefresh();
+          }
+          return;
+        }
         if (msg.type === 'connected') {
           this.authenticated.value = true;
           const isReconnect = this.authenticatedOnce;
@@ -145,6 +210,7 @@ export class WsClient {
       socket.onclose = (event) => {
         if (event.target !== this.socket) return;
         clearTimeout(timeout);
+        this.clearRefresh(new Error('WebSocket closed'));
         this.connected.value = false;
         this.authenticated.value = false;
         this.liveSubscriptions.clear();
@@ -216,8 +282,11 @@ export class WsClient {
     this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, 30_000);
   }
 
-  disconnect() {
+  disconnect(preserveSession = false) {
     this.intentionalClose = true;
+    this.clearRefresh(new Error('WebSocket connection cancelled'));
+    this.authToken = null;
+    this.authExpiresAt = Infinity;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -233,9 +302,11 @@ export class WsClient {
     }
     this.connected.value = false;
     this.authenticated.value = false;
-    this.authenticatedOnce = false;
+    if (!preserveSession) {
+      this.authenticatedOnce = false;
+      this.subscribedSessionIds.clear();
+    }
     this.connectPromise = null;
-    this.subscribedSessionIds.clear();
     this.liveSubscriptions.clear();
   }
 
@@ -299,11 +370,19 @@ export class WsClient {
   }
 
   /** 关键帧：连接不在则尝试重连后补发，重连失败返回 false */
-  private sendReliable(frame: WsEmbedOutboundFrame): Promise<boolean> {
-    if (this.sendNow(frame)) return Promise.resolve(true);
-    return this.connect()
-      .then(() => this.sendNow(frame))
-      .catch(() => false);
+  private async sendReliable(frame: WsEmbedOutboundFrame): Promise<boolean> {
+    const identity = this.hooks.identity?.();
+    try {
+      if (this.hooks.beforeSend) {
+        await this.hooks.beforeSend();
+        if (identity !== this.hooks.identity?.()) return false;
+        if (this.refresh) await this.refresh.promise;
+      }
+      if (this.sendNow(frame)) return true;
+      await this.connect();
+      if (identity !== this.hooks.identity?.()) return false;
+      return this.sendNow(frame);
+    } catch { return false; }
   }
 
   private sendNow(frame: WsEmbedOutboundFrame): boolean {

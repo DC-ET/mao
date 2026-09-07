@@ -17,6 +17,14 @@ export class JwtService {
     return this.buildToken(userId, username, this.expiration, 'access');
   }
 
+  generateCompanySsoToken(userId: number, username: string, ttlSeconds: number): { accessToken: string; expiresIn: number; expiresAt: number } {
+    if (!Number.isSafeInteger(userId) || userId <= 0 || !Number.isInteger(ttlSeconds) || ttlSeconds < 1 || ttlSeconds > 3600) throw new Error('Invalid SSO token parameters');
+    const now = Math.floor(Date.now() / 1000);
+    const exp = now + ttlSeconds;
+    const accessToken = jwt.sign({ username, type: 'access', auth_source: 'company_sso', iat: now, exp }, Buffer.from(this.secret, 'utf8'), { algorithm: 'HS256', subject: String(userId) });
+    return { accessToken, expiresIn: ttlSeconds, expiresAt: exp * 1000 };
+  }
+
   generateRefreshToken(userId: number, username: string): string {
     return this.buildToken(userId, username, this.refreshExpiration, 'refresh');
   }
@@ -54,6 +62,28 @@ export class JwtService {
     try {
       const type = this.parseClaims(token).type;
       return TOKEN_TYPES.includes(type as JwtTokenType) ? (type as JwtTokenType) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 验证访问凭据并读取认证元数据；expiresAt 为 epoch 毫秒。 */
+  getAccessTokenMetadata(token: string): { userId: number; authSource?: string; expiresAt: number } | null {
+    try {
+      const claims = this.parseClaims(token);
+      if (claims.type !== 'access' && claims.type !== 'shell') return null;
+      if (typeof claims.sub !== 'string' || !/^[1-9]\d*$/.test(claims.sub)) return null;
+      const userId = Number(claims.sub);
+      if (!Number.isSafeInteger(userId) || userId <= 0) return null;
+      if (typeof claims.exp !== 'number' || !Number.isSafeInteger(claims.exp)
+        || claims.exp <= Math.floor(Date.now() / 1000)
+        || !Number.isSafeInteger(claims.exp * 1000)) return null;
+      if (claims.auth_source !== undefined && (typeof claims.auth_source !== 'string' || !claims.auth_source)) return null;
+      return {
+        userId,
+        ...(claims.auth_source === undefined ? {} : { authSource: claims.auth_source as string }),
+        expiresAt: claims.exp * 1000,
+      };
     } catch {
       return null;
     }

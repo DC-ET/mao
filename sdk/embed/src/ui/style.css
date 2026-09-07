@@ -77,7 +77,10 @@
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.12), transparent 55%, rgba(0, 0, 0, 0.08)), var(--mao-primary);
   color: var(--mao-on-primary);
   border: none;
-  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
   box-shadow: var(--mao-shadow-launcher), inset 0 0 0 1px var(--mao-primary-edge);
   display: flex;
   align-items: center;
@@ -100,6 +103,8 @@
   box-shadow: var(--mao-shadow-launcher-hover), inset 0 0 0 1px var(--mao-primary-edge);
 }
 .mao-launcher:active { transform: translateY(0) scale(0.95); }
+.mao-launcher.mao-launcher--dragging { cursor: grabbing; transform: none; transition: none; }
+.mao-launcher > svg, .mao-launcher > img { pointer-events: none; }
 .mao-launcher:focus-visible {
   outline: none;
   box-shadow: var(--mao-shadow-launcher), 0 0 0 4px var(--mao-focus-ring);

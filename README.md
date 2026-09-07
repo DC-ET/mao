@@ -91,24 +91,45 @@ mao auth login
 </script>
 ```
 
-- **凭据**：宿主后端持有 Mao 凭据，仅向页面下发短期 access token；SDK 不落盘，过期时回调 `getToken()` 重取
+- **凭据**：使用现有 `getToken()` 提供短期 Mao access token，或使用下述公司 SSO 模式由 Mao 集中换票与自动续期；两种初始化模式互斥，Token 仅保存在 SDK 内存。
 - **上下文**：`context()` 返回值（连同 url / title）变化时自动拼入下一条消息，前缀总长上限 8KB；页面上选中文本自动成为引用（浮窗内部的选中不会被采集，同一段文本不会被连续两条消息重复携带）
 - **会话**：每用户每 agent 一个常驻会话，desktop 端会话列表可见、可继续；本地记录的会话被删除或不归属当前用户时自动新建
+- **入口定位**：鼠标或触摸拖动入口，松手左右贴边并记住高度，刷新恢复；浮窗跟随入口选择上下展开方向并约束在可视区域内。未调整时遵循 `position`，隐藏入口时仍使用原浮窗定位。
 - **入口视觉**：对话轮廓与 M 形声波组成矢量标识，圆形底座带轻高光和细内描边；入口与浮窗头像统一，跟随 `theme.primary` 配色，保留运行环与未读提示。
 - **执行展示**：流式思考、正文与工具按实际事件顺序穿插呈现；思考和连续工具调用默认折叠，工具摘要保留数量、执行中与失败状态，点击展开查看参数和结果，正文始终可见。
 - **Agent 头像**：在管理后台「Agent 管理 → 基本信息」上传，后台、客户端与 Embed SDK 共用；编辑表单按五个 Tab 分组，详见 [管理后台手册](skills/mao-cli/reference/admin.md#agent-管理)。
 - **宿主 CSP**：需放行 Mao 域名 `connect-src`（wss / https）及 `img-src`（头像）
 - **注意**：`context()` 中的业务数据会随消息发送至 LLM，请勿放入敏感信息
 
+### 公司 SSO 接入
+
+公司后台已有可读取的 SSO Token 时，不需要修改后台后端，只需配置 SDK：
+
+```js
+MaoChat.init({
+  serverUrl: 'https://mao.company.example',
+  agentId: 1,
+  auth: {
+    type: 'company-sso',
+    checkUrl: 'https://sgs.acg.team/api/sso-auth/auth/checkToken',
+    getSsoToken: () => companyLogin.getCurrentToken(), // 替换为现有登录 SDK 的真实方法
+  },
+});
+```
+
+Mao 服务端须先启用并配置公司 SSO，设置 `SSO_ALLOWED_DOMAINS`（例如 `acg.team` 允许自身和全部子域）及宿主 Origin 白名单。业务系统通过 `auth.checkUrl` 指定校验地址，域名信任范围由配置人员决定。官方校验成功后，按稳定身份绑定、可信邮箱关联已有普通账号或创建普通用户；不自动绑定管理员。SDK 在凭证临期前换票并在线更新 WS 认证，SSO 有效期间不限制连续使用时长。换发的 Token 与该 Mao 用户普通登录等权，不是仅能访问某个 Agent 的专用凭证。
+
+详见 [接入手册](skills/mao-cli/reference/embed-sdk.md#公司-sso-接入)。当前适配器针对公司 `checkToken` 协议，不是任意 SSO 的自动适配器。上线前须完成真实 SSO 联调；退出不等于立即撤销已签发 Token，后台任务仍继续。
+
 ### 安全边界（接入前必读）
 
 以下三项为当前既定设计，接入方必须知情：
 
-1. **WS 握手不校验 origin**：`/api/ws/stream` 在公开前缀内，鉴权完全依赖连接后的首帧 `auth`；结合 CORS 反射任意 origin，安全边界全部落在 **token 发放侧**。
-2. **后端不校验 agent 归属**：任何已登录用户可用任意 `agentId` 建会话，embed 的权限边界只靠 `agentId` 保密。
-3. **登录接口返回的 access token 默认有效期 24 小时**：请勿把它直接交给页面。宿主后端应自行签发**更短有效期的专用 token**，并在 `getToken()` 中返回。
+1. **WS 身份依赖 Token**：握手不校验 Origin；SSO 来源连接支持在线凭证更新和到期关闭。普通 REST 保持原 CORS，SSO 换票单独限制精确 Origin，Origin 不替代身份认证。
+2. **没有 SDK 专用 Agent 权限范围**：使用当前 Mao 用户的权限，不能将 `agentId` 保密当作授权控制。
+3. **短期凭证**：普通 `getToken` 模式应提供短期 Mao Token；公司 SSO 模式由 Mao 负责签发及 SDK 自动续期，不需要后台后端自行换票。
 
-宿主可通过 `onEvent` 接收 `phase` / `error` / `unread` 事件做埋点与状态联动；`error` 事件携带的是原始错误信息（浮窗内展示的是中文可读文案）。
+宿主可通过 `onEvent` 接收 `phase` / `error` / `unread` 及 SSO 模式的 `auth` 事件做埋点与状态联动；认证事件使用脱敏分类文案，不包含凭证。
 
 本地验收：`cd sdk/embed && npm install && npm run dev`（demo 页模拟宿主，见 `sdk/embed/demo/`）。
 

@@ -91,6 +91,18 @@ function makeClient(hooks: {
 }
 
 describe('WsClient', () => {
+  it('sends auth_refresh and resolves only matching confirmation', async () => {
+    const ws = new WsClient('https://x', { getToken: () => Promise.resolve('old'), onAuthenticated: () => {}, onAuthFailed: () => {}, onDisconnected: () => {}, onEvent: () => {} });
+    const pending = ws.connect();
+    const socket = (FakeWebSocket as unknown as { instances: Array<{ open(): void; emit(v: unknown): void; framesOfType(t: string): unknown[] }> }).instances[0];
+    socket.open(); await pending; socket.emit({ type: 'connected', sessionId: null, data: {} });
+    const refresh = ws.refreshAuth('new', Date.now() + 10000);
+    expect(socket.framesOfType('auth_refresh')).toHaveLength(1);
+    socket.emit({ type: 'auth_refreshed', requestId: (socket.framesOfType('auth_refresh')[0] as { requestId: string }).requestId, expiresAt: Date.now() + 10000 });
+    await expect(refresh).resolves.toBeUndefined();
+    ws.disconnect();
+  });
+
   let originalWs: typeof WebSocket;
 
   beforeEach(() => {
@@ -257,6 +269,26 @@ describe('WsClient', () => {
     // 30s 静默无服务端消息 → 主动 close
     await vi.advanceTimersByTimeAsync(30_000);
     expect(s1.readyState).toBe(FakeWebSocket.CLOSED);
+    ws.disconnect();
+  });
+
+  it('authentication pause preserves subscription and reconnect history signal', async () => {
+    const { hooks, calls } = makeHooks();
+    const ws = makeClient(hooks);
+    const first = ws.connect();
+    const s1 = FakeWebSocket.instances[0];
+    s1.open(); await first;
+    s1.emit({ type: 'connected', sessionId: null, data: { userId: 1 } });
+    ws.subscribe(11);
+    ws.disconnect(true);
+    expect(ws.trackedSessionIds()).toEqual([11]);
+    const second = ws.connect();
+    const s2 = FakeWebSocket.instances[1];
+    s2.open(); await second;
+    s2.emit({ type: 'connected', sessionId: null, data: { userId: 1 } });
+    expect(s2.framesOfType('subscribe')).toEqual([{ type: 'subscribe', sessionId: 11 }]);
+    expect(calls.authenticated).toEqual([false, true]);
+    expect(s2.framesOfType('send_message')).toEqual([]);
     ws.disconnect();
   });
 

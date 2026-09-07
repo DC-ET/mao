@@ -107,7 +107,29 @@ export class StructuredNestLogger implements LoggerService {
   }
 }
 
+export function redactCredentialQuery(rawUrl: string): string {
+  // Keep request diagnostics without persisting credentials, including invalid SDK input.
+  const question = rawUrl.indexOf('?');
+  if (question < 0) return rawUrl;
+  const params = new URLSearchParams(rawUrl.slice(question + 1));
+  for (const key of [...params.keys()]) {
+    if (/^(?:token|access_token|refresh_token|sso_token)$/i.test(key)) params.set(key, '[REDACTED]');
+  }
+  return `${rawUrl.slice(0, question)}?${params.toString()}`;
+}
+
 export const fastifyLoggerOptions: PinoLoggerOptions = {
+  redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
+  serializers: {
+    req(request) {
+      return {
+        id: request.id,
+        method: request.method,
+        url: redactCredentialQuery(request.url),
+        remoteAddress: request.ip,
+      };
+    },
+  },
   level: process.env.LOG_LEVEL ?? 'info',
   messageKey: 'message',
   timestamp: () => `,"time":"${formatLogTime()}"`,

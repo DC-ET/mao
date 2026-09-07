@@ -799,6 +799,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   }
 
   function newSession() {
+    restoreGeneration++
+    switchingSession.value = false
     if (sessionId.value) {
       sessionStore.clearQueueMessages(sessionId.value)
     }
@@ -888,14 +890,15 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     } catch {
       // WS connect failed (e.g. no token) — subscribe will be retried on reconnect
     }
+    if (generation !== restoreGeneration || sessionId.value !== sessionIdVal) return
     subscribe(sessionIdVal)
 
     if (!active || !hasCompleteCache) {
-      fetchMessages({ preserveLiveStream: active }).then(() => {
-        if (isActivePhase(sessionStore.activeSession?.phase)) {
-          sessionStore.ensureStreamingAssistantMessage(sessionIdVal)
-        }
-      })
+      await fetchMessages({ preserveLiveStream: active })
+      if (generation !== restoreGeneration || sessionId.value !== sessionIdVal) return
+      if (isActivePhase(sessionStore.activeSession?.phase)) {
+        sessionStore.ensureStreamingAssistantMessage(sessionIdVal)
+      }
     }
     fetchTodos()
     fetchQueue()

@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module.js';
 import { loadConfig } from './config/app-config.js';
+import { loadTrustedProxyAddresses } from './config/trusted-proxy.js';
 import { createMaoApp } from './create-app.js';
 import { fastifyLoggerOptions, installStructuredConsole, StructuredNestLogger } from './common/structured-logger.js';
 
@@ -12,6 +13,7 @@ async function bootstrap(): Promise<void> {
   const cfg = loadConfig();
   const adapter = new FastifyAdapter({
     logger: fastifyLoggerOptions,
+    trustProxy: loadTrustedProxyAddresses(),
     bodyLimit: 52 * 1024 * 1024,
   });
   const nestApp = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {

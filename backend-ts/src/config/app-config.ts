@@ -1,3 +1,4 @@
+import { validateCompanySsoConfig, type CompanySsoConfig } from '../auth/company-sso.config.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +20,7 @@ export interface FeishuBotConfig {
 }
 
 export interface AppConfig {
+  sso: CompanySsoConfig;
   server: {
     port: number;
     servlet: { contextPath: string };
@@ -105,6 +107,7 @@ export interface AppConfig {
 }
 
 const DEFAULTS: AppConfig = {
+  sso: { enabled: false, allowedDomains: [], allowedOrigins: [], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true },
   server: {
     port: 9080,
     servlet: { contextPath: '/api' },
@@ -377,6 +380,15 @@ export function loadConfig(): AppConfig {
   if (process.env.APP_FEISHU_BOT_SECRET) {
     cfg.feishu.bot.appSecretKey = process.env.APP_FEISHU_BOT_SECRET;
   }
+  if (process.env.SSO_ENABLED !== undefined) {
+    if (!['true', 'false'].includes(process.env.SSO_ENABLED)) throw new Error('Invalid SSO_ENABLED');
+    cfg.sso.enabled = process.env.SSO_ENABLED === 'true';
+  }
+  if (process.env.SSO_ALLOWED_DOMAINS !== undefined) cfg.sso.allowedDomains = process.env.SSO_ALLOWED_DOMAINS.split(',').map((domain) => domain.trim());
+  if (process.env.SSO_ALLOWED_ORIGINS !== undefined) cfg.sso.allowedOrigins = process.env.SSO_ALLOWED_ORIGINS.split(',').map((origin) => origin.trim());
+  cfg.sso.accessTtlSeconds = Number(process.env.SSO_ACCESS_TTL_SECONDS ?? cfg.sso.accessTtlSeconds);
+  cfg.sso.timeoutMs = Number(process.env.SSO_TIMEOUT_MS ?? cfg.sso.timeoutMs);
+  validateCompanySsoConfig(cfg.sso);
   cached = cfg;
   return cfg;
 }
