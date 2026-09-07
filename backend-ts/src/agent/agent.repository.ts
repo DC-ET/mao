@@ -54,6 +54,7 @@ export class MysqlAgentRepository implements AgentRepository {
       const id = await tx.insert('agent', {
         name: agent.name,
         description: agent.description,
+        avatarUrl: agent.avatarUrl ?? null,
         systemPrompt: agent.systemPrompt,
         creatorId: agent.creatorId,
         configJson: agent.configJson,
@@ -84,6 +85,7 @@ export class MysqlAgentRepository implements AgentRepository {
       await tx.updateById('agent', agent.id!, {
         name: agent.name,
         description: agent.description,
+        avatarUrl: agent.avatarUrl ?? null,
         systemPrompt: agent.systemPrompt,
         creatorId: agent.creatorId,
         configJson: agent.configJson,

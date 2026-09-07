@@ -72,12 +72,14 @@ function jsonOk(data: unknown) {
 }
 
 let historyMessages: Array<Record<string, unknown>> = [];
+let agentAvatarUrl: string | null | undefined;
 
 function installFetch(fetchCalls: string[]) {
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
     fetchCalls.push(`${method} ${url}`);
+    if (url.endsWith('/agents/3')) return jsonOk({ id: 3, avatarUrl: agentAvatarUrl });
     if (method === 'POST' && url.includes('/sessions')) {
       return jsonOk({ id: SESSION_ID, title: '网页助手' });
     }
@@ -129,6 +131,7 @@ describe('EmbedController', () => {
     FakeWebSocket.instances = [];
     FakeWebSocket.constructThrows = false;
     historyMessages = [];
+    agentAvatarUrl = undefined;
     (globalThis as Record<string, unknown>).WebSocket = FakeWebSocket;
     window.localStorage.clear();
   });
@@ -136,6 +139,35 @@ describe('EmbedController', () => {
   afterEach(() => {
     (globalThis as Record<string, unknown>).WebSocket = originalWs;
     globalThis.fetch = originalFetch;
+  });
+
+  it.each([
+    [undefined, null],
+    [null, null],
+    ['', null],
+    ['/uploads/agents/3.png', 'https://mao.example.com/uploads/agents/3.png'],
+    ['https://oss.example.com/3.png', 'https://oss.example.com/3.png'],
+  ])('boot 获取 Agent 并解析头像 %s', async (avatar, expected) => {
+    agentAvatarUrl = avatar;
+    const h = await makeHarness();
+    expect(h.fetchCalls).toHaveLength(0);
+    await boot(h);
+    expect(h.fetchCalls).toContain('GET https://mao.example.com/api/v1/agents/3');
+    expect(h.ui.agentAvatarUrl).toBe(expected);
+    h.ctl.destroy();
+  });
+
+  it('Agent 详情失败通过原有初始化错误展示，重试后加载头像', async () => {
+    const h = await makeHarness();
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('Agent unavailable'));
+    h.ctl.open();
+    await vi.waitFor(() => expect(h.ui.sessionError).toBe('Agent unavailable'));
+    expect(h.ui.agentAvatarUrl).toBeNull();
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    agentAvatarUrl = '/uploads/agents/3.png';
+    await boot(h);
+    expect(h.ui.agentAvatarUrl).toBe('https://mao.example.com/uploads/agents/3.png');
+    h.ctl.destroy();
   });
 
   it('boot 后 subscribe 只发一次，ui.connected 随鉴权双向同步', async () => {

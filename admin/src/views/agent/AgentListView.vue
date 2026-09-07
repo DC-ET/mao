@@ -33,8 +33,11 @@
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="名称" min-width="120">
           <template #default="{ row }">
-            <span>{{ row.name }}</span>
-            <el-tag v-if="row.isDefault" type="warning" size="small" style="margin-left: 8px">默认</el-tag>
+            <span class="agent-identity">
+              <el-avatar :size="32" :src="resolveAgentAvatarUrl(row.avatarUrl)" shape="square">{{ row.name?.slice(0, 1) || 'A' }}</el-avatar>
+              <span>{{ row.name }}</span>
+              <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
+            </span>
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
@@ -61,6 +64,7 @@
       <div v-else class="mobile-card-list" v-loading="loading">
         <el-card v-for="row in filteredAgents" :key="row.id" shadow="hover">
           <div class="mobile-card-head">
+            <el-avatar :size="32" :src="resolveAgentAvatarUrl(row.avatarUrl)" shape="square">{{ row.name?.slice(0, 1) || 'A' }}</el-avatar>
             <span class="mobile-card-title">{{ row.name }}</span>
             <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
           </div>
@@ -117,6 +121,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
 import { formatDateTimeColumn } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
@@ -227,6 +232,12 @@ onMounted(fetchAgents)
 </script>
 
 <style scoped>
+.agent-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-identity .el-avatar { flex-shrink: 0; }
 .card-header {
   display: flex;
   justify-content: space-between;

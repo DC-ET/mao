@@ -24,6 +24,19 @@ function mockDb(queryOne: unknown = { id: 1 }, query: unknown[] = [{ id: 1 }]) {
 }
 
 describe('MysqlAgentRepository', () => {
+  it('writes avatarUrl on insert and update including explicit clearing', async () => {
+    const db = mockDb({ id: 5, name: 'A', systemPrompt: 'p' });
+    db.transaction.mockImplementation(async (fn) => fn(db));
+    const repo = new MysqlAgentRepository(db as never);
+    const avatarUrl = '/uploads/12345678-1234-1234-1234-123456789abc.png';
+    const agent = { id: 5, name: 'A', systemPrompt: 'p', avatarUrl };
+    await repo.insert(agent);
+    expect(db.insert).toHaveBeenCalledWith('agent', expect.objectContaining({ avatarUrl }));
+    await repo.updateById(agent, 7, false);
+    expect(db.updateById).toHaveBeenCalledWith('agent', 5, expect.objectContaining({ avatarUrl }));
+    await repo.updateById({ ...agent, avatarUrl: null }, 7, false);
+    expect(db.updateById).toHaveBeenLastCalledWith('agent', 5, expect.objectContaining({ avatarUrl: null }));
+  });
   it('covers list find insert update delete and experiences', async () => {
     const db = mockDb();
     const repo = new MysqlAgentRepository(db as never);

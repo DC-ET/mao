@@ -27,6 +27,7 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
 <template>
   <Launcher
     :visible="ui.launcherVisible"
+    :agent-avatar-url="ui.agentAvatarUrl"
     :position="ui.position"
     :running="running"
     :attention="attention"
@@ -34,6 +35,7 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
   />
   <ChatPanel
     :open="ui.panelOpen"
+    :agent-avatar-url="ui.agentAvatarUrl"
     :position="ui.position"
     :connected="ui.connected"
     :phase="ui.phase"

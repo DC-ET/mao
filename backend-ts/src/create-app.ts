@@ -36,6 +36,7 @@ import { registerPermissionRoutes } from './permission/permission.routes.js';
 import { MysqlAgentExperienceRepository, MysqlAgentRepository } from './agent/agent.repository.js';
 import { AgentExperienceService } from './agent/agent-experience.service.js';
 import { AgentService } from './agent/agent.service.js';
+import { registerAgentAvatarRoutes } from './agent/agent-avatar.js';
 import { registerAgentRoutes } from './agent/agent.routes.js';
 import { McpServerValidatorImpl, MysqlMcpServerLookup } from './agent/mcp-validator.js';
 import { MysqlLlmModelRepository, MysqlSessionModelRepository } from './model/model.repository.js';
@@ -1602,6 +1603,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerUserRoutes(api, userService, userRepo, permissionService);
     registerPermissionRoutes(api, permissionService);
     registerGitCredentialRoutes(api, gitCredentials);
+    registerAgentAvatarRoutes(api, fileService, permissionService);
     registerAgentRoutes(api, {
       agentService, experienceService, userRepo, mcpServerValidator: mcpValidator,
       permissionService,

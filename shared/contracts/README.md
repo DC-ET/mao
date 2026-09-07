@@ -26,6 +26,15 @@ export type { UserInfoVO, LoginVO } from '@mao/contracts';
 import type { NotificationChannel } from '@mao/contracts';
 ```
 
+## Agent 头像
+
+- `POST /api/v1/agents/avatar`：登录并拥有 `agent:write`，multipart/form-data，仅一个 `file` 字段。
+- 接受内容与 MIME 一致的 PNG、JPEG、WebP，原文件最大 2 MiB，单边最大 4096 像素；拒绝 SVG、动画和解码失败图片。
+- 后端完整解码并移除元数据，缩放至 512 × 512 范围后重新编码为 PNG，复用通用上传存储和文件记录。返回 `Result<AgentAvatarUploadVO>`，例如 `{ code: 0, data: { avatarUrl: "/uploads/<uuid>.png" } }`。
+- 上传不修改 Agent，可先上传再创建。Agent 创建/更新接受 `avatarUrl`，列表/详情返回该字段；省略更新字段保留原头像，`null` 清空。仅接受上传格式的同源 PNG 路径，禁止远程 URL、data URL 和 SVG。
+- 头像是公开展示资源，不应上传敏感内容；替换或删除 Agent 不自动删除旧文件，沿用通用文件管理机制。
+- 部署后端时执行迁移 `V105__agent_avatar_url.sql`。
+
 ## 演进原则
 
 - 新契约先确认「前后端语义完全一致」再下沉，避免把一端私有形状污染为公共契约。

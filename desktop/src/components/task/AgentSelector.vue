@@ -6,7 +6,7 @@
         <el-icon class="collapse-icon" :class="{ collapsed }"><ArrowDown /></el-icon>
         <span class="header-title" v-if="!collapsed || !selectedAgent">选择智能体</span>
         <template v-if="collapsed && selectedAgent">
-          <el-avatar :size="22" class="collapsed-avatar">{{ selectedAgent.name?.charAt(0) }}</el-avatar>
+          <el-avatar :size="22" :src="resolveAvatarUrl(selectedAgent.avatarUrl)" class="collapsed-avatar">{{ selectedAgent.name?.charAt(0) }}</el-avatar>
           <span class="collapsed-name">{{ selectedAgent.name }}</span>
         </template>
       </div>
@@ -22,7 +22,7 @@
         :class="{ selected: String(agent.id) === String(selectedAgentId) }"
         @click="selectAgent(agent)"
       >
-        <el-avatar :size="32" class="agent-avatar">{{ agent.name?.charAt(0) }}</el-avatar>
+        <el-avatar :size="32" :src="resolveAvatarUrl(agent.avatarUrl)" class="agent-avatar">{{ agent.name?.charAt(0) }}</el-avatar>
         <div class="agent-info">
           <span class="agent-name">{{ agent.name }}</span>
           <el-tooltip :content="agent.description || 'AI Agent'" :disabled="!(agent.description && agent.description.length > 30)" placement="top">
@@ -39,6 +39,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { useAgentStore, type Agent } from '../../stores/agent'
+import { resolveAvatarUrl } from '../../utils/avatar'
 
 const props = defineProps<{
   selectedAgentId: string | null

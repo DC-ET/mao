@@ -9,10 +9,16 @@ export interface ExperienceVO {
   enabled?: boolean;
 }
 
+export interface AgentAvatarUploadVO {
+  avatarUrl: string;
+}
+
 export interface AgentVO {
   id?: number;
   name?: string;
   description?: string | null;
+  /** Same-origin PNG upload URL; null means no custom avatar. */
+  avatarUrl?: string | null;
   systemPrompt?: string;
   creatorId?: number | null;
   creatorName?: string | null;

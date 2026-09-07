@@ -4,6 +4,13 @@
 
 管理用户可见的 Agent：列表、详情、创建、更新、删除，以及 Agent 经验（experience）独立 CRUD。
 
+## Agent 头像（REST / 管理后台）
+
+- `POST /api/v1/agents/avatar`：需登录及 `agent:write`，以 multipart 字段 `file` 上传 PNG / JPEG / WebP，最大 2 MiB。服务端校验内容并转为 PNG，返回 `data: { avatarUrl: "/uploads/<uuid>.png" }`。
+- 创建 / 更新 Agent 的 JSON 支持 `avatarUrl`，使用上传返回的路径；更新省略字段保留原头像，传 `null` 清空。上传本身不修改 Agent，随后保存才生效。
+- 列表和详情的 `avatarUrl` 为头像路径或 `null`，供客户端、后台及 SDK 共用；跨域调用方以 Mao 服务端 origin 解析 `/uploads/` 路径。
+- 头像为公开展示资源，不要上传敏感内容。CLI 暂无专用头像上传/设置参数，使用管理后台或 REST。
+
 ## 系统提示词版本（REST / 管理后台）
 
 创建及更新提示词会自动保存版本；内容不变不新增版本。管理后台「Agent 管理 → 提示词版本」支持预览和确认回滚，详见 [admin.md](admin.md#系统提示词版本与回滚)。现有 Agent 在迁移时保留当前提示词为 v1，无法恢复迁移前已覆盖的内容。

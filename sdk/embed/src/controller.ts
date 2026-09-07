@@ -14,6 +14,7 @@ import { SelectionTracker } from './context/selection';
 import type { ChatMessage, MessageSegment, ToolCallItem } from './types';
 import type {
   EmbedMessageVO,
+  AgentVO,
   WsAskUserQuestionAnswer,
   WsTaskPhase,
   WsServerEvent,
@@ -39,6 +40,7 @@ export interface UiState {
   phase: WsTaskPhase | null;
   unread: number;
   sessionTitle: string;
+  agentAvatarUrl: string | null;
   sessionError: string | null;
   llmRetryText: string | null;
   messages: ChatMessage[];
@@ -57,6 +59,7 @@ export function createUiState(options: MaoChatInitOptions): UiState {
     phase: null,
     unread: 0,
     sessionTitle: 'Mao 助手',
+    agentAvatarUrl: null,
     sessionError: null,
     llmRetryText: null,
     messages: [],
@@ -335,6 +338,12 @@ export class EmbedController {
     this.ui.sessionError = null;
     this.store.sessionError.value = null;
     try {
+      const agent = await this.rest.request<AgentVO>('GET', `/agents/${this.options.agentId}`);
+      if (this.destroyed) return;
+      // SDK 嵌在第三方页面：上传路径必须指向 Mao 服务，不能落到宿主域名。
+      this.ui.agentAvatarUrl = agent.avatarUrl
+        ? new URL(agent.avatarUrl, resolveApiBase(this.options.serverUrl)).href
+        : null;
       // 多 tab 竞态：先问其他 tab 是否已有会话
       const claimed = await this.tabs.inquire();
       if (claimed != null) {

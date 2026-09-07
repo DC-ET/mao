@@ -16,7 +16,7 @@ export type { QuickCommandItem, QuickCommandsVO } from './command';
 export type { ToolVO } from './tool';
 export type { UserInfoVO, LoginVO } from './user';
 export type { ModelVO, ModelPageResult, ModelListFilter, ClientImpersonation } from './model';
-export type { ExperienceVO, AgentVO } from './agent';
+export type { ExperienceVO, AgentVO, AgentAvatarUploadVO } from './agent';
 export type { WeixinPreferenceVO, TaskPanelPreferenceState } from './preference';
 export type { AuditLog, AuditListFilter } from './audit';
 export type { MessageSearchItem } from './session';

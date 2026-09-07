@@ -74,7 +74,7 @@
   height: 56px;
   padding: 0;
   border-radius: 50%;
-  background: var(--mao-primary);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.12), transparent 55%, rgba(0, 0, 0, 0.08)), var(--mao-primary);
   color: var(--mao-on-primary);
   border: none;
   cursor: pointer;
@@ -85,9 +85,18 @@
   z-index: var(--mao-z);
   transition: transform 0.18s var(--mao-ease), box-shadow 0.18s ease, background 0.15s ease;
 }
+.mao-launcher::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: inherit;
+  border: 1px solid currentColor;
+  opacity: 0.12;
+  pointer-events: none;
+}
 .mao-launcher:hover {
   transform: translateY(-2px);
-  background: var(--mao-primary-hover);
+  background-color: var(--mao-primary-hover);
   box-shadow: var(--mao-shadow-launcher-hover), inset 0 0 0 1px var(--mao-primary-edge);
 }
 .mao-launcher:active { transform: translateY(0) scale(0.95); }
@@ -97,7 +106,8 @@
 }
 .mao-launcher[data-pos='right'] { right: 24px; }
 .mao-launcher[data-pos='left'] { left: 24px; }
-.mao-launcher svg { width: 26px; height: 26px; fill: currentColor; }
+.mao-launcher .mao-assistant-mark { width: 32px; height: 32px; fill: none; transform: translateY(-1px); }
+.mao-agent-avatar { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 .mao-launcher__dot {
   position: absolute;
   top: 3px;
@@ -167,7 +177,7 @@
   justify-content: center;
   flex-shrink: 0;
 }
-.mao-panel__avatar svg { width: 17px; height: 17px; fill: currentColor; }
+.mao-panel__avatar .mao-assistant-mark { width: 21px; height: 21px; fill: none; }
 .mao-panel__meta {
   display: flex;
   flex-direction: column;
