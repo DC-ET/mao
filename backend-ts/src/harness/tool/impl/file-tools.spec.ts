@@ -262,25 +262,80 @@ describe('SearchTools', () => {
     mkdirSync(join(dir, 'desktop'));
     writeFileSync(join(dir, 'desktop/package.json'), '{}');
     const tool = new GlobSearchTool(new PathSandbox(dir));
-    (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
     const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: 'desktop/package.json' })));
     expect(result.files).toHaveLength(1);
     expect(result.files[0]).toBe('desktop/package.json');
     expect(result.search_root).toBe(dir);
   });
 
-  it('globSearchFindsFilesWithJavaFallbackAndMarksTruncation', async () => {
+  it('globSearchDoesNotMarkExactLimitAsTruncated', async () => {
     const dir = await tmp();
     mkdirSync(join(dir, 'src/main'), { recursive: true });
     writeFileSync(join(dir, 'src/main/App.java'), 'class App {}');
     writeFileSync(join(dir, 'README.md'), 'docs');
     const tool = new GlobSearchTool(new PathSandbox(dir));
-    (tool as unknown as { rgAvailable: boolean }).rgAvailable = false;
     const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: '**/*.java', head_limit: 1 })));
     expect(result.files).toHaveLength(1);
     expect(result.files[0]).toContain('App.java');
-    expect(result.truncated).toBe(true);
+    expect(result.truncated).toBe(false);
     expect(result.total_matched).toBe(1);
+  });
+
+  it('globSearchSupportsBracesClassesAndLiteralDots', async () => {
+    const dir = await tmp();
+    mkdirSync(join(dir, 'src/nested'), { recursive: true });
+    for (const file of ['src/a.ts', 'src/nested/b.js', 'src/nested/c.ts', 'src/catalog', 'src/a.log']) {
+      writeFileSync(join(dir, file), '');
+    }
+    const tool = new GlobSearchTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: 'src/**/[ab].{ts,js}' })));
+    expect(result.files.sort()).toEqual(['src/a.ts', 'src/nested/b.js']);
+    const logs = JSON.parse(await tool.execute(JSON.stringify({ pattern: '*.log' })));
+    expect(logs.files).toEqual(['src/a.log']);
+  });
+
+  it('globSearchMarksOnlyAdditionalMatchesAsTruncated', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'a.txt'), '');
+    writeFileSync(join(dir, 'b.txt'), '');
+    const tool = new GlobSearchTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: '*.txt', head_limit: 1 })));
+    expect(result.files).toHaveLength(1);
+    expect(result.total_matched).toBe(1);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('globSearchUsesExplicitIgnoreRulesAndSkipsSymlinkLoops', async () => {
+    const dir = await tmp();
+    mkdirSync(join(dir, 'node_modules'));
+    writeFileSync(join(dir, 'node_modules/a.txt'), '');
+    writeFileSync(join(dir, '.hidden.txt'), '');
+    writeFileSync(join(dir, 'ignored.txt'), '');
+    writeFileSync(join(dir, '.gitignore'), '*.txt\n');
+    symlinkSync(dir, join(dir, 'loop'));
+    const tool = new GlobSearchTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: '*.txt' })));
+    expect(result.files.sort()).toEqual(['.hidden.txt', 'ignored.txt']);
+  });
+
+  it('globSearchRestrictsSingleFileScope', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'a.txt'), '');
+    writeFileSync(join(dir, 'b.txt'), '');
+    const tool = new GlobSearchTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'a.txt', pattern: '*.txt' })));
+    expect(result.files).toEqual(['a.txt']);
+  });
+
+  it('globSearchReportsMissingPathsAndInvalidLimits', async () => {
+    const dir = await tmp();
+    const tool = new GlobSearchTool(new PathSandbox(dir));
+    const missing = JSON.parse(await tool.execute(JSON.stringify({ path: 'missing', pattern: '*' })));
+    expect(missing.error).toBeTruthy();
+    for (const head_limit of [0, -1, 1.5, '2']) {
+      const result = JSON.parse(await tool.execute(JSON.stringify({ pattern: '*', head_limit })));
+      expect(result.error).toContain('head_limit');
+    }
   });
 
   it('grepSearchFindsMatchesInSingleFilePath', async () => {

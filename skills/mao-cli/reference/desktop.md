@@ -26,7 +26,12 @@ LOCAL 本机工具需 Electron，见 [electron.md](electron.md)。对话执行�
 
 ## CLOUD 云端模式
 
-工具在服务器执行，工作区在 `WORKSPACE_ROOT` 下。云端文件内容搜索的无 `rg` 分支支持异步逐行读取大文件，错误会明确返回；详见 [grep_search 使用说明](tool.md)。
+工具在服务器执行，工作区在 `WORKSPACE_ROOT` 下。
+
+- 文件名搜索 `glob_search` 统一异步按需遍历，不依赖 `rg`；minimatch 支持 `**`、花括号、字符组与字面点。包含隐藏文件、不读取 `.gitignore` / `.ignore`，固定排除依赖与构建等目录，遍历不跟随符号链接；访问失败返回 `error`。`head_limit` 须为正整数，仅发现额外匹配才标记 `truncated`，`total_matched` 为返回数而非全量。
+- 文件内容搜索 `grep_search` 与之不同：仍区分 `rg` / 无 `rg` 分支，无 `rg` 分支支持异步逐行读取大文件，错误会明确返回；不要套用 `glob_search` 的遍历与计数规则。
+
+完整规则与固定排除目录见 [搜索工具使用说明](tool.md)。
 
 | 工作区来源 | 说明 |
 |------------|------|

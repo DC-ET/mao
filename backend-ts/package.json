@@ -38,6 +38,7 @@
     "jsonwebtoken": "^9.0.2",
     "ldapts": "^8.0.9",
     "mime-types": "^3.0.1",
+    "minimatch": "^10.2.6",
     "mysql2": "^3.14.3",
     "node-pty": "1.1.0",
     "reflect-metadata": "^0.2.2",

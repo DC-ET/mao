@@ -20,6 +20,7 @@
 ### 后端
 
 - `grep_search` 在未安装 ripgrep（`rg`）时改用异步流式逐行读取，不再静默跳过超过 10 MiB 的文件；保留上下文、正则、大小写、glob 过滤与输出截断，文件读取或目录访问错误明确返回 `error`。本次流式化仅涉及无 `rg` 分支。
+- `glob_search`（CLOUD）统一异步按需遍历目录，不再依赖 `rg`；使用 minimatch 支持 `**`、花括号、字符组与字面点，包含隐藏文件，不读取 `.gitignore` / `.ignore`，固定排除依赖、构建等目录（见源码 `glob-search-tool.ts` 的 `IGNORED_DIRS`），遍历不跟随符号链接，访问失败返回 `error`。`head_limit` 须为正整数，仅发现超出上限的额外匹配时才标记 `truncated`；`total_matched` 为返回数而非全量匹配数。与仍区分 `rg` / 无 `rg` 分支的 `grep_search` 不同，以上规则统一适用于 CLOUD 文件名搜索。
 
 ---
 
