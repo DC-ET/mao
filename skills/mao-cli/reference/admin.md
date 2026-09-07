@@ -41,6 +41,15 @@ CLI：`mao model list|create|update|delete|set-status|test`（见 [model.md](mod
 
 CLI：`mao agent list|get|create|update` 等（见 [agent.md](agent.md)）。
 
+### 系统提示词版本与回滚
+
+- 在 Agent 列表点击「提示词版本」，查看版本号、保存时间、操作人 ID、回滚来源，并预览完整提示词。此入口和接口均要求 `agent:write` 权限。
+- 创建 Agent 时保存 v1；升级时将现有未删除 Agent 的提示词保存为 v1。之后仅在提示词内容实际变化时递增版本，修改名称等其他配置不会产生提示词版本。
+- 选中历史版本后点击「回滚到此版本」，确认后立即保存。只恢复系统提示词，不修改名称、经验、Skills、MCP 或默认模型。
+- 回滚会新增版本并记录来源，旧版本不会删除，因此可以再次回滚；目标内容与当前一致时不重复生成版本。
+- 版本历史只能恢复启用此功能后保存的内容，无法找回此前已经被覆盖的提示词。
+
+
 ## Skills 管理
 
 维护平台 Skill 文档目录。为内部规范、排障流程编写独立 Skill；按 Agent 场景关联子集。

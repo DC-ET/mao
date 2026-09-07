@@ -20,6 +20,42 @@ async function appWithUser(register: (app: ReturnType<typeof Fastify>) => void) 
 }
 
 describe('CRUD routes', () => {
+  it('protects prompt history and rollback, validates versions and records the operator', async () => {
+    const agent = { id: 1, name: 'A', systemPrompt: 'old' };
+    const versions = [{ id: 1, agentId: 1, version: 1, systemPrompt: 'old' }];
+    const service = {
+      listPromptVersions: vi.fn(async () => versions),
+      rollbackPrompt: vi.fn(async () => agent),
+      getAgentExperiences: vi.fn(async () => []),
+    };
+    const permissionService = { hasPermission: vi.fn(async () => false) };
+    const app = await appWithUser(f => registerAgentRoutes(f, {
+      agentService: service as never, experienceService: {} as never,
+      userRepo: {} as never, mcpServerValidator: {} as never, permissionService,
+    }));
+    try {
+      expect((await app.inject({ method: 'GET', url: '/v1/agents/1/prompt-versions' })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'POST', url: '/v1/agents/1/prompt-versions/1/rollback' })).statusCode).toBe(403);
+      expect(service.listPromptVersions).not.toHaveBeenCalled();
+      expect(service.rollbackPrompt).not.toHaveBeenCalled();
+      expect(permissionService.hasPermission).toHaveBeenCalledWith(7, 'agent:write');
+      permissionService.hasPermission.mockResolvedValue(true);
+      const history = await app.inject({ method: 'GET', url: '/v1/agents/1/prompt-versions' });
+      expect(history.json().data).toEqual(versions);
+      expect(service.listPromptVersions).toHaveBeenCalledWith(1);
+      for (const version of ['0', '-1', '1.5', 'abc']) {
+        const invalid = await app.inject({ method: 'POST', url: `/v1/agents/1/prompt-versions/${version}/rollback` });
+        expect(invalid.json().code).not.toBe(0);
+      }
+      expect(service.rollbackPrompt).not.toHaveBeenCalled();
+      const restored = await app.inject({ method: 'POST', url: '/v1/agents/1/prompt-versions/1/rollback' });
+      expect(restored.json().data).toMatchObject(agent);
+      expect(service.rollbackPrompt).toHaveBeenCalledWith(1, 1, 7);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('agent routes list get create update delete and experiences', async () => {
     const agent = { id: 1, name: 'A', systemPrompt: 'p', creatorId: 7, isDefault: 0 };
     const agentService = {

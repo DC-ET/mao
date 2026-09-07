@@ -14,6 +14,7 @@ import {
 
 function mockDb(queryOne: unknown = { id: 1 }, query: unknown[] = [{ id: 1 }]) {
   return {
+    transaction: vi.fn(async (fn: (db: unknown) => Promise<unknown>) => fn(mockDb(queryOne, query))),
     query: vi.fn(async () => query),
     queryOne: vi.fn(async () => queryOne),
     execute: vi.fn(async () => ({ affectedRows: 1, insertId: 1 })),
@@ -35,11 +36,11 @@ describe('MysqlAgentRepository', () => {
     await repo.findDefault();
     const agent = { name: 'a', systemPrompt: 'p' };
     expect(await repo.insert(agent as never)).toBe(5);
-    await repo.updateById({ id: 5, name: 'a', systemPrompt: 'p' } as never);
-    await repo.updateById({ name: 'a', systemPrompt: 'p' } as never);
+    await repo.updateById({ id: 5, name: 'a', systemPrompt: 'p' }, 7, true);
+    await repo.updateById({ name: 'a', systemPrompt: 'p' }, 7, true);
     await repo.deleteById(5);
     await repo.clearDefaultFlag();
-
+    await repo.listPromptVersions(1);
     const exp = new MysqlAgentExperienceRepository(db as never);
     await exp.listByAgentId(1);
     await exp.listEnabledByAgentId(1);

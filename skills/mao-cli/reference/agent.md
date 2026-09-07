@@ -4,6 +4,20 @@
 
 管理用户可见的 Agent：列表、详情、创建、更新、删除，以及 Agent 经验（experience）独立 CRUD。
 
+## 系统提示词版本（REST / 管理后台）
+
+创建及更新提示词会自动保存版本；内容不变不新增版本。管理后台「Agent 管理 → 提示词版本」支持预览和确认回滚，详见 [admin.md](admin.md#系统提示词版本与回滚)。现有 Agent 在迁移时保留当前提示词为 v1，无法恢复迁移前已覆盖的内容。
+
+以下接口均要求 `agent:write` 权限（路径相对于 `/api/v1`）；CLI 暂无专用子命令：
+
+| 操作 | 接口 | 返回 |
+|------|------|------|
+| 历史列表 | `GET /agents/:id/prompt-versions` | 按版本倒序的数组，包含 `id`、`agentId`、`version`、`systemPrompt`、`operatorId`、`sourceVersion`、`createdAt` |
+| 回滚 | `POST /agents/:id/prompt-versions/:version/rollback` | 最新 Agent 详情；`:version` 为正整数版本号，无需请求体 |
+
+回滚仅恢复提示词并生成带 `sourceVersion` 的新版本，不删除历史、不改动其他 Agent 配置。目标内容与当前一致时不重复生成版本。普通 `agent create/update` 命令同样触发服务端自动版本记录。
+
+
 ## 命令选择
 
 | 场景 | 命令 |

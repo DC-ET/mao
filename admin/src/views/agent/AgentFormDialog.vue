@@ -26,6 +26,7 @@
           :rows="5"
           placeholder="请输入角色定义：身份、目标、工作内容、表达方式等"
         />
+        <div class="form-hint">保存后自动记录提示词版本；可在 Agent 列表的「提示词版本」中预览和回滚。</div>
       </el-form-item>
       <el-form-item label="最佳实践经验">
         <div class="experience-list">

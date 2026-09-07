@@ -101,10 +101,11 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
   });
 
   app.put('/v1/agents/:id', async (request, reply) => {
-    await requireAgentWrite(request);
+    const userId = await requireAgentWrite(request);
     const body = bodyOf<UpdateAgentRequest>(request);
     const mcpServerIds = await resolveMcpServerIds(mcpServerValidator, body.mcpServerIds ?? undefined);
     const agent = await agentService.updateAgent(
+      userId,
       pathId(request),
       body.name,
       body.description,
@@ -115,6 +116,19 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.isDefault,
       body.defaultModelId,
     );
+    return sendOk(reply, await toVO(agent, agentService, userRepo));
+  });
+
+  app.get('/v1/agents/:id/prompt-versions', async (request, reply) => {
+    await requireAgentWrite(request);
+    return sendOk(reply, await agentService.listPromptVersions(pathId(request)));
+  });
+
+  app.post('/v1/agents/:id/prompt-versions/:version/rollback', async (request, reply) => {
+    const userId = await requireAgentWrite(request);
+    const raw = (request.params as { version: string }).version;
+    if (!/^[1-9]\d*$/.test(raw)) throw new BusinessException(ErrorCode.PARAM_INVALID, '版本号必须为正整数');
+    const agent = await agentService.rollbackPrompt(pathId(request), Number(raw), userId);
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
 

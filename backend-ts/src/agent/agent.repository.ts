@@ -1,3 +1,5 @@
+import { BusinessException } from '../common/business-exception.js';
+import { ErrorCode } from '../common/error-code.js';
 import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
 import type {
@@ -5,6 +7,7 @@ import type {
   AgentExperience,
   AgentExperienceRepository,
   AgentRepository,
+  AgentPromptVersion,
 } from './types.js';
 
 export class MysqlAgentRepository implements AgentRepository {
@@ -47,36 +50,84 @@ export class MysqlAgentRepository implements AgentRepository {
   }
 
   async insert(agent: Agent): Promise<number> {
-    const id = await this.db.insert('agent', {
-      name: agent.name,
-      description: agent.description,
-      systemPrompt: agent.systemPrompt,
-      creatorId: agent.creatorId,
-      configJson: agent.configJson,
-      skillNames: agent.skillNames,
-      mcpServerIds: agent.mcpServerIds,
-      defaultModelId: agent.defaultModelId ?? null,
-      isDefault: agent.isDefault ?? 0,
-      deleted: 0,
+    const id = await this.db.transaction(async (tx) => {
+      const id = await tx.insert('agent', {
+        name: agent.name,
+        description: agent.description,
+        systemPrompt: agent.systemPrompt,
+        creatorId: agent.creatorId,
+        configJson: agent.configJson,
+        skillNames: agent.skillNames,
+        mcpServerIds: agent.mcpServerIds,
+        defaultModelId: agent.defaultModelId ?? null,
+        isDefault: agent.isDefault ?? 0,
+        deleted: 0,
+      });
+      await tx.insert('agent_prompt_versions', {
+        agentId: id, version: 1, systemPrompt: agent.systemPrompt,
+        operatorId: agent.creatorId ?? null, sourceVersion: null,
+      });
+      return id;
     });
     agent.id = id;
     return id;
   }
 
-  async updateById(agent: Agent): Promise<void> {
-    if (agent.id == null) {
-      return;
-    }
-    await this.db.updateById('agent', agent.id, {
-      name: agent.name,
-      description: agent.description,
-      systemPrompt: agent.systemPrompt,
-      creatorId: agent.creatorId,
-      configJson: agent.configJson,
-      skillNames: agent.skillNames ?? null,
-      mcpServerIds: agent.mcpServerIds ?? null,
-      defaultModelId: agent.defaultModelId ?? null,
-      isDefault: agent.isDefault,
+  async updateById(agent: Agent, operatorId: number, writePrompt: boolean): Promise<void> {
+    if (agent.id == null) return;
+    await this.db.transaction(async (tx) => {
+      const current = await tx.queryOne<Agent>(
+        `SELECT * FROM agent WHERE id = ? AND ${notDeleted()} FOR UPDATE`, [agent.id],
+      );
+      if (!current) throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
+      if (!writePrompt) agent.systemPrompt = current.systemPrompt;
+      await tx.updateById('agent', agent.id!, {
+        name: agent.name,
+        description: agent.description,
+        systemPrompt: agent.systemPrompt,
+        creatorId: agent.creatorId,
+        configJson: agent.configJson,
+        skillNames: agent.skillNames ?? null,
+        mcpServerIds: agent.mcpServerIds ?? null,
+        defaultModelId: agent.defaultModelId ?? null,
+        isDefault: agent.isDefault,
+      });
+      if (agent.systemPrompt !== current.systemPrompt) {
+        await this.appendPromptVersion(tx, agent.id!, agent.systemPrompt, operatorId, null);
+      }
+    });
+  }
+
+  listPromptVersions(agentId: number): Promise<AgentPromptVersion[]> {
+    return this.db.query<AgentPromptVersion>(
+      'SELECT * FROM agent_prompt_versions WHERE agent_id = ? ORDER BY version DESC', [agentId],
+    );
+  }
+
+  private async appendPromptVersion(
+    tx: Db, agentId: number, systemPrompt: string,
+    operatorId: number | null, sourceVersion: number | null,
+  ): Promise<void> {
+    const latest = await tx.queryOne<{ version: number }>(
+      'SELECT version FROM agent_prompt_versions WHERE agent_id = ? ORDER BY version DESC LIMIT 1', [agentId],
+    );
+    await tx.insert('agent_prompt_versions', {
+      agentId, version: (latest?.version ?? 0) + 1, systemPrompt, operatorId, sourceVersion,
+    });
+  }
+
+  async rollbackPrompt(agentId: number, version: number, operatorId: number): Promise<Agent> {
+    return this.db.transaction(async (tx) => {
+      const agent = await tx.queryOne<Agent>(`SELECT * FROM agent WHERE id = ? AND ${notDeleted()} FOR UPDATE`, [agentId]);
+      if (!agent) throw new BusinessException(ErrorCode.AGENT_NOT_FOUND);
+      const target = await tx.queryOne<AgentPromptVersion>('SELECT * FROM agent_prompt_versions WHERE agent_id = ? AND version = ?', [agentId, version]);
+      if (!target) throw new BusinessException(ErrorCode.PARAM_INVALID, '提示词版本不存在');
+      if (target.systemPrompt !== agent.systemPrompt) {
+        await tx.updateById('agent', agentId, { systemPrompt: target.systemPrompt });
+        await this.appendPromptVersion(tx, agentId, target.systemPrompt, operatorId, version);
+        agent.systemPrompt = target.systemPrompt;
+      }
+      return agent;
     });
   }
 

@@ -45,11 +45,12 @@
           <template #default="{ row }">{{ row.experiences?.length || 0 }}</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" />
-        <el-table-column label="操作" width="190" fixed="right">
+        <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <template v-if="canWrite">
               <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
+              <el-button type="primary" link size="small" @click="historyAgent = row">提示词版本</el-button>
               <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
             </template>
             <span v-else class="op-muted">—</span>
@@ -75,6 +76,7 @@
             <template v-if="canWrite">
               <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
+              <el-button type="primary" link @click="historyAgent = row">提示词版本</el-button>
               <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
             </template>
           </div>
@@ -93,6 +95,13 @@
       />
     </el-card>
 
+    <AgentPromptHistoryDialog
+      v-if="historyAgent"
+      :agent-id="historyAgent.id"
+      :agent-name="historyAgent.name"
+      @close="historyAgent = null"
+      @restored="fetchAgents"
+    />
     <AgentFormDialog
       v-if="dialogVisible"
       :visible="true"
@@ -112,6 +121,9 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import AgentFormDialog from './AgentFormDialog.vue'
+import AgentPromptHistoryDialog from './AgentPromptHistoryDialog.vue'
+
+const historyAgent = ref<{ id: number; name: string } | null>(null)
 
 const { isMobile } = useBreakpoint()
 

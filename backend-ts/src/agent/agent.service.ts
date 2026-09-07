@@ -83,6 +83,7 @@ export class AgentService {
   }
 
   async updateAgent(
+    operatorId: number,
     id: number,
     name: string | null | undefined,
     description: string | null | undefined,
@@ -113,10 +114,22 @@ export class AgentService {
       }
       agent.isDefault = isDefault;
     }
-    await this.agentRepo.updateById(agent);
+    await this.agentRepo.updateById(agent, operatorId, systemPrompt != null);
 
     await this.experienceService.syncExperiences(id, experiences);
     return agent;
+  }
+
+  async listPromptVersions(id: number) {
+    await this.getAgent(id);
+    return this.agentRepo.listPromptVersions(id);
+  }
+
+  async rollbackPrompt(id: number, version: number, operatorId: number): Promise<Agent> {
+    if (!Number.isSafeInteger(version) || version <= 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '版本号必须为正整数');
+    }
+    return this.agentRepo.rollbackPrompt(id, version, operatorId);
   }
 
   async deleteAgent(id: number): Promise<void> {

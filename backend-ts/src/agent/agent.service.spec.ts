@@ -20,6 +20,8 @@ describe('AgentService', () => {
       return a.id;
     }),
     updateById: vi.fn(),
+    listPromptVersions: vi.fn(),
+    rollbackPrompt: vi.fn(),
     deleteById: vi.fn(),
     clearDefaultFlag: vi.fn(),
     removeSkillName: vi.fn(),
@@ -57,6 +59,7 @@ describe('AgentService', () => {
       [10, 20],
       experiences,
       1,
+      undefined,
     );
     expect(created.creatorId).toBe(7);
     expect(created.skillNames).toContain('skill-a');
@@ -66,6 +69,7 @@ describe('AgentService', () => {
     expect(experienceService.syncExperiences).toHaveBeenCalledWith(created.id, experiences);
 
     const updated = await service.updateAgent(
+      7,
       1,
       'new',
       null,
@@ -74,11 +78,12 @@ describe('AgentService', () => {
       [],
       experiences,
       0,
+      undefined,
     );
     expect(updated.name).toBe('new');
     expect(updated.skillNames).toBeNull();
     expect(updated.isDefault).toBe(0);
-    expect(agentRepo.updateById).toHaveBeenCalledWith(existing);
+    expect(agentRepo.updateById).toHaveBeenCalledWith(existing, 7, true);
     expect(experienceService.syncExperiences).toHaveBeenCalledWith(1, experiences);
 
     await service.deleteAgent(1);
@@ -86,7 +91,34 @@ describe('AgentService', () => {
     expect(agentRepo.deleteById).toHaveBeenCalledWith(1);
   });
 
-  it('getAgentThrowsWhenMissing', async () => {
+  it('handles prompt versions and rollback', async () => {
+    const versions = [{ id: 2, agentId: 1, version: 2, systemPrompt: 'new', operatorId: 7, sourceVersion: null, createdAt: 'now' }];
+    vi.mocked(agentRepo.findById).mockResolvedValue(agent(1, 'a', 0));
+    vi.mocked(agentRepo.listPromptVersions).mockResolvedValue(versions);
+    vi.mocked(agentRepo.rollbackPrompt).mockResolvedValue({ ...agent(1, 'a', 0), systemPrompt: 'new' });
+    expect(await service.listPromptVersions(1)).toEqual(versions);
+    expect(await service.rollbackPrompt(1, 2, 7)).toMatchObject({ systemPrompt: 'new' });
+    await expect(service.rollbackPrompt(1, 0, 7)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+  });
+
+  it('does not list history for a missing agent', async () => {
+    vi.mocked(agentRepo.findById).mockResolvedValue(null);
+    await expect(service.listPromptVersions(404)).rejects.toMatchObject({ code: ErrorCode.AGENT_NOT_FOUND.code });
+    expect(agentRepo.listPromptVersions).not.toHaveBeenCalled();
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('rejects invalid rollback version %s', async (version) => {
+    await expect(service.rollbackPrompt(1, version, 7)).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+    expect(agentRepo.rollbackPrompt).not.toHaveBeenCalled();
+  });
+
+  it('marks an omitted prompt as not written', async () => {
+    vi.mocked(agentRepo.findById).mockResolvedValue(agent(1, 'a', 0));
+    await service.updateAgent(7, 1, 'renamed', null, undefined, null, null, null, null, undefined);
+    expect(agentRepo.updateById).toHaveBeenCalledWith(expect.objectContaining({ name: 'renamed' }), 7, false);
+  });
+
+  it('get rejects missing agents', async () => {
     vi.mocked(agentRepo.findById).mockResolvedValue(null);
     await expect(service.getAgent(404)).rejects.toBeInstanceOf(BusinessException);
   });
@@ -130,7 +162,7 @@ describe('AgentService', () => {
       const created = await serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, 0, 7);
       expect(created.defaultModelId).toBe(7);
 
-      await serviceWithLookup.updateAgent(1, null, null, null, null, null, null, null, null);
+      await serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null);
       const updated = vi.mocked(agentRepo.updateById).mock.calls.at(-1)![0] as Agent;
       expect(updated.defaultModelId).toBeNull();
     });
@@ -141,12 +173,12 @@ describe('AgentService', () => {
       vi.mocked(agentRepo.findById).mockResolvedValue(existing);
 
       // undefined：不改动
-      await serviceWithLookup.updateAgent(1, 'renamed', null, null, null, null, null, null, undefined);
+      await serviceWithLookup.updateAgent(7, 1, 'renamed', null, null, null, null, null, null, undefined);
       expect(existing.defaultModelId).toBe(7);
 
       // 非法值：报错且不落库
       await expect(
-        serviceWithLookup.updateAgent(1, null, null, null, null, null, null, null, 404),
+        serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, 404),
       ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
       expect(agentRepo.updateById).toHaveBeenCalledTimes(1);
     });

@@ -17,6 +17,16 @@ export interface Agent {
   updatedAt?: string | null;
 }
 
+export interface AgentPromptVersion {
+  id?: number;
+  agentId: number;
+  version: number;
+  systemPrompt: string;
+  operatorId?: number | null;
+  sourceVersion?: number | null;
+  createdAt?: string | null;
+}
+
 export interface AgentExperience {
   id?: number;
   agentId: number;
@@ -39,10 +49,12 @@ export interface AgentRepository {
   findById(id: number): Promise<Agent | null>;
   findDefault(): Promise<Agent | null>;
   insert(agent: Agent): Promise<number>;
-  updateById(agent: Agent): Promise<void>;
+  updateById(agent: Agent, operatorId: number, writePrompt: boolean): Promise<void>;
   deleteById(id: number): Promise<void>;
   clearDefaultFlag(): Promise<void>;
   removeSkillName(skillName: string): Promise<number>;
+  listPromptVersions(agentId: number): Promise<AgentPromptVersion[]>;
+  rollbackPrompt(agentId: number, version: number, operatorId: number): Promise<Agent>;
 }
 
 export interface AgentExperienceRepository {
