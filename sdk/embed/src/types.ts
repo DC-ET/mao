@@ -38,6 +38,11 @@ export type MaoChatEvent =
   /** 未读数变化（收起浮窗时收到新消息 / 展开时清零） */
   | { type: 'unread'; count: number };
 
+/** 按事件到达顺序记录；仅合并相邻同类节点，工具结果就地更新。 */
+export type MessageSegment =
+  | { type: 'text' | 'thinking'; content: string }
+  | { type: 'tool-group'; toolCalls: ToolCallItem[] };
+
 /** 浮窗内一条消息的运行时形态 */
 export interface ChatMessage {
   id: string;
@@ -46,6 +51,7 @@ export interface ChatMessage {
   thinking: string;
   streaming: boolean;
   error: boolean;
+  segments: MessageSegment[];
   /** 工具调用卡片 */
   toolCalls: ToolCallItem[];
 }
@@ -55,7 +61,7 @@ export interface ToolCallItem {
   toolName: string;
   displayName: string;
   argsText: string;
-  status: 'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error' | 'unknown';
   resultText: string;
 }
 

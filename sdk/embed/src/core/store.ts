@@ -108,7 +108,7 @@ export function mergeHistory(history: ChatMessage[], local: ChatMessage[]): Chat
   // （本地是全轮拼接、历史是单轮片段，等值/后缀比对都命中不了）。
   // 仅当本轮用户消息已在历史中（tail 里没有未落库的用户消息）才敢按「历史最后一条 user 之后」
   // 判定为本轮范围，避免把上一轮的回答误剪。
-  const localRound = tail.find((m) => m.role === 'assistant' && m.content !== '');
+  const localRound = tail.find((m) => m.role === 'assistant' && (m.content !== '' || m.toolCalls.length > 0));
   if (!localRound || tail.some((m) => m.role === 'user')) return [...history, ...tail];
   let lastUserIdx = -1;
   history.forEach((m, i) => {
@@ -116,6 +116,12 @@ export function mergeHistory(history: ChatMessage[], local: ChatMessage[]): Chat
   });
   const pruned = history.filter((m, i) => {
     if (i <= lastUserIdx || m.role !== 'assistant') return true;
+    // 纯工具轮次也可能已在本地流中，必须按调用 id 对账，不能因正文为空重复上屏。
+    if (m.toolCalls.length > 0) {
+      const covered = m.toolCalls.every((tc) => localRound.toolCalls.some((local) => local.toolCallId === tc.toolCallId));
+      if (!covered) return true;
+      return !localRound.content.includes(m.content) || !localRound.thinking.includes(m.thinking);
+    }
     const text = m.content.trim();
     // 无正文的行不参与剪裁（其信息在 thinking 里，`includes('')` 恒真会误删）
     if (text === '') return true;
@@ -217,7 +223,7 @@ export class ChatStore {
     switch (type) {
       case 'content_delta':
         this.clearLlmRetry();
-        this.ensureStreamingAssistant().content += String(data.delta ?? '');
+        this.appendText('text', String(data.delta ?? ''));
         break;
       case 'thinking_start':
         this.clearLlmRetry();
@@ -226,7 +232,7 @@ export class ChatStore {
         break;
       case 'thinking_delta':
         this.clearLlmRetry();
-        this.ensureStreamingAssistant().thinking += String(data.delta ?? '');
+        this.appendText('thinking', String(data.delta ?? ''));
         break;
       case 'thinking_end':
         this.clearLlmRetry();
@@ -258,7 +264,7 @@ export class ChatStore {
           status: 'running',
           resultText: '',
         });
-        msg0.toolCalls.push(tc);
+        this.appendTool(msg0, tc);
         break;
       }
       case 'tool_call_args_delta': {
@@ -281,7 +287,7 @@ export class ChatStore {
         // 未见过对应 start（如订阅晚于该工具执行完成）：补一张已完成卡片，避免结果静默丢失
         const toolName = data.tool_name != null ? String(data.tool_name) : '';
         if (!toolName) break;
-        this.ensureStreamingAssistant().toolCalls.push(
+        this.appendTool(this.ensureStreamingAssistant(),
           reactive({
             toolCallId: data.tool_call_id != null ? String(data.tool_call_id) : genId('tc'),
             toolName,
@@ -369,6 +375,7 @@ export class ChatStore {
         if (m?.streaming) {
           m.content = '';
           m.thinking = '';
+          m.segments = [];
           m.toolCalls.splice(0, m.toolCalls.length);
         }
         break;
@@ -391,6 +398,7 @@ export class ChatStore {
       thinking: '',
       streaming: false,
       error: false,
+      segments: [],
       toolCalls: [],
     });
     this.ensureStreamingAssistant();
@@ -445,6 +453,7 @@ export class ChatStore {
       thinking: '',
       streaming: false,
       error: false,
+      segments: [],
       toolCalls: [],
     });
   }
@@ -488,7 +497,10 @@ export class ChatStore {
   private finishInterrupted(reason: string) {
     const m = this.lastAssistant();
     if (m) {
-      if (m.streaming) m.content = m.content || `_${reason}_`;
+      if (m.streaming && !m.content) {
+        m.content = `_${reason}_`;
+        m.segments.push({ type: 'text', content: m.content });
+      }
       m.streaming = false;
       for (const tc of m.toolCalls) {
         if (tc.status === 'running') tc.status = 'error';
@@ -546,12 +558,30 @@ export class ChatStore {
       thinking: '',
       streaming: true,
       error: false,
+      segments: [],
       toolCalls: [],
     });
     // 上一条流式气泡若还挂着 streaming，就地收口
     if (m) m.streaming = false;
     this.messages.value.push(created);
     return created;
+  }
+
+  private appendText(type: 'text' | 'thinking', delta: string) {
+    if (!delta) return;
+    const m = this.ensureStreamingAssistant();
+    if (type === 'text') m.content += delta;
+    else m.thinking += delta;
+    const last = m.segments[m.segments.length - 1];
+    if (last?.type === type) last.content += delta;
+    else m.segments.push({ type, content: delta });
+  }
+
+  private appendTool(m: ChatMessage, tc: ToolCallItem) {
+    m.toolCalls.push(tc);
+    const last = m.segments[m.segments.length - 1];
+    if (last?.type === 'tool-group') last.toolCalls.push(tc);
+    else m.segments.push({ type: 'tool-group', toolCalls: [tc] });
   }
 
   private findToolCall(data: Record<string, unknown>): ToolCallItem | undefined {

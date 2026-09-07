@@ -7,6 +7,36 @@ function ev(type: string, sessionId: number | null, data?: Record<string, unknow
 }
 
 describe('ChatStore', () => {
+  it('多轮思考、正文与工具按发生顺序记录，结果与重放不移动工具节点', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const send = (type: string, data: Record<string, unknown>) => store.handleEvent(ev(type, 1, data));
+    send('thinking_delta', { delta: '先分析' });
+    send('content_delta', { delta: '先' });
+    send('content_delta', { delta: '搜索' });
+    send('tool_call_start', { tool_call_id: 't1', tool_name: 'glob_search' });
+    send('tool_call_start', { tool_call_id: 't2', tool_name: 'read_file' });
+    send('thinking_delta', { delta: '再分析' });
+    send('content_delta', { delta: '继续处理' });
+    send('tool_call_start', { tool_call_id: 't3', tool_name: 'shell' });
+    send('content_delta', { delta: '最终回答' });
+    send('tool_call_result', { tool_call_id: 't1', status: 'success', result: '找到文件' });
+    send('tool_call_start', { tool_call_id: 't1', tool_name: 'glob_search' });
+    const m = store.messages.value[0];
+    expect(m.segments.map((s) => s.type)).toEqual([
+      'thinking', 'text', 'tool-group', 'thinking', 'text', 'tool-group', 'text',
+    ]);
+    expect(m.segments[1]).toEqual({ type: 'text', content: '先搜索' });
+    const group = m.segments[2];
+    expect(group.type === 'tool-group' && group.toolCalls).toEqual(m.toolCalls.slice(0, 2));
+    expect(m.toolCalls[0].resultText).toBe('找到文件');
+    expect(m.toolCalls).toHaveLength(3);
+    send('llm_stream_reset', {});
+    expect(m.segments).toEqual([]);
+    send('content_delta', { delta: '重新回答' });
+    expect(m.segments).toEqual([{ type: 'text', content: '重新回答' }]);
+  });
+
   it('content_delta 聚合到最后一条 assistant 消息', () => {
     const store = new ChatStore();
     store.bindSession(1);
@@ -16,6 +46,22 @@ describe('ChatStore', () => {
     expect(store.messages.value.length).toBe(1);
     expect(store.messages.value[0].content).toBe('你好世界');
     expect(store.messages.value[0].streaming).toBe(true);
+  });
+
+  it('重连时纯工具历史轮次不与本地时间线重复', async () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const id = store.appendLocalUserMessage('搜索');
+    store.confirmLocalUserMessage(id, '1');
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'glob_search' }));
+    const local = store.messages.value[1];
+    await store.reloadHistory(async () => [
+      { ...store.messages.value[0], id: 'h_1' },
+      { ...local, id: 'h_2', streaming: false },
+    ]);
+    expect(store.messages.value).toHaveLength(2);
+    expect(store.messages.value[1]).toBe(local);
+    expect(local.segments).toHaveLength(1);
   });
 
   it('stale executionId 事件被丢弃', () => {
@@ -264,8 +310,8 @@ describe('ChatStore', () => {
     // 刚发出、尚未落库确认的用户气泡 + 本轮流式 assistant 气泡
     store.appendLocalUserMessage('新问题');
     await store.reloadHistory(async () => [
-      { id: 'h_1', role: 'user', content: 'A', thinking: '', streaming: false, error: false, toolCalls: [] },
-      { id: 'h_2', role: 'assistant', content: 'B', thinking: '', streaming: false, error: false, toolCalls: [] },
+      { id: 'h_1', role: 'user', content: 'A', thinking: '', streaming: false, error: false, segments: [], toolCalls: [] },
+      { id: 'h_2', role: 'assistant', content: 'B', thinking: '', streaming: false, error: false, segments: [], toolCalls: [] },
     ]);
     expect(store.messages.value.map((m) => m.content)).toEqual(['A', 'B', '新问题', '']);
     // 流式气泡必须是原对象（延续 delta 写入），否则回答会掐头
@@ -278,8 +324,8 @@ describe('ChatStore', () => {
     const localId = store.appendLocalUserMessage('你好');
     store.confirmLocalUserMessage(localId, '7');
     await store.reloadHistory(async () => [
-      { id: 'h_7', role: 'user', content: '你好', thinking: '', streaming: false, error: false, toolCalls: [] },
-      { id: 'h_8', role: 'assistant', content: '回答', thinking: '', streaming: false, error: false, toolCalls: [] },
+      { id: 'h_7', role: 'user', content: '你好', thinking: '', streaming: false, error: false, segments: [], toolCalls: [] },
+      { id: 'h_8', role: 'assistant', content: '回答', thinking: '', streaming: false, error: false, segments: [], toolCalls: [] },
     ]);
     // 历史已含该消息（h_7 ↔ s_7 同一条），本地副本不再重复
     expect(store.messages.value.map((m) => m.content)).toEqual(['你好', '回答', '']);
@@ -297,7 +343,7 @@ describe('ChatStore', () => {
         thinking: '',
         streaming: false,
         error: false,
-        toolCalls: [],
+        segments: [], toolCalls: [],
       },
     ]);
     // 服务端存的是带前缀的完整内容，本地只存用户输入：不能重复上屏
@@ -341,8 +387,8 @@ describe('ChatStore', () => {
     store.handleEvent(ev('content_delta', 1, { delta: '查完了' }));
     // 服务端每个工具轮次结束就落一条 ASSISTANT（单轮片段），本地气泡是全轮拼接
     await store.reloadHistory(async () => [
-      { id: 'h_11', role: 'user', content: '查一下', thinking: '', streaming: false, error: false, toolCalls: [] },
-      { id: 'h_12', role: 'assistant', content: '我先查一下', thinking: '', streaming: false, error: false, toolCalls: [] },
+      { id: 'h_11', role: 'user', content: '查一下', thinking: '', streaming: false, error: false, segments: [], toolCalls: [] },
+      { id: 'h_12', role: 'assistant', content: '我先查一下', thinking: '', streaming: false, error: false, segments: [], toolCalls: [] },
     ]);
     // 片段行不重复上屏，工具卡随本地气泡保留
     expect(store.messages.value.map((m) => m.content)).toEqual(['查一下', '我先查一下查完了']);
@@ -357,8 +403,8 @@ describe('ChatStore', () => {
     store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
     store.handleEvent(ev('content_delta', 1, { delta: '旧回答' }));
     await store.reloadHistory(async () => [
-      { id: 'h_1', role: 'user', content: '旧问题', thinking: '', streaming: false, error: false, toolCalls: [] },
-      { id: 'h_2', role: 'assistant', content: '旧回答', thinking: '', streaming: false, error: false, toolCalls: [] },
+      { id: 'h_1', role: 'user', content: '旧问题', thinking: '', streaming: false, error: false, segments: [], toolCalls: [] },
+      { id: 'h_2', role: 'assistant', content: '旧回答', thinking: '', streaming: false, error: false, segments: [], toolCalls: [] },
     ]);
     // 本轮用户消息还没落库 → 历史里最后一条 user 之后的行属于上一轮，不能剪
     expect(store.messages.value.map((m) => m.content)).toEqual(['旧问题', '旧回答', '新问题', '旧回答']);
@@ -370,7 +416,7 @@ describe('ChatStore', () => {
     const load = async () => {
       store.bindSession(2);
       return [
-        { id: 'h_1', role: 'user' as const, content: 'A', thinking: '', streaming: false, error: false, toolCalls: [] },
+        { id: 'h_1', role: 'user' as const, content: 'A', thinking: '', streaming: false, error: false, segments: [], toolCalls: [] },
       ];
     };
     await store.reloadHistory(load);

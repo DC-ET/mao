@@ -363,7 +363,14 @@
   border-bottom: 3.5px solid transparent;
   transition: transform 0.18s var(--mao-ease);
 }
-.mao-thinking__caret--open { transform: rotate(90deg); }
+.mao-thinking__caret--open,
+.mao-thinking[open] > summary .mao-thinking__caret { transform: rotate(90deg); }
+.mao-thinking__summary::-webkit-details-marker { display: none; }
+.mao-thinking__summary:focus-visible { outline: 2px solid var(--mao-primary); outline-offset: 2px; }
+.mao-toolgroup { margin-bottom: 8px; }
+.mao-toolgroup__summary { border: 0; background: transparent; font: inherit; font-size: 12px; text-align: left; }
+.mao-toolgroup__body { margin-top: 4px; }
+.mao-thinking__caret { flex-shrink: 0; }
 .mao-thinking__body {
   margin-top: 4px;
   padding-left: 9px;

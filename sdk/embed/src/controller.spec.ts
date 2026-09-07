@@ -326,6 +326,80 @@ describe('EmbedController', () => {
     h.ctl.destroy();
   });
 
+  it('历史按消息与调用数组顺序恢复聚合 segments 和工具结果', async () => {
+    historyMessages = [
+      { id: 1, role: 'SYSTEM', content: '不显示' },
+      { id: 2, role: 'USER', content: '[用户选中文本]\n引用内容\n\n---\n\n问题' },
+      {
+        id: 3, role: 'ASSISTANT', thinkingContent: '先想一下', content: '开始查询',
+        toolCalls: JSON.stringify([
+          { id: 'tc1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a"}' } },
+          { id: 'tc2', type: 'function', function: { name: 'shell', arguments: '{}' } },
+        ]),
+      },
+      // 即使结果顺序不同，也不改写调用数组顺序。
+      { id: 4, role: 'TOOL', toolCallId: 'tc2', content: 'error: command failed' },
+      { id: 5, role: 'TOOL', toolCallId: 'tc1', content: '文件内容' },
+      { id: 6, role: 'ASSISTANT', content: '查询结论', thinkingContent: '再想一下' },
+      { id: 7, role: 'ASSISTANT', content: '', thinkingContent: null },
+    ];
+    const h = await makeHarness();
+    await boot(h);
+    const messages = h.ctl.store.messages.value;
+    expect(messages.map((m) => m.id)).toEqual(['h_2', 'h_3', 'h_6']);
+    expect(messages[0].content).toBe('问题');
+    expect(messages[0].segments).toEqual([{ type: 'text', content: '问题' }]);
+    expect(messages[1].segments).toEqual([
+      { type: 'thinking', content: '先想一下' },
+      { type: 'text', content: '开始查询' },
+      { type: 'tool-group', toolCalls: [
+        { toolCallId: 'tc1', toolName: 'read_file', displayName: 'read_file', argsText: '{"path":"a"}', status: 'done', resultText: '文件内容' },
+        { toolCallId: 'tc2', toolName: 'shell', displayName: 'shell', argsText: '{}', status: 'done', resultText: 'error: command failed' },
+      ] },
+    ]);
+    const group = messages[1].segments[2];
+    expect(group.type === 'tool-group' && group.toolCalls).toBe(messages[1].toolCalls);
+    expect(messages[2].segments).toEqual([
+      { type: 'thinking', content: '再想一下' },
+      { type: 'text', content: '查询结论' },
+    ]);
+    expect(messages.every((m) => !m.streaming && !m.error)).toBe(true);
+    h.ctl.destroy();
+  });
+
+  it('历史保留纯工具与纯思考消息，缺失结果标为 unknown 且不跨轮关联', async () => {
+    historyMessages = [
+      { id: 1, role: 'ASSISTANT', toolCalls: JSON.stringify([
+        { id: 'tc1', function: { name: 'read_file' } },
+        { id: 'tc2', function: { name: 'shell', arguments: '{}' } },
+      ]) },
+      { id: 2, role: 'TOOL', toolCallId: 'tc1', content: '' },
+      { id: 3, role: 'TOOL', toolCallId: 'orphan', content: '孤立结果' },
+      { id: 4, role: 'USER', content: '下一轮' },
+      { id: 5, role: 'TOOL', toolCallId: 'tc2', content: '不应跨轮关联' },
+      { id: 6, role: 'ASSISTANT', thinkingContent: '只有思考' },
+    ];
+    const h = await makeHarness();
+    await boot(h);
+    const messages = h.ctl.store.messages.value;
+    expect(messages.map((m) => m.id)).toEqual(['h_1', 'h_4', 'h_6']);
+    expect(messages[0].segments).toEqual([{ type: 'tool-group', toolCalls: messages[0].toolCalls }]);
+    expect(messages[0].toolCalls.map((t) => [t.status, t.resultText])).toEqual([['done', ''], ['unknown', '']]);
+    expect(messages[0].toolCalls[0].argsText).toBe('');
+    expect(messages[2].segments).toEqual([{ type: 'thinking', content: '只有思考' }]);
+    h.ctl.destroy();
+  });
+
+  it('历史工具 JSON 损坏时明确报错而不是静默丢失工具', async () => {
+    historyMessages = [{ id: 1, role: 'ASSISTANT', content: '查询中', toolCalls: '{broken' }];
+    const h = await makeHarness();
+    h.ctl.open();
+    await vi.waitFor(() => expect(h.ui.sessionError).not.toBeNull(), { timeout: 2000 });
+    expect(h.ctl.store.messages.value).toEqual([]);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    h.ctl.destroy();
+  });
+
   it('历史里的用户消息剥掉上下文前缀后上屏（不回显 JSON 上下文块）', async () => {
     const h = await makeHarness();
     const socket = await boot(h);
@@ -347,6 +421,7 @@ describe('EmbedController', () => {
         '这单什么状态？',
       ]),
     );
+    expect(h.ctl.store.messages.value[0].segments).toEqual([{ type: 'text', content: '这单什么状态？' }]);
     h.ctl.destroy();
   });
 

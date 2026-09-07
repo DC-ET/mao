@@ -11,13 +11,24 @@ import { TokenProvider } from './core/token-provider';
 import { TabsCoordinator } from './core/tabs';
 import { ContextCollector, PREFIX_SEPARATOR, stripContextPrefix } from './context/collector';
 import { SelectionTracker } from './context/selection';
-import type { ChatMessage } from './types';
+import type { ChatMessage, MessageSegment, ToolCallItem } from './types';
 import type {
   EmbedMessageVO,
   WsAskUserQuestionAnswer,
   WsTaskPhase,
   WsServerEvent,
 } from '@mao/contracts';
+
+/** /sessions/:id/messages 实际使用 session-vo.ts 的 MessageVO，工具字段是 JSON 字符串。 */
+interface HistoryMessageVO extends EmbedMessageVO {
+  toolCalls?: string | null;
+  toolCallId?: string | null;
+}
+
+interface HistoryToolCall {
+  id: string;
+  function: { name: string; arguments?: string | null };
+}
 
 /** 传给 RootApp 的响应式 UI 状态（reactive 深层，RootApp 内直接引用字段） */
 export interface UiState {
@@ -235,24 +246,63 @@ export class EmbedController {
   private fetchHistory = async (sid: number): Promise<ChatMessage[]> => {
     // 后端响应结构：{ messages: EmbedMessageVO[], hasMore, nextBeforeMessageId }
     const page = await this.rest.request<{
-      messages: EmbedMessageVO[];
+      messages: HistoryMessageVO[];
       hasMore?: boolean;
     }>('GET', `/sessions/${sid}/messages`, { query: { roundLimit: 20 } });
-    return (page.messages ?? [])
-      .filter((m) => m.role === 'USER' || m.role === 'ASSISTANT')
-      .map((m) => ({
+    const messages: ChatMessage[] = [];
+    // 后端已将 TOOL 行归到所属 ASSISTANT 后；只在当前轮次内按 id 关联，避免跨轮串卡。
+    let roundTools = new Map<string, ToolCallItem>();
+    for (const m of page.messages ?? []) {
+      if (m.role === 'TOOL') {
+        const tool = m.toolCallId ? roundTools.get(m.toolCallId) : undefined;
+        if (tool) {
+          tool.resultText = m.content ?? '';
+          // 历史不持久化 WS 的 success/error；done 仅表示已有结果，不推断执行成功。
+          tool.status = 'done';
+        }
+        continue;
+      }
+      roundTools = new Map();
+      if (m.role !== 'USER' && m.role !== 'ASSISTANT') continue;
+      // 上下文剥离必须先于 segments 构建，两个表示都只能含用户输入。
+      const content = m.role === 'USER' ? stripContextPrefix(m.content ?? '') : m.content ?? '';
+      const thinking = m.thinkingContent ?? '';
+      const segments: MessageSegment[] = [];
+      // 单行仅存聚合字段，没有 delta 顺序。思考→正文是展示约定，不拆分/伪造交错。
+      if (thinking) segments.push({ type: 'thinking', content: thinking });
+      if (content) segments.push({ type: 'text', content });
+      const toolCalls: ToolCallItem[] = [];
+      if (m.role === 'ASSISTANT' && m.toolCalls) {
+        const calls = JSON.parse(m.toolCalls) as HistoryToolCall[];
+        for (const call of calls) {
+          const tool: ToolCallItem = {
+            toolCallId: call.id,
+            toolName: call.function.name,
+            displayName: call.function.name,
+            argsText: call.function.arguments ?? '',
+            // 缺失历史结果不能说明仍在运行，避免已结束的调用永久显示加载态。
+            status: 'unknown',
+            resultText: '',
+          };
+          toolCalls.push(tool);
+          roundTools.set(tool.toolCallId, tool);
+        }
+        // 保留持久化调用数组顺序；并行工具完成先后不可从历史推断。
+        if (toolCalls.length) segments.push({ type: 'tool-group', toolCalls });
+      }
+      if (m.role === 'ASSISTANT' && !segments.length) continue;
+      messages.push({
         id: `h_${m.id}`,
-        role: m.role === 'USER' ? ('user' as const) : ('assistant' as const),
-        // 服务端存的是拼了页面上下文/选中引用的完整内容，气泡只显示用户真正输入的部分
-        content: m.role === 'USER' ? stripContextPrefix(m.content ?? '') : m.content ?? '',
-        thinking: m.thinkingContent ?? '',
+        role: m.role === 'USER' ? 'user' : 'assistant',
+        content,
+        thinking,
+        segments,
         streaming: false,
         error: false,
-        toolCalls: [] as never[],
-      }))
-      // 工具轮次可能落库一条无正文的 ASSISTANT（内容全在 toolCalls，而历史不渲染工具卡）：
-      // 这类行上屏就是一个空气泡，直接丢弃
-      .filter((m) => m.role !== 'assistant' || m.content !== '' || m.thinking !== '');
+        toolCalls,
+      });
+    }
+    return messages;
   };
 
   /**
