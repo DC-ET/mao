@@ -44,7 +44,7 @@
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
-        <el-table-column prop="createdAt" label="时间" width="170" />
+        <el-table-column prop="createdAt" label="时间" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column prop="username" label="用户" width="120" />
         <el-table-column prop="action" label="动作" width="100">
           <template #default="{ row }">
@@ -82,7 +82,7 @@
           </div>
           <div class="audit-card-row">
             <span class="audit-card-label">时间</span>
-            <span>{{ row.createdAt || '-' }}</span>
+            <span>{{ formatDateTime(row.createdAt) }}</span>
           </div>
           <div class="audit-card-row">
             <span class="audit-card-label">用户</span>
@@ -133,6 +133,7 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
 import { api } from '../../api'
+import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'

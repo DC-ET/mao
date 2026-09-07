@@ -4,7 +4,7 @@
     <div v-if="userMessage" class="message-item user">
       <div class="message-content">
         <div class="message-time">
-          <span>{{ userMessage.createdAt }}</span>
+          <span>{{ formatDateTime(userMessage.createdAt) }}</span>
         </div>
         <div class="message-text user-text" :class="{ collapsed: userCollapsed }">
           <div class="user-text-content">{{ userMessage.content }}</div>
@@ -49,7 +49,7 @@
     <div v-if="finalReply && finalReplyText" class="message-item assistant">
       <div class="message-content">
         <div class="message-time">
-          <span>{{ finalReply.createdAt }}</span>
+          <span>{{ formatDateTime(finalReply.createdAt) }}</span>
         </div>
         <div class="assistant-text markdown-body" v-html="renderMarkdown(finalReply.content)" />
       </div>
@@ -60,6 +60,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
+import { formatDateTime } from '../../../utils/datetime'
 import { renderMarkdown } from '../composables/useMarkdown'
 import type { ChatMessage } from '../types/chat'
 import ThinkingBlock from './ThinkingBlock.vue'

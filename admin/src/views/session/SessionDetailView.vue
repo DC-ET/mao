@@ -29,8 +29,8 @@
           <el-descriptions-item label="项目">{{ sessionInfo.projectKey || '-' }}</el-descriptions-item>
           <el-descriptions-item label="上下文Token">{{ sessionInfo.contextTokens || '-' }}</el-descriptions-item>
           <el-descriptions-item label="摘要">{{ sessionInfo.summary || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="创建时间">{{ sessionInfo.createdAt }}</el-descriptions-item>
-          <el-descriptions-item label="最后活动">{{ formatTime(sessionInfo.lastActivityAt) || formatTime(sessionInfo.updatedAt) || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ formatDateTime(sessionInfo.createdAt) }}</el-descriptions-item>
+          <el-descriptions-item label="最后活动">{{ formatDateTime(sessionInfo.lastActivityAt || sessionInfo.updatedAt) }}</el-descriptions-item>
         </el-descriptions>
       </el-card>
 
@@ -65,6 +65,7 @@
 import { ref, computed, nextTick, onMounted, onActivated, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api'
+import { formatDateTime } from '../../utils/datetime'
 import { executionModeLabel, phaseLabel } from '../../utils/labels'
 import { mapApiMessagesToChat } from './utils/chatMessage'
 import type { ChatMessage } from './types/chat'
@@ -118,10 +119,6 @@ function phaseTagType(phase: string): 'primary' | 'success' | 'danger' | 'warnin
     case 'CANCELLED': return 'warning'
     default: return 'info'
   }
-}
-
-function formatTime(value: string | null | undefined): string {
-  return value ? String(value) : ''
 }
 
 let latestFetchSeq = 0

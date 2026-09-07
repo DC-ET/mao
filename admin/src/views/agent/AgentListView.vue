@@ -44,7 +44,7 @@
         <el-table-column label="经验数" width="90" align="right">
           <template #default="{ row }">{{ row.experiences?.length || 0 }}</template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="创建时间" width="180" />
+        <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <template v-if="canWrite">
@@ -117,6 +117,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { formatDateTimeColumn } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'

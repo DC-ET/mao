@@ -38,7 +38,7 @@
               v-if="row.finished"
               type="info"
               size="small"
-              :title="row.finishedAt ? `完结于 ${row.finishedAt}` : '已完结'"
+              :title="row.finishedAt ? `完结于 ${formatDateTime(row.finishedAt)}` : '已完结'"
             >
               已完结
             </el-tag>
@@ -54,9 +54,9 @@
           </template>
         </el-table-column>
         <el-table-column prop="fireCount" label="触发次数" width="90" align="right" />
-        <el-table-column prop="lastFireTime" label="上次触发" width="170" />
-        <el-table-column prop="nextFireTime" label="下次触发" width="170" />
-        <el-table-column prop="createdAt" label="创建时间" width="170" />
+        <el-table-column prop="lastFireTime" label="上次触发" width="180" :formatter="formatDateTimeColumn" />
+        <el-table-column prop="nextFireTime" label="下次触发" width="180" :formatter="formatDateTimeColumn" />
+        <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-tooltip v-if="!isOwner(row)" content="仅任务归属人可操作" placement="top">
@@ -125,7 +125,7 @@
           </div>
           <div class="mobile-card-row">
             <span class="mobile-card-label">下次</span>
-            <span>{{ row.nextFireTime || '-' }}</span>
+            <span>{{ formatDateTime(row.nextFireTime) }}</span>
           </div>
           <div class="mobile-card-actions">
             <template v-if="isOwner(row)">
@@ -167,6 +167,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '../../api'
+import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { ElMessage } from 'element-plus'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'

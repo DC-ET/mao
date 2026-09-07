@@ -22,7 +22,7 @@
             <el-tag v-if="row.version === currentVersion" size="small">当前</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="保存时间" min-width="170" />
+        <el-table-column prop="createdAt" label="保存时间" min-width="180" :formatter="formatDateTimeColumn" />
         <el-table-column label="操作人 ID" width="110">
           <template #default="{ row }">{{ row.operatorId ?? '—' }}</template>
         </el-table-column>
@@ -58,6 +58,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { formatDateTimeColumn } from '../../utils/datetime'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 interface PromptVersion {

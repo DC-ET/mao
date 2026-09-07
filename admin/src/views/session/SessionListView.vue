@@ -100,8 +100,8 @@
             />
           </template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="创建时间" width="170" />
-        <el-table-column prop="lastActivityAt" label="最后活动" width="170" />
+        <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
+        <el-table-column prop="lastActivityAt" label="最后活动" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column label="操作" width="80" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleView(row)">查看</el-button>
@@ -142,7 +142,7 @@
           </div>
           <div class="mobile-card-row">
             <span class="mobile-card-label">活动</span>
-            <span>{{ row.lastActivityAt || '-' }}</span>
+            <span>{{ formatDateTime(row.lastActivityAt) }}</span>
           </div>
           <div class="mobile-card-actions">
             <el-button type="primary" link @click="handleView(row)">查看</el-button>
@@ -169,6 +169,7 @@
 import { ref, reactive, onMounted, onActivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api'
+import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import FilterPanel from '../../components/FilterPanel.vue'

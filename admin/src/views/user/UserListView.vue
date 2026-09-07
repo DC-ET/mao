@@ -73,8 +73,8 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="lastLoginAt" label="最后登录" width="170" />
-        <el-table-column prop="createdAt" label="创建时间" width="170" />
+        <el-table-column prop="lastLoginAt" label="最后登录" width="180" :formatter="formatDateTimeColumn" />
+        <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <template v-if="canWrite">
@@ -211,6 +211,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
+import { formatDateTimeColumn } from '../../utils/datetime'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import UserFormDialog from './UserFormDialog.vue'
