@@ -570,6 +570,47 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
     expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_1', 5, 'IN');
   });
 
+  it('switches back to a quoted assistant session while the new session is running', async () => {
+    let activeId = 5;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const queue = makeQueueService();
+    const control = makeP2pControl({
+      findActiveSession: vi.fn(async () => ({ id: activeId })),
+      createSession: vi.fn(async () => { activeId = 8; return { id: activeId }; }),
+      findSessionByMessageId: vi.fn(async () => 5),
+      switchSession: vi.fn(async (_account, _context, target) => { activeId = target; return { id: target }; }),
+    });
+    const sessionService = makeSessionService({
+      getOrCreateSession: vi.fn(async () => ({ id: activeId, executionUserId: 42 })),
+    });
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async (id: number) => { if (id === 8) await gate; }),
+    };
+    const onReply = vi.fn(async () => 'om_reply');
+    const handler = new AgentFeishuInboundHandler({
+      sessionService, harnessService: harness as never,
+      p2pSessionControl: control as never, queueService: queue,
+      listenerFactory: async () => listener, onReply,
+    });
+    await handler.onMessage(makeP2pContext({ text: '---', messageId: 'om_new' }));
+    const running = handler.onMessage(makeP2pContext({ text: '长任务', messageId: 'om_long' }));
+    try {
+      await vi.waitFor(() => expect(harness.execute).toHaveBeenCalledWith(8, 'e', expect.anything(), expect.anything(), 42));
+      await handler.onMessage(makeP2pContext({ parentId: 'om_old_assistant', messageId: 'om_quote' }));
+      expect(control.findSessionByMessageId).toHaveBeenCalledWith('1', 'om_old_assistant');
+      expect(activeId).toBe(5);
+      expect(harness.execute).toHaveBeenCalledWith(5, 'e', expect.anything(), expect.anything(), 42);
+      expect(queue.enqueue).not.toHaveBeenCalled();
+      expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_quote', 5, 'IN');
+      expect(onReply).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('已切换'), 5);
+    } finally {
+      release();
+      await running;
+    }
+  });
+
   it('stays silent when the quoted message is not found in the mapping', async () => {
     const sessionService = makeSessionService();
     const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };

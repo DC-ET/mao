@@ -1580,7 +1580,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     patchCard: async (botId, cardMessageId, card) => {
       const client = await getFeishuClient(botId);
       if (client == null) throw new Error(`飞书客户端不可用, botId=${botId}, cardMessageId=${cardMessageId}`);
-      await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
+      const response = await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
+      if (response?.code !== 0) {
+        throw new Error(`飞书卡片更新失败, code=${response?.code ?? 'missing'}, msg=${response?.msg ?? 'unknown'}`);
+      }
     },
   });
   const feishuMonitor = new FeishuMonitorService(cfg.feishu.bot, feishuBots, feishuInboundProcessor, async (data) => feishuCardActionService.handle(data, ''));

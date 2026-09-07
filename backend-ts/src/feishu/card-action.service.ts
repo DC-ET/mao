@@ -96,9 +96,10 @@ export class FeishuCardActionService {
         await this.options.patchCard(row.botId, row.cardMessageId, buildQueueCardText('✖️ 已取消', '这条消息已取消，未进入执行。'));
       } catch (error) {
         console.warn(`飞书排队卡片取消 PATCH 失败, cardMessageId=${row.cardMessageId}`, error);
+        return { toast: { type: 'info', content: '这条排队消息已取消，但卡片更新失败，不会进入执行。' } };
       }
     }
-    return undefined;
+    return { toast: { type: 'success', content: '这条排队消息已取消，不会进入执行。' } };
   }
 
   private parseActionValue(value: unknown): FeishuCardActionValue | null {

@@ -213,11 +213,11 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
 
   async findP2pMessageSession(appId: string, messageId: string): Promise<number | null> {
     if (messageId == null || messageId === '') return null;
-    const row = await this.db.queryOne<{ session_id: number }>(
+    const row = await this.db.queryOne<{ sessionId: number }>(
       'SELECT session_id FROM feishu_p2p_message WHERE app_id = ? AND message_id = ? LIMIT 1',
       [appId, messageId],
     );
-    return row?.session_id ?? null;
+    return row?.sessionId ?? null;
   }
 
   async upsertSessionChannel(sessionId: number, appId: string, chatId: string, chatType: 'p2p' | 'group', awaitingFirstMessageTitle = false): Promise<void> {

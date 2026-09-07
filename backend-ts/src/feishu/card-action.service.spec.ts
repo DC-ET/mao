@@ -63,8 +63,36 @@ describe('FeishuCardActionService', () => {
       patchCard,
     });
     const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'cancel' }), '');
-    expect(res).toBeUndefined();
+    expect(res).toEqual({ toast: { type: 'success', content: '这条排队消息已取消，不会进入执行。' } });
     expect(patchCard).toHaveBeenCalledWith(1, 'cm_1', expect.objectContaining({ body: expect.anything() }));
+    expect(JSON.stringify(patchCard.mock.calls[0])).toContain('这条消息已取消，未进入执行。');
+  });
+
+  it('reports cancellation separately when the card update fails', async () => {
+    const cancel = vi.fn(async () => 'CANCELLED' as const);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const service = makeService({
+        queuePort: { findByCardMessageId: vi.fn(async () => row()), cancel },
+        patchCard: vi.fn(async () => { throw new Error('PATCH failed'); }),
+      });
+      const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'cancel' }), '');
+      expect(cancel).toHaveBeenCalledWith(1);
+      expect(res).toEqual({ toast: { type: 'info', content: '这条排队消息已取消，但卡片更新失败，不会进入执行。' } });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('confirms cancellation even when no card id was persisted', async () => {
+    const patchCard = vi.fn(async () => undefined);
+    const service = makeService({
+      queuePort: { findByCardMessageId: vi.fn(async () => row({ cardMessageId: null })) },
+      patchCard,
+    });
+    expect(await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'cancel' }), ''))
+      .toEqual({ toast: { type: 'success', content: '这条排队消息已取消，不会进入执行。' } });
+    expect(patchCard).not.toHaveBeenCalled();
   });
 
   it('cancel returns ALREADY_STARTED toast when already running', async () => {
