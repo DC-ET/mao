@@ -1,3 +1,4 @@
+import { validateAgentAvatarUrl } from './agent-avatar.js';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { AgentExperienceService } from './agent-experience.service.js';
@@ -54,7 +55,9 @@ export class AgentService {
     experiences: ExperienceInput[] | null | undefined,
     isDefault: number | null | undefined,
     defaultModelId: number | null | undefined,
+    avatarUrl?: string | null,
   ): Promise<Agent> {
+    validateAgentAvatarUrl(avatarUrl);
     if (isDefault != null && isDefault === 1) {
       await this.agentRepo.clearDefaultFlag();
     }
@@ -62,6 +65,7 @@ export class AgentService {
     const agent: Agent = {
       name,
       description,
+      avatarUrl: avatarUrl ?? null,
       systemPrompt,
       creatorId: userId,
       defaultModelId: defaultModelId ?? null,
@@ -93,8 +97,11 @@ export class AgentService {
     experiences: ExperienceInput[] | null | undefined,
     isDefault: number | null | undefined,
     defaultModelId: number | null | undefined,
+    avatarUrl?: string | null,
   ): Promise<Agent> {
+    validateAgentAvatarUrl(avatarUrl);
     const agent = await this.getAgent(id);
+    if (avatarUrl !== undefined) agent.avatarUrl = avatarUrl;
     if (name != null) agent.name = name;
     if (description != null) agent.description = description;
     if (systemPrompt != null) agent.systemPrompt = systemPrompt;

@@ -82,6 +82,8 @@ export class SubAgentVisibilityService {
     const childSessionId = childSession.id;
     if (userId == null || childSessionId == null) return;
     this.deps.registry.subscribe(userId, childSessionId);
+    // 旧 todo 已随追问事务软删除；在新执行启动前同步清空客户端进度缓存。
+    this.deps.registry.send(userId, wsEvent('todo_updated', childSessionId, { todos: [] }));
     this.deps.registry.send(userId, wsEvent('subagent_followup_created', parentSession.id ?? null, {
       childSessionId,
       title: childSession.title || '子代理',

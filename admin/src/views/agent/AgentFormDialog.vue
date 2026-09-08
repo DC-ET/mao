@@ -13,55 +13,29 @@
       label-width="110px"
       label-position="right"
     >
+      <el-tabs v-model="activeTab" class="agent-tabs">
+      <el-tab-pane label="基本信息" name="basic">
+      <el-form-item label="头像">
+        <div class="avatar-editor">
+          <el-avatar :size="72" :src="resolveAgentAvatarUrl(form.avatarUrl)" shape="square">{{ form.name.slice(0, 1) || 'A' }}</el-avatar>
+          <div class="avatar-details">
+            <div class="avatar-actions">
+              <el-upload accept="image/png,image/jpeg,image/webp" :show-file-list="false" :http-request="uploadAvatar" :disabled="uploading || submitting" :before-upload="validateAvatar">
+                <el-button type="primary" plain :loading="uploading" :disabled="submitting">{{ form.avatarUrl ? '更换头像' : '上传头像' }}</el-button>
+              </el-upload>
+              <el-button v-if="form.avatarUrl" link type="danger" :disabled="uploading || submitting" @click="form.avatarUrl = null">移除头像</el-button>
+            </div>
+            <p class="avatar-hint">PNG / JPEG / WebP · 最大 2 MB</p>
+            <p class="avatar-hint">建议使用方形图片，不超过 4096 × 4096 像素，不支持动画。</p>
+            <p class="avatar-note">保存后同步到客户端、后台和 SDK。</p>
+          </div>
+        </div>
+      </el-form-item>
       <el-form-item label="名称" prop="name">
         <el-input v-model="form.name" placeholder="请输入 Agent 名称" />
       </el-form-item>
       <el-form-item label="描述" prop="description">
         <el-input v-model="form.description" type="textarea" :rows="3" placeholder="请输入描述" />
-      </el-form-item>
-      <el-form-item label="角色定义" prop="systemPrompt">
-        <el-input
-          v-model="form.systemPrompt"
-          type="textarea"
-          :rows="5"
-          placeholder="请输入角色定义：身份、目标、工作内容、表达方式等"
-        />
-        <div class="form-hint">保存后自动记录提示词版本；可在 Agent 列表的「提示词版本」中预览和回滚。</div>
-      </el-form-item>
-      <el-form-item label="最佳实践经验">
-        <div class="experience-list">
-          <div
-            v-for="(item, index) in form.experiences"
-            :key="item._key"
-            class="experience-item"
-          >
-            <el-input
-              v-model="item.content"
-              type="textarea"
-              :rows="2"
-              :maxlength="300"
-              show-word-limit
-              placeholder="请输入经验正文（最长 300 字）"
-            />
-            <div class="experience-actions">
-              <el-switch v-model="item.enabled" active-text="启用" inactive-text="停用" />
-              <el-button
-                link
-                type="primary"
-                :disabled="index === 0"
-                @click="moveExperience(index, -1)"
-              >上移</el-button>
-              <el-button
-                link
-                type="primary"
-                :disabled="index === form.experiences.length - 1"
-                @click="moveExperience(index, 1)"
-              >下移</el-button>
-              <el-button link type="danger" @click="removeExperience(index)">删除</el-button>
-            </div>
-          </div>
-          <el-button type="primary" link @click="addExperience">+ 添加经验</el-button>
-        </div>
       </el-form-item>
       <el-form-item label="Skills" prop="skillNames">
         <el-select
@@ -118,10 +92,50 @@
         </el-select>
         <div class="form-hint">该 Agent 的会话未手动选择模型时优先使用；留空则跟随系统默认模型</div>
       </el-form-item>
+      </el-tab-pane>
+      <el-tab-pane label="角色提示词" name="prompt">
+      <el-form-item label="角色定义" prop="systemPrompt">
+        <el-input
+          v-model="form.systemPrompt"
+          type="textarea"
+          :rows="15"
+          placeholder="请输入角色定义：身份、目标、工作内容、表达方式等"
+        />
+        <div class="form-hint">保存后自动记录提示词版本；可在 Agent 列表的「提示词版本」中预览和回滚。</div>
+      </el-form-item>
+      </el-tab-pane>
+      <el-tab-pane label="最佳实践" name="experience">
+      <el-form-item label="最佳实践经验">
+        <div class="experience-list">
+          <div
+            v-for="(item, index) in form.experiences"
+            :key="item._key"
+            class="experience-item"
+          >
+            <el-input
+              v-model="item.content"
+              type="textarea"
+              :rows="2"
+              :maxlength="300"
+              show-word-limit
+              placeholder="请输入经验正文（最长 300 字）"
+            />
+            <div class="experience-actions">
+              <el-switch v-model="item.enabled" active-text="启用" inactive-text="停用" />
+              <el-button link type="primary" :disabled="index === 0" @click="moveExperience(index, -1)">上移</el-button>
+              <el-button link type="primary" :disabled="index === form.experiences.length - 1" @click="moveExperience(index, 1)">下移</el-button>
+              <el-button link type="danger" @click="removeExperience(index)">删除</el-button>
+            </div>
+          </div>
+          <el-button type="primary" link @click="addExperience">+ 添加经验</el-button>
+        </div>
+      </el-form-item>
+      </el-tab-pane>
+      </el-tabs>
     </el-form>
     <template #footer>
       <el-button @click="$emit('update:visible', false)">取消</el-button>
-      <el-button type="primary" :loading="submitting" @click="handleSubmit">
+      <el-button type="primary" :loading="submitting" :disabled="uploading" @click="handleSubmit">
         {{ submitButtonText }}
       </el-button>
     </template>
@@ -130,9 +144,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, reactive } from 'vue'
-import type { FormInstance, FormRules } from 'element-plus'
+import type { FormInstance, FormRules, UploadRawFile, UploadRequestOptions } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
+import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 interface ExperienceFormItem {
@@ -165,6 +180,8 @@ const dialogTitle = computed(() => {
 })
 const submitButtonText = computed(() => (isEdit.value ? '保存' : '创建'))
 const submitting = ref(false)
+const uploading = ref(false)
+const activeTab = ref('basic')
 const formRef = ref<FormInstance>()
 const skillDocs = ref<any[]>([])
 const mcpServers = ref<any[]>([])
@@ -172,6 +189,7 @@ const models = ref<any[]>([])
 let experienceKeySeq = 0
 
 const form = reactive({
+  avatarUrl: null as string | null,
   name: '',
   description: '',
   systemPrompt: '',
@@ -205,6 +223,7 @@ function mapExperiences(source: any[] | undefined | null, keepId: boolean): Expe
 
 function resetForm() {
   Object.assign(form, {
+    avatarUrl: null,
     name: '',
     description: '',
     systemPrompt: '',
@@ -262,9 +281,10 @@ function validateExperiences(): boolean {
 
 watch(() => props.visible, async (val) => {
   if (!val) return
-  await loadOptions()
+  activeTab.value = 'basic'
   if (props.agentData) {
     Object.assign(form, {
+      avatarUrl: props.agentData.avatarUrl || null,
       name: props.mode === 'copy' ? `${props.agentData.name || ''} - 副本` : props.agentData.name || '',
       description: props.agentData.description || '',
       systemPrompt: props.agentData.systemPrompt || '',
@@ -279,6 +299,7 @@ watch(() => props.visible, async (val) => {
   }
 
   formRef.value?.clearValidate()
+  await loadOptions()
 }, { immediate: true })
 
 async function loadOptions() {
@@ -300,12 +321,46 @@ async function loadOptions() {
   }
 }
 
+function validateAvatar(file: UploadRawFile) {
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    ElMessage.warning('请选择 PNG、JPEG 或 WebP 图片')
+    return false
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    ElMessage.warning('头像大小不能超过 2 MB')
+    return false
+  }
+  return true
+}
+
+async function uploadAvatar(options: UploadRequestOptions) {
+  uploading.value = true
+  try {
+    const body = new FormData()
+    body.append('file', options.file)
+    const { data } = await api.post('/agents/avatar', body, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+    form.avatarUrl = data.avatarUrl
+  } finally {
+    uploading.value = false
+  }
+}
+
 async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
+  if (uploading.value || submitting.value) return
+  const valid = await formRef.value?.validate().catch((fields) => {
+    activeTab.value = fields?.name ? 'basic' : 'prompt'
+    return false
+  })
   if (!valid) return
-  if (!validateExperiences()) return
+  if (!validateExperiences()) {
+    activeTab.value = 'experience'
+    return
+  }
 
   const payload = {
+    avatarUrl: form.avatarUrl,
     name: form.name,
     description: form.description,
     systemPrompt: form.systemPrompt,
@@ -341,6 +396,32 @@ async function handleSubmit() {
 </script>
 
 <style scoped>
+.agent-tabs :deep(.el-tab-pane) {
+  height: min(440px, 55vh);
+  overflow-y: auto;
+  padding: 12px 12px 0 0;
+}
+.avatar-editor {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 14px;
+  box-sizing: border-box;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+}
+.avatar-editor .el-avatar { flex-shrink: 0; }
+.avatar-details { min-width: 0; }
+.avatar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 8px; }
+.avatar-actions .el-button { margin-left: 0; }
+.avatar-hint, .avatar-note { margin: 0; font-size: 12px; line-height: 1.6; color: var(--el-text-color-secondary); }
+.avatar-note { margin-top: 4px; }
+@media (max-width: 767px) {
+  .agent-tabs :deep(.el-tab-pane) { height: calc(100dvh - 240px); }
+  .avatar-editor { align-items: flex-start; flex-direction: column; gap: 12px; }
+}
 .experience-list {
   width: 100%;
   display: flex;

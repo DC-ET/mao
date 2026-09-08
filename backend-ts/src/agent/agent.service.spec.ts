@@ -41,6 +41,23 @@ describe('AgentService', () => {
     });
   });
 
+  it('persists, preserves and clears avatarUrl; rejects unsafe values before writes', async () => {
+    const avatarUrl = '/uploads/12345678-1234-1234-1234-123456789abc.png';
+    const created = await service.createAgent(7, 'A', null, 'p', null, null, null, 0, null, avatarUrl);
+    expect(created.avatarUrl).toBe(avatarUrl);
+    expect(agentRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ avatarUrl }));
+    vi.mocked(agentRepo.findById).mockResolvedValue(created);
+    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, undefined)).avatarUrl).toBe(avatarUrl);
+    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, undefined, null)).avatarUrl).toBeNull();
+    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, undefined, avatarUrl)).avatarUrl).toBe(avatarUrl);
+    vi.clearAllMocks();
+    await expect(service.createAgent(7, 'A', null, 'p', null, null, null, 1, null, 'javascript:alert(1)')).rejects.toThrow();
+    await expect(service.updateAgent(7, 1, null, null, null, null, null, null, null, undefined, 'https://evil/a.svg')).rejects.toThrow();
+    expect(agentRepo.insert).not.toHaveBeenCalled();
+    expect(agentRepo.updateById).not.toHaveBeenCalled();
+    expect(agentRepo.clearDefaultFlag).not.toHaveBeenCalled();
+  });
+
   it('listsGetsCreatesUpdatesDeletes', async () => {
     const existing = agent(1, 'old', 0);
     vi.mocked(agentRepo.selectList).mockResolvedValue([existing]);

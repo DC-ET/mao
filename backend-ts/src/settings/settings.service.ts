@@ -1,3 +1,4 @@
+import { validateCompanySsoConfig, type CompanySsoConfig } from '../auth/company-sso.config.js';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
@@ -7,6 +8,8 @@ import type {
   NotificationTuningSettings, OssSettings, SettingsRuntimeConfig, SystemSetting, SystemSettingRepository,
   TavilySettings, TerminalSettings, TinyFishSettings, UploadSettings, WebSearchConfig, WebSearchProvider,
 } from './types.js';
+
+export const COMPANY_SSO_CONFIG_KEY = 'auth.companySso.config';
 
 export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
@@ -198,6 +201,27 @@ export class SystemSettingService {
       result.push(this.masked(setting));
     }
     return result;
+  }
+
+  async getCompanySsoConfig(): Promise<CompanySsoConfig> {
+    const setting = await this.settingRepo.findByKey(COMPANY_SSO_CONFIG_KEY);
+    if (!setting) {
+      return { enabled: false, allowedDomains: [], allowedOrigins: [], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true };
+    }
+    return this.parseCompanySsoConfig(setting.value);
+  }
+
+  private parseCompanySsoConfig(value: unknown): CompanySsoConfig {
+    try {
+      if (typeof value !== 'string') throw new Error();
+      const parsed: unknown = JSON.parse(value);
+      const keys = ['enabled', 'allowedDomains', 'allowedOrigins', 'accessTtlSeconds', 'timeoutMs'];
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+        || Object.keys(parsed).length !== keys.length || !keys.every((key) => Object.hasOwn(parsed, key))) throw new Error();
+      return validateCompanySsoConfig({ ...parsed, requireHttps: true } as CompanySsoConfig);
+    } catch {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '公司 SSO 配置必须是完整有效的 JSON：enabled、allowedDomains、allowedOrigins、accessTtlSeconds（60-3600）、timeoutMs（1-30000），仅允许 HTTPS Origin');
+    }
   }
 
   async getLdapConfig(): Promise<LdapSettings> {
@@ -416,6 +440,10 @@ export class SystemSettingService {
   }
 
   private async resolveNextValue(setting: SystemSetting, value: string | null | undefined): Promise<string | null> {
+    if (setting.settingKey === COMPANY_SSO_CONFIG_KEY) {
+      const { requireHttps: _requireHttps, ...config } = this.parseCompanySsoConfig(value);
+      return JSON.stringify(config);
+    }
     if (setting.isSecret === 1) {
       if (value == null) {
         return null;

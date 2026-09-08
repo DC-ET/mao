@@ -46,7 +46,7 @@ function serializeToolCall(tc: ToolCall): Record<string, unknown> {
     if (tc.function.arguments != null) fn.arguments = tc.function.arguments;
     out.function = fn;
   }
-  if (tc.summary != null) out.summary = tc.summary;
+  // summary 是内部工具执行摘要，不属于 Chat Completions 工具调用协议。
   return out;
 }
 

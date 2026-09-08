@@ -5,13 +5,19 @@ export interface MaoChatTheme {
   primary?: string;
 }
 
-export interface MaoChatInitOptions {
+export type MaoChatInitOptions = MaoChatCommonOptions & (
+  | { getToken: () => Promise<string>; auth?: never }
+  | { getToken?: undefined; auth: { type: 'company-sso'; getSsoToken: () => Promise<string>; checkUrl: string } }
+);
+
+export type AuthStatus = 'authenticated' | 'login_required' | 'service_unavailable'
+  | 'account_forbidden' | 'identity_conflict' | 'configuration_error';
+
+export interface MaoChatCommonOptions {
   /** Mao 服务地址，如 https://mao.etarch.cn（REST 前缀 /api/v1、WS /api/ws/stream 自动推导） */
   serverUrl: string;
   /** 必填：页面助手绑定的 agent id */
   agentId: number;
-  /** token 供给：SDK 不落盘，过期（401/WS 鉴权失败）时重新调用 */
-  getToken: () => Promise<string>;
   /** 页面上下文供给：每次发送前实时采集；返回值变化时才拼入引用块 */
   context?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
   theme?: MaoChatTheme;
@@ -33,6 +39,7 @@ export interface MaoChatInstance {
 
 /** 透传给宿主的事件 */
 export type MaoChatEvent =
+  | { type: 'auth'; status: AuthStatus; message: string; userId?: number }
   | { type: 'phase'; phase: WsTaskPhase; sessionId: number }
   | { type: 'error'; message: string }
   /** 未读数变化（收起浮窗时收到新消息 / 展开时清零） */

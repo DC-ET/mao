@@ -151,12 +151,14 @@ export class StreamingWsHandler {
   }
 
   async handleTextMessage(session: WsSocket, payload: string): Promise<void> {
+    if (!this.deps.registry.isConnectionAuthorized(session)) return;
     let root: Record<string, unknown>;
     try {
       root = JSON.parse(payload) as Record<string, unknown>;
     } catch {
       return;
     }
+    if (!root || typeof root !== 'object') return;
     const type = typeof root.type === 'string' ? root.type : null;
     if (!type) return;
     // 鉴权改为首帧 auth 消息：token 不再出现在握手 URL（避免进日志/代理记录）。
@@ -164,18 +166,22 @@ export class StreamingWsHandler {
     const userId = this.deps.registry.getUserId(session);
     if (userId == null) {
       if (type !== 'auth') {
-        session.close(1003, 'Not authenticated');
+        this.deps.registry.closeConnection(session, 'Not authenticated');
         return;
       }
       const token = typeof root.token === 'string' ? root.token : undefined;
-      const authedUserId = this.parseUserIdFromToken(token);
-      if (authedUserId == null) {
-        session.close(1003, 'Missing or invalid token');
+      const metadata = token ? this.deps.jwtService.getAccessTokenMetadata(token) : null;
+      if (!metadata || (metadata.authSource === 'company_sso' && this.deps.jwtService.getTokenType(token!) !== 'access')) {
+        this.deps.registry.closeConnection(session, 'Missing or invalid token');
         return;
       }
       const clientType = this.normalizeClient(typeof root.client === 'string' ? root.client : undefined);
-      this.deps.registry.register(session, authedUserId, clientType);
-      this.deps.registry.send(authedUserId, wsEvent('connected', null, { userId: authedUserId }));
+      this.deps.registry.register(session, metadata.userId, clientType, metadata);
+      this.deps.registry.sendToConnection(session, wsEvent('connected', null, { userId: metadata.userId }));
+      return;
+    }
+    if (type === 'auth_refresh') {
+      this.handleAuthRefresh(session, root);
       return;
     }
     try {
@@ -1412,15 +1418,25 @@ export class StreamingWsHandler {
     return session;
   }
 
-  private parseUserIdFromToken(token: string | undefined): number | null {
-    if (!token) return null;
-    try {
-      // WS 与 REST 同权：接受 access/shell，拒绝 refresh token 充当连接凭据
-      if (!this.deps.jwtService.validateAccessToken(token)) return null;
-      return this.deps.jwtService.getUserIdFromToken(token);
-    } catch {
-      return null;
+  private handleAuthRefresh(session: WsSocket, root: Record<string, unknown>): void {
+    const { requestId, token } = root;
+    if (typeof requestId !== 'string' || !requestId.trim() || requestId.length > 256
+      || typeof token !== 'string' || !token) {
+      this.deps.registry.closeConnection(session, 'Invalid auth refresh');
+      return;
     }
+    const previous = this.deps.registry.getRefreshResult(session, requestId);
+    if (previous !== undefined) {
+      this.deps.registry.sendToConnection(session, { type: 'auth_refreshed', requestId, expiresAt: previous });
+      return;
+    }
+    const metadata = this.deps.jwtService.getAccessTokenMetadata(token);
+    if (!metadata || this.deps.jwtService.getTokenType(token) !== 'access'
+      || !this.deps.registry.refreshAuthentication(session, requestId, metadata)) {
+      this.deps.registry.closeConnection(session, 'Invalid auth refresh');
+      return;
+    }
+    this.deps.registry.sendToConnection(session, { type: 'auth_refreshed', requestId, expiresAt: metadata.expiresAt });
   }
 
   private normalizeClient(client: string | undefined): string {

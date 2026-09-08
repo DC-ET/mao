@@ -16,7 +16,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 生产自托管：服务器、Nginx、HTTPS、升级、运维 | [reference/deploy.md](reference/deploy.md) |
 | 双域名合并为单域名 / 改 Nginx | 仓库 [docs/guides/single-domain-nginx-migration.md](../../docs/guides/single-domain-nginx-migration.md) |
 | 环境变量、数据目录、默认账号、认证方式 | [reference/config.md](reference/config.md) |
-| 管理后台怎么用 / Agent 提示词版本与回滚 | [reference/admin.md](reference/admin.md) |
+| 管理后台怎么用 / Agent 头像与分组编辑 / 提示词版本与回滚 | [reference/admin.md](reference/admin.md) |
 | 桌面 Web 端（任务、工作区、终端、通知、微信等） | [reference/desktop.md](reference/desktop.md) |
 | 飞书机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/feishu-bot.md](reference/feishu-bot.md) |
 | Electron LOCAL、工具审批、打包与自动更新 | [reference/electron.md](reference/electron.md) |
@@ -43,6 +43,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 
 - 对话消息发送、消息队列写操作、WebSocket 流式会话
 - `/v1/statistics/*` 用量统计（管理后台 UI 可用）
+- Agent 头像上传与设置（管理后台 UI / REST 可用，见 [reference/agent.md](reference/agent.md)）
 - Agent 系统提示词版本列表与回滚（管理后台 UI / REST 可用，见 [reference/agent.md](reference/agent.md)）
 - 会话 `search` / `messages` 全文检索（管理端 UI 可用）
 - 工作区 Git 写操作（commit/push 等，CLI 仅只读诊断）

@@ -22,6 +22,18 @@ export function delivered(result: WsDeliveryResult): boolean {
   return result.successCount > 0;
 }
 
+export interface WsAuthMetadata {
+  userId: number;
+  authSource?: string;
+  expiresAt: number;
+}
+
+interface ConnectionAuth {
+  metadata: WsAuthMetadata;
+  timer: ReturnType<typeof setTimeout> | null;
+  refreshes: Map<string, number>;
+}
+
 type SendTarget = 'ALL' | 'LOCAL_ONLY';
 
 interface OutboundItem {
@@ -38,6 +50,8 @@ export class StreamingWsRegistry {
   private running = true;
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
 
+  private readonly connectionAuth = new Map<string, ConnectionAuth>();
+  private readonly closedConnections = new WeakSet<WsSocket>();
   private readonly userSessions = new Map<number, Set<WsSocket>>();
   private readonly sessionToUser = new Map<string, number>();
   private readonly sessionToClientType = new Map<string, string>();
@@ -51,6 +65,10 @@ export class StreamingWsRegistry {
 
   shutdown(): void {
     this.running = false;
+    for (const auth of this.connectionAuth.values()) {
+      if (auth.timer) clearTimeout(auth.timer);
+    }
+    this.connectionAuth.clear();
     if (this.drainTimer) {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
@@ -61,7 +79,16 @@ export class StreamingWsRegistry {
     return this.outboundQueue.length;
   }
 
-  register(session: WsSocket, userId: number, clientType: string | null | undefined): void {
+  register(session: WsSocket, userId: number, clientType: string | null | undefined, metadata?: WsAuthMetadata): void {
+    if (this.closedConnections.has(session)) return;
+    const previous = this.connectionAuth.get(session.id);
+    if (previous?.timer) clearTimeout(previous.timer);
+    this.connectionAuth.delete(session.id);
+    if (metadata) {
+      const auth: ConnectionAuth = { metadata: { ...metadata }, timer: null, refreshes: new Map() };
+      this.connectionAuth.set(session.id, auth);
+      this.scheduleAuthExpiry(session, auth);
+    }
     this.sessionToUser.set(session.id, userId);
     this.sessionToClientType.set(session.id, this.normalizeClientType(clientType));
     let set = this.userSessions.get(userId);
@@ -74,6 +101,10 @@ export class StreamingWsRegistry {
   }
 
   unregister(session: WsSocket): void {
+    this.closedConnections.add(session);
+    const auth = this.connectionAuth.get(session.id);
+    if (auth?.timer) clearTimeout(auth.timer);
+    this.connectionAuth.delete(session.id);
     const userId = this.sessionToUser.get(session.id);
     this.sessionToUser.delete(session.id);
     this.sessionToClientType.delete(session.id);
@@ -87,6 +118,61 @@ export class StreamingWsRegistry {
         }
       }
     }
+  }
+
+  /** 收发入口均检查墙上时间，不依赖到期回调获得调度。 */
+  isConnectionAuthorized(session: WsSocket): boolean {
+    if (this.closedConnections.has(session)) return false;
+    const auth = this.connectionAuth.get(session.id);
+    if (auth?.metadata.authSource === 'company_sso' && auth.metadata.expiresAt <= Date.now()) {
+      this.closeConnection(session, 'Authentication expired');
+      return false;
+    }
+    return true;
+  }
+
+  closeConnection(session: WsSocket, reason: string): void {
+    if (this.closedConnections.has(session)) return;
+    this.closedConnections.add(session);
+    const auth = this.connectionAuth.get(session.id);
+    if (auth?.timer) clearTimeout(auth.timer);
+    this.connectionAuth.delete(session.id);
+    session.close(1003, reason);
+  }
+
+  getRefreshResult(session: WsSocket, requestId: string): number | undefined {
+    return this.connectionAuth.get(session.id)?.refreshes.get(requestId);
+  }
+
+  /** 调用方提供已验证元数据；同步完成校验、替换及计时器更新。 */
+  refreshAuthentication(session: WsSocket, requestId: string, metadata: WsAuthMetadata): boolean {
+    if (!this.isConnectionAuthorized(session)) return false;
+    const auth = this.connectionAuth.get(session.id);
+    if (!auth || metadata.userId !== auth.metadata.userId
+      || metadata.authSource !== auth.metadata.authSource || metadata.expiresAt <= Date.now()) return false;
+    if (auth.refreshes.has(requestId)) return true;
+    auth.metadata = { ...metadata };
+    auth.refreshes.set(requestId, metadata.expiresAt);
+    this.scheduleAuthExpiry(session, auth);
+    return true;
+  }
+
+  /** 认证确认只属于当前连接，不能广播到同一用户的其他客户端。 */
+  sendToConnection(session: WsSocket, frame: unknown): void {
+    if (this.isConnectionAuthorized(session) && session.readyState === WS_OPEN) {
+      session.send(JSON.stringify(frame));
+    }
+  }
+
+  private scheduleAuthExpiry(session: WsSocket, auth: ConnectionAuth): void {
+    if (auth.timer) clearTimeout(auth.timer);
+    auth.timer = null;
+    if (auth.metadata.authSource !== 'company_sso') return;
+    auth.timer = setTimeout(() => {
+      auth.timer = null;
+      if (this.isConnectionAuthorized(session)) this.scheduleAuthExpiry(session, auth);
+    }, Math.max(0, Math.min(auth.metadata.expiresAt - Date.now(), 2_147_483_647)));
+    auth.timer.unref?.();
   }
 
   subscribe(userId: number, sessionId: number): void {
@@ -176,13 +262,13 @@ export class StreamingWsRegistry {
 
   hasConnection(userId: number): boolean {
     const sessions = this.userSessions.get(userId);
-    return sessions != null && [...sessions].some((s) => s.readyState === WS_OPEN);
+    return sessions != null && [...sessions].some((s) => s.readyState === WS_OPEN && this.isConnectionAuthorized(s));
   }
 
   hasLocalClientConnection(userId: number): boolean {
     const sessions = this.userSessions.get(userId);
     return sessions != null && [...sessions].some(
-      (s) => s.readyState === WS_OPEN && LOCAL_CAPABLE_CLIENTS.has(this.sessionToClientType.get(s.id) ?? ''),
+      (s) => s.readyState === WS_OPEN && this.isConnectionAuthorized(s) && LOCAL_CAPABLE_CLIENTS.has(this.sessionToClientType.get(s.id) ?? ''),
     );
   }
 
@@ -248,7 +334,7 @@ export class StreamingWsRegistry {
     let successCount = 0;
     let failureCount = 0;
     for (const session of targets) {
-      if (session.readyState === WS_OPEN) {
+      if (session.readyState === WS_OPEN && this.isConnectionAuthorized(session)) {
         targetCount++;
         try {
           session.send(json);

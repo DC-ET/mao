@@ -57,7 +57,7 @@ describe('CRUD routes', () => {
   });
 
   it('agent routes list get create update delete and experiences', async () => {
-    const agent = { id: 1, name: 'A', systemPrompt: 'p', creatorId: 7, isDefault: 0 };
+    const agent = { id: 1, name: 'A', systemPrompt: 'p', creatorId: 7, isDefault: 0, avatarUrl: '/uploads/12345678-1234-1234-1234-123456789abc.png' };
     const agentService = {
       listAgents: vi.fn(async () => [agent]),
       getAgent: vi.fn(async () => agent),
@@ -82,14 +82,16 @@ describe('CRUD routes', () => {
       mcpServerValidator: mcpServerValidator as never,
       permissionService,
     }));
-    expect((await app.inject({ method: 'GET', url: '/v1/agents' })).statusCode).toBe(200);
-    expect((await app.inject({ method: 'GET', url: '/v1/agents/1' })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/v1/agents' })).json().data[0].avatarUrl).toBe(agent.avatarUrl);
+    expect((await app.inject({ method: 'GET', url: '/v1/agents/1' })).json().data.avatarUrl).toBe(agent.avatarUrl);
     expect((await app.inject({
-      method: 'POST', url: '/v1/agents', payload: { name: 'A', systemPrompt: 'p' },
-    })).statusCode).toBe(200);
+      method: 'POST', url: '/v1/agents', payload: { name: 'A', systemPrompt: 'p', avatarUrl: agent.avatarUrl },
+    })).json().data.avatarUrl).toBe(agent.avatarUrl);
+    expect(agentService.createAgent.mock.calls[0]?.at(-1)).toBe(agent.avatarUrl);
     expect((await app.inject({
-      method: 'PUT', url: '/v1/agents/1', payload: { name: 'B' },
+      method: 'PUT', url: '/v1/agents/1', payload: { name: 'B', avatarUrl: null },
     })).statusCode).toBe(200);
+    expect(agentService.updateAgent.mock.calls[0]?.at(-1)).toBeNull();
     expect((await app.inject({ method: 'DELETE', url: '/v1/agents/1' })).statusCode).toBe(200);
     expect((await app.inject({ method: 'GET', url: '/v1/agents/1/experiences' })).statusCode).toBe(200);
     expect((await app.inject({

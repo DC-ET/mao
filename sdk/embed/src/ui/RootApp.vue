@@ -4,8 +4,11 @@ import type { WsAskUserQuestionAnswer } from '@mao/contracts';
 import type { UiState } from '../controller';
 import Launcher from './Launcher.vue';
 import ChatPanel from './ChatPanel.vue';
+import { useLauncherPosition } from './useLauncherPosition';
 
 const props = defineProps<{ ui: UiState }>();
+const placement = useLauncherPosition(() => props.ui.position);
+const { side, dragging, launcherStyle, panelStyle } = placement;
 
 defineEmits<{
   launcherClick: [];
@@ -27,14 +30,25 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
 <template>
   <Launcher
     :visible="ui.launcherVisible"
-    :position="ui.position"
+    :agent-avatar-url="ui.agentAvatarUrl"
+    :position="side"
+    :style="launcherStyle"
+    :dragging="dragging"
     :running="running"
     :attention="attention"
-    @click="$emit('launcherClick')"
+    @pointerdown="placement.pointerDown"
+    @pointermove="placement.pointerMove"
+    @pointerup="(event: PointerEvent) => { if (placement.pointerUp(event)) $emit('launcherClick'); }"
+    @pointercancel="placement.pointerCancel"
+    @lostpointercapture="placement.pointerCancel"
+    @click="(event) => { if (placement.allowClick(event)) $emit('launcherClick'); }"
   />
   <ChatPanel
+    :key="ui.identityVersion"
     :open="ui.panelOpen"
-    :position="ui.position"
+    :agent-avatar-url="ui.agentAvatarUrl"
+    :position="ui.launcherVisible ? side : ui.position"
+    :style="ui.launcherVisible ? panelStyle : undefined"
     :connected="ui.connected"
     :phase="ui.phase"
     :session-title="ui.sessionTitle"

@@ -15,7 +15,25 @@ function createInstance(options: MaoChatInitOptions): MaoChatInstance {
   }
   if (!options?.serverUrl) throw new Error('MaoChat.init: serverUrl is required');
   if (!options?.agentId) throw new Error('MaoChat.init: agentId is required');
-  if (typeof options?.getToken !== 'function') throw new Error('MaoChat.init: getToken is required');
+  const mao = typeof options.getToken === 'function' && options.auth === undefined;
+  const sso = options.getToken === undefined && options.auth?.type === 'company-sso'
+    && typeof options.auth.getSsoToken === 'function';
+  if (!mao && !sso) throw new Error('MaoChat.init: choose exactly one of getToken or company-sso auth');
+  if (sso && new URL(options.serverUrl).protocol !== 'https:') {
+    throw new Error('MaoChat.init: company-sso requires HTTPS');
+  }
+  if (sso) {
+    const rawCheckUrl = options.auth.checkUrl;
+    if (typeof rawCheckUrl !== 'string' || rawCheckUrl.length > 2048 || /[\s\\]/.test(rawCheckUrl)) {
+      throw new Error('MaoChat.init: checkUrl must be a valid HTTPS URL');
+    }
+    let checkUrl: URL;
+    try { checkUrl = new URL(rawCheckUrl); } catch { throw new Error('MaoChat.init: checkUrl must be a valid HTTPS URL'); }
+    if (checkUrl.protocol !== 'https:' || checkUrl.username || checkUrl.password || checkUrl.hash
+      || /#$/.test(rawCheckUrl) || checkUrl.searchParams.has('token')) {
+      throw new Error('MaoChat.init: checkUrl must be a valid HTTPS URL');
+    }
+  }
   if (window.__maoChatInstance) {
     // 单实例约束：重复 init 先销毁旧实例
     window.__maoChatInstance.destroy();

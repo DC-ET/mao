@@ -31,18 +31,20 @@ export type TabsMessage = SessionClaimMessage | SessionInquiryMessage | SessionR
 
 export class TabsCoordinator {
   private channel: BroadcastChannel | null = null;
-  private readonly replyWaiters = new Map<string, (msg: SessionReplyMessage) => void>();
+  private readonly replyWaiters = new Map<string, (msg: SessionReplyMessage | null) => void>();
+  private readonly timers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly agentId: number,
     /** 本地（localStorage）当前 sessionId，供应答 inquiry */
     private readonly getLocalSessionId: () => number | null,
+    private readonly scope: () => string = () => 'isolated',
   ) {}
 
   private ensureChannel(): BroadcastChannel | null {
     if (this.channel) return this.channel;
     if (typeof BroadcastChannel === 'undefined') return null;
-    this.channel = new BroadcastChannel(CHANNEL_NAME);
+    this.channel = new BroadcastChannel(`${CHANNEL_NAME}_${this.scope()}_${this.agentId}`);
     this.channel.onmessage = (event: MessageEvent<TabsMessage>) => {
       const msg = event.data;
       if (!msg || typeof msg !== 'object') return;
@@ -99,12 +101,14 @@ export class TabsCoordinator {
     const nonce = newNonce();
     const reply = new Promise<SessionReplyMessage | null>((resolve) => {
       this.replyWaiters.set(nonce, resolve);
-      setTimeout(() => {
+      const timer = setTimeout(() => {
+        this.timers.delete(timer);
         if (this.replyWaiters.has(nonce)) {
           this.replyWaiters.delete(nonce);
           resolve(null);
         }
       }, waitMs);
+      this.timers.add(timer);
     });
     ch.postMessage({ kind: 'session-inquiry', agentId: this.agentId, nonce } satisfies SessionInquiryMessage);
     const resp = await reply;
@@ -114,6 +118,9 @@ export class TabsCoordinator {
   close() {
     this.channel?.close();
     this.channel = null;
+    for (const timer of this.timers) clearTimeout(timer);
+    this.timers.clear();
+    for (const resolve of this.replyWaiters.values()) resolve(null);
     this.replyWaiters.clear();
   }
 }

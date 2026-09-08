@@ -6,6 +6,7 @@ import { getToken } from '../utils/auth-storage'
 export interface Agent {
   id: string
   name: string
+  avatarUrl?: string | null
   description: string
   executionMode: string
   isDefault?: boolean

@@ -9,6 +9,7 @@
 // 注意：后端采用 Node16 moduleResolution 且本包未标记 "type": "module"，
 // 内部 re-export 使用无扩展名相对路径即可（TypeScript 类型检查阶段可解析）。
 
+export type { SsoExchangeVO } from './sso';
 export type { Result } from './result';
 export type { PageQuery, PageResult } from './pagination';
 export type { NotificationChannel, TaskNotificationPreference } from './notification';
@@ -16,13 +17,15 @@ export type { QuickCommandItem, QuickCommandsVO } from './command';
 export type { ToolVO } from './tool';
 export type { UserInfoVO, LoginVO } from './user';
 export type { ModelVO, ModelPageResult, ModelListFilter, ClientImpersonation } from './model';
-export type { ExperienceVO, AgentVO } from './agent';
+export type { ExperienceVO, AgentVO, AgentAvatarUploadVO } from './agent';
 export type { WeixinPreferenceVO, TaskPanelPreferenceState } from './preference';
 export type { AuditLog, AuditListFilter } from './audit';
 export type { MessageSearchItem } from './session';
 export type {
   WsClientType,
   WsAuthFrame,
+  WsAuthRefreshFrame,
+  WsAuthRefreshedFrame,
   WsPingFrame,
   WsSubscribeFrame,
   WsUnsubscribeFrame,

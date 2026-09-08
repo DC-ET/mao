@@ -1,8 +1,11 @@
 <template>
   <div class="chat-panel">
-    <div class="messages" ref="messagesContainer">
-      <div v-if="initialLoading && messages.length === 0" class="empty-state">
-        <el-icon :size="32" class="is-loading"><Loading /></el-icon>
+    <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
+      @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove">
+      <div v-if="historyLoading" class="history-loading"
+        :class="{ 'empty-state': messages.length === 0 }" role="status" aria-live="polite">
+        <el-icon :size="messages.length === 0 ? 28 : 16" class="is-loading" aria-hidden="true"><Loading /></el-icon>
+        <p>正在加载历史对话…</p>
       </div>
       <div v-else-if="initializingWorkspace && messages.length === 0" class="empty-state workspace-init-state">
         <el-icon :size="32" class="is-loading"><Loading /></el-icon>
@@ -126,6 +129,7 @@ import { ref, computed, inject, watch, nextTick, onActivated, onMounted, onUnmou
 import { useRouter } from 'vue-router'
 import { ChatDotRound, Loading } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage } from '../../composables/useChat'
+import { useChatScroll } from '../../composables/useChatScroll'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
@@ -184,6 +188,7 @@ const models = ref<Array<{ id: number; supportsVision: boolean }>>([])
 const {
   messages,
   sending,
+  switchingSession,
   initializingWorkspace,
   initializingWorkspaceLabel,
   sessionId,
@@ -212,6 +217,8 @@ const {
   deleteQueueMessage,
   reorderQueueMessage
 } = useChat(agentId, executionMode, newTaskModelId, permissionLevel)
+
+const historyLoading = computed(() => initialLoading.value || switchingSession.value)
 
 // Sync workspace source state from ChatInput events to useChat
 watch(newTaskWorkspaceMode, (val) => { workspaceMode.value = val })
@@ -242,33 +249,19 @@ watch(sending, () => syncToTaskView())
 watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 
 // Session restore — ChatPanel watches sessionStore.activeSessionId
-const restoring = ref(false)
+const messagesContainer = ref<HTMLElement>()
+const {
+  userScrolledUp, scrollToBottom, beginRestore, completeRestore,
+  handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handleScroll, cancelRestore, dispose: disposeScroll,
+} = useChatScroll(messagesContainer, {
+  loadOlder: loadOlderMessages,
+  canLoadOlder: () => sessionStore.activeMessageHasMore && !sessionStore.activeMessageLoadingOlder,
+})
 let restoreGeneration = 0
-
-// Markdown 渲染为异步（含代码块高亮），会话恢复后消息内容高度需等渲染完成才最终确定。
-// 若在 restoreSession 完成后只滚动一次，可能因高度未定型而停留在非底部。
-// 因此恢复阶段持续监听渲染完成事件并滚动到底部，直到高度稳定。
-let markdownRenderTimer: ReturnType<typeof setTimeout> | null = null
-function handleMarkdownRendered() {
-  if (!restoring.value) return
-  if (userScrolledUp.value) return
-  scrollToBottom()
-  // 防抖收尾：只要仍有渲染事件持续触发，就重置定时器，直到高度稳定后才结束恢复流程
-  if (markdownRenderTimer) clearTimeout(markdownRenderTimer)
-  markdownRenderTimer = setTimeout(finishMarkdownRestore, 300)
-}
-
-function finishMarkdownRestore() {
-  if (markdownRenderTimer) { clearTimeout(markdownRenderTimer); markdownRenderTimer = null }
-  window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
-  if (!restoring.value) return
-  restoring.value = false
-  scrollToBottom()
-  nextTick(() => chatInputRef.value?.focusInput())
-}
 
 watch(() => sessionStore.activeSessionId, (newSid) => {
   const generation = ++restoreGeneration
+  cancelRestore()
   if (!newSid) {
     if (sessionId.value) {
       cleanup()
@@ -277,18 +270,15 @@ watch(() => sessionStore.activeSessionId, (newSid) => {
     return
   }
   if (newSid === sessionId.value) return
-  userScrolledUp.value = false
-  restoring.value = true
+  const scrollGeneration = beginRestore()
   const session = sessionStore.sessions.find(s => String(s.id) === String(newSid))
   const mode = session?.executionMode || executionMode.value
   const ws = session?.workspace || undefined
   restoreSession(newSid, mode, ws).finally(() => {
     if (generation !== restoreGeneration) return
     syncToTaskView()
-    scrollToBottom()
-    window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
-    // 兜底：若没有渲染事件或渲染很快完成，定时收尾结束恢复流程
-    markdownRenderTimer = setTimeout(finishMarkdownRestore, 300)
+    completeRestore(scrollGeneration)
+    nextTick(() => chatInputRef.value?.focusInput())
   })
 })
 
@@ -358,6 +348,7 @@ const canContinue = computed(() => {
 })
 
 const showTypingIndicator = computed(() => {
+  if (historyLoading.value) return false
   if (initializingWorkspace.value) return false
   if (!agentRunning.value) return false
   if (sessionStore.activeStreaming) return false
@@ -389,7 +380,8 @@ onMounted(async () => {
   const el = messagesContainer.value
   el?.addEventListener('scroll', handleScroll, { passive: true })
   el?.addEventListener('wheel', handleWheel, { passive: true })
-  
+  window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
+
   // 获取模型列表，用于新建任务模式下判断视觉能力
   try {
     const { data } = await api.get('/models/active')
@@ -408,10 +400,8 @@ onUnmounted(() => {
   cleanup()
   // 恢复期可能注册的渲染监听与收尾定时器一并清理
   window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
-  if (markdownRenderTimer) {
-    clearTimeout(markdownRenderTimer)
-    markdownRenderTimer = null
-  }
+  disposeScroll()
+  restoreGeneration++
 })
 
 // Edit message
@@ -468,34 +458,6 @@ async function handleQueueEdit(msg: QueueMessage) {
   nextTick(() => chatInputRef.value?.focusInput())
 }
 
-// Auto-scroll
-const messagesContainer = ref<HTMLElement>()
-const userScrolledUp = ref(false)
-const isProgrammaticScroll = ref(false)
-const NEAR_BOTTOM = 80
-const LOAD_MORE_THRESHOLD = 120
-
-function isNearBottom(): boolean {
-  const el = messagesContainer.value
-  if (!el) return false
-  return el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM
-}
-
-function scrollToBottom() {
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      if (userScrolledUp.value) return
-      const el = messagesContainer.value
-      if (!el) return
-      isProgrammaticScroll.value = true
-      el.scrollTop = el.scrollHeight
-      requestAnimationFrame(() => {
-        isProgrammaticScroll.value = false
-      })
-    })
-  })
-}
-
 function scrollToBottomSmooth() {
   scrollToBottom()
 }
@@ -524,34 +486,6 @@ function buildScrollAnchor(): string {
     sessionStore.activeLlmRetry ? 'retry' : '',
     showTypingIndicator.value,
   ].join('|')
-}
-
-function handleWheel(e: WheelEvent) {
-  if (e.deltaY < 0) userScrolledUp.value = true
-}
-
-function handleScroll() {
-  const el = messagesContainer.value
-  if (!el) return
-
-  // Load older messages when scrolling near top
-  if (el.scrollTop <= LOAD_MORE_THRESHOLD
-    && sessionStore.activeMessageHasMore
-    && !sessionStore.activeMessageLoadingOlder) {
-    const oldScrollHeight = el.scrollHeight
-    loadOlderMessages().then(() => {
-      nextTick(() => {
-        const el2 = messagesContainer.value
-        if (el2) el2.scrollTop = el2.scrollHeight - oldScrollHeight
-      })
-    })
-  }
-
-  if (isProgrammaticScroll.value) return
-
-  // Track user scroll intent: when user scrolls away from bottom,
-  // pause auto-scroll. When they scroll back near bottom, resume it.
-  userScrolledUp.value = !isNearBottom()
 }
 
 // Auto-scroll: scroll when message/thinking/streaming state changes.
@@ -596,10 +530,7 @@ onActivated(() => {
     waitingForSave.value = false
     sendGeneration++
   }
-  nextTick(() => {
-    const el = messagesContainer.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
+  scrollToBottom()
 })
 
 // Send/stop handlers
@@ -779,6 +710,25 @@ function handleNewTaskAgentChange(id: string | null) {
   justify-content: center;
   height: 100%;
   color: var(--aw-ink-muted-48);
+}
+
+.history-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 0;
+  box-sizing: border-box;
+  color: var(--aw-ink-muted-48);
+}
+
+.history-loading p {
+  margin: 0;
+  font-size: var(--aw-text-body);
+}
+
+.history-loading.empty-state {
+  margin-bottom: 0;
 }
 
 .empty-icon {

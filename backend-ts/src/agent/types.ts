@@ -5,6 +5,7 @@ export interface Agent {
   id?: number;
   name: string;
   description?: string | null;
+  avatarUrl?: string | null;
   systemPrompt: string;
   creatorId?: number | null;
   configJson?: string | null;

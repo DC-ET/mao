@@ -9,10 +9,11 @@ import type { RestClient } from './rest-client';
 export interface SessionManagerDeps {
   rest: RestClient;
   agentId: number;
+  scope?: () => string;
 }
 
-function storageKey(agentId: number): string {
-  return `mao_embed_session_${agentId}`;
+function storageKey(agentId: number, scope: string): string {
+  return `mao_embed_session_${scope}_${agentId}`;
 }
 
 /** 后端业务码：会话不存在 */
@@ -73,7 +74,7 @@ export class SessionManager {
 
   readStoredSessionId(): number | null {
     try {
-      const raw = window.localStorage.getItem(storageKey(this.deps.agentId));
+      const raw = window.localStorage.getItem(storageKey(this.deps.agentId, this.deps.scope?.() ?? 'isolated'));
       if (!raw) return null;
       const id = Number(raw);
       return Number.isFinite(id) && id > 0 ? id : null;
@@ -84,7 +85,7 @@ export class SessionManager {
 
   writeStoredSessionId(id: number) {
     try {
-      window.localStorage.setItem(storageKey(this.deps.agentId), String(id));
+      window.localStorage.setItem(storageKey(this.deps.agentId, this.deps.scope?.() ?? 'isolated'), String(id));
     } catch {
       /* 隐私模式等场景下 localStorage 不可用：退化为每次新建会话 */
     }
@@ -92,7 +93,7 @@ export class SessionManager {
 
   clearStoredSessionId() {
     try {
-      window.localStorage.removeItem(storageKey(this.deps.agentId));
+      window.localStorage.removeItem(storageKey(this.deps.agentId, this.deps.scope?.() ?? 'isolated'));
     } catch {
       /* ignore */
     }

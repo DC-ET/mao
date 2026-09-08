@@ -2,12 +2,14 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { WsAskUserQuestionAnswer } from '@mao/contracts';
 import type { ChatMessage, PendingQuestion } from '../types';
+import AssistantMark from './AssistantMark.vue';
 import MessageBubble from './MessageBubble.vue';
 import Composer from './Composer.vue';
 import QuestionCard from './QuestionCard.vue';
 
 const props = defineProps<{
   open: boolean;
+  agentAvatarUrl?: string | null;
   position: 'right' | 'left';
   connected: boolean;
   phase: string | null;
@@ -86,7 +88,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
   <div v-if="open" class="mao-panel" :data-pos="position" role="dialog" aria-label="Mao 助手对话">
     <div class="mao-panel__header">
       <span class="mao-panel__avatar" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 5.94 2 10.8c0 2.62 1.32 4.98 3.44 6.6-.14 1.5-.7 3.06-1.7 4.36-.2.26.02.64.34.58 2.62-.44 4.6-1.54 5.86-2.44.66.1 1.36.16 2.06.16 5.52 0 10-3.94 10-8.8S17.52 2 12 2Z"/></svg>
+        <img v-if="agentAvatarUrl" class="mao-agent-avatar" :src="agentAvatarUrl" alt="" />
+        <AssistantMark v-else />
       </span>
       <span class="mao-panel__meta">
         <span class="mao-panel__title">{{ sessionTitle }}</span>

@@ -303,7 +303,7 @@ export class AgentLoop {
             },
             onError: (t: unknown) => {
               harnessLog('error', 'LLM call failed', t);
-              throw new Error('LLM call failed: ' + (t as Error).message, { cause: t });
+              throw t;
             },
             onStreamReset: () => {
               if (thinkingActive.v) {

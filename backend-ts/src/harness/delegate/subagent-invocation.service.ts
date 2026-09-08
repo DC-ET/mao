@@ -2,6 +2,7 @@ import { nowSql } from '../../common/datetime.js';
 import type { Db } from '../../db/db.js';
 import type { SubagentExecution } from '../../session/types.js';
 import type { Session } from '../deps.js';
+import { SessionTodoMapper } from '../todo/session-todo.mapper.js';
 import { SubagentExecutionMapper } from './subagent-execution.mapper.js';
 
 export class SubagentInvocationService {
@@ -90,6 +91,8 @@ export class SubagentInvocationService {
       if (!child || child.sessionType !== 'SUBAGENT' || child.parentSessionId !== parent.id) return null;
       if (child.phase === 'RUNNING' || child.phase === 'RESUMING'
         || child.phase === 'WAITING_APPROVAL' || child.phase === 'CANCELLING') return null;
+      // 新一轮进度不继承上一轮待办；与执行记录同事务，拒绝或回滚追问时保留旧任务。
+      await new SessionTodoMapper(tx).deleteBySessionId(childSessionId);
       // 追问/纠偏时让子代理跟随主代理当前模型：主代理切换模型后，子代理复用其既有上下文、但改用主代理正在用的新模型。
       // 首次 spawn 时子代理继承 parent.modelId；追问时需要重新同步，否则子代理会一直用创建时绑定的旧模型。
       await tx.execute("UPDATE session SET phase = 'RUNNING', model_id = ? WHERE id = ?", [parent.modelId, childSessionId]);
