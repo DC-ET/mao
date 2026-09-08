@@ -257,7 +257,9 @@ export class PageExecutor {
     }
     el.focus();
     await settle();
-    const active = el.ownerDocument.activeElement;
+    // getRootNode()：同源 iframe / 开放 Shadow DOM 内元素的焦点在各自 root 上，
+    // ownerDocument.activeElement 在 Shadow DOM 下会指向 host。
+    const active = (el.getRootNode() as Document | ShadowRoot).activeElement;
     const verified = active === el;
     if (!verified) {
       return failure(action, this.manager.pageVersion, error('not_focusable', '焦点未落到目标元素', resolved.descriptor.elementId), snapshotId);

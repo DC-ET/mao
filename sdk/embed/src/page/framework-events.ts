@@ -49,7 +49,10 @@ export function dispatchValueEvents(el: Element, value: string, contentEditable:
 
 /** 焦点变化事件：只在元素当前持有焦点时派发，避免无谓地触发页面校验。 */
 export function dispatchBlur(el: Element): void {
-  if (document.activeElement !== el) return;
+  // 用 getRootNode()：同源 iframe 与开放 Shadow DOM 内元素的焦点记录在各自 root 上，
+  // 顶层 document.activeElement 此时是 <iframe> 宿主元素 / Shadow host（与 executeFocus 口径一致）。
+  const active = (el.getRootNode() as Document | ShadowRoot).activeElement;
+  if (active !== el) return;
   el.dispatchEvent(new FocusEvent('blur', { bubbles: false }));
   el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
 }

@@ -57,6 +57,8 @@ const chat = MaoChat.init({
 
 `page_select` 对 `multiple` 多选只按单值选中一个选项（会替换原有选择），不支持一次选中多个值。
 
+同源 iframe 内元素可被扫描到，但受浏览器跨 realm 限制，iframe 内元素的部分动作（`fill`/`focus`/`select` 等类型判定）可能不可用；需要稳定操作时请优先选择主文档元素。
+
 ## 公司 SSO 接入
 
 公司后台已有前端可读取的 SSO Token 时，使用以下模式替代 `getToken`，不改公司后台后端或现有登录流程：

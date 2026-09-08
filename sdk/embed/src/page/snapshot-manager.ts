@@ -30,6 +30,20 @@ function randomId(): string {
 }
 
 /**
+ * 值/勾选/选项状态：signatureOf 刻意排除 value/checked/selected 等易变字段，
+ * observe 必须单独比较才能发现「只改值、结构未变」的更新。
+ */
+function stateKeyOf(descriptor: PageElement): string {
+  return JSON.stringify([
+    // 敏感字段的值会随授权级别脱敏（inspect 可能不脱敏、observe 恒定脱敏），
+    // 且其值本就不应参与变化比对：统一忽略，避免「未变化却报 updated」的误报。
+    descriptor.sensitive ? null : (descriptor.value ?? null),
+    descriptor.disabled,
+    descriptor.options.map((option) => [option.value, option.selected, option.disabled]),
+  ]);
+}
+
+/**
  * 快照生命周期：
  * - 每次 inspect 生成新的 snapshotId + pageVersion，旧 elementId 立即失效；
  * - 记录导航版本（history 导航 / SPA 路由 / 整页跳转），导航后所有快照失效；
@@ -154,15 +168,23 @@ export class PageSnapshotManager {
         const now = counts.get(signature) ?? 0;
         if (count > now) removed += count - now;
       }
-      // 同一节点身份 token 且签名变化 = 更新；它同时被签名口径计入 added 和 removed，需扣除。
-      const beforeTokens = new Map<string, string>();
-      for (const item of previous.refs.values()) beforeTokens.set(item.token, item.signature);
+      // 同一节点身份 token：签名变化 = 结构/属性更新（会同时被签名口径计入 added/removed，需扣除）；
+      // 签名不变但 value/checked/selected 变化 = 纯状态更新（不计入 added/removed）。
+      const beforeTokens = new Map<string, ResolvedElement>();
+      for (const item of previous.refs.values()) beforeTokens.set(item.token, item);
+      let signatureUpdates = 0;
       for (const item of scan.elements) {
         const prior = beforeTokens.get(item.token);
-        if (prior !== undefined && prior !== item.signature) updated += 1;
+        if (!prior) continue;
+        if (prior.signature !== item.signature) {
+          signatureUpdates += 1;
+          updated += 1;
+        } else if (stateKeyOf(prior.descriptor) !== stateKeyOf(item.descriptor)) {
+          updated += 1;
+        }
       }
-      added = Math.max(0, added - updated);
-      removed = Math.max(0, removed - updated);
+      added = Math.max(0, added - signatureUpdates);
+      removed = Math.max(0, removed - signatureUpdates);
     }
     return {
       pageVersion: this.navVersion(),

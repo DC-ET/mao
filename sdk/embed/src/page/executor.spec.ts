@@ -50,6 +50,38 @@ describe('PageExecutor', () => {
     expect(focusout).toHaveBeenCalledTimes(1);
   });
 
+  it('dispatches blur for a filled element inside a same-origin iframe', async () => {
+    const iframe = document.createElement('iframe');
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument;
+    // 显式断言：环境不支持 iframe 文档时直接失败，避免用例被静默跳过
+    expect(doc?.body).toBeTruthy();
+    const input = doc!.createElement('input');
+    doc!.body.appendChild(input);
+    const blur = vi.fn();
+    input.addEventListener('blur', blur);
+    const id = snapshotId();
+    const result = await executor.execute({ type: 'fill', elementId: 'e1', value: 'x' }, { snapshotId: id });
+    expect(result.success).toBe(true);
+    expect(blur).toHaveBeenCalledTimes(1);
+  });
+
+  it('fills and focuses elements inside an open shadow root', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = host.attachShadow({ mode: 'open' });
+    const input = document.createElement('input');
+    root.appendChild(input);
+    const blur = vi.fn();
+    input.addEventListener('blur', blur);
+    const id = snapshotId();
+    const fill = await executor.execute({ type: 'fill', elementId: 'e1', value: 'x' }, { snapshotId: id });
+    expect(fill.success).toBe(true);
+    expect(blur).toHaveBeenCalledTimes(1);
+    const focus = await executor.execute({ type: 'focus', elementId: 'e1' }, { snapshotId: id });
+    expect(focus.success).toBe(true);
+  });
+
   it('rejects filling a button', async () => {
     document.body.innerHTML = '<button>保存</button>';
     const id = snapshotId();

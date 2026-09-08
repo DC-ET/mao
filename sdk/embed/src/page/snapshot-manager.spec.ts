@@ -73,6 +73,60 @@ describe('PageSnapshotManager', () => {
     expect(observed.changes.removed).toBe(0);
   });
 
+  it('reports updated when a reused element value or checked state changes', () => {
+    document.body.innerHTML = '<input type="checkbox">';
+    const snapshot = manager.inspect();
+    (document.querySelector('input') as HTMLInputElement).checked = true;
+    const observed = manager.observe(snapshot.snapshotId);
+    expect(observed.changes.updated).toBe(1);
+    expect(observed.changes.added).toBe(0);
+    expect(observed.changes.removed).toBe(0);
+  });
+
+  it('reports no change when the page is untouched', () => {
+    document.body.innerHTML = '<input type="text" value="a">';
+    const snapshot = manager.inspect();
+    const observed = manager.observe(snapshot.snapshotId);
+    expect(observed.changes.updated).toBe(0);
+    expect(observed.changes.added).toBe(0);
+    expect(observed.changes.removed).toBe(0);
+  });
+
+  it('reports updated when a text input value changes', () => {
+    document.body.innerHTML = '<input type="text">';
+    const snapshot = manager.inspect();
+    (document.querySelector('input') as HTMLInputElement).value = 'hello';
+    const observed = manager.observe(snapshot.snapshotId);
+    expect(observed.changes.updated).toBe(1);
+  });
+
+  it('reports updated when a select selection changes', () => {
+    document.body.innerHTML = '<select><option value="a">A</option><option value="b">B</option></select>';
+    const snapshot = manager.inspect();
+    (document.querySelector('select') as HTMLSelectElement).value = 'b';
+    const observed = manager.observe(snapshot.snapshotId);
+    expect(observed.changes.updated).toBe(1);
+  });
+
+  it('reports updated when a non-selected option value changes', () => {
+    document.body.innerHTML = '<select><option value="a">A</option><option value="b">B</option></select>';
+    const snapshot = manager.inspect();
+    // 只改非选中项（第二个）：select.value 保持 'a'，确保不是靠 select 自身值变化蒙对
+    (document.querySelectorAll('option')[1] as HTMLOptionElement).value = 'c';
+    const observed = manager.observe(snapshot.snapshotId);
+    expect(observed.changes.updated).toBe(1);
+  });
+
+  it('does not report updated for an unchanged sensitive field across redaction modes', () => {
+    // inspect 不脱敏（full/task）、observe 恒定脱敏：未变化时不能误报 updated
+    document.body.innerHTML = '<input type="password" value="s3cret">';
+    const snapshot = manager.inspect({ redactSensitive: false });
+    const observed = manager.observe(snapshot.snapshotId);
+    expect(observed.changes.updated).toBe(0);
+    expect(observed.changes.added).toBe(0);
+    expect(observed.changes.removed).toBe(0);
+  });
+
   it('reports navigation in observe even though the current record was invalidated', () => {
     document.body.innerHTML = '<button>A</button>';
     const snapshot = manager.inspect();

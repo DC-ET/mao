@@ -108,7 +108,7 @@ export class PageInspectTool extends PageToolBase {
 export class PageObserveTool extends PageToolBase {
   getName(): string { return 'page_observe'; }
   getDescription(): string {
-    return '观察页面当前状态：URL、标题、pageVersion、相对上次快照的交互元素增减，以及是否发生导航。用于确认动作后的页面变化。';
+    return '观察页面当前状态：URL、标题、pageVersion、相对上次快照的交互元素增减与值/勾选状态变化，以及是否发生导航。用于确认动作后的页面变化。';
   }
   getInputSchema(): Record<string, unknown> {
     return { type: 'object', properties: { snapshotId: { type: 'string', description: '用于对比的可选快照 ID' } } };
