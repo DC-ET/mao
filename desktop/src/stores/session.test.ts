@@ -59,6 +59,27 @@ describe('session store 实体/投影模型', () => {
     expect(store.getMessages('1').at(-1)?.content).toBe('')
   })
 
+  it('流重置保留已完成工具轮次，只丢掉未完成尾巴', () => {
+    const store = useSessionStore()
+    store.addUserMessage('1', { id: 'u1', role: 'user', content: '安装 nvm', createdAt: '2026-09-08 12:00:00' })
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    store.appendDelta('1', '先检查环境')
+    store.appendToolCallStart('1', { tool_call_id: 't1', tool_name: 'shell', arguments: '{"command":"ls"}' })
+    store.updateToolCallResult('1', { tool_call_id: 't1', result: '{}', status: 'success', summary: '执行 ls' })
+    store.appendDelta('1', '接着安装')
+    store.appendThinkingDelta('1', '考虑用 nvm')
+    store.appendToolCallStart('1', { tool_call_id: 't2', tool_name: 'shell', arguments: '{"command":"find"}' })
+
+    store.resetStreamingAssistantMessage('1')
+
+    const live = store.getMessages('1').find(m => m.id === streaming.id)
+    expect(live?.content).toBe('先检查环境')
+    expect(live?.thinkingContent).toBeUndefined()
+    expect(live?.toolCalls?.map(tc => tc.id)).toEqual(['t1'])
+    expect(live?.toolCalls?.[0].status).toBe('success')
+    expect(live?.segments?.map(s => s.type)).toEqual(['text', 'tool'])
+  })
+
   it('工具结果缺少对应开始事件时仍使用结果携带的工具名', () => {
     const store = useSessionStore()
 

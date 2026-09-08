@@ -369,15 +369,10 @@ export class ChatStore {
         }
         break;
       case 'llm_stream_reset': {
-        // 后端 reset 时同步清空 toolCallInfo/activeToolCalls，本地必须一并清工具卡，
-        // 否则残留孤儿卡片。守卫 streaming：reset 早于本轮气泡创建时不得误擦历史消息。
+        // 丢掉当前这趟未完成的生成；已结束的工具轮次留在同一条流式气泡里。
+        // 守卫 streaming：reset 早于本轮气泡创建时不得误擦历史消息。
         const m = this.lastAssistant();
-        if (m?.streaming) {
-          m.content = '';
-          m.thinking = '';
-          m.segments = [];
-          m.toolCalls.splice(0, m.toolCalls.length);
-        }
+        if (m?.streaming) this.discardAbortedStreamTail(m);
         break;
       }
       case 'session_already_running':
@@ -582,6 +577,42 @@ export class ChatStore {
     const last = m.segments[m.segments.length - 1];
     if (last?.type === 'tool-group') last.toolCalls.push(tc);
     else m.segments.push({ type: 'tool-group', toolCalls: [tc] });
+  }
+
+  /** 与 desktop discardAbortedStreamTail 对齐：只丢未完成尾巴，保留已完成工具轮次。 */
+  private discardAbortedStreamTail(m: ChatMessage) {
+    const completed = m.toolCalls.filter((tc) => tc.status === 'done' || tc.status === 'error');
+    if (completed.length === 0) {
+      m.content = '';
+      m.thinking = '';
+      m.segments = [];
+      m.toolCalls.splice(0, m.toolCalls.length);
+      return;
+    }
+    m.toolCalls.splice(0, m.toolCalls.length, ...completed);
+    const completedIds = new Set(completed.map((tc) => tc.toolCallId));
+    const kept: ChatMessage['segments'] = [];
+    for (const seg of m.segments) {
+      if (seg.type !== 'tool-group') {
+        kept.push(seg);
+        continue;
+      }
+      const tools = seg.toolCalls.filter((tc) => completedIds.has(tc.toolCallId));
+      if (tools.length > 0) kept.push({ type: 'tool-group', toolCalls: tools });
+    }
+    let lastToolIdx = -1;
+    for (let i = 0; i < kept.length; i++) {
+      if (kept[i].type === 'tool-group') lastToolIdx = i;
+    }
+    m.segments = lastToolIdx >= 0 ? kept.slice(0, lastToolIdx + 1) : [];
+    let content = '';
+    let thinking = '';
+    for (const seg of m.segments) {
+      if (seg.type === 'text') content += seg.content;
+      else if (seg.type === 'thinking') thinking += seg.content;
+    }
+    m.content = content;
+    m.thinking = thinking;
   }
 
   private findToolCall(data: Record<string, unknown>): ToolCallItem | undefined {

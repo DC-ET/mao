@@ -69,7 +69,7 @@
           <ThinkingBlock
             v-if="seg.type === 'thinking' && seg.content"
             :thinking="seg.content"
-            :streaming="isAssistantRunning && sessionThinkingActive && idx === lastThinkingIdx"
+            :streaming="isAssistantRunning && sessionThinkingActive && idx === lastThinkingIdx && lastRenderIsThinking"
           />
           <MarkdownContent
             v-else-if="seg.type === 'text'"
@@ -375,6 +375,11 @@ const lastThinkingIdx = computed(() => {
   }
   return -1
 })
+
+/** 重置重试时会短暂把 thinking 标为 true；只有思考段仍在时间线末尾才显示「思考中」 */
+const lastRenderIsThinking = computed(() =>
+  renderSegments.value[renderSegments.value.length - 1]?.type === 'thinking'
+)
 
 /** Approx. chars per visual line in the user bubble (max-width ~75%). */
 const USER_CHARS_PER_LINE = 48

@@ -32,9 +32,13 @@ describe('ChatStore', () => {
     expect(m.toolCalls[0].resultText).toBe('找到文件');
     expect(m.toolCalls).toHaveLength(3);
     send('llm_stream_reset', {});
-    expect(m.segments).toEqual([]);
+    expect(m.segments.map((s) => s.type)).toEqual(['thinking', 'text', 'tool-group']);
+    expect(m.toolCalls.map((t) => t.toolCallId)).toEqual(['t1']);
+    expect(m.content).toBe('先搜索');
+    expect(m.thinking).toBe('先分析');
     send('content_delta', { delta: '重新回答' });
-    expect(m.segments).toEqual([{ type: 'text', content: '重新回答' }]);
+    expect(m.segments.map((s) => s.type)).toEqual(['thinking', 'text', 'tool-group', 'text']);
+    expect(m.segments[3]).toEqual({ type: 'text', content: '重新回答' });
   });
 
   it('content_delta 聚合到最后一条 assistant 消息', () => {
@@ -252,7 +256,7 @@ describe('ChatStore', () => {
     expect(store.llmRetryText.value).toBeNull();
   });
 
-  it('llm_stream_reset 清空当前流式气泡的内容与工具卡', () => {
+  it('llm_stream_reset 无已完成工具时清空当前流式气泡', () => {
     const store = new ChatStore();
     store.bindSession(1);
     store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
@@ -264,6 +268,22 @@ describe('ChatStore', () => {
     expect(m.content).toBe('');
     expect(m.thinking).toBe('');
     expect(m.toolCalls.length).toBe(0);
+  });
+
+  it('llm_stream_reset 保留已完成工具轮次并丢掉未完成尾巴', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('content_delta', 1, { delta: '先检查' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'shell' }));
+    store.handleEvent(ev('tool_call_result', 1, { tool_call_id: 't1', status: 'success', result: 'ok' }));
+    store.handleEvent(ev('content_delta', 1, { delta: '接着安装' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't2', tool_name: 'shell' }));
+    store.handleEvent(ev('llm_stream_reset', 1, {}));
+    const m = store.messages.value[0];
+    expect(m.content).toBe('先检查');
+    expect(m.toolCalls.map((t) => t.toolCallId)).toEqual(['t1']);
+    expect(m.segments.map((s) => s.type)).toEqual(['text', 'tool-group']);
   });
 
   it('llm_stream_reset 不误擦非流式的历史助手消息', () => {

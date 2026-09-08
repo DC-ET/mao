@@ -167,6 +167,51 @@ export function appendToolCallStart(msg: ChatMessage, call: ToolCall) {
   msg.segments.push({ type: 'tool', callId: call.id })
 }
 
+const COMPLETED_TOOL_STATUSES = new Set<ToolCall['status']>(['success', 'error'])
+
+/**
+ * 丢掉当前这趟未完成的 LLM 生成（尾部正文/思考、仍在 running/pending 的工具），
+ * 保留同一条流式气泡里已经结束的工具轮次。
+ * `llm_stream_reset` 只针对当前模型调用；整轮执行共用一条气泡，不能整段清空。
+ */
+export function discardAbortedStreamTail(msg: ChatMessage): void {
+  const toolCalls = msg.toolCalls ?? []
+  const completed = toolCalls.filter(tc => COMPLETED_TOOL_STATUSES.has(tc.status))
+  const completedIds = new Set(completed.map(tc => tc.id))
+
+  if (completedIds.size === 0) {
+    msg.content = ''
+    msg.thinkingContent = undefined
+    msg.toolCalls = []
+    msg.segments = []
+    return
+  }
+
+  msg.toolCalls = completed
+  const segments = msg.segments ?? []
+  if (segments.length === 0) {
+    return
+  }
+
+  const kept: MessageSegment[] = []
+  for (const seg of segments) {
+    if (seg.type === 'tool') {
+      if (completedIds.has(seg.callId)) kept.push(seg)
+      continue
+    }
+    kept.push(seg)
+  }
+
+  let lastToolIdx = -1
+  for (let i = 0; i < kept.length; i++) {
+    if (kept[i].type === 'tool') lastToolIdx = i
+  }
+  msg.segments = lastToolIdx >= 0 ? kept.slice(0, lastToolIdx + 1) : []
+  msg.content = msg.segments.filter(s => s.type === 'text').map(s => s.content || '').join('')
+  const thinking = msg.segments.filter(s => s.type === 'thinking').map(s => s.content || '').join('')
+  msg.thinkingContent = thinking || undefined
+}
+
 /** 将 API 消息映射为聊天消息，并附加 fileChanges */
 export function mapMessagesWithFileChanges(raw: Array<Record<string, unknown>>) {
   const messages = mapApiMessagesToChat(raw)

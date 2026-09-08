@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { api } from '../api'
 import { useDraftStore } from './draft'
 import type { ChatMessage, TodoItem, ContextWindowInfo, CompactionEvent, QueueMessage, FileChange, PendingQuestion } from '../types/chat'
-import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil } from '../utils/chatMessage'
+import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil, discardAbortedStreamTail } from '../utils/chatMessage'
 import { nowDateTime } from '../utils/datetime'
 import { cloudGroupKey } from '../utils/cloud-project'
 import { sortByFocusPriority, sessionToFocusCandidate } from '../utils/focusSort'
@@ -1225,10 +1225,7 @@ export const useSessionStore = defineStore('session', () => {
     const lastMsg = list[list.length - 1]
     if (lastMsg?.role !== 'assistant'
         || streamingAssistantMessageIds.get(sid) !== String(lastMsg.id)) return
-    lastMsg.content = ''
-    lastMsg.thinkingContent = undefined
-    lastMsg.toolCalls = []
-    lastMsg.segments = []
+    discardAbortedStreamTail(lastMsg)
     sessionStreaming.value.set(sid, false)
     sessionThinking.value.set(sid, true)
     sessionMessages.value.set(sid, [...list])
