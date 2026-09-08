@@ -6,19 +6,14 @@ const config: CompanySsoConfig = { enabled: true, allowedDomains: ['acg.team'], 
 afterEach(() => { vi.unstubAllEnvs(); resetConfigCache(); });
 
 describe('company SSO configuration', () => {
-  it('defaults disabled with bounded TTL and timeout and no fixed URL', () => {
-    resetConfigCache();
-    expect(loadConfig().sso).toMatchObject({ enabled: false, accessTtlSeconds: 1800, timeoutMs: 3000, allowedDomains: [] });
-    expect(loadConfig().sso).not.toHaveProperty('checkUrl');
-  });
-
-  it('loads exact origins and comma separated normalized domains', () => {
+  it('has no AppConfig SSO configuration even when obsolete environment variables exist', () => {
     vi.stubEnv('SSO_ENABLED', 'true');
-    vi.stubEnv('SSO_ALLOWED_DOMAINS', ' ACG.Team , sso.example.test ');
-    vi.stubEnv('SSO_ALLOWED_ORIGINS', 'https://a.example.test,https://b.example.test');
-    vi.stubEnv('SSO_ACCESS_TTL_SECONDS', '600');
+    vi.stubEnv('SSO_ALLOWED_DOMAINS', '*');
+    vi.stubEnv('SSO_ALLOWED_ORIGINS', 'http://insecure.test');
+    vi.stubEnv('SSO_ACCESS_TTL_SECONDS', 'invalid');
+    vi.stubEnv('SSO_TIMEOUT_MS', 'invalid');
     resetConfigCache();
-    expect(loadConfig().sso).toMatchObject({ enabled: true, accessTtlSeconds: 600, allowedDomains: ['acg.team', 'sso.example.test'], allowedOrigins: ['https://a.example.test', 'https://b.example.test'] });
+    expect(loadConfig()).not.toHaveProperty('sso');
   });
 
   it.each([
@@ -36,17 +31,8 @@ describe('company SSO configuration', () => {
     expect(() => validateCompanySsoConfig({ ...config, allowedDomains: [domain] })).toThrow();
   });
 
-  it.each(['', 'acg.team,', '*.acg.team'])('rejects invalid domain environment %s when enabled', (domains) => {
-    vi.stubEnv('SSO_ENABLED', 'true');
-    vi.stubEnv('SSO_ALLOWED_DOMAINS', domains);
-    vi.stubEnv('SSO_ALLOWED_ORIGINS', 'https://host.example.test');
-    resetConfigCache();
-    expect(() => loadConfig()).toThrow();
-  });
-
-  it('requires HTTPS in production', () => {
-    vi.stubEnv('NODE_ENV', 'production');
-    expect(() => validateCompanySsoConfig({ ...config, requireHttps: false })).toThrow();
+  it('requires HTTPS in every environment', () => {
+    expect(() => validateCompanySsoConfig({ ...config, requireHttps: false } as unknown as CompanySsoConfig)).toThrow();
   });
 });
 

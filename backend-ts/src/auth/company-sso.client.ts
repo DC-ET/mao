@@ -13,14 +13,13 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 export class CompanySsoClient {
-  constructor(private readonly config: CompanySsoConfig, private readonly fetcher: typeof fetch = fetch) {
-    validateCompanySsoConfig(config);
-  }
+  constructor(private readonly fetcher: typeof fetch = fetch) {}
 
-  async verify(token: string, checkUrl: string): Promise<VerifiedSsoIdentity> {
-    const url = validateCompanySsoCheckUrl(checkUrl, this.config);
+  async verify(token: string, checkUrl: string, config: CompanySsoConfig): Promise<VerifiedSsoIdentity> {
+    validateCompanySsoConfig(config);
+    const url = validateCompanySsoCheckUrl(checkUrl, config);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       url.searchParams.set('token', token);

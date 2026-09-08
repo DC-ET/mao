@@ -327,7 +327,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const apiPrefix = cfg.server.servlet.contextPath || '/api';
   const ssoExchangePath = `${apiPrefix}/v1/auth/sso/exchange`;
   await app.register(cors, {
-    delegator: async (request: FastifyRequest) => corsForRequest(request, ssoExchangePath, cfg.sso.enabled, cfg.sso.allowedOrigins),
+    delegator: async (request: FastifyRequest) => corsForRequest(request, ssoExchangePath, bootstrapSettings),
   });
   await app.register(multipart, { limits: { fileSize: multipartLimitMb * 1024 * 1024, files: 500 } });
   const uploadDir = resolve(expandHome(cfg.app.file.uploadDir));
@@ -1603,8 +1603,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
     registerAuthRoutes(api, authService, feishu);
     registerCompanySsoRoutes(api, new CompanySsoService(
-      cfg.sso, new CompanySsoClient(cfg.sso), new CompanySsoIdentityRepository(db), jwt,
-    ), cfg.sso, async (event) => {
+      new CompanySsoClient(), new CompanySsoIdentityRepository(db), jwt,
+    ), settingService, async (event) => {
       await auditService.record({
         action: event.action === 'created' ? 'CREATE' : event.action === 'bound' ? 'UPDATE' : 'LOGIN',
         objectType: 'sso.identity',

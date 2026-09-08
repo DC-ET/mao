@@ -16,8 +16,9 @@ describe('SSO exchange application boundary', () => {
     const exchange = vi.fn(async () => ({ ...jwt.generateCompanySsoToken(42, 'synthetic', 300), refreshAfter: 240, user: { id: 42, displayName: 'Test' }, action: 'existing' as const }));
     const audit = vi.fn(async () => {});
     const app = Fastify({ trustProxy: ['127.0.0.1'] });
-    const config = { enabled: true, allowedDomains: ['acg.team'], allowedOrigins: ['https://portal.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true };
-    await app.register(cors, { delegator: async (req: FastifyRequest) => corsForRequest(req, path, config.enabled, config.allowedOrigins) });
+    const config = { enabled: true, allowedDomains: ['acg.team'], allowedOrigins: ['https://portal.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true as const };
+    const settings = { getCompanySsoConfig: async () => config };
+    await app.register(cors, { delegator: async (req: FastifyRequest) => corsForRequest(req, path, settings) });
     app.addHook('preHandler', async (request, reply) => {
       if (request.method === 'OPTIONS' || request.url.split('?')[0] === path) return;
       const id = authenticateRequest(request, jwt);
@@ -25,7 +26,7 @@ describe('SSO exchange application boundary', () => {
       if (!isPublicPath(request.method, request.url) && id == null) return reply.code(401).send({ code: 1001 });
     });
     await app.register(async (api) => {
-      registerCompanySsoRoutes(api, { exchange }, config, audit);
+      registerCompanySsoRoutes(api, { exchange }, settings, audit);
       api.get('/v1/protected', (request) => ({ userId: request.userId }));
     }, { prefix: '/api' });
     const headers = { authorization: 'Bearer synthetic.sso.token', origin: 'https://portal.example.test', 'x-forwarded-proto': 'https' };
@@ -33,7 +34,7 @@ describe('SSO exchange application boundary', () => {
       const result = await app.inject({ method: 'POST', payload: { checkUrl }, url: path, remoteAddress: '127.0.0.1', headers });
       expect(result.statusCode).toBe(200);
       expect(verifyMao).not.toHaveBeenCalled();
-      expect(exchange).toHaveBeenCalledWith('synthetic.sso.token', checkUrl);
+      expect(exchange).toHaveBeenCalledWith('synthetic.sso.token', checkUrl, config);
       expect(audit).toHaveBeenCalledOnce();
       expect(result.headers['cache-control']).toBe('no-store');
       expect(result.json().data).not.toHaveProperty('refreshToken');

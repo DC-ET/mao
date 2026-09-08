@@ -6,6 +6,16 @@
 
 集成配置类 key（`auth.ldap.*`、`auth.feishu.*`、`upload.*`、`tools.*`、`oss.*`、`agent.*`、`notify.*`、`harness.*` 等）已支持后台可视化编辑（`agent.*`/`ws.*`/`harness.*` 为启动时构建，保存后需重启后端生效，其余即时生效）；secret 类项（`is_secret`）写入后仅返回掩码，不可读回明文。
 
+## 公司 SSO 配置（0.0.111 起）
+
+推荐通过管理后台「系统设置 → 集成配置 → 公司 SSO」维护。也可使用现有 `settings set`，键为 `auth.companySso.config`，value 必须是包含以下五个字段的完整 JSON 字符串：
+
+```json
+{"enabled":false,"allowedDomains":[],"allowedOrigins":[],"accessTtlSeconds":1800,"timeoutMs":3000}
+```
+
+启用时两个白名单均必填，域名匹配自身及子域，Origin 精确匹配 HTTPS Origin。TTL 为 60–3600 秒，timeout 为 1–30000 毫秒；未知字段、缺失字段及非法值拒绝保存，不接受 `requireHttps` 开关。保存后新换票即时生效，`SSO_*` 环境变量不再读取或导入。校验 URL 仍由业务系统 `MaoChat.init` 指定。详见 [配置参考](config.md#公司-ssoweb-embed-sdk)。
+
 ## 命令选择
 
 | 场景 | 命令 |

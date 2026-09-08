@@ -31,6 +31,15 @@ cd ../admin && npm run build
 - desktop 构建通过并同步 SDK 产物；本增量未更改 admin。
 - 复用原 reviewer 完成增量第 1 轮审查，无新增可触发 bug，不创建空报告。额外离线跨端验证覆盖首次换票、并发合并、续期保持实际 path/query、欺骗域拒绝；存储与上游为 mock，不代表真实联调。
 
+## 管理后台配置迁移验证（2026-09-08）
+
+- 公司 SSO 配置迁至后台「系统设置 → 集成配置 → 公司 SSO」，V107 新增 `auth.companySso.config`，保存完整五字段 JSON；不读取或导入旧 SSO 业务环境变量。测试隔离 socket 开关仅供测试使用，保持不变。
+- 后端 `npm run build && npm test` 通过：171 文件、1615 项通过，12 项真实 MySQL 测试仍跳过。V107 已通过迁移加载的 mock 测试，未在真实 MySQL 执行。
+- 管理后台 `npm run build` 通过；根目录 `npm run test:admin -- admin-company-sso.spec.ts` 16 项通过，API 全部 mock，覆盖字段校验、权限、缺失/损坏值禁止保存、完整提交、失败保留输入。
+- 复用原 reviewer 完成本次迁移第 1 轮审查，无新增可触发 bug，不生成空报告。复核请求配置快照、动态启停/白名单/TTL/timeout、限流不重置、配置失败拒绝换票及不影响普通 REST。
+- 补充全仓测试源码 `tsconfig.json` 类型检查因范围外 spec 类型错误未通过；标准后端生产构建与管理端类型检查均通过，未修改无关测试。
+- 未部署或执行真实 SSO/数据库联调。发布后须先完成 V107 迁移，再由管理员填写配置（默认关闭，旧环境变量不导入）。
+
 ## 隔离 MySQL 集成测试
 
 `backend-ts/src/auth/company-sso.mysql.integration.spec.ts` 默认跳过，只有显式设置 `SSO_TEST_MYSQL_SOCKET` 才执行。它不加载应用数据库配置，要求独立 `sso-mysql-*` 目录下的真实 Unix socket、MySQL 关闭网络监听，使用随机新建的测试数据库，并只删除该测试数据库。

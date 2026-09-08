@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import { describe, expect, it } from 'vitest';
 import { corsForRequest } from './cors-policy.js';
@@ -7,7 +7,7 @@ const path = '/api/v1/auth/sso/exchange';
 describe('SSO exchange CORS boundary', () => {
   it('allows the configured origin and Authorization preflight only', async () => {
     const app = Fastify();
-    await app.register(cors, { delegator: async (req) => corsForRequest(req, path, true, ['https://portal.example.test']) });
+    await app.register(cors, { delegator: async (req: FastifyRequest) => corsForRequest(req, path, { getCompanySsoConfig: async () => ({ enabled: true, allowedDomains: ['example.test'], allowedOrigins: ['https://portal.example.test'], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true }) }) });
     app.post(path, () => ({ ok: true }));
     app.get('/api/v1/users/me', () => ({ ok: true }));
     try {

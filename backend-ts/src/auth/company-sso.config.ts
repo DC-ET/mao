@@ -7,7 +7,7 @@ export interface CompanySsoConfig {
   allowedOrigins: string[];
   accessTtlSeconds: number;
   timeoutMs: number;
-  requireHttps: boolean;
+  requireHttps: true;
 }
 
 function normalizeDomain(value: unknown): string {
@@ -39,14 +39,14 @@ export function validateCompanySsoCheckUrl(checkUrl: unknown, config: CompanySso
 }
 
 export function validateCompanySsoConfig(config: CompanySsoConfig): CompanySsoConfig {
-  if (typeof config.enabled !== 'boolean' || typeof config.requireHttps !== 'boolean') throw new Error('Invalid SSO enable/HTTPS configuration');
+  if (typeof config.enabled !== 'boolean' || config.requireHttps !== true) throw new Error('Invalid SSO enable/HTTPS configuration');
   if (!Array.isArray(config.allowedDomains) || (config.enabled && !config.allowedDomains.length)) throw new Error('SSO requires allowed domains');
   config.allowedDomains = config.allowedDomains.map(normalizeDomain);
   if (!Number.isInteger(config.accessTtlSeconds) || config.accessTtlSeconds < 60 || config.accessTtlSeconds > 3600) throw new Error('SSO TTL must be 60-3600 seconds');
   if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 30000) throw new Error('Invalid SSO timeout');
-  if (process.env.NODE_ENV === 'production' && !config.requireHttps) throw new Error('SSO requires HTTPS in production');
   if (!Array.isArray(config.allowedOrigins) || (config.enabled && !config.allowedOrigins.length)) throw new Error('SSO requires exact allowed origins');
   for (const origin of config.allowedOrigins) {
+    if (typeof origin !== 'string') throw new Error('Invalid SSO allowed origin');
     const url = new URL(origin);
     if (origin.includes('*') || url.origin !== origin || url.username || url.password || !['http:', 'https:'].includes(url.protocol)
       || (config.requireHttps && url.protocol !== 'https:')) throw new Error('Invalid SSO allowed origin');

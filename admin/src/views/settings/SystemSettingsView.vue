@@ -30,6 +30,12 @@
         </aside>
 
         <div class="settings-content">
+          <CompanySsoConfigPanel
+            :row="companySsoRow"
+            :can-write="canWrite"
+            :ready="settingsLoaded && !loading"
+            @saved="fetchSettings"
+          />
           <IntegrationConfigPanel
             v-if="integrationRows.length > 0"
             :rows="integrationRows"
@@ -130,6 +136,8 @@ import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import IntegrationConfigPanel from './components/IntegrationConfigPanel.vue'
+import CompanySsoConfigPanel from './components/CompanySsoConfigPanel.vue'
+import { COMPANY_SSO_KEY } from './companySsoConfig'
 
 const authStore = useAuthStore()
 /** 后端 PUT /system-settings/:key 需 settings:write，无权限时禁用全部写控件 */
@@ -170,7 +178,10 @@ const INTEGRATION_TOC = [
 ]
 
 const loading = ref(false)
+const settingsLoaded = ref(false)
 const settings = ref<any[]>([])
+const companySsoRow = computed(() => settings.value.find((item) => item.settingKey === COMPANY_SSO_KEY))
+const SPECIAL_KEYS = new Set([...INTEGRATION_KEYS, COMPANY_SSO_KEY])
 const agents = ref<any[]>([])
 const models = ref<any[]>([])
 const activeSection = ref('')
@@ -193,7 +204,7 @@ function toNumberOrNull(raw: string | undefined): number | undefined {
 
 function syncPlainModel() {
   for (const row of settings.value) {
-    if (INTEGRATION_KEYS.has(row.settingKey)) continue
+    if (SPECIAL_KEYS.has(row.settingKey)) continue
     if (plainModel[row.settingKey] === undefined) {
       plainModel[row.settingKey] = row.isSecret === 1 ? '' : (row.value ?? '')
     }
@@ -265,7 +276,7 @@ const categories = computed(() => {
   const list: string[] = []
   for (const item of settings.value) {
     const category = item.category || '未分类'
-    if (INTEGRATION_KEYS.has(item.settingKey)) continue
+    if (SPECIAL_KEYS.has(item.settingKey)) continue
     if (!seen.has(category)) {
       seen.add(category)
       list.push(category)
@@ -277,7 +288,7 @@ const categories = computed(() => {
 const settingsByCategory = computed(() => {
   const map: Record<string, any[]> = {}
   for (const item of settings.value) {
-    if (INTEGRATION_KEYS.has(item.settingKey)) continue
+    if (SPECIAL_KEYS.has(item.settingKey)) continue
     const category = item.category || '未分类'
     if (!map[category]) map[category] = []
     map[category].push(item)
@@ -287,7 +298,7 @@ const settingsByCategory = computed(() => {
 
 /** 目录索引：集成配置在前，普通分类在后。 */
 const toc = computed(() => {
-  const list: Array<{ id: string; label: string }> = []
+  const list: Array<{ id: string; label: string }> = [{ id: 'setting-group-company-sso', label: '公司 SSO' }]
   if (integrationRows.value.length > 0) list.push(...INTEGRATION_TOC)
   for (const category of categories.value) {
     list.push({ id: `setting-cat-${category}`, label: category })
@@ -356,6 +367,7 @@ async function fetchSettings() {
       fetchModels()
     ])
     settings.value = data || []
+    settingsLoaded.value = true
     syncPlainModel()
     await nextTick(setupObserver)
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {

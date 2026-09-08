@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { sendJson, sendOk } from '../common/http-error.js';
 import { fail } from '../common/result.js';
-import { validateCompanySsoCheckUrl, validateCompanySsoConfig, type CompanySsoConfig } from './company-sso.config.js';
+import { validateCompanySsoCheckUrl } from './company-sso.config.js';
+import { companySsoConfigForRequest, type CompanySsoSettings } from './company-sso-request.js';
 import { CompanySsoError } from './company-sso.error.js';
 import { CompanySsoRateLimiter, type CompanySsoService } from './company-sso.service.js';
 
@@ -20,13 +21,13 @@ export interface CompanySsoAuditEvent {
 
 export type CompanySsoAuditCallback = (event: CompanySsoAuditEvent) => Promise<void>;
 
-export function registerCompanySsoRoutes(app: FastifyInstance, service: Pick<CompanySsoService, 'exchange'>, config: CompanySsoConfig, audit?: CompanySsoAuditCallback): void {
-  validateCompanySsoConfig(config);
+export function registerCompanySsoRoutes(app: FastifyInstance, service: Pick<CompanySsoService, 'exchange'>, settings: CompanySsoSettings, audit?: CompanySsoAuditCallback): void {
   const limiter = new CompanySsoRateLimiter();
   app.post('/v1/auth/sso/exchange', { bodyLimit: 16 * 1024 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const start = Date.now();
     try {
+      const config = await companySsoConfigForRequest(request, settings);
       if (!config.enabled) throw new CompanySsoError('service_unavailable');
       if (config.requireHttps && request.protocol !== 'https') throw new CompanySsoError('account_forbidden');
       const origin = request.headers.origin;
@@ -39,7 +40,7 @@ export function registerCompanySsoRoutes(app: FastifyInstance, service: Pick<Com
       validateCompanySsoCheckUrl(body.checkUrl, config);
       const authorization = request.headers.authorization;
       if (!authorization || authorization.length > 16384 || !/^Bearer [A-Za-z0-9._~+\/-]+=*$/i.test(authorization)) throw new CompanySsoError('invalid_request');
-      const { action, ...result } = await service.exchange(authorization.slice(7), body.checkUrl);
+      const { action, ...result } = await service.exchange(authorization.slice(7), body.checkUrl, config);
       const event: CompanySsoAuditEvent = { requestId: request.id, provider: 'company_sso', userId: result.user.id, action, outcome: 'success', durationMs: Date.now() - start, ip: request.ip };
       await audit?.(event);
       request.log.info(event, 'SSO exchange');

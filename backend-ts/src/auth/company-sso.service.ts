@@ -24,20 +24,19 @@ export class CompanySsoRateLimiter {
 
 export class CompanySsoService {
   constructor(
-    private readonly config: CompanySsoConfig,
     private readonly client: Pick<CompanySsoClient, 'verify'>,
     private readonly identities: Pick<CompanySsoIdentityRepository, 'resolve'>,
     private readonly jwt: JwtService,
     private readonly limiter = new CompanySsoRateLimiter(),
   ) {}
 
-  async exchange(token: string, checkUrl: string) {
-    if (!this.config.enabled) throw new CompanySsoError('service_unavailable');
-    const identity = await this.client.verify(token, checkUrl);
+  async exchange(token: string, checkUrl: string, config: CompanySsoConfig) {
+    if (!config.enabled) throw new CompanySsoError('service_unavailable');
+    const identity = await this.client.verify(token, checkUrl, config);
     this.limiter.consume(`subject:${identity.subject}`, 20);
-    this.ttl(identity.expiresAt);
+    this.ttl(identity.expiresAt, config);
     const { user, action } = await this.identities.resolve(identity);
-    const issued = this.jwt.generateCompanySsoToken(user.id!, user.username, this.ttl(identity.expiresAt));
+    const issued = this.jwt.generateCompanySsoToken(user.id!, user.username, this.ttl(identity.expiresAt, config));
     const lead = Math.min(120, issued.expiresIn * 0.2);
     return {
       action,
@@ -47,9 +46,9 @@ export class CompanySsoService {
     };
   }
 
-  private ttl(expiresAt: number): number {
+  private ttl(expiresAt: number, config: CompanySsoConfig): number {
     const remaining = Math.floor((expiresAt - Date.now()) / 1000);
     if (remaining < 30) throw new CompanySsoError('token_expiring');
-    return Math.min(this.config.accessTtlSeconds, remaining);
+    return Math.min(config.accessTtlSeconds, remaining);
   }
 }
