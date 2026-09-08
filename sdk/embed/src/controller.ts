@@ -9,7 +9,7 @@ import { SessionManager } from './core/session-manager';
 import { RestClient, AuthError } from './core/rest-client';
 import { TokenProvider, AUTH_MESSAGES, tokenSubject } from './core/token-provider';
 import { TabsCoordinator } from './core/tabs';
-import { ContextCollector, PREFIX_SEPARATOR, stripContextPrefix } from './context/collector';
+import { ContextCollector, PREFIX_SEPARATOR, extractQuotedSelection, stripContextPrefix } from './context/collector';
 import { SelectionTracker } from './context/selection';
 import type { ChatMessage, MessageSegment, ToolCallItem } from './types';
 import type {
@@ -61,7 +61,7 @@ export function createUiState(options: MaoChatInitOptions): UiState {
     connected: false,
     phase: null,
     unread: 0,
-    sessionTitle: 'Mao 助手',
+    sessionTitle: FALLBACK_PANEL_TITLE,
     agentAvatarUrl: null,
     sessionError: null,
     llmRetryText: null,
@@ -111,6 +111,15 @@ export function setController(c: EmbedController | null) {
 }
 export function getController(): EmbedController | null {
   return controller;
+}
+
+/** 浮窗标题在 Agent 名称尚未加载或为空时的占位 */
+const FALLBACK_PANEL_TITLE = 'Mao 助手';
+
+function displayAgentName(name: unknown): string | null {
+  if (typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  return trimmed || null;
 }
 
 /** 鉴权类错误文案：重新鉴权成功后自动清除 */
@@ -177,6 +186,8 @@ export class EmbedController {
   private readonly submittedQuestionIds = new Set<string>();
   /** 落库超时后仍可能迟到的确认：eventId → localId，只用于补做 id 升级，不再计时 */
   private readonly unconfirmedSaves = new Map<string, string>();
+  /** 管理后台配置的 Agent 名称；浮窗标题用这个，不跟会话自动标题走 */
+  private agentDisplayName: string | null = null;
 
   constructor(
     public readonly options: MaoChatInitOptions,
@@ -317,12 +328,17 @@ export class EmbedController {
     this.ui.quotedSelection = null;
     this.selectionTracker?.dismiss(this.selectionTracker.peek());
     this.contextCollector.restoreHash(null);
-    this.ui.sessionTitle = 'Mao 助手';
+    this.agentDisplayName = null;
+    this.applyPanelTitle();
     this.ui.agentAvatarUrl = null;
     this.booted = false;
     // Run after the single-flight token acquisition settles; never reuse old session requests.
     if (this.ui.panelOpen) this.resumeAuthenticatedPanel();
     return true;
+  }
+
+  private applyPanelTitle() {
+    this.ui.sessionTitle = this.agentDisplayName ?? FALLBACK_PANEL_TITLE;
   }
 
   /** 历史加载器：boot 首次加载与重连对账共用同一映射逻辑 */
@@ -348,7 +364,9 @@ export class EmbedController {
       roundTools = new Map();
       if (m.role !== 'USER' && m.role !== 'ASSISTANT') continue;
       // 上下文剥离必须先于 segments 构建，两个表示都只能含用户输入。
-      const content = m.role === 'USER' ? stripContextPrefix(m.content ?? '') : m.content ?? '';
+      const raw = m.content ?? '';
+      const quotedSelection = m.role === 'USER' ? extractQuotedSelection(raw) : undefined;
+      const content = m.role === 'USER' ? stripContextPrefix(raw) : raw;
       const thinking = m.thinkingContent ?? '';
       const segments: MessageSegment[] = [];
       // 单行仅存聚合字段，没有 delta 顺序。思考→正文是展示约定，不拆分/伪造交错。
@@ -383,6 +401,7 @@ export class EmbedController {
         streaming: false,
         error: false,
         toolCalls,
+        quotedSelection,
       });
     }
     return messages;
@@ -426,6 +445,8 @@ export class EmbedController {
       this.ui.agentAvatarUrl = agent.avatarUrl
         ? new URL(agent.avatarUrl, resolveApiBase(this.options.serverUrl)).href
         : null;
+      this.agentDisplayName = displayAgentName(agent.name);
+      this.applyPanelTitle();
       // 多 tab 竞态：先问其他 tab 是否已有会话
       const claimed = await this.tabs.inquire();
       if (stale()) return;
@@ -436,7 +457,6 @@ export class EmbedController {
       if (stale()) return;
       this.tabs.claim(session.id);
       this.store.bindSession(session.id);
-      this.ui.sessionTitle = session.title || 'Mao 助手';
       // 历史先于 WS subscribe 拉取：避免流事件先到导致 messages 非空而跳过历史补齐
       await this.store.ensureHistory(this.fetchHistory);
       if (stale()) return;
@@ -479,11 +499,9 @@ export class EmbedController {
       case 'user_message_saved':
         this.onUserMessageSaved(msg);
         break;
-      case 'session_title_updated': {
-        const title = (msg.data as { title?: string } | undefined)?.title;
-        if (title && msg.sessionId === this.store.sessionId()) this.ui.sessionTitle = title;
+      case 'session_title_updated':
+        // 浮窗标题固定为 Agent 名称，会话自动标题只用于 desktop 列表
         return;
-      }
       case 'ask_user_questions': {
         const data = msg.data as { requestId?: string; questions?: unknown[] } | undefined;
         if (data?.requestId) {
@@ -598,7 +616,7 @@ export class EmbedController {
       this.submittedQuestionIds.clear();
       this.store.reset();
       this.store.bindSession(session.id);
-      this.ui.sessionTitle = session.title || 'Mao 助手';
+      this.applyPanelTitle();
       this.ui.phase = null;
       this.ui.sessionError = null;
       this.ui.questionSubmitting = false;
@@ -705,7 +723,8 @@ export class EmbedController {
     if (selection) this.selectionTracker?.consume(selection);
     this.ui.quotedSelection = null;
     const full = prefix ? `${prefix}${PREFIX_SEPARATOR}${content}` : content;
-    const localId = this.store.appendLocalUserMessage(content);
+    const quote = prefix ? extractQuotedSelection(full) : null;
+    const localId = this.store.appendLocalUserMessage(content, quote);
     this.ui.sessionError = null;
     this.store.sessionError.value = null;
     const eventId = `ev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;

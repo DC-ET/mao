@@ -37,8 +37,6 @@ const composerEl = ref<InstanceType<typeof Composer> | null>(null);
 
 // embed 会话固定为 CLOUD，无工具审批环节，故不含 WAITING_APPROVAL
 const running = computed(() => props.phase === 'RUNNING' || props.phase === 'RESUMING');
-// 断线不禁用输入：sendReliable 会先重连再补发（Composer 内已有对应提示）
-const inputDisabled = computed(() => running.value);
 const isEmpty = computed(() => props.messages.length === 0);
 /** header 副标题：运行态优先，其次连接态（连接指示灯颜色只表示已鉴权） */
 const statusText = computed(() => (running.value ? '正在处理…' : props.connected ? '在线' : '连接中…'));
@@ -85,7 +83,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 </script>
 
 <template>
-  <div v-if="open" class="mao-panel" :data-pos="position" role="dialog" aria-label="Mao 助手对话">
+  <div v-if="open" class="mao-panel" :data-pos="position" role="dialog" :aria-label="`${sessionTitle}对话`">
     <div class="mao-panel__header">
       <span class="mao-panel__avatar" aria-hidden="true">
         <img v-if="agentAvatarUrl" class="mao-agent-avatar" :src="agentAvatarUrl" alt="" />
@@ -132,7 +130,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 
     <Composer
       ref="composerEl"
-      :disabled="inputDisabled"
       :running="running"
       :quoted-selection="quotedSelection"
       :connection-error="!connected"

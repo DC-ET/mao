@@ -2,7 +2,6 @@
 import { nextTick, ref, watch } from 'vue';
 
 const props = defineProps<{
-  disabled: boolean;
   running: boolean;
   quotedSelection: string | null;
   connectionError: boolean;
@@ -28,7 +27,9 @@ watch(text, () => nextTick(autoGrow));
 
 function onSend() {
   const content = text.value.trim();
-  if (!content || props.disabled) return;
+  if (!content) return;
+  // 执行中可继续打字，但不发出：embed 无消息队列，发出会被服务端拒绝并丢掉草稿
+  if (props.running) return;
   emit('send', content);
   text.value = '';
 }
@@ -62,12 +63,11 @@ defineExpose({ focus });
         class="mao-composer__input"
         rows="1"
         aria-label="消息输入框"
-        :disabled="disabled"
-        :placeholder="disabled ? (running ? '执行中…' : '连接中…') : '输入消息，Enter 发送'"
+        placeholder="输入消息，Enter 发送"
         @keydown="onKeydown"
       />
       <button v-if="running" class="mao-composer__stop" type="button" @click="emit('stop')">停止</button>
-      <button v-else class="mao-composer__send" type="button" :disabled="disabled || !text.trim()" @click="onSend">
+      <button v-else class="mao-composer__send" type="button" :disabled="!text.trim()" @click="onSend">
         <svg viewBox="0 0 24 24"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
       </button>
     </div>

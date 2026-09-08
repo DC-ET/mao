@@ -72,6 +72,24 @@ export function stripContextPrefix(content: string): string {
   return content.slice(idx + PREFIX_SEPARATOR.length);
 }
 
+/**
+ * 从拼装后的完整消息取出用户选中引用（不含页面上下文 JSON）。
+ * 气泡回显用：让用户看见这段文字已随消息交给 Agent。
+ */
+export function extractQuotedSelection(content: string): string | null {
+  if (!content.startsWith(CONTEXT_HEADER) && !content.startsWith(SELECTION_HEADER)) return null;
+  const idx = content.indexOf(PREFIX_SEPARATOR);
+  const prefix = idx < 0 ? content : content.slice(0, idx);
+  const marker = `${SELECTION_HEADER}\n`;
+  const start = prefix.indexOf(marker);
+  if (start < 0) return null;
+  let text = prefix.slice(start + marker.length);
+  const next = text.search(/\n\n\[/);
+  if (next >= 0) text = text.slice(0, next);
+  const trimmed = text.trim();
+  return trimmed || null;
+}
+
 export class ContextCollector {
   private lastHash: string | null = null;
   /** 宿主通过 chat.setContext() 命令式覆盖的上下文 */

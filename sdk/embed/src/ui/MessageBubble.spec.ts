@@ -32,8 +32,9 @@ describe('MessageBubble timeline', () => {
     setup();
     const nodes = [...el.querySelector('.mao-msg__bubble')!.children];
     expect(nodes.map((node) => node.className)).toEqual([
-      'mao-thinking', 'mao-msg__md', 'mao-toolgroup', 'mao-thinking', 'mao-msg__md mao-cursor',
+      'mao-thinking', 'mao-msg__md', 'mao-toolgroup', 'mao-thinking', 'mao-msg__md', 'mao-typing',
     ]);
+    expect(el.querySelectorAll('.mao-typing span')).toHaveLength(3);
     expect([...el.querySelectorAll('details')].every((node) => !node.open)).toBe(true);
     expect(el.querySelector('button')?.getAttribute('aria-expanded')).toBe('false');
     expect(el.querySelector('.mao-toolcard')).toBeNull();
@@ -70,9 +71,55 @@ describe('MessageBubble timeline', () => {
     expect(button.textContent).toContain('执行结束');
     expect(el.querySelector('.mao-toolcard__result')?.textContent).toBe('<script>bad()</script>');
     expect(el.querySelector('script')).toBeNull();
-    expect(el.querySelector('.mao-cursor')).toBeNull();
+    expect(el.querySelector('.mao-typing')).toBeNull();
     button.click();
     await nextTick();
     expect(el.querySelector('.mao-toolcard')).toBeNull();
+  });
+});
+
+describe('MessageBubble typing dots', () => {
+  it('工具执行中不显示三点，结束后等待下一轮输出时显示', async () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const send = (type: string, data: Record<string, unknown>) => {
+      store.handleEvent({ type, sessionId: 1, data } as WsServerEvent);
+    };
+    send('tool_call_start', { tool_call_id: 't1', tool_name: 'glob_search' });
+    el = document.createElement('div');
+    document.body.appendChild(el);
+    app = createApp({ render: () => h(MessageBubble, { message: store.messages.value[0] }) });
+    app.mount(el);
+    expect(el.querySelector('.mao-typing')).toBeNull();
+
+    send('tool_call_result', { tool_call_id: 't1', status: 'success', result: 'ok' });
+    await nextTick();
+    expect(el.querySelectorAll('.mao-typing span')).toHaveLength(3);
+  });
+});
+
+describe('MessageBubble quote', () => {
+  it('用户气泡回显选中引用，正文仍是提问', () => {
+    el = document.createElement('div');
+    document.body.appendChild(el);
+    app = createApp({
+      render: () => h(MessageBubble, {
+        message: {
+          id: 'u1',
+          role: 'user',
+          content: '帮我看下',
+          thinking: '',
+          streaming: false,
+          error: false,
+          segments: [],
+          toolCalls: [],
+          quotedSelection: '不健康实例 telemetry 10.140.0.96:8080',
+        },
+      }),
+    });
+    app.mount(el);
+    expect(el.querySelector('.mao-msg__quote-label')?.textContent).toBe('讨论');
+    expect(el.querySelector('.mao-msg__quote-text')?.textContent).toBe('不健康实例 telemetry 10.140.0.96:8080');
+    expect(el.querySelector('.mao-msg__text')?.textContent).toBe('帮我看下');
   });
 });

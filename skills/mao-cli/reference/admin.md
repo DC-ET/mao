@@ -43,7 +43,7 @@ CLI：`mao model list|create|update|delete|set-status|test`（见 [model.md](mod
 
 头像区域使用预览卡片，更换与移除按钮横向排列，窄屏自动调整布局；上传中显示进度状态并禁止重复操作。
 
-头像支持 PNG / JPEG / WebP，最大 2 MiB、4096 × 4096 像素，不支持动画；服务端验证、去除元数据并缩放至 512 × 512 范围后转为 PNG。上传或移除后须保存 Agent 才生效；复制继承头像。后台列表、客户端 Agent 选择入口与 Embed SDK 使用同一头像；未配置时使用原有默认标识。头像属于公开展示资源，请勿上传敏感图片。上传与保存需要 `agent:write` 权限。
+头像支持 PNG / JPEG / WebP，最大 2 MiB、4096 × 4096 像素，不支持动画；服务端验证、去除元数据并缩放至 512 × 512 范围后转为 PNG。上传或移除后须保存 Agent 才生效；复制继承头像。后台列表、客户端 Agent 选择入口与 Embed SDK 使用同一头像；Embed SDK 浮窗标题同时显示 Agent 名称。未配置头像时使用原有默认标识。头像属于公开展示资源，请勿上传敏感图片。上传与保存需要 `agent:write` 权限。
 
 CLI：`mao agent list|get|create|update` 等（见 [agent.md](agent.md)）。
 

@@ -61,6 +61,8 @@ export interface ChatMessage {
   segments: MessageSegment[];
   /** 工具调用卡片 */
   toolCalls: ToolCallItem[];
+  /** 随本条发出的页面选中引用；仅用户气泡回显，不进助手侧 */
+  quotedSelection?: string | null;
 }
 
 export interface ToolCallItem {
