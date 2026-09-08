@@ -37,7 +37,7 @@
 
 ### 后端
 
-- 公司 SSO 校验上游 `Content-Type` 时允许 `application/json;charset=UTF-8`（分号前无空格，Spring 常见写法）；换票 503 日志增加不含凭证的 `detail`（`content_type` / `http_*` / `contract` / `transport` / `oversized`）。HTTP/2 常无 `Content-Length` 或网关填了缓冲大小，改为只限制实际响应字节，避免误判 oversized。
+- 公司 SSO 校验上游 `Content-Type` 时允许 `application/json;charset=UTF-8`（分号前无空格）；换票 503 日志带不含凭证的 `detail`。checkToken 响应上限从 64KB 提到 1MB（公司 claims 常超过 64KB），超限时 `detail` 为 `oversized:<实际字节>`。
 
 - 公司 SSO 首次换票允许按可信邮箱绑定已有启用的管理员账号，不改角色、密码或飞书绑定；新建账号仍只授普通用户。禁用/删除账号与邮箱冲突仍拒绝。
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CompanySsoClient } from './company-sso.client.js';
+import { CompanySsoClient, MAX_SSO_BODY_BYTES } from './company-sso.client.js';
 import type { CompanySsoConfig } from './company-sso.config.js';
 
 const checkUrl = 'https://sgs.acg.team/api/sso-auth/auth/checkToken';
@@ -28,14 +28,16 @@ describe('CompanySsoClient', () => {
     expect(fetcher.mock.calls[0][1]).not.toHaveProperty('body');
   });
 
-  it('ignores a lying Content-Length header and only caps actual bytes', async () => {
-    const payload = { code: 0, success: true, data: { illegal: false, claims: claims() } };
+  it('ignores a lying Content-Length header and accepts checkToken bodies over 64KiB', async () => {
+    const payload = { code: 0, success: true, data: { illegal: false, claims: { ...claims(), padding: 'n'.repeat(70_000) } } };
     const ok = new Response(JSON.stringify(payload), {
       headers: { 'content-type': 'application/json;charset=UTF-8', 'content-length': '999999' },
     });
     await expect(new CompanySsoClient(vi.fn().mockResolvedValue(ok)).verify('synthetic', checkUrl, config)).resolves.toMatchObject({ subject: '3089' });
-    const huge = new Response('x'.repeat(65537), { headers: { 'content-type': 'application/json' } });
-    await expect(new CompanySsoClient(vi.fn().mockResolvedValue(huge)).verify('synthetic', checkUrl, config)).rejects.toMatchObject({ status: 503, detail: 'oversized' });
+    const huge = new Response('x'.repeat(MAX_SSO_BODY_BYTES + 1), { headers: { 'content-type': 'application/json' } });
+    await expect(new CompanySsoClient(vi.fn().mockResolvedValue(huge)).verify('synthetic', checkUrl, config)).rejects.toMatchObject({
+      status: 503, detail: `oversized:${MAX_SSO_BODY_BYTES + 1}`,
+    });
   });
 
   it.each(['application/json', 'application/json;charset=UTF-8', 'application/json; charset=UTF-8'])('accepts JSON content type %s', async (contentType) => {
@@ -68,7 +70,6 @@ describe('CompanySsoClient', () => {
 
   it('bounds streamed responses and suppresses transport error details', async () => {
     const cases = [
-      { fetcher: vi.fn().mockResolvedValue(new Response('x'.repeat(65537), { headers: { 'content-type': 'application/json' } })), detail: 'oversized' },
       { fetcher: vi.fn().mockRejectedValue(new Error('https://example.test/?token=secret')), detail: 'transport' },
       { fetcher: vi.fn().mockResolvedValue(new Response('', { status: 302, headers: { location: 'https://elsewhere.test' } })), detail: 'http_302' },
       { fetcher: vi.fn().mockResolvedValue(new Response('<html></html>', { headers: { 'content-type': 'text/html' } })), detail: 'content_type' },

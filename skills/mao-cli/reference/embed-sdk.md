@@ -106,7 +106,7 @@ const chat = MaoChat.init({
 | 横幅"登录凭据已失效" | 服务端以 `close(1003)` 拒绝了 token；重新鉴权成功后横幅会自动消失 |
 | 横幅"无法连接到助手服务" | WS 连不上（域名 / 证书 / CSP / 网络）；原始错误可从 `onEvent` 的 `error` 事件取到 |
 | 跨源请求被浏览器拒绝 | 确认后端版本 ≥ 0.0.111（CORS 预检反射请求头，覆盖 `Authorization` 与宿主 APM 的 `sw8` 等）；生产 Nginx 不要另行覆盖 CORS 头 |
-| 换票 503 | Mao 调用 checkToken 未通过：日志 `detail` 为 `content_type` / `http_*` / `contract` / `transport` / `oversized`。须在 Mao 主机上 curl 校验；`oversized` 在 0.0.111 起只按实际字节数判断 |
+| 换票 503 | Mao 调用 checkToken 未通过：看日志 `detail`。`oversized:<n>` 表示响应超过 1MB；公司 claims 超过 64KB 属正常，需 0.0.111 含 1MB 上限的后端 |
 
 ## 开发与发布
 

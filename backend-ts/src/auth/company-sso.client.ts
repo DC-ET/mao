@@ -21,7 +21,30 @@ function unavailable(detail: string): CompanySsoError {
   return new CompanySsoError('service_unavailable', undefined, detail);
 }
 
-const MAX_SSO_BODY_BYTES = 65536;
+/** Company checkToken JSON often exceeds 64KiB (departments, extra claims). Cap is DoS protection only. */
+export const MAX_SSO_BODY_BYTES = 1024 * 1024;
+
+async function readLimitedBody(response: Response): Promise<Buffer> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > MAX_SSO_BODY_BYTES) throw unavailable(`oversized:${buffer.byteLength}`);
+    return buffer;
+  }
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const part = await reader.read();
+    if (part.done) break;
+    size += part.value.byteLength;
+    if (size > MAX_SSO_BODY_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw unavailable(`oversized:${size}`);
+    }
+    chunks.push(part.value);
+  }
+  return Buffer.concat(chunks, size);
+}
 
 export class CompanySsoClient {
   constructor(private readonly fetcher: typeof fetch = fetch) {}
@@ -36,9 +59,7 @@ export class CompanySsoClient {
       const response = await this.fetcher(url, { method: 'GET', headers: { Accept: 'application/json' }, redirect: 'error', signal: controller.signal });
       if (!response.ok) throw unavailable(`http_${response.status}`);
       if (!isJsonContentType(response.headers.get('content-type'))) throw unavailable('content_type');
-      // HTTP/2 / ELB often omit Content-Length or advertise a buffer size; only cap actual bytes.
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.byteLength > MAX_SSO_BODY_BYTES) throw unavailable('oversized');
+      const buffer = await readLimitedBody(response);
       let body: unknown;
       try {
         body = JSON.parse(buffer.toString('utf8'));
