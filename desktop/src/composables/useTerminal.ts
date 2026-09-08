@@ -476,6 +476,13 @@ export function useTerminal() {
         ? remaining[Math.min(Math.max(visibleIdx, 0), remaining.length - 1)].id
         : null
     }
+
+    // 最后一个可见终端被关闭（用户关闭 / 进程退出 / 被回收）后自动收起面板，
+    // 避免留下只剩空态提示的终端区域
+    if (isOpen.value && visibleTabs.value.length === 0) {
+      isOpen.value = false
+      detachRemoteTerminals(null)
+    }
   }
 
   async function togglePanel(cwd?: string) {
