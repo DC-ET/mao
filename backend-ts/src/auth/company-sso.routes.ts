@@ -17,6 +17,7 @@ export interface CompanySsoAuditEvent {
   outcome: 'success' | SsoErrorKind;
   durationMs: number;
   ip: string;
+  detail?: string;
 }
 
 export type CompanySsoAuditCallback = (event: CompanySsoAuditEvent) => Promise<void>;
@@ -49,6 +50,7 @@ export function registerCompanySsoRoutes(app: FastifyInstance, service: Pick<Com
       const safe = error instanceof CompanySsoError ? error : new CompanySsoError('service_unavailable');
       if (safe.retryAfter) reply.header('Retry-After', safe.retryAfter);
       const event: CompanySsoAuditEvent = { requestId: request.id, provider: 'company_sso', outcome: safe.kind, durationMs: Date.now() - start, ip: request.ip };
+      if (safe.detail) event.detail = safe.detail;
       try {
         await audit?.(event);
       } catch {

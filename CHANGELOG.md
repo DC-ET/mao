@@ -37,6 +37,8 @@
 
 ### 后端
 
+- 公司 SSO 校验上游 `Content-Type` 时允许 `application/json;charset=UTF-8`（分号前无空格，Spring 常见写法）；换票 503 日志增加不含凭证的 `detail`（`content_type` / `http_*` / `contract` / `transport`），便于区分校验失败与网络失败。
+
 - 公司 SSO 首次换票允许按可信邮箱绑定已有启用的管理员账号，不改角色、密码或飞书绑定；新建账号仍只授普通用户。禁用/删除账号与邮箱冲突仍拒绝。
 
 - CORS 预检改为反射客户端请求头，不再用静态 `allowedHeaders` 白名单。宿主页注入的 SkyWalking `sw8` 等自定义头可通过跨源换票与 REST，无需为每个头改后端；`Authorization` 仍由反射覆盖（`*` 对它无效）。

@@ -20,6 +20,7 @@
 - 管理后台菜单缺失：角色权限、登录是否过期
 - Embed 浮窗跨源报 `sw8` / 自定义头不在 `Access-Control-Allow-Headers`：0.0.111 起预检反射请求头，升级后端即可，不必为每个头改白名单；确认 Nginx `/api/` 未另行覆盖 CORS
 - Embed 管理员换票 403：0.0.111 起允许按邮箱绑定已有启用管理员；仍拒绝禁用/删除账号。升级后端后用同一邮箱再换一次即可，不会改原角色
+- Embed 换票 503 且 `durationMs` 约几十毫秒：Mao 已调用公司 checkToken 但未通过校验。0.0.111 起日志带 `detail`（`content_type` / `http_401` / `contract` / `transport`）。在 **Mao 服务器本机** `curl -D - -H 'Accept: application/json' 'https://<checkUrl>?token=...'` 看状态码和 Content-Type；浏览器能通则不代表 Mao 主机网络/证书/响应一致
 
 ## Agent 无回复
 

@@ -13,7 +13,7 @@ const ERRORS: Record<SsoErrorKind, { status: number; code: number; message: stri
 export class CompanySsoError extends Error {
   readonly status: number;
   readonly code: number;
-  constructor(readonly kind: SsoErrorKind, readonly retryAfter?: number) {
+  constructor(readonly kind: SsoErrorKind, readonly retryAfter?: number, readonly detail?: string) {
     super(ERRORS[kind].message);
     this.status = ERRORS[kind].status;
     this.code = ERRORS[kind].code;

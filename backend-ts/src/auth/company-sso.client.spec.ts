@@ -28,6 +28,13 @@ describe('CompanySsoClient', () => {
     expect(fetcher.mock.calls[0][1]).not.toHaveProperty('body');
   });
 
+  it.each(['application/json', 'application/json;charset=UTF-8', 'application/json; charset=UTF-8'])('accepts JSON content type %s', async (contentType) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      code: 0, success: true, data: { illegal: false, claims: claims() },
+    }), { headers: { 'content-type': contentType } }));
+    await expect(new CompanySsoClient(fetcher).verify('synthetic', checkUrl, config)).resolves.toMatchObject({ subject: '3089' });
+  });
+
   it.each(['https://evilacg.team/check', 'https://acg.team.evil.com/check', 'http://acg.team', 'https://acg.team?token=existing', 'not a URL'])('rejects %s before any outbound request', async (url) => {
     const fetcher = vi.fn<typeof fetch>();
     await expect(new CompanySsoClient(fetcher).verify('synthetic', url, config)).rejects.toMatchObject({ status: 400 });
@@ -40,7 +47,7 @@ describe('CompanySsoClient', () => {
     { code: 0, success: true, data: { illegal: false, claims: { ...claims(), id: '3089' } } },
     { code: 0, success: true, data: { illegal: false, claims: { ...claims(), exp: undefined } } },
   ])('fails closed for ambiguous contract %j', async (body) => {
-    await expect(new CompanySsoClient(vi.fn().mockResolvedValue(response(body))).verify('synthetic', checkUrl, config)).rejects.toMatchObject({ status: 503 });
+    await expect(new CompanySsoClient(vi.fn().mockResolvedValue(response(body))).verify('synthetic', checkUrl, config)).rejects.toMatchObject({ status: 503, detail: 'contract' });
   });
 
   it('distinguishes explicit illegal and expired credentials', async () => {
@@ -50,12 +57,14 @@ describe('CompanySsoClient', () => {
   });
 
   it('bounds streamed responses and suppresses transport error details', async () => {
-    for (const fetcher of [
-      vi.fn().mockResolvedValue(new Response('x'.repeat(65537), { headers: { 'content-type': 'application/json' } })),
-      vi.fn().mockRejectedValue(new Error('https://example.test/?token=secret')),
-      vi.fn().mockResolvedValue(new Response('', { status: 302, headers: { location: 'https://elsewhere.test' } })),
-    ]) {
-      await expect(new CompanySsoClient(fetcher).verify('synthetic', checkUrl, config)).rejects.toMatchObject({ status: 503, message: 'SSO service is unavailable' });
+    const cases = [
+      { fetcher: vi.fn().mockResolvedValue(new Response('x'.repeat(65537), { headers: { 'content-type': 'application/json' } })), detail: 'oversized' },
+      { fetcher: vi.fn().mockRejectedValue(new Error('https://example.test/?token=secret')), detail: 'transport' },
+      { fetcher: vi.fn().mockResolvedValue(new Response('', { status: 302, headers: { location: 'https://elsewhere.test' } })), detail: 'http_302' },
+      { fetcher: vi.fn().mockResolvedValue(new Response('<html></html>', { headers: { 'content-type': 'text/html' } })), detail: 'content_type' },
+    ];
+    for (const { fetcher, detail } of cases) {
+      await expect(new CompanySsoClient(fetcher).verify('synthetic', checkUrl, config)).rejects.toMatchObject({ status: 503, detail, message: 'SSO service is unavailable' });
     }
   });
 
