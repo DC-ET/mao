@@ -21,6 +21,8 @@ function unavailable(detail: string): CompanySsoError {
   return new CompanySsoError('service_unavailable', undefined, detail);
 }
 
+const MAX_SSO_BODY_BYTES = 65536;
+
 export class CompanySsoClient {
   constructor(private readonly fetcher: typeof fetch = fetch) {}
 
@@ -29,24 +31,20 @@ export class CompanySsoClient {
     const url = validateCompanySsoCheckUrl(checkUrl, config);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       url.searchParams.set('token', token);
       const response = await this.fetcher(url, { method: 'GET', headers: { Accept: 'application/json' }, redirect: 'error', signal: controller.signal });
       if (!response.ok) throw unavailable(`http_${response.status}`);
       if (!isJsonContentType(response.headers.get('content-type'))) throw unavailable('content_type');
-      if (Number(response.headers.get('content-length')) > 65536 || !response.body) throw unavailable('oversized');
-      reader = response.body.getReader();
-      const chunks: Uint8Array[] = [];
-      let size = 0;
-      for (;;) {
-        const part = await reader.read();
-        if (part.done) break;
-        size += part.value.byteLength;
-        if (size > 65536) throw unavailable('oversized');
-        chunks.push(part.value);
+      // HTTP/2 / ELB often omit Content-Length or advertise a buffer size; only cap actual bytes.
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > MAX_SSO_BODY_BYTES) throw unavailable('oversized');
+      let body: unknown;
+      try {
+        body = JSON.parse(buffer.toString('utf8'));
+      } catch {
+        throw unavailable('contract');
       }
-      const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (!record(body) || body.code !== 0 || body.success !== true || !record(body.data)) throw unavailable('contract');
       if (body.data.illegal === true) throw new CompanySsoError('invalid_token');
       if (body.data.illegal !== false || !record(body.data.claims)) throw unavailable('contract');
@@ -64,7 +62,6 @@ export class CompanySsoClient {
       throw unavailable('transport');
     } finally {
       controller.abort();
-      await reader?.cancel().catch(() => {});
       clearTimeout(timer);
     }
   }

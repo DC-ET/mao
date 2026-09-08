@@ -28,6 +28,16 @@ describe('CompanySsoClient', () => {
     expect(fetcher.mock.calls[0][1]).not.toHaveProperty('body');
   });
 
+  it('ignores a lying Content-Length header and only caps actual bytes', async () => {
+    const payload = { code: 0, success: true, data: { illegal: false, claims: claims() } };
+    const ok = new Response(JSON.stringify(payload), {
+      headers: { 'content-type': 'application/json;charset=UTF-8', 'content-length': '999999' },
+    });
+    await expect(new CompanySsoClient(vi.fn().mockResolvedValue(ok)).verify('synthetic', checkUrl, config)).resolves.toMatchObject({ subject: '3089' });
+    const huge = new Response('x'.repeat(65537), { headers: { 'content-type': 'application/json' } });
+    await expect(new CompanySsoClient(vi.fn().mockResolvedValue(huge)).verify('synthetic', checkUrl, config)).rejects.toMatchObject({ status: 503, detail: 'oversized' });
+  });
+
   it.each(['application/json', 'application/json;charset=UTF-8', 'application/json; charset=UTF-8'])('accepts JSON content type %s', async (contentType) => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       code: 0, success: true, data: { illegal: false, claims: claims() },
