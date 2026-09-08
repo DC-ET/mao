@@ -25,6 +25,7 @@ export interface WsHandlerDeps {
     getMessages(sessionId: number): Promise<Message[]>;
     getLastUserMessage(sessionId: number): Promise<Message | null>;
     editMessageAndTruncate(sessionId: number, messageId: number, content: string, images: string[]): Promise<Message>;
+    deleteMessageById(sessionId: number, messageId: number): Promise<void>;
     save(session: Session): Promise<void>;
     listSubagentSessions(parentId: number): Promise<Session[]>;
     cleanupIncompleteTail(sessionId: number): Promise<number>;
@@ -124,8 +125,8 @@ export class StreamingWsHandler {
   private readonly pendingMcpSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
   private readonly autoConsumingSessionIds = new Set<number>();
   private readonly suppressAutoConsumeSend = new Set<number>();
-  /** 用户已点「停止」但 cancel flag 尚未注册（执行提交前的窗口期）的会话；注册标志时立即消费。 */
-  private readonly pendingCancels = new Set<number>();
+  /** 用户已点「停止」但 cancel flag 尚未注册（执行提交前的窗口期）的会话 → 登记时间戳；注册标志时按时间判定消费。 */
+  private readonly pendingCancels = new Map<number, number>();
   private readonly insertLocks = new Map<number, Promise<void>>();
   private readonly mcpSyncTimeoutSeconds: number;
 
@@ -254,9 +255,15 @@ export class StreamingWsHandler {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
     const data = (root.data ?? {}) as Record<string, unknown>;
+    // 本次发送的起始时间：pendingCancels 只消费「登记时间晚于本次发送开始」的取消标记，
+    // 避免此前一次取消（当时无执行在跑）残留的标记误杀用户后续的新发送。
+    const sendStartedAt = Date.now();
     // claimAlreadyHeld=true 表示调用方（auto-consume）已在出队前占位会话，
     // 本方法内任何未进入执行的失败出口都必须释放占位，否则会话永久卡死
     const claimAlreadyHeld = data.executionClaimHeld === true;
+    // auto-consume / 插队路径的消息在调用本方法前已落库：校验失败回补队首时须一并删除孤儿消息，
+    // 否则下次消费会再写一条同内容 USER 消息（重复落库）。
+    const autoSavedMessageId = typeof data.autoSavedMessageId === 'number' ? data.autoSavedMessageId : null;
     if (typeof data.content !== 'string') {
       if (claimAlreadyHeld) this.executionClaims.delete(sessionId);
       return;
@@ -275,6 +282,13 @@ export class StreamingWsHandler {
     const requeueIfClaimed = async () => {
       if (!claimAlreadyHeld) return;
       this.executionClaims.delete(sessionId);
+      if (autoSavedMessageId != null) {
+        try {
+          await this.deps.sessionService.deleteMessageById(sessionId, autoSavedMessageId);
+        } catch (e) {
+          console.error(`Failed to delete orphan auto-saved message ${autoSavedMessageId} for session ${sessionId}`, e);
+        }
+      }
       try {
         await this.deps.messageQueueService.enqueueHead(
           sessionId, userId, content, images.length > 0 ? JSON.stringify(images) : null,
@@ -346,8 +360,11 @@ export class StreamingWsHandler {
     // 注册完成后回调在下一个微任务执行，但此刻仍在同一同步段内，
     // 通过注册时返回值立即消费，避免用户点「停止」后任务照常跑完。
     const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
-    if (this.pendingCancels.delete(sessionId)) {
+    const pendingCancelAt = this.pendingCancels.get(sessionId);
+    this.pendingCancels.delete(sessionId);
+    if (pendingCancelAt != null && pendingCancelAt >= sendStartedAt) {
       // 用户已在执行提交前点「停止」：释放占位并落 CANCELLED 终态，不提交执行。
+      // 早于本次发送开始的残留标记（上次取消的遗留）在此被静默清除，不影响本次发送。
       flag.set(true);
       this.executionClaims.delete(sessionId);
       this.autoConsumingSessionIds.delete(sessionId);
@@ -549,13 +566,26 @@ export class StreamingWsHandler {
       return;
     }
     const messageContent: unknown = images.length === 0 ? content : contentParts(content, images);
-    const resolvedEventId = await this.deps.harnessService.prepareMessage(sessionId, messageContent);
-    this.deps.registry.subscribe(userId, sessionId);
-    const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
-    this.cancelFlags.set(sessionId, flag);
-    this.runningExecutionIds.set(sessionId, resolvedEventId);
-    this.submitExecution(sessionId, userId, resolvedEventId, (futureRef) =>
-      this.runExecution(session, userId, sessionId, resolvedEventId, flag, true, futureRef));
+    try {
+      const resolvedEventId = await this.deps.harnessService.prepareMessage(sessionId, messageContent);
+      this.deps.registry.subscribe(userId, sessionId);
+      const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
+      this.cancelFlags.set(sessionId, flag);
+      this.runningExecutionIds.set(sessionId, resolvedEventId);
+      this.submitExecution(sessionId, userId, resolvedEventId, (futureRef) =>
+        this.runExecution(session, userId, sessionId, resolvedEventId, flag, true, futureRef));
+    } catch (e) {
+      // claim 添加后、执行提交前的异常路径必须释放占位，否则会话永久判定 busy。
+      // submitExecution 提交被拒时已自行回滚并发事件，仅当占位仍在时才收敛，避免重复发 error。
+      if (!this.executionClaims.has(sessionId)) return;
+      this.cancelFlags.delete(sessionId);
+      this.runningExecutionIds.delete(sessionId);
+      this.deps.agentLoop.removeCancelFlag(sessionId);
+      this.executionClaims.delete(sessionId);
+      this.deps.registry.send(userId, wsEvent('error', sessionId, {
+        message: `编辑重发失败: ${e instanceof Error ? e.message : String(e)}`,
+      }));
+    }
   }
 
   private async handleToolResult(userId: number, root: Record<string, unknown>): Promise<void> {
@@ -913,11 +943,13 @@ export class StreamingWsHandler {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
-    if (!this.cancelFlags.has(sessionId) && !this.executionClaims.has(sessionId)) {
+    if (!this.cancelFlags.has(sessionId)) {
       // 执行尚未提交（send 的模型校验/LOCAL 检查/saveMessage await 期间，或 autoConsume 的 500ms 延迟窗口）：
-      // cancel flag 尚未注册，直接 set(true) 会空转。记录待取消标记（注册标志时消费），
+      // cancel flag 尚未注册，直接 set(true) 会空转。记录待取消标记（注册标志时按时间判定消费），
       // 同时落 CANCELLED 终态，保证 DB 状态收敛。
-      this.pendingCancels.add(sessionId);
+      // claim 已持有但 flag 未注册的窗口同样适用：否则 send 从 await 恢复后会照常提交执行，
+      // 并把此处写入的 CANCELLED 覆盖回 RUNNING，用户的取消被静默丢弃。
+      this.pendingCancels.set(sessionId, Date.now());
       this.deps.registry.send(userId, wsEvent('cancelled', sessionId, { pending: true, executionId: this.runningExecutionIds.get(sessionId) ?? '' }));
       await this.finishCancelledSession(sessionId, userId, this.runningExecutionIds.get(sessionId) ?? randomUUID());
       return;
@@ -946,7 +978,6 @@ export class StreamingWsHandler {
     if (!data || data.queueId == null) return;
     const queueId = Number(data.queueId);
     this.suppressAutoConsumeSend.add(sessionId);
-    this.abortRunningExecution(sessionId, userId);
     try {
       this.deps.agentExecutor(async () => {
         await this.withLock(this.insertLocks, sessionId, async () => {
@@ -956,6 +987,8 @@ export class StreamingWsHandler {
             await this.sendQueueUpdated(sessionId, userId);
             return;
           }
+          // 校验通过后才终止旧执行：对无效/已消费的队列消息不应误杀正在运行的任务
+          this.abortRunningExecution(sessionId, userId);
           if (!(await this.awaitExecutionRelease(sessionId, 30_000))) {
             this.deps.registry.send(userId, wsEvent('error', sessionId, { message: '旧任务取消超时，消息仍保留在队列中' }));
             return;
@@ -988,7 +1021,10 @@ export class StreamingWsHandler {
           this.suppressAutoConsumeSend.delete(sessionId);
           await this.handleSendMessage(userId, {
             sessionId,
-            data: { content, eventId: randomUUID(), clearTodos: false, replaceExecution: true, executionClaimHeld: true, images: imageList },
+            data: {
+              content, eventId: randomUUID(), clearTodos: false, replaceExecution: true, executionClaimHeld: true,
+              images: imageList, ...(savedMessage.id != null ? { autoSavedMessageId: savedMessage.id } : {}),
+            },
           }, false);
         } catch {
           this.autoConsumingSessionIds.delete(sessionId);
@@ -1101,7 +1137,13 @@ export class StreamingWsHandler {
       try {
         this.deps.agentExecutor(async () => {
           await new Promise((r) => setTimeout(r, 500));
-          await this.handleSendMessage(userId, { sessionId, data: { content, eventId: randomUUID(), images: imageList, executionClaimHeld: true } }, true);
+          await this.handleSendMessage(userId, {
+            sessionId,
+            data: {
+              content, eventId: randomUUID(), images: imageList, executionClaimHeld: true,
+              ...(savedMessage.id != null ? { autoSavedMessageId: savedMessage.id } : {}),
+            },
+          }, true);
         });
       } catch (submitErr) {
         // 提交被拒时释放占位并回补队列，避免消息已出队却永不执行

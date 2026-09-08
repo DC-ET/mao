@@ -554,9 +554,13 @@ export class HarnessService {
       const recent = messages.slice(fromIndex);
       let sb = '以下是主任务最近的对话摘要：\n\n';
       for (const msg of recent) {
-        const content = msg.content;
-        if (hasText(content)) {
-          const truncated = content!.length > 300 ? content!.slice(0, 300) + '...' : content!;
+        // 多模态消息落库 content 是含 base64 data URI 的 JSON 数组字符串，
+        // 先提取纯文本再截断，避免把 base64 乱码注入边路任务 system prompt
+        const text = this.sessionService.extractVisibleText
+          ? this.sessionService.extractVisibleText(msg.content ?? null)
+          : msg.content;
+        if (text != null && hasText(text)) {
+          const truncated = text.length > 300 ? text.slice(0, 300) + '...' : text;
           sb += `[${msg.role}]: ${truncated}\n`;
         }
       }
