@@ -157,6 +157,8 @@ export interface SessionService {
   ): Promise<Message>;
   getMessagesAfterId(sessionId: number, boundary: number): Promise<Message[]>;
   getMessages?(sessionId: number): Promise<Message[]>;
+  /** 从（可能是多模态 JSON 的）消息 content 中提取可见文本，供摘要等场景使用。 */
+  extractVisibleText?(content: string | null): string | null;
   cleanupIncompleteTail(sessionId: number): Promise<number>;
   cleanupIncompleteTailAfterId?(sessionId: number, afterMessageId: number): Promise<number>;
   enterWaitingApproval(sessionId: number): Promise<boolean>;
