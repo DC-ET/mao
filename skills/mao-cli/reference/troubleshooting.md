@@ -61,6 +61,7 @@
 - 已知关键输出（如 `Listening on`）时给 `wait_for` 正则，命中即提前返回，不必等满 `yield_time_ms`
 - 提前返回后剩余输出会缓冲在会话里，`output_file` 始终是完整输出
 - 提示「会话仍有未结束的命令」是因为一个会话同一时刻只跑一条命令，先 `await_async` 收完再发下一条；要给运行中的命令喂输入用 `write_stdin`
+- 常驻会话（`keep_session`）里不要用 `exit`/`exec` 结束循环，那会杀掉整个 bash；应使用 `break`。若命令已经 `exit`，工具会把剩余输出标为 `completed:true` 并关闭会话，无需再 `await_async`
 
 ## 找不到文件
 

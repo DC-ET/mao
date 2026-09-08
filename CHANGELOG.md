@@ -49,6 +49,15 @@
 
 - 修复工具执行后部分模型渠道返回 `400 messages.*.tool_calls.*.summary`：Chat Completions 请求不再发送内部工具摘要 `summary`，保留会话内部摘要及工具调用参数、结果；流式与非流式请求均生效。
 - 修复模型调用失败时重复叠加 `LLM call failed:` 的问题：Agent 错误回调原样透传异常，保留上游状态码、错误详情及异常类型。
+- Shell：`wait_for` 命中后若 bash 已因 `exit`/`exec` 退出，立即 `completed:true` 并交付剩余输出，不再误报「命令仍在运行」；后续 `await_async` 可收取已死会话的最后输出，而不是「会话不存在或已关闭」。常驻会话里请用 `break` 而不是 `exit` 结束循环。
+
+### 桌面 Electron
+
+- 本地 Shell 与云端对齐：`wait_for` 命中后进程已退出时按命令结束交付，`await_async` 不再对刚 `exit` 的会话报「不存在」。
+
+### 终端 CLI（mao-agent）
+
+- LOCAL Shell 同步上述等待语义（`vendor/localShell.cjs`）。
 
 ## 0.0.110 (2026-09-07)
 

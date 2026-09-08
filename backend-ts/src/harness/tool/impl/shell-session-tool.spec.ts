@@ -292,4 +292,28 @@ describe('ShellSessionTool marker and environment handling', () => {
     expect(shellSession.writeStdin.mock.calls[0][0]).toBe('y\n');
     expect(outputManager.readUntilMarker.mock.calls[0][1]).toBe(pendingMarker);
   });
+
+  it('drains await_async after the shell process has exited and closes the session', async () => {
+    const { tool, shellSession, sessionManager, outputManager } = harness({ completed: false });
+    await tool.execute(
+      JSON.stringify({ command: 'sleep 99', yield_time_ms: 10, keep_session: true }), 11, 7, '/tmp',
+    );
+    shellSession.isAlive = () => false;
+    outputManager.readUntilMarker.mockImplementationOnce(async () => {
+      shellSession.pendingCommand = null;
+      return {
+        output: 'record=SUCCESS\n', truncated: false, completed: true, exitCode: 0,
+        matched: 'record=SUCCESS', shellExited: true,
+      };
+    });
+    const resumed = JSON.parse(await tool.execute(
+      JSON.stringify({ action: 'await_async', session_id: 'sh-1' }), 11, 7, '/tmp',
+    ));
+    expect(resumed.completed).toBe(true);
+    expect(resumed.exit_code).toBe(0);
+    expect(resumed.matched).toBe('record=SUCCESS');
+    expect(resumed.message).toContain('已退出');
+    expect(sessionManager.close).toHaveBeenCalledWith('sh-1');
+    expect(outputManager.readUntilMarker.mock.calls.at(-1)?.[3]).toBeNull();
+  });
 });

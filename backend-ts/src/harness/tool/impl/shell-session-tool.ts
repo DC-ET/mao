@@ -71,7 +71,7 @@ export class ShellSessionTool extends BaseTool {
         input: { type: 'string', description: '要写入 stdin 的输入（用于 write_stdin 动作）' },
         workdir: { type: 'string', description: '工作目录：支持相对路径和任意绝对路径' },
         yield_time_ms: { type: 'integer', description: '等待输出的最长时间，单位毫秒（exec 默认 300000，write_stdin 默认 5000，await_async 默认 60000）' },
-        wait_for: { type: 'string', description: `正则，命中输出即提前返回（最长 ${MAX_WAIT_FOR_LENGTH} 字符）。例如等服务启动打印 "Listening on"。` },
+        wait_for: { type: 'string', description: `正则，命中输出即提前返回（最长 ${MAX_WAIT_FOR_LENGTH} 字符）。例如等服务启动打印 "Listening on"。若命中后进程已退出（命令含 exit）则 completed=true，不要再 await_async。` },
         async: { type: 'boolean', description: '是否在后台运行并立即返回 task_id（默认 false，仅用于 exec 动作）' },
         task_id: { type: 'string', description: '后台任务 ID（用于 await_async 动作，等待 async 提交的任务）' },
         keep_session: { type: 'boolean', description: '是否保留会话（默认 false）。执行后自动关闭会话以释放资源。' },

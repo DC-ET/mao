@@ -332,12 +332,17 @@ export class OutputManager {
         const hit = waitFor.exec(buffer.slice(session.emittedBoundary()));
         if (hit) {
           matched = hit[0];
-          // printf 命中后紧跟 exit 很常见：再等一小段，避免误报「命令仍在运行」
-          if (session.isAlive()) {
-            const remain = deadline - Date.now();
-            await session.waitForOutput(remain > 0 ? Math.min(remain, WAIT_SLICE_MS) : WAIT_SLICE_MS);
+          // printf 命中后紧跟 exit 很常见：stdout 结束会先于 exitCode 到达，
+          // 必须在宽限期内等到进程真正退出，否则会误报「命令仍在运行」。
+          const graceDeadline = Date.now() + WAIT_SLICE_MS;
+          while (session.isAlive()) {
+            markerIndex = session.peekBuffer().indexOf(marker);
+            if (markerIndex >= 0) break;
+            const remain = graceDeadline - Date.now();
+            if (remain <= 0) break;
+            await session.waitForOutput(remain);
           }
-          markerIndex = session.peekBuffer().indexOf(marker);
+          if (markerIndex < 0) markerIndex = session.peekBuffer().indexOf(marker);
           break;
         }
       }

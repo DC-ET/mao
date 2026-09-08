@@ -137,6 +137,13 @@ class LocalShellSession {
     return this.alive && this.process.exitCode == null && !this.process.killed
   }
 
+  /** 进程已退出时的状态码：正常退出用 bash 的 exit code；被信号杀掉则为 -1。 */
+  processExitStatus() {
+    if (this.process.exitCode != null) return this.process.exitCode
+    if (this.process.signalCode || !this.isAlive()) return -1
+    return null
+  }
+
   isIdleTimeout(timeoutMs) {
     return Date.now() - this.lastActiveAt > timeoutMs
   }
@@ -383,6 +390,17 @@ function createLocalShellRuntime(options = {}) {
         const hit = waitFor.exec(buffer.slice(session.emittedBoundary()))
         if (hit) {
           matched = hit[0]
+          // printf 命中后紧跟 exit 很常见：stdout 结束会先于 exitCode 到达，
+          // 必须在宽限期内等到进程真正退出，否则会误报「命令仍在运行」。
+          const graceDeadline = Date.now() + WAIT_SLICE_MS
+          while (session.isAlive()) {
+            markerIndex = session.peekBuffer().indexOf(marker)
+            if (markerIndex >= 0) break
+            const remain = graceDeadline - Date.now()
+            if (remain <= 0) break
+            await session.waitForOutput(remain)
+          }
+          if (markerIndex < 0) markerIndex = session.peekBuffer().indexOf(marker)
           break
         }
       }
@@ -393,17 +411,32 @@ function createLocalShellRuntime(options = {}) {
     }
 
     const buffer = session.peekBuffer()
+    if (markerIndex < 0) markerIndex = buffer.indexOf(marker)
     const emitted = session.emittedBoundary()
     if (markerIndex < 0) {
       // 尾部可能是被切成两半的结束标记，留到下一次读取再判定，否则标记会漏进正文；
-      // 会话已结束时不会再有后续字节，只能原样交付。
-      const tail = session.isAlive() ? pendingMarkerTail(buffer, marker) : 0
+      // 进程已退出时不会再有后续字节，按命令结束交付，避免 Agent 去续等已死会话。
+      const dead = !session.isAlive()
+      const tail = dead ? 0 : pendingMarkerTail(buffer, marker)
       const end = Math.max(emitted, buffer.length - tail)
       const shown = preview(buffer.slice(emitted, end))
+      const trimmed = session.wasBufferTrimmed()
       session.markEmitted(end)
+      if (dead) {
+        session.finishCommand(buffer.length)
+        return {
+          output: shown.text,
+          truncated: shown.truncated || trimmed,
+          completed: true,
+          elapsedMs: Date.now() - start,
+          exitCode: session.processExitStatus(),
+          matched,
+          shellExited: true,
+        }
+      }
       return {
         output: shown.text,
-        truncated: shown.truncated || session.wasBufferTrimmed(),
+        truncated: shown.truncated || trimmed,
         completed: false,
         elapsedMs: Date.now() - start,
         exitCode: null,
@@ -458,7 +491,7 @@ function createLocalShellRuntime(options = {}) {
   }
 
   async function resolveCurrentWorkdir(session, result) {
-    if (!result.completed) return session.currentWorkdir
+    if (!result.completed || !session.isAlive()) return session.currentWorkdir
     try {
       const marker = newMarker()
       // pwd 属协议命令，输出不进落盘文件
@@ -496,7 +529,9 @@ function createLocalShellRuntime(options = {}) {
       output_file: session.displayPath,
     }
     if (result.matched != null) payload.matched = result.matched
-    if (!result.completed) {
+    if (result.shellExited) {
+      payload.message = 'shell 进程已退出，会话已关闭。常驻 bash 里的 exit/exec 会结束整个会话。'
+    } else if (!result.completed) {
       payload.message = result.matched != null
         ? `wait_for 已命中，命令仍在运行。用 action:'await_async' + session_id:'${session.sessionId}' 继续等待。`
         : `等待超时，命令仍在运行。用 action:'await_async' + session_id:'${session.sessionId}' 继续等待。`
@@ -527,9 +562,10 @@ function createLocalShellRuntime(options = {}) {
   /**
    * 命令已结束才按 keep_session 决定是否回收；仍在运行时必须保留会话，
    * 否则关闭会 SIGKILL 掉进程组，模型再也拿不到剩余输出。
+   * bash 已退出时 keep_session 也无法复用，必须回收。
    */
   function settleSession(session, result, keepSession) {
-    if (result.completed && !keepSession) removeSession(session.sessionId)
+    if (!session.isAlive() || (result.completed && !keepSession)) removeSession(session.sessionId)
   }
 
   async function handleExec(args, ctx) {
@@ -705,7 +741,12 @@ function createLocalShellRuntime(options = {}) {
   function cleanupExpiredSessions() {
     let cleaned = 0
     for (const [sessionId, session] of [...sessions.entries()]) {
-      if (!session.isAlive() || session.isIdleTimeout(idleTimeoutMs) || session.isExpired(maxLifetimeMs)) {
+      const dead = !session.isAlive()
+      // 刚因 exit 退出、结果尚未收取的会话留给下一次 await_async
+      if (dead && session.pendingCommand && !session.isIdleTimeout(idleTimeoutMs) && !session.isExpired(maxLifetimeMs)) {
+        continue
+      }
+      if (dead || session.isIdleTimeout(idleTimeoutMs) || session.isExpired(maxLifetimeMs)) {
         removeSession(sessionId)
         cleaned++
       }

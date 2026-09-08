@@ -260,6 +260,51 @@ test('wait_for returns early while the command keeps running, await_async collec
   assert.equal(/Listening on/.test(rest.output), false)
 })
 
+test('wait_for plus an immediate exit completes instead of asking to await a dead session', async (t) => {
+  const { runtime, dir } = createRuntime(t)
+  const result = await runtime.handle(
+    {
+      command: "printf 'record=SUCCESS tag=v1\\n'; exit 0",
+      wait_for: 'record=(SUCCESS|FAILURE|STOP)',
+      keep_session: true,
+      session_id: 'sh-wait-exit',
+    },
+    { conversationId: 40, workspace: dir, needApproval: false },
+  )
+  assert.equal(result.completed, true)
+  assert.equal(result.exit_code, 0)
+  assert.equal(result.matched, 'record=SUCCESS')
+  assert.match(result.output, /record=SUCCESS/)
+  assert.match(result.message, /已退出/)
+  const listed = await runtime.handle({ action: 'list' }, { conversationId: 40 })
+  assert.equal(listed.sessions.length, 0)
+})
+
+test('await_async after wait_for still finishes when the shell later exits', async (t) => {
+  const { runtime, dir } = createRuntime(t)
+  const early = await runtime.handle(
+    {
+      command: "printf 'record=SUCCESS\\n'; sleep 0.5; exit 0",
+      wait_for: 'record=SUCCESS',
+      keep_session: true,
+      session_id: 'sh-delay-exit',
+    },
+    { conversationId: 41, workspace: dir, needApproval: false },
+  )
+  assert.equal(early.completed, false)
+  assert.equal(early.matched, 'record=SUCCESS')
+  await new Promise((resolve) => setTimeout(resolve, 800))
+  const rest = await runtime.handle(
+    { action: 'await_async', session_id: 'sh-delay-exit', yield_time_ms: 2000 },
+    { conversationId: 41 },
+  )
+  assert.equal(rest.completed, true)
+  assert.equal(rest.exit_code, 0)
+  assert.match(rest.message, /已退出/)
+  const listed = await runtime.handle({ action: 'list' }, { conversationId: 41 })
+  assert.equal(listed.sessions.length, 0)
+})
+
 test('await_async resumes a timed-out command without losing output', async (t) => {
   const { runtime, dir } = createRuntime(t)
   const first = await runtime.handle(

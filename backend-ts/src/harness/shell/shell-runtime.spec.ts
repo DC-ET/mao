@@ -246,9 +246,66 @@ describe('ShellSessionManager', () => {
     const pending = output.readUntilMarker(session, '__NEVER__', 30_000);
     setTimeout(() => manager.close('sh-abort'), 100);
     const result = await pending;
-    expect(result.completed).toBe(false);
+    expect(result.completed).toBe(true);
+    expect(result.shellExited).toBe(true);
     // 会话关闭要立刻唤醒读取者，而不是空等到 yield 超时
     expect(Date.now() - started).toBeLessThan(3000);
+    expect(session.pendingCommand).toBeNull();
+  });
+
+  it('treats wait_for plus an immediate exit as completed so the next await is not needed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(19, 'sh-wait-exit', 7, dir, {});
+    const output = new OutputManager();
+
+    const marker = '__WAIT_EXIT__';
+    session.beginCommand(marker, true);
+    session.writeStdin(`printf 'record=SUCCESS tag=v1\\n'; exit 0\necho ${marker} $?\n`);
+    const result = await output.readUntilMarker(session, marker, 5000, /record=(SUCCESS|FAILURE|STOP)/);
+    expect(result.completed).toBe(true);
+    expect(result.shellExited).toBe(true);
+    expect(result.matched).toBe('record=SUCCESS');
+    expect(result.output).toContain('record=SUCCESS');
+    expect(result.exitCode).toBe(0);
+    expect(session.pendingCommand).toBeNull();
+    expect(session.isAlive()).toBe(false);
+    // 活会话查询为空，但死会话仍可被 await_async 查到直到 settle 回收
+    expect(manager.getSession('sh-wait-exit')).toBeNull();
+    expect(manager.getSession('sh-wait-exit', { allowDead: true })).toBe(session);
+    manager.close('sh-wait-exit');
+  });
+
+  it('lets a later read finish after wait_for returned and the shell then exited', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(20, 'sh-delayed-exit', 7, dir, {});
+    const output = new OutputManager();
+
+    const marker = '__DELAYED__';
+    session.beginCommand(marker, true);
+    session.writeStdin(`printf 'record=SUCCESS\\n'; sleep 0.5; exit 0\necho ${marker} $?\n`);
+    const early = await output.readUntilMarker(session, marker, 5000, /record=SUCCESS/);
+    expect(early.completed).toBe(false);
+    expect(early.matched).toBe('record=SUCCESS');
+    expect(session.pendingCommand?.marker).toBe(marker);
+
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(session.isAlive()).toBe(false);
+    const rest = await output.readUntilMarker(session, marker, 2000);
+    expect(rest.completed).toBe(true);
+    expect(rest.shellExited).toBe(true);
+    expect(rest.exitCode).toBe(0);
+    expect(session.pendingCommand).toBeNull();
+    manager.close('sh-delayed-exit');
   });
 
   it('does not leak a marker that arrives split across two chunks', async () => {
