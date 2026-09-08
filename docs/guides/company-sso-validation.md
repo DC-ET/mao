@@ -51,7 +51,7 @@ cd ../admin && npm run build
 
 `backend-ts/src/auth/company-sso.mysql.integration.spec.ts` 默认跳过，只有显式设置 `SSO_TEST_MYSQL_SOCKET` 才执行。它不加载应用数据库配置，要求独立 `sso-mysql-*` 目录下的真实 Unix socket、MySQL 关闭网络监听，使用随机新建的测试数据库，并只删除该测试数据库。
 
-测试包含12项：V106迁移、同身份和同邮箱并发、普通账号关联、管理员/禁用/删除拒绝、事务回滚与用户邮箱写入竞态。
+测试包含12项：V106迁移、同身份和同邮箱并发、普通/管理员账号关联且不改角色、禁用/删除/重复邮箱拒绝、事务回滚与用户邮箱写入竞态。
 
 在安全策略允许的独立测试环境中执行：
 

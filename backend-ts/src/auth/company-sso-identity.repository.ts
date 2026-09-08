@@ -42,10 +42,6 @@ export class CompanySsoIdentityRepository {
       let user = matches[0];
       if (user) {
         this.assertActive(user);
-        const admin = await tx.queryOne<{ id: number }>(
-          'SELECT r.id FROM role r JOIN user_role ur ON ur.role_id = r.id WHERE ur.user_id = ? AND r.code = ? AND r.deleted = 0 FOR UPDATE', [user.id, 'ADMIN'],
-        );
-        if (admin) throw new CompanySsoError('account_forbidden');
         const other = await tx.queryOne<{ id: number }>('SELECT id FROM user_external_identity WHERE provider = ? AND user_id = ? FOR UPDATE', ['company_sso', user.id]);
         if (other) throw new CompanySsoError('identity_conflict');
       } else {

@@ -86,18 +86,16 @@ describe.skipIf(!socket)('company SSO isolated MySQL integration', () => {
     expect(await count('user_external_identity')).toBe(1);
   });
 
-  it('binds ordinary email without changing password, display name or roles; binding wins later', async () => {
+  it.each([1, 2])('binds unique email without changing password, display name or role_id=%s; binding wins later', async (roleId) => {
     const id = await createUser();
-    await db.insert('user_role', { userId: id, roleId: 2 });
+    await db.insert('user_role', { userId: id, roleId });
     expect(await identities.resolve(identity())).toMatchObject({ action: 'bound', user: { id, displayName: 'Local name', passwordHash: 'synthetic-hash' } });
-    await db.execute('UPDATE user_role SET role_id = 1 WHERE user_id = ?', [id]);
     expect(await identities.resolve(identity('3089', 'Changed@example.test'))).toMatchObject({ action: 'existing', user: { id } });
-    expect(await db.query('SELECT role_id FROM user_role')).toEqual([{ roleId: 1 }]);
+    expect(await db.query('SELECT role_id FROM user_role')).toEqual([{ roleId }]);
   });
 
-  it.each(['admin', 'disabled', 'deleted', 'duplicate'] as const)('refuses %s email without new users or bindings', async (kind) => {
+  it.each(['disabled', 'deleted', 'duplicate'] as const)('refuses %s email without new users or bindings', async (kind) => {
     const id = await createUser(undefined, kind === 'disabled' ? 0 : 1, kind === 'deleted' ? 1 : 0);
-    if (kind === 'admin') await db.insert('user_role', { userId: id, roleId: 1 });
     if (kind === 'duplicate') await createUser();
     await expect(identities.resolve(identity())).rejects.toMatchObject({ status: kind === 'duplicate' ? 409 : 403 });
     expect(await count('user_external_identity')).toBe(0);

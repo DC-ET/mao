@@ -5,13 +5,12 @@ import { CompanySsoIdentityRepository } from './company-sso-identity.repository.
 const identity = { subject: '3089', email: 'Synthetic@example.test', displayName: 'Test', expiresAt: Date.now() + 3600000 };
 const user = { id: 4, username: 'test', email: identity.email, status: 1, deleted: 0 };
 
-function setup(options: { binding?: boolean; matches?: object[]; boundUser?: object | null; admin?: boolean; other?: boolean; failInsert?: boolean; role?: boolean } = {}) {
+function setup(options: { binding?: boolean; matches?: object[]; boundUser?: object | null; other?: boolean; failInsert?: boolean; role?: boolean } = {}) {
   const tx = {
     queryOne: vi.fn(async (sql: string) => {
       if (sql.includes('user_identity_write_lock')) return { id: 1 };
       if (sql.includes('subject =')) return options.binding ? { userId: 4 } : null;
       if (sql.includes('`user` WHERE id')) return options.boundUser === undefined ? user : options.boundUser;
-      if (sql.includes('JOIN user_role')) return options.admin ? { id: 1 } : null;
       if (sql.includes('user_external_identity')) return options.other ? { id: 9 } : null;
       if (sql.includes('FROM role')) return options.role === false ? null : { id: 2 };
       throw new Error(`Unexpected test query: ${sql}`);
@@ -33,17 +32,18 @@ function setup(options: { binding?: boolean; matches?: object[]; boundUser?: obj
 
 describe('CompanySsoIdentityRepository', () => {
   it('prefers existing binding even when email differs and preserves promoted roles', async () => {
-    const { repo, tx } = setup({ binding: true, admin: true });
+    const { repo, tx } = setup({ binding: true });
     expect(await repo.resolve({ ...identity, email: 'Changed@example.test' })).toEqual({ user, action: 'existing' });
     expect(tx.query).not.toHaveBeenCalled();
     expect(tx.insert).not.toHaveBeenCalled();
   });
 
-  it('binds unique ordinary account without overwriting it', async () => {
+  it('binds unique existing account without overwriting it', async () => {
     const { repo, tx } = setup({ matches: [user] });
     expect(await repo.resolve(identity)).toEqual({ user, action: 'bound' });
     expect(tx.insert).toHaveBeenCalledTimes(1);
     expect(tx.insert).toHaveBeenCalledWith('user_external_identity', expect.objectContaining({ userId: 4, subject: '3089' }));
+    expect(tx.insert.mock.calls.map(([table]) => table)).not.toContain('user_role');
   });
 
   it('creates user, ordinary role and identity in one transaction', async () => {
@@ -55,7 +55,7 @@ describe('CompanySsoIdentityRepository', () => {
   });
 
   it.each([
-    [{ matches: [user, user] }, 409], [{ matches: [user], admin: true }, 403],
+    [{ matches: [user, user] }, 409],
     [{ matches: [{ ...user, status: 0 }] }, 403], [{ matches: [{ ...user, deleted: 1 }] }, 403],
     [{ matches: [user], other: true }, 409], [{ binding: true, boundUser: null }, 403],
     [{ role: false }, 503],
