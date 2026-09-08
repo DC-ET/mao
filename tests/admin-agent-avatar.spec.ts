@@ -1,7 +1,7 @@
 import { test, expect, type Locator, type Page, type Request } from '@playwright/test'
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')
-const tabs = ['基本信息', '角色提示词', '最佳实践', '工具能力', '运行设置']
+const tabs = ['基本信息', '角色提示词', '最佳实践']
 const promptPlaceholder = '请输入角色定义：身份、目标、工作内容、表达方式等'
 
 async function setup(page: Page) {
@@ -67,7 +67,7 @@ async function chooseOption(page: Page, dialog: Locator, label: string, option: 
   await page.keyboard.press('Escape')
 }
 
-test('all five tabs preserve values and save the complete payload', async ({ page }) => {
+test('all three tabs preserve values and save the complete payload', async ({ page }) => {
   const state = await setup(page)
   const dialog = await openDialog(page, '创建')
   await expect(dialog.getByRole('tab')).toHaveText(tabs)
@@ -79,10 +79,10 @@ test('all five tabs preserve values and save the complete payload', async ({ pag
   await dialog.getByRole('button', { name: '+ 添加经验', exact: true }).click()
   await dialog.getByPlaceholder('请输入经验正文（最长 300 字）').fill('保留经验')
   await dialog.locator('.el-tab-pane:visible .el-switch').click()
-  await selectTab(dialog, '工具能力')
+  await selectTab(dialog, '基本信息')
   await chooseOption(page, dialog, 'Skills', 'mock-skill')
   await chooseOption(page, dialog, 'MCP 服务器', 'mock-mcp（HTTP）')
-  await selectTab(dialog, '运行设置')
+  await selectTab(dialog, '基本信息')
   await dialog.locator('.el-tab-pane:visible .el-switch').click()
   await chooseOption(page, dialog, '默认模型', 'mock-model')
   for (const name of tabs) {
@@ -90,16 +90,16 @@ test('all five tabs preserve values and save the complete payload', async ({ pag
     if (name === '基本信息') {
       await expect(dialog.getByPlaceholder('请输入 Agent 名称', { exact: true })).toHaveValue('跨页签 Agent')
       await expect(dialog.getByPlaceholder('请输入描述', { exact: true })).toHaveValue('保留描述')
-    } else if (name === '角色提示词') await expect(dialog.getByPlaceholder(promptPlaceholder)).toHaveValue('保留角色定义')
-    else if (name === '最佳实践') {
-      await expect(dialog.getByPlaceholder('请输入经验正文（最长 300 字）')).toHaveValue('保留经验')
-      await expect(dialog.getByRole('switch')).not.toBeChecked()
-    } else if (name === '工具能力') {
       await expect(dialog.getByRole('tabpanel', { name, exact: true })).toContainText('mock-skill')
       await expect(dialog.getByRole('tabpanel', { name, exact: true })).toContainText('mock-mcp（HTTP）')
-    } else {
       await expect(dialog.getByRole('switch')).toBeChecked()
       await expect(dialog.getByRole('tabpanel', { name, exact: true })).toContainText('mock-model')
+    } else if (name === '角色提示词') {
+      await expect(dialog.getByPlaceholder(promptPlaceholder)).toHaveValue('保留角色定义')
+      await expect(dialog.getByPlaceholder(promptPlaceholder)).toHaveAttribute('rows', '15')
+    } else {
+      await expect(dialog.getByPlaceholder('请输入经验正文（最长 300 字）')).toHaveValue('保留经验')
+      await expect(dialog.getByRole('switch')).not.toBeChecked()
     }
   }
   await dialog.getByRole('button', { name: '创建', exact: true }).click()
@@ -114,19 +114,19 @@ test('all five tabs preserve values and save the complete payload', async ({ pag
 test('hidden required errors select the appropriate tab without saving', async ({ page }) => {
   const state = await setup(page)
   const dialog = await openDialog(page, '创建')
-  await selectTab(dialog, '运行设置')
+  await selectTab(dialog, '角色提示词')
   await dialog.getByRole('button', { name: '创建', exact: true }).click()
   await expect(dialog.getByRole('tab', { name: '基本信息', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(dialog.locator('.el-form-item__error', { hasText: '请输入 Agent 名称' })).toBeVisible()
   await dialog.getByPlaceholder('请输入 Agent 名称', { exact: true }).fill('校验 Agent')
-  await selectTab(dialog, '工具能力')
+  await selectTab(dialog, '基本信息')
   await dialog.getByRole('button', { name: '创建', exact: true }).click()
   await expect(dialog.getByRole('tab', { name: '角色提示词', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(dialog.locator('.el-form-item__error', { hasText: '请输入角色定义' })).toBeVisible()
   await dialog.getByPlaceholder(promptPlaceholder).fill('有效角色')
   await selectTab(dialog, '最佳实践')
   await dialog.getByRole('button', { name: '+ 添加经验', exact: true }).click()
-  await selectTab(dialog, '运行设置')
+  await selectTab(dialog, '基本信息')
   await dialog.getByRole('button', { name: '创建', exact: true }).click()
   await expect(dialog.getByRole('tab', { name: '最佳实践', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByText('第 1 条经验不能为空', { exact: true })).toBeVisible()
@@ -193,7 +193,7 @@ test('removing an avatar saves explicit null and restores the list initial', asy
   await dialog.getByRole('button', { name: '移除头像', exact: true }).click()
   await expect(dialog.locator('.el-avatar')).toHaveText('头')
   await expect(dialog.locator('button').filter({ hasText: /^上传头像$/ })).toBeVisible()
-  await selectTab(dialog, '运行设置')
+  await selectTab(dialog, '基本信息')
   await selectTab(dialog, '基本信息')
   await expect(dialog.locator('.el-avatar img')).toHaveCount(0)
   await dialog.getByRole('button', { name: '保存', exact: true }).click()
@@ -208,7 +208,7 @@ test('copy inherits the avatar without reuploading and creates instead of updati
   const state = await setup(page)
   const dialog = await openDialog(page, '复制')
   await expect(dialog.locator('img[src$="/uploads/original.png"]')).toBeVisible()
-  await selectTab(dialog, '运行设置')
+  await selectTab(dialog, '基本信息')
   await expect(dialog.getByRole('switch')).not.toBeChecked()
   await dialog.getByRole('button', { name: '创建', exact: true }).click()
   await expect(dialog).not.toBeVisible()
@@ -241,7 +241,9 @@ test('mobile cards and fullscreen form allow all tabs, avatar removal and saving
     }
     await selectTab(dialog, name)
   }
-  await dialog.locator('.el-tabs__nav-prev').click()
+  if (await dialog.locator('.el-tabs__nav-prev').isVisible()) {
+    await dialog.locator('.el-tabs__nav-prev').click()
+  }
   await selectTab(dialog, '基本信息')
   await expect(dialog.getByPlaceholder('请输入 Agent 名称', { exact: true })).toHaveValue('移动端 Agent')
   await dialog.getByRole('button', { name: '移除头像', exact: true }).click()

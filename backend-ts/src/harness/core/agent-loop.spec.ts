@@ -139,6 +139,26 @@ describe('AgentLoop', () => {
     });
   }
 
+  it.each([
+    'LLM API returned 400: invalid summary',
+    'LLM call failed: timeout',
+  ])('preserves the original LLM error across repeated callbacks: %s', async (message) => {
+    const failure = new Error(message);
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(42);
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      try {
+        callback.onError(failure);
+      } catch (error) {
+        callback.onError(error);
+      }
+    });
+
+    await expect(agentLoop.execute(context(), listener(), persistence())).rejects.toBe(failure);
+    expect(failure.message).toBe(message);
+  });
+
   it('executeStreamsPlainAssistantMessageAndPersistsIt', async () => {
     const ctx = context();
     const l = listener();

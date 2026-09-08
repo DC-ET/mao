@@ -18,12 +18,16 @@
       <el-form-item label="头像">
         <div class="avatar-editor">
           <el-avatar :size="72" :src="resolveAgentAvatarUrl(form.avatarUrl)" shape="square">{{ form.name.slice(0, 1) || 'A' }}</el-avatar>
-          <div>
-            <el-upload accept="image/png,image/jpeg,image/webp" :show-file-list="false" :http-request="uploadAvatar" :disabled="uploading" :before-upload="validateAvatar">
-              <el-button :loading="uploading">{{ form.avatarUrl ? '更换头像' : '上传头像' }}</el-button>
-            </el-upload>
-            <el-button v-if="form.avatarUrl" link type="danger" :disabled="uploading" @click="form.avatarUrl = null">移除头像</el-button>
-            <div class="form-hint">PNG / JPEG / WebP，最大 2 MB、4096 × 4096 像素，不支持动画；保存后在各端生效。</div>
+          <div class="avatar-details">
+            <div class="avatar-actions">
+              <el-upload accept="image/png,image/jpeg,image/webp" :show-file-list="false" :http-request="uploadAvatar" :disabled="uploading || submitting" :before-upload="validateAvatar">
+                <el-button type="primary" plain :loading="uploading" :disabled="submitting">{{ form.avatarUrl ? '更换头像' : '上传头像' }}</el-button>
+              </el-upload>
+              <el-button v-if="form.avatarUrl" link type="danger" :disabled="uploading || submitting" @click="form.avatarUrl = null">移除头像</el-button>
+            </div>
+            <p class="avatar-hint">PNG / JPEG / WebP · 最大 2 MB</p>
+            <p class="avatar-hint">建议使用方形图片，不超过 4096 × 4096 像素，不支持动画。</p>
+            <p class="avatar-note">保存后同步到客户端、后台和 SDK。</p>
           </div>
         </div>
       </el-form-item>
@@ -33,56 +37,6 @@
       <el-form-item label="描述" prop="description">
         <el-input v-model="form.description" type="textarea" :rows="3" placeholder="请输入描述" />
       </el-form-item>
-      </el-tab-pane>
-      <el-tab-pane label="角色提示词" name="prompt">
-      <el-form-item label="角色定义" prop="systemPrompt">
-        <el-input
-          v-model="form.systemPrompt"
-          type="textarea"
-          :rows="5"
-          placeholder="请输入角色定义：身份、目标、工作内容、表达方式等"
-        />
-        <div class="form-hint">保存后自动记录提示词版本；可在 Agent 列表的「提示词版本」中预览和回滚。</div>
-      </el-form-item>
-      </el-tab-pane>
-      <el-tab-pane label="最佳实践" name="experience">
-      <el-form-item label="最佳实践经验">
-        <div class="experience-list">
-          <div
-            v-for="(item, index) in form.experiences"
-            :key="item._key"
-            class="experience-item"
-          >
-            <el-input
-              v-model="item.content"
-              type="textarea"
-              :rows="2"
-              :maxlength="300"
-              show-word-limit
-              placeholder="请输入经验正文（最长 300 字）"
-            />
-            <div class="experience-actions">
-              <el-switch v-model="item.enabled" active-text="启用" inactive-text="停用" />
-              <el-button
-                link
-                type="primary"
-                :disabled="index === 0"
-                @click="moveExperience(index, -1)"
-              >上移</el-button>
-              <el-button
-                link
-                type="primary"
-                :disabled="index === form.experiences.length - 1"
-                @click="moveExperience(index, 1)"
-              >下移</el-button>
-              <el-button link type="danger" @click="removeExperience(index)">删除</el-button>
-            </div>
-          </div>
-          <el-button type="primary" link @click="addExperience">+ 添加经验</el-button>
-        </div>
-      </el-form-item>
-      </el-tab-pane>
-      <el-tab-pane label="工具能力" name="tools">
       <el-form-item label="Skills" prop="skillNames">
         <el-select
           v-model="form.skillNames"
@@ -117,8 +71,6 @@
         </el-select>
         <div class="form-hint">该 Agent 的会话可调用所选 MCP 服务器暴露的工具；建议关联不超过 10 台以避免工具清单膨胀。</div>
       </el-form-item>
-      </el-tab-pane>
-      <el-tab-pane label="运行设置" name="runtime">
       <el-form-item label="默认 Agent">
         <el-switch v-model="form.isDefault" />
         <span class="form-hint">开启后，新建会话未指定 Agent 时将使用该智能体</span>
@@ -139,6 +91,44 @@
           />
         </el-select>
         <div class="form-hint">该 Agent 的会话未手动选择模型时优先使用；留空则跟随系统默认模型</div>
+      </el-form-item>
+      </el-tab-pane>
+      <el-tab-pane label="角色提示词" name="prompt">
+      <el-form-item label="角色定义" prop="systemPrompt">
+        <el-input
+          v-model="form.systemPrompt"
+          type="textarea"
+          :rows="15"
+          placeholder="请输入角色定义：身份、目标、工作内容、表达方式等"
+        />
+        <div class="form-hint">保存后自动记录提示词版本；可在 Agent 列表的「提示词版本」中预览和回滚。</div>
+      </el-form-item>
+      </el-tab-pane>
+      <el-tab-pane label="最佳实践" name="experience">
+      <el-form-item label="最佳实践经验">
+        <div class="experience-list">
+          <div
+            v-for="(item, index) in form.experiences"
+            :key="item._key"
+            class="experience-item"
+          >
+            <el-input
+              v-model="item.content"
+              type="textarea"
+              :rows="2"
+              :maxlength="300"
+              show-word-limit
+              placeholder="请输入经验正文（最长 300 字）"
+            />
+            <div class="experience-actions">
+              <el-switch v-model="item.enabled" active-text="启用" inactive-text="停用" />
+              <el-button link type="primary" :disabled="index === 0" @click="moveExperience(index, -1)">上移</el-button>
+              <el-button link type="primary" :disabled="index === form.experiences.length - 1" @click="moveExperience(index, 1)">下移</el-button>
+              <el-button link type="danger" @click="removeExperience(index)">删除</el-button>
+            </div>
+          </div>
+          <el-button type="primary" link @click="addExperience">+ 添加经验</el-button>
+        </div>
       </el-form-item>
       </el-tab-pane>
       </el-tabs>
@@ -411,12 +401,26 @@ async function handleSubmit() {
   overflow-y: auto;
   padding: 12px 12px 0 0;
 }
-.avatar-editor { display: flex; align-items: center; gap: 16px; }
+.avatar-editor {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 14px;
+  box-sizing: border-box;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+}
 .avatar-editor .el-avatar { flex-shrink: 0; }
-.avatar-editor .form-hint { margin: 6px 0 0; line-height: 1.5; }
+.avatar-details { min-width: 0; }
+.avatar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 8px; }
+.avatar-actions .el-button { margin-left: 0; }
+.avatar-hint, .avatar-note { margin: 0; font-size: 12px; line-height: 1.6; color: var(--el-text-color-secondary); }
+.avatar-note { margin-top: 4px; }
 @media (max-width: 767px) {
   .agent-tabs :deep(.el-tab-pane) { height: calc(100dvh - 240px); }
-  .avatar-editor { align-items: flex-start; gap: 10px; }
+  .avatar-editor { align-items: flex-start; flex-direction: column; gap: 12px; }
 }
 .experience-list {
   width: 100%;
