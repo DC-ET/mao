@@ -121,15 +121,12 @@ export class CompactionService {
   deriveRequest(source: ChatRequest, appendedUserContent: string): ChatRequest {
     const messages: ChatMessage[] = source.messages ? [...source.messages] : [];
     messages.push({ role: 'user', content: appendedUserContent });
+    // 展开源请求以保留 promptCacheKey：Responses 网关按该键做上游粘性路由，
+    // 丢掉后压缩请求无法打到主请求刚写过的前缀缓存分片。
     return {
+      ...source,
       messages,
-      tools: source.tools,
-      temperature: source.temperature,
       stream: true,
-      reasoning: source.reasoning,
-      thinking: source.thinking,
-      enableThinking: source.enableThinking,
-      audio: source.audio,
     };
   }
 

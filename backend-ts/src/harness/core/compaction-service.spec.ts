@@ -42,6 +42,7 @@ describe('CompactionService', () => {
       temperature: 0.2,
       reasoning: { effort: 'high' },
       stream: true,
+      promptCacheKey: 'mao-session-7',
     };
   }
 
@@ -120,6 +121,7 @@ describe('CompactionService', () => {
     expect(derived.reasoning).toBe(normal.reasoning);
     expect(derived.temperature).toBe(0.2);
     expect(derived.stream).toBe(true);
+    expect(derived.promptCacheKey).toBe('mao-session-7');
     expect(normal.messages).toEqual(originalMessages);
     expect(normal.stream).toBe(true);
     expect(result?.summaryText).toBe('交接正文');
@@ -142,6 +144,7 @@ describe('CompactionService', () => {
     const retry = llmAdapter.stream.mock.calls[1][0] as ChatRequest;
     expect(retry.messages).toHaveLength((normalRequest().messages?.length ?? 0) + 2);
     expect(retry.messages?.some((m) => m.role === 'assistant' && m.content === 'bad')).toBe(false);
+    expect(retry.promptCacheKey).toBe('mao-session-7');
     expect(result?.promptTokens).toBe(12);
     expect(result?.cachedTokens).toBe(0);
     expect(result?.completionTokens).toBe(4);
