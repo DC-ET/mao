@@ -22,7 +22,40 @@
 </script>
 ```
 
-实例方法：`open()` / `close()` / `toggle()` / `newSession()` / `setContext(ctx)` / `destroy()`。重复 `init()` 会先销毁旧实例（单实例约束）。
+实例方法：`open()` / `close()` / `toggle()` / `newSession()` / `setContext(ctx)` / `destroy()`；页面操作相关：`inspectPage()` / `executePageAction(action, snapshotId?)` / `getPageAuthorization()` / `setPageAuthorization(level)` / `capturePageScreenshot({ maskSensitive?, reason? })`。重复 `init()` 会先销毁旧实例（单实例约束）。
+
+## 页面操作 Agent
+
+在对话中直接要求 Agent 查看或操作当前页面（如「帮我把收货地址填成……」）。业务方仍然只需 `MaoChat.init()`，不需要为按钮/表单增加标记，也不需要提供 selector 或回调。Agent 通过后端 `page_*` 工具请求、由 SDK 在用户浏览器本地执行并回传结果。
+
+```js
+const chat = MaoChat.init({
+  serverUrl: 'https://mao.etarch.cn',
+  agentId: 1,
+  getToken: () => fetch('/your-backend/embed-token').then(r => r.json()).then(d => d.accessToken),
+  page: {
+    initialLevel: 'per_action',       // 可选：默认每次确认；宿主不得借此静默授予高权限
+    screenshotRenderer: myRenderer,   // 可选：自定义截图渲染器，缺省用内置视口渲染器
+  },
+});
+```
+
+- **能力**：`page_inspect`（可见交互元素快照）、`page_screenshot`（当前视口截图）、`page_observe`、`page_scroll`、`page_focus`、`page_fill`、`page_select`、`page_check` / `page_uncheck`、`page_click`、`page_keyboard`、`page_wait`、`page_actions`（有序批量）。
+- **元素引用**：只使用快照作用域内的 opaque `elementId`；不向 Agent 暴露 selector、XPath、outerHTML 或任意脚本。页面导航、SPA 路由或 DOM 重建后旧引用立即失效，Agent 必须重新 `page_inspect`。
+- **授权**：默认 `per_action`（每个写操作前在浮窗确认）；用户可切换 `task`（本次任务内有效，任务结束/切换会话/刷新后失效）或 `full`（按 Mao 用户身份、站点 Origin、Agent 持久化到 localStorage，可随时撤销）。授权键按 `serverUrl`、Origin、身份、agentId 和授权版本隔离，不保存 Token。宿主 `page.initialLevel` 与实例方法 `setPageAuthorization()` 只接受 `per_action`/`task`，传 `full` 会被降级；**完全授权只能由用户在浮窗内显式点击授予**，避免宿主一行代码替用户提权。
+- **敏感数据**：`per_action` 下快照中密码/验证码/银行卡等字段值脱敏；截图默认遮罩敏感区域，发送未遮罩原图会先请求确认；`full` 在授权范围内允许未遮罩。
+- **反馈与停止**：浮窗显示授权级别、待确认动作（含高风险提示）、目标元素高亮、动作日志和执行状态；用户可随时点「停止页面任务」，SDK 会取消等待中的确认并让后续动作失败。
+- **截图**：只截当前视口，永远排除 SDK 浮窗；内置渲染器基于 DOM 序列化（SVG foreignObject），跨域图片可能缺失，失败时返回明确错误且不影响普通页面观察。需要更完整像素时可传自定义 `screenshotRenderer`。
+
+### 明确不支持（会返回可解释错误，不尝试绕过浏览器边界）
+
+- 跨域 iframe、闭合 Shadow DOM 内的元素；
+- 文件选择器/上传、下载确认、新标签页与其他标签页、浏览器地址栏；
+- 验证码/人机验证、浏览器权限弹窗、系统窗口；
+- 任意 JavaScript 执行、坐标点击/拖拽、绕过同源策略/CSP/真实用户手势限制；
+- 截图整页拼接（仅当前视口）、SDK 自身 Shadow DOM 的读取与操作。
+
+`page_select` 对 `multiple` 多选只按单值选中一个选项（会替换原有选择），不支持一次选中多个值。
 
 ## 公司 SSO 接入
 

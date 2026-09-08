@@ -79,7 +79,93 @@ export interface WsAskUserQuestionsResultFrame {
   data: { requestId: string; answers: WsAskUserQuestionAnswer[] };
 }
 
-/** embed 实际发送的帧集合 */
+/** 页面工具名：后端 Agent 可请求、SDK 在浏览器本地执行的受控能力。 */
+export type PageToolName =
+  | 'page_inspect'
+  | 'page_screenshot'
+  | 'page_scroll'
+  | 'page_focus'
+  | 'page_fill'
+  | 'page_select'
+  | 'page_check'
+  | 'page_uncheck'
+  | 'page_click'
+  | 'page_keyboard'
+  | 'page_wait'
+  | 'page_observe'
+  | 'page_actions';
+
+/** 页面工具错误码：SDK 回传、后端工具原样透传给模型。 */
+export type PageToolErrorCode =
+  | 'authorization_required'
+  | 'authorization_denied'
+  | 'snapshot_expired'
+  | 'element_not_available'
+  | 'element_changed'
+  | 'element_disabled'
+  | 'element_readonly'
+  | 'element_not_fillable'
+  | 'element_not_selectable'
+  | 'element_not_checkable'
+  | 'value_not_applied'
+  | 'not_focusable'
+  | 'scroll_failed'
+  | 'option_not_found'
+  | 'option_disabled'
+  | 'unsupported_action'
+  | 'unsupported_target'
+  | 'cross_origin_frame'
+  | 'closed_shadow_root'
+  | 'navigation_detected'
+  | 'task_cancelled'
+  | 'screenshot_failed'
+  | 'screenshot_too_large'
+  | 'invalid_arguments'
+  | 'internal_error';
+
+/** 服务端 → SDK：页面工具请求（只发往绑定的那个 embed 连接）。 */
+export interface WsPageToolRequestData {
+  requestId: string;
+  tool: PageToolName;
+  arguments: Record<string, unknown>;
+}
+
+export interface WsPageToolRequestFrame {
+  type: 'page_tool_request';
+  sessionId: number;
+  data: WsPageToolRequestData;
+}
+
+/** SDK → 服务端：页面工具执行结果。 */
+export interface WsPageToolError {
+  code: PageToolErrorCode | string;
+  message: string;
+  elementId?: string;
+}
+
+export interface WsPageToolResultData {
+  success: boolean;
+  result?: unknown;
+  error?: WsPageToolError;
+  snapshotId?: string;
+  pageVersion?: string;
+}
+
+export interface WsPageToolResultFrame {
+  type: 'page_tool_result';
+  sessionId: number;
+  requestId: string;
+  data: WsPageToolResultData;
+}
+
+/**
+ * 服务端 → SDK：该会话的页面执行端已切换到其他连接（或页面任务被取消），
+ * SDK 应立即中止在途页面动作/批量并拒绝等待中的确认，避免与接管方重复执行 DOM 动作。
+ */
+export interface WsPageToolCancelData {
+  reason?: string;
+}
+
 export type WsEmbedOutboundFrame =
   | WsAuthFrame
   | WsAuthRefreshFrame
@@ -89,9 +175,9 @@ export type WsEmbedOutboundFrame =
   | WsSendMessageFrame
   | WsCancelFrame
   | WsToolApprovalFrame
-  | WsAskUserQuestionsResultFrame;
+  | WsAskUserQuestionsResultFrame
+  | WsPageToolResultFrame;
 
-/** ─────────────────── 服务端 → 客户端 事件 payload ─────────────────── */
 
 export interface WsConnectedData {
   userId: number;

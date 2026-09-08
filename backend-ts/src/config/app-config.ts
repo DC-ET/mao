@@ -66,6 +66,7 @@ export interface AppConfig {
       runtimeDir: string;
       userHomeDir: string;
       localToolTimeoutSeconds: number;
+      embedPageToolTimeoutSeconds: number;
       skillsDir: string;
       userSkillsDir: string;
       skillsCacheSeconds: number;
@@ -165,6 +166,8 @@ const DEFAULTS: AppConfig = {
       runtimeDir: '/opt/mao-data/runtime',
       userHomeDir: '/opt/mao-data/users',
       localToolTimeoutSeconds: 900,
+      // 需覆盖 per_action 逐次确认窗口（SDK 确认超时 120s），否则用户确认后动作仍会执行但结果无人接收。
+      embedPageToolTimeoutSeconds: 180,
       skillsDir: './skills',
       userSkillsDir: join(process.env.HOME ?? '/tmp', '.mao/data/userskills'),
       skillsCacheSeconds: 300,

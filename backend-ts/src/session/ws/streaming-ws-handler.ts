@@ -5,6 +5,7 @@ import { contentParts, WsStreamingEventListener, type AgentEventListener, type W
 import type { StreamingWsRegistry, WsSocket } from './streaming-ws-registry.js';
 import { wsEvent } from './ws-event.js';
 import { isActivePhase } from '../session-vo.js';
+import type { EmbedPageToolRegistry } from '../../harness/embed-page-tool-registry.js';
 
 export interface WsHandlerDeps {
   registry: StreamingWsRegistry;
@@ -43,6 +44,7 @@ export interface WsHandlerDeps {
     delete(id: number): Promise<void>;
     reorder(id: number, direction: string): Promise<void>;
   };
+  embedPageToolRegistry: EmbedPageToolRegistry;
   localToolSessionRegistry: {
     setUserForSession(sessionId: number, userId: number): void;
     isConnected(sessionId: number): boolean | Promise<boolean>;
@@ -140,6 +142,10 @@ export class StreamingWsHandler {
 
   afterConnectionClosed(session: WsSocket): void {
     const userId = this.deps.registry.getUserId(session);
+    // 页面连接断开：先让该连接上所有等待中的页面工具立即失败，再注销连接与绑定。
+    for (const boundSessionId of this.deps.registry.getEmbedSessionsForConnection(session)) {
+      this.deps.embedPageToolRegistry.failSession(boundSessionId, '页面连接已断开，页面操作已取消', 'embed_client_not_connected');
+    }
     this.deps.registry.unregister(session);
     if (userId != null && !this.deps.registry.hasLocalClientConnection(userId)) {
       this.deps.localToolSessionRegistry.failAllForUser(userId);
@@ -185,16 +191,16 @@ export class StreamingWsHandler {
       return;
     }
     try {
-      await this.dispatch(userId, type, root);
+      await this.dispatch(session, userId, type, root);
     } catch (e) {
       console.error(`WS handler failed for type=${type} userId=${userId}`, e);
     }
   }
 
-  private async dispatch(userId: number, type: string, root: Record<string, unknown>): Promise<void> {
+  private async dispatch(session: WsSocket, userId: number, type: string, root: Record<string, unknown>): Promise<void> {
     switch (type) {
-      case 'subscribe': await this.handleSubscribe(userId, root); break;
-      case 'unsubscribe': this.handleUnsubscribe(userId, root); break;
+      case 'subscribe': await this.handleSubscribe(session, userId, root); break;
+      case 'unsubscribe': this.handleUnsubscribe(session, userId, root); break;
       case 'send_message': await this.handleSendMessage(userId, root, true); break;
       case 'edit_and_resend': await this.handleEditAndResend(userId, root); break;
       case 'cancel': await this.handleCancel(userId, root); break;
@@ -206,6 +212,7 @@ export class StreamingWsHandler {
       case 'mcp_tools_report': await this.handleMcpToolsReport(userId, root); break;
       case 'tool_result': await this.handleToolResult(userId, root); break;
       case 'tool_error': await this.handleToolError(userId, root); break;
+      case 'page_tool_result': await this.handlePageToolResult(session, userId, root); break;
       case 'tool_approval': await this.handleToolApproval(userId, root); break;
       case 'ask_user_questions_result': await this.handleAskUserQuestionsResult(userId, root); break;
       case 'create_side_session': await this.handleCreateSideSession(userId, root); break;
@@ -216,12 +223,24 @@ export class StreamingWsHandler {
     }
   }
 
-  private async handleSubscribe(userId: number, root: Record<string, unknown>): Promise<void> {
+  private async handleSubscribe(session: WsSocket, userId: number, root: Record<string, unknown>): Promise<void> {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
     const s = await this.requireOwnedSession(userId, sessionId);
     if (!s) return;
     this.deps.registry.subscribe(userId, sessionId);
+    // 页面执行端绑定：embed 连接订阅 agent 会话后，该会话的页面工具请求只发往此连接。
+    if (this.deps.registry.getClientType(session) === 'embed') {
+      const previous = this.deps.registry.getEmbedSessionBinding(sessionId);
+      if (previous && previous.id !== session.id) {
+        // 同一会话被新标签页/新连接接管：旧连接上在途的页面请求立即失败，
+        // 即使旧连接已不 OPEN 也要清掉，否则它会堵住该会话的串行队列直到超时。
+        this.deps.embedPageToolRegistry.failSession(sessionId, '页面连接已切换，页面操作已取消', 'embed_client_not_connected');
+        // 旧连接可能仍 OPEN 并在本地继续执行在途 DOM 动作；显式通知它中止，避免与新连接重复执行。
+        this.deps.registry.sendToConnection(previous, wsEvent('page_tool_cancel', sessionId, { reason: '页面连接已切换' }));
+      }
+      this.deps.registry.bindEmbedSession(sessionId, session);
+    }
     const active = this.isSessionActive(s.phase);
     if (s.executionMode === 'LOCAL' && active) {
       this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
@@ -245,10 +264,16 @@ export class StreamingWsHandler {
     }
   }
 
-  private handleUnsubscribe(userId: number, root: Record<string, unknown>): void {
+  private handleUnsubscribe(session: WsSocket, userId: number, root: Record<string, unknown>): void {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
     this.deps.registry.unsubscribe(userId, sessionId);
+    if (this.deps.registry.getClientType(session) === 'embed'
+      && this.deps.registry.getEmbedSessionsForConnection(session).includes(sessionId)) {
+      // 页面端主动退订（切换/新建会话）：在途页面请求立即失败，不等超时。
+      this.deps.embedPageToolRegistry.failSession(sessionId, '页面已取消订阅，页面操作已取消', 'embed_client_not_connected');
+      this.deps.registry.unbindEmbedSession(sessionId, session);
+    }
   }
 
   private async handleSendMessage(userId: number, root: Record<string, unknown>, clearTodos: boolean): Promise<void> {
@@ -607,6 +632,26 @@ export class StreamingWsHandler {
     await Promise.resolve(this.deps.treeSignalPublisher.publishForSession(sessionId));
   }
 
+  private async handlePageToolResult(session: WsSocket, userId: number, root: Record<string, unknown>): Promise<void> {
+    const sessionId = this.getLong(root, 'sessionId');
+    const requestId = typeof root.requestId === 'string' ? root.requestId : null;
+    const data = root.data && typeof root.data === 'object' ? root.data as Record<string, unknown> : null;
+    if (sessionId == null || !requestId || !data || !(await this.requireOwnedSession(userId, sessionId))) return;
+    // 只接受该会话绑定的页面连接回包；同用户其他标签页/其他客户端不能完成请求。
+    if (!this.deps.registry.getEmbedSessionsForConnection(session).includes(sessionId)) return;
+    const error = data.error != null && typeof data.error === 'object' ? data.error as Record<string, unknown> : null;
+    this.deps.embedPageToolRegistry.complete(sessionId, requestId, session, {
+      success: data.success === true,
+      result: data.result,
+      error: error == null ? undefined : {
+        code: typeof error.code === 'string' ? error.code : 'page_tool_failed',
+        message: typeof error.message === 'string' ? error.message : '页面操作失败',
+        ...(typeof error.elementId === 'string' ? { elementId: error.elementId } : {}),
+      },
+      ...(typeof data.snapshotId === 'string' ? { snapshotId: data.snapshotId } : {}),
+      ...(typeof data.pageVersion === 'string' ? { pageVersion: data.pageVersion } : {}),
+    });
+  }
   private async handleToolError(userId: number, root: Record<string, unknown>): Promise<void> {
     const sessionId = this.getLong(root, 'sessionId');
     const requestId = typeof root.requestId === 'string' ? root.requestId : null;
@@ -943,6 +988,8 @@ export class StreamingWsHandler {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
+    // 用户点击停止：立刻取消该会话等待中的页面操作，不让工具挂到超时。
+    this.deps.embedPageToolRegistry.failSession(sessionId, '用户已停止任务，页面操作已取消');
     if (!this.cancelFlags.has(sessionId)) {
       // 执行尚未提交（send 的模型校验/LOCAL 检查/saveMessage await 期间，或 autoConsume 的 500ms 延迟窗口）：
       // cancel flag 尚未注册，直接 set(true) 会空转。记录待取消标记（注册标志时按时间判定消费），

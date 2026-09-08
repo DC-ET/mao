@@ -176,6 +176,15 @@ describe('ToolResultSummarizer', () => {
     expect(ToolResultSummarizer.summarize('task_delete', '{}', '{"message":"已删除"}')).toBe('已删除');
   });
 
+  it('summarizesPageTools', () => {
+    expect(ToolResultSummarizer.summarize('page_inspect', '{}', '{"success":true,"result":{"elements":[{},{}]}}')).toBe('查看页面元素 (2 个元素)');
+    expect(ToolResultSummarizer.summarize('page_observe', '{}', '{"success":true,"result":{"elementCount":7}}')).toBe('观察页面变化 (7 个元素)');
+    expect(ToolResultSummarizer.summarize('page_click', '{}', '{"success":true,"result":{"success":true}}')).toBe('点击页面元素 (成功)');
+    expect(ToolResultSummarizer.summarize('page_fill', '{}', '{"success":false,"error":{"message":"目标元素不可填写"}}')).toBe('填写页面输入框 (失败: 目标元素不可填写)');
+    expect(ToolResultSummarizer.summarize('page_screenshot', '{}', '{"success":true,"result":{"masked":true}}')).toBe('截取页面截图，已遮罩');
+    expect(ToolResultSummarizer.summarize('page_actions', '{}', '{"success":false,"result":{"steps":[{},{}],"stoppedAt":1}}')).toBe('执行批量页面操作 (2 步，中断于第 2 步)');
+  });
+
   it('summarizesScheduledTaskTools', () => {
     expect(ToolResultSummarizer.summarize('create_scheduled_task', '{"name":"新股申购检查"}', '{"message":"定时任务 \'新股申购检查\' 已创建，下次执行时间: 2026-07-28T09:00:00"}')).toBe("定时任务 '新股申购检查' 已创建，下次执行时间: 2026-07-28T09:00:00");
     expect(ToolResultSummarizer.summarize('update_scheduled_task', '{}', '{"name":"新股申购检查","status":"PAUSED","message":"定时任务已更新"}')).toBe('定时任务已更新');

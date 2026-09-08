@@ -2,10 +2,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { WsAskUserQuestionAnswer } from '@mao/contracts';
 import type { ChatMessage, PendingQuestion } from '../types';
+import type { PageActionLogEntry, PageAuthorizationLevel, PageConfirmRequest } from '../page';
 import AssistantMark from './AssistantMark.vue';
 import MessageBubble from './MessageBubble.vue';
 import Composer from './Composer.vue';
 import QuestionCard from './QuestionCard.vue';
+import PageActionPanel from './PageActionPanel.vue';
 
 const props = defineProps<{
   open: boolean;
@@ -20,6 +22,10 @@ const props = defineProps<{
   pendingQuestion: PendingQuestion | null;
   questionSubmitting: boolean;
   quotedSelection: string | null;
+  pageAuthorization: PageAuthorizationLevel;
+  pageTaskActive: boolean;
+  pageConfirm: PageConfirmRequest | null;
+  pageLogs: PageActionLogEntry[];
 }>();
 
 const emit = defineEmits<{
@@ -30,6 +36,9 @@ const emit = defineEmits<{
   answer: [requestId: string, answers: WsAskUserQuestionAnswer[]];
   clearSelection: [];
   retry: [];
+  setPageAuthorization: [level: PageAuthorizationLevel];
+  resolvePageConfirm: [id: string, approved: boolean];
+  cancelPageTask: [];
 }>();
 
 const listEl = ref<HTMLElement | null>(null);
@@ -126,6 +135,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
       :pending="pendingQuestion"
       :submitting="questionSubmitting"
       @submit="(id, answers) => emit('answer', id, answers)"
+    />
+
+    <PageActionPanel
+      :level="pageAuthorization"
+      :task-active="pageTaskActive"
+      :confirm="pageConfirm"
+      :logs="pageLogs"
+      @set-level="(level) => emit('setPageAuthorization', level)"
+      @confirm="(id, approved) => emit('resolvePageConfirm', id, approved)"
+      @cancel-task="emit('cancelPageTask')"
     />
 
     <Composer

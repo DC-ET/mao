@@ -38,6 +38,9 @@ describe('StreamingWsHandler', () => {
     getUserId: vi.fn(), send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
     sendToLocalClients: vi.fn(), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
+    getClientType: vi.fn(() => 'browser'), bindEmbedSession: vi.fn(), unbindEmbedSession: vi.fn(),
+    getEmbedSessionsForConnection: vi.fn(() => []), getEmbedSessionConnection: vi.fn(() => null),
+    getEmbedSessionBinding: vi.fn(() => null),
   };
   const titleService = { scheduleForFirstUserMessage: vi.fn() };
   const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executeSideFirstMessage: vi.fn() };
@@ -56,6 +59,10 @@ describe('StreamingWsHandler', () => {
   const localToolSessionRegistry = {
     setUserForSession: vi.fn(), isConnected: vi.fn(), failAllForSession: vi.fn(), failAllForUser: vi.fn(),
     completeToolRequest: vi.fn(), completeToolRequestError: vi.fn(),
+  };
+  const embedPageToolRegistry = {
+    request: vi.fn(), complete: vi.fn(() => true), failSession: vi.fn(), isEmbedSession: vi.fn(() => false),
+    hasBoundConnection: vi.fn(() => false), pendingCount: vi.fn(() => 0),
   };
   const askUserQuestionsRegistry = {
     failAllForSession: vi.fn(), getPendingForSession: vi.fn(() => []), complete: vi.fn(),
@@ -86,7 +93,7 @@ describe('StreamingWsHandler', () => {
 
   const handler = new StreamingWsHandler({
     registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
-    localToolSessionRegistry, askUserQuestionsRegistry, treeSignalPublisher, approvalRegistry, activityService,
+    localToolSessionRegistry, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
     activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
     localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
     llmModelMapper, jwtService, agentExecutor: (fn) => executor.submit(fn), mcpSyncTimeoutSeconds: 60,
@@ -119,7 +126,7 @@ describe('StreamingWsHandler', () => {
     const taskExecutor = new CapturingExecutor();
     const taskHandler = new StreamingWsHandler({
       registry: realRegistry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
-      localToolSessionRegistry, askUserQuestionsRegistry, treeSignalPublisher, approvalRegistry, activityService,
+      localToolSessionRegistry, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
       activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
       localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
       llmModelMapper, jwtService, agentExecutor: (fn) => taskExecutor.submit(fn),
@@ -707,7 +714,7 @@ describe('StreamingWsHandler', () => {
     function buildSubagentHandler(manager: ReturnType<typeof buildManagerMock>) {
       return new StreamingWsHandler({
         registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
-        localToolSessionRegistry, askUserQuestionsRegistry, treeSignalPublisher, approvalRegistry, activityService,
+        localToolSessionRegistry, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
         activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
         localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
         llmModelMapper, jwtService, agentExecutor: (fn) => executor.submit(fn),
@@ -785,6 +792,87 @@ describe('StreamingWsHandler', () => {
       await executor.runAll();
 
       expect(manager.completeRetry).toHaveBeenCalledWith(10, 55, 'FAILED');
+    });
+  });
+
+  describe('page tool bridge', () => {
+    it('binds the embed connection when it subscribes to a session', async () => {
+      vi.clearAllMocks();
+      registry.getUserId.mockReturnValue(7);
+      registry.getClientType.mockReturnValue('embed');
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+      expect(registry.bindEmbedSession).toHaveBeenCalledWith(11, ws);
+    });
+
+    it('completes pending page requests only for the bound connection', async () => {
+      vi.clearAllMocks();
+      registry.getUserId.mockReturnValue(7);
+      registry.getEmbedSessionsForConnection.mockReturnValue([11]);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+      embedPageToolRegistry.complete.mockReturnValue(true);
+      await handler.handleTextMessage(ws, JSON.stringify({
+        type: 'page_tool_result', sessionId: 11, requestId: 'req-1',
+        data: { success: true, result: { ok: true }, snapshotId: 's1', pageVersion: 'v2' },
+      }));
+      expect(embedPageToolRegistry.complete).toHaveBeenCalledWith(11, 'req-1', ws, expect.objectContaining({
+        success: true, snapshotId: 's1', pageVersion: 'v2',
+      }));
+    });
+
+    it('ignores page tool results from a connection that is not bound to the session', async () => {
+      vi.clearAllMocks();
+      registry.getUserId.mockReturnValue(7);
+      registry.getEmbedSessionsForConnection.mockReturnValue([]);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+      await handler.handleTextMessage(ws, JSON.stringify({
+        type: 'page_tool_result', sessionId: 11, requestId: 'req-1', data: { success: true },
+      }));
+      expect(embedPageToolRegistry.complete).not.toHaveBeenCalled();
+    });
+
+    it('fails pending page requests when the embed connection closes', () => {
+      vi.clearAllMocks();
+      registry.getUserId.mockReturnValue(7);
+      registry.getEmbedSessionsForConnection.mockReturnValue([11, 12]);
+      handler.afterConnectionClosed(ws);
+      expect(embedPageToolRegistry.failSession).toHaveBeenCalledWith(11, expect.stringContaining('页面连接'), 'embed_client_not_connected');
+      expect(embedPageToolRegistry.failSession).toHaveBeenCalledWith(12, expect.stringContaining('页面连接'), 'embed_client_not_connected');
+      expect(registry.unregister).toHaveBeenCalledWith(ws);
+    });
+
+    it('cancels pending page requests when the user stops the task', async () => {
+      vi.clearAllMocks();
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'cancel', sessionId: 11 }));
+      expect(embedPageToolRegistry.failSession).toHaveBeenCalledWith(11, expect.stringContaining('停止'));
+    });
+
+    it('fails pending page requests when the embed connection unsubscribes', async () => {
+      vi.clearAllMocks();
+      registry.getUserId.mockReturnValue(7);
+      registry.getClientType.mockReturnValue('embed');
+      registry.getEmbedSessionsForConnection.mockReturnValue([11]);
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'unsubscribe', sessionId: 11 }));
+      expect(embedPageToolRegistry.failSession).toHaveBeenCalledWith(11, expect.stringContaining('取消订阅'), 'embed_client_not_connected');
+      expect(registry.unbindEmbedSession).toHaveBeenCalledWith(11, ws);
+    });
+
+    it('fails pending page requests when the session is rebound to another embed connection', async () => {
+      vi.clearAllMocks();
+      registry.getUserId.mockReturnValue(7);
+      registry.getClientType.mockReturnValue('embed');
+      const other: WsSocket = { id: 'ws-2', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+      registry.getEmbedSessionBinding.mockReturnValue(other);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'IDLE'));
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+      expect(embedPageToolRegistry.failSession).toHaveBeenCalledWith(11, expect.stringContaining('切换'), 'embed_client_not_connected');
+      // 旧连接可能仍 OPEN：必须显式通知它中止在途页面动作，避免与新连接重复执行
+      expect(registry.sendToConnection).toHaveBeenCalledWith(other, expect.objectContaining({
+        type: 'page_tool_cancel', sessionId: 11,
+      }));
+      expect(registry.bindEmbedSession).toHaveBeenCalledWith(11, ws);
     });
   });
 });

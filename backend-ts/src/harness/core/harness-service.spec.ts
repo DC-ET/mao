@@ -64,6 +64,12 @@ describe('HarnessService.filterToolsForSession', () => {
     expect(names(filtered)).not.toContain('send_wechat_image');
   });
 
+  it('exposes page tools only for embed sessions', () => {
+    const list = [fakeTool('read_file'), fakeTool('page_inspect'), fakeTool('page_click')];
+    expect(names(HarnessService.filterPageTools(list, true))).toEqual(['read_file', 'page_inspect', 'page_click']);
+    expect(names(HarnessService.filterPageTools(list, false))).toEqual(['read_file']);
+  });
+
   it('emptyToolsIsSafe', () => {
     expect(HarnessService.filterToolsForSession([], WEIXIN_PROJECT_KEY)).toEqual([]);
   });

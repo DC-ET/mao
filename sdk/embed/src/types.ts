@@ -1,30 +1,45 @@
 import type { WsAskUserQuestionItem, WsTaskPhase } from '@mao/contracts';
+import type {
+  PageAction, PageActionResult, PageAuthorizationLevel, PageScreenshot, PageSnapshot, ScreenshotRenderer,
+} from './page';
 
+/** 主题：目前只支持主色，hover/浅底/聚焦环由 SDK 自动派生。 */
 export interface MaoChatTheme {
-  /** 主色，默认取 Mao 品牌蓝 */
   primary?: string;
 }
 
+/**
+ * 初始化参数：getToken（自签凭证）与 auth（公司 SSO）必须二选一。
+ */
 export type MaoChatInitOptions = MaoChatCommonOptions & (
   | { getToken: () => Promise<string>; auth?: never }
   | { getToken?: undefined; auth: { type: 'company-sso'; getSsoToken: () => Promise<string>; checkUrl: string } }
 );
 
-export type AuthStatus = 'authenticated' | 'login_required' | 'service_unavailable'
-  | 'account_forbidden' | 'identity_conflict' | 'configuration_error';
+export type AuthStatus =
+  | 'authenticated'
+  | 'login_required'
+  | 'service_unavailable'
+  | 'account_forbidden'
+  | 'identity_conflict'
+  | 'configuration_error';
+
+/** 页面操作相关选项。 */
+export interface MaoChatPageOptions {
+  /** 初始授权级别；缺省 per_action。宿主不能借此静默授予高权限（full 会被降级），用户仍可在浮窗中调整。 */
+  initialLevel?: PageAuthorizationLevel;
+  /** 截图渲染器；缺省使用内置 DOM 渲染器（当前视口，排除 SDK 浮窗）。 */
+  screenshotRenderer?: ScreenshotRenderer;
+}
 
 export interface MaoChatCommonOptions {
-  /** Mao 服务地址，如 https://mao.etarch.cn（REST 前缀 /api/v1、WS /api/ws/stream 自动推导） */
   serverUrl: string;
-  /** 必填：页面助手绑定的 agent id */
   agentId: number;
-  /** 页面上下文供给：每次发送前实时采集；返回值变化时才拼入引用块 */
   context?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
   theme?: MaoChatTheme;
   position?: 'right' | 'left';
-  /** 隐藏自带浮动按钮（宿主自绘入口），用 chat.open() 打开 */
   launcher?: { visible?: boolean };
-  /** 事件透传（宿主埋点/状态联动） */
+  page?: MaoChatPageOptions;
   onEvent?: (event: MaoChatEvent) => void;
 }
 
@@ -34,23 +49,28 @@ export interface MaoChatInstance {
   toggle(): void;
   newSession(): Promise<void>;
   setContext(ctx: Record<string, unknown>): void;
+  /** 读取当前页面可见交互元素快照。 */
+  inspectPage(): PageSnapshot;
+  /** 执行单个页面动作；snapshotId 缺省使用最近一次 inspect 的快照。 */
+  executePageAction(action: PageAction, snapshotId?: string): Promise<PageActionResult>;
+  getPageAuthorization(): PageAuthorizationLevel;
+  /** 宿主 API：只接受 per_action/task，full 会被降级（完全授权需用户在浮窗内授予）。 */
+  setPageAuthorization(level: PageAuthorizationLevel): void;
+  /** 截取当前视口截图；maskSensitive 缺省按授权级别处理。 */
+  capturePageScreenshot(options?: { maskSensitive?: boolean; reason?: string }): Promise<PageScreenshot>;
   destroy(): void;
 }
 
-/** 透传给宿主的事件 */
 export type MaoChatEvent =
   | { type: 'auth'; status: AuthStatus; message: string; userId?: number }
   | { type: 'phase'; phase: WsTaskPhase; sessionId: number }
   | { type: 'error'; message: string }
-  /** 未读数变化（收起浮窗时收到新消息 / 展开时清零） */
   | { type: 'unread'; count: number };
 
-/** 按事件到达顺序记录；仅合并相邻同类节点，工具结果就地更新。 */
 export type MessageSegment =
   | { type: 'text' | 'thinking'; content: string }
   | { type: 'tool-group'; toolCalls: ToolCallItem[] };
 
-/** 浮窗内一条消息的运行时形态 */
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -59,9 +79,7 @@ export interface ChatMessage {
   streaming: boolean;
   error: boolean;
   segments: MessageSegment[];
-  /** 工具调用卡片 */
   toolCalls: ToolCallItem[];
-  /** 随本条发出的页面选中引用；仅用户气泡回显，不进助手侧 */
   quotedSelection?: string | null;
 }
 

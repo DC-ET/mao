@@ -1,5 +1,7 @@
 import type { WsEvent } from './ws-event.js';
 
+import { wsEvent } from './ws-event.js';
+
 export interface WsSocket {
   id: string;
   readyState: number;
@@ -57,6 +59,10 @@ export class StreamingWsRegistry {
   private readonly sessionToClientType = new Map<string, string>();
   private readonly userSubscriptions = new Map<number, Set<number>>();
   private readonly activeToolCalls = new Map<number, Map<string, Record<string, unknown>>>();
+  /** agent sessionId → 绑定的 embed 连接（页面执行端）。每个会话只绑定一个页面连接。 */
+  private readonly embedSessionBindings = new Map<number, WsSocket>();
+  /** embed 连接 → 该连接绑定的 agent sessionId 集合（断线清理用）。 */
+  private readonly embedConnectionSessions = new Map<string, Set<number>>();
 
   constructor(outboundQueueCapacity = 10000) {
     this.capacity = outboundQueueCapacity;
@@ -105,6 +111,7 @@ export class StreamingWsRegistry {
     const auth = this.connectionAuth.get(session.id);
     if (auth?.timer) clearTimeout(auth.timer);
     this.connectionAuth.delete(session.id);
+    this.releaseEmbedConnection(session);
     const userId = this.sessionToUser.get(session.id);
     this.sessionToUser.delete(session.id);
     this.sessionToClientType.delete(session.id);
@@ -249,6 +256,75 @@ export class StreamingWsRegistry {
 
   sendToLocalClients(userId: number, event: WsEvent): void {
     this.enqueue(userId, event, 'LOCAL_ONLY');
+  }
+
+  getClientType(session: WsSocket): string | null {
+    return this.sessionToClientType.get(session.id) ?? null;
+  }
+
+  /**
+   * 把 agent 会话绑定到具体的 embed 连接（浏览器标签页/页面实例）。
+   * 页面工具请求只发往该连接，同一用户的其他标签页不会收到，也不会接管结果。
+   */
+  bindEmbedSession(sessionId: number, session: WsSocket): void {
+    const previous = this.embedSessionBindings.get(sessionId);
+    if (previous && previous !== session) {
+      this.embedConnectionSessions.get(previous.id)?.delete(sessionId);
+    }
+    this.embedSessionBindings.set(sessionId, session);
+    let sessions = this.embedConnectionSessions.get(session.id);
+    if (!sessions) {
+      sessions = new Set();
+      this.embedConnectionSessions.set(session.id, sessions);
+    }
+    sessions.add(sessionId);
+  }
+
+  unbindEmbedSession(sessionId: number, session: WsSocket): void {
+    if (this.embedSessionBindings.get(sessionId) === session) {
+      this.embedSessionBindings.delete(sessionId);
+    }
+    this.embedConnectionSessions.get(session.id)?.delete(sessionId);
+  }
+
+  getEmbedSessionConnection(sessionId: number): WsSocket | null {
+    const socket = this.embedSessionBindings.get(sessionId);
+    if (!socket) return null;
+    if (socket.readyState !== WS_OPEN || !this.isConnectionAuthorized(socket)) return null;
+    return socket;
+  }
+
+  /** 原始绑定（不检查连接是否 OPEN）：换绑时用于识别被顶掉的旧连接。 */
+  getEmbedSessionBinding(sessionId: number): WsSocket | null {
+    return this.embedSessionBindings.get(sessionId) ?? null;
+  }
+
+  isEmbedSession(sessionId: number): boolean {
+    return this.getEmbedSessionConnection(sessionId) != null;
+  }
+
+  /** 某 embed 连接当前绑定的 agent 会话（断线时用于清理 pending 页面请求）。 */
+  getEmbedSessionsForConnection(session: WsSocket): number[] {
+    return [...(this.embedConnectionSessions.get(session.id) ?? [])];
+  }
+
+  private releaseEmbedConnection(session: WsSocket): void {
+    const sessions = this.embedConnectionSessions.get(session.id);
+    if (!sessions) return;
+    this.embedConnectionSessions.delete(session.id);
+    for (const sessionId of sessions) {
+      if (this.embedSessionBindings.get(sessionId) === session) {
+        this.embedSessionBindings.delete(sessionId);
+      }
+    }
+  }
+
+  /** 定向发送页面工具请求；返回是否成功投递到绑定的页面连接。 */
+  sendPageToolRequest(sessionId: number, requestId: string, tool: string, args: unknown): boolean {
+    const socket = this.getEmbedSessionConnection(sessionId);
+    if (!socket) return false;
+    this.sendToConnection(socket, wsEvent('page_tool_request', sessionId, { requestId, tool, arguments: args }));
+    return true;
   }
 
   sendRaw(userId: number, json: string): void {

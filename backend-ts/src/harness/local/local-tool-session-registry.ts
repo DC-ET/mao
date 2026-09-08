@@ -108,10 +108,7 @@ export class LocalToolSessionRegistry {
   completeToolRequest(sessionId: number, requestId: string, result: string): void {
     const map = this.pendingRequests.get(sessionId);
     const entry = map?.get(requestId);
-    if (entry) {
-      map!.delete(requestId);
-      entry.resolve(result);
-    }
+    if (entry) { map!.delete(requestId); entry.resolve(result); }
   }
 
   completeToolRequestError(sessionId: number, requestId: string, error: string): void {

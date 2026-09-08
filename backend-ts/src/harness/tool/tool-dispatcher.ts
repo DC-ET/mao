@@ -146,7 +146,7 @@ export class ToolDispatcher {
     if (toolName === ASK_USER_QUESTIONS) {
       return this.dispatchAskUserQuestions(argumentsJson, sessionId);
     }
-    if (SERVER_ONLY_TOOLS.has(toolName)) {
+    if (SERVER_ONLY_TOOLS.has(toolName) || toolName.startsWith('page_')) {
       const tool = this.toolRegistry.getTool(toolName);
       if (tool) {
         return await callTool(tool, argumentsJson, sessionId, userId, workspace);

@@ -166,6 +166,7 @@ import { lazyRef } from './common/lazy-ref.js';
 import { ApprovalRegistry } from './harness/approval/approval-registry.js';
 import { SessionTreeSignalPublisher } from './harness/approval/session-tree-signal-publisher.js';
 import { StreamingWsRegistry } from './session/ws/streaming-ws-registry.js';
+import { EmbedPageToolRegistry, resolveEmbedPageToolTimeoutMs } from './harness/embed-page-tool-registry.js';
 import { StreamingWsHandler } from './session/ws/streaming-ws-handler.js';
 import { attachWebSocket } from './session/ws/attach-websocket.js';
 import { TerminalManager, TERMINAL_AUDIT_META, type TerminalAuditRecorder } from './harness/terminal/terminal-manager.js';
@@ -635,6 +636,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const localSkills = new LocalSkillRegistry();
   const localAgentsMd = new LocalAgentsMdRegistry();
   const wsRegistry = new StreamingWsRegistry(cfg.app.ws.outboundQueueCapacity);
+  const embedPageToolRegistry = new EmbedPageToolRegistry(
+    wsRegistry, resolveEmbedPageToolTimeoutMs(cfg.app.harness.embedPageToolTimeoutSeconds),
+  );
   const localToolSessions = new LocalToolSessionRegistry(wsRegistry, sessionMap);
   const definitionRegistry = new AgentDefinitionRegistry();
   const subagentMapper = new SubagentExecutionMapper(db);
@@ -796,6 +800,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     backgroundSubagentManager,
     messageMapper: messageRepo as never,
     sessionCompactionService: compactionSvc,
+    embedPageToolRegistry,
   });
 
   const toolDispatcher = new ToolDispatcher(
@@ -814,6 +819,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sessionMap, agentRepo as never, experienceService, modelRepo as never, fileChangeRepo as never,
     sessionSvc, compactionSvc, historyLoader, orchestrator,
     promptEngine, activeContext, compactionConfig, envInfo, db, mcpClient, mcpSync,
+    { isEmbedSession: (sid: number) => embedPageToolRegistry.isEmbedSession(sid) },
   );
   holder.harness = harness;
 
@@ -883,6 +889,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sessionService,
     taskTerminalService: taskTerminal,
     messageQueueService,
+    embedPageToolRegistry,
     localToolSessionRegistry: localToolSessions,
     askUserQuestionsRegistry,
     treeSignalPublisher,

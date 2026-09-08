@@ -30,6 +30,19 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   update_scheduled_task: '更新定时任务',
   delete_scheduled_task: '删除定时任务',
   list_scheduled_tasks: '查询定时任务',
+  page_inspect: '查看页面元素',
+  page_observe: '观察页面变化',
+  page_screenshot: '截取页面截图',
+  page_scroll: '滚动页面',
+  page_focus: '聚焦页面元素',
+  page_fill: '填写页面输入框',
+  page_select: '选择下拉选项',
+  page_check: '勾选页面控件',
+  page_uncheck: '取消勾选页面控件',
+  page_click: '点击页面元素',
+  page_keyboard: '发送键盘输入',
+  page_wait: '等待页面',
+  page_actions: '执行批量页面操作',
 }
 
 export function getToolDisplayName(name: string): string {
@@ -48,6 +61,29 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
     case 'feishu_send_file':
       if (typeof input.filename === 'string' && input.filename.trim()) return input.filename
       return typeof input.file === 'string' ? input.file : ''
+    case 'page_inspect':
+    case 'page_observe':
+    case 'page_screenshot':
+      return typeof input.reason === 'string' ? input.reason : ''
+    case 'page_actions': {
+      const actions = Array.isArray(input.actions) ? input.actions : []
+      return `${actions.length} 个动作`
+    }
+    case 'page_fill':
+      return typeof input.value === 'string' ? `值: ${input.value.slice(0, 40)}` : ''
+    case 'page_select':
+      return typeof input.value === 'string' ? `选项: ${input.value}` : ''
+    case 'page_keyboard':
+      return typeof input.key === 'string' ? `按键: ${input.key}` : ''
+    case 'page_scroll':
+      return typeof input.to === 'string' ? `滚动到 ${input.to}` : ''
+    case 'page_wait':
+      return typeof input.ms === 'number' ? `等待 ${input.ms}ms` : ''
+    case 'page_click':
+    case 'page_focus':
+    case 'page_check':
+    case 'page_uncheck':
+      return typeof input.elementId === 'string' ? `元素: ${input.elementId}` : ''
   }
   const cmd = input.command
   if (typeof cmd === 'string') {

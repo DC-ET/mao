@@ -34,6 +34,7 @@ describe('WS SSO authentication lifecycle', () => {
     handler = new StreamingWsHandler({
       registry, jwtService, agentLoop: { requestCancel },
       localToolSessionRegistry: { failAllForUser },
+      embedPageToolRegistry: { failSession: vi.fn(), complete: vi.fn(() => true) },
     } as unknown as WsHandlerDeps);
   });
 

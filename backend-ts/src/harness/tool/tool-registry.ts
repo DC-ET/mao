@@ -42,6 +42,8 @@ import {
 } from './impl/scheduled-task-tools.js';
 import { SendWechatFileTool, SendWechatImageTool } from './impl/wechat-tools.js';
 import { FeishuDownloadFileTool, ReadFeishuDocTool, SendFeishuFileTool, SendFeishuImageTool } from './impl/feishu-tools.js';
+import { createPageTools } from './impl/page-tools.js';
+import type { EmbedPageToolRegistry } from '../embed-page-tool-registry.js';
 
 export interface DefaultToolRegistryDeps {
   pathSandbox: PathSandbox;
@@ -80,9 +82,10 @@ export interface DefaultToolRegistryDeps {
   backgroundSubagentManager: BackgroundSubagentManager;
   messageMapper: MessageMapper;
   sessionCompactionService: SessionCompactionService;
+  embedPageToolRegistry: EmbedPageToolRegistry;
 }
 
-/** Instantiates and registers all 22 built-in tools (mirrors Spring Tool bean auto-registration). */
+/** Instantiates and registers all built-in tools (mirrors Spring Tool bean auto-registration). */
 export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRegistry {
   return new ToolRegistry([
     new AskUserQuestionsTool(),
@@ -118,6 +121,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new CheckSubagentTool(deps.backgroundSubagentManager),
     new CancelSubagentTool(deps.backgroundSubagentManager),
     new WaitSubagentsTool(deps.backgroundSubagentManager, (sid) => deps.agentLoop.getCancelFlag(sid)),
+    ...createPageTools(deps.embedPageToolRegistry),
   ]);
 }
 

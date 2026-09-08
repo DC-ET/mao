@@ -144,9 +144,68 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeDeleteScheduledTask(result);
     case 'list_scheduled_tasks':
       return summarizeListScheduledTasks(result);
+    case 'page_inspect':
+    case 'page_observe':
+    case 'page_screenshot':
+    case 'page_scroll':
+    case 'page_focus':
+    case 'page_fill':
+    case 'page_select':
+    case 'page_check':
+    case 'page_uncheck':
+    case 'page_click':
+    case 'page_keyboard':
+    case 'page_wait':
+    case 'page_actions':
+      return summarizePageTool(toolName.toLowerCase(), argumentsJson, result);
     default:
       return summarizeGeneric(toolName, result);
   }
+}
+
+const PAGE_TOOL_LABELS: Record<string, string> = {
+  page_inspect: '查看页面元素',
+  page_observe: '观察页面变化',
+  page_screenshot: '截取页面截图',
+  page_scroll: '滚动页面',
+  page_focus: '聚焦页面元素',
+  page_fill: '填写页面输入框',
+  page_select: '选择下拉选项',
+  page_check: '勾选页面控件',
+  page_uncheck: '取消勾选页面控件',
+  page_click: '点击页面元素',
+  page_keyboard: '发送键盘输入',
+  page_wait: '等待页面',
+  page_actions: '执行批量页面操作',
+};
+
+function summarizePageTool(toolName: string, argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const label = PAGE_TOOL_LABELS[toolName] ?? '页面操作';
+  const root = asObj(parseJson(result ?? null));
+  if (!root) return label;
+  if (has(root, 'error')) {
+    const error = asObj(root.error);
+    const message = error && has(error, 'message') ? String(error.message) : '';
+    return message ? `${label} (失败: ${truncate(message, 40)})` : `${label} (失败)`;
+  }
+  const node = asObj(root.result) ?? root;
+  if (toolName === 'page_inspect' && Array.isArray(node.elements)) {
+    return `${label} (${node.elements.length} 个元素)`;
+  }
+  if (toolName === 'page_observe' && has(node, 'elementCount')) {
+    return `${label} (${Number(node.elementCount)} 个元素)`;
+  }
+  if (toolName === 'page_actions') {
+    const steps = Array.isArray(node.steps) ? node.steps.length : 0;
+    const stopped = has(node, 'stoppedAt') ? `，中断于第 ${Number(node.stoppedAt) + 1} 步` : '';
+    return `${label} (${steps} 步${stopped})`;
+  }
+  if (toolName === 'page_screenshot') {
+    const masked = node.masked === true ? '，已遮罩' : '';
+    return `${label}${masked}`;
+  }
+  if (root.success === true) return `${label} (成功)`;
+  return label;
 }
 
 function summarizeShell(argumentsJson: string | null | undefined, result: string | null | undefined): string {

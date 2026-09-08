@@ -66,6 +66,7 @@ export class HarnessService {
     private readonly db?: Db | null,
     private readonly mcpClientManager?: McpClientManager | null,
     private readonly mcpSyncService?: McpSyncService | null,
+    private readonly embedSessionLookup?: { isEmbedSession(sessionId: number): boolean } | null,
   ) {}
 
   prepareMessage(_sessionId: number, _userContent: unknown): string {
@@ -321,6 +322,8 @@ export class HarnessService {
     context.contextAnchorMsgId = anchor.contextAnchorMsgId;
 
     let sessionTools = HarnessService.filterToolsForSession(this.toolRegistry.getAllTools(), session.projectKey, session.workspace);
+    // 页面工具只在绑定了 embed 页面连接的会话中暴露；其他会话（桌面/CLI/微信/子代理）不可见也不可调用。
+    sessionTools = HarnessService.filterPageTools(sessionTools, this.embedSessionLookup?.isEmbedSession(sessionId) === true);
     const mcpWarnings: string[] = [];
     if (this.mcpSyncService) {
       try {
@@ -436,6 +439,10 @@ export class HarnessService {
       return result.filter((t) => !isWeixinChannelTool(t) && t.getName() !== ASK_USER_QUESTIONS);
     }
     return result.filter((t) => !isWeixinChannelTool(t) && !isFeishuChannelTool(t));
+  }
+
+  static filterPageTools(tools: Tool[], isEmbedSession: boolean): Tool[] {
+    return isEmbedSession ? [...tools] : tools.filter((t) => !t.getName().startsWith('page_'));
   }
 
   static mergeLocalUnsyncedSkills(

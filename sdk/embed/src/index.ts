@@ -2,7 +2,11 @@ import type { MaoChatInitOptions, MaoChatInstance } from './types';
 import { EmbedController, createUiState, mountApp, type UiState } from './controller';
 import { applyTheme } from './ui/theme';
 
-export type { MaoChatInitOptions, MaoChatInstance, MaoChatEvent } from './types';
+export type { MaoChatInitOptions, MaoChatInstance, MaoChatEvent, MaoChatPageOptions } from './types';
+export type {
+  PageSnapshot, PageElement, PageAction, PageActionResult, PageScreenshot,
+  PageAuthorizationLevel, PageConfirmRequest, PageActionLogEntry, PageObserveResult, PageBatchResult,
+} from './page';
 
 interface EmbeddedInstance extends MaoChatInstance {
   /** 内部 state（仅测试用） */
@@ -59,6 +63,15 @@ function createInstance(options: MaoChatInitOptions): MaoChatInstance {
     toggle: () => controller.toggle(),
     newSession: () => controller.newSession(),
     setContext: (ctx) => controller.setContext(ctx),
+    inspectPage: () => controller.pageEngine.inspect({ sessionId: controller.store.sessionId() }),
+    executePageAction: (action, snapshotId) => controller.pageEngine.executeAction(
+      action, snapshotId ?? controller.pageEngine.manager.currentSnapshotId ?? undefined, controller.store.sessionId() ?? 0,
+    ),
+    getPageAuthorization: () => controller.pageEngine.authorizationLevel,
+    setPageAuthorization: (level) => controller.setPageAuthorization(level),
+    capturePageScreenshot: (opts) => controller.pageEngine.screenshot({
+      maskSensitive: opts?.maskSensitive, reason: opts?.reason, sessionId: controller.store.sessionId(),
+    }),
     destroy: () => {
       controller.destroy();
       window.__maoChatInstance = undefined;

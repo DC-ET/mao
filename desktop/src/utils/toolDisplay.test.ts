@@ -92,4 +92,17 @@ describe('getToolInputPreview', () => {
     expect(getToolInputPreview('read_file', { file_path: text })).toBe(text)
     expect(getToolInputPreview('web_search', { query: text })).toBe(text)
   })
+
+  it('页面工具展示中文名与参数预览', () => {
+    expect(getToolDisplayName('page_inspect')).toBe('查看页面元素')
+    expect(getToolDisplayName('page_click')).toBe('点击页面元素')
+    expect(getToolDisplayName('page_screenshot')).toBe('截取页面截图')
+    expect(getToolInputPreview('page_click', { snapshotId: 's1', elementId: 'e3' })).toBe('元素: e3')
+    expect(getToolInputPreview('page_fill', { elementId: 'e1', value: '张三' })).toBe('值: 张三')
+    expect(getToolInputPreview('page_select', { value: 'b' })).toBe('选项: b')
+    expect(getToolInputPreview('page_keyboard', { key: 'Enter' })).toBe('按键: Enter')
+    expect(getToolInputPreview('page_scroll', { to: 'bottom' })).toBe('滚动到 bottom')
+    expect(getToolInputPreview('page_wait', { ms: 500 })).toBe('等待 500ms')
+    expect(getToolInputPreview('page_actions', { actions: [{ type: 'click' }, { type: 'wait' }] })).toBe('2 个动作')
+  })
 })

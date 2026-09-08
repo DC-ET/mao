@@ -4,8 +4,9 @@ import type {
   WsAskUserQuestionsResultFrame,
   WsCancelFrame,
   WsEmbedOutboundFrame,
-  WsSendMessageFrame,
+  WsPageToolResultFrame,
   WsServerEvent,
+  WsSendMessageFrame,
 } from '@mao/contracts';
 import {
   DEFAULT_WS_SILENCE_TIMEOUT_MS,
@@ -369,7 +370,11 @@ export class WsClient {
     return this.sendReliable(frame);
   }
 
-  /** 关键帧：连接不在则尝试重连后补发，重连失败返回 false */
+  sendPageToolResult(sessionId: number, requestId: string, data: WsPageToolResultFrame['data']): Promise<boolean> {
+    return this.sendReliable({ type: 'page_tool_result', sessionId, requestId, data });
+  }
+
+
   private async sendReliable(frame: WsEmbedOutboundFrame): Promise<boolean> {
     const identity = this.hooks.identity?.();
     try {

@@ -12,10 +12,13 @@ import { TabsCoordinator } from './core/tabs';
 import { ContextCollector, PREFIX_SEPARATOR, extractQuotedSelection, stripContextPrefix } from './context/collector';
 import { SelectionTracker } from './context/selection';
 import type { ChatMessage, MessageSegment, ToolCallItem } from './types';
+import type { PageActionLogEntry, PageAuthorizationLevel, PageConfirmRequest, PageHighlightTarget } from './page';
+import { PageEngine, isPageToolName } from './page';
 import type {
   EmbedMessageVO,
   AgentVO,
   WsAskUserQuestionAnswer,
+  WsPageToolResultData,
   WsTaskPhase,
   WsServerEvent,
 } from '@mao/contracts';
@@ -51,6 +54,16 @@ export interface UiState {
   questionSubmitting: boolean;
   quotedSelection: string | null;
   position: 'right' | 'left';
+  /** 页面操作授权级别（默认 per_action） */
+  pageAuthorization: PageAuthorizationLevel;
+  /** 当前是否有正在进行的页面任务 */
+  pageTaskActive: boolean;
+  /** per_action 下等待用户确认的页面动作 */
+  pageConfirm: PageConfirmRequest | null;
+  /** 页面动作日志（最近若干条） */
+  pageLogs: PageActionLogEntry[];
+  /** 当前高亮的页面目标元素 */
+  pageHighlight: PageHighlightTarget | null;
 }
 
 export function createUiState(options: MaoChatInitOptions): UiState {
@@ -70,6 +83,11 @@ export function createUiState(options: MaoChatInitOptions): UiState {
     questionSubmitting: false,
     quotedSelection: null,
     position: options.position ?? 'right',
+    pageAuthorization: options.page?.initialLevel ?? 'per_action',
+    pageTaskActive: false,
+    pageConfirm: null,
+    pageLogs: [],
+    pageHighlight: null,
   });
 }
 
@@ -98,6 +116,9 @@ export function mountApp(ui: UiState): { app: VueApp; host: HTMLElement; root: H
       void getController()?.answer(requestId, answers),
     onClearSelection: () => getController()?.clearSelection(),
     onRetry: () => getController()?.retry(),
+    onSetPageAuthorization: (level: PageAuthorizationLevel) => getController()?.applyUserPageAuthorization(level),
+    onResolvePageConfirm: (id: string, approved: boolean) => getController()?.resolvePageConfirm(id, approved),
+    onCancelPageTask: () => getController()?.cancelPageTask(),
   });
   app.mount(mountEl);
 
@@ -165,6 +186,8 @@ export class EmbedController {
   private readonly tabs: TabsCoordinator;
   private readonly contextCollector: ContextCollector;
   private selectionTracker: SelectionTracker | null = null;
+  /** 页面能力引擎：快照 / 动作 / 授权 / 截图，与 controller 共用同一页面实例 */
+  readonly pageEngine: PageEngine;
   private destroyed = false;
   private booted = false;
   private identity: string | null = null;
@@ -188,6 +211,9 @@ export class EmbedController {
   private readonly unconfirmedSaves = new Map<string, string>();
   /** 管理后台配置的 Agent 名称；浮窗标题用这个，不跟会话自动标题走 */
   private agentDisplayName: string | null = null;
+  /** 页面工具 requestId 幂等：已处理过的请求重发缓存结果，处理中的重复请求直接忽略 */
+  private readonly pageToolResults = new Map<string, WsPageToolResultData>();
+  private readonly pageToolInFlight = new Set<string>();
 
   constructor(
     public readonly options: MaoChatInitOptions,
@@ -249,6 +275,9 @@ export class EmbedController {
         this.store.clearLlmRetry();
         // 落库确认帧不参与 subscribe 重放：断线期间暂停计时，重连后走 REST 对账
         this.pauseSaveTimeouts();
+        // 页面工具 pending 已被服务端在断线时失败：本地中止在途动作/批量并拒绝等待中的确认，
+        // 避免用户断线后批准或重连后新旧请求并发执行 DOM 动作（重复提交）。
+        if (this.pageEngine) this.pageEngine.abortInFlight();
       },
       onEvent: (event) => this.onWsEvent(event),
     });
@@ -258,6 +287,32 @@ export class EmbedController {
     this.selectionTracker = new SelectionTracker((sel) => {
       this.ui.quotedSelection = sel;
     }, host);
+    this.pageEngine = new PageEngine({
+      host,
+      serverUrl: options.serverUrl,
+      agentId: options.agentId,
+      identity: () => this.identity,
+      currentSessionId: () => this.store.sessionId(),
+      screenshotRenderer: options.page?.screenshotRenderer,
+      onAuthorizationChange: (level) => {
+        this.ui.pageAuthorization = level;
+        // 不在此清空 pageConfirm：授权层会在升级（自动放行）或撤销/结束（拒绝）时通过
+        // onConfirmRequest(null) 统一收口；降级到 per_action 时等待中的确认卡片应继续可见。
+      },
+      onConfirmRequest: (request) => {
+        this.ui.pageConfirm = request;
+      },
+      onLog: (entry) => {
+        this.ui.pageLogs = [...this.ui.pageLogs, entry].slice(-20);
+      },
+      onHighlight: (target) => {
+        this.ui.pageHighlight = target;
+      },
+      onTaskStateChange: (active) => {
+        this.ui.pageTaskActive = active;
+      },
+    });
+    if (options.page?.initialLevel) this.pageEngine.setInitialLevel(options.page.initialLevel);
     // ws → ui：连接指示灯/输入禁用以"已鉴权"为准（socket OPEN 但未鉴权时业务帧不可用）
     watch(this.ws.authenticated, (v) => {
       this.ui.connected = v;
@@ -274,6 +329,8 @@ export class EmbedController {
     watch(this.store.phase, (v) => {
       this.ui.phase = v;
       const sid = this.store.sessionId();
+      // 任务终态：task 授权随任务结束失效，页面任务标记清除
+      if (v === 'COMPLETED' || v === 'FAILED' || v === 'CANCELLED') this.pageEngine.endTask();
       // phase 事件以 store 为准透传给宿主：与 UI 显示的状态严格一致
       // （stale CANCELLING、cancel 抑制等过滤已在 store 内完成）
       if (v != null && sid != null) this.emitEvent({ type: 'phase', phase: v, sessionId: sid });
@@ -313,6 +370,8 @@ export class EmbedController {
     if (this.destroyed || this.identity === user) return false;
     const changed = this.identity !== null;
     this.identity = user;
+    // 身份就绪/切换后立刻按真实身份同步页面授权（持久化 full 才能反映到浮窗）
+    if (this.pageEngine) this.pageEngine.authorization.syncIdentity();
     if (!changed) return false;
     this.identityVersion++;
     this.ui.identityVersion++;
@@ -331,6 +390,12 @@ export class EmbedController {
     this.agentDisplayName = null;
     this.applyPanelTitle();
     this.ui.agentAvatarUrl = null;
+    // 身份切换：取消页面任务并清空页面授权/日志，避免跨身份继承
+    this.pageEngine.cancel();
+    this.ui.pageLogs = [];
+    this.ui.pageConfirm = null;
+    this.ui.pageHighlight = null;
+    this.ui.pageTaskActive = false;
     this.booted = false;
     // Run after the single-flight token acquisition settles; never reuse old session requests.
     if (this.ui.panelOpen) this.resumeAuthenticatedPanel();
@@ -539,6 +604,16 @@ export class EmbedController {
         this.rollbackAllPendingSaves();
         break;
       }
+      case 'page_tool_request': {
+        // 页面工具请求不进入聊天消息流；由 PageEngine 在浏览器本地执行后经 page_tool_result 回传
+        void this.handlePageToolRequest(msg);
+        return;
+      }
+      case 'page_tool_cancel': {
+        // 该会话的页面执行端已被其他标签页/连接接管：中止在途动作，避免与新连接重复执行 DOM 副作用
+        if (msg.sessionId == null || msg.sessionId === this.store.sessionId()) this.pageEngine.abortInFlight();
+        return;
+      }
       default:
         break;
     }
@@ -614,6 +689,10 @@ export class EmbedController {
       this.tabs.claim(session.id);
       this.clearPendingSaves();
       this.submittedQuestionIds.clear();
+      // 新会话：页面任务与 task 授权立即失效，页面日志清空
+      this.pageEngine.cancel();
+      this.ui.pageLogs = [];
+      this.ui.pageConfirm = null;
       this.store.reset();
       this.store.bindSession(session.id);
       this.applyPanelTitle();
@@ -637,6 +716,7 @@ export class EmbedController {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.pageEngine.destroy();
     this.tokens.destroy();
     this.store.reset();
     this.clearPendingSaves();
@@ -703,6 +783,8 @@ export class EmbedController {
   // ─── UI 事件 ───
 
   async send(content: string) {
+    // 新消息代表新一轮任务：清掉上一轮 stop() 留下的取消阻断态。
+    this.pageEngine.prepareNewTask();
     const version = this.identityVersion;
     if (this.options.auth) {
       try { await this.tokens.get(); } catch { return; }
@@ -780,6 +862,9 @@ export class EmbedController {
   async stop() {
     const sid = this.store.sessionId();
     if (sid == null) return;
+    // 用户停止：先取消本地页面任务与等待中的确认，再通知服务端
+    this.pageEngine.cancel();
+    this.ui.pageConfirm = null;
     // 先 await 成功才抑制：失败时不能让本地进入抑制态（否则服务端续推的内容被吞）
     const ok = await this.ws.cancel(sid);
     if (!ok) {
@@ -792,11 +877,9 @@ export class EmbedController {
     // 乐观切回发送态，不等服务端 CANCELLED 回包
     this.store.phase.value = 'CANCELLED';
   }
-
   async answer(requestId: string, answers: WsAskUserQuestionAnswer[]) {
     const sid = this.store.sessionId();
-    if (sid == null) return;
-    if (this.submittedQuestionIds.has(requestId)) return;
+    if (sid == null || this.submittedQuestionIds.has(requestId)) return;
     this.submittedQuestionIds.add(requestId);
     this.ui.questionSubmitting = true;
     const ok = await this.ws.sendAskUserQuestionsResult(sid, requestId, answers);
@@ -816,6 +899,76 @@ export class EmbedController {
     // 同时通知 tracker：否则 send() 仍会重新读取 window.getSelection() 拼进引用块
     this.selectionTracker?.dismiss(this.ui.quotedSelection);
     this.ui.quotedSelection = null;
+  }
+
+  // ─── 页面操作（SDK 公共 API 与 UI 共用同一 PageEngine） ───
+
+  setPageAuthorization(level: PageAuthorizationLevel): void {
+    // 宿主公开 API：full 降级（用户需在浮窗内显式授权）
+    this.pageEngine.setHostLevel(level, this.store.sessionId());
+  }
+
+  /** 浮窗内用户点击授权级别：允许授予并持久化 full。 */
+  applyUserPageAuthorization(level: PageAuthorizationLevel): void {
+    this.pageEngine.setLevel(level, this.store.sessionId());
+  }
+
+  resolvePageConfirm(id: string, approved: boolean): void {
+    this.pageEngine.resolveConfirmation(id, approved);
+  }
+
+  cancelPageTask(): void {
+    this.pageEngine.cancel();
+    this.ui.pageConfirm = null;
+    // 只停本地不够：必须通知服务端取消当前任务，否则 Agent 会继续下发页面请求。
+    const sid = this.store.sessionId();
+    if (sid != null) void this.ws.cancel(sid);
+  }
+
+  /** 后端 page_tool_request → 本地执行 → page_tool_result 回传。requestId 幂等。 */
+  private async handlePageToolRequest(msg: WsServerEvent): Promise<void> {
+    const data = msg.data as { requestId?: string; tool?: string; arguments?: Record<string, unknown> } | undefined;
+    const sessionId = msg.sessionId;
+    const requestId = data?.requestId;
+    const tool = data?.tool;
+    if (!requestId || !tool || sessionId == null || !isPageToolName(tool)) return;
+    const cached = this.pageToolResults.get(requestId);
+    if (cached) {
+      await this.ws.sendPageToolResult(sessionId, requestId, cached);
+      return;
+    }
+    if (this.pageToolInFlight.has(requestId)) return;
+    // 用户已停止任务：拒绝停止后到达的页面请求，避免动作在取消后仍被执行。
+    if (this.pageEngine.isCancelled) {
+      await this.ws.sendPageToolResult(sessionId, requestId, {
+        success: false, error: { code: 'task_cancelled', message: '页面任务已取消' },
+      });
+      return;
+    }
+    this.pageToolInFlight.add(requestId);
+    let result: WsPageToolResultData;
+    try {
+      const outcome = await this.pageEngine.handleRequest(tool, data?.arguments ?? {}, sessionId);
+      result = {
+        success: outcome.success,
+        ...(outcome.result !== undefined ? { result: outcome.result } : {}),
+        ...(outcome.error ? { error: outcome.error } : {}),
+        ...(outcome.snapshotId ? { snapshotId: outcome.snapshotId } : {}),
+        ...(outcome.pageVersion ? { pageVersion: outcome.pageVersion } : {}),
+      };
+    } catch (e) {
+      result = { success: false, error: { code: 'internal_error', message: e instanceof Error ? e.message : String(e) } };
+    } finally {
+      this.pageToolInFlight.delete(requestId);
+    }
+    // 截图结果含 dataUri（可能数百 KB）：超过阈值只保留轻量摘要，避免缓存常驻大内存。
+    const serialized = JSON.stringify(result);
+    this.pageToolResults.set(requestId, serialized.length <= 64_000 ? result : { success: result.success, error: result.error });
+    if (this.pageToolResults.size > 50) {
+      const oldest = this.pageToolResults.keys().next().value;
+      if (oldest != null) this.pageToolResults.delete(oldest);
+    }
+    await this.ws.sendPageToolResult(sessionId, requestId, result);
   }
 
   retry() {

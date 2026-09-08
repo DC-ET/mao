@@ -2,8 +2,10 @@
 import { computed, toRef } from 'vue';
 import type { WsAskUserQuestionAnswer } from '@mao/contracts';
 import type { UiState } from '../controller';
+import type { PageAuthorizationLevel } from '../page';
 import Launcher from './Launcher.vue';
 import ChatPanel from './ChatPanel.vue';
+import PageHighlight from './PageHighlight.vue';
 import { useLauncherPosition } from './useLauncherPosition';
 
 const props = defineProps<{ ui: UiState }>();
@@ -19,12 +21,15 @@ defineEmits<{
   answer: [requestId: string, answers: WsAskUserQuestionAnswer[]];
   clearSelection: [];
   retry: [];
+  setPageAuthorization: [level: PageAuthorizationLevel];
+  resolvePageConfirm: [id: string, approved: boolean];
+  cancelPageTask: [];
 }>();
 
 const phaseRef = toRef(() => props.ui.phase);
 // embed 会话固定为 CLOUD，无工具审批环节，故不含 WAITING_APPROVAL
 const running = computed(() => phaseRef.value === 'RUNNING' || phaseRef.value === 'RESUMING');
-const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion != null);
+const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion != null || props.ui.pageConfirm != null);
 </script>
 
 <template>
@@ -44,6 +49,7 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
     @lostpointercapture="placement.pointerCancel"
     @click="(event) => { if (placement.allowClick(event)) $emit('launcherClick'); }"
   />
+  <PageHighlight :target="ui.pageHighlight" />
   <ChatPanel
     :key="ui.identityVersion"
     :open="ui.panelOpen"
@@ -59,6 +65,10 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
     :pending-question="ui.pendingQuestion"
     :question-submitting="ui.questionSubmitting"
     :quoted-selection="ui.quotedSelection"
+    :page-authorization="ui.pageAuthorization"
+    :page-task-active="ui.pageTaskActive"
+    :page-confirm="ui.pageConfirm"
+    :page-logs="ui.pageLogs"
     @close="$emit('close')"
     @new-session="$emit('newSession')"
     @send="(c) => $emit('send', c)"
@@ -66,5 +76,8 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
     @answer="(id, a) => $emit('answer', id, a)"
     @clear-selection="$emit('clearSelection')"
     @retry="$emit('retry')"
+    @set-page-authorization="(level) => $emit('setPageAuthorization', level)"
+    @resolve-page-confirm="(id, approved) => $emit('resolvePageConfirm', id, approved)"
+    @cancel-page-task="$emit('cancelPageTask')"
   />
 </template>
