@@ -183,6 +183,13 @@ export class ShellSession {
     return this.alive && this.process.exitCode == null && !this.process.killed;
   }
 
+  /** 进程已退出时的状态码：正常退出用 bash 的 exit code；被信号杀掉则为 -1。 */
+  processExitStatus(): number | null {
+    if (this.process.exitCode != null) return this.process.exitCode;
+    if (this.process.signalCode || !this.isAlive()) return -1;
+    return null;
+  }
+
   isIdleTimeout(timeoutMs: number): boolean {
     return Date.now() - this.lastActiveAt > timeoutMs;
   }
@@ -258,6 +265,8 @@ export interface OutputResult {
   exitCode: number | null;
   /** wait_for 命中的文本；命中即提前返回，命令仍在后台继续运行。 */
   matched: string | null;
+  /** bash 已退出（命令含 exit/exec、进程崩溃或会话被关闭），没有更多输出。 */
+  shellExited?: boolean;
 }
 
 /** 匹配紧跟在 marker 之后被回显的 `$?`。 */
@@ -323,6 +332,12 @@ export class OutputManager {
         const hit = waitFor.exec(buffer.slice(session.emittedBoundary()));
         if (hit) {
           matched = hit[0];
+          // printf 命中后紧跟 exit 很常见：再等一小段，避免误报「命令仍在运行」
+          if (session.isAlive()) {
+            const remain = deadline - Date.now();
+            await session.waitForOutput(remain > 0 ? Math.min(remain, WAIT_SLICE_MS) : WAIT_SLICE_MS);
+          }
+          markerIndex = session.peekBuffer().indexOf(marker);
           break;
         }
       }
@@ -333,17 +348,32 @@ export class OutputManager {
     }
 
     const buffer = session.peekBuffer();
+    if (markerIndex < 0) markerIndex = buffer.indexOf(marker);
     const emitted = session.emittedBoundary();
     if (markerIndex < 0) {
       // 尾部可能是被切成两半的结束标记，留到下一次读取再判定，否则标记会漏进正文；
-      // 会话已结束时不会再有后续字节，只能原样交付。
-      const tail = session.isAlive() ? pendingMarkerTail(buffer, marker) : 0;
+      // 进程已退出时不会再有后续字节，按命令结束交付，避免 Agent 去续等已死会话。
+      const dead = !session.isAlive();
+      const tail = dead ? 0 : pendingMarkerTail(buffer, marker);
       const end = Math.max(emitted, buffer.length - tail);
       const preview = this.preview(buffer.slice(emitted, end));
+      const trimmed = session.wasBufferTrimmed();
       session.markEmitted(end);
+      if (dead) {
+        session.finishCommand(buffer.length);
+        return {
+          output: preview.text,
+          truncated: preview.truncated || trimmed,
+          completed: true,
+          elapsedMs: Date.now() - start,
+          exitCode: session.processExitStatus(),
+          matched,
+          shellExited: true,
+        };
+      }
       return {
         output: preview.text,
-        truncated: preview.truncated || session.wasBufferTrimmed(),
+        truncated: preview.truncated || trimmed,
         completed: false,
         elapsedMs: Date.now() - start,
         exitCode: null,
@@ -465,9 +495,10 @@ export class ShellSessionManager {
     return session;
   }
 
-  getSession(sessionId: string): ShellSession | null {
+  getSession(sessionId: string, opts?: { allowDead?: boolean }): ShellSession | null {
     const session = this.sessions.get(sessionId);
-    if (!session || !session.isAlive()) return null;
+    if (!session) return null;
+    if (!session.isAlive()) return opts?.allowDead ? session : null;
     session.touch();
     return session;
   }
@@ -515,7 +546,12 @@ export class ShellSessionManager {
     const maxLifetime = this.sessionMaxLifetimeHours * 3600_000;
     let cleaned = 0;
     for (const [sessionId, session] of [...this.sessions.entries()]) {
-      if (!session.isAlive() || session.isIdleTimeout(idleTimeout) || session.isExpired(maxLifetime)) {
+      const dead = !session.isAlive();
+      // 刚因 exit 退出、结果尚未收取的会话留给下一次 await_async，避免 Agent 看到「会话不存在」
+      if (dead && session.pendingCommand && !session.isIdleTimeout(idleTimeout) && !session.isExpired(maxLifetime)) {
+        continue;
+      }
+      if (dead || session.isIdleTimeout(idleTimeout) || session.isExpired(maxLifetime)) {
         this.removeSession(sessionId);
         cleaned++;
       }

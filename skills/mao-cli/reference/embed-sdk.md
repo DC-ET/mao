@@ -95,7 +95,7 @@ const chat = MaoChat.init({
 ## 宿主侧要求
 
 - **CSP**：放行 Mao 域名的 `connect-src`（`https:` 与 `wss:`）、`script-src` 及 `img-src`（Agent 头像）。
-- **跨源**：REST 请求带 `Authorization`，会触发预检；后端 CORS 已显式放行 `Authorization`（0.0.105 起）。生产 Nginx 的 `/api/` 是纯反代、不注入 CORS 头。
+- **跨源**：REST 请求带 `Authorization` 会触发预检。后端 CORS 不设静态 `allowedHeaders`，预检反射 `Access-Control-Request-Headers`（含 `Authorization` 以及宿主 APM 注入的 `sw8` 等自定义头）。不要改回 `*`（对 `Authorization` 无效）或静态白名单。生产 Nginx 的 `/api/` 是纯反代、不注入 CORS 头。
 
 ## 常见问题
 
@@ -105,7 +105,7 @@ const chat = MaoChat.init({
 | 指示灯不亮 / 底部提示"连接已断开" | 尚未鉴权成功：检查 `getToken()` 是否返回有效 token、CSP 是否放行 `wss:`（此状态下仍可输入，发送会先重连） |
 | 横幅"登录凭据已失效" | 服务端以 `close(1003)` 拒绝了 token；重新鉴权成功后横幅会自动消失 |
 | 横幅"无法连接到助手服务" | WS 连不上（域名 / 证书 / CSP / 网络）；原始错误可从 `onEvent` 的 `error` 事件取到 |
-| 跨源请求被浏览器拒绝 | 确认后端版本 ≥ 0.0.105（CORS `allowedHeaders` 显式含 `Authorization`） |
+| 跨源请求被浏览器拒绝 | 确认后端版本 ≥ 0.0.111（CORS 预检反射请求头，覆盖 `Authorization` 与宿主 APM 的 `sw8` 等）；生产 Nginx 不要另行覆盖 CORS 头 |
 
 ## 开发与发布
 

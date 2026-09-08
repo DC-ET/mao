@@ -57,7 +57,9 @@ export class ShellSessionTool extends BaseTool {
       + '- keep_session：是否保留会话（默认 false），执行后自动关闭会话以释放资源。\n'
       + '- wait_for：正则；命中输出即提前返回（completed=false），命令继续在后台运行。\n'
       + '返回 completed=false 时命令仍在运行，会话被保留，用 await_async + session_id 继续等待；'
-      + '完整输出始终写入 output_file。';
+      + '完整输出始终写入 output_file。'
+      + '常驻会话里不要用 exit/exec 结束循环（会杀掉整个 bash）；应使用 break。'
+      + '若进程已退出，await_async 会交付剩余输出并 completed=true，不要再续等。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
@@ -217,9 +219,10 @@ export class ShellSessionTool extends BaseTool {
   /**
    * 命令已结束才按 keep_session 决定是否回收；仍在运行时必须保留会话，
    * 否则关闭会 SIGKILL 掉进程组，模型再也拿不到剩余输出。
+   * bash 已退出时 keep_session 也无法复用，必须回收。
    */
   private settleSession(session: ShellSession, result: OutputResult, keepSession: boolean): void {
-    if (result.completed && !keepSession) this.sessionManager.close(session.sessionId);
+    if (!session.isAlive() || (result.completed && !keepSession)) this.sessionManager.close(session.sessionId);
   }
 
   private formatResult(
@@ -235,7 +238,9 @@ export class ShellSessionTool extends BaseTool {
       output_file: session.outputFile,
     };
     if (result.matched != null) payload.matched = result.matched;
-    if (!result.completed) {
+    if (result.shellExited) {
+      payload.message = 'shell 进程已退出，会话已关闭。常驻 bash 里的 exit/exec 会结束整个会话。';
+    } else if (!result.completed) {
       payload.message = result.matched != null
         ? `wait_for 已命中，命令仍在运行。用 action:'await_async' + session_id:'${session.sessionId}' 继续等待。`
         : `等待超时，命令仍在运行。用 action:'await_async' + session_id:'${session.sessionId}' 继续等待。`;
@@ -315,7 +320,8 @@ export class ShellSessionTool extends BaseTool {
     }
     const shellId = asText(args.session_id);
     if (!shellId) return errorJson("await_async 必须提供 session_id 或 task_id");
-    const session = this.sessionManager.getSession(shellId);
+    // 进程可能刚因 exit 退出，仍要读出最后输出，不能把死会话当成「不存在」
+    const session = this.sessionManager.getSession(shellId, { allowDead: true });
     if (!session) return errorJson('会话不存在或已关闭：' + shellId);
     const pending = session.pendingCommand;
     if (!pending) return errorJson('该会话没有未结束的命令：' + shellId);
@@ -348,7 +354,7 @@ export class ShellSessionTool extends BaseTool {
    * 读取过程反而会消费当前命令的后续输出并把日志末行误判为工作目录。
    */
   private async resolveCurrentWorkdir(session: ShellSession, result: OutputResult): Promise<string> {
-    if (!result.completed) return session.currentWorkdir;
+    if (!result.completed || !session.isAlive()) return session.currentWorkdir;
     try {
       const marker = this.newMarker();
       // pwd 属协议命令，输出不进 output_file

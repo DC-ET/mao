@@ -18,7 +18,8 @@ export async function corsForRequest(
     origin: isExchange ? allowed && (config?.allowedOrigins.includes('*') ? '*' : true) : true,
     credentials: !isExchange,
     methods: isExchange ? ['POST', 'OPTIONS'] : ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Requested-With'],
+    // Omit allowedHeaders: @fastify/cors default (null) reflects Access-Control-Request-Headers.
+    // A static list rejects host APM headers (e.g. SkyWalking sw8); '*' does not cover Authorization.
     exposedHeaders: isExchange ? ['Retry-After'] : [],
     maxAge: 3600,
   };
