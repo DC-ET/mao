@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import AssistantMark from './AssistantMark.vue';
 
-defineProps<{
+const props = defineProps<{
   agentAvatarUrl?: string | null;
+  agentName?: string;
   visible: boolean;
   position: 'right' | 'left';
   running: boolean;
@@ -11,6 +13,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{ click: [event: MouseEvent] }>();
+const labelName = computed(() => props.agentName?.trim() || 'Mao 助手');
 </script>
 
 <template>
@@ -20,7 +23,7 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>();
     :class="{ 'mao-launcher--dragging': dragging }"
     :data-pos="position"
     type="button"
-    :aria-label="running ? 'Mao 助手，正在处理' : attention ? 'Mao 助手，有新消息' : '打开 Mao 助手'"
+    :aria-label="running ? `${labelName}，正在处理` : attention ? `${labelName}，有新消息` : `打开 ${labelName}`"
     title="点击打开，拖动调整位置"
     @dragstart.prevent
     @click="emit('click', $event)"

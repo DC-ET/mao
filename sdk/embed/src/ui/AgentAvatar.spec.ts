@@ -13,10 +13,16 @@ describe('Agent avatar', () => {
     ui.panelOpen = true;
     ui.phase = 'RUNNING';
     ui.unread = 1;
+    ui.sessionTitle = '客服助手';
     el = document.createElement('div');
     document.body.appendChild(el);
     app = createApp({ render: () => h(RootApp, { ui }) });
     app.mount(el);
+    expect(el.querySelector('.mao-panel__title')?.textContent).toBe('客服助手');
+    expect(el.querySelector('.mao-panel')?.getAttribute('aria-label')).toBe('客服助手对话');
+    expect(el.querySelector('.mao-launcher')?.getAttribute('aria-label')).toBe('客服助手，正在处理');
+    expect(el.querySelector<HTMLTextAreaElement>('.mao-composer__input')?.disabled).toBe(false);
+    expect(el.querySelector('.mao-composer__stop')).not.toBeNull();
     expect(el.querySelectorAll('.mao-assistant-mark')).toHaveLength(2);
     expect(el.querySelectorAll('.mao-agent-avatar')).toHaveLength(0);
 

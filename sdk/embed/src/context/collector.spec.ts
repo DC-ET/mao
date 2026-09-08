@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ContextCollector,
+  extractQuotedSelection,
   hashString,
   stableStringify,
   stripContextPrefix,
@@ -30,6 +31,26 @@ describe('stripContextPrefix', () => {
 
   it('只有前缀没有分隔符时保留原文（不产出空气泡）', () => {
     expect(stripContextPrefix('[页面上下文]\nurl: x')).toBe('[页面上下文]\nurl: x');
+  });
+});
+
+describe('extractQuotedSelection', () => {
+  it('取出单独的选中引用', () => {
+    expect(extractQuotedSelection('[用户选中文本]\n合同条款片段\n\n---\n\n帮我解释')).toBe('合同条款片段');
+  });
+
+  it('页面上下文与选中并存时只回显选中文本', () => {
+    const full = '[页面上下文]\nurl: https://x/y\ntitle: T\ndata: {"a":1}\n\n[用户选中文本]\n不健康实例 telemetry\n\n---\n\n这是什么';
+    expect(extractQuotedSelection(full)).toBe('不健康实例 telemetry');
+    expect(stripContextPrefix(full)).toBe('这是什么');
+  });
+
+  it('仅有页面上下文时不回显引用', () => {
+    expect(extractQuotedSelection('[页面上下文]\nurl: x\n\n---\n\n问题')).toBeNull();
+  });
+
+  it('无前缀时返回 null', () => {
+    expect(extractQuotedSelection('普通消息')).toBeNull();
   });
 });
 

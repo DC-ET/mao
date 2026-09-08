@@ -73,13 +73,14 @@ function jsonOk(data: unknown) {
 
 let historyMessages: Array<Record<string, unknown>> = [];
 let agentAvatarUrl: string | null | undefined;
+let agentName: string | null | undefined = '客服助手';
 
 function installFetch(fetchCalls: string[]) {
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
     fetchCalls.push(`${method} ${url}`);
-    if (url.endsWith('/agents/3')) return jsonOk({ id: 3, avatarUrl: agentAvatarUrl });
+    if (url.endsWith('/agents/3')) return jsonOk({ id: 3, name: agentName, avatarUrl: agentAvatarUrl });
     if (method === 'POST' && url.includes('/sessions')) {
       return jsonOk({ id: SESSION_ID, title: '网页助手' });
     }
@@ -132,6 +133,7 @@ describe('EmbedController', () => {
     FakeWebSocket.constructThrows = false;
     historyMessages = [];
     agentAvatarUrl = undefined;
+    agentName = '客服助手';
     (globalThis as Record<string, unknown>).WebSocket = FakeWebSocket;
     window.localStorage.clear();
   });
@@ -154,6 +156,32 @@ describe('EmbedController', () => {
     await boot(h);
     expect(h.fetchCalls).toContain('GET https://mao.example.com/api/v1/agents/3');
     expect(h.ui.agentAvatarUrl).toBe(expected);
+    h.ctl.destroy();
+  });
+
+  it.each([
+    ['客服助手', '客服助手'],
+    ['  客服助手  ', '客服助手'],
+    [undefined, 'Mao 助手'],
+    [null, 'Mao 助手'],
+    ['', 'Mao 助手'],
+    ['   ', 'Mao 助手'],
+  ])('boot 浮窗标题使用 Agent 名称 %s', async (name, expected) => {
+    agentName = name;
+    const h = await makeHarness();
+    expect(h.ui.sessionTitle).toBe('Mao 助手');
+    await boot(h);
+    expect(h.ui.sessionTitle).toBe(expected);
+    h.ctl.destroy();
+  });
+
+  it('session_title_updated 不覆盖 Agent 名称', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    expect(h.ui.sessionTitle).toBe('客服助手');
+    socket.emit({ type: 'session_title_updated', sessionId: SESSION_ID, data: { title: '今天的订单查询' } });
+    await nextTick();
+    expect(h.ui.sessionTitle).toBe('客服助手');
     h.ctl.destroy();
   });
 
@@ -380,6 +408,7 @@ describe('EmbedController', () => {
     const messages = h.ctl.store.messages.value;
     expect(messages.map((m) => m.id)).toEqual(['h_2', 'h_3', 'h_6']);
     expect(messages[0].content).toBe('问题');
+    expect(messages[0].quotedSelection).toBe('引用内容');
     expect(messages[0].segments).toEqual([{ type: 'text', content: '问题' }]);
     expect(messages[1].segments).toEqual([
       { type: 'thinking', content: '先想一下' },
@@ -633,6 +662,21 @@ describe('EmbedController', () => {
     h.ctl.destroy();
   });
 
+  it('发送带选中引用时气泡回显讨论块，正文仍是用户输入', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    h.ui.quotedSelection = '不健康实例 telemetry 10.140.0.96:8080';
+    await h.ctl.send('帮我看下');
+    const user = h.ctl.store.messages.value.find((m) => m.role === 'user');
+    expect(user?.content).toBe('帮我看下');
+    expect(user?.quotedSelection).toBe('不健康实例 telemetry 10.140.0.96:8080');
+    const frame = socket.framesOfType('send_message')[0] as { data: { content: string } };
+    expect(frame.data.content).toContain('[用户选中文本]');
+    expect(frame.data.content).toContain('不健康实例 telemetry 10.140.0.96:8080');
+    expect(h.ui.quotedSelection).toBeNull();
+    h.ctl.destroy();
+  });
+
   it('clearSelection 后发送不再携带引用块', async () => {
     const h = await makeHarness();
     const socket = await boot(h);
@@ -658,6 +702,7 @@ describe('EmbedController', () => {
       return jsonOk({ messages: [], hasMore: false });
     }) as unknown as typeof fetch;
     await h.ctl.newSession();
+    expect(h.ui.sessionTitle).toBe('客服助手');
     expect(socket.framesOfType('unsubscribe')).toEqual([{ type: 'unsubscribe', sessionId: SESSION_ID }]);
     expect(socket.framesOfType('subscribe')).toEqual([
       { type: 'subscribe', sessionId: SESSION_ID },

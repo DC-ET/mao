@@ -50,4 +50,22 @@ describe('Launcher', () => {
     await nextTick();
     expect(el.querySelector('button')).toBeNull();
   });
+
+  it('朗读名使用 Agent 名称', async () => {
+    const props = reactive({
+      visible: true,
+      position: 'right' as const,
+      running: false,
+      attention: false,
+      agentName: '客服助手',
+    });
+    el = document.createElement('div');
+    document.body.appendChild(el);
+    app = createApp({ render: () => h(Launcher, props) });
+    app.mount(el);
+    expect(el.querySelector('button')?.getAttribute('aria-label')).toBe('打开 客服助手');
+    props.running = true;
+    await nextTick();
+    expect(el.querySelector('button')?.getAttribute('aria-label')).toBe('客服助手，正在处理');
+  });
 });

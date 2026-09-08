@@ -384,8 +384,9 @@ export class ChatStore {
   }
 
   /** 用户主动发送后立即上屏；返回本地消息 id 供发送失败时回滚 */
-  appendLocalUserMessage(content: string): string {
+  appendLocalUserMessage(content: string, quotedSelection?: string | null): string {
     const id = genId('u');
+    const quote = quotedSelection?.trim() || undefined;
     this.messages.value.push({
       id,
       role: 'user',
@@ -395,6 +396,7 @@ export class ChatStore {
       error: false,
       segments: [],
       toolCalls: [],
+      quotedSelection: quote,
     });
     this.ensureStreamingAssistant();
     return id;
