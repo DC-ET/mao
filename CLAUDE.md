@@ -27,6 +27,7 @@ admin：router `admin/src/router/index.ts`，视图 `views/`。desktop：useStre
 ## 规范
 后端 TS Node22+ Nest11 Fastify；表列 snake_case，BIGINT 自增，created_at/updated_at。
 前端 Vue3 `<script setup>`，Pinia `defineStore`，严格 TS，无 ESLint/Prettier，靠 vue-tsc。
+新增或重命名内置工具时，同步补齐 `backend-ts/src/session/util/tool-result-summarizer.ts` 的结果摘要、`desktop/src/utils/toolDisplay.ts` 的中文名称与参数预览，并添加成功/失败及缺失参数的回归测试，勿只注册工具而遗漏展示。
 安卓 Java 在 `android/android/app/`；专用 UI/路由/OTA 写 desktop 并用 `android-capacitor` / `Capacitor.isNativePlatform()` 守卫，勿影响 Web/Electron。不做 LOCAL、工具审批、系统推送、移动端布局重构、上架商店、改后端/admin。keystore 严禁入 git（`MAO_KEYSTORE_*` 或 `/opt/mao/keystore/keystore-credentials.env`）。前端发版=部署 desktop/dist（刷新/`version.json`）；仅原生壳变更才 `build-apk.sh`。
 
 ## 改哪

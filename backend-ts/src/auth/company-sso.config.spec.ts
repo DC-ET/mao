@@ -17,7 +17,7 @@ describe('company SSO configuration', () => {
   });
 
   it.each([
-    { allowedOrigins: [] }, { allowedOrigins: ['null'] }, { allowedOrigins: ['https://*.example.test'] },
+    { allowedOrigins: [] }, { allowedOrigins: ['null'] }, { allowedOrigins: ['https://foo*.example.test'] },
     { allowedOrigins: ['https://host.example.test/path'] }, { allowedOrigins: ['http://host.example.test'] },
     { accessTtlSeconds: 59 }, { accessTtlSeconds: 3601 }, { timeoutMs: 0 }, { allowedDomains: [] },
   ])('rejects unsafe config %j', (override) => {

@@ -70,6 +70,8 @@ describe('company SSO settings validation', () => {
     JSON.stringify({ ...enabled, allowedDomains: 'acg.team' }), JSON.stringify({ ...enabled, allowedDomains: [1] }),
     JSON.stringify({ ...enabled, allowedOrigins: [1] }), JSON.stringify({ ...enabled, allowedOrigins: [] }),
     JSON.stringify({ ...enabled, allowedDomains: [] }), JSON.stringify({ ...enabled, allowedOrigins: ['http://portal.example.test'] }),
+    ...['https://*.ACG.TEAM', 'https://*.acg.team:443', 'https://foo*.acg.team', 'https://*.*.acg.team', 'https://*.127.0.0.1', 'https://*.acg.team/path', 'https://user@*.acg.team', 'https://*.acg.team:65536']
+      .map((pattern) => JSON.stringify({ ...enabled, allowedOrigins: ['*', pattern] })),
     ...[59, 3601, 60.5, '1800', null].map((accessTtlSeconds) => JSON.stringify({ ...enabled, accessTtlSeconds })),
     ...[0, 30001, 1.5, '3000', null].map((timeoutMs) => JSON.stringify({ ...enabled, timeoutMs })),
     ...Object.keys(enabled).map((key) => JSON.stringify(Object.fromEntries(Object.entries(enabled).filter(([field]) => field !== key)))),
@@ -93,6 +95,63 @@ describe('company SSO settings validation', () => {
 });
 
 describe('company SSO runtime updates through settings HTTP routes', () => {
+  it.each(['https://*.acg.team', 'https://*.acg.team:8443', '*'])('saves %s in both paths and shares preflight/POST decisions', async (pattern) => {
+    const f = await application();
+    try {
+      for (const batch of [false, true]) {
+        expect((await f.save({ ...enabled, allowedOrigins: [pattern] }, batch)).json().code).toBe(0);
+        expect((await f.settings.getCompanySsoConfig()).allowedOrigins).toEqual([pattern]);
+      }
+      const origins = ['https://a.acg.team', 'https://a.b.acg.team', 'https://acg.team',
+        'https://a.acg.team:8443', 'https://a.b.acg.team:8443', 'https://a.acg.team:9443',
+        'https://acg.team:8443', 'http://a.acg.team', 'null', 'https://evilacg.team',
+        'https://a.acg.team.evil.test', 'https://a.acg.team/path', 'https://user@a.acg.team'];
+      for (const origin of origins) {
+        const allowed = pattern === '*' || (pattern.endsWith(':8443')
+          ? ['https://a.acg.team:8443', 'https://a.b.acg.team:8443'].includes(origin)
+          : ['https://a.acg.team', 'https://a.b.acg.team'].includes(origin));
+        const preflight = await f.app.inject({ method: 'OPTIONS', url: path, headers: {
+          origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'Authorization, Content-Type',
+        } });
+        const post = await f.exchange(checkUrl, origin);
+        expect(post.statusCode).toBe(allowed ? 200 : 403);
+        for (const response of [preflight, post]) {
+          expect(response.headers['access-control-allow-origin']).toBe(allowed ? (pattern === '*' ? '*' : origin) : undefined);
+          expect(response.headers['access-control-allow-credentials']).toBeUndefined();
+        }
+        if (allowed) expect(preflight.statusCode).toBe(204);
+      }
+    } finally { await f.app.close(); }
+  });
+
+  it('keeps Mao HTTPS and checkUrl rules with all sources enabled', async () => {
+    const f = await application(JSON.stringify({ ...enabled, allowedOrigins: ['*'] }));
+    try {
+      const insecure = await f.app.inject({ method: 'POST', url: path, payload: { checkUrl },
+        headers: { ...headers, origin: 'http://localhost:3000', 'x-forwarded-proto': 'http' } });
+      expect(insecure.statusCode).toBe(403);
+      for (const url of ['http://sgs.acg.team/check', 'https://evilacg.team/check', 'https://acg.team.evil.test/check']) {
+        expect((await f.exchange(url, 'null')).statusCode).toBe(400);
+      }
+      expect(f.fetcher).not.toHaveBeenCalled();
+    } finally { await f.app.close(); }
+  });
+
+  it.each([
+    { ...enabled, enabled: false, allowedOrigins: ['*'] },
+    { ...enabled, allowedOrigins: ['*', 'https://*.*.acg.team'] },
+  ])('fails closed on disabled or bad wildcard configuration %j', async (stored) => {
+    const f = await application(JSON.stringify(stored));
+    try {
+      const preflight = await f.app.inject({ method: 'OPTIONS', url: path,
+        headers: { origin: 'null', 'access-control-request-method': 'POST' } });
+      const post = await f.exchange(checkUrl, 'null');
+      expect(post.statusCode).toBe(503);
+      for (const response of [preflight, post]) expect(response.headers['access-control-allow-origin']).toBeUndefined();
+      expect(f.fetcher).not.toHaveBeenCalled();
+    } finally { await f.app.close(); }
+  });
+
   it('applies enable, domains, origins, timeout and TTL immediately with one read per exchange', async () => {
     const f = await application(JSON.stringify(defaults));
     try {

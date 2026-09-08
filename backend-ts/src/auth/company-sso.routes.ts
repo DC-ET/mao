@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { sendJson, sendOk } from '../common/http-error.js';
 import { fail } from '../common/result.js';
-import { validateCompanySsoCheckUrl } from './company-sso.config.js';
+import { matchesCompanySsoOrigin, validateCompanySsoCheckUrl } from './company-sso.config.js';
 import { companySsoConfigForRequest, type CompanySsoSettings } from './company-sso-request.js';
 import { CompanySsoError } from './company-sso.error.js';
 import { CompanySsoRateLimiter, type CompanySsoService } from './company-sso.service.js';
@@ -31,7 +31,7 @@ export function registerCompanySsoRoutes(app: FastifyInstance, service: Pick<Com
       if (!config.enabled) throw new CompanySsoError('service_unavailable');
       if (config.requireHttps && request.protocol !== 'https') throw new CompanySsoError('account_forbidden');
       const origin = request.headers.origin;
-      if (origin !== undefined && !config.allowedOrigins.includes(origin)) throw new CompanySsoError('account_forbidden');
+      if (origin !== undefined && !matchesCompanySsoOrigin(origin, config.allowedOrigins)) throw new CompanySsoError('account_forbidden');
       limiter.consume(`ip:${request.ip}`, 60);
       const body = request.body;
       if (Object.keys(request.query as object).length || !body || typeof body !== 'object' || Array.isArray(body)

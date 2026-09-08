@@ -46,7 +46,7 @@ const chat = MaoChat.init({
 
 ### 部署与身份要求
 
-1. 在管理后台「系统设置 → 集成配置 → 公司 SSO」启用并登记精确 HTTPS Origin、校验域名白名单；保存后新换票即时生效，不使用 `SSO_*` 环境变量，详见 [配置参考](config.md#公司-ssoweb-embed-sdk)。另按部署要求配置 TLS 终止代理的受信 IP。域名白名单支持完整域名或上级域名，每项覆盖自身及所有子域，信任范围由配置人员判定。
+1. 在管理后台「系统设置 → 集成配置 → 公司 SSO」启用并登记宿主 Origin（精确 HTTPS、`https://*.acg.team` 子域或 `*` 全来源）、校验域名白名单；保存后新换票即时生效，不使用 `SSO_*` 环境变量，详见 [配置参考](config.md#公司-ssoweb-embed-sdk)。另按部署要求配置 TLS 终止代理的受信 IP。域名白名单支持完整域名或上级域名，每项覆盖自身及所有子域，信任范围由配置人员判定。
 2. `auth.checkUrl` 必填，由业务系统指定 HTTPS 校验地址（不带用户名密码、片段或已有 `token` 查询参数），服务端校验域名后调用，禁止重定向。地址可以不同，但仍须采用公司 checkToken 协议：GET query `token`；成功响应须 `code=0`、`success=true`、`data.illegal=false`，可信 claims 提供 `id`、`email`、`realName`、`exp`。所有地址共用同一员工身份体系。
 3. `claims.id` 作为固定身份键，公司需保证不可回收复用。首次登录按可信邮箱唯一匹配普通账号，否则创建普通用户；管理员、禁用/删除账号、重复邮箱和已有绑定冲突拒绝自动关联。
 4. 已绑定身份不随邮箱变化重新匹配，不覆盖原角色、密码或飞书绑定。换票凭证与该用户普通 Mao 登录等权，没有 SDK 专用 Agent/接口范围。
@@ -87,7 +87,7 @@ const chat = MaoChat.init({
 
 均为当前既定设计，不是缺陷，但接入方必须知情：
 
-1. **WS 握手不校验 origin**：`/api/ws/stream` 的身份依赖连接后 `auth`，SSO 来源连接增加在线更新及到期关闭。普通 REST 保持原 CORS 策略，SSO 换票单独限制精确 Origin；Origin 不是身份凭证。
+1. **WS 握手不校验 origin**：`/api/ws/stream` 的身份依赖连接后 `auth`，SSO 来源连接增加在线更新及到期关闭。普通 REST 保持原 CORS 策略，SSO 换票按后台 Origin 规则匹配，`*` 表示不限制网页来源；Origin 不是身份凭证。
 2. **没有 SDK 专用 Agent 权限范围**：持有 Token 的用户沿用 Mao 现有授权，不能靠 `agentId` 保密充当访问控制。
 3. **普通登录 access 默认 24 小时有效**：`getToken` 模式应提供更短期凭证；公司 SSO 模式由 Mao 按 SSO 有效期上界签发短期 access，不要求各后台自行签发。
 4. `context()` 里的业务数据会随消息发到 LLM，**不要放敏感信息**。

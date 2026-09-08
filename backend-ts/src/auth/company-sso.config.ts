@@ -38,18 +38,55 @@ export function validateCompanySsoCheckUrl(checkUrl: unknown, config: CompanySso
   }
 }
 
+/** Parse only a whole leftmost wildcard label, with a DNS root and an optional port. */
+function parseWildcardOrigin(pattern: string): URL {
+  const match = /^https:\/\/\*\.([^/:?#@\\\s]+)(?::([1-9][0-9]{0,4}))?$/.exec(pattern);
+  if (!match) throw new Error('Invalid SSO allowed origin');
+  normalizeDomain(match[1]);
+  const url = new URL(`https://${match[1]}${match[2] ? `:${match[2]}` : ''}`);
+  if (pattern !== `https://*.${url.host}`) throw new Error('Invalid SSO allowed origin');
+  return url;
+}
+
+function validateAllowedOrigin(origin: unknown): void {
+  if (typeof origin !== 'string') throw new Error('Invalid SSO allowed origin');
+  if (origin === '*') return;
+  if (origin.includes('*')) {
+    parseWildcardOrigin(origin);
+    return;
+  }
+  const url = new URL(origin);
+  if (url.origin !== origin || url.username || url.password || url.protocol !== 'https:') {
+    throw new Error('Invalid SSO allowed origin');
+  }
+}
+
+/** Shared by CORS and POST; callers supply the validated per-request configuration. */
+export function matchesCompanySsoOrigin(origin: string, allowedOrigins: readonly string[]): boolean {
+  if (allowedOrigins.includes('*')) return true;
+  try {
+    const url = new URL(origin);
+    // Do not let URL normalization turn paths, userinfo or malformed origins into trusted origins.
+    if (url.origin !== origin || url.protocol !== 'https:' || url.username || url.password) return false;
+    if (allowedOrigins.includes(origin)) return true;
+    return allowedOrigins.some((pattern) => {
+      if (!pattern.includes('*')) return false;
+      const root = parseWildcardOrigin(pattern);
+      return normalizeDomain(url.hostname) === url.hostname
+        && url.hostname.endsWith(`.${root.hostname}`) && url.port === root.port;
+    });
+  } catch {
+    return false;
+  }
+}
+
 export function validateCompanySsoConfig(config: CompanySsoConfig): CompanySsoConfig {
   if (typeof config.enabled !== 'boolean' || config.requireHttps !== true) throw new Error('Invalid SSO enable/HTTPS configuration');
   if (!Array.isArray(config.allowedDomains) || (config.enabled && !config.allowedDomains.length)) throw new Error('SSO requires allowed domains');
   config.allowedDomains = config.allowedDomains.map(normalizeDomain);
   if (!Number.isInteger(config.accessTtlSeconds) || config.accessTtlSeconds < 60 || config.accessTtlSeconds > 3600) throw new Error('SSO TTL must be 60-3600 seconds');
   if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 30000) throw new Error('Invalid SSO timeout');
-  if (!Array.isArray(config.allowedOrigins) || (config.enabled && !config.allowedOrigins.length)) throw new Error('SSO requires exact allowed origins');
-  for (const origin of config.allowedOrigins) {
-    if (typeof origin !== 'string') throw new Error('Invalid SSO allowed origin');
-    const url = new URL(origin);
-    if (origin.includes('*') || url.origin !== origin || url.username || url.password || !['http:', 'https:'].includes(url.protocol)
-      || (config.requireHttps && url.protocol !== 'https:')) throw new Error('Invalid SSO allowed origin');
-  }
+  if (!Array.isArray(config.allowedOrigins) || (config.enabled && !config.allowedOrigins.length)) throw new Error('SSO requires allowed origins');
+  config.allowedOrigins.forEach(validateAllowedOrigin);
   return config;
 }

@@ -1,3 +1,4 @@
+import { matchesCompanySsoOrigin } from '../auth/company-sso.config.js';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyCorsOptions } from '@fastify/cors';
 import { companySsoConfigForRequest, type CompanySsoSettings } from '../auth/company-sso-request.js';
@@ -12,8 +13,9 @@ export async function corsForRequest(
   // Bad stored configuration must fail closed, without breaking unrelated REST requests.
   const config = isExchange ? await companySsoConfigForRequest(request, settings).catch(() => null) : null;
   const origin = request.headers.origin;
+  const allowed = config?.enabled === true && typeof origin === 'string' && matchesCompanySsoOrigin(origin, config.allowedOrigins);
   return {
-    origin: isExchange ? config?.enabled === true && typeof origin === 'string' && config.allowedOrigins.includes(origin) : true,
+    origin: isExchange ? allowed && (config?.allowedOrigins.includes('*') ? '*' : true) : true,
     credentials: !isExchange,
     methods: isExchange ? ['POST', 'OPTIONS'] : ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Requested-With'],

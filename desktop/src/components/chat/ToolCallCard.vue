@@ -68,7 +68,7 @@ import { Select, CloseBold, ArrowDown, CopyDocument } from '@element-plus/icons-
 import type { ToolCall } from '../../composables/useChat'
 import { useSessionStore } from '../../stores/session'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
-import { getToolDisplayName } from '../../utils/toolDisplay'
+import { getToolDisplayName, getToolInputPreview } from '../../utils/toolDisplay'
 
 const props = defineProps<{ toolCall: ToolCall }>()
 
@@ -141,35 +141,7 @@ const displaySummary = computed(() => {
   return preview ? `${displayName} · ${preview}` : displayName
 })
 
-const inputPreview = computed(() => {
-  const input = props.toolCall.input
-  if (!input) return ''
-  const cmd = input.command
-  if (typeof cmd === 'string') {
-    return cmd.slice(0, 60) + (cmd.length > 60 ? '...' : '')
-  }
-  const pattern = input.pattern
-  if (typeof pattern === 'string') {
-    const searchPath = input.path
-    const suffix = (typeof searchPath === 'string' && searchPath) ? ` in ${searchPath}` : ''
-    const text = `${pattern}${suffix}`
-    return text.length > 60 ? text.slice(0, 60) + '...' : text
-  }
-  const path = input.path ?? input.file_path
-  if (typeof path === 'string') return path
-  const query = input.query
-  if (typeof query === 'string') return query
-  // delegate 工具：展示 agent_type + task 摘要。
-  // 否则 inputPreview 恒为空，卡片在子代理执行期间一直显示"参数加载中..."
-  const agentType = input.agent_type
-  const task = input.task
-  if (typeof agentType === 'string' || typeof task === 'string') {
-    const prefix = typeof agentType === 'string' && agentType ? `${agentType}: ` : ''
-    const text = prefix + (typeof task === 'string' ? task : '')
-    return text.length > 60 ? text.slice(0, 60) + '...' : text
-  }
-  return ''
-})
+const inputPreview = computed(() => getToolInputPreview(props.toolCall.name, props.toolCall.input))
 
 const formattedInput = computed(() => {
   const input = props.toolCall.input

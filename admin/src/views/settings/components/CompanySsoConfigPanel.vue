@@ -19,9 +19,10 @@
           <el-input v-model="domains" type="textarea" :rows="3" placeholder="example.com，多个域名使用英文逗号或换行分隔" />
           <div class="field-hint">允许校验 URL 的域名自身及其子域；填写至少两段的纯域名，不含 IP、协议、端口、路径或通配符。</div>
         </el-form-item>
-        <el-form-item label="HTTPS Origin 白名单">
-          <el-input v-model="origins" type="textarea" :rows="3" placeholder="https://portal.example.com，多个 Origin 使用英文逗号或换行分隔" />
-          <div class="field-hint">Origin 精确匹配（含非默认端口），不自动包含子域；仅 HTTPS，不含尾部斜杠、路径、查询或通配符。</div>
+        <el-form-item label="宿主Origin白名单">
+          <el-input v-model="origins" type="textarea" :rows="3" placeholder="https://portal.example.com、https://*.acg.team 或 *，多项使用英文逗号或换行分隔" />
+          <div class="field-hint">支持精确 HTTPS Origin 或 https://*.acg.team 子域模式；子域模式匹配任意层级子域，不含根域。默认 HTTPS 443（省略 :443），可显式指定非默认端口，如 :8443；端口须匹配。须为规范完整 Origin，不含尾部斜杠、路径、凭据、查询或片段；通配符仅限最左侧 *.，根域须为至少两段的合法 DNS 域名且不能为 IP。</div>
+          <div class="field-hint">* 放开全部网页来源（包括 HTTP 和 null Origin），但仍须有效 SSO，校验域名白名单限制不变。</div>
         </el-form-item>
         <el-form-item label="访问令牌 TTL (秒)">
           <el-input-number v-model="model.accessTtlSeconds" :min="60" :max="3600" :step="1" step-strictly controls-position="right" />

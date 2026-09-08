@@ -131,6 +131,11 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeSendWechatImage(argumentsJson, result);
     case 'send_wechat_file':
       return summarizeSendWechatFile(argumentsJson, result);
+    case 'feishu_read_doc':
+    case 'feishu_download_file':
+    case 'feishu_send_image':
+    case 'feishu_send_file':
+      return summarizeFeishuTool(toolName.toLowerCase(), argumentsJson, result);
     case 'create_scheduled_task':
       return summarizeCreateScheduledTask(argumentsJson, result);
     case 'update_scheduled_task':
@@ -401,6 +406,46 @@ function summarizeListScheduledTasks(result: string | null | undefined): string 
   if (has(node, 'total')) return `定时任务列表 (${Number(node.total)} 个)`;
   if (Array.isArray(node.tasks)) return `定时任务列表 (${node.tasks.length} 个)`;
   return '查询定时任务';
+}
+
+function summarizeFeishuTool(toolName: string, argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const node = asObj(parseJson(result));
+  const labels: Record<string, string> = {
+    feishu_read_doc: '读取飞书文档',
+    feishu_download_file: '下载飞书文件',
+    feishu_send_image: '发送飞书图片',
+    feishu_send_file: '发送飞书文件',
+  };
+  const label = labels[toolName];
+  if (has(node, 'error') || node?.success === false) return `${label} (失败)`;
+
+  let detail = '';
+  switch (toolName) {
+    case 'feishu_read_doc':
+      detail = formatUrl(extractJsonString(argumentsJson, 'link'));
+      break;
+    case 'feishu_download_file':
+      detail = truncateFilename(extractFilePath(result))
+        || extractJsonString(argumentsJson, 'message_id') || '';
+      break;
+    case 'feishu_send_image': {
+      const image = extractJsonString(argumentsJson, 'image');
+      detail = image?.startsWith('http') ? formatUrl(image) : truncateFilename(image);
+      break;
+    }
+    case 'feishu_send_file': {
+      const file = extractJsonString(argumentsJson, 'file');
+      detail = extractJsonString(argumentsJson, 'filename')
+        || (file?.startsWith('http') ? formatUrl(file) : truncateFilename(file));
+      break;
+    }
+  }
+  const summary = detail ? `${label}: ${truncate(detail, 60)}` : label;
+  if (node?.success === true) return `${summary} (成功)`;
+  if (toolName === 'feishu_read_doc' && typeof node?.content === 'string') {
+    return `${summary} (${node.content.length} 字符)`;
+  }
+  return summary;
 }
 
 function summarizeGeneric(toolName: string, result: string | null | undefined): string {

@@ -38,17 +38,23 @@ function validateOrigins(value: unknown): string[] {
     throw new Error('allowedOrigins 必须为字符串数组')
   }
   return [...new Set(value.map((item: string) => {
-    const origin = item
+    if (item === '*') return item
+    const wildcard = item.startsWith('https://*.')
+    const origin = wildcard ? `https://${item.slice('https://*.'.length)}` : item
     let url: URL
     try {
       url = new URL(origin)
+      if (wildcard) validateDomains([url.hostname])
     } catch {
-      throw new Error(`allowedOrigins Origin 无效：${item}`)
+      throw new Error(`allowedOrigins Origin 或子域模式无效：${item}`)
+    }
+    if (wildcard && url.port === '0') {
+      throw new Error('allowedOrigins 子域模式端口必须为 1–65535，默认 HTTPS 端口请省略')
     }
     if (url.protocol !== 'https:' || url.origin !== origin || url.hostname.includes('*')) {
-      throw new Error(`allowedOrigins 必须是精确 HTTPS Origin：${item}；不含路径、尾部斜杠、查询、凭据或通配符`)
+      throw new Error(`allowedOrigins 必须是精确 HTTPS Origin、https://*.acg.team 形式的子域模式或 *：${item}；须为规范 Origin，不含路径、尾部斜杠、查询、凭据或片段，子域通配符仅限最左侧 *.`)
     }
-    return origin
+    return item
   }))]
 }
 
