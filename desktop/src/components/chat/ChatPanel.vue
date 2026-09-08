@@ -1,9 +1,11 @@
 <template>
   <div class="chat-panel">
-    <div class="messages" ref="messagesContainer"
+    <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
       @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove">
-      <div v-if="initialLoading && messages.length === 0" class="empty-state">
-        <el-icon :size="32" class="is-loading"><Loading /></el-icon>
+      <div v-if="historyLoading" class="history-loading"
+        :class="{ 'empty-state': messages.length === 0 }" role="status" aria-live="polite">
+        <el-icon :size="messages.length === 0 ? 28 : 16" class="is-loading" aria-hidden="true"><Loading /></el-icon>
+        <p>正在加载历史对话…</p>
       </div>
       <div v-else-if="initializingWorkspace && messages.length === 0" class="empty-state workspace-init-state">
         <el-icon :size="32" class="is-loading"><Loading /></el-icon>
@@ -186,6 +188,7 @@ const models = ref<Array<{ id: number; supportsVision: boolean }>>([])
 const {
   messages,
   sending,
+  switchingSession,
   initializingWorkspace,
   initializingWorkspaceLabel,
   sessionId,
@@ -214,6 +217,8 @@ const {
   deleteQueueMessage,
   reorderQueueMessage
 } = useChat(agentId, executionMode, newTaskModelId, permissionLevel)
+
+const historyLoading = computed(() => initialLoading.value || switchingSession.value)
 
 // Sync workspace source state from ChatInput events to useChat
 watch(newTaskWorkspaceMode, (val) => { workspaceMode.value = val })
@@ -343,6 +348,7 @@ const canContinue = computed(() => {
 })
 
 const showTypingIndicator = computed(() => {
+  if (historyLoading.value) return false
   if (initializingWorkspace.value) return false
   if (!agentRunning.value) return false
   if (sessionStore.activeStreaming) return false
@@ -704,6 +710,25 @@ function handleNewTaskAgentChange(id: string | null) {
   justify-content: center;
   height: 100%;
   color: var(--aw-ink-muted-48);
+}
+
+.history-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 0;
+  box-sizing: border-box;
+  color: var(--aw-ink-muted-48);
+}
+
+.history-loading p {
+  margin: 0;
+  font-size: var(--aw-text-body);
+}
+
+.history-loading.empty-state {
+  margin-bottom: 0;
 }
 
 .empty-icon {

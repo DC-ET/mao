@@ -32,9 +32,11 @@ describe('restoreSession', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(completed).toBe(false)
+    expect(chat.switchingSession.value).toBe(true)
     resolve({ data: { messages: [], hasMore: false } })
     await pending
     expect(completed).toBe(true)
+    expect(chat.switchingSession.value).toBe(false)
   })
 
   it('连接挂起时进入新任务，不再订阅或加载旧会话', async () => {
@@ -48,6 +50,33 @@ describe('restoreSession', () => {
     expect(ws.subscribe).not.toHaveBeenCalled()
     expect(api.get).not.toHaveBeenCalled()
     expect(chat.sessionId.value).toBeNull()
+    expect(chat.switchingSession.value).toBe(false)
+  })
+
+  it('历史请求失败后结束加载状态', async () => {
+    vi.mocked(api.get).mockRejectedValue(new Error('network error'))
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    await chat.restoreSession('A', 'CLOUD')
+    expect(chat.switchingSession.value).toBe(false)
+  })
+
+  it('快速切换时旧请求完成不会提前结束当前会话的加载状态', async () => {
+    const resolves = new Map<string, (value: any) => void>()
+    vi.mocked(api.get).mockImplementation((url: string) => url.endsWith('/messages')
+      ? new Promise(resolve => { resolves.set(url, resolve) })
+      : Promise.resolve({ data: [] }))
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    const first = chat.restoreSession('A', 'CLOUD')
+    await Promise.resolve()
+    const second = chat.restoreSession('B', 'CLOUD')
+    await Promise.resolve()
+    resolves.get('/sessions/A/messages')!({ data: { messages: [], hasMore: false } })
+    await first
+    expect(chat.switchingSession.value).toBe(true)
+    expect(chat.sessionId.value).toBe('B')
+    resolves.get('/sessions/B/messages')!({ data: { messages: [], hasMore: false } })
+    await second
+    expect(chat.switchingSession.value).toBe(false)
   })
 })
 
