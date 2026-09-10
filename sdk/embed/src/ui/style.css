@@ -431,17 +431,67 @@
   background: var(--mao-bg);
   box-shadow: var(--mao-shadow-card);
 }
+.mao-toolcard__thumb {
+  display: block;
+  margin: 6px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  max-width: 120px;
+}
+.mao-toolcard__thumb:focus-visible {
+  outline: 2px solid var(--mao-primary);
+  outline-offset: 2px;
+  border-radius: var(--mao-radius-sm);
+}
 .mao-toolcard__image {
   display: block;
-  width: 100%;
-  max-height: 280px;
+  width: auto;
+  max-width: 120px;
+  max-height: 90px;
   object-fit: contain;
-  object-position: top left;
-  margin: 6px 0 8px;
-  border-radius: var(--mao-radius-md);
+  border-radius: var(--mao-radius-sm);
   border: 1px solid var(--mao-border);
   background: var(--mao-bg);
 }
+.mao-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--mao-z) + 2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 20px;
+  background: rgba(0, 0, 0, 0.72);
+}
+.mao-lightbox__img {
+  max-width: min(100%, 960px);
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--mao-radius-md);
+  box-shadow: var(--mao-shadow);
+  background: var(--mao-bg);
+}
+.mao-lightbox__close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mao-lightbox__close:hover { background: rgba(255, 255, 255, 0.28); }
+.mao-lightbox__close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.mao-lightbox__close svg { width: 18px; height: 18px; fill: currentColor; }
 .mao-toolcard__head {
   display: flex;
   align-items: center;

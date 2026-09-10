@@ -98,6 +98,48 @@ describe('MessageBubble typing dots', () => {
   });
 });
 
+describe('MessageBubble screenshot thumbnail', () => {
+  const preview = 'data:image/png;base64,aaa';
+
+  function setupShot() {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent({
+      type: 'tool_call_start', sessionId: 1,
+      data: { tool_call_id: 't1', tool_name: 'page_screenshot' },
+    } as WsServerEvent);
+    store.attachImageToRunningTool('page_screenshot', preview);
+    store.handleEvent({
+      type: 'tool_call_result', sessionId: 1,
+      data: { tool_call_id: 't1', result: '{}', summary: '截取页面截图', status: 'success' },
+    } as WsServerEvent);
+    store.messages.value[0].streaming = false;
+    el = document.createElement('div');
+    document.body.appendChild(el);
+    app = createApp({ render: () => h(MessageBubble, { message: store.messages.value[0] }) });
+    app.mount(el);
+  }
+
+  it('截图默认折叠，展开后显示缩略图，点击查看大图', async () => {
+    setupShot();
+    expect(el.querySelector('.mao-toolcard__image')).toBeNull();
+    expect(el.querySelector('.mao-lightbox')).toBeNull();
+    el.querySelector('button')!.click();
+    await nextTick();
+    const thumb = el.querySelector('.mao-toolcard__thumb') as HTMLButtonElement;
+    const img = el.querySelector('.mao-toolcard__image') as HTMLImageElement;
+    expect(thumb.title).toBe('查看大图');
+    expect(img.src).toBe(preview);
+    thumb.click();
+    await nextTick();
+    expect(el.querySelector('.mao-lightbox')).not.toBeNull();
+    expect((el.querySelector('.mao-lightbox__img') as HTMLImageElement).src).toBe(preview);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await nextTick();
+    expect(el.querySelector('.mao-lightbox')).toBeNull();
+  });
+});
+
 describe('MessageBubble quote', () => {
   it('用户气泡回显选中引用，正文仍是提问', () => {
     el = document.createElement('div');
