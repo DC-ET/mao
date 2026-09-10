@@ -27,11 +27,23 @@ import type {
 interface HistoryMessageVO extends EmbedMessageVO {
   toolCalls?: string | null;
   toolCallId?: string | null;
+  metadata?: string | null;
 }
 
 interface HistoryToolCall {
   id: string;
   function: { name: string; arguments?: string | null };
+}
+
+function extractHistoryImagePreview(metadata: string | null | undefined): string | undefined {
+  if (!metadata) return undefined;
+  try {
+    const root = JSON.parse(metadata) as { attachments?: Array<{ data_uri?: string }> };
+    const uri = root.attachments?.[0]?.data_uri;
+    return typeof uri === 'string' && uri.startsWith('data:image/') ? uri : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** 传给 RootApp 的响应式 UI 状态（reactive 深层，RootApp 内直接引用字段） */
@@ -422,6 +434,8 @@ export class EmbedController {
           tool.resultText = m.content ?? '';
           // 历史不持久化 WS 的 success/error；done 仅表示已有结果，不推断执行成功。
           tool.status = 'done';
+          const preview = extractHistoryImagePreview(m.metadata);
+          if (preview) tool.imagePreview = preview;
         }
         continue;
       }
@@ -958,6 +972,10 @@ export class EmbedController {
     if (this.pageToolResults.size > 50) {
       const oldest = this.pageToolResults.keys().next().value;
       if (oldest != null) this.pageToolResults.delete(oldest);
+    }
+    if (tool === 'page_screenshot' && result.success) {
+      const shot = result.result as { dataUri?: string } | undefined;
+      if (typeof shot?.dataUri === 'string') this.store.attachImageToRunningTool('page_screenshot', shot.dataUri);
     }
     await this.ws.sendPageToolResult(sessionId, requestId, result);
   }

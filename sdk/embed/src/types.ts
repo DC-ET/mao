@@ -90,6 +90,8 @@ export interface ToolCallItem {
   argsText: string;
   status: 'running' | 'done' | 'error' | 'unknown';
   resultText: string;
+  /** 页面截图等工具结果的图片 data URI，供气泡与工具卡展示。 */
+  imagePreview?: string;
 }
 
 export interface PendingQuestion {

@@ -114,6 +114,25 @@ describe('PromptEngine', () => {
     expect(system).toContain('本地未同步');
   });
 
+  it('adds embed screenshot display hints when page_screenshot is available', async () => {
+    const engine = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const context = new AgentExecutionContext();
+    context.executionMode = 'CLOUD';
+    context.workspace = '/ws';
+    context.tools = [tool('page_screenshot'), tool('page_inspect')];
+    const request = await engine.buildRequest(context);
+    const system = request.messages[0].content as string;
+    expect(system).toContain('页面截图展示');
+    expect(system).toContain('attachment://');
+    expect(system).toContain('不要在回复里用 Markdown 图片');
+  });
+
   it('keepsUnknownSkillAndCommandMarkers', async () => {
     const logSpy = vi.spyOn(harnessLogModule, 'harnessLog').mockImplementation(() => undefined);
     const engine = new PromptEngine(

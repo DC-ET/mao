@@ -23,6 +23,31 @@ const STREAM_EVENT_TYPES = new Set([
   'error',
 ]);
 
+function extractImagePreview(source: unknown): string | undefined {
+  if (source == null) return undefined;
+  let node: unknown = source;
+  if (typeof source === 'string') {
+    const trimmed = source.trim();
+    if (trimmed.startsWith('data:image/')) return trimmed;
+    try { node = JSON.parse(trimmed); } catch { return undefined; }
+  }
+  if (node == null || typeof node !== 'object') return undefined;
+  const obj = node as Record<string, unknown>;
+  const direct = obj.data_uri ?? obj.dataUri;
+  if (typeof direct === 'string' && direct.startsWith('data:image/')) return direct;
+  const preview = obj.preview;
+  if (preview && typeof preview === 'object') {
+    const uri = (preview as Record<string, unknown>).data_uri ?? (preview as Record<string, unknown>).dataUri;
+    if (typeof uri === 'string' && uri.startsWith('data:image/')) return uri;
+  }
+  const attachments = obj.attachments;
+  if (Array.isArray(attachments) && attachments[0] && typeof attachments[0] === 'object') {
+    const uri = (attachments[0] as Record<string, unknown>).data_uri;
+    if (typeof uri === 'string' && uri.startsWith('data:image/')) return uri;
+  }
+  return undefined;
+}
+
 function genId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -170,6 +195,24 @@ export class ChatStore {
     return this.activeSessionId;
   }
 
+  /** 页面截图在本地完成后立刻挂到对应工具卡，不依赖服务端再回传大图。 */
+  attachImageToRunningTool(toolName: string, dataUri: string): void {
+    if (!dataUri.startsWith('data:image/')) return;
+    for (let i = this.messages.value.length - 1; i >= 0; i--) {
+      const m = this.messages.value[i];
+      if (m.role !== 'assistant') continue;
+      for (let j = m.toolCalls.length - 1; j >= 0; j--) {
+        const tc = m.toolCalls[j];
+        if (tc.toolName !== toolName) continue;
+        if (tc.status === 'running' || !tc.imagePreview) {
+          tc.imagePreview = dataUri;
+          return;
+        }
+      }
+      return;
+    }
+  }
+
   /** 展开浮窗/重连时调用：加载或补齐历史 */
   async ensureHistory(load: (sessionId: number) => Promise<ChatMessage[]>) {
     if (!this.activeSessionId || this.historyLoaded) return;
@@ -272,6 +315,7 @@ export class ChatStore {
           argsText,
           status: 'running',
           resultText: '',
+          imagePreview: undefined,
         });
         this.appendTool(msg0, tc);
         break;
@@ -291,6 +335,8 @@ export class ChatStore {
         if (tc) {
           tc.status = data.status === 'error' ? 'error' : 'done';
           tc.resultText = String(data.summary ?? data.result ?? '');
+          const preview = extractImagePreview(data.preview) ?? extractImagePreview(data);
+          if (preview) tc.imagePreview = preview;
           break;
         }
         // 未见过对应 start（如订阅晚于该工具执行完成）：补一张已完成卡片，避免结果静默丢失
@@ -304,6 +350,7 @@ export class ChatStore {
             argsText: '',
             status: data.status === 'error' ? 'error' : 'done',
             resultText: String(data.summary ?? data.result ?? ''),
+            imagePreview: extractImagePreview(data.preview) ?? extractImagePreview(data),
           }) as ToolCallItem,
         );
         break;

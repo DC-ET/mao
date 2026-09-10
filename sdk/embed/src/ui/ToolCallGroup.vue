@@ -7,6 +7,7 @@ const expanded = ref(false);
 const running = computed(() => props.toolCalls.filter((tc) => tc.status === 'running').length);
 const failed = computed(() => props.toolCalls.filter((tc) => tc.status === 'error').length);
 const unknown = computed(() => props.toolCalls.filter((tc) => tc.status === 'unknown').length);
+const images = computed(() => props.toolCalls.filter((tc) => tc.imagePreview));
 const summary = computed(() => [
   `${props.toolCalls.length} 个工具调用`,
   running.value ? `${running.value} 个执行中` : unknown.value ? '' : '执行结束',
@@ -26,6 +27,13 @@ const summary = computed(() => [
       <span class="mao-thinking__caret" :class="{ 'mao-thinking__caret--open': expanded }" aria-hidden="true" />
       <span>{{ summary }}</span>
     </button>
+    <img
+      v-for="tc in images"
+      :key="tc.toolCallId"
+      class="mao-toolcard__image"
+      :src="tc.imagePreview"
+      alt=""
+    />
     <div v-if="expanded" class="mao-toolgroup__body">
       <div v-for="tc in toolCalls" :key="tc.toolCallId" class="mao-toolcard">
         <div class="mao-toolcard__head">

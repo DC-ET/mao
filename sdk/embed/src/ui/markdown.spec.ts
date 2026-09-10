@@ -38,4 +38,11 @@ describe('renderMarkdown', () => {
     expect(links[1].getAttribute('target')).toBeNull();
     expect(links[2].getAttribute('target')).toBeNull();
   });
+
+  it('strips markdown images with invented attachment:// urls', () => {
+    const html = renderMarkdown('当前页面截图如下：\n\n![当前页面截图](attachment://page-screenshot.png)');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('attachment://');
+    expect(html).toContain('当前页面截图如下');
+  });
 });

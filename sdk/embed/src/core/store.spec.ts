@@ -122,6 +122,20 @@ describe('ChatStore', () => {
     expect(tc.resultText).toBe('ok');
   });
 
+  it('attaches screenshot preview from tool_call_result and local capture', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('tool_call_start', 1, { tool_call_id: 't1', tool_name: 'page_screenshot' }));
+    store.attachImageToRunningTool('page_screenshot', 'data:image/png;base64,local');
+    expect(store.messages.value[0].toolCalls[0].imagePreview).toBe('data:image/png;base64,local');
+    store.handleEvent(ev('tool_call_result', 1, {
+      tool_call_id: 't1', result: '{"path":"page-screenshot.png"}', summary: '截取页面截图', status: 'success',
+      preview: { media_type: 'image', mime: 'image/png', data_uri: 'data:image/png;base64,fromws' },
+    }));
+    expect(store.messages.value[0].toolCalls[0].imagePreview).toBe('data:image/png;base64,fromws');
+  });
+
   it('重复 tool_call_start（subscribe 重放）不产生重复卡片', () => {
     const store = new ChatStore();
     store.bindSession(1);

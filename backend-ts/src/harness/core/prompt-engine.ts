@@ -189,6 +189,7 @@ export class PromptEngine {
     sb += this.toolBehaviorHints(context);
     sb += this.subagentToolHints(context);
     sb += this.weixinMediaToolHints(context);
+    sb += this.embedPageScreenshotHints(context);
     sb += this.workspaceRules(context, effectiveWorkspace);
     return sb;
   }
@@ -332,6 +333,17 @@ export class PromptEngine {
 - 当前会话为微信通道。用户请求"把这张图/照片发给我""生成一张图发我"时，使用 send_wechat_image；请求"发一份文件/PDF/报告"时使用 send_wechat_file。
 - 工具只负责发送媒体本身；文字说明通过正常回复给出。
 - 工具返回 {"error": ...} 时，如实向用户说明原因（如账号未绑定、需要先给机器人发一条消息建立会话、文件超限等），不要重复调用。
+
+`;
+  }
+
+  private embedPageScreenshotHints(context: AgentExecutionContext): string {
+    if (!(context.tools ?? []).some((t) => t.getName() === 'page_screenshot')) return '';
+    return `## 页面截图展示
+
+- \`page_screenshot\` 的图片会作为视觉输入给你看，并直接显示在用户浮窗的工具结果中。
+- 不要在回复里用 Markdown 图片、\`attachment://\`、\`page-screenshot.png\` 或其它虚构 URL 再贴一次截图。浮窗无法解析这些链接，只会显示破图。
+- 向用户用文字描述你看到的画面即可。
 
 `;
   }

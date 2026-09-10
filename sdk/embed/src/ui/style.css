@@ -431,6 +431,17 @@
   background: var(--mao-bg);
   box-shadow: var(--mao-shadow-card);
 }
+.mao-toolcard__image {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  object-position: top left;
+  margin: 6px 0 8px;
+  border-radius: var(--mao-radius-md);
+  border: 1px solid var(--mao-border);
+  background: var(--mao-bg);
+}
 .mao-toolcard__head {
   display: flex;
   align-items: center;

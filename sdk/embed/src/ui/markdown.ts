@@ -30,5 +30,19 @@ export function renderMarkdown(content: string): string {
     RETURN_DOM: true,
   }) as unknown as HTMLElement;
   hardenExternalLinks(body);
+  stripUnsafeImages(body);
   return body.innerHTML;
+}
+
+const SAFE_IMG_SRC = /^(https?:|data:image\/)/i;
+
+/**
+ * 模型常把工具附件编成 attachment://page-screenshot.png 之类的虚构协议。
+ * DOMPurify 会丢掉非法 src，留下无图的 <img alt="...">，表现为破图。
+ */
+export function stripUnsafeImages(root: ParentNode): void {
+  for (const img of [...root.querySelectorAll('img')]) {
+    const src = img.getAttribute('src') ?? '';
+    if (!SAFE_IMG_SRC.test(src)) img.remove();
+  }
 }

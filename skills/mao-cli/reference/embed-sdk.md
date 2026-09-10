@@ -45,7 +45,7 @@ const chat = MaoChat.init({
 - **授权**：默认 `per_action`（每个写操作前在浮窗确认）；用户可在输入框底部工具栏的授权下拉中切换 `task`（本次任务内有效，任务结束/切换会话/刷新后失效）或 `full`（按 Mao 用户身份、站点 Origin、Agent 持久化到 localStorage，可随时撤销）。授权键按 `serverUrl`、Origin、身份、agentId 和授权版本隔离，不保存 Token。宿主 `page.initialLevel` 与实例方法 `setPageAuthorization()` 只接受 `per_action`/`task`，传 `full` 会被降级；**完全授权只能由用户在浮窗内显式点击授予**，避免宿主一行代码替用户提权。
 - **敏感数据**：`per_action` 下快照中密码/验证码/银行卡等字段值脱敏；截图默认遮罩敏感区域，发送未遮罩原图会先请求确认；`full` 在授权范围内允许未遮罩。
 - **反馈与停止**：待确认动作（含高风险提示）以卡片出现在输入框上方，并高亮目标元素；用户点输入框停止按钮会终止整个任务（含页面操作），SDK 会取消等待中的确认并让后续动作失败。
-- **截图**：只截当前视口，永远排除 SDK 浮窗；内置渲染器把 DOM 编成良好 XML 再放入 SVG foreignObject 光栅化，并剥掉跨域图片/背景以免 canvas 被污染。跨域图片会缺失；若仍无法导出则回退为 DOM 色块+文字。需要更完整像素时可传自定义 `screenshotRenderer`。
+- **截图**：只截当前视口，永远排除 SDK 浮窗；内置渲染器把 DOM 编成良好 XML 再放入 SVG foreignObject 光栅化，并剥掉跨域图片/背景以免 canvas 被污染。跨域图片会缺失；若仍无法导出则回退为 DOM 色块+文字。截图会显示在浮窗工具结果中，不要指望用 Markdown `![](attachment://…)` 在回复里再贴一次。需要更完整像素时可传自定义 `screenshotRenderer`。
 
 ### 明确不支持（会返回可解释错误，不尝试绕过浏览器边界）
 

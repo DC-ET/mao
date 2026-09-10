@@ -21,8 +21,13 @@
 
 - Web Embed SDK 内置页面截图不再把 HTML `innerHTML` 直接塞进 SVG：改为 XML 序列化（补齐 void 标签、HTML 实体、`xlink` 命名空间），避免业务页常见的 `<br>` / `<input>` / 图标导致 `screenshot_render_failed`。
 - Web Embed SDK 页面截图会剔除跨域图片和 CSS `url()`，避免污染 canvas 后 `toBlob` 失败；若仍无法导出则回退为 DOM 色块+文字绘制，保证工具不中断。
+- Web Embed SDK 在工具结果中直接展示页面截图；回复里的 `attachment://` 等虚构图片链接会去掉以免破图。嵌入会话会提示模型不要用 Markdown 再贴一次截图。
 - Web Embed SDK 对话浮窗不再展示「LLM 等待中（response_headers Ns）」等内部等待诊断；上游真正重试时仍显示重试提示。
 - Web Embed SDK 输入区对齐桌面端：圆角卡片、占位「告诉 Agent 你想做什么...」、发送/停止在底部工具栏；页面授权改为下拉切换，不再单独提供「停止操作」，终止页面动作与终止任务共用停止按钮。
+
+### 后端
+
+- 嵌入会话在系统提示词和 `page_screenshot` 工具说明中明确：截图已展示给用户，不要用 Markdown / `attachment://` 再贴一次。
 
 ---
 

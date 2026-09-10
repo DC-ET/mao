@@ -119,7 +119,9 @@ export class PageScreenshotTool extends PageToolBase {
   getName(): string { return 'page_screenshot'; }
   getDescription(): string {
     return '截取当前浏览器可视区域截图（仅视口，不含 Mao 浮窗）。'
-      + '默认按当前授权级别处理敏感区域遮罩；需要原图时会先请求用户确认。';
+      + '默认按当前授权级别处理敏感区域遮罩；需要原图时会先请求用户确认。'
+      + '截图会作为视觉输入给你，并直接展示在用户浮窗的工具结果里。'
+      + '不要在回复中用 Markdown 图片、attachment://、page-screenshot.png 或其它虚构 URL 再贴一次；用户端无法解析，只会显示破图。用文字描述你看到的画面即可。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
