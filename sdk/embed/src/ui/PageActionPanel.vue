@@ -36,6 +36,7 @@ const visible = computed(() => props.confirm != null || recentLogs.value.length 
       </div>
     </div>
 
+    <p v-if="recentLogs.length" class="mao-page__logs-title">正在操作当前页面</p>
     <ul v-if="recentLogs.length" class="mao-page__logs">
       <li v-for="log in recentLogs" :key="log.id" :data-status="log.status">
         <span class="mao-page__log-dot" :data-status="log.status" />

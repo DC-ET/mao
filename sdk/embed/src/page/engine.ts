@@ -220,7 +220,7 @@ export class PageEngine {
       authorize: this.authorizer(sessionId),
       shouldAbort: () => this.aborted(epoch),
       stopOnConfirmation: this.authorization.current === 'per_action',
-      onStep: (step, index) => this.logStep(`批量步骤 ${index + 1}`, step),
+      onStep: (step) => this.logStep(describeAction(step.action, this.descriptorOf(step.action)), step),
     });
     return truncated ? { ...result, truncated: true } : result;
   }
@@ -317,7 +317,7 @@ export class PageEngine {
       const result = await this.executor.execute(action, {
         snapshotId, authorize: this.authorizer(sessionId), shouldAbort: () => this.aborted(epoch),
       });
-      this.logStep(describeAction(action), result);
+      this.logStep(describeAction(action, this.descriptorOf(action)), result);
       return {
         success: result.success,
         result,
@@ -389,15 +389,23 @@ export class PageEngine {
   }
 
   private logStep(summary: string, result: PageActionResult): void {
+    const text = result.error ? `${summary} · ${result.error.message}` : summary;
     this.hooks.onLog?.({
       id: `log-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
       tool: toolForAction(result.action.type),
-      summary,
+      summary: text,
       status: result.success ? 'success' : 'error',
       risk: this.authorization.riskOf(result.action),
       at: Date.now(),
       ...(result.error ? { error: result.error.message } : {}),
     });
+  }
+
+  /** 日志/确认文案用：从当前快照取元素描述，失败时仍尽量带上名称。 */
+  private descriptorOf(action: PageAction): PageElement | undefined {
+    const elementId = 'elementId' in action ? action.elementId : undefined;
+    if (!elementId) return undefined;
+    return this.manager.current?.elements.find((el) => el.elementId === elementId);
   }
 }
 
@@ -420,18 +428,41 @@ function toolForAction(type: PageAction['type']): PageToolName {
 }
 
 function describeAction(action: PageAction, element?: PageElement): string {
-  const target = element ? `「${element.label || element.text || element.role}」` : '';
+  const target = formatTarget(element);
   switch (action.type) {
     case 'click': return `点击${target}`;
     case 'focus': return `聚焦${target}`;
-    case 'fill': return `填写${target}`;
-    case 'select': return `选择${target} 的选项`;
+    case 'fill': {
+      const value = element?.sensitive ? '（已遮罩）' : formatSnippet(action.value);
+      return value ? `填写${target}为 ${value}` : `填写${target}`;
+    }
+    case 'select': return `选择${target} 的选项${action.value ? `「${formatSnippet(action.value)}」` : ''}`;
     case 'check': return `勾选${target}`;
     case 'uncheck': return `取消勾选${target}`;
     case 'keyboard': return `按键 ${action.key}${target}`;
     case 'scroll': return action.to ? `滚动到${action.to === 'top' ? '顶部' : '底部'}` : '滚动页面';
     case 'wait': return action.until === 'stable' ? '等待页面稳定' : `等待 ${action.ms ?? 300}ms`;
   }
+}
+
+const KIND_FALLBACK: Record<PageElement['kind'], string> = {
+  button: '按钮',
+  'form-control': '输入框',
+  link: '链接',
+  other: '控件',
+};
+
+function formatTarget(element?: PageElement): string {
+  const name = formatSnippet(element?.label || element?.text || '');
+  if (name) return `「${name}」`;
+  if (!element) return '';
+  return `「${KIND_FALLBACK[element.kind] || '控件'}」`;
+}
+
+function formatSnippet(value: string | undefined): string {
+  const text = (value ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > 24 ? `${text.slice(0, 24)}…` : text;
 }
 
 function stringArg(value: unknown): string | undefined {

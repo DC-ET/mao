@@ -95,6 +95,16 @@ describe('PageEngine', () => {
     expect(batch.stoppedAt).toBe(1);
   });
 
+  it('logs click and fill with the target name, not a bare verb', async () => {
+    document.body.innerHTML = '<input aria-label="筛选条件"><button>保存</button>';
+    const inspect = await engine.handleRequest('page_inspect', {}, 1);
+    engine.setLevel('full', 1);
+    await engine.handleRequest('page_fill', { snapshotId: inspect.snapshotId, elementId: 'e1', value: '核心表' }, 1);
+    await engine.handleRequest('page_click', { snapshotId: inspect.snapshotId, elementId: 'e2' }, 1);
+    expect(logs).toContain('success:填写「筛选条件」为 核心表');
+    expect(logs).toContain('success:点击「保存」');
+  });
+
   it('observes page changes and waits for stability', async () => {
     document.body.innerHTML = '<button>A</button>';
     const inspect = await engine.handleRequest('page_inspect', {}, 1);
