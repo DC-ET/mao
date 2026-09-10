@@ -46,7 +46,7 @@ export type PageAction =
   | { type: 'focus'; elementId: string }
   | { type: 'check'; elementId: string }
   | { type: 'uncheck'; elementId: string }
-  | { type: 'fill'; elementId: string; value: string }
+  | { type: 'fill'; elementId: string; value: string; blur?: boolean }
   | { type: 'select'; elementId: string; value: string }
   | { type: 'keyboard'; elementId?: string; key: string; modifiers?: string[]; text?: string }
   | { type: 'scroll'; elementId?: string; x?: number; y?: number; to?: 'top' | 'bottom' }

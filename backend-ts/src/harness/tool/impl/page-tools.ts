@@ -98,6 +98,7 @@ export class PageInspectTool extends PageToolBase {
   getName(): string { return 'page_inspect'; }
   getDescription(): string {
     return '读取当前浏览器页面可见的交互元素快照（按钮、链接、输入框、下拉、勾选、可编辑区域等），返回 snapshotId 与 opaque elementId。'
+      + '包含已打开的下拉建议（role=option 以及 Element/Ant Design 等常见下拉项）。'
       + '后续所有页面动作都必须使用本次返回的 snapshotId + elementId；页面导航或重渲染后旧引用失效，必须重新 inspect。';
   }
   getInputSchema(): Record<string, unknown> {
@@ -180,12 +181,17 @@ export class PageFocusTool extends PageToolBase {
 export class PageFillTool extends PageToolBase {
   getName(): string { return 'page_fill'; }
   getDescription(): string {
-    return '向快照中的输入框、文本域或 contenteditable 元素写入文本，并触发兼容 React/Vue 受控组件的事件；执行后会回读校验是否写入成功。';
+    return '向快照中的输入框、文本域或 contenteditable 元素写入文本，并触发兼容 React/Vue 受控组件的事件；执行后会回读校验是否写入成功。'
+      + '对 combobox / 远程搜索框默认保持焦点并短暂等待下拉建议，观察结果可能包含 suggestions；需要失焦提交时传 blur=true。'
+      + '出现建议后请 page_inspect，再 page_click 对应选项，不要对自定义下拉使用 page_select。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
-      properties: { snapshotId: { type: 'string' }, elementId: { type: 'string' }, value: { type: 'string' } },
+      properties: {
+        snapshotId: { type: 'string' }, elementId: { type: 'string' }, value: { type: 'string' },
+        blur: { type: 'boolean', description: '填写后是否失焦。远程搜索/combobox 默认 false，普通输入框默认 true' },
+      },
       required: ['snapshotId', 'elementId', 'value'],
     };
   }
@@ -200,7 +206,8 @@ export class PageFillTool extends PageToolBase {
 export class PageSelectTool extends PageToolBase {
   getName(): string { return 'page_select'; }
   getDescription(): string {
-    return '在快照中的原生 select 中选择指定 value 的选项，并回读校验最终值。';
+    return '仅用于原生 HTML select：选择指定 value 的选项并回读校验。'
+      + 'Vue/React 组件库下拉（el-select、Ant Select、远程搜索等）不是原生 select，page_select 会失败；请先 page_fill 搜索框，再 page_inspect，然后 page_click 对应 option。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
@@ -267,7 +274,10 @@ export class PageKeyboardTool extends PageToolBase {
 
 export class PageWaitTool extends PageToolBase {
   getName(): string { return 'page_wait'; }
-  getDescription(): string { return '等待页面稳定：可等待固定毫秒数（上限 10 秒），或等待 DOM 在一小段时间内不再变化（until=stable）。'; }
+  getDescription(): string {
+    return '等待页面稳定：可等待固定毫秒数（上限 10 秒），或等待 DOM 在一小段时间内不再变化（until=stable）。'
+      + '远程搜索下拉在 fill 后若 suggestions 仍为空，先 wait 再 page_inspect。';
+  }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
@@ -300,6 +310,7 @@ export class PageActionsTool extends PageToolBase {
               type: { type: 'string', enum: ['click', 'focus', 'fill', 'select', 'check', 'uncheck', 'keyboard', 'scroll', 'wait'] },
               elementId: { type: 'string' },
               value: { type: 'string' },
+              blur: { type: 'boolean' },
               key: { type: 'string' },
               modifiers: { type: 'array', items: { type: 'string' } },
               x: { type: 'number' }, y: { type: 'number' }, to: { type: 'string' },

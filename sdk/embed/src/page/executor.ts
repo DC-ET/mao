@@ -6,6 +6,7 @@ import { PageSnapshotManager, type ResolvedElement } from './snapshot-manager';
 import {
   isCheckable, isDisabled, isEditable, isReadonly, isVisible,
 } from './visibility';
+import { collectVisibleOptionLabels, isSearchLikeField } from './scanner';
 import {
   dispatchBlur, dispatchKeyEvents, dispatchValueEvents, setElementValue,
 } from './framework-events';
@@ -27,6 +28,8 @@ export interface ExecuteOptions {
 
 const MAX_WAIT_MS = 10_000;
 const SETTLE_MS = 60;
+const SUGGESTION_WAIT_MS = 2_000;
+const SUGGESTION_POLL_MS = 50;
 const KNOWN_ACTION_TYPES = new Set(['click', 'focus', 'check', 'uncheck', 'fill', 'select', 'keyboard', 'scroll', 'wait']);
 
 function delay(ms: number): Promise<void> {
@@ -128,7 +131,7 @@ export class PageExecutor {
       if (action.type === 'scroll') return await this.executeScroll(action, resolved, snapshotId, options);
       if (!resolved) return failure(action, pageVersion, error('element_not_available', '目标元素不存在'), snapshotId);
       if (action.type === 'focus') return await this.executeFocus(action, resolved, snapshotId);
-      if (action.type === 'fill') return await this.executeFill(action, resolved, snapshotId);
+      if (action.type === 'fill') return await this.executeFill(action, resolved, snapshotId, options);
       if (action.type === 'select') return await this.executeSelect(action, resolved, snapshotId);
       if (action.type === 'check' || action.type === 'uncheck') return await this.executeCheck(action, resolved, snapshotId);
       if (action.type === 'click') return await this.executeClick(action, resolved, snapshotId);
@@ -267,7 +270,12 @@ export class PageExecutor {
     return { success: true, action, pageVersion: this.manager.pageVersion, snapshotId, verified: true, effect: 'state' };
   }
 
-  private async executeFill(action: Extract<PageAction, { type: 'fill' }>, resolved: ResolvedElement, snapshotId?: string): Promise<PageActionResult> {
+  private async executeFill(
+    action: Extract<PageAction, { type: 'fill' }>,
+    resolved: ResolvedElement,
+    snapshotId?: string,
+    options: ExecuteOptions = {},
+  ): Promise<PageActionResult> {
     const el = resolved.element;
     const elementId = resolved.descriptor.elementId;
     if (typeof action.value !== 'string') return failure(action, this.manager.pageVersion, error('invalid_arguments', '缺少字符串 value', elementId), snapshotId);
@@ -275,21 +283,34 @@ export class PageExecutor {
     if (isReadonly(el)) return failure(action, this.manager.pageVersion, error('element_readonly', '目标元素为只读', elementId), snapshotId);
     if (!isEditable(el)) return failure(action, this.manager.pageVersion, error('element_not_fillable', '目标元素不可填写', elementId), snapshotId);
     const contentEditable = !(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement);
-    // 先聚焦再写入：设计约定 fill 触发 blur，而 dispatchBlur 只在元素持有焦点时派发；
-    // 依赖失焦提交/校验的表单需要这一步。
+    const searchLike = isSearchLikeField(el);
+    const shouldBlur = action.blur === true || (action.blur !== false && !searchLike);
+    // 先聚焦再写入：设计约定普通输入 fill 触发 blur（失焦提交/校验）；
+    // 远程搜索/combobox 保持焦点，否则下拉建议会被立刻收起。
     if (el instanceof HTMLElement && typeof el.focus === 'function') el.focus();
     if (!setElementValue(el, action.value)) {
       return failure(action, this.manager.pageVersion, error('element_not_fillable', '无法写入目标元素', elementId), snapshotId);
     }
     dispatchValueEvents(el, action.value, contentEditable);
-    dispatchBlur(el);
+    if (shouldBlur) dispatchBlur(el);
     await settle();
     const actual = contentEditable ? (el.textContent ?? '') : (el as HTMLInputElement).value;
     if (actual !== action.value) {
       return failure(action, this.manager.pageVersion, error('value_not_applied', `写入后回读值不一致（实际长度 ${actual.length}）`, elementId), snapshotId);
     }
     this.manager.refreshDescriptor(elementId);
-    return { success: true, action, pageVersion: this.manager.pageVersion, snapshotId, verified: true, effect: 'state', observation: { valueLength: actual.length } };
+    const observation: Record<string, unknown> = { valueLength: actual.length };
+    if (searchLike && !shouldBlur) {
+      const suggestions = await waitForVisibleOptions(SUGGESTION_WAIT_MS, options.shouldAbort);
+      observation.keepFocus = true;
+      if (suggestions.length > 0) {
+        observation.suggestions = suggestions;
+        observation.note = '下拉建议已出现，请 page_inspect 后点击对应选项；不要用 page_select';
+      } else {
+        observation.note = '已填写并保持焦点。若这是远程搜索，请 page_wait 后再 page_inspect；空列表不代表没有匹配项';
+      }
+    }
+    return { success: true, action, pageVersion: this.manager.pageVersion, snapshotId, verified: true, effect: 'state', observation };
   }
 
   private async executeSelect(action: Extract<PageAction, { type: 'select' }>, resolved: ResolvedElement, snapshotId?: string): Promise<PageActionResult> {
@@ -420,6 +441,19 @@ function describeResolveFailure(code: string | undefined): string {
   if (code === 'snapshot_expired') return '快照已失效（页面已导航或重新 inspect），请重新调用 page_inspect';
   if (code === 'element_changed') return '目标元素语义已变化，请重新 page_inspect 后重试';
   return '目标元素已不存在或不可用，请重新 page_inspect';
+}
+
+async function waitForVisibleOptions(maxMs: number, shouldAbort?: () => boolean): Promise<string[]> {
+  const deadline = Date.now() + Math.max(0, maxMs);
+  let labels = collectVisibleOptionLabels();
+  if (labels.length > 0) return labels;
+  while (Date.now() < deadline) {
+    if (shouldAbort?.()) break;
+    await delay(SUGGESTION_POLL_MS);
+    labels = collectVisibleOptionLabels();
+    if (labels.length > 0) return labels;
+  }
+  return labels;
 }
 
 export async function waitForStable(maxMs: number, quietMs = 300, shouldAbort?: () => boolean): Promise<void> {

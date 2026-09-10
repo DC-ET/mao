@@ -50,6 +50,37 @@ describe('PageExecutor', () => {
     expect(focusout).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps focus on a remote search select and reports suggestions', async () => {
+    document.body.innerHTML = `
+      <div class="el-select"><input id="user" class="el-input__inner"></div>
+      <ul class="el-select-dropdown__list"></ul>`;
+    const input = document.getElementById('user') as HTMLInputElement;
+    const list = document.querySelector('.el-select-dropdown__list')!;
+    const blur = vi.fn();
+    input.addEventListener('blur', blur);
+    input.addEventListener('input', () => {
+      list.innerHTML = '<li class="el-select-dropdown__item">刘志杰_liuzhijie</li>';
+    });
+    const id = snapshotId();
+    const result = await executor.execute({ type: 'fill', elementId: 'e1', value: '刘志杰' }, { snapshotId: id });
+    expect(result.success).toBe(true);
+    expect(blur).not.toHaveBeenCalled();
+    expect(result.observation?.keepFocus).toBe(true);
+    expect(result.observation?.suggestions).toEqual(['刘志杰_liuzhijie']);
+  });
+
+  it('blurs a remote search field when blur is explicitly true', async () => {
+    document.body.innerHTML = '<div class="el-select"><input id="user" class="el-input__inner"></div>';
+    const input = document.getElementById('user') as HTMLInputElement;
+    const blur = vi.fn();
+    input.addEventListener('blur', blur);
+    const id = snapshotId();
+    const result = await executor.execute({ type: 'fill', elementId: 'e1', value: '刘志杰', blur: true }, { snapshotId: id });
+    expect(result.success).toBe(true);
+    expect(blur).toHaveBeenCalledTimes(1);
+    expect(result.observation?.keepFocus).toBeUndefined();
+  });
+
   it('dispatches blur for a filled element inside a same-origin iframe', async () => {
     const iframe = document.createElement('iframe');
     document.body.appendChild(iframe);

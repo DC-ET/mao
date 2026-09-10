@@ -34,11 +34,38 @@ const INTERACTIVE_SELECTOR = [
   '[contenteditable="true"]', '[contenteditable=""]',
   '[role="button"]', '[role="link"]', '[role="textbox"]', '[role="searchbox"]', '[role="combobox"]',
   '[role="checkbox"]', '[role="radio"]', '[role="switch"]', '[role="menuitem"]', '[role="option"]',
+  '[role="treeitem"]',
   '[role="tab"]', '[role="slider"]', '[role="spinbutton"]',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+const DROPDOWN_ITEM_CLASSES = [
+  'el-select-dropdown__item',
+  'el-autocomplete-suggestion__item',
+  'el-cascader-node',
+  'ant-select-item',
+  'ant-select-item-option',
+  'n-base-select-option',
+];
+
+const DROPDOWN_LIST_CLASSES = [
+  'el-select-dropdown__list',
+  'el-autocomplete-suggestion__list',
+];
+
+const SEARCH_CONTAINER_SELECTOR = [
+  '[role="combobox"]',
+  '.el-select',
+  '.el-autocomplete',
+  '.el-cascader',
+  '.ant-select',
+  '.ant-cascader',
+  '.n-select',
+  '.n-auto-complete',
+].join(',');
+
 const DEFAULT_MAX_ELEMENTS = 400;
+const MAX_SUGGESTION_LABELS = 20;
 
 interface RootContext { inFrame: boolean; inShadowRoot: boolean; }
 
@@ -81,9 +108,37 @@ function labelOf(el: Element): string {  const parts: string[] = [];
   return unique.join(' / ').slice(0, 500);
 }
 
+/** 打开的自定义下拉项：组件库常用 class，或 listbox/menu 下的 li。 */
+export function isDropdownOption(el: Element): boolean {
+  const role = (el.getAttribute('role') || '').toLowerCase();
+  if (role === 'option' || role === 'treeitem') return true;
+  if (DROPDOWN_ITEM_CLASSES.some((name) => el.classList.contains(name))) return true;
+  const parent = el.parentElement;
+  if (!parent) return false;
+  const parentRole = (parent.getAttribute('role') || '').toLowerCase();
+  if ((parentRole === 'listbox' || parentRole === 'menu') && el.tagName === 'LI') return true;
+  if (DROPDOWN_LIST_CLASSES.some((name) => parent.classList.contains(name)) && el.tagName === 'LI') return true;
+  return false;
+}
+
+/** combobox / 远程搜索框：fill 后应保持焦点并等待建议，而不是立刻 blur。 */
+export function isSearchLikeField(el: Element): boolean {
+  const role = (el.getAttribute('role') || '').toLowerCase();
+  if (role === 'combobox' || role === 'searchbox') return true;
+  if (el.getAttribute('aria-autocomplete')) return true;
+  if (el.getAttribute('aria-expanded') != null) return true;
+  if (el.getAttribute('aria-controls') || el.getAttribute('list')) return true;
+  try {
+    return el.closest(SEARCH_CONTAINER_SELECTOR) != null;
+  } catch {
+    return false;
+  }
+}
+
 function roleOf(el: Element): string {
   const explicit = el.getAttribute('role');
   if (explicit) return explicit;
+  if (isDropdownOption(el)) return 'option';
   if (el instanceof HTMLAnchorElement) return 'link';
   if (el instanceof HTMLButtonElement) return 'button';
   if (el instanceof HTMLSelectElement) return 'combobox';
@@ -103,6 +158,7 @@ function roleOf(el: Element): string {
 function kindOf(el: Element, role: string): PageElementKind {
   if (role === 'button' || role === 'menuitem' || role === 'tab') return 'button';
   if (role === 'link') return 'link';
+  if (role === 'option' || role === 'treeitem') return 'other';
   if (['textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton'].includes(role)) return 'form-control';
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return 'form-control';
   return 'other';
@@ -171,7 +227,44 @@ export function tokenOf(el: Element): string {
 
 function isInteractive(el: Element): boolean {
   if (el.matches(INTERACTIVE_SELECTOR)) return true;
+  if (isDropdownOption(el)) return true;
   return el instanceof HTMLElement && el.isContentEditable;
+}
+
+function isOptionDisabled(el: Element): boolean {
+  return el.classList.contains('is-disabled')
+    || el.classList.contains('ant-select-item-option-disabled');
+}
+
+/** 当前可见的下拉建议文案，供 fill 观察结果使用。 */
+export function collectVisibleOptionLabels(): string[] {
+  const labels: string[] = [];
+  const visit = (root: Document | ShadowRoot): void => {
+    let nodes: Element[];
+    try {
+      nodes = Array.from(root.querySelectorAll('*'));
+    } catch {
+      return;
+    }
+    for (const el of nodes) {
+      if (labels.length >= MAX_SUGGESTION_LABELS) return;
+      if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+        try {
+          const doc = (el as HTMLIFrameElement).contentDocument;
+          if (doc) visit(doc);
+        } catch { /* 跨域 */ }
+        continue;
+      }
+      if (el.shadowRoot) visit(el.shadowRoot);
+      if (!isDropdownOption(el) || isExcluded(el, null)) continue;
+      if (!isStyleVisible(el) || !hasLayoutBox(el) || isOptionDisabled(el)) continue;
+      const label = textOf(el).slice(0, 80);
+      if (!label || labels.includes(label)) continue;
+      labels.push(label);
+    }
+  };
+  visit(document);
+  return labels;
 }
 
 function isExcluded(el: Element, host: HTMLElement | null | undefined): boolean {
@@ -220,6 +313,7 @@ export function scanPage(options: ScanOptions = {}): ScanResult {
       if (el.shadowRoot) {
         visitRoot(el.shadowRoot, { inFrame: context.inFrame, inShadowRoot: true });
       }
+      if (isDropdownOption(el) && !textOf(el)) continue;
       if (!isInteractive(el)) continue;
       if (isExcluded(el, host)) continue;
       const styleVisible = isStyleVisible(el);
@@ -241,7 +335,7 @@ export function scanPage(options: ScanOptions = {}): ScanResult {
         options: optionsOf(el),
         visible,
         inViewport: visible && isInViewport(rect),
-        disabled: isDisabled(el),
+        disabled: isDisabled(el) || (isDropdownOption(el) && isOptionDisabled(el)),
         readonly: isReadonly(el),
         required: el.hasAttribute('required') || el.getAttribute('aria-required') === 'true',
         sensitive,

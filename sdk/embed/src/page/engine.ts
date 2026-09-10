@@ -255,7 +255,10 @@ export class PageEngine {
           to: args.to === 'top' || args.to === 'bottom' ? args.to : undefined,
         }, stringArg(args.snapshotId), sessionId);
         case 'page_focus': return await this.handleSingle({ type: 'focus', elementId: requiredElement(args) }, requiredSnapshot(args), sessionId);
-        case 'page_fill': return await this.handleSingle({ type: 'fill', elementId: requiredElement(args), value: stringArg(args.value) ?? '' }, requiredSnapshot(args), sessionId);
+        case 'page_fill': return await this.handleSingle({
+          type: 'fill', elementId: requiredElement(args), value: stringArg(args.value) ?? '',
+          blur: booleanArg(args.blur),
+        }, requiredSnapshot(args), sessionId);
         case 'page_select': return await this.handleSingle({ type: 'select', elementId: requiredElement(args), value: stringArg(args.value) ?? '' }, requiredSnapshot(args), sessionId);
         case 'page_check': return await this.handleSingle({ type: 'check', elementId: requiredElement(args) }, requiredSnapshot(args), sessionId);
         case 'page_uncheck': return await this.handleSingle({ type: 'uncheck', elementId: requiredElement(args) }, requiredSnapshot(args), sessionId);
@@ -492,6 +495,11 @@ function normalizeAction(action: PageAction): PageAction {
       else next[key] = normalized;
     }
   }
+  if ('blur' in next) {
+    const normalized = booleanArg(next.blur);
+    if (normalized === undefined) delete next.blur;
+    else next.blur = normalized;
+  }
   for (const key of ['ms', 'x', 'y']) {
     if (key in next) {
       const normalized = numberArg(next[key]);
@@ -500,6 +508,13 @@ function normalizeAction(action: PageAction): PageAction {
     }
   }
   return next as unknown as PageAction;
+}
+
+function booleanArg(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return undefined;
 }
 
 function numberArg(value: unknown): number | undefined {

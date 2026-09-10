@@ -105,6 +105,32 @@ describe('PageEngine', () => {
     expect(logs).toContain('success:点击「保存」');
   });
 
+  it('fills a remote search box, inspects the opened option, and clicks it', async () => {
+    document.body.innerHTML = `
+      <div class="el-select"><input id="user" class="el-input__inner" placeholder="选择用户"></div>
+      <ul class="el-select-dropdown__list"></ul>
+      <button type="button">查询</button>`;
+    const input = document.getElementById('user') as HTMLInputElement;
+    const list = document.querySelector('.el-select-dropdown__list')!;
+    input.addEventListener('input', () => {
+      list.innerHTML = '<li class="el-select-dropdown__item">刘志杰_liuzhijie</li>';
+    });
+    const selected: string[] = [];
+    engine.setLevel('full', 1);
+    const inspect = await engine.handleRequest('page_inspect', {}, 1);
+    const fill = await engine.handleRequest('page_fill', { snapshotId: inspect.snapshotId, elementId: 'e1', value: '刘志杰' }, 1);
+    expect(fill.success).toBe(true);
+    expect((fill.result as { observation?: { suggestions?: string[] } }).observation?.suggestions).toContain('刘志杰_liuzhijie');
+    document.querySelector('.el-select-dropdown__item')!.addEventListener('click', () => selected.push('yes'));
+    const after = await engine.handleRequest('page_inspect', {}, 1);
+    const elements = (after.result as { elements: Array<{ elementId: string; role: string; text: string }> }).elements;
+    const option = elements.find((el) => el.role === 'option' && el.text.includes('刘志杰'));
+    expect(option).toBeTruthy();
+    const click = await engine.handleRequest('page_click', { snapshotId: after.snapshotId, elementId: option!.elementId }, 1);
+    expect(click.success).toBe(true);
+    expect(selected).toEqual(['yes']);
+  });
+
   it('observes page changes and waits for stability', async () => {
     document.body.innerHTML = '<button>A</button>';
     const inspect = await engine.handleRequest('page_inspect', {}, 1);

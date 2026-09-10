@@ -62,4 +62,28 @@ describe('scanPage', () => {
     expect(scanPage({}).elements).toHaveLength(1);
     expect(scanPage({ includeHidden: true }).elements).toHaveLength(2);
   });
+
+  it('collects open custom dropdown items as options', () => {
+    document.body.innerHTML = `
+      <ul class="el-select-dropdown__list">
+        <li class="el-select-dropdown__item">刘志杰_liuzhijie</li>
+      </ul>
+      <div style="display:none">
+        <ul class="el-select-dropdown__list">
+          <li class="el-select-dropdown__item">隐藏项</li>
+        </ul>
+      </div>`;
+    const result = scanPage({});
+    const texts = result.elements.map((item) => item.descriptor.text);
+    expect(texts).toContain('刘志杰_liuzhijie');
+    expect(texts).not.toContain('隐藏项');
+    const option = result.elements.find((item) => item.descriptor.text === '刘志杰_liuzhijie')!;
+    expect(option.descriptor.role).toBe('option');
+  });
+
+  it('collects autocomplete suggestion items', () => {
+    document.body.innerHTML = '<ul class="el-autocomplete-suggestion__list"><li class="el-autocomplete-suggestion__item">张三</li></ul>';
+    const result = scanPage({});
+    expect(result.elements.some((item) => item.descriptor.role === 'option' && item.descriptor.text === '张三')).toBe(true);
+  });
 });

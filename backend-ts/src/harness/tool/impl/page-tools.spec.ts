@@ -69,4 +69,11 @@ describe('page tools', () => {
     expect(parsed.data_uri).toBe('data:image/png;base64,AAA');
     expect(parsed.masked).toBe(true);
   });
+
+  it('describes remote-search dropdown usage on fill and select tools', () => {
+    const { tools } = registryOf({ success: true });
+    expect(toolOf(tools, 'page_fill').getDescription()).toContain('远程搜索');
+    expect(toolOf(tools, 'page_select').getDescription()).toContain('原生 HTML select');
+    expect(toolOf(tools, 'page_inspect').getDescription()).toContain('下拉建议');
+  });
 });

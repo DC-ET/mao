@@ -140,6 +140,7 @@ describe('PromptEngine', () => {
     expect(system).toContain('金额以页面为准');
     expect(system).toContain('嵌入式对话浮窗');
     expect(system).toContain('页面上下文与可见范围');
+    expect(system).toContain('自定义搜索下拉');
     expect(system).toContain('[页面上下文]');
     expect(system).toContain('[用户选中文本]');
     expect(system).toContain('attachment://');

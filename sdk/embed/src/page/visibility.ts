@@ -1,12 +1,26 @@
 import type { PageRect } from './types';
 
-/** 样式层面可见（不依赖布局盒模型）。 */
+/** 样式层面可见（不依赖布局盒模型）。祖先 `display:none` 会隐藏子节点，但 display 不继承，必须向上走。 */
 export function isStyleVisible(el: Element): boolean {
   if (!(el instanceof Element)) return false;
-  const style = getComputedStyle(el);
-  if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
-  if (Number.parseFloat(style.opacity || '1') === 0) return false;
-  if ((el as HTMLElement).hidden === true) return false;
+  let node: Element | null = el;
+  let depth = 0;
+  while (node && depth++ < 40) {
+    const style = getComputedStyle(node);
+    if (style.display === 'none') return false;
+    if ((node as HTMLElement).hidden === true) return false;
+    if (node === el) {
+      if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+      if (Number.parseFloat(style.opacity || '1') === 0) return false;
+    }
+    const parent: Element | null = node.parentElement;
+    if (parent) {
+      node = parent;
+      continue;
+    }
+    const root = node.getRootNode();
+    node = root instanceof ShadowRoot ? root.host : null;
+  }
   return true;
 }
 
