@@ -45,7 +45,7 @@ const chat = MaoChat.init({
 - **授权**：默认 `per_action`（每个写操作前在浮窗确认）；用户可切换 `task`（本次任务内有效，任务结束/切换会话/刷新后失效）或 `full`（按 Mao 用户身份、站点 Origin、Agent 持久化到 localStorage，可随时撤销）。授权键按 `serverUrl`、Origin、身份、agentId 和授权版本隔离，不保存 Token。宿主 `page.initialLevel` 与实例方法 `setPageAuthorization()` 只接受 `per_action`/`task`，传 `full` 会被降级；**完全授权只能由用户在浮窗内显式点击授予**，避免宿主一行代码替用户提权。
 - **敏感数据**：`per_action` 下快照中密码/验证码/银行卡等字段值脱敏；截图默认遮罩敏感区域，发送未遮罩原图会先请求确认；`full` 在授权范围内允许未遮罩。
 - **反馈与停止**：浮窗显示授权级别、待确认动作（含高风险提示）、目标元素高亮、动作日志和执行状态；用户可随时点「停止页面任务」，SDK 会取消等待中的确认并让后续动作失败。
-- **截图**：只截当前视口，永远排除 SDK 浮窗；内置渲染器基于 DOM 序列化（SVG foreignObject），跨域图片可能缺失，失败时返回明确错误且不影响普通页面观察。需要更完整像素时可传自定义 `screenshotRenderer`。
+- **截图**：只截当前视口，永远排除 SDK 浮窗；内置渲染器把 DOM 编成良好 XML 再放入 SVG foreignObject 光栅化，跨域图片可能缺失，失败时返回明确错误且不影响普通页面观察。需要更完整像素时可传自定义 `screenshotRenderer`。
 
 ### 明确不支持（会返回可解释错误，不尝试绕过浏览器边界）
 
@@ -130,7 +130,7 @@ const chat = MaoChat.init({
 
 ## 宿主侧要求
 
-- **CSP**：放行 Mao 域名的 `connect-src`（`https:` 与 `wss:`）、`script-src` 及 `img-src`（Agent 头像）。
+- **CSP**：放行 Mao 域名的 `connect-src`（`https:` 与 `wss:`）、`script-src` 及 `img-src`（Agent 头像；页面截图还需 `data:` 与 `blob:`）。
 - **跨源**：REST 请求带 `Authorization` 会触发预检。后端 CORS 不设静态 `allowedHeaders`，预检反射 `Access-Control-Request-Headers`（含 `Authorization` 以及宿主 APM 注入的 `sw8` 等自定义头）。不要改回 `*`（对 `Authorization` 无效）或静态白名单。生产 Nginx 的 `/api/` 是纯反代、不注入 CORS 头。
 
 ## 常见问题
@@ -143,6 +143,7 @@ const chat = MaoChat.init({
 | 横幅"无法连接到助手服务" | WS 连不上（域名 / 证书 / CSP / 网络）；原始错误可从 `onEvent` 的 `error` 事件取到 |
 | 跨源请求被浏览器拒绝 | 确认后端版本 ≥ 0.0.111（CORS 预检反射请求头，覆盖 `Authorization` 与宿主 APM 的 `sw8` 等）；生产 Nginx 不要另行覆盖 CORS 头 |
 | 换票 503 | Mao 调用 checkToken 未通过：看日志 `detail`。`oversized:<n>` 表示响应超过 1MB；公司 claims 超过 64KB 属正常，需 0.0.111 含 1MB 上限的后端 |
+| 截图失败 `screenshot_render_failed` | 内置渲染器把 DOM 编成 SVG 再光栅化。未闭合的 `<br>`/`<input>`、HTML 实体、图标 `xlink:href` 等非法 XML 会让图片加载失败。0.0.113 起改为 XML 序列化；若仍失败，检查宿主 CSP 的 `img-src` 是否放行 `data:` 与 `blob:` |
 
 ## 开发与发布
 

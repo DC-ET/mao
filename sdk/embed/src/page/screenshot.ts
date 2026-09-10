@@ -102,6 +102,135 @@ function inlineStyles(source: Element, clone: Element): void {
   }
 }
 
+const VOID_TAGS = 'area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr';
+const XML_SAFE_ENTITIES = new Set(['amp', 'lt', 'gt', 'quot', 'apos']);
+const XML_ATTR_NAME = /^(?:xmlns:|xml:|xlink:)?[A-Za-z_][\w.-]*$/;
+const ILLEGAL_XML_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+
+function sanitizeCloneForXml(node: Node): void {
+  if (node.nodeType === Node.COMMENT_NODE) {
+    node.parentNode?.removeChild(node);
+    return;
+  }
+  if (node.nodeType === Node.TEXT_NODE) {
+    if (node.nodeValue) node.nodeValue = node.nodeValue.replace(ILLEGAL_XML_CHARS, '');
+    return;
+  }
+  if (!(node instanceof Element)) return;
+  const remove: string[] = [];
+  for (const attr of Array.from(node.attributes)) {
+    if (!XML_ATTR_NAME.test(attr.name)) remove.push(attr.name);
+    else if (attr.value) {
+      const cleaned = attr.value.replace(ILLEGAL_XML_CHARS, '');
+      if (cleaned !== attr.value) node.setAttribute(attr.name, cleaned);
+    }
+  }
+  for (const name of remove) node.removeAttribute(name);
+  for (const child of Array.from(node.childNodes)) sanitizeCloneForXml(child);
+}
+
+function decodeNamedEntity(entity: string): string {
+  const scratch = document.createElement('textarea');
+  scratch.innerHTML = entity;
+  return scratch.value;
+}
+
+function escapeXmlText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function replaceHtmlNamedEntities(xml: string): string {
+  return xml.replace(/&([a-zA-Z][a-zA-Z0-9]+);/g, (full, name: string) => {
+    if (XML_SAFE_ENTITIES.has(name)) return full;
+    const decoded = decodeNamedEntity(full);
+    if (!decoded || decoded === full) return '';
+    return escapeXmlText(decoded);
+  });
+}
+
+function selfCloseVoidTags(xml: string): string {
+  const pattern = new RegExp(`<(${VOID_TAGS})\\b([^>]*?)>`, 'gi');
+  return xml.replace(pattern, (match, tag: string, attrs: string) => {
+    if (/\/>\s*$/.test(match)) return match;
+    return `<${tag}${attrs}/>`;
+  });
+}
+
+function serializeXhtml(node: Element): string {
+  sanitizeCloneForXml(node);
+  let xml = new XMLSerializer().serializeToString(node);
+  xml = xml.replace(ILLEGAL_XML_CHARS, '');
+  xml = replaceHtmlNamedEntities(xml);
+  xml = selfCloseVoidTags(xml);
+  return xml;
+}
+
+function safeCssValue(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || /[<>"']/.test(trimmed)) return fallback;
+  return trimmed;
+}
+
+export interface ScreenshotSvgViewport {
+  width: number;
+  height: number;
+  background: string;
+  scrollX: number;
+  scrollY: number;
+  docWidth: number;
+  bodyMargin: string;
+}
+
+/** 把克隆 DOM 编成可被 Image 加载的 SVG。必须是良好 XML，否则浏览器 onerror → screenshot_render_failed。 */
+export function buildScreenshotSvgXml(clone: HTMLElement, viewport: ScreenshotSvgViewport): string {
+  const viewportEl = document.createElement('div');
+  const background = safeCssValue(viewport.background, '#ffffff');
+  viewportEl.setAttribute(
+    'style',
+    `position:relative;width:${viewport.width}px;height:${viewport.height}px;overflow:hidden;background:${background}`,
+  );
+  const content = document.createElement('div');
+  content.setAttribute(
+    'style',
+    `position:absolute;left:${-viewport.scrollX}px;top:${-viewport.scrollY}px;width:${viewport.docWidth}px;${viewport.bodyMargin}`,
+  );
+  while (clone.firstChild) content.appendChild(clone.firstChild);
+  viewportEl.appendChild(content);
+  const xhtml = serializeXhtml(viewportEl);
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${viewport.width}" height="${viewport.height}">`
+    + `<foreignObject x="0" y="0" width="${viewport.width}" height="${viewport.height}">${xhtml}</foreignObject></svg>`;
+}
+
+function loadSvgImage(src: string, timeoutMs: number): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const timer = setTimeout(() => reject(new Error('screenshot_render_timeout')), timeoutMs);
+    image.onload = () => { clearTimeout(timer); resolve(image); };
+    image.onerror = () => { clearTimeout(timer); reject(new Error('screenshot_render_failed')); };
+    image.src = src;
+  });
+}
+
+async function svgToImage(svg: string): Promise<{ image: HTMLImageElement; revoke: () => void }> {
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const blobUrl = URL.createObjectURL(blob);
+  const revoke = () => URL.revokeObjectURL(blobUrl);
+  try {
+    const image = await loadSvgImage(blobUrl, 8_000);
+    return { image, revoke };
+  } catch {
+    revoke();
+    const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    const image = await loadSvgImage(dataUrl, 8_000);
+    return { image, revoke: () => undefined };
+  }
+}
+
 async function defaultRenderer(root: HTMLElement, options: ScreenshotRenderOptions): Promise<HTMLCanvasElement> {
   const clone = root.cloneNode(true) as HTMLElement;
   const sourceNodes = [root, ...Array.from(root.querySelectorAll('*'))].slice(0, MAX_INLINE_ELEMENTS);
@@ -132,27 +261,27 @@ async function defaultRenderer(root: HTMLElement, options: ScreenshotRenderOptio
   const scrollX = window.scrollX || document.documentElement.scrollLeft || 0;
   const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
   const docWidth = Math.max(document.documentElement.scrollWidth || 0, viewportWidth);
-  const html = clone.innerHTML;
-  const serialized = `<div xmlns="http://www.w3.org/1999/xhtml" style="position:relative;width:${viewportWidth}px;height:${viewportHeight}px;overflow:hidden;background:${background}">`
-    + `<div style="position:absolute;left:${-scrollX}px;top:${-scrollY}px;width:${docWidth}px;${bodyMargin}">${html}</div></div>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${viewportWidth}" height="${viewportHeight}">`
-    + `<foreignObject x="0" y="0" width="${viewportWidth}" height="${viewportHeight}">${serialized}</foreignObject></svg>`;
-  const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  const image = new Image();
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('screenshot_render_timeout')), 8_000);
-    image.onload = () => { clearTimeout(timer); resolve(); };
-    image.onerror = () => { clearTimeout(timer); reject(new Error('screenshot_render_failed')); };
-    image.src = dataUrl;
+  const svg = buildScreenshotSvgXml(clone, {
+    width: viewportWidth,
+    height: viewportHeight,
+    background,
+    scrollX,
+    scrollY,
+    docWidth,
+    bodyMargin,
   });
-  const canvas = document.createElement('canvas');
-  canvas.width = options.width;
-  canvas.height = options.height;
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('screenshot_canvas_unavailable');
-  // 自然尺寸 → 输出尺寸：drawImage 负责缩放
-  context.drawImage(image, 0, 0, options.width, options.height);
-  return canvas;
+  const { image, revoke } = await svgToImage(svg);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = options.width;
+    canvas.height = options.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('screenshot_canvas_unavailable');
+    context.drawImage(image, 0, 0, options.width, options.height);
+    return canvas;
+  } finally {
+    revoke();
+  }
 }
 
 function maskRects(canvas: HTMLCanvasElement, rects: PageRect[], scale: number): void {

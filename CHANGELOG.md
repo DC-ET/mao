@@ -15,6 +15,14 @@
 
 ---
 
+## 0.0.113 (2026-09-10)
+
+### 前端（桌面 / Web / 安卓）
+
+- Web Embed SDK 内置页面截图不再把 HTML `innerHTML` 直接塞进 SVG：改为 XML 序列化（补齐 void 标签、HTML 实体、`xlink` 命名空间），避免业务页常见的 `<br>` / `<input>` / 图标导致 `screenshot_render_failed`。
+
+---
+
 ## 0.0.112 (2026-09-08)
 
 ### 前端（桌面 / Web / 安卓）
