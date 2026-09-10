@@ -12,6 +12,7 @@
 | `/admin/` 白屏但 `/admin/login` 正常 | `curl` 看 `<title>`：若是 `Mao` 则误返回桌面 index。删掉 `rewrite ^/admin/` 与 `try_files ... /admin/index.html`，改用 `scripts/nginx/mao-admin-locations.conf`。见 [single-domain-nginx-migration.md](../../../docs/guides/single-domain-nginx-migration.md) |
 | 历史工作区文件找不到 | `WORKSPACE_ROOT` 是否与 `session.workspace` 前缀一致 |
 | 蓝绿后仍连旧端口 | 查 `MAO_RUNTIME_DIR/active-backend-port` 与 `mao-upstream.conf` |
+| 蓝绿后飞书进度卡片一直「正在处理」但任务已完成 | 旧版崩溃恢复不 PATCH 卡片终态。0.0.113 起续跑成功/失败/取消会刷新原卡片；升级后端后对新恢复生效，已卡住的卡片不会自动改 |
 
 ## 登录与认证
 

@@ -23,6 +23,10 @@ import {
 export interface RecoveryExtraListener extends AgentEventListener {
   /** 恢复续跑被取消时的终态通知（如飞书进度卡片 PATCH「已取消」）。 */
   cancel?(interrupted?: boolean): Promise<boolean>;
+  /** 恢复续跑成功结束时的终态通知（如飞书进度卡片 PATCH「已完成」）。 */
+  complete?(finalContent: string): Promise<boolean>;
+  /** 恢复续跑失败时的终态通知（如飞书进度卡片 PATCH「已失败」）。 */
+  fail?(message: string): Promise<boolean>;
 }
 
 export class CrashRecoveryRunner {
@@ -237,16 +241,25 @@ export class CrashRecoveryRunner {
       } else {
         await this.taskTerminalService.finishExecution(sessionId, userId, 'COMPLETED', executionId);
         terminalPhase = 'COMPLETED';
+        // 成功终态必须 PATCH 飞书进度卡片：执行中的 round/tool 事件不会把卡片收成「已完成」，
+        // 漏掉 complete 会让蓝绿/重启后续跑成功后卡片永久停在「正在处理」。
+        try { await extra?.complete?.(await this.latestAssistantReply(sessionId)); } catch (e) {
+          harnessLog('warn', `Recovery extra complete failed for session ${sessionId}`, e);
+        }
       }
       harnessLog('info', `Session ${sessionId}: recovery completed`);
     } catch (e) {
       // 恢复续跑异常：额外监听（如飞书卡片）同步收到 FAILED 终态，避免停留在「正在处理」。
-      try { extra?.onError(e); } catch { /* extra 已尽力 */ }
+      const failMessage = (e as Error).message ?? 'Recovery failed';
+      try {
+        if (extra?.fail != null) await extra.fail(failMessage);
+        else extra?.onError(e);
+      } catch { /* extra 已尽力 */ }
       harnessLog('error', `Recovery failed for session ${sessionId}`, e);
       terminalPhase = 'FAILED';
       try {
         await this.taskTerminalService.finishExecution(
-          sessionId, userId, 'FAILED', executionId, (e as Error).message ?? 'Recovery failed');
+          sessionId, userId, 'FAILED', executionId, failMessage);
       } catch { /* ignore */ }
     } finally {
       this.agentLoop.removeCancelFlag(sessionId);
@@ -269,6 +282,17 @@ export class CrashRecoveryRunner {
       this.registry.send(userId, wsEvent('session_status', sessionId, statusData));
       this.registry.send(userId, wsEvent('session_list_update', sessionId, { phase }));
     } catch { /* client may not be connected */ }
+  }
+
+  private async latestAssistantReply(sessionId: number): Promise<string> {
+    const messages = await this.sessionService.getMessages?.(sessionId) ?? [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message.role !== 'ASSISTANT') continue;
+      const text = this.sessionService.extractVisibleText?.(message.content ?? null) ?? message.content;
+      if (text != null && text.trim() !== '') return text;
+    }
+    return '任务已完成。';
   }
 
   private async resolveSupportsVision(session: Session): Promise<boolean> {

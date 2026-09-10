@@ -40,6 +40,8 @@ function makeRunner(
   const sessionService = {
     cleanupIncompleteTail: vi.fn().mockResolvedValue(0),
     updatePhase: vi.fn().mockResolvedValue(undefined),
+    getMessages: vi.fn().mockResolvedValue([]),
+    extractVisibleText: (content: string | null) => content,
   };
   const taskTerminalService = { finishExecution: vi.fn().mockResolvedValue(undefined) };
   const harnessService = {
@@ -71,7 +73,7 @@ function makeRunner(
     undefined,
     extra,
   );
-  return { runner, taskTerminalService, harnessService, pending, onExecutionFinished };
+  return { runner, taskTerminalService, harnessService, pending, onExecutionFinished, sessionService };
 }
 
 describe('CrashRecoveryRunner.createExtraListeners', () => {
@@ -104,7 +106,42 @@ describe('CrashRecoveryRunner.createExtraListeners', () => {
     expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(7, 42, 'COMPLETED', expect.any(String));
   });
 
-  it('executionFailureNotifiesExtraOnErrorAndMarksFailed', async () => {
+  it('successfulRecoveryNotifiesExtraCompleteWithLatestAssistantReply', async () => {
+    const complete = vi.fn().mockResolvedValue(true);
+    const extra: RecoveryExtraListener = { onContentDelta: () => {}, onError: () => {}, complete };
+    const { runner, taskTerminalService, pending, sessionService } = makeRunner(async () => extra);
+    sessionService.getMessages.mockResolvedValue([
+      { role: 'USER', content: '请继续' },
+      { role: 'ASSISTANT', content: '最终回复' },
+    ]);
+    await runner.run();
+    await Promise.all(pending);
+    expect(complete).toHaveBeenCalledWith('最终回复');
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(7, 42, 'COMPLETED', expect.any(String));
+  });
+
+  it('successfulRecoveryCompleteFallsBackWhenNoAssistantReply', async () => {
+    const complete = vi.fn().mockResolvedValue(true);
+    const extra: RecoveryExtraListener = { onContentDelta: () => {}, onError: () => {}, complete };
+    const { runner, pending } = makeRunner(async () => extra);
+    await runner.run();
+    await Promise.all(pending);
+    expect(complete).toHaveBeenCalledWith('任务已完成。');
+  });
+
+  it('executionFailureNotifiesExtraFailAndMarksFailed', async () => {
+    const fail = vi.fn().mockResolvedValue(true);
+    const onError = vi.fn();
+    const extra: RecoveryExtraListener = { onContentDelta: () => {}, onError, fail };
+    const { runner, taskTerminalService, pending } = makeRunner(async () => extra, { executeError: new Error('llm down') });
+    await runner.run();
+    await Promise.all(pending);
+    expect(fail).toHaveBeenCalledWith('llm down');
+    expect(onError).not.toHaveBeenCalled();
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(7, 42, 'FAILED', expect.any(String), 'llm down');
+  });
+
+  it('executionFailureFallsBackToOnErrorWhenFailIsAbsent', async () => {
     const onError = vi.fn();
     const extra: RecoveryExtraListener = { onContentDelta: () => {}, onError };
     const { runner, taskTerminalService, pending } = makeRunner(async () => extra, { executeError: new Error('llm down') });
