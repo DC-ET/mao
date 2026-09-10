@@ -302,6 +302,41 @@
   -webkit-line-clamp: 4;
 }
 .mao-msg__text { min-width: 0; }
+/* 用户消息里的图片附件与文件引用 chip（粘贴文件产生，历史回显同样命中） */
+.mao-msg__images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 5px;
+}
+.mao-msg__image {
+  max-width: 132px;
+  max-height: 132px;
+  border-radius: var(--mao-radius-sm);
+  display: block;
+  object-fit: cover;
+}
+.mao-msg__files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 5px;
+}
+.mao-msg__file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: var(--mao-radius-xs);
+  background: color-mix(in srgb, var(--mao-on-primary) 16%, transparent);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mao-msg__file svg { width: 13px; height: 13px; fill: currentColor; flex-shrink: 0; }
 /* 助手侧不套气泡（对齐 desktop）：正文直接落在面板上，表格/代码块能用满宽度，
    工具卡与思考块也不再是"卡片套卡片"。flex:1 + min-width:0 保证长代码行在 pre 内部横向滚动，
    而不是把整条消息撑宽 */
@@ -744,6 +779,77 @@
   transition: background 0.15s ease;
 }
 .mao-chip__close:hover { background: var(--mao-primary-soft-strong); }
+/* ── 待发附件（粘贴进来，发送时上传） ── */
+.mao-composer__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 0;
+}
+.mao-attach {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 6px 4px 4px;
+  border: 1px solid var(--mao-border);
+  border-radius: var(--mao-radius-sm);
+  background: var(--mao-panel);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--mao-text);
+}
+.mao-attach__thumb {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: var(--mao-radius-xs);
+  display: block;
+}
+.mao-attach__icon {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--mao-radius-xs);
+  background: var(--mao-primary-soft);
+  color: var(--mao-primary-ink);
+}
+.mao-attach__icon svg { width: 18px; height: 18px; fill: currentColor; }
+.mao-attach__name {
+  min-width: 0;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mao-attach__size {
+  margin-left: 4px;
+  color: var(--mao-text-tertiary);
+}
+.mao-attach__close {
+  border: none;
+  background: transparent;
+  color: var(--mao-text-tertiary);
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: var(--mao-radius-xs);
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.mao-attach__close:hover { background: var(--mao-primary-soft-strong); color: var(--mao-primary-ink); }
+.mao-composer__notice {
+  padding: 6px 14px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mao-danger);
+}
 .mao-composer__input {
   display: block;
   width: 100%;
@@ -926,6 +1032,10 @@
   .mao-composer__input { padding: 12px 14px 8px; }
   .mao-chip { padding: 6px 6px 6px 10px; }
   .mao-chip__close { width: 26px; height: 26px; font-size: 16px; }
+  .mao-attach { padding: 5px 6px 5px 5px; }
+  .mao-attach__thumb,
+  .mao-attach__icon { width: 38px; height: 38px; }
+  .mao-attach__close { width: 26px; height: 26px; font-size: 16px; }
   .mao-thinking__summary { padding: 5px 10px 5px 8px; }
   .mao-q__opt { padding: 10px 12px; }
   .mao-btn { padding: 9px 18px; }

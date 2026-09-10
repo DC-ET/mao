@@ -3,6 +3,7 @@ import { computed, toRef } from 'vue';
 import type { WsAskUserQuestionAnswer } from '@mao/contracts';
 import type { UiState } from '../controller';
 import type { PageAuthorizationLevel } from '../page';
+import type { PendingAttachment } from '../core/attachment';
 import Launcher from './Launcher.vue';
 import ChatPanel from './ChatPanel.vue';
 import PageHighlight from './PageHighlight.vue';
@@ -16,7 +17,7 @@ defineEmits<{
   launcherClick: [];
   close: [];
   newSession: [];
-  send: [content: string];
+  send: [content: string, attachments: PendingAttachment[]];
   stop: [];
   answer: [requestId: string, answers: WsAskUserQuestionAnswer[]];
   clearSelection: [];
@@ -68,9 +69,10 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
     :page-task-active="ui.pageTaskActive"
     :page-confirm="ui.pageConfirm"
     :page-logs="ui.pageLogs"
+    :max-attachment-mb="ui.attachmentMaxMb"
     @close="$emit('close')"
     @new-session="$emit('newSession')"
-    @send="(c) => $emit('send', c)"
+    @send="(c, a) => $emit('send', c, a)"
     @stop="$emit('stop')"
     @answer="(id, a) => $emit('answer', id, a)"
     @clear-selection="$emit('clearSelection')"

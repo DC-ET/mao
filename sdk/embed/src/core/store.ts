@@ -440,7 +440,7 @@ export class ChatStore {
   }
 
   /** 用户主动发送后立即上屏；返回本地消息 id 供发送失败时回滚 */
-  appendLocalUserMessage(content: string, quotedSelection?: string | null): string {
+  appendLocalUserMessage(content: string, quotedSelection?: string | null, images?: string[]): string {
     const id = genId('u');
     const quote = quotedSelection?.trim() || undefined;
     this.messages.value.push({
@@ -453,6 +453,7 @@ export class ChatStore {
       segments: [],
       toolCalls: [],
       quotedSelection: quote,
+      ...(images && images.length > 0 ? { images } : {}),
     });
     this.ensureStreamingAssistant();
     return id;

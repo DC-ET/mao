@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { WsAskUserQuestionAnswer } from '@mao/contracts';
 import type { ChatMessage, PendingQuestion } from '../types';
 import type { PageActionLogEntry, PageAuthorizationLevel, PageConfirmRequest } from '../page';
+import type { PendingAttachment } from '../core/attachment';
 import AssistantMark from './AssistantMark.vue';
 import MessageBubble from './MessageBubble.vue';
 import Composer from './Composer.vue';
@@ -26,12 +27,13 @@ const props = defineProps<{
   pageTaskActive: boolean;
   pageConfirm: PageConfirmRequest | null;
   pageLogs: PageActionLogEntry[];
+  maxAttachmentMb: number;
 }>();
 
 const emit = defineEmits<{
   close: [];
   newSession: [];
-  send: [content: string];
+  send: [content: string, attachments: PendingAttachment[]];
   stop: [];
   answer: [requestId: string, answers: WsAskUserQuestionAnswer[]];
   clearSelection: [];
@@ -124,7 +126,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
           <svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2ZM7 9h10v2H7V9Zm7 5H7v-2h7v2Zm3-8H7V5h10v1Z"/></svg>
         </span>
         <span class="mao-empty__title">有什么可以帮你？</span>
-        <span class="mao-empty__hint">直接提问，我会结合当前页面内容回答；选中页面上的文字即可带上引用。</span>
+        <span class="mao-empty__hint">直接提问，我会结合当前页面内容回答；选中页面上的文字即可带上引用，也可直接粘贴图片或文件。</span>
       </div>
     </div>
 
@@ -152,7 +154,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
       :running="running"
       :quoted-selection="quotedSelection"
       :page-authorization="pageAuthorization"
-      @send="(c) => emit('send', c)"
+      :max-attachment-mb="maxAttachmentMb"
+      @send="(c, a) => emit('send', c, a)"
       @stop="emit('stop')"
       @clear-selection="emit('clearSelection')"
       @set-page-authorization="(level) => emit('setPageAuthorization', level)"

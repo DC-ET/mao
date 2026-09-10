@@ -55,6 +55,34 @@ export class RestClient {
       },
       ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
     });
+    return this.parse<T>(resp, `${method} ${path}`, identity, token, retry, () => this.request<T>(method, path, opts, false));
+  }
+
+  /**
+   * multipart 上传（附件）：Content-Type 必须交给浏览器按 boundary 生成，不能手写。
+   * FormData 可重复提交，401 换新 token 后直接重试。
+   */
+  async upload<T>(path: string, form: FormData, retry = true): Promise<T> {
+    const before = this.identity();
+    const token = await this.getToken();
+    const identity = this.identity();
+    if (before !== null && before !== identity) throw new AuthError();
+    const resp = await fetch(new URL(`${this.apiBase}${path}`).toString(), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    return this.parse<T>(resp, `POST ${path}`, identity, token, retry, () => this.upload<T>(path, form, false));
+  }
+
+  private async parse<T>(
+    resp: Response,
+    label: string,
+    identity: string | null,
+    token: string,
+    retry: boolean,
+    retryCall: () => Promise<T>,
+  ): Promise<T> {
     if (identity !== this.identity()) throw new AuthError();
     const text = await resp.text();
     if (identity !== this.identity()) throw new AuthError();
@@ -62,18 +90,18 @@ export class RestClient {
     try {
       payload = text ? JSON.parse(text) : {};
     } catch {
-      throw new ApiError(resp.status, `Invalid response from ${path}`);
+      throw new ApiError(resp.status, `Invalid response from ${label}`);
     }
     // Only the authentication gate's documented code proves no business execution occurred.
     if (resp.status === 401 && payload.code === 1001) {
       this.onUnauthorized?.(token, !retry);
-      if (retry) return this.request<T>(method, path, opts, false);
+      if (retry) return retryCall();
       throw new AuthError();
     }
     if (!resp.ok || (payload.code != null && payload.code !== 0)) {
       throw new ApiError(
         resp.status,
-        payload.message || `${method} ${path} failed (${resp.status})`,
+        payload.message || `${label} failed (${resp.status})`,
         payload.code ?? null,
       );
     }

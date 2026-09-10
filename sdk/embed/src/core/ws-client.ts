@@ -343,11 +343,11 @@ export class WsClient {
     }
   }
 
-  sendMessage(sessionId: number, content: string, eventId: string): Promise<boolean> {
+  sendMessage(sessionId: number, content: string, eventId: string, images?: string[]): Promise<boolean> {
     const frame: WsSendMessageFrame = {
       type: 'send_message',
       sessionId,
-      data: { content, eventId },
+      data: { content, eventId, ...(images && images.length > 0 ? { images } : {}) },
     };
     return this.sendReliable(frame);
   }

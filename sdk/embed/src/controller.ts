@@ -1,12 +1,15 @@
 import { createApp, reactive, watch, type App as VueApp } from 'vue';
 import type { MaoChatEvent, MaoChatInitOptions, PendingQuestion } from './types';
-import { resolveApiBase } from './types';
+import { resolveApiBase, resolveAssetUrl } from './types';
 import RootApp from './ui/RootApp.vue';
 import styleText from './ui/style.css?inline';
 import { WsClient } from './core/ws-client';
 import { ChatStore } from './core/store';
 import { SessionManager } from './core/session-manager';
 import { RestClient, AuthError } from './core/rest-client';
+import {
+  DEFAULT_MAX_ATTACHMENT_MB, fetchMaxAttachmentMb, uploadAttachments, type PendingAttachment,
+} from './core/attachment';
 import { TokenProvider, AUTH_MESSAGES, tokenSubject } from './core/token-provider';
 import { TabsCoordinator } from './core/tabs';
 import { ContextCollector, PREFIX_SEPARATOR, extractQuotedSelection, stripContextPrefix } from './context/collector';
@@ -25,6 +28,7 @@ import type {
 
 /** /sessions/:id/messages 实际使用 session-vo.ts 的 MessageVO，工具字段是 JSON 字符串。 */
 interface HistoryMessageVO extends EmbedMessageVO {
+  images?: string[];
   toolCalls?: string | null;
   toolCallId?: string | null;
   metadata?: string | null;
@@ -66,6 +70,8 @@ export interface UiState {
   questionSubmitting: boolean;
   quotedSelection: string | null;
   position: 'right' | 'left';
+  /** 后台配置的单文件附件大小上限（MB） */
+  attachmentMaxMb: number;
   /** 页面操作授权级别（默认 per_action） */
   pageAuthorization: PageAuthorizationLevel;
   /** 当前是否有正在进行的页面任务 */
@@ -95,6 +101,7 @@ export function createUiState(options: MaoChatInitOptions): UiState {
     questionSubmitting: false,
     quotedSelection: null,
     position: options.position ?? 'right',
+    attachmentMaxMb: DEFAULT_MAX_ATTACHMENT_MB,
     pageAuthorization: options.page?.initialLevel ?? 'per_action',
     pageTaskActive: false,
     pageConfirm: null,
@@ -122,7 +129,7 @@ export function mountApp(ui: UiState): { app: VueApp; host: HTMLElement; root: H
     onLauncherClick: () => getController()?.toggle(),
     onClose: () => getController()?.close(),
     onNewSession: () => void getController()?.newSession(),
-    onSend: (content: string) => void getController()?.send(content),
+    onSend: (content: string, attachments: PendingAttachment[]) => void getController()?.send(content, attachments),
     onStop: () => void getController()?.stop(),
     onAnswer: (requestId: string, answers: WsAskUserQuestionAnswer[]) =>
       void getController()?.answer(requestId, answers),
@@ -417,6 +424,13 @@ export class EmbedController {
     this.ui.sessionTitle = this.agentDisplayName ?? FALLBACK_PANEL_TITLE;
   }
 
+  /** 附件大小上限：后台集成配置变更后，下次 boot/重试即可生效 */
+  private async loadAttachmentLimit(): Promise<void> {
+    const maxMb = await fetchMaxAttachmentMb(this.rest);
+    if (this.destroyed) return;
+    this.ui.attachmentMaxMb = maxMb;
+  }
+
   /** 历史加载器：boot 首次加载与重连对账共用同一映射逻辑 */
   private fetchHistory = async (sid: number): Promise<ChatMessage[]> => {
     // 后端响应结构：{ messages: EmbedMessageVO[], hasMore, nextBeforeMessageId }
@@ -446,6 +460,10 @@ export class EmbedController {
       const quotedSelection = m.role === 'USER' ? extractQuotedSelection(raw) : undefined;
       const content = m.role === 'USER' ? stripContextPrefix(raw) : raw;
       const thinking = m.thinkingContent ?? '';
+      // 用户消息的图片附件随 content 一起落库（服务端返回 images），历史回显必须一起还原
+      const images = m.role === 'USER' && Array.isArray(m.images)
+        ? m.images.map((url) => resolveAssetUrl(String(url), this.options.serverUrl))
+        : [];
       const segments: MessageSegment[] = [];
       // 单行仅存聚合字段，没有 delta 顺序。思考→正文是展示约定，不拆分/伪造交错。
       if (thinking) segments.push({ type: 'thinking', content: thinking });
@@ -480,6 +498,7 @@ export class EmbedController {
         error: false,
         toolCalls,
         quotedSelection,
+        ...(images.length > 0 ? { images } : {}),
       });
     }
     return messages;
@@ -517,7 +536,11 @@ export class EmbedController {
     this.ui.sessionError = null;
     this.store.sessionError.value = null;
     try {
-      const agent = await this.rest.request<AgentVO>('GET', `/agents/${this.options.agentId}`);
+      const [agent] = await Promise.all([
+        this.rest.request<AgentVO>('GET', `/agents/${this.options.agentId}`),
+        // 附件上限用于输入区即时校验；拉取失败保持默认值，不阻断 boot
+        this.loadAttachmentLimit(),
+      ]);
       if (stale()) return;
       // SDK 嵌在第三方页面：上传路径必须指向 Mao 服务，不能落到宿主域名。
       this.ui.agentAvatarUrl = agent.avatarUrl
@@ -795,7 +818,7 @@ export class EmbedController {
 
   // ─── UI 事件 ───
 
-  async send(content: string) {
+  async send(content: string, attachments: PendingAttachment[] = []) {
     // 新消息代表新一轮任务：清掉上一轮 stop() 留下的取消阻断态。
     this.pageEngine.prepareNewTask();
     const version = this.identityVersion;
@@ -808,6 +831,28 @@ export class EmbedController {
       if (this.store.sessionId() == null) return;
     }
     const sid = this.store.sessionId()!;
+    // 附件先上传（图片→images，文件→@{绝对路径}@ 引用）：上传失败就不消费选中引用、不上屏
+    const images: string[] = [];
+    let failedAttachments: string[] = [];
+    if (attachments.length > 0) {
+      const uploaded = await uploadAttachments({
+        attachments,
+        client: this.rest,
+        sessionId: sid,
+        resolveAssetUrl: (url) => resolveAssetUrl(url, this.options.serverUrl),
+      });
+      if (this.destroyed || version !== this.identityVersion) return;
+      images.push(...uploaded.images);
+      if (uploaded.refs.length > 0) {
+        content = content ? `${content}\n${uploaded.refs.join(' ')}` : uploaded.refs.join(' ');
+      }
+      failedAttachments = uploaded.failed;
+      // 全部失败且无正文：不发空消息，否则用户以为附件已送达（提示见下）
+      if (!content.trim() && images.length === 0) {
+        this.reportAttachmentFailure(failedAttachments);
+        return;
+      }
+    }
     // 引用文本以 UI 显示为准（clearSelection 后必须真的不带），
     // 为空时再读一次实时选区兜住 200ms debounce 窗口内的新选中（dismiss 状态由 tracker 守住）
     const selection = this.ui.quotedSelection ?? this.selectionTracker?.peek() ?? null;
@@ -819,11 +864,13 @@ export class EmbedController {
     this.ui.quotedSelection = null;
     const full = prefix ? `${prefix}${PREFIX_SEPARATOR}${content}` : content;
     const quote = prefix ? extractQuotedSelection(full) : null;
-    const localId = this.store.appendLocalUserMessage(content, quote);
+    const localId = this.store.appendLocalUserMessage(content, quote, images);
     this.ui.sessionError = null;
     this.store.sessionError.value = null;
+    // 部分附件失败：成功的照常发出，失败项在横幅里点名（不静默吞掉）
+    if (failedAttachments.length > 0) this.reportAttachmentFailure(failedAttachments);
     const eventId = `ev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-    const ok = await this.ws.sendMessage(sid, full, eventId);
+    const ok = await this.ws.sendMessage(sid, full, eventId, images);
     if (this.destroyed || version !== this.identityVersion) return;
     if (!ok) {
       this.rollbackSend(localId, contextHash, selection);
@@ -858,6 +905,15 @@ export class EmbedController {
   private clearUnconfirmedNotice() {
     if (this.ui.sessionError === SAVE_UNCONFIRMED_TEXT) this.ui.sessionError = null;
     if (this.store.sessionError.value === SAVE_UNCONFIRMED_TEXT) this.store.sessionError.value = null;
+  }
+
+  /** 附件上传失败：横幅提示 + 宿主埋点；成功上传的附件不受影响 */
+  private reportAttachmentFailure(failed: string[]) {
+    if (failed.length === 0) return;
+    const message = `附件上传失败：${failed.join('、')}`;
+    this.ui.sessionError = message;
+    this.store.sessionError.value = message;
+    this.emitEvent({ type: 'error', message });
   }
 
   /** 发送失败/超时回滚：气泡、上下文变更基线、选中引用三者一起复原 */

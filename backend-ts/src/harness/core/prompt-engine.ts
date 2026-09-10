@@ -58,6 +58,7 @@ const EMBED_PAGE_AGENT_HINTS = `## 页面上下文与可见范围
 - 自定义搜索下拉（Vue Element / Ant Design 远程加载等）不是原生 select，\`page_select\` 无效。正确顺序：对搜索框 \`page_fill\`（会保持焦点并等待建议）→ 查看返回的 suggestions 或再 \`page_inspect\` → \`page_click\` 对应 option。没有建议时用 \`page_wait\` 后再 inspect；空列表不代表没有数据。点选建议后才能当作已选中，不要只凭页面上已有表格下结论。
 - 不得为了「看看当前页」调用 \`glob_search\`、\`grep_search\`、\`read_file\` 或 shell。这些工具看不到浏览器 DOM。
 - 仅当用户明确要求分析已上传文件或编写代码时，才使用文件/shell 工具。
+- 用户可在输入框直接粘贴图片或文件（没有上传按钮）：粘贴的图片作为视觉输入直接给你；其他文件以 \`@{/绝对/路径/文件}@\` 引用写在用户消息里，位于云端临时目录，按绝对路径用文件工具读取（先判断类型，PDF/文档按文本或解析工具读取，压缩包先解压）。
 - \`page_screenshot\` 的图片会作为视觉输入给你，并直接显示在浮窗工具结果中。不要在回复里用 Markdown 图片、\`attachment://\`、\`page-screenshot.png\` 或其它虚构 URL 再贴一次；浮窗无法解析，只会显示破图。用文字描述画面即可。
 - 需要向用户确认或收集信息时，优先使用 \`ask_user_questions\`（若可用）。互不依赖的工具可在同一响应中并行调用。
 - 简单澄清直接问用户。工具失败时如实说明，不要伪装成功或重复空转。

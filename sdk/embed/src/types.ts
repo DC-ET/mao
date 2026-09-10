@@ -81,6 +81,8 @@ export interface ChatMessage {
   segments: MessageSegment[];
   toolCalls: ToolCallItem[];
   quotedSelection?: string | null;
+  /** 用户消息携带的图片访问地址（粘贴上传后的附件） */
+  images?: string[];
 }
 
 export interface ToolCallItem {
@@ -112,4 +114,18 @@ export function resolveWsUrl(serverUrl: string): string {
 export function resolveApiBase(serverUrl: string): string {
   const trimmed = serverUrl.replace(/\/+$/, '');
   return trimmed.endsWith('/api/v1') ? trimmed : `${trimmed}/api/v1`;
+}
+
+/**
+ * 把服务端返回的相对资源地址（如本地存储模式的 `/uploads/x.png`）补成绝对地址。
+ * 气泡 <img> 与 LLM 取图都必须用 Mao 服务的域名，不能落回宿主页面 origin。
+ */
+export function resolveAssetUrl(url: string, serverUrl: string): string {
+  if (!url || /^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
+  try {
+    const base = typeof window !== 'undefined' ? window.location.href : undefined;
+    return new URL(url, new URL(serverUrl, base).origin).href;
+  } catch {
+    return url;
+  }
 }

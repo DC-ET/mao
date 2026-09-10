@@ -74,12 +74,20 @@ function jsonOk(data: unknown) {
 let historyMessages: Array<Record<string, unknown>> = [];
 let agentAvatarUrl: string | null | undefined;
 let agentName: string | null | undefined = '客服助手';
+let failImageUpload = false;
+let incomingAbsolutePath = '/opt/mao/runtime/1/incoming/a.pdf';
 
 function installFetch(fetchCalls: string[]) {
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
     fetchCalls.push(`${method} ${url}`);
+    if (url.endsWith('/upload/config')) return jsonOk({ storageMode: 'local', baseUrl: '', maxSizeMb: 8 });
+    if (url.endsWith('/files/upload-incoming')) return jsonOk({ absolutePath: incomingAbsolutePath });
+    if (url.endsWith('/files/upload')) {
+      if (failImageUpload) throw new Error('upload failed');
+      return jsonOk({ url: '/uploads/pic.png' });
+    }
     if (url.endsWith('/agents/3')) return jsonOk({ id: 3, name: agentName, avatarUrl: agentAvatarUrl });
     if (method === 'POST' && url.includes('/sessions')) {
       return jsonOk({ id: SESSION_ID, title: '网页助手' });
@@ -134,6 +142,8 @@ describe('EmbedController', () => {
     historyMessages = [];
     agentAvatarUrl = undefined;
     agentName = '客服助手';
+    failImageUpload = false;
+    incomingAbsolutePath = '/opt/mao/runtime/1/incoming/a.pdf';
     (globalThis as Record<string, unknown>).WebSocket = FakeWebSocket;
     window.localStorage.clear();
   });
@@ -220,6 +230,85 @@ describe('EmbedController', () => {
     await h.ctl.send('你好');
     expect(h.ctl.store.messages.value).toHaveLength(0);
     expect(h.ui.sessionError).toContain('发送失败');
+    h.ctl.destroy();
+  });
+
+  it('boot 读取后台上传配置作为附件大小上限', async () => {
+    const h = await makeHarness();
+    expect(h.ui.attachmentMaxMb).toBe(1024);
+    await boot(h);
+    expect(h.fetchCalls).toContain('GET https://mao.example.com/api/v1/upload/config');
+    expect(h.ui.attachmentMaxMb).toBe(8);
+    h.ctl.destroy();
+  });
+
+  it('图片附件先上传，再由 send_message 带 images 并回显缩略图', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    const file = new File(['x'], 'shot.png', { type: 'image/png' });
+    await h.ctl.send('看下这张图', [{ id: 'a1', file, previewUrl: null }]);
+
+    expect(h.fetchCalls).toContain('POST https://mao.example.com/api/v1/files/upload');
+    const frame = socket.framesOfType('send_message')[0] as {
+      data: { content: string; images?: string[] };
+    };
+    expect(frame.data.content).toBe('看下这张图');
+    // 本地存储模式返回 /uploads/xxx：必须补成 Mao 服务绝对地址，LLM 才能取图
+    expect(frame.data.images).toEqual(['https://mao.example.com/uploads/pic.png']);
+    expect(h.ctl.store.messages.value[0].images).toEqual(['https://mao.example.com/uploads/pic.png']);
+    h.ctl.destroy();
+  });
+
+  it('非图片文件上传后以 @{绝对路径}@ 引用写进正文', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    incomingAbsolutePath = '/opt/mao/runtime/1/incoming/报告.pdf';
+    const file = new File(['y'], '报告.pdf', { type: 'application/pdf' });
+    await h.ctl.send('帮我看看', [{ id: 'a1', file, previewUrl: null }]);
+
+    expect(h.fetchCalls).toContain('POST https://mao.example.com/api/v1/files/upload-incoming');
+    const frame = socket.framesOfType('send_message')[0] as { data: { content: string; images?: string[] } };
+    expect(frame.data.content).toBe('帮我看看\n@{/opt/mao/runtime/1/incoming/报告.pdf}@');
+    expect(frame.data.images).toBeUndefined();
+    h.ctl.destroy();
+  });
+
+  it('附件全部上传失败且无正文时不发送，横幅点名失败文件', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    failImageUpload = true;
+    const file = new File(['x'], 'shot.png', { type: 'image/png' });
+    await h.ctl.send('', [{ id: 'a1', file, previewUrl: null }]);
+
+    expect(socket.framesOfType('send_message')).toEqual([]);
+    expect(h.ctl.store.messages.value).toHaveLength(0);
+    expect(h.ui.sessionError).toBe('附件上传失败：shot.png');
+    h.ctl.destroy();
+  });
+
+  it('部分附件失败仍有正文时照常发送，并提示失败项', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    failImageUpload = true;
+    const image = new File(['x'], 'shot.png', { type: 'image/png' });
+    const doc = new File(['y'], 'a.pdf', { type: 'application/pdf' });
+    await h.ctl.send('看下', [
+      { id: 'a1', file: image, previewUrl: null },
+      { id: 'a2', file: doc, previewUrl: null },
+    ]);
+
+    const frame = socket.framesOfType('send_message')[0] as { data: { content: string; images?: string[] } };
+    expect(frame.data.images).toBeUndefined();
+    expect(frame.data.content).toBe('看下\n@{/opt/mao/runtime/1/incoming/a.pdf}@');
+    expect(h.ui.sessionError).toBe('附件上传失败：shot.png');
+    h.ctl.destroy();
+  });
+
+  it('历史消息里的图片附件按 Mao 服务域名补全后回显', async () => {
+    historyMessages = [{ id: 1, role: 'USER', content: '看下', images: ['/uploads/pic.png'] }];
+    const h = await makeHarness();
+    await boot(h);
+    expect(h.ctl.store.messages.value[0].images).toEqual(['https://mao.example.com/uploads/pic.png']);
     h.ctl.destroy();
   });
 

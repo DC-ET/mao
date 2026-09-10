@@ -151,6 +151,9 @@ describe('PromptEngine', () => {
     expect(system).not.toContain('使用read_file而不是cat');
     expect(system).not.toContain('请使用 shell 执行 `date`');
     expect(system).not.toContain('用户上传的文件');
+    // 浮窗只支持粘贴附件：仍需说明 @{绝对路径}@ 的读法，但不能灌编程助手的上传目录/工作区说明
+    expect(system).toContain('用户可在输入框直接粘贴图片或文件');
+    expect(system).not.toContain('上传目录：');
     expect(system).not.toContain('should-not-appear');
     expect(system).not.toContain('## 工作区规则');
   });

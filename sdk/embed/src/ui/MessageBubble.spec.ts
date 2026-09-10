@@ -165,3 +165,49 @@ describe('MessageBubble quote', () => {
     expect(el.querySelector('.mao-msg__text')?.textContent).toBe('帮我看下');
   });
 });
+
+describe('MessageBubble attachments', () => {
+  function render(content: string, images?: string[]) {
+    el = document.createElement('div');
+    document.body.appendChild(el);
+    app = createApp({
+      render: () => h(MessageBubble, {
+        message: {
+          id: 'u2',
+          role: 'user',
+          content,
+          thinking: '',
+          streaming: false,
+          error: false,
+          segments: [],
+          toolCalls: [],
+          ...(images ? { images } : {}),
+        },
+      }),
+    });
+    app.mount(el);
+  }
+
+  it('图片附件显示为缩略图，正文照常显示', () => {
+    render('看下这张图', ['https://mao.example.com/uploads/a.png']);
+    const img = el.querySelector('.mao-msg__image') as HTMLImageElement;
+    expect(img.src).toBe('https://mao.example.com/uploads/a.png');
+    expect(img.alt).toBe('附件图片');
+    expect(el.querySelector('.mao-msg__text')?.textContent).toBe('看下这张图');
+  });
+
+  it('文件引用显示为文件名 chip，正文不出现 @{路径}@ 标记', () => {
+    render('帮我看看\n@{/opt/mao/data/runtime/2/1/incoming/报告.pdf}@');
+    const chip = el.querySelector('.mao-msg__file') as HTMLElement;
+    expect(chip.textContent?.trim()).toBe('报告.pdf');
+    expect(chip.title).toBe('/opt/mao/data/runtime/2/1/incoming/报告.pdf');
+    expect(el.querySelector('.mao-msg__text')?.textContent).toBe('帮我看看');
+    expect(el.textContent).not.toContain('@{');
+  });
+
+  it('只有附件没有正文时不渲染空文本节点', () => {
+    render('@{/tmp/a.pdf}@');
+    expect(el.querySelector('.mao-msg__file')).not.toBeNull();
+    expect(el.querySelector('.mao-msg__text')).toBeNull();
+  });
+});
