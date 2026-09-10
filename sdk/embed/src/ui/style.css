@@ -578,8 +578,6 @@
   color: var(--mao-primary-ink);
   box-shadow: inset 0 0 0 1px var(--mao-primary-soft-strong);
 }
-/* composer 内嵌的断连提示：贴在输入框下方，不占外层 banner 的外边距 */
-.mao-banner--inline { margin: 8px 0 0; }
 .mao-banner__retry {
   margin-left: auto;
   flex-shrink: 0;

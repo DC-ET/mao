@@ -6,7 +6,6 @@ import PageAuthSwitcher from './PageAuthSwitcher.vue';
 const props = defineProps<{
   running: boolean;
   quotedSelection: string | null;
-  connectionError: boolean;
   pageAuthorization: PageAuthorizationLevel;
 }>();
 
@@ -112,9 +111,6 @@ defineExpose({ focus, closeMenu, isMenuOpen });
           </svg>
         </button>
       </div>
-    </div>
-    <div v-if="connectionError" class="mao-banner mao-banner--error mao-banner--inline">
-      连接已断开，发送时将自动重连
     </div>
   </div>
 </template>

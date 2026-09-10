@@ -151,7 +151,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
       ref="composerEl"
       :running="running"
       :quoted-selection="quotedSelection"
-      :connection-error="!connected"
       :page-authorization="pageAuthorization"
       @send="(c) => emit('send', c)"
       @stop="emit('stop')"

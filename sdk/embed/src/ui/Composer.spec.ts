@@ -10,13 +10,11 @@ afterEach(() => { app?.unmount(); el?.remove(); });
 function mount(overrides: {
   running?: boolean;
   quotedSelection?: string | null;
-  connectionError?: boolean;
   pageAuthorization?: PageAuthorizationLevel;
 } = {}) {
   const props = reactive({
     running: false,
     quotedSelection: null as string | null,
-    connectionError: false,
     pageAuthorization: 'per_action' as PageAuthorizationLevel,
     ...overrides,
   });
