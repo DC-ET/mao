@@ -12,7 +12,7 @@ describe('CompanySsoClient', () => {
   it('uses only trusted remote claims and fixed GET protocol', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ code: 0, success: true, data: { illegal: false, claims: claims() } }));
     const identity = await new CompanySsoClient(fetcher).verify('synthetic-token', checkUrl, config);
-    expect(identity).toMatchObject({ subject: '3089', email: 'Synthetic@example.test', displayName: 'Test' });
+    expect(identity).toMatchObject({ subject: 'Synthetic@example.test', email: 'Synthetic@example.test', displayName: 'Test' });
     const [url, init] = fetcher.mock.calls[0];
     expect(String(url)).toBe(`${checkUrl}?token=synthetic-token`);
     expect(init).toMatchObject({ method: 'GET', redirect: 'error', headers: { Accept: 'application/json' } });
@@ -33,7 +33,7 @@ describe('CompanySsoClient', () => {
     const ok = new Response(JSON.stringify(payload), {
       headers: { 'content-type': 'application/json;charset=UTF-8', 'content-length': '999999' },
     });
-    await expect(new CompanySsoClient(vi.fn().mockResolvedValue(ok)).verify('synthetic', checkUrl, config)).resolves.toMatchObject({ subject: '3089' });
+    await expect(new CompanySsoClient(vi.fn().mockResolvedValue(ok)).verify('synthetic', checkUrl, config)).resolves.toMatchObject({ subject: 'Synthetic@example.test' });
     const huge = new Response('x'.repeat(MAX_SSO_BODY_BYTES + 1), { headers: { 'content-type': 'application/json' } });
     await expect(new CompanySsoClient(vi.fn().mockResolvedValue(huge)).verify('synthetic', checkUrl, config)).rejects.toMatchObject({
       status: 503, detail: `oversized:${MAX_SSO_BODY_BYTES + 1}`,
@@ -44,7 +44,14 @@ describe('CompanySsoClient', () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       code: 0, success: true, data: { illegal: false, claims: claims() },
     }), { headers: { 'content-type': contentType } }));
-    await expect(new CompanySsoClient(fetcher).verify('synthetic', checkUrl, config)).resolves.toMatchObject({ subject: '3089' });
+    await expect(new CompanySsoClient(fetcher).verify('synthetic', checkUrl, config)).resolves.toMatchObject({ subject: 'Synthetic@example.test' });
+  });
+
+  it('uses email as the stable subject across different company user ids', async () => {
+    for (const id of [1, 9999]) {
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ code: 0, success: true, data: { illegal: false, claims: { ...claims(), id } } }));
+      await expect(new CompanySsoClient(fetcher).verify('synthetic', checkUrl, config)).resolves.toMatchObject({ subject: 'Synthetic@example.test' });
+    }
   });
 
   it.each(['https://evilacg.team/check', 'https://acg.team.evil.com/check', 'http://acg.team', 'https://acg.team?token=existing', 'not a URL'])('rejects %s before any outbound request', async (url) => {

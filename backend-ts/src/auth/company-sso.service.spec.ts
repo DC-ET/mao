@@ -30,7 +30,7 @@ describe('CompanySsoService', () => {
     for (const checkUrl of ['https://acg.team/business/check?app=first', 'https://sgs.acg.team/other/path?app=second']) {
       const result = await service.exchange('synthetic', checkUrl, config);
       expect(String(fetcher.mock.lastCall![0])).toBe(`${checkUrl}&token=synthetic`);
-      expect(resolve).toHaveBeenLastCalledWith(expect.objectContaining({ subject: '3089' }));
+      expect(resolve).toHaveBeenLastCalledWith(expect.objectContaining({ subject: 'Synthetic@example.test', email: 'Synthetic@example.test' }));
       expect(jwt.getAccessTokenMetadata(result.accessToken)).toMatchObject({ userId: 4, authSource: 'company_sso' });
     }
   });
@@ -45,7 +45,7 @@ describe('CompanySsoService', () => {
     await expect(new CompanySsoService({ verify: vi.fn().mockResolvedValue(verified) }, { resolve }, jwt).exchange('synthetic', 'https://sgs.acg.team/check', config)).rejects.toMatchObject({ code: 1402 });
   });
 
-  it('rate limits verified subject across exchanges', async () => {
+  it('rate limits verified email across exchanges', async () => {
     const service = new CompanySsoService({ verify: vi.fn().mockResolvedValue(identity(3600)) }, { resolve: vi.fn().mockResolvedValue({ user: { id: 4, username: 'test' }, action: 'existing' }) }, jwt);
     for (let i = 0; i < 20; i++) await service.exchange('synthetic', 'https://sgs.acg.team/check', config);
     await expect(service.exchange('synthetic', 'https://sgs.acg.team/check', config)).rejects.toMatchObject({ status: 429 });

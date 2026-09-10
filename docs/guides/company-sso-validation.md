@@ -51,7 +51,7 @@ cd ../admin && npm run build
 
 `backend-ts/src/auth/company-sso.mysql.integration.spec.ts` 默认跳过，只有显式设置 `SSO_TEST_MYSQL_SOCKET` 才执行。它不加载应用数据库配置，要求独立 `sso-mysql-*` 目录下的真实 Unix socket、MySQL 关闭网络监听，使用随机新建的测试数据库，并只删除该测试数据库。
 
-测试包含12项：V106迁移、同身份和同邮箱并发、普通/管理员账号关联且不改角色、禁用/删除/重复邮箱拒绝、事务回滚与用户邮箱写入竞态。
+测试包含13项：V106迁移、同邮箱并发（含不同公司用户 id）、普通/管理员账号关联且不改角色、旧 claims.id 绑定改写为邮箱、禁用/删除/重复邮箱拒绝、事务回滚与用户邮箱写入竞态。
 
 在安全策略允许的独立测试环境中执行：
 
@@ -67,7 +67,7 @@ SSO_TEST_MYSQL_SOCKET=/absolute/test-root/sso-mysql-unique/mysql.sock \
 ## 公司 SSO 上线前联调
 
 - 校验成功、Token到期、撤销、员工停用、服务不可用及 `illegal` 实际含义。
-- 确认 `claims.id` 永不复用、邮箱已验证且不重分配；不使用用户名替代稳定ID。
+- 确认邮箱已验证且不重分配；测试/生产等环境的公司用户 `claims.id` 可以不同，Mao 只按邮箱关联。
 - 当前已知失败仅包含 `illegal=true` 和已过期 claims；未知上游格式返回503并拒绝换票，不能仅靠成功样例认定停用即时生效。
 - 确认反向代理精确可信IP、Origin白名单、CSP、公司 SSO query日志脱敏。
 - 连续使用超过两个TTL，确认真实发生换票与 WS 更新；验证断网、恢复、休眠、账号切换和并发页签。

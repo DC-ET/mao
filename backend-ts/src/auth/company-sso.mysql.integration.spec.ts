@@ -77,21 +77,31 @@ describe.skipIf(!socket)('company SSO isolated MySQL integration', () => {
     expect(await db.query('SELECT role_id FROM user_role')).toEqual([{ roleId: 2 }]);
   });
 
-  it('concurrent different subjects sharing an email have one winner and no orphan', async () => {
-    const results = await Promise.allSettled(Array.from({ length: 8 }, (_, i) => identities.resolve(identity(String(i + 1)))));
-    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    for (const result of results) if (result.status === 'rejected') expect(result.reason).toMatchObject({ status: 409 });
+  it('concurrent different company ids sharing an email converge on one user', async () => {
+    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => identities.resolve(identity(String(i + 1)))));
+    expect(new Set(results.map((result) => result.user.id)).size).toBe(1);
+    expect(results.filter((result) => result.action === 'created')).toHaveLength(1);
     expect(await count('user')).toBe(1);
     expect(await count('user_role')).toBe(1);
     expect(await count('user_external_identity')).toBe(1);
+    expect(await db.queryOne<{ subject: string }>('SELECT subject FROM user_external_identity')).toEqual({ subject: identity().email });
   });
 
-  it.each([1, 2])('binds unique email without changing password, display name or role_id=%s; binding wins later', async (roleId) => {
+  it.each([1, 2])('binds unique email without changing password, display name or role_id=%s; later env id maps by email', async (roleId) => {
     const id = await createUser();
     await db.insert('user_role', { userId: id, roleId });
     expect(await identities.resolve(identity())).toMatchObject({ action: 'bound', user: { id, displayName: 'Local name', passwordHash: 'synthetic-hash' } });
-    expect(await identities.resolve(identity('3089', 'Changed@example.test'))).toMatchObject({ action: 'existing', user: { id } });
+    expect(await identities.resolve(identity('9999'))).toMatchObject({ action: 'existing', user: { id } });
     expect(await db.query('SELECT role_id FROM user_role')).toEqual([{ roleId }]);
+    expect(await db.queryOne<{ subject: string }>('SELECT subject FROM user_external_identity')).toEqual({ subject: identity().email });
+  });
+
+  it('rewrites a legacy claims.id binding to the email key', async () => {
+    const id = await createUser();
+    await db.insert('user_external_identity', { provider: 'company_sso', subject: '3089', userId: id, emailAtBinding: identity().email });
+    expect(await identities.resolve(identity('9999'))).toMatchObject({ action: 'existing', user: { id } });
+    expect(await count('user_external_identity')).toBe(1);
+    expect(await db.queryOne<{ subject: string }>('SELECT subject FROM user_external_identity')).toEqual({ subject: identity().email });
   });
 
   it.each(['disabled', 'deleted', 'duplicate'] as const)('refuses %s email without new users or bindings', async (kind) => {

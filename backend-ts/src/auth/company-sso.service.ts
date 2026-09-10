@@ -33,7 +33,7 @@ export class CompanySsoService {
   async exchange(token: string, checkUrl: string, config: CompanySsoConfig) {
     if (!config.enabled) throw new CompanySsoError('service_unavailable');
     const identity = await this.client.verify(token, checkUrl, config);
-    this.limiter.consume(`subject:${identity.subject}`, 20);
+    this.limiter.consume(`email:${identity.email}`, 20);
     this.ttl(identity.expiresAt, config);
     const { user, action } = await this.identities.resolve(identity);
     const issued = this.jwt.generateCompanySsoToken(user.id!, user.username, this.ttl(identity.expiresAt, config));

@@ -2,6 +2,7 @@ import { CompanySsoError } from './company-sso.error.js';
 import { validateCompanySsoCheckUrl, validateCompanySsoConfig, type CompanySsoConfig } from './company-sso.config.js';
 
 export interface VerifiedSsoIdentity {
+  /** Binding key: the verified company email, not claims.id. */
   subject: string;
   email: string;
   displayName: string;
@@ -70,13 +71,13 @@ export class CompanySsoClient {
       if (body.data.illegal === true) throw new CompanySsoError('invalid_token');
       if (body.data.illegal !== false || !record(body.data.claims)) throw unavailable('contract');
       const claims = body.data.claims;
-      // Company claims.id is the binding key, NOT sub. External owner must confirm id is never reused.
+      // Email is the binding key so test/prod company user ids can differ. id is still required by checkToken.
       if (typeof claims.id !== 'number' || !Number.isSafeInteger(claims.id) || claims.id <= 0
         || typeof claims.email !== 'string' || claims.email.length > 128 || !/^[\w.+-]+@[\w-]+(\.[\w-]+)+$/.test(claims.email)
         || typeof claims.realName !== 'string' || !claims.realName.trim() || claims.realName.length > 128
         || typeof claims.exp !== 'number' || !Number.isSafeInteger(claims.exp) || !Number.isSafeInteger(claims.exp * 1000)) throw unavailable('contract');
       if (claims.exp * 1000 <= Date.now()) throw new CompanySsoError('invalid_token');
-      return { subject: String(claims.id), email: claims.email, displayName: claims.realName.trim(), expiresAt: claims.exp * 1000 };
+      return { subject: claims.email, email: claims.email, displayName: claims.realName.trim(), expiresAt: claims.exp * 1000 };
     } catch (error) {
       if (error instanceof CompanySsoError) throw error;
       // Never propagate fetch errors: they may contain the credential-bearing URL.

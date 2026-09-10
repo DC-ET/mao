@@ -25,33 +25,40 @@ export class CompanySsoIdentityRepository {
   }
 
   private async resolveTransaction(identity: VerifiedSsoIdentity): Promise<{ user: User; action: SsoAssociationAction }> {
-    // All repository email writers take this same lock before locking any user row.
-    // Creation, ordinary role assignment and binding either commit together or roll back.
+    // Email is the only identity key. Company claims.id is ignored so test/prod ids can differ.
+    const subject = identity.email;
     return this.db.transaction(async (tx) => {
       await lockUserIdentityWrites(tx);
-      const binding = await tx.queryOne<{ userId: number }>(
-        'SELECT user_id FROM user_external_identity WHERE provider = ? AND subject = ? FOR UPDATE', ['company_sso', identity.subject],
-      );
-      if (binding) {
-        const user = await tx.queryOne<User>('SELECT * FROM `user` WHERE id = ? FOR UPDATE', [binding.userId]);
-        this.assertActive(user);
-        return { user: user!, action: 'existing' };
-      }
       const matches = await tx.query<User>('SELECT * FROM `user` WHERE BINARY email = BINARY ? FOR UPDATE', [identity.email]);
       if (matches.length > 1) throw new CompanySsoError('identity_conflict');
       let user = matches[0];
       if (user) {
         this.assertActive(user);
-        const other = await tx.queryOne<{ id: number }>('SELECT id FROM user_external_identity WHERE provider = ? AND user_id = ? FOR UPDATE', ['company_sso', user.id]);
-        if (other) throw new CompanySsoError('identity_conflict');
+        const binding = await tx.queryOne<{ id: number; subject: string }>(
+          'SELECT id, subject FROM user_external_identity WHERE provider = ? AND user_id = ? FOR UPDATE', ['company_sso', user.id],
+        );
+        if (binding) {
+          if (binding.subject !== subject) {
+            await tx.updateById('user_external_identity', binding.id, { subject, emailAtBinding: identity.email });
+          }
+          return { user, action: 'existing' };
+        }
       } else {
+        const binding = await tx.queryOne<{ userId: number }>(
+          'SELECT user_id FROM user_external_identity WHERE provider = ? AND subject = ? FOR UPDATE', ['company_sso', subject],
+        );
+        if (binding) {
+          user = (await tx.queryOne<User>('SELECT * FROM `user` WHERE id = ? FOR UPDATE', [binding.userId]))!;
+          this.assertActive(user);
+          return { user, action: 'existing' };
+        }
         const role = await tx.queryOne<{ id: number }>('SELECT id FROM role WHERE code = ? AND deleted = 0 FOR UPDATE', ['USER']);
         if (!role) throw new CompanySsoError('service_unavailable');
         user = { username: `sso_${randomUUID().replaceAll('-', '')}`, displayName: identity.displayName, email: identity.email, passwordHash: null, status: 1, deleted: 0 };
         user.id = await tx.insert('user', user);
         await tx.insert('user_role', { userId: user.id, roleId: role.id });
       }
-      await tx.insert('user_external_identity', { provider: 'company_sso', subject: identity.subject, userId: user.id, emailAtBinding: identity.email });
+      await tx.insert('user_external_identity', { provider: 'company_sso', subject, userId: user.id, emailAtBinding: identity.email });
       return { user, action: matches.length ? 'bound' : 'created' };
     });
   }
