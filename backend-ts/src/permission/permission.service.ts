@@ -64,6 +64,16 @@ export class PermissionService {
   }
 
   async assignPermissions(roleId: number, permissionIds: number[]): Promise<void> {
+    // 先删后插必须同事务：中途失败不得留下「已删未插」的半截状态
+    if (this.rolePermissionRepo.transaction) {
+      await this.rolePermissionRepo.transaction(async (tx) => {
+        await tx.deleteByRoleId(roleId);
+        for (const permId of permissionIds) {
+          await tx.insert({ roleId, permissionId: permId });
+        }
+      });
+      return;
+    }
     await this.rolePermissionRepo.deleteByRoleId(roleId);
     for (const permId of permissionIds) {
       await this.rolePermissionRepo.insert({ roleId, permissionId: permId });
@@ -74,10 +84,60 @@ export class PermissionService {
     if (roleIds == null || roleIds.length === 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '至少分配一个角色');
     }
+    // 先删后插必须同事务：中途失败不得留下「已删未插」的半截状态
+    if (this.userRoleRepo.transaction) {
+      await this.userRoleRepo.transaction(async (tx) => {
+        await tx.deleteByUserId(userId);
+        for (const roleId of roleIds) {
+          await tx.insert({ userId, roleId });
+        }
+      });
+      return;
+    }
     await this.userRoleRepo.deleteByUserId(userId);
     for (const roleId of roleIds) {
       await this.userRoleRepo.insert({ userId, roleId });
     }
+  }
+
+  /**
+   * 最后管理员保护 + 角色写入同一事务。
+   * 对 ADMIN 绑定行 FOR UPDATE，避免并发双降级同时通过 count 检查后清空全部管理员。
+   */
+  async changeRolesWithAdminGuard(userId: number, newRoleIds: number[]): Promise<void> {
+    if (newRoleIds.length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '至少分配一个角色');
+    }
+    if (!this.userRoleRepo.transaction || !this.userRoleRepo.findByRoleIdForUpdate) {
+      // 无事务能力时退化为「先断言再写」（与旧行为一致）
+      await this.assertCanChangeRoles(userId, newRoleIds);
+      await this.assignRoles(userId, newRoleIds);
+      return;
+    }
+    await this.userRoleRepo.transaction(async (tx) => {
+      const adminRole = await this.getAdminRole();
+      if (adminRole && tx.findByRoleIdForUpdate) {
+        // 锁定 ADMIN 全部绑定行：并发降级在此串行化
+        const bindings = await tx.findByRoleIdForUpdate(adminRole.id!);
+        const hadAdmin = bindings.some((b) => b.userId === userId);
+        const willHaveAdmin = newRoleIds.includes(adminRole.id!);
+        if (hadAdmin && !willHaveAdmin) {
+          let otherActive = 0;
+          for (const b of bindings) {
+            if (b.userId === userId) continue;
+            const u = await this.userRepo.findById(b.userId);
+            if (u && u.status === 1) otherActive += 1;
+          }
+          if (otherActive === 0) {
+            throw new BusinessException(ErrorCode.CANNOT_REMOVE_LAST_ADMIN);
+          }
+        }
+      }
+      await tx.deleteByUserId(userId);
+      for (const roleId of newRoleIds) {
+        await tx.insert({ userId, roleId });
+      }
+    });
   }
 
   async getUserRoleIds(userId: number): Promise<number[]> {
@@ -120,13 +180,34 @@ export class PermissionService {
     if (targetUserId === currentUserId) {
       throw new BusinessException(ErrorCode.CANNOT_DISABLE_SELF);
     }
+    await this.assertNotLastAdmin(targetUserId);
+  }
+
+  /** 在事务内锁 ADMIN 绑定后检查目标是否为最后一名活跃管理员。 */
+  private async assertNotLastAdmin(targetUserId: number): Promise<void> {
     const adminRole = await this.getAdminRole();
     if (!adminRole || !(await this.userHasRole(targetUserId, adminRole.id!))) {
       return;
     }
-    if ((await this.countOtherActiveAdmins(adminRole.id!, targetUserId)) === 0) {
-      throw new BusinessException(ErrorCode.CANNOT_REMOVE_LAST_ADMIN);
+    if (!this.userRoleRepo.transaction || !this.userRoleRepo.findByRoleIdForUpdate) {
+      if ((await this.countOtherActiveAdmins(adminRole.id!, targetUserId)) === 0) {
+        throw new BusinessException(ErrorCode.CANNOT_REMOVE_LAST_ADMIN);
+      }
+      return;
     }
+    await this.userRoleRepo.transaction(async (tx) => {
+      if (!tx.findByRoleIdForUpdate) return;
+      const bindings = await tx.findByRoleIdForUpdate(adminRole.id!);
+      let otherActive = 0;
+      for (const b of bindings) {
+        if (b.userId === targetUserId) continue;
+        const u = await this.userRepo.findById(b.userId);
+        if (u && u.status === 1) otherActive += 1;
+      }
+      if (otherActive === 0) {
+        throw new BusinessException(ErrorCode.CANNOT_REMOVE_LAST_ADMIN);
+      }
+    });
   }
 
   async assertCanChangeRoles(userId: number, newRoleIds: number[]): Promise<void> {

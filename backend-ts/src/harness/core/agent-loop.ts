@@ -248,31 +248,31 @@ export class AgentLoop {
                 listener.onThinkingEnd?.();
               }
               context.addUsage(usage);
-              if (usage && usage.promptTokens > 0) {
-                const promptTokens = usage.promptTokens;
-                const anchorMsgId = preRequestMaxMsgId > 0 ? preRequestMaxMsgId : context.contextAnchorMsgId;
-                context.lastPromptTokens = promptTokens;
-                context.contextAnchorMsgId = anchorMsgId;
-                context.messagesCoveredByAnchor = messagesCoveredThisRound;
-                if (context.sessionId != null && anchorMsgId > 0) {
-                  afterStream.push(this.sessionService.updateContextAnchor(context.sessionId, promptTokens, anchorMsgId));
-                }
-                listener.onContextWindow?.(promptTokens, promptTokens);
-              }
-              if (toolCalls.length > 0) {
-                for (const tc of toolCalls) {
-                  // 与 Java 版一致：流结束时用完整参数刷新监听器缓存。
-                  // 监听器会去重 start 事件，但摘要器随后需要这里的最终 arguments。
-                  listener.onToolCallStart(tc);
-                }
-                context.pendingToolCalls = toolCalls;
-              }
               const content = contentBuilder.join('');
               const thinkingContent = thinkingBuilder.length > 0 ? thinkingBuilder.join('') : null;
               if (content !== '' || toolCalls.length > 0) {
                 // 收到有效输出即复位计数，保证"连续 10 次空响应"语义
                 emptyResponseCount = 0;
                 context.addAssistantMessage(content, toolCalls, thinkingContent);
+                if (usage && usage.promptTokens > 0) {
+                  const promptTokens = usage.promptTokens;
+                  const anchorMsgId = preRequestMaxMsgId > 0 ? preRequestMaxMsgId : context.contextAnchorMsgId;
+                  context.lastPromptTokens = promptTokens;
+                  context.contextAnchorMsgId = anchorMsgId;
+                  context.messagesCoveredByAnchor = messagesCoveredThisRound;
+                  if (context.sessionId != null && anchorMsgId > 0) {
+                    afterStream.push(this.sessionService.updateContextAnchor(context.sessionId, promptTokens, anchorMsgId));
+                  }
+                  listener.onContextWindow?.(promptTokens, promptTokens);
+                }
+                if (toolCalls.length > 0) {
+                  for (const tc of toolCalls) {
+                    // 与 Java 版一致：流结束时用完整参数刷新监听器缓存。
+                    // 监听器会去重 start 事件，但摘要器随后需要这里的最终 arguments。
+                    listener.onToolCallStart(tc);
+                  }
+                  context.pendingToolCalls = toolCalls;
+                }
                 if (toolCalls.length === 0 && persistenceCallback) {
                   afterStream.push(Promise.resolve(persistenceCallback.onSaveAssistantMessage(content, thinkingContent, toolCalls, usage)));
                 } else {
@@ -284,6 +284,9 @@ export class AgentLoop {
               } else {
                 // LLM 返回了空响应（无 content、无 tool_calls，可能有思考或无思考）。
                 // 指数退避重试，最多 10 次。
+                // 注意：空响应轮不更新 context anchor、不向 afterStream 压 promise——
+                // 否则 EmptyResponseExhaustedException 会在 catch 中 rethrow，
+                // afterStream 永远不会被 await，形成 unhandled rejection 与错误锚点。
                 emptyResponseCount++;
                 const emptyMaxRetries = 10;
                 const backoffSeconds = Math.min(30, Math.pow(2, emptyResponseCount - 1));
@@ -346,6 +349,8 @@ export class AgentLoop {
               await this.sleepMs(emptyBackoffMs.v, cancelFlag ?? null);
             }
             context.clearPendingToolCalls();
+            // 与正常轮次对齐：start/end 必须成对，否则前端回合状态错乱
+            listener.onRoundEnd?.(round);
             continue;
           }
           const bgSubagentManager = this.backgroundSubagentManager?.();
@@ -356,6 +361,8 @@ export class AgentLoop {
               return;
             }
             context.clearPendingToolCalls();
+            // 与空响应/正常轮次对齐：start/end 必须成对，否则前端回合状态错乱
+            listener.onRoundEnd?.(round);
             continue;
           }
           listener.onRoundEnd?.(round);

@@ -28,10 +28,22 @@ export class McpClientManager {
       map = new Map();
       this.sessionClients.set(sessionId, map);
     }
+    // 重连同一 serverId 时先关闭旧客户端，避免 STDIO 子进程泄漏
+    const previous = map.get(server.id!);
+    if (previous) {
+      await this.closeClient(`session-${sessionId}/server-${server.id} (stale)`, previous);
+    }
     map.set(server.id!, client);
-    const tools = await this.toToolRefs(server, await client.listTools());
-    harnessLog('info', `MCP client connected (CLOUD): session=${sessionId}, server=${server.name}, tools=${tools.length}`);
-    return tools;
+    try {
+      const tools = await this.toToolRefs(server, await client.listTools());
+      harnessLog('info', `MCP client connected (CLOUD): session=${sessionId}, server=${server.name}, tools=${tools.length}`);
+      return tools;
+    } catch (e) {
+      // listTools 失败时不留下悬空连接
+      map.delete(server.id!);
+      await this.closeClient(`session-${sessionId}/server-${server.id} (listTools failed)`, client);
+      throw e;
+    }
   }
 
   async callTool(sessionId: number | null, serverId: number, toolName: string, argumentsJson: string): Promise<string> {
@@ -39,7 +51,12 @@ export class McpClientManager {
     if (!client) return JSON.stringify({ error: `MCP connection not found for serverId=${serverId}` });
     try {
       const args = parseArguments(argumentsJson);
-      const result = await client.callTool({ name: toolName, arguments: args });
+      // 必须有超时：MCP 服务器挂起会拖死整轮 Promise.all 工具执行
+      const result = await this.withTimeout(
+        client.callTool({ name: toolName, arguments: args }),
+        this.clientTimeoutSeconds * 1000,
+        `MCP tool call timed out after ${this.clientTimeoutSeconds}s: ${toolName}`,
+      );
       return formatResult(result);
     } catch (e) {
       harnessLog('warn', `MCP callTool failed: serverId=${serverId}, tool=${toolName}, error=${(e as Error).message}`);
@@ -74,6 +91,29 @@ export class McpClientManager {
   }
 
   private async connect(server: McpServer, env: Record<string, string>): Promise<AnyClient> {
+    // HTTP：先 Streamable，连接失败再回退 SSE。
+    // StreamableHTTPClientTransport 构造通常不抛错，协议不兼容发生在 connect 阶段，
+    // 因此回退必须包在 connect 而非构造器上。
+    if (server.serverType !== TYPE_STDIO) {
+      const url = new URL(server.url ?? '');
+      try {
+        const client = new Client({ name: 'mao', version: '1.0.0' }) as unknown as AnyClient;
+        await client.connect(new StreamableHTTPClientTransport(url));
+        return client;
+      } catch (streamableErr) {
+        harnessLog('info', `MCP StreamableHTTP connect failed for ${server.name}, trying SSE: ${(streamableErr as Error).message}`);
+        try {
+          const client = new Client({ name: 'mao', version: '1.0.0' }) as unknown as AnyClient;
+          await client.connect(new SSEClientTransport(url));
+          return client;
+        } catch (sseErr) {
+          throw new Error(
+            `连接 MCP 服务器 ${server.name} 失败: streamable=${(streamableErr as Error).message}; sse=${(sseErr as Error).message}`,
+            { cause: sseErr },
+          );
+        }
+      }
+    }
     const transport = this.buildTransport(server, env);
     try {
       const client = new Client({ name: 'mao', version: '1.0.0' }) as unknown as AnyClient;
@@ -93,12 +133,8 @@ export class McpClientManager {
         env: { ...process.env, ...env } as Record<string, string>,
       });
     }
-    const url = new URL(server.url ?? '');
-    try {
-      return new StreamableHTTPClientTransport(url);
-    } catch {
-      return new SSEClientTransport(url);
-    }
+    // HTTP 路径在 connect() 中处理 Streamable→SSE 回退
+    return new StreamableHTTPClientTransport(new URL(server.url ?? ''));
   }
 
   private async toToolRefs(
@@ -124,6 +160,20 @@ export class McpClientManager {
       await client.close();
     } catch (e) {
       harnessLog('debug', `Failed to close MCP client ${label}: ${(e as Error).message}`);
+    }
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(message)), ms);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 }

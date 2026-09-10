@@ -48,8 +48,8 @@ export function registerPermissionRoutes(app: FastifyInstance, permissionService
     const body = bodyOf<{ roleIds?: number[] }>(request);
     const targetUserId = pathId(request);
     const roleIds = body.roleIds ?? [];
-    await permissionService.assertCanChangeRoles(targetUserId, roleIds);
-    await permissionService.assignRoles(targetUserId, roleIds);
+    // 断言 + 写入同事务（锁 ADMIN 绑定），避免并发双降级清空全部管理员
+    await permissionService.changeRolesWithAdminGuard(targetUserId, roleIds);
     return sendOk(reply);
   });
 }

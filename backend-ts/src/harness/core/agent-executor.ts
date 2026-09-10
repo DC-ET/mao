@@ -26,7 +26,8 @@ export function createAgentExecutor(
 
   const start = (task: () => Promise<void>): void => {
     active += 1;
-    void task().finally(() => {
+    // 必须消费 rejection：仅 .finally 会在 task reject 时留下 unhandled rejection
+    void task().catch(() => { /* 记录由调用方负责；此处仅避免 unhandled */ }).finally(() => {
       active -= 1;
       const next = queue.shift();
       if (next) start(next);

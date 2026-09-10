@@ -38,6 +38,8 @@ export interface MessageQueueItem {
   content?: string | null;
   images?: string | null;
   sortOrder?: number | null;
+  status?: string | null;
+  scheduledTaskId?: number | null;
   createdAt?: string | Date | null;
 }
 

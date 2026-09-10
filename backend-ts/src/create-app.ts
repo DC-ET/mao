@@ -913,6 +913,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     jwtService: jwt,
     agentExecutor: (fn: () => Promise<void>) => agentExecutor.submit(fn),
     mcpSyncTimeoutSeconds: cfg.app.mcp.syncTimeoutSeconds,
+    // busy 入队的定时任务在队列真正执行到终态后回写 lastExecutionStatus
+    onScheduledTaskQueueConsumed: async (taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => {
+      await scheduledStore.updateById({ id: taskId, lastExecutionStatus: status });
+    },
   } as never);
   scheduledService.setLiveExecution((session, userId, executionId, saved) =>
     wsHandler.executePersistedUserPrompt(session, userId, executionId, saved));

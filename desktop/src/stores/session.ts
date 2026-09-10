@@ -1192,6 +1192,22 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /**
+   * 发送失败回滚：移除最后一条乐观插入的用户消息（本地 id，无服务端 id）。
+   * 与 removeTrailingEmptyAssistant 配对调用，避免失败后留下幽灵气泡。
+   */
+  function removeLastUserMessage(sessionId: string) {
+    const sid = String(sessionId)
+    const list = sessionMessages.value.get(sid)
+    if (!list || list.length === 0) return
+    const lastMsg = list[list.length - 1]
+    if (lastMsg?.role !== 'user') return
+    const id = String(lastMsg.id)
+    // 仅回滚本地乐观消息（msg_/side_user_ 前缀）；已落库消息由 fetchSession 覆盖
+    if (!id.startsWith('msg_') && !id.startsWith('side_user_')) return
+    list.pop()
+  }
+
   // 流式期间数组引用替换节流：delta 高频到达时避免每字符 O(n) 复制整条消息数组。
   // 元素本身深层响应式，原地修改即时生效；引用替换仅服务于以数组身份为依赖的 watcher（150ms 节流）。
   const pendingArrayNotifyTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -1762,6 +1778,7 @@ export const useSessionStore = defineStore('session', () => {
     ensureStreamingAssistantMessage,
     getMessages,
     removeTrailingEmptyAssistant,
+    removeLastUserMessage,
     appendDelta,
     appendThinkingDelta,
     resetStreamingAssistantMessage,

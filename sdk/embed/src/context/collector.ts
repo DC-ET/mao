@@ -13,6 +13,18 @@ const CONTEXT_HEADER = '[页面上下文]';
 const SELECTION_HEADER = '[用户选中文本]';
 /** 上下文前缀与用户正文之间的分隔符 */
 export const PREFIX_SEPARATOR = '\n\n---\n\n';
+/**
+ * 写入选中块前打断内部的分隔符序列：选中原文若含 `\n\n---\n\n`，
+ * stripContextPrefix 的全文 indexOf 会在选中内部误切，导致历史回显损坏。
+ * 用零宽空格打断 `---`，肉眼不可见；还原时 unescape 恢复原貌。
+ */
+const ZWSP = '​';
+function escapeSeparatorSequences(text: string): string {
+  return text.replace(/\n\n---\n\n/g, `\n\n-${ZWSP}--\n\n`);
+}
+function unescapeSeparatorSequences(text: string): string {
+  return text.split(ZWSP).join('');
+}
 
 export interface PageContextPayload {
   url: string;
@@ -86,7 +98,8 @@ export function extractQuotedSelection(content: string): string | null {
   let text = prefix.slice(start + marker.length);
   const next = text.search(/\n\n\[/);
   if (next >= 0) text = text.slice(0, next);
-  const trimmed = text.trim();
+  // 写入时对选中内部的 --- 序列做过零宽打断，回显前恢复原貌
+  const trimmed = unescapeSeparatorSequences(text).trim();
   return trimmed || null;
 }
 
@@ -149,8 +162,10 @@ export class ContextCollector {
     }
 
     if (sel) {
-      const kept = truncateByBytes(sel, selBudget);
-      parts.push(`${SELECTION_HEADER}\n${kept}${kept.length < sel.length ? TRUNCATED_SUFFIX : ''}`);
+      // 转义后再截断：避免截断点落在转义序列中间；还原时 unescape
+      const escapedSel = escapeSeparatorSequences(sel);
+      const kept = truncateByBytes(escapedSel, selBudget);
+      parts.push(`${SELECTION_HEADER}\n${kept}${kept.length < escapedSel.length ? TRUNCATED_SUFFIX : ''}`);
     }
 
     if (parts.length === 0) return null;

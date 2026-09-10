@@ -345,12 +345,15 @@ export class BackgroundSubagentManager {
         flag.set(true);
       }
       if (execution.id != null) {
-        await this.deps.subagentExecutionMapper.updateById(execution.id, {
+        // 条件更新：仅 RUNNING/RECOVERING → CANCELLED。
+        // 若子代理恰在此窗口内已 COMPLETED，不得覆盖终态或抑制已投递结果。
+        const applied = await this.deps.subagentExecutionMapper.updateTerminal(execution.id, {
           status: 'CANCELLED',
           result: '后台子代理已随父会话取消',
           deliveryStatus: 'SUPPRESSED',
           completedAt: nowSql(),
         });
+        void applied;
       }
       if (execution.childSessionId != null) {
         const child = await this.deps.sessionMapper.selectById(execution.childSessionId);

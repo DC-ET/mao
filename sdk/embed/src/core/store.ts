@@ -1,6 +1,7 @@
 import { reactive, ref } from 'vue';
 import type { WsTaskPhase, WsServerEvent } from '@mao/contracts';
 import type { ChatMessage, PendingQuestion, ToolCallItem } from '../types';
+import { stripContextPrefix } from '../context/collector';
 
 const TERMINAL_PHASES: WsTaskPhase[] = ['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE'];
 // 对齐 desktop：session_status / session_snapshot 不经 executionId 门禁
@@ -34,11 +35,19 @@ function serverKey(id: string): string | null {
 
 /**
  * 本地用户气泡只显示用户输入，服务端存的是带上下文前缀的完整内容，
- * 因此同一条消息的两种形态用「后缀相同」判定。
+ * 因此同一条消息的两种形态优先用 stripContextPrefix 还原后全等比较。
+ * endsWith 仅作兜底且要求左边界为分隔符/标头，避免短句（如 "OK"）被
+ * "BOOK"、"请确认OK" 等历史消息误命中而丢弃未落库的本地气泡。
  */
 function sameMessageText(fetched: string, local: string): boolean {
   if (fetched === local) return true;
-  return local.length > 0 && fetched.endsWith(local);
+  const stripped = stripContextPrefix(fetched);
+  if (stripped === local) return true;
+  if (local.length === 0 || !fetched.endsWith(local)) return false;
+  // 左边界必须是换行（PREFIX_SEPARATOR 以 \n 结尾）；空格边界过松，
+  // 会让 "... BOOK OK" 与本地 "OK" 误命中
+  const left = fetched.charCodeAt(fetched.length - local.length - 1);
+  return left === 0x0a /* \n */;
 }
 
 /**

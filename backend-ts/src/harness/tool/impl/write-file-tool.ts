@@ -6,6 +6,7 @@ import { splitLines } from './read-file-tool.js';
 import { FileChangeDiffUtil } from '../file-change-diff-util.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { harnessLog } from '../../log.js';
+import { withFileLock } from './file-write-lock.js';
 
 export class WriteFileTool extends BaseTool {
   constructor(private readonly pathSandbox: PathSandbox) {
@@ -36,7 +37,7 @@ export class WriteFileTool extends BaseTool {
     };
   }
 
-  protected executeWithWorkspace(argumentsJson: string, workspace: string | null): string {
+  protected async executeWithWorkspace(argumentsJson: string, workspace: string | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson);
       if (!args) return toJson({ success: false, bytes_written: 0, error: '无效的JSON参数' });
@@ -46,26 +47,29 @@ export class WriteFileTool extends BaseTool {
         return toJson({ success: false, bytes_written: 0, error: '缺少必填参数: path, content' });
       }
       const filePath = this.pathSandbox.resolve(filePathArg, workspace);
-      const fileExisted = existsSync(filePath);
-      const beforeContent = fileExisted ? readFileSync(filePath, 'utf8') : '';
-      const parent = path.dirname(filePath);
-      if (parent && !existsSync(parent)) mkdirSync(parent, { recursive: true });
-      writeFileSync(filePath, content);
-      const newLineCount = splitLines(content).length;
-      const lineDelta = fileExisted
-        ? FileChangeDiffUtil.computeLineDelta(beforeContent, content)
-        : { linesAdded: newLineCount, linesDeleted: 0 };
-      return toJson({
-        success: true,
-        bytes_written: Buffer.byteLength(content, 'utf8'),
-        file_change: {
-          path: filePathArg,
-          type: fileExisted ? 'MODIFIED' : 'CREATED',
-          total_lines: newLineCount,
-          lines_added: lineDelta.linesAdded,
-          lines_deleted: lineDelta.linesDeleted,
-        },
-        [FileChangeDiffUtil.PRIVATE_DIFF_FIELD]: FileChangeDiffUtil.buildDiff(filePathArg, beforeContent, content),
+      // 与 edit_file 共用路径锁，避免并行写同一文件互相覆盖
+      return await withFileLock(filePath, () => {
+        const fileExisted = existsSync(filePath);
+        const beforeContent = fileExisted ? readFileSync(filePath, 'utf8') : '';
+        const parent = path.dirname(filePath);
+        if (parent && !existsSync(parent)) mkdirSync(parent, { recursive: true });
+        writeFileSync(filePath, content);
+        const newLineCount = splitLines(content).length;
+        const lineDelta = fileExisted
+          ? FileChangeDiffUtil.computeLineDelta(beforeContent, content)
+          : { linesAdded: newLineCount, linesDeleted: 0 };
+        return toJson({
+          success: true,
+          bytes_written: Buffer.byteLength(content, 'utf8'),
+          file_change: {
+            path: filePathArg,
+            type: fileExisted ? 'MODIFIED' : 'CREATED',
+            total_lines: newLineCount,
+            lines_added: lineDelta.linesAdded,
+            lines_deleted: lineDelta.linesDeleted,
+          },
+          [FileChangeDiffUtil.PRIVATE_DIFF_FIELD]: FileChangeDiffUtil.buildDiff(filePathArg, beforeContent, content),
+        });
       });
     } catch (e) {
       harnessLog('error', 'WriteFileTool execution failed', e);

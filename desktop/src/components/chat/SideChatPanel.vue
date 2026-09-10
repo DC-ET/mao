@@ -516,147 +516,179 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
   const trimmed = text.trim()
   if (!trimmed && (!files || files.length === 0) && (!pendingUploads || pendingUploads.length === 0)) return
 
-  await connect()
-
-  if (hasRealSession.value) {
-    sessionStore.clearExecutionError(String(realSessionId.value))
-  }
-
-  const uploadSessionId = hasRealSession.value
-    ? String(realSessionId.value)
-    : (sessionStore.activeSessionId ?? null)
-  const imageUrls = files.length > 0 ? await uploadImages(files, uploadSessionId) : []
-  // If user attached images but all uploads failed, do not send a text-only message by mistake.
-  if (files.length > 0 && imageUrls.length === 0) return
-
-  // Upload non-image files to runtime incoming (uses parent session ID for first side send)
-  let resolvedText = trimmed
-  if (pendingUploads && pendingUploads.length > 0 && uploadSessionId) {
-    resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, uploadSessionId)
-  }
-
-  // 边路任务正在执行中：将消息加入队列（不受 sending 状态阻塞）
-  if (hasRealSession.value && isSideActive.value) {
-    const enqueued = await enqueueMessage(String(realSessionId.value), resolvedText, generateUUID(), imageUrls)
-    if (!enqueued) {
-      ElMessage.error('消息发送失败，网络连接不可用，请重试')
-      return
-    }
-    draftStore.clearDraft(props.tabId)
-    chatInputRef.value?.clearInput()
-    return
-  }
-
+  // 与主聊天 prepareAndSendMessage 对齐：任何 await 之前同步置位互斥，
+  // 防止双击/双 Enter 在 connect/upload 期间再次进入并 createSideSession。
+  // 队列入队分支在确认走 enqueue 后释放，不占用 sending。
   if (sending.value) return
-
-  const localSkills = await collectLocalUnsyncedSkills(parentExecutionMode.value, isElectron)
-  const agentsMdContent = await collectAgentsMdContent(parentWorkspace.value, parentExecutionMode.value, isElectron)
-
-  // 设置发送中状态
-  waitingForSave.value = true
-
-  // 首次创建边路会话时尚未有真实 sessionId；后端先发 side_session_created 再发 user_message_saved。
-  // TaskView 会在同事件中同步把 tab.sideSessionId 写成正数，不能再靠「占位 tab」判定。
-  // 本监听仅在本次首次发送期间注册，用本地 realSessionId 绑定即可。
-  const isFirstSideSend = !hasRealSession.value
-  let expectedSavedSessionId: string | null = isFirstSideSend ? null : String(realSessionId.value)
-  let removeSideCreatedListener: (() => void) | undefined
-  if (isFirstSideSend) {
-    const onSideCreated = (e: Event) => {
-      const detail = (e as CustomEvent).detail
-      if (detail?.sideSessionId == null || realSessionId.value > 0) return
-      expectedSavedSessionId = String(detail.sideSessionId)
+  sending.value = true
+  let sendLockHeld = true
+  const releaseSendLock = () => {
+    if (sendLockHeld) {
+      sendLockHeld = false
+      sending.value = false
     }
-    window.addEventListener('side_session_created', onSideCreated)
-    removeSideCreatedListener = () => window.removeEventListener('side_session_created', onSideCreated)
   }
 
-  if (isFirstSideSend) {
-    // 首次发送：先校验父会话存在，再插乐观消息，避免校验失败后留下幽灵消息
-    const parentSessionId = sessionStore.activeSessionId
-    if (!parentSessionId) {
-      removeSideCreatedListener?.()
-      waitingForSave.value = false
-      ElMessage.warning('主会话不存在，无法创建边路任务')
+  try {
+    await connect()
+
+    if (hasRealSession.value) {
+      sessionStore.clearExecutionError(String(realSessionId.value))
+    }
+
+    const uploadSessionId = hasRealSession.value
+      ? String(realSessionId.value)
+      : (sessionStore.activeSessionId ?? null)
+    const imageUrls = files.length > 0 ? await uploadImages(files, uploadSessionId) : []
+    // If user attached images but all uploads failed, do not send a text-only message by mistake.
+    if (files.length > 0 && imageUrls.length === 0) {
+      releaseSendLock()
       return
     }
 
-    const optimisticUserId = 'side_user_' + Date.now()
-    sessionStore.addUserMessage(placeholderCacheKey.value, {
-      id: optimisticUserId,
-      role: 'user',
-      content: resolvedText,
-      createdAt: nowDateTime(),
-      images: imageUrls.length > 0 ? imageUrls : undefined,
-    })
-    sessionStore.ensureStreamingAssistantMessage(placeholderCacheKey.value)
-
-    const created = await createSideSession(
-      parentSessionId,
-      resolvedText,
-      inheritContext.value,
-      currentModelId.value,
-      localSkills,
-      agentsMdContent,
-      imageUrls
-    )
-    if (!created) {
-      rollbackOptimisticMessages(placeholderCacheKey.value, optimisticUserId)
-      removeSideCreatedListener?.()
-      waitingForSave.value = false
-      ElMessage.error('边路任务创建失败，网络连接不可用，请重试')
-      return
+    // Upload non-image files to runtime incoming (uses parent session ID for first side send)
+    let resolvedText = trimmed
+    if (pendingUploads && pendingUploads.length > 0 && uploadSessionId) {
+      resolvedText = await uploadPendingFiles(resolvedText, pendingUploads, uploadSessionId)
     }
-    sending.value = true
-  } else {
-    const sid = String(realSessionId.value)
 
-    const optimisticUserId = 'side_user_' + Date.now()
-    sessionStore.addUserMessage(sid, {
-      id: optimisticUserId,
-      role: 'user',
-      content: resolvedText,
-      createdAt: nowDateTime(),
-      images: imageUrls.length > 0 ? imageUrls : undefined,
-    })
-    sessionStore.ensureStreamingAssistantMessage(sid)
-    const sent = await sendMessage(sid, resolvedText, generateUUID(), imageUrls, localSkills, agentsMdContent, currentModelId.value)
-    if (!sent) {
-      rollbackOptimisticMessages(sid, optimisticUserId)
-      waitingForSave.value = false
-      ElMessage.error('消息发送失败，网络连接不可用，请重试')
-      return
-    }
-    sending.value = true
-  }
-
-  // 等待消息保存确认：仅在保存成功时清空输入（与主会话 ChatPanel 一致）；
-  // 超时/卸载只解锁 waitingForSave，保留草稿以便重试。
-  // 发送前捕获 tabId：等待期间 tab 可能被关闭/晋升，保存成功后必须清掉对应草稿槽位。
-  const draftKeyAtSend = props.tabId
-  let settled = false
-  let saveTimeoutId: ReturnType<typeof setTimeout>
-  const finishWaiting = (clearInput: boolean) => {
-    if (settled) return
-    settled = true
-    pendingSendCleanup = null
-    clearTimeout(saveTimeoutId)
-    removeSideCreatedListener?.()
-    offMessageSaved(callbackId)
-    waitingForSave.value = false
-    if (clearInput) {
-      draftStore.clearDraft(draftKeyAtSend)
+    // 边路任务正在执行中：将消息加入队列（不占用 sending 互斥）
+    if (hasRealSession.value && isSideActive.value) {
+      releaseSendLock()
+      const enqueued = await enqueueMessage(String(realSessionId.value), resolvedText, generateUUID(), imageUrls)
+      if (!enqueued) {
+        ElMessage.error('消息发送失败，网络连接不可用，请重试')
+        return
+      }
+      draftStore.clearDraft(props.tabId)
       chatInputRef.value?.clearInput()
+      return
     }
+
+    const localSkills = await collectLocalUnsyncedSkills(parentExecutionMode.value, isElectron)
+    const agentsMdContent = await collectAgentsMdContent(parentWorkspace.value, parentExecutionMode.value, isElectron)
+
+    // 设置发送中状态
+    waitingForSave.value = true
+
+    // 首次创建边路会话时尚未有真实 sessionId；后端先发 side_session_created 再发 user_message_saved。
+    // TaskView 会在同事件中同步把 tab.sideSessionId 写成正数，不能再靠「占位 tab」判定。
+    // 本监听仅在本次首次发送期间注册，用本地 realSessionId 绑定即可。
+    const isFirstSideSend = !hasRealSession.value
+    let expectedSavedSessionId: string | null = isFirstSideSend ? null : String(realSessionId.value)
+    let removeSideCreatedListener: (() => void) | undefined
+    try {
+      if (isFirstSideSend) {
+        const onSideCreated = (e: Event) => {
+          const detail = (e as CustomEvent).detail
+          if (detail?.sideSessionId == null || realSessionId.value > 0) return
+          expectedSavedSessionId = String(detail.sideSessionId)
+        }
+        window.addEventListener('side_session_created', onSideCreated)
+        removeSideCreatedListener = () => window.removeEventListener('side_session_created', onSideCreated)
+      }
+
+      if (isFirstSideSend) {
+        // 首次发送：先校验父会话存在，再插乐观消息，避免校验失败后留下幽灵消息
+        const parentSessionId = sessionStore.activeSessionId
+        if (!parentSessionId) {
+          removeSideCreatedListener?.()
+          waitingForSave.value = false
+          releaseSendLock()
+          ElMessage.warning('主会话不存在，无法创建边路任务')
+          return
+        }
+
+        const optimisticUserId = 'side_user_' + Date.now()
+        sessionStore.addUserMessage(placeholderCacheKey.value, {
+          id: optimisticUserId,
+          role: 'user',
+          content: resolvedText,
+          createdAt: nowDateTime(),
+          images: imageUrls.length > 0 ? imageUrls : undefined,
+        })
+        sessionStore.ensureStreamingAssistantMessage(placeholderCacheKey.value)
+
+        const created = await createSideSession(
+          parentSessionId,
+          resolvedText,
+          inheritContext.value,
+          currentModelId.value,
+          localSkills,
+          agentsMdContent,
+          imageUrls
+        )
+        if (!created) {
+          rollbackOptimisticMessages(placeholderCacheKey.value, optimisticUserId)
+          removeSideCreatedListener?.()
+          waitingForSave.value = false
+          releaseSendLock()
+          ElMessage.error('边路任务创建失败，网络连接不可用，请重试')
+          return
+        }
+      } else {
+        const sid = String(realSessionId.value)
+
+        const optimisticUserId = 'side_user_' + Date.now()
+        sessionStore.addUserMessage(sid, {
+          id: optimisticUserId,
+          role: 'user',
+          content: resolvedText,
+          createdAt: nowDateTime(),
+          images: imageUrls.length > 0 ? imageUrls : undefined,
+        })
+        sessionStore.ensureStreamingAssistantMessage(sid)
+        const sent = await sendMessage(sid, resolvedText, generateUUID(), imageUrls, localSkills, agentsMdContent, currentModelId.value)
+        if (!sent) {
+          rollbackOptimisticMessages(sid, optimisticUserId)
+          waitingForSave.value = false
+          releaseSendLock()
+          ElMessage.error('消息发送失败，网络连接不可用，请重试')
+          return
+        }
+      }
+    } catch (e) {
+      removeSideCreatedListener?.()
+      waitingForSave.value = false
+      releaseSendLock()
+      ElMessage.error((e as Error)?.message || '消息发送失败，请重试')
+      return
+    }
+
+    // 等待消息保存确认：仅在保存成功时清空输入（与主会话 ChatPanel 一致）；
+    // 超时/卸载只解锁 waitingForSave，保留草稿以便重试。
+    // 发送前捕获 tabId：等待期间 tab 可能被关闭/晋升，保存成功后必须清掉对应草稿槽位。
+    const draftKeyAtSend = props.tabId
+    let settled = false
+    let saveTimeoutId: ReturnType<typeof setTimeout>
+    const finishWaiting = (clearInput: boolean) => {
+      if (settled) return
+      settled = true
+      pendingSendCleanup = null
+      clearTimeout(saveTimeoutId)
+      removeSideCreatedListener?.()
+      offMessageSaved(callbackId)
+      waitingForSave.value = false
+      // 成功路径由 phase 终态/watcher 收敛 sending；保存确认本身不释放互斥
+      if (clearInput) {
+        draftStore.clearDraft(draftKeyAtSend)
+        chatInputRef.value?.clearInput()
+      }
+    }
+    const callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
+      if (expectedSavedSessionId != null && callbackSessionId === expectedSavedSessionId) {
+        finishWaiting(true)
+      }
+    })
+    pendingSendCleanup = () => finishWaiting(false)
+    // 设置超时，避免永远等待
+    saveTimeoutId = setTimeout(() => finishWaiting(false), 60000)
+  } catch (e) {
+    // connect/upload 等前置 await 异常：释放互斥，避免 sending 永久卡住
+    releaseSendLock()
+    waitingForSave.value = false
+    ElMessage.error((e as Error)?.message || '消息发送失败，请重试')
   }
-  const callbackId = onMessageSaved((callbackSessionId: string, _messageId: string) => {
-    if (expectedSavedSessionId != null && callbackSessionId === expectedSavedSessionId) {
-      finishWaiting(true)
-    }
-  })
-  pendingSendCleanup = () => finishWaiting(false)
-  // 设置超时，避免永远等待
-  saveTimeoutId = setTimeout(() => finishWaiting(false), 60000)
 }
 
 function handleStop() {

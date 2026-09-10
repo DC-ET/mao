@@ -42,6 +42,7 @@ export class MessageQueueRepository {
       images: item.images,
       sortOrder: item.sortOrder,
       status: item.status ?? 'PENDING',
+      scheduledTaskId: item.scheduledTaskId ?? null,
       deleted: 0,
     });
     item.id = id;

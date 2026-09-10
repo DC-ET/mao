@@ -76,9 +76,20 @@ export function useToolApprovals() {
     }
   }
 
-  function clearPendingApprovals() {
-    const items = pendingApprovals.value.slice()
-    pendingApprovals.value = []
+  /**
+   * 清空待审批队列。
+   * @param onlySessionId 仅清理指定会话的审批项；不传则清空全部（登出等全局场景）。
+   * 新建任务/面板卸载时必须传入当前会话，否则会误拒边路任务/子代理仍在等待的审批。
+   */
+  function clearPendingApprovals(onlySessionId?: string | null) {
+    const items = onlySessionId != null
+      ? pendingApprovals.value.filter((item) => item.sessionId === onlySessionId)
+      : pendingApprovals.value.slice()
+    if (onlySessionId != null) {
+      pendingApprovals.value = pendingApprovals.value.filter((item) => item.sessionId !== onlySessionId)
+    } else {
+      pendingApprovals.value = []
+    }
     for (const item of items) {
       if (item.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
       // Reject in main process so requestToolApproval() Promises do not hang forever.
@@ -402,7 +413,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       initializingWorkspace.value = false
       initializingWorkspaceLabel.value = ''
       if (sessionId.value) {
+        // 回滚乐观插入的用户消息与 assistant 占位，避免失败后留下幽灵气泡
+        // （内容被修改后重发时，尾部保留逻辑无法识别旧乐观消息，会双条上屏）
         sessionStore.removeTrailingEmptyAssistant(sessionId.value)
+        sessionStore.removeLastUserMessage?.(sessionId.value)
         sessionStore.fetchSession(sessionId.value)
       }
       if (!(error as Error & { toastShown?: boolean }).toastShown) {
@@ -803,8 +817,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     switchingSession.value = false
     if (sessionId.value) {
       sessionStore.clearQueueMessages(sessionId.value)
+      // 仅清当前会话的审批，避免误拒边路任务/子代理仍在等待的审批项
+      clearPendingApprovals(sessionId.value)
     }
-    clearPendingApprovals()
     sending.value = false
     sessionId.value = null
     workspace.value = ''
@@ -918,8 +933,9 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   function cleanup() {
     if (sessionId.value) {
       unsubscribe(sessionId.value)
+      // 仅清当前会话的审批；边路任务/子代理的审批挂在其他 sessionId 上，不得被面板卸载误拒
+      clearPendingApprovals(sessionId.value)
     }
-    clearPendingApprovals()
   }
 
   return {

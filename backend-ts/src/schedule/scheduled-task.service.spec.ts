@@ -255,7 +255,7 @@ describe('ScheduledTaskService', () => {
     expect(store.updateById).toHaveBeenCalled();
   });
 
-  it('queued run does not count fireCount or lastFireTime', async () => {
+  it('queued run counts fireCount/lastFireTime at enqueue and marks QUEUED', async () => {
     const localStore: ScheduledTaskStore = {
       insert: vi.fn(),
       updateById: vi.fn(),
@@ -278,8 +278,9 @@ describe('ScheduledTaskService', () => {
     await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'q', fireCount: 3 });
     await ran;
     const persisted = vi.mocked(localStore.updateById).mock.calls.map(([row]) => row);
-    expect(persisted.some((row) => row.fireCount === 4)).toBe(false);
-    expect(persisted.some((row) => row.lastFireTime != null)).toBe(false);
+    // 入队成功即计数：消费侧无 scheduledTaskId 回写链路，不计会永久丢失
+    expect(persisted.some((row) => row.fireCount === 4)).toBe(true);
+    expect(persisted.some((row) => row.lastFireTime != null)).toBe(true);
     expect(persisted.some((row) => row.lastExecutionStatus === 'QUEUED')).toBe(true);
   });
 

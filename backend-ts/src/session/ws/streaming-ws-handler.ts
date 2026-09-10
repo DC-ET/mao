@@ -37,13 +37,15 @@ export interface WsHandlerDeps {
   };
   messageQueueService: {
     listPending(sessionId: number): Promise<MessageQueueItem[]>;
-    enqueue(sessionId: number, userId: number, content: string, images: string | null): Promise<void>;
-    enqueueHead(sessionId: number, userId: number, content: string, images: string | null): Promise<void>;
+    enqueue(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null): Promise<void>;
+    enqueueHead(sessionId: number, userId: number, content: string, images: string | null, scheduledTaskId?: number | null): Promise<void>;
     dequeue(sessionId: number): Promise<MessageQueueItem | null>;
     getById(id: number): Promise<MessageQueueItem | null>;
     delete(id: number): Promise<void>;
     reorder(id: number, direction: string): Promise<void>;
   };
+  /** busy 入队的定时任务在队列真正执行完成后回写 lastExecutionStatus */
+  onScheduledTaskQueueConsumed?: (taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void> | void;
   embedPageToolRegistry: EmbedPageToolRegistry;
   localToolSessionRegistry: {
     setUserForSession(sessionId: number, userId: number): void;
@@ -130,6 +132,8 @@ export class StreamingWsHandler {
   /** 用户已点「停止」但 cancel flag 尚未注册（执行提交前的窗口期）的会话 → 登记时间戳；注册标志时按时间判定消费。 */
   private readonly pendingCancels = new Map<number, number>();
   private readonly insertLocks = new Map<number, Promise<void>>();
+  /** autoConsume 消费到的定时任务来源：sessionId → scheduledTaskId，执行终态后回写 */
+  private readonly queueScheduledTaskIds = new Map<number, number>();
   private readonly mcpSyncTimeoutSeconds: number;
 
   constructor(private readonly deps: WsHandlerDeps) {
@@ -280,9 +284,6 @@ export class StreamingWsHandler {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
     const data = (root.data ?? {}) as Record<string, unknown>;
-    // 本次发送的起始时间：pendingCancels 只消费「登记时间晚于本次发送开始」的取消标记，
-    // 避免此前一次取消（当时无执行在跑）残留的标记误杀用户后续的新发送。
-    const sendStartedAt = Date.now();
     // claimAlreadyHeld=true 表示调用方（auto-consume）已在出队前占位会话，
     // 本方法内任何未进入执行的失败出口都必须释放占位，否则会话永久卡死
     const claimAlreadyHeld = data.executionClaimHeld === true;
@@ -296,6 +297,12 @@ export class StreamingWsHandler {
     const content = data.content;
     const eventId = typeof data.eventId === 'string' ? data.eventId : null;
     const images = Array.isArray(data.images) ? data.images.map(String) : [];
+    // 本次发送的起始时间：pendingCancels 只消费「登记时间晚于本次发送开始」的取消标记，
+    // 避免此前一次取消（当时无执行在跑）残留的标记误杀用户后续的新发送。
+    // autoConsume 必须取「占位/出队时刻」而非本方法入口：500ms 延迟窗口内的取消
+    // 登记时间早于入口，若用入口时间会被误判为陈旧标记而丢弃（M-2 回归）。
+    const autoConsumeStartedAt = typeof data.autoConsumeStartedAt === 'number' ? data.autoConsumeStartedAt : null;
+    const sendStartedAt = autoConsumeStartedAt != null ? autoConsumeStartedAt : Date.now();
     const session = await this.requireOwnedSession(userId, sessionId);
     if (!session) {
       if (claimAlreadyHeld) this.executionClaims.delete(sessionId);
@@ -307,6 +314,9 @@ export class StreamingWsHandler {
     const requeueIfClaimed = async () => {
       if (!claimAlreadyHeld) return;
       this.executionClaims.delete(sessionId);
+      // 回补即放弃本次消费：清掉定时任务绑定，避免下次无关执行误回写陈旧任务终态
+      const scheduledTaskId = this.queueScheduledTaskIds.get(sessionId) ?? null;
+      this.queueScheduledTaskIds.delete(sessionId);
       if (autoSavedMessageId != null) {
         try {
           await this.deps.sessionService.deleteMessageById(sessionId, autoSavedMessageId);
@@ -316,7 +326,7 @@ export class StreamingWsHandler {
       }
       try {
         await this.deps.messageQueueService.enqueueHead(
-          sessionId, userId, content, images.length > 0 ? JSON.stringify(images) : null,
+          sessionId, userId, content, images.length > 0 ? JSON.stringify(images) : null, scheduledTaskId,
         );
         await this.sendQueueUpdated(sessionId, userId);
       } catch (e) {
@@ -394,6 +404,16 @@ export class StreamingWsHandler {
       this.executionClaims.delete(sessionId);
       this.autoConsumingSessionIds.delete(sessionId);
       this.runningExecutionIds.delete(sessionId);
+      // 定时任务 busy 入队消息在此窗口被取消：同步回写 CANCELLED 并清映射，避免永久 QUEUED + 误回写
+      const scheduledTaskId = this.queueScheduledTaskIds.get(sessionId);
+      if (scheduledTaskId != null) {
+        this.queueScheduledTaskIds.delete(sessionId);
+        try {
+          await this.deps.onScheduledTaskQueueConsumed?.(scheduledTaskId, 'CANCELLED');
+        } catch (e) {
+          console.warn(`Failed to write back scheduled task ${scheduledTaskId} after pre-exec cancel`, e);
+        }
+      }
       await this.finishCancelledSession(sessionId, userId, resolvedEventId ?? randomUUID());
       return;
     }
@@ -497,6 +517,16 @@ export class StreamingWsHandler {
         this.pendingCancels.delete(sessionId);
         this.deps.agentLoop.removeCancelFlag(sessionId);
         this.deps.activityHeartbeat.clear(sessionId);
+        // busy 入队的定时任务：队列真正执行到终态后回写 lastExecutionStatus，避免永久停在 QUEUED
+        const scheduledTaskId = this.queueScheduledTaskIds.get(sessionId);
+        if (scheduledTaskId != null) {
+          this.queueScheduledTaskIds.delete(sessionId);
+          try {
+            await this.deps.onScheduledTaskQueueConsumed?.(scheduledTaskId, terminalPhase);
+          } catch (e) {
+            console.warn(`Failed to write back scheduled task ${scheduledTaskId} after queue consume`, e);
+          }
+        }
         if (terminalPhase !== 'FAILED') await this.autoConsumeQueue(sessionId, userId);
       }
     });
@@ -1030,7 +1060,8 @@ export class StreamingWsHandler {
         await this.withLock(this.insertLocks, sessionId, async () => {
         try {
           const item = await this.deps.messageQueueService.getById(queueId);
-          if (!item || item.sessionId !== sessionId) {
+          // 仅允许插队仍处于 PENDING 的队列项：已消费/已删除（status=DELETED）不得再次执行
+          if (!item || item.sessionId !== sessionId || item.status !== 'PENDING') {
             await this.sendQueueUpdated(sessionId, userId);
             return;
           }
@@ -1050,7 +1081,20 @@ export class StreamingWsHandler {
             await this.sendQueueUpdated(sessionId, userId);
             return;
           }
+          // abort 等待期间该项可能已被 autoConsume 消费：二次校验 status，避免重复执行
+          {
+            const latest = await this.deps.messageQueueService.getById(queueId);
+            if (!latest || latest.status !== 'PENDING') {
+              this.executionClaims.delete(sessionId);
+              await this.sendQueueUpdated(sessionId, userId);
+              return;
+            }
+          }
           this.executionClaims.add(sessionId);
+          // 插队消费带来源的定时任务消息：与 autoConsume 对齐，绑定后由 runExecution finally 回写
+          if (item.scheduledTaskId != null) {
+            this.queueScheduledTaskIds.set(sessionId, item.scheduledTaskId);
+          }
           const content = item.content ?? '';
           let imageList: string[] = [];
           if (item.images) {
@@ -1076,6 +1120,8 @@ export class StreamingWsHandler {
         } catch {
           this.autoConsumingSessionIds.delete(sessionId);
           this.executionClaims.delete(sessionId);
+          // saveMessage/handleSendMessage 异常：清定时任务映射，避免陈旧 taskId 被下次无关执行误回写
+          this.queueScheduledTaskIds.delete(sessionId);
         } finally {
           this.suppressAutoConsumeSend.delete(sessionId);
         }
@@ -1085,6 +1131,7 @@ export class StreamingWsHandler {
       this.suppressAutoConsumeSend.delete(sessionId);
       this.executionClaims.delete(sessionId);
       this.autoConsumingSessionIds.delete(sessionId);
+      this.queueScheduledTaskIds.delete(sessionId);
     }
   }
 
@@ -1151,11 +1198,17 @@ export class StreamingWsHandler {
       }
       // 原子占位后再出队：占位与出队之间无 await，手动 send_message 无法插队。
       // 若不占位，出队与延迟执行之间可能被手动发送抢占，导致消息被消费却永不执行。
+      // 占位时刻即 autoConsume 取消窗口起点：saveMessage/500ms 延迟内的取消都必须被识别。
+      const autoConsumeStartedAt = Date.now();
       this.executionClaims.add(sessionId);
       const head = await this.deps.messageQueueService.dequeue(sessionId);
       if (!head) {
         this.executionClaims.delete(sessionId);
         return;
+      }
+      // 定时任务 busy 入队来源：执行终态后回写 lastExecutionStatus
+      if (head.scheduledTaskId != null) {
+        this.queueScheduledTaskIds.set(sessionId, head.scheduledTaskId);
       }
       await this.sendQueueUpdated(sessionId, userId);
       const content = head.content ?? '';
@@ -1170,7 +1223,9 @@ export class StreamingWsHandler {
       } catch (e) {
         // M-3：队列行已出队（dequeue 已删除），saveMessage 失败必须回补队首，否则消息静默丢失。
         console.error(`Failed to save auto-consumed message for session ${sessionId}, re-enqueueing`, e);
-        await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, head.images ?? null);
+        // 回补时透传来源任务 id，并清内存映射，避免绑定丢失与陈旧回写
+        this.queueScheduledTaskIds.delete(sessionId);
+        await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, head.images ?? null, head.scheduledTaskId ?? null);
         this.executionClaims.delete(sessionId);
         this.autoConsumingSessionIds.delete(sessionId);
         await this.sendQueueUpdated(sessionId, userId);
@@ -1188,6 +1243,7 @@ export class StreamingWsHandler {
             sessionId,
             data: {
               content, eventId: randomUUID(), images: imageList, executionClaimHeld: true,
+              autoConsumeStartedAt,
               ...(savedMessage.id != null ? { autoSavedMessageId: savedMessage.id } : {}),
             },
           }, true);
@@ -1196,13 +1252,16 @@ export class StreamingWsHandler {
         // 提交被拒时释放占位并回补队列，避免消息已出队却永不执行
         this.executionClaims.delete(sessionId);
         this.autoConsumingSessionIds.delete(sessionId);
-        await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, head.images ?? null);
+        this.queueScheduledTaskIds.delete(sessionId);
+        await this.deps.messageQueueService.enqueueHead(sessionId, userId, content, head.images ?? null, head.scheduledTaskId ?? null);
         throw submitErr;
       }
     } catch (e) {
       console.error(`Failed to auto-consume queue for session ${sessionId}`, e);
       this.executionClaims.delete(sessionId);
       this.autoConsumingSessionIds.delete(sessionId);
+      // 映射已设置但后续异常（如 sendQueueUpdated 抛出）时清掉，避免陈旧 taskId 被下次无关执行误回写
+      this.queueScheduledTaskIds.delete(sessionId);
     }
   }
 

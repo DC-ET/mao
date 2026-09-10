@@ -5,6 +5,7 @@ import { FileChangeDiffUtil } from '../file-change-diff-util.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { harnessLog } from '../../log.js';
 import { applyEditMatch } from './edit-file-match.js';
+import { withFileLock } from './file-write-lock.js';
 
 export class EditFileTool extends BaseTool {
   constructor(private readonly pathSandbox: PathSandbox) {
@@ -42,7 +43,7 @@ export class EditFileTool extends BaseTool {
     };
   }
 
-  protected executeWithWorkspace(argumentsJson: string, workspace: string | null): string {
+  protected async executeWithWorkspace(argumentsJson: string, workspace: string | null): Promise<string> {
     try {
       const args = parseObject(argumentsJson);
       if (!args) return toJson({ success: false, replacements: 0, error: '无效的JSON参数' });
@@ -61,31 +62,34 @@ export class EditFileTool extends BaseTool {
         });
       }
       const filePath = this.pathSandbox.resolve(filePathArg, workspace);
-      if (!existsSync(filePath)) {
-        return toJson({ success: false, replacements: 0, error: '文件不存在：' + filePathArg });
-      }
-      const content = readFileSync(filePath, 'utf8');
-      const match = applyEditMatch(content, oldString, newString, replaceAll);
-      if (!match.ok) {
+      // 并行工具调用可能同时编辑同一文件：按路径串行化 read-modify-write
+      return await withFileLock(filePath, () => {
+        if (!existsSync(filePath)) {
+          return toJson({ success: false, replacements: 0, error: '文件不存在：' + filePathArg });
+        }
+        const content = readFileSync(filePath, 'utf8');
+        const match = applyEditMatch(content, oldString, newString, replaceAll);
+        if (!match.ok) {
+          return toJson({
+            success: false,
+            replacements: 0,
+            error: match.error,
+            ...(match.occurrences != null ? { occurrences: match.occurrences, occurrence_lines: match.occurrence_lines } : {}),
+          });
+        }
+        writeFileSync(filePath, match.updated);
+        const lineDelta = FileChangeDiffUtil.computeLineDelta(content, match.updated);
         return toJson({
-          success: false,
-          replacements: 0,
-          error: match.error,
-          ...(match.occurrences != null ? { occurrences: match.occurrences, occurrence_lines: match.occurrence_lines } : {}),
+          success: true,
+          replacements: match.replacements,
+          file_change: {
+            path: filePathArg,
+            type: 'MODIFIED',
+            lines_added: lineDelta.linesAdded,
+            lines_deleted: lineDelta.linesDeleted,
+          },
+          [FileChangeDiffUtil.PRIVATE_DIFF_FIELD]: FileChangeDiffUtil.buildDiff(filePathArg, content, match.updated),
         });
-      }
-      writeFileSync(filePath, match.updated);
-      const lineDelta = FileChangeDiffUtil.computeLineDelta(content, match.updated);
-      return toJson({
-        success: true,
-        replacements: match.replacements,
-        file_change: {
-          path: filePathArg,
-          type: 'MODIFIED',
-          lines_added: lineDelta.linesAdded,
-          lines_deleted: lineDelta.linesDeleted,
-        },
-        [FileChangeDiffUtil.PRIVATE_DIFF_FIELD]: FileChangeDiffUtil.buildDiff(filePathArg, content, match.updated),
       });
     } catch (e) {
       harnessLog('error', 'EditFileTool execution failed', e);

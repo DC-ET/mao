@@ -3,7 +3,13 @@ import type { MessageQueueRepository } from './message-queue.repository.js';
 export class MessageQueueService {
   constructor(private readonly repo: MessageQueueRepository) {}
 
-  async enqueue(sessionId: number, userId: number, content: string, images: string | null): Promise<MessageQueue> {
+  async enqueue(
+    sessionId: number,
+    userId: number,
+    content: string,
+    images: string | null,
+    scheduledTaskId?: number | null,
+  ): Promise<MessageQueue> {
     // 事务 + FOR UPDATE 锁住队尾，避免并发 enqueue 读到相同 max(sort_order) 产生重复排序值
     return this.repo.transaction(async (tx) => {
       const last = await tx.findLastPendingForUpdate(sessionId);
@@ -15,6 +21,7 @@ export class MessageQueueService {
         images,
         sortOrder: maxOrder + 1,
         status: 'PENDING',
+        scheduledTaskId: scheduledTaskId ?? null,
       };
       await tx.insert(item);
       return item;
@@ -22,7 +29,13 @@ export class MessageQueueService {
   }
 
   /** 将消息插回队头（用于 auto-consume 失败补偿），取队首 order-1 保证排在所有现存消息之前。 */
-  async enqueueHead(sessionId: number, userId: number, content: string, images: string | null): Promise<void> {
+  async enqueueHead(
+    sessionId: number,
+    userId: number,
+    content: string,
+    images: string | null,
+    scheduledTaskId?: number | null,
+  ): Promise<void> {
     return this.repo.transaction(async (tx) => {
       const first = await tx.findFirstPendingForUpdate(sessionId);
       const minOrder = first?.sortOrder ?? 1;
@@ -33,6 +46,7 @@ export class MessageQueueService {
         images,
         sortOrder: minOrder - 1,
         status: 'PENDING',
+        scheduledTaskId: scheduledTaskId ?? null,
       });
     });
   }

@@ -77,14 +77,16 @@ export class UserService {
     if (status != null) {
       user.status = status;
     }
-    // 角色变更校验必须前置于用户行持久化：断言失败时不得留下已写入的半截修改（无事务回滚）
+    // 角色变更：空 roleIds 提前拒绝；持锁守卫必须先于用户行落库，
+    // 避免守卫因并发失败时资料/状态已写入而角色未改（半截更新）。
     if (roleIds != null) {
-      await this.permissionService.assertCanChangeRoles(id, roleIds);
+      if (roleIds.length === 0) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '至少分配一个角色');
+      }
+      // changeRolesWithAdminGuard 在同一事务内锁 ADMIN 绑定并做最后管理员检查 + 写入
+      await this.permissionService.changeRolesWithAdminGuard(id, roleIds);
     }
     await this.userRepo.updateById(user);
-    if (roleIds != null) {
-      await this.permissionService.assignRoles(id, roleIds);
-    }
     return user;
   }
 

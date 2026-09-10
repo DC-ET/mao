@@ -80,10 +80,14 @@ export interface UserRoleRepository {
   findByUserId(userId: number): Promise<UserRole[]>;
   findByUserIds(userIds: number[]): Promise<UserRole[]>;
   findByRoleId(roleId: number): Promise<UserRole[]>;
+  /** FOR UPDATE 锁定某角色全部绑定行（Mysql 实现提供）。 */
+  findByRoleIdForUpdate?(roleId: number): Promise<UserRole[]>;
   countByRoleId(roleId: number): Promise<number>;
   countByUserAndRole(userId: number, roleId: number): Promise<number>;
   deleteByUserId(userId: number): Promise<void>;
   insert(row: UserRole): Promise<void>;
+  /** 可选：在事务中执行先删后插（Mysql 实现提供）。 */
+  transaction?<T>(fn: (tx: UserRoleRepository) => Promise<T>): Promise<T>;
 }
 
 export interface RolePermissionRepository {
@@ -91,4 +95,6 @@ export interface RolePermissionRepository {
   findByRoleIds(roleIds: number[]): Promise<RolePermission[]>;
   deleteByRoleId(roleId: number): Promise<void>;
   insert(row: RolePermission): Promise<void>;
+  /** 可选：在事务中执行先删后插（Mysql 实现提供）。 */
+  transaction?<T>(fn: (tx: RolePermissionRepository) => Promise<T>): Promise<T>;
 }

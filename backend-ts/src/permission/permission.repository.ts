@@ -86,6 +86,11 @@ export class MysqlPermissionRepository implements PermissionRepository {
 export class MysqlUserRoleRepository implements UserRoleRepository {
   constructor(private readonly db: Db) {}
 
+  /** 在独立事务中执行先删后插，避免半截状态。 */
+  async transaction<T>(fn: (tx: MysqlUserRoleRepository) => Promise<T>): Promise<T> {
+    return this.db.transaction((txDb) => fn(new MysqlUserRoleRepository(txDb)));
+  }
+
   findByUserId(userId: number): Promise<UserRole[]> {
     return this.db.query<UserRole>('SELECT * FROM user_role WHERE user_id = ?', [userId]);
   }
@@ -100,6 +105,11 @@ export class MysqlUserRoleRepository implements UserRoleRepository {
 
   findByRoleId(roleId: number): Promise<UserRole[]> {
     return this.db.query<UserRole>('SELECT * FROM user_role WHERE role_id = ?', [roleId]);
+  }
+
+  /** FOR UPDATE 锁定某角色的全部绑定行，供最后管理员检查与写入串行化。 */
+  async findByRoleIdForUpdate(roleId: number): Promise<UserRole[]> {
+    return this.db.query<UserRole>('SELECT * FROM user_role WHERE role_id = ? FOR UPDATE', [roleId]);
   }
 
   async countByRoleId(roleId: number): Promise<number> {
@@ -129,6 +139,11 @@ export class MysqlUserRoleRepository implements UserRoleRepository {
 
 export class MysqlRolePermissionRepository implements RolePermissionRepository {
   constructor(private readonly db: Db) {}
+
+  /** 在独立事务中执行先删后插，避免半截状态。 */
+  async transaction<T>(fn: (tx: MysqlRolePermissionRepository) => Promise<T>): Promise<T> {
+    return this.db.transaction((txDb) => fn(new MysqlRolePermissionRepository(txDb)));
+  }
 
   findByRoleId(roleId: number): Promise<RolePermission[]> {
     return this.db.query<RolePermission>('SELECT * FROM role_permission WHERE role_id = ?', [roleId]);

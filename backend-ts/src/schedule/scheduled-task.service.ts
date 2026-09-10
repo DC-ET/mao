@@ -49,7 +49,13 @@ export interface ScheduleSessionService {
 }
 
 export interface ScheduleMessageQueueService {
-  enqueue(sessionId: number, userId: number, content: string, images: string | null): Promise<void>;
+  enqueue(
+    sessionId: number,
+    userId: number,
+    content: string,
+    images: string | null,
+    scheduledTaskId?: number | null,
+  ): Promise<void>;
 }
 
 export interface ScheduleHarnessService {
@@ -287,9 +293,32 @@ export class ScheduledTaskService {
               const phase = session.phase;
               const busy = this.isSessionBusy?.(task.sessionId!) === true || isActivePhase(phase);
               if (busy) {
-                // 仅入队未执行：不计入 fireCount/lastFireTime，待消息队列消费真正执行
-                await this.messageQueueService.enqueue(task.sessionId!, userId, buildScheduledPrompt(task, task.prompt!), null);
-                await this.markTaskResult(task, 'QUEUED');
+                // 仅入队未真正执行：不进入 finally 的 fireCount 收尾（countThisRun 保持 false），
+                // 但本次 cron 触发已发生——入队成功即累加 fireCount/lastFireTime。
+                // 绑定 scheduledTaskId：队列消费侧完成后回写 lastExecutionStatus QUEUED→COMPLETED/FAILED。
+                await this.messageQueueService.enqueue(
+                  task.sessionId!, userId, buildScheduledPrompt(task, task.prompt!), null, task.id ?? null,
+                );
+                const enqueuedAt = formatDateTime(new Date());
+                const patch: Partial<ScheduledTask> & { id: number } = {
+                  id: task.id!,
+                  lastExecutionStatus: 'QUEUED',
+                  lastFireTime: enqueuedAt,
+                  fireCount: (latest.fireCount ?? task.fireCount ?? 0) + 1,
+                };
+                // once 任务：入队即视为本次触发已消费，立即完结，避免次年同日再次命中 listDue。
+                if (latest.once === 1 || task.once === 1) {
+                  patch.finished = 1;
+                  patch.finishedAt = enqueuedAt;
+                  patch.nextFireTime = null;
+                  task.finished = 1;
+                  task.finishedAt = enqueuedAt;
+                  task.nextFireTime = null;
+                }
+                task.lastExecutionStatus = 'QUEUED';
+                task.lastFireTime = enqueuedAt;
+                task.fireCount = patch.fireCount;
+                await this.store.updateById(patch);
                 return;
               }
               await this.sessionService.updatePhase(task.sessionId!, 'RUNNING');

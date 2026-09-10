@@ -24,6 +24,7 @@ describe('UserService', () => {
   };
   const permissionService = {
     assignRoles: vi.fn(),
+    changeRolesWithAdminGuard: vi.fn(),
     assertCanChangeRoles: vi.fn(),
     assertCanDisableUser: vi.fn(),
     batchGetUserRoles: vi.fn(),
@@ -76,8 +77,7 @@ describe('UserService', () => {
     expect(updated.email).toBeNull();
     expect(updated.status).toBe(0);
     expect(permissionService.assertCanDisableUser).toHaveBeenCalledWith(7, 1);
-    expect(permissionService.assertCanChangeRoles).toHaveBeenCalledWith(7, [1, 2]);
-    expect(permissionService.assignRoles).toHaveBeenCalledWith(7, [1, 2]);
+    expect(permissionService.changeRolesWithAdminGuard).toHaveBeenCalledWith(7, [1, 2]);
     expect(userRepo.updateById).toHaveBeenCalledWith(existing);
   });
 

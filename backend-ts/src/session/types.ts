@@ -78,6 +78,8 @@ export interface MessageQueue {
   images?: string | null;
   sortOrder?: number | null;
   status?: string | null;
+  /** busy 入队的定时任务来源；队列消费完成后回写任务 lastExecutionStatus */
+  scheduledTaskId?: number | null;
   deleted?: number;
   createdAt?: string | null;
   updatedAt?: string | null;
