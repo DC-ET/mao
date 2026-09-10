@@ -2,7 +2,7 @@ import { test, expect, type Locator, type Page, type Request } from '@playwright
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')
 const tabs = ['基本信息', '角色提示词', '最佳实践']
-const promptPlaceholder = '请输入角色定义：身份、目标、工作内容、表达方式等'
+const promptPlaceholder = '只需填写身份、业务目标与表达方式。页面规则、工具用法和安全边界由系统按会话通道注入。'
 
 async function setup(page: Page) {
   let agent = {

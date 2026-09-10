@@ -99,9 +99,9 @@
           v-model="form.systemPrompt"
           type="textarea"
           :rows="15"
-          placeholder="请输入角色定义：身份、目标、工作内容、表达方式等"
+          placeholder="只需填写身份、业务目标与表达方式。页面规则、工具用法和安全边界由系统按会话通道注入。"
         />
-        <div class="form-hint">保存后自动记录提示词版本；可在 Agent 列表的「提示词版本」中预览和回滚。</div>
+        <div class="form-hint">嵌入网页浮窗、桌面编程、微信等通道规则由系统注入，此处只写本 Agent 的角色与风格。若已写过页面上下文或工具纪律，可删掉重复段。保存后自动记录提示词版本，可在 Agent 列表的「提示词版本」中预览和回滚。</div>
       </el-form-item>
       </el-tab-pane>
       <el-tab-pane label="最佳实践" name="experience">

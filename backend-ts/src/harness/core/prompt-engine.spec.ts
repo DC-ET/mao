@@ -114,23 +114,67 @@ describe('PromptEngine', () => {
     expect(system).toContain('本地未同步');
   });
 
-  it('adds embed screenshot display hints when page_screenshot is available', async () => {
+  it('injects embed channel base and skips coding workspace when page tools exist', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'pe-embed-'));
+    writeFileSync(join(workspace, 'AGENTS.md'), '# agents\nshould-not-appear\n');
     const engine = new PromptEngine(
       { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
-      { getWorkspaceRoot: () => '/ws' } as never,
-      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getWorkspaceRoot: () => workspace } as never,
+      RuntimeDataResolver.forTest(join(workspace, 'runtime'), join(workspace, 'home')),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const context = new AgentExecutionContext();
+    context.userId = 3;
+    context.sessionId = 8;
+    context.systemPrompt = '你是服务治理页的网页助手';
+    context.experiences = ['金额以页面为准'];
+    context.executionMode = 'CLOUD';
+    context.workspace = workspace;
+    context.isGit = true;
+    context.currentTimestamp = '2026-09-10';
+    context.tools = [tool('page_screenshot'), tool('page_inspect'), tool('read_file')];
+    const request = await engine.buildRequest(context);
+    const system = request.messages[0].content as string;
+    expect(system).toContain('你是服务治理页的网页助手');
+    expect(system).toContain('金额以页面为准');
+    expect(system).toContain('嵌入式对话浮窗');
+    expect(system).toContain('页面上下文与可见范围');
+    expect(system).toContain('[页面上下文]');
+    expect(system).toContain('[用户选中文本]');
+    expect(system).toContain('attachment://');
+    expect(system).toContain('不要在回复里用 Markdown 图片');
+    expect(system).toContain('当前日期：`2026-09-10`');
+    expect(system).not.toContain('你当前的工作目录是');
+    expect(system).not.toContain('CLOUD 云端模式');
+    expect(system).not.toContain('使用read_file而不是cat');
+    expect(system).not.toContain('请使用 shell 执行 `date`');
+    expect(system).not.toContain('用户上传的文件');
+    expect(system).not.toContain('should-not-appear');
+    expect(system).not.toContain('## 工作区规则');
+  });
+
+  it('keeps coding workspace guidance when page tools are absent', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'pe-code-'));
+    writeFileSync(join(workspace, 'AGENTS.md'), '# agents\nrule-coding\n');
+    const engine = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => workspace } as never,
+      RuntimeDataResolver.forTest(join(workspace, 'runtime'), join(workspace, 'home')),
       { getByUserIdAndName: async () => null } as never,
       { getUserSkillDocuments: () => [] } as never,
     );
     const context = new AgentExecutionContext();
     context.executionMode = 'CLOUD';
-    context.workspace = '/ws';
-    context.tools = [tool('page_screenshot'), tool('page_inspect')];
+    context.workspace = workspace;
+    context.tools = [tool('read_file')];
     const request = await engine.buildRequest(context);
     const system = request.messages[0].content as string;
-    expect(system).toContain('页面截图展示');
-    expect(system).toContain('attachment://');
-    expect(system).toContain('不要在回复里用 Markdown 图片');
+    expect(system).toContain('你当前的工作目录是');
+    expect(system).toContain('使用read_file而不是cat');
+    expect(system).toContain('rule-coding');
+    expect(system).not.toContain('嵌入式对话浮窗');
+    expect(system).not.toContain('页面上下文与可见范围');
   });
 
   it('keepsUnknownSkillAndCommandMarkers', async () => {
