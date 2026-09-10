@@ -23,7 +23,6 @@ defineEmits<{
   retry: [];
   setPageAuthorization: [level: PageAuthorizationLevel];
   resolvePageConfirm: [id: string, approved: boolean];
-  cancelPageTask: [];
 }>();
 
 const phaseRef = toRef(() => props.ui.phase);
@@ -78,6 +77,5 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
     @retry="$emit('retry')"
     @set-page-authorization="(level) => $emit('setPageAuthorization', level)"
     @resolve-page-confirm="(id, approved) => $emit('resolvePageConfirm', id, approved)"
-    @cancel-page-task="$emit('cancelPageTask')"
   />
 </template>

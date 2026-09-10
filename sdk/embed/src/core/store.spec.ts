@@ -256,6 +256,19 @@ describe('ChatStore', () => {
     expect(store.llmRetryText.value).toBeNull();
   });
 
+  it('llm_waiting 不展示内部等待阶段，也不覆盖已有重试提示', () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    store.handleEvent(ev('session_status', 1, { phase: 'RUNNING', executionId: 'e1' }));
+    store.handleEvent(ev('llm_waiting', 1, { phase: 'response_headers', elapsedSeconds: 1 }));
+    expect(store.llmRetryText.value).toBeNull();
+    store.handleEvent(ev('llm_retry', 1, { reason: 'timeout', attempt: 2, maxRetries: 5 }));
+    const retry = store.llmRetryText.value;
+    expect(retry).toContain('LLM 重试中');
+    store.handleEvent(ev('llm_waiting', 1, { phase: 'stream_data', elapsedSeconds: 3 }));
+    expect(store.llmRetryText.value).toBe(retry);
+  });
+
   it('llm_stream_reset 无已完成工具时清空当前流式气泡', () => {
     const store = new ChatStore();
     store.bindSession(1);

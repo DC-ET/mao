@@ -1,6 +1,6 @@
 # Web Embed SDK（页面嵌入对话浮窗）
 
-`sdk/embed`（包名 `@mao/chat-embed`）把 Mao 的 agent 对话做成**一个脚本文件**：内部 Web 系统引入后调一次 `MaoChat.init()`，页面右下角出现浮动入口，点开即可就当前页面内容与 agent 对话（流式输出、思考过程、工具执行状态、追问作答、手动停止）。
+`sdk/embed`（包名 `@mao/chat-embed`）把 Mao 的 agent 对话做成**一个脚本文件**：内部 Web 系统引入后调一次 `MaoChat.init()`，页面右下角出现浮动入口，点开即可就当前页面内容与 agent 对话（流式输出、思考过程、工具执行状态、追问作答、手动停止）。浮窗不展示引擎内部的 LLM 等待阶段（如 `response_headers`），上游真正重试时仍会提示。
 
 产物托管路径 `https://mao.etarch.cn/embed/mao-chat.js`（另有版本锁定副本 `mao-chat.v{version}.js`）。会话为 **CLOUD 模式**，无工具审批环节。
 
@@ -42,10 +42,10 @@ const chat = MaoChat.init({
 
 - **能力**：`page_inspect`（可见交互元素快照）、`page_screenshot`（当前视口截图）、`page_observe`、`page_scroll`、`page_focus`、`page_fill`、`page_select`、`page_check` / `page_uncheck`、`page_click`、`page_keyboard`、`page_wait`、`page_actions`（有序批量）。
 - **元素引用**：只使用快照作用域内的 opaque `elementId`；不向 Agent 暴露 selector、XPath、outerHTML 或任意脚本。页面导航、SPA 路由或 DOM 重建后旧引用立即失效，Agent 必须重新 `page_inspect`。
-- **授权**：默认 `per_action`（每个写操作前在浮窗确认）；用户可切换 `task`（本次任务内有效，任务结束/切换会话/刷新后失效）或 `full`（按 Mao 用户身份、站点 Origin、Agent 持久化到 localStorage，可随时撤销）。授权键按 `serverUrl`、Origin、身份、agentId 和授权版本隔离，不保存 Token。宿主 `page.initialLevel` 与实例方法 `setPageAuthorization()` 只接受 `per_action`/`task`，传 `full` 会被降级；**完全授权只能由用户在浮窗内显式点击授予**，避免宿主一行代码替用户提权。
+- **授权**：默认 `per_action`（每个写操作前在浮窗确认）；用户可在输入框底部工具栏的授权下拉中切换 `task`（本次任务内有效，任务结束/切换会话/刷新后失效）或 `full`（按 Mao 用户身份、站点 Origin、Agent 持久化到 localStorage，可随时撤销）。授权键按 `serverUrl`、Origin、身份、agentId 和授权版本隔离，不保存 Token。宿主 `page.initialLevel` 与实例方法 `setPageAuthorization()` 只接受 `per_action`/`task`，传 `full` 会被降级；**完全授权只能由用户在浮窗内显式点击授予**，避免宿主一行代码替用户提权。
 - **敏感数据**：`per_action` 下快照中密码/验证码/银行卡等字段值脱敏；截图默认遮罩敏感区域，发送未遮罩原图会先请求确认；`full` 在授权范围内允许未遮罩。
-- **反馈与停止**：浮窗显示授权级别、待确认动作（含高风险提示）、目标元素高亮、动作日志和执行状态；用户可随时点「停止页面任务」，SDK 会取消等待中的确认并让后续动作失败。
-- **截图**：只截当前视口，永远排除 SDK 浮窗；内置渲染器把 DOM 编成良好 XML 再放入 SVG foreignObject 光栅化，跨域图片可能缺失，失败时返回明确错误且不影响普通页面观察。需要更完整像素时可传自定义 `screenshotRenderer`。
+- **反馈与停止**：待确认动作（含高风险提示）以卡片出现在输入框上方，并高亮目标元素；用户点输入框停止按钮会终止整个任务（含页面操作），SDK 会取消等待中的确认并让后续动作失败。
+- **截图**：只截当前视口，永远排除 SDK 浮窗；内置渲染器把 DOM 编成良好 XML 再放入 SVG foreignObject 光栅化，并剥掉跨域图片/背景以免 canvas 被污染。跨域图片会缺失；若仍无法导出则回退为 DOM 色块+文字。需要更完整像素时可传自定义 `screenshotRenderer`。
 
 ### 明确不支持（会返回可解释错误，不尝试绕过浏览器边界）
 
@@ -144,6 +144,7 @@ const chat = MaoChat.init({
 | 跨源请求被浏览器拒绝 | 确认后端版本 ≥ 0.0.111（CORS 预检反射请求头，覆盖 `Authorization` 与宿主 APM 的 `sw8` 等）；生产 Nginx 不要另行覆盖 CORS 头 |
 | 换票 503 | Mao 调用 checkToken 未通过：看日志 `detail`。`oversized:<n>` 表示响应超过 1MB；公司 claims 超过 64KB 属正常，需 0.0.111 含 1MB 上限的后端 |
 | 截图失败 `screenshot_render_failed` | 内置渲染器把 DOM 编成 SVG 再光栅化。未闭合的 `<br>`/`<input>`、HTML 实体、图标 `xlink:href` 等非法 XML 会让图片加载失败。0.0.113 起改为 XML 序列化；若仍失败，检查宿主 CSP 的 `img-src` 是否放行 `data:` 与 `blob:` |
+| 截图失败 `toBlob` / Tainted canvas | 页面含跨域图片或背景图时，画进 canvas 后浏览器禁止导出。0.0.113 起会剥掉外部资源；仍失败则回退为 DOM 绘制（图片可能缺失，文字和布局仍可用） |
 
 ## 开发与发布
 

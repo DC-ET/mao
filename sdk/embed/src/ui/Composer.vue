@@ -1,20 +1,27 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
+import type { PageAuthorizationLevel } from '../page';
+import PageAuthSwitcher from './PageAuthSwitcher.vue';
 
 const props = defineProps<{
   running: boolean;
   quotedSelection: string | null;
   connectionError: boolean;
+  pageAuthorization: PageAuthorizationLevel;
 }>();
 
 const emit = defineEmits<{
   send: [content: string];
   stop: [];
   clearSelection: [];
+  setPageAuthorization: [level: PageAuthorizationLevel];
 }>();
 
 const text = ref('');
 const inputEl = ref<HTMLTextAreaElement | null>(null);
+const authEl = ref<InstanceType<typeof PageAuthSwitcher> | null>(null);
+
+const canSend = computed(() => text.value.trim().length > 0 && !props.running);
 
 function autoGrow() {
   const el = inputEl.value;
@@ -46,30 +53,65 @@ function focus() {
   inputEl.value?.focus();
 }
 
-defineExpose({ focus });
+function closeMenu() {
+  authEl.value?.close();
+}
+
+function isMenuOpen() {
+  return authEl.value?.isOpen() === true;
+}
+
+defineExpose({ focus, closeMenu, isMenuOpen });
 </script>
 
 <template>
   <div class="mao-composer">
-    <div v-if="quotedSelection" class="mao-chip">
-      <span class="mao-chip__label">讨论</span>
-      <span class="mao-chip__text">{{ quotedSelection }}</span>
-      <button class="mao-chip__close" type="button" aria-label="移除引用" @click="emit('clearSelection')">×</button>
-    </div>
-    <div class="mao-composer__row">
+    <div class="mao-composer__card">
+      <div v-if="quotedSelection" class="mao-chip">
+        <span class="mao-chip__label">讨论</span>
+        <span class="mao-chip__text">{{ quotedSelection }}</span>
+        <button class="mao-chip__close" type="button" aria-label="移除引用" @click="emit('clearSelection')">×</button>
+      </div>
       <textarea
         ref="inputEl"
         v-model="text"
         class="mao-composer__input"
         rows="1"
         aria-label="消息输入框"
-        placeholder="输入消息，Enter 发送"
+        placeholder="告诉 Agent 你想做什么..."
         @keydown="onKeydown"
       />
-      <button v-if="running" class="mao-composer__stop" type="button" @click="emit('stop')">停止</button>
-      <button v-else class="mao-composer__send" type="button" :disabled="!text.trim()" @click="onSend">
-        <svg viewBox="0 0 24 24"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-      </button>
+      <div class="mao-composer__toolbar">
+        <PageAuthSwitcher
+          ref="authEl"
+          :level="pageAuthorization"
+          @set-level="(level) => emit('setPageAuthorization', level)"
+        />
+        <button
+          v-if="running"
+          class="mao-composer__send mao-composer__stop"
+          type="button"
+          title="停止"
+          aria-label="停止"
+          @click="emit('stop')"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="2"/></svg>
+        </button>
+        <button
+          v-else
+          class="mao-composer__send"
+          type="button"
+          :class="{ 'mao-composer__send--active': canSend }"
+          :disabled="!canSend"
+          title="发送 (Enter)"
+          aria-label="发送"
+          @click="onSend"
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 19V5M12 5 5 12M12 5l7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <div v-if="connectionError" class="mao-banner mao-banner--error mao-banner--inline">
       连接已断开，发送时将自动重连

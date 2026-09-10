@@ -118,7 +118,6 @@ export function mountApp(ui: UiState): { app: VueApp; host: HTMLElement; root: H
     onRetry: () => getController()?.retry(),
     onSetPageAuthorization: (level: PageAuthorizationLevel) => getController()?.applyUserPageAuthorization(level),
     onResolvePageConfirm: (id: string, approved: boolean) => getController()?.resolvePageConfirm(id, approved),
-    onCancelPageTask: () => getController()?.cancelPageTask(),
   });
   app.mount(mountEl);
 
@@ -915,14 +914,6 @@ export class EmbedController {
 
   resolvePageConfirm(id: string, approved: boolean): void {
     this.pageEngine.resolveConfirmation(id, approved);
-  }
-
-  cancelPageTask(): void {
-    this.pageEngine.cancel();
-    this.ui.pageConfirm = null;
-    // 只停本地不够：必须通知服务端取消当前任务，否则 Agent 会继续下发页面请求。
-    const sid = this.store.sessionId();
-    if (sid != null) void this.ws.cancel(sid);
   }
 
   /** 后端 page_tool_request → 本地执行 → page_tool_result 回传。requestId 幂等。 */

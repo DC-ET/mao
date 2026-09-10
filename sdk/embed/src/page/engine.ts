@@ -227,7 +227,7 @@ export class PageEngine {
 
   private ensureTask(sessionId: number): void {
     // 宿主公开 API：复位取消态；有真实会话时让 task 授权绑定到该会话。
-    // 不设置 activeSessionId / 不通知 UI，避免宿主单独操作时面板常显「停止页面任务」。
+    // 不设置 activeSessionId / 不通知 UI，避免宿主单独操作时面板进入页面任务态。
     if (this.activeSessionId == null && this.cancelled) this.cancelled = false;
     if (sessionId <= 0) return;
     this.authorization.beginTask(sessionId);

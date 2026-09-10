@@ -38,7 +38,6 @@ const emit = defineEmits<{
   retry: [];
   setPageAuthorization: [level: PageAuthorizationLevel];
   resolvePageConfirm: [id: string, approved: boolean];
-  cancelPageTask: [];
 }>();
 
 const listEl = ref<HTMLElement | null>(null);
@@ -84,7 +83,12 @@ watch(
 
 function onKeydown(e: KeyboardEvent) {
   // 不调 stopPropagation：SDK 挂在宿主 document 上监听，拦截会吞掉宿主页自己的 Escape 处理
-  if (e.key === 'Escape' && props.open) emit('close');
+  if (e.key !== 'Escape' || !props.open) return;
+  if (composerEl.value?.isMenuOpen()) {
+    composerEl.value.closeMenu();
+    return;
+  }
+  emit('close');
 }
 
 onMounted(() => document.addEventListener('keydown', onKeydown));
@@ -138,13 +142,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
     />
 
     <PageActionPanel
-      :level="pageAuthorization"
-      :task-active="pageTaskActive"
       :confirm="pageConfirm"
-      :logs="pageLogs"
-      @set-level="(level) => emit('setPageAuthorization', level)"
+      :logs="pageConfirm || pageTaskActive ? pageLogs : []"
       @confirm="(id, approved) => emit('resolvePageConfirm', id, approved)"
-      @cancel-task="emit('cancelPageTask')"
     />
 
     <Composer
@@ -152,9 +152,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
       :running="running"
       :quoted-selection="quotedSelection"
       :connection-error="!connected"
+      :page-authorization="pageAuthorization"
       @send="(c) => emit('send', c)"
       @stop="emit('stop')"
       @clear-selection="emit('clearSelection')"
+      @set-page-authorization="(level) => emit('setPageAuthorization', level)"
     />
   </div>
 </template>

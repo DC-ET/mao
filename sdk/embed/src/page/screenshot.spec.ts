@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildScreenshotSvgXml, type ScreenshotSvgViewport } from './screenshot';
+import { buildScreenshotSvgXml, capturePageScreenshot, stripTaintSources, type ScreenshotSvgViewport } from './screenshot';
 
 function parseXml(xml: string): Document {
   return new DOMParser().parseFromString(xml, 'application/xml');
@@ -82,5 +82,61 @@ describe('buildScreenshotSvgXml', () => {
     expectWellFormed(xml);
     expect(xml).toContain('left:0px');
     expect(xml).toContain('top:-40px');
+  });
+});
+
+describe('stripTaintSources', () => {
+  it('removes remote images and css urls that would taint canvas.toBlob', () => {
+    const clone = cloneFromHtml(`
+      <img src="https://cdn.example/a.png" srcset="https://cdn.example/a.png 2x" alt="logo">
+      <img src="data:image/gif;base64,AAAA">
+      <div style="background-image:url(https://cdn.example/bg.png);color:#111">标题</div>
+      <svg viewBox="0 0 24 24"><use xlink:href="#icon-ok"></use><use href="https://cdn.example/icons.svg#x"></use></svg>
+      <iframe src="https://other.example/embed"></iframe>
+    `);
+    stripTaintSources(clone);
+    const xml = buildScreenshotSvgXml(clone, viewport());
+    expectWellFormed(xml);
+    expect(xml).not.toContain('https://cdn.example');
+    expect(xml).not.toContain('other.example');
+    expect(xml).not.toContain('iframe');
+    expect(xml).toContain('data:image/gif;base64');
+    expect(xml).toContain('#icon-ok');
+  });
+});
+
+describe('capturePageScreenshot', () => {
+  it('falls back to DOM paint when canvas.toBlob throws a tainted-canvas error', async () => {
+    document.body.innerHTML = '<p>订单号 SO-42</p>';
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.getContext = function getContext() {
+      return {
+        fillStyle: '', font: '', textBaseline: 'top',
+        fillRect() {}, save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, fillText() {},
+      } as unknown as CanvasRenderingContext2D;
+    } as unknown as typeof HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.toBlob = function toBlob(cb) {
+      cb(new Blob(['png'], { type: 'image/png' }));
+    };
+    try {
+      const renderer = async () => ({
+        width: 80,
+        height: 40,
+        getContext: () => ({ fillRect() {}, fillStyle: '' }),
+        toBlob() {
+          const error = new Error("Failed to execute 'toBlob' on 'HTMLCanvasElement': Tainted canvases may not be exported.");
+          error.name = 'SecurityError';
+          throw error;
+        },
+      } as unknown as HTMLCanvasElement);
+      const shot = await capturePageScreenshot({ renderer, maskSensitive: false });
+      expect(shot.mime).toBe('image/png');
+      expect(shot.dataUri.startsWith('data:image/png')).toBe(true);
+      expect(shot.width).toBeGreaterThan(0);
+    } finally {
+      HTMLCanvasElement.prototype.getContext = originalGetContext;
+      HTMLCanvasElement.prototype.toBlob = originalToBlob;
+    }
   });
 });

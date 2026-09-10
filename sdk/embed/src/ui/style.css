@@ -632,12 +632,22 @@
 }
 .mao-q__custom:disabled { background: var(--mao-panel); color: var(--mao-text-tertiary); }
 
-/* ── composer ── */
+/* ── composer（对齐桌面端 ChatInput 卡片：输入在上、工具栏在下） ── */
 .mao-composer {
-  border-top: 1px solid var(--mao-border);
-  padding: 10px 12px 12px;
+  padding: 8px 12px 12px;
   background: var(--mao-bg);
   flex-shrink: 0;
+}
+.mao-composer__card {
+  background: var(--mao-bg);
+  border: 1px solid var(--mao-border);
+  border-radius: 16px;
+  padding: 0;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.mao-composer__card:focus-within {
+  border-color: var(--mao-primary-ink);
+  box-shadow: 0 0 0 2px var(--mao-focus-ring);
 }
 .mao-chip {
   display: flex;
@@ -649,8 +659,8 @@
   padding: 5px 6px 5px 9px;
   font-size: 12px;
   line-height: 1.5;
-  margin-bottom: 8px;
-  max-width: 100%;
+  margin: 10px 12px 0;
+  max-width: calc(100% - 24px);
 }
 .mao-chip__label { flex-shrink: 0; opacity: 0.75; }
 .mao-chip__text {
@@ -675,82 +685,135 @@
   transition: background 0.15s ease;
 }
 .mao-chip__close:hover { background: var(--mao-primary-soft-strong); }
-.mao-composer__row {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-}
 .mao-composer__input {
-  flex: 1;
+  display: block;
+  width: 100%;
   min-width: 0;
-  border: 1px solid var(--mao-border);
-  border-radius: var(--mao-radius-lg);
-  padding: 8px 12px;
+  border: none;
+  border-radius: 0;
+  padding: 12px 14px 8px;
   font: inherit;
   line-height: 1.55;
   resize: none;
   max-height: 120px;
-  background: var(--mao-sunken);
+  background: transparent;
   color: var(--mao-text);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 .mao-composer__input::placeholder { color: var(--mao-text-tertiary); }
-.mao-composer__input:focus {
-  outline: none;
-  background: var(--mao-bg);
-  border-color: var(--mao-primary-ink);
-  box-shadow: 0 0 0 3px var(--mao-focus-ring);
+.mao-composer__input:focus { outline: none; }
+.mao-composer__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px 8px 10px;
+  min-height: 42px;
 }
-.mao-composer__input:disabled { background: var(--mao-panel); color: var(--mao-text-tertiary); }
 .mao-composer__send {
   border: none;
-  background: var(--mao-primary);
-  color: var(--mao-on-primary);
-  box-shadow: inset 0 0 0 1px var(--mao-primary-edge);
+  background: var(--mao-panel);
+  color: var(--mao-text-tertiary);
   border-radius: 50%;
   width: 34px;
   height: 34px;
   padding: 0;
-  cursor: pointer;
+  cursor: default;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.15s ease, transform 0.12s var(--mao-ease), opacity 0.15s ease;
+  margin-left: auto;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s var(--mao-ease);
 }
-.mao-composer__send:hover:not(:disabled) { background: var(--mao-primary-hover); }
-.mao-composer__send:active:not(:disabled) { transform: scale(0.92); }
-.mao-composer__send:focus-visible { outline: 2px solid var(--mao-primary-ink); outline-offset: 2px; }
-.mao-composer__send:disabled { opacity: 0.32; cursor: not-allowed; }
-.mao-composer__send svg { width: 16px; height: 16px; fill: currentColor; }
-.mao-composer__stop {
-  border: 1px solid var(--mao-border-strong);
-  background: var(--mao-bg);
-  color: var(--mao-text-secondary);
-  border-radius: var(--mao-radius-pill);
-  height: 34px;
-  padding: 0 14px;
+.mao-composer__send--active {
+  background: var(--mao-primary);
+  color: var(--mao-on-primary);
+  box-shadow: inset 0 0 0 1px var(--mao-primary-edge);
   cursor: pointer;
-  font: inherit;
-  font-size: 13px;
+}
+.mao-composer__send--active:hover { background: var(--mao-primary-hover); transform: scale(1.05); }
+.mao-composer__send--active:active { transform: scale(0.95); }
+.mao-composer__send:focus-visible { outline: 2px solid var(--mao-primary-ink); outline-offset: 2px; }
+.mao-composer__send:disabled { cursor: default; }
+.mao-composer__send svg { width: 18px; height: 18px; }
+.mao-composer__stop {
+  background: var(--mao-danger);
+  color: #fff;
+  cursor: pointer;
+}
+.mao-composer__stop:hover { background: color-mix(in srgb, var(--mao-danger) 85%, #000); transform: scale(1.05); }
+.mao-composer__stop svg { width: 16px; height: 16px; fill: currentColor; }
+
+/* 页面授权：对齐桌面端 PermissionLevelSwitcher */
+.mao-auth {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.mao-auth__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+  border: none;
+  background: transparent;
+  padding: 4px 6px;
+  border-radius: var(--mao-radius-xs);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  cursor: pointer;
+  user-select: none;
+  color: var(--mao-text-secondary);
+  transition: opacity 0.15s ease;
+}
+.mao-auth__badge[data-level='task'] { color: var(--mao-primary-ink); }
+.mao-auth__badge[data-level='full'] { color: var(--mao-danger); }
+.mao-auth__badge:hover { opacity: 0.85; }
+.mao-auth__badge:focus-visible { outline: 2px solid var(--mao-primary-ink); outline-offset: 1px; }
+.mao-auth__icon,
+.mao-auth__chevron {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
   flex-shrink: 0;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
-.mao-composer__stop:hover {
-  border-color: var(--mao-danger);
-  color: var(--mao-danger);
-  background: var(--mao-danger-soft);
+.mao-auth__menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 2;
+  min-width: 220px;
+  max-width: min(280px, calc(100vw - 64px));
+  padding: 6px;
+  border-radius: var(--mao-radius-md);
+  border: 1px solid var(--mao-border);
+  background: var(--mao-bg);
+  box-shadow: var(--mao-shadow-card), 0 8px 24px rgba(0, 0, 0, 0.1);
 }
-.mao-composer__stop::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  background: currentColor;
+.mao-auth__option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 7px 8px;
+  border-radius: var(--mao-radius-sm);
+  font: inherit;
+  cursor: pointer;
+  color: var(--mao-text);
 }
+.mao-auth__option:hover { background: var(--mao-sunken); }
+.mao-auth__option[aria-selected='true'] { background: var(--mao-primary-soft); }
+.mao-auth__name { font-size: 12.5px; font-weight: 500; }
+.mao-auth__desc { font-size: 11px; color: var(--mao-text-tertiary); line-height: 1.4; }
 
 /* ── empty state ── */
 .mao-empty {
@@ -798,11 +861,10 @@
   .mao-panel[data-pos='left'] { left: 16px; }
   .mao-panel__btn { width: 36px; height: 36px; }
   .mao-panel__btn svg { width: 19px; height: 19px; }
-  .mao-composer { padding: 10px 12px 14px; }
+  .mao-composer { padding: 8px 12px 14px; }
   .mao-composer__send { width: 40px; height: 40px; }
   .mao-composer__send svg { width: 18px; height: 18px; }
-  .mao-composer__stop { height: 40px; padding: 0 16px; }
-  .mao-composer__input { padding: 10px 12px; }
+  .mao-composer__input { padding: 12px 14px 8px; }
   .mao-chip { padding: 6px 6px 6px 10px; }
   .mao-chip__close { width: 26px; height: 26px; font-size: 16px; }
   .mao-thinking__summary { padding: 5px 10px 5px 8px; }
@@ -836,16 +898,10 @@
 }
 
 /* ── 页面操作面板（授权、确认、日志、停止） ── */
-.mao-page { border-top: 1px solid var(--mao-border); background: var(--mao-sunken); padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
-.mao-page__bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.mao-page__level { font-size: 12px; color: var(--mao-text-secondary); }
-.mao-page__level[data-level='full'] { color: var(--mao-danger); }
-.mao-page__level[data-level='task'] { color: var(--mao-primary-ink); }
-.mao-page__spacer { flex: 1; }
+.mao-page { padding: 0 12px 8px; display: flex; flex-direction: column; gap: 8px; }
 .mao-page__chip { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: var(--mao-radius-pill); border: 1px solid var(--mao-border-strong); background: var(--mao-bg); color: var(--mao-text); cursor: pointer; }
 .mao-page__chip:hover { border-color: var(--mao-primary); color: var(--mao-primary-ink); }
 .mao-page__chip--strong { border-color: var(--mao-primary); color: var(--mao-primary-ink); background: var(--mao-primary-soft); }
-.mao-page__chip--danger { border-color: var(--mao-danger); color: var(--mao-danger); background: var(--mao-danger-soft); }
 .mao-page__confirm { border: 1px solid var(--mao-border-strong); border-radius: var(--mao-radius-md); background: var(--mao-bg); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: var(--mao-shadow-card); }
 .mao-page__confirm-head { display: flex; align-items: center; gap: 6px; }
 .mao-page__confirm-title { font-size: 13px; font-weight: 600; }

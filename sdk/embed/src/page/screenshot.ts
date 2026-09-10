@@ -81,9 +81,10 @@ function inlineStyles(source: Element, clone: Element): void {
   const declarations: string[] = [];
   for (const property of INLINE_PROPERTIES) {
     const value = style.getPropertyValue(property);
-    if (value && value !== 'none' && value !== 'normal' && value !== 'auto' && value !== '0px') {
-      declarations.push(`${property}:${value}`);
-    }
+    if (!value || value === 'none' || value === 'normal' || value === 'auto' || value === '0px') continue;
+    // 外部 url() 画进 canvas 会污染画布，toBlob 抛 SecurityError。
+    if (cssHasUnsafeUrl(value)) continue;
+    declarations.push(`${property}:${value}`);
   }
   clone.setAttribute('style', declarations.join(';'));
   if (source instanceof HTMLInputElement) {
@@ -100,6 +101,140 @@ function inlineStyles(source: Element, clone: Element): void {
       }
     }
   }
+}
+
+function cssHasUnsafeUrl(value: string): boolean {
+  return /url\s*\(\s*(['"]?)(?!(?:data:|#))/i.test(value);
+}
+
+function stripUnsafeCssUrls(css: string): string {
+  return css.replace(/url\(\s*(['"]?)(?!(?:data:|#))[\s\S]*?\1\s*\)/gi, 'none');
+}
+
+function isSafeResourceUrl(value: string): boolean {
+  const v = value.trim();
+  return v.length === 0 || v.startsWith('#') || v.startsWith('data:');
+}
+
+/**
+ * 去掉会让 canvas 被标为 tainted 的外部资源。
+ * 跨域/无 CORS 的 img、background-image、SVG image 一旦进入 foreignObject，
+ * Chrome 在 toBlob 时抛 Failed to execute 'toBlob' on 'HTMLCanvasElement'。
+ */
+export function stripTaintSources(root: Element): void {
+  const nodes = [root, ...Array.from(root.querySelectorAll('*'))];
+  for (const el of nodes) {
+    if (el instanceof HTMLImageElement) {
+      el.removeAttribute('srcset');
+      if (!isSafeResourceUrl(el.getAttribute('src') ?? '')) el.removeAttribute('src');
+    }
+    if (el instanceof HTMLInputElement && el.type === 'image' && !isSafeResourceUrl(el.getAttribute('src') ?? '')) {
+      el.removeAttribute('src');
+    }
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'image' || tag === 'feimage') {
+      const href = el.getAttribute('href') || el.getAttribute('xlink:href') || '';
+      if (!isSafeResourceUrl(href)) {
+        el.removeAttribute('href');
+        el.removeAttribute('xlink:href');
+      }
+    }
+    if (tag === 'use') {
+      const href = el.getAttribute('href') || el.getAttribute('xlink:href') || '';
+      if (href && !href.startsWith('#')) {
+        el.removeAttribute('href');
+        el.removeAttribute('xlink:href');
+      }
+    }
+    const style = el.getAttribute('style');
+    if (style && cssHasUnsafeUrl(style)) el.setAttribute('style', stripUnsafeCssUrls(style));
+    for (const attr of ['src', 'srcset', 'poster', 'data'] as const) {
+      const current = el.getAttribute(attr);
+      if (!current) continue;
+      if (attr === 'srcset' || !isSafeResourceUrl(current)) el.removeAttribute(attr);
+    }
+  }
+  root.querySelectorAll('iframe,embed,object,video,audio,canvas,link,style').forEach((node) => node.remove());
+}
+
+function isTransparentColor(value: string): boolean {
+  const v = value.replace(/\s+/g, '').toLowerCase();
+  return !v || v === 'transparent' || v === 'rgba(0,0,0,0)' || v === 'hsla(0,0%,0%,0)';
+}
+
+function paintDomFallback(
+  width: number,
+  height: number,
+  scale: number,
+  ignore: (el: Element) => boolean,
+): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('screenshot_canvas_unavailable');
+  ctx.fillStyle = getComputedStyle(document.body).backgroundColor || '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+  const viewH = window.innerHeight || height;
+  const viewW = window.innerWidth || width;
+  const nodes = [document.body, ...Array.from(document.body.querySelectorAll('*'))].slice(0, MAX_INLINE_ELEMENTS);
+  for (const el of nodes) {
+    if (ignore(el)) continue;
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) continue;
+    if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= viewH || rect.left >= viewW) continue;
+    if (!isTransparentColor(style.backgroundColor)) {
+      ctx.fillStyle = style.backgroundColor;
+      ctx.fillRect(rect.left * scale, rect.top * scale, rect.width * scale, rect.height * scale);
+    }
+  }
+  for (const el of nodes) {
+    if (ignore(el)) continue;
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) continue;
+    if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= viewH || rect.left >= viewW) continue;
+    let text = '';
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      text = el.type === 'password' ? '' : el.value;
+    } else if (el instanceof HTMLSelectElement) {
+      text = el.options[el.selectedIndex]?.text ?? '';
+    } else {
+      text = Array.from(el.childNodes)
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => (node.textContent ?? '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .join(' ');
+    }
+    if (!text) continue;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.left * scale, rect.top * scale, rect.width * scale, rect.height * scale);
+    ctx.clip();
+    const fontSize = Math.max(8, (Number.parseFloat(style.fontSize) || 14) * scale);
+    ctx.font = `${style.fontWeight || '400'} ${fontSize}px ${style.fontFamily || 'sans-serif'}`;
+    ctx.fillStyle = style.color || '#111827';
+    ctx.textBaseline = 'top';
+    const padX = (Number.parseFloat(style.paddingLeft) || 0) * scale;
+    const padY = (Number.parseFloat(style.paddingTop) || 0) * scale;
+    ctx.fillText(text.slice(0, 300), rect.left * scale + padX, rect.top * scale + padY);
+    ctx.restore();
+  }
+  return canvas;
+}
+
+function isCanvasExportError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === 'SecurityError') return true;
+  return /tainted|toBlob|toDataURL|insecure|screenshot_encoding_failed/i.test(error.message);
+}
+
+function wrapEncodeError(error: unknown): Error {
+  if (error instanceof Error && error.message.startsWith('screenshot_')) return error;
+  return new Error('screenshot_encoding_failed');
 }
 
 const VOID_TAGS = 'area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr';
@@ -250,6 +385,7 @@ async function defaultRenderer(root: HTMLElement, options: ScreenshotRenderOptio
       if (options.mask(sourceNodes[i]!)) blankNode(cloneNodes[i]!);
     }
   }
+  stripTaintSources(clone);
 
   const background = getComputedStyle(root).backgroundColor || '#ffffff';
   // 渲染的是「当前视口」：先按文档坐标平移 -scrollX/-scrollY，再裁到视口尺寸。
@@ -335,11 +471,12 @@ export async function capturePageScreenshot(options: CaptureScreenshotOptions = 
 
   const renderer = options.renderer ?? defaultRenderer;
   const maskSet = new Set(options.maskElements ?? []);
-  const canvas = await withTimeout(
+  const ignore = (el: Element) => isSdkElement(el, host);
+  let canvas = await withTimeout(
     renderer(document.body, {
       width,
       height,
-      ignore: (el) => isSdkElement(el, host),
+      ignore,
       mask: (el) => maskSet.has(el),
     }),
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -348,7 +485,19 @@ export async function capturePageScreenshot(options: CaptureScreenshotOptions = 
   // 元素级涂黑已覆盖主文档；再叠加一次按视口坐标的涂黑，兜住 iframe 内容等
   // 元素级克隆无法触达的区域（重复涂黑无副作用）。
   if (maskList.length > 0) maskRects(canvas, maskList, scale);
-  const encoded = await encodeWithinLimit(canvas, maxBytes);
+  let encoded: { blob: Blob; canvas: HTMLCanvasElement };
+  try {
+    encoded = await encodeWithinLimit(canvas, maxBytes);
+  } catch (error) {
+    if (!isCanvasExportError(error)) throw wrapEncodeError(error);
+    canvas = paintDomFallback(width, height, scale, ignore);
+    if (maskList.length > 0) maskRects(canvas, maskList, scale);
+    try {
+      encoded = await encodeWithinLimit(canvas, maxBytes);
+    } catch (fallbackError) {
+      throw wrapEncodeError(fallbackError);
+    }
+  }
   const dataUri = await blobToDataUrl(encoded.blob);
   const masked = options.maskSensitive === true && (maskSet.size > 0 || maskList.length > 0);
   return { dataUri, mime: 'image/png', width: encoded.canvas.width, height: encoded.canvas.height, masked };

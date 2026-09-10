@@ -369,7 +369,7 @@ export class ChatStore {
         this.executionError(String(data.message ?? 'Agent 执行异常'));
         break;
       case 'llm_waiting':
-        this.llmRetryText.value = `LLM 等待中（${String(data.phase ?? '')} ${String(data.elapsedSeconds ?? 0)}s）`;
+        // 对齐桌面端：response_headers / stream_data 是内部诊断，不对嵌入页用户展示。
         break;
       case 'llm_retry':
         this.llmRetryText.value = `LLM 重试中（${String(data.reason ?? '')} 第 ${String(data.attempt ?? 0)}/${String(data.maxRetries ?? 0)} 次）`;
