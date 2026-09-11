@@ -291,7 +291,7 @@ describe('OpenAiLlmAdapter', () => {
     expect(response.choices?.[0]?.message?.reasoningContent).toBe('思考过程');
   });
 
-  it('chatSendsBackReasoningContentForAssistantMessages', async () => {
+  it('chatSendsBackReasoningContentForDeepSeekAssistantMessages', async () => {
     server = new QueueServer();
     server.enqueueJson('{"id":"ok","choices":[]}');
     await server.start();
@@ -302,8 +302,27 @@ describe('OpenAiLlmAdapter', () => {
         reasoningContent: '思考过程',
         toolCalls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }],
       }],
-    }, configOf(server));
+    }, configOf(server, { modelId: 'deepseek-chat' }));
     expect(server.bodies[0]).toContain('"reasoning_content":"思考过程"');
+  });
+
+  it('chatStripsReasoningContentForNonDeepSeekModels', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"ok","choices":[]}');
+    await server.start();
+    // GLM 等网关把 reasoning_content 视为自家签发的载体，客户端回传会被 400 拒绝。
+    for (const modelId of ['glm-5.3', 'gpt-test', 'kimi-k2']) {
+      server.enqueueJson('{"id":"ok","choices":[]}');
+      await adapter(0, 0).chat({
+        messages: [{
+          role: 'assistant',
+          content: '答案',
+          reasoningContent: '思考过程',
+          toolCalls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }],
+        }],
+      }, configOf(server, { modelId }));
+      expect(server.bodies.at(-1)).not.toContain('reasoning_content');
+    }
   });
 
   it('chatOmitsReasoningContentWhenAbsent', async () => {

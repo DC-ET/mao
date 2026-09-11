@@ -28,6 +28,7 @@
 - `session` 表新增 `source` 列（迁移 V109，`web`/`embed`，默认 `web`）标记会话来源，并建 `(user_id, agent_id, source, updated_at)` 索引服务浮窗历史列表查询。
 - `POST /v1/sessions` 支持可选 `source` 字段（仅接受 `web`/`embed`）；新增 `PUT /v1/sessions/{id}/source` 供 SDK 惰性补标存量常驻会话（仅允许 `web → embed` 单向、幂等、校验归属）。
 - `GET /v1/sessions` 新增可选 `agentId` / `source` 过滤参数与独立 `offset`/`limit` 分页（上限 50，默认 20），用于 SDK 历史列表；不传新参数时行为完全不变。会话 VO 透出 `source` 字段。
+- 修复 GLM（如 glm-5.3）多轮工具调用报 400「'messages.N.reasoning_content' must be a gateway-issued carrier」：`reasoning_content` 回传改为按模型白名单生效，仅 DeepSeek 系模型（含 `deepseek` 子串 / `ds-` 前缀）继续原样回传，其余模型（GLM、GPT 等）在序列化请求体时剥离该字段，避免被把该字段视为自家签发载体的网关拒绝。历史存储与恢复链路不变。
 
 ## 0.0.113 (2026-09-10)
 

@@ -50,7 +50,7 @@ function serializeToolCall(tc: ToolCall): Record<string, unknown> {
   return out;
 }
 
-export function serializeChatMessage(msg: ChatMessage): Record<string, unknown> {
+export function serializeChatMessage(msg: ChatMessage, echoReasoningContent = false): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (msg.role != null) out.role = msg.role;
   out.content = serializeContent(msg.content ?? '');
@@ -59,15 +59,27 @@ export function serializeChatMessage(msg: ChatMessage): Record<string, unknown> 
   if (msg.toolCalls != null) out.tool_calls = msg.toolCalls.map(serializeToolCall);
   if (msg.audio != null) out.audio = msg.audio;
   // DeepSeek thinking 模式下，带 tools 的多轮请求要求把上一轮 assistant 的 reasoning_content
-  // 原样回传，否则返回 400。其他模型忽略该字段，故统一在有值时透传。
-  if (msg.reasoningContent != null && msg.reasoningContent !== '') out.reasoning_content = msg.reasoningContent;
+  // 原样回传，否则返回 400；而 GLM 等网关把该字段视为自家签发的载体（carrier），客户端回传
+  // 一律 400（"must be a gateway-issued carrier"）。故仅对 DeepSeek 系模型透传，
+  // 其余模型在序列化时剥离，历史链路（session-history-loader）无需感知该差异。
+  if (echoReasoningContent && msg.reasoningContent != null && msg.reasoningContent !== '') {
+    out.reasoning_content = msg.reasoningContent;
+  }
   return out;
 }
 
+// 仅 DeepSeek 系模型要求回传 reasoning_content；模型 ID 形如 deepseek-chat / deepseek-reasoner /
+// ds-v4-flash 等，覆盖 `deepseek` 子串与 `ds-` 前缀两种命名。
+function shouldEchoReasoningContent(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  return id.includes('deepseek') || id.startsWith('ds-');
+}
+
 export function serializeChatRequest(request: ChatRequest, modelId: string, stream: boolean): Record<string, unknown> {
+  const echoReasoningContent = shouldEchoReasoningContent(modelId);
   const body: Record<string, unknown> = {
     model: modelId,
-    messages: (request.messages ?? []).map(serializeChatMessage),
+    messages: (request.messages ?? []).map((m) => serializeChatMessage(m, echoReasoningContent)),
     stream,
   };
   if (request.temperature != null) body.temperature = request.temperature;

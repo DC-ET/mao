@@ -47,4 +47,26 @@ describe('serializeChatRequest', () => {
     });
     expect(request).toEqual(original);
   });
+
+  it.each([
+    ['deepseek-chat', true],
+    ['DeepSeek-Reasoner', true],
+    ['ds-v4-flash', true],
+    ['glm-5.3', false],
+    ['gpt-test', false],
+  ])('echoes reasoning_content only for DeepSeek-family models (model=%s)', (modelId, expected) => {
+    const request: ChatRequest = {
+      messages: [
+        { role: 'assistant', content: '', reasoningContent: '思考过程', toolCalls: [] },
+        { role: 'tool', content: '结果', toolCallId: 'call_1' },
+      ],
+    };
+    const body = serializeChatRequest(request, modelId, false);
+    const assistant = (body.messages as Record<string, unknown>[])[0];
+    if (expected) {
+      expect(assistant.reasoning_content).toBe('思考过程');
+    } else {
+      expect(assistant).not.toHaveProperty('reasoning_content');
+    }
+  });
 });
