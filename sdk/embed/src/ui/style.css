@@ -1015,7 +1015,8 @@
   max-width: 260px;
 }
 
-/* 空白态推荐问题：竖排按钮列表，点击填入输入框 */
+/* 空白态推荐问题：竖排按钮列表，点击填入输入框。
+   单条 ≤100 字按完整文本换行展示（word-break），不做行数截断。 */
 .mao-suggested {
   display: flex;
   flex-direction: column;
@@ -1029,36 +1030,6 @@
   padding: 10px 14px;
   border: 1px solid var(--mao-border);
   border-radius: 10px;
-  background: var(--mao-surface);
-  color: var(--mao-text);
-  font-size: 13px;
-  line-height: 1.5;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
-  word-break: break-word;
-}
-.mao-suggested__item:hover,
-.mao-suggested__item:focus-visible {
-  border-color: var(--mao-primary);
-  background: var(--mao-primary-soft);
-  outline: none;
-}
-
-/* ── 空白态推荐问题（竖排列表，点击填入输入框） ── */
-.mao-suggested {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-  max-width: 320px;
-  margin-top: 8px;
-}
-.mao-suggested__item {
-  width: 100%;
-  padding: 9px 14px;
-  border: 1px solid var(--mao-border);
-  border-radius: 10px;
   background: var(--mao-bg);
   color: var(--mao-text);
   font-size: 12.5px;
@@ -1066,15 +1037,13 @@
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  word-break: break-word;
 }
-.mao-suggested__item:hover {
+.mao-suggested__item:hover,
+.mao-suggested__item:focus-visible {
   border-color: var(--mao-primary);
   background: var(--mao-primary-soft);
+  outline: none;
 }
 .mao-suggested__item:active {
   border-color: var(--mao-primary);
