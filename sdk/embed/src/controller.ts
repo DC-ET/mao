@@ -792,6 +792,8 @@ export class EmbedController {
       // 历史面板开着时从面板入口新建：收起面板，高亮随 bindSession 更新
       this.ui.historyOpen = false;
     } catch (err) {
+      // 已作废（新切换接管/身份变化）：错误文案不写到新身份的横幅上
+      if (stale()) return;
       const message = err instanceof Error ? err.message : '创建会话失败';
       this.ui.sessionError = isConnectionError(err) ? CONNECT_ERROR_TEXT : message;
       this.store.sessionError.value = this.ui.sessionError;
@@ -858,6 +860,9 @@ export class EmbedController {
       if (previous != null && this.store.sessionId() !== previous) {
         this.store.reset();
         this.bindSession(previous);
+        // 常驻指针与页签声明一并回退：刷新后浮窗仍恢复到回退会话
+        this.sessions.adoptSession({ id: previous } as EmbedSessionVO);
+        this.tabs.claim(previous);
         this.ws.subscribe(previous);
         await this.store.reloadHistory(this.fetchHistory).catch(() => undefined);
       }
