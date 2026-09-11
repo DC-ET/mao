@@ -90,6 +90,7 @@ export class SessionRepository {
       unread: session.unread ?? 0,
       parentSessionId: session.parentSessionId,
       sessionType: session.sessionType ?? 'NORMAL',
+      source: session.source ?? 'web',
       runtimeStatusJson: session.runtimeStatusJson,
       deleted: 0,
     });
@@ -129,7 +130,6 @@ export class SessionRepository {
       unread: session.unread,
       parentSessionId: session.parentSessionId,
       sessionType: session.sessionType,
-      source: session.source ?? 'web',
       runtimeStatusJson: session.runtimeStatusJson,
     });
   }

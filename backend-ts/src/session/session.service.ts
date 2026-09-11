@@ -295,8 +295,9 @@ export class SessionService {
     offset: number,
     limit: number,
   ): Promise<SessionGroupPage> {
-    const safeOffset = Math.max(0, offset);
-    const safeLimit = Math.min(Math.max(1, limit), 50);
+    // 非整数（1.5 / 1e21 等）截断，避免拼进 LIMIT/OFFSET 生成非法 SQL
+    const safeOffset = Math.trunc(Math.max(0, offset));
+    const safeLimit = Math.min(Math.max(1, Math.trunc(limit)), 50);
     const filter: SessionListFilter = {
       userId,
       agentId: parseEntityId(agentId) ?? null,
@@ -321,7 +322,12 @@ export class SessionService {
     return this.getSession(sessionId);
   }
 
-  private baseSessionListQuery(userId: number, keyword?: string | null, status?: string | null): { whereSql: string; params: unknown[] } {    const clauses = ['user_id = ?', `session_type NOT IN ('SUBAGENT', 'SIDE_TASK')`];
+  private baseSessionListQuery(
+    userId: number,
+    keyword?: string | null,
+    status?: string | null,
+  ): { whereSql: string; params: unknown[] } {
+    const clauses = ['user_id = ?', `session_type NOT IN ('SUBAGENT', 'SIDE_TASK')`];
     const params: unknown[] = [userId];
     if (keyword != null && keyword.length > 0) {
       clauses.push('title LIKE ?');

@@ -217,6 +217,8 @@ describe('session and admin routes', () => {
     expect(bad.code).toBe(2001);
     const missing = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/sessions?agentId=9' })).body);
     expect(missing.code).toBe(2001);
+    const badAgent = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/sessions?source=embed&agentId=abc' })).body);
+    expect(badAgent.code).toBe(2001);
     await fastify.close();
   });
 

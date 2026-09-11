@@ -900,6 +900,82 @@ describe('EmbedController', () => {
     h.ctl.destroy();
   });
 
+  it('selectHistory 历史拉取失败：退订目标会话并回退原会话', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/sessions/50') && !url.includes('messages')) {
+        return jsonOk({ id: 50, title: '旧会话', phase: 'IDLE' });
+      }
+      if (url.includes('/sessions/50/messages')) {
+        throw new Error('network down');
+      }
+      return jsonOk({ messages: [], hasMore: false });
+    }) as unknown as typeof fetch;
+    await h.ctl.selectHistory(50);
+    // 回退后仍绑定原会话
+    expect(h.ctl.store.sessionId()).toBe(SESSION_ID);
+    expect(h.ui.activeSessionId).toBe(SESSION_ID);
+    expect(h.ui.historyError).toBeTruthy();
+    // 目标会话已退订：50 subscribe 后必须有对应 unsubscribe
+    const unsubs = socket.framesOfType('unsubscribe').map((f) => f.sessionId);
+    expect(unsubs).toContain(50);
+    // 原会话重新订阅（boot 1 次 + 回退 1 次）
+    const subs = socket.framesOfType('subscribe').map((f) => f.sessionId);
+    expect(subs.filter((id) => id === SESSION_ID).length).toBe(2);
+    h.ctl.destroy();
+  });
+
+  it('连续快速切换：旧流程作废，不产生半切换状态', async () => {
+    const h = await makeHarness();
+    await boot(h);
+    let resolveFirst: (v: Response) => void = () => {};
+    const firstGate = new Promise<Response>((r) => { resolveFirst = r; });
+    let historyCalls = 0;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/sessions/60') && !url.includes('messages')) {
+        return firstGate; // 第一次切换的 GET 挂起
+      }
+      if (url.includes('/sessions/70') && !url.includes('messages')) {
+        return jsonOk({ id: 70, title: 'B', phase: 'IDLE' });
+      }
+      if (url.includes('/messages')) {
+        historyCalls++;
+        return jsonOk({ messages: [], hasMore: false });
+      }
+      return jsonOk({ messages: [], hasMore: false });
+    }) as unknown as typeof fetch;
+    const first = h.ctl.selectHistory(60);
+    await nextTick();
+    await h.ctl.selectHistory(70); // 在途时发起第二次切换
+    expect(h.ctl.store.sessionId()).toBe(70);
+    resolveFirst(jsonOk({ id: 60, title: 'A', phase: 'IDLE' }));
+    await first;
+    // 第一次切换作废：不覆盖第二次的结果
+    expect(h.ctl.store.sessionId()).toBe(70);
+    expect(h.ui.activeSessionId).toBe(70);
+    h.ctl.destroy();
+  });
+
+  it('身份切换后历史面板状态清空', async () => {
+    const h = await makeHarness();
+    await boot(h);
+    const setIdentity = (u: string | null) =>
+      (h.ctl as unknown as { setIdentity: (user: string | null) => boolean }).setIdentity(u);
+    // null → user-1：首次建立身份（changed=false 不清理）；user-1 → user-2：真实切换
+    setIdentity('user-1');
+    h.ui.historyOpen = true;
+    h.ui.historyItems = [{ id: SESSION_ID, title: '旧账号会话', updatedAt: null, phase: null }];
+    h.ui.activeSessionId = SESSION_ID;
+    setIdentity('user-2');
+    expect(h.ui.historyOpen).toBe(false);
+    expect(h.ui.historyItems).toHaveLength(0);
+    expect(h.ui.activeSessionId).toBeNull();
+    h.ctl.destroy();
+  });
+
   it('phase 变更透传给宿主 onEvent', async () => {
     const h = await makeHarness();
     const socket = await boot(h);

@@ -219,11 +219,19 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const keyword = queryOptStr(request, 'keyword');
     const status = queryOptStr(request, 'status');
     const source = queryOptStr(request, 'source');
-    const agentId = queryOptInt(request, 'agentId');
-    if (source != null || agentId != null) {
+    const rawAgentId = queryOptStr(request, 'agentId');
+    if (source != null || rawAgentId != null) {
       // Embed SDK 历史列表分支：仅 source / agentId 过滤 + 独立分页，不参与 groupKey/keyword/status
       if (source == null || !isSessionSource(source)) {
-        throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed'");
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '过滤查询需提供合法的 source（web 或 embed）');
+      }
+      let agentId: number | null = null;
+      if (rawAgentId != null) {
+        const n = Number(rawAgentId);
+        if (!Number.isInteger(n) || n <= 0) {
+          throw new BusinessException(ErrorCode.PARAM_INVALID, 'agentId 必须为正整数');
+        }
+        agentId = n;
       }
       const offset = queryOptInt(request, 'offset') ?? 0;
       const limit = queryOptInt(request, 'limit') ?? 20;

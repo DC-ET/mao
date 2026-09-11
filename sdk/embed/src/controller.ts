@@ -240,6 +240,10 @@ export class EmbedController {
   private booted = false;
   private identity: string | null = null;
   private identityVersion = 0;
+  /** 会话切换序号：在途切换被更新的切换/新对话/身份变化接管时，旧流程静默作废 */
+  private switchSeq = 0;
+  /** 历史列表请求序号：丢弃过期响应（重开面板使在途翻页响应作废） */
+  private historyReqSeq = 0;
   private readonly anonymousScope = crypto.randomUUID();
   private scope = () => JSON.stringify([resolveApiBase(this.options.serverUrl), this.identity ?? this.anonymousScope]);
   /** 等待 user_message_saved 落库确认的本地消息：key 为 eventId */
@@ -444,6 +448,13 @@ export class EmbedController {
     this.ui.pageConfirm = null;
     this.ui.pageHighlight = null;
     this.ui.pageTaskActive = false;
+    // 历史面板状态一并清空：避免新账号看到上一账号的会话列表与高亮
+    this.ui.historyOpen = false;
+    this.ui.historyItems = [];
+    this.ui.historyLoading = false;
+    this.ui.historyHasMore = false;
+    this.ui.historyError = null;
+    this.ui.activeSessionId = null;
     this.booted = false;
     // Run after the single-flight token acquisition settles; never reuse old session requests.
     if (this.ui.panelOpen) this.resumeAuthenticatedPanel();
@@ -668,12 +679,15 @@ export class EmbedController {
         break;
       }
       case 'session_already_running': {
-        // 发送被服务端拒绝：乐观气泡必须立即回滚（不能等 60s 落库超时）
-        this.rollbackAllPendingSaves();
+        // 发送被服务端拒绝：乐观气泡必须立即回滚（不能等 60s 落库超时）。
+        // 归属校验：泄漏的订阅事件不得回滚当前会话的在途气泡
+        if (msg.sessionId === this.store.sessionId()) this.rollbackAllPendingSaves();
         break;
       }
       case 'page_tool_request': {
-        // 页面工具请求不进入聊天消息流；由 PageEngine 在浏览器本地执行后经 page_tool_result 回传
+        // 页面工具请求不进入聊天消息流；由 PageEngine 在浏览器本地执行后经 page_tool_result 回传。
+        // 归属校验：只执行当前订阅会话的页面动作，防止切换期间旧会话的工具操纵宿主页
+        if (msg.sessionId != null && msg.sessionId !== this.store.sessionId()) return;
         void this.handlePageToolRequest(msg);
         return;
       }
@@ -749,9 +763,14 @@ export class EmbedController {
   }
 
   async newSession() {
+    const version = this.identityVersion;
+    const seq = ++this.switchSeq;
+    const stale = () => this.destroyed || version !== this.identityVersion || seq !== this.switchSeq;
     try {
       const previous = this.store.sessionId();
       const session = await this.sessions.startNewSession();
+      // 在途期间发生了另一次切换/新对话/身份变化：本次结果作废，不覆盖新状态
+      if (stale()) return;
       // 旧会话退订：否则服务端继续推送其事件（仅靠 store 的 sessionId 过滤兜底）
       if (previous != null && previous !== session.id) this.ws.unsubscribe(previous);
       this.tabs.claim(session.id);
@@ -770,6 +789,8 @@ export class EmbedController {
       // 新会话没有历史，直接置已加载，避免重连对账把空历史反复重拉
       this.store.markHistoryLoaded();
       this.ws.subscribe(session.id);
+      // 历史面板开着时从面板入口新建：收起面板，高亮随 bindSession 更新
+      this.ui.historyOpen = false;
     } catch (err) {
       const message = err instanceof Error ? err.message : '创建会话失败';
       this.ui.sessionError = isConnectionError(err) ? CONNECT_ERROR_TEXT : message;
@@ -785,50 +806,55 @@ export class EmbedController {
   }
 
   /**
-   * 切换到历史会话：旧会话退订、新会话校验+拉历史+订阅。
+   * 历史列表：切换会话。
    * 旧会话进行中的任务在服务端继续跑完不中断；切换期间的事件不再接收，
    * 切回时靠 REST 历史重拉 + session_snapshot 对账还原。
-   * 任一步失败则回退到原会话订阅，不产生半切换状态。
+   * 失败（目标不可达/历史拉取失败）则回退到原会话：退订已订阅的目标会话、
+   * 恢复原会话绑定与订阅，不产生半切换状态。
    */
-  private async switchSession(targetId: number): Promise<void> {
-    const previous = this.store.sessionId();
-    if (previous === targetId) return;
-    // 目标会话可达性校验（已删除/无权 → 3002/1002/403）
-    const session = await this.rest.request<EmbedSessionVO>('GET', `/sessions/${targetId}`);
-    // 退订旧会话：切换期间旧会话事件不再进入本地
-    if (previous != null) this.ws.unsubscribe(previous);
-    this.clearPendingSaves();
-    this.submittedQuestionIds.clear();
-    this.pageEngine.cancel();
-    this.ui.pageLogs = [];
-    this.ui.pageConfirm = null;
-    this.store.reset();
-    this.bindSession(session.id);
-    this.sessions.adoptSession(session);
-    this.tabs.claim(session.id);
-    this.applyPanelTitle();
-    this.ui.phase = session.phase ?? null;
-    this.ui.sessionError = null;
-    this.ui.questionSubmitting = false;
-    this.ui.pendingQuestion = null;
-    this.store.pendingQuestion.value = null;
-    // 订阅登记在前（重放快照先于 REST 返回也不丢），历史由 reloadHistory 合并
-    this.ws.subscribe(session.id);
-    await this.store.reloadHistory(this.fetchHistory);
-  }
-
-  /** 历史列表：切换会话（入口校验 + 失败回退） */
   async selectHistory(id: number): Promise<void> {
     if (this.store.sessionId() === id) {
       this.ui.historyOpen = false;
       return;
     }
+    const version = this.identityVersion;
+    const seq = ++this.switchSeq;
+    // 在途期间被更新的切换接管或身份变化：本次静默作废，不回退、不报错
+    const stale = () => this.destroyed || version !== this.identityVersion || seq !== this.switchSeq;
     const previous = this.store.sessionId();
+    let subscribedTarget = false;
     try {
-      await this.switchSession(id);
+      // 目标会话可达性校验（已删除/无权 → 3002/1002/403）
+      const session = await this.rest.request<EmbedSessionVO>('GET', `/sessions/${id}`);
+      if (stale()) return;
+      // 退订旧会话：切换期间旧会话事件不再进入本地
+      if (previous != null) this.ws.unsubscribe(previous);
+      this.clearPendingSaves();
+      this.submittedQuestionIds.clear();
+      this.pageEngine.cancel();
+      this.ui.pageLogs = [];
+      this.ui.pageConfirm = null;
+      this.store.reset();
+      this.bindSession(session.id);
+      this.sessions.adoptSession(session);
+      this.tabs.claim(session.id);
+      this.applyPanelTitle();
+      this.ui.phase = session.phase ?? null;
+      this.ui.sessionError = null;
+      this.ui.questionSubmitting = false;
+      this.ui.pendingQuestion = null;
+      this.store.pendingQuestion.value = null;
+      // 订阅登记在前（重放快照先于 REST 返回也不丢），历史由 reloadHistory 合并
+      this.ws.subscribe(session.id);
+      subscribedTarget = true;
+      await this.store.reloadHistory(this.fetchHistory);
+      if (stale()) return;
       this.ui.historyOpen = false;
     } catch (err) {
-      // 失败回退：若 store 已被切换则恢复原会话，避免半切换状态
+      // 已被更新切换接管或身份已变：既不回退也不提示（新流程负责后续状态）
+      if (stale()) return;
+      // 失败回退：先退订已订阅的目标会话（否则泄漏的订阅在重连后仍会恢复）
+      if (subscribedTarget) this.ws.unsubscribe(id);
       if (previous != null && this.store.sessionId() !== previous) {
         this.store.reset();
         this.bindSession(previous);
@@ -841,7 +867,7 @@ export class EmbedController {
     }
   }
 
-  /** 展开/收起历史列表面板；展开时总是重新拉第一页 */
+  /** 展开/收起历史列表面板；展开时总是重新拉第一页（新请求使在途旧响应过期） */
   toggleHistory(): void {
     this.ui.historyOpen = !this.ui.historyOpen;
     if (this.ui.historyOpen) void this.loadHistoryPage(0);
@@ -854,24 +880,34 @@ export class EmbedController {
   }
 
   private async loadHistoryPage(offset: number): Promise<void> {
+    const seq = ++this.historyReqSeq;
     this.ui.historyLoading = true;
     this.ui.historyError = null;
     try {
       const page = await this.sessions.listSessions(offset);
+      // 过期响应丢弃：重新打开面板（offset=0）或更新的翻页请求已发出
+      if (seq !== this.historyReqSeq) return;
       const items: EmbedSessionListItem[] = page.items.map((s) => ({
         id: s.id,
         title: s.title ?? null,
         updatedAt: s.updatedAt ?? null,
         phase: s.phase ?? null,
       }));
-      this.ui.historyItems = offset === 0 ? items : [...this.ui.historyItems, ...items];
+      if (offset === 0) {
+        this.ui.historyItems = items;
+      } else {
+        // updated_at 排序下当前会话上浮会造成翻页重复：按 id 去重
+        const seen = new Set(this.ui.historyItems.map((i) => i.id));
+        this.ui.historyItems = [...this.ui.historyItems, ...items.filter((i) => !seen.has(i.id))];
+      }
       this.ui.historyHasMore = page.hasMore;
     } catch (err) {
+      if (seq !== this.historyReqSeq) return;
       const message = err instanceof Error ? err.message : '加载历史会话失败';
       this.ui.historyError = isConnectionError(err) ? CONNECT_ERROR_TEXT : message;
       if (offset === 0) this.ui.historyItems = [];
     } finally {
-      this.ui.historyLoading = false;
+      if (seq === this.historyReqSeq) this.ui.historyLoading = false;
     }
   }
 
