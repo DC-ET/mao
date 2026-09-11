@@ -2,7 +2,7 @@
 
 ## 模块职责
 
-管理用户可见的 Agent：列表、详情、创建、更新、删除，以及 Agent 经验（experience）独立 CRUD。
+管理用户可见的 Agent：列表、详情、创建、更新、删除，以及 Agent 经验（experience）独立 CRUD。Agent 可另配推荐问题（suggestedQuestions，Embed SDK 空白态展示，最多 5 条），随创建/更新全量同步，无独立子命令。
 
 ## Agent 头像（REST / 管理后台）
 
@@ -76,7 +76,7 @@ mao agent list --keyword 助手 --json
 
 ### 用途
 
-按 ID 获取 Agent 详情（含 tags、skillNames、experiences）。
+按 ID 获取 Agent 详情（含 tags、skillNames、experiences、suggestedQuestions）。
 
 ### 参数说明
 
@@ -108,6 +108,7 @@ mao agent get --id 1
 | `--tags` | 否 | 逗号分隔字符串 | 标签列表 → `tags` 数组 |
 | `--skill-names` | 否 | 逗号分隔字符串 | 绑定技能名 → `skillNames` 数组 |
 | `--experiences-json` | 否 | JSON 字符串 | 经验数组 → `experiences`。元素字段：`content`（字符串）、`sortOrder`（整数）、`enabled`（布尔）、可选 `id` |
+| `--suggested-questions-json` | 否 | JSON 字符串 | 推荐问题数组 → `suggestedQuestions`。元素字段：`content`（字符串，1～100 字）、`sortOrder`（整数）、可选 `id`；最多 5 条 |
 | `--is-default` | 否 | 布尔 `true/false` | 是否设为默认 Agent → `isDefault` |
 | `--default-model-id` | 否 | 数字 | Agent 默认模型 ID（须为启用中的文本模型）→ `defaultModelId`；`0` 表示清除 |
 
@@ -146,6 +147,7 @@ mao agent create \
 | `--tags` | 否 | 逗号分隔 | 覆盖标签 |
 | `--skill-names` | 否 | 逗号分隔 | 覆盖技能名 |
 | `--experiences-json` | 否 | JSON | 覆盖经验列表 |
+| `--suggested-questions-json` | 否 | JSON | 覆盖推荐问题列表 |
 | `--is-default` | 否 | 布尔 | 是否设为默认 Agent |
 | `--default-model-id` | 否 | 数字 | Agent 默认模型 ID；`0` 表示清除（回退系统默认模型） |
 

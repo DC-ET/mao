@@ -2,11 +2,14 @@ import { validateAgentAvatarUrl } from './agent-avatar.js';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { AgentExperienceService } from './agent-experience.service.js';
+import type { AgentSuggestedQuestionService } from './agent-suggested-question.service.js';
 import type {
   Agent,
   AgentExperience,
   AgentRepository,
+  AgentSuggestedQuestion,
   ExperienceInput,
+  SuggestedQuestionInput,
 } from './types.js';
 
 /** Agent 默认模型校验所需的最小模型查询能力 */
@@ -18,6 +21,7 @@ export class AgentService {
   constructor(
     private readonly agentRepo: AgentRepository,
     private readonly experienceService: AgentExperienceService,
+    private readonly suggestedQuestionService: AgentSuggestedQuestionService,
     private readonly modelLookup?: AgentModelLookup,
   ) {}
 
@@ -53,6 +57,7 @@ export class AgentService {
     skillNames: string[] | null | undefined,
     mcpServerIds: number[] | null | undefined,
     experiences: ExperienceInput[] | null | undefined,
+    suggestedQuestions: SuggestedQuestionInput[] | null | undefined,
     isDefault: number | null | undefined,
     defaultModelId: number | null | undefined,
     avatarUrl?: string | null,
@@ -82,6 +87,9 @@ export class AgentService {
     if (experiences != null) {
       await this.experienceService.syncExperiences(agent.id!, experiences);
     }
+    if (suggestedQuestions != null) {
+      await this.suggestedQuestionService.syncSuggestedQuestions(agent.id!, suggestedQuestions);
+    }
 
     return agent;
   }
@@ -95,6 +103,7 @@ export class AgentService {
     skillNames: string[] | null | undefined,
     mcpServerIds: number[] | null | undefined,
     experiences: ExperienceInput[] | null | undefined,
+    suggestedQuestions: SuggestedQuestionInput[] | null | undefined,
     isDefault: number | null | undefined,
     defaultModelId: number | null | undefined,
     avatarUrl?: string | null,
@@ -124,6 +133,7 @@ export class AgentService {
     await this.agentRepo.updateById(agent, operatorId, systemPrompt != null);
 
     await this.experienceService.syncExperiences(id, experiences);
+    await this.suggestedQuestionService.syncSuggestedQuestions(id, suggestedQuestions);
     return agent;
   }
 
@@ -145,6 +155,7 @@ export class AgentService {
       throw new BusinessException(ErrorCode.AGENT_IS_DEFAULT);
     }
     await this.experienceService.deleteByAgentId(id);
+    await this.suggestedQuestionService.deleteByAgentId(id);
     await this.agentRepo.deleteById(id);
   }
 
@@ -164,5 +175,9 @@ export class AgentService {
 
   getAgentExperiences(agentId: number): Promise<AgentExperience[]> {
     return this.experienceService.listByAgentId(agentId);
+  }
+
+  getAgentSuggestedQuestions(agentId: number): Promise<AgentSuggestedQuestion[]> {
+    return this.suggestedQuestionService.listByAgentId(agentId);
   }
 }

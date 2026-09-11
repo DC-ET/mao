@@ -1,5 +1,5 @@
-import type { ExperienceVO, AgentVO } from '@mao/contracts';
-export type { ExperienceVO, AgentVO };
+import type { ExperienceVO, SuggestedQuestionVO, AgentVO } from '@mao/contracts';
+export type { ExperienceVO, SuggestedQuestionVO, AgentVO };
 
 export interface Agent {
   id?: number;
@@ -45,6 +45,21 @@ export interface ExperienceInput {
   enabled?: boolean | null;
 }
 
+export interface AgentSuggestedQuestion {
+  id?: number;
+  agentId: number;
+  content: string;
+  sortOrder?: number | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface SuggestedQuestionInput {
+  id?: number | null;
+  content?: string | null;
+  sortOrder?: number | null;
+}
+
 export interface AgentRepository {
   selectList(keyword?: string | null): Promise<Agent[]>;
   findById(id: number): Promise<Agent | null>;
@@ -64,6 +79,15 @@ export interface AgentExperienceRepository {
   findById(id: number): Promise<AgentExperience | null>;
   insert(experience: AgentExperience): Promise<number>;
   updateById(experience: AgentExperience): Promise<void>;
+  deleteById(id: number): Promise<void>;
+  deleteByAgentId(agentId: number): Promise<void>;
+}
+
+export interface AgentSuggestedQuestionRepository {
+  listByAgentId(agentId: number): Promise<AgentSuggestedQuestion[]>;
+  findById(id: number): Promise<AgentSuggestedQuestion | null>;
+  insert(question: AgentSuggestedQuestion): Promise<number>;
+  updateById(question: AgentSuggestedQuestion): Promise<void>;
   deleteById(id: number): Promise<void>;
   deleteByAgentId(agentId: number): Promise<void>;
 }

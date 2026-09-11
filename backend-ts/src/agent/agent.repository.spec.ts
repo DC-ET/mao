@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   MysqlAgentExperienceRepository,
   MysqlAgentRepository,
+  MysqlAgentSuggestedQuestionRepository,
 } from './agent.repository.js';
 import { MysqlUserRepository } from '../user/user.repository.js';
 import { MysqlLlmModelRepository } from '../model/model.repository.js';
@@ -62,6 +63,13 @@ describe('MysqlAgentRepository', () => {
     await exp.updateById({ id: 1, agentId: 1, content: 'c' });
     await exp.deleteById(1);
     await exp.deleteByAgentId(1);
+    const sq = new MysqlAgentSuggestedQuestionRepository(db as never);
+    await sq.listByAgentId(1);
+    await sq.findById(1);
+    await sq.insert({ agentId: 1, content: 'q' });
+    await sq.updateById({ id: 1, agentId: 1, content: 'q' });
+    await sq.deleteById(1);
+    await sq.deleteByAgentId(1);
   });
 });
 

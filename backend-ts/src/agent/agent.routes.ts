@@ -7,19 +7,25 @@ import { bodyOf, pathId } from '../common/request.js';
 import type { UserRepository } from '../user/types.js';
 import { experienceInputOf } from './agent-experience.service.js';
 import type { AgentExperienceService } from './agent-experience.service.js';
+import { suggestedQuestionInputOf } from './agent-suggested-question.service.js';
+import type { AgentSuggestedQuestionService } from './agent-suggested-question.service.js';
 import type { AgentService } from './agent.service.js';
 import type {
   Agent,
   AgentExperience,
+  AgentSuggestedQuestion,
   AgentVO,
   ExperienceInput,
   ExperienceVO,
+  SuggestedQuestionInput,
+  SuggestedQuestionVO,
   McpServerValidator,
 } from './types.js';
 
 export interface AgentRouteDeps {
   agentService: AgentService;
   experienceService: AgentExperienceService;
+  suggestedQuestionService: AgentSuggestedQuestionService;
   userRepo: UserRepository;
   mcpServerValidator: McpServerValidator;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
@@ -33,6 +39,7 @@ interface CreateAgentRequest {
   skillNames?: string[];
   mcpServerIds?: number[];
   experiences?: ExperienceVO[];
+  suggestedQuestions?: SuggestedQuestionVO[];
   isDefault?: number | null;
   defaultModelId?: number | null;
 }
@@ -45,6 +52,7 @@ interface UpdateAgentRequest {
   skillNames?: string[] | null;
   mcpServerIds?: number[] | null;
   experiences?: ExperienceVO[] | null;
+  suggestedQuestions?: SuggestedQuestionVO[] | null;
   isDefault?: number | null;
   defaultModelId?: number | null;
 }
@@ -96,6 +104,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.skillNames,
       mcpServerIds,
       toExperienceInputs(body.experiences),
+      toSuggestedQuestionInputs(body.suggestedQuestions),
       body.isDefault,
       body.defaultModelId,
       body.avatarUrl,
@@ -116,6 +125,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.skillNames,
       mcpServerIds,
       toExperienceInputs(body.experiences),
+      toSuggestedQuestionInputs(body.suggestedQuestions),
       body.isDefault,
       body.defaultModelId,
       body.avatarUrl,
@@ -205,6 +215,7 @@ async function toVO(agent: Agent, agentService: AgentService, userRepo: UserRepo
     defaultModelId: agent.defaultModelId ?? null,
     createdAt: agent.createdAt ?? null,
     experiences: [],
+    suggestedQuestions: [],
   };
 
   if (agent.creatorId != null) {
@@ -232,6 +243,9 @@ async function toVO(agent: Agent, agentService: AgentService, userRepo: UserRepo
 
   const experiences = await agentService.getAgentExperiences(agent.id!);
   vo.experiences = experiences.map(toExperienceVO);
+
+  const suggestedQuestions = await agentService.getAgentSuggestedQuestions(agent.id!);
+  vo.suggestedQuestions = suggestedQuestions.map(toSuggestedQuestionVO);
   return vo;
 }
 
@@ -249,4 +263,21 @@ function toExperienceInputs(experiences: ExperienceVO[] | null | undefined): Exp
     return null;
   }
   return experiences.map((e) => experienceInputOf(e.id, e.content, e.sortOrder, e.enabled));
+}
+
+function toSuggestedQuestionVO(question: AgentSuggestedQuestion): SuggestedQuestionVO {
+  return {
+    id: question.id,
+    content: question.content,
+    sortOrder: question.sortOrder,
+  };
+}
+
+function toSuggestedQuestionInputs(
+  questions: SuggestedQuestionVO[] | null | undefined,
+): SuggestedQuestionInput[] | null {
+  if (questions == null) {
+    return null;
+  }
+  return questions.map((q) => suggestedQuestionInputOf(q.id, q.content, q.sortOrder));
 }

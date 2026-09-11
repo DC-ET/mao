@@ -65,6 +65,44 @@ function imageFile(name = 'shot.png', bytes = 8) {
   return new File([new Uint8Array(bytes)], name, { type: 'image/png' });
 }
 
+describe('Composer.setText（推荐问题填入）', () => {
+  it('覆盖草稿填入文本并聚焦，不自动发送', async () => {
+    // 经模板 ref 拿到 defineExpose 的 setText（与 ChatPanel 的 composerEl 同一通道）
+    const holder = { comp: null as { setText?: (v: string) => void; focus?: () => void } | null };
+    const app2 = createApp({
+      setup() {
+        const assign = (v: unknown) => { holder.comp = v as typeof holder.comp; };
+        return () =>
+          h('div', [
+            h(Composer, {
+              ref: (v: unknown) => assign(v),
+              running: false,
+              quotedSelection: null,
+              pageAuthorization: 'per_action',
+              maxAttachmentMb: 5,
+            }),
+          ]);
+      },
+    });
+    const el2 = document.createElement('div');
+    document.body.appendChild(el2);
+    app2.mount(el2);
+    await nextTick();
+    try {
+      expect(holder.comp).not.toBeNull();
+      expect(typeof holder.comp!.setText).toBe('function');
+      holder.comp!.setText?.('帮我总结当前页面');
+      await nextTick();
+      const input2 = el2.querySelector<HTMLTextAreaElement>('.mao-composer__input')!;
+      expect(input2.value).toBe('帮我总结当前页面');
+      expect(input2.selectionStart).toBe('帮我总结当前页面'.length);
+    } finally {
+      app2.unmount();
+      el2.remove();
+    }
+  });
+});
+
 describe('Composer', () => {
   it('Agent 输出过程中不禁用输入框，草稿保留且不发出', async () => {
     const state = mount({ running: true });
@@ -167,5 +205,41 @@ describe('Composer', () => {
     expect(state.levels).toEqual(['full']);
     expect(el.querySelector('.mao-auth__menu')).toBeNull();
     expect(el.querySelector('.mao-auth__stop')).toBeNull();
+  });
+
+  it('setText 填入推荐问题草稿且不自动发送，覆盖已有草稿', async () => {
+    const state = mount();
+    // 已有草稿时点击推荐问题：直接覆盖
+    state.input().value = '旧草稿';
+    state.input().dispatchEvent(new Event('input'));
+    await nextTick();
+
+    let exposed: { setText: (v: string) => void } | undefined;
+    const el2 = document.createElement('div');
+    document.body.appendChild(el2);
+    const app2 = createApp({
+      render: () => h(Composer, {
+        ref: (v: unknown) => {
+          exposed = v as { setText: (v: string) => void };
+        },
+        running: false,
+        quotedSelection: null,
+        pageAuthorization: 'per_action' as PageAuthorizationLevel,
+        maxAttachmentMb: 5,
+        onSend: () => {},
+        onStop: () => {},
+        onSetPageAuthorization: () => {},
+      }),
+    });
+    app2.mount(el2);
+    expect(exposed?.setText).toBeTypeOf('function');
+    exposed!.setText('帮我总结当前页面');
+    await nextTick();
+    const input2 = el2.querySelector<HTMLTextAreaElement>('.mao-composer__input')!;
+    expect(input2.value).toBe('帮我总结当前页面');
+    // 填入不等于发送
+    expect(state.sent).toHaveLength(0);
+    app2.unmount();
+    el2.remove();
   });
 });

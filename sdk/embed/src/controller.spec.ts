@@ -74,6 +74,7 @@ function jsonOk(data: unknown) {
 let historyMessages: Array<Record<string, unknown>> = [];
 let agentAvatarUrl: string | null | undefined;
 let agentName: string | null | undefined = '客服助手';
+let agentSuggestedQuestions: Array<{ content?: string | null }> | undefined;
 let failImageUpload = false;
 let incomingAbsolutePath = '/opt/mao/runtime/1/incoming/a.pdf';
 
@@ -88,7 +89,14 @@ function installFetch(fetchCalls: string[]) {
       if (failImageUpload) throw new Error('upload failed');
       return jsonOk({ url: '/uploads/pic.png' });
     }
-    if (url.endsWith('/agents/3')) return jsonOk({ id: 3, name: agentName, avatarUrl: agentAvatarUrl });
+    if (url.endsWith('/agents/3')) {
+      return jsonOk({
+        id: 3,
+        name: agentName,
+        avatarUrl: agentAvatarUrl,
+        suggestedQuestions: agentSuggestedQuestions,
+      });
+    }
     if (method === 'POST' && url.includes('/sessions')) {
       return jsonOk({ id: SESSION_ID, title: '网页助手' });
     }
@@ -142,6 +150,7 @@ describe('EmbedController', () => {
     historyMessages = [];
     agentAvatarUrl = undefined;
     agentName = '客服助手';
+    agentSuggestedQuestions = undefined;
     failImageUpload = false;
     incomingAbsolutePath = '/opt/mao/runtime/1/incoming/a.pdf';
     (globalThis as Record<string, unknown>).WebSocket = FakeWebSocket;
@@ -166,6 +175,26 @@ describe('EmbedController', () => {
     await boot(h);
     expect(h.fetchCalls).toContain('GET https://mao.example.com/api/v1/agents/3');
     expect(h.ui.agentAvatarUrl).toBe(expected);
+    h.ctl.destroy();
+  });
+
+  it('boot 随 Agent 详情拉取推荐问题，过滤空白内容', async () => {
+    agentSuggestedQuestions = [
+      { content: '帮我总结当前页面' },
+      { content: '   ' },
+      { content: null },
+      { content: '这个页面上有什么按钮？' },
+    ];
+    const h = await makeHarness();
+    await boot(h);
+    expect(h.ui.suggestedQuestions).toEqual(['帮我总结当前页面', '这个页面上有什么按钮？']);
+    h.ctl.destroy();
+  });
+
+  it('boot 未返回推荐问题时保持空数组（空白态不渲染该区块）', async () => {
+    const h = await makeHarness();
+    await boot(h);
+    expect(h.ui.suggestedQuestions).toEqual([]);
     h.ctl.destroy();
   });
 

@@ -28,6 +28,8 @@ const props = defineProps<{
   pageConfirm: PageConfirmRequest | null;
   pageLogs: PageActionLogEntry[];
   maxAttachmentMb: number;
+  /** Agent 推荐问题：仅空白态展示，点击填入输入框 */
+  suggestedQuestions: string[];
 }>();
 
 const emit = defineEmits<{
@@ -48,6 +50,14 @@ const composerEl = ref<InstanceType<typeof Composer> | null>(null);
 // embed 会话固定为 CLOUD，无工具审批环节，故不含 WAITING_APPROVAL
 const running = computed(() => props.phase === 'RUNNING' || props.phase === 'RESUMING');
 const isEmpty = computed(() => props.messages.length === 0);
+/** 推荐问题仅在空白态且列表非空时展示；发出首条消息后自然隐藏 */
+const showSuggested = computed(() => isEmpty.value && props.suggestedQuestions.length > 0);
+
+/** 点击推荐问题：填入输入框并聚焦，由用户确认后手动发送 */
+function fillSuggestedQuestion(content: string) {
+  composerEl.value?.setText(content);
+  composerEl.value?.focus();
+}
 /** header 副标题：运行态优先，其次连接态（连接指示灯颜色只表示已鉴权） */
 const statusText = computed(() => (running.value ? '正在处理…' : props.connected ? '在线' : '连接中…'));
 
@@ -127,6 +137,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
         </span>
         <span class="mao-empty__title">有什么可以帮你？</span>
         <span class="mao-empty__hint">直接提问，我会结合当前页面内容回答；选中页面上的文字即可带上引用，也可直接粘贴图片或文件。</span>
+        <div v-if="showSuggested" class="mao-suggested">
+          <button
+            v-for="(question, index) in suggestedQuestions"
+            :key="index"
+            class="mao-suggested__item"
+            type="button"
+            :title="question"
+            @click="fillSuggestedQuestion(question)"
+          >{{ question }}</button>
+        </div>
       </div>
     </div>
 

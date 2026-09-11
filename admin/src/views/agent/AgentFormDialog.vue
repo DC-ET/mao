@@ -131,6 +131,33 @@
         </div>
       </el-form-item>
       </el-tab-pane>
+      <el-tab-pane label="推荐问题" name="suggestedQuestions">
+      <el-form-item label="推荐问题">
+        <div class="experience-list">
+          <div
+            v-for="(item, index) in form.suggestedQuestions"
+            :key="item._key"
+            class="experience-item"
+          >
+            <el-input
+              v-model="item.content"
+              type="textarea"
+              :rows="2"
+              :maxlength="100"
+              show-word-limit
+              placeholder="请输入推荐问题（最长 100 字），用户点击后填入输入框"
+            />
+            <div class="experience-actions">
+              <el-button link type="primary" :disabled="index === 0" @click="moveSuggestedQuestion(index, -1)">上移</el-button>
+              <el-button link type="primary" :disabled="index === form.suggestedQuestions.length - 1" @click="moveSuggestedQuestion(index, 1)">下移</el-button>
+              <el-button link type="danger" @click="removeSuggestedQuestion(index)">删除</el-button>
+            </div>
+          </div>
+          <el-button type="primary" link @click="addSuggestedQuestion">+ 添加问题</el-button>
+          <div class="form-hint">新会话空白态展示给用户的提问引导，最多 5 条。</div>
+        </div>
+      </el-form-item>
+      </el-tab-pane>
       </el-tabs>
     </el-form>
     <template #footer>
@@ -156,6 +183,13 @@ interface ExperienceFormItem {
   content: string
   sortOrder: number
   enabled: boolean
+}
+
+interface SuggestedQuestionFormItem {
+  _key: string
+  id?: number | null
+  content: string
+  sortOrder: number
 }
 
 const props = withDefaults(defineProps<{
@@ -187,6 +221,7 @@ const skillDocs = ref<any[]>([])
 const mcpServers = ref<any[]>([])
 const models = ref<any[]>([])
 let experienceKeySeq = 0
+let suggestedQuestionKeySeq = 0
 
 const form = reactive({
   avatarUrl: null as string | null,
@@ -196,6 +231,7 @@ const form = reactive({
   skillNames: [] as string[],
   mcpServerIds: [] as number[],
   experiences: [] as ExperienceFormItem[],
+  suggestedQuestions: [] as SuggestedQuestionFormItem[],
   isDefault: false,
   defaultModelId: null as number | null
 })
@@ -221,6 +257,21 @@ function mapExperiences(source: any[] | undefined | null, keepId: boolean): Expe
   }))
 }
 
+function nextSuggestedQuestionKey() {
+  suggestedQuestionKeySeq += 1
+  return `sq-${suggestedQuestionKeySeq}`
+}
+
+function mapSuggestedQuestions(source: any[] | undefined | null, keepId: boolean): SuggestedQuestionFormItem[] {
+  if (!source || source.length === 0) return []
+  return source.map((item, index) => ({
+    _key: nextSuggestedQuestionKey(),
+    id: keepId ? item.id ?? null : null,
+    content: item.content || '',
+    sortOrder: item.sortOrder ?? index
+  }))
+}
+
 function resetForm() {
   Object.assign(form, {
     avatarUrl: null,
@@ -230,6 +281,7 @@ function resetForm() {
     skillNames: [],
     mcpServerIds: [],
     experiences: [],
+    suggestedQuestions: [],
     isDefault: false,
     defaultModelId: null
   })
@@ -264,6 +316,38 @@ function moveExperience(index: number, delta: number) {
   })
 }
 
+function addSuggestedQuestion() {
+  if (form.suggestedQuestions.length >= 5) {
+    ElMessage.warning('推荐问题最多 5 条')
+    return
+  }
+  form.suggestedQuestions.push({
+    _key: nextSuggestedQuestionKey(),
+    id: null,
+    content: '',
+    sortOrder: form.suggestedQuestions.length
+  })
+}
+
+function removeSuggestedQuestion(index: number) {
+  form.suggestedQuestions.splice(index, 1)
+  form.suggestedQuestions.forEach((item, i) => {
+    item.sortOrder = i
+  })
+}
+
+function moveSuggestedQuestion(index: number, delta: number) {
+  const target = index + delta
+  if (target < 0 || target >= form.suggestedQuestions.length) return
+  const list = form.suggestedQuestions
+  const tmp = list[index]
+  list[index] = list[target]
+  list[target] = tmp
+  list.forEach((item, i) => {
+    item.sortOrder = i
+  })
+}
+
 function validateExperiences(): boolean {
   for (let i = 0; i < form.experiences.length; i++) {
     const content = (form.experiences[i].content || '').trim()
@@ -273,6 +357,25 @@ function validateExperiences(): boolean {
     }
     if (content.length > 300) {
       ElMessage.warning(`第 ${i + 1} 条经验不能超过 300 字`)
+      return false
+    }
+  }
+  return true
+}
+
+function validateSuggestedQuestions(): boolean {
+  if (form.suggestedQuestions.length > 5) {
+    ElMessage.warning('推荐问题最多 5 条')
+    return false
+  }
+  for (let i = 0; i < form.suggestedQuestions.length; i++) {
+    const content = (form.suggestedQuestions[i].content || '').trim()
+    if (!content) {
+      ElMessage.warning(`第 ${i + 1} 条推荐问题不能为空`)
+      return false
+    }
+    if (content.length > 100) {
+      ElMessage.warning(`第 ${i + 1} 条推荐问题不能超过 100 字`)
       return false
     }
   }
@@ -291,6 +394,7 @@ watch(() => props.visible, async (val) => {
       skillNames: props.agentData.skillNames || [],
       mcpServerIds: props.agentData.mcpServerIds || [],
       experiences: mapExperiences(props.agentData.experiences, props.mode === 'edit'),
+      suggestedQuestions: mapSuggestedQuestions(props.agentData.suggestedQuestions, props.mode === 'edit'),
       isDefault: props.mode === 'copy' ? false : !!props.agentData.isDefault,
       defaultModelId: props.mode === 'copy' ? null : props.agentData.defaultModelId ?? null
     })
@@ -358,6 +462,10 @@ async function handleSubmit() {
     activeTab.value = 'experience'
     return
   }
+  if (!validateSuggestedQuestions()) {
+    activeTab.value = 'suggestedQuestions'
+    return
+  }
 
   const payload = {
     avatarUrl: form.avatarUrl,
@@ -373,6 +481,11 @@ async function handleSubmit() {
       content: item.content.trim(),
       sortOrder: index,
       enabled: item.enabled
+    })),
+    suggestedQuestions: form.suggestedQuestions.map((item, index) => ({
+      id: isEdit.value ? item.id ?? null : null,
+      content: item.content.trim(),
+      sortOrder: index
     }))
   }
 

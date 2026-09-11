@@ -62,6 +62,8 @@ export interface UiState {
   unread: number;
   sessionTitle: string;
   agentAvatarUrl: string | null;
+  /** Agent 推荐问题（新会话空白态展示），boot 时随 Agent 详情拉取 */
+  suggestedQuestions: string[];
   sessionError: string | null;
   llmRetryText: string | null;
   messages: ChatMessage[];
@@ -94,6 +96,7 @@ export function createUiState(options: MaoChatInitOptions): UiState {
     unread: 0,
     sessionTitle: FALLBACK_PANEL_TITLE,
     agentAvatarUrl: null,
+    suggestedQuestions: [],
     sessionError: null,
     llmRetryText: null,
     messages: [],
@@ -408,6 +411,7 @@ export class EmbedController {
     this.agentDisplayName = null;
     this.applyPanelTitle();
     this.ui.agentAvatarUrl = null;
+    this.ui.suggestedQuestions = [];
     // 身份切换：取消页面任务并清空页面授权/日志，避免跨身份继承
     this.pageEngine.cancel();
     this.ui.pageLogs = [];
@@ -548,6 +552,10 @@ export class EmbedController {
         : null;
       this.agentDisplayName = displayAgentName(agent.name);
       this.applyPanelTitle();
+      // 推荐问题随详情一次拉取；为空或接口未返回时保持空数组（空白态不渲染该区块）
+      this.ui.suggestedQuestions = (agent.suggestedQuestions ?? [])
+        .map((q) => (q.content ?? '').trim())
+        .filter((content) => content.length > 0);
       // 多 tab 竞态：先问其他 tab 是否已有会话
       const claimed = await this.tabs.inquire();
       if (stale()) return;

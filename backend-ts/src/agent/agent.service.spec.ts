@@ -31,7 +31,12 @@ describe('AgentService', () => {
     deleteByAgentId: vi.fn(),
     listByAgentId: vi.fn(),
   } as unknown as AgentExperienceService;
-  const service = new AgentService(agentRepo, experienceService);
+  const suggestedQuestionService = {
+    syncSuggestedQuestions: vi.fn(),
+    deleteByAgentId: vi.fn(),
+    listByAgentId: vi.fn(),
+  } as never;
+  const service = new AgentService(agentRepo, experienceService, suggestedQuestionService);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -43,16 +48,16 @@ describe('AgentService', () => {
 
   it('persists, preserves and clears avatarUrl; rejects unsafe values before writes', async () => {
     const avatarUrl = '/uploads/12345678-1234-1234-1234-123456789abc.png';
-    const created = await service.createAgent(7, 'A', null, 'p', null, null, null, 0, null, avatarUrl);
+    const created = await service.createAgent(7, 'A', null, 'p', null, null, null, null, 0, null, avatarUrl);
     expect(created.avatarUrl).toBe(avatarUrl);
     expect(agentRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ avatarUrl }));
     vi.mocked(agentRepo.findById).mockResolvedValue(created);
-    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, undefined)).avatarUrl).toBe(avatarUrl);
-    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, undefined, null)).avatarUrl).toBeNull();
-    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, undefined, avatarUrl)).avatarUrl).toBe(avatarUrl);
+    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined)).avatarUrl).toBe(avatarUrl);
+    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined, null)).avatarUrl).toBeNull();
+    expect((await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined, avatarUrl)).avatarUrl).toBe(avatarUrl);
     vi.clearAllMocks();
-    await expect(service.createAgent(7, 'A', null, 'p', null, null, null, 1, null, 'javascript:alert(1)')).rejects.toThrow();
-    await expect(service.updateAgent(7, 1, null, null, null, null, null, null, null, undefined, 'https://evil/a.svg')).rejects.toThrow();
+    await expect(service.createAgent(7, 'A', null, 'p', null, null, null, null, 1, null, 'javascript:alert(1)')).rejects.toThrow();
+    await expect(service.updateAgent(7, 1, null, null, null, null, null, null, null, null, undefined, 'https://evil/a.svg')).rejects.toThrow();
     expect(agentRepo.insert).not.toHaveBeenCalled();
     expect(agentRepo.updateById).not.toHaveBeenCalled();
     expect(agentRepo.clearDefaultFlag).not.toHaveBeenCalled();
@@ -75,6 +80,7 @@ describe('AgentService', () => {
       ['skill-a'],
       [10, 20],
       experiences,
+      null,
       1,
       undefined,
     );
@@ -94,6 +100,7 @@ describe('AgentService', () => {
       [],
       [],
       experiences,
+      null,
       0,
       undefined,
     );
@@ -105,6 +112,7 @@ describe('AgentService', () => {
 
     await service.deleteAgent(1);
     expect(experienceService.deleteByAgentId).toHaveBeenCalledWith(1);
+    expect(suggestedQuestionService.deleteByAgentId).toHaveBeenCalledWith(1);
     expect(agentRepo.deleteById).toHaveBeenCalledWith(1);
   });
 
@@ -131,7 +139,7 @@ describe('AgentService', () => {
 
   it('marks an omitted prompt as not written', async () => {
     vi.mocked(agentRepo.findById).mockResolvedValue(agent(1, 'a', 0));
-    await service.updateAgent(7, 1, 'renamed', null, undefined, null, null, null, null, undefined);
+    await service.updateAgent(7, 1, 'renamed', null, undefined, null, null, null, null, null, undefined);
     expect(agentRepo.updateById).toHaveBeenCalledWith(expect.objectContaining({ name: 'renamed' }), 7, false);
   });
 
@@ -158,7 +166,7 @@ describe('AgentService', () => {
         id === 7 ? { id: 7, status: 1 } : id === 8 ? { id: 8, status: 0 } : null,
       ),
     };
-    const serviceWithLookup = new AgentService(agentRepo, experienceService, modelLookup);
+    const serviceWithLookup = new AgentService(agentRepo, experienceService, suggestedQuestionService, modelLookup);
 
     beforeEach(() => {
       vi.clearAllMocks();
@@ -167,19 +175,19 @@ describe('AgentService', () => {
 
     it('createRejectsMissingOrDisabledModel', async () => {
       await expect(
-        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, 0, 404),
+        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, 0, 404),
       ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
       await expect(
-        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, 0, 8),
+        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, 0, 8),
       ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
       expect(agentRepo.insert).not.toHaveBeenCalled();
     });
 
     it('createAcceptsEnabledModelAndNullClearsOnUpdate', async () => {
-      const created = await serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, 0, 7);
+      const created = await serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, 0, 7);
       expect(created.defaultModelId).toBe(7);
 
-      await serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null);
+      await serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, null);
       const updated = vi.mocked(agentRepo.updateById).mock.calls.at(-1)![0] as Agent;
       expect(updated.defaultModelId).toBeNull();
     });
@@ -195,7 +203,7 @@ describe('AgentService', () => {
 
       // 非法值：报错且不落库
       await expect(
-        serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, 404),
+        serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, 404),
       ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
       expect(agentRepo.updateById).toHaveBeenCalledTimes(1);
     });
