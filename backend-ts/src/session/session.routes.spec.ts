@@ -49,6 +49,8 @@ describe('session and admin routes', () => {
       listSessions: vi.fn(async () => [session()]),
       listSessionGroups: vi.fn(async () => []),
       listSessionsByGroup: vi.fn(),
+      listSessionsByFilter: vi.fn(async () => ({ items: [session({ source: 'embed' })], total: 1, offset: 0, limit: 20, hasMore: false })),
+      markSessionSource: vi.fn(async () => session({ source: 'embed' })),
       searchSessionsByUserMessage: vi.fn(async () => []),
       listSessionsForDashboard: vi.fn(async () => ({ running: [], recent: [] })),
       listSideTaskSessions: vi.fn(async () => []),
@@ -176,6 +178,73 @@ describe('session and admin routes', () => {
     const { fastify } = await app();
     const res = await fastify.inject({ method: 'POST', url: '/v1/oss/sts-token', payload: { sessionId: 1 } });
     expect(JSON.parse(res.body).data.uploadDir).toBe('uploads/');
+    await fastify.close();
+  });
+
+  it('creates session with embed source and rejects invalid source', async () => {
+    const { fastify, sessionService } = await app();
+    const created = JSON.parse((await fastify.inject({
+      method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: 9, source: 'embed' },
+    })).body);
+    expect(created.code).toBe(0);
+    expect(created.data.source).toBe('web'); // mock 返回默认 session()，真实落库在 service 层测
+    const args = vi.mocked(sessionService.createSession).mock.calls[0];
+    expect(args[args.length - 1]).toBe('embed');
+    const bad = JSON.parse((await fastify.inject({
+      method: 'POST', url: '/v1/sessions', payload: { title: 't', source: 'mobile' },
+    })).body);
+    expect(bad.code).toBe(2001);
+    await fastify.close();
+  });
+
+  it('lists embed sessions via source/agentId filter with pagination', async () => {
+    const { fastify, sessionService } = await app();
+    const res = JSON.parse((await fastify.inject({
+      method: 'GET', url: '/v1/sessions?source=embed&agentId=9&offset=20&limit=30',
+    })).body);
+    expect(res.code).toBe(0);
+    expect(res.data.items).toHaveLength(1);
+    expect(res.data.items[0].source).toBe('embed');
+    expect(res.data.total).toBe(1);
+    expect(res.data.hasMore).toBe(false);
+    expect(vi.mocked(sessionService.listSessionsByFilter).mock.calls[0]).toEqual([7, 9, 'embed', 20, 30]);
+    await fastify.close();
+  });
+
+  it('rejects list without valid source when filter params present', async () => {
+    const { fastify } = await app();
+    const bad = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/sessions?source=mobile' })).body);
+    expect(bad.code).toBe(2001);
+    const missing = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/sessions?agentId=9' })).body);
+    expect(missing.code).toBe(2001);
+    await fastify.close();
+  });
+
+  it('keeps legacy list behavior when no filter params present', async () => {
+    const { fastify, sessionService } = await app();
+    const res = JSON.parse((await fastify.inject({ method: 'GET', url: '/v1/sessions' })).body);
+    expect(res.code).toBe(0);
+    expect(Array.isArray(res.data)).toBe(true);
+    expect(vi.mocked(sessionService.listSessionsByFilter)).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  it('marks session source lazily for embed takeover', async () => {
+    const { fastify, sessionService } = await app();
+    const ok = JSON.parse((await fastify.inject({
+      method: 'PUT', url: '/v1/sessions/1/source', payload: { source: 'embed' },
+    })).body);
+    expect(ok.code).toBe(0);
+    expect(ok.data.source).toBe('embed');
+    expect(vi.mocked(sessionService.markSessionSource)).toHaveBeenCalledWith(1, 7, 'embed');
+    const bad = JSON.parse((await fastify.inject({
+      method: 'PUT', url: '/v1/sessions/1/source', payload: { source: 'mobile' },
+    })).body);
+    expect(bad.code).toBe(2001);
+    const missing = JSON.parse((await fastify.inject({
+      method: 'PUT', url: '/v1/sessions/1/source', payload: {},
+    })).body);
+    expect(missing.code).toBe(2001);
     await fastify.close();
   });
 });

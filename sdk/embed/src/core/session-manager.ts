@@ -2,7 +2,7 @@
  * 会话生命周期管理：创建/复用/新对话。
  * 复用策略（设计文档 2.2）：仅复用 SDK 自己创建的会话，localStorage 持久化，key 含 agentId。
  */
-import type { EmbedCreateSessionRequest, EmbedSessionVO } from '@mao/contracts';
+import type { EmbedCreateSessionRequest, EmbedSessionPage, EmbedSessionVO } from '@mao/contracts';
 import { ApiError } from './rest-client';
 import type { RestClient } from './rest-client';
 
@@ -60,16 +60,47 @@ export class SessionManager {
     const body: EmbedCreateSessionRequest = {
       agentId: this.deps.agentId,
       title: '网页助手',
+      source: 'embed',
     };
     const session = await this.deps.rest.request<EmbedSessionVO>('POST', '/sessions', { body });
     this.writeStoredSessionId(session.id);
     return session;
   }
 
+  /**
+   * 历史会话列表：仅当前 agent、SDK 创建（source=embed）的主会话，updated_at 倒序。
+   */
+  async listSessions(offset = 0, limit = 20): Promise<EmbedSessionPage> {
+    return this.deps.rest.request<EmbedSessionPage>(
+      'GET',
+      `/sessions?source=embed&agentId=${this.deps.agentId}&offset=${offset}&limit=${limit}`,
+    );
+  }
+
+  /**
+   * 存量常驻会话惰性标记：恢复的会话若还是 web 来源，补标为 embed（后端幂等）。
+   * 失败不阻断恢复流程——列表里缺它只是少一条记录，聊天不受影响。
+   */
+  async markSourceEmbed(session: EmbedSessionVO): Promise<void> {
+    if (session.source === 'embed') return;
+    try {
+      await this.deps.rest.request<EmbedSessionVO>('PUT', `/sessions/${session.id}/source`, {
+        body: { source: 'embed' },
+      });
+    } catch {
+      /* 静默降级 */
+    }
+  }
+
   /** “新对话”：不删除旧会话（保留在 desktop 列表），替换本地记录 */
   async startNewSession(): Promise<EmbedSessionVO> {
     const session = await this.createSession();
     return session;
+  }
+
+  /** 历史列表切换：目标会话已存在，仅更新本地常驻指针 */
+  adoptSession(session: EmbedSessionVO): void {
+    this.writeStoredSessionId(session.id);
   }
 
   readStoredSessionId(): number | null {

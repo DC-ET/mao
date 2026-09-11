@@ -59,5 +59,6 @@ export type {
   WsServerEvent,
   EmbedSessionVO,
   EmbedCreateSessionRequest,
+  EmbedSessionPage,
   EmbedMessageVO,
 } from './ws';

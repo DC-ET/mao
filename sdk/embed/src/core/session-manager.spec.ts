@@ -129,3 +129,82 @@ describe('SessionManager', () => {
     expect(storage.getItem('mao_embed_session_isolated_3')).toBe(String(second.id));
   });
 });
+
+describe('SessionManager embed history', () => {
+  const originalFetch = globalThis.fetch;
+  let storage: MemStorage;
+
+  beforeEach(() => {
+    storage = new MemStorage();
+    sessions.clear();
+    nextCreatedId = 100;
+    (globalThis as unknown as { window: { localStorage: MemStorage } }).window =
+      { localStorage: storage };
+  });
+
+  afterEach(() => {
+    (globalThis as unknown as { fetch: unknown }).fetch = originalFetch;
+  });
+
+  it('createSession 请求体带 source=embed', async () => {
+    const fn = stubFetch();
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
+    await mgr.resolveSession();
+    const call = fn.mock.calls.find((c) => String(c[0]).endsWith('/sessions') && (c[1] as RequestInit)?.method === 'POST');
+    expect(call).toBeTruthy();
+    expect(JSON.parse((call![1] as RequestInit).body as string)).toMatchObject({ agentId: 3, source: 'embed' });
+  });
+
+  it('listSessions 按 agentId+source 分页请求', async () => {
+    let requestedUrl = '';
+    const fn = stubFetch((url) => {
+      if (url.includes('source=embed')) {
+        requestedUrl = url;
+        return jsonResponse(200, {
+          code: 0,
+          data: { items: [{ id: 5, title: '旧会话' }], total: 1, offset: 20, limit: 20, hasMore: false },
+        });
+      }
+      return undefined;
+    });
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
+    const page = await mgr.listSessions(20);
+    expect(requestedUrl).toContain('source=embed');
+    expect(requestedUrl).toContain('agentId=3');
+    expect(requestedUrl).toContain('offset=20');
+    expect(page.total).toBe(1);
+    expect(page.items[0].id).toBe(5);
+    expect(fn).toHaveBeenCalled();
+  });
+
+  it('markSourceEmbed 对 web 会话发 PUT，已是 embed 时跳过', async () => {
+    const fn = stubFetch((_url: string, method: string) => {
+      if (method === 'PUT' && /\/sessions\/5\/source$/.test(_url)) {
+        return jsonResponse(200, { code: 0, data: { id: 5, source: 'embed' } });
+      }
+      return undefined;
+    });
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
+    await mgr.markSourceEmbed({ id: 5, title: 'x', source: 'web' });
+    expect(fn.mock.calls.some((c) => (c[1] as RequestInit)?.method === 'PUT' && String(c[0]).includes('/sessions/5/source'))).toBe(true);
+    fn.mockClear();
+    await mgr.markSourceEmbed({ id: 5, title: 'x', source: 'embed' });
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('markSourceEmbed 失败静默不抛出', async () => {
+    stubFetch((_url, method) => {
+      if (method === 'PUT') return jsonResponse(500, { code: 5000, message: 'down' });
+      return undefined;
+    });
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
+    await expect(mgr.markSourceEmbed({ id: 5, title: 'x', source: 'web' })).resolves.toBeUndefined();
+  });
+
+  it('adoptSession 更新本地常驻指针', async () => {
+    stubFetch();
+    const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
+    mgr.adoptSession({ id: 77 } as EmbedSessionVO);
+    expect(storage.getItem('mao_embed_session_isolated_3')).toBe('77');
+  });
+});

@@ -5,6 +5,7 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, collectEntityIds, idMapGet, parseEntityId, pathId, queryOptInt, queryOptStr } from '../common/request.js';
+import { isSessionSource, type SessionSource } from './session.repository.js';
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import type { SessionService } from './session.service.js';
@@ -65,6 +66,7 @@ interface CreateSessionRequest {
   platform?: string | null;
   shell?: string | null;
   osVersion?: string | null;
+  source?: string | null;
 }
 
 interface UpdateSessionRequest {
@@ -134,10 +136,14 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
   app.post('/v1/sessions', async (request, reply) => {
     const userId = requireUserId(request);
     const body = bodyOf<CreateSessionRequest>(request);
+    if (body.source != null && !isSessionSource(body.source)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed'");
+    }
     const session = await sessionService.createSession(
       userId, parseEntityId(body.agentId), body.title, body.executionMode, body.workspace,
       body.permissionLevel, body.isGit, body.platform, body.shell, body.osVersion,
       parseEntityId(body.modelId), body.cloudProjectKey, body.workspaceMode, body.gitCloneUrl, body.gitBranch,
+      body.source as SessionSource | null,
     );
     const vos = await enrichSessions([session]);
     return sendOk(reply, vos[0]);
@@ -212,6 +218,25 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const groupKey = queryOptStr(request, 'groupKey');
     const keyword = queryOptStr(request, 'keyword');
     const status = queryOptStr(request, 'status');
+    const source = queryOptStr(request, 'source');
+    const agentId = queryOptInt(request, 'agentId');
+    if (source != null || agentId != null) {
+      // Embed SDK 历史列表分支：仅 source / agentId 过滤 + 独立分页，不参与 groupKey/keyword/status
+      if (source == null || !isSessionSource(source)) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed'");
+      }
+      const offset = queryOptInt(request, 'offset') ?? 0;
+      const limit = queryOptInt(request, 'limit') ?? 20;
+      const page = await sessionService.listSessionsByFilter(userId, agentId, source, offset, limit);
+      const items = await enrichSessions(page.items);
+      return sendOk(reply, {
+        items,
+        total: page.total,
+        offset: page.offset,
+        limit: page.limit,
+        hasMore: page.hasMore,
+      });
+    }
     if (groupKey != null && groupKey.trim().length > 0) {
       const offset = queryOptInt(request, 'offset') ?? 0;
       const limit = queryOptInt(request, 'limit') ?? 20;
@@ -251,6 +276,18 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (source.parentSessionId != null) {
       treeSignalPublisher.publish(source.parentSessionId);
     }
+    return sendOk(reply, vos[0]);
+  });
+
+  app.put('/v1/sessions/:id/source', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requireSessionOwner(userId, pathId(request));
+    const body = bodyOf<{ source?: string | null }>(request);
+    if (body.source == null || !isSessionSource(body.source)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed'");
+    }
+    const session = await sessionService.markSessionSource(pathId(request), userId, body.source);
+    const vos = await enrichSessions([session]);
     return sendOk(reply, vos[0]);
   });
 

@@ -13,7 +13,7 @@ import { isFeishuChannelSession } from '../harness/tool/feishu-channel-tool.js';
 import type { GitOperationService } from './git-operation.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
-import { FileChangeRepository, MessageRepository, SessionRepository } from './session.repository.js';
+import { FileChangeRepository, MessageRepository, SessionRepository, type SessionListFilter, type SessionSource } from './session.repository.js';
 import { SessionTodoRepository } from './activity.repository.js';
 import type {
   AgentLookup,
@@ -78,6 +78,7 @@ export class SessionService {
     workspaceMode?: string | null,
     gitCloneUrl?: string | null,
     gitBranch?: string | null,
+    source?: SessionSource | null,
   ): Promise<Session> {
     let resolvedAgentId = parseEntityId(agentId);
     if (resolvedAgentId == null) {
@@ -105,6 +106,7 @@ export class SessionService {
       phase: 'IDLE',
       elapsedMs: 0,
       sessionType: 'NORMAL',
+      source: source ?? 'web',
     };
 
     if (session.executionMode === 'CLOUD') {
@@ -282,8 +284,44 @@ export class SessionService {
     return { items, total, offset: safeOffset, limit: safeLimit, hasMore };
   }
 
-  private baseSessionListQuery(userId: number, keyword?: string | null, status?: string | null): { whereSql: string; params: unknown[] } {
-    const clauses = ['user_id = ?', `session_type NOT IN ('SUBAGENT', 'SIDE_TASK')`];
+  /**
+   * Embed SDK 历史列表：当前用户、指定 agent、指定来源的主会话，updated_at 倒序分页。
+   * limit 上限 50、默认 20（与 groupKey 分页的 100 上限独立，浮窗场景不需要更大页）。
+   */
+  async listSessionsByFilter(
+    userId: number,
+    agentId: number | null | undefined,
+    source: SessionSource,
+    offset: number,
+    limit: number,
+  ): Promise<SessionGroupPage> {
+    const safeOffset = Math.max(0, offset);
+    const safeLimit = Math.min(Math.max(1, limit), 50);
+    const filter: SessionListFilter = {
+      userId,
+      agentId: parseEntityId(agentId) ?? null,
+      source,
+    };
+    return this.sessionRepo.pageSessionsByFilter(filter, safeOffset, safeLimit);
+  }
+
+  /** 存量 SDK 常驻会话惰性标记：仅允许 web → embed 单向迁移，幂等 */
+  async markSessionSource(sessionId: number, userId: number, source: SessionSource): Promise<Session> {
+    const session = await this.getSession(sessionId);
+    if (session.userId !== userId) {
+      throw new BusinessException(ErrorCode.FORBIDDEN, '无权操作该会话');
+    }
+    if (source !== 'embed') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许设置为 'embed'");
+    }
+    if (session.source === 'embed') {
+      return session;
+    }
+    await this.sessionRepo.updateFields(sessionId, { source });
+    return this.getSession(sessionId);
+  }
+
+  private baseSessionListQuery(userId: number, keyword?: string | null, status?: string | null): { whereSql: string; params: unknown[] } {    const clauses = ['user_id = ?', `session_type NOT IN ('SUBAGENT', 'SIDE_TASK')`];
     const params: unknown[] = [userId];
     if (keyword != null && keyword.length > 0) {
       clauses.push('title LIKE ?');

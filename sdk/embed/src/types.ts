@@ -48,6 +48,8 @@ export interface MaoChatInstance {
   close(): void;
   toggle(): void;
   newSession(): Promise<void>;
+  /** 展开/收起浮窗内的历史会话列表面板。 */
+  toggleHistory(): void;
   setContext(ctx: Record<string, unknown>): void;
   /** 读取当前页面可见交互元素快照。 */
   inspectPage(): PageSnapshot;

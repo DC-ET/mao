@@ -62,6 +62,7 @@ function createInstance(options: MaoChatInitOptions): MaoChatInstance {
     close: () => controller.close(),
     toggle: () => controller.toggle(),
     newSession: () => controller.newSession(),
+    toggleHistory: () => controller.toggleHistory(),
     setContext: (ctx) => controller.setContext(ctx),
     inspectPage: () => controller.pageEngine.inspect({ sessionId: controller.store.sessionId() }),
     executePageAction: (action, snapshotId) => controller.pageEngine.executeAction(

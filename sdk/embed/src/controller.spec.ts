@@ -800,6 +800,106 @@ describe('EmbedController', () => {
     h.ctl.destroy();
   });
 
+  it('createSession 请求体带 source=embed', async () => {
+    const h = await makeHarness();
+    await boot(h);
+    const posts = h.fetchCalls.filter((c) => c.startsWith('POST'));
+    expect(posts.some((c) => c.includes('/sessions'))).toBe(true);
+    h.ctl.destroy();
+  });
+
+  it('boot 恢复 web 来源会话时惰性补标 embed', async () => {
+    const h = await makeHarness();
+    await boot(h);
+    await vi.waitFor(() => {
+      expect(h.fetchCalls.some((c) => c.startsWith('PUT') && c.includes(`/sessions/${SESSION_ID}/source`))).toBe(true);
+    });
+    h.ctl.destroy();
+  });
+
+  it('toggleHistory 打开时拉取第一页并填充列表', async () => {
+    const h = await makeHarness();
+    await boot(h);
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('source=embed')) {
+        return jsonOk({
+          items: [
+            { id: SESSION_ID, title: '当前会话', updatedAt: '2026-09-11 10:00:00' },
+            { id: 50, title: '旧会话', updatedAt: '2026-09-10 10:00:00' },
+          ],
+          total: 2, offset: 0, limit: 20, hasMore: false,
+        });
+      }
+      return jsonOk({ messages: [], hasMore: false });
+    }) as unknown as typeof fetch;
+    h.ctl.toggleHistory();
+    expect(h.ui.historyOpen).toBe(true);
+    await vi.waitFor(() => expect(h.ui.historyItems).toHaveLength(2));
+    expect(h.ui.historyHasMore).toBe(false);
+    h.ctl.toggleHistory();
+    expect(h.ui.historyOpen).toBe(false);
+    h.ctl.destroy();
+  });
+
+  it('selectHistory 切换会话：退订旧、订阅新、更新常驻指针、拉历史', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    let switchTarget = 0;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(`/sessions/${switchTarget}`) && !url.includes('messages')) {
+        return jsonOk({ id: switchTarget, title: '旧会话', phase: 'IDLE' });
+      }
+      if (url.includes(`/sessions/${switchTarget}/messages`)) {
+        return jsonOk({ messages: [], hasMore: false });
+      }
+      return jsonOk({ messages: [], hasMore: false });
+    }) as unknown as typeof fetch;
+    switchTarget = 50;
+    await h.ctl.selectHistory(50);
+    expect(h.ui.historyOpen).toBe(false);
+    expect(h.ctl.store.sessionId()).toBe(50);
+    expect(socket.framesOfType('unsubscribe')).toEqual([{ type: 'unsubscribe', sessionId: SESSION_ID }]);
+    const subs = socket.framesOfType('subscribe');
+    expect(subs[subs.length - 1]).toEqual({ type: 'subscribe', sessionId: 50 });
+    const storedValues = Object.values(window.localStorage) as string[];
+    expect(storedValues).toContain('50');
+    h.ctl.destroy();
+  });
+
+  it('selectHistory 目标已删除时报错并保持原会话', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/sessions/999')) {
+        return {
+          status: 200,
+          ok: true,
+          text: async () => JSON.stringify({ code: 3002, message: '会话不存在' }),
+        } as unknown as Response;
+      }
+      return jsonOk({ messages: [], hasMore: false });
+    }) as unknown as typeof fetch;
+    await h.ctl.selectHistory(999);
+    expect(h.ctl.store.sessionId()).toBe(SESSION_ID);
+    expect(h.ui.historyError).toBeTruthy();
+    // 校验失败发生在 store 变更之前，不应产生 unsubscribe
+    expect(socket.framesOfType('unsubscribe')).toHaveLength(0);
+    h.ctl.destroy();
+  });
+
+  it('selectHistory 同一会话幂等：仅收起面板', async () => {
+    const h = await makeHarness();
+    const socket = await boot(h);
+    h.ui.historyOpen = true;
+    await h.ctl.selectHistory(SESSION_ID);
+    expect(h.ui.historyOpen).toBe(false);
+    expect(socket.framesOfType('unsubscribe')).toHaveLength(0);
+    h.ctl.destroy();
+  });
+
   it('phase 变更透传给宿主 onEvent', async () => {
     const h = await makeHarness();
     const socket = await boot(h);

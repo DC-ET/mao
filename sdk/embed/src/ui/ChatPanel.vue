@@ -9,6 +9,8 @@ import MessageBubble from './MessageBubble.vue';
 import Composer from './Composer.vue';
 import QuestionCard from './QuestionCard.vue';
 import PageActionPanel from './PageActionPanel.vue';
+import HistoryPanel from './HistoryPanel.vue';
+import type { EmbedSessionListItem } from '../controller';
 
 const props = defineProps<{
   open: boolean;
@@ -28,11 +30,20 @@ const props = defineProps<{
   pageConfirm: PageConfirmRequest | null;
   pageLogs: PageActionLogEntry[];
   maxAttachmentMb: number;
+  historyOpen: boolean;
+  historyItems: EmbedSessionListItem[];
+  historyLoading: boolean;
+  historyHasMore: boolean;
+  historyError: string | null;
+  activeSessionId: number | null;
 }>();
 
 const emit = defineEmits<{
   close: [];
   newSession: [];
+  toggleHistory: [];
+  selectHistory: [id: number];
+  loadMoreHistory: [];
   send: [content: string, attachments: PendingAttachment[]];
   stop: [];
   answer: [requestId: string, answers: WsAskUserQuestionAnswer[]];
@@ -111,7 +122,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
           {{ statusText }}
         </span>
       </span>
-      <button class="mao-panel__btn" type="button" title="新对话" :disabled="running" @click="emit('newSession')">
+      <button class="mao-panel__btn" type="button" title="历史对话" :class="{ 'mao-panel__btn--on': historyOpen }" @click="emit('toggleHistory')">
+        <svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L8.9 12H6a7 7 0 1 1 7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18Zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12Z"/></svg>
+      </button>
+      <button class="mao-panel__btn" type="button" title="新对话" @click="emit('newSession')">
         <svg viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4Z"/></svg>
       </button>
       <button class="mao-panel__btn" type="button" title="关闭" @click="emit('close')">
@@ -128,6 +142,18 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
         <span class="mao-empty__title">有什么可以帮你？</span>
         <span class="mao-empty__hint">直接提问，我会结合当前页面内容回答；选中页面上的文字即可带上引用，也可直接粘贴图片或文件。</span>
       </div>
+      <HistoryPanel
+        :open="historyOpen"
+        :items="historyItems"
+        :loading="historyLoading"
+        :has-more="historyHasMore"
+        :error="historyError"
+        :active-session-id="activeSessionId"
+        @select="(id) => emit('selectHistory', id)"
+        @new-session="emit('newSession')"
+        @load-more="emit('loadMoreHistory')"
+        @close="emit('toggleHistory')"
+      />
     </div>
 
     <div v-if="llmRetryText" class="mao-banner mao-banner--info">{{ llmRetryText }}</div>

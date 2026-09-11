@@ -1,7 +1,7 @@
 # Embed SDK 对话浮窗 · 历史会话列表技术方案
 
 - 日期：2026-09-11
-- 状态：已与需求方达成共识，待实施
+- 状态：已实施（分支 feat/embed-sdk-history-session-list）
 - 涉及端：backend-ts（后端）、sdk/embed（Web Embed SDK）
 - 不涉及：desktop UI、admin、android、agent-cli 的功能变更（仅 SDK 构建产物随 desktop 部署）
 

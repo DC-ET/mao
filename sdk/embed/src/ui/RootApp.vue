@@ -17,6 +17,9 @@ defineEmits<{
   launcherClick: [];
   close: [];
   newSession: [];
+  toggleHistory: [];
+  selectHistory: [id: number];
+  loadMoreHistory: [];
   send: [content: string, attachments: PendingAttachment[]];
   stop: [];
   answer: [requestId: string, answers: WsAskUserQuestionAnswer[]];
@@ -70,8 +73,17 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
     :page-confirm="ui.pageConfirm"
     :page-logs="ui.pageLogs"
     :max-attachment-mb="ui.attachmentMaxMb"
+    :history-open="ui.historyOpen"
+    :history-items="ui.historyItems"
+    :history-loading="ui.historyLoading"
+    :history-has-more="ui.historyHasMore"
+    :history-error="ui.historyError"
+    :active-session-id="ui.activeSessionId"
     @close="$emit('close')"
     @new-session="$emit('newSession')"
+    @toggle-history="$emit('toggleHistory')"
+    @select-history="(id) => $emit('selectHistory', id)"
+    @load-more-history="$emit('loadMoreHistory')"
     @send="(c, a) => $emit('send', c, a)"
     @stop="$emit('stop')"
     @answer="(id, a) => $emit('answer', id, a)"

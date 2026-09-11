@@ -279,11 +279,25 @@ export interface EmbedSessionVO {
   sessionType?: string;
   executionMode?: string | null;
   workspace?: string | null;
+  /** 会话来源：web=桌面/Web 端，embed=Embed SDK 浮窗 */
+  source?: string;
+  updatedAt?: string | null;
+  createdAt?: string | null;
 }
 
 export interface EmbedCreateSessionRequest {
   agentId: number;
   title?: string | null;
+  source?: 'embed' | 'web';
+}
+
+/** Embed SDK 历史会话列表分页（GET /sessions?source=embed&agentId=&offset=&limit=） */
+export interface EmbedSessionPage {
+  items: EmbedSessionVO[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
 }
 
 export interface EmbedMessageVO {

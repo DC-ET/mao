@@ -23,6 +23,9 @@ function makeService() {
     findById: vi.fn(),
     updateById: vi.fn(),
     updateWhere: vi.fn(),
+    updateFields: vi.fn(async () => 1),
+    pageSessionsByFilter: vi.fn(),
+    count: vi.fn(async () => 0),
     selectMessageSearchCandidates: vi.fn(),
     list: vi.fn(),
     insert: vi.fn(async (s: Session) => { s.id = 99; return 99; }),
@@ -379,5 +382,50 @@ describe('SessionService message search', () => {
     vi.mocked(sessionRepo.selectMessageSearchCandidates).mockResolvedValue([session(12, '空内容', 'NORMAL', null, '2026-08-07 10:00:00')]);
     vi.mocked(messageRepo.selectMessagesForSearch).mockResolvedValue([message(1, 12, null)]);
     expect(await service.searchSessionsByUserMessage(7, '关键词')).toEqual([]);
+  });
+});
+
+describe('SessionService embed source', () => {
+  it('marks legacy resident session web -> embed once', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.findById)
+      .mockResolvedValueOnce({ ...session(20, '常驻', 'NORMAL', 9, '2026-08-07 10:00:00'), source: 'web' })
+      .mockResolvedValueOnce({ ...session(20, '常驻', 'NORMAL', 9, '2026-08-07 10:00:00'), source: 'embed' });
+    const updated = await service.markSessionSource(20, 7, 'embed');
+    expect(updated.source).toBe('embed');
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(20, { source: 'embed' });
+  });
+
+  it('is idempotent when session is already embed', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.findById)
+      .mockResolvedValue({ ...session(20, '常驻', 'NORMAL', 9, '2026-08-07 10:00:00'), source: 'embed' });
+    const updated = await service.markSessionSource(20, 7, 'embed');
+    expect(updated.source).toBe('embed');
+    expect(sessionRepo.updateFields).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-embed target and foreign owner', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.findById)
+      .mockResolvedValue({ ...session(20, '常驻', 'NORMAL', 9, '2026-08-07 10:00:00'), source: 'web' });
+    await expect(service.markSessionSource(20, 7, 'web' as 'embed')).rejects.toThrow();
+    expect(sessionRepo.updateFields).not.toHaveBeenCalled();
+    await expect(service.markSessionSource(20, 8, 'embed')).rejects.toThrow();
+    expect(sessionRepo.updateFields).not.toHaveBeenCalled();
+  });
+
+  it('lists sessions by filter with clamped pagination', async () => {
+    const { service, sessionRepo } = makeService();
+    const page = {
+      items: [{ ...session(20, '常驻', 'NORMAL', 9, '2026-08-07 10:00:00'), source: 'embed' }],
+      total: 1, offset: 0, limit: 20, hasMore: false,
+    };
+    vi.mocked(sessionRepo.pageSessionsByFilter).mockResolvedValue(page);
+    const result = await service.listSessionsByFilter(7, 9, 'embed', 0, 999);
+    expect(sessionRepo.pageSessionsByFilter).toHaveBeenCalledWith(
+      { userId: 7, agentId: 9, source: 'embed' }, 0, 50,
+    );
+    expect(result.items[0].source).toBe('embed');
   });
 });

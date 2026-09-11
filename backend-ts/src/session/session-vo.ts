@@ -26,6 +26,7 @@ export interface SessionVO {
   isFavorite?: boolean;
   executionMode?: string | null;
   workspace?: string | null;
+  source?: string | null;
   isGit?: boolean | null;
   platform?: string | null;
   shell?: string | null;
@@ -139,6 +140,7 @@ export function toSessionVO(
     isFavorite: session.isFavorite != null && session.isFavorite === 1,
     executionMode: session.executionMode,
     workspace: session.workspace,
+    source: session.source ?? 'web',
     platform: session.platform,
     shell: session.shellPath,
     osVersion: session.osVersion,

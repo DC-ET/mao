@@ -38,7 +38,7 @@ export class RestClient {
     private readonly identity: () => string | null = () => null,
   ) {}
 
-  async request<T>(method: 'GET' | 'POST', path: string, opts: RestOptions = {}, retry = true): Promise<T> {
+  async request<T>(method: 'GET' | 'POST' | 'PUT', path: string, opts: RestOptions = {}, retry = true): Promise<T> {
     const before = this.identity();
     const token = await this.getToken();
     const identity = this.identity();

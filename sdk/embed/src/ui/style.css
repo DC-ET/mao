@@ -1090,3 +1090,87 @@
 /* ── 页面目标元素高亮（固定定位在视口坐标，不进入页面快照/截图） ── */
 .mao-page-highlight { position: fixed; pointer-events: none; z-index: var(--mao-z); border: 2px solid var(--mao-primary); border-radius: var(--mao-radius-xs); box-shadow: 0 0 0 3px var(--mao-focus-ring); transition: all 0.15s var(--mao-ease); }
 .mao-page-highlight__label { position: absolute; top: -22px; left: -2px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; padding: 2px 8px; border-radius: var(--mao-radius-xs); background: var(--mao-primary); color: var(--mao-on-primary); }
+
+/* ── 历史对话列表面板（覆盖在消息区上，不遮挡标题栏与输入区） ── */
+.mao-history {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  background: var(--mao-bg, #fff);
+  animation: mao-msg-in 0.18s ease-out;
+}
+.mao-history__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px 8px 16px;
+}
+.mao-history__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.mao-history__new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 8px;
+  padding: 9px 12px;
+  border-radius: var(--mao-radius-sm, 8px);
+  border: 1px dashed var(--mao-border, rgba(0, 0, 0, 0.14));
+  color: var(--mao-primary, #1a73e8);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+.mao-history__new:hover { background: var(--mao-hover, rgba(0, 0, 0, 0.04)); }
+.mao-history__new svg { width: 16px; height: 16px; fill: currentColor; }
+.mao-history__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mao-history__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--mao-radius-sm, 8px);
+  cursor: pointer;
+  user-select: none;
+}
+.mao-history__item:hover { background: var(--mao-hover, rgba(0, 0, 0, 0.05)); }
+.mao-history__item--active {
+  background: var(--mao-primary, #1a73e8);
+  color: var(--mao-on-primary, #fff);
+}
+.mao-history__item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.mao-history__item-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  opacity: 0.65;
+}
+.mao-history__empty, .mao-history__error, .mao-history__more {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12px;
+  opacity: 0.7;
+}
+.mao-history__error { color: var(--mao-danger, #d93025); opacity: 0.9; }
+.mao-history__more { cursor: pointer; }
+.mao-panel__btn--on { color: var(--mao-primary, #1a73e8); }

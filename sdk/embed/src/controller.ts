@@ -19,6 +19,7 @@ import type { PageActionLogEntry, PageAuthorizationLevel, PageConfirmRequest, Pa
 import { PageEngine, isPageToolName } from './page';
 import type {
   EmbedMessageVO,
+  EmbedSessionVO,
   AgentVO,
   WsAskUserQuestionAnswer,
   WsPageToolResultData,
@@ -82,6 +83,26 @@ export interface UiState {
   pageLogs: PageActionLogEntry[];
   /** 当前高亮的页面目标元素 */
   pageHighlight: PageHighlightTarget | null;
+  /** 历史会话列表面板是否展开（覆盖在消息区上） */
+  historyOpen: boolean;
+  /** 历史列表条目（当前 agent、SDK 创建的会话） */
+  historyItems: EmbedSessionListItem[];
+  /** 历史列表加载中 */
+  historyLoading: boolean;
+  /** 历史列表触底自动翻页：是否还有下一页 */
+  historyHasMore: boolean;
+  /** 历史列表加载失败文案（重试入口用） */
+  historyError: string | null;
+  /** 当前活跃会话 id：历史列表高亮用 */
+  activeSessionId: number | null;
+}
+
+/** 历史列表条目：与 EmbedSessionVO 字段子集对齐 */
+export interface EmbedSessionListItem {
+  id: number;
+  title: string | null;
+  updatedAt: string | null;
+  phase: WsTaskPhase | null;
 }
 
 export function createUiState(options: MaoChatInitOptions): UiState {
@@ -107,6 +128,12 @@ export function createUiState(options: MaoChatInitOptions): UiState {
     pageConfirm: null,
     pageLogs: [],
     pageHighlight: null,
+    historyOpen: false,
+    historyItems: [],
+    historyLoading: false,
+    historyHasMore: false,
+    historyError: null,
+    activeSessionId: null,
   });
 }
 
@@ -129,6 +156,9 @@ export function mountApp(ui: UiState): { app: VueApp; host: HTMLElement; root: H
     onLauncherClick: () => getController()?.toggle(),
     onClose: () => getController()?.close(),
     onNewSession: () => void getController()?.newSession(),
+    onToggleHistory: () => getController()?.toggleHistory(),
+    onSelectHistory: (id: number) => void getController()?.selectHistory(id),
+    onLoadMoreHistory: () => void getController()?.loadMoreHistory(),
     onSend: (content: string, attachments: PendingAttachment[]) => void getController()?.send(content, attachments),
     onStop: () => void getController()?.stop(),
     onAnswer: (requestId: string, answers: WsAskUserQuestionAnswer[]) =>
@@ -556,8 +586,10 @@ export class EmbedController {
       }
       const session = await this.sessions.resolveSession();
       if (stale()) return;
+      // 存量常驻会话（source=web）惰性补标 embed：失败静默，列表缺它不影响聊天
+      void this.sessions.markSourceEmbed(session);
       this.tabs.claim(session.id);
-      this.store.bindSession(session.id);
+      this.bindSession(session.id);
       // 历史先于 WS subscribe 拉取：避免流事件先到导致 messages 非空而跳过历史补齐
       await this.store.ensureHistory(this.fetchHistory);
       if (stale()) return;
@@ -730,7 +762,7 @@ export class EmbedController {
       this.ui.pageLogs = [];
       this.ui.pageConfirm = null;
       this.store.reset();
-      this.store.bindSession(session.id);
+      this.bindSession(session.id);
       this.applyPanelTitle();
       this.ui.phase = null;
       this.ui.sessionError = null;
@@ -742,6 +774,104 @@ export class EmbedController {
       const message = err instanceof Error ? err.message : '创建会话失败';
       this.ui.sessionError = isConnectionError(err) ? CONNECT_ERROR_TEXT : message;
       this.store.sessionError.value = this.ui.sessionError;
+    }
+  }
+
+  /** 绑定会话并同步 UI 状态（历史列表高亮用） */
+  private bindSession(id: number | undefined): void {
+    if (id == null) return;
+    this.store.bindSession(id);
+    this.ui.activeSessionId = id;
+  }
+
+  /**
+   * 切换到历史会话：旧会话退订、新会话校验+拉历史+订阅。
+   * 旧会话进行中的任务在服务端继续跑完不中断；切换期间的事件不再接收，
+   * 切回时靠 REST 历史重拉 + session_snapshot 对账还原。
+   * 任一步失败则回退到原会话订阅，不产生半切换状态。
+   */
+  private async switchSession(targetId: number): Promise<void> {
+    const previous = this.store.sessionId();
+    if (previous === targetId) return;
+    // 目标会话可达性校验（已删除/无权 → 3002/1002/403）
+    const session = await this.rest.request<EmbedSessionVO>('GET', `/sessions/${targetId}`);
+    // 退订旧会话：切换期间旧会话事件不再进入本地
+    if (previous != null) this.ws.unsubscribe(previous);
+    this.clearPendingSaves();
+    this.submittedQuestionIds.clear();
+    this.pageEngine.cancel();
+    this.ui.pageLogs = [];
+    this.ui.pageConfirm = null;
+    this.store.reset();
+    this.bindSession(session.id);
+    this.sessions.adoptSession(session);
+    this.tabs.claim(session.id);
+    this.applyPanelTitle();
+    this.ui.phase = session.phase ?? null;
+    this.ui.sessionError = null;
+    this.ui.questionSubmitting = false;
+    this.ui.pendingQuestion = null;
+    this.store.pendingQuestion.value = null;
+    // 订阅登记在前（重放快照先于 REST 返回也不丢），历史由 reloadHistory 合并
+    this.ws.subscribe(session.id);
+    await this.store.reloadHistory(this.fetchHistory);
+  }
+
+  /** 历史列表：切换会话（入口校验 + 失败回退） */
+  async selectHistory(id: number): Promise<void> {
+    if (this.store.sessionId() === id) {
+      this.ui.historyOpen = false;
+      return;
+    }
+    const previous = this.store.sessionId();
+    try {
+      await this.switchSession(id);
+      this.ui.historyOpen = false;
+    } catch (err) {
+      // 失败回退：若 store 已被切换则恢复原会话，避免半切换状态
+      if (previous != null && this.store.sessionId() !== previous) {
+        this.store.reset();
+        this.bindSession(previous);
+        this.ws.subscribe(previous);
+        await this.store.reloadHistory(this.fetchHistory).catch(() => undefined);
+      }
+      const message = err instanceof Error ? err.message : '切换会话失败';
+      this.ui.historyError = isConnectionError(err) ? CONNECT_ERROR_TEXT : message;
+      this.emitEvent({ type: 'error', message: `切换会话失败: ${message}` });
+    }
+  }
+
+  /** 展开/收起历史列表面板；展开时总是重新拉第一页 */
+  toggleHistory(): void {
+    this.ui.historyOpen = !this.ui.historyOpen;
+    if (this.ui.historyOpen) void this.loadHistoryPage(0);
+  }
+
+  /** 触底加载下一页 */
+  loadMoreHistory(): void {
+    if (!this.ui.historyHasMore || this.ui.historyLoading) return;
+    void this.loadHistoryPage(this.ui.historyItems.length);
+  }
+
+  private async loadHistoryPage(offset: number): Promise<void> {
+    this.ui.historyLoading = true;
+    this.ui.historyError = null;
+    try {
+      const page = await this.sessions.listSessions(offset);
+      const items: EmbedSessionListItem[] = page.items.map((s) => ({
+        id: s.id,
+        title: s.title ?? null,
+        updatedAt: s.updatedAt ?? null,
+        phase: s.phase ?? null,
+      }));
+      this.ui.historyItems = offset === 0 ? items : [...this.ui.historyItems, ...items];
+      this.ui.historyHasMore = page.hasMore;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载历史会话失败';
+      this.ui.historyError = isConnectionError(err) ? CONNECT_ERROR_TEXT : message;
+      if (offset === 0) this.ui.historyItems = [];
+    } finally {
+      this.ui.historyLoading = false;
     }
   }
 

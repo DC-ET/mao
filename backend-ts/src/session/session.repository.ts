@@ -1,7 +1,19 @@
 import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
 import { toSnakeRow } from '../common/case.js';
-import type { FileChange, Message, Session } from './types.js';
+import type { FileChange, Message, Session, SessionGroupPage } from './types.js';
+
+export const SESSION_SOURCE_VALUES = ['web', 'embed'] as const;
+export type SessionSource = (typeof SESSION_SOURCE_VALUES)[number];
+
+export const isSessionSource = (value: unknown): value is SessionSource =>
+  typeof value === 'string' && (SESSION_SOURCE_VALUES as readonly string[]).includes(value);
+
+export interface SessionListFilter {
+  userId: number;
+  agentId?: number | null;
+  source?: SessionSource | null;
+}
 
 export class SessionRepository {
   constructor(private readonly db: Db) {}
@@ -117,6 +129,7 @@ export class SessionRepository {
       unread: session.unread,
       parentSessionId: session.parentSessionId,
       sessionType: session.sessionType,
+      source: session.source ?? 'web',
       runtimeStatusJson: session.runtimeStatusJson,
     });
   }
@@ -173,6 +186,20 @@ export class SessionRepository {
       `SELECT * FROM \`session\` WHERE ${whereSql} AND ${notDeleted()} ${orderSql}`,
       params,
     );
+  }
+
+  /** Embed SDK 历史列表：user + agent + source 过滤，主会话，updated_at 倒序分页 */
+  async pageSessionsByFilter(filter: SessionListFilter, offset: number, limit: number): Promise<SessionGroupPage> {
+    const clauses = ['user_id = ?', `session_type NOT IN ('SUBAGENT', 'SIDE_TASK')`, 'status = ?', 'source = ?'];
+    const params: unknown[] = [filter.userId, 'ACTIVE', filter.source ?? 'web'];
+    if (filter.agentId != null) {
+      clauses.push('agent_id = ?');
+      params.push(filter.agentId);
+    }
+    const whereSql = clauses.join(' AND ');
+    const total = await this.count(whereSql, params);
+    const items = await this.list(whereSql, params, `ORDER BY updated_at DESC, id DESC LIMIT ${limit} OFFSET ${offset}`);
+    return { items, total, offset, limit, hasMore: offset + items.length < total };
   }
 
   async count(whereSql: string, params: unknown[]): Promise<number> {
