@@ -92,7 +92,7 @@ SDK 对话窗在新会话的空白态只显示静态提示文案（「有什么�
 
 ### 5.1 新表 `agent_suggested_questions`
 
-迁移文件：`backend-ts/db/migration/V109__agent_suggested_questions.sql`
+迁移文件：`backend-ts/db/migration/V110__agent_suggested_questions.sql`
 
 ```sql
 CREATE TABLE IF NOT EXISTS `agent_suggested_questions` (
@@ -216,7 +216,7 @@ export interface SuggestedQuestionInput {
 
 | 步骤 | 内容 | 产出 |
 |------|------|------|
-| 1 | Flyway `V109__agent_suggested_questions.sql` | 新表 |
+| 1 | Flyway `V110__agent_suggested_questions.sql` | 新表 |
 | 2 | types / repository：推荐问题 CRUD 与按 Agent 删除 | 领域层 |
 | 3 | `agent.service.ts`：create/update 全量同步（≤5 条、1～100 字校验）、delete 级联；错误码 | 服务层 |
 | 4 | `agent.routes.ts`：Request/VO 增加 `suggestedQuestions`；详情返回 | API |
@@ -232,7 +232,7 @@ export interface SuggestedQuestionInput {
 
 ### 10.1 后端（backend-ts）
 
-- [x] `V109__agent_suggested_questions.sql`
+- [x] `V110__agent_suggested_questions.sql`
 - [x] `agent/types.ts`：`AgentSuggestedQuestion` / `SuggestedQuestionInput`
 - [x] `agent/agent.repository.ts`：5 个推荐问题方法
 - [x] `agent/agent.service.ts`：全量同步 + 校验（≤5 条、1～100 字）+ 级联删除

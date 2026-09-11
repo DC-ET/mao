@@ -19,7 +19,7 @@
 
 ### 后端
 
-- Agent 新增「推荐问题」配置：新建/编辑/复制时随请求体嵌套 `suggestedQuestions` 全量同步，单 Agent 最多 5 条、单条 1～100 字（超限硬拒绝，新增错误码 3028/3029）；随 `GET /v1/agents/{id}` 详情返回，列表接口不返回；删除 Agent 时级联物理删除其推荐问题。新增迁移 `V109__agent_suggested_questions.sql`。
+- Agent 新增「推荐问题」配置：新建/编辑/复制时随请求体嵌套 `suggestedQuestions` 全量同步，单 Agent 最多 5 条、单条 1～100 字（超限硬拒绝，新增错误码 3028/3029）；随 `GET /v1/agents/{id}` 详情返回，列表接口不返回；删除 Agent 时级联物理删除其推荐问题。新增迁移 `V110__agent_suggested_questions.sql`。
 
 ### 管理后台
 
