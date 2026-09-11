@@ -68,6 +68,7 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
     :pending-question="ui.pendingQuestion"
     :question-submitting="ui.questionSubmitting"
     :quoted-selection="ui.quotedSelection"
+    :suggested-questions="ui.suggestedQuestions"
     :page-authorization="ui.pageAuthorization"
     :page-task-active="ui.pageTaskActive"
     :page-confirm="ui.pageConfirm"

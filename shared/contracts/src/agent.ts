@@ -13,6 +13,12 @@ export interface AgentAvatarUploadVO {
   avatarUrl: string;
 }
 
+export interface SuggestedQuestionVO {
+  id?: number;
+  content?: string;
+  sortOrder?: number | null;
+}
+
 export interface AgentVO {
   id?: number;
   name?: string;
@@ -28,5 +34,6 @@ export interface AgentVO {
   skillNames?: string[];
   mcpServerIds?: number[];
   experiences?: ExperienceVO[];
+  suggestedQuestions?: SuggestedQuestionVO[];
   createdAt?: string | null;
 }

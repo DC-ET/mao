@@ -41,8 +41,9 @@ import {
 } from './permission/permission.repository.js';
 import { PermissionService } from './permission/permission.service.js';
 import { registerPermissionRoutes } from './permission/permission.routes.js';
-import { MysqlAgentExperienceRepository, MysqlAgentRepository } from './agent/agent.repository.js';
+import { MysqlAgentExperienceRepository, MysqlAgentRepository, MysqlAgentSuggestedQuestionRepository } from './agent/agent.repository.js';
 import { AgentExperienceService } from './agent/agent-experience.service.js';
+import { AgentSuggestedQuestionService } from './agent/agent-suggested-question.service.js';
 import { AgentService } from './agent/agent.service.js';
 import { registerAgentAvatarRoutes } from './agent/agent-avatar.js';
 import { registerAgentRoutes } from './agent/agent.routes.js';
@@ -405,8 +406,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   const agentRepo = new MysqlAgentRepository(db);
   const experienceService = new AgentExperienceService(new MysqlAgentExperienceRepository(db));
+  const suggestedQuestionService = new AgentSuggestedQuestionService(new MysqlAgentSuggestedQuestionRepository(db));
   const modelRepo = new MysqlLlmModelRepository(db);
-  const agentService = new AgentService(agentRepo, experienceService, modelRepo);
+  const agentService = new AgentService(agentRepo, experienceService, suggestedQuestionService, modelRepo);
   const modelChatClient = new OpenAiChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
   const anthropicChatClient = new AnthropicChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
   const responsesChatClient = new ResponsesChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
@@ -1635,7 +1637,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerGitCredentialRoutes(api, gitCredentials);
     registerAgentAvatarRoutes(api, fileService, permissionService);
     registerAgentRoutes(api, {
-      agentService, experienceService, userRepo, mcpServerValidator: mcpValidator,
+      agentService, experienceService, suggestedQuestionService, userRepo, mcpServerValidator: mcpValidator,
       permissionService,
     });
     registerModelRoutes(api, { modelService, permissionService });

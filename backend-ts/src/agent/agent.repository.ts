@@ -8,6 +8,8 @@ import type {
   AgentExperienceRepository,
   AgentRepository,
   AgentPromptVersion,
+  AgentSuggestedQuestion,
+  AgentSuggestedQuestionRepository,
 } from './types.js';
 
 export class MysqlAgentRepository implements AgentRepository {
@@ -217,5 +219,49 @@ export class MysqlAgentExperienceRepository implements AgentExperienceRepository
 
   async deleteByAgentId(agentId: number): Promise<void> {
     await this.db.execute('DELETE FROM agent_experiences WHERE agent_id = ?', [agentId]);
+  }
+}
+
+export class MysqlAgentSuggestedQuestionRepository implements AgentSuggestedQuestionRepository {
+  constructor(private readonly db: Db) {}
+
+  listByAgentId(agentId: number): Promise<AgentSuggestedQuestion[]> {
+    return this.db.query<AgentSuggestedQuestion>(
+      'SELECT * FROM agent_suggested_questions WHERE agent_id = ? ORDER BY sort_order ASC, id ASC',
+      [agentId],
+    );
+  }
+
+  findById(id: number): Promise<AgentSuggestedQuestion | null> {
+    return this.db.queryOne<AgentSuggestedQuestion>(
+      'SELECT * FROM agent_suggested_questions WHERE id = ?', [id],
+    );
+  }
+
+  async insert(question: AgentSuggestedQuestion): Promise<number> {
+    const id = await this.db.insert('agent_suggested_questions', {
+      agentId: question.agentId,
+      content: question.content,
+      sortOrder: question.sortOrder ?? 0,
+    });
+    question.id = id;
+    return id;
+  }
+
+  async updateById(question: AgentSuggestedQuestion): Promise<void> {
+    if (question.id == null) return;
+    await this.db.updateById('agent_suggested_questions', question.id, {
+      agentId: question.agentId,
+      content: question.content,
+      sortOrder: question.sortOrder,
+    });
+  }
+
+  async deleteById(id: number): Promise<void> {
+    await this.db.execute('DELETE FROM agent_suggested_questions WHERE id = ?', [id]);
+  }
+
+  async deleteByAgentId(agentId: number): Promise<void> {
+    await this.db.execute('DELETE FROM agent_suggested_questions WHERE agent_id = ?', [agentId]);
   }
 }

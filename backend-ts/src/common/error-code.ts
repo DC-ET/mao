@@ -33,6 +33,8 @@ export const ErrorCode = {
   GIT_CREDENTIAL_DOMAIN_DUPLICATE: { code: 3022, message: '该域名的凭证已存在' },
   AGENT_EXPERIENCE_CONTENT_INVALID: { code: 3023, message: '最佳实践经验内容无效（需 1～300 字）' },
   AGENT_EXPERIENCE_NOT_FOUND: { code: 3024, message: '最佳实践经验不存在' },
+  AGENT_SUGGESTED_QUESTION_CONTENT_INVALID: { code: 3028, message: '推荐问题内容无效（需 1～100 字）' },
+  AGENT_SUGGESTED_QUESTION_LIMIT_EXCEEDED: { code: 3029, message: '推荐问题最多 5 条' },
   SCHEDULED_TASK_NOT_FOUND: { code: 3025, message: '定时任务不存在' },
   SCHEDULED_TASK_ACCESS_DENIED: { code: 3026, message: '无权操作该定时任务' },
   MESSAGE_ALREADY_COMPACTED: { code: 3027, message: '该消息已进入会话摘要，无法编辑' },

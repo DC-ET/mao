@@ -17,8 +17,8 @@ const { outputResult } = require('../output');
 const HELP = `用法:
   mao agent list [--keyword <关键词>]
   mao agent get --id <id>
-  mao agent create --name <名称> --system-prompt <提示词> [--description] [--tags] [--skill-names] [--experiences-json] [--is-default true|false]
-  mao agent update --id <id> [--name] [--description] [--system-prompt] [--tags] [--skill-names] [--experiences-json] [--is-default true|false]
+  mao agent create --name <名称> --system-prompt <提示词> [--description] [--tags] [--skill-names] [--experiences-json] [--suggested-questions-json] [--is-default true|false]
+  mao agent update --id <id> [--name] [--description] [--system-prompt] [--tags] [--skill-names] [--experiences-json] [--suggested-questions-json] [--is-default true|false]
   mao agent delete --id <id>
   mao agent experience list --agent-id <id>
   mao agent experience create --agent-id <id> --content <内容> [--sort-order] [--enabled]
@@ -34,6 +34,7 @@ function buildAgentBody(flags, { requireCore = false } = {}) {
   const tags = parseCsv(optionalString(flags, 'tags'));
   const skillNames = parseCsv(optionalString(flags, 'skill-names'));
   const experiences = parseJsonFlag(flags, 'experiences-json');
+  const suggestedQuestions = parseJsonFlag(flags, 'suggested-questions-json');
   const isDefault = optionalBoolean(flags, 'is-default');
   const defaultModelId = optionalNumber(flags, 'default-model-id');
 
@@ -48,6 +49,7 @@ function buildAgentBody(flags, { requireCore = false } = {}) {
   if (tags !== undefined) body.tags = tags;
   if (skillNames !== undefined) body.skillNames = skillNames;
   if (experiences !== undefined) body.experiences = experiences;
+  if (suggestedQuestions !== undefined) body.suggestedQuestions = suggestedQuestions;
   if (isDefault !== undefined) body.isDefault = isDefault ? 1 : 0;
   if (defaultModelId !== undefined) body.defaultModelId = defaultModelId || null;
   return body;

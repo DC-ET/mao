@@ -27,10 +27,12 @@ describe('CRUD routes', () => {
       listPromptVersions: vi.fn(async () => versions),
       rollbackPrompt: vi.fn(async () => agent),
       getAgentExperiences: vi.fn(async () => []),
+      getAgentSuggestedQuestions: vi.fn(async () => []),
     };
     const permissionService = { hasPermission: vi.fn(async () => false) };
     const app = await appWithUser(f => registerAgentRoutes(f, {
       agentService: service as never, experienceService: {} as never,
+      suggestedQuestionService: {} as never,
       userRepo: {} as never, mcpServerValidator: {} as never, permissionService,
     }));
     try {
@@ -65,6 +67,7 @@ describe('CRUD routes', () => {
       updateAgent: vi.fn(async () => agent),
       deleteAgent: vi.fn(),
       getAgentExperiences: vi.fn(async () => [{ id: 1, content: 'c', sortOrder: 0, enabled: 1 }]),
+      getAgentSuggestedQuestions: vi.fn(async () => [{ id: 1, content: 'q', sortOrder: 0 }]),
     };
     const experienceService = {
       listByAgentId: vi.fn(async () => [{ id: 1, content: 'c', sortOrder: 0, enabled: 1 }]),
@@ -72,12 +75,16 @@ describe('CRUD routes', () => {
       update: vi.fn(async () => ({ id: 1, content: 'u', sortOrder: 1, enabled: 1 })),
       delete: vi.fn(),
     };
+    const suggestedQuestionService = {
+      listByAgentId: vi.fn(async () => [{ id: 1, content: 'q', sortOrder: 0 }]),
+    };
     const userRepo = { findById: vi.fn(async () => ({ id: 7, username: 'ada', displayName: 'Ada' })) };
     const mcpServerValidator = { validateForAgent: vi.fn(async (ids: number[]) => ids) };
     const permissionService = { hasPermission: vi.fn(async () => true) };
     const app = await appWithUser((f) => registerAgentRoutes(f, {
       agentService: agentService as never,
       experienceService: experienceService as never,
+      suggestedQuestionService: suggestedQuestionService as never,
       userRepo: userRepo as never,
       mcpServerValidator: mcpServerValidator as never,
       permissionService,

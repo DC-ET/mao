@@ -126,6 +126,18 @@ function focus() {
   inputEl.value?.focus();
 }
 
+/** 供推荐问题点击后填入输入框：覆盖草稿并聚焦，由用户确认后手动发送 */
+function setText(value: string) {
+  text.value = value;
+  void nextTick(() => {
+    autoGrow();
+    inputEl.value?.focus();
+    // 光标置于末尾，便于继续补充
+    const el = inputEl.value;
+    if (el) el.selectionStart = el.selectionEnd = el.value.length;
+  });
+}
+
 function closeMenu() {
   authEl.value?.close();
 }
@@ -139,7 +151,7 @@ onBeforeUnmount(() => {
   attachments.value.forEach(revokePreview);
 });
 
-defineExpose({ focus, closeMenu, isMenuOpen });
+defineExpose({ focus, setText, closeMenu, isMenuOpen });
 </script>
 
 <template>

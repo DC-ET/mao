@@ -1,6 +1,6 @@
 # Agent 推荐问题（Suggested Questions）技术方案
 
-> 状态：方案已评审，待实现
+> 状态：已实现
 > 日期：2026-09-11
 > 范围：管理后台 Agent 管理 + 后端 Agent 详情接口 + SDK（sdk/embed）对话窗空白态
 
@@ -92,7 +92,7 @@ SDK 对话窗在新会话的空白态只显示静态提示文案（「有什么�
 
 ### 5.1 新表 `agent_suggested_questions`
 
-迁移文件：`backend-ts/db/migration/V109__agent_suggested_questions.sql`
+迁移文件：`backend-ts/db/migration/V110__agent_suggested_questions.sql`
 
 ```sql
 CREATE TABLE IF NOT EXISTS `agent_suggested_questions` (
@@ -216,7 +216,7 @@ export interface SuggestedQuestionInput {
 
 | 步骤 | 内容 | 产出 |
 |------|------|------|
-| 1 | Flyway `V109__agent_suggested_questions.sql` | 新表 |
+| 1 | Flyway `V110__agent_suggested_questions.sql` | 新表 |
 | 2 | types / repository：推荐问题 CRUD 与按 Agent 删除 | 领域层 |
 | 3 | `agent.service.ts`：create/update 全量同步（≤5 条、1～100 字校验）、delete 级联；错误码 | 服务层 |
 | 4 | `agent.routes.ts`：Request/VO 增加 `suggestedQuestions`；详情返回 | API |
@@ -232,32 +232,32 @@ export interface SuggestedQuestionInput {
 
 ### 10.1 后端（backend-ts）
 
-- [ ] `V109__agent_suggested_questions.sql`
-- [ ] `agent/types.ts`：`AgentSuggestedQuestion` / `SuggestedQuestionInput`
-- [ ] `agent/agent.repository.ts`：5 个推荐问题方法
-- [ ] `agent/agent.service.ts`：全量同步 + 校验（≤5 条、1～100 字）+ 级联删除
-- [ ] `common/error-code.ts`：新增 2 个错误码
-- [ ] `agent/agent.routes.ts`：Request/VO/详情返回/删除级联
-- [ ] 单测：`agent.routes.spec.ts` / `agent.service.spec.ts` 覆盖同步规则、校验拒绝、详情返回、级联删除
+- [x] `V110__agent_suggested_questions.sql`
+- [x] `agent/types.ts`：`AgentSuggestedQuestion` / `SuggestedQuestionInput`
+- [x] `agent/agent.repository.ts`：5 个推荐问题方法
+- [x] `agent/agent.service.ts`：全量同步 + 校验（≤5 条、1～100 字）+ 级联删除
+- [x] `common/error-code.ts`：新增 2 个错误码
+- [x] `agent/agent.routes.ts`：Request/VO/详情返回/删除级联
+- [x] 单测：`agent.routes.spec.ts` / `agent.service.spec.ts` 覆盖同步规则、校验拒绝、详情返回、级联删除
 
 ### 10.2 管理后台（admin）
 
-- [ ] `AgentFormDialog.vue`：新增「推荐问题」Tab（增删/排序/校验/嵌套提交/复制去 id）
-- [ ] `vue-tsc` 构建通过
+- [x] `AgentFormDialog.vue`：新增「推荐问题」Tab（增删/排序/校验/嵌套提交/复制去 id）
+- [x] `vue-tsc` 构建通过
 
 ### 10.3 SDK（sdk/embed）
 
-- [ ] `src/types.ts`：`AgentVO.suggestedQuestions`
-- [ ] `src/controller.ts`：boot 赋值 + 身份切换清空
-- [ ] `src/ui/ChatPanel.vue`：空白态竖排列表 + 点击 emit
-- [ ] `src/ui/Composer.vue`：`setText` 对外方法
-- [ ] Vitest：ChatPanel 空白态渲染/非空不渲染/点击填入；controller 赋值与失败兜底
+- [x] `src/types.ts`：`AgentVO.suggestedQuestions`
+- [x] `src/controller.ts`：boot 赋值 + 身份切换清空
+- [x] `src/ui/ChatPanel.vue`：空白态竖排列表 + 点击 emit
+- [x] `src/ui/Composer.vue`：`setText` 对外方法
+- [x] Vitest：ChatPanel 空白态渲染/非空不渲染/点击填入；controller 赋值与失败兜底
 
 ### 10.4 文档 / 其它
 
-- [ ] 本方案文档与实现保持一致（偏差回写）
-- [ ] CHANGELOG.md 顶部新增版本小节（用户可见改动：后台配置 + SDK 展示）
-- [ ] 不改：PromptEngine、运行时链路、desktop、飞书/微信、mao-agent、`GET /v1/agents` 列表
+- [x] 本方案文档与实现保持一致（偏差回写）
+- [x] CHANGELOG.md 顶部新增版本小节（用户可见改动：后台配置 + SDK 展示）
+- [x] 不改：PromptEngine、运行时链路、desktop、飞书/微信、mao-agent、`GET /v1/agents` 列表
 
 ### 10.5 验收标准
 
