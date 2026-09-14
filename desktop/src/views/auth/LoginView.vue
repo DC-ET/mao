@@ -62,14 +62,24 @@
           </el-button>
         </el-form-item>
         <el-button
-          v-if="authStore.features.feishuEnabled || authStore.features.ecpEnabled"
+          v-if="authStore.features.feishuEnabled"
           class="feishu-entry"
           size="large"
           plain
-          :loading="feishuLoading"
-          @click="startFeishuLogin"
+          :loading="feishuLoading && activeFeishuProvider === 'mao'"
+          @click="startFeishuLogin('mao')"
         >
           飞书登录
+        </el-button>
+        <el-button
+          v-if="authStore.features.ecpEnabled"
+          class="feishu-entry"
+          size="large"
+          plain
+          :loading="feishuLoading && activeFeishuProvider === 'ecp'"
+          @click="startFeishuLogin('ecp')"
+        >
+          ECP 飞书登录
         </el-button>
       </el-form>
 
@@ -80,9 +90,9 @@
           size="large"
           type="primary"
           :loading="feishuLoading"
-          @click="startFeishuLogin"
+          @click="startFeishuLogin(activeFeishuProvider)"
         >
-          飞书登录
+          {{ activeFeishuProvider === 'ecp' ? 'ECP 飞书登录' : '飞书登录' }}
         </el-button>
         <el-button class="password-entry" link @click="backToPasswordLogin">
           返回密码登录
@@ -105,6 +115,7 @@ import { useTheme } from '../../utils/theme'
 import { readRedirectQuery, safeRedirect } from '../../utils/login-redirect'
 
 type LoginMode = 'password' | 'feishu'
+type FeishuProvider = 'mao' | 'ecp'
 
 const authStore = useAuthStore()
 const route = useRoute()
@@ -118,6 +129,7 @@ const themeTooltip = computed(() => {
 })
 
 const mode = ref<LoginMode>('password')
+const activeFeishuProvider = ref<FeishuProvider>('mao')
 const passwordLoading = ref(false)
 const feishuLoading = ref(false)
 const feishuStatusText = ref('')
@@ -199,17 +211,18 @@ function saveRememberedUsername() {
   }
 }
 
-/** 双飞书并存时优先 Mao 飞书 OAuth；仅开 ECP 时走 ECP 票登录。 */
-const useEcpLogin = () => authStore.features.ecpEnabled && !authStore.features.feishuEnabled
+const isEcpProvider = () => activeFeishuProvider.value === 'ecp'
 
-async function startFeishuLogin() {
-  if (!authStore.features.feishuEnabled && !authStore.features.ecpEnabled) return
+async function startFeishuLogin(provider: FeishuProvider) {
+  if (provider === 'mao' && !authStore.features.feishuEnabled) return
+  if (provider === 'ecp' && !authStore.features.ecpEnabled) return
+  activeFeishuProvider.value = provider
   mode.value = 'feishu'
   feishuStatusText.value = '正在打开飞书授权页面…'
   feishuLoading.value = true
 
   try {
-    const qr = useEcpLogin()
+    const qr = isEcpProvider()
       ? await authStore.startEcpFeishuLogin()
       : await authStore.startFeishuLogin()
     const authUrl = qr.authUrl || qr.qrCodeUrl
@@ -218,9 +231,9 @@ async function startFeishuLogin() {
     if (window.electronAPI?.openFeishuAuthWindow) {
       // Electron: 内嵌窗口打开飞书授权页
       feishuStatusText.value = '请在打开的飞书授权窗口中完成登录'
-      const callbackPath = useEcpLogin() ? '/auth/ecp/feishu-callback' : undefined
+      const callbackPath = isEcpProvider() ? '/auth/ecp/feishu-callback' : undefined
       const result = await window.electronAPI.openFeishuAuthWindow(authUrl, callbackPath)
-      if (useEcpLogin() && result.state && result.code) {
+      if (isEcpProvider() && result.state && result.code) {
         feishuStatusText.value = '登录成功，正在获取用户信息…'
         const { data } = await api.post('/auth/ecp/feishu/callback', { state: result.state, code: result.code })
         await authStore.applyLogin(data)
@@ -260,7 +273,7 @@ async function checkFeishuStatus() {
   if (!feishuState || polling) return
   polling = true
   try {
-    const result = useEcpLogin()
+    const result = isEcpProvider()
       ? await authStore.pollEcpFeishuLogin(feishuState)
       : await authStore.pollFeishuLogin(feishuState)
     feishuPollFailures = 0
@@ -300,7 +313,7 @@ async function pollFeishuResult(state: string) {
     if (pollCancelled) return
     attempts++
     try {
-      const result = useEcpLogin()
+      const result = isEcpProvider()
         ? await authStore.pollEcpFeishuLogin(state)
         : await authStore.pollFeishuLogin(state)
       if (pollCancelled) return
@@ -475,8 +488,12 @@ onBeforeUnmount(() => {
 
 .feishu-entry {
   width: 100%;
-  margin-top: 4px;
+  margin-top: 8px;
   border-radius: var(--aw-radius-pill) !important;
+}
+
+.feishu-entry + .feishu-entry {
+  margin-top: 8px;
 }
 
 .feishu-panel {
