@@ -86,4 +86,18 @@ describe('scanPage', () => {
     const result = scanPage({});
     expect(result.elements.some((item) => item.descriptor.role === 'option' && item.descriptor.text === '张三')).toBe(true);
   });
+
+  it('labels el-select filter input from adjacent form-item title', () => {
+    document.body.innerHTML = `
+      <div class="el-form-item server">
+        <div class="el-form-item__label">服务:</div>
+        <div class="el-select">
+          <input class="el-select__input" data-testid="filter-input">
+        </div>
+      </div>`;
+    const result = scanPage({});
+    const filter = result.elements.find((item) => (item.element as HTMLElement).dataset?.testid === 'filter-input')!;
+    expect(filter.descriptor.label).toContain('服务');
+    expect(filter.descriptor.readonly).toBe(false);
+  });
 });

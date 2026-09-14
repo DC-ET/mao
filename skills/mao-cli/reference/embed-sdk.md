@@ -42,7 +42,7 @@ const chat = MaoChat.init({
 
 - **能力**：`page_inspect`（可见交互元素快照，含已打开的下拉建议）、`page_screenshot`（当前视口截图）、`page_observe`、`page_scroll`、`page_focus`、`page_fill`、`page_select`、`page_check` / `page_uncheck`、`page_click`、`page_keyboard`、`page_wait`、`page_actions`（有序批量）。
 - **元素引用**：只使用快照作用域内的 opaque `elementId`；不向 Agent 暴露 selector、XPath、outerHTML 或任意脚本。页面导航、SPA 路由或 DOM 重建后旧引用立即失效，Agent 必须重新 `page_inspect`。
-- **自定义下拉**：Vue Element / Ant Design 等远程搜索框不是原生 `<select>`。`page_fill` 对 combobox 默认保持焦点并短暂等待建议（可用 `blur: true` 强制失焦）；出现选项后重新 `page_inspect`，再 `page_click` 对应 option。`page_select` 只操作原生 `select`。
+- **自定义下拉**：Vue Element / Ant Design 等远程搜索框不是原生 `<select>`。`page_fill` 对 combobox 默认保持焦点并短暂等待建议（可用 `blur: true` 强制失焦）；出现选项后重新 `page_inspect`，再 `page_click` 对应 option。`page_select` 只操作原生 `select`。点中 option 后以 `observation.selected === true`（或重新 inspect 出现选中标签）为准；`multiple`/`allow-create` 下 fill 成功只代表过滤文本已写入，不代表 v-model 已绑定。
 - **授权**：默认 `per_action`（每个写操作前在浮窗确认）；用户可在输入框底部工具栏的授权下拉中切换 `task`（本次任务内有效，任务结束/切换会话/刷新后失效）或 `full`（按 Mao 用户身份、站点 Origin、Agent 持久化到 localStorage，可随时撤销）。授权键按 `serverUrl`、Origin、身份、agentId 和授权版本隔离，不保存 Token。宿主 `page.initialLevel` 与实例方法 `setPageAuthorization()` 只接受 `per_action`/`task`，传 `full` 会被降级；**完全授权只能由用户在浮窗内显式点击授予**，避免宿主一行代码替用户提权。
 - **敏感数据**：`per_action` 下快照中密码/验证码/银行卡等字段值脱敏；截图默认遮罩敏感区域，发送未遮罩原图会先请求确认；`full` 在授权范围内允许未遮罩。
 - **反馈与停止**：待确认动作（含高风险提示）以卡片出现在输入框上方，并高亮目标元素；用户点输入框停止按钮会终止整个任务（含页面操作），SDK 会取消等待中的确认并让后续动作失败。任务进行中会在输入框上方列出最近的页面动作（如「点击『保存』」），绿点成功、红点失败。

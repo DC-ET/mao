@@ -88,6 +88,60 @@ export function dispatchKeyEvents(target: EventTarget, options: KeyboardOptions)
   target.dispatchEvent(new KeyboardEvent('keyup', init));
 }
 
+function fireMouseLike(el: EventTarget, type: string, init: MouseEventInit): void {
+  if (type.startsWith('pointer') && typeof PointerEvent === 'function') {
+    try {
+      el.dispatchEvent(new PointerEvent(type, {
+        ...init,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true,
+      }));
+      return;
+    } catch { /* 某些环境 PointerEvent 构造失败则回退 MouseEvent */ }
+  }
+  el.dispatchEvent(new MouseEvent(type, init));
+}
+
+/**
+ * 模拟真实鼠标按下/抬起再 click。
+ * Element/Ant 等组件库常用 mousedown 防误关弹层，只派发 click 会选不中下拉项。
+ */
+export function dispatchNativeClick(el: HTMLElement): void {
+  const rect = el.getBoundingClientRect?.() ?? { left: 0, top: 0, width: 0, height: 0 };
+  const init: MouseEventInit = {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2,
+  };
+  if (typeof el.focus === 'function') el.focus();
+  fireMouseLike(el, 'pointerdown', init);
+  fireMouseLike(el, 'mousedown', init);
+  fireMouseLike(el, 'pointerup', init);
+  fireMouseLike(el, 'mouseup', init);
+  fireMouseLike(el, 'click', init);
+}
+
+/** 下拉项选中态：用于 click 后回读，避免 Agent 把「已点开/已过滤」当成「已选中」。 */
+export function readOptionSelected(el: Element): boolean | null {
+  // 节点已被父级重渲染替换时，旧节点上的 aria-selected/class 不可信
+  if (!el.isConnected) return null;
+  const aria = el.getAttribute('aria-selected');
+  if (aria === 'true') return true;
+  if (aria === 'false') return false;
+  if (
+    el.classList.contains('selected')
+    || el.classList.contains('is-selected')
+    || el.getAttribute('aria-checked') === 'true'
+    || el.getAttribute('data-selected') === 'true'
+  ) {
+    return true;
+  }
+  return null;
+}
+
 const CODE_MAP: Record<string, string> = {
   Enter: 'Enter', Escape: 'Escape', Esc: 'Escape', Tab: 'Tab', Backspace: 'Backspace',
   Delete: 'Delete', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight',
