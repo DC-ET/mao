@@ -212,7 +212,7 @@ interface ElectronAPI {
   maximizeWindow(): Promise<void>
   closeWindow(): Promise<void>
   openExternal(url: string): Promise<void>
-  openFeishuAuthWindow(authUrl: string): Promise<{ state: string }>
+  openFeishuAuthWindow(authUrl: string, callbackPath?: string): Promise<{ state: string; code?: string }>
   selectDirectory(): Promise<string | null>
   openFolder(folderPath: string): Promise<void>
   openTerminal(folderPath: string): Promise<void>

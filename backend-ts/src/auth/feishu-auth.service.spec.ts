@@ -83,6 +83,19 @@ describe('FeishuAuthService', () => {
     expect(await service.isEnabled()).toBe(true);
   });
 
+  it('isBindingOnlyStateWhenUserIdPresent', async () => {
+    const { service, stateRepo } = makeService();
+    stateRepo.findByState = vi.fn(async () => ({
+      state: 's1', status: FEISHU_PENDING, userId: 9, expiresAt: '2099-01-01 00:00:00',
+    }));
+    expect(await service.isBindingOnlyState('s1')).toBe(true);
+    expect(await service.isBindingOnlyState('')).toBe(false);
+    stateRepo.findByState = vi.fn(async () => ({
+      state: 's2', status: FEISHU_PENDING, userId: null, expiresAt: '2099-01-01 00:00:00',
+    }));
+    expect(await service.isBindingOnlyState('s2')).toBe(false);
+  });
+
   it('completeStateWithCodeCreatesUserAndPollReturnsLogin', async () => {
     const http: FeishuHttp = {
       postJson: vi.fn(async (url: string) => {

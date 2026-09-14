@@ -125,6 +125,10 @@ MaoChat.init({
 
 详见 [接入手册](skills/mao-cli/reference/embed-sdk.md#公司-sso-接入)。当前适配器针对公司 `checkToken` 协议，不是任意 SSO 的自动适配器。上线前须完成真实 SSO 联调；退出不等于立即撤销已签发 Token，后台任务仍继续。
 
+### ECP 飞书登录（全站 / CLOUD CLI）
+
+需要 CLOUD 定时任务或 Agent shell 调用内部网关 CLI（如 `bigdata-cli`）时，可在管理后台「系统设置 → 集成配置 → ECP 飞书登录」启用。用户通过 ECP 飞书登录 Mao；服务端加密保存 ECP `sessionToken` 并在 12 小时内自动 renew，CLOUD shell 将会话票写入虚拟 HOME 的 AccessOne 兼容目录。开启后密码、LDAP、Mao 飞书与公司 SSO 换票均不可用。须在 ECP 登记桌面与管理后台飞书回调 URL。详见 [技术方案](docs/plan/ecp-native-login-technical-design.md) 与 [配置参考](skills/mao-cli/reference/config.md)。
+
 ### 安全边界（接入前必读）
 
 以下三项为当前既定设计，接入方必须知情：

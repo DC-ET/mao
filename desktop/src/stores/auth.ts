@@ -43,12 +43,13 @@ export interface FeishuLoginStatus {
 
 export interface AuthFeatures {
   feishuEnabled: boolean
+  ecpEnabled: boolean
 }
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(getToken())
   const user = ref<User | null>(null)
-  const features = ref<AuthFeatures>({ feishuEnabled: false })
+  const features = ref<AuthFeatures>({ feishuEnabled: false, ecpEnabled: false })
 
   const permissions = computed(() => user.value?.permissions ?? [])
   const isAdmin = computed(() => Boolean(user.value?.isAdmin))
@@ -93,9 +94,23 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchAuthFeatures() {
     const { data } = await api.get('/auth/features')
     features.value = {
-      feishuEnabled: Boolean(data?.feishuEnabled)
+      feishuEnabled: Boolean(data?.feishuEnabled),
+      ecpEnabled: Boolean(data?.ecpEnabled),
     }
     return features.value
+  }
+
+  async function startEcpFeishuLogin(): Promise<FeishuQrCode> {
+    const { data } = await api.post('/auth/ecp/feishu/start', { target: 'desktop' })
+    return data
+  }
+
+  async function pollEcpFeishuLogin(state: string): Promise<FeishuLoginStatus> {
+    const { data } = await api.get('/auth/ecp/feishu/status', { params: { state } })
+    if (data.status === 'SUCCESS' && data.login) {
+      await applyLogin(data.login)
+    }
+    return data
   }
 
   async function pollFeishuLogin(state: string): Promise<FeishuLoginStatus> {
@@ -133,9 +148,12 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     hasPermission,
     login,
+    applyLogin,
     fetchAuthFeatures,
     startFeishuLogin,
+    startEcpFeishuLogin,
     pollFeishuLogin,
+    pollEcpFeishuLogin,
     logout,
     clearLocalSession,
     fetchUserInfo

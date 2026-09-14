@@ -1,4 +1,5 @@
 import { validateCompanySsoConfig, type CompanySsoConfig } from '../auth/company-sso.config.js';
+import { ECP_CONFIG_KEY, parseEcpConfig, type EcpConfig } from '../auth/ecp.config.js';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
@@ -209,6 +210,23 @@ export class SystemSettingService {
       return { enabled: false, allowedDomains: [], allowedOrigins: [], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true };
     }
     return this.parseCompanySsoConfig(setting.value);
+  }
+
+  async getEcpConfig(): Promise<EcpConfig> {
+    const setting = await this.settingRepo.findByKey(ECP_CONFIG_KEY);
+    if (!setting?.value) {
+      return parseEcpConfig(null);
+    }
+    return this.parseEcpConfig(setting.value);
+  }
+
+  private parseEcpConfig(value: unknown): EcpConfig {
+    try {
+      if (typeof value !== 'string') throw new Error();
+      return parseEcpConfig(value);
+    } catch {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'ECP 配置必须是完整有效的 JSON：enabled、appCode、baseUrl、loginVariant、timeoutMs、desktopCallbackUrl、adminCallbackUrl');
+    }
   }
 
   private parseCompanySsoConfig(value: unknown): CompanySsoConfig {
@@ -443,6 +461,9 @@ export class SystemSettingService {
     if (setting.settingKey === COMPANY_SSO_CONFIG_KEY) {
       const { requireHttps: _requireHttps, ...config } = this.parseCompanySsoConfig(value);
       return JSON.stringify(config);
+    }
+    if (setting.settingKey === ECP_CONFIG_KEY) {
+      return JSON.stringify(this.parseEcpConfig(value));
     }
     if (setting.isSecret === 1) {
       if (value == null) {

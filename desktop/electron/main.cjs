@@ -1202,7 +1202,11 @@ ipcMain.handle('open-external', async (event, url) => {
   await shell.openExternal(parsed.toString())
 })
 
-ipcMain.handle('open-feishu-auth-window', async (event, authUrl) => {
+ipcMain.handle('open-feishu-auth-window', async (event, payload) => {
+  const authUrl = typeof payload === 'string' ? payload : payload?.authUrl
+  const callbackPath = typeof payload === 'object' && payload?.callbackPath
+    ? payload.callbackPath
+    : '/api/v1/auth/feishu/callback'
   return new Promise((resolve) => {
     const authWindow = new BrowserWindow({
       width: 800,
@@ -1219,22 +1223,19 @@ ipcMain.handle('open-feishu-auth-window', async (event, authUrl) => {
     authWindow.loadURL(authUrl)
 
     let resolved = false
-    const CALLBACK_PATH = '/api/v1/auth/feishu/callback'
 
     function checkUrl(url) {
       if (resolved) return
       try {
         const parsed = new URL(url)
-        if (parsed.pathname === CALLBACK_PATH) {
+        if (parsed.pathname === callbackPath || parsed.pathname.endsWith(callbackPath)) {
           resolved = true
           const state = parsed.searchParams.get('state') || ''
-          // Short delay for the server to finish processing the callback
-          setTimeout(() => {
-            if (!authWindow.isDestroyed()) {
-              authWindow.close()
-            }
-            resolve({ state })
-          }, 500)
+          const code = parsed.searchParams.get('code') || ''
+          if (!authWindow.isDestroyed()) {
+            authWindow.close()
+          }
+          resolve({ state, code })
         }
       } catch {
         // ignore invalid URLs

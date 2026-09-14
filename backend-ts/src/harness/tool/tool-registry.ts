@@ -32,7 +32,7 @@ import { WriteFileTool } from './impl/write-file-tool.js';
 import { EditFileTool } from './impl/edit-file-tool.js';
 import { GlobSearchTool } from './impl/glob-search-tool.js';
 import { GrepSearchTool } from './impl/grep-search-tool.js';
-import { ShellSessionTool, type ShellTokenIssuer, type ShellUserLookup } from './impl/shell-session-tool.js';
+import { ShellSessionTool, type ShellEcpInjector, type ShellTokenIssuer, type ShellUserLookup } from './impl/shell-session-tool.js';
 import { WebSearchTool } from './impl/web-search-tool.js';
 import { OpenWebPageTool } from './impl/open-web-page-tool.js';
 import { GenerateImageTool } from './impl/generate-image-tool.js';
@@ -57,6 +57,7 @@ export interface DefaultToolRegistryDeps {
   gitCredentialService?: GitCredentialLookup | null;
   jwtService?: ShellTokenIssuer | null;
   shellUserLookup?: ShellUserLookup | null;
+  shellEcpInjector?: ShellEcpInjector | null;
   webSearch: () => Promise<WebSearchConfig>;
   webPage: WebPageConfig;
   imageModelLookup: ImageModelLookup;
@@ -97,7 +98,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new ShellSessionTool(
       deps.pathSandbox, deps.shellSessionManager, deps.outputManager,
       deps.backgroundTaskManager, deps.gitCredentialService,
-      deps.jwtService, deps.shellUserLookup,
+      deps.jwtService, deps.shellUserLookup, deps.shellEcpInjector,
     ),
     new WebSearchTool(deps.webSearch),
     new OpenWebPageTool(deps.webPage),

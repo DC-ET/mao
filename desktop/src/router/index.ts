@@ -12,6 +12,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true }
   },
   {
+    path: '/auth/ecp/feishu-callback',
+    name: 'EcpFeishuCallback',
+    component: () => import('../views/auth/EcpFeishuCallbackView.vue'),
+    meta: { public: true }
+  },
+  {
     path: '/',
     name: 'Layout',
     component: () => import('../components/common/Layout.vue'),

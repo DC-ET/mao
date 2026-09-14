@@ -87,7 +87,7 @@ jobs:
         working-directory: desktop
         # CI 只跑 vitest / vue-tsc / vite，不启动 Electron。跳过 lifecycle
         # 以免 electron 二进制下载和 node-pty 的 electron-rebuild 拖垮或弄挂 npm ci。
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --legacy-peer-deps
 
       - name: Run unit tests
         working-directory: desktop

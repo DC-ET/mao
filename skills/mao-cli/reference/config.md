@@ -45,6 +45,21 @@
 | `MAO_USER_HOME_DIR` | 否 | CLOUD 用户 HOME |
 | `MAO_BLUE_GREEN_DRAIN_SEC` | 否 | 蓝绿切换后停旧实例延迟，默认 60s |
 
+### ECP 飞书登录（全站）
+
+管理后台「系统设置 → 集成配置 → ECP 飞书登录」维护，默认关闭。配置键 `auth.ecp.config`（JSON），保存后对新登录与 renew 即时生效。开启后**关闭**密码、LDAP、Mao 飞书 OAuth 与公司 SSO 换票；用户通过 ECP 飞书登录 Mao，服务端加密保存 ECP `sessionToken` 并在 12 小时内自动 renew；CLOUD shell 将会话票写入虚拟 HOME 的 `~/.config/com.access.accessone/` 供内部 CLI（如 `bigdata-cli`）读取 Bearer。
+
+| 后台字段 | 默认 | 说明 |
+|------|------|------|
+| 启用 ECP 飞书登录 | 关闭 | 开启后其它登录方式不可用 |
+| appCode | EK6301 | ECP 应用编码 |
+| ECP API Base URL | `https://ecp.acg.team/api/v1` | 生产网关 |
+| loginVariant | PARTNER | 飞书授权变体，联调可调 |
+| 桌面回调 URL | `https://mao.etarch.cn/auth/ecp/feishu-callback` | 须在 ECP 登记 |
+| 管理后台回调 URL | `https://mao.etarch.cn/admin/auth/ecp/feishu-callback` | 须在 ECP 登记 |
+
+升级需执行 V111 迁移。`mao-cli` 本期不提供浏览器飞书登录，仅 Web/管理后台/Electron 入口。设计见 `docs/plan/ecp-native-login-technical-design.md`。
+
 ### 公司 SSO（Web Embed SDK）
 
 此集成在管理后台「系统设置 → 集成配置 → 公司 SSO」维护，默认关闭。配置以单条 `auth.companySso.config` JSON 保存在系统设置中，保存后对新换票请求及预检即时生效，无需重启；不再读取或自动导入 `SSO_*` 环境变量。业务系统仍在 `MaoChat.init` 的 `auth.checkUrl` 指定校验地址，校验协议仍为公司 checkToken 协议。

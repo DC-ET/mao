@@ -36,6 +36,12 @@
             :ready="settingsLoaded && !loading"
             @saved="fetchSettings"
           />
+          <EcpConfigPanel
+            :row="ecpRow"
+            :can-write="canWrite"
+            :ready="settingsLoaded && !loading"
+            @saved="fetchSettings"
+          />
           <IntegrationConfigPanel
             v-if="integrationRows.length > 0"
             :rows="integrationRows"
@@ -137,7 +143,9 @@ import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import IntegrationConfigPanel from './components/IntegrationConfigPanel.vue'
 import CompanySsoConfigPanel from './components/CompanySsoConfigPanel.vue'
+import EcpConfigPanel from './components/EcpConfigPanel.vue'
 import { COMPANY_SSO_KEY } from './companySsoConfig'
+import { ECP_CONFIG_KEY } from './ecpConfig'
 
 const authStore = useAuthStore()
 /** 后端 PUT /system-settings/:key 需 settings:write，无权限时禁用全部写控件 */
@@ -181,7 +189,8 @@ const loading = ref(false)
 const settingsLoaded = ref(false)
 const settings = ref<any[]>([])
 const companySsoRow = computed(() => settings.value.find((item) => item.settingKey === COMPANY_SSO_KEY))
-const SPECIAL_KEYS = new Set([...INTEGRATION_KEYS, COMPANY_SSO_KEY])
+const ecpRow = computed(() => settings.value.find((item) => item.settingKey === ECP_CONFIG_KEY))
+const SPECIAL_KEYS = new Set([...INTEGRATION_KEYS, COMPANY_SSO_KEY, ECP_CONFIG_KEY])
 const agents = ref<any[]>([])
 const models = ref<any[]>([])
 const activeSection = ref('')
@@ -298,7 +307,10 @@ const settingsByCategory = computed(() => {
 
 /** 目录索引：集成配置在前，普通分类在后。 */
 const toc = computed(() => {
-  const list: Array<{ id: string; label: string }> = [{ id: 'setting-group-company-sso', label: '公司 SSO' }]
+  const list: Array<{ id: string; label: string }> = [
+    { id: 'setting-group-company-sso', label: '公司 SSO' },
+    { id: 'setting-group-ecp', label: 'ECP 飞书登录' },
+  ]
   if (integrationRows.value.length > 0) list.push(...INTEGRATION_TOC)
   for (const category of categories.value) {
     list.push({ id: `setting-cat-${category}`, label: category })

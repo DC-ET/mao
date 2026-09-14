@@ -18,7 +18,7 @@
       </div>
 
       <el-form
-        v-if="mode === 'password'"
+        v-if="mode === 'password' && !authStore.features.ecpEnabled"
         ref="formRef"
         :model="form"
         :rules="formRules"
@@ -84,7 +84,7 @@
         >
           飞书登录
         </el-button>
-        <el-button class="password-entry" link @click="backToPasswordLogin">
+        <el-button v-if="!authStore.features.ecpEnabled" class="password-entry" link @click="backToPasswordLogin">
           返回密码登录
         </el-button>
       </div>
@@ -98,6 +98,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Sunrise, Moon, Sunny } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules, InputInstance } from 'element-plus'
+import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import appIcon from '../../assets/app-icon-small.png'
 import { useTheme } from '../../utils/theme'
@@ -143,8 +144,14 @@ let pollCancelled = false
 let feishuPollFailures = 0
 
 onMounted(() => {
-  void authStore.fetchAuthFeatures().catch(() => {
+  void authStore.fetchAuthFeatures().then(() => {
+    if (authStore.features.ecpEnabled) {
+      mode.value = 'feishu'
+      feishuStatusText.value = '请使用飞书登录'
+    }
+  }).catch(() => {
     authStore.features.feishuEnabled = false
+    authStore.features.ecpEnabled = false
   })
 })
 
@@ -197,22 +204,32 @@ function saveRememberedUsername() {
   }
 }
 
+const useEcpLogin = () => authStore.features.ecpEnabled
+
 async function startFeishuLogin() {
-  if (!authStore.features.feishuEnabled) return
+  if (!authStore.features.feishuEnabled && !authStore.features.ecpEnabled) return
   mode.value = 'feishu'
   feishuStatusText.value = '正在打开飞书授权页面…'
   feishuLoading.value = true
 
   try {
-    const qr = await authStore.startFeishuLogin()
+    const qr = useEcpLogin()
+      ? await authStore.startEcpFeishuLogin()
+      : await authStore.startFeishuLogin()
     const authUrl = qr.authUrl || qr.qrCodeUrl
     feishuState = qr.state
 
     if (window.electronAPI?.openFeishuAuthWindow) {
       // Electron: 内嵌窗口打开飞书授权页
       feishuStatusText.value = '请在打开的飞书授权窗口中完成登录'
-      const result = await window.electronAPI.openFeishuAuthWindow(authUrl)
-      if (result.state) {
+      const callbackPath = useEcpLogin() ? '/auth/ecp/feishu-callback' : undefined
+      const result = await window.electronAPI.openFeishuAuthWindow(authUrl, callbackPath)
+      if (useEcpLogin() && result.state && result.code) {
+        feishuStatusText.value = '登录成功，正在获取用户信息…'
+        const { data } = await api.post('/auth/ecp/feishu/callback', { state: result.state, code: result.code })
+        await authStore.applyLogin(data)
+        await finishLogin()
+      } else if (result.state) {
         feishuStatusText.value = '登录成功，正在获取用户信息…'
         await pollFeishuResult(feishuState)
       } else {
@@ -247,7 +264,9 @@ async function checkFeishuStatus() {
   if (!feishuState || polling) return
   polling = true
   try {
-    const result = await authStore.pollFeishuLogin(feishuState)
+    const result = useEcpLogin()
+      ? await authStore.pollEcpFeishuLogin(feishuState)
+      : await authStore.pollFeishuLogin(feishuState)
     feishuPollFailures = 0
     if (result.status === 'PENDING') {
       feishuStatusText.value = '等待飞书确认'
@@ -285,7 +304,9 @@ async function pollFeishuResult(state: string) {
     if (pollCancelled) return
     attempts++
     try {
-      const result = await authStore.pollFeishuLogin(state)
+      const result = useEcpLogin()
+        ? await authStore.pollEcpFeishuLogin(state)
+        : await authStore.pollFeishuLogin(state)
       if (pollCancelled) return
       if (result.status === 'SUCCESS') {
         feishuStatusText.value = '登录成功'

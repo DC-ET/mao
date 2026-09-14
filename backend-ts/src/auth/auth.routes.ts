@@ -5,10 +5,18 @@ import { hasText } from '../common/case.js';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { AuthService } from './auth.service.js';
+import type { EcpAuthService } from './ecp-auth.service.js';
+import { assertEcpDisabled } from './ecp.error.js';
 import type { FeishuAuthService } from './feishu-auth.service.js';
 
-export function registerAuthRoutes(app: FastifyInstance, auth: AuthService, feishu: FeishuAuthService): void {
+export function registerAuthRoutes(
+  app: FastifyInstance,
+  auth: AuthService,
+  feishu: FeishuAuthService,
+  ecp: EcpAuthService,
+): void {
   app.post('/v1/auth/login', async (request, reply) => {
+    assertEcpDisabled(await ecp.isEnabled());
     const body = bodyOf<{ username?: string; password?: string }>(request);
     if (!hasText(body.username) || !hasText(body.password)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '用户名不能为空');
@@ -17,15 +25,23 @@ export function registerAuthRoutes(app: FastifyInstance, auth: AuthService, feis
   });
 
   app.get('/v1/auth/features', async (_request, reply) => {
-    return sendOk(reply, { feishuEnabled: await feishu.isEnabled() });
+    const ecpEnabled = await ecp.isEnabled();
+    return sendOk(reply, {
+      feishuEnabled: ecpEnabled ? false : await feishu.isEnabled(),
+      ecpEnabled,
+    });
   });
 
   app.get('/v1/auth/feishu/qrcode', async (_request, reply) => {
+    assertEcpDisabled(await ecp.isEnabled());
     return sendOk(reply, await feishu.getQrCodeUrl());
   });
 
   app.post('/v1/auth/feishu/callback', async (request, reply) => {
-    const body = bodyOf<{ code?: string }>(request);
+    const body = bodyOf<{ code?: string; state?: string }>(request);
+    if (await ecp.isEnabled() && !(await feishu.isBindingOnlyState(body.state))) {
+      assertEcpDisabled(true);
+    }
     if (!hasText(body.code)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '授权码不能为空');
     }
@@ -34,11 +50,15 @@ export function registerAuthRoutes(app: FastifyInstance, auth: AuthService, feis
 
   app.get('/v1/auth/feishu/callback', async (request, reply) => {
     const q = request.query as { code?: string; state?: string };
+    if (await ecp.isEnabled() && !(await feishu.isBindingOnlyState(q.state))) {
+      assertEcpDisabled(true);
+    }
     const html = await feishu.renderCallbackPage(q.state, q.code);
     return reply.type('text/html; charset=utf-8').send(html);
   });
 
   app.get('/v1/auth/feishu/status', async (request, reply) => {
+    assertEcpDisabled(await ecp.isEnabled());
     const state = (request.query as { state?: string }).state ?? '';
     return sendOk(reply, await feishu.getLoginStatus(state));
   });

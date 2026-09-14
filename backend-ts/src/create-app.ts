@@ -29,6 +29,13 @@ import { CompanySsoIdentityRepository } from './auth/company-sso-identity.reposi
 import { CompanySsoService } from './auth/company-sso.service.js';
 import { registerCompanySsoRoutes } from './auth/company-sso.routes.js';
 import { CompanySsoError } from './auth/company-sso.error.js';
+import { EcpAuthService } from './auth/ecp-auth.service.js';
+import { createEcpCredentialsInjector } from './auth/ecp-credentials-injector.js';
+import { EcpIdentityRepository } from './auth/ecp-identity.repository.js';
+import { MysqlEcpOauthStateRepository } from './auth/ecp-oauth.repository.js';
+import { EcpRenewScheduler } from './auth/ecp-renew.scheduler.js';
+import { registerEcpAuthRoutes } from './auth/ecp.routes.js';
+import { MysqlEcpSessionRepository } from './auth/ecp-session.repository.js';
 import { MysqlUserRepository } from './user/user.repository.js';
 import { UserService } from './user/user.service.js';
 import { registerUserRoutes } from './user/user.routes.js';
@@ -374,6 +381,36 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       }
     },
   );
+  const ecpOAuthRepo = new MysqlEcpOauthStateRepository(db);
+  const ecpIdentityRepo = new EcpIdentityRepository(db);
+  const ecpSessionRepo = new MysqlEcpSessionRepository(db, settingsSecret);
+  const ecpAuth = new EcpAuthService(
+    userRepo,
+    ecpOAuthRepo,
+    ecpIdentityRepo,
+    ecpSessionRepo,
+    jwt,
+    authService,
+    () => settingService.getEcpConfig(),
+    undefined,
+    async (user, state) => {
+      const pending = await pendingBindingMessages.claim(state);
+      if (pending == null) return;
+      const unionId = pending.event.senderUnionId ?? pending.event.senderId;
+      if (unionId != null && user.id != null) {
+        await earlyFeishuBinding.bind(user.id, unionId);
+      }
+      if (pendingBindingProcessor != null) {
+        try {
+          await pendingBindingProcessor.process(String(pending.appId), { ...pending.event, progressCardMessageId: pending.cardMessageId }, true);
+          await pendingBindingMessages.complete(state);
+        } catch (error) {
+          await pendingBindingMessages.release(state);
+          console.error(`恢复飞书待绑定消息失败, state=${state}`, error);
+        }
+      }
+    },
+  );
   const gitCredentials = new GitCredentialService(db, cfg.app.gitCredential.secretKey);
   const gitLookup = {
     getTokenMapByUser: async (userId: number) => Object.fromEntries(await gitCredentials.getTokenMapByUser(userId)),
@@ -499,6 +536,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const userSkillsDir = cfg.app.harness.userSkillsDir || resolve(process.env.HOME ?? '/tmp', '.mao/data/userskills');
   const skillLoader = new SkillLoader(pathSandbox, cfg.app.harness.skillsDir, cfg.app.harness.skillsCacheSeconds);
   const runtimeResolver = new RuntimeDataResolver(cfg.app.harness.runtimeDir, cfg.app.harness.userHomeDir);
+  const ecpInjector = createEcpCredentialsInjector(
+    ecpSessionRepo,
+    (userId) => runtimeResolver.resolveUserHomeDir(userId),
+  );
   const skillSync = new SkillSyncService(skillLoader, pathSandbox, runtimeResolver, userSkillsDir);
   const userSkillService = new UserSkillService(userSkillsDir);
   const skillDocService = new SkillDocService(skillLoader);
@@ -622,6 +663,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     gitCredentials: gitLookup,
     shellToken: jwt,
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
+    ecpInjector,
     config: terminalCfg,
     audit: terminalAudit,
   });
@@ -728,6 +770,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     gitCredentialService: gitLookup,
     jwtService: jwt,
     shellUserLookup: { findById: (id: number) => userRepo.findById(id) },
+    shellEcpInjector: ecpInjector,
     webSearch: () => settingService.getWebSearchConfig(),
     webPage: harnessTuning.webPage,
     imageModelLookup: modelService,
@@ -1559,10 +1602,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sendUnauthorizedCard: async (accountId, event) => {
       const client = await getFeishuClient(Number(accountId));
       if (client == null || event.chatType !== 'group' || event.chatId == null || event.messageId == null) return false;
-      let auth;
+      let auth: { authUrl: string; state: string } | null = null;
       try {
-        auth = await feishu.getQrCodeUrl();
+        if (await ecpAuth.isEnabled()) {
+          auth = await ecpAuth.startFeishuLogin('desktop');
+        } else if (await feishu.isEnabled()) {
+          auth = await feishu.getQrCodeUrl();
+        }
       } catch { return false; }
+      if (auth == null) return false;
       await pendingBindingMessages.insert({ state: auth.state, appId: Number(accountId), messageId: event.messageId, event });
       const card = {
         schema: '2.0', config: { update_multi: true },
@@ -1595,15 +1643,24 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       }
       return true;
     },
-    unauthorizedText: async (_accountId, event) => {
+    unauthorizedText: async (accountId, event) => {
       const base = event.chatType === 'group'
         ? '请先完成飞书账号绑定，获得群内使用权限后再试。'
         : '请先完成飞书账号绑定后再试。';
       let link = '';
       try {
-        if (await feishu.isEnabled()) {
+        if (await ecpAuth.isEnabled()) {
+          const qr = await ecpAuth.startFeishuLogin('desktop');
+          link = qr.authUrl ?? '';
+          if (event.messageId != null) {
+            await pendingBindingMessages.insert({ state: qr.state, appId: Number(accountId), messageId: event.messageId, event });
+          }
+        } else if (await feishu.isEnabled()) {
           const qr = await feishu.getQrCodeUrl();
           link = qr.authUrl ?? '';
+          if (event.messageId != null) {
+            await pendingBindingMessages.insert({ state: qr.state, appId: Number(accountId), messageId: event.messageId, event });
+          }
         }
       } catch { link = ''; }
       return link ? `${base}\n点击完成绑定：${link}` : base;
@@ -1650,7 +1707,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     api.get('/v3/api-docs', async (_req, reply) => {
       return reply.send(app.swagger());
     });
-    registerAuthRoutes(api, authService, feishu);
+    registerAuthRoutes(api, authService, feishu, ecpAuth);
+    registerEcpAuthRoutes(api, ecpAuth);
     registerCompanySsoRoutes(api, new CompanySsoService(
       new CompanySsoClient(), new CompanySsoIdentityRepository(db), jwt,
     ), settingService, async (event) => {
@@ -1667,7 +1725,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         errorMessage: event.outcome === 'success' ? null : event.outcome,
         queryString: JSON.stringify({ requestId: event.requestId, provider: event.provider, durationMs: event.durationMs }),
       });
-    });
+    }, () => ecpAuth.isEnabled());
     registerUserRoutes(api, userService, userRepo, permissionService);
     registerPermissionRoutes(api, permissionService);
     registerGitCredentialRoutes(api, gitCredentials);
@@ -1793,6 +1851,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     senderRegistry,
   );
   deliveryScheduler.start();
+  const ecpRenewScheduler = new EcpRenewScheduler(
+    ecpSessionRepo,
+    () => settingService.getEcpConfig(),
+    undefined,
+    (token) => ecpSessionRepo.encryptToken(token),
+  );
+  ecpRenewScheduler.start();
   weixinMonitor.start();
   feishuMonitor.start();
   void pendingBindingMessages.listRecoverable().then(async (pending) => {
@@ -1871,6 +1936,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     async close() {
       scheduler.stop();
       deliveryScheduler.stop();
+      ecpRenewScheduler.stop();
       shellManager.stopCleanup();
       terminalManager.stopCleanup();
       terminalManager.closeAll();

@@ -15,6 +15,25 @@
 
 ---
 
+## 0.0.118 (2026-09-14)
+
+### 后端
+
+- 新增 ECP 原生飞书登录：管理后台「集成配置 → ECP 飞书登录」开启后，密码/LDAP/Mao 飞书/公司 SSO 换票入口关闭；飞书授权经 ECP `feishu-authorizations` + `sessions` 换票，按邮箱映射 Mao 用户并加密存储 `sessionToken`；常驻 `EcpRenewScheduler` 在到期前约 30 分钟 renew；CLOUD shell/云端终端向虚拟 HOME 写入 AccessOne 兼容目录供 `bigdata-cli` 等读取 Bearer。迁移 V111（`auth.ecp.config`、`user_ecp_session`、`ecp_oauth_state`）。设计见 `docs/plan/ecp-native-login-technical-design.md`。
+- ECP 开启时飞书 Bot 未绑定引导改为 ECP 飞书授权链接；登录成功后按消息事件中的 `union_id` 写入 `feishu_binding` 并重放原消息。设置页飞书绑定仍走 Mao 飞书 OAuth（仅绑定、非登录），ECP 模式下回调豁免。
+
+### 管理后台
+
+- 系统设置新增 ECP 飞书登录配置面板；开启后登录页仅保留飞书登录，回调路由 `/admin/auth/ecp/feishu-callback`。
+
+### 前端（桌面 / Web / 安卓）
+
+- ECP 开启时登录页仅飞书入口；Web/Electron 回调 `/auth/ecp/feishu-callback`；Electron 授权窗支持 ECP 回调路径并可直接完成换票。设置页「飞书Bot」在 ECP 模式下说明绑定与全站登录分离。
+
+### 桌面 Electron
+
+- `openFeishuAuthWindow` 支持自定义回调路径，ECP 飞书登录完成后提取 `code`/`state` 交回主窗口。
+
 ## 0.0.117 (2026-09-14)
 
 ### 前端（桌面 / Web / 安卓）

@@ -22,12 +22,19 @@ export interface CompanySsoAuditEvent {
 
 export type CompanySsoAuditCallback = (event: CompanySsoAuditEvent) => Promise<void>;
 
-export function registerCompanySsoRoutes(app: FastifyInstance, service: Pick<CompanySsoService, 'exchange'>, settings: CompanySsoSettings, audit?: CompanySsoAuditCallback): void {
+export function registerCompanySsoRoutes(
+  app: FastifyInstance,
+  service: Pick<CompanySsoService, 'exchange'>,
+  settings: CompanySsoSettings,
+  audit?: CompanySsoAuditCallback,
+  isEcpEnabled?: () => Promise<boolean>,
+): void {
   const limiter = new CompanySsoRateLimiter();
   app.post('/v1/auth/sso/exchange', { bodyLimit: 16 * 1024 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const start = Date.now();
     try {
+      if (isEcpEnabled != null && await isEcpEnabled()) throw new CompanySsoError('account_forbidden');
       const config = await companySsoConfigForRequest(request, settings);
       if (!config.enabled) throw new CompanySsoError('service_unavailable');
       if (config.requireHttps && request.protocol !== 'https') throw new CompanySsoError('account_forbidden');

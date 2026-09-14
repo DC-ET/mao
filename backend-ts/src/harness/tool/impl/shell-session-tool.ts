@@ -28,6 +28,10 @@ export interface ShellUserLookup {
   findById(userId: number): Promise<{ username?: string | null } | null>;
 }
 
+export interface ShellEcpInjector {
+  injectForUser(userId: number): Promise<void>;
+}
+
 /** bash 单引号转义，避免 JWT 等特殊字符破坏命令 */
 export function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -42,6 +46,7 @@ export class ShellSessionTool extends BaseTool {
     private readonly gitCredentialService?: GitCredentialLookup | null,
     private readonly jwtService?: ShellTokenIssuer | null,
     private readonly userLookup?: ShellUserLookup | null,
+    private readonly ecpInjector?: ShellEcpInjector | null,
   ) { super(); }
 
   getName(): string { return 'shell'; }
@@ -384,7 +389,15 @@ export class ShellSessionTool extends BaseTool {
 
   /** 为 CLOUD shell 注入短效 JWT，供 mao-*-cli 使用。必须在写入命令前完成，否则 export 会排到命令之后。 */
   private async injectMaoToken(session: ShellSession, userId: number | null): Promise<void> {
-    if (userId == null || !this.jwtService || !this.userLookup) return;
+    if (userId == null) return;
+    if (this.ecpInjector) {
+      try {
+        await this.ecpInjector.injectForUser(userId);
+      } catch (e) {
+        harnessLog('warn', `Failed to inject ECP credentials for userId=${userId}: ${(e as Error).message}`);
+      }
+    }
+    if (!this.jwtService || !this.userLookup) return;
     try {
       const user = await this.userLookup.findById(userId);
       const username = user?.username;

@@ -4,6 +4,7 @@
       <h1 class="page-title">飞书机器人绑定</h1>
       <p class="page-desc">
         完成飞书账号授权后，即可在飞书内与机器人对话。绑定以飞书 union_id 为身份锚，绑定一次对所有机器人通用。
+        <template v-if="ecpEnabled">全站已启用 ECP 飞书登录；此处绑定仍通过飞书应用 OAuth 获取 union_id，与全站登录票分离。</template>
       </p>
     </div>
 
@@ -66,6 +67,7 @@ interface FeishuBindingStatus {
 }
 
 const loading = ref(false)
+const ecpEnabled = ref(false)
 const authorized = ref(false)
 const unionId = ref('')
 const boundAt = ref('')
@@ -174,7 +176,15 @@ function clearPollTimer() {
   }
 }
 
-onMounted(loadStatus)
+onMounted(async () => {
+  try {
+    const { data } = await api.get<{ ecpEnabled?: boolean }>('/auth/features')
+    ecpEnabled.value = Boolean(data?.ecpEnabled)
+  } catch {
+    ecpEnabled.value = false
+  }
+  await loadStatus()
+})
 onUnmounted(clearPollTimer)
 </script>
 

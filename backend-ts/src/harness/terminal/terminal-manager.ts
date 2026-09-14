@@ -114,12 +114,17 @@ export class TerminalSpawnError extends Error {
   }
 }
 
+export interface TerminalEcpInjector {
+  injectForUser(userId: number): Promise<void>;
+}
+
 export interface TerminalManagerDeps {
   pathSandbox: TerminalPathSandbox;
   runtimeResolver: TerminalRuntimeResolver;
   gitCredentials?: TerminalGitCredentialLookup;
   shellToken?: TerminalShellTokenIssuer;
   userLookup?: TerminalUserLookup;
+  ecpInjector?: TerminalEcpInjector;
   config: TerminalManagerConfig;
   audit?: TerminalAuditRecorder;
   ptyFactory?: PtyFactory;
@@ -380,6 +385,13 @@ export class TerminalManager {
       } catch (e) {
         // Git 凭据缺失不应阻断终端创建
         harnessLog('warn', `Failed to load git credentials for user ${userId}`, e);
+      }
+    }
+    if (this.deps.ecpInjector) {
+      try {
+        await this.deps.ecpInjector.injectForUser(userId);
+      } catch (e) {
+        harnessLog('warn', `Failed to inject ECP credentials for user ${userId}`, e);
       }
     }
     if (this.deps.shellToken) {

@@ -56,6 +56,13 @@ export class FeishuAuthService {
     return cfg.enabled && hasText(cfg.appId) && cfg.appId !== '1234567890';
   }
 
+  /** 设置页发起的飞书绑定（state 携带目标 userId），ECP 全站登录开启时仍允许。 */
+  async isBindingOnlyState(state: string | undefined): Promise<boolean> {
+    if (!hasText(state)) return false;
+    const oauthState = await this.stateRepo.findByState(state!);
+    return oauthState?.userId != null;
+  }
+
   async getQrCodeUrl(userId?: number) {
     await this.ensureEnabled();
     await this.ensureAppIdConfigured();
