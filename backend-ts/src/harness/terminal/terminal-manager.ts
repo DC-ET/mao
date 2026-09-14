@@ -115,7 +115,7 @@ export class TerminalSpawnError extends Error {
 }
 
 export interface TerminalEcpInjector {
-  injectForUser(userId: number): Promise<void>;
+  injectForUser(userId: number): Promise<string | null>;
 }
 
 export interface TerminalManagerDeps {
@@ -389,7 +389,8 @@ export class TerminalManager {
     }
     if (this.deps.ecpInjector) {
       try {
-        await this.deps.ecpInjector.injectForUser(userId);
+        const ecpToken = await this.deps.ecpInjector.injectForUser(userId);
+        if (ecpToken) env.ECP_TOKEN = ecpToken;
       } catch (e) {
         harnessLog('warn', `Failed to inject ECP credentials for user ${userId}`, e);
       }

@@ -81,7 +81,7 @@ CLI 只读诊断：`mao file workspace-*`（见 [file.md](file.md)）。
 | LOCAL | Electron | 可用（本机 shell） |
 | LOCAL | Web / 安卓 | 不可用（提示「本地任务的终端仅在桌面客户端可用」） |
 
-**云端终端**：跑在后端服务器上的交互式 bash，工作目录为任务工作区，环境变量与 Agent 的 Shell 工具一致（虚拟 HOME、`GIT_TOKEN_*`、`GIT_ASKPASS`、`MAO_TOKEN`、`MAO_TASK_NAME`），首次使用写入默认 `.bashrc`。权限 `terminal:use` 默认只授管理员角色；无权限时按钮置灰并提示原因。
+**云端终端**：跑在后端服务器上的交互式 bash，工作目录为任务工作区，环境变量与 Agent 的 Shell 工具一致（虚拟 HOME、`GIT_TOKEN_*`、`GIT_ASKPASS`、`MAO_TOKEN`、`ECP_TOKEN`（有 ECP 票时）、`MAO_TASK_NAME`），首次使用写入默认 `.bashrc`。权限 `terminal:use` 默认只授管理员角色；无权限时按钮置灰并提示原因。
 
 - **断线**：网络抖动或切页后自动重连并重新接入原终端，回放最近输出（默认 256KB，超出提示已截断）；输出过快时会丢弃部分内容并提示。
 - **切任务 / 收起面板**：会解绑云端终端（服务端进程继续跑），切回或重新打开时自动接入并回放输出。解绑后的终端开始计空闲时间，长期不用会被回收。

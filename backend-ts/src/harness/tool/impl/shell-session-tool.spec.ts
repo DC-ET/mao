@@ -186,6 +186,49 @@ describe('ShellSessionTool marker and environment handling', () => {
     expect(script.indexOf('export MAO_TOKEN')).toBeLessThan(script.indexOf('mao-admin-cli'));
   });
 
+  it('exports ECP_TOKEN when user has an active ECP session', async () => {
+    const ecpInjector = { injectForUser: vi.fn(async () => 'ecp-tok"en') };
+    const shellSession = {
+      sessionId: 'sh-1',
+      writeStdin: vi.fn(),
+      incrementCommandCount: vi.fn(),
+      touch: vi.fn(),
+      currentWorkdir: '/tmp',
+      outputFile: '/tmp/out.log',
+      isAlive: () => true,
+      pendingCommand: null as { marker: string; keepSession: boolean; persist: boolean; taskId: string | null } | null,
+      beginCommand(marker: string, keepSession: boolean, persist = true, taskId: string | null = null) {
+        shellSession.pendingCommand = { marker, keepSession, persist, taskId };
+      },
+    };
+    const sessionManager = {
+      getOrCreate: vi.fn(() => shellSession),
+      getSession: vi.fn(() => shellSession),
+      close: vi.fn(),
+      listByConversation: vi.fn(() => [shellSession]),
+    };
+    const outputManager = {
+      readUntilMarker: vi.fn(async () => {
+        shellSession.pendingCommand = null;
+        return { output: 'ok\n', truncated: false, completed: true, exitCode: 0, matched: null };
+      }),
+    };
+    const withEcp = new ShellSessionTool(
+      { resolve: vi.fn((p: string) => p), resolveLenient: vi.fn((p: string) => p) } as never,
+      sessionManager as never,
+      outputManager as never,
+      { submit: vi.fn(() => 'task-1') } as never,
+      null,
+      { generateShellToken: vi.fn(() => 'jwt-to"ken') },
+      { findById: vi.fn(async () => ({ username: 'alice' })) },
+      ecpInjector,
+    );
+    await withEcp.execute(JSON.stringify({ command: 'echo $ECP_TOKEN' }), 11, 7, '/tmp');
+    const script = shellSession.writeStdin.mock.calls.map((c) => String(c[0])).join('');
+    expect(script).toContain(`export ECP_TOKEN='ecp-tok"en'`);
+    expect(script.indexOf('export ECP_TOKEN')).toBeLessThan(script.indexOf('echo $ECP_TOKEN'));
+  });
+
   it('injects a fresh MAO_TOKEN before write_stdin commands on a reused session', async () => {
     const { tool, written } = harness();
     await tool.execute(

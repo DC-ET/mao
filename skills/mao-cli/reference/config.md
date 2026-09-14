@@ -47,7 +47,7 @@
 
 ### ECP 飞书登录（全站）
 
-管理后台「系统设置 → 集成配置 → ECP 飞书登录」维护，默认关闭。配置键 `auth.ecp.config`（JSON），保存后对新登录与 renew 即时生效。开启后**新增** ECP 飞书登录入口，不关闭密码、LDAP、Mao 飞书 OAuth 与公司 SSO 换票；仅经 ECP 飞书登录的用户会加密保存 ECP `sessionToken` 并在 12 小时内自动 renew，CLOUD shell 将会话票写入虚拟 HOME 的 `~/.config/com.access.accessone/` 供内部 CLI（如 `bigdata-cli`）读取 Bearer。
+管理后台「系统设置 → 集成配置 → ECP 飞书登录」维护，默认关闭。配置键 `auth.ecp.config`（JSON），保存后对新登录与 renew 即时生效。开启后**新增** ECP 飞书登录入口，不关闭密码、LDAP、Mao 飞书 OAuth 与公司 SSO 换票；仅经 ECP 飞书登录的用户会加密保存 ECP `sessionToken` 并在 12 小时内自动 renew，CLOUD shell 将会话票写入虚拟 HOME 的 `~/.config/com.access.accessone/` 供内部 CLI（如 `bigdata-cli`）读取 Bearer，并注入环境变量 `ECP_TOKEN`。
 
 | 后台字段 | 默认 | 说明 |
 |------|------|------|
@@ -176,7 +176,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 | 公司 SSO 换票 | Web Embed SDK 回调提供公司 Token，Mao 官方校验后签发 access，自动续期，不签发 refresh |
 | JWT | 桌面/管理后台/CLI 共用；管理接口看权限不看 token 来源 |
 
-云端 CLOUD shell 会为当前会话用户注入短效 `MAO_TOKEN`，供 `mao` CLI 免登录。
+云端 CLOUD shell 会为当前会话用户注入短效 `MAO_TOKEN`，供 `mao` CLI 免登录；若该用户经 ECP 飞书登录且票仍有效，同时注入 `ECP_TOKEN`（明文 ECP `sessionToken`）。
 
 ## API 前缀与文档
 

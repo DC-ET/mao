@@ -20,6 +20,7 @@
 ### 后端
 
 - 取消 ECP 与其它登录方式互斥：密码/LDAP、Mao 飞书、公司 SSO 换票、ECP 飞书可同时可用；仅 ECP 飞书登录会写入 `user_ecp_session` 供 CLOUD shell 注入。
+- CLOUD shell / 云端终端：用户有有效 ECP 票时除 AccessOne 布局外，额外注入环境变量 `ECP_TOKEN`（与 `MAO_TOKEN` 并列）。
 
 ### 管理后台
 

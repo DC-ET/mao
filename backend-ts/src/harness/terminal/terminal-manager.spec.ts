@@ -80,6 +80,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
   audit?: Array<{ event: TerminalAuditEvent; terminalId: string; errorMessage?: string | null }>;
   ptyFactory?: PtyFactory;
   tokenMap?: Record<string, string>;
+  ecpInjector?: { injectForUser: (userId: number) => Promise<string | null> };
 } = {}): Promise<{ manager: TerminalManager; root: string }> {
   const root = await mkdtemp(join(tmpdir(), 'mao-term-'));
   const sandbox = new PathSandbox(root);
@@ -89,6 +90,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
     gitCredentials: extra.tokenMap ? { getTokenMapByUser: async () => extra.tokenMap! } : undefined,
     shellToken: { generateShellToken: (userId, username) => `tok-${userId}-${username}` },
     userLookup: { findById: async (id) => ({ id, username: `user${id}` }) },
+    ecpInjector: extra.ecpInjector,
     config: config(overrides),
     ptyFactory: extra.ptyFactory ?? fakeFactory,
     audit: extra.audit
@@ -139,6 +141,14 @@ describe('clampInt', () => {
 });
 
 describe('TerminalManager', () => {
+  it('injects ECP_TOKEN when user has an active ECP session', async () => {
+    const { manager, root } = await newManager({}, {
+      ecpInjector: { injectForUser: async () => 'ecp-session-token' },
+    });
+    await manager.create({ sessionId: 8, userId: 5, workspace: root });
+    expect(FakePty.instances[0].options.env.ECP_TOKEN).toBe('ecp-session-token');
+  });
+
   it('creates a terminal with task env, virtual HOME and default rc', async () => {
     const audit: Array<{ event: TerminalAuditEvent; terminalId: string }> = [];
     const { manager, root } = await newManager({}, { audit, tokenMap: { 'git.example.com': 'tok' } });

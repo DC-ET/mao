@@ -29,7 +29,7 @@ export interface ShellUserLookup {
 }
 
 export interface ShellEcpInjector {
-  injectForUser(userId: number): Promise<void>;
+  injectForUser(userId: number): Promise<string | null>;
 }
 
 /** bash 单引号转义，避免 JWT 等特殊字符破坏命令 */
@@ -392,7 +392,10 @@ export class ShellSessionTool extends BaseTool {
     if (userId == null) return;
     if (this.ecpInjector) {
       try {
-        await this.ecpInjector.injectForUser(userId);
+        const ecpToken = await this.ecpInjector.injectForUser(userId);
+        if (ecpToken) {
+          session.writeStdin('export ECP_TOKEN=' + shellSingleQuote(ecpToken) + '\n');
+        }
       } catch (e) {
         harnessLog('warn', `Failed to inject ECP credentials for userId=${userId}: ${(e as Error).message}`);
       }
