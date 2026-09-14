@@ -240,7 +240,8 @@ export class PageUncheckTool extends PageToolBase {
 export class PageClickTool extends PageToolBase {
   getName(): string { return 'page_click'; }
   getDescription(): string {
-    return '点击快照中可见且可操作的按钮、链接或控件，不使用坐标。执行后会检测导航、DOM 变化或控件状态变化；verified=false 时请重新 inspect。';
+    return '点击快照中可见且可操作的按钮、链接或控件，不使用坐标。会派发完整鼠标序列（mousedown/mouseup/click），适配 Element/Ant 等自定义下拉项。'
+      + '点击后会检测导航、DOM 变化或控件状态变化；点下拉 option 时 observation.selected=true 才表示已选中，false/null 时请重新 page_inspect 确认选中标签，不要直接点查询。';
   }
   getInputSchema(): Record<string, unknown> {
     return { type: 'object', properties: { snapshotId: { type: 'string' }, elementId: { type: 'string' } }, required: ['snapshotId', 'elementId'] };

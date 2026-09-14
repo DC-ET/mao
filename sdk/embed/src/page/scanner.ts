@@ -104,6 +104,12 @@ function labelOf(el: Element): string {  const parts: string[] = [];
     const value = el.getAttribute(attr);
     if (value) parts.push(value);
   }
+  // Element/Ant 表单项：内部 input 往往没有 <label for>，用 form-item 标题补充
+  const formItem = el.closest('.el-form-item, .ant-form-item');
+  if (formItem) {
+    const label = formItem.querySelector(':scope > .el-form-item__label, :scope > .ant-form-item-label, :scope > label');
+    if (label) parts.push(textOf(label));
+  }
   const unique = Array.from(new Set(parts.map((p) => p.trim()).filter(Boolean)));
   return unique.join(' / ').slice(0, 500);
 }

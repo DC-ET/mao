@@ -75,5 +75,7 @@ describe('page tools', () => {
     expect(toolOf(tools, 'page_fill').getDescription()).toContain('远程搜索');
     expect(toolOf(tools, 'page_select').getDescription()).toContain('原生 HTML select');
     expect(toolOf(tools, 'page_inspect').getDescription()).toContain('下拉建议');
+    expect(toolOf(tools, 'page_click').getDescription()).toContain('mousedown');
+    expect(toolOf(tools, 'page_click').getDescription()).toContain('observation.selected');
   });
 });

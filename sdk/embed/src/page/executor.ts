@@ -6,9 +6,9 @@ import { PageSnapshotManager, type ResolvedElement } from './snapshot-manager';
 import {
   isCheckable, isDisabled, isEditable, isReadonly, isVisible,
 } from './visibility';
-import { collectVisibleOptionLabels, isSearchLikeField } from './scanner';
+import { collectVisibleOptionLabels, isDropdownOption, isSearchLikeField } from './scanner';
 import {
-  dispatchBlur, dispatchKeyEvents, dispatchValueEvents, setElementValue,
+  dispatchBlur, dispatchKeyEvents, dispatchNativeClick, dispatchValueEvents, readOptionSelected, setElementValue,
 } from './framework-events';
 
 export interface AuthorizeAction {
@@ -390,17 +390,29 @@ export class PageExecutor {
       } catch { observer = null; }
     }
     try {
-      (el as HTMLElement).click();
+      dispatchNativeClick(el as HTMLElement);
     } finally {
       await settle();
       observer?.disconnect();
     }
     const after = stateOf(el);
     const effect = observeEffect(before, after, mutated);
+    const observation: Record<string, unknown> = {};
+    if (isDropdownOption(el) || before.ariaSelected != null || after.ariaSelected != null) {
+      const selected = inferOptionSelected(el);
+      if (selected != null) observation.selected = selected;
+      if (selected !== true) {
+        observation.note = '选项点击已下发，但未读到选中态；请重新 page_inspect 确认是否出现选中标签';
+      }
+    }
+    if (effect === 'none' && observation.note == null) {
+      observation.note = '点击已下发但未观察到页面变化，请重新 page_inspect 确认';
+    }
     return {
       success: true, action, pageVersion: this.manager.pageVersion, snapshotId,
-      verified: effect !== 'none', effect,
-      ...(effect === 'none' ? { observation: { note: '点击已下发但未观察到页面变化，请重新 page_inspect 确认' } } : {}),
+      verified: effect !== 'none' || observation.selected === true,
+      effect,
+      ...(Object.keys(observation).length > 0 ? { observation } : {}),
     };
   }
 
@@ -441,6 +453,28 @@ function describeResolveFailure(code: string | undefined): string {
   if (code === 'snapshot_expired') return '快照已失效（页面已导航或重新 inspect），请重新调用 page_inspect';
   if (code === 'element_changed') return '目标元素语义已变化，请重新 page_inspect 后重试';
   return '目标元素已不存在或不可用，请重新 page_inspect';
+}
+
+function optionText(el: Element): string {
+  return (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** 点击后回读下拉选中态：原节点可能被组件库重渲染替换，需在当前 DOM 中按文案回查。 */
+function inferOptionSelected(el: Element): boolean | null {
+  const direct = readOptionSelected(el);
+  if (direct != null) return direct;
+  const label = optionText(el);
+  if (!label) return null;
+  for (const node of document.querySelectorAll('.el-select-dropdown__item, [role="option"]')) {
+    if (optionText(node) !== label) continue;
+    const selected = readOptionSelected(node);
+    if (selected != null) return selected;
+  }
+  for (const tag of document.querySelectorAll('.el-tag, .el-select__selected-item, .el-select__tags .el-tag')) {
+    const text = optionText(tag);
+    if (text === label || (tag as HTMLElement).dataset?.value === label) return true;
+  }
+  return null;
 }
 
 async function waitForVisibleOptions(maxMs: number, shouldAbort?: () => boolean): Promise<string[]> {
