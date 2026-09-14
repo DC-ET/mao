@@ -18,7 +18,7 @@ async function setup(page: Page) {
     const request = route.request()
     const path = new URL(request.url()).pathname
     let data: unknown = []
-    if (path.endsWith('/auth/login')) data = { accessToken: 'test-token', refreshToken: 'test-refresh' }
+    if (path.endsWith('/auth/admin/login') || path.endsWith('/auth/login')) data = { accessToken: 'test-token', refreshToken: 'test-refresh' }
     else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', displayName: '管理员', permissions: ['agent:read', 'agent:write'] }
     else if (path.endsWith('/agents/avatar') && request.method() === 'POST') {
       uploads.push(request)

@@ -64,7 +64,7 @@ api.interceptors.response.use(
         // 静默刷新 token 后重试原请求；刷新失败才登出。
         const original = config as AxiosRequestConfig
         const url = original.url || ''
-        if (url.includes('/auth/refresh') || url.includes('/auth/login')) {
+        if (url.includes('/auth/refresh') || url.includes('/auth/login') || url.includes('/auth/admin/login')) {
           forceLogout()
           return Promise.reject(error)
         }

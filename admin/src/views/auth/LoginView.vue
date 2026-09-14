@@ -5,7 +5,7 @@
       <h2>Mao 管理后台</h2>
       <p class="login-hint">平台配置、会话排障与权限治理</p>
 
-      <el-form v-if="!ecpEnabled" :model="form" @submit.prevent="handleLogin">
+      <el-form :model="form" @submit.prevent="handleLogin">
         <el-form-item>
           <el-input
             v-model="form.username"
@@ -42,12 +42,15 @@
         </el-form-item>
       </el-form>
 
-      <div v-else class="feishu-panel">
-        <p class="feishu-status">{{ feishuStatusText }}</p>
-        <el-button type="primary" size="large" :loading="feishuLoading" style="width: 100%" @click="startFeishuLogin">
-          飞书登录
-        </el-button>
-      </div>
+      <template v-if="ecpEnabled">
+        <div class="login-divider">或</div>
+        <div class="feishu-panel">
+          <p class="feishu-status">{{ feishuStatusText }}</p>
+          <el-button type="default" size="large" :loading="feishuLoading" style="width: 100%" @click="startFeishuLogin">
+            飞书登录
+          </el-button>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -203,8 +206,15 @@ async function checkFeishuStatus() {
   margin-bottom: 24px;
 }
 
+.login-divider {
+  margin: 20px 0 16px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
 .feishu-status {
   margin-bottom: 16px;
   color: var(--el-text-color-regular);
+  font-size: 13px;
 }
 </style>

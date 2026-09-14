@@ -117,7 +117,7 @@ mao auth whoami
 
 `data.feishuEnabled`：布尔值（与 `ecpEnabled` 互斥，ECP 开启时为 `false`）。
 
-`data.ecpEnabled`：布尔值；为 `true` 时须使用 ECP 飞书登录（`POST /v1/auth/ecp/feishu/start`），密码/Mao 飞书/公司 SSO 换票接口将拒绝。
+`data.ecpEnabled`：布尔值；为 `true` 时桌面端须使用 ECP 飞书登录（`POST /v1/auth/ecp/feishu/start`），`POST /v1/auth/login`、Mao 飞书/公司 SSO 换票将拒绝；管理后台账号密码走 `POST /v1/auth/admin/login`。
 
 ### 示例
 

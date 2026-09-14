@@ -103,7 +103,7 @@ async function openSettings(page: Page, raw: string | null | undefined, canWrite
     const request = route.request()
     const path = new URL(request.url()).pathname
     let data: unknown = []
-    if (path.endsWith('/auth/login')) data = { accessToken: 'sso-test-token', refreshToken: 'sso-test-refresh' }
+    if (path.endsWith('/auth/admin/login') || path.endsWith('/auth/login')) data = { accessToken: 'sso-test-token', refreshToken: 'sso-test-refresh' }
     if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', permissions: ['settings:read', ...(canWrite ? ['settings:write'] : [])] }
     if (path.endsWith('/system-settings')) data = raw === undefined ? [] : [{ settingKey: COMPANY_SSO_KEY, value: raw, editable, category: '认证' }]
     if (request.method() === 'PUT') {

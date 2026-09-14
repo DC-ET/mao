@@ -24,6 +24,15 @@ export function registerAuthRoutes(
     return sendOk(reply, await auth.login(body.username!, body.password!));
   });
 
+  /** 管理后台专用：ECP 开启时仍允许账号密码登录（桌面端仍走 ECP 飞书）。 */
+  app.post('/v1/auth/admin/login', async (request, reply) => {
+    const body = bodyOf<{ username?: string; password?: string }>(request);
+    if (!hasText(body.username) || !hasText(body.password)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '用户名不能为空');
+    }
+    return sendOk(reply, await auth.login(body.username!, body.password!));
+  });
+
   app.get('/v1/auth/features', async (_request, reply) => {
     const ecpEnabled = await ecp.isEnabled();
     return sendOk(reply, {
