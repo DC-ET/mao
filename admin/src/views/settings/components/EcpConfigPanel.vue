@@ -9,7 +9,7 @@
       </template>
       <el-alert v-if="ready && !row" type="warning" :closable="false" show-icon title="ECP 配置项未初始化" description="请先完成数据库迁移并确认配置项已初始化，再刷新页面；当前不能保存。" />
       <el-alert v-if="readError" type="error" :closable="false" show-icon :title="`ECP 配置读取失败：${readError}`" description="已禁止编辑和保存，避免覆盖现有配置。请修复配置后点击页面刷新。" />
-      <el-alert type="warning" :closable="false" show-icon title="开启后将关闭密码、LDAP、Mao 飞书与公司 SSO 登录" class="config-tip" />
+      <el-alert type="info" :closable="false" show-icon title="开启后新增 ECP 飞书登录入口，并加密保存 sessionToken 供 CLOUD shell 注入内部 CLI；不关闭其它登录方式。" class="config-tip" />
       <el-alert type="info" :closable="false" show-icon title="保存后对新登录与 renew 即时生效，不需重启。" class="config-tip" />
       <el-form label-width="170px" label-position="left" class="group-form" :disabled="disabled">
         <el-form-item label="启用 ECP 飞书登录">

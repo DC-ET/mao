@@ -18,7 +18,7 @@
       </div>
 
       <el-form
-        v-if="mode === 'password' && !authStore.features.ecpEnabled"
+        v-if="mode === 'password'"
         ref="formRef"
         :model="form"
         :rules="formRules"
@@ -62,7 +62,7 @@
           </el-button>
         </el-form-item>
         <el-button
-          v-if="authStore.features.feishuEnabled"
+          v-if="authStore.features.feishuEnabled || authStore.features.ecpEnabled"
           class="feishu-entry"
           size="large"
           plain
@@ -73,7 +73,7 @@
         </el-button>
       </el-form>
 
-      <div v-else class="feishu-panel">
+      <div v-else-if="mode === 'feishu'" class="feishu-panel">
         <el-icon class="feishu-icon" :size="48"><Connection /></el-icon>
         <p class="feishu-status">{{ feishuStatusText }}</p>
         <el-button
@@ -84,7 +84,7 @@
         >
           飞书登录
         </el-button>
-        <el-button v-if="!authStore.features.ecpEnabled" class="password-entry" link @click="backToPasswordLogin">
+        <el-button class="password-entry" link @click="backToPasswordLogin">
           返回密码登录
         </el-button>
       </div>
@@ -144,12 +144,7 @@ let pollCancelled = false
 let feishuPollFailures = 0
 
 onMounted(() => {
-  void authStore.fetchAuthFeatures().then(() => {
-    if (authStore.features.ecpEnabled) {
-      mode.value = 'feishu'
-      feishuStatusText.value = '请使用飞书登录'
-    }
-  }).catch(() => {
+  void authStore.fetchAuthFeatures().catch(() => {
     authStore.features.feishuEnabled = false
     authStore.features.ecpEnabled = false
   })
@@ -204,7 +199,8 @@ function saveRememberedUsername() {
   }
 }
 
-const useEcpLogin = () => authStore.features.ecpEnabled
+/** 双飞书并存时优先 Mao 飞书 OAuth；仅开 ECP 时走 ECP 票登录。 */
+const useEcpLogin = () => authStore.features.ecpEnabled && !authStore.features.feishuEnabled
 
 async function startFeishuLogin() {
   if (!authStore.features.feishuEnabled && !authStore.features.ecpEnabled) return

@@ -115,9 +115,9 @@ mao auth whoami
 
 ### 返回结果
 
-`data.feishuEnabled`：布尔值（与 `ecpEnabled` 互斥，ECP 开启时为 `false`）。
+`data.feishuEnabled`：布尔值（Mao 飞书 OAuth 是否可用）。
 
-`data.ecpEnabled`：布尔值；为 `true` 时桌面端须使用 ECP 飞书登录（`POST /v1/auth/ecp/feishu/start`），`POST /v1/auth/login`、Mao 飞书/公司 SSO 换票将拒绝；管理后台账号密码走 `POST /v1/auth/admin/login`。
+`data.ecpEnabled`：布尔值；为 `true` 时客户端可增加 ECP 飞书登录（`POST /v1/auth/ecp/feishu/start`），与密码/Mao 飞书/公司 SSO 换票并存；仅 ECP 飞书登录会写入服务端 ECP 票供 CLOUD shell 注入。
 
 ### 示例
 

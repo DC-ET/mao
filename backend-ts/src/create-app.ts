@@ -1604,10 +1604,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       if (client == null || event.chatType !== 'group' || event.chatId == null || event.messageId == null) return false;
       let auth: { authUrl: string; state: string } | null = null;
       try {
-        if (await ecpAuth.isEnabled()) {
-          auth = await ecpAuth.startFeishuLogin('desktop');
-        } else if (await feishu.isEnabled()) {
+        if (await feishu.isEnabled()) {
           auth = await feishu.getQrCodeUrl();
+        } else if (await ecpAuth.isEnabled()) {
+          auth = await ecpAuth.startFeishuLogin('desktop');
         }
       } catch { return false; }
       if (auth == null) return false;
@@ -1649,14 +1649,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         : '请先完成飞书账号绑定后再试。';
       let link = '';
       try {
-        if (await ecpAuth.isEnabled()) {
-          const qr = await ecpAuth.startFeishuLogin('desktop');
-          link = qr.authUrl ?? '';
-          if (event.messageId != null) {
-            await pendingBindingMessages.insert({ state: qr.state, appId: Number(accountId), messageId: event.messageId, event });
-          }
-        } else if (await feishu.isEnabled()) {
-          const qr = await feishu.getQrCodeUrl();
+        const qr = (await feishu.isEnabled())
+          ? await feishu.getQrCodeUrl()
+          : (await ecpAuth.isEnabled()) ? await ecpAuth.startFeishuLogin('desktop') : null;
+        if (qr != null) {
           link = qr.authUrl ?? '';
           if (event.messageId != null) {
             await pendingBindingMessages.insert({ state: qr.state, appId: Number(accountId), messageId: event.messageId, event });
@@ -1725,7 +1721,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         errorMessage: event.outcome === 'success' ? null : event.outcome,
         queryString: JSON.stringify({ requestId: event.requestId, provider: event.provider, durationMs: event.durationMs }),
       });
-    }, () => ecpAuth.isEnabled());
+    });
     registerUserRoutes(api, userService, userRepo, permissionService);
     registerPermissionRoutes(api, permissionService);
     registerGitCredentialRoutes(api, gitCredentials);

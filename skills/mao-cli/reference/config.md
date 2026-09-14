@@ -47,11 +47,11 @@
 
 ### ECP 飞书登录（全站）
 
-管理后台「系统设置 → 集成配置 → ECP 飞书登录」维护，默认关闭。配置键 `auth.ecp.config`（JSON），保存后对新登录与 renew 即时生效。开启后**关闭**桌面端密码、LDAP、Mao 飞书 OAuth 与公司 SSO 换票（管理后台仍可用 `POST /v1/auth/admin/login` 账号密码，并可选 ECP 飞书）；用户通过 ECP 飞书登录 Mao，服务端加密保存 ECP `sessionToken` 并在 12 小时内自动 renew；CLOUD shell 将会话票写入虚拟 HOME 的 `~/.config/com.access.accessone/` 供内部 CLI（如 `bigdata-cli`）读取 Bearer。
+管理后台「系统设置 → 集成配置 → ECP 飞书登录」维护，默认关闭。配置键 `auth.ecp.config`（JSON），保存后对新登录与 renew 即时生效。开启后**新增** ECP 飞书登录入口，不关闭密码、LDAP、Mao 飞书 OAuth 与公司 SSO 换票；仅经 ECP 飞书登录的用户会加密保存 ECP `sessionToken` 并在 12 小时内自动 renew，CLOUD shell 将会话票写入虚拟 HOME 的 `~/.config/com.access.accessone/` 供内部 CLI（如 `bigdata-cli`）读取 Bearer。
 
 | 后台字段 | 默认 | 说明 |
 |------|------|------|
-| 启用 ECP 飞书登录 | 关闭 | 开启后其它登录方式不可用 |
+| 启用 ECP 飞书登录 | 关闭 | 开启后新增 ECP 飞书入口，不关闭其它登录方式 |
 | appCode | EK6301 | ECP 应用编码 |
 | ECP API Base URL | `https://ecp.acg.team/api/v1` | 生产网关 |
 | loginVariant | PARTNER | 飞书授权变体，联调可调 |
