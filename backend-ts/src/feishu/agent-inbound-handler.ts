@@ -110,8 +110,13 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     harnessService: FeishuHarnessService;
     createCancelFlag?: (sessionId: number) => CancelFlag;
     releaseCancelFlag?: (sessionId: number) => void;
-    /** 「立即发送」按钮中断当前执行时的回调（如关闭该会话的 shell）。 */
+    /** 「立即发送」按钮中断当前执行时的回调（如关闭该会话的 shell、置位 AgentLoop 取消标志）。 */
     onInterruptRunning?: (sessionId: number) => void;
+    /**
+     * 内存中没有正在执行的任务（典型：崩溃恢复尚未/未能挂上 cancel flag，DB 仍为 RUNNING）时，
+     * 先把会话落成 CANCELLED 再排空队列，避免飞书「取消/立即发送」空转、任务永久卡住。
+     */
+    resolveIdleRunning?: (sessionId: number) => Promise<void>;
     /** 图片/文件下载：返回 data URI 与落盘路径；返回 null 表示无媒体或未处理。 */
     downloadMedia?: (context: FeishuInboundContext, workspace: string | null) => Promise<FeishuMediaDownload | null>;
     listenerFactory?: (sessionId: number, context: FeishuInboundContext, executionId: string) => Parameters<FeishuHarnessService['execute']>[2] | Promise<Parameters<FeishuHarnessService['execute']>[2]>;
@@ -131,30 +136,40 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
 
   authorizeDirectMessage(): boolean { return true; }
 
-  /** 中断指定会话的当前执行（由卡片动作服务在「立即发送」时调用）。 */
-  interrupt(sessionId: number): void {
+  /** 中断指定会话的当前执行（由卡片动作服务在「立即发送」时调用）。返回是否命中本 handler 的执行。 */
+  interrupt(sessionId: number): boolean {
     const flag = this.cancelFlags.get(sessionId);
     if (flag != null) {
       flag.set(true);
       this.interrupted.add(sessionId);
-      this.options.onInterruptRunning?.(sessionId);
     }
+    // 崩溃恢复续跑走 AgentLoop flag，不在本 handler 的 cancelFlags 里；shell / AgentLoop 取消仍要发。
+    this.options.onInterruptRunning?.(sessionId);
+    return flag != null;
   }
 
   /**
    * M-6：插队按钮的「中断 + 接力」原子路径。
    * - 命中当前执行：置取消标志，并在下一条消息/队列接力时机由 onExecutionFinished/onMessage 驱动；
-   * - 未命中（会话已空闲）：说明上一任务已终态收尾，无人再调度队列 → 立即兜底排空，
-   *   避免排队消息永久滞留；同时避免「PATCH 卡片等待窗口内被接力认领的目标消息」被本点击误取消。
+   * - 未命中（会话已空闲或仅 DB 残留 RUNNING）：先 resolveIdleRunning 落 CANCELLED，再排空，
+   *   避免重启后飞书「立即发送」空转、排队消息永久滞留。
    */
   interruptAndDrain(sessionId: number): void {
-    const flag = this.cancelFlags.get(sessionId);
-    if (flag != null) {
-      flag.set(true);
-      this.interrupted.add(sessionId);
-      this.options.onInterruptRunning?.(sessionId);
+    const hitInbound = this.interrupt(sessionId);
+    if (hitInbound) {
+      void this.drainNextIfPending(sessionId).catch((error) => {
+        console.error(`飞书插队后排空异常, sessionId=${sessionId}`, error);
+      });
+      return;
     }
-    void this.drainNextIfPending(sessionId).catch((error) => {
+    const resolveIdle = this.options.resolveIdleRunning;
+    if (resolveIdle == null) {
+      void this.drainNextIfPending(sessionId).catch((error) => {
+        console.error(`飞书插队后排空异常, sessionId=${sessionId}`, error);
+      });
+      return;
+    }
+    void resolveIdle(sessionId).then(() => this.drainNextIfPending(sessionId)).catch((error) => {
       console.error(`飞书插队后排空异常, sessionId=${sessionId}`, error);
     });
   }

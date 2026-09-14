@@ -4,6 +4,7 @@ import fastifyStatic from '@fastify/static';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, existsSync, rmSync, lstatSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve, relative } from 'node:path';
@@ -1191,7 +1192,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const client = await getFeishuClient(row.botId);
       if (client == null) return null;
       const cancelAction = row.senderOpenId != null && row.senderOpenId !== '' ? { sessionId, sender: row.senderOpenId } : null;
-      return createPatchedProgress(client, row.cardMessageId, cancelAction);
+      const progress = createPatchedProgress(client, row.cardMessageId, cancelAction);
+      // 重启后续跑立刻刷新卡片并带上取消按钮，避免旧卡停在崩溃前的「正在处理」且取消回调失效。
+      try {
+        await progress.update('RUNNING', 0, '任务正在恢复执行。', []);
+      } catch (error) {
+        console.warn(`飞书恢复进度卡片首次 PATCH 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return progress;
     } catch (error) {
       console.warn(`飞书恢复进度卡片加载失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
@@ -1208,6 +1216,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
   /** 排队卡片展示位置：入队完成后队列中的 QUEUED 行数（含本条，插入语义=队尾第 N 位）。 */
   const queuePositionOf = async (sessionId: number): Promise<number> => (await feishuInboundQueueRepo.countPending(sessionId));
+  /** 重启后内存无 cancel flag、DB 仍 RUNNING/RESUMING 时，把会话落成 CANCELLED（与桌面端停止同语义）。 */
+  const persistCancelledIfActive = async (sessionId: number): Promise<boolean> => {
+    const session = await sessionService.getSession(sessionId).catch(() => null);
+    if (session == null) return false;
+    if (session.phase !== 'RUNNING' && session.phase !== 'RESUMING') return false;
+    await sessionService.cleanupIncompleteTail(sessionId);
+    await taskTerminal.finishExecution(sessionId, session.userId, 'CANCELLED', randomUUID());
+    try { await feishuProgressCardRepo.deleteBySessionId(sessionId); } catch (error) {
+      console.warn(`清理飞书进度卡片映射失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return true;
+  };
   const feishuInboundHandler = new AgentFeishuInboundHandler({
     sessionService: {
       getOrCreateSession: async (accountId, context) => {
@@ -1289,9 +1309,16 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     releaseCancelFlag: (sessionId) => agentLoop.removeCancelFlag(sessionId),
     createProgressCard: (context, sessionId) => createFeishuProgressCard(context, sessionId),
     onInterruptRunning: (sessionId) => {
+      // 崩溃恢复续跑只把 flag 挂在 AgentLoop 上，飞书 handler 的 cancelFlags 是空的。
+      agentLoop.requestCancel(sessionId);
       try { shellManager.closeByConversation(sessionId); } catch (error) {
         console.debug(`关闭飞书会话 Shell 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
+    },
+    resolveIdleRunning: async (sessionId) => {
+      // 已有 AgentLoop 执行（含崩溃恢复）：只置 flag，由执行收尾再 drain，避免与续跑并行。
+      if (agentLoop.getCancelFlag(sessionId) != null) return;
+      await persistCancelledIfActive(sessionId);
     },
     queueService: feishuTaskQueue,
     createQueueCard: async (context, _queueId, sessionId) => createFeishuQueueCard(context, _queueId, await queuePositionOf(sessionId), sessionId),
@@ -1583,15 +1610,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     // M-6：插队按钮「中断+接力」收敛为一条原子路径——空闲时由 interrupt 内部排空兜底，
     // 命中时中断后立即排空，避免与 onMessage 接力窗口相互踩踏/滞留。
     interruptAndDrain: (sessionId) => feishuInboundHandler.interruptAndDrain(sessionId),
-    // 进度卡「取消任务」：经 AgentLoop 会话取消标志置位（覆盖执行中与崩溃恢复续跑两种场景）+ 关闭会话 shell，与桌面端「停止」同语义。
-    cancelRunning: (sessionId) => {
-      const flag = agentLoop.getCancelFlag(sessionId);
-      if (flag == null) return false;
-      flag.set(true);
-      try { shellManager.closeByConversation(sessionId); } catch (error) {
-        console.debug(`关闭飞书会话 Shell 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    // 进度卡「取消任务」：置位 AgentLoop / 飞书 handler 取消标志 + 关闭 shell；
+    // 重启后续跑尚未挂 flag 时补写 CANCELLED，与桌面端输入框停止同语义。
+    cancelRunning: async (sessionId) => {
+      feishuInboundHandler.interrupt(sessionId);
+      const hadLoop = agentLoop.getCancelFlag(sessionId) != null;
+      const persisted = await persistCancelledIfActive(sessionId);
+      if (!hadLoop && persisted) {
+        void feishuInboundHandler.drainNextIfPending(sessionId).catch((error) => {
+          console.error(`飞书取消后队列接力失败, sessionId=${sessionId}`, error);
+        });
       }
-      return true;
+      return hadLoop || persisted;
     },
     patchCard: async (botId, cardMessageId, card) => {
       const client = await getFeishuClient(botId);

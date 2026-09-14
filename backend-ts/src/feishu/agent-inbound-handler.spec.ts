@@ -228,6 +228,47 @@ describe('AgentFeishuInboundHandler', () => {
     expect(harness.execute).toHaveBeenCalledTimes(2);
   });
 
+  it('interruptAndDrain resolves idle RUNNING sessions then drains the queue', async () => {
+    const sessionService = makeSessionService();
+    const resolveIdleRunning = vi.fn(async () => undefined);
+    const onInterruptRunning = vi.fn();
+    const queueRow = {
+      id: 2, botId: 1, sessionId: 7, messageId: 'om_2', cardMessageId: 'cm_2',
+      senderOpenId: 'ou_user', maoUserId: null, rankNo: 0, status: 'QUEUED',
+      payload: JSON.stringify({
+        message: 'm2',
+        context: { accountId: '1', chatType: 'group', chatId: 'oc_group', senderId: 'ou_user', senderUnionId: 'on_user', messageId: 'om_2', senderLabel: '李四' },
+        botId: 1,
+      }),
+    };
+    let claimed = false;
+    const queueService = makeQueueService({
+      hasPending: vi.fn(async () => !claimed),
+      claimNext: vi.fn(async () => {
+        if (claimed) return null;
+        claimed = true;
+        return { ...queueRow, status: 'RUNNING' };
+      }),
+    });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      queueService,
+      onInterruptRunning,
+      resolveIdleRunning,
+    });
+    handler.interruptAndDrain(7);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(onInterruptRunning).toHaveBeenCalledWith(7);
+    expect(resolveIdleRunning).toHaveBeenCalledWith(7);
+    expect(queueService.claimNext).toHaveBeenCalled();
+    expect(harness.execute).toHaveBeenCalledTimes(1);
+  });
+
   it('serializes executions on the same session via queue instead of concurrent', async () => {
     const order: string[] = [];
     let releaseFirst!: () => void;

@@ -58,7 +58,7 @@ export class FeishuCardActionService {
     /** 中断后批量推进队列（含「中断未命中时兜底消费」与「命中后立即接力」）。 */
     interruptAndDrain?: (sessionId: number) => void;
     /** 取消会话当前执行中的任务（进度卡「取消任务」按钮）；返回 false 表示当前无在执行任务。 */
-    cancelRunning: (sessionId: number) => boolean;
+    cancelRunning: (sessionId: number) => boolean | Promise<boolean>;
     /** PATCH 卡片内容（botId 用于定位客户端）。仅作群内其他人的补充推送，不得阻塞回调。 */
     patchCard: (botId: number, cardMessageId: string, card: Record<string, unknown>) => Promise<void>;
   }) {}
@@ -83,16 +83,20 @@ export class FeishuCardActionService {
     return undefined;
   }
 
-  /** 进度卡「取消任务」：点击者须为触发任务的原发送者；取消成功后卡片由执行收尾链路 PATCH 为已取消终态。 */
-  private handleProgressCancel(event: FeishuCardActionEvent, action: FeishuProgressCardActionValue): FeishuCardActionResponse | undefined {
+  /** 进度卡「取消任务」：点击者须为触发任务的原发送者；取消成功后回调带回终态卡片，避免客户端还原为「正在处理」。 */
+  private async handleProgressCancel(event: FeishuCardActionEvent, action: FeishuProgressCardActionValue): Promise<FeishuCardActionResponse | undefined> {
     const operatorOpenId = event.operator?.open_id;
     if (operatorOpenId == null || operatorOpenId !== action.sender) {
       return { toast: { type: 'error', content: '仅消息发送者可操作' } };
     }
-    if (!this.options.cancelRunning(action.sessionId)) {
+    const cancelled = await this.options.cancelRunning(action.sessionId);
+    if (!cancelled) {
       return { toast: { type: 'info', content: '该任务已结束' } };
     }
-    return undefined;
+    return {
+      toast: { type: 'success', content: '正在取消任务' },
+      card: { type: 'raw', data: buildQueueCardText('任务已取消', '已停止当前任务。') },
+    };
   }
 
   private async handleRun(row: { id: number; sessionId: number; status: string; cardMessageId: string | null; botId: number }): Promise<FeishuCardActionResponse | undefined> {

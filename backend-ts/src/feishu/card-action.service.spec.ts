@@ -208,12 +208,13 @@ describe('FeishuCardActionService', () => {
     expect(res).toEqual({ toast: { type: 'info', content: '该消息已开始执行' } });
   });
 
-  it('progress cancel by original sender cancels running execution', async () => {
+  it('progress cancel by original sender cancels running execution and returns a terminal card', async () => {
     const cancelRunning = vi.fn(() => true);
     const service = makeService({ cancelRunning });
     const value = { kind: 'feishu_progress', act: 'cancel', sessionId: 7, sender: 'ou_1' };
     const res = await service.handle(makeEvent(value), '');
-    expect(res).toBeUndefined();
+    expect(res?.toast).toEqual({ type: 'success', content: '正在取消任务' });
+    expectQueueCard(res, '任务已取消', '已停止当前任务。');
     expect(cancelRunning).toHaveBeenCalledWith(7);
   });
 
@@ -239,7 +240,7 @@ describe('FeishuCardActionService', () => {
     const service = makeService({ cancelRunning });
     const value = JSON.stringify({ kind: 'feishu_progress', act: 'cancel', sessionId: 7, sender: 'ou_1' });
     const res = await service.handle(makeEvent(value), '');
-    expect(res).toBeUndefined();
+    expect(res?.toast).toEqual({ type: 'success', content: '正在取消任务' });
     expect(cancelRunning).toHaveBeenCalledWith(7);
   });
 
