@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ChatStore } from './store';
+import { ChatStore, mergeAdjacentToolOnly } from './store';
 import type { WsServerEvent } from '@mao/contracts';
 
 function ev(type: string, sessionId: number | null, data?: Record<string, unknown>): WsServerEvent {
@@ -455,6 +455,83 @@ describe('ChatStore', () => {
     ]);
     // 本轮用户消息还没落库 → 历史里最后一条 user 之后的行属于上一轮，不能剪
     expect(store.messages.value.map((m) => m.content)).toEqual(['旧问题', '旧回答', '新问题', '旧回答']);
+  });
+
+  it('reloadHistory 合并相邻纯工具 assistant，回显只折一组工具调用', async () => {
+    const store = new ChatStore();
+    store.bindSession(1);
+    const toolMsg = (id: string, callId: string) => ({
+      id,
+      role: 'assistant' as const,
+      content: '',
+      thinking: '',
+      streaming: false,
+      error: false,
+      segments: [{
+        type: 'tool-group' as const,
+        toolCalls: [{
+          toolCallId: callId, toolName: 'sql_query', displayName: 'sql_query',
+          argsText: '', status: 'done' as const, resultText: '',
+        }],
+      }],
+      toolCalls: [{
+        toolCallId: callId, toolName: 'sql_query', displayName: 'sql_query',
+        argsText: '', status: 'done' as const, resultText: '',
+      }],
+    });
+    await store.reloadHistory(async () => [
+      { id: 'h_1', role: 'user', content: '查权限', thinking: '', streaming: false, error: false, segments: [], toolCalls: [] },
+      toolMsg('h_2', 't1'),
+      toolMsg('h_3', 't2'),
+      toolMsg('h_4', 't3'),
+      { id: 'h_5', role: 'assistant', content: '有权限', thinking: '', streaming: false, error: false, segments: [{ type: 'text', content: '有权限' }], toolCalls: [] },
+    ]);
+    expect(store.messages.value.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant']);
+    const tools = store.messages.value[1];
+    expect(tools.toolCalls.map((t) => t.toolCallId)).toEqual(['t1', 't2', 't3']);
+    expect(tools.segments).toHaveLength(1);
+    expect(tools.segments[0].type).toBe('tool-group');
+    expect(store.messages.value[2].content).toBe('有权限');
+  });
+
+  it('mergeAdjacentToolOnly 不合并带正文的 assistant，也不吸收流式气泡', () => {
+    const withText = (id: string, content: string, tools: string[]) => ({
+      id,
+      role: 'assistant' as const,
+      content,
+      thinking: '',
+      streaming: false,
+      error: false,
+      segments: [
+        ...(content ? [{ type: 'text' as const, content }] : []),
+        ...tools.map((callId) => ({
+          type: 'tool-group' as const,
+          toolCalls: [{
+            toolCallId: callId, toolName: 'shell', displayName: 'shell',
+            argsText: '', status: 'done' as const, resultText: '',
+          }],
+        })),
+      ],
+      toolCalls: tools.map((callId) => ({
+        toolCallId: callId, toolName: 'shell', displayName: 'shell',
+        argsText: '', status: 'done' as const, resultText: '',
+      })),
+    });
+    const streaming = withText('s1', '', ['t9']);
+    streaming.streaming = true;
+    const merged = mergeAdjacentToolOnly([
+      withText('a1', '开始查', ['t1']),
+      withText('a2', '', ['t2']),
+      withText('a3', '结论', []),
+      withText('a4', '', ['t3']),
+      streaming,
+    ]);
+    expect(merged.map((m) => m.id)).toEqual(['a1', 'a3', 'a4', 's1']);
+    expect(merged[0].toolCalls.map((t) => t.toolCallId)).toEqual(['t1', 't2']);
+    expect(merged[1].content).toBe('结论');
+    expect(merged[2].toolCalls.map((t) => t.toolCallId)).toEqual(['t3']);
+    expect(merged[3].streaming).toBe(true);
+    expect(merged[3].toolCalls.map((t) => t.toolCallId)).toEqual(['t9']);
   });
 
   it('reloadHistory 期间会话被切换则丢弃结果', async () => {

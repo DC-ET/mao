@@ -75,6 +75,50 @@ function sameMessageText(fetched: string, local: string): boolean {
   return left === 0x0a /* \n */;
 }
 
+/** 服务端每个工具轮次落一条无正文 ASSISTANT；回显时应并入前一条以 tool-group 收尾的气泡。 */
+function isToolOnlyAssistant(m: ChatMessage): boolean {
+  return m.role === 'assistant'
+    && !m.content.trim()
+    && !m.thinking.trim()
+    && m.toolCalls.length > 0;
+}
+
+function endsWithToolGroup(m: ChatMessage): boolean {
+  return m.segments[m.segments.length - 1]?.type === 'tool-group';
+}
+
+/**
+ * 合并相邻纯工具 assistant 消息（对齐 desktop mergeAdjacentToolMessages）：
+ * 多轮「只调工具、无正文」的历史回显会变成一叠「1 个工具调用」，应折成一组。
+ * 流式气泡不参与吸收，避免重连对账时改写在途气泡对象。
+ */
+export function mergeAdjacentToolOnly(messages: ChatMessage[]): ChatMessage[] {
+  const result: ChatMessage[] = [];
+  for (const m of messages) {
+    if (m.streaming) {
+      result.push(m);
+      continue;
+    }
+    const prev = result[result.length - 1];
+    if (
+      isToolOnlyAssistant(m)
+      && prev
+      && !prev.streaming
+      && prev.role === 'assistant'
+      && endsWithToolGroup(prev)
+    ) {
+      const existingIds = new Set(prev.toolCalls.map((t) => t.toolCallId));
+      const added = m.toolCalls.filter((t) => !existingIds.has(t.toolCallId));
+      prev.toolCalls.push(...added);
+      const lastSeg = prev.segments[prev.segments.length - 1];
+      if (lastSeg?.type === 'tool-group') lastSeg.toolCalls.push(...added);
+      continue;
+    }
+    result.push(m);
+  }
+  return result;
+}
+
 /**
  * REST 历史与本地消息流合并：以历史为准，保留历史里还没有的本地尾部消息。
  * 必须保留的是「服务端尚未落库」的部分——当前流式 assistant 气泡（含其工具卡）与
@@ -136,14 +180,14 @@ export function mergeHistory(history: ChatMessage[], local: ChatMessage[]): Chat
     }
     tail.unshift(m);
   }
-  if (tail.length === 0) return history;
+  if (tail.length === 0) return mergeAdjacentToolOnly(history);
   // 客户端一轮执行只有一个 assistant 气泡（message_end 整轮只发一次），而服务端每个工具轮次
   // 结束就落一条 ASSISTANT 行：执行中途重连拉到的这些中间行与保留的本地气泡内容重复
   // （本地是全轮拼接、历史是单轮片段，等值/后缀比对都命中不了）。
   // 仅当本轮用户消息已在历史中（tail 里没有未落库的用户消息）才敢按「历史最后一条 user 之后」
   // 判定为本轮范围，避免把上一轮的回答误剪。
   const localRound = tail.find((m) => m.role === 'assistant' && (m.content !== '' || m.toolCalls.length > 0));
-  if (!localRound || tail.some((m) => m.role === 'user')) return [...history, ...tail];
+  if (!localRound || tail.some((m) => m.role === 'user')) return mergeAdjacentToolOnly([...history, ...tail]);
   let lastUserIdx = -1;
   history.forEach((m, i) => {
     if (m.role === 'user') lastUserIdx = i;
@@ -162,7 +206,7 @@ export function mergeHistory(history: ChatMessage[], local: ChatMessage[]): Chat
     // 已被本地气泡渲染的文本不再重复上屏（本地气泡带工具卡，信息量更全）
     return !localRound.content.includes(text);
   });
-  return [...pruned, ...tail];
+  return mergeAdjacentToolOnly([...pruned, ...tail]);
 }
 
 /**

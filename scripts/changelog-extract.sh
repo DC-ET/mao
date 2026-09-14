@@ -178,10 +178,24 @@ cmd_sync_desktop() {
     const p = process.argv[1];
     const ver = process.argv[2];
     const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
-    if (pkg.version === ver) process.exit(0);
-    pkg.version = ver;
-    fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
-    console.log('desktop/package.json version -> ' + ver);
+    if (pkg.version !== ver) {
+      pkg.version = ver;
+      fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+      console.log('desktop/package.json version -> ' + ver);
+    }
+    const lockPath = require('path').join(require('path').dirname(p), 'package-lock.json');
+    if (!fs.existsSync(lockPath)) process.exit(0);
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    let changed = false;
+    if (lock.version !== ver) { lock.version = ver; changed = true; }
+    if (lock.packages && lock.packages[''] && lock.packages[''].version !== ver) {
+      lock.packages[''].version = ver;
+      changed = true;
+    }
+    if (changed) {
+      fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
+      console.log('desktop/package-lock.json version -> ' + ver);
+    }
   " "$pkg" "$version"
 }
 
