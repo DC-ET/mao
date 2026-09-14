@@ -61,26 +61,33 @@
             登录
           </el-button>
         </el-form-item>
-        <el-button
-          v-if="authStore.features.feishuEnabled"
-          class="feishu-entry"
-          size="large"
-          plain
-          :loading="feishuLoading && activeFeishuProvider === 'mao'"
-          @click="startFeishuLogin('mao')"
+        <el-form-item
+          v-if="authStore.features.feishuEnabled || authStore.features.ecpEnabled"
+          class="feishu-actions-item"
         >
-          飞书登录
-        </el-button>
-        <el-button
-          v-if="authStore.features.ecpEnabled"
-          class="feishu-entry"
-          size="large"
-          plain
-          :loading="feishuLoading && activeFeishuProvider === 'ecp'"
-          @click="startFeishuLogin('ecp')"
-        >
-          ECP 飞书登录
-        </el-button>
+          <div class="feishu-actions">
+            <el-button
+              v-if="authStore.features.feishuEnabled"
+              class="feishu-entry"
+              size="large"
+              plain
+              :loading="feishuLoading && activeFeishuProvider === 'mao'"
+              @click="startFeishuLogin('mao')"
+            >
+              飞书登录
+            </el-button>
+            <el-button
+              v-if="authStore.features.ecpEnabled"
+              class="feishu-entry"
+              size="large"
+              plain
+              :loading="feishuLoading && activeFeishuProvider === 'ecp'"
+              @click="startFeishuLogin('ecp')"
+            >
+              ECP 飞书登录
+            </el-button>
+          </div>
+        </el-form-item>
       </el-form>
 
       <div v-else-if="mode === 'feishu'" class="feishu-panel">
@@ -472,6 +479,18 @@ onBeforeUnmount(() => {
   margin-bottom: 0 !important;
 }
 
+.feishu-actions-item {
+  margin-bottom: 0 !important;
+  margin-top: 8px;
+}
+
+.feishu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
 .login-btn {
   width: 100%;
   border-radius: var(--aw-radius-pill) !important;
@@ -488,12 +507,8 @@ onBeforeUnmount(() => {
 
 .feishu-entry {
   width: 100%;
-  margin-top: 8px;
+  margin: 0;
   border-radius: var(--aw-radius-pill) !important;
-}
-
-.feishu-entry + .feishu-entry {
-  margin-top: 8px;
 }
 
 .feishu-panel {
