@@ -283,7 +283,6 @@ describe('el-select filterable multiple integration', () => {
       { type: 'fill', elementId: filterId, value: 'rob-api' },
       { snapshotId: first.snapshotId },
     );
-    const second = manager.inspect();
     const option = mock.getOption('rob-api')!;
     expect(option).toBeTruthy();
 
