@@ -8,6 +8,36 @@ import type { User, UserRepository } from '../user/types.js';
 const jwt = new JwtService('mao-dev-jwt-secret-change-me-32bytes!!', 86400000, 604800000, 7200000);
 
 describe('EcpAuthService', () => {
+  it('stores ECP OAuth state from authorization response for callback lookup', async () => {
+    const stateRepo = {
+      insert: vi.fn(),
+      findByState: vi.fn(),
+      updateByState: vi.fn(),
+      consumeSuccess: vi.fn(),
+      claimPending: vi.fn(),
+    };
+    const client = {
+      createFeishuAuthorization: vi.fn(async () => ({
+        authorizeUrl: 'https://feishu.example/auth',
+        state: 'ecp-state-9',
+      })),
+      createSessionFromFeishuCallback: vi.fn(),
+    };
+    const service = new EcpAuthService(
+      {} as UserRepository,
+      stateRepo,
+      {} as never,
+      {} as never,
+      jwt,
+      { buildLoginResult: vi.fn() },
+      async () => ({ ...defaultEcpConfig(), enabled: true }),
+      client,
+    );
+    const result = await service.startFeishuLogin('desktop');
+    expect(result.state).toBe('ecp-state-9');
+    expect(stateRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ state: 'ecp-state-9' }));
+  });
+
   it('invokes onAuthenticated after successful callback', async () => {
     const onAuthenticated = vi.fn(async () => {});
     const stateRepo = {

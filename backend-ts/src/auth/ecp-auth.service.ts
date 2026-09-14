@@ -6,7 +6,7 @@ import { UserService } from '../user/user.service.js';
 import type { LoginVO, User, UserRepository } from '../user/types.js';
 import type { AuthService } from './auth.service.js';
 import { formatNow } from './auth.service.js';
-import { EcpClient } from './ecp.client.js';
+import { EcpClient, resolveEcpOAuthState } from './ecp.client.js';
 import type { EcpCallbackTarget, EcpConfig } from './ecp.config.js';
 import { callbackUrlForTarget } from './ecp.config.js';
 import { assertEcpEnabled, EcpError } from './ecp.error.js';
@@ -42,7 +42,9 @@ export class EcpAuthService {
   async startFeishuLogin(target: EcpCallbackTarget) {
     const config = await this.getConfig();
     assertEcpEnabled(config.enabled);
-    const state = randomUUID();
+    const callbackUrl = callbackUrlForTarget(config, target);
+    const authorization = await this.client.createFeishuAuthorization(config, callbackUrl);
+    const state = resolveEcpOAuthState(authorization) ?? randomUUID();
     const expiresAt = plusSeconds(STATE_EXPIRES_SECONDS);
     await this.stateRepo.insert({
       state,
@@ -50,8 +52,6 @@ export class EcpAuthService {
       status: ECP_PENDING,
       expiresAt,
     });
-    const callbackUrl = callbackUrlForTarget(config, target);
-    const authorization = await this.client.createFeishuAuthorization(config, callbackUrl);
     return {
       authUrl: authorization.authorizeUrl,
       qrCodeUrl: authorization.authorizeUrl,

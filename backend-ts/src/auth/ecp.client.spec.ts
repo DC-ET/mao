@@ -1,9 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EcpClient } from './ecp.client.js';
+import { EcpClient, resolveEcpOAuthState } from './ecp.client.js';
 import { defaultEcpConfig } from './ecp.config.js';
 
 describe('EcpClient', () => {
   const config = { ...defaultEcpConfig(), enabled: true };
+
+  it('resolveEcpOAuthState prefers response body then authorizeUrl query', () => {
+    expect(resolveEcpOAuthState({
+      authorizeUrl: 'https://feishu.example/auth?state=from-url',
+      state: 'from-body',
+    })).toBe('from-body');
+    expect(resolveEcpOAuthState({
+      authorizeUrl: 'https://feishu.example/auth?state=from-url',
+    })).toBe('from-url');
+  });
 
   it('creates feishu authorization', async () => {
     const http = {

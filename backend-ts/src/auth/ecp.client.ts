@@ -18,6 +18,17 @@ export interface EcpFeishuAuthorization {
   state?: string;
 }
 
+/** ECP 飞书授权 state：优先响应体，其次 authorizeUrl query。 */
+export function resolveEcpOAuthState(authorization: EcpFeishuAuthorization): string | undefined {
+  if (hasText(authorization.state)) return authorization.state!.trim();
+  try {
+    const state = new URL(authorization.authorizeUrl).searchParams.get('state');
+    return hasText(state) ? state!.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface EcpHttpClient {
   request(method: string, url: string, options?: {
     headers?: Record<string, string>;
