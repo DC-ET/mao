@@ -1289,12 +1289,17 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .chat-input-card {
+  display: flex;
+  flex-direction: column;
   margin-bottom: 10px;
   background: var(--aw-canvas);
   border: 1px solid var(--aw-hairline);
   border-radius: 16px;
   padding: 0;
-  flex-shrink: 0;
+  /* 安卓软键盘弹出后可视高度骤减：卡片参与收缩（收缩量由内部可滚动的配置区承担），
+     避免把输入框与发送按钮顶出可视区被键盘盖住 */
+  flex: 0 1 auto;
+  min-height: 0;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
@@ -1307,6 +1312,7 @@ onBeforeUnmount(() => {
 .textarea-area {
   position: relative;
   padding: 12px 16px;
+  flex-shrink: 0;
 }
 
 .textarea-area.is-dragging-file {
@@ -1390,6 +1396,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: var(--aw-space-xxs);
   padding: 4px 16px 0;
+  flex-shrink: 0;
 }
 
 .pending-file {
@@ -1437,6 +1444,7 @@ onBeforeUnmount(() => {
   padding: 8px 12px;
   min-height: 40px;
   min-width: 0;
+  flex-shrink: 0;
 }
 
 .toolbar-left {
@@ -1621,6 +1629,12 @@ onBeforeUnmount(() => {
 /* New task config bar */
 .new-task-config-bar {
   padding: 8px 16px 4px;
+  /* 可视高度不足（软键盘弹出 / 横屏矮窗口）时收缩此处，智能体列表内部滚动，编辑器与发送按钮保持可见 */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .config-row {
