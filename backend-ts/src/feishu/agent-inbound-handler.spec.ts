@@ -180,6 +180,54 @@ describe('AgentFeishuInboundHandler', () => {
     await Promise.all([first, second]);
   });
 
+  it('interruptAndDrain cancels the running task and then drains the queued message', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const sessionService = makeSessionService();
+    const flags: CancelFlag[] = [];
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => {
+        if (flags.length === 1) await firstGate;
+      }),
+    };
+    const queuedPayload = JSON.stringify({
+      message: 'm2',
+      context: { accountId: '1', chatType: 'group', chatId: 'oc_group', senderId: 'ou_user', senderUnionId: 'on_user', messageId: 'om_2', senderLabel: '李四' },
+      botId: 1,
+    });
+    const queueRow = {
+      id: 2, botId: 1, sessionId: 7, messageId: 'om_2', cardMessageId: 'cm_2',
+      senderOpenId: 'ou_user', maoUserId: null, rankNo: 0, status: 'QUEUED', payload: queuedPayload,
+    };
+    let claimed = false;
+    const queueService = makeQueueService({
+      hasPending: vi.fn(async () => !claimed),
+      claimNext: vi.fn(async () => {
+        if (claimed) return null;
+        claimed = true;
+        return { ...queueRow, status: 'RUNNING' };
+      }),
+    });
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: () => { const flag = makeFlag(); flags.push(flag); return flag; },
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      queueService,
+    });
+    const first = handler.onMessage(makeContext({ text: 'm1' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    handler.interruptAndDrain(7);
+    expect(flags[0].get()).toBe(true);
+    releaseFirst();
+    await first;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(queueService.claimNext).toHaveBeenCalled();
+    expect(harness.execute).toHaveBeenCalledTimes(2);
+  });
+
   it('serializes executions on the same session via queue instead of concurrent', async () => {
     const order: string[] = [];
     let releaseFirst!: () => void;

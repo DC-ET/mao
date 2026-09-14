@@ -12,6 +12,7 @@ function options(overrides: Partial<Parameters<typeof makeService>[0]> = {}) {
 function makeService(overrides: {
   queuePort?: Partial<FeishuCardActionPort>;
   interrupt?: (sessionId: number) => void;
+  interruptAndDrain?: (sessionId: number) => void;
   cancelRunning?: (sessionId: number) => boolean;
   patchCard?: (botId: number, cardMessageId: string, card: Record<string, unknown>) => Promise<void>;
 } = {}) {
@@ -24,7 +25,19 @@ function makeService(overrides: {
   const interrupt = overrides.interrupt ?? vi.fn();
   const cancelRunning = overrides.cancelRunning ?? vi.fn(() => true);
   const patchCard = overrides.patchCard ?? vi.fn(async () => undefined);
-  return new FeishuCardActionService({ queuePort, interrupt, cancelRunning, patchCard });
+  return new FeishuCardActionService({
+    queuePort, interrupt, cancelRunning, patchCard,
+    ...(overrides.interruptAndDrain != null ? { interruptAndDrain: overrides.interruptAndDrain } : {}),
+  });
+}
+
+function expectQueueCard(res: unknown, bold: string, body: string) {
+  expect(res).toEqual(expect.objectContaining({
+    card: { type: 'raw', data: expect.objectContaining({ schema: '2.0' }) },
+  }));
+  const json = JSON.stringify(res);
+  expect(json).toContain(bold);
+  expect(json).toContain(body);
 }
 
 function makeEvent(value: unknown, operatorOpenId = 'ou_1', cardMessageId = 'cm_1') {
@@ -56,19 +69,21 @@ describe('FeishuCardActionService', () => {
     expect(res).toEqual({ toast: { type: 'error', content: '仅消息发送者可操作' } });
   });
 
-  it('cancel patches card on success', async () => {
+  it('cancel returns the updated card in the callback so Feishu does not revert', async () => {
     const patchCard = vi.fn(async () => undefined);
     const service = makeService({
       queuePort: { findByCardMessageId: vi.fn(async () => row()), cancel: vi.fn(async () => 'CANCELLED') },
       patchCard,
     });
     const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'cancel' }), '');
-    expect(res).toEqual({ toast: { type: 'success', content: '这条排队消息已取消，不会进入执行。' } });
+    expect(res?.toast).toEqual({ type: 'success', content: '这条排队消息已取消，不会进入执行。' });
+    expectQueueCard(res, '✖️ 已取消', '这条消息已取消，未进入执行。');
+    await Promise.resolve();
     expect(patchCard).toHaveBeenCalledWith(1, 'cm_1', expect.objectContaining({ body: expect.anything() }));
     expect(JSON.stringify(patchCard.mock.calls[0])).toContain('这条消息已取消，未进入执行。');
   });
 
-  it('reports cancellation separately when the card update fails', async () => {
+  it('still confirms cancellation when the background card PATCH fails', async () => {
     const cancel = vi.fn(async () => 'CANCELLED' as const);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
@@ -78,7 +93,9 @@ describe('FeishuCardActionService', () => {
       });
       const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'cancel' }), '');
       expect(cancel).toHaveBeenCalledWith(1);
-      expect(res).toEqual({ toast: { type: 'info', content: '这条排队消息已取消，但卡片更新失败，不会进入执行。' } });
+      expect(res?.toast).toEqual({ type: 'success', content: '这条排队消息已取消，不会进入执行。' });
+      expectQueueCard(res, '✖️ 已取消', '这条消息已取消，未进入执行。');
+      await Promise.resolve();
     } finally {
       warn.mockRestore();
     }
@@ -90,8 +107,9 @@ describe('FeishuCardActionService', () => {
       queuePort: { findByCardMessageId: vi.fn(async () => row({ cardMessageId: null })) },
       patchCard,
     });
-    expect(await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'cancel' }), ''))
-      .toEqual({ toast: { type: 'success', content: '这条排队消息已取消，不会进入执行。' } });
+    const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'cancel' }), '');
+    expect(res?.toast).toEqual({ type: 'success', content: '这条排队消息已取消，不会进入执行。' });
+    expectQueueCard(res, '✖️ 已取消', '这条消息已取消，未进入执行。');
     expect(patchCard).not.toHaveBeenCalled();
   });
 
@@ -103,8 +121,8 @@ describe('FeishuCardActionService', () => {
     expect(res).toEqual({ toast: { type: 'info', content: '该消息已开始执行' } });
   });
 
-  it('run jumps to front, patches card and interrupts session', async () => {
-    const patchCard = vi.fn(async () => undefined);
+  it('run returns inserted card in the callback and interrupts without waiting on PATCH', async () => {
+    const patchCard = vi.fn(async () => { throw new Error('PATCH should not block run'); });
     const interrupt = vi.fn();
     const service = makeService({
       queuePort: { findByCardMessageId: vi.fn(async () => row()), jumpToFront: vi.fn(async () => true) },
@@ -112,12 +130,26 @@ describe('FeishuCardActionService', () => {
       interrupt,
     });
     const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'run' }), '');
-    expect(res).toBeUndefined();
-    expect(patchCard).toHaveBeenCalled();
+    expect(res?.toast).toEqual({ type: 'success', content: '已插队，正在中断当前任务并执行这条消息' });
+    expectQueueCard(res, '🚀 已插队', '正在中断当前任务并执行这条消息…');
+    expect(patchCard).not.toHaveBeenCalled();
     expect(interrupt).toHaveBeenCalledWith(7);
   });
 
-  it('run without card message id does not patch but still interrupts', async () => {
+  it('run prefers interruptAndDrain over interrupt', async () => {
+    const interrupt = vi.fn();
+    const interruptAndDrain = vi.fn();
+    const service = makeService({
+      queuePort: { findByCardMessageId: vi.fn(async () => row()), jumpToFront: vi.fn(async () => true) },
+      interrupt,
+      interruptAndDrain,
+    });
+    await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'run' }), '');
+    expect(interruptAndDrain).toHaveBeenCalledWith(7);
+    expect(interrupt).not.toHaveBeenCalled();
+  });
+
+  it('run without card message id still returns callback card and interrupts', async () => {
     const patchCard = vi.fn(async () => undefined);
     const interrupt = vi.fn();
     const service = makeService({
@@ -126,21 +158,39 @@ describe('FeishuCardActionService', () => {
       interrupt,
     });
     const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'run' }), '');
-    expect(res).toBeUndefined();
+    expectQueueCard(res, '🚀 已插队', '正在中断当前任务并执行这条消息…');
     expect(patchCard).not.toHaveBeenCalled();
     expect(interrupt).toHaveBeenCalledWith(7);
   });
 
   it('handles action value as JSON string (compat)', async () => {
-    const patchCard = vi.fn(async () => undefined);
     const interrupt = vi.fn();
     const service = makeService({
       queuePort: { findByCardMessageId: vi.fn(async () => row()), jumpToFront: vi.fn(async () => true) },
-      patchCard,
       interrupt,
     });
     const res = await service.handle(makeEvent(JSON.stringify({ kind: 'feishu_queue', queueId: 1, act: 'run' })), '');
-    expect(res).toBeUndefined();
+    expectQueueCard(res, '🚀 已插队', '正在中断当前任务并执行这条消息…');
+    expect(interrupt).toHaveBeenCalledWith(7);
+  });
+
+  it('handles the unflattened v2 envelope with nested event', async () => {
+    const interrupt = vi.fn();
+    const service = makeService({
+      queuePort: { findByCardMessageId: vi.fn(async () => row()), jumpToFront: vi.fn(async () => true) },
+      interrupt,
+    });
+    const envelope = {
+      schema: '2.0',
+      header: { event_type: 'card.action.trigger' },
+      event: {
+        operator: { open_id: 'ou_1' },
+        action: { value: { kind: 'feishu_queue', queueId: 1, act: 'run' } },
+        context: { open_message_id: 'cm_1' },
+      },
+    };
+    const res = await service.handle(envelope, '');
+    expectQueueCard(res, '🚀 已插队', '正在中断当前任务并执行这条消息…');
     expect(interrupt).toHaveBeenCalledWith(7);
   });
 

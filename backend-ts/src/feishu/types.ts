@@ -104,6 +104,11 @@ export interface FeishuCardActionEvent {
 /** 卡片动作处理结果（返回给 SDK 作为回调响应）。 */
 export interface FeishuCardActionResponse {
   toast?: { type: 'success' | 'info' | 'error' | 'warning'; content: string };
+  /**
+   * 必须随回调返回新卡片，否则飞书客户端会把交互态还原为点击前内容。
+   * `type: 'raw'` + JSON 2.0 `data` 与排队/进度卡 schema 对齐。
+   */
+  card?: { type: 'raw'; data: Record<string, unknown> };
 }
 
 /** handler 用于执行队列消费的最小端口。 */

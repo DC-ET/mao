@@ -15,9 +15,40 @@ function buildQueueCardText(bold: string, body: string): Record<string, unknown>
   };
 }
 
+/** 将排队卡终态包进 card.action.trigger 回调响应，避免客户端还原点击前内容。 */
+function toCardCallback(bold: string, body: string, toast?: FeishuCardActionResponse['toast']): FeishuCardActionResponse {
+  return {
+    ...(toast != null ? { toast } : {}),
+    card: { type: 'raw', data: buildQueueCardText(bold, body) },
+  };
+}
+
+/**
+ * SDK EventDispatcher 会把 v2 信封的 header/event 展开到顶层；部分入口仍可能传入原始信封。
+ * 两种形态都要能读到 action / operator / open_message_id，否则按钮点击会静默无效。
+ */
+function unwrapCardActionEvent(raw: unknown): FeishuCardActionEvent {
+  if (raw == null || typeof raw !== 'object') return {};
+  const root = raw as Record<string, unknown>;
+  const nested = root.event;
+  if (root.action == null && nested != null && typeof nested === 'object') {
+    const inner = nested as Record<string, unknown>;
+    return {
+      context: (inner.context as FeishuCardActionEvent['context']) ?? (root.context as FeishuCardActionEvent['context']),
+      open_message_id: (inner.open_message_id as string | undefined) ?? (root.open_message_id as string | undefined),
+      open_chat_id: (inner.open_chat_id as string | undefined) ?? (root.open_chat_id as string | undefined),
+      token: (inner.token as string | undefined) ?? (root.token as string | undefined),
+      operator: (inner.operator as FeishuCardActionEvent['operator']) ?? (root.operator as FeishuCardActionEvent['operator']),
+      action: inner.action as FeishuCardActionEvent['action'],
+    };
+  }
+  return root as FeishuCardActionEvent;
+}
+
 /**
  * 飞书卡片按钮回调处理器：解析 card.action.trigger 事件，分派「立即发送」与「取消本次任务」。
- * 按钮仅原发送者可操作（open_id 比对）；操作结果通过 PATCH 卡片呈现，无效操作返回 toast。
+ * 按钮仅原发送者可操作（open_id 比对）；有效操作必须在回调响应里带回新卡片（不能只 PATCH），
+ * 否则飞书客户端会把 loading 还原为点击前的「排队中」。
  */
 export class FeishuCardActionService {
   constructor(private readonly options: {
@@ -28,12 +59,12 @@ export class FeishuCardActionService {
     interruptAndDrain?: (sessionId: number) => void;
     /** 取消会话当前执行中的任务（进度卡「取消任务」按钮）；返回 false 表示当前无在执行任务。 */
     cancelRunning: (sessionId: number) => boolean;
-    /** PATCH 卡片内容（botId 用于定位客户端）。 */
+    /** PATCH 卡片内容（botId 用于定位客户端）。仅作群内其他人的补充推送，不得阻塞回调。 */
     patchCard: (botId: number, cardMessageId: string, card: Record<string, unknown>) => Promise<void>;
   }) {}
 
   async handle(raw: unknown, _accountId: string): Promise<FeishuCardActionResponse | undefined> {
-    const event = raw as FeishuCardActionEvent;
+    const event = unwrapCardActionEvent(raw);
     const action = this.parseActionValue(event.action?.value);
     if (action == null) return undefined;
     if (action.kind === 'feishu_progress') return this.handleProgressCancel(event, action);
@@ -69,37 +100,42 @@ export class FeishuCardActionService {
     if (row.status !== 'QUEUED') return { toast: { type: 'info', content: '该消息已失效' } };
     const jumped = await this.options.queuePort.jumpToFront(row.id);
     if (!jumped) return { toast: { type: 'info', content: '该消息已开始执行' } };
-    // 先中断后排空，再 PATCH 卡片：若 PATCH（飞书 API 往返百毫秒）期间上一任务正好自然收尾、
-    // 队列接力已认领目标消息，插队回调再中断会误取消用户主动要求立即执行的消息。
+    // 先中断后排空：drain 为 fire-and-forget，不得 await PATCH。回调必须在 3s 内返回新卡片，
+    // 空响应会让点击端把卡片还原为「排队中」，看起来像消息没发出去。
     const interruptAndDrain = this.options.interruptAndDrain;
     if (interruptAndDrain != null) {
       interruptAndDrain(row.sessionId);
     } else {
       this.options.interrupt(row.sessionId);
     }
-    if (row.cardMessageId != null) {
-      try {
-        await this.options.patchCard(row.botId, row.cardMessageId, buildQueueCardText('🚀 已插队', '正在中断当前任务并执行这条消息…'));
-      } catch (error) {
-        console.warn(`飞书排队卡片插队 PATCH 失败, cardMessageId=${row.cardMessageId}`, error);
-      }
-    }
-    return undefined;
+    const card = buildQueueCardText('🚀 已插队', '正在中断当前任务并执行这条消息…');
+    // 不在这里 PATCH：排队卡稍后会被 drain 就地升级为进度卡；若后台 PATCH「已插队」
+    // 晚于进度卡升级，会把「正在处理」盖回插队文案。点击者靠回调 card 更新，群内其他人
+    // 会在任务开始执行时看到进度卡。
+    return {
+      toast: { type: 'success', content: '已插队，正在中断当前任务并执行这条消息' },
+      card: { type: 'raw', data: card },
+    };
   }
 
   private async handleCancel(row: { id: number; cardMessageId: string | null; botId: number }): Promise<FeishuCardActionResponse | undefined> {
     const result = await this.options.queuePort.cancel(row.id);
     if (result === 'ALREADY_STARTED') return { toast: { type: 'info', content: '该消息已开始执行' } };
     if (result === 'NOT_FOUND') return { toast: { type: 'info', content: '该消息已失效' } };
-    if (row.cardMessageId != null) {
-      try {
-        await this.options.patchCard(row.botId, row.cardMessageId, buildQueueCardText('✖️ 已取消', '这条消息已取消，未进入执行。'));
-      } catch (error) {
-        console.warn(`飞书排队卡片取消 PATCH 失败, cardMessageId=${row.cardMessageId}`, error);
-        return { toast: { type: 'info', content: '这条排队消息已取消，但卡片更新失败，不会进入执行。' } };
-      }
-    }
-    return { toast: { type: 'success', content: '这条排队消息已取消，不会进入执行。' } };
+    const card = buildQueueCardText('✖️ 已取消', '这条消息已取消，未进入执行。');
+    this.patchInBackground(row, card);
+    return toCardCallback('✖️ 已取消', '这条消息已取消，未进入执行。', {
+      type: 'success',
+      content: '这条排队消息已取消，不会进入执行。',
+    });
+  }
+
+  /** 群内其他人看不到回调响应里的卡片，后台 PATCH 一次；失败只记日志，不阻塞也不改回调结果。 */
+  private patchInBackground(row: { cardMessageId: string | null; botId: number }, card: Record<string, unknown>): void {
+    if (row.cardMessageId == null) return;
+    void this.options.patchCard(row.botId, row.cardMessageId, card).catch((error) => {
+      console.warn(`飞书排队卡片 PATCH 失败, cardMessageId=${row.cardMessageId}`, error);
+    });
   }
 
   private parseActionValue(value: unknown): FeishuCardActionValue | null {
