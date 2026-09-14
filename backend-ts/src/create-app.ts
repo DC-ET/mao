@@ -233,6 +233,7 @@ import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 import { FeishuCardProgressListener, type FeishuCardProgress } from './feishu/card-progress-listener.js';
+import { buildFeishuProgressCard } from './feishu/progress-card.js';
 import { inboundImageKeys } from './feishu/event-normalizer.js';
 import { chatFilesDirOf } from './feishu/chat-files.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
@@ -1103,32 +1104,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
     return (response as { data?: { message_id?: string } }).data?.message_id ?? null;
   };
-  const buildFeishuProgressCard = (
-    status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[],
-    cancelAction?: { sessionId: number; sender: string },
-  ): Record<string, unknown> => {
-    const title = status === 'RUNNING' ? '正在处理' : status === 'COMPLETED' ? '处理完成' : status === 'CANCELLED' ? '任务已取消' : '处理失败';
-    const sections: Array<Record<string, unknown>> = [
-      { tag: 'markdown', content: `**状态：${title}**${round > 0 ? ` · 第 ${round} 轮` : ''}`, text_align: 'left', text_size: 'normal_v2' },
-    ];
-    if (content.trim() !== '') sections.push({ tag: 'markdown', content: content.slice(0, 6000), text_align: 'left', text_size: 'normal_v2' });
-    if (tools.length > 0) sections.push({ tag: 'markdown', content: `**本轮工具**\n${tools.map((tool) => `- ${tool}`).join('\n').slice(0, 3000)}`, text_align: 'left', text_size: 'normal_v2' });
-    // 执行中提供「取消任务」按钮（终态 PATCH 不带按钮，随卡片重写自动消失）。
-    if (status === 'RUNNING' && cancelAction != null) {
-      sections.push({
-        // 卡片 JSON 2.0 不支持 tag:'action' 交互模块，按钮需放入 elements（并排用 column_set）。
-        tag: 'column_set', flex_mode: 'flow', background_style: 'default',
-        columns: [
-          { tag: 'column', width: 'auto', vertical_align: 'top', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '取消任务' }, type: 'danger', value: { kind: 'feishu_progress', act: 'cancel', sessionId: cancelAction.sessionId, sender: cancelAction.sender } }] },
-        ],
-      });
-    }
-    return {
-      schema: '2.0',
-      config: { update_multi: true },
-      body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements: sections },
-    };
-  };
   // 排队交互卡片：提示当前任务执行中、新消息已入队，并提供「立即发送/取消本次任务」两个按钮。
   const buildFeishuQueueCard = (context: FeishuInboundContext, queueId: number, position: number): Record<string, unknown> => {
     const summary = context.text.length > 60 ? `${context.text.slice(0, 60)}…` : context.text;
@@ -1171,18 +1146,21 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     }
     return cardMessageId;
   };
-  /** 250ms 节流的进度卡片 PATCH 闭包：正常执行与崩溃恢复续跑共用同一实现。 */
-  const createPatchedProgress = (client: Lark.Client, cardMessageId: string, cancelAction: { sessionId: number; sender: string } | null): FeishuCardProgress => {
+  /** 250ms 节流的进度卡片 PATCH 闭包：正常执行与崩溃恢复续跑共用同一实现。
+   *  @param startedAtMs 任务起算时间（毫秒），终态时据此计算卡片上的「耗时」。 */
+  const createPatchedProgress = (
+    client: Lark.Client, cardMessageId: string, cancelAction: { sessionId: number; sender: string } | null, startedAtMs: number,
+  ): FeishuCardProgress => {
     let nextUpdateAt = 0;
     return {
       update: async (status, round, content, tools) => {
         const wait = nextUpdateAt - Date.now();
         if (wait > 0) await new Promise<void>((resolve) => setTimeout(resolve, wait));
         nextUpdateAt = Date.now() + 250;
-        await client.im.v1.message.patch({
-          path: { message_id: cardMessageId },
-          data: { content: JSON.stringify(buildFeishuProgressCard(status, round, content, tools, cancelAction ?? undefined)) },
-        });
+        // 仅终态展示耗时：执行中展示会因 250ms 节流停留在一段过期读数上。
+        const elapsedMs = status === 'RUNNING' ? undefined : Date.now() - startedAtMs;
+        const card = buildFeishuProgressCard(status, round, content, tools, cancelAction ?? undefined, elapsedMs);
+        await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
       },
     };
   };
@@ -1206,11 +1184,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       }
     };
     const existingMessageId = context.progressCardMessageId;
+    // 任务起算时间取卡片就绪时刻：排队消息的等待时间不计入耗时。
+    const startedAtMs = Date.now();
     if (existingMessageId != null) {
       const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction);
       await client.im.v1.message.patch({ path: { message_id: existingMessageId }, data: { content: JSON.stringify(card) } });
       await persistCard(existingMessageId);
-      return createPatchedProgress(client, existingMessageId, cancelAction);
+      return createPatchedProgress(client, existingMessageId, cancelAction, startedAtMs);
     }
     const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction);
     const data = { msg_type: 'interactive', content: JSON.stringify(card) };
@@ -1225,7 +1205,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     await persistCard(messageId);
     // 私聊进度卡片可被回复/引用，记录卡片消息 → 会话映射供引用切换定位。
     if (context.chatType === 'p2p') await feishuMessageService.recordP2pMessage(String(botId), messageId, sessionId, 'OUT');
-    return createPatchedProgress(client, messageId, cancelAction);
+    return createPatchedProgress(client, messageId, cancelAction, startedAtMs);
   };
   /** 崩溃恢复续跑：按会话查找活跃进度卡片并构造续更 progress；无映射或加载失败返回 null（不阻断恢复）。 */
   const createFeishuRecoveryProgress = async (sessionId: number): Promise<FeishuCardProgress | null> => {
@@ -1241,7 +1221,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         return null;
       }
       const cancelAction = row.senderOpenId != null && row.senderOpenId !== '' ? { sessionId, sender: row.senderOpenId } : null;
-      const progress = createPatchedProgress(client, row.cardMessageId, cancelAction);
+      // 续跑任务的耗时以崩溃前会话记录的 startedAt 起算（读不到时退回恢复开始的时刻）。
+      const session = await sessionService.getSession(sessionId).catch(() => null);
+      const startedAtMs = parseSqlTimeMs(session?.startedAt) ?? Date.now();
+      const progress = createPatchedProgress(client, row.cardMessageId, cancelAction, startedAtMs);
       // 重启后续跑立刻刷新卡片并带上取消按钮，避免旧卡停在崩溃前的「正在处理」且取消回调失效。
       try {
         await progress.update('RUNNING', 0, '任务正在恢复执行。', []);
@@ -1951,6 +1934,13 @@ function expandHome(v: string): string {
   if (v.startsWith('$HOME')) return v.replace(/^\$HOME/, process.env.HOME ?? '');
   if (v.startsWith('~/')) return resolve(process.env.HOME ?? '', v.slice(2));
   return v;
+}
+
+/** 解析 MySQL datetime（`yyyy-MM-dd HH:mm:ss`）为毫秒时间戳；缺失或不可解析返回 null。 */
+function parseSqlTimeMs(value: string | null | undefined): number | null {
+  if (value == null || value === '') return null;
+  const ms = Date.parse(value.includes('T') ? value : value.replace(' ', 'T'));
+  return Number.isFinite(ms) ? ms : null;
 }
 
 /** 会话删除时清理该会话 runtime 目录（incoming 上传、skills 同步副本、shell 输出等临时数据）。 */
