@@ -1,5 +1,5 @@
 INSERT INTO `system_setting` (`setting_key`, `value`, `category`, `description`, `editable`, `is_secret`) VALUES
-('auth.ecp.config', '{"enabled":false,"appCode":"EK6301","baseUrl":"https://ecp.acg.team/api/v1","loginVariant":"PARTNER","timeoutMs":10000,"desktopCallbackUrl":"https://mao.etarch.cn/auth/ecp/feishu-callback","adminCallbackUrl":"https://mao.etarch.cn/admin/auth/ecp/feishu-callback"}', '集成配置', 'ECP 原生飞书登录 JSON 配置（开启后关闭其它登录方式）', 1, 0);
+('auth.ecp.config', '{"enabled":false,"appCode":"EK0001","baseUrl":"https://ecp.example.com/api/v1","loginVariant":"PARTNER","timeoutMs":10000,"desktopCallbackUrl":"https://mao.example.com/auth/ecp/feishu-callback","adminCallbackUrl":"https://mao.example.com/admin/auth/ecp/feishu-callback"}', '集成配置', 'ECP 原生飞书登录 JSON 配置（开启后关闭其它登录方式）', 1, 0);
 
 CREATE TABLE `ecp_oauth_state` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
