@@ -41,7 +41,9 @@ export class ContextManager {
     summary: string | null | undefined,
     incrementalMessages: ChatMessage[] | null,
     archiveHint?: string | null,
+    latestUserMessage?: ChatMessage | null,
   ): ChatMessage[] {
-    return this.compactionService.prependSessionSummary(summary, incrementalMessages, archiveHint);
+    return this.compactionService.prependSessionSummary(
+      summary, incrementalMessages, archiveHint, latestUserMessage);
   }
 }

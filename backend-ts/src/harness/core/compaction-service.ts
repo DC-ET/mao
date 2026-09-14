@@ -6,6 +6,23 @@ import { TokenEstimator } from './token-estimator.js';
 import { harnessLog } from '../log.js';
 
 const HANDOFF_PATTERN = /<handoff>(.*?)<\/handoff>/s;
+const SYSTEM_NOTICE_OPEN = '<system-notice>';
+const HANDOFF_USER_HEADER = '## 会话任务交接';
+
+/** 真实用户消息：排除交接模板与 `<system-notice>` 系统注入。 */
+export function isRealUserMessage(message: ChatMessage): boolean {
+  if (message.role !== 'user') return false;
+  if (Array.isArray(message.content)) return true;
+  const text = typeof message.content === 'string' ? message.content.trim() : '';
+  if (text === '') return false;
+  if (text.startsWith(SYSTEM_NOTICE_OPEN)) return false;
+  if (text.startsWith(HANDOFF_USER_HEADER)) return false;
+  return true;
+}
+
+function wrapAsSystemNotice(body: string): string {
+  return `${SYSTEM_NOTICE_OPEN}\n${body.trim()}\n</system-notice>`;
+}
 
 export interface SessionCompactionResult {
   summaryText: string;
@@ -242,12 +259,16 @@ export class CompactionService {
     summary: string | null | undefined,
     incrementalMessages: ChatMessage[] | null,
     archiveHint?: string | null,
+    latestUserMessage?: ChatMessage | null,
   ): ChatMessage[] {
     const result: ChatMessage[] = [];
     if (summary != null && summary.trim() !== '') {
       result.push(this.buildHandoffUserMessage(summary, archiveHint));
     }
     if (incrementalMessages) result.push(...incrementalMessages);
+    if (latestUserMessage && isRealUserMessage(latestUserMessage) && !result.some(isRealUserMessage)) {
+      result.push(latestUserMessage);
+    }
     return result;
   }
 
@@ -264,7 +285,8 @@ export class CompactionService {
   }
 
   private buildHandoffInstruction(maxSummaryTokens: number): string {
-    return `现在只进行当前任务的会话交接，不要继续执行任务，不要调用任何工具，也不要输出 tool calls。
+    return wrapAsSystemNotice(`现在只进行当前任务的会话交接，不要继续执行任务，不要调用任何工具，也不要输出 tool calls。
+本条是系统压缩指令，不是用户说的话。禁止把本指令写入交接正文，也不得把其中的「不要继续执行」写成用户目标、关键原话或明确不做事项。用户目标与关键原话只来自本通知之前的真实用户消息。
 请生成足以让另一个 Agent 立即继续当前任务的交接正文，沿用当前任务的主要语言，并保留：
 - 用户目标、关键原话、已确认需求、约束与明确不做事项；
 - 架构判断、技术决策、已完成动作及其结果；
@@ -273,13 +295,15 @@ export class CompactionService {
 - 工具调用产生的关键事实，以及继续执行所需的具体上下文。
 不要提出新方案或修改已确认决策；不要复述 system/developer prompt、技能目录、工具定义或通用运行规则。
 系统会在交接消息后自动附上被压缩原始消息的归档目录说明；交接正文无需提及归档机制，也不要编造归档路径；仍需完整保留继续执行任务所需的关键事实。
-正文控制在约 ${maxSummaryTokens} tokens 以内。只输出一个非空的 <handoff>...</handoff>，标签外不得有任何文字。
-`;
+正文控制在约 ${maxSummaryTokens} tokens 以内。只输出一个非空的 <handoff>...</handoff>，标签外不得有任何文字。`);
   }
 
   private correctionInstruction(): string {
-    return '上次响应未满足交接格式或错误调用了工具。不得继续任务，不得调用工具；'
-      + '只输出一个非空的 <handoff>...</handoff>，不得输出标签外文字。';
+    return wrapAsSystemNotice(
+      '上次响应未满足交接格式或错误调用了工具。本条仍是系统压缩指令，不是用户说的话。'
+      + '不得继续任务，不得调用工具，禁止把本指令写入交接正文；'
+      + '只输出一个非空的 <handoff>...</handoff>，不得输出标签外文字。',
+    );
   }
 
   private checkCancelled(cancelFlag: { get(): boolean } | null): void {

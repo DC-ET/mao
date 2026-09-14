@@ -315,7 +315,7 @@ export class HarnessService {
       await this.sessionService.cleanupIncompleteTailAfterId(sessionId, boundary);
     }
     const history = await this.sessionHistoryLoader.loadHistoryAfterBoundary(sessionId, boundary);
-    this.sessionHistoryLoader.applyHistory(context, summary, history);
+    await this.sessionHistoryLoader.applyHistory(context, summary, history);
 
     const anchor = await this.sessionService.loadContextAnchor(sessionId);
     context.lastPromptTokens = anchor.lastPromptTokens;

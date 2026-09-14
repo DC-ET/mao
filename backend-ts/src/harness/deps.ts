@@ -156,6 +156,8 @@ export interface SessionService {
     metadataJson?: string | null,
   ): Promise<Message>;
   getMessagesAfterId(sessionId: number, boundary: number): Promise<Message[]>;
+  /** 按 id 单调序取最后一条用户消息；压缩后回注最新真实用户原话时使用。 */
+  getLastUserMessage?(sessionId: number): Promise<Message | null>;
   getMessages?(sessionId: number): Promise<Message[]>;
   /** 从（可能是多模态 JSON 的）消息 content 中提取可见文本，供摘要等场景使用。 */
   extractVisibleText?(content: string | null): string | null;

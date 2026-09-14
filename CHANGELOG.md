@@ -21,6 +21,10 @@
 
 - Web Embed SDK 页面操作修复 Element `el-select`（`filterable` + `multiple`）下拉点不中：`page_click` 改为派发完整鼠标序列（pointer/mousedown/mouseup/click），点中下拉 option 后回读并返回 `observation.selected`，避免 Agent 把「只填了关键字」当成已选中服务。快照为 Element 表单项内过滤框补充 form-item 标题标签。新增多选下拉集成测试覆盖「过滤框 fill → 重新 inspect → 点 option → 确认选中」完整路径。
 
+### 后端
+
+- 修复会话压缩后 Agent 把系统交接指令当成用户原话、停下当前任务：压缩指令改为 `<system-notice>` 系统通知（明确不是用户说的话，禁止写入交接正文）；压缩后若增量历史里没有真实用户消息，自动把最新一条用户原话接回交接消息之后，后续真实请求不再被「不要继续执行」盖掉。
+
 ## 0.0.115 (2026-09-14)
 
 ### 后端

@@ -2,6 +2,7 @@ import type { ChatMessage, ChatRequest, ToolCall } from '../llm/chat-request.js'
 import type { Message, SessionService } from '../deps.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
 import type { CompactionArchiveService } from './compaction-archive.service.js';
+import { isRealUserMessage } from './compaction-service.js';
 import type { ContextManager } from './context-manager.js';
 import { MessageHistoryNormalizer } from './message-history-normalizer.js';
 import { PersistedChatMessage } from './persisted-chat-message.js';
@@ -33,12 +34,16 @@ export class SessionHistoryLoader {
     return { snapshotMessageIds, normalizedEntities: normalized, persistedMessages };
   }
 
-  applyHistory(context: AgentExecutionContext, summary: string | null | undefined, history: HistorySnapshot): void {
+  async applyHistory(
+    context: AgentExecutionContext, summary: string | null | undefined, history: HistorySnapshot,
+  ): Promise<void> {
     const incremental = history.persistedMessages.map((p) => p.chatMessage);
     const archiveHint = this.compactionArchiveService.buildArchiveHint(
       context.executionMode, context.userId, context.sessionId);
+    const latestUserMessage = await this.resolveLatestUserMessage(context, summary, incremental);
     context.messages.length = 0;
-    context.messages.push(...this.contextManager.prependSessionSummary(summary, incremental, archiveHint));
+    context.messages.push(...this.contextManager.prependSessionSummary(
+      summary, incremental, archiveHint, latestUserMessage));
     if (context.ephemeralSystemMessages.length > 0) {
       context.messages.push(...context.ephemeralSystemMessages);
     }
@@ -47,6 +52,20 @@ export class SessionHistoryLoader {
     for (const [k, v] of Object.entries(ToolAttachmentLoader.loadAllFromMessages(history.normalizedEntities))) {
       context.toolAttachments.set(k, v);
     }
+  }
+
+  private async resolveLatestUserMessage(
+    context: AgentExecutionContext,
+    summary: string | null | undefined,
+    incremental: ChatMessage[],
+  ): Promise<ChatMessage | null> {
+    if (summary == null || summary.trim() === '') return null;
+    if (incremental.some(isRealUserMessage)) return null;
+    if (context.sessionId == null || this.sessionService.getLastUserMessage == null) return null;
+    const last = await this.sessionService.getLastUserMessage(context.sessionId);
+    if (last == null) return null;
+    const message = this.toChatMessage(last);
+    return isRealUserMessage(message) ? message : null;
   }
 
   toChatMessage(message: Message): ChatMessage {

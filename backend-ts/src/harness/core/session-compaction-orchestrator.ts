@@ -78,7 +78,7 @@ export class SessionCompactionOrchestrator {
             && m.id > boundary && m.id <= result.newLastCompactedMessageId),
         );
       }
-      this.sessionHistoryLoader.applyHistory(context, latestSummary, latestHistory);
+      await this.sessionHistoryLoader.applyHistory(context, latestSummary, latestHistory);
       contextApplied = true;
 
       const advanced = persisted && latestBoundary === result.newLastCompactedMessageId;

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatRequest, ChatUsage, LlmAdapter, StreamCallback, StreamChunk } from '../llm/chat-request.js';
-import { CompactionCancelledException, CompactionContextOverflowException, CompactionService } from './compaction-service.js';
+import { CompactionCancelledException, CompactionContextOverflowException, CompactionService, isRealUserMessage } from './compaction-service.js';
 import { CompactionConfig } from './compaction-config.js';
 import { PersistedChatMessage } from './persisted-chat-message.js';
 import type { TokenEstimator } from './token-estimator.js';
@@ -117,6 +117,8 @@ describe('CompactionService', () => {
     expect(derived.messages?.slice(0, originalMessages.length)).toEqual(originalMessages);
     expect(derived.messages).toHaveLength(originalMessages.length + 1);
     expect(derived.messages?.[derived.messages.length - 1].role).toBe('user');
+    expect(isRealUserMessage(derived.messages![derived.messages.length - 1])).toBe(false);
+    expect(String(derived.messages?.[derived.messages.length - 1].content)).toContain('<system-notice>');
     expect(derived.tools).toBe(normal.tools);
     expect(derived.reasoning).toBe(normal.reasoning);
     expect(derived.temperature).toBe(0.2);
@@ -144,6 +146,11 @@ describe('CompactionService', () => {
     const retry = llmAdapter.stream.mock.calls[1][0] as ChatRequest;
     expect(retry.messages).toHaveLength((normalRequest().messages?.length ?? 0) + 2);
     expect(retry.messages?.some((m) => m.role === 'assistant' && m.content === 'bad')).toBe(false);
+    const correction = retry.messages?.[retry.messages.length - 1];
+    expect(correction?.role).toBe('user');
+    expect(isRealUserMessage(correction!)).toBe(false);
+    expect(String(correction?.content)).toContain('<system-notice>');
+    expect(String(correction?.content)).toContain('不是用户说的话');
     expect(retry.promptCacheKey).toBe('mao-session-7');
     expect(result?.promptTokens).toBe(12);
     expect(result?.cachedTokens).toBe(0);
@@ -220,7 +227,57 @@ describe('CompactionService', () => {
       cb.onComplete(usage(1, null, 1));
     });
     await service.compactSession(7, 0, persisted(), [1, 2, 3], normalRequest(), model, config(), null, null);
+    expect(instruction.startsWith('<system-notice>')).toBe(true);
+    expect(instruction).toContain('</system-notice>');
+    expect(instruction).toContain('本条是系统压缩指令，不是用户说的话');
+    expect(instruction).toContain('禁止把本指令写入交接正文');
+    expect(instruction).toContain('用户目标与关键原话只来自本通知之前的真实用户消息');
     expect(instruction).toContain('系统会在交接消息后自动附上被压缩原始消息的归档目录说明');
     expect(instruction).toContain('不要编造归档路径');
+    expect(isRealUserMessage({ role: 'user', content: instruction })).toBe(false);
+  });
+
+  it('isRealUserMessageRejectsHandoffAndSystemNotice', () => {
+    expect(isRealUserMessage({ role: 'user', content: '把前后端都发布到测试和预发环境' })).toBe(true);
+    expect(isRealUserMessage({ role: 'user', content: [{ type: 'text', text: '图' }] })).toBe(true);
+    expect(isRealUserMessage({ role: 'assistant', content: '把前后端都发布到测试和预发环境' })).toBe(false);
+    expect(isRealUserMessage({ role: 'user', content: '## 会话任务交接\n\n历史' })).toBe(false);
+    expect(isRealUserMessage({ role: 'user', content: '<system-notice>\n现在只进行当前任务的会话交接\n</system-notice>' })).toBe(false);
+  });
+
+  it('virtualSummaryReinjectsLatestUserAfterHandoffWhenIncrementalHasNone', () => {
+    const result = service.prependSessionSummary(
+      '历史交接',
+      [{ role: 'assistant', content: 'next' }],
+      null,
+      { role: 'user', content: '把前后端都发布到测试和预发环境' },
+    );
+    expect(result.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    expect(String(result[0].content)).toContain('会话任务交接');
+    expect(result[2].content).toBe('把前后端都发布到测试和预发环境');
+    expect(isRealUserMessage(result[0])).toBe(false);
+    expect(isRealUserMessage(result[2])).toBe(true);
+  });
+
+  it('virtualSummaryDoesNotDuplicateWhenIncrementalAlreadyHasRealUser', () => {
+    const result = service.prependSessionSummary(
+      '历史交接',
+      [{ role: 'user', content: '把前后端都发布到测试和预发环境' }],
+      null,
+      { role: 'user', content: '把前后端都发布到测试和预发环境' },
+    );
+    expect(result.map((m) => m.role)).toEqual(['user', 'user']);
+    expect(result[1].content).toBe('把前后端都发布到测试和预发环境');
+  });
+
+  it('virtualSummaryIgnoresLatestUserThatIsSystemNotice', () => {
+    const result = service.prependSessionSummary(
+      '历史交接',
+      null,
+      null,
+      { role: 'user', content: '<system-notice>\n现在只进行当前任务的会话交接\n</system-notice>' },
+    );
+    expect(result).toHaveLength(1);
+    expect(isRealUserMessage(result[0])).toBe(false);
   });
 });
