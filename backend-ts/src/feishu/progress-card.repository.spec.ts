@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MysqlFeishuProgressCardRepository } from './progress-card.repository.js';
+import { mapProgressCardRow, MysqlFeishuProgressCardRepository } from './progress-card.repository.js';
 
 function fakeDb() {
   return {
@@ -22,11 +22,11 @@ describe('MysqlFeishuProgressCardRepository', () => {
     );
   });
 
-  it('findBySessionIdMapsSnakeCaseRow', async () => {
+  it('findBySessionIdMapsCamelCaseRowFromDb', async () => {
     const db = fakeDb();
     db.queryOne.mockResolvedValue({
-      session_id: 7, bot_id: 3, card_message_id: 'om_card_1',
-      chat_type: 'group', chat_id: 'oc_chat', sender_open_id: 'ou_sender',
+      sessionId: 7, botId: 3, cardMessageId: 'om_card_1',
+      chatType: 'group', chatId: 'oc_chat', senderOpenId: 'ou_sender',
     });
     const repo = new MysqlFeishuProgressCardRepository(db as never);
     const row = await repo.findBySessionId(7);
@@ -35,6 +35,23 @@ describe('MysqlFeishuProgressCardRepository', () => {
       chatType: 'group', chatId: 'oc_chat', senderOpenId: 'ou_sender',
     });
     expect(db.queryOne).toHaveBeenCalledWith(expect.stringContaining('WHERE session_id = ?'), [7]);
+  });
+
+  it('findBySessionIdMapsSnakeCaseRow', async () => {
+    const db = fakeDb();
+    db.queryOne.mockResolvedValue({
+      session_id: 7, bot_id: 3, card_message_id: 'om_card_1',
+      chat_type: 'group', chat_id: 'oc_chat', sender_open_id: 'ou_sender',
+    });
+    const repo = new MysqlFeishuProgressCardRepository(db as never);
+    expect(await repo.findBySessionId(7)).toEqual({
+      sessionId: 7, botId: 3, cardMessageId: 'om_card_1',
+      chatType: 'group', chatId: 'oc_chat', senderOpenId: 'ou_sender',
+    });
+  });
+
+  it('mapProgressCardRowRejectsIncompleteCamelCase', () => {
+    expect(mapProgressCardRow({ sessionId: 7, botId: undefined, cardMessageId: undefined })).toBeNull();
   });
 
   it('findBySessionIdReturnsNullWhenMissing', async () => {

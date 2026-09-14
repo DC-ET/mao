@@ -16,7 +16,25 @@ export interface FeishuProgressCardRepository {
   deleteBySessionId(sessionId: number): Promise<void>;
 }
 
-interface DbRow { session_id: number; bot_id: number; card_message_id: string; chat_type: string; chat_id: string | null; sender_open_id: string | null }
+/** Db.query / queryOne 已 toCamel；兼容未转换的 snake_case 行。字段不全视为无映射。 */
+export function mapProgressCardRow(row: Record<string, unknown>): FeishuProgressCardRow | null {
+  const sessionId = Number(row.sessionId ?? row.session_id);
+  const botId = Number(row.botId ?? row.bot_id);
+  const cardMessageId = String(row.cardMessageId ?? row.card_message_id ?? '');
+  if (!Number.isFinite(sessionId) || sessionId <= 0 || !Number.isFinite(botId) || botId <= 0 || cardMessageId === '') {
+    return null;
+  }
+  const chatIdRaw = row.chatId ?? row.chat_id;
+  const senderRaw = row.senderOpenId ?? row.sender_open_id;
+  return {
+    sessionId,
+    botId,
+    cardMessageId,
+    chatType: String(row.chatType ?? row.chat_type ?? ''),
+    chatId: chatIdRaw == null ? null : String(chatIdRaw),
+    senderOpenId: senderRaw == null ? null : String(senderRaw),
+  };
+}
 
 export class MysqlFeishuProgressCardRepository implements FeishuProgressCardRepository {
   constructor(private readonly db: Db) {}
@@ -32,19 +50,12 @@ export class MysqlFeishuProgressCardRepository implements FeishuProgressCardRepo
   }
 
   async findBySessionId(sessionId: number): Promise<FeishuProgressCardRow | null> {
-    const row = await this.db.queryOne<DbRow>(
+    const row = await this.db.queryOne<Record<string, unknown>>(
       'SELECT session_id, bot_id, card_message_id, chat_type, chat_id, sender_open_id FROM feishu_progress_card WHERE session_id = ? LIMIT 1',
       [sessionId],
     );
     if (row == null) return null;
-    return {
-      sessionId: row.session_id,
-      botId: row.bot_id,
-      cardMessageId: row.card_message_id,
-      chatType: row.chat_type,
-      chatId: row.chat_id,
-      senderOpenId: row.sender_open_id,
-    };
+    return mapProgressCardRow(row);
   }
 
   async deleteBySessionId(sessionId: number): Promise<void> {

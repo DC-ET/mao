@@ -1188,9 +1188,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const createFeishuRecoveryProgress = async (sessionId: number): Promise<FeishuCardProgress | null> => {
     try {
       const row = await feishuProgressCardRepo.findBySessionId(sessionId);
-      if (row == null) return null;
+      if (row == null) {
+        console.warn(`飞书恢复进度卡片无映射, sessionId=${sessionId}`);
+        return null;
+      }
       const client = await getFeishuClient(row.botId);
-      if (client == null) return null;
+      if (client == null) {
+        console.warn(`飞书恢复进度卡片无法创建客户端, sessionId=${sessionId} botId=${row.botId}`);
+        return null;
+      }
       const cancelAction = row.senderOpenId != null && row.senderOpenId !== '' ? { sessionId, sender: row.senderOpenId } : null;
       const progress = createPatchedProgress(client, row.cardMessageId, cancelAction);
       // 重启后续跑立刻刷新卡片并带上取消按钮，避免旧卡停在崩溃前的「正在处理」且取消回调失效。
