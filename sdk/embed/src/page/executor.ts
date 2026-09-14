@@ -301,7 +301,18 @@ export class PageExecutor {
     this.manager.refreshDescriptor(elementId);
     const observation: Record<string, unknown> = { valueLength: actual.length };
     if (searchLike && !shouldBlur) {
-      const suggestions = await waitForVisibleOptions(SUGGESTION_WAIT_MS, options.shouldAbort);
+      // Element 多选常需先点开容器弹层：focus/input 可能不展开，导致「填了关键字但没有选项」
+      let suggestions = collectVisibleOptionLabels();
+      if (suggestions.length === 0) {
+        const opened = await ensureSearchDropdownOpen(el, options.shouldAbort);
+        if (opened) {
+          observation.dropdownOpened = true;
+          suggestions = collectVisibleOptionLabels();
+        }
+      }
+      if (suggestions.length === 0) {
+        suggestions = await waitForVisibleOptions(SUGGESTION_WAIT_MS, options.shouldAbort);
+      }
       observation.keepFocus = true;
       if (suggestions.length > 0) {
         observation.suggestions = suggestions;
@@ -457,6 +468,35 @@ function describeResolveFailure(code: string | undefined): string {
 
 function optionText(el: Element): string {
   return (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+const SEARCH_OPEN_CONTAINER_SELECTOR = [
+  '.el-select', '.el-autocomplete', '.el-cascader',
+  '.ant-select', '.ant-cascader', '.n-select', '.n-auto-complete',
+  '[role="combobox"]',
+].join(',');
+
+/**
+ * 远程/多选下拉：很多实现只在容器 mousedown 后展开弹层。
+ * fill 仅写 input 时可能“关键字进去了但列表没出来”，这里补一次容器点击并重放输入。
+ */
+async function ensureSearchDropdownOpen(el: Element, shouldAbort?: () => boolean): Promise<boolean> {
+  if (collectVisibleOptionLabels().length > 0) return true;
+  const container = el.closest(SEARCH_OPEN_CONTAINER_SELECTOR);
+  if (!(container instanceof HTMLElement)) return false;
+  if (typeof container.getBoundingClientRect === 'function') {
+    const rect = container.getBoundingClientRect();
+    if (rect.width <= 0 && rect.height <= 0) return false;
+  }
+  if (shouldAbort?.()) return false;
+  dispatchNativeClick(container);
+  await settle();
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    // 打开后重放 input，确保过滤条件在弹层内生效
+    dispatchValueEvents(el, el.value, false);
+    await settle();
+  }
+  return collectVisibleOptionLabels().length > 0 || container.getAttribute('aria-expanded') === 'true';
 }
 
 /** 点击后回读下拉选中态：原节点可能被组件库重渲染替换，需在当前 DOM 中按文案回查。 */

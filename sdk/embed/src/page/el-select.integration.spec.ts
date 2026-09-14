@@ -123,16 +123,13 @@ function mountElementMultiSelect(): MockSelect {
     root.dispatchEvent(new CustomEvent('change', { detail: state.selected.slice(), bubbles: true }));
   };
 
-  // Element 风格：容器/过滤框按下打开；选项需要 mousedown + click 才算选中
+  // Element 多选常见实现：仅容器 mousedown 展开；focus/input 单独不会打开弹层
   root.addEventListener('mousedown', () => {
-    if (!state.open) openDropdown();
-  });
-  filterInput.addEventListener('focus', () => {
     if (!state.open) openDropdown();
   });
   filterInput.addEventListener('input', () => {
     state.query = filterInput.value.trim();
-    openDropdown();
+    if (!state.open) return;
     renderOptions();
   });
   filterInput.addEventListener('blur', (event) => {
@@ -246,6 +243,8 @@ describe('el-select filterable multiple integration', () => {
 
     expect(fill.success).toBe(true);
     expect(fill.observation?.keepFocus).toBe(true);
+    // 组件仅容器 mousedown 打开：fill 必须保证弹层已展开，否则线上会出现「填了关键字但没有选项」
+    expect(fill.observation?.dropdownOpened).toBe(true);
     expect(fill.observation?.suggestions).toContain('rob-system');
     expect(mock.state.open).toBe(true);
     expect(mock.getOption('rob-system')).toBeTruthy();

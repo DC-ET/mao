@@ -20,6 +20,7 @@
 ### 前端（桌面 / Web / 安卓）
 
 - Web Embed SDK 页面操作修复 Element `el-select`（`filterable` + `multiple`）下拉点不中：`page_click` 改为派发完整鼠标序列（pointer/mousedown/mouseup/click），点中下拉 option 后回读并返回 `observation.selected`，避免 Agent 把「只填了关键字」当成已选中服务。快照为 Element 表单项内过滤框补充 form-item 标题标签。新增多选下拉集成测试覆盖「过滤框 fill → 重新 inspect → 点 option → 确认选中」完整路径。
+- 同上场景继续修复「填了服务名但下拉仍不展开、没有可点选项」：`page_fill` 对 combobox/搜索框在建议为空时自动对容器派发鼠标序列展开弹层并重放输入，返回 `observation.dropdownOpened`，避免只 focus/input 导致 Element 多选弹层未打开。
 
 ### 后端
 
