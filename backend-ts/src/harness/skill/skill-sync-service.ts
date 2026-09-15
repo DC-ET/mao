@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Writable } from 'node:stream';
@@ -46,20 +46,17 @@ export class SkillSyncService {
     const toRemove = new Set(state.keys());
     for (const [skillName, sourceFolder] of merged) {
       toRemove.delete(skillName);
-      const sourceModified = getLastModified(sourceFolder);
-      const lastSynced = state.get(skillName);
       const targetFolder = path.join(skillsDir, skillName);
-      // 源未变化时仍校验目标目录：若已被清理（如定时清理删除），则强制重新同步，避免 agent 读不到技能文件
-      if (lastSynced != null && lastSynced >= sourceModified && existsSync(targetFolder)) continue;
       try {
         if (!isValidSkillName(skillName)) {
           harnessLog('warn', `Skip syncing skill with unsafe name: ${skillName}`);
           continue;
         }
         assertInside(skillsDir, targetFolder);
-        copyDirectory(sourceFolder, targetFolder);
-        state.set(skillName, sourceModified);
-        harnessLog('info', `Synced skill ${skillName} to ${targetFolder}`);
+        linkSkill(sourceFolder, targetFolder);
+        // 链接指向源目录，内容始终最新，无需记录 mtime；state 仅用于追踪本会话已挂载的技能名
+        state.set(skillName, 0);
+        harnessLog('info', `Linked skill ${skillName} to ${targetFolder}`);
       } catch (e) {
         harnessLog('error', `Failed to sync skill ${skillName} to session runtime: ${(e as Error).message}`);
       }
@@ -69,7 +66,7 @@ export class SkillSyncService {
         if (!isValidSkillName(name)) continue;
         const target = path.join(skillsDir, name);
         assertInside(skillsDir, target);
-        rmSync(target, { recursive: true, force: true });
+        removeSkillLink(target);
       } catch { /* ignore */ }
       state.delete(name);
     }
@@ -213,9 +210,39 @@ function getLastModified(folder: string): number {
   }
 }
 
-function copyDirectory(src: string, dest: string): void {
-  mkdirSync(dest, { recursive: true });
-  cpSync(src, dest, { recursive: true });
+/**
+ * 以符号链接把技能源目录挂到会话 runtime 下。
+ * 源目录是持久数据（全局技能 / 用户技能），链接只是引用，因此定时清理删掉 runtime 副本不会影响源，
+ * 也不会让已 `npm install . -g` 的 CLI 因源目录消失而失效（npm 会 realpath 到源目录）。
+ * 目标已是正确链接时跳过；否则先移除旧的实体目录或错误/悬空链接再重建。
+ */
+function linkSkill(src: string, dest: string): void {
+  const existing = lstatSync(dest, { throwIfNoEntry: false });
+  if (existing != null) {
+    if (existing.isSymbolicLink() && resolveLinkTarget(dest) === path.resolve(src)) return;
+    // 悬空链接必须用 unlinkSync：rmSync 会跟随链接，ENOENT 被 force 吞掉后链接仍在
+    if (existing.isSymbolicLink()) unlinkSync(dest);
+    else rmSync(dest, { recursive: true, force: true });
+  }
+  mkdirSync(path.dirname(dest), { recursive: true });
+  symlinkSync(path.resolve(src), dest, 'dir');
+}
+
+/** 移除技能链接（或历史遗留的实体副本目录）。悬空链接只能 unlink，rmSync 会跟随链接而失败。 */
+function removeSkillLink(dest: string): void {
+  const existing = lstatSync(dest, { throwIfNoEntry: false });
+  if (existing == null) return;
+  if (existing.isSymbolicLink()) unlinkSync(dest);
+  else rmSync(dest, { recursive: true, force: true });
+}
+
+/** 读取链接指向的绝对路径；读取失败（悬空等）时返回 null。 */
+function resolveLinkTarget(link: string): string | null {
+  try {
+    return path.resolve(path.dirname(link), readlinkSync(link));
+  } catch {
+    return null;
+  }
 }
 
 /** 断言 target 严格位于 root 之内，防止技能名路径穿越。 */

@@ -141,7 +141,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 |------|------|------|
 | `MAO_CLEANUP_INTERVAL_MS` | 86400000（1 天） | 清理调度间隔 |
 | `MAO_CLEANUP_SHELL_MAX_AGE_DAYS` | 7 | shell 输出文件（`runtime/<uid>/<sid>/shellOutput/`）保留天数 |
-| `MAO_CLEANUP_SKILLS` | true | 是否清理会话 runtime 下的 skills 同步副本目录（活跃会话跳过） |
+| `MAO_CLEANUP_SKILLS` | true | 是否清理会话 runtime 下的 skills 链接目录（活跃会话跳过）。技能以符号链接指向源目录，清理只删链接，不影响源与已全局安装的 CLI |
 
 ### 密钥轮换注意
 
