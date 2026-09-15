@@ -13,3 +13,4 @@ export * from './message-detail.js';
 export * from './doc-reader.js';
 export * from './binding.repository.js';
 export * from './binding.routes.js';
+export * from './ecp-inbound-gate.js';

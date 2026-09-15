@@ -224,6 +224,14 @@ import { GroupContextSummarizer } from './feishu/group-context-summarizer.js';
 import type { ClientImpersonation } from '@mao/contracts';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
+import {
+  completeFeishuPendingAfterEcp,
+  FEISHU_ECP_IDENTITY_MISMATCH_TEXT,
+  feishuUnauthorizedGuide,
+  senderUnionIdOf,
+  startFeishuChannelAuthLink,
+} from './feishu/ecp-inbound-gate.js';
+import { hasUsableEcpSession } from './auth/ecp-session.repository.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
 import { FeishuInboundQueueRepository } from './feishu/inbound-queue.repository.js';
 import { MysqlFeishuProgressCardRepository } from './feishu/progress-card.repository.js';
@@ -361,6 +369,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const earlyFeishuBinding = new MysqlFeishuBindingRepository(db);
   const pendingBindingMessages = new MysqlFeishuPendingBindingRepository(db);
   let pendingBindingProcessor: FeishuInboundProcessor | undefined;
+  let notifyFeishuPendingMismatch: ((pending: { appId: number; event: FeishuNormalizedMessage }) => Promise<void>) | undefined;
   const feishu = new FeishuAuthService(
     userRepo, userRoleRepo, new MysqlFeishuOauthStateRepository(db), jwt, async () => (await settingService.getFeishuOAuthConfig()),
     undefined,
@@ -395,21 +404,28 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     () => settingService.getEcpConfig(),
     undefined,
     async (user, state) => {
-      const pending = await pendingBindingMessages.claim(state);
-      if (pending == null) return;
-      const unionId = pending.event.senderUnionId ?? pending.event.senderId;
-      if (unionId != null && user.id != null) {
-        await earlyFeishuBinding.bind(user.id, unionId);
-      }
-      if (pendingBindingProcessor != null) {
-        try {
-          await pendingBindingProcessor.process(String(pending.appId), { ...pending.event, progressCardMessageId: pending.cardMessageId }, true);
-          await pendingBindingMessages.complete(state);
-        } catch (error) {
-          await pendingBindingMessages.release(state);
-          console.error(`恢复飞书待绑定消息失败, state=${state}`, error);
-        }
-      }
+      if (user.id == null) return;
+      await completeFeishuPendingAfterEcp({
+        state,
+        ecpUserId: user.id,
+        claim: (s) => pendingBindingMessages.claim(s),
+        findUserIdByUnionId: (unionId) => earlyFeishuBinding.findUserIdByUnionId(unionId),
+        bind: (userId, unionId) => earlyFeishuBinding.bind(userId, unionId),
+        replay: async (pending) => {
+          if (pendingBindingProcessor == null) throw new Error('飞书入站处理器未就绪');
+          await pendingBindingProcessor.process(
+            String(pending.appId),
+            { ...pending.event, progressCardMessageId: pending.cardMessageId },
+            true,
+          );
+        },
+        complete: (s) => pendingBindingMessages.complete(s),
+        release: (s) => pendingBindingMessages.release(s),
+        failClaimed: (s) => pendingBindingMessages.failClaimed(s),
+        notifyMismatch: async (pending) => {
+          await notifyFeishuPendingMismatch?.(pending);
+        },
+      });
     },
   );
   const gitCredentials = new GitCredentialService(db, cfg.app.gitCredential.secretKey);
@@ -1104,6 +1120,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
     return (response as { data?: { message_id?: string } }).data?.message_id ?? null;
   };
+  notifyFeishuPendingMismatch = async (pending) => {
+    await sendFeishuText(pending.appId, pending.event, FEISHU_ECP_IDENTITY_MISMATCH_TEXT);
+  };
   // 排队交互卡片：提示当前任务执行中、新消息已入队，并提供「立即发送/取消本次任务」两个按钮。
   const buildFeishuQueueCard = (context: FeishuInboundContext, queueId: number, position: number): Record<string, unknown> => {
     const summary = context.text.length > 60 ? `${context.text.slice(0, 60)}…` : context.text;
@@ -1563,16 +1582,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       if (detail == null) return null;
       return persist(detail.text);
     },
-    resolveUserId: async (accountId, event) => {
-      const unionId = event.senderUnionId ?? event.senderId;
+    resolveUserId: async (_accountId, event) => {
+      const unionId = senderUnionIdOf(event);
       if (unionId == null) return null;
       return (await feishuBinding.findUserIdByUnionId(unionId)) ?? null;
     },
     authorizeSender: async (accountId, event) => {
-      const unionId = event.senderUnionId ?? event.senderId;
+      const unionId = senderUnionIdOf(event);
       if (unionId == null) return false;
       const userId = await feishuBinding.findUserIdByUnionId(unionId);
       if (userId == null) return false;
+      if (await ecpAuth.isEnabled() && !(await hasUsableEcpSession(ecpSessionRepo, userId))) return false;
       if (event.chatType === 'group') {
         if (event.chatId == null) return false;
         // 已绑定用户在群内发言即登记为成员并放行（feishu_chat_member 是登记表，不是白名单门槛）。
@@ -1587,20 +1607,24 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       if (client == null || event.chatType !== 'group' || event.chatId == null || event.messageId == null) return false;
       let auth: { authUrl: string; state: string } | null = null;
       try {
-        if (await feishu.isEnabled()) {
-          auth = await feishu.getQrCodeUrl();
-        } else if (await ecpAuth.isEnabled()) {
-          auth = await ecpAuth.startFeishuLogin('desktop');
-        }
+        auth = await startFeishuChannelAuthLink({
+          ecpEnabled: await ecpAuth.isEnabled(),
+          feishuEnabled: await feishu.isEnabled(),
+          startEcp: () => ecpAuth.startFeishuLogin('desktop'),
+          startFeishu: () => feishu.getQrCodeUrl(),
+        });
       } catch { return false; }
       if (auth == null) return false;
       await pendingBindingMessages.insert({ state: auth.state, appId: Number(accountId), messageId: event.messageId, event });
+      const unionId = senderUnionIdOf(event);
+      const bound = unionId != null && (await feishuBinding.findUserIdByUnionId(unionId)) != null;
+      const guide = feishuUnauthorizedGuide(await ecpAuth.isEnabled(), bound, event.chatType);
       const card = {
         schema: '2.0', config: { update_multi: true },
-        header: { template: 'orange', title: { tag: 'plain_text', content: '需要完成飞书绑定' } },
+        header: { template: 'orange', title: { tag: 'plain_text', content: guide.title } },
         body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements: [
-          { tag: 'markdown', content: '请先完成飞书账号绑定，获得群内使用权限后再试。' },
-          { tag: 'markdown', content: `[点击完成绑定](${auth.authUrl})` },
+          { tag: 'markdown', content: guide.body },
+          { tag: 'markdown', content: `[点击完成${await ecpAuth.isEnabled() ? '登录' : '绑定'}](${auth.authUrl})` },
         ] },
       };
       let response;
@@ -1627,14 +1651,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       return true;
     },
     unauthorizedText: async (accountId, event) => {
-      const base = event.chatType === 'group'
-        ? '请先完成飞书账号绑定，获得群内使用权限后再试。'
-        : '请先完成飞书账号绑定后再试。';
+      const ecpEnabled = await ecpAuth.isEnabled();
+      const unionId = senderUnionIdOf(event);
+      const bound = unionId != null && (await feishuBinding.findUserIdByUnionId(unionId)) != null;
+      const guide = feishuUnauthorizedGuide(ecpEnabled, bound, event.chatType);
       let link = '';
       try {
-        const qr = (await feishu.isEnabled())
-          ? await feishu.getQrCodeUrl()
-          : (await ecpAuth.isEnabled()) ? await ecpAuth.startFeishuLogin('desktop') : null;
+        const qr = await startFeishuChannelAuthLink({
+          ecpEnabled,
+          feishuEnabled: await feishu.isEnabled(),
+          startEcp: () => ecpAuth.startFeishuLogin('desktop'),
+          startFeishu: () => feishu.getQrCodeUrl(),
+        });
         if (qr != null) {
           link = qr.authUrl ?? '';
           if (event.messageId != null) {
@@ -1642,7 +1670,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
           }
         }
       } catch { link = ''; }
-      return link ? `${base}\n点击完成绑定：${link}` : base;
+      return link ? `${guide.body}\n点击完成${ecpEnabled ? '登录' : '绑定'}：${link}` : guide.body;
     },
   });
   pendingBindingProcessor = feishuInboundProcessor;
