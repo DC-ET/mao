@@ -1379,6 +1379,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         return true;
       },
     },
+    threadSessionControl: {
+      findSession: async (accountId, context) => {
+        const result = await feishuMessageService.findThreadSession(accountId, context.threadId);
+        return result == null ? null : { sessionId: result.sessionId, rootMessageId: result.rootMessageId };
+      },
+      getOrCreateSession: async (accountId, context) => {
+        const result = await feishuMessageService.getOrCreateThreadSession(accountId, context);
+        if (result == null) return null;
+        const triggerUserId = await resolveFeishuUserId(accountId, context);
+        await applyFeishuBotConfig(result.sessionId, Number(accountId));
+        void ensureFeishuSessionTitle(result.sessionId, Number(accountId), context);
+        return { sessionId: result.sessionId, rootMessageId: result.rootMessageId, workspace: result.workspace ?? null, executionUserId: triggerUserId ?? null };
+      },
+    },
     onReply: async (context, text, sessionId) => {
       const messageId = await sendFeishuText(Number(context.accountId), context, text);
       // 私聊出站文本回复记录归属映射：用户回复机器人消息时可凭此切换会话。
@@ -1594,6 +1608,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     messageService: feishuMessageService,
     resolveSenderName: resolveFeishuSenderName,
     downloadGroupImage: downloadFeishuGroupImage,
+    resolveThreadSession: async (accountId, event) => {
+      const result = await feishuMessageService.findThreadSession(String(accountId), event.threadId);
+      return result == null ? null : { sessionId: result.sessionId };
+    },
     resolveQuotedMessage: async (accountId, event) => {
       if (event.parentId == null) return null;
       const persist = async (raw: string): Promise<string> => {

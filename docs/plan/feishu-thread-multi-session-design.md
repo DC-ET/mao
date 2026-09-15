@@ -115,7 +115,7 @@ ALTER TABLE `feishu_group_message_log` ADD KEY `idx_group_msg_thread` (`app_id`,
        │
        ├─ 2. 查 feishu_thread_session 映射
        │     ├─ 命中 → 取已有 session
-       │     └─ 未命中 → 检查是否为话题根消息（parentId == messageId 或 parentId 为空）
+       │     └─ 未命中 → 检查是否为话题根消息（parentId 为空）
        │           ├─ 是（用户发起新话题）→ 创建新 session + 记录映射
        │           └─ 否（话题内回复但映射缺失，如上线前消息）→ 降级：按现有群逻辑处理
        │
@@ -263,9 +263,9 @@ async getOrCreateThreadSession(
   if (context.threadId == null || context.chatId == null) return null;
   const existing = await this.repository.findThreadSession(accountId, context.threadId);
   if (existing != null) return { sessionId: existing.sessionId, rootMessageId: existing.rootMessageId, workspace: null };
-  // 仅话题根消息触发创建（parentId == messageId 或 parentId 为空）
+  // 仅话题根消息触发创建（parentId 为空即根消息，飞书根消息无回复目标）
   // 话题内回复但映射缺失（上线前消息）：降级不创建，返回 null 让调用方走现有逻辑
-  const isRoot = context.parentId == null || context.parentId === context.messageId;
+  const isRoot = context.parentId == null || context.parentId === '';
   if (!isRoot) return null;
   const session = await this.sessionFactory.create(accountId, context);
   await this.repository.recordThreadSession({
@@ -380,7 +380,7 @@ async buildGroupContext(accountId: string, context: FeishuInboundContext): Promi
 
 | 风险 | 对策 |
 |---|---|
-| 话题根消息 `parentId` 可能为空或等于 `messageId`（飞书侧行为差异） | 创建映射条件放宽为 `parentId == null \|\| parentId === messageId \|\| parentId === rootId`；以 `threadId` 存在为主要判据 |
+| 话题根消息 `parentId` 为空（飞书根消息无回复目标） | 创建映射条件：`parentId == null \|\| parentId === ''`；以 `threadId` 存在为主要判据 |
 | 上线前话题的回复消息（无映射）走现有群逻辑，可能进入群级单会话 | 降级行为可接受：该消息进入群会话而非话题会话，用户下次在话题发消息时话题会话被创建 |
 | `feishu_group_message_log` 存量行 `thread_id` 为 null | 话题路径 `listGroupMessages` 过滤 `thread_id = ?` 时存量行自然不命中；新消息从上线起记录 `thread_id` |
 | 进度卡片/排队卡片发送到群（非话题内） | 本期接受：卡片在群中可见，不影响功能；后续可通过 reply 话题根消息让卡片落入话题 |

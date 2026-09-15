@@ -277,6 +277,37 @@ describe('normalizeFeishuEvent', () => {
     expect(event!.text).toBe('@Eter 看看');
   });
 
+  it('extracts thread_id for topic messages', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_app' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_reply', parent_id: 'om_root', root_id: 'om_root', thread_id: 'omt_abc123',
+          chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"继续这个话题"}',
+        },
+      },
+    });
+    expect(event!.threadId).toBe('omt_abc123');
+    expect(event!.parentId).toBe('om_root');
+    expect(event!.rootId).toBe('om_root');
+  });
+
+  it('threadId is null for non-topic messages', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_app' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user' } },
+        message: {
+          message_id: 'om_msg', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"hello"}',
+        },
+      },
+    });
+    expect(event!.threadId).toBeNull();
+  });
+
   it('parses image message media keys', () => {
     const event = normalizeFeishuEvent({
       header: { app_id: 'cli_mybot' },

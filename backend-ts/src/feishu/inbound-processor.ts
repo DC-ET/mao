@@ -20,6 +20,8 @@ export interface FeishuInboundProcessorOptions {
   resolveQuotedMessage?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
   /** 群聊图片入站即下载（非懒加载）：按 imageKey 下载并返回落盘绝对路径嵌入占位文本；null/抛错表示失败，保留懒加载占位符。 */
   downloadGroupImage?: (accountId: string, event: FeishuNormalizedMessage, imageKey: string, index: number) => Promise<string | null>;
+  /** 话题会话映射查询：threadId 存在且映射命中时，跳过 @bot 门禁（话题内消息视为触发）。 */
+  resolveThreadSession?: (accountId: string, event: FeishuNormalizedMessage) => Promise<{ sessionId: number } | null>;
 }
 
 export class FeishuInboundProcessor {
@@ -72,7 +74,13 @@ export class FeishuInboundProcessor {
         completed = true;
         return;
       }
-      const mentioned = this.isBotMentioned(normalized);
+      let mentioned = this.isBotMentioned(normalized);
+      // 话题消息：threadId 存在且话题会话映射命中时，跳过 @bot 门禁（话题内消息视为触发）。
+      // 映射未命中（非根消息/上线前话题）时保持原有 mention 门禁不变。
+      if (!mentioned && normalized.threadId != null && this.options.resolveThreadSession != null) {
+        const threadSession = await this.options.resolveThreadSession(accountId, normalized).catch(() => null);
+        if (threadSession != null) mentioned = true;
+      }
       // 群消息立即按到达顺序落日志（占位文本），慢操作（姓名解析/图片预下载）后置为异步富化；
       // 否则图片下载期间后续 @ 触发会先读上下文并推进水位线，该图片将永远无法进入 Agent 会话。
       const logId = await this.runInChatOrder(accountId, normalized.chatId,
@@ -126,6 +134,10 @@ export class FeishuInboundProcessor {
   /** 解析被引用/回复消息内容；失败降级为无引用（引用内容属任务意图核心，但不阻塞主流程）。 */
   private async resolveQuoted(accountId: string, event: FeishuNormalizedMessage): Promise<string | undefined> {
     if (event.parentId == null || event.parentId === '' || this.options.resolveQuotedMessage == null) return undefined;
+    // 话题内回复：parent_id 恒指向话题根（官方行为），非用户主动引用 → 跳过注入。
+    // 仅当 parent_id ≠ root_id 时才是显式引用了话题内某条回复。必须带 threadId 条件，
+    // 否则非话题群普通引用回复（root_id 通常也等于 parent_id）会被误跳过。
+    if (event.threadId != null && event.parentId === event.rootId) return undefined;
     try {
       const quoted = await this.options.resolveQuotedMessage(accountId, event);
       return quoted == null || quoted.trim() === '' ? undefined : quoted;

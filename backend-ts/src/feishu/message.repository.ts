@@ -25,8 +25,18 @@ export interface FeishuGroupMessage {
   fileKey?: string | null;
   fileName?: string | null;
   messageId?: string | null;
+  threadId?: string | null;
   isMention: boolean;
   createdAt?: string | null;
+}
+
+export interface FeishuThreadSession {
+  id?: number;
+  appId: string;
+  chatId: string;
+  threadId: string;
+  rootMessageId: string;
+  sessionId: number;
 }
 
 export interface FeishuMessageRepository {
@@ -40,9 +50,9 @@ export interface FeishuMessageRepository {
   releaseInboundMessage(appId: string, messageId: string): Promise<void>;
   completeInboundMessage(appId: string, messageId: string): Promise<void>;
   appendGroupMessage(message: FeishuGroupMessage): Promise<number>;
-  listGroupMessages(appId: string, chatId: string, limit: number, maxMinutes?: number): Promise<FeishuGroupMessage[]>;
+  listGroupMessages(appId: string, chatId: string, limit: number, maxMinutes?: number, threadId?: string | null): Promise<FeishuGroupMessage[]>;
   /** 追溯注入窗口之前被丢弃的未注入普通消息（id > watermark 且 id < beforeId，不限时间），供溢出摘要。 */
-  listOverflowGroupMessages(appId: string, chatId: string, watermark: number, beforeId: number, limit: number): Promise<FeishuGroupMessage[]>;
+  listOverflowGroupMessages(appId: string, chatId: string, watermark: number, beforeId: number, limit: number, threadId?: string | null): Promise<FeishuGroupMessage[]>;
   /** 推进群聊上下文增量注入水位线（只前进不后退）。 */
   updateGroupContextWatermark(appId: string, chatId: string, logId: number): Promise<void>;
   /** 写入溢出摘要缓存（logId 只前进不后退）。 */
@@ -57,6 +67,10 @@ export interface FeishuMessageRepository {
 
   /** 按飞书消息 ID 查询归属会话 ID；未记录返回 null。 */
   findP2pMessageSession(appId: string, messageId: string): Promise<number | null>;
+  /** 记录话题→会话映射（INSERT IGNORE 防重）。 */
+  recordThreadSession(params: { appId: string; chatId: string; threadId: string; rootMessageId: string; sessionId: number }): Promise<void>;
+  /** 按话题 ID 查归属会话；未记录返回 null。 */
+  findThreadSession(appId: string, threadId: string): Promise<{ sessionId: number; rootMessageId: string } | null>;
   /** 会话 → 飞书通道绑定（创建时落行、不可变）：session_id 唯一，upsert 幂等；
    *  awaiting_first_message_title 用 GREATEST「只进不清」——指针切换的 upsert(false) 不会清掉 `---` 置上的待命名标志。 */
   upsertSessionChannel(sessionId: number, appId: string, chatId: string, chatType: 'p2p' | 'group', awaitingFirstMessageTitle?: boolean): Promise<void>;
@@ -140,10 +154,10 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     if (message.messageId == null || message.messageId === '') throw new Error('Feishu group message requires messageId');
     await this.db.execute(
       `INSERT IGNORE INTO feishu_group_message_log
-       (app_id, chat_id, sender_open_id, sender_name, msg_type, content, file_key, file_name, message_id, is_mention)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (app_id, chat_id, sender_open_id, sender_name, msg_type, content, file_key, file_name, message_id, is_mention, thread_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [message.appId, message.chatId, message.senderOpenId, message.senderName, message.msgType ?? 'text', message.content ?? null,
-        message.fileKey ?? null, message.fileName ?? null, message.messageId, message.isMention ? 1 : 0],
+        message.fileKey ?? null, message.fileName ?? null, message.messageId, message.isMention ? 1 : 0, message.threadId ?? null],
     );
     const saved = await this.db.queryOne<{ id?: number }>(
       'SELECT id FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ? AND message_id = ? LIMIT 1',
@@ -161,23 +175,26 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     );
   }
 
-  listGroupMessages(appId: string, chatId: string, limit: number, maxMinutes = 120): Promise<FeishuGroupMessage[]> {
+  listGroupMessages(appId: string, chatId: string, limit: number, maxMinutes = 120, threadId: string | null = null): Promise<FeishuGroupMessage[]> {
     const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
     const safeMinutes = Math.max(1, Math.min(10080, Math.floor(maxMinutes)));
+    const threadFilter = threadId != null ? ' AND thread_id = ?' : '';
+    const params = threadId != null ? [appId, chatId, threadId] : [appId, chatId];
     return this.db.query<FeishuGroupMessage>(
-      `SELECT * FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ?
+      `SELECT * FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ?${threadFilter}
        AND created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ${safeMinutes} MINUTE)
-       ORDER BY created_at DESC, id DESC LIMIT ${safeLimit}`, [appId, chatId],
+       ORDER BY created_at DESC, id DESC LIMIT ${safeLimit}`, params,
     ).then((rows) => rows.reverse());
   }
 
-  listOverflowGroupMessages(appId: string, chatId: string, watermark: number, beforeId: number, limit: number): Promise<FeishuGroupMessage[]> {
+  listOverflowGroupMessages(appId: string, chatId: string, watermark: number, beforeId: number, limit: number, threadId: string | null = null): Promise<FeishuGroupMessage[]> {
     const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    const threadFilter = threadId != null ? ' AND thread_id = ?' : '';
+    const params = threadId != null ? [appId, chatId, watermark, beforeId, threadId] : [appId, chatId, watermark, beforeId];
     return this.db.query<FeishuGroupMessage>(
       `SELECT * FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ?
-       AND id > ? AND id < ? AND is_mention = 0
-       ORDER BY created_at DESC, id DESC LIMIT ${safeLimit}`,
-      [appId, chatId, watermark, beforeId],
+       AND id > ? AND id < ? AND is_mention = 0${threadFilter}
+       ORDER BY created_at DESC, id DESC LIMIT ${safeLimit}`, params,
     ).then((rows) => rows.reverse());
   }
 
@@ -218,6 +235,23 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
       [appId, messageId],
     );
     return row?.sessionId ?? null;
+  }
+
+  async recordThreadSession(params: { appId: string; chatId: string; threadId: string; rootMessageId: string; sessionId: number }): Promise<void> {
+    if (params.threadId == null || params.threadId === '') return;
+    await this.db.execute(
+      'INSERT IGNORE INTO feishu_thread_session (app_id, chat_id, thread_id, root_message_id, session_id) VALUES (?, ?, ?, ?, ?)',
+      [params.appId, params.chatId, params.threadId, params.rootMessageId, params.sessionId],
+    );
+  }
+
+  async findThreadSession(appId: string, threadId: string): Promise<{ sessionId: number; rootMessageId: string } | null> {
+    if (threadId == null || threadId === '') return null;
+    const row = await this.db.queryOne<{ sessionId: number; rootMessageId: string }>(
+      'SELECT session_id, root_message_id FROM feishu_thread_session WHERE app_id = ? AND thread_id = ? LIMIT 1',
+      [appId, threadId],
+    );
+    return row ?? null;
   }
 
   async upsertSessionChannel(sessionId: number, appId: string, chatId: string, chatType: 'p2p' | 'group', awaitingFirstMessageTitle = false): Promise<void> {

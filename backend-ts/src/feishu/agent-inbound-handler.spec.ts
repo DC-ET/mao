@@ -846,4 +846,103 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
     releaseFirst();
     await first;
   });
+
+  // ─── 话题会话 ────────────────────────────────────────────────────────
+
+  it('routes thread root message to a new thread session', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const threadControl = {
+      findSession: vi.fn(async () => null),
+      getOrCreateSession: vi.fn(async () => ({ sessionId: 10, rootMessageId: 'om_root', workspace: '/ws/thread', executionUserId: 42 })),
+    };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      threadSessionControl: threadControl as never,
+    });
+    await handler.onMessage(makeContext({ threadId: 'omt_abc', messageId: 'om_root', parentId: null }));
+    expect(threadControl.getOrCreateSession).toHaveBeenCalled();
+    // 会话 10 被使用，而非默认的群级会话 7。
+    expect(harness.execute).toHaveBeenCalledWith(10, 'e', expect.anything(), expect.anything(), 42);
+    expect(sessionService.getOrCreateSession).not.toHaveBeenCalled();
+  });
+
+  it('routes thread reply to existing thread session', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const threadControl = {
+      findSession: vi.fn(async () => ({ sessionId: 10, rootMessageId: 'om_root' })),
+      getOrCreateSession: vi.fn(async () => ({ sessionId: 10, rootMessageId: 'om_root', workspace: '/ws/thread', executionUserId: 42 })),
+    };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      threadSessionControl: threadControl as never,
+    });
+    await handler.onMessage(makeContext({ threadId: 'omt_abc', messageId: 'om_reply', parentId: 'om_root', rootId: 'om_root' }));
+    expect(harness.execute).toHaveBeenCalledWith(10, 'e', expect.anything(), expect.anything(), 42);
+  });
+
+  it('falls back to group session when thread mapping misses (non-root reply)', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const threadControl = {
+      findSession: vi.fn(async () => null),
+      getOrCreateSession: vi.fn(async () => null),
+    };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      threadSessionControl: threadControl as never,
+    });
+    await handler.onMessage(makeContext({ threadId: 'omt_abc', messageId: 'om_reply', parentId: 'om_root', rootId: 'om_root' }));
+    // 降级走现有群逻辑：使用群级会话 7。
+    expect(harness.execute).toHaveBeenCalledWith(7, 'e', expect.anything(), expect.anything(), 42);
+  });
+
+  it('falls back to group session when threadSessionControl throws', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const threadControl = {
+      findSession: vi.fn(async () => null),
+      getOrCreateSession: vi.fn(async () => { throw new Error('db down'); }),
+    };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      threadSessionControl: threadControl as never,
+    });
+    await handler.onMessage(makeContext({ threadId: 'omt_abc' }));
+    // 异常降级走现有群逻辑。
+    expect(harness.execute).toHaveBeenCalledWith(7, 'e', expect.anything(), expect.anything(), 42);
+  });
+
+  it('non-thread group message ignores threadSessionControl entirely', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const threadControl = {
+      findSession: vi.fn(async () => ({ sessionId: 10, rootMessageId: 'om_root' })),
+      getOrCreateSession: vi.fn(async () => ({ sessionId: 10, rootMessageId: 'om_root' })),
+    };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      threadSessionControl: threadControl as never,
+    });
+    await handler.onMessage(makeContext());
+    // 无 threadId → 不走话题分支，使用群级会话 7。
+    expect(threadControl.getOrCreateSession).not.toHaveBeenCalled();
+    expect(harness.execute).toHaveBeenCalledWith(7, 'e', expect.anything(), expect.anything(), 42);
+  });
 });

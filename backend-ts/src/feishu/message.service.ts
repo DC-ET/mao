@@ -12,6 +12,12 @@ export interface FeishuGroupContext {
   prompt: string;
 }
 
+export interface FeishuThreadSessionResult {
+  sessionId: number;
+  rootMessageId: string;
+  workspace?: string | null;
+}
+
 export class FeishuMessageService {
   constructor(
     private readonly repository: FeishuMessageRepository,
@@ -117,6 +123,49 @@ export class FeishuMessageService {
     return this.createConversation(accountId, context.chatId, context);
   }
 
+  /** 查询话题→会话映射；未记录返回 null。 */
+  async findThreadSession(accountId: string, threadId: string | null | undefined): Promise<{ sessionId: number; rootMessageId: string } | null> {
+    if (threadId == null || threadId === '') return null;
+    try {
+      return await this.repository.findThreadSession(accountId, threadId);
+    } catch (error) {
+      console.warn(`飞书话题映射查询失败, appId=${accountId}, threadId=${threadId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  /**
+   * 获取或创建话题→会话映射。
+   * - 映射存在：返回已有会话；
+   * - 映射不存在且为话题根消息（parentId 为空）：创建新会话并记录映射；
+   * - 映射不存在且非根消息（上线前话题的回复）：返回 null，调用方降级走现有群逻辑。
+   */
+  async getOrCreateThreadSession(accountId: string, context: FeishuInboundContext): Promise<FeishuThreadSessionResult | null> {
+    if (context.threadId == null || context.chatId == null) return null;
+    return this.withChatLock(`${accountId}:thread:${context.threadId}`, async () => {
+      const existing = await this.repository.findThreadSession(accountId, context.threadId!);
+      if (existing != null) {
+        const conversation = await this.repository.findGroupConversation(accountId, context.chatId!);
+        return { sessionId: existing.sessionId, rootMessageId: existing.rootMessageId, workspace: conversation?.workspace ?? null };
+      }
+      // 仅话题根消息触发创建；话题内回复但映射缺失 → 降级（返回 null）。
+      const isRoot = context.parentId == null || context.parentId === '';
+      if (!isRoot) return null;
+      const session = await this.sessionFactory.create(accountId, context);
+      await this.repository.recordThreadSession({
+        appId: accountId, chatId: context.chatId!, threadId: context.threadId!,
+        rootMessageId: context.messageId!, sessionId: session.sessionId,
+      });
+      // 话题会话标记待命名（复用 p2p 的持久化标志，首条消息前 20 字命名）。
+      try {
+        await this.repository.upsertSessionChannel(session.sessionId, accountId, context.chatId!, 'group', true);
+      } catch (error) {
+        console.warn(`飞书话题会话待命名标记失败, sessionId=${session.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return { sessionId: session.sessionId, rootMessageId: context.messageId!, workspace: session.workspace };
+    });
+  }
+
   async claimInboundMessage(accountId: string, context: FeishuInboundContext): Promise<boolean> {
     if (context.messageId == null || context.messageId === '') return false;
     return this.repository.claimInboundMessage(accountId, context.messageId, context.eventId, context.chatId);
@@ -135,6 +184,7 @@ export class FeishuMessageService {
     return this.repository.appendGroupMessage({
       appId: accountId, chatId: context.chatId, senderOpenId: context.senderId,
       senderName: senderName(context), content: context.text, messageId: context.messageId,
+      threadId: context.threadId ?? null,
       isMention, msgType: context.messageType ?? 'text',
       fileKey: context.fileKey ?? context.imageKey ?? null,
       fileName: context.fileName ?? null,
@@ -153,7 +203,8 @@ export class FeishuMessageService {
 
   async buildGroupContext(accountId: string, context: FeishuInboundContext): Promise<FeishuGroupContext> {
     const conversation = await this.getOrCreateGroup(accountId, context);
-    const messages = await this.repository.listGroupMessages(accountId, context.chatId!, this.contextWindow, this.maxMinutes);
+    const threadId = context.threadId ?? null;
+    const messages = await this.repository.listGroupMessages(accountId, context.chatId!, this.contextWindow, this.maxMinutes, threadId);
     // 增量注入：仅注入上次触发之后新增的未 @ 机器人的普通群消息。
     // 已注入的历史随上一轮 USER 消息保存在会话上下文中，重复注入只会浪费 token；
     // @ 机器人的消息本身已作为会话消息保存，同样无需注入。
@@ -162,7 +213,7 @@ export class FeishuMessageService {
     const filtered = messages.filter((message) =>
       !message.isMention && message.messageId !== context.messageId && (message.id ?? 0) > watermark);
     // 被窗口淘汰（超出条数上限或时间窗）且从未注入过的更早消息：摘要后一次性注入，避免上下文断层。
-    const overflowSection = await this.buildOverflowSummary(accountId, context, conversation, messages);
+    const overflowSection = await this.buildOverflowSummary(accountId, context, conversation, messages, threadId);
     const lines = filtered.map((message) => `[${formatGroupTime(message.createdAt)}] ${message.senderName}：${message.content ?? ''}`);
     const prompt = [...(overflowSection != null ? [overflowSection] : []), ...lines].join('\n');
     const maxLogId = messages.reduce((acc, message) => Math.max(acc, message.id ?? 0), watermark);
@@ -177,12 +228,13 @@ export class FeishuMessageService {
   private async buildOverflowSummary(
     accountId: string, context: FeishuInboundContext,
     conversation: FeishuConversation, recentMessages: FeishuGroupMessage[],
+    threadId: string | null = null,
   ): Promise<string | null> {
     if (this.summarizer == null || recentMessages.length === 0) return null;
     const chatId = context.chatId!;
     const watermark = conversation.lastContextLogId ?? 0;
     const beforeId = Math.min(...recentMessages.map((message) => message.id ?? 0));
-    const overflow = await this.repository.listOverflowGroupMessages(accountId, chatId, watermark, beforeId, this.overflowWindow);
+    const overflow = await this.repository.listOverflowGroupMessages(accountId, chatId, watermark, beforeId, this.overflowWindow, threadId);
     if (overflow.length === 0) return null;
     const maxOverflowId = Math.max(...overflow.map((message) => message.id ?? 0));
     const cached = conversation.contextSummary?.trim();

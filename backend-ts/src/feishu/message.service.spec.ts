@@ -144,7 +144,7 @@ describe('FeishuMessageService', () => {
     const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120, summarizer, 100);
     const group = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger' }));
     // 溢出查询以最近窗口最小 id 为上界，且不受时间窗限制。
-    expect(repository.listOverflowGroupMessages).toHaveBeenCalledWith('1', 'oc_group', 0, 101, 100);
+    expect(repository.listOverflowGroupMessages).toHaveBeenCalledWith('1', 'oc_group', 0, 101, 100, null);
     expect(summarize).toHaveBeenCalledWith(expect.stringContaining('[2026-08-25 09:00] 张三：更早的讨论'), 9);
     expect(group.prompt).toBe(
       '[更早历史消息摘要]\n此前讨论了部署方案，决定周五上线。\n[2026-08-26 13:18] 张三：最近讨论',
@@ -311,5 +311,68 @@ describe('FeishuMessageService', () => {
     const failing = makeRepo({ findP2pMessageSession: vi.fn(async () => { throw new Error('db down'); }) });
     const serviceFailing = new FeishuMessageService(failing as never, { create: vi.fn() } as never, 20, 120);
     expect(await serviceFailing.findP2pMessageSession('1', 'om_1')).toBeNull();
+  });
+
+  it('finds thread session mapping and degrades to null on failure', async () => {
+    const repository = makeRepo({ findThreadSession: vi.fn(async () => ({ sessionId: 5, rootMessageId: 'om_root' })) });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    const result = await service.findThreadSession('1', 'omt_abc');
+    expect(result?.sessionId).toBe(5);
+    expect(await service.findThreadSession('1', null)).toBeNull();
+    expect(await service.findThreadSession('1', '')).toBeNull();
+    const failing = makeRepo({ findThreadSession: vi.fn(async () => { throw new Error('db down'); }) });
+    const serviceFailing = new FeishuMessageService(failing as never, { create: vi.fn() } as never, 20, 120);
+    expect(await serviceFailing.findThreadSession('1', 'omt_abc')).toBeNull();
+  });
+
+  it('getOrCreateThreadSession returns existing mapping when found', async () => {
+    const repository = makeRepo({
+      findThreadSession: vi.fn(async () => ({ sessionId: 5, rootMessageId: 'om_root' })),
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId: 5, ownerUserId: 3, workspace: '/ws/group' })),
+    });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    const result = await service.getOrCreateThreadSession('1', makeContext({ threadId: 'omt_abc' }));
+    expect(result?.sessionId).toBe(5);
+    expect(result?.rootMessageId).toBe('om_root');
+  });
+
+  it('getOrCreateThreadSession creates new session for thread root message', async () => {
+    const repository = makeRepo({
+      findThreadSession: vi.fn(async () => null),
+      recordThreadSession: vi.fn(async () => undefined),
+      upsertSessionChannel: vi.fn(async () => undefined),
+    });
+    const sessionFactory = { create: vi.fn(async () => ({ sessionId: 10, ownerUserId: 3, workspace: '/ws/new' })) };
+    const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
+    // 话题根消息：parentId 为空 → 创建新会话。
+    const result = await service.getOrCreateThreadSession('1', makeContext({ threadId: 'omt_abc', messageId: 'om_root', parentId: null }));
+    expect(result?.sessionId).toBe(10);
+    expect(repository.recordThreadSession).toHaveBeenCalledWith({
+      appId: '1', chatId: 'oc_group', threadId: 'omt_abc', rootMessageId: 'om_root', sessionId: 10,
+    });
+  });
+
+  it('getOrCreateThreadSession returns null for non-root thread reply with missing mapping', async () => {
+    const repository = makeRepo({ findThreadSession: vi.fn(async () => null) });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    // 话题内回复但映射缺失（parentId ≠ messageId，非根消息）→ 降级返回 null。
+    const result = await service.getOrCreateThreadSession('1', makeContext({
+      threadId: 'omt_abc', messageId: 'om_reply', parentId: 'om_root', rootId: 'om_root',
+    }));
+    expect(result).toBeNull();
+  });
+
+  it('buildGroupContext passes threadId to listGroupMessages', async () => {
+    const repository = makeRepo();
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    await service.buildGroupContext('1', makeContext({ threadId: 'omt_abc' }));
+    expect(repository.listGroupMessages).toHaveBeenCalledWith('1', 'oc_group', 20, 120, 'omt_abc');
+  });
+
+  it('buildGroupContext passes null threadId for non-thread messages', async () => {
+    const repository = makeRepo();
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    await service.buildGroupContext('1', makeContext());
+    expect(repository.listGroupMessages).toHaveBeenCalledWith('1', 'oc_group', 20, 120, null);
   });
 });

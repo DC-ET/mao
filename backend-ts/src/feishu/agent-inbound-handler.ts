@@ -41,6 +41,14 @@ export interface FeishuP2pSessionControl {
   finalizeNewSessionTitle?(sessionId: number, title: string): Promise<boolean>;
 }
 
+/** 话题会话控制端口：话题→会话映射查询/创建。 */
+export interface FeishuThreadSessionControl {
+  /** 查询话题→会话映射；未记录返回 null（不创建）。 */
+  findSession(accountId: string, context: FeishuInboundContext): Promise<{ sessionId: number; rootMessageId: string } | null>;
+  /** 获取或创建话题→会话映射：映射存在返回已有；不存在且为话题根消息创建新会话；非根消息返回 null。 */
+  getOrCreateSession(accountId: string, context: FeishuInboundContext): Promise<{ sessionId: number; rootMessageId: string; workspace?: string | null; executionUserId?: number | null } | null>;
+}
+
 /** `---` 新建会话指令：trim 后为 3 个及以上半角连字符或全角破折号的宽松变体集合。 */
 export function isNewSessionCommand(text: string | null | undefined): boolean {
   return /^[-—]{3,}$/u.test((text ?? '').trim());
@@ -68,6 +76,9 @@ function buildQueuePayload(botId: number, context: FeishuInboundContext, message
     senderName: context.senderName,
     maoUserId: context.maoUserId,
     messageId: context.messageId,
+    threadId: context.threadId,
+    parentId: context.parentId,
+    rootId: context.rootId,
     senderLabel: context.senderLabel,
     groupContext: context.groupContext,
     quotedContext: context.quotedContext,
@@ -81,7 +92,7 @@ function reconstructFromQueue(row: FeishuInboundQueueRow): { context: FeishuInbo
   const payload = JSON.parse(row.payload) as FeishuQueuePayload;
   const s = payload.context;
   const context: FeishuInboundContext = {
-    eventId: null, messageId: s.messageId, parentId: null, rootId: null,
+    eventId: null, messageId: s.messageId, parentId: s.parentId ?? null, rootId: s.rootId ?? null, threadId: s.threadId ?? null,
     chatId: s.chatId, chatType: s.chatType, senderId: s.senderId,
     senderUnionId: s.senderUnionId, senderName: s.senderName, maoUserId: s.maoUserId,
     senderType: 'user', messageType: 'text', imageKey: null, fileKey: null, fileName: null,
@@ -130,6 +141,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     resolveBotId?: (accountId: string) => number;
     /** 私聊多会话控制（未配置时 `---`/引用切换不生效，行为与旧版一致）。 */
     p2pSessionControl?: FeishuP2pSessionControl;
+    /** 话题会话控制（未配置时话题消息走现有群逻辑）。 */
+    threadSessionControl?: FeishuThreadSessionControl;
     /** 文本回复发送：成功返回飞书 message_id（供出站映射），失败返回 null（内部可抛错，由 reply 统一容错）。 */
     onReply?: (context: FeishuInboundContext, text: string, sessionId?: number) => Promise<string | null>;
   }) {}
@@ -192,41 +205,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       await this.reply(context, outcome.confirm.text, outcome.confirm.sessionId ?? undefined);
     }
     if (outcome.intercepted) return null;
-    const session = outcome.session!;
-    const sessionId = session.id;
-    const message = await this.buildMessage(context, session.workspace ?? null);
-
-    // 忙时立即入队（不等待锁）：同一会话执行中（含崩溃恢复中的 RUNNING/RESUMING），
-    // 新消息直接排队并返回，避免持有 inbound claim 阻塞或与恢复任务并发执行。
-    if (await this.isBusyOrRecovering(sessionId)) {
-      await this.enqueueMessage(sessionId, context, message, session);
-      return null;
-    }
-    // 空闲路径：加锁 + 双重校验后执行；执行期间持有锁，保证 claim 语义与消息保序。
-    let executed = false;
-    let phase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
-    await this.withLock(sessionId, async () => {
-      if (await this.isBusyOrRecovering(sessionId)) {
-        await this.enqueueMessage(sessionId, context, message, session);
-        return;
-      }
-      this.busy.add(sessionId);
-      executed = true;
-      // 时序契约：busy.add 必须先于 runExecution 内的 updatePhase(RUNNING)，否则会出现
-      // 「phase 已 RUNNING 但 busy 未置位」的窗口，让并发消息误判为空闲而直接执行。
-      try {
-        phase = await this.executeDirect(sessionId, context, message, session);
-      } finally {
-        this.busy.delete(sessionId);
-        this.interrupted.delete(sessionId);
-      }
-    });
-    // 本消息执行结束（或入队后队列需推进）时，尝试接力消费下一个排队任务；
-    // 上一任务 FAILED 时不再自动消费下一条（延续失败上下文执行会产生不可信结果）。
-    if (executed && phase !== 'FAILED') void this.drainNext(sessionId).catch((error) => {
-      console.error(`飞书队列消费接力异常, sessionId=${sessionId}`, error);
-    });
-    return null;
+    return this.executeWithSession(outcome.session!, context);
   }
 
   /** p2p 临界区：只做 DB 决策与映射记录，网络发送（确认文案）由调用方在锁外执行。 */
@@ -290,9 +269,32 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     }
   }
 
-  /** 群聊入站：原逻辑不变（`---` 作为普通文本进入群会话，引用消息只注入内容不做切换）。 */
+  /** 群聊入站：话题分支 + 现有逻辑。话题消息优先路由到话题会话；映射未命中降级走现有群逻辑。 */
   private async onGroupMessage(context: FeishuInboundContext): Promise<FeishuReply | null> {
+    // 话题路径：threadId 存在且话题会话控制已配置。
+    if (context.threadId != null && this.options.threadSessionControl != null) {
+      try {
+        const threadSession = await this.options.threadSessionControl.getOrCreateSession(context.accountId, context);
+        if (threadSession != null) {
+          const session = { id: threadSession.sessionId, workspace: threadSession.workspace ?? null, executionUserId: threadSession.executionUserId ?? context.maoUserId ?? null };
+          return this.executeWithSession(session, context);
+        }
+        // 映射未命中且非话题根消息（上线前话题的回复）→ 降级走现有群逻辑。
+      } catch (error) {
+        console.error(`飞书话题会话获取失败, accountId=${context.accountId}, threadId=${context.threadId}`, error);
+        // 降级走现有群逻辑。
+      }
+    }
+    // 现有逻辑：群级单会话。
     const session = await this.options.sessionService.getOrCreateSession(context.accountId, context);
+    return this.executeWithSession(session, context);
+  }
+
+  /** 共享执行路径：buildMessage → busy 检查/入队/执行（按 sessionId 粒度互斥）。 */
+  private async executeWithSession(
+    session: { id: number; workspace?: string | null; executionUserId?: number | null },
+    context: FeishuInboundContext,
+  ): Promise<FeishuReply | null> {
     const sessionId = session.id;
     const message = await this.buildMessage(context, session.workspace ?? null);
 

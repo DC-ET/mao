@@ -101,6 +101,82 @@ describe('FeishuInboundProcessor', () => {
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ quotedContext: undefined }));
   });
 
+  it('skips quote injection when thread reply has parent_id === root_id (thread root)', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const resolveQuotedMessage = vi.fn(async () => '[引用消息] 内容');
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveQuotedMessage,
+    });
+    await processor.process('1', makeEvent({
+      isBotMentioned: true, parentId: 'om_root', rootId: 'om_root', threadId: 'omt_abc',
+    }));
+    // 话题内回复的 parent_id 恒指向话题根，不是用户主动引用 → 不注入。
+    expect(resolveQuotedMessage).not.toHaveBeenCalled();
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ quotedContext: undefined }));
+  });
+
+  it('injects quote when thread reply explicitly quotes another message (parent_id ≠ root_id)', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const resolveQuotedMessage = vi.fn(async () => '[引用消息] 被引用的回复');
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveQuotedMessage,
+    });
+    await processor.process('1', makeEvent({
+      isBotMentioned: true, parentId: 'om_other', rootId: 'om_root', threadId: 'omt_abc',
+    }));
+    // 用户显式引用了话题内某条回复 → 正常注入。
+    expect(resolveQuotedMessage).toHaveBeenCalled();
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ quotedContext: '[引用消息] 被引用的回复' }));
+  });
+
+  it('still injects quote for non-thread reply where parent_id === root_id', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const resolveQuotedMessage = vi.fn(async () => '[引用消息] 内容');
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveQuotedMessage,
+    });
+    // 非话题群：root_id 通常也等于 parent_id（引用的那条消息就是回复树的根），
+    // 守卫必须带 threadId 条件，不能误伤。
+    await processor.process('1', makeEvent({ isBotMentioned: true, parentId: 'om_parent', rootId: 'om_parent' }));
+    expect(resolveQuotedMessage).toHaveBeenCalled();
+  });
+
+  it('triggers thread message without @bot when thread session mapping hits', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveThreadSession: async () => ({ sessionId: 42 }),
+    });
+    // 无 @、有 threadId、映射命中 → 跳过 mention 门禁，正常触发。
+    await processor.process('1', makeEvent({ isBotMentioned: false, threadId: 'omt_abc' }));
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1', expect.anything(), true);
+    expect(onMessage).toHaveBeenCalledOnce();
+  });
+
+  it('does not trigger thread message without @bot when mapping misses', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveThreadSession: async () => null,
+    });
+    // 无 @、有 threadId、映射未命中 → 保持 mention 门禁，不触发。
+    await processor.process('1', makeEvent({ isBotMentioned: false, threadId: 'omt_abc' }));
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
   it('only records group message when bot not mentioned', async () => {
     messageService.claimInboundMessage.mockResolvedValueOnce(true);
     const onMessage = vi.fn(async () => ({ text: 'r' }));
