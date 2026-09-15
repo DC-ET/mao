@@ -21,13 +21,7 @@ npm run dist    # Electron 打包（需自行处理代码签名）
 
 ## 自动更新
 
-桌面壳使用 `electron-updater` + `electron-builder` 的 generic provider。默认更新地址为：
-
-```text
-https://mao.etarch.cn/downloads/desktop/
-```
-
-私有部署时请先修改 `package.json` 中 `build.publish[0].url`，再重新打包。发布新版本时需要：
+桌面壳使用 `electron-updater` + `electron-builder` 的 generic provider。私有部署请先把 `package.json` 中 `build.publish[0].url` 改成你的更新地址（例如 `https://mao.example.com/downloads/desktop/`），再重新打包。发布新版本时需要：
 
 1. 修改 `package.json` 的 `version`。
 2. 执行 `npm run build && npm run dist`。

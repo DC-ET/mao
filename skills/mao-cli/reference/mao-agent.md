@@ -63,7 +63,7 @@ mao-agent -p "检查本次 PR 是否有明显的安全问题" \
 | 变量 | 说明 |
 |------|------|
 | `MAO_TOKEN` / `MAO_REFRESH_TOKEN` | JWT（兼容旧名 `MAO_ADMIN_TOKEN` / `MAO_USER_TOKEN` / `MAO_ADMIN_REFRESH_TOKEN` / `MAO_USER_REFRESH_TOKEN`） |
-| `MAO_AGENT_BASE_URL` | 到 `/api`（不含 `/v1`），自动剥误粘贴的 `/v1` |
+| `MAO_AGENT_BASE_URL` | 到 `/api`（不含 `/v1`），自动剥误粘贴的 `/v1`。私有化必须指向自己的实例（如 `https://mao.example.com/api`）；未配置时的回落见 [config.md](config.md#站点域名) |
 | `MAO_AGENT_OUTPUT_FORMAT` | 默认输出格式 |
 | `MAO_AGENT_VERBOSE` | `1`/`true` 默认展开工具输出，`0`/`false` 强制折叠 |
 | `MAO_AGENT_REPO` / `MAO_AGENT_REF` | `update` 默认仓库与分支/标签（等价于 `--repo` / `--ref`） |
@@ -183,7 +183,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 | `--replay-full` | resume 时完整打印历史消息（默认只摘要最后 3 轮） |
 | `--debug` | WS 收发帧与 REST 摘要打到 stderr（已脱敏） |
 | `--trace-file <path>` | 完整事件流落盘为 NDJSON |
-| `--base-url <url>` | API 根地址（到 `/api` 为止，不含 `/v1`） |
+| `--base-url <url>` | API 根地址（到 `/api` 为止，不含 `/v1`）；未设时同 `MAO_AGENT_BASE_URL` |
 | `--token <jwt>` | 一次性覆盖本地 token（更推荐 `MAO_TOKEN`） |
 | `--timeout-ms <n>` | 单次 REST 请求超时，默认 30000 |
 

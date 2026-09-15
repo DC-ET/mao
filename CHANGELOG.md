@@ -33,6 +33,11 @@
 ### 终端 CLI（mao-cli）
 
 - 新增 `mao llm-call me` / `mao llm-call list` 查询调用流水（见 `skills/mao-cli/reference/llm-call.md`）。
+- 产品文档与 CLI 帮助改为用 `mao.example.com` 占位；开源示例域名仅在配置说明中作为最低优先级回落提及。
+
+### 终端 CLI（mao-agent）
+
+- `--help` 不再展示开源示例域名，改为提示私有化必须设置 `MAO_AGENT_BASE_URL`。
 
 ## 0.0.122 (2026-09-15)
 

@@ -77,13 +77,13 @@ mao auth login
 
 ## Web Embed SDK
 
-在任意内部 Web 系统中一行接入 Mao agent 对话浮窗（详细设计见 [docs/plan/embed-sdk-technical-design.md](docs/plan/embed-sdk-technical-design.md)）：
+在任意内部 Web 系统中一行接入 Mao agent 对话浮窗（详细设计见 [docs/plan/embed-sdk-technical-design.md](docs/plan/embed-sdk-technical-design.md)）。将 `mao.example.com` 换成你的 Mao 站点（占位约定见 [config.md](skills/mao-cli/reference/config.md#站点域名)）：
 
 ```html
-<script src="https://mao.etarch.cn/embed/mao-chat.js"></script>
+<script src="https://mao.example.com/embed/mao-chat.js"></script>
 <script>
   MaoChat.init({
-    serverUrl: 'https://mao.etarch.cn',
+    serverUrl: 'https://mao.example.com',
     agentId: 1,                       // 页面助手绑定的 agent
     getToken: () => fetch('/your-backend/embed-token').then(r => r.json()).then(d => d.accessToken),
     context: () => ({ page: location.pathname, orderId: window.__orderId }),

@@ -2,15 +2,15 @@
 
 `sdk/embed`（包名 `@mao/chat-embed`）把 Mao 的 agent 对话做成**一个脚本文件**：内部 Web 系统引入后调一次 `MaoChat.init()`，页面右下角出现浮动入口，点开即可就当前页面内容与 agent 对话（流式输出、思考过程、工具执行状态、追问作答、手动停止；输入框可直接粘贴剪切板里的图片或文件）。浮窗不展示引擎内部的 LLM 等待阶段（如 `response_headers`），上游真正重试时仍会提示。
 
-产物托管路径 `https://mao.etarch.cn/embed/mao-chat.js`（另有版本锁定副本 `mao-chat.v{version}.js`）。会话为 **CLOUD 模式**，无工具审批环节。
+产物随桌面前端部署，路径为 `{站点}/embed/mao-chat.js`（另有版本锁定副本 `mao-chat.v{version}.js`）。将下列示例中的 `mao.example.com` 换成你的 Mao 站点。会话为 **CLOUD 模式**，无工具审批环节。站点占位约定见 [config.md](config.md#站点域名)。
 
 ## 接入
 
 ```html
-<script src="https://mao.etarch.cn/embed/mao-chat.js"></script>
+<script src="https://mao.example.com/embed/mao-chat.js"></script>
 <script>
   const chat = MaoChat.init({
-    serverUrl: 'https://mao.etarch.cn',
+    serverUrl: 'https://mao.example.com',
     agentId: 1,
     getToken: () => fetch('/your-backend/embed-token').then(r => r.json()).then(d => d.accessToken),
     context: () => ({ page: location.pathname, orderId: window.__orderId }),
@@ -30,7 +30,7 @@
 
 ```js
 const chat = MaoChat.init({
-  serverUrl: 'https://mao.etarch.cn',
+  serverUrl: 'https://mao.example.com',
   agentId: 1,
   getToken: () => fetch('/your-backend/embed-token').then(r => r.json()).then(d => d.accessToken),
   page: {

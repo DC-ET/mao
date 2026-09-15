@@ -2,6 +2,12 @@
 
 部署与开发共用的配置说明。本地安装步骤见 [install.md](install.md)；生产 `.env` 示例见 [deploy.md](deploy.md)。
 
+## 站点域名
+
+文档与命令示例统一用 `https://mao.example.com` 表示**你部署后的对外站点**（把主机名换成自己的域名）。路径约定见 [deploy.md](deploy.md)：桌面 `/`、管理后台 `/admin/`、API `/api/`、上传 `/uploads/`。
+
+`mao-cli` / `mao-agent` 未设置 `MAO_BASE_URL` / `MAO_AGENT_BASE_URL` / `--base-url` 时，会回落到开源仓库内置的示例域名（`https://mao.etarch.cn`，最低优先级）。**私有化部署后该地址通常不可达**，必须改成自己的实例，例如 `https://mao.example.com/api/v1`（mao-cli）或 `https://mao.example.com/api`（mao-agent，到 `/api` 为止）。
+
 ## 默认账号
 
 首次 Flyway 迁移创建：
@@ -55,8 +61,8 @@
 | appCode | EK6301 | ECP 应用编码 |
 | ECP API Base URL | `https://ecp.acg.team/api/v1` | 生产网关 |
 | loginVariant | PARTNER | 飞书授权变体，联调可调 |
-| 桌面回调 URL | `https://mao.etarch.cn/auth/ecp/feishu-callback` | 须在 ECP 登记 |
-| 管理后台回调 URL | `https://mao.etarch.cn/admin/auth/ecp/feishu-callback` | 须在 ECP 登记 |
+| 桌面回调 URL | `https://mao.example.com/auth/ecp/feishu-callback` | 须与对外站点同源，并在 ECP 登记 |
+| 管理后台回调 URL | `https://mao.example.com/admin/auth/ecp/feishu-callback` | 同上 |
 
 升级需执行 V111 迁移。`mao-cli` 本期不提供浏览器飞书登录，仅 Web/管理后台/Electron 入口。设计见 `docs/plan/ecp-native-login-technical-design.md`。
 
@@ -160,9 +166,9 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 
 | 变量 | 说明 |
 |------|------|
-| `MAO_BASE_URL` | mao-cli API 根，默认 `https://mao.etarch.cn/api/v1` |
+| `MAO_BASE_URL` | mao-cli API 根，如 `https://mao.example.com/api/v1`（未设时的回落见上文「站点域名」） |
 | `MAO_TOKEN` / `MAO_REFRESH_TOKEN` | JWT（与 `~/.mao/auth.json` 共用） |
-| `MAO_AGENT_BASE_URL` | mao-agent，到 `/api`（不含 `/v1`） |
+| `MAO_AGENT_BASE_URL` | mao-agent，到 `/api`（不含 `/v1`），如 `https://mao.example.com/api` |
 
 兼容旧名：`MAO_USER_BASE_URL`、`MAO_ADMIN_BASE_URL`。
 
