@@ -1036,7 +1036,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, workspaceLeaf);
         mkdirSync(workspace, { recursive: true });
         const isGroup = context.chatType === 'group' && context.chatId != null;
-        const title = isGroup ? (await getFeishuChatTitle(Number(accountId), context.chatId!)) || '飞书Bot会话' : '飞书Bot会话';
+        // 话题会话不预填群名，用默认标题，留给首条消息命名机制（awaitingFirstMessageTitle）重命名。
+        const title = isGroup && context.threadId == null
+          ? (await getFeishuChatTitle(Number(accountId), context.chatId!)) || '飞书Bot会话'
+          : '飞书Bot会话';
         const session = await sessionService.createSession(
           user.id, agent.id, title, 'CLOUD', workspace, 'FULL', false,
           'linux', '/bin/bash', 'Linux', model?.id ?? null,
@@ -1187,8 +1190,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     const client = await getFeishuClient(Number(context.accountId));
     if (client == null) return null;
     const data = { msg_type: 'interactive', content: JSON.stringify(buildFeishuQueueCard(context, queueId, position)) };
-    const response = await (context.chatType === 'group' && context.chatId != null
-      ? client.im.v1.message.create({ params: { receive_id_type: 'chat_id' }, data: { ...data, receive_id: context.chatId } })
+    // 群聊用 reply 触发消息：话题群中 message.create 到 chat_id 会创建新话题，reply 才落入当前话题。
+    const response = await (context.chatType === 'group' && context.messageId != null
+      ? client.im.v1.message.reply({ path: { message_id: context.messageId }, data })
       : client.im.v1.message.create({ params: { receive_id_type: 'open_id' }, data: { ...data, receive_id: context.senderId! } }));
     const cardMessageId = (response as { data?: { message_id?: string } }).data?.message_id ?? null;
     // 私聊排队卡片可被回复/引用，记录卡片消息 → 会话映射供引用切换定位。
@@ -1389,7 +1393,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         if (result == null) return null;
         const triggerUserId = await resolveFeishuUserId(accountId, context);
         await applyFeishuBotConfig(result.sessionId, Number(accountId));
-        void ensureFeishuSessionTitle(result.sessionId, Number(accountId), context);
+        // 不调用 ensureFeishuSessionTitle：话题会话标题由首条消息命名机制处理（awaitingFirstMessageTitle）。
         return { sessionId: result.sessionId, rootMessageId: result.rootMessageId, workspace: result.workspace ?? null, executionUserId: triggerUserId ?? null };
       },
     },

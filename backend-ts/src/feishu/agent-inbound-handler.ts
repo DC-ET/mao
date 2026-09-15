@@ -277,6 +277,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         const threadSession = await this.options.threadSessionControl.getOrCreateSession(context.accountId, context);
         if (threadSession != null) {
           const session = { id: threadSession.sessionId, workspace: threadSession.workspace ?? null, executionUserId: threadSession.executionUserId ?? context.maoUserId ?? null };
+          // 首条消息命名：新建话题会话标记了 awaitingFirstMessageTitle，此处用消息前 20 字重命名。
+          await this.renameNewP2pSessionIfNeeded(session.id, context);
           return this.executeWithSession(session, context);
         }
         // 映射未命中且非话题根消息（上线前话题的回复）→ 降级走现有群逻辑。
