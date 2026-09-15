@@ -23,6 +23,28 @@ export interface EcpSessionStore {
   clearFailed(userId: number): Promise<void>;
 }
 
+/** 本地判定 ECP 票是否仍可用于 CLOUD / 飞书通道（不打 ECP HTTP）。 */
+export function isUsableEcpSession(
+  row: UserEcpSession | null | undefined,
+  decryptToken: (enc: string) => string | null,
+  now = Date.now(),
+): boolean {
+  if (row == null) return false;
+  if (row.renewStatus === 'FAILED') return false;
+  if (new Date(row.expiresAt).getTime() <= now) return false;
+  const token = decryptToken(row.sessionTokenEnc);
+  return token != null && token !== '';
+}
+
+export async function hasUsableEcpSession(
+  sessions: Pick<EcpSessionStore, 'findByUserId'> & { decryptToken(enc: string): string | null },
+  userId: number,
+  now = Date.now(),
+): Promise<boolean> {
+  const row = await sessions.findByUserId(userId);
+  return isUsableEcpSession(row, (enc) => sessions.decryptToken(enc), now);
+}
+
 export class MysqlEcpSessionRepository implements EcpSessionStore {
   constructor(
     private readonly db: Db,

@@ -117,7 +117,7 @@ mao auth whoami
 
 `data.feishuEnabled`：布尔值（Mao 飞书 OAuth 是否可用）。
 
-`data.ecpEnabled`：布尔值；为 `true` 时客户端可增加 ECP 飞书登录（`POST /v1/auth/ecp/feishu/start`），与密码/Mao 飞书/公司 SSO 换票并存；仅 ECP 飞书登录会写入服务端 ECP 票供 CLOUD shell 注入。
+`data.ecpEnabled`：布尔值；为 `true` 时客户端可增加 ECP 飞书登录（`POST /v1/auth/ecp/feishu/start`），与密码/Mao 飞书/公司 SSO 换票并存；仅 ECP 飞书登录会写入服务端 ECP 票供 CLOUD shell 注入。飞书机器人通道在该开关开启后要求发送者具备有效 ECP 票。
 
 ### 示例
 

@@ -40,6 +40,13 @@ export class MysqlFeishuPendingBindingRepository {
     );
   }
 
+  async failClaimed(state: string): Promise<void> {
+    await this.db.execute(
+      "UPDATE feishu_pending_binding_message SET status = 'FAILED' WHERE state = ? AND status = 'CLAIMED'",
+      [state],
+    );
+  }
+
   async release(state: string): Promise<void> {
     await this.db.execute(
       "UPDATE feishu_pending_binding_message SET status = 'SENT' WHERE state = ? AND status = 'CLAIMED'",
