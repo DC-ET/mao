@@ -123,6 +123,10 @@ CLI：`mao weixin ...`（见 [weixin.md](weixin.md)）。
 
 上传个人 Skill 覆盖同名系统 Skill。「设置」中还可管理 Git 凭证、任务面板偏好等。
 
+## 使用记录
+
+「设置 → 使用记录」查看当前账号的 LLM 调用明细：场景、模型、入/出 Token、耗时与成败；可按场景筛选，会话 ID 可跳转任务。CLI：`mao llm-call me`（见 [llm-call.md](llm-call.md)）。
+
 REST 非对话操作统一用 `mao` CLI（本 Skill），见 [SKILL.md](../SKILL.md)。
 
 ## 权限档位与审批（LOCAL）

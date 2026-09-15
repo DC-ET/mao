@@ -57,7 +57,8 @@ import {
   Setting,
   Link,
   Promotion,
-  ChatLineRound
+  ChatLineRound,
+  Tickets
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -118,7 +119,8 @@ const menuGroups: MenuGroup[] = [
       { index: '/sessions', label: '会话管理', icon: ChatDotRound, permission: 'session:read' },
       { index: '/runtime', label: '运行监控', icon: Operation, adminOnly: true },
       { index: '/scheduled-tasks', label: '定时任务', icon: Timer, permission: 'session:read' },
-      { index: '/analytics', label: '用量分析', icon: TrendCharts, adminOnly: true }
+      { index: '/analytics', label: '用量分析', icon: TrendCharts, adminOnly: true },
+      { index: '/llm-calls', label: '调用流水', icon: Tickets, adminOnly: true }
     ]
   },
   {

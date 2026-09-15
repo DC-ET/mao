@@ -15,6 +15,25 @@
 
 ---
 
+## 0.0.123 (2026-09-15)
+
+### 后端
+
+- 新增 `llm_call` 表与统一落库：`LlmAdapterFacade` / `LlmChatClient` 装饰器记录每次 LLM 调用的场景、Token、首字/总耗时、成败与重试次数；对话主链路、压缩、标题、Git 提交信息、危险评估、语音合成、飞书摘要、连通性测试均写入。
+- 新增 `GET /v1/admin/llm-calls`（管理员全站）与 `GET /v1/llm-calls/me`（当前用户）分页查询接口。
+
+### 管理后台
+
+- 新增「运行 → 调用流水」页：按用户/会话/模型/场景/时间筛选，展示 Token 与延迟明细。
+
+### 前端（桌面 / Web / 安卓）
+
+- 设置新增「使用记录」Tab，查看当前用户的 LLM 调用流水，支持跳转关联会话。
+
+### 终端 CLI（mao-cli）
+
+- 新增 `mao llm-call me` / `mao llm-call list` 查询调用流水（见 `skills/mao-cli/reference/llm-call.md`）。
+
 ## 0.0.122 (2026-09-15)
 
 ### 后端

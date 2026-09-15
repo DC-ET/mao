@@ -3,6 +3,7 @@ import type { LlmAdapter } from '../harness/llm/chat-request.js';
 import type { LlmModel } from '../model/types.js';
 import type { WeixinBotConfig } from './types.js';
 import { WeixinVoiceTextSanitizer } from './voice-text-sanitizer.js';
+import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
 
 const DEFAULT_MAX_CHARS = 240;
 
@@ -56,7 +57,12 @@ export class WeixinVoiceSynthesisService {
     }
     const clipped = this.clipText(plain);
     try {
-      const response = await this.llmAdapter.chat(
+      const response = await LlmCallContext.runAsync({
+        scene: LLM_CALL_SCENES.VOICE_SYNTHESIS,
+        userId: null,
+        sessionId: null,
+        agentId: null,
+      }, async () => this.llmAdapter.chat(
         {
           messages: [{ role: 'assistant', content: clipped }],
           audio: { format: 'wav' },
@@ -71,7 +77,7 @@ export class WeixinVoiceSynthesisService {
           modelId: model.modelId,
           clientImpersonation: toClientImpersonation(model.clientImpersonation),
         },
-      );
+      ));
       const audio = response?.choices?.[0]?.message?.audio;
       if (audio == null || audio.data == null || audio.data.trim() === '') {
         console.warn(`微信语音回复：语音模型未返回音频数据, model=${model.modelId}`);

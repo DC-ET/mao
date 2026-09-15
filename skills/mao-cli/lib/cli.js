@@ -25,6 +25,7 @@ const role = require('./commands/role');
 const runtime = require('./commands/runtime');
 const analytics = require('./commands/analytics');
 const audit = require('./commands/audit');
+const llmCall = require('./commands/llm-call');
 const settings = require('./commands/settings');
 const systemCommand = require('./commands/system-command');
 const mcp = require('./commands/mcp');
@@ -69,6 +70,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   admin-session   管理端会话检索
   runtime         运行监控
   analytics       分析汇总
+  llm-call        LLM 调用流水
   audit           审计日志
   settings        系统设置
   system-command  系统指令管理（管理员）
@@ -141,6 +143,7 @@ const MODULES = {
   },
   runtime,
   analytics,
+  'llm-call': llmCall,
   audit,
   settings,
   'system-command': systemCommand,

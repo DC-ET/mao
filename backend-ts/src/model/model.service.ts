@@ -13,6 +13,7 @@ import type {
   ModelTestResult,
   SessionModelRepository,
 } from './types.js';
+import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
 
 const TTS_TEST_TEXT = '你好，欢迎使用 Mao 语音合成测试。';
 const TTS_TEST_AUDIO = { format: 'wav' };
@@ -252,7 +253,12 @@ export class ModelService {
       const request: LlmChatRequest = {
         messages: [{ role: 'user', content: 'Hi' }],
       };
-      const response = await this.chatClientFor(config).chat(request, config);
+      const response = await LlmCallContext.runAsync({
+        scene: LLM_CALL_SCENES.CONNECTIVITY_TEST,
+        userId: null,
+        sessionId: null,
+        agentId: null,
+      }, async () => this.chatClientFor(config).chat(request, config));
       return {
         connectivity: true,
         connectivityOutput: extractChatContent(response),
@@ -274,7 +280,12 @@ export class ModelService {
         messages: [{ role: 'assistant', content: TTS_TEST_TEXT }],
         audio: TTS_TEST_AUDIO,
       };
-      const response = await this.chatClientFor(config).chat(request, config);
+      const response = await LlmCallContext.runAsync({
+        scene: LLM_CALL_SCENES.CONNECTIVITY_TEST,
+        userId: null,
+        sessionId: null,
+        agentId: null,
+      }, async () => this.chatClientFor(config).chat(request, config));
       if (!response?.choices || response.choices.length === 0) {
         return this.buildAudioTestFailure('语音合成接口未返回结果', startTime);
       }

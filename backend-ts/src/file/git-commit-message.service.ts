@@ -5,6 +5,7 @@ import { AtomicBoolean } from '../harness/atomic-boolean.js';
 import { hasText } from '../common/case.js';
 import type { LlmModelRef, Session } from '../session/types.js';
 import { LlmUsageService } from '../usage/llm-usage.service.js';
+import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
 import { GIT_COMMIT_MESSAGE_MODEL_ID_KEY } from '../settings/settings.service.js';
 
 export const MAX_DIFF_BYTES = 200 * 1024;
@@ -164,7 +165,16 @@ export class GitCommitMessageService {
     let success = false;
     const cancelFlag = new AtomicBoolean(false);
     try {
-      response = await withTimeout(this.llmAdapter.chat(request, config, cancelFlag), TIMEOUT_SECONDS * 1000, () => cancelFlag.set(true));
+      response = await withTimeout(
+        LlmCallContext.runAsync({
+          scene: LLM_CALL_SCENES.GIT_COMMIT_MESSAGE,
+          userId: session.userId ?? null,
+          sessionId: session.id ?? null,
+          agentId: session.agentId ?? null,
+        }, async () => this.llmAdapter.chat(request, config, cancelFlag)),
+        TIMEOUT_SECONDS * 1000,
+        () => cancelFlag.set(true),
+      );
       const content = extractContent(response);
       success = true;
       return content;

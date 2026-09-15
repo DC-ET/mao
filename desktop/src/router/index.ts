@@ -46,6 +46,11 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/ProfileView.vue')
           },
           {
+            path: 'usage',
+            name: 'Usage',
+            component: () => import('../views/settings/UsageView.vue')
+          },
+          {
             path: 'git-credentials',
             name: 'GitCredentials',
             component: () => import('../views/settings/GitCredentialsView.vue')

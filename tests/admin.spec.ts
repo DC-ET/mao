@@ -313,6 +313,7 @@ test.describe('Sidebar Navigation', () => {
       { label: '会话管理', url: /\/sessions$/ },
       { label: '运行监控', url: /\/runtime$/ },
       { label: '用量分析', url: /\/analytics$/ },
+      { label: '调用流水', url: /\/llm-calls$/ },
       { label: '用户管理', url: /\/users$/ },
       { label: '角色权限', url: /\/roles$/ },
       { label: '审计日志', url: /\/audit-logs$/ },

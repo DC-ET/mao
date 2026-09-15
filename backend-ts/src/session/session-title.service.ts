@@ -9,6 +9,7 @@ import type { MessageRepository, SessionRepository } from './session.repository.
 import { SESSION_TITLE_MODEL_ID_KEY } from '../settings/settings.service.js';
 import { TitleGenerator } from './util/title-generator.js';
 import { wsEvent } from './ws/ws-event.js';
+import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
 
 const TITLE_TIMEOUT_MS = 30_000;
 const NORMAL_PLACEHOLDER = '未命名会话';
@@ -84,7 +85,7 @@ export class SessionTitleService {
       let failureReason: string | null = null;
       if (model) {
         try {
-          title = cleanModelTitle(await this.invoke(preprocessed, model));
+          title = cleanModelTitle(await this.invoke(preprocessed, model, session));
           if (!title) failureReason = 'empty_response';
         } catch (error) {
           failureReason = errorMessage(error);
@@ -141,7 +142,7 @@ export class SessionTitleService {
     return TitleGenerator.preprocessForTitle(text, commands)?.replace(/\s+/g, ' ').trim() ?? '';
   }
 
-  private async invoke(text: string, model: LlmModel): Promise<string> {
+  private async invoke(text: string, model: LlmModel, session: Session): Promise<string> {
     const cancelFlag = new AtomicBoolean(false);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -152,7 +153,12 @@ export class SessionTitleService {
     });
     try {
       const response = await Promise.race([
-        this.llmAdapter.chat({
+        LlmCallContext.runAsync({
+          scene: LLM_CALL_SCENES.SESSION_TITLE,
+          userId: session.userId ?? null,
+          sessionId: session.id ?? null,
+          agentId: session.agentId ?? null,
+        }, async () => this.llmAdapter.chat({
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: text },
@@ -163,7 +169,7 @@ export class SessionTitleService {
           reasoning: { effort: 'none' },
           thinking: { type: 'disabled' },
           enableThinking: false,
-        }, llmModelToConfig(model), cancelFlag),
+        }, llmModelToConfig(model), cancelFlag)),
         timeout,
       ]);
       return responseText(response);

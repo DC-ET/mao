@@ -210,6 +210,11 @@ import { TaskNotificationDeliveryService } from './notification/task/delivery.se
 import { WebhookSenderRegistry, DingTalkWebhookSender, FeishuWebhookSender } from './notification/task/webhook-sender.js';
 import { WebhookUrlValidator } from './notification/task/webhook-url-validator.js';
 import { LlmUsageRepository, LlmUsageService } from './usage/llm-usage.service.js';
+import { LlmCallRepository } from './usage/llm-call.repository.js';
+import { LlmCallService } from './usage/llm-call.service.js';
+import { RecordingLlmAdapter } from './usage/recording-llm-adapter.js';
+import { RecordingLlmChatClient } from './usage/recording-llm-chat-client.js';
+import { registerLlmCallRoutes } from './usage/llm-call.routes.js';
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { decryptAesGcm } from './crypto/aes-gcm.js';
 import { MysqlFeishuBotRepository } from './feishu/feishu_bot.repository.js';
@@ -464,9 +469,33 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const suggestedQuestionService = new AgentSuggestedQuestionService(new MysqlAgentSuggestedQuestionRepository(db));
   const modelRepo = new MysqlLlmModelRepository(db);
   const agentService = new AgentService(agentRepo, experienceService, suggestedQuestionService, modelRepo);
-  const modelChatClient = new OpenAiChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
-  const anthropicChatClient = new AnthropicChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
-  const responsesChatClient = new ResponsesChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 });
+  const llmCallService = new LlmCallService(
+    new LlmCallRepository(db),
+    {
+      findUsername: async (id) => {
+        const user = await userRepo.findById(id);
+        return user ? { username: user.username, displayName: user.displayName } : null;
+      },
+    },
+    {
+      findName: async (id) => {
+        const agent = await agentRepo.findById(id);
+        return agent?.name ?? null;
+      },
+    },
+  );
+  const modelChatClient = new RecordingLlmChatClient(
+    new OpenAiChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 }),
+    llmCallService,
+  );
+  const anthropicChatClient = new RecordingLlmChatClient(
+    new AnthropicChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 }),
+    llmCallService,
+  );
+  const responsesChatClient = new RecordingLlmChatClient(
+    new ResponsesChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 }),
+    llmCallService,
+  );
   const llmChatClients = new Map<string, LlmChatClient>([
     ['anthropic', anthropicChatClient],
     ['openai-responses', responsesChatClient],
@@ -626,12 +655,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     httpCallTimeoutSeconds: harnessTuning.llm.httpCallTimeoutSeconds,
     streamIdleTimeoutSeconds: harnessTuning.llm.streamIdleTimeoutSeconds,
   });
-  const llmAdapter = new LlmAdapterFacade(
-    new Map<string, LlmAdapter>([
-      ['anthropic', anthropicLlmAdapter],
-      ['openai-responses', responsesLlmAdapter],
-    ]),
-    openAiLlmAdapter,
+  const llmAdapter = new RecordingLlmAdapter(
+    new LlmAdapterFacade(
+      new Map<string, LlmAdapter>([
+        ['anthropic', anthropicLlmAdapter],
+        ['openai-responses', responsesLlmAdapter],
+      ]),
+      openAiLlmAdapter,
+    ),
+    llmCallService,
   );
   const promptEngine = new PromptEngine(skillLoader, pathSandbox, runtimeResolver, commandService, skillSync);
   const tokenEstimator = new TokenEstimator();
@@ -1756,6 +1788,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     });
     registerToolRoutes(api, { toolService: restToolService });
     registerAuditLogRoutes(api, { auditLogService: auditService });
+    registerLlmCallRoutes(api, { llmCallService, permissionService });
     registerUploadRoutes(api, () => settingService.getUploadConfig());
     registerSessionRoutes(api, {
       sessionService, activityService, messageQueueService,

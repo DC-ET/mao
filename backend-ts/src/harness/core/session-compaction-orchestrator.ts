@@ -9,6 +9,7 @@ import type { PromptEngine } from './prompt-engine.js';
 import type { SessionHistoryLoader } from './session-history-loader.js';
 import type { SessionCompactionEventService, SessionCompactionService, SessionService } from '../deps.js';
 import { harnessLog } from '../log.js';
+import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
 
 export class CompactionStateReloadException extends Error {
   constructor(cause?: unknown) {
@@ -46,9 +47,14 @@ export class SessionCompactionOrchestrator {
     const history = await this.sessionHistoryLoader.loadHistoryAfterBoundary(sessionId, boundary);
     if (history.persistedMessages.length === 0) return false;
 
-    const result = await this.contextManager.compactSession(
+    const result = await LlmCallContext.runAsync({
+      scene: LLM_CALL_SCENES.COMPACTION,
+      userId: context.executionUserId ?? context.userId ?? null,
+      sessionId: context.sessionId ?? null,
+      agentId: context.agentId ?? null,
+    }, async () => this.contextManager.compactSession(
       sessionId, boundary, history.persistedMessages, history.snapshotMessageIds,
-      normalRequest, context.modelConfig!, config, listener, cancelFlag, activeTokensHint ?? null);
+      normalRequest, context.modelConfig!, config, listener, cancelFlag, activeTokensHint ?? null));
     if (result == null) return false;
 
     let compactionEnded = false;

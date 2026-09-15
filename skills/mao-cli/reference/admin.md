@@ -118,6 +118,14 @@ CLI：`mao runtime ...`（见 [runtime.md](runtime.md)）。
 
 CLI：`mao analytics summary --days 7|30|90` 取同一份数据（见 [analytics.md](analytics.md)）。
 
+## 调用流水
+
+「运行 → 调用流水」查看全站逐次 LLM 调用：时间、用户、场景、模型、入/出/缓存 Token、流式、首字与总耗时、成败。可按用户、会话、模型、场景、时间筛选；详情弹窗展示协议、推理强度、重试次数与错误摘要。
+
+与「用量分析」区别：用量分析是窗口内聚合报表；调用流水是每次 `chat/stream` 一行，含延迟与场景。
+
+CLI：`mao llm-call list`（见 [llm-call.md](llm-call.md)）。
+
 ## 系统设置
 
 平台级配置，例如：

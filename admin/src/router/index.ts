@@ -88,6 +88,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '用量分析', keepAlive: true, adminOnly: true }
       },
       {
+        path: 'llm-calls',
+        name: 'LlmCalls',
+        component: () => import('../views/llm-call/LlmCallView.vue'),
+        meta: { title: '调用流水', keepAlive: true, adminOnly: true }
+      },
+      {
         path: 'scheduled-tasks',
         name: 'ScheduledTasks',
         component: () => import('../views/scheduled-tasks/index.vue'),

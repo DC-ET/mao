@@ -19,6 +19,7 @@ import { permissionLevelFromString, type PermissionLevel } from './permission-le
 import type { BackgroundTaskManager } from '../core/background-task-manager.js';
 import { parseObject } from './json.js';
 import type { TaskNotificationDelivery } from '../../notification/task/types.js';
+import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
 
 /** 用户离线时 ask_user_questions 的 Webhook 通知能力（由 notification/task 提供）。 */
 export interface AskUserOfflineNotifier {
@@ -160,7 +161,9 @@ export class ToolDispatcher {
         if (session?.permissionLevel) latest = session.permissionLevel;
       }
       const level = permissionLevelFromString(latest);
-      const decision = await this.shouldRequireApproval(descriptor, toolName, level, argumentsJson, modelConfig);
+      const decision = await this.shouldRequireApproval(
+        descriptor, toolName, level, argumentsJson, modelConfig, sessionId, executionUserId ?? userId,
+      );
       if (toolName === 'shell' && this.backgroundTaskManager && isLocalShellAsyncExec(argumentsJson)) {
         return this.dispatchLocalShellAsync(
           argumentsJson, sessionId, workspace, decision.needApproval, decision.dangerReason,
@@ -243,6 +246,8 @@ export class ToolDispatcher {
     level: PermissionLevel,
     argumentsJson: string,
     modelConfig: LlmModelConfig | null,
+    sessionId: number | null,
+    userId: number | null,
   ): Promise<{ needApproval: boolean; dangerReason: string | null }> {
     // MCP 识别：descriptor.source 优先，mcp__ 前缀保留为 fallback（缺 descriptor 的直接实现/旧名场景）
     const isMcpTool = descriptor?.source === 'mcp' || (toolName != null && toolName.startsWith(MCP_TOOL_PREFIX));
@@ -258,7 +263,12 @@ export class ToolDispatcher {
           harnessLog('warn', 'SMART mode: no modelConfig available, defaulting to approval required');
           return { needApproval: true, dangerReason: '无法进行安全评估，默认需要审批' };
         }
-        const result = await this.dangerAssessor.assess(argumentsJson, modelConfig);
+        const result = await LlmCallContext.runAsync({
+          scene: LLM_CALL_SCENES.DANGER_ASSESS,
+          userId,
+          sessionId,
+          agentId: null,
+        }, async () => this.dangerAssessor.assess(argumentsJson, modelConfig));
         return { needApproval: result.dangerous, dangerReason: result.reason };
       }
       case 'FULL':

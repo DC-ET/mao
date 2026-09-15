@@ -18,6 +18,7 @@ import { BusinessException } from '../../common/business-exception.js';
 import { ErrorCode } from '../../common/error-code.js';
 import { FileChangeDiffUtil } from '../tool/file-change-diff-util.js';
 import { ToolCallContext } from '../tool/tool-call-context.js';
+import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
 import type { ToolDispatcher } from '../tool/tool-dispatcher.js';
 import { ToolImageResultProcessor } from '../tool/tool-image-result-processor.js';
 import { toolResultMeta, type ToolResult } from '../tool/tool-result.js';
@@ -325,7 +326,14 @@ export class AgentLoop {
             },
           };
 
-          await this.llmAdapter.stream(request, context.modelConfig!, callback, cancelFlag ?? null);
+          await LlmCallContext.runAsync({
+            scene: LLM_CALL_SCENES.AGENT,
+            userId: context.executionUserId ?? context.userId ?? null,
+            sessionId: context.sessionId ?? null,
+            agentId: context.agentId ?? null,
+          }, async () => {
+            await this.llmAdapter.stream(request, context.modelConfig!, callback, cancelFlag ?? null);
+          });
           await Promise.all(afterStream);
         } catch (e) {
           if (thinkingActive.v) {

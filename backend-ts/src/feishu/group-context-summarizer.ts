@@ -1,4 +1,5 @@
 import type { LlmChatClient, LlmChatRequest, LlmModelConfig } from '../model/types.js';
+import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
 
 const SYSTEM_PROMPT = `你是群聊记录摘要助手。把群聊记录压缩为一份简明摘要，供 AI 助手在后续对话中了解此前的讨论背景。
 要求：
@@ -31,7 +32,12 @@ export class GroupContextSummarizer {
         temperature: 0.2,
         stream: false,
       };
-      const response = await this.resolveLlmClient(config).chat(request, config);
+      const response = await LlmCallContext.runAsync({
+        scene: LLM_CALL_SCENES.FEISHU_SUMMARIZE,
+        userId: null,
+        sessionId,
+        agentId: null,
+      }, async () => this.resolveLlmClient(config).chat(request, config));
       const text = extractText(response);
       return text !== '' ? text : null;
     } catch (error) {
