@@ -20,6 +20,8 @@ export interface FeishuInboundProcessorOptions {
   resolveQuotedMessage?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
   /** 群聊图片入站即下载（非懒加载）：按 imageKey 下载并返回落盘绝对路径嵌入占位文本；null/抛错表示失败，保留懒加载占位符。 */
   downloadGroupImage?: (accountId: string, event: FeishuNormalizedMessage, imageKey: string, index: number) => Promise<string | null>;
+  /** 话题会话映射查询：threadId 存在且映射命中（机器人已在该话题中）时免 @ 触发。 */
+  resolveThreadSession?: (accountId: string, event: FeishuNormalizedMessage) => Promise<{ sessionId: number } | null>;
 }
 
 export class FeishuInboundProcessor {
@@ -73,12 +75,12 @@ export class FeishuInboundProcessor {
         return;
       }
       let mentioned = this.isBotMentioned(normalized);
-      // 话题消息：threadId 存在即放行（话题内消息视为触发）。
-      // 不能依赖映射查询结果——新话题根消息尚无映射，若查不到就拦截，
-      // agent handler 的话题分支（负责创建新会话）永远不会被调用。
-      // 非根消息且映射缺失时，agent handler 内部会降级走现有群逻辑。
-      if (!mentioned && normalized.threadId != null) {
-        mentioned = true;
+      // 话题消息免 @ 触发：仅当话题会话映射已存在（机器人已在该话题中）时放行。
+      // 新话题（无映射）不 @ 不触发——用户开话题不等于让机器人参与；
+      // @bot 时 mentioned 已为 true，正常走触发链路，agent handler 创建新话题会话。
+      if (!mentioned && normalized.threadId != null && this.options.resolveThreadSession != null) {
+        const threadSession = await this.options.resolveThreadSession(accountId, normalized).catch(() => null);
+        if (threadSession != null) mentioned = true;
       }
       // 群消息立即按到达顺序落日志（占位文本），慢操作（姓名解析/图片预下载）后置为异步富化；
       // 否则图片下载期间后续 @ 触发会先读上下文并推进水位线，该图片将永远无法进入 Agent 会话。

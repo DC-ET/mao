@@ -344,7 +344,7 @@ describe('FeishuMessageService', () => {
     });
     const sessionFactory = { create: vi.fn(async () => ({ sessionId: 10, ownerUserId: 3, workspace: '/ws/new' })) };
     const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
-    // 话题根消息：parentId 为空 → 创建新会话。
+    // 话题根消息：parentId 为空 → 创建新会话，rootMessageId = messageId。
     const result = await service.getOrCreateThreadSession('1', makeContext({ threadId: 'omt_abc', messageId: 'om_root', parentId: null }));
     expect(result?.sessionId).toBe(10);
     expect(repository.recordThreadSession).toHaveBeenCalledWith({
@@ -352,14 +352,23 @@ describe('FeishuMessageService', () => {
     });
   });
 
-  it('getOrCreateThreadSession returns null for non-root thread reply with missing mapping', async () => {
-    const repository = makeRepo({ findThreadSession: vi.fn(async () => null) });
-    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
-    // 话题内回复但映射缺失（parentId ≠ messageId，非根消息）→ 降级返回 null。
+  it('getOrCreateThreadSession creates session for @bot reply using rootId as rootMessageId', async () => {
+    const repository = makeRepo({
+      findThreadSession: vi.fn(async () => null),
+      recordThreadSession: vi.fn(async () => undefined),
+      upsertSessionChannel: vi.fn(async () => undefined),
+    });
+    const sessionFactory = { create: vi.fn(async () => ({ sessionId: 11, ownerUserId: 3, workspace: '/ws/new' })) };
+    const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
+    // 话题内回复（先建话题不 @bot，后在话题内 @bot）：parentId 非空，rootMessageId 用 rootId。
     const result = await service.getOrCreateThreadSession('1', makeContext({
       threadId: 'omt_abc', messageId: 'om_reply', parentId: 'om_root', rootId: 'om_root',
     }));
-    expect(result).toBeNull();
+    expect(result?.sessionId).toBe(11);
+    expect(result?.rootMessageId).toBe('om_root');
+    expect(repository.recordThreadSession).toHaveBeenCalledWith({
+      appId: '1', chatId: 'oc_group', threadId: 'omt_abc', rootMessageId: 'om_root', sessionId: 11,
+    });
   });
 
   it('buildGroupContext passes threadId to listGroupMessages', async () => {

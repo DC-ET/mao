@@ -55,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, watch, inject } from 'vue'
+import { ref, computed, reactive, watch, inject, type Ref } from 'vue'
 import { Document, ArrowDown } from '@element-plus/icons-vue'
 import type { FileChange } from '../../types/chat'
 import { useSessionStore } from '../../stores/session'
@@ -80,7 +80,8 @@ const { openDiffTab } = useCenterTabs(activeSessionIdRef)
 
 const executionMode = inject<string>('executionMode', 'CLOUD')
 const canOpenInFinder = typeof window !== 'undefined' && !!window.electronAPI?.showItemInFolder
-const fileProvider = inject<WorkspaceFileProvider | null>('fileProvider', null)
+// TaskView provide 的是 ComputedRef，inject 拿到的是 Ref 本身，需取 .value
+const fileProviderRef = inject<Ref<WorkspaceFileProvider | null>>('fileProvider', ref(null))
 const addFileToChat = inject<(filePath: string) => void>('addFileToChat', () => {})
 
 type MergedChange = FileChange & { displayPath: string }
@@ -186,6 +187,7 @@ function handleAddToChat() {
 async function handleDownloadFile() {
   const change = ctxMenu.change
   if (!change) return
+  const fileProvider = fileProviderRef.value
   if (!fileProvider?.downloadFile) {
     ElMessage.warning('当前模式不支持下载')
     return

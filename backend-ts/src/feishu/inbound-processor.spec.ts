@@ -150,16 +150,43 @@ describe('FeishuInboundProcessor', () => {
     expect(resolveQuotedMessage).toHaveBeenCalled();
   });
 
-  it('triggers thread message without @bot (threadId presence bypasses mention gate)', async () => {
+  it('triggers existing thread message without @bot when thread session mapping hits', async () => {
     messageService.claimInboundMessage.mockResolvedValueOnce(true);
     const onMessage = vi.fn(async () => ({ text: 'r' }));
     const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
       messageService,
       authorizeSender: async () => true,
+      resolveThreadSession: async () => ({ sessionId: 10 }),
     });
-    // 无 @、有 threadId → 放行触发（不依赖映射查询，新话题根消息也能触发）。
+    // 无 @、有 threadId、映射命中（机器人已在该话题中）→ 免 @ 触发。
     await processor.process('1', makeEvent({ isBotMentioned: false, threadId: 'omt_abc' }));
     expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1', expect.anything(), true);
+    expect(onMessage).toHaveBeenCalledOnce();
+  });
+
+  it('does not trigger new topic without @bot (no thread session mapping)', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveThreadSession: async () => null,
+    });
+    // 无 @、有 threadId、映射不存在（新话题/机器人不在）→ 不触发。
+    await processor.process('1', makeEvent({ isBotMentioned: false, threadId: 'omt_abc' }));
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it('triggers new topic with @bot even without existing mapping', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+      resolveThreadSession: async () => null,
+    });
+    // @bot → mentioned 已为 true，不依赖映射查询，正常触发。
+    await processor.process('1', makeEvent({ isBotMentioned: true, threadId: 'omt_abc' }));
     expect(onMessage).toHaveBeenCalledOnce();
   });
 

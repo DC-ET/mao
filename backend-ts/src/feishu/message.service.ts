@@ -137,8 +137,9 @@ export class FeishuMessageService {
   /**
    * 获取或创建话题→会话映射。
    * - 映射存在：返回已有会话；
-   * - 映射不存在且为话题根消息（parentId 为空）：创建新会话并记录映射；
-   * - 映射不存在且非根消息（上线前话题的回复）：返回 null，调用方降级走现有群逻辑。
+   * - 映射不存在：创建新会话并记录映射。根消息用自身 messageId，回复用 rootId（话题根）作为 rootMessageId。
+   *   本方法仅在消息通过 mention 门禁后被调用（@bot 或映射已存在），因此非根消息创建是安全的
+   *   （典型场景：先建话题不 @bot，后续在话题内 @bot 触发建会话）。
    */
   async getOrCreateThreadSession(accountId: string, context: FeishuInboundContext): Promise<FeishuThreadSessionResult | null> {
     if (context.threadId == null || context.chatId == null) return null;
@@ -148,13 +149,14 @@ export class FeishuMessageService {
         const conversation = await this.repository.findGroupConversation(accountId, context.chatId!);
         return { sessionId: existing.sessionId, rootMessageId: existing.rootMessageId, workspace: conversation?.workspace ?? null };
       }
-      // 仅话题根消息触发创建；话题内回复但映射缺失 → 降级（返回 null）。
+      // rootMessageId：话题根消息用自身 messageId；话题内回复用 rootId（指向话题根的 message_id，
+      // reply API 回复该 ID 可自动落入话题）。
       const isRoot = context.parentId == null || context.parentId === '';
-      if (!isRoot) return null;
+      const rootMessageId = isRoot ? context.messageId! : (context.rootId ?? context.parentId ?? context.messageId!);
       const session = await this.sessionFactory.create(accountId, context);
       await this.repository.recordThreadSession({
         appId: accountId, chatId: context.chatId!, threadId: context.threadId!,
-        rootMessageId: context.messageId!, sessionId: session.sessionId,
+        rootMessageId, sessionId: session.sessionId,
       });
       // 话题会话标记待命名（复用 p2p 的持久化标志，首条消息前 20 字命名）。
       try {
@@ -162,7 +164,7 @@ export class FeishuMessageService {
       } catch (error) {
         console.warn(`飞书话题会话待命名标记失败, sessionId=${session.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
-      return { sessionId: session.sessionId, rootMessageId: context.messageId!, workspace: session.workspace };
+      return { sessionId: session.sessionId, rootMessageId, workspace: session.workspace };
     });
   }
 

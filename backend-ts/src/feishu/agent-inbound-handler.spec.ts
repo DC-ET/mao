@@ -888,7 +888,7 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
     expect(harness.execute).toHaveBeenCalledWith(10, 'e', expect.anything(), expect.anything(), 42);
   });
 
-  it('falls back to group session when thread mapping misses (non-root reply)', async () => {
+  it('falls back to group session when threadSessionControl returns null (error path)', async () => {
     const sessionService = makeSessionService();
     const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
     const threadControl = {
@@ -903,7 +903,7 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
       threadSessionControl: threadControl as never,
     });
     await handler.onMessage(makeContext({ threadId: 'omt_abc', messageId: 'om_reply', parentId: 'om_root', rootId: 'om_root' }));
-    // 降级走现有群逻辑：使用群级会话 7。
+    // getOrCreateSession 返回 null（异常/降级）→ 走现有群逻辑。
     expect(harness.execute).toHaveBeenCalledWith(7, 'e', expect.anything(), expect.anything(), 42);
   });
 
