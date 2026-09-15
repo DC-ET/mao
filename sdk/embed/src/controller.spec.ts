@@ -98,13 +98,13 @@ function installFetch(fetchCalls: string[]) {
       });
     }
     if (method === 'POST' && url.includes('/sessions')) {
-      return jsonOk({ id: SESSION_ID, title: '网页助手' });
+      return jsonOk({ id: SESSION_ID, title: '未命名会话' });
     }
     if (url.includes(`/sessions/${SESSION_ID}/messages`)) {
       return jsonOk({ messages: historyMessages, hasMore: false });
     }
     if (url.includes(`/sessions/${SESSION_ID}`)) {
-      return jsonOk({ id: SESSION_ID, title: '网页助手' });
+      return jsonOk({ id: SESSION_ID, title: '未命名会话' });
     }
     return jsonOk({});
   }) as unknown as typeof fetch;
@@ -815,7 +815,7 @@ describe('EmbedController', () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if ((init?.method ?? 'GET') === 'POST' && url.includes('/sessions')) {
-        return jsonOk({ id: 99, title: '网页助手' });
+        return jsonOk({ id: 99, title: '未命名会话' });
       }
       return jsonOk({ messages: [], hasMore: false });
     }) as unknown as typeof fetch;
