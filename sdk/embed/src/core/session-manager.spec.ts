@@ -31,15 +31,14 @@ function stubFetch(handler?: (url: string, method: string) => Response | undefin
     const custom = handler?.(url, method);
     if (custom) return custom;
     const getMatch = /\/sessions\/(\d+)$/.exec(url);
-    if (method === 'GET' && getMatch) {
-      const id = Number(getMatch[1]);
+    if (method === 'GET' && getMatch) {      const id = Number(getMatch[1]);
       const s = sessions.get(id);
       if (!s) return jsonResponse(200, { code: 3002, message: '会话不存在' });
       return jsonResponse(200, { code: 0, data: s });
     }
     if (method === 'POST' && url.endsWith('/sessions')) {
       const id = nextCreatedId++;
-      const s = { id, title: '网页助手' } as EmbedSessionVO;
+      const s = { id, title: '未命名会话' } as EmbedSessionVO;
       sessions.set(id, s);
       return jsonResponse(200, { code: 0, data: s });
     }
@@ -146,13 +145,14 @@ describe('SessionManager embed history', () => {
     (globalThis as unknown as { fetch: unknown }).fetch = originalFetch;
   });
 
-  it('createSession 请求体带 source=embed', async () => {
+  it('createSession 请求体带 source=embed 且不传 title（留给自动标题）', async () => {
     const fn = stubFetch();
     const mgr = new SessionManager({ rest: newRest(), agentId: 3 });
     await mgr.resolveSession();
     const call = fn.mock.calls.find((c) => String(c[0]).endsWith('/sessions') && (c[1] as RequestInit)?.method === 'POST');
     expect(call).toBeTruthy();
     expect(JSON.parse((call![1] as RequestInit).body as string)).toMatchObject({ agentId: 3, source: 'embed' });
+    expect(JSON.parse((call![1] as RequestInit).body as string).title).toBeUndefined();
   });
 
   it('listSessions 按 agentId+source 分页请求', async () => {

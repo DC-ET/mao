@@ -57,9 +57,10 @@ export class SessionManager {
   }
 
   async createSession(): Promise<EmbedSessionVO> {
+    // 不传 title：走后端默认占位符「未命名会话」，首条消息后由
+    // SessionTitleService 生成 LLM 标题（占位符才触发自动生成，传固定值会卡住）
     const body: EmbedCreateSessionRequest = {
       agentId: this.deps.agentId,
-      title: '网页助手',
       source: 'embed',
     };
     const session = await this.deps.rest.request<EmbedSessionVO>('POST', '/sessions', { body });
