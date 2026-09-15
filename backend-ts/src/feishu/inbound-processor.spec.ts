@@ -150,31 +150,17 @@ describe('FeishuInboundProcessor', () => {
     expect(resolveQuotedMessage).toHaveBeenCalled();
   });
 
-  it('triggers thread message without @bot when thread session mapping hits', async () => {
+  it('triggers thread message without @bot (threadId presence bypasses mention gate)', async () => {
     messageService.claimInboundMessage.mockResolvedValueOnce(true);
     const onMessage = vi.fn(async () => ({ text: 'r' }));
     const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
       messageService,
       authorizeSender: async () => true,
-      resolveThreadSession: async () => ({ sessionId: 42 }),
     });
-    // 无 @、有 threadId、映射命中 → 跳过 mention 门禁，正常触发。
+    // 无 @、有 threadId → 放行触发（不依赖映射查询，新话题根消息也能触发）。
     await processor.process('1', makeEvent({ isBotMentioned: false, threadId: 'omt_abc' }));
     expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1', expect.anything(), true);
     expect(onMessage).toHaveBeenCalledOnce();
-  });
-
-  it('does not trigger thread message without @bot when mapping misses', async () => {
-    messageService.claimInboundMessage.mockResolvedValueOnce(true);
-    const onMessage = vi.fn(async () => ({ text: 'r' }));
-    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
-      messageService,
-      authorizeSender: async () => true,
-      resolveThreadSession: async () => null,
-    });
-    // 无 @、有 threadId、映射未命中 → 保持 mention 门禁，不触发。
-    await processor.process('1', makeEvent({ isBotMentioned: false, threadId: 'omt_abc' }));
-    expect(onMessage).not.toHaveBeenCalled();
   });
 
   it('only records group message when bot not mentioned', async () => {

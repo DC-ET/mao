@@ -1608,10 +1608,6 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     messageService: feishuMessageService,
     resolveSenderName: resolveFeishuSenderName,
     downloadGroupImage: downloadFeishuGroupImage,
-    resolveThreadSession: async (accountId, event) => {
-      const result = await feishuMessageService.findThreadSession(String(accountId), event.threadId);
-      return result == null ? null : { sessionId: result.sessionId };
-    },
     resolveQuotedMessage: async (accountId, event) => {
       if (event.parentId == null) return null;
       const persist = async (raw: string): Promise<string> => {
