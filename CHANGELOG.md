@@ -15,6 +15,13 @@
 
 ---
 
+## 0.0.121 (2026-09-15)
+
+### 后端
+
+- 修复 ECP 会话 renew 必然失败：`renewSession` 不再复用登录解析，ECP renew 响应不含用户信息，此前被误判为「ECP 响应缺少用户邮箱」→ 会话被标记 `FAILED` → CLOUD shell 不再注入 `ECP_TOKEN`，`bigdata-cli` 等内部 CLI 报「ECP 登录态已失效」。
+- ECP 会话不可用（renew 失败 / 已过期 / 解密失败）时清理虚拟 HOME 的 AccessOne 布局，避免下游 CLI 读到已作废旧票而误报登录态失效；同时输出跳过注入的原因日志。
+
 ## 0.0.120 (2026-09-14)
 
 ### 后端

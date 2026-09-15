@@ -51,6 +51,8 @@ CLOUD 定时任务与 Agent shell 在服务端执行，当前仅注入短效 `MA
 
 响应成功约定：`code=0`（或等价 success），`data.sessionToken`、`data.expiresAt`（epoch 毫秒或 ISO，实现按实际字段解析）。
 
+⚠️ **renew 响应不含用户信息**（无 `data.user` / `email`）：只有换票（`sessions`）才返回用户邮箱。解析必须分开——`renewSession` 只取 `sessionToken` + `expiresAt`，不得复用要求邮箱的登录解析，否则 renew 会必然失败并把会话打成 `FAILED`。
+
 ## 4. 认证链路
 
 ```text
@@ -156,6 +158,7 @@ ECP 开启时：`POST /v1/auth/login`、飞书 QR/callback、`POST /v1/auth/sso/
 - 触发：`expires_at <= now + 30min` 且 `renew_status = ACTIVE`
 - 流程：`FOR UPDATE` 用户会话行 → 调 renew → 成功则 UPDATE 新 token+expires_at → `renew_status=ACTIVE`
 - renew 网络超时/无响应：标记 `FAILED`，**不得**用旧票重试 renew；用户须重新飞书登录
+- renew 响应解析失败同样按 `FAILED` 处理（新票可能已签发但被丢弃，旧票已作废）；此时须清理虚拟 HOME 的 AccessOne 布局，避免下游 CLI 读到旧票后误报「ECP 登录态已失效」
 - 并发：同一用户仅一个 renew；ECP 返回「Session already renewed」视为另一 worker 已成功，重读 DB
 - Mao 停机超过 12h：所有票过期，须全员重新登录
 

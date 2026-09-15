@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
@@ -29,6 +29,49 @@ describe('createEcpCredentialsInjector', () => {
     const home = await mkdtemp(join(tmpdir(), 'mao-ecp-inject-'));
     const sessions = {
       findByUserId: vi.fn(async () => null),
+      decryptToken: vi.fn(() => 'token'),
+    };
+    const injector = createEcpCredentialsInjector(sessions as never, () => home);
+    expect(await injector.injectForUser(1)).toBeNull();
+    expect(sessions.decryptToken).not.toHaveBeenCalled();
+  });
+
+  it('clears stale AccessOne layout when session renew failed', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'mao-ecp-inject-'));
+    const accountDir = join(home, '.config', 'com.access.accessone', 'profiles', 'mao');
+    const sessions = {
+      findByUserId: vi.fn(async () => ({
+        sessionTokenEnc: 'enc',
+        expiresAt: '2099-01-01 00:00:00',
+        renewStatus: 'FAILED',
+      })),
+      decryptToken: vi.fn(() => 'stale-token'),
+    };
+    // 先写入一份旧票，模拟历史残留
+    await createEcpCredentialsInjector(
+      { findByUserId: vi.fn(async () => ({
+        sessionTokenEnc: 'enc',
+        expiresAt: '2099-01-01 00:00:00',
+        renewStatus: 'ACTIVE',
+      })), decryptToken: vi.fn(() => 'stale-token') } as never,
+      () => home,
+    ).injectForUser(1);
+    await expect(stat(accountDir)).resolves.toBeTruthy();
+
+    const injector = createEcpCredentialsInjector(sessions as never, () => home);
+    expect(await injector.injectForUser(1)).toBeNull();
+    expect(sessions.decryptToken).not.toHaveBeenCalled();
+    await expect(stat(accountDir)).rejects.toThrow();
+  });
+
+  it('clears stale AccessOne layout when session expired', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'mao-ecp-inject-'));
+    const sessions = {
+      findByUserId: vi.fn(async () => ({
+        sessionTokenEnc: 'enc',
+        expiresAt: '2000-01-01 00:00:00',
+        renewStatus: 'ACTIVE',
+      })),
       decryptToken: vi.fn(() => 'token'),
     };
     const injector = createEcpCredentialsInjector(sessions as never, () => home);

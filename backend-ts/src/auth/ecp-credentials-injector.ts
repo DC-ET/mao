@@ -1,4 +1,5 @@
-import { writeAccessOneEcpToken } from '../harness/accessone-ecp-credentials.js';
+import { harnessLog } from '../harness/log.js';
+import { clearAccessOneEcpToken, writeAccessOneEcpToken } from '../harness/accessone-ecp-credentials.js';
 import type { MysqlEcpSessionRepository } from './ecp-session.repository.js';
 
 export interface EcpCredentialsInjector {
@@ -12,12 +13,28 @@ export function createEcpCredentialsInjector(
 ): EcpCredentialsInjector {
   return {
     async injectForUser(userId: number): Promise<string | null> {
-      const row = await sessions.findByUserId(userId);
-      if (!row) return null;
-      if (row.renewStatus === 'FAILED' || new Date(row.expiresAt).getTime() <= Date.now()) return null;
-      const token = sessions.decryptToken(row.sessionTokenEnc);
-      if (!token) return null;
       const home = resolveUserHome(userId);
+      const row = await sessions.findByUserId(userId);
+      if (!row) {
+        if (home) await clearAccessOneEcpToken(home);
+        return null;
+      }
+      if (row.renewStatus === 'FAILED') {
+        harnessLog('warn', `Skip ECP_TOKEN inject: session renew failed, userId=${userId}；需重新 ECP 飞书登录`);
+        if (home) await clearAccessOneEcpToken(home);
+        return null;
+      }
+      if (new Date(row.expiresAt).getTime() <= Date.now()) {
+        harnessLog('warn', `Skip ECP_TOKEN inject: session expired at ${row.expiresAt}, userId=${userId}；需重新 ECP 飞书登录`);
+        if (home) await clearAccessOneEcpToken(home);
+        return null;
+      }
+      const token = sessions.decryptToken(row.sessionTokenEnc);
+      if (!token) {
+        harnessLog('warn', `Skip ECP_TOKEN inject: session token decrypt failed, userId=${userId}`);
+        if (home) await clearAccessOneEcpToken(home);
+        return null;
+      }
       if (home) await writeAccessOneEcpToken(home, token);
       return token;
     },

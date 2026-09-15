@@ -13,6 +13,12 @@ export interface EcpSessionResult {
   user: EcpSessionUser;
 }
 
+/** renew 只换票，不返回用户信息。 */
+export interface EcpRenewedSession {
+  sessionToken: string;
+  expiresAt: Date;
+}
+
 export interface EcpFeishuAuthorization {
   authorizeUrl: string;
   state?: string;
@@ -106,11 +112,19 @@ function parseUser(data: Record<string, unknown>): EcpSessionUser {
   return { email, displayName };
 }
 
-function parseSession(data: Record<string, unknown>): EcpSessionResult {
+/**
+ * renew 只换票，响应不含用户信息；登录换票才需要解析用户邮箱。
+ * 两者拆开，避免 renew 因缺少 user 字段被误判为失败。
+ */
+function parseSessionToken(data: Record<string, unknown>): EcpRenewedSession {
   const sessionToken = String(data.sessionToken ?? data.token ?? '').trim();
   if (!sessionToken) throw new EcpError('ECP 响应缺少 sessionToken');
   const expiresAt = parseExpiresAt(data.expiresAt ?? data.expireAt ?? data.expiredAt);
-  return { sessionToken, expiresAt, user: parseUser(data) };
+  return { sessionToken, expiresAt };
+}
+
+function parseSession(data: Record<string, unknown>): EcpSessionResult {
+  return { ...parseSessionToken(data), user: parseUser(data) };
 }
 
 export class EcpClient {
@@ -150,7 +164,7 @@ export class EcpClient {
     return parseSession(unwrapData(json));
   }
 
-  async renewSession(config: EcpConfig, sessionToken: string): Promise<EcpSessionResult> {
+  async renewSession(config: EcpConfig, sessionToken: string): Promise<EcpRenewedSession> {
     const url = `${config.baseUrl}/public/session/renew?appCode=${encodeURIComponent(config.appCode)}`;
     const { status, json } = await this.http.request('POST', url, {
       headers: { Authorization: `Bearer ${sessionToken}` },
@@ -168,7 +182,7 @@ export class EcpClient {
     if (status < 200 || status >= 300) {
       throw new EcpError(`ECP renew 失败（HTTP ${status}）`);
     }
-    return parseSession(unwrapData(json));
+    return parseSessionToken(unwrapData(json));
   }
 
   async verifySession(config: EcpConfig, sessionToken: string): Promise<EcpSessionUser> {

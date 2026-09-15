@@ -47,6 +47,27 @@ describe('EcpClient', () => {
     expect(session.user.email).toBe('a@example.com');
   });
 
+  it('renews a session when the response has no user info', async () => {
+    // ECP renew 只换票，不返回 user；曾因复用登录解析而误报「缺少用户邮箱」
+    const http = {
+      request: vi.fn(async () => ({
+        status: 200,
+        json: {
+          code: 0,
+          data: {
+            sessionToken: 'tok-renewed',
+            expiresAt: Date.now() + 3600_000,
+          },
+        },
+      })),
+    };
+    const client = new EcpClient(http);
+    const renewed = await client.renewSession(config, 'old-token');
+    expect(renewed.sessionToken).toBe('tok-renewed');
+    expect(renewed.expiresAt).toBeInstanceOf(Date);
+    expect(renewed).not.toHaveProperty('user');
+  });
+
   it('renew rejects expired session', async () => {
     const http = {
       request: vi.fn(async () => ({ status: 401, json: { message: 'expired' } })),
