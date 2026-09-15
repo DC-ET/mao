@@ -2,29 +2,52 @@ import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import type { AtomicBoolean } from '../../atomic-boolean.js';
 import type { BackgroundSubagentManager } from '../../delegate/background-subagent-manager.js';
+import { BUILTIN_AGENT_TYPES, normalizeAgentType, type AgentDefinitionRegistry } from '../../delegate/agent-definition-registry.js';
 import { ToolCallContext } from '../tool-call-context.js';
 
 export class SpawnSubagentTool extends BaseTool {
-  constructor(private readonly manager: BackgroundSubagentManager) { super(); }
+  constructor(
+    private readonly manager: BackgroundSubagentManager,
+    private readonly definitionRegistry?: AgentDefinitionRegistry,
+  ) { super(); }
 
   getName(): string { return 'spawn_subagent'; }
   getDescription(): string {
     return '在后台启动一个子代理执行任务，立即返回任务句柄，主代理可继续主线工作。'
       + '适用于：可并行、无强依赖的分支工作；主代理无需立即等待结果。'
-      + '完成后子代理会主动汇报结果。';
+      + '完成后子代理会主动汇报结果。角色见 agent_type：default 通用 / explorer 调研 / reviewer 审查 / worker 写代码。';
   }
   getToolPrompt(): string {
     return '## 后台子代理\n\n'
       + '使用 `spawn_subagent` 在后台派发子代理，返回 `task_id` 和 `child_session_id`，主代理继续执行主线。\n'
-      + '配套工具：`subagent_followup` 追问/纠偏、`check_subagent` 查看进度、`cancel_subagent` 取消、`wait_subagents` 等待全部完成。\n'
+      + '配套工具：`subagent_followup` 追问/纠偏、`check_subagent` 查看进度、`cancel_subagent` 取消、`wait_subagents` 等待全部完成。\n\n'
+      + '**角色选型：**\n'
+      + '- `default`：通用并行，完整继承主代理能力；不确定时首选\n'
+      + '- `explorer`：代码库调研/问答，只读；多问题可并行、结论默认可信\n'
+      + '- `reviewer`：代码审查，只读问题清单；修复派 worker，可 followup 复查\n'
+      + '- `worker`：实现与修改代码；多 worker 需划分互不重叠的文件/模块归属\n\n'
+      + '**委派纪律：**\n'
+      + '1. 先快速分析整体任务，区分关键路径阻塞任务与可并行 sidecar；关键路径勿外包后干等\n'
+      + '2. 子任务必须具体、自包含（目标、输入、期望输出、约束），实质性推进主任务\n'
+      + '3. 不要在同一未解决线程上重复派发；并行子任务写入范围不得重叠\n'
+      + '4. 代码改动优先 worker；审查用 reviewer 且不要让其改代码\n'
+      + '5. `wait_subagents` 慎用，仅在下一步被阻塞时调用；运行期间做不重叠的本地工作\n'
+      + '6. 子代理返回后先快速审查改动/结论，再集成或细化\n\n'
       + '注意：后台子代理无法与用户交互，也不能再派生后台子代理。\n'
       + '主代理在主线完成时若仍有后台子代理运行，会自动挂起等待，无需手动等待。';
   }
   getInputSchema(): Record<string, unknown> {
+    const roleList = this.definitionRegistry
+      ? this.definitionRegistry.getAllDefinitions().map((d) => `- ${d.name}：${d.description}`).join('\n')
+      : BUILTIN_AGENT_TYPES.map((name) => `- ${name}`).join('\n');
     return {
       type: 'object',
       properties: {
-        agent_type: { type: 'string', description: '子代理类型（researcher/reviewer/coder）' },
+        agent_type: {
+          type: 'string',
+          enum: [...BUILTIN_AGENT_TYPES],
+          description: '子代理类型：\n' + roleList,
+        },
         task: { type: 'string', description: '要派发的任务描述，包含目标、输入上下文、期望输出与约束' },
       },
       required: ['agent_type', 'task'],
@@ -41,7 +64,7 @@ export class SpawnSubagentTool extends BaseTool {
     if (sessionId == null) return errorJson('缺少会话 ID');
     const toolCallId = ToolCallContext.getToolCallId();
     if (!toolCallId) return errorJson('缺少父工具调用 ID');
-    const result = await this.manager.spawn(sessionId, agentType, task, toolCallId);
+    const result = await this.manager.spawn(sessionId, normalizeAgentType(agentType), task, toolCallId);
     if (!result.ok) return errorJson(result.error ?? '创建后台子代理失败');
     return toJson({
       success: true,

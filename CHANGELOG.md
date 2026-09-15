@@ -15,6 +15,24 @@
 
 ---
 
+## 0.0.127 (2026-09-26)
+
+### 后端
+
+- 子代理角色对齐 Codex 并 thin 扩展：内置角色改为 `default` / `explorer` / `worker` / `reviewer`；新增通用 `default`（完整继承父会话）；`researcher`→`explorer`、`coder→worker` 运行时归一并由 Flyway 迁移历史 `agent_type`；`reviewer` 保留为正式 thin 角色（仅 description + system prompt，无工具黑名单）。
+- `spawn_subagent` 工具 schema 暴露四角色枚举，工具说明与 PromptEngine 写入委派纪律（选型、并行写入范围、worker 归属权、审查闭环 reviewer → worker → followup reviewer）。
+- 未知 `agent_type` 仍报错；仅旧名 researcher/coder 归一；崩溃恢复与 followup 兼容历史类型。
+
+### 前端（桌面 / Web / 安卓）
+
+- 子代理工具卡片继续透传 `agent_type` 英文名（本轮不做中文映射）；相关测试样例改为新角色名。
+
+## 0.0.126 (2026-09-15)
+
+### 前端（桌面 / Web / 安卓）
+
+- 用户设置「使用记录」列表新增「缓存」「首字」列，展示每次 LLM 调用的缓存命中 token 数（含命中率百分比）与首 token 延迟（与管理后台一致）。
+
 ## 0.0.125 (2026-09-15)
 
 ### 前端（桌面 / Web / 安卓）

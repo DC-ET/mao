@@ -40,8 +40,14 @@
         <el-table-column label="入 Token" width="100" align="right">
           <template #default="{ row }">{{ formatNumber(row.promptTokens || 0) }}</template>
         </el-table-column>
+        <el-table-column label="缓存" width="130" align="right">
+          <template #default="{ row }">{{ formatCacheHit(row) }}</template>
+        </el-table-column>
         <el-table-column label="出 Token" width="100" align="right">
           <template #default="{ row }">{{ formatNumber(row.completionTokens || 0) }}</template>
+        </el-table-column>
+        <el-table-column label="首字" width="90" align="right">
+          <template #default="{ row }">{{ formatMs(row.firstTokenMs) }}</template>
         </el-table-column>
         <el-table-column label="耗时" width="90" align="right">
           <template #default="{ row }">{{ formatMs(row.durationMs) }}</template>
@@ -98,6 +104,15 @@ const filters = reactive({
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('zh-CN').format(value)
+}
+
+function formatCacheHit(row: { cachedTokens?: number | null; promptTokens?: number | null }) {
+  const cached = row.cachedTokens || 0
+  const prompt = row.promptTokens || 0
+  if (cached <= 0) return '0'
+  const num = formatNumber(cached)
+  if (prompt <= 0) return num
+  return `${num} (${Math.round((cached / prompt) * 100)}%)`
 }
 
 let fetchSeq = 0

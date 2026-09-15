@@ -117,7 +117,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),
     new SendFeishuImageTool(deps.pathSandbox, deps.feishuMediaSendSupport),
     new SendFeishuFileTool(deps.pathSandbox, deps.feishuMediaSendSupport),
-    new SpawnSubagentTool(deps.backgroundSubagentManager),
+    new SpawnSubagentTool(deps.backgroundSubagentManager, deps.definitionRegistry),
     new SubagentFollowupTool(deps.backgroundSubagentManager),
     new CheckSubagentTool(deps.backgroundSubagentManager),
     new CancelSubagentTool(deps.backgroundSubagentManager),

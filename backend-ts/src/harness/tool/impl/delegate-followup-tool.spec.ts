@@ -209,15 +209,22 @@ describe('DelegateFollowupTool', () => {
     const names = subCtx.tools.map((t) => t.getName());
     expect(names).toContain('read_file');
     expect(names).toContain('write_file');
-    expect(names).not.toContain('edit_file');
+    // thin reviewer：不设工具黑名单，edit_file 由 prompt 约束不使用
+    expect(names).toContain('edit_file');
     expect(names).not.toContain('delegate');
     expect(names).not.toContain('delegate_followup');
   });
 
-  it('researcherAllowsWriteFileAndExcludesEditFile', () => {
-    const definition = new AgentDefinitionRegistry().getDefinition('researcher')!;
-    expect(definition.excludedToolNames).not.toContain('write_file');
-    expect(definition.excludedToolNames).toContain('edit_file');
+  it('explorerHasNoToolExclusionsAndResearcherNormalizes', () => {
+    const registry = new AgentDefinitionRegistry();
+    const definition = registry.getDefinition('researcher')!;
+    expect(definition.name).toBe('explorer');
+    expect(definition.excludedToolNames ?? []).toEqual([]);
+  });
+
+  it('coderNormalizesToWorker', () => {
+    const definition = new AgentDefinitionRegistry().getDefinition('coder')!;
+    expect(definition.name).toBe('worker');
   });
 });
 

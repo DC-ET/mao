@@ -7,6 +7,7 @@ import type { HarnessService } from '../core/harness-service.js';
 import type { Session, SessionMapper, SessionService } from '../deps.js';
 import { harnessLog } from '../log.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
+import { normalizeAgentType } from './agent-definition-registry.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './agent-definition-registry.js';
 import { SubAgentResultCollector } from './subagent-result-collector.js';
 import type { SubagentExecutionMapper } from './subagent-execution.mapper.js';
@@ -82,7 +83,8 @@ export class BackgroundSubagentManager {
   ): Promise<BackgroundSpawnResult> {
     const parentSession = await this.deps.sessionMapper.selectById(parentSessionId);
     if (!parentSession) return { ok: false, error: '父会话不存在: ' + parentSessionId };
-    const definition = this.deps.definitionRegistry.getDefinition(agentType);
+    const canonicalType = normalizeAgentType(agentType);
+    const definition = this.deps.definitionRegistry.getDefinition(canonicalType);
     if (!definition) {
       return {
         ok: false,
@@ -90,15 +92,15 @@ export class BackgroundSubagentManager {
       };
     }
 
-    const childTitle = '后台子代理(' + agentType + '): ' + (task.length > 40 ? task.slice(0, 40) + '...' : task);
+    const childTitle = '后台子代理(' + canonicalType + '): ' + (task.length > 40 ? task.slice(0, 40) + '...' : task);
     const { child, execution } = await this.deps.subagentInvocationService.createBackground(
-      parentSession, agentType, task, childTitle, parentToolCallId,
+      parentSession, canonicalType, task, childTitle, parentToolCallId,
     );
     if (execution.id == null || child.id == null) {
       return { ok: false, error: '后台子代理执行记录创建失败' };
     }
 
-    this.deps.visibilityService.notifySubagentCreated(parentSession, child, agentType, task, parentToolCallId);
+    this.deps.visibilityService.notifySubagentCreated(parentSession, child, canonicalType, task, parentToolCallId);
     const submitted = await this.submitExecution(parentSession, child, execution, definition);
     if (!submitted.ok) return submitted;
 
@@ -430,7 +432,7 @@ export class BackgroundSubagentManager {
 
   private async resolveAgentType(childSessionId: number): Promise<string | null> {
     const row = await this.deps.subagentExecutionMapper.findByChildSessionId(childSessionId);
-    return row?.agentType ?? null;
+    return row?.agentType != null ? normalizeAgentType(row.agentType) : null;
   }
 
   private async submitExecution(

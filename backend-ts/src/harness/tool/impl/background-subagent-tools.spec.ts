@@ -25,7 +25,7 @@ describe('WaitSubagentsTool', () => {
       waitForAll: vi.fn().mockResolvedValue({ completed: false, timedOut: true }),
       consumeResults: vi.fn().mockResolvedValue({}),
       progress: vi.fn().mockResolvedValue([
-        { taskId: 7, childSessionId: 8, agentType: 'coder', status: 'RUNNING' },
+        { taskId: 7, childSessionId: 8, agentType: 'worker', status: 'RUNNING' },
       ]),
     } as never;
 

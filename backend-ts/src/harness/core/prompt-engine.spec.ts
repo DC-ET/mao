@@ -82,6 +82,10 @@ describe('PromptEngine', () => {
     expect(system).toContain('**java**');
     expect(system).toContain('任务管理');
     expect(system).toContain('子代理委派');
+    expect(system).toContain('default');
+    expect(system).toContain('explorer');
+    expect(system).toContain('reviewer');
+    expect(system).toContain('worker');
     expect(system).toContain('子代理追问 / 纠偏');
     expect(system).toContain('rule-one');
     const user = request.messages[1].content as string;

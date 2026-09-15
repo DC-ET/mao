@@ -367,11 +367,17 @@ export class PromptEngine {
     if (hasSpawn) {
       sb += '## 子代理委派\n\n'
         + '你可以使用 `spawn_subagent` 工具在后台启动专用子代理。子代理拥有独立会话，工具会立即返回 `task_id` 与 `child_session_id`。\n\n'
+        + '**角色选型：**\n'
+        + '- `default`：通用并行，完整继承主代理能力\n'
+        + '- `explorer`：代码库调研/问答，只读，多问题可并行、结论默认可信\n'
+        + '- `reviewer`：代码审查，只读问题清单；修复派 worker，可 followup 复查\n'
+        + '- `worker`：实现与修改代码；多 worker 需划分互不重叠的文件/模块归属\n\n'
         + '**使用原则：**\n'
-        + '1. 只有当子任务足够独立、可并行推进时才派发\n'
+        + '1. 只有当子任务足够独立、可并行推进时才派发；关键路径勿外包后干等\n'
         + '2. 任务描述要具体，包含明确目标、输入数据和期望输出格式\n'
         + '3. 子代理无法与用户交互，不要派发需要用户确认的任务\n'
-        + '4. 后续使用 `check_subagent` 查看进度，或使用 `wait_subagents` 等待全部后台子代理结束\n\n';
+        + '4. 并行子任务写入范围不得重叠；代码改动优先 worker，审查用 reviewer\n'
+        + '5. `wait_subagents` 慎用；后续可用 `check_subagent` 查看进度\n\n';
     }
     if (hasFollowup) {
       sb += '## 子代理追问 / 纠偏\n\n'

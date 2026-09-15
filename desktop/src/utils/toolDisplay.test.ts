@@ -64,8 +64,8 @@ describe('getToolInputPreview', () => {
     { input: { path: '', file_path: '/tmp/b' }, expected: '' },
     { input: { path: 42, file_path: '/tmp/b' }, expected: '' },
     { input: { query: 'query', task: 'task' }, expected: 'query' },
-    { input: { agent_type: 'coder', task: '修复问题' }, expected: 'coder: 修复问题' },
-    { input: { agent_type: 'coder' }, expected: 'coder: ' },
+    { input: { agent_type: 'worker', task: '修复问题' }, expected: 'worker: 修复问题' },
+    { input: { agent_type: 'worker' }, expected: 'worker: ' },
     { input: { task: '修复问题' }, expected: '修复问题' },
     { input: { agent_type: '', task: '修复问题' }, expected: '修复问题' },
     { input: { command: 42, pattern: {}, path: [], query: false, agent_type: null, task: 42 }, expected: '' },
@@ -83,7 +83,7 @@ describe('getToolInputPreview', () => {
     }
     const text = 'a'.repeat(55) + ' in src'
     expect(getToolInputPreview('grep_search', { pattern: 'a'.repeat(55), path: 'src' })).toBe(text.slice(0, 60) + '...')
-    expect(getToolInputPreview('delegate', { agent_type: 'coder', task: 'a'.repeat(60) })).toBe(('coder: ' + 'a'.repeat(60)).slice(0, 60) + '...')
+    expect(getToolInputPreview('delegate', { agent_type: 'worker', task: 'a'.repeat(60) })).toBe(('worker: ' + 'a'.repeat(60)).slice(0, 60) + '...')
   })
 
   it('保留路径与查询不截断的行为', () => {
