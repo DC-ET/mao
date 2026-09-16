@@ -157,7 +157,6 @@
         :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
         :cloud-project-key="isNewTaskMode ? newTaskCloudProjectKey : cloudProjectKey"
         :project-key="currentSession?.projectKey"
-        :session-title="isNewTaskMode ? '' : currentSession?.title"
         :execution-mode="isNewTaskMode ? newTaskMode : executionMode"
         :model-id="isNewTaskMode ? newTaskModelId : currentSession?.modelId"
         :model-supports-vision="currentModelSupportsVision"

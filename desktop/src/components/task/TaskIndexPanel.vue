@@ -424,7 +424,7 @@ import { useSessionStore, type Session, type TaskPhase } from '../../stores/sess
 import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
-import { cloudGroupKey, formatCloudGroupLabel, isSharedCloudProject, FEISHU_PLACEHOLDER_TITLE } from '../../utils/cloud-project'
+import { cloudGroupKey, formatCloudGroupLabel, isSharedCloudProject } from '../../utils/cloud-project'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
 
 const props = defineProps<{
@@ -893,12 +893,10 @@ const groupedSessions = computed(() => {
 })
 
 function formatGroupLabel(key: string, session?: Session): string {
-  if (key.startsWith('FEISHU_PRIVATE:')) return session?.agentName || '未知 Agent'
-  if (key.startsWith('FEISHU_GROUP:')) {
-    const title = session?.title && session.title !== FEISHU_PLACEHOLDER_TITLE ? session.title : undefined
-    return `${session?.agentName || '未知 Agent'}:${title ?? '飞书群聊'}`
+  // FEISHU_* 与 CLOUD: 统一走 formatCloudGroupLabel：话题会话 title 是话题标题，不能当工作区/群名。
+  if (key.startsWith('FEISHU_PRIVATE:') || key.startsWith('FEISHU_GROUP:') || key.startsWith('CLOUD:')) {
+    return formatCloudGroupLabel(key, session)
   }
-  if (key.startsWith('CLOUD:')) return formatCloudGroupLabel(key, session)
   if (key.startsWith('LOCAL:')) {
     const ws = key.substring(6)
     if (ws === '未设置') return '未设置'

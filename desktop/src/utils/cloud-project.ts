@@ -3,9 +3,6 @@ import type { Session } from '../stores/session'
 /** 飞书群聊工作区路径标记：{workspaceRoot}/feishu-chat/{botId}/{chatId}，每个机器人×群聊独立目录。 */
 const FEISHU_CHAT_SEGMENT = 'feishu-chat'
 
-/** 飞书会话默认占位标题（后端建会话时写入），不作为展示名外露。 */
-export const FEISHU_PLACEHOLDER_TITLE = '飞书Bot会话'
-
 export function isFeishuChatWorkspace(workspace: string | undefined | null): boolean {
   if (!workspace) return false
   return workspace.replace(/\\/g, '/').split('/').includes(FEISHU_CHAT_SEGMENT)
@@ -16,12 +13,6 @@ export function isFeishuPrivateWorkspace(workspace: string | undefined | null): 
   if (!isFeishuChatWorkspace(workspace)) return false
   const parts = workspace!.replace(/\\/g, '/').split('/')
   return (parts[parts.length - 1] ?? '').startsWith('private-')
-}
-
-/** 会话标题中适合作为展示名的部分：默认占位标题不外露。 */
-function displayTitleOf(title: string | undefined | null): string | undefined {
-  const trimmed = title?.trim()
-  return trimmed && trimmed !== FEISHU_PLACEHOLDER_TITLE ? trimmed : undefined
 }
 
 export function isSharedCloudProject(session: Pick<Session, 'executionMode' | 'workspace'>): boolean {
@@ -64,8 +55,9 @@ export function formatCloudGroupLabel(
 ): string {
   if (key.startsWith('FEISHU_PRIVATE:')) return session?.agentName || '未知 Agent'
   if (key.startsWith('FEISHU_GROUP:')) {
-    const title = session?.title && session.title !== FEISHU_PLACEHOLDER_TITLE ? session.title : undefined
-    return `${session?.agentName || '未知 Agent'}:${title ?? '飞书群聊'}`
+    // 话题多会话下 session.title 是话题标题而非群名；分组标签用工作区路径合成稳定标识。
+    const ws = key.substring('FEISHU_GROUP:'.length)
+    return `${session?.agentName || '未知 Agent'}:${formatCloudGroupLabel(`CLOUD:${ws}`)}`
   }
   if (key === 'CLOUD:临时工作区') return '临时工作区'
   if (key.startsWith('CLOUD:')) {
@@ -149,8 +141,6 @@ export interface CloudWorkspaceIndicatorOptions {
   draftProjectKey?: string
   workspaceMode?: string
   gitCloneUrl?: string
-  /** 会话标题（需与 workspace 同一主体）：飞书通道优先于路径合成标签。 */
-  sessionTitle?: string
 }
 
 export function cloudWorkspaceIndicator(
@@ -171,7 +161,8 @@ export function cloudWorkspaceIndicator(
     return '飞书私聊'
   }
   if (isFeishuChatWorkspace(workspace)) {
-    return displayTitleOf(options.sessionTitle) ?? formatCloudGroupLabel(`CLOUD:${workspace}`)
+    // 话题多会话：session.title 是话题标题，不是群名；工作区展示用稳定合成标签。
+    return formatCloudGroupLabel(`CLOUD:${workspace}`)
   }
   return '临时工作区'
 }

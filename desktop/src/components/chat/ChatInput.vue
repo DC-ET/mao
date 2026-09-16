@@ -166,7 +166,6 @@
             :git-branch="gitBranch"
             :cloud-projects="cloudProjects"
             :is-new-task="isNewTask"
-            :session-title="sessionTitle"
             :disabled="disabled"
             :is-mobile="false"
             @update:execution-mode="handleModeChange"
@@ -271,7 +270,6 @@
         :git-branch="gitBranch"
         :cloud-projects="cloudProjects"
         :is-new-task="isNewTask"
-        :session-title="sessionTitle"
         :disabled="disabled"
         :is-mobile="true"
         @update:execution-mode="handleModeChange"
@@ -337,8 +335,6 @@ const props = withDefaults(defineProps<{
   registerKey?: string
   /** 草稿绑定键：主会话 's:{id}' / 新建任务 'new' / 边路任务 tabId；null 表示暂不绑定（加载过渡期） */
   draftKey?: string | null
-  /** 当前会话标题：飞书通道用作工作区指示标签（群名/私聊占位标题不外露） */
-  sessionTitle?: string
   /** 会话处于 CANCELLED 终态时，输入框为空则显示绿色「继续」按钮（续跑语义同重试） */
   canContinue?: boolean
   /** centered=新建会话居中态（chip 工具条、更高编辑区）；docked=底部贴靠（默认，会话中） */
@@ -460,7 +456,6 @@ const cloudIndicatorLabel = computed(() =>
       draftProjectKey: props.isNewTask ? props.cloudProjectKey : undefined,
       workspaceMode: props.isNewTask ? props.workspaceMode : undefined,
       gitCloneUrl: props.isNewTask ? props.gitCloneUrl : undefined,
-      sessionTitle: props.sessionTitle,
     }
   )
 )

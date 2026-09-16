@@ -135,7 +135,6 @@ const props = withDefaults(defineProps<{
   gitBranch?: string
   cloudProjects?: Array<{ name: string; path: string; isGit: boolean }>
   isNewTask?: boolean
-  sessionTitle?: string
   disabled?: boolean
   isMobile?: boolean
 }>(), {
@@ -146,7 +145,6 @@ const props = withDefaults(defineProps<{
   gitBranch: '',
   cloudProjects: () => [],
   isNewTask: false,
-  sessionTitle: '',
   disabled: false,
   isMobile: false,
 })
@@ -180,7 +178,6 @@ const displayLabel = computed(() => {
       draftProjectKey: props.isNewTask ? props.cloudProjectKey : undefined,
       workspaceMode: props.isNewTask ? props.workspaceMode : undefined,
       gitCloneUrl: props.isNewTask ? props.gitCloneUrl : undefined,
-      sessionTitle: props.sessionTitle,
     }
   ) || '工作区'
 })
