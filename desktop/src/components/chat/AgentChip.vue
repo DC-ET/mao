@@ -17,9 +17,15 @@
           :class="{ empty: !selectedAgent, warn: !selectedAgent }"
           :disabled="disabled"
         >
-          <el-avatar v-if="selectedAgent" :size="18" :src="resolveAvatarUrl(selectedAgent.avatarUrl)" class="chip-avatar">
+          <img
+            v-if="selectedAgent && resolveAvatarUrl(selectedAgent.avatarUrl)"
+            :src="resolveAvatarUrl(selectedAgent.avatarUrl)"
+            alt=""
+            class="chip-avatar"
+          />
+          <span v-else-if="selectedAgent" class="chip-avatar chip-avatar-fallback">
             {{ selectedAgent.name?.charAt(0) }}
-          </el-avatar>
+          </span>
           <el-icon v-else :size="14"><User /></el-icon>
           <span class="chip-label">{{ selectedAgent?.name || '选择智能体' }}</span>
           <el-icon class="chip-caret" :size="12"><ArrowDown /></el-icon>
@@ -36,7 +42,13 @@
             :class="{ selected: String(agent.id) === String(selectedAgentId) }"
             @click="selectAgent(agent)"
           >
-            <el-avatar :size="28" :src="resolveAvatarUrl(agent.avatarUrl)">{{ agent.name?.charAt(0) }}</el-avatar>
+            <img
+              v-if="resolveAvatarUrl(agent.avatarUrl)"
+              :src="resolveAvatarUrl(agent.avatarUrl)"
+              alt=""
+              class="row-avatar"
+            />
+            <span v-else class="row-avatar row-avatar-fallback">{{ agent.name?.charAt(0) }}</span>
             <div class="agent-row-info">
               <span class="agent-row-name">{{ agent.name }}</span>
               <span class="agent-row-desc">{{ agent.description || 'AI Agent' }}</span>
@@ -56,9 +68,15 @@
         :disabled="disabled"
         @click="openPicker"
       >
-        <el-avatar v-if="selectedAgent" :size="18" :src="resolveAvatarUrl(selectedAgent.avatarUrl)" class="chip-avatar">
+        <img
+          v-if="selectedAgent && resolveAvatarUrl(selectedAgent.avatarUrl)"
+          :src="resolveAvatarUrl(selectedAgent.avatarUrl)"
+          alt=""
+          class="chip-avatar"
+        />
+        <span v-else-if="selectedAgent" class="chip-avatar chip-avatar-fallback">
           {{ selectedAgent.name?.charAt(0) }}
-        </el-avatar>
+        </span>
         <el-icon v-else :size="14"><User /></el-icon>
         <span class="chip-label">{{ selectedAgent?.name || '选择智能体' }}</span>
         <el-icon class="chip-caret" :size="12"><ArrowDown /></el-icon>
@@ -80,7 +98,13 @@
             :class="{ selected: String(agent.id) === String(selectedAgentId) }"
             @click="selectAgent(agent)"
           >
-            <el-avatar :size="28" :src="resolveAvatarUrl(agent.avatarUrl)">{{ agent.name?.charAt(0) }}</el-avatar>
+            <img
+              v-if="resolveAvatarUrl(agent.avatarUrl)"
+              :src="resolveAvatarUrl(agent.avatarUrl)"
+              alt=""
+              class="row-avatar"
+            />
+            <span v-else class="row-avatar row-avatar-fallback">{{ agent.name?.charAt(0) }}</span>
             <div class="agent-row-info">
               <span class="agent-row-name">{{ agent.name }}</span>
               <span class="agent-row-desc">{{ agent.description || 'AI Agent' }}</span>
@@ -184,12 +208,21 @@ function selectAgent(agent: Agent) {
 
 .chip-avatar {
   flex-shrink: 0;
-  width: 18px !important;
-  height: 18px !important;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
   background: var(--aw-primary);
+}
+
+.chip-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--aw-on-primary);
   font-size: 9px;
   font-weight: 600;
+  line-height: 1;
 }
 
 .chip-label {
@@ -221,8 +254,23 @@ function selectAgent(agent: Agent) {
   overflow-y: auto;
 }
 
-.agent-list :deep(.el-avatar) {
+.row-avatar {
   flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--aw-primary);
+}
+
+.row-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--aw-on-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .agent-row {
@@ -251,6 +299,7 @@ function selectAgent(agent: Agent) {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .agent-row-name {
@@ -283,7 +332,6 @@ function selectAgent(agent: Agent) {
   }
 
   .agent-chip.warn {
-    /* 移动端弱化空态强调，避免整条配置被橙色抢焦点 */
     border-color: color-mix(in srgb, var(--aw-warning) 45%, var(--aw-hairline));
     color: var(--aw-warning);
     background: color-mix(in srgb, var(--aw-warning) 5%, transparent);
