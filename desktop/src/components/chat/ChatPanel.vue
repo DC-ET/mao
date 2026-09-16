@@ -7,7 +7,7 @@
       :class="{ 'is-keyboard-open': keyboardOpen }"
     >
       <div class="center-brand" aria-hidden="true">
-        <div class="brand-mark">M</div>
+        <img :src="appIcon" alt="" class="brand-mark" />
       </div>
       <h1 class="center-greeting">今天想完成什么？</h1>
       <div class="center-composer">
@@ -210,6 +210,7 @@ import ApprovalStack from './ApprovalStack.vue'
 import QuestionPanel from './QuestionPanel.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 import StarterPrompts from './StarterPrompts.vue'
+import appIcon from '../../assets/app-icon-small.png'
 
 // Inject shared refs from TaskView
 const agentId = inject<Ref<string>>('agentId')!
@@ -816,19 +817,11 @@ function handleNewTaskAgentChange(id: string | null) {
 }
 
 .brand-mark {
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
   border-radius: 14px;
-  border: 1px solid var(--aw-hairline);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--aw-font-display);
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--aw-ink);
-  background: var(--aw-canvas-parchment);
+  object-fit: contain;
+  display: block;
 }
 
 .center-greeting {
@@ -883,7 +876,13 @@ function handleNewTaskAgentChange(id: string | null) {
   }
 
   .center-brand {
-    display: none;
+    margin-bottom: 8px;
+  }
+
+  .brand-mark {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
   }
 
   .center-greeting {
