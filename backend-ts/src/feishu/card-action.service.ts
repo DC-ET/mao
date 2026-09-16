@@ -1,17 +1,36 @@
 import type { FeishuCardActionEvent, FeishuCardActionPort, FeishuCardActionResponse, FeishuCardActionValue, FeishuProgressCardActionValue } from './types.js';
 
-/** 排队卡片终态/中间态 PATCH 内容构建（无按钮）。 */
-function buildQueueCardText(bold: string, body: string): Record<string, unknown> {
+/** 排队卡片终态/中间态 PATCH 内容构建（可选「会话详情」跳转按钮）。 */
+function buildQueueCardText(bold: string, body: string, sessionDetailUrl?: string): Record<string, unknown> {
+  const elements: Array<Record<string, unknown>> = [
+    { tag: 'markdown', content: `**${bold}**`, text_align: 'left', text_size: 'normal_v2' },
+    { tag: 'markdown', content: body, text_align: 'left', text_size: 'normal_v2' },
+  ];
+  const detailUrl = sessionDetailUrl?.trim();
+  if (detailUrl != null && detailUrl !== '') {
+    elements.push({
+      tag: 'column_set', flex_mode: 'flow', background_style: 'default',
+      columns: [{
+        tag: 'column', width: 'auto', vertical_align: 'top',
+        elements: [{
+          tag: 'button',
+          text: { tag: 'plain_text', content: '会话详情' },
+          type: 'default',
+          behaviors: [{
+            type: 'open_url',
+            default_url: detailUrl,
+            pc_url: detailUrl,
+            ios_url: detailUrl,
+            android_url: detailUrl,
+          }],
+        }],
+      }],
+    });
+  }
   return {
     schema: '2.0',
     config: { update_multi: true },
-    body: {
-      direction: 'vertical', padding: '12px 12px 12px 12px',
-      elements: [
-        { tag: 'markdown', content: `**${bold}**`, text_align: 'left', text_size: 'normal_v2' },
-        { tag: 'markdown', content: body, text_align: 'left', text_size: 'normal_v2' },
-      ],
-    },
+    body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements },
   };
 }
 
@@ -61,6 +80,8 @@ export class FeishuCardActionService {
     cancelRunning: (sessionId: number) => boolean | Promise<boolean>;
     /** PATCH 卡片内容（botId 用于定位客户端）。仅作群内其他人的补充推送，不得阻塞回调。 */
     patchCard: (botId: number, cardMessageId: string, card: Record<string, unknown>) => Promise<void>;
+    /** 拼「会话详情」深链（已含 `/tasks/{id}`）；返回 undefined 时不渲染按钮。 */
+    sessionDetailUrl?: (sessionId: number) => Promise<string | undefined> | string | undefined;
   }) {}
 
   async handle(raw: unknown, _accountId: string): Promise<FeishuCardActionResponse | undefined> {
@@ -95,8 +116,19 @@ export class FeishuCardActionService {
     }
     return {
       toast: { type: 'success', content: '正在取消任务' },
-      card: { type: 'raw', data: buildQueueCardText('任务已取消', '已停止当前任务。') },
+      card: { type: 'raw', data: buildQueueCardText('任务已取消', '已停止当前任务。', await this.resolveSessionDetailUrl(action.sessionId)) },
     };
+  }
+
+  private async resolveSessionDetailUrl(sessionId: number): Promise<string | undefined> {
+    const resolve = this.options.sessionDetailUrl;
+    if (resolve == null) return undefined;
+    try {
+      const url = await resolve(sessionId);
+      return url?.trim() || undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async handleRun(row: { id: number; sessionId: number; status: string; cardMessageId: string | null; botId: number }): Promise<FeishuCardActionResponse | undefined> {

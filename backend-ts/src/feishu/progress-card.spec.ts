@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildFeishuProgressCard, formatFeishuDuration } from './progress-card.js';
+import { buildFeishuProgressCard, feishuSessionDetailUrl, formatFeishuDuration } from './progress-card.js';
 
-type CardElement = { tag: string; content?: string; columns?: Array<{ elements: Array<{ value?: Record<string, unknown> }> }> };
+type CardElement = {
+  tag: string;
+  content?: string;
+  columns?: Array<{ elements: Array<{ value?: Record<string, unknown>; behaviors?: Array<{ type: string; default_url?: string }>; text?: { content?: string } }> }>;
+};
 
 function elementsOf(card: Record<string, unknown>): CardElement[] {
   return (card.body as { elements: CardElement[] }).elements;
@@ -13,7 +17,17 @@ function statusLineOf(card: Record<string, unknown>): string {
 
 function cancelButtonValue(card: Record<string, unknown>): Record<string, unknown> | null {
   const columnSet = elementsOf(card).find((element) => element.tag === 'column_set');
-  return columnSet?.columns?.[0]?.elements?.[0]?.value ?? null;
+  const cancel = columnSet?.columns
+    ?.flatMap((column) => column.elements)
+    .find((element) => element.value?.kind === 'feishu_progress');
+  return cancel?.value ?? null;
+}
+
+function sessionDetailButtons(card: Record<string, unknown>): Array<{ label?: string; url?: string }> {
+  return elementsOf(card)
+    .flatMap((element) => element.columns?.flatMap((column) => column.elements) ?? [])
+    .filter((element) => element.tag === 'button' && element.text?.content === '会话详情')
+    .map((element) => ({ label: element.text?.content, url: element.behaviors?.[0]?.default_url }));
 }
 
 describe('飞书进度卡片状态行', () => {
@@ -51,6 +65,46 @@ describe('飞书进度卡片「取消任务」按钮', () => {
   it('终态不带按钮（随卡片重写自动消失）', () => {
     expect(cancelButtonValue(buildFeishuProgressCard('COMPLETED', 1, '', [], cancelAction, 1000))).toBeNull();
     expect(cancelButtonValue(buildFeishuProgressCard('CANCELLED', 1, '', [], cancelAction, 1000))).toBeNull();
+  });
+});
+
+describe('飞书进度卡片「会话详情」按钮', () => {
+  const cancelAction = { sessionId: 7, sender: 'ou_sender' };
+  const detailUrl = 'https://mao.example.com/tasks/7';
+
+  it('执行中与取消任务并排，open_url 指向网页会话页', () => {
+    const card = buildFeishuProgressCard('RUNNING', 1, '', [], cancelAction, undefined, detailUrl);
+    expect(cancelButtonValue(card)).not.toBeNull();
+    expect(sessionDetailButtons(card)).toEqual([{ label: '会话详情', url: detailUrl }]);
+  });
+
+  it('终态仅保留会话详情按钮', () => {
+    const card = buildFeishuProgressCard('COMPLETED', 3, '完成', [], cancelAction, 1000, detailUrl);
+    expect(cancelButtonValue(card)).toBeNull();
+    expect(sessionDetailButtons(card)).toEqual([{ label: '会话详情', url: detailUrl }]);
+  });
+
+  it('未提供链接时不渲染按钮区', () => {
+    const card = buildFeishuProgressCard('COMPLETED', 1, '完成', []);
+    expect(sessionDetailButtons(card)).toEqual([]);
+    expect(elementsOf(card).some((element) => element.tag === 'column_set')).toBe(false);
+  });
+});
+
+describe('feishuSessionDetailUrl', () => {
+  it('从回调 URL origin 拼 /tasks/{id}', () => {
+    expect(feishuSessionDetailUrl('https://mao.example.com/auth/ecp/feishu-callback', 42))
+      .toBe('https://mao.example.com/tasks/42');
+  });
+
+  it('已带尾斜杠的站点根同样可用', () => {
+    expect(feishuSessionDetailUrl('https://mao.example.com/', 1)).toBe('https://mao.example.com/tasks/1');
+  });
+
+  it('空值/非法 URL 返回 undefined', () => {
+    expect(feishuSessionDetailUrl('', 1)).toBeUndefined();
+    expect(feishuSessionDetailUrl(null, 1)).toBeUndefined();
+    expect(feishuSessionDetailUrl('not-a-url', 1)).toBeUndefined();
   });
 });
 

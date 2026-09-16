@@ -15,6 +15,7 @@ function makeService(overrides: {
   interruptAndDrain?: (sessionId: number) => void;
   cancelRunning?: (sessionId: number) => boolean;
   patchCard?: (botId: number, cardMessageId: string, card: Record<string, unknown>) => Promise<void>;
+  sessionDetailUrl?: (sessionId: number) => Promise<string | undefined> | string | undefined;
 } = {}) {
   const queuePort: FeishuCardActionPort = {
     findByCardMessageId: vi.fn(async () => null),
@@ -28,6 +29,7 @@ function makeService(overrides: {
   return new FeishuCardActionService({
     queuePort, interrupt, cancelRunning, patchCard,
     ...(overrides.interruptAndDrain != null ? { interruptAndDrain: overrides.interruptAndDrain } : {}),
+    ...(overrides.sessionDetailUrl != null ? { sessionDetailUrl: overrides.sessionDetailUrl } : {}),
   });
 }
 
@@ -216,6 +218,20 @@ describe('FeishuCardActionService', () => {
     expect(res?.toast).toEqual({ type: 'success', content: '正在取消任务' });
     expectQueueCard(res, '任务已取消', '已停止当前任务。');
     expect(cancelRunning).toHaveBeenCalledWith(7);
+  });
+
+  it('progress cancel terminal card keeps session detail open_url button when configured', async () => {
+    const service = makeService({
+      cancelRunning: vi.fn(() => true),
+      sessionDetailUrl: (sessionId) => `https://mao.example.com/tasks/${sessionId}`,
+    });
+    const value = { kind: 'feishu_progress', act: 'cancel', sessionId: 7, sender: 'ou_1' };
+    const res = await service.handle(makeEvent(value), '');
+    expectQueueCard(res, '任务已取消', '已停止当前任务。');
+    const json = JSON.stringify(res);
+    expect(json).toContain('会话详情');
+    expect(json).toContain('https://mao.example.com/tasks/7');
+    expect(json).toContain('open_url');
   });
 
   it('progress cancel forbids non-owner operator', async () => {

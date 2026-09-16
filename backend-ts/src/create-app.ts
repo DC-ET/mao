@@ -249,7 +249,7 @@ import { readFeishuDocMarkdown } from './feishu/doc-reader.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 import { FeishuCardProgressListener, type FeishuCardProgress } from './feishu/card-progress-listener.js';
-import { buildFeishuProgressCard } from './feishu/progress-card.js';
+import { buildFeishuProgressCard, feishuSessionDetailUrl } from './feishu/progress-card.js';
 import { inboundImageKeys } from './feishu/event-normalizer.js';
 import { chatFilesDirOf } from './feishu/chat-files.js';
 import type { FeishuInboundContext, FeishuNormalizedMessage } from './feishu/types.js';
@@ -1204,10 +1204,20 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     }
     return cardMessageId;
   };
+  /** 网页端会话详情深链：取 ECP desktopCallbackUrl 的 origin 拼 `/tasks/{id}`；配置异常时不渲染按钮。 */
+  const resolveFeishuSessionDetailUrl = async (sessionId: number): Promise<string | undefined> => {
+    try {
+      const ecp = await settingService.getEcpConfig();
+      return feishuSessionDetailUrl(ecp.desktopCallbackUrl, sessionId);
+    } catch {
+      return undefined;
+    }
+  };
   /** 250ms 节流的进度卡片 PATCH 闭包：正常执行与崩溃恢复续跑共用同一实现。
    *  @param startedAtMs 任务起算时间（毫秒），终态时据此计算卡片上的「耗时」。 */
   const createPatchedProgress = (
     client: Lark.Client, cardMessageId: string, cancelAction: { sessionId: number; sender: string } | null, startedAtMs: number,
+    sessionDetailUrl?: string,
   ): FeishuCardProgress => {
     let nextUpdateAt = 0;
     return {
@@ -1217,7 +1227,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         nextUpdateAt = Date.now() + 250;
         // 仅终态展示耗时：执行中展示会因 250ms 节流停留在一段过期读数上。
         const elapsedMs = status === 'RUNNING' ? undefined : Date.now() - startedAtMs;
-        const card = buildFeishuProgressCard(status, round, content, tools, cancelAction ?? undefined, elapsedMs);
+        const card = buildFeishuProgressCard(status, round, content, tools, cancelAction ?? undefined, elapsedMs, sessionDetailUrl);
         await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
       },
     };
@@ -1227,6 +1237,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     const client = await getFeishuClient(botId);
     if (client == null) return null;
     const cancelAction = { sessionId, sender: context.senderId ?? '' };
+    const sessionDetailUrl = await resolveFeishuSessionDetailUrl(sessionId);
     // 持久化「会话 → 活跃进度卡片」映射：进程重启后崩溃恢复续跑可凭此续更卡片直至终态。
     // 持久化失败不阻断执行，仅丢失该任务的恢复续更能力。
     const persistCard = async (cardMessageId: string): Promise<void> => {
@@ -1245,12 +1256,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     // 任务起算时间取卡片就绪时刻：排队消息的等待时间不计入耗时。
     const startedAtMs = Date.now();
     if (existingMessageId != null) {
-      const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction);
+      const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction, undefined, sessionDetailUrl);
       await client.im.v1.message.patch({ path: { message_id: existingMessageId }, data: { content: JSON.stringify(card) } });
       await persistCard(existingMessageId);
-      return createPatchedProgress(client, existingMessageId, cancelAction, startedAtMs);
+      return createPatchedProgress(client, existingMessageId, cancelAction, startedAtMs, sessionDetailUrl);
     }
-    const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction);
+    const card = buildFeishuProgressCard('RUNNING', 0, '任务已接收，正在准备执行。', [], cancelAction, undefined, sessionDetailUrl);
     const data = { msg_type: 'interactive', content: JSON.stringify(card) };
     const response = await (context.chatType === 'group' && context.messageId != null
       ? client.im.v1.message.reply({ path: { message_id: context.messageId }, data })
@@ -1263,7 +1274,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     await persistCard(messageId);
     // 私聊进度卡片可被回复/引用，记录卡片消息 → 会话映射供引用切换定位。
     if (context.chatType === 'p2p') await feishuMessageService.recordP2pMessage(String(botId), messageId, sessionId, 'OUT');
-    return createPatchedProgress(client, messageId, cancelAction, startedAtMs);
+    return createPatchedProgress(client, messageId, cancelAction, startedAtMs, sessionDetailUrl);
   };
   /** 崩溃恢复续跑：按会话查找活跃进度卡片并构造续更 progress；无映射或加载失败返回 null（不阻断恢复）。 */
   const createFeishuRecoveryProgress = async (sessionId: number): Promise<FeishuCardProgress | null> => {
@@ -1279,10 +1290,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         return null;
       }
       const cancelAction = row.senderOpenId != null && row.senderOpenId !== '' ? { sessionId, sender: row.senderOpenId } : null;
+      const sessionDetailUrl = await resolveFeishuSessionDetailUrl(sessionId);
       // 续跑任务的耗时以崩溃前会话记录的 startedAt 起算（读不到时退回恢复开始的时刻）。
       const session = await sessionService.getSession(sessionId).catch(() => null);
       const startedAtMs = parseSqlTimeMs(session?.startedAt) ?? Date.now();
-      const progress = createPatchedProgress(client, row.cardMessageId, cancelAction, startedAtMs);
+      const progress = createPatchedProgress(client, row.cardMessageId, cancelAction, startedAtMs, sessionDetailUrl);
       // 重启后续跑立刻刷新卡片并带上取消按钮，避免旧卡停在崩溃前的「正在处理」且取消回调失效。
       try {
         await progress.update('RUNNING', 0, '任务正在恢复执行。', []);
@@ -1530,7 +1542,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       data: {
         receive_id: target.receiveId,
         msg_type: 'interactive',
-        content: JSON.stringify(buildFeishuProgressCard('COMPLETED', 0, text, [])),
+        content: JSON.stringify(buildFeishuProgressCard('COMPLETED', 0, text, [], undefined, undefined, await resolveFeishuSessionDetailUrl(sessionId))),
       },
     });
     // 私聊定时任务结果卡片可被回复/引用，记录卡片消息 → 会话映射供引用切换定位。
@@ -1751,6 +1763,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         throw new Error(`飞书卡片更新失败, code=${response?.code ?? 'missing'}, msg=${response?.msg ?? 'unknown'}`);
       }
     },
+    sessionDetailUrl: (sessionId) => resolveFeishuSessionDetailUrl(sessionId),
   });
   const feishuMonitor = new FeishuMonitorService(cfg.feishu.bot, feishuBots, feishuInboundProcessor, async (data) => feishuCardActionService.handle(data, ''));
 
