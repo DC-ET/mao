@@ -148,12 +148,12 @@
           <el-icon :size="16"><Plus /></el-icon>
         </label>
 
-        <!-- Centered new-task chips -->
-        <template v-if="isNewTask && layout === 'centered'">
+        <!-- Centered new-task chips（桌面：占工具条；移动：见下方 meta 行） -->
+        <template v-if="isNewTask && layout === 'centered' && !isMobileViewport">
           <AgentChip
             :selected-agent-id="selectedAgentId"
             :disabled="disabled"
-            :is-mobile="isMobileViewport"
+            :is-mobile="false"
             @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
           />
           <WorkspaceChip
@@ -168,7 +168,7 @@
             :is-new-task="isNewTask"
             :session-title="sessionTitle"
             :disabled="disabled"
-            :is-mobile="isMobileViewport"
+            :is-mobile="false"
             @update:execution-mode="handleModeChange"
             @update:workspace="w => emit('update:workspace', w)"
             @update:cloud-project-key="onCloudProjectKeyChange"
@@ -180,7 +180,7 @@
 
         <!-- Docked / session workspace indicator -->
         <div
-          v-else
+          v-if="!(isNewTask && layout === 'centered')"
           class="workspace-indicator"
           :class="{ 'has-workspace': !!workspace || executionMode === 'CLOUD', 'cloud-mode': executionMode === 'CLOUD' }"
           @click="executionMode !== 'CLOUD' && openWorkspace()"
@@ -251,6 +251,36 @@
           </svg>
         </button>
       </div>
+    </div>
+
+    <!-- 移动居中态：智能体/工作区配置条（输入与操作行下方，不占工具条横向空间） -->
+    <div v-if="isNewTask && layout === 'centered' && isMobileViewport" class="center-meta-row">
+      <AgentChip
+        :selected-agent-id="selectedAgentId"
+        :disabled="disabled"
+        :is-mobile="true"
+        @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
+      />
+      <WorkspaceChip
+        :execution-mode="executionMode"
+        :workspace="workspace"
+        :cloud-project-key="cloudProjectKey"
+        :project-key="projectKey"
+        :workspace-mode="workspaceMode"
+        :git-clone-url="gitCloneUrl"
+        :git-branch="gitBranch"
+        :cloud-projects="cloudProjects"
+        :is-new-task="isNewTask"
+        :session-title="sessionTitle"
+        :disabled="disabled"
+        :is-mobile="true"
+        @update:execution-mode="handleModeChange"
+        @update:workspace="w => emit('update:workspace', w)"
+        @update:cloud-project-key="onCloudProjectKeyChange"
+        @update:workspace-mode="onWorkspaceModeChange"
+        @update:git-clone-url="onGitCloneUrlChange"
+        @update:git-branch="b => emit('update:gitBranch', b)"
+      />
     </div>
   </div>
 </template>
@@ -1459,13 +1489,13 @@ onBeforeUnmount(() => {
     font-size: var(--aw-text-caption);
   }
 
-  /* 单行工具条：左侧 chips 横滑，发送固定在右侧 */
+  /* 单行工具条：仅 + / 权限 / 模型 / 发送；智能体与工作区见下方 meta 行 */
   .chat-input-card.layout-centered .toolbar {
     flex-direction: row;
     flex-wrap: nowrap;
     align-items: center;
     gap: 6px;
-    padding: 8px 10px 10px;
+    padding: 8px 10px 6px;
     min-height: 48px;
   }
 
@@ -1474,25 +1504,21 @@ onBeforeUnmount(() => {
     min-width: 0;
     flex-wrap: nowrap;
     gap: 6px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-    padding: 2px 0;
-  }
-
-  .chat-input-card.layout-centered .toolbar-left::-webkit-scrollbar {
-    display: none;
-  }
-
-  .chat-input-card.layout-centered .toolbar-left > * {
-    flex-shrink: 0;
   }
 
   .chat-input-card.layout-centered .toolbar-right {
     flex: 0 0 auto;
     gap: 4px;
     min-width: 0;
+  }
+
+  .chat-input-card.layout-centered .center-meta-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 10px 12px;
+    border-top: 1px solid var(--aw-divider-soft);
   }
 
   .chat-input-card.layout-centered .add-btn {
