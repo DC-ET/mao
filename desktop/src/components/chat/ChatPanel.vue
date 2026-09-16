@@ -890,8 +890,8 @@ function handleNewTaskAgentChange(id: string | null) {
     font-size: 18px;
     font-weight: 600;
     margin-bottom: 14px;
-    align-self: stretch;
-    text-align: left;
+    align-self: center;
+    text-align: center;
   }
 
   .center-composer {
