@@ -39,7 +39,8 @@ function serializeContent(content: unknown): unknown {
 function serializeToolCall(tc: ToolCall): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (tc.id != null) out.id = tc.id;
-  if (tc.type != null) out.type = tc.type;
+  // 历史（含 Responses 流式旧数据）可能缺 type；Chat Completions / 部分网关要求 tool_calls[].type 必填。
+  out.type = tc.type ?? 'function';
   if (tc.function != null) {
     const fn: Record<string, unknown> = {};
     if (tc.function.name != null) fn.name = tc.function.name;

@@ -417,4 +417,20 @@ describe('normalizeFeishuEvent', () => {
     const event = normalizeFeishuEvent({ header: {}, event: { sender: {} } });
     expect(event).toBeNull();
   });
+
+  it('treats Feishu card upgrade-fallback text as empty so placeholder generation runs', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_bot', union_id: 'on_bot' }, sender_type: 'app' },
+        message: {
+          message_id: 'om_card', chat_id: 'oc_group', chat_type: 'group', message_type: 'interactive',
+          content: '{"text":"请升级至最新版本客户端，以查看内容"}',
+        },
+      },
+    });
+    expect(event).not.toBeNull();
+    expect(event!.messageType).toBe('interactive');
+    expect(event!.text).toBe('');
+  });
 });

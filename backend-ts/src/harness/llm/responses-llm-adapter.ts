@@ -339,6 +339,7 @@ export class ResponsesLlmAdapter implements LlmAdapter {
               toolCalls: [{
                 id: syntheticId,
                 index: event.output_index ?? 0,
+                type: 'function',
                 ...(streamingReasoningRef != null && !firstToolCallEmitted ? { reasoning: streamingReasoningRef } : {}),
                 function: { name: item.name as string | undefined, arguments: '' },
               }],

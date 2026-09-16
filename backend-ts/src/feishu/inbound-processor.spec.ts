@@ -390,4 +390,43 @@ describe('FeishuInboundProcessor', () => {
     await expect(processor.process('1', makeEvent({ isBotMentioned: true }))).rejects.toThrow('boom');
     expect(messageService.releaseInboundMessage).toHaveBeenCalledWith('1', 'om_1');
   });
+
+  it('replaces Feishu card upgrade-fallback text with placeholder when logging group cards', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(201);
+    messageService.updateGroupMessageContent.mockClear();
+    const processor = new FeishuInboundProcessor(makeHandler(), { messageService });
+    await processor.process('1', makeEvent({
+      messageId: 'om_card_deg',
+      messageType: 'interactive',
+      senderType: 'app',
+      senderId: 'ou_253023b8',
+      text: '请升级至最新版本客户端，以查看内容',
+      content: { text: '请升级至最新版本客户端，以查看内容' },
+      isBotMentioned: false,
+    }));
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
+      expect.objectContaining({ text: '[卡片消息]' }), false);
+  });
+
+  it('upgrades degraded group card log content via message detail fetch', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(202);
+    messageService.updateGroupMessageContent.mockClear();
+    const resolveMessageText = vi.fn(async () => '状态：处理完成 · 任务已完成');
+    const processor = new FeishuInboundProcessor(makeHandler(), { messageService, resolveMessageText });
+    await processor.process('1', makeEvent({
+      messageId: 'om_card_up',
+      messageType: 'interactive',
+      senderType: 'app',
+      senderId: 'ou_253023b8',
+      text: '请升级至最新版本客户端，以查看内容',
+      isBotMentioned: false,
+    }));
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
+      expect.objectContaining({ text: '[卡片消息]' }), false);
+    await vi.waitFor(() => expect(messageService.updateGroupMessageContent)
+      .toHaveBeenCalledWith(202, '状态：处理完成 · 任务已完成'));
+    expect(resolveMessageText).toHaveBeenCalledWith('1', 'om_card_up');
+  });
 });

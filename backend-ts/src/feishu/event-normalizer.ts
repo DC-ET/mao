@@ -1,4 +1,5 @@
 import type { FeishuChatType, FeishuEventHeader, FeishuNormalizedMessage } from './types.js';
+import { FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
 
 export function normalizeFeishuEvent(input: unknown, botOpenId?: string): FeishuNormalizedMessage | null {
   const root = asRecord(input);
@@ -86,9 +87,13 @@ function parseContent(value: unknown): unknown {
 }
 
 function extractText(content: unknown, fallback: unknown): string {
-  if (typeof content === 'string') return content;
+  // 飞书对无法透出原始卡片 JSON 的 interactive 消息会把 content 降级为
+  // {"text":"请升级至最新版本客户端，以查看内容"}；此文案无信息量，视为空文本走占位符生成，
+  // 否则会原样落入群消息日志并污染【群内最近消息】。
+  if (typeof content === 'string') return content === FEISHU_CARD_UPGRADE_FALLBACK ? '' : content;
   const record = asRecord(content);
-  return firstString(record.text, fallback) ?? '';
+  const text = firstString(record.text, fallback) ?? '';
+  return text === FEISHU_CARD_UPGRADE_FALLBACK ? '' : text;
 }
 
 interface MentionItem { key?: string | null; id?: string | null; unionId?: string | null; name?: string | null; mentionedType?: string | null; }

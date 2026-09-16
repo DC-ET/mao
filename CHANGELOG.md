@@ -19,7 +19,9 @@
 
 ### 后端
 
+- 修复 Responses 协议会话中途切到 Chat Completions 协议后请求 400（`messages[N]: missing field \`type\``）：Responses 流式 toolCall 补写 `type: 'function'`；Chat Completions 序列化对历史缺失 `type` 的 tool_calls 兜底为 `function`。升级后端后原会话可继续使用，无需清空历史。
 - 修复定时任务执行失败后仍向飞书/微信推送上一轮对话旧回复的问题：`liveExecution`（WS 执行路径）内部 catch 吞掉异常并落会话 FAILED 终态后正常返回，`executeTask` 误判为成功、标记 COMPLETED 并调用结果推送；`sendFeishuReplyIfApplicable` / `sendWeixinReplyIfApplicable` 从会话历史取最后一条 ASSISTANT 消息（本次失败未产出新消息，取到的是上一轮旧回复）推给用户。现 `liveExecution` 返回后回读会话真实终态，FAILED/CANCELLED 时不标 COMPLETED、不推送回复。
+- 修复飞书群聊【群内最近消息】中机器人卡片仍显示“请升级至最新版本客户端，以查看内容”的问题：此前仅修了引用预取的消息详情接口，`im.message.receive_v1` 事件里 interactive 卡片 content 被飞书降级为该文案后仍会原样落入群消息日志；现归一化与卡片文本提取均过滤该降级文案，入库占位为 `[卡片消息]`，并后台按 messageId 拉详情（`card_msg_content_type=user_card_content`）回填真实卡片文本。
 
 ## 0.0.127 (2026-09-26)
 

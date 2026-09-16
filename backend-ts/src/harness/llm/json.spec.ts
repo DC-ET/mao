@@ -48,6 +48,25 @@ describe('serializeChatRequest', () => {
     expect(request).toEqual(original);
   });
 
+  it.each([false, true])('defaults missing tool_call type to function for legacy Responses history (stream=%s)', (stream) => {
+    const request: ChatRequest = {
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_legacy', function: { name: 'lookup', arguments: '{}' } }],
+        },
+        { role: 'tool', content: '结果', toolCallId: 'call_legacy' },
+      ],
+    };
+
+    const body = serializeChatRequest(request, 'glm-5.3', stream);
+    const assistant = (body.messages as Record<string, unknown>[])[0];
+    expect(assistant.tool_calls).toEqual([
+      { id: 'call_legacy', type: 'function', function: { name: 'lookup', arguments: '{}' } },
+    ]);
+  });
+
   it.each([
     ['deepseek-chat', true],
     ['DeepSeek-Reasoner', true],

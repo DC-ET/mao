@@ -76,6 +76,14 @@ describe('fetchFeishuMessageDetail 卡片文本提取', () => {
     expect(detail?.text).toBe('[卡片消息]');
   });
 
+  it('ignores Feishu card upgrade-fallback text and falls back to placeholder', async () => {
+    const detail = await fetchDetail({
+      msg_type: 'interactive',
+      body: { content: JSON.stringify({ text: '请升级至最新版本客户端，以查看内容' }) },
+    });
+    expect(detail?.text).toBe('[卡片消息]');
+  });
+
   it('extracts sticker placeholder with message id and file_key', async () => {
     const detail = await fetchDetail({ msg_type: 'sticker', body: { content: JSON.stringify({ file_key: 'v3_0013m_abc' }) } });
     expect(detail?.msgType).toBe('sticker');

@@ -537,6 +537,11 @@ describe('ResponsesLlmAdapter - stream（流式）', () => {
     expect(tc?.function?.name).toBe('lookup');
     expect(tc?.function?.arguments).toBe('{"q":"bj"}');
     expect(callback.usage?.totalTokens).toBe(7);
+    // 流式首包必须带 type:'function'，否则跨协议回放到 Chat Completions 时会缺必填字段
+    const firstToolCallChunk = callback.chunks
+      .flatMap((chunk) => chunk.choices?.[0]?.delta?.toolCalls ?? [])
+      .find((tc) => tc.id === 'call_x' && tc.function?.name != null);
+    expect(firstToolCallChunk?.type).toBe('function');
   });
 
   it('网关不发 arguments.delta 时由 output_item.done 刷新完整参数', async () => {

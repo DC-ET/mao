@@ -1636,6 +1636,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       if (detail == null) return null;
       return persist(detail.text);
     },
+    resolveMessageText: async (accountId, messageId) => {
+      const client = await getFeishuClient(Number(accountId));
+      if (client == null) return null;
+      const detail = await fetchFeishuMessageDetail(client, messageId);
+      return detail?.text ?? null;
+    },
     resolveUserId: async (_accountId, event) => {
       const unionId = senderUnionIdOf(event);
       if (unionId == null) return null;

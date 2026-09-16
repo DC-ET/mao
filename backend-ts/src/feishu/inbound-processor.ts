@@ -2,7 +2,7 @@ import type { FeishuInboundHandler, FeishuNormalizedMessage, FeishuInboundContex
 import { inboundImageKeys } from './event-normalizer.js';
 import type { FeishuMessageService } from './message.service.js';
 import { botSenderLabel, isBotSender } from './message.service.js';
-import { describeMessageText } from './message-detail.js';
+import { describeMessageText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
 
 export interface FeishuInboundProcessorOptions {
   messageService?: FeishuMessageService;
@@ -22,6 +22,8 @@ export interface FeishuInboundProcessorOptions {
   downloadGroupImage?: (accountId: string, event: FeishuNormalizedMessage, imageKey: string, index: number) => Promise<string | null>;
   /** 话题会话映射查询：threadId 存在且映射命中（机器人已在该话题中）时免 @ 触发。 */
   resolveThreadSession?: (accountId: string, event: FeishuNormalizedMessage) => Promise<{ sessionId: number } | null>;
+  /** interactive 卡片入站占位升级：事件 content 被飞书降级时按 messageId 拉详情补真实文本；null/抛错保留占位。 */
+  resolveMessageText?: (accountId: string, messageId: string) => Promise<string | null>;
 }
 
 export class FeishuInboundProcessor {
@@ -149,7 +151,8 @@ export class FeishuInboundProcessor {
   }
 
   /** 群消息后台富化（不阻塞入库与触发时序）：补齐发送人显示名；图片消息入站预下载，
-   * 成功则将日志行占位文本升级为携带 @{路径}@ 引用（Agent 免工具直接读取），失败保留懒加载占位符。 */
+   * 成功则将日志行占位文本升级为携带 @{路径}@ 引用（Agent 免工具直接读取），失败保留懒加载占位符；
+   * interactive 卡片事件 content 被飞书降级时，按 messageId 拉详情补真实文本。 */
   private async enrichGroupMessage(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
     try {
       const messageService = this.options.messageService;
@@ -159,6 +162,7 @@ export class FeishuInboundProcessor {
         await messageService.updateGroupMessageSenderName(logId, resolved.senderName);
       }
       await this.prewarmGroupImage(accountId, logId, event);
+      await this.prewarmGroupCardText(accountId, logId, event);
     } catch (error) {
       console.warn(`飞书群消息后台富化失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -185,9 +189,27 @@ export class FeishuInboundProcessor {
     await this.options.messageService?.updateGroupMessageContent(logId, content);
   }
 
+  /** interactive 卡片预升级：事件 content 被飞书降级为占位时，按 messageId 拉详情补真实文本。
+   *  失败或仍无有效文本则保留已入库占位（[卡片消息]），不阻塞主流程。 */
+  private async prewarmGroupCardText(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
+    if (event.messageType !== 'interactive' || this.options.resolveMessageText == null || event.messageId == null) return;
+    const current = (event.text ?? '').trim();
+    // 事件自带真实卡片文本时无需回拉。
+    if (current !== '' && current !== '[卡片消息]' && current !== FEISHU_CARD_UPGRADE_FALLBACK) return;
+    try {
+      const text = await this.options.resolveMessageText(accountId, event.messageId);
+      const upgraded = (text ?? '').trim();
+      if (upgraded === '' || upgraded === FEISHU_CARD_UPGRADE_FALLBACK) return;
+      await this.options.messageService?.updateGroupMessageContent(logId, upgraded);
+    } catch (error) {
+      console.warn(`飞书卡片文本预升级失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   private normalizeText(event: FeishuNormalizedMessage): FeishuNormalizedMessage {
     const rawText = event.text?.trim() ?? '';
-    if (rawText !== '') return event;
+    // 飞书卡片降级文案无信息量：视为空文本走占位/详情升级，避免落入群日志污染上下文。
+    if (rawText !== '' && rawText !== FEISHU_CARD_UPGRADE_FALLBACK) return event;
     // 纯文本消息保持原样（空文本不应伪造占位符）；非文本消息统一生成占位/可读文本
     // （复用引用预取的映射，含 post 富文本、语音、视频、卡片等），占位符携带消息 ID，
     // 供 Agent 通过 feishu_download_file 按需下载。

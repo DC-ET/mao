@@ -91,6 +91,9 @@ function collectText(node: unknown): string {
   return '';
 }
 
+/** 飞书对无法透出原始卡片 JSON 时返回的降级文案（receive 事件 / 详情接口均可能出现）。 */
+export const FEISHU_CARD_UPGRADE_FALLBACK = '请升级至最新版本客户端，以查看内容';
+
 /** 卡片消息（多为机器人回复）：遍历卡片 JSON 收集文本元素，失败退化为占位。 */
 function extractInteractiveText(content: Record<string, unknown>): string {
   const parts: string[] = [];
@@ -119,14 +122,14 @@ function walkCardContent(node: unknown, parts: string[]): void {
   const tag = typeof record.tag === 'string' ? record.tag : '';
   if (tag === 'img' || tag === 'media' || tag === 'emotion') return;
   if ((tag === 'markdown' || tag === 'lark_md' || tag === 'plain_text') && typeof record.content === 'string') {
-    if (record.content.trim() !== '') parts.push(record.content);
+    if (record.content.trim() !== '' && record.content !== FEISHU_CARD_UPGRADE_FALLBACK) parts.push(record.content);
     return;
   }
-  if (typeof record.content === 'string' && record.content.trim() !== '') {
+  if (typeof record.content === 'string' && record.content.trim() !== '' && record.content !== FEISHU_CARD_UPGRADE_FALLBACK) {
     parts.push(record.content);
     return;
   }
-  if (typeof record.text === 'string' && record.text.trim() !== '') {
+  if (typeof record.text === 'string' && record.text.trim() !== '' && record.text !== FEISHU_CARD_UPGRADE_FALLBACK) {
     parts.push(record.text);
     return;
   }
