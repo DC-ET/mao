@@ -20,6 +20,7 @@
         placeholder="选择工作区"
         :size="fieldSize"
         class="ws-field"
+        popper-class="ws-field-select-dropdown"
         @update:model-value="(v: string) => emit('update:cloudProjectKey', v || '')"
       >
         <el-option v-for="p in cloudProjects" :key="p.name" :label="p.name" :value="p.name" />
@@ -192,5 +193,24 @@ async function selectWorkspace() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+</style>
+
+<style>
+/* 工作区下拉列表：选项文字与「模型选择」列表一致（深色常规字重），
+   选中项去掉 Element Plus 默认的加粗 + 主色，仅用淡蓝底标示 */
+.ws-field-select-dropdown.el-select-dropdown {
+  border-radius: var(--aw-radius-md);
+}
+
+.ws-field-select-dropdown .el-select-dropdown__item {
+  font-weight: 400;
+  color: var(--aw-body);
+}
+
+.ws-field-select-dropdown .el-select-dropdown__item.is-selected {
+  font-weight: 400;
+  color: var(--aw-body);
+  background: var(--aw-primary-lighter);
 }
 </style>

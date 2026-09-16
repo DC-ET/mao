@@ -2046,5 +2046,15 @@ onBeforeUnmount(() => {
   height: 28px;
   line-height: 28px;
   padding: 0 12px;
+  font-weight: 400;
+  color: var(--aw-body);
+}
+
+/* 与「模型选择」列表对齐：选中项不用加粗主色，改用淡蓝底 + 深色文字 */
+.workspace-mode-select-dropdown .el-select-dropdown__item.is-selected,
+.cloud-project-select-dropdown .el-select-dropdown__item.is-selected {
+  font-weight: 400;
+  color: var(--aw-body);
+  background: var(--aw-primary-lighter);
 }
 </style>
