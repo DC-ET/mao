@@ -76,10 +76,12 @@ describe('feishuUnauthorizedGuide', () => {
     const guide = feishuUnauthorizedGuide(true, 'p2p');
     expect(guide.body).toBe('请点击下方按钮完成ECP用户绑定');
     expect(guide.buttonLabel).toBe('点我绑定');
+    expect(guide.title).toBe('新用户绑定');
   });
 
   it('uses the same ECP copy in group chat', () => {
     expect(feishuUnauthorizedGuide(true, 'group')).toEqual({
+      title: '新用户绑定',
       body: '请点击下方按钮完成ECP用户绑定',
       buttonLabel: '点我绑定',
     });
@@ -113,7 +115,7 @@ describe('buildFeishuAuthGuideCard', () => {
   it('puts the long auth URL on an open_url button instead of markdown text', () => {
     const url = `https://ecp.example/auth?${'s='.repeat(200)}`;
     const card = buildFeishuAuthGuideCard(feishuUnauthorizedGuide(true, 'p2p'), url);
-    expect(card.header).toBeUndefined();
+    expect(card.header).toEqual({ template: 'orange', title: { tag: 'plain_text', content: '新用户绑定' } });
     const body = card.body as { elements: Array<Record<string, unknown>> };
     const markdown = body.elements.filter((el) => el.tag === 'markdown');
     expect(JSON.stringify(markdown)).not.toContain(url);

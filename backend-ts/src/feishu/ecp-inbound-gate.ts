@@ -8,6 +8,7 @@ export interface FeishuChannelAuthLink {
 }
 
 export interface FeishuUnauthorizedGuide {
+  title: string;
   body: string;
   buttonLabel: string;
 }
@@ -36,12 +37,13 @@ export function feishuUnauthorizedFallbackText(guide: FeishuUnauthorizedGuide): 
   return `${guide.body}\n若未看到「${guide.buttonLabel}」按钮，请打开 Mao 桌面或网页完成操作。`;
 }
 
-/** 飞书卡片 JSON 2.0：正文 + 跳转按钮，避免把超长授权 URL 写进文本被客户端截断。无标题行。 */
+/** 飞书卡片 JSON 2.0：正文 + 跳转按钮，避免把超长授权 URL 写进文本被客户端截断。 */
 export function buildFeishuAuthGuideCard(guide: FeishuUnauthorizedGuide, authUrl: string): Record<string, unknown> {
   const url = authUrl.trim();
   return {
     schema: '2.0',
     config: { update_multi: true },
+    header: { template: 'orange', title: { tag: 'plain_text', content: guide.title } },
     body: {
       direction: 'vertical',
       padding: '12px 12px 12px 12px',
@@ -84,11 +86,13 @@ export async function persistFeishuPendingAuth(insert: () => Promise<void>, stat
 export function feishuUnauthorizedGuide(ecpEnabled: boolean, chatType: FeishuChatType): FeishuUnauthorizedGuide {
   if (ecpEnabled) {
     return {
-      body: '请点击下方按钮完成ECP用户绑定',
+      title: '新用户绑定',
+      body: '请先点击下方按钮完成用户绑定（3分钟内有效）。',
       buttonLabel: '点我绑定',
     };
   }
   return {
+    title: '新用户绑定',
     body: chatType === 'group'
       ? '请先完成飞书账号绑定，获得群内使用权限后再试。'
       : '请先完成飞书账号绑定后再试。',
