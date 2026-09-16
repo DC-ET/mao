@@ -6,21 +6,21 @@
     </div>
 
     <el-card class="usage-card">
-      <el-form :inline="true" class="search-form">
+      <el-form :inline="true" size="small" class="search-form">
         <el-form-item label="场景">
-          <el-select v-model="filters.scene" clearable placeholder="全部" style="width: 160px" @change="handleSearch">
+          <el-select v-model="filters.scene" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
             <el-option v-for="opt in LLM_CALL_SCENE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="结果">
-          <el-select v-model="filters.success" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+          <el-select v-model="filters.success" clearable placeholder="全部" style="width: 100px" @change="handleSearch">
             <el-option label="成功" :value="true" />
             <el-option label="失败" :value="false" />
           </el-select>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="handleSearch">查询</el-button>
-          <el-button @click="handleReset">重置</el-button>
+          <el-button type="primary" size="small" @click="handleSearch">查询</el-button>
+          <el-button size="small" @click="handleReset">重置</el-button>
         </el-form-item>
       </el-form>
 
@@ -28,38 +28,38 @@
         <template #empty>
           <el-empty description="暂无调用记录" :image-size="48" />
         </template>
-        <el-table-column label="时间" width="170">
+        <el-table-column label="时间" width="140">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="场景" width="120">
+        <el-table-column label="场景" width="72">
           <template #default="{ row }">{{ llmCallSceneLabel(row.scene) }}</template>
         </el-table-column>
-        <el-table-column label="模型" min-width="140" show-overflow-tooltip>
+        <el-table-column label="模型" min-width="100" show-overflow-tooltip>
           <template #default="{ row }">{{ row.modelName || row.providerModelId || '-' }}</template>
         </el-table-column>
-        <el-table-column label="入 Token" width="100" align="right">
+        <el-table-column label="入 Token" width="88" align="right">
           <template #default="{ row }">{{ formatNumber(row.promptTokens || 0) }}</template>
         </el-table-column>
-        <el-table-column label="缓存" width="130" align="right">
+        <el-table-column label="缓存" width="118" align="right">
           <template #default="{ row }">{{ formatCacheHit(row) }}</template>
         </el-table-column>
-        <el-table-column label="出 Token" width="100" align="right">
+        <el-table-column label="出 Token" width="88" align="right">
           <template #default="{ row }">{{ formatNumber(row.completionTokens || 0) }}</template>
         </el-table-column>
-        <el-table-column label="首字" width="90" align="right">
+        <el-table-column label="首字" width="72" align="right">
           <template #default="{ row }">{{ formatMs(row.firstTokenMs) }}</template>
         </el-table-column>
-        <el-table-column label="耗时" width="90" align="right">
+        <el-table-column label="耗时" width="72" align="right">
           <template #default="{ row }">{{ formatMs(row.durationMs) }}</template>
         </el-table-column>
-        <el-table-column label="结果" width="80">
+        <el-table-column label="结果" width="64">
           <template #default="{ row }">
             <el-tag size="small" :type="row.success === 1 ? 'success' : 'danger'">
               {{ row.success === 1 ? '成功' : '失败' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="会话" width="100">
+        <el-table-column label="会话" width="64">
           <template #default="{ row }">
             <el-button v-if="row.sessionId" type="primary" link size="small" @click="goSession(row.sessionId)">
               #{{ row.sessionId }}
@@ -74,7 +74,8 @@
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :total="total"
-          :page-sizes="[20, 50]"
+          :page-sizes="[10, 20, 50, 100]"
+          size="small"
           layout="total, sizes, prev, pager, next"
           @current-change="fetchRecords"
           @size-change="handleSizeChange"

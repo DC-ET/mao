@@ -334,6 +334,16 @@ export class ScheduledTaskService {
               }
               if (this.liveExecution != null) {
                 await this.liveExecution(session, userId, executionId, savedMessage);
+                // liveExecution（runExecution）内部 catch 吞掉失败/取消并落终态后正常返回，
+                // 必须回读会话真实终态：FAILED/CANCELLED 时不得标 COMPLETED，
+                // 也不得把上一轮 ASSISTANT 旧回复误推给飞书/微信。
+                const after = await this.sessionService.getSession(task.sessionId!);
+                const actualPhase = after?.phase;
+                if (actualPhase === 'FAILED' || actualPhase === 'CANCELLED') {
+                  await this.markTaskResult(task, actualPhase);
+                  countThisRun = true;
+                  return;
+                }
               } else {
                 await this.harnessService.executeFromEvent(task.sessionId!, executionId, {
                   onContentDelta() {},

@@ -188,6 +188,44 @@ describe('ScheduledTaskService', () => {
     expect(feishuPusher).toHaveBeenCalledWith(11, 'task result');
   });
 
+  it('doesNotPushStaleAssistantReplyWhenLiveExecutionFails', async () => {
+    vi.mocked(store.selectById).mockResolvedValue({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', prompt: 'hello', fireCount: 0 });
+    vi.mocked(store.updateById).mockClear();
+    // 1st getSession: before execution (IDLE); 2nd: after liveExecution returns (FAILED)
+    stubs.getSession.mockReset();
+    stubs.getSession.mockResolvedValueOnce({ id: 11, phase: 'IDLE' });
+    stubs.getSession.mockResolvedValueOnce({ id: 11, phase: 'FAILED' });
+    stubs.saveMessage.mockResolvedValue({ id: 88, content: 'hello' });
+    // Historical messages contain a stale ASSISTANT reply from a previous run
+    stubs.getMessages.mockResolvedValue([
+      { role: 'USER', content: 'previous run' },
+      { role: 'ASSISTANT', content: 'stale old reply' },
+    ]);
+    // liveExecution swallows errors internally (runExecution catch) and returns normally
+    const live = vi.fn(async () => undefined);
+    const feishuPusher = vi.fn(async () => undefined);
+    const weixinSend = { sendText: vi.fn() };
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      store, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn() }, { finishExecution: vi.fn() },
+      weixinSend as never,
+      { findByUserId: vi.fn(async () => null) } as never, { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+      live,
+    );
+    svc.setFeishuResultPusher(feishuPusher);
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 });
+    await ran;
+    expect(live).toHaveBeenCalledTimes(1);
+    // Must NOT push the stale ASSISTANT reply to Feishu
+    expect(feishuPusher).not.toHaveBeenCalled();
+    expect(weixinSend.sendText).not.toHaveBeenCalled();
+    // Must mark task as FAILED, not COMPLETED
+    const persisted = vi.mocked(store.updateById).mock.calls.map(([row]) => row);
+    expect(persisted.some((row) => row.lastExecutionStatus === 'FAILED')).toBe(true);
+    expect(persisted.some((row) => row.lastExecutionStatus === 'COMPLETED')).toBe(false);
+  });
+
   it('pusherFailureDoesNotFailTask', async () => {
     stubs.getSession.mockResolvedValue({ id: 11, phase: 'IDLE' });
     stubs.saveMessage.mockResolvedValue({ id: 88, content: 'hello' });
