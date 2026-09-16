@@ -184,6 +184,8 @@ function selectAgent(agent: Agent) {
 
 .chip-avatar {
   flex-shrink: 0;
+  width: 18px !important;
+  height: 18px !important;
   background: var(--aw-primary);
   color: var(--aw-on-primary);
   font-size: 9px;
@@ -217,6 +219,10 @@ function selectAgent(agent: Agent) {
   gap: 4px;
   max-height: 280px;
   overflow-y: auto;
+}
+
+.agent-list :deep(.el-avatar) {
+  flex-shrink: 0;
 }
 
 .agent-row {

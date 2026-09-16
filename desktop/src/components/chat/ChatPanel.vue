@@ -819,9 +819,11 @@ function handleNewTaskAgentChange(id: string | null) {
 .brand-mark {
   width: 52px;
   height: 52px;
+  aspect-ratio: 1 / 1;
   border-radius: 14px;
-  object-fit: contain;
+  object-fit: cover;
   display: block;
+  flex-shrink: 0;
 }
 
 .center-greeting {
@@ -882,6 +884,7 @@ function handleNewTaskAgentChange(id: string | null) {
   .brand-mark {
     width: 44px;
     height: 44px;
+    aspect-ratio: 1 / 1;
     border-radius: 12px;
   }
 
