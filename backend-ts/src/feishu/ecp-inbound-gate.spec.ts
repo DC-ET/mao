@@ -4,8 +4,10 @@ import {
   FEISHU_ECP_IDENTITY_MISMATCH_TEXT,
   feishuUnauthorizedGuide,
   isFeishuSenderEcpReady,
+  persistFeishuPendingAuth,
   senderUnionIdOf,
   startFeishuChannelAuthLink,
+  withFeishuAuthLink,
 } from './ecp-inbound-gate.js';
 import type { FeishuPendingBindingMessage } from './pending-binding.repository.js';
 
@@ -105,6 +107,28 @@ describe('isFeishuSenderEcpReady', () => {
     expect(isFeishuSenderEcpReady(true, {
       userId: 1, sessionTokenEnc: 'enc', expiresAt: '2099-01-01 00:00:00', renewStatus: 'ACTIVE',
     }, () => 'tok')).toBe(true);
+  });
+});
+
+describe('withFeishuAuthLink', () => {
+  it('appends the login URL even when pending persistence later fails', () => {
+    const body = '已绑定飞书账号，但没有有效的 ECP 登录凭证。请完成 ECP 飞书登录后再试（执行内部工具需要该凭证）。';
+    expect(withFeishuAuthLink(body, 'https://ecp.example/auth?state=long', '登录')).toBe(
+      `${body}\n点击完成登录：https://ecp.example/auth?state=long`,
+    );
+  });
+
+  it('keeps the body when the URL is empty', () => {
+    expect(withFeishuAuthLink('请先完成绑定', '  ', '绑定')).toBe('请先完成绑定');
+  });
+});
+
+describe('persistFeishuPendingAuth', () => {
+  it('does not throw when insert fails so the auth URL can still be sent', async () => {
+    const ok = await persistFeishuPendingAuth(async () => {
+      throw new Error("Data too long for column 'state'");
+    }, 'x'.repeat(200));
+    expect(ok).toBe(false);
   });
 });
 

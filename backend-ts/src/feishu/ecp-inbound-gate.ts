@@ -27,6 +27,22 @@ export async function startFeishuChannelAuthLink(options: {
   return null;
 }
 
+export function withFeishuAuthLink(body: string, link: string, action: '登录' | '绑定'): string {
+  const url = link.trim();
+  return url === '' ? body : `${body}\n点击完成${action}：${url}`;
+}
+
+/** 记录待重放消息失败时仍应把授权链接发给用户，不能把已拿到的 URL 丢掉。 */
+export async function persistFeishuPendingAuth(insert: () => Promise<void>, state: string): Promise<boolean> {
+  try {
+    await insert();
+    return true;
+  } catch (error) {
+    console.error(`记录飞书待登录/绑定消息失败, state=${state}`, error);
+    return false;
+  }
+}
+
 export function feishuUnauthorizedGuide(ecpEnabled: boolean, bound: boolean, chatType: FeishuChatType): FeishuUnauthorizedGuide {
   if (ecpEnabled) {
     if (bound) {

@@ -233,8 +233,10 @@ import {
   completeFeishuPendingAfterEcp,
   FEISHU_ECP_IDENTITY_MISMATCH_TEXT,
   feishuUnauthorizedGuide,
+  persistFeishuPendingAuth,
   senderUnionIdOf,
   startFeishuChannelAuthLink,
+  withFeishuAuthLink,
 } from './feishu/ecp-inbound-gate.js';
 import { hasUsableEcpSession } from './auth/ecp-session.repository.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
@@ -1673,9 +1675,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
           startEcp: () => ecpAuth.startFeishuLogin('desktop'),
           startFeishu: () => feishu.getQrCodeUrl(),
         });
-      } catch { return false; }
-      if (auth == null) return false;
-      await pendingBindingMessages.insert({ state: auth.state, appId: Number(accountId), messageId: event.messageId, event });
+      } catch (error) {
+        console.error('飞书未授权引导获取登录链接失败', error);
+        return false;
+      }
+      if (auth == null || auth.authUrl.trim() === '') return false;
+      const inboundMessageId = event.messageId;
+      if (inboundMessageId == null) return false;
+      await persistFeishuPendingAuth(
+        () => pendingBindingMessages.insert({ state: auth.state, appId: Number(accountId), messageId: inboundMessageId, event }),
+        auth.state,
+      );
       const unionId = senderUnionIdOf(event);
       const bound = unionId != null && (await feishuBinding.findUserIdByUnionId(unionId)) != null;
       const guide = feishuUnauthorizedGuide(await ecpAuth.isEnabled(), bound, event.chatType);
@@ -1726,11 +1736,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         if (qr != null) {
           link = qr.authUrl ?? '';
           if (event.messageId != null) {
-            await pendingBindingMessages.insert({ state: qr.state, appId: Number(accountId), messageId: event.messageId, event });
+            const inboundMessageId = event.messageId;
+            await persistFeishuPendingAuth(
+              () => pendingBindingMessages.insert({ state: qr.state, appId: Number(accountId), messageId: inboundMessageId, event }),
+              qr.state,
+            );
           }
         }
-      } catch { link = ''; }
-      return link ? `${guide.body}\n点击完成${ecpEnabled ? '登录' : '绑定'}：${link}` : guide.body;
+      } catch (error) {
+        console.error('飞书未授权引导获取登录链接失败', error);
+      }
+      return withFeishuAuthLink(guide.body, link, ecpEnabled ? '登录' : '绑定');
     },
   });
   pendingBindingProcessor = feishuInboundProcessor;
