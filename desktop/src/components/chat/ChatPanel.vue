@@ -1,7 +1,11 @@
 <template>
   <div class="chat-panel" :class="{ 'is-center-composer': showCenterComposer }">
-    <!-- 新建会话中心态（桌面居中 / 移动上锚定） -->
-    <div v-if="showCenterComposer" class="center-stage">
+    <!-- 新建会话中心态：默认垂直居中；移动软键盘弹出时切上锚定 -->
+    <div
+      v-if="showCenterComposer"
+      class="center-stage"
+      :class="{ 'is-keyboard-open': keyboardOpen }"
+    >
       <div class="center-brand" aria-hidden="true">
         <div class="brand-mark">M</div>
       </div>
@@ -290,6 +294,19 @@ function syncMobileViewport() {
   isMobileViewport.value = window.innerWidth <= 768
 }
 
+/** 软键盘弹出（visualViewport 明显矮于布局视口）时关闭几何居中，避免发送键被遮挡 */
+const keyboardOpen = ref(false)
+function syncKeyboardOpen() {
+  if (typeof window === 'undefined') return
+  const vv = window.visualViewport
+  if (!vv) {
+    keyboardOpen.value = false
+    return
+  }
+  // 预留 120px：浏览器工具栏/轻微缩放不误判
+  keyboardOpen.value = window.innerHeight - vv.height > 120
+}
+
 function handleStarterSelect(text: string) {
   chatInputRef.value?.insertText?.(text)
   nextTick(() => chatInputRef.value?.focusInput())
@@ -462,6 +479,8 @@ watch(messagesContainer, (el, oldEl) => {
 onMounted(async () => {
   window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
   window.addEventListener('resize', syncMobileViewport, { passive: true })
+  window.visualViewport?.addEventListener('resize', syncKeyboardOpen, { passive: true })
+  syncKeyboardOpen()
 
   // 获取模型列表，用于新建任务模式下判断视觉能力
   try {
@@ -482,6 +501,7 @@ onUnmounted(() => {
   // 恢复期可能注册的渲染监听与收尾定时器一并清理
   window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
   window.removeEventListener('resize', syncMobileViewport)
+  window.visualViewport?.removeEventListener('resize', syncKeyboardOpen)
   disposeScroll()
   restoreGeneration++
 })
@@ -845,16 +865,21 @@ function handleNewTaskAgentChange(id: string | null) {
   }
 }
 
-/* ≤768：上锚定紧凑态，避免软键盘顶掉发送 */
+/* ≤768：默认仍垂直居中；软键盘弹出时（.is-keyboard-open）改上锚定 */
 @media (max-width: 768px) {
   .chat-panel {
     padding: 0 12px;
   }
 
   .center-stage {
-    justify-content: flex-start;
-    padding: 12px 0 20px;
+    justify-content: center;
+    padding: 16px 0 24px;
     overflow-y: auto;
+  }
+
+  .center-stage.is-keyboard-open {
+    justify-content: flex-start;
+    padding: 8px 0 16px;
   }
 
   .center-brand {
