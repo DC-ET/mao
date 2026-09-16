@@ -853,7 +853,7 @@ function handleNewTaskAgentChange(id: string | null) {
 
   .center-stage {
     justify-content: flex-start;
-    padding: 16px 0 20px;
+    padding: 12px 0 20px;
     overflow-y: auto;
   }
 
@@ -862,9 +862,10 @@ function handleNewTaskAgentChange(id: string | null) {
   }
 
   .center-greeting {
-    font-size: 17px;
-    margin-bottom: 12px;
-    align-self: flex-start;
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 14px;
+    align-self: stretch;
     text-align: left;
   }
 

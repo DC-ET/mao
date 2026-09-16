@@ -206,6 +206,7 @@
       <div class="toolbar-right">
         <ModelSelector
           :model-id="modelId"
+          :compact="isMobileViewport && layout === 'centered'"
           @update:model-id="id => emit('update:modelId', id)"
           @select="(id, modelIdStr) => emit('select:model', id, modelIdStr)"
         />
@@ -1445,44 +1446,58 @@ onBeforeUnmount(() => {
 @media (max-width: 768px) {
   .chat-input-card.layout-centered {
     border-radius: 16px;
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.05);
   }
 
   .chat-input-card.layout-centered .textarea-area {
-    padding: 12px 14px 6px;
+    padding: 14px 14px 4px;
   }
 
   .chat-input-card.layout-centered :deep(.rich-editor),
   .chat-input-card.layout-centered :deep(.rich-editor .ProseMirror) {
-    min-height: 72px;
+    min-height: 64px;
+    font-size: var(--aw-text-caption);
   }
 
-  /* 两行固定：行1 配置 chips，行2 模型 + 发送（发送始终贴右、不与 chips 错位） */
+  /* 单行工具条：左侧 chips 横滑，发送固定在右侧 */
   .chat-input-card.layout-centered .toolbar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
     padding: 8px 10px 10px;
-    min-height: 0;
+    min-height: 48px;
   }
 
   .chat-input-card.layout-centered .toolbar-left {
-    width: 100%;
-    flex: 0 0 auto;
-    flex-wrap: wrap;
-    gap: 8px;
+    flex: 1 1 auto;
     min-width: 0;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding: 2px 0;
+  }
+
+  .chat-input-card.layout-centered .toolbar-left::-webkit-scrollbar {
+    display: none;
+  }
+
+  .chat-input-card.layout-centered .toolbar-left > * {
+    flex-shrink: 0;
   }
 
   .chat-input-card.layout-centered .toolbar-right {
-    width: 100%;
     flex: 0 0 auto;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 4px;
+    min-width: 0;
   }
 
   .chat-input-card.layout-centered .add-btn {
-    width: 36px;
-    height: 36px;
+    width: 34px;
+    height: 34px;
   }
 
   .chat-input-card.layout-centered .send-btn {
@@ -1491,10 +1506,12 @@ onBeforeUnmount(() => {
   }
 
   .chat-input-card.layout-centered .toolbar-right :deep(.model-name) {
-    max-width: min(160px, 48vw);
-    min-height: 36px;
+    max-width: 72px;
+    min-height: 34px;
     display: inline-flex;
     align-items: center;
+    padding: 0 6px;
+    font-size: var(--aw-text-micro);
   }
 }
 

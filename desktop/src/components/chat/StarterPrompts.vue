@@ -83,11 +83,15 @@ const visibleItems = computed(() => {
 
 @media (max-width: 768px) {
   .starter-prompts {
-    margin-top: 12px;
+    margin-top: 14px;
+    width: 100%;
   }
 
   .starter-item {
     min-height: 36px;
+    padding: 8px 4px;
+    gap: 8px;
+    font-size: var(--aw-text-fine);
   }
 }
 </style>

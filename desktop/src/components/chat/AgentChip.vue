@@ -270,8 +270,17 @@ function selectAgent(agent: Agent) {
 
 @media (pointer: coarse), (max-width: 768px) {
   .agent-chip {
-    height: 36px;
-    max-width: 180px;
+    height: 32px;
+    max-width: 148px;
+    padding: 0 8px;
+    gap: 5px;
+  }
+
+  .agent-chip.warn {
+    /* 移动端弱化空态强调，避免整条工具条被橙色抢焦点 */
+    border-color: color-mix(in srgb, var(--aw-warning) 45%, var(--aw-hairline));
+    color: var(--aw-warning);
+    background: color-mix(in srgb, var(--aw-warning) 5%, transparent);
   }
 }
 </style>

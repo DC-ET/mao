@@ -314,8 +314,10 @@ function onGitCloneUrlChange(value: string) {
 
 @media (pointer: coarse), (max-width: 768px) {
   .workspace-chip {
-    height: 36px;
-    max-width: 160px;
+    height: 32px;
+    max-width: 132px;
+    padding: 0 8px;
+    gap: 5px;
   }
 }
 </style>

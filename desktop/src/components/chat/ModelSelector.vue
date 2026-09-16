@@ -1,7 +1,9 @@
 <template>
   <el-popover ref="popoverRef" trigger="click" :width="280" placement="top-end" @before-enter="loadModels">
     <template #reference>
-      <span class="model-name clickable">{{ displayName || '选择模型' }}</span>
+      <span class="model-name clickable" :class="{ compact }" :title="displayName || '选择模型'">
+        {{ label }}
+      </span>
     </template>
     <div class="model-selector">
       <div v-if="loadingModels" class="model-loading">加载中...</div>
@@ -25,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, toRef } from 'vue'
+import { ref, computed, toRef } from 'vue'
 import { api } from '../../api'
 import { useModelName } from '../../composables/useModelName'
 
@@ -39,6 +41,8 @@ interface ModelItem {
 
 const props = defineProps<{
   modelId?: number
+  /** 窄屏紧凑展示：超长模型名截断，未选中显示「模型」 */
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -53,6 +57,13 @@ const loadingModels = ref(false)
 // Use composable to resolve model name from ID
 const modelIdRef = toRef(props, 'modelId')
 const { modelName: displayName } = useModelName(modelIdRef)
+
+const label = computed(() => {
+  const name = displayName.value || ''
+  if (!props.compact) return name || '选择模型'
+  if (!name) return '模型'
+  return name.length > 10 ? `${name.slice(0, 8)}…` : name
+})
 
 async function loadModels() {
   loadingModels.value = true
@@ -91,6 +102,13 @@ function handleSelect(id: number) {
 
 .model-name.clickable:hover {
   background: var(--aw-canvas-parchment);
+}
+
+.model-name.compact {
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .model-selector {
