@@ -1460,15 +1460,6 @@ onBeforeUnmount(() => {
   height: 36px;
 }
 
-.chat-input-card.layout-centered .send-btn.active {
-  background: var(--aw-ink);
-  color: var(--aw-canvas);
-}
-
-.chat-input-card.layout-centered .send-btn.active:hover {
-  background: var(--aw-ink-muted-80);
-}
-
 @media (max-width: 768px) {
   .chat-input-card.layout-centered {
     border-radius: 16px;
@@ -1529,12 +1520,13 @@ onBeforeUnmount(() => {
   }
 
   .chat-input-card.layout-centered .toolbar-right :deep(.model-name) {
-    max-width: 72px;
+    /* 移动端：模型名给足可视宽度与字号，避免只剩「ds-v4.1-…」 */
+    max-width: 148px;
     min-height: 34px;
     display: inline-flex;
     align-items: center;
-    padding: 0 6px;
-    font-size: var(--aw-text-micro);
+    padding: 0 8px;
+    font-size: var(--aw-text-caption);
   }
 }
 

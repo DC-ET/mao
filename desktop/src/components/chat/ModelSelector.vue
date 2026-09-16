@@ -60,9 +60,10 @@ const { modelName: displayName } = useModelName(modelIdRef)
 
 const label = computed(() => {
   const name = displayName.value || ''
-  if (!props.compact) return name || '选择模型'
-  if (!name) return '模型'
-  return name.length > 10 ? `${name.slice(0, 8)}…` : name
+  // 超长模型名交给 CSS 省略号按实际可用宽度截断（title 保留全名），
+  // 不再按固定字数硬切，避免工具条还有空间却只剩几个字符
+  if (!name) return props.compact ? '模型' : '选择模型'
+  return name
 })
 
 async function loadModels() {
@@ -105,7 +106,7 @@ function handleSelect(id: number) {
 }
 
 .model-name.compact {
-  max-width: 88px;
+  max-width: 148px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
