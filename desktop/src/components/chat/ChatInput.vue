@@ -102,7 +102,7 @@
     <!-- Editor area -->
     <div
       class="textarea-area"
-      :class="{ 'new-task-textarea': isNewTask, 'is-dragging-file': draggingFile }"
+      :class="{ 'new-task-textarea': isNewTask && layout === 'docked', 'is-dragging-file': draggingFile }"
       @dragover.prevent="handleDragOver"
       @dragenter.prevent="handleDragEnter"
       @dragleave="handleDragLeave"
@@ -463,6 +463,16 @@ const dynamicPlaceholder = computed(() => {
   }
   if (props.loading) return 'Agent 执行中，发送的消息将进入队列...'
   if (props.isNewTask) {
+    // 居中态：工作区配置在 chip 内完成，placeholder 不再重复项目名/路径引导
+    if (props.layout === 'centered') {
+      if (props.executionMode === 'LOCAL') {
+        return props.workspace ? `在「${dirName.value}」中开始新任务…` : '选择工作目录，然后告诉 Agent 你想做什么…'
+      }
+      if (props.workspaceMode === 'git' && !props.gitCloneUrl) {
+        return '填写 Git 地址，然后描述任务…'
+      }
+      return '告诉 Agent 你想做什么…'
+    }
     if (props.executionMode === 'LOCAL') {
       return props.workspace ? `在「${dirName.value}」中开始新任务...` : '先选择本地工作目录，再告诉 Agent 你想做什么...'
     }
@@ -1406,11 +1416,30 @@ onBeforeUnmount(() => {
 .chat-input-card.layout-centered .toolbar {
   padding: 10px 14px 12px;
   flex-wrap: wrap;
+  min-height: 48px;
 }
 
 .chat-input-card.layout-centered .toolbar-left {
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.chat-input-card.layout-centered .toolbar-right {
+  gap: 8px;
+}
+
+.chat-input-card.layout-centered .send-btn {
+  width: 36px;
+  height: 36px;
+}
+
+.chat-input-card.layout-centered .send-btn.active {
+  background: var(--aw-ink);
+  color: var(--aw-canvas);
+}
+
+.chat-input-card.layout-centered .send-btn.active:hover {
+  background: var(--aw-ink-muted-80);
 }
 
 @media (max-width: 768px) {
@@ -1438,7 +1467,11 @@ onBeforeUnmount(() => {
 .textarea-area.is-dragging-file {
   outline: 2px dashed var(--aw-primary);
   outline-offset: -8px;
-  border-radius: 0;
+}
+
+.chat-input-card.layout-centered .textarea-area.is-dragging-file {
+  border-radius: 12px;
+  outline-offset: -4px;
 }
 
 .textarea-area.new-task-textarea {

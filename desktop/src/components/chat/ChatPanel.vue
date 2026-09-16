@@ -799,15 +799,16 @@ function handleNewTaskAgentChange(id: string | null) {
   width: 48px;
   height: 48px;
   border-radius: 14px;
-  border: 1.5px solid var(--aw-hairline);
+  border: 1px solid var(--aw-hairline);
   display: flex;
   align-items: center;
   justify-content: center;
   font-family: var(--aw-font-display);
   font-size: 20px;
   font-weight: 600;
-  color: var(--aw-ink-muted-64);
-  background: var(--aw-surface);
+  letter-spacing: -0.02em;
+  color: var(--aw-ink);
+  background: var(--aw-canvas-parchment);
 }
 
 .center-greeting {

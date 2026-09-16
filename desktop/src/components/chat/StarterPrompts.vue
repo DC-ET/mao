@@ -45,7 +45,7 @@ const visibleItems = computed(() => {
   flex-direction: column;
   gap: 2px;
   width: min(720px, 100%);
-  margin: 16px auto 0;
+  margin: 18px auto 0;
 }
 
 .starter-item {
@@ -53,7 +53,8 @@ const visibleItems = computed(() => {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 10px 12px;
+  min-height: 38px;
+  padding: 8px 10px;
   border: none;
   border-radius: var(--aw-radius-sm);
   background: transparent;
