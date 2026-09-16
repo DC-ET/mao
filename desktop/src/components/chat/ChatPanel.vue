@@ -1,126 +1,187 @@
 <template>
-  <div class="chat-panel">
-    <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
-      @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove">
-      <div v-if="historyLoading" class="history-loading"
-        :class="{ 'empty-state': messages.length === 0 }" role="status" aria-live="polite">
-        <el-icon :size="messages.length === 0 ? 28 : 16" class="is-loading" aria-hidden="true"><Loading /></el-icon>
-        <p>正在加载历史对话…</p>
+  <div class="chat-panel" :class="{ 'is-center-composer': showCenterComposer }">
+    <!-- 新建会话中心态（桌面居中 / 移动上锚定） -->
+    <div v-if="showCenterComposer" class="center-stage">
+      <div class="center-brand" aria-hidden="true">
+        <div class="brand-mark">M</div>
       </div>
-      <div v-else-if="initializingWorkspace && messages.length === 0" class="empty-state workspace-init-state">
-        <el-icon :size="32" class="is-loading"><Loading /></el-icon>
-        <p>{{ initializingWorkspaceLabel }}</p>
+      <h1 class="center-greeting">今天想完成什么？</h1>
+      <div class="center-composer">
+        <ExecutionErrorBanner
+          v-if="executionError"
+          :message="executionError"
+          :can-retry="!agentRunning"
+          @retry="handleRetry"
+        />
+        <ChatInput
+          ref="chatInputRef"
+          layout="centered"
+          :loading="agentRunning"
+          :can-continue="canContinue"
+          :initializing-workspace="initializingWorkspace"
+          :initializing-workspace-label="initializingWorkspaceLabel"
+          :workspace="newTaskWorkspace"
+          :cloud-project-key="newTaskCloudProjectKey"
+          :execution-mode="newTaskMode"
+          :model-id="newTaskModelId"
+          :model-supports-vision="currentModelSupportsVision"
+          :permission-level="permissionLevel"
+          :is-new-task="true"
+          :selected-agent-id="newTaskAgentId"
+          :agents="agentStore.agents"
+          :workspace-mode="newTaskWorkspaceMode"
+          :git-clone-url="newTaskGitCloneUrl"
+          :git-branch="newTaskGitBranch"
+          :cloud-projects="newTaskCloudProjects"
+          :waiting-for-save="waitingForSave"
+          :draft-key="currentDraftKey"
+          @send="handleSend"
+          @stop="handleStop"
+          @continue="handleRetry"
+          @update:permission-level="handlePermissionLevelChange"
+          @update:execution-mode="handleNewTaskModeChange"
+          @update:workspace="handleNewTaskWorkspaceChange"
+          @update:cloud-project-key="handleNewTaskCloudProjectKeyChange"
+          @update:selected-agent-id="handleNewTaskAgentChange"
+          @update:model-id="handleModelSwitch"
+          @select:model="handleModelSelect"
+          @update:workspace-mode="handleNewTaskWorkspaceModeChange"
+          @update:git-clone-url="handleNewTaskGitCloneUrlChange"
+          @update:git-branch="handleNewTaskGitBranchChange"
+        />
       </div>
-      <div v-else-if="messages.length === 0 && !agentRunning && !initialLoading" class="empty-state">
-        <template v-if="!sessionId">
-          <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
-          <p>我可以帮你做点什么？</p>
-        </template>
-        <template v-else>
-          <p class="guidance-text">在下方输入框描述你的任务，我会帮你完成</p>
-        </template>
+      <StarterPrompts
+        class="center-tips"
+        :is-mobile="isMobileViewport"
+        @select="handleStarterSelect"
+      />
+    </div>
+
+    <!-- 会话态 / 加载态：底部 Composer -->
+    <template v-else>
+      <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
+        @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove">
+        <div v-if="historyLoading" class="history-loading"
+          :class="{ 'empty-state': messages.length === 0 }" role="status" aria-live="polite">
+          <el-icon :size="messages.length === 0 ? 28 : 16" class="is-loading" aria-hidden="true"><Loading /></el-icon>
+          <p>正在加载历史对话…</p>
+        </div>
+        <div v-else-if="initializingWorkspace && messages.length === 0" class="empty-state workspace-init-state">
+          <el-icon :size="32" class="is-loading"><Loading /></el-icon>
+          <p>{{ initializingWorkspaceLabel }}</p>
+        </div>
+        <div v-else-if="messages.length === 0 && !agentRunning && !initialLoading" class="empty-state">
+          <template v-if="!sessionId">
+            <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
+            <p>我可以帮你做点什么？</p>
+          </template>
+          <template v-else>
+            <p class="guidance-text">在下方输入框描述你的任务，我会帮你完成</p>
+          </template>
+        </div>
+
+        <!-- 历史轮次 + 当前轮次 -->
+        <ChatRoundList
+          :messages="messages"
+          :sending="agentRunning"
+          :session-id="sessionId ?? ''"
+          :editing-message-id="editingMessageId"
+          :can-edit-message="canEditMessage"
+          :compaction-events="sessionStore.activeCompactionEvents"
+          @edit="startEdit"
+          @cancel-edit="cancelEdit"
+          @confirm-edit="confirmEdit"
+          @add-to-command="openWithContent"
+        />
+
+        <div v-if="showTypingIndicator" class="typing-indicator">
+          <div class="typing-dots">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div v-if="typingRetry?.attempt" class="typing-retry">
+            <span class="typing-retry-spinner"></span>
+            <span>上游响应异常{{ typingRetry.statusCode ? `（HTTP ${typingRetry.statusCode}）` : '' }}，正在第 {{ typingRetry.attempt }}/{{ typingRetry.maxRetries }} 次重试，{{ typingRetry.delaySeconds }} 秒后继续…</span>
+          </div>
+        </div>
       </div>
 
-      <!-- 历史轮次 + 当前轮次 -->
-      <ChatRoundList
-        :messages="messages"
-        :sending="agentRunning"
-        :session-id="sessionId ?? ''"
-        :editing-message-id="editingMessageId"
-        :can-edit-message="canEditMessage"
-        :compaction-events="sessionStore.activeCompactionEvents"
-        @edit="startEdit"
-        @cancel-edit="cancelEdit"
-        @confirm-edit="confirmEdit"
-        @add-to-command="openWithContent"
+      <QueuePanel
+        @edit="handleQueueEdit"
+        @insert="insertQueueMessage"
+        @delete="deleteQueueMessage"
+        @reorder="(id, dir) => reorderQueueMessage(id, dir)"
       />
 
-      <div v-if="showTypingIndicator" class="typing-indicator">
-        <div class="typing-dots">
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
-        <div v-if="typingRetry?.attempt" class="typing-retry">
-          <span class="typing-retry-spinner"></span>
-          <span>上游响应异常{{ typingRetry.statusCode ? `（HTTP ${typingRetry.statusCode}）` : '' }}，正在第 {{ typingRetry.attempt }}/{{ typingRetry.maxRetries }} 次重试，{{ typingRetry.delaySeconds }} 秒后继续…</span>
-        </div>
+      <ApprovalStack
+        v-if="activePendingApprovals.length > 0"
+        :items="activePendingApprovals"
+        @confirm="confirmApproval"
+      />
+
+      <QuestionPanel
+        v-if="activePendingQuestions.length > 0"
+        :items="activePendingQuestions"
+        @submit="submitQuestionAnswer"
+      />
+
+      <div v-if="sessionId && !isNewTaskMode" class="side-task-entry">
+        <button type="button" class="side-task-btn" @click="openSideTask?.()">
+          + 边路任务
+        </button>
       </div>
-    </div>
 
-    <QueuePanel
-      @edit="handleQueueEdit"
-      @insert="insertQueueMessage"
-      @delete="deleteQueueMessage"
-      @reorder="(id, dir) => reorderQueueMessage(id, dir)"
-    />
+      <div v-if="sessionStore.activeCompacting" class="compaction-hint" role="status">
+        <span class="compaction-spinner" aria-hidden="true"></span>
+        <span>正在整理历史对话，腾出上下文空间…</span>
+      </div>
 
-    <ApprovalStack
-      v-if="activePendingApprovals.length > 0"
-      :items="activePendingApprovals"
-      @confirm="confirmApproval"
-    />
+      <ExecutionErrorBanner
+        :message="executionError"
+        :can-retry="!agentRunning"
+        @retry="handleRetry"
+      />
 
-    <QuestionPanel
-      v-if="activePendingQuestions.length > 0"
-      :items="activePendingQuestions"
-      @submit="submitQuestionAnswer"
-    />
-
-    <div v-if="sessionId && !isNewTaskMode" class="side-task-entry">
-      <button type="button" class="side-task-btn" @click="openSideTask?.()">
-        + 边路任务
-      </button>
-    </div>
-
-    <div v-if="sessionStore.activeCompacting" class="compaction-hint" role="status">
-      <span class="compaction-spinner" aria-hidden="true"></span>
-      <span>正在整理历史对话，腾出上下文空间…</span>
-    </div>
-
-    <ExecutionErrorBanner
-      :message="executionError"
-      :can-retry="!agentRunning"
-      @retry="handleRetry"
-    />
-
-    <ChatInput
-      ref="chatInputRef"
-      :loading="agentRunning"
-      :can-continue="canContinue"
-      :initializing-workspace="initializingWorkspace"
-      :initializing-workspace-label="initializingWorkspaceLabel"
-      :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
-      :cloud-project-key="isNewTaskMode ? newTaskCloudProjectKey : cloudProjectKey"
-      :project-key="currentSession?.projectKey"
-      :session-title="isNewTaskMode ? '' : currentSession?.title"
-      :execution-mode="isNewTaskMode ? newTaskMode : executionMode"
-      :model-id="isNewTaskMode ? newTaskModelId : currentSession?.modelId"
-      :model-supports-vision="currentModelSupportsVision"
-      :permission-level="permissionLevel"
-      :is-new-task="isNewTaskMode"
-      :selected-agent-id="newTaskAgentId"
-      :agents="agentStore.agents"
-      :workspace-mode="isNewTaskMode ? newTaskWorkspaceMode : 'new'"
-      :git-clone-url="isNewTaskMode ? newTaskGitCloneUrl : ''"
-      :git-branch="isNewTaskMode ? newTaskGitBranch : ''"
-      :cloud-projects="isNewTaskMode ? newTaskCloudProjects : []"
-      :waiting-for-save="waitingForSave"
-      :draft-key="currentDraftKey"
-      @send="handleSend"
-      @stop="handleStop"
-      @continue="handleRetry"
-      @update:permission-level="handlePermissionLevelChange"
-      @update:execution-mode="handleNewTaskModeChange"
-      @update:workspace="handleNewTaskWorkspaceChange"
-      @update:cloud-project-key="handleNewTaskCloudProjectKeyChange"
-      @update:selected-agent-id="handleNewTaskAgentChange"
-      @update:model-id="handleModelSwitch"
-      @select:model="handleModelSelect"
-      @update:workspace-mode="handleNewTaskWorkspaceModeChange"
-      @update:git-clone-url="handleNewTaskGitCloneUrlChange"
-      @update:git-branch="handleNewTaskGitBranchChange"
-    />
+      <ChatInput
+        ref="chatInputRef"
+        layout="docked"
+        :loading="agentRunning"
+        :can-continue="canContinue"
+        :initializing-workspace="initializingWorkspace"
+        :initializing-workspace-label="initializingWorkspaceLabel"
+        :workspace="isNewTaskMode ? newTaskWorkspace : workspace"
+        :cloud-project-key="isNewTaskMode ? newTaskCloudProjectKey : cloudProjectKey"
+        :project-key="currentSession?.projectKey"
+        :session-title="isNewTaskMode ? '' : currentSession?.title"
+        :execution-mode="isNewTaskMode ? newTaskMode : executionMode"
+        :model-id="isNewTaskMode ? newTaskModelId : currentSession?.modelId"
+        :model-supports-vision="currentModelSupportsVision"
+        :permission-level="permissionLevel"
+        :is-new-task="isNewTaskMode"
+        :selected-agent-id="newTaskAgentId"
+        :agents="agentStore.agents"
+        :workspace-mode="isNewTaskMode ? newTaskWorkspaceMode : 'new'"
+        :git-clone-url="isNewTaskMode ? newTaskGitCloneUrl : ''"
+        :git-branch="isNewTaskMode ? newTaskGitBranch : ''"
+        :cloud-projects="isNewTaskMode ? newTaskCloudProjects : []"
+        :waiting-for-save="waitingForSave"
+        :draft-key="currentDraftKey"
+        @send="handleSend"
+        @stop="handleStop"
+        @continue="handleRetry"
+        @update:permission-level="handlePermissionLevelChange"
+        @update:execution-mode="handleNewTaskModeChange"
+        @update:workspace="handleNewTaskWorkspaceChange"
+        @update:cloud-project-key="handleNewTaskCloudProjectKeyChange"
+        @update:selected-agent-id="handleNewTaskAgentChange"
+        @update:model-id="handleModelSwitch"
+        @select:model="handleModelSelect"
+        @update:workspace-mode="handleNewTaskWorkspaceModeChange"
+        @update:git-clone-url="handleNewTaskGitCloneUrlChange"
+        @update:git-branch="handleNewTaskGitBranchChange"
+      />
+    </template>
   </div>
 </template>
 
@@ -144,6 +205,7 @@ import QueuePanel from './QueuePanel.vue'
 import ApprovalStack from './ApprovalStack.vue'
 import QuestionPanel from './QuestionPanel.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
+import StarterPrompts from './StarterPrompts.vue'
 
 // Inject shared refs from TaskView
 const agentId = inject<Ref<string>>('agentId')!
@@ -219,6 +281,19 @@ const {
 } = useChat(agentId, executionMode, newTaskModelId, permissionLevel)
 
 const historyLoading = computed(() => initialLoading.value || switchingSession.value)
+
+/** 新建会话中心态：无 session 且不在加载历史时展示居中 Composer */
+const showCenterComposer = computed(() => isNewTaskMode.value && !historyLoading.value)
+
+const isMobileViewport = ref(typeof window !== 'undefined' ? window.innerWidth <= 768 : false)
+function syncMobileViewport() {
+  isMobileViewport.value = window.innerWidth <= 768
+}
+
+function handleStarterSelect(text: string) {
+  chatInputRef.value?.insertText?.(text)
+  nextTick(() => chatInputRef.value?.focusInput())
+}
 
 // Sync workspace source state from ChatInput events to useChat
 watch(newTaskWorkspaceMode, (val) => { workspaceMode.value = val })
@@ -376,11 +451,17 @@ const typingRetry = computed(() => {
   return sessionStore.activeLlmRetry
 })
 
-onMounted(async () => {
-  const el = messagesContainer.value
+// 中心态 → 会话态切换后 messages 容器会重建，需重新挂载滚动监听
+watch(messagesContainer, (el, oldEl) => {
+  oldEl?.removeEventListener('scroll', handleScroll)
+  oldEl?.removeEventListener('wheel', handleWheel)
   el?.addEventListener('scroll', handleScroll, { passive: true })
   el?.addEventListener('wheel', handleWheel, { passive: true })
+}, { flush: 'post' })
+
+onMounted(async () => {
   window.addEventListener('mao:markdown-rendered', handleMarkdownRendered)
+  window.addEventListener('resize', syncMobileViewport, { passive: true })
 
   // 获取模型列表，用于新建任务模式下判断视觉能力
   try {
@@ -400,6 +481,7 @@ onUnmounted(() => {
   cleanup()
   // 恢复期可能注册的渲染监听与收尾定时器一并清理
   window.removeEventListener('mao:markdown-rendered', handleMarkdownRendered)
+  window.removeEventListener('resize', syncMobileViewport)
   disposeScroll()
   restoreGeneration++
 })
@@ -690,6 +772,104 @@ function handleNewTaskAgentChange(id: string | null) {
   min-height: 0;
   overflow: hidden;
   padding: 0px 20px;
+}
+
+/* ===== 新建会话中心态 ===== */
+.center-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 0 32px;
+  scrollbar-width: none;
+}
+
+.center-stage::-webkit-scrollbar {
+  display: none;
+}
+
+.center-brand {
+  margin-bottom: 12px;
+}
+
+.brand-mark {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  border: 1.5px solid var(--aw-hairline);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--aw-font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--aw-ink-muted-64);
+  background: var(--aw-surface);
+}
+
+.center-greeting {
+  margin: 0 0 20px;
+  font-family: var(--aw-font-display);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--aw-ink);
+  text-align: center;
+}
+
+.center-composer {
+  width: min(720px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.center-tips {
+  flex-shrink: 0;
+}
+
+/* 768–959：上半屏居中 */
+@media (min-width: 769px) and (max-width: 959px) {
+  .center-stage {
+    justify-content: flex-start;
+    padding-top: 12vh;
+  }
+
+  .center-greeting {
+    font-size: 20px;
+  }
+}
+
+/* ≤768：上锚定紧凑态，避免软键盘顶掉发送 */
+@media (max-width: 768px) {
+  .chat-panel {
+    padding: 0 12px;
+  }
+
+  .center-stage {
+    justify-content: flex-start;
+    padding: 16px 0 20px;
+    overflow-y: auto;
+  }
+
+  .center-brand {
+    display: none;
+  }
+
+  .center-greeting {
+    font-size: 17px;
+    margin-bottom: 12px;
+    align-self: flex-start;
+    text-align: left;
+  }
+
+  .center-composer {
+    width: 100%;
+  }
 }
 
 .messages {

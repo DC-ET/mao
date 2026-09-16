@@ -1,10 +1,18 @@
 <template>
-  <div class="chat-input-card" :class="{ 'is-initializing-workspace': initializingWorkspace, 'is-disabled': disabled }">
-    <!-- New task config bar -->
-    <div v-if="isNewTask" class="new-task-config-bar">
+  <div
+    class="chat-input-card"
+    :class="{
+      'is-initializing-workspace': initializingWorkspace,
+      'is-disabled': disabled,
+      'layout-centered': layout === 'centered',
+      'layout-docked': layout === 'docked',
+    }"
+  >
+    <!-- New task config bar (docked bottom layout only; centered uses chips in toolbar) -->
+    <div v-if="isNewTask && layout === 'docked'" class="new-task-config-bar">
       <AgentSelector
         :selected-agent-id="selectedAgentId"
-        @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
+        @update:selected-agent-id="(id: string | null) => emit('update:selectedAgentId', id)"
       />
       <div class="config-row" :class="{ 'is-mobile': isTouchDevice }">
         <div class="mode-selector">
@@ -139,7 +147,44 @@
           <input type="file" multiple :accept="executionMode === 'LOCAL' ? 'image/*' : ''" :disabled="disabled" @change="handleFileSelect" style="display: none" />
           <el-icon :size="16"><Plus /></el-icon>
         </label>
-        <div class="workspace-indicator" :class="{ 'has-workspace': !!workspace || executionMode === 'CLOUD', 'cloud-mode': executionMode === 'CLOUD' }" @click="executionMode !== 'CLOUD' && openWorkspace()">
+
+        <!-- Centered new-task chips -->
+        <template v-if="isNewTask && layout === 'centered'">
+          <AgentChip
+            :selected-agent-id="selectedAgentId"
+            :disabled="disabled"
+            :is-mobile="isMobileViewport"
+            @update:selected-agent-id="id => emit('update:selectedAgentId', id)"
+          />
+          <WorkspaceChip
+            :execution-mode="executionMode"
+            :workspace="workspace"
+            :cloud-project-key="cloudProjectKey"
+            :project-key="projectKey"
+            :workspace-mode="workspaceMode"
+            :git-clone-url="gitCloneUrl"
+            :git-branch="gitBranch"
+            :cloud-projects="cloudProjects"
+            :is-new-task="isNewTask"
+            :session-title="sessionTitle"
+            :disabled="disabled"
+            :is-mobile="isMobileViewport"
+            @update:execution-mode="handleModeChange"
+            @update:workspace="w => emit('update:workspace', w)"
+            @update:cloud-project-key="onCloudProjectKeyChange"
+            @update:workspace-mode="onWorkspaceModeChange"
+            @update:git-clone-url="onGitCloneUrlChange"
+            @update:git-branch="b => emit('update:gitBranch', b)"
+          />
+        </template>
+
+        <!-- Docked / session workspace indicator -->
+        <div
+          v-else
+          class="workspace-indicator"
+          :class="{ 'has-workspace': !!workspace || executionMode === 'CLOUD', 'cloud-mode': executionMode === 'CLOUD' }"
+          @click="executionMode !== 'CLOUD' && openWorkspace()"
+        >
           <template v-if="executionMode === 'CLOUD'">
             <el-icon :size="14"><Cloudy /></el-icon>
             <span>{{ cloudIndicatorLabel }}</span>
@@ -220,6 +265,8 @@ import { TextSelection } from '@tiptap/pm/state'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
 import AgentSelector from '../task/AgentSelector.vue'
+import AgentChip from './AgentChip.vue'
+import WorkspaceChip from './WorkspaceChip.vue'
 import ModelSelector from './ModelSelector.vue'
 import QuickCommandPanel from './QuickCommandPanel.vue'
 import FileReferencePanel from './FileReferencePanel.vue'
@@ -263,6 +310,8 @@ const props = withDefaults(defineProps<{
   sessionTitle?: string
   /** 会话处于 CANCELLED 终态时，输入框为空则显示绿色「继续」按钮（续跑语义同重试） */
   canContinue?: boolean
+  /** centered=新建会话居中态（chip 工具条、更高编辑区）；docked=底部贴靠（默认，会话中） */
+  layout?: 'centered' | 'docked'
 }>(), {
   disabled: false,
   loading: false,
@@ -284,6 +333,7 @@ const props = withDefaults(defineProps<{
   registerKey: 'chat',
   draftKey: null,
   canContinue: false,
+  layout: 'docked',
   // 视觉能力 tri-state：true=支持 / false=不支持 / undefined=未知（不拦截，交给后端校验）。
   // 必须显式声明，否则 Boolean 类型 props 未传时会被 Vue 强制为 false，导致发送被误拦截。
   modelSupportsVision: undefined,
@@ -308,6 +358,13 @@ const emit = defineEmits<{
 const sessionStore = useSessionStore()
 const isElectronClient = typeof window !== 'undefined' && !!(window as any).electronAPI
 const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
+const isMobileViewport = ref(typeof window !== 'undefined' ? window.innerWidth <= 768 : false)
+function syncMobileViewport() {
+  isMobileViewport.value = window.innerWidth <= 768
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', syncMobileViewport, { passive: true })
+}
 
 // Register with parent for file tree context menu "add to chat"
 const registerChatInput = inject<(key: string, handle: { insertFileReference: (filePath: string) => void }) => void>('registerChatInput', () => {})
@@ -1136,6 +1193,20 @@ function focusInput() {
   nextTick(() => editor.value?.commands.focus())
 }
 
+/** 快捷起步：把文案填入编辑器（追加到现有内容后），不自动发送。 */
+function insertText(text: string) {
+  if (props.disabled || !editor.value || !text) return
+  const ed = editor.value
+  const current = ed.getText({ blockSeparator: '\n' }).trim()
+  if (current) {
+    const endPos = ed.state.doc.content.size
+    ed.chain().focus('end').insertContentAt(endPos, `\n${text}`).run()
+  } else {
+    ed.chain().focus().insertContent(text).run()
+  }
+  editorContent.value = ed.getText({ blockSeparator: '\n' })
+}
+
 watch(() => props.disabled, (disabled) => {
   editor.value?.setEditable(!disabled)
   if (disabled) {
@@ -1267,10 +1338,13 @@ function restoreContent(text: string, files: File[]) {
   }
 }
 
-defineExpose({ focusInput, insertFileReference, clearInput, hasDraft, restoreContent })
+defineExpose({ focusInput, insertFileReference, clearInput, hasDraft, restoreContent, insertText })
 
 onBeforeUnmount(() => {
   unregisterChatInput(props.registerKey)
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', syncMobileViewport)
+  }
   if (fileSearchDebounce) {
     clearTimeout(fileSearchDebounce)
     fileSearchDebounce = null
@@ -1306,6 +1380,52 @@ onBeforeUnmount(() => {
 .chat-input-card:focus-within {
   border-color: var(--aw-primary);
   box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.08);
+}
+
+/* Centered new-session composer: larger editor, no top config bar */
+.chat-input-card.layout-centered {
+  border-radius: 20px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+}
+
+.chat-input-card.layout-centered:focus-within {
+  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.12), 0 4px 24px rgba(0, 0, 0, 0.04);
+}
+
+.chat-input-card.layout-centered .textarea-area {
+  padding: 16px 18px 8px;
+}
+
+.chat-input-card.layout-centered :deep(.rich-editor),
+.chat-input-card.layout-centered :deep(.rich-editor .ProseMirror) {
+  min-height: 96px;
+  max-height: 280px;
+  font-size: var(--aw-text-body);
+}
+
+.chat-input-card.layout-centered .toolbar {
+  padding: 10px 14px 12px;
+  flex-wrap: wrap;
+}
+
+.chat-input-card.layout-centered .toolbar-left {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+  .chat-input-card.layout-centered {
+    border-radius: 16px;
+  }
+
+  .chat-input-card.layout-centered :deep(.rich-editor),
+  .chat-input-card.layout-centered :deep(.rich-editor .ProseMirror) {
+    min-height: 72px;
+  }
+
+  .chat-input-card.layout-centered .toolbar {
+    padding: 8px 10px 10px;
+  }
 }
 
 /* Editor area */
