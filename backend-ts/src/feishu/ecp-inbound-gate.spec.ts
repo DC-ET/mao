@@ -8,6 +8,8 @@ import {
   senderUnionIdOf,
   startFeishuChannelAuthLink,
   withFeishuAuthLink,
+  buildFeishuAuthGuideCard,
+  feishuUnauthorizedFallbackText,
 } from './ecp-inbound-gate.js';
 import type { FeishuPendingBindingMessage } from './pending-binding.repository.js';
 
@@ -107,6 +109,33 @@ describe('isFeishuSenderEcpReady', () => {
     expect(isFeishuSenderEcpReady(true, {
       userId: 1, sessionTokenEnc: 'enc', expiresAt: '2099-01-01 00:00:00', renewStatus: 'ACTIVE',
     }, () => 'tok')).toBe(true);
+  });
+});
+
+describe('buildFeishuAuthGuideCard', () => {
+  it('puts the long auth URL on an open_url button instead of markdown text', () => {
+    const url = `https://ecp.example/auth?${'s='.repeat(200)}`;
+    const card = buildFeishuAuthGuideCard(feishuUnauthorizedGuide(true, true, 'p2p'), url);
+    const body = card.body as { elements: Array<Record<string, unknown>> };
+    const markdown = body.elements.filter((el) => el.tag === 'markdown');
+    expect(JSON.stringify(markdown)).not.toContain(url);
+    const columnSet = body.elements.find((el) => el.tag === 'column_set') as {
+      columns: Array<{ elements: Array<Record<string, unknown>> }>;
+    };
+    const button = columnSet.columns[0].elements[0];
+    expect(button.tag).toBe('button');
+    expect(button.text).toEqual({ tag: 'plain_text', content: '完成 ECP 登录' });
+    expect(button.behaviors).toEqual([{
+      type: 'open_url', default_url: url, pc_url: url, ios_url: url, android_url: url,
+    }]);
+  });
+});
+
+describe('feishuUnauthorizedFallbackText', () => {
+  it('does not embed the auth URL in the text fallback', () => {
+    const text = feishuUnauthorizedFallbackText(feishuUnauthorizedGuide(true, true, 'p2p'));
+    expect(text).toContain('完成 ECP 登录');
+    expect(text).not.toContain('https://');
   });
 });
 

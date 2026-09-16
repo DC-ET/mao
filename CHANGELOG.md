@@ -21,6 +21,10 @@
 
 - `MAO_BASE_URL` / `--base-url` 与 `mao-agent` 共用：可写站点根、`/api` 或 `/api/v1`，CLI 自行归一到 `/api/v1`。
 
+### 后端
+
+- 飞书通道 ECP/绑定引导改为交互卡片按钮跳转（`open_url`），不再把超长授权 URL 写进文本；私聊与群聊一致。卡片发送失败时回退文案提示去桌面/网页登录，避免链接被飞书截断。
+
 ### 终端 CLI（mao-agent）
 
 - 改读 `MAO_BASE_URL`，移除 `MAO_AGENT_BASE_URL`。同样接受站点根、`/api`、`/api/v1`。

@@ -10,6 +10,7 @@ export interface FeishuChannelAuthLink {
 export interface FeishuUnauthorizedGuide {
   title: string;
   body: string;
+  buttonLabel: string;
 }
 
 export const FEISHU_ECP_IDENTITY_MISMATCH_TEXT =
@@ -32,6 +33,45 @@ export function withFeishuAuthLink(body: string, link: string, action: '登录' 
   return url === '' ? body : `${body}\n点击完成${action}：${url}`;
 }
 
+export function feishuUnauthorizedFallbackText(guide: FeishuUnauthorizedGuide): string {
+  return `${guide.body}\n若未看到「${guide.buttonLabel}」按钮，请打开 Mao 桌面或网页完成操作。`;
+}
+
+/** 飞书卡片 JSON 2.0：正文 + 跳转按钮，避免把超长授权 URL 写进文本被客户端截断。 */
+export function buildFeishuAuthGuideCard(guide: FeishuUnauthorizedGuide, authUrl: string): Record<string, unknown> {
+  const url = authUrl.trim();
+  return {
+    schema: '2.0',
+    config: { update_multi: true },
+    header: { template: 'orange', title: { tag: 'plain_text', content: guide.title } },
+    body: {
+      direction: 'vertical',
+      padding: '12px 12px 12px 12px',
+      elements: [
+        { tag: 'markdown', content: guide.body },
+        {
+          tag: 'column_set', flex_mode: 'flow', background_style: 'default',
+          columns: [{
+            tag: 'column', width: 'auto', vertical_align: 'top',
+            elements: [{
+              tag: 'button',
+              text: { tag: 'plain_text', content: guide.buttonLabel },
+              type: 'primary',
+              behaviors: [{
+                type: 'open_url',
+                default_url: url,
+                pc_url: url,
+                ios_url: url,
+                android_url: url,
+              }],
+            }],
+          }],
+        },
+      ],
+    },
+  };
+}
+
 /** 记录待重放消息失败时仍应把授权链接发给用户，不能把已拿到的 URL 丢掉。 */
 export async function persistFeishuPendingAuth(insert: () => Promise<void>, state: string): Promise<boolean> {
   try {
@@ -51,6 +91,7 @@ export function feishuUnauthorizedGuide(ecpEnabled: boolean, bound: boolean, cha
         body: chatType === 'group'
           ? '已绑定飞书账号，但没有有效的 ECP 登录凭证。请完成 ECP 飞书登录后，再在群内使用机器人（执行内部工具需要该凭证）。'
           : '已绑定飞书账号，但没有有效的 ECP 登录凭证。请完成 ECP 飞书登录后再试（执行内部工具需要该凭证）。',
+        buttonLabel: '完成 ECP 登录',
       };
     }
     return {
@@ -58,6 +99,7 @@ export function feishuUnauthorizedGuide(ecpEnabled: boolean, bound: boolean, cha
       body: chatType === 'group'
         ? '请先完成 ECP 飞书登录，获得群内使用权限后再试。'
         : '请先完成 ECP 飞书登录后再试。',
+      buttonLabel: '完成 ECP 登录',
     };
   }
   return {
@@ -65,6 +107,7 @@ export function feishuUnauthorizedGuide(ecpEnabled: boolean, bound: boolean, cha
     body: chatType === 'group'
       ? '请先完成飞书账号绑定，获得群内使用权限后再试。'
       : '请先完成飞书账号绑定后再试。',
+    buttonLabel: '完成飞书绑定',
   };
 }
 

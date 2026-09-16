@@ -61,8 +61,7 @@ export class FeishuInboundProcessor {
       if (normalized.chatType === 'p2p') {
         const named = await this.resolveSenderName(normalized, accountId);
         if (this.options.authorizeSender != null && !(await this.options.authorizeSender(accountId, named))) {
-          await this.options.onUnauthorized?.(accountId, named);
-          await this.sendUnauthorized(accountId, named);
+          await this.sendUnauthorizedGuide(accountId, named);
         } else if (this.handler.authorizeDirectMessage(accountId, named.senderUnionId ?? named.senderId!, named.text)) {
           const resolvedUserId = await this.options.resolveUserId?.(accountId, named);
           const quotedContext = await this.resolveQuoted(accountId, named);
@@ -96,14 +95,7 @@ export class FeishuInboundProcessor {
       const named = await this.resolveSenderName(normalized, accountId);
       void this.enrichGroupMessage(accountId, logId, named);
       if (this.options.authorizeSender != null && !(await this.options.authorizeSender(accountId, named))) {
-        await this.options.onUnauthorized?.(accountId, named);
-        let sentCard = false;
-        try {
-          sentCard = await this.options.sendUnauthorizedCard?.(accountId, named) ?? false;
-        } catch (error) {
-          console.warn(`飞书绑定卡片发送失败，使用文本回退: ${error instanceof Error ? error.message : String(error)}`);
-        }
-        if (!sentCard) await this.sendUnauthorized(accountId, named);
+        await this.sendUnauthorizedGuide(accountId, named);
         completed = true;
         return;
       }
@@ -224,6 +216,17 @@ export class FeishuInboundProcessor {
     ).trim();
     if (placeholder === '') placeholder = `[${event.messageType} msg=${event.messageId ?? '未知'}]`;
     return { ...event, text: placeholder };
+  }
+
+  private async sendUnauthorizedGuide(accountId: string, event: FeishuNormalizedMessage): Promise<void> {
+    await this.options.onUnauthorized?.(accountId, event);
+    let sentCard = false;
+    try {
+      sentCard = await this.options.sendUnauthorizedCard?.(accountId, event) ?? false;
+    } catch (error) {
+      console.warn(`飞书绑定卡片发送失败，使用文本回退: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!sentCard) await this.sendUnauthorized(accountId, event);
   }
 
   private async sendUnauthorized(accountId: string, event: FeishuNormalizedMessage): Promise<void> {

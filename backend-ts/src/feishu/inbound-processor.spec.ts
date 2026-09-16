@@ -213,6 +213,21 @@ describe('FeishuInboundProcessor', () => {
     expect(sendReply).toHaveBeenCalledWith('1', expect.anything(), expect.stringContaining('绑定'));
   });
 
+  it('sends unauthorized card in p2p without falling back to text', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    const sendReply = vi.fn(async () => undefined);
+    const sendUnauthorizedCard = vi.fn(async () => true);
+    const processor = new FeishuInboundProcessor(makeHandler(), {
+      messageService,
+      authorizeSender: async () => false,
+      sendReply,
+      sendUnauthorizedCard,
+    });
+    await processor.process('1', makeEvent({ chatType: 'p2p' }));
+    expect(sendUnauthorizedCard).toHaveBeenCalledOnce();
+    expect(sendReply).not.toHaveBeenCalled();
+  });
+
   it('uses customized unauthorized text with binding link', async () => {
     messageService.claimInboundMessage.mockResolvedValueOnce(true);
     const sendReply = vi.fn(async () => undefined);

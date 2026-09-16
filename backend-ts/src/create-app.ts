@@ -232,11 +232,12 @@ import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.re
 import {
   completeFeishuPendingAfterEcp,
   FEISHU_ECP_IDENTITY_MISMATCH_TEXT,
+  buildFeishuAuthGuideCard,
+  feishuUnauthorizedFallbackText,
   feishuUnauthorizedGuide,
   persistFeishuPendingAuth,
   senderUnionIdOf,
   startFeishuChannelAuthLink,
-  withFeishuAuthLink,
 } from './feishu/ecp-inbound-gate.js';
 import { hasUsableEcpSession } from './auth/ecp-session.repository.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
@@ -1666,7 +1667,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sendReply: async (accountId, event, text) => { await sendFeishuText(Number(accountId), event, text); },
     sendUnauthorizedCard: async (accountId, event) => {
       const client = await getFeishuClient(Number(accountId));
-      if (client == null || event.chatType !== 'group' || event.chatId == null || event.messageId == null) return false;
+      if (client == null || event.messageId == null) return false;
+      if (event.chatType === 'group' && event.chatId == null) return false;
+      if (event.chatType === 'p2p' && event.senderId == null) return false;
       let auth: { authUrl: string; state: string } | null = null;
       try {
         auth = await startFeishuChannelAuthLink({
@@ -1681,72 +1684,47 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       }
       if (auth == null || auth.authUrl.trim() === '') return false;
       const inboundMessageId = event.messageId;
-      if (inboundMessageId == null) return false;
-      await persistFeishuPendingAuth(
+      const persisted = await persistFeishuPendingAuth(
         () => pendingBindingMessages.insert({ state: auth.state, appId: Number(accountId), messageId: inboundMessageId, event }),
         auth.state,
       );
       const unionId = senderUnionIdOf(event);
       const bound = unionId != null && (await feishuBinding.findUserIdByUnionId(unionId)) != null;
-      const guide = feishuUnauthorizedGuide(await ecpAuth.isEnabled(), bound, event.chatType);
-      const card = {
-        schema: '2.0', config: { update_multi: true },
-        header: { template: 'orange', title: { tag: 'plain_text', content: guide.title } },
-        body: { direction: 'vertical', padding: '12px 12px 12px 12px', elements: [
-          { tag: 'markdown', content: guide.body },
-          { tag: 'markdown', content: `[点击完成${await ecpAuth.isEnabled() ? '登录' : '绑定'}](${auth.authUrl})` },
-        ] },
-      };
+      const ecpEnabled = await ecpAuth.isEnabled();
+      const guide = feishuUnauthorizedGuide(ecpEnabled, bound, event.chatType);
+      const card = buildFeishuAuthGuideCard(guide, auth.authUrl);
+      const data = { msg_type: 'interactive' as const, content: JSON.stringify(card) };
       let response;
       try {
-        response = await client.im.v1.message.reply({
-          path: { message_id: event.messageId },
-          data: { msg_type: 'interactive', content: JSON.stringify(card) },
-        });
+        response = await (event.chatType === 'group'
+          ? client.im.v1.message.reply({ path: { message_id: inboundMessageId }, data })
+          : client.im.v1.message.create({
+            params: { receive_id_type: 'open_id' },
+            data: { ...data, receive_id: event.senderId! },
+          }));
       } catch (error) {
-        await pendingBindingMessages.fail(auth.state);
+        if (persisted) await pendingBindingMessages.fail(auth.state);
         throw error;
       }
       const cardMessageId = (response as { data?: { message_id?: string } }).data?.message_id;
       if (cardMessageId == null || cardMessageId === '') {
-        await pendingBindingMessages.fail(auth.state);
+        if (persisted) await pendingBindingMessages.fail(auth.state);
         return false;
       }
-      try {
-        await pendingBindingMessages.setCardMessageId(auth.state, cardMessageId);
-      } catch (error) {
-        await pendingBindingMessages.fail(auth.state);
-        throw error;
+      if (persisted) {
+        try {
+          await pendingBindingMessages.setCardMessageId(auth.state, cardMessageId);
+        } catch (error) {
+          console.error(`飞书登录引导卡片已发送但回写 card_message_id 失败, state=${auth.state}`, error);
+        }
       }
       return true;
     },
-    unauthorizedText: async (accountId, event) => {
+    unauthorizedText: async (_accountId, event) => {
       const ecpEnabled = await ecpAuth.isEnabled();
       const unionId = senderUnionIdOf(event);
       const bound = unionId != null && (await feishuBinding.findUserIdByUnionId(unionId)) != null;
-      const guide = feishuUnauthorizedGuide(ecpEnabled, bound, event.chatType);
-      let link = '';
-      try {
-        const qr = await startFeishuChannelAuthLink({
-          ecpEnabled,
-          feishuEnabled: await feishu.isEnabled(),
-          startEcp: () => ecpAuth.startFeishuLogin('desktop'),
-          startFeishu: () => feishu.getQrCodeUrl(),
-        });
-        if (qr != null) {
-          link = qr.authUrl ?? '';
-          if (event.messageId != null) {
-            const inboundMessageId = event.messageId;
-            await persistFeishuPendingAuth(
-              () => pendingBindingMessages.insert({ state: qr.state, appId: Number(accountId), messageId: inboundMessageId, event }),
-              qr.state,
-            );
-          }
-        }
-      } catch (error) {
-        console.error('飞书未授权引导获取登录链接失败', error);
-      }
-      return withFeishuAuthLink(guide.body, link, ecpEnabled ? '登录' : '绑定');
+      return feishuUnauthorizedFallbackText(feishuUnauthorizedGuide(ecpEnabled, bound, event.chatType));
     },
   });
   pendingBindingProcessor = feishuInboundProcessor;
