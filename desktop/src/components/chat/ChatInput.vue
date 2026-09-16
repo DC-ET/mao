@@ -1519,14 +1519,13 @@ onBeforeUnmount(() => {
     height: 36px;
   }
 
+  /* 移动端：模型名放宽可视宽度，避免只剩「ds-v4.1-…」；字号/颜色沿用会话态输入框（12px） */
   .chat-input-card.layout-centered .toolbar-right :deep(.model-name) {
-    /* 移动端：模型名给足可视宽度与字号，避免只剩「ds-v4.1-…」 */
     max-width: 148px;
     min-height: 34px;
     display: inline-flex;
     align-items: center;
     padding: 0 8px;
-    font-size: var(--aw-text-caption);
   }
 }
 

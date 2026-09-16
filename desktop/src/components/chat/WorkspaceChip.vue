@@ -82,7 +82,7 @@
         :with-header="true"
         title="工作区设置"
       >
-        <div class="ws-config">
+        <div class="ws-config is-mobile">
           <div class="ws-section-title">执行模式</div>
           <div class="mode-seg">
             <button type="button" class="mode-btn" :class="{ active: executionMode === 'CLOUD' }" @click="switchMode('CLOUD')">
@@ -100,6 +100,7 @@
           </div>
           <WorkspaceConfigFields
             :execution-mode="executionMode"
+            :is-mobile="true"
             :workspace="workspace"
             :cloud-project-key="cloudProjectKey"
             :workspace-mode="workspaceMode"
@@ -269,6 +270,13 @@ function onGitCloneUrlChange(value: string) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* 触屏底部抽屉：执行模式分段按钮高度/字号对齐大号输入框 */
+.ws-config.is-mobile .mode-btn {
+  height: 40px;
+  padding: 0 16px;
+  font-size: var(--aw-text-caption);
 }
 
 .ws-section-title {

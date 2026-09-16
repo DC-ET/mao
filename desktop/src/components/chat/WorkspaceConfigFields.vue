@@ -1,5 +1,5 @@
 <template>
-  <div class="ws-fields">
+  <div class="ws-fields" :class="{ 'is-mobile': isMobile }">
     <template v-if="executionMode === 'CLOUD'">
       <div class="ws-section-title">工作区</div>
       <div class="mode-seg workspace-mode-seg">
@@ -18,7 +18,7 @@
         v-if="workspaceMode === 'existing'"
         :model-value="cloudProjectKey"
         placeholder="选择工作区"
-        size="small"
+        :size="fieldSize"
         class="ws-field"
         @update:model-value="(v: string) => emit('update:cloudProjectKey', v || '')"
       >
@@ -28,7 +28,7 @@
         <el-input
           :model-value="gitCloneUrl"
           placeholder="HTTPS Git 地址"
-          size="small"
+          :size="fieldSize"
           clearable
           class="ws-field"
           @update:model-value="(v: string) => emit('update:gitCloneUrl', v || '')"
@@ -36,7 +36,7 @@
         <el-input
           :model-value="gitBranch"
           placeholder="分支（可选）"
-          size="small"
+          :size="fieldSize"
           clearable
           class="ws-field"
           @update:model-value="(v: string) => emit('update:gitBranch', v || '')"
@@ -46,7 +46,7 @@
         v-else
         :model-value="cloudProjectKey"
         placeholder="项目名（留空=临时工作区）"
-        size="small"
+        :size="fieldSize"
         clearable
         class="ws-field"
         @update:model-value="(v: string) => emit('update:cloudProjectKey', v || '')"
@@ -79,7 +79,12 @@ const props = defineProps<{
   gitCloneUrl?: string
   gitBranch?: string
   cloudProjects?: Array<{ name: string; path: string; isGit: boolean }>
+  /** 移动端底部抽屉：表单控件放大到触屏可用尺寸（输入框 40px，与智能体搜索框一致） */
+  isMobile?: boolean
 }>()
+
+/** 触屏抽屉用大号控件（40px / 14px），桌面 popover 保持 small（24px） */
+const fieldSize = computed(() => (props.isMobile ? 'large' : 'small'))
 
 const emit = defineEmits<{
   'update:cloudProjectKey': [key: string]
@@ -153,6 +158,18 @@ async function selectWorkspace() {
 
 .ws-field {
   width: 100%;
+}
+
+/* 触屏抽屉：分段按钮与目录按钮对齐大号输入框高度 */
+.ws-fields.is-mobile .mode-btn {
+  height: 40px;
+  padding: 0 16px;
+  font-size: var(--aw-text-caption);
+}
+
+.ws-fields.is-mobile .local-dir-btn {
+  min-height: 40px;
+  font-size: var(--aw-text-caption);
 }
 
 .local-dir-btn {
