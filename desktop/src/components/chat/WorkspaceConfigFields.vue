@@ -197,24 +197,9 @@ async function selectWorkspace() {
 </style>
 
 <style>
-/* 工作区下拉列表：选项文字与「模型选择」列表一致（14px / 深色 / 常规字重），
-   选中项去掉 Element Plus 默认的加粗 + 主色，仅用淡蓝底标示。
-   注意：全局把 --el-font-size-base 覆盖成了 17px（见 style.css），下拉项默认取它，
-   会比输入框（大号 14px）大一圈，这里显式对齐为 14px。 */
+/* 工作区下拉：选项文字样式已统一在全局（style.css 的 .el-select-dropdown 规则，
+   14px / 深色 / 常规字重 / 选中淡蓝底），这里只补圆角 */
 .ws-field-select-dropdown.el-select-dropdown {
   border-radius: var(--aw-radius-md);
-}
-
-.ws-field-select-dropdown .el-select-dropdown__item {
-  font-family: var(--aw-font-text);
-  font-size: var(--aw-text-caption);
-  font-weight: 400;
-  color: var(--aw-body);
-}
-
-.ws-field-select-dropdown .el-select-dropdown__item.is-selected {
-  font-weight: 400;
-  color: var(--aw-body);
-  background: var(--aw-primary-lighter);
 }
 </style>

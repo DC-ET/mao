@@ -369,6 +369,25 @@ a:hover {
   --el-box-shadow-light: none;
 }
 
+/*
+ * Element Plus 下拉列表（el-select）选项文字统一为 App 小号正文：
+ * --el-font-size-base 被全局改成 17px，而 EP 下拉项默认取它，会比输入框大一圈、显得粗壮。
+ * 选中项沿用「模型选择」列表的表达：常规字重 + 深色文字 + 淡蓝底（保留 EP 的 ✓）。
+ * 用 .el-select-dropdown 前缀抬高优先级（盖过 EP 默认），同时低于各组件自带的
+ * popper 定制（如仓库选择器的等宽 12px、输入区紧凑下拉），组件样式仍可覆盖。
+ */
+.el-select-dropdown .el-select-dropdown__item,
+.el-select-dropdown .el-select-dropdown__item.is-selected {
+  font-family: var(--aw-font-text);
+  font-size: var(--aw-text-caption);
+  font-weight: 400;
+  color: var(--aw-body);
+}
+
+.el-select-dropdown .el-select-dropdown__item.is-selected {
+  background: var(--aw-primary-lighter);
+}
+
 /* Element Plus Dark Mode */
 [data-theme="dark"] {
   --el-bg-color: #141416;
