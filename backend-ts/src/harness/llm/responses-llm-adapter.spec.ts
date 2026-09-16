@@ -6,7 +6,6 @@ import {
   mapResponsesStatusToFinishReason,
   parseResponsesChatResponse,
   REASONING_REF_PREFIX,
-  RESPONSES_MAX_OUTPUT_TOKENS,
   ResponsesLlmAdapter,
 } from './responses-llm-adapter.js';
 import type { ChatRequest, ChatUsage, LlmModelConfig, LlmRetryConfig, StreamCallback, StreamChunk, ToolCall } from './chat-request.js';
@@ -280,7 +279,7 @@ describe('ResponsesLlmAdapter - chat（非流式）', () => {
     if (server) await server.close();
   });
 
-  it('POST {baseUrl}/responses，请求体含 store/include/max_output_tokens 与转换后的 tools', async () => {
+  it('POST {baseUrl}/responses，请求体含 store/include 与转换后的 tools，不传 max_output_tokens', async () => {
     server = new QueueServer();
     server.enqueueJson(JSON.stringify({
       id: 'resp_1', object: 'response', status: 'completed', model: 'gpt-responses-test',
@@ -297,7 +296,7 @@ describe('ResponsesLlmAdapter - chat（非流式）', () => {
     expect(body.stream).toBe(false);
     expect(body.store).toBe(false);
     expect(body.include).toEqual(['reasoning.encrypted_content']);
-    expect(body.max_output_tokens).toBe(RESPONSES_MAX_OUTPUT_TOKENS);
+    expect(body.max_output_tokens).toBeUndefined();
     expect(body.temperature).toBe(0.2);
     expect(Array.isArray(body.tools)).toBe(true);
     const tool = (body.tools as Record<string, unknown>[])[0];

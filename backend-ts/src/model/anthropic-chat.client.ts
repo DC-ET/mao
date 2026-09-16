@@ -24,8 +24,6 @@ export class AnthropicChatClient implements LlmChatClient {
     const converted = convertMessages(request.messages as ChatMessage[]);
     const body: Record<string, unknown> = {
       model: config.modelId,
-      // 连通性测试只需极短输出，用小 max_tokens 降低探测开销
-      max_tokens: 1024,
       // 固定非流式：本客户端仅按 JSON 解析响应，不支持 SSE
       stream: false,
       messages: converted.messages,

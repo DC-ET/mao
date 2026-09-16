@@ -9,7 +9,7 @@ function fetchOk(body: Record<string, unknown>): typeof fetch {
 }
 
 describe('AnthropicChatClient', () => {
-  it('POST {baseUrl}/messages，system 拆顶层、双认证头、max_tokens', async () => {
+  it('POST {baseUrl}/messages，system 拆顶层、双认证头、不传 max_tokens', async () => {
     let capturedUrl = '';
     let capturedInit: RequestInit | undefined;
     const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -35,7 +35,7 @@ describe('AnthropicChatClient', () => {
     expect(headers['anthropic-version']).toBe('2023-06-01');
     const body = JSON.parse(capturedInit?.body as string) as Record<string, unknown>;
     expect(body.model).toBe('claude-test');
-    expect(body.max_tokens).toBe(1024);
+    expect(body.max_tokens).toBeUndefined();
     expect(body.system).toBe('sys');
     expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }]);
 

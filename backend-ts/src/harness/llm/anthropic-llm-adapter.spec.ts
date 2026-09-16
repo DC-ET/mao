@@ -1,7 +1,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AnthropicLlmAdapter, convertMessages, ANTHROPIC_MAX_OUTPUT_TOKENS } from './anthropic-llm-adapter.js';
+import { AnthropicLlmAdapter, convertMessages } from './anthropic-llm-adapter.js';
 import type { ChatRequest, ChatUsage, LlmModelConfig, LlmRetryConfig, StreamCallback, StreamChunk } from './chat-request.js';
 import { DEFAULT_LLM_RETRY } from './chat-request.js';
 
@@ -134,7 +134,7 @@ describe('AnthropicLlmAdapter - chat (non-stream)', () => {
     if (server) await server.close();
   });
 
-  it('POST {baseUrl}/messages，携带双认证头与 anthropic-version，请求体含 max_tokens 与转换后的 tools', async () => {
+  it('POST {baseUrl}/messages，携带双认证头与 anthropic-version，请求体含转换后的 tools，不传 max_tokens', async () => {
     server = new QueueServer();
     server.enqueueJson('{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"你好"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}');
     await server.start();
@@ -146,7 +146,7 @@ describe('AnthropicLlmAdapter - chat (non-stream)', () => {
     expect(server.headers[0]['anthropic-version']).toBe('2023-06-01');
     const body = JSON.parse(server.bodies[0]) as Record<string, unknown>;
     expect(body.model).toBe('claude-test');
-    expect(body.max_tokens).toBe(ANTHROPIC_MAX_OUTPUT_TOKENS);
+    expect(body.max_tokens).toBeUndefined();
     expect(body.stream).toBe(false);
     expect(body.system).toBeUndefined();
     expect(body.tools).toEqual([{ name: 'lookup', description: 'lookup tool', input_schema: { type: 'object', properties: { q: { type: 'string' } } } }]);

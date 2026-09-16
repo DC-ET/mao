@@ -26,9 +26,6 @@ import { applyClientImpersonationHeaders } from './client-impersonation-headers.
 
 const IMAGE_PLACEHOLDER = '「此处用户上传了图片」';
 
-/** 默认输出上限：Responses API 的 max_output_tokens 含 reasoning token，推理模型需留思考预算。 */
-export const RESPONSES_MAX_OUTPUT_TOKENS = 32768;
-
 class StreamInterruptedAfterOutputException extends Error {
   constructor(cause?: unknown) {
     super('LLM stream interrupted after output started; automatic retry disabled');
@@ -831,8 +828,6 @@ function buildResponsesBody(request: ChatRequest, config: LlmModelConfig, messag
   // 首轮工具调用流式期间引用尚未入历史、include 为空 → 拿不到密文 → 下轮无引用可回传，形成死锁。
   // 代价仅是请求体多一个空 include 项（纯文本轮网关不下发 reasoning 时无额外输出）。
   body.include = ['reasoning.encrypted_content'];
-  // 输出上限含 reasoning token，推理模型需预留思考预算，统一给足
-  body.max_output_tokens = RESPONSES_MAX_OUTPUT_TOKENS;
   return body;
 }
 

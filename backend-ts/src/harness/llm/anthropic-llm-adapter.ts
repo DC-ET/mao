@@ -24,9 +24,6 @@ import { applyClientImpersonationHeaders } from './client-impersonation-headers.
 
 const IMAGE_PLACEHOLDER = '「此处用户上传了图片」';
 
-/** Anthropic Messages API 要求显式传 max_tokens，本期不落库，统一常量。 */
-export const ANTHROPIC_MAX_OUTPUT_TOKENS = 16384;
-
 const ANTHROPIC_VERSION = '2023-06-01';
 
 const SUPPORTED_IMAGE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
@@ -538,7 +535,6 @@ export class AnthropicLlmAdapter implements LlmAdapter {
     const converted = convertMessages(messages ?? []);
     const body: Record<string, unknown> = {
       model: config.modelId ?? '',
-      max_tokens: ANTHROPIC_MAX_OUTPUT_TOKENS,
       stream,
       messages: converted.messages,
     };

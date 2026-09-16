@@ -15,6 +15,12 @@
 
 ---
 
+## 0.0.131 (2026-09-16)
+
+### 后端
+
+- LLM 调用不再向任何协议（OpenAI Chat / Responses / Anthropic Messages）发送 `max_tokens` 与 `max_output_tokens` 参数，输出上限交由上游/网关默认策略决定；删除 `RESPONSES_MAX_OUTPUT_TOKENS`、`ANTHROPIC_MAX_OUTPUT_TOKENS` 常量，连通性探测客户端同步去掉。
+
 ## 0.0.130 (2026-09-16)
 
 ### 前端（桌面 / Web / 安卓）

@@ -1,6 +1,6 @@
 import type { LlmChatClient, LlmChatRequest, LlmChatResponse, LlmModelConfig } from './types.js';
 import { applyClientImpersonationHeaders } from '../harness/llm/client-impersonation-headers.js';
-import { convertMessages, mapResponsesStatusToFinishReason, RESPONSES_MAX_OUTPUT_TOKENS } from '../harness/llm/responses-llm-adapter.js';
+import { convertMessages, mapResponsesStatusToFinishReason } from '../harness/llm/responses-llm-adapter.js';
 import type { ChatMessage } from '../harness/llm/chat-request.js';
 
 export interface ResponsesChatClientOptions {
@@ -27,8 +27,6 @@ export class ResponsesChatClient implements LlmChatClient {
       input: converted.input,
       // stateless：连通性探测不落服务端会话
       store: false,
-      // 连通性测试只需极短输出；max_output_tokens 含 reasoning token，同样预留预算
-      max_output_tokens: RESPONSES_MAX_OUTPUT_TOKENS,
       include: [],
       // 固定非流式：本客户端仅按 JSON 解析响应，不支持 SSE
       stream: false,
