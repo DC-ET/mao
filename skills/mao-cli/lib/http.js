@@ -8,6 +8,14 @@ const { resolveToken } = require('./auth-store');
 const DEFAULT_BASE_URL = 'https://mao.etarch.cn/api/v1';
 const DEFAULT_TIMEOUT_MS = 30000;
 
+/** 归一到 REST 根 `.../api/v1`。接受站点根、`/api` 或 `/api/v1`。 */
+function normalizeCliBaseUrl(raw) {
+  let url = String(raw).trim().replace(/\/+$/, '');
+  if (url.endsWith('/v1')) url = url.slice(0, -3).replace(/\/+$/, '');
+  if (!url.endsWith('/api')) url += '/api';
+  return `${url}/v1`;
+}
+
 function resolveBaseUrl(cliBaseUrl) {
   const raw =
     cliBaseUrl ||
@@ -15,7 +23,7 @@ function resolveBaseUrl(cliBaseUrl) {
     process.env.MAO_USER_BASE_URL ||
     process.env.MAO_ADMIN_BASE_URL ||
     DEFAULT_BASE_URL;
-  return String(raw).replace(/\/+$/, '');
+  return normalizeCliBaseUrl(raw);
 }
 
 function buildUrl(baseUrl, apiPath, query) {
@@ -306,6 +314,7 @@ async function downloadToFile(options) {
 module.exports = {
   DEFAULT_BASE_URL,
   DEFAULT_TIMEOUT_MS,
+  normalizeCliBaseUrl,
   resolveBaseUrl,
   request,
   get,

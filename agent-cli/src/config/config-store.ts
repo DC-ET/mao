@@ -126,7 +126,7 @@ export function resolveConfig(cli: {
 }): ResolvedConfig {
   const user = loadUserConfig();
   const project = findProjectConfig() ?? {};
-  const envBase = process.env.MAO_AGENT_BASE_URL;
+  const envBase = process.env.MAO_BASE_URL;
   const envFormat = process.env.MAO_AGENT_OUTPUT_FORMAT as OutputFormat | undefined;
   const envVerbose = envBool(process.env.MAO_AGENT_VERBOSE);
   const baseUrl = cli.baseUrl || envBase || project.baseUrl || user.baseUrl || DEFAULT_BASE_URL;

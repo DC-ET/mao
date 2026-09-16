@@ -17,7 +17,7 @@ mao-agent login
 mao-agent
 ```
 
-需 Node.js ≥ 20。请用 `MAO_AGENT_BASE_URL` 指向自己的后端（到 `/api` 为止）。未配置时的回落见 [config.md](config.md#站点域名)。详见 [mao-agent.md](mao-agent.md)。
+需 Node.js ≥ 20。请用 `MAO_BASE_URL` 指向自己的站点（如 `https://mao.example.com`）。未配置时的回落见 [config.md](config.md#站点域名)。详见 [mao-agent.md](mao-agent.md)。
 
 ## 1. 获取源码
 

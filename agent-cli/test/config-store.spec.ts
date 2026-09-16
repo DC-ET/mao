@@ -11,7 +11,7 @@ let home = '';
 const envKeys = [
   'HOME',
   'USERPROFILE',
-  'MAO_AGENT_BASE_URL',
+  'MAO_BASE_URL',
   'MAO_AGENT_OUTPUT_FORMAT',
   'MAO_AGENT_VERBOSE',
 ] as const;
@@ -23,7 +23,7 @@ beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-agent-cfg-'));
   process.env.HOME = home;
   process.env.USERPROFILE = home;
-  delete process.env.MAO_AGENT_BASE_URL;
+  delete process.env.MAO_BASE_URL;
   delete process.env.MAO_AGENT_OUTPUT_FORMAT;
   delete process.env.MAO_AGENT_VERBOSE;
   vi.resetModules();
@@ -87,9 +87,9 @@ describe('resolveConfig precedence', () => {
     });
   });
 
-  it('lets the environment override the user config', async () => {
+  it('lets MAO_BASE_URL override the user config', async () => {
     writeUserConfig({ baseUrl: 'https://user.example/api', outputFormat: 'json' });
-    process.env.MAO_AGENT_BASE_URL = 'https://env.example/api';
+    process.env.MAO_BASE_URL = 'https://env.example/api';
     process.env.MAO_AGENT_OUTPUT_FORMAT = 'stream-json';
     process.env.MAO_AGENT_VERBOSE = '1';
     const { resolveConfig } = await store();
@@ -101,7 +101,7 @@ describe('resolveConfig precedence', () => {
 
   it('lets CLI flags win over everything', async () => {
     writeUserConfig({ baseUrl: 'https://user.example/api', ui: { asciiOnly: false, queuedInput: true } });
-    process.env.MAO_AGENT_BASE_URL = 'https://env.example/api';
+    process.env.MAO_BASE_URL = 'https://env.example/api';
     const { resolveConfig } = await store();
     const cfg = resolveConfig({
       baseUrl: 'https://cli.example/api',

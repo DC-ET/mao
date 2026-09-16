@@ -151,7 +151,7 @@ mao model list --provider openai --status 1
 `POST /models`
 
 ```bash
-export MAO_BASE_URL=https://mao.example.com/api/v1
+export MAO_BASE_URL=https://mao.example.com
 mao model create \
   --name 'GPT-4o' \
   --provider openai \

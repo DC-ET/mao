@@ -15,6 +15,16 @@
 
 ---
 
+## 0.0.129 (2026-09-16)
+
+### 终端 CLI（mao-cli）
+
+- `MAO_BASE_URL` / `--base-url` 与 `mao-agent` 共用：可写站点根、`/api` 或 `/api/v1`，CLI 自行归一到 `/api/v1`。
+
+### 终端 CLI（mao-agent）
+
+- 改读 `MAO_BASE_URL`，移除 `MAO_AGENT_BASE_URL`。同样接受站点根、`/api`、`/api/v1`。
+
 ## 0.0.128 (2026-09-16)
 
 ### 后端

@@ -76,7 +76,7 @@ export const FLAG_SPECS: readonly FlagSpec[] = [
   { name: 'replay-full', kind: 'boolean', group: '输出与诊断', desc: 'resume 时完整打印历史消息，默认只摘要最后 3 轮' },
   { name: 'debug', kind: 'boolean', group: '输出与诊断', desc: '打印 WS 收发帧与 REST 摘要到 stderr（已脱敏）' },
   { name: 'trace-file', kind: 'value', arg: '<path>', group: '输出与诊断', desc: '完整事件流落盘为 NDJSON' },
-  { name: 'base-url', kind: 'value', arg: '<url>', group: '输出与诊断', desc: 'API 根地址（到 /api 为止，不含 /v1；私有化必须指定自己的实例）' },
+  { name: 'base-url', kind: 'value', arg: '<url>', group: '输出与诊断', desc: '站点地址（接受站点根 /api /api/v1；优先于 MAO_BASE_URL）' },
   { name: 'token', kind: 'value', arg: '<jwt>', group: '输出与诊断', desc: '一次性覆盖本地 token（更推荐环境变量 MAO_TOKEN）' },
   { name: 'timeout-ms', kind: 'value', arg: '<n>', group: '输出与诊断', desc: `单次 REST 请求超时，默认 ${DEFAULT_TIMEOUT_MS}` },
 
@@ -288,9 +288,11 @@ export function consumesPipedPrompt(command: CommandName): boolean {
   return command === 'chat';
 }
 
+/** 归一到 `.../api`。接受站点根、`/api` 或 `/api/v1`。 */
 export function normalizeBaseUrl(raw: string): string {
   let url = String(raw).trim().replace(/\/+$/, '');
   if (url.endsWith('/v1')) url = url.slice(0, -3).replace(/\/+$/, '');
+  if (!url.endsWith('/api')) url += '/api';
   return url;
 }
 
@@ -476,7 +478,7 @@ const USAGE = `用法:
   mao-agent update [--check]         拉取最新源码并重装；--check 仅检查新版本`;
 
 const REFERENCE = `环境变量:
-  MAO_AGENT_BASE_URL                 私有化请设为自己的 API 根（到 /api 为止）；未设置时回落到开源示例域名
+  MAO_BASE_URL                       私有化请设为自己的站点，如 https://mao.example.com（兼容 /api 与 /api/v1）
   MAO_TOKEN / MAO_REFRESH_TOKEN      与 mao CLI 同名（兼容 MAO_ADMIN_* / MAO_USER_*）
   MAO_AGENT_OUTPUT_FORMAT            默认输出格式
   MAO_AGENT_VERBOSE                  1/true 默认展开工具输出，0/false 强制折叠

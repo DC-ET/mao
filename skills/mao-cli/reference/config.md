@@ -6,7 +6,7 @@
 
 文档与命令示例统一用 `https://mao.example.com` 表示**你部署后的对外站点**（把主机名换成自己的域名）。路径约定见 [deploy.md](deploy.md)：桌面 `/`、管理后台 `/admin/`、API `/api/`、上传 `/uploads/`。
 
-`mao-cli` / `mao-agent` 未设置 `MAO_BASE_URL` / `MAO_AGENT_BASE_URL` / `--base-url` 时，会回落到开源仓库内置的示例域名（`https://mao.etarch.cn`，最低优先级）。**私有化部署后该地址通常不可达**，必须改成自己的实例，例如 `https://mao.example.com/api/v1`（mao-cli）或 `https://mao.example.com/api`（mao-agent，到 `/api` 为止）。
+`mao-cli` / `mao-agent` 共用 `MAO_BASE_URL`（或 `--base-url`）。推荐写成站点根，例如 `https://mao.example.com`；也接受 `https://mao.example.com/api` 与 `https://mao.example.com/api/v1`，工具会自己归一化。未设置时回落到开源仓库内置的示例域名（`https://mao.etarch.cn`，最低优先级）。**私有化部署后该地址通常不可达**，必须改成自己的实例。
 
 ## 默认账号
 
@@ -166,9 +166,8 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 
 | 变量 | 说明 |
 |------|------|
-| `MAO_BASE_URL` | mao-cli API 根，如 `https://mao.example.com/api/v1`（未设时的回落见上文「站点域名」） |
+| `MAO_BASE_URL` | `mao-cli` 与 `mao-agent` 共用的站点地址，如 `https://mao.example.com`（也接受 `/api` 与 `/api/v1`；未设时的回落见上文「站点域名」） |
 | `MAO_TOKEN` / `MAO_REFRESH_TOKEN` | JWT（与 `~/.mao/auth.json` 共用） |
-| `MAO_AGENT_BASE_URL` | mao-agent，到 `/api`（不含 `/v1`），如 `https://mao.example.com/api` |
 
 兼容旧名：`MAO_USER_BASE_URL`、`MAO_ADMIN_BASE_URL`。
 

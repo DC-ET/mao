@@ -35,7 +35,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   mao <模块> <子命令> [选项]
 
 全局选项:
-  --base-url <url>     API 根地址（优先于 MAO_BASE_URL；未设置时回落到开源示例域名，私有化必须指定自己的实例）
+  --base-url <url>     站点地址（优先于 MAO_BASE_URL；接受站点根 /api /api/v1）
   --token <jwt>        覆盖本地缓存的 accessToken
   --json               机器可读 JSON 输出
   --raw                输出完整 Result（含 code/message/data）
@@ -75,7 +75,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   system-command  系统指令管理（管理员）
 
 环境变量:
-  MAO_BASE_URL         私有化请设为自己的 API 根，如 https://mao.example.com/api/v1
+  MAO_BASE_URL         私有化请设为自己的站点，如 https://mao.example.com
   MAO_USER_BASE_URL / MAO_ADMIN_BASE_URL   兼容旧名
   MAO_TOKEN
   MAO_REFRESH_TOKEN

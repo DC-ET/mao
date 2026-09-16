@@ -4,10 +4,13 @@ import { pickLatestSession } from '../src/session/session-runner';
 import type { SessionVO } from '../src/rest/types';
 
 describe('normalizeBaseUrl', () => {
-  it('strips trailing /v1 copied from mao-user-cli', () => {
-    expect(normalizeBaseUrl('https://mao.etarch.cn/api/v1')).toBe('https://mao.etarch.cn/api');
-    expect(normalizeBaseUrl('https://mao.etarch.cn/api/v1/')).toBe('https://mao.etarch.cn/api');
-    expect(normalizeBaseUrl('https://mao.etarch.cn/api')).toBe('https://mao.etarch.cn/api');
+  it('accepts origin, /api, and /api/v1', () => {
+    expect(normalizeBaseUrl('https://mao.example.com')).toBe('https://mao.example.com/api');
+    expect(normalizeBaseUrl('https://mao.example.com/')).toBe('https://mao.example.com/api');
+    expect(normalizeBaseUrl('https://mao.example.com/api')).toBe('https://mao.example.com/api');
+    expect(normalizeBaseUrl('https://mao.example.com/api/v1')).toBe('https://mao.example.com/api');
+    expect(normalizeBaseUrl('https://mao.example.com/api/v1/')).toBe('https://mao.example.com/api');
+    expect(normalizeBaseUrl('http://127.0.0.1:9080')).toBe('http://127.0.0.1:9080/api');
   });
 });
 

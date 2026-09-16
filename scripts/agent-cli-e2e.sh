@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 半自动验收：对接真实后端跑通 login → -p 打印模式（CLOUD）以及可选 LOCAL。
 # 不进 CI。用法：
-#   MAO_AGENT_BASE_URL=https://mao.etarch.cn/api \
+#   MAO_BASE_URL=https://mao.example.com \
 #   MAO_AGENT_E2E_USER=admin MAO_AGENT_E2E_PASS='...' \
 #   bash scripts/agent-cli-e2e.sh
 set -euo pipefail
@@ -11,7 +11,7 @@ if [[ ! -d node_modules ]]; then npm ci; fi
 npm run build
 npm test
 
-BASE="${MAO_AGENT_BASE_URL:-https://mao.etarch.cn/api}"
+BASE="${MAO_BASE_URL:-https://mao.etarch.cn}"
 USER="${MAO_AGENT_E2E_USER:-}"
 PASS="${MAO_AGENT_E2E_PASS:-}"
 if [[ -z "$USER" || -z "$PASS" ]]; then
