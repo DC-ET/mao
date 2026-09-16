@@ -53,7 +53,7 @@
 
 ### ECP 飞书登录（全站）
 
-管理后台「系统设置 → 集成配置 → ECP 飞书登录」维护，默认关闭。配置键 `auth.ecp.config`（JSON），保存后对新登录与 renew 即时生效。开启后**新增** ECP 飞书登录入口，不关闭密码、LDAP、Mao 飞书 OAuth 与公司 SSO 换票；仅经 ECP 飞书登录的用户会加密保存 ECP `sessionToken` 并在 12 小时内自动 renew，CLOUD shell 将会话票写入虚拟 HOME 的 `~/.config/com.access.accessone/` 供内部 CLI（如 `bigdata-cli`）读取 Bearer，并注入环境变量 `ECP_TOKEN`。开启后飞书机器人通道会额外检查发送者是否有未过期的 ECP 票，没有则引导 ECP 飞书登录，即使飞书账号已经绑定。
+管理后台「系统设置 → 集成配置 → ECP 飞书登录」维护，默认关闭。配置键 `auth.ecp.config`（JSON），保存后对新登录与 renew 即时生效。开启后**新增** ECP 飞书登录入口，不关闭密码、LDAP、Mao 飞书 OAuth 与公司 SSO 换票；仅经 ECP 飞书登录的用户会加密保存 ECP `sessionToken` 并在 12 小时内自动 renew，CLOUD shell 将会话票写入虚拟 HOME 的 `~/.config/com.access.accessone/` 供内部 CLI（如 `bigdata-cli`）读取 Bearer，并注入环境变量 `ECP_TOKEN`。开启后飞书机器人通道会额外检查发送者是否有未过期的 ECP 票，没有则发送无标题卡片（正文「请点击下方按钮完成ECP用户绑定」，按钮「点我绑定」），即使飞书账号已经绑定。
 
 | 后台字段 | 默认 | 说明 |
 |------|------|------|

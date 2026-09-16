@@ -1688,10 +1688,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         () => pendingBindingMessages.insert({ state: auth.state, appId: Number(accountId), messageId: inboundMessageId, event }),
         auth.state,
       );
-      const unionId = senderUnionIdOf(event);
-      const bound = unionId != null && (await feishuBinding.findUserIdByUnionId(unionId)) != null;
       const ecpEnabled = await ecpAuth.isEnabled();
-      const guide = feishuUnauthorizedGuide(ecpEnabled, bound, event.chatType);
+      const guide = feishuUnauthorizedGuide(ecpEnabled, event.chatType);
       const card = buildFeishuAuthGuideCard(guide, auth.authUrl);
       const data = { msg_type: 'interactive' as const, content: JSON.stringify(card) };
       let response;
@@ -1722,9 +1720,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     unauthorizedText: async (_accountId, event) => {
       const ecpEnabled = await ecpAuth.isEnabled();
-      const unionId = senderUnionIdOf(event);
-      const bound = unionId != null && (await feishuBinding.findUserIdByUnionId(unionId)) != null;
-      return feishuUnauthorizedFallbackText(feishuUnauthorizedGuide(ecpEnabled, bound, event.chatType));
+      return feishuUnauthorizedFallbackText(feishuUnauthorizedGuide(ecpEnabled, event.chatType));
     },
   });
   pendingBindingProcessor = feishuInboundProcessor;

@@ -8,7 +8,6 @@ export interface FeishuChannelAuthLink {
 }
 
 export interface FeishuUnauthorizedGuide {
-  title: string;
   body: string;
   buttonLabel: string;
 }
@@ -37,13 +36,12 @@ export function feishuUnauthorizedFallbackText(guide: FeishuUnauthorizedGuide): 
   return `${guide.body}\n若未看到「${guide.buttonLabel}」按钮，请打开 Mao 桌面或网页完成操作。`;
 }
 
-/** 飞书卡片 JSON 2.0：正文 + 跳转按钮，避免把超长授权 URL 写进文本被客户端截断。 */
+/** 飞书卡片 JSON 2.0：正文 + 跳转按钮，避免把超长授权 URL 写进文本被客户端截断。无标题行。 */
 export function buildFeishuAuthGuideCard(guide: FeishuUnauthorizedGuide, authUrl: string): Record<string, unknown> {
   const url = authUrl.trim();
   return {
     schema: '2.0',
     config: { update_multi: true },
-    header: { template: 'orange', title: { tag: 'plain_text', content: guide.title } },
     body: {
       direction: 'vertical',
       padding: '12px 12px 12px 12px',
@@ -83,27 +81,14 @@ export async function persistFeishuPendingAuth(insert: () => Promise<void>, stat
   }
 }
 
-export function feishuUnauthorizedGuide(ecpEnabled: boolean, bound: boolean, chatType: FeishuChatType): FeishuUnauthorizedGuide {
+export function feishuUnauthorizedGuide(ecpEnabled: boolean, chatType: FeishuChatType): FeishuUnauthorizedGuide {
   if (ecpEnabled) {
-    if (bound) {
-      return {
-        title: '需要完成 ECP 飞书登录',
-        body: chatType === 'group'
-          ? '已绑定飞书账号，但没有有效的 ECP 登录凭证。请完成 ECP 飞书登录后，再在群内使用机器人（执行内部工具需要该凭证）。'
-          : '已绑定飞书账号，但没有有效的 ECP 登录凭证。请完成 ECP 飞书登录后再试（执行内部工具需要该凭证）。',
-        buttonLabel: '完成 ECP 登录',
-      };
-    }
     return {
-      title: '需要完成 ECP 飞书登录',
-      body: chatType === 'group'
-        ? '请先完成 ECP 飞书登录，获得群内使用权限后再试。'
-        : '请先完成 ECP 飞书登录后再试。',
-      buttonLabel: '完成 ECP 登录',
+      body: '请点击下方按钮完成ECP用户绑定',
+      buttonLabel: '点我绑定',
     };
   }
   return {
-    title: '需要完成飞书绑定',
     body: chatType === 'group'
       ? '请先完成飞书账号绑定，获得群内使用权限后再试。'
       : '请先完成飞书账号绑定后再试。',

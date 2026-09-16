@@ -72,30 +72,27 @@ describe('startFeishuChannelAuthLink', () => {
 });
 
 describe('feishuUnauthorizedGuide', () => {
-  it('uses ECP copy for bound users missing a token', () => {
-    const guide = feishuUnauthorizedGuide(true, true, 'p2p');
-    expect(guide.title).toContain('ECP');
-    expect(guide.body).toContain('没有有效的 ECP');
+  it('uses ECP bind copy when ECP is enabled', () => {
+    const guide = feishuUnauthorizedGuide(true, 'p2p');
+    expect(guide.body).toBe('请点击下方按钮完成ECP用户绑定');
+    expect(guide.buttonLabel).toBe('点我绑定');
   });
 
-  it('uses ECP copy for bound users in group chat', () => {
-    expect(feishuUnauthorizedGuide(true, true, 'group').body).toContain('再在群内使用机器人');
-  });
-
-  it('uses ECP copy for unbound users in group chat', () => {
-    const guide = feishuUnauthorizedGuide(true, false, 'group');
-    expect(guide.body).toContain('ECP 飞书登录');
-    expect(guide.body).toContain('群内');
+  it('uses the same ECP copy in group chat', () => {
+    expect(feishuUnauthorizedGuide(true, 'group')).toEqual({
+      body: '请点击下方按钮完成ECP用户绑定',
+      buttonLabel: '点我绑定',
+    });
   });
 
   it('keeps bind copy when ECP is off', () => {
-    const guide = feishuUnauthorizedGuide(false, false, 'group');
-    expect(guide.title).toContain('绑定');
+    const guide = feishuUnauthorizedGuide(false, 'group');
     expect(guide.body).toContain('飞书账号绑定');
+    expect(guide.buttonLabel).toBe('完成飞书绑定');
   });
 
   it('uses bind copy for private chat when ECP is off', () => {
-    expect(feishuUnauthorizedGuide(false, false, 'p2p').body).toContain('请先完成飞书账号绑定后再试');
+    expect(feishuUnauthorizedGuide(false, 'p2p').body).toContain('请先完成飞书账号绑定后再试');
   });
 });
 
@@ -115,16 +112,18 @@ describe('isFeishuSenderEcpReady', () => {
 describe('buildFeishuAuthGuideCard', () => {
   it('puts the long auth URL on an open_url button instead of markdown text', () => {
     const url = `https://ecp.example/auth?${'s='.repeat(200)}`;
-    const card = buildFeishuAuthGuideCard(feishuUnauthorizedGuide(true, true, 'p2p'), url);
+    const card = buildFeishuAuthGuideCard(feishuUnauthorizedGuide(true, 'p2p'), url);
+    expect(card.header).toBeUndefined();
     const body = card.body as { elements: Array<Record<string, unknown>> };
     const markdown = body.elements.filter((el) => el.tag === 'markdown');
     expect(JSON.stringify(markdown)).not.toContain(url);
+    expect(JSON.stringify(markdown)).toContain('请点击下方按钮完成ECP用户绑定');
     const columnSet = body.elements.find((el) => el.tag === 'column_set') as {
       columns: Array<{ elements: Array<Record<string, unknown>> }>;
     };
     const button = columnSet.columns[0].elements[0];
     expect(button.tag).toBe('button');
-    expect(button.text).toEqual({ tag: 'plain_text', content: '完成 ECP 登录' });
+    expect(button.text).toEqual({ tag: 'plain_text', content: '点我绑定' });
     expect(button.behaviors).toEqual([{
       type: 'open_url', default_url: url, pc_url: url, ios_url: url, android_url: url,
     }]);
@@ -133,8 +132,8 @@ describe('buildFeishuAuthGuideCard', () => {
 
 describe('feishuUnauthorizedFallbackText', () => {
   it('does not embed the auth URL in the text fallback', () => {
-    const text = feishuUnauthorizedFallbackText(feishuUnauthorizedGuide(true, true, 'p2p'));
-    expect(text).toContain('完成 ECP 登录');
+    const text = feishuUnauthorizedFallbackText(feishuUnauthorizedGuide(true, 'p2p'));
+    expect(text).toContain('点我绑定');
     expect(text).not.toContain('https://');
   });
 });
