@@ -1439,7 +1439,8 @@ onBeforeUnmount(() => {
 
 .chat-input-card.layout-centered :deep(.rich-editor),
 .chat-input-card.layout-centered :deep(.rich-editor .ProseMirror) {
-  min-height: 96px;
+  /* 17px × 1.5 ≈ 25.5px/行，2 行约 52px */
+  min-height: 52px;
   max-height: 280px;
   font-size: var(--aw-text-body);
 }
@@ -1485,7 +1486,8 @@ onBeforeUnmount(() => {
 
   .chat-input-card.layout-centered :deep(.rich-editor),
   .chat-input-card.layout-centered :deep(.rich-editor .ProseMirror) {
-    min-height: 64px;
+    /* 14px × 1.5 ≈ 21px/行，2 行约 42px */
+    min-height: 42px;
     font-size: var(--aw-text-caption);
   }
 
