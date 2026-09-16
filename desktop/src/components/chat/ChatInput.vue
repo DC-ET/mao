@@ -1447,13 +1447,54 @@ onBeforeUnmount(() => {
     border-radius: 16px;
   }
 
+  .chat-input-card.layout-centered .textarea-area {
+    padding: 12px 14px 6px;
+  }
+
   .chat-input-card.layout-centered :deep(.rich-editor),
   .chat-input-card.layout-centered :deep(.rich-editor .ProseMirror) {
     min-height: 72px;
   }
 
+  /* 两行固定：行1 配置 chips，行2 模型 + 发送（发送始终贴右、不与 chips 错位） */
   .chat-input-card.layout-centered .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
     padding: 8px 10px 10px;
+    min-height: 0;
+  }
+
+  .chat-input-card.layout-centered .toolbar-left {
+    width: 100%;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .chat-input-card.layout-centered .toolbar-right {
+    width: 100%;
+    flex: 0 0 auto;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .chat-input-card.layout-centered .add-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .chat-input-card.layout-centered .send-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .chat-input-card.layout-centered .toolbar-right :deep(.model-name) {
+    max-width: min(160px, 48vw);
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
   }
 }
 

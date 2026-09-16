@@ -271,6 +271,7 @@ function selectAgent(agent: Agent) {
 @media (pointer: coarse), (max-width: 768px) {
   .agent-chip {
     height: 36px;
+    max-width: 180px;
   }
 }
 </style>
