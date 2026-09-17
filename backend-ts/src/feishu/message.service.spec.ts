@@ -31,6 +31,7 @@ describe('FeishuMessageService', () => {
       upsertSessionChannel: vi.fn(async () => undefined),
       findSessionChannel: vi.fn(async () => null),
       clearAwaitingFirstMessageTitle: vi.fn(async () => undefined),
+      findLatestInboundMessageId: vi.fn(async () => null),
       ...overrides,
     };
   }

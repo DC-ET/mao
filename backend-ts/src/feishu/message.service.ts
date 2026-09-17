@@ -116,6 +116,16 @@ export class FeishuMessageService {
     }
   }
 
+  /** 查询会话最新入站消息 ID（用于 reply 发送）；失败降级 null。 */
+  async findLatestInboundMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null> {
+    try {
+      return await this.repository.findLatestInboundMessageId(sessionId, channel);
+    } catch (error) {
+      console.warn(`查询飞书最新入站消息ID失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
   async getOrCreateGroup(accountId: string, context: FeishuInboundContext): Promise<FeishuConversation> {
     if (context.chatId == null) throw new Error('Feishu group message requires chatId');
     const existing = await this.repository.findGroupConversation(accountId, context.chatId);
