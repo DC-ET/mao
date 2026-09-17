@@ -1753,8 +1753,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     interruptAndDrain: (sessionId) => feishuInboundHandler.interruptAndDrain(sessionId),
     // 进度卡「取消任务」：置位 AgentLoop / 飞书 handler 取消标志 + 关闭 shell；
     // 重启后续跑尚未挂 flag 时补写 CANCELLED，与桌面端输入框停止同语义。
+    // 用 cancel 而非 interrupt：interrupt 会标记「被下一条指令中断」，取消按钮应显示「任务已取消」。
     cancelRunning: async (sessionId) => {
-      feishuInboundHandler.interrupt(sessionId);
+      feishuInboundHandler.cancel(sessionId);
       const hadLoop = agentLoop.getCancelFlag(sessionId) != null;
       const persisted = await persistCancelledIfActive(sessionId);
       if (!hadLoop && persisted) {

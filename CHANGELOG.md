@@ -22,6 +22,7 @@
 - CLOUD shell / 交互终端在 ECP 飞书登录开启且配置了 `larkAppId` 时，自动注入 `LARKSUITE_CLI_APP_ID` 与 `LARKSUITE_CLI_USER_ACCESS_TOKEN`（用户飞书 UAT），供 lark-cli 以用户身份使用；UAT 走 ECP 换票接口 + 进程内存缓存，ECP 会话失效时不注入。
 - 历史里某个 tool_call 缺少对应输出时（含并行工具结果被图片消息拆开），不再把 `No tool output found for tool call` 的 400 卡死会话：补占位结果、重排 tool 组，原会话可继续或重试。
 - 飞书进度卡片执行失败时，正文改为展示具体 `error.message`（与客户端对话页「执行异常」一致）；无错误信息时仍回退「抱歉，处理您的消息时出现了错误，请稍后再试。」
+- 飞书进度卡点「取消任务」后终态文案由「已被下一条指令中断。」改为「任务已取消。」——取消按钮误用了「立即发送」插队的 interrupted 标记。
 
 ### 管理后台
 

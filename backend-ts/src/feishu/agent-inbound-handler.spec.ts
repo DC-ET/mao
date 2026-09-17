@@ -378,6 +378,78 @@ describe('AgentFeishuInboundHandler', () => {
     expect(onExecutionFinished).toHaveBeenCalledWith(7, expect.anything(), 'e', 'CANCELLED');
   });
 
+  it('progress cancel shows 任务已取消 not 被下一条指令中断', async () => {
+    const sessionService = makeSessionService({
+      cleanupIncompleteTail: vi.fn(async () => 1),
+    });
+    const flag = makeFlag();
+    let releaseExecute!: () => void;
+    const executeGate = new Promise<void>((resolve) => { releaseExecute = resolve; });
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { await executeGate; }),
+    };
+    const updates: Array<{ status: string; content: string }> = [];
+    const onExecutionFinished = vi.fn(async () => undefined);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: () => flag,
+      releaseCancelFlag: vi.fn(),
+      createProgressCard: vi.fn(async () => ({
+        update: async (status: string, _round: number, content: string) => {
+          updates.push({ status, content });
+        },
+      })),
+      listenerFactory: async () => listener,
+      onExecutionFinished,
+      onInterruptRunning: vi.fn(),
+    });
+    const running = handler.onMessage(makeContext());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // 模拟进度卡「取消任务」：只 cancel，不 interrupt
+    expect(handler.cancel(7)).toBe(true);
+    expect(flag.get()).toBe(true);
+    releaseExecute();
+    await running;
+    expect(updates).toContainEqual({ status: 'CANCELLED', content: '任务已取消。' });
+    expect(updates.some((u) => u.content.includes('中断'))).toBe(false);
+  });
+
+  it('interrupt marks interrupted so next-message wording is used', async () => {
+    const sessionService = makeSessionService({
+      cleanupIncompleteTail: vi.fn(async () => 1),
+    });
+    const flag = makeFlag();
+    let releaseExecute!: () => void;
+    const executeGate = new Promise<void>((resolve) => { releaseExecute = resolve; });
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { await executeGate; }),
+    };
+    const updates: Array<{ status: string; content: string }> = [];
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: () => flag,
+      releaseCancelFlag: vi.fn(),
+      createProgressCard: vi.fn(async () => ({
+        update: async (status: string, _round: number, content: string) => {
+          updates.push({ status, content });
+        },
+      })),
+      listenerFactory: async () => listener,
+      onExecutionFinished: async () => undefined,
+      onInterruptRunning: vi.fn(),
+    });
+    const running = handler.onMessage(makeContext());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(handler.interrupt(7)).toBe(true);
+    releaseExecute();
+    await running;
+    expect(updates).toContainEqual({ status: 'CANCELLED', content: '已被下一条指令中断。' });
+  });
+
   it('releases cancel flag when execution completes', async () => {
     const sessionService = makeSessionService();
     const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
