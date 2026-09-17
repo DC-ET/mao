@@ -14,9 +14,9 @@ export const useTabStore = defineStore('tabs', () => {
   // store 可能在任意时机（守卫/单测）被首次实例化，必须使用 router 单例而非 useRouter()
 
   const tabs = ref<TabItem[]>([
-    { path: '/dashboard', title: '数据概览', name: 'Dashboard', closable: false }
+    { path: '/analytics', title: '用量分析', name: 'Analytics', closable: false }
   ])
-  const activeTabPath = ref('/dashboard')
+  const activeTabPath = ref('/analytics')
 
   function addTab(route: RouteLocationNormalized) {
     const path = route.fullPath
@@ -35,7 +35,7 @@ export const useTabStore = defineStore('tabs', () => {
       path,
       title,
       name: route.name?.toString() || '',
-      closable: path !== '/dashboard'
+      closable: path !== '/analytics'
     })
     activeTabPath.value = path
   }

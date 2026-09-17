@@ -44,7 +44,7 @@
 ## 日常管理员流程
 
 1. 管理后台：用户/角色、模型、Agent、Skill、MCP
-2. 会话/定时任务/审计/运行监控巡检
+2. 会话/定时任务/审计巡检；运行态会话用 CLI `mao runtime sessions`
 3. 升级：`git pull` + 按范围 deploy-admin / deploy-desktop / restart 后端
 4. 发版：更新 CHANGELOG，Web 部署后多端刷新；安卓壳变更跑 `build-apk.sh`
 

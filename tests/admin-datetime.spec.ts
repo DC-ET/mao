@@ -33,7 +33,7 @@ async function setup(page: Page) {
       { id: 2, role: 'assistant', content: '测试回复', createdAt: iso }
     ], hasMore: false }
     else if (path.endsWith('/admin/sessions/7')) data = { ...session, lastActivityAt: null }
-    else if (path.endsWith('/admin/sessions') || path.endsWith('/admin/runtime/sessions')) data = { records: [session], total: 1 }
+    else if (path.endsWith('/admin/sessions')) data = { records: [session], total: 1 }
     else if (path.endsWith('/users')) data = { records: [{ id: 2, username: '测试用户', authSource: 'LOCAL', status: 1, createdAt: iso, lastLoginAt: null }], total: 1 }
     else if (path.endsWith('/prompt-versions')) data = [{ id: 1, version: 1, systemPrompt: '提示词', createdAt: iso }]
     else if (path.endsWith('/agents')) data = [agent]
@@ -45,7 +45,7 @@ async function setup(page: Page) {
   await page.fill('input[placeholder="用户名"]', 'admin')
   await page.fill('input[placeholder="密码"]', 'admin123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await page.waitForURL(/\/admin\/dashboard/)
+  await page.waitForURL(/\/admin\/analytics/)
 }
 
 test.describe('后台时间展示', () => {
@@ -53,7 +53,7 @@ test.describe('后台时间展示', () => {
 
   test.beforeEach(async ({ page }) => { await setup(page) })
 
-  for (const [path, count] of [['sessions', 2], ['users', 1], ['agents', 1], ['runtime', 1], ['audit-logs', 1], ['scheduled-tasks', 2]] as const) {
+  for (const [path, count] of [['sessions', 2], ['users', 1], ['agents', 1], ['audit-logs', 1], ['scheduled-tasks', 2]] as const) {
     test(`${path} 表格时间已格式化`, async ({ page }) => {
       await page.goto(`/admin/${path}`)
       const rows = page.locator('.el-table__body-wrapper')
@@ -74,7 +74,7 @@ test.describe('后台时间展示', () => {
     await expect(page.locator('.message-time').getByText(formatted, { exact: true })).toHaveCount(2)
   })
 
-  for (const path of ['sessions', 'runtime', 'audit-logs', 'scheduled-tasks']) {
+  for (const path of ['sessions', 'audit-logs', 'scheduled-tasks']) {
     test(`${path} 移动卡片时间已格式化`, async ({ page }) => {
       await page.setViewportSize({ width: 390, height: 844 })
       await page.goto(`/admin/${path}`)

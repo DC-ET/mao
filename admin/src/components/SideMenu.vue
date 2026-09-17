@@ -43,7 +43,6 @@
 import { computed, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  DataLine,
   Monitor,
   Connection,
   MagicStick,
@@ -51,7 +50,6 @@ import {
   User,
   Lock,
   DocumentChecked,
-  Operation,
   Timer,
   TrendCharts,
   Setting,
@@ -99,7 +97,7 @@ const menuGroups: MenuGroup[] = [
     id: 'overview',
     label: '',
     items: [
-      { index: '/dashboard', label: '数据概览', icon: DataLine }
+      { index: '/analytics', label: '用量分析', icon: TrendCharts, adminOnly: true }
     ]
   },
   {
@@ -117,9 +115,7 @@ const menuGroups: MenuGroup[] = [
     label: '运行',
     items: [
       { index: '/sessions', label: '会话管理', icon: ChatDotRound, permission: 'session:read' },
-      { index: '/runtime', label: '运行监控', icon: Operation, adminOnly: true },
       { index: '/scheduled-tasks', label: '定时任务', icon: Timer, permission: 'session:read' },
-      { index: '/analytics', label: '用量分析', icon: TrendCharts, adminOnly: true },
       { index: '/llm-calls', label: '调用流水', icon: Tickets, adminOnly: true }
     ]
   },
@@ -160,7 +156,7 @@ const activeMenu = computed(() => {
 })
 
 function goHome() {
-  router.push('/dashboard')
+  router.push('/analytics')
   emit('select')
 }
 

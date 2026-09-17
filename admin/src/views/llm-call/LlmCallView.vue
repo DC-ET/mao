@@ -88,7 +88,7 @@
             <el-tag size="small">{{ llmCallSceneLabel(row.scene) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="模型" min-width="150" show-overflow-tooltip>
+        <el-table-column label="模型" width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ row.modelName || row.providerModelId || '-' }}</template>
         </el-table-column>
         <el-table-column label="入 Token" width="100" align="right">
@@ -97,8 +97,10 @@
         <el-table-column label="出 Token" width="100" align="right">
           <template #default="{ row }">{{ formatNumber(row.completionTokens || 0) }}</template>
         </el-table-column>
-        <el-table-column label="缓存" width="120" align="right" class-name="hide-on-mobile">
-          <template #default="{ row }">{{ formatCacheHit(row) }}</template>
+        <el-table-column label="缓存" width="140" align="right" class-name="hide-on-mobile cache-col">
+          <template #default="{ row }">
+            <span class="cache-cell">{{ formatCacheHit(row) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="流式" width="70" align="center">
           <template #default="{ row }">{{ row.stream === 1 ? '是' : '否' }}</template>
@@ -309,6 +311,10 @@ onMounted(() => {
 .pagination {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+.cache-col .cache-cell {
+  white-space: nowrap;
 }
 
 .mobile-card-list {

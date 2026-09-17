@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 const ADMIN_USER = 'admin'
 const ADMIN_PASS = 'admin123'
 
-/** Login helper: navigates to login, fills form, submits, waits for dashboard */
+/** Login helper: navigates to login, fills form, submits, waits for analytics homepage */
 async function login(page: import('@playwright/test').Page) {
   await page.goto('/admin/login')
   await page.waitForSelector('.login-card', { timeout: 10_000 })
@@ -12,8 +12,8 @@ async function login(page: import('@playwright/test').Page) {
   await page.fill('input[placeholder="密码"]', ADMIN_PASS)
   await page.click('button:has-text("登录")')
 
-  // Wait for redirect to dashboard
-  await page.waitForURL(/\/admin\/dashboard/, { timeout: 10_000 })
+  // Wait for redirect to analytics homepage
+  await page.waitForURL(/\/admin\/analytics/, { timeout: 10_000 })
   // Wait for layout to be fully rendered
   await page.waitForSelector('.layout-container', { timeout: 10_000 })
 }
@@ -30,12 +30,12 @@ test.describe('Login Page', () => {
     await expect(page.locator('button:has-text("登录")')).toBeVisible()
   })
 
-  test('should login successfully and redirect to dashboard', async ({ page }) => {
+  test('should login successfully and redirect to analytics homepage', async ({ page }) => {
     await login(page)
     // Should show user info in header
     await expect(page.locator('.username')).toBeVisible()
     // Sidebar should have active menu
-    await expect(page.locator('.sidebar-menu .is-active')).toContainText('数据概览')
+    await expect(page.locator('.sidebar-menu .is-active')).toContainText('用量分析')
   })
 
   test('should show error with wrong credentials', async ({ page }) => {
@@ -56,48 +56,26 @@ test.describe('Login Page', () => {
 })
 
 // ─────────────────────────────────────────────────────────
-// Dashboard
+// Analytics Homepage
 // ─────────────────────────────────────────────────────────
-test.describe('Dashboard', () => {
+test.describe('Analytics Homepage', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
   })
 
-  test('should show overview stat cards', async ({ page }) => {
-    const statCards = page.locator('.stat-card')
-    await expect(statCards.first()).toBeVisible({ timeout: 10_000 })
-    // Should have 4 stat cards
-    await expect(statCards).toHaveCount(4)
-    // Verify stat labels
-    await expect(page.locator('.stat-label')).toContainText(['Agent 数量', '用户数量', '总会话数', '总消息数'])
+  test('should show period control and KPI cards', async ({ page }) => {
+    await expect(page.locator('.toolbar-title')).toHaveText('用量分析')
+    await expect(page.locator('text=统计周期')).toBeVisible()
+    const kpiCards = page.locator('.kpi-row .el-card')
+    await expect(kpiCards.first()).toBeVisible({ timeout: 10_000 })
+    await expect(kpiCards).toHaveCount(4)
   })
 
-  test('should show stat values as numbers', async ({ page }) => {
-    const values = page.locator('.stat-value')
-    await expect(values.first()).toBeVisible({ timeout: 10_000 })
-    // All values should be non-empty
-    const count = await values.count()
-    for (let i = 0; i < count; i++) {
-      const text = await values.nth(i).textContent()
-      expect(text).toMatch(/\d+/)
-    }
-  })
-
-  test('should show trend chart and rank sections', async ({ page }) => {
-    await expect(page.locator('.chart-container, .chart-empty').first()).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('.el-card__header').filter({ hasText: '使用趋势' })).toBeVisible()
-    await expect(page.locator('.rank-item').first()).toBeVisible({ timeout: 10_000 })
-  })
-
-  test('should show governance cards and link to analytics', async ({ page }) => {
-    await expect(page.locator('.governance-card')).toContainText(['运行中会话', '待审批会话', '失败会话', '取消会话'])
-    await expect(page.locator('text=查看用量分析')).toBeVisible()
-  })
-
-  test('should drill down from failed sessions to runtime monitor', async ({ page }) => {
-    await page.locator('.governance-card:has-text("失败会话")').click()
-    await page.waitForURL(/\/runtime/, { timeout: 10_000 })
-    await expect(page.locator('text=运行中与异常会话')).toBeVisible({ timeout: 10_000 })
+  test('should show trend and ranking sections', async ({ page }) => {
+    await expect(page.locator('.el-card__header').filter({ hasText: '会话与消息趋势' })).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.el-card__header').filter({ hasText: 'Token 消耗趋势' })).toBeVisible()
+    await expect(page.locator('.el-card__header').filter({ hasText: 'Agent Token 排行' })).toBeVisible()
+    await expect(page.locator('.el-card__header').filter({ hasText: '模型用量明细' })).toBeVisible()
   })
 })
 
@@ -306,13 +284,11 @@ test.describe('Sidebar Navigation', () => {
 
   test('should navigate between all pages via sidebar', async ({ page }) => {
     const navItems = [
-      { label: '数据概览', url: /\/dashboard$/ },
+      { label: '用量分析', url: /\/analytics$/ },
       { label: 'Agent 管理', url: /\/agents$/ },
       { label: '模型管理', url: /\/models$/ },
       { label: 'Skills 管理', url: /\/skills$/ },
       { label: '会话管理', url: /\/sessions$/ },
-      { label: '运行监控', url: /\/runtime$/ },
-      { label: '用量分析', url: /\/analytics$/ },
       { label: '调用流水', url: /\/llm-calls$/ },
       { label: '用户管理', url: /\/users$/ },
       { label: '角色权限', url: /\/roles$/ },
@@ -352,16 +328,7 @@ test.describe('Governance Console', () => {
     await expect(page.locator('button:has-text("查询")')).toBeVisible()
   })
 
-  test('should render runtime monitor page', async ({ page }) => {
-    await page.click('span:has-text("运行监控")')
-    await page.waitForURL(/\/runtime$/)
-    await expect(page.locator('text=运行中与异常会话')).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('input[placeholder="标题/摘要"]')).toBeVisible()
-  })
-
-  test('should render analytics and settings pages', async ({ page }) => {
-    await page.click('span:has-text("用量分析")')
-    await page.waitForURL(/\/analytics$/)
+  test('should render analytics homepage and settings pages', async ({ page }) => {
     await expect(page.locator('text=统计周期')).toBeVisible({ timeout: 10_000 })
 
     await page.click('span:has-text("系统设置")')
@@ -396,9 +363,9 @@ test.describe('Tab Bar', () => {
     await page.click('span:has-text("Agent 管理")')
     await page.waitForURL(/\/agents$/)
 
-    // Click dashboard tab to go back
-    await page.locator('.tab-item:has-text("数据概览")').click()
-    await page.waitForURL(/\/dashboard$/)
+    // Click analytics homepage tab to go back
+    await page.locator('.tab-item:has-text("用量分析")').click()
+    await page.waitForURL(/\/analytics$/)
   })
 })
 

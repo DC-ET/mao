@@ -5,7 +5,7 @@
         <div class="toolbar-info">
           <div class="toolbar-title">用量分析</div>
           <div class="toolbar-hint">
-            {{ periodText }}，环比对照 {{ previousText }}；数字均为窗口内新增。实时异常请用运行监控。
+            {{ periodText }}，环比对照 {{ previousText }}；数字均为窗口内新增。
           </div>
         </div>
         <div class="toolbar-actions">
@@ -352,7 +352,7 @@ const kpis = computed(() => {
       series: null,
       color: '#ff3b30',
       inverse: true,
-      path: '/runtime?phase=FAILED'
+      path: '/sessions?phase=FAILED'
     }
   ]
 })

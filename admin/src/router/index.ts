@@ -2,6 +2,16 @@ import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
+/** 首页：管理员进用量分析；非管理员按已有权限落到首个可用页面 */
+function pickHomePath(isAdmin: boolean, hasPermission: (p: string) => boolean): string {
+  if (isAdmin) return '/analytics'
+  if (hasPermission('session:read')) return '/sessions'
+  if (hasPermission('agent:read')) return '/agents'
+  if (hasPermission('user:read')) return '/users'
+  if (hasPermission('settings:read')) return '/settings'
+  return '/forbidden'
+}
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -19,14 +29,8 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     name: 'Layout',
     component: () => import('../components/Layout.vue'),
-    redirect: '/dashboard',
+    redirect: '/analytics',
     children: [
-      {
-        path: 'dashboard',
-        name: 'Dashboard',
-        component: () => import('../views/dashboard/DashboardView.vue'),
-        meta: { title: '数据概览', keepAlive: true }
-      },
       {
         path: 'agents',
         name: 'Agents',
@@ -74,12 +78,6 @@ const routes: RouteRecordRaw[] = [
         name: 'AuditLogs',
         component: () => import('../views/audit/AuditLogView.vue'),
         meta: { title: '审计日志', keepAlive: true, permission: 'user:read' }
-      },
-      {
-        path: 'runtime',
-        name: 'RuntimeMonitor',
-        component: () => import('../views/runtime/RuntimeMonitorView.vue'),
-        meta: { title: '运行监控', keepAlive: true, adminOnly: true }
       },
       {
         path: 'analytics',
@@ -132,9 +130,9 @@ const routes: RouteRecordRaw[] = [
     ]
   },
   {
-    // 404 兜底：未知路径回仪表盘，避免白屏
+    // 404 兜底：未知路径回用量分析首页，避免白屏
     path: '/:pathMatch(.*)*',
-    redirect: '/dashboard'
+    redirect: '/analytics'
   }
 ]
 
@@ -175,6 +173,11 @@ router.beforeEach(async (to, _from, next) => {
     }
     // 管理员专属页面（MCP 服务器等）：权限维度已移除，改为管理员角色控制
     if (to.meta.adminOnly && !authStore.isAdmin) {
+      // 首页（用量分析）对非管理员软回退到其有权限的首个页面，避免登录即无权限
+      if (to.path === '/analytics') {
+        next(pickHomePath(authStore.isAdmin, (p) => authStore.hasPermission(p)))
+        return
+      }
       next('/forbidden')
       return
     }
