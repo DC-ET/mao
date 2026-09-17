@@ -471,14 +471,15 @@ onMounted(fetchSummary)
   border-radius: 4px;
 }
 
+/* 项目约定：红=好、绿=坏（与默认色觉习惯相反） */
 .kpi-delta.up {
-  color: #1a7f37;
-  background: rgba(52, 199, 89, 0.12);
+  color: #c9252d;
+  background: rgba(255, 59, 48, 0.1);
 }
 
 .kpi-delta.down {
-  color: #c9252d;
-  background: rgba(255, 59, 48, 0.1);
+  color: #1a7f37;
+  background: rgba(52, 199, 89, 0.12);
 }
 
 .kpi-delta.flat {
