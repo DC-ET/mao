@@ -208,7 +208,7 @@ export class CrashRecoveryRunner {
     try {
       const deleted = await this.sessionService.cleanupIncompleteTail(sessionId);
       if (deleted > 0) {
-        harnessLog('info', `Session ${sessionId}: cleaned up ${deleted} incomplete tail messages`);
+        harnessLog('info', `Session ${sessionId}: filled ${deleted} missing tool output(s)`);
       }
       await this.sessionService.updatePhase(sessionId, 'RESUMING');
       this.notifyClient(userId, sessionId, 'RUNNING');

@@ -5,7 +5,7 @@ import { ErrorCode } from '../common/error-code.js';
 import { javaLocalDateTimeString, nowSql } from '../common/datetime.js';
 import { collectEntityIds, parseEntityId } from '../common/request.js';
 import type { EnvironmentInfoProvider } from '../harness/core/environment-info.js';
-import { MessageHistoryNormalizer } from '../harness/core/message-history-normalizer.js';
+import { MessageHistoryNormalizer, MISSING_TOOL_RESULT_PLACEHOLDER } from '../harness/core/message-history-normalizer.js';
 import { CloudWorkspaceResolver } from '../harness/safety/cloud-workspace-resolver.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import { fromString as permissionFromString } from './permission-level.js';
@@ -884,58 +884,31 @@ export class SessionService {
 
   private async cleanupIncompleteTailList(sessionId: number, messages: Message[]): Promise<number> {
     if (messages.length === 0) return 0;
-    let cutIndex = -1;
-    let missingToolCallIds = new Set<string>();
-
-    for (let i = messages.length - 1; i >= 0; i--) {
+    let filled = 0;
+    for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
-      if (msg.role === 'ASSISTANT' && msg.toolCalls != null && msg.toolCalls.length > 0) {
-        const expectedIds = extractToolCallIds(msg.toolCalls);
-        const foundIds = new Set<string>();
-        for (let j = i + 1; j < messages.length; j++) {
-          const subsequent = messages[j];
-          if (subsequent.role === 'TOOL' && subsequent.toolCallId != null) {
-            foundIds.add(subsequent.toolCallId);
-          } else if (subsequent.role === 'ASSISTANT') {
-            break;
-          }
-        }
-        let allFound = true;
-        for (const id of expectedIds) {
-          if (!foundIds.has(id)) {
-            allFound = false;
-            break;
-          }
-        }
-        if (!allFound) {
-          cutIndex = i;
-          const missing = new Set(expectedIds);
-          for (const id of foundIds) missing.delete(id);
-          missingToolCallIds = missing;
+      if (msg.role !== 'ASSISTANT' || msg.toolCalls == null || msg.toolCalls.length === 0) continue;
+      const expectedIds = extractToolCallIds(msg.toolCalls);
+      if (expectedIds.size === 0) continue;
+      const foundIds = new Set<string>();
+      for (let j = i + 1; j < messages.length; j++) {
+        const subsequent = messages[j];
+        if (subsequent.role === 'TOOL' && subsequent.toolCallId != null) {
+          foundIds.add(subsequent.toolCallId);
+        } else if (subsequent.role === 'ASSISTANT') {
           break;
         }
       }
-    }
-
-    if (cutIndex < 0) return 0;
-    let totalCount = 0;
-    if (missingToolCallIds.size > 0) {
-      for (let i = 0; i < cutIndex; i++) {
-        const msg = messages[i];
-        if (msg.role === 'TOOL' && msg.toolCallId != null && missingToolCallIds.has(msg.toolCallId) && msg.id != null) {
-          await this.messageRepo.logicalDeleteById(msg.id);
-          totalCount++;
-        }
+      for (const id of expectedIds) {
+        if (foundIds.has(id)) continue;
+        await this.saveMessage(sessionId, 'TOOL', MISSING_TOOL_RESULT_PLACEHOLDER, null, id, null, 0, null);
+        filled++;
       }
     }
-    for (let i = cutIndex; i < messages.length; i++) {
-      if (messages[i].id != null) {
-        await this.messageRepo.logicalDeleteById(messages[i].id!);
-        totalCount++;
-      }
+    if (filled > 0) {
+      console.info(`Session ${sessionId}: filled ${filled} missing tool output(s)`);
     }
-    console.info(`Session ${sessionId}: cleaned up ${totalCount} incomplete messages (cut at index ${cutIndex})`);
-    return totalCount;
+    return filled;
   }
 
   /** 按会话范围回滚单条消息：入站消息被更新消息取代时清理，避免历史中留下无回复的孤立 USER。 */

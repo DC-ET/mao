@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
-import { ensureContentPresent } from '../core/message-history-normalizer.js';
+import { ensureContentPresent, MISSING_TOOL_RESULT_PLACEHOLDER } from '../core/message-history-normalizer.js';
 import { ImageFileSupport } from '../tool/image-file-support.js';
 import { PromptImageResizer } from '../tool/prompt-image-resizer.js';
 import { harnessLog } from '../log.js';
@@ -845,13 +845,25 @@ export function convertMessages(messages: ChatMessage[]): { instructions: string
   const input: Record<string, unknown>[] = [];
   // 连续 tool 消息缓冲：统一在缓冲结束时输出 function_call_output
   let toolBuffer: Array<{ callId: string; content: string }> = [];
+  // 本轮已发出的 function_call call_id：冲刷时为缺失的 output 补占位，避免网关 400
+  let pendingCallIds: string[] = [];
 
   const flushToolBuffer = (): void => {
-    if (toolBuffer.length === 0) return;
+    const seen = new Set<string>();
     for (const t of toolBuffer) {
       input.push({ type: 'function_call_output', call_id: t.callId, output: t.content });
+      seen.add(t.callId);
     }
     toolBuffer = [];
+    for (const callId of pendingCallIds) {
+      if (callId === '' || seen.has(callId)) continue;
+      input.push({
+        type: 'function_call_output',
+        call_id: callId,
+        output: MISSING_TOOL_RESULT_PLACEHOLDER,
+      });
+    }
+    pendingCallIds = [];
   };
 
   for (const msg of messages) {
@@ -891,12 +903,13 @@ export function convertMessages(messages: ChatMessage[]): { instructions: string
       }
       for (const tc of callsToEmit) {
         input.push(functionCallItem(tc));
+        if (tc.id) pendingCallIds.push(tc.id);
       }
       continue;
     }
     // user 消息
-    if (toolBuffer.length > 0) {
-      // tool 后紧跟 user：先冲刷 function_call_output（顺序保证）
+    if (toolBuffer.length > 0 || pendingCallIds.length > 0) {
+      // tool 后紧跟 user：先冲刷 function_call_output（顺序保证）；缺 output 时补占位
       flushToolBuffer();
     }
     const blocks: Record<string, unknown>[] = [];
@@ -910,7 +923,7 @@ export function convertMessages(messages: ChatMessage[]): { instructions: string
     }
     input.push({ role: 'user', content: blocks });
   }
-  if (toolBuffer.length > 0) {
+  if (toolBuffer.length > 0 || pendingCallIds.length > 0) {
     flushToolBuffer();
   }
   return {

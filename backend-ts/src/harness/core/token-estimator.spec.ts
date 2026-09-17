@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TokenEstimator } from './token-estimator.js';
-import { MessageHistoryNormalizer } from './message-history-normalizer.js';
+import { MessageHistoryNormalizer, MISSING_TOOL_RESULT_PLACEHOLDER } from './message-history-normalizer.js';
 import { LocalAgentsMdRegistry } from './local-agents-md-registry.js';
 import { BackgroundTaskManager } from './background-task-manager.js';
 import { CompositeAgentEventListener } from './composite-agent-event-listener.js';
@@ -69,6 +69,53 @@ describe('MessageHistoryNormalizer', () => {
     const one = [{ role: 'user', content: 'hi' }];
     expect(MessageHistoryNormalizer.normalizeChatMessages(null)).toBeNull();
     expect(MessageHistoryNormalizer.normalizeChatMessages(one)).toBe(one);
+  });
+
+  it('normalizeChatMessagesFillsMissingToolOutputs', () => {
+    const assistant = {
+      role: 'assistant',
+      content: '',
+      toolCalls: [
+        { id: 'call_1', type: 'function', function: { name: 'lookup', arguments: '{}' } },
+        { id: 'call_2', type: 'function', function: { name: 'read_file', arguments: '{}' } },
+      ],
+    };
+    const tool1 = { role: 'tool', toolCallId: 'call_1', content: 'ok' };
+    const normalized = MessageHistoryNormalizer.normalizeChatMessages([assistant, tool1]);
+    expect(normalized).toEqual([
+      assistant,
+      tool1,
+      { role: 'tool', toolCallId: 'call_2', content: MISSING_TOOL_RESULT_PLACEHOLDER },
+    ]);
+  });
+
+  it('normalizeChatMessagesFillsWhenAssistantHasToolCallsButNoToolMessages', () => {
+    const assistant = {
+      role: 'assistant',
+      content: '',
+      toolCalls: [{ id: 'call_01_ET_missing', function: { name: 'lookup', arguments: '{}' } }],
+    };
+    const normalized = MessageHistoryNormalizer.normalizeChatMessages([assistant]);
+    expect(normalized).toEqual([
+      assistant,
+      { role: 'tool', toolCallId: 'call_01_ET_missing', content: MISSING_TOOL_RESULT_PLACEHOLDER },
+    ]);
+  });
+
+  it('normalizeChatMessagesRegroupsToolsSplitBySyntheticUser', () => {
+    const assistant = {
+      role: 'assistant',
+      content: '',
+      toolCalls: [
+        { id: 'call_1', function: { name: 'shot', arguments: '{}' } },
+        { id: 'call_2', function: { name: 'read', arguments: '{}' } },
+      ],
+    };
+    const tool1 = { role: 'tool', toolCallId: 'call_1', content: 'img' };
+    const synthetic = { role: 'user', content: 'Attached media' };
+    const tool2 = { role: 'tool', toolCallId: 'call_2', content: 'txt' };
+    const normalized = MessageHistoryNormalizer.normalizeChatMessages([assistant, tool1, synthetic, tool2]);
+    expect(normalized).toEqual([assistant, tool1, tool2, synthetic]);
   });
 
   it('normalizeEntitiesMovesToolsAfterAssistantCalls', () => {
