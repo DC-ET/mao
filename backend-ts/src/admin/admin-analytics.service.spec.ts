@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { shanghaiYmd } from '../common/json.js';
+import { addDaysYmd, shanghaiYmd } from '../common/json.js';
 import { AdminAnalyticsDbStore, AdminAnalyticsService, type AnalyticsRange } from './admin-analytics.service.js';
 
 const range: AnalyticsRange = {
@@ -113,6 +113,19 @@ describe('AdminAnalyticsService', () => {
 
     expect(result.period).toMatchObject({ days: 90 });
     expect(result.trends).toHaveLength(90);
+  });
+
+  it('summaryShiftsEndDayWithEndOffset', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.summary(1, 1)) as Record<string, any>;
+    const yesterday = addDaysYmd(today, -1);
+
+    expect(result.period).toMatchObject({ days: 1, start: yesterday, end: yesterday });
+    expect(result.trends).toHaveLength(1);
+    expect(result.trends[0]).toMatchObject({ date: yesterday, sessions: 0, messages: 0 });
   });
 });
 

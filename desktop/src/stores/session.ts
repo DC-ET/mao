@@ -693,8 +693,12 @@ export const useSessionStore = defineStore('session', () => {
       data.id = normalizeId(data.id)
       data.agentId = normalizeId(data.agentId)
       upsertSessionEntity(data)
-      if (!standardSessionIds.value.includes(String(data.id))) {
-        standardSessionIds.value = [String(data.id), ...standardSessionIds.value]
+      const sid = String(data.id)
+      if (!standardSessionIds.value.includes(sid)) {
+        standardSessionIds.value = [sid, ...standardSessionIds.value]
+      }
+      if (focusLoaded.value && !focusSessionIds.value.includes(sid)) {
+        focusSessionIds.value = [sid, ...focusSessionIds.value]
       }
       bumpGroupMetaForSession(data, 1)
     }
@@ -1606,6 +1610,10 @@ export const useSessionStore = defineStore('session', () => {
     sessionFileChanges.value.set(String(sessionId), changes)
   }
 
+  function getFileChanges(sessionId: string): FileChange[] {
+    return sessionFileChanges.value.get(String(sessionId)) ?? []
+  }
+
   function clearFileChanges(sessionId: string) {
     sessionFileChanges.value.delete(String(sessionId))
   }
@@ -1836,6 +1844,7 @@ export const useSessionStore = defineStore('session', () => {
     activeFileChanges,
     appendFileChange,
     setFileChanges,
+    getFileChanges,
     clearFileChanges,
     // Pending questions
     sessionPendingQuestions,

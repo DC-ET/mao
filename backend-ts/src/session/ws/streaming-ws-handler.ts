@@ -906,10 +906,10 @@ export class StreamingWsHandler {
         }
         // 注意：不重新同步 skills — 复用已有会话上下文（有意为之）
       }
-      // 清理未完成尾巴消息（与 CrashRecoveryRunner 一致）
+      // 补齐缺失的 tool output（与 CrashRecoveryRunner 一致），避免重试再次 400
       const deleted = await this.deps.sessionService.cleanupIncompleteTail(sessionId);
       if (deleted > 0) {
-        console.info(`Session ${sessionId}: cleaned up ${deleted} incomplete tail messages before retry`);
+        console.info(`Session ${sessionId}: filled ${deleted} missing tool output(s) before retry`);
       }
       // 置为 RESUMING 状态
       await this.deps.sessionService.updatePhase(sessionId, 'RESUMING');

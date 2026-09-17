@@ -5,7 +5,7 @@
         <div class="toolbar-info">
           <div class="toolbar-title">用量分析</div>
           <div class="toolbar-hint">
-            {{ periodText }}，环比对照 {{ previousText }}；数字均为窗口内新增。实时异常请用运行监控。
+            {{ periodText }}，环比对照 {{ previousText }}；数字均为窗口内新增。
           </div>
         </div>
         <div class="toolbar-actions">
@@ -234,14 +234,32 @@ const EMPTY_TOTALS: PeriodTotals = {
   failedSessions: 0
 }
 
+type PeriodValue = number | 'today' | 'yesterday'
+
 const router = useRouter()
-const days = ref(30)
+const days = ref<PeriodValue>('today')
 const loading = ref(false)
 const periodOptions = [
+  { label: '今日', value: 'today' as const },
+  { label: '昨日', value: 'yesterday' as const },
+  { label: '3 天', value: 3 },
   { label: '7 天', value: 7 },
   { label: '30 天', value: 30 },
   { label: '90 天', value: 90 }
 ]
+
+/** 今日/昨日用 1 天窗口 + 结束偏移表达，其余为「以今日结尾的近 N 天」。 */
+function resolvePeriod(value: PeriodValue): { days: number; endOffset: number } {
+  if (value === 'today') return { days: 1, endOffset: 0 }
+  if (value === 'yesterday') return { days: 1, endOffset: 1 }
+  return { days: Number(value), endOffset: 0 }
+}
+
+function periodLabel(value: PeriodValue): string {
+  if (value === 'today') return '今日'
+  if (value === 'yesterday') return '昨日'
+  return `近 ${value} 天`
+}
 const summary = ref<Record<string, any>>({})
 
 const trends = computed<TrendPoint[]>(() => (summary.value.trends || []) as TrendPoint[])
@@ -254,7 +272,7 @@ const hasTokens = computed(() => trends.value.some((t) => t.totalTokens > 0))
 
 const periodText = computed(() => {
   const period = summary.value.period
-  return period ? `${period.start} ~ ${period.end}（${period.days} 天）` : `近 ${days.value} 天`
+  return period ? `${period.start} ~ ${period.end}（${period.days} 天）` : periodLabel(days.value)
 })
 const previousText = computed(() => {
   const period = summary.value.period
@@ -334,7 +352,7 @@ const kpis = computed(() => {
       series: null,
       color: '#ff3b30',
       inverse: true,
-      path: '/runtime?phase=FAILED'
+      path: '/sessions?phase=FAILED'
     }
   ]
 })
@@ -374,7 +392,10 @@ async function fetchSummary() {
   const seq = ++fetchSummarySeq
   loading.value = true
   try {
-    const { data } = await api.get('/admin/analytics/summary', { params: { days: days.value } })
+    const { days: windowDays, endOffset } = resolvePeriod(days.value)
+    const { data } = await api.get('/admin/analytics/summary', {
+      params: { days: windowDays, endOffset }
+    })
     if (seq !== fetchSummarySeq) return
     summary.value = data || {}
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
@@ -450,14 +471,15 @@ onMounted(fetchSummary)
   border-radius: 4px;
 }
 
+/* 项目约定：红=好、绿=坏（与默认色觉习惯相反） */
 .kpi-delta.up {
-  color: #1a7f37;
-  background: rgba(52, 199, 89, 0.12);
+  color: #c9252d;
+  background: rgba(255, 59, 48, 0.1);
 }
 
 .kpi-delta.down {
-  color: #c9252d;
-  background: rgba(255, 59, 48, 0.1);
+  color: #1a7f37;
+  background: rgba(52, 199, 89, 0.12);
 }
 
 .kpi-delta.flat {

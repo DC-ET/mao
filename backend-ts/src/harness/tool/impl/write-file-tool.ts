@@ -7,6 +7,7 @@ import { FileChangeDiffUtil } from '../file-change-diff-util.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { harnessLog } from '../../log.js';
 import { withFileLock } from './file-write-lock.js';
+import { applyEol, detectEol, stripBom } from './file-eol.js';
 
 export class WriteFileTool extends BaseTool {
   constructor(private readonly pathSandbox: PathSandbox) {
@@ -50,17 +51,19 @@ export class WriteFileTool extends BaseTool {
       // 与 edit_file 共用路径锁，避免并行写同一文件互相覆盖
       return await withFileLock(filePath, () => {
         const fileExisted = existsSync(filePath);
-        const beforeContent = fileExisted ? readFileSync(filePath, 'utf8') : '';
+        const rawBefore = fileExisted ? readFileSync(filePath, 'utf8') : '';
+        const beforeContent = stripBom(rawBefore);
+        const toWrite = fileExisted ? applyEol(content, detectEol(rawBefore)) : content;
         const parent = path.dirname(filePath);
         if (parent && !existsSync(parent)) mkdirSync(parent, { recursive: true });
-        writeFileSync(filePath, content);
+        writeFileSync(filePath, toWrite);
         const newLineCount = splitLines(content).length;
         const lineDelta = fileExisted
           ? FileChangeDiffUtil.computeLineDelta(beforeContent, content)
           : { linesAdded: newLineCount, linesDeleted: 0 };
         return toJson({
           success: true,
-          bytes_written: Buffer.byteLength(content, 'utf8'),
+          bytes_written: Buffer.byteLength(toWrite, 'utf8'),
           file_change: {
             path: filePathArg,
             type: fileExisted ? 'MODIFIED' : 'CREATED',

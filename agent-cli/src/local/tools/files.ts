@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertNotSymlink, resolveSandboxPath } from '../sandbox';
+import { withFileLock } from './file-write-lock';
 
 const IMAGE_EXT: Record<string, string> = {
   '.png': 'image/png',
@@ -265,37 +266,39 @@ export function handleReadFile(args: Record<string, unknown>, workspace: string 
   }
 }
 
-export function handleWriteFile(args: Record<string, unknown>, workspace: string | undefined, sessionId: number): Record<string, unknown> {
+export async function handleWriteFile(args: Record<string, unknown>, workspace: string | undefined, sessionId: number): Promise<Record<string, unknown>> {
   try {
     const filePath = extractFilePath(args);
     if (!filePath) return { success: false, error: '缺少必填参数 path' };
     if (typeof args.content !== 'string') return { success: false, error: '缺少必填参数 content' };
     const content = args.content;
     const resolvedPath = resolveSandboxPath(filePath, workspace, sessionId);
-    assertNotSymlink(resolvedPath, filePath);
-    const fileExisted = fs.existsSync(resolvedPath);
-    if (fileExisted && !fs.statSync(resolvedPath).isFile()) {
-      return { success: false, error: `不是普通文件，拒绝写入：${filePath}` };
-    }
-    const rawBefore = fileExisted ? fs.readFileSync(resolvedPath, 'utf-8') : '';
-    const beforeContent = stripBom(rawBefore);
-    const toWrite = fileExisted ? applyEol(content, detectEol(rawBefore)) : content;
-    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
-    fs.writeFileSync(resolvedPath, toWrite, 'utf-8');
-    const newLineCount = splitLines(content).length;
-    const lineDelta = fileExisted ? computeLineDelta(beforeContent, content) : { linesAdded: newLineCount, linesDeleted: 0 };
-    return {
-      success: true,
-      bytes_written: Buffer.byteLength(toWrite, 'utf-8'),
-      file_change: {
-        path: filePath,
-        type: fileExisted ? 'MODIFIED' : 'CREATED',
-        total_lines: newLineCount,
-        lines_added: lineDelta.linesAdded,
-        lines_deleted: lineDelta.linesDeleted,
-      },
-      [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(filePath, beforeContent, content),
-    };
+    return await withFileLock(resolvedPath, () => {
+      assertNotSymlink(resolvedPath, filePath);
+      const fileExisted = fs.existsSync(resolvedPath);
+      if (fileExisted && !fs.statSync(resolvedPath).isFile()) {
+        return { success: false, error: `不是普通文件，拒绝写入：${filePath}` };
+      }
+      const rawBefore = fileExisted ? fs.readFileSync(resolvedPath, 'utf-8') : '';
+      const beforeContent = stripBom(rawBefore);
+      const toWrite = fileExisted ? applyEol(content, detectEol(rawBefore)) : content;
+      fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+      fs.writeFileSync(resolvedPath, toWrite, 'utf-8');
+      const newLineCount = splitLines(content).length;
+      const lineDelta = fileExisted ? computeLineDelta(beforeContent, content) : { linesAdded: newLineCount, linesDeleted: 0 };
+      return {
+        success: true,
+        bytes_written: Buffer.byteLength(toWrite, 'utf-8'),
+        file_change: {
+          path: filePath,
+          type: fileExisted ? 'MODIFIED' : 'CREATED',
+          total_lines: newLineCount,
+          lines_added: lineDelta.linesAdded,
+          lines_deleted: lineDelta.linesDeleted,
+        },
+        [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(filePath, beforeContent, content),
+      };
+    });
   } catch (e) {
     return { success: false, error: sandboxError(e) };
   }
@@ -381,7 +384,7 @@ function applyEditMatch(content: string, oldString: string, newString: string, r
   };
 }
 
-export function handleEditFile(args: Record<string, unknown>, workspace: string | undefined, sessionId: number): Record<string, unknown> {
+export async function handleEditFile(args: Record<string, unknown>, workspace: string | undefined, sessionId: number): Promise<Record<string, unknown>> {
   try {
     const filePath = extractFilePath(args);
     if (!filePath) return { success: false, replacements: 0, error: '缺少必填参数 path' };
@@ -398,34 +401,36 @@ export function handleEditFile(args: Record<string, unknown>, workspace: string 
       };
     }
     const resolvedPath = resolveSandboxPath(filePath, workspace, sessionId);
-    assertNotSymlink(resolvedPath, filePath);
-    if (!fs.existsSync(resolvedPath)) return { success: false, replacements: 0, error: `文件不存在：${filePath}` };
-    const raw = fs.readFileSync(resolvedPath, 'utf-8');
-    const eol = detectEol(raw);
-    const content = stripBom(raw);
-    const match = applyEditMatch(content, oldStr, newStr, asBool(args.replace_all));
-    if (!match.ok) {
+    return await withFileLock(resolvedPath, () => {
+      assertNotSymlink(resolvedPath, filePath);
+      if (!fs.existsSync(resolvedPath)) return { success: false, replacements: 0, error: `文件不存在：${filePath}` };
+      const raw = fs.readFileSync(resolvedPath, 'utf-8');
+      const eol = detectEol(raw);
+      const content = stripBom(raw);
+      const match = applyEditMatch(content, oldStr, newStr, asBool(args.replace_all));
+      if (!match.ok) {
+        return {
+          success: false,
+          replacements: 0,
+          error: match.error,
+          ...(match.occurrences != null ? { occurrences: match.occurrences, occurrence_lines: match.occurrence_lines } : {}),
+        };
+      }
+      const updated = match.updated!;
+      fs.writeFileSync(resolvedPath, applyEol(updated, eol), 'utf-8');
+      const lineDelta = computeLineDelta(content, updated);
       return {
-        success: false,
-        replacements: 0,
-        error: match.error,
-        ...(match.occurrences != null ? { occurrences: match.occurrences, occurrence_lines: match.occurrence_lines } : {}),
+        success: true,
+        replacements: match.replacements,
+        file_change: {
+          path: filePath,
+          type: 'MODIFIED',
+          lines_added: lineDelta.linesAdded,
+          lines_deleted: lineDelta.linesDeleted,
+        },
+        [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(filePath, content, updated),
       };
-    }
-    const updated = match.updated!;
-    fs.writeFileSync(resolvedPath, applyEol(updated, eol), 'utf-8');
-    const lineDelta = computeLineDelta(content, updated);
-    return {
-      success: true,
-      replacements: match.replacements,
-      file_change: {
-        path: filePath,
-        type: 'MODIFIED',
-        lines_added: lineDelta.linesAdded,
-        lines_deleted: lineDelta.linesDeleted,
-      },
-      [PRIVATE_DIFF_FIELD]: buildFileChangeDiff(filePath, content, updated),
-    };
+    });
   } catch (e) {
     return { success: false, replacements: 0, error: sandboxError(e) };
   }

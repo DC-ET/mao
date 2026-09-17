@@ -41,7 +41,12 @@
               <strong>{{ currentRole.name }}</strong>
               <el-tag size="small">{{ currentRole.code }}</el-tag>
             </div>
-            <el-checkbox-group v-model="selectedPermissionIds" class="permission-grid" @change="onPermissionChange">
+            <el-checkbox-group
+              v-model="selectedPermissionIds"
+              class="permission-grid"
+              :disabled="savingPermissions"
+              @change="onPermissionChange"
+            >
               <el-checkbox
                 v-for="permission in permissions"
                 :key="permission.id"
@@ -166,6 +171,7 @@ async function confirmDiscardUnsaved(): Promise<boolean> {
 }
 
 async function handleRoleRowClick(role: Role) {
+  if (savingPermissions.value) return
   if (role.id === currentRole.value?.id) return
   if (!(await confirmDiscardUnsaved())) return
   selectRole(role)

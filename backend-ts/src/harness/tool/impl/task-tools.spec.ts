@@ -13,6 +13,7 @@ describe('TaskTools', () => {
     resetInProgressIfExists: vi.fn(async () => true),
     insert: vi.fn(),
     selectBySessionId: vi.fn(),
+    selectMaxSortOrder: vi.fn(async () => -1),
     updateFields: vi.fn(),
     delete: vi.fn(),
   } as unknown as SessionTodoMapper & Record<string, ReturnType<typeof vi.fn>>;
@@ -38,6 +39,20 @@ describe('TaskTools', () => {
     expect(result.message).toContain('2');
     expect(mapper.resetInProgress).toHaveBeenCalledWith(11);
     expect(mapper.insert).toHaveBeenCalledTimes(2);
+    expect(mapper.insert).toHaveBeenNthCalledWith(1, expect.objectContaining({ sortOrder: 0 }));
+    expect(mapper.insert).toHaveBeenNthCalledWith(2, expect.objectContaining({ sortOrder: 1 }));
+  });
+
+  it('appends new todos after the current max sort_order instead of restarting at 0', async () => {
+    mapper.selectMaxSortOrder.mockResolvedValue(2);
+    mapper.selectBySessionId.mockResolvedValue([todo(4, 'D', 'pending'), todo(5, 'E', 'pending')]);
+    const tool = new TaskCreateTool(mapper);
+    await tool.execute(JSON.stringify({
+      items: [{ content: 'D' }, { content: 'E' }],
+    }), 11, null);
+    expect(mapper.selectMaxSortOrder).toHaveBeenCalledWith(11);
+    expect(mapper.insert).toHaveBeenNthCalledWith(1, expect.objectContaining({ content: 'D', sortOrder: 3 }));
+    expect(mapper.insert).toHaveBeenNthCalledWith(2, expect.objectContaining({ content: 'E', sortOrder: 4 }));
   });
 
   it('updateToolUpdatesTodosAndEmitsCompletionHints', async () => {

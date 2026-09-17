@@ -156,9 +156,12 @@ function buildUnifiedPatch(filePath: string, before: string, after: string): { c
   return { content: patch, truncated };
 }
 
+/** 与 read-file-tool / agent-cli 同口径：末尾换行不产生空行。 */
 function splitLines(text: string | null | undefined): string[] {
   if (text == null || text === '') return [];
-  return text.split(/\r\n|\n|\r/);
+  const lines = text.split(/\r\n|\r|\n/);
+  if (lines[lines.length - 1] === '') lines.pop();
+  return lines;
 }
 
 function lcsLength(oldLines: string[], oldStart: number, oldEnd: number, newLines: string[], newStart: number, newEnd: number): number {

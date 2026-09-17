@@ -8,6 +8,7 @@ import {
   REASONING_REF_PREFIX,
   ResponsesLlmAdapter,
 } from './responses-llm-adapter.js';
+import { MISSING_TOOL_RESULT_PLACEHOLDER } from '../core/message-history-normalizer.js';
 import type { ChatRequest, ChatUsage, LlmModelConfig, LlmRetryConfig, StreamCallback, StreamChunk, ToolCall } from './chat-request.js';
 import { DEFAULT_LLM_RETRY } from './chat-request.js';
 
@@ -176,6 +177,22 @@ describe('convertMessages（请求转换）', () => {
     const types = input.map((item) => item.type ?? `role:${item.role}`);
     expect(types).toEqual([
       'role:user', 'function_call', 'function_call', 'function_call_output', 'function_call_output',
+    ]);
+  });
+
+  it('缺失的 tool output 补占位 function_call_output，避免网关 400', () => {
+    const { input } = convertMessages([
+      { role: 'user', content: '查两个城市' },
+      { role: 'assistant', content: '', toolCalls: [
+        { id: 'call_01_ET_hVY3McifxdUHAsw5uQcI3406', type: 'function', function: { name: 'lookup', arguments: '{"q":"bj"}' } },
+        { id: 'call_2', type: 'function', function: { name: 'lookup', arguments: '{"q":"sh"}' } },
+      ] },
+      { role: 'tool', toolCallId: 'call_01_ET_hVY3McifxdUHAsw5uQcI3406', content: '晴' },
+    ]);
+    const outputs = input.filter((item) => item.type === 'function_call_output');
+    expect(outputs).toEqual([
+      { type: 'function_call_output', call_id: 'call_01_ET_hVY3McifxdUHAsw5uQcI3406', output: '晴' },
+      { type: 'function_call_output', call_id: 'call_2', output: MISSING_TOOL_RESULT_PLACEHOLDER },
     ]);
   });
 

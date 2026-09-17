@@ -64,6 +64,7 @@ import { useStreamWS } from '../../composables/useStreamWS'
 import { useToolApprovals } from '../../composables/useChat'
 import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { api } from '../../api'
+import { ElMessage } from 'element-plus'
 import {
   mapMessagesWithFileChanges,
   mapCompactionEvents,
@@ -168,11 +169,16 @@ const executionError = computed(
   () => sessionStore.sessionExecutionErrors.get(sid.value) ?? null
 )
 
-function handleRetryExecution() {
+async function handleRetryExecution() {
   if (retrying.value) return
   retrying.value = true
   sessionStore.clearExecutionError(sid.value)
-  retryExecution(sid.value)
+  const ok = await retryExecution(sid.value)
+  if (!ok) {
+    retrying.value = false
+    ElMessage.error('重试失败，网络连接不可用，请重试')
+    return
+  }
   sessionStore.ensureStreamingAssistantMessage(sid.value)
 }
 

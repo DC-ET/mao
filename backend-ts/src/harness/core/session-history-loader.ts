@@ -37,7 +37,9 @@ export class SessionHistoryLoader {
   async applyHistory(
     context: AgentExecutionContext, summary: string | null | undefined, history: HistorySnapshot,
   ): Promise<void> {
-    const incremental = history.persistedMessages.map((p) => p.chatMessage);
+    const incremental = MessageHistoryNormalizer.normalizeChatMessages(
+      history.persistedMessages.map((p) => p.chatMessage),
+    ) ?? [];
     const archiveHint = this.compactionArchiveService.buildArchiveHint(
       context.executionMode, context.userId, context.sessionId);
     const latestUserMessage = await this.resolveLatestUserMessage(context, summary, incremental);

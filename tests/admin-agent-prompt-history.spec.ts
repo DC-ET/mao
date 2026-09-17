@@ -32,7 +32,7 @@ async function setup(page: Page, canWrite = true) {
   await page.fill('input[placeholder="用户名"]', 'admin')
   await page.fill('input[placeholder="密码"]', 'admin123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await page.waitForURL(/\/admin\/dashboard/)
+  await page.waitForURL(/\/admin\/analytics/)
   await page.goto('/admin/agents')
   return { rollbackCount: () => rollbackCount, failHistory: (value: boolean) => { failHistory = value } }
 }

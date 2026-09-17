@@ -127,6 +127,28 @@ function parseSession(data: Record<string, unknown>): EcpSessionResult {
   return { ...parseSessionToken(data), user: parseUser(data) };
 }
 
+export interface LarkUserAccessToken {
+  accessToken: string;
+  expiresAt: Date;
+  scope?: string;
+}
+
+/** 兼容裸 OAuth token 响应与 { code, data } 包裹。 */
+function parseLarkUat(json: unknown): LarkUserAccessToken {
+  const data = unwrapData(json);
+  const accessToken = String(data.access_token ?? data.accessToken ?? data.userAccessToken ?? '').trim();
+  if (!accessToken) throw new EcpError('ECP 响应缺少 access_token');
+  const expiresInRaw = Number(data.expires_in ?? data.expiresIn ?? 0);
+  const expiresInSec = Number.isFinite(expiresInRaw) && expiresInRaw > 0 ? Math.floor(expiresInRaw) : 7200;
+  const scopeRaw = data.scope;
+  const scope = scopeRaw != null && String(scopeRaw).trim() !== '' ? String(scopeRaw).trim() : undefined;
+  return {
+    accessToken,
+    expiresAt: new Date(Date.now() + expiresInSec * 1000),
+    scope,
+  };
+}
+
 export class EcpClient {
   constructor(private readonly http: EcpHttpClient = defaultHttpClient()) {}
 
@@ -195,5 +217,25 @@ export class EcpClient {
       throw new EcpError(`ECP session 校验失败（HTTP ${status}）`);
     }
     return parseUser(unwrapData(json));
+  }
+
+  /** 用 ECP sessionToken 换飞书用户 UAT（OAuth2 token 端点，token 放 query）。 */
+  async getUserAccessToken(config: EcpConfig, ecpUserToken: string): Promise<LarkUserAccessToken> {
+    const url = `${config.baseUrl}/public/protocols/oauth2/apps/token`
+      + `?appCode=${encodeURIComponent(config.appCode)}`
+      + `&ecpUserToken=${encodeURIComponent(ecpUserToken)}`;
+    const { status, json } = await this.http.request('POST', url, {
+      timeoutMs: config.timeoutMs,
+    });
+    if (status < 200 || status >= 300) {
+      const root = (json ?? {}) as Record<string, unknown>;
+      const message = typeof root.error_description === 'string' ? root.error_description
+        : typeof root.error === 'string' ? root.error
+          : typeof root.message === 'string' ? root.message : '';
+      throw new EcpError(message
+        ? `ECP 换取飞书 UAT 失败：${message}`
+        : `ECP 换取飞书 UAT 失败（HTTP ${status}）`);
+    }
+    return parseLarkUat(json);
   }
 }

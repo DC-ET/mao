@@ -56,6 +56,7 @@ export class TaskCreateTool extends BaseTool {
       const args = parseObject(argumentsJson);
       if (!args) return errorJson('无效的JSON参数');
       const items = Array.isArray(args.items) ? args.items : [];
+      let nextSort = sessionId != null ? (await this.sessionTodoMapper.selectMaxSortOrder(sessionId)) + 1 : 0;
       let count = 0;
       for (const item of items as Record<string, unknown>[]) {
         const status = asText(item.status) ?? 'pending';
@@ -68,7 +69,7 @@ export class TaskCreateTool extends BaseTool {
           description: asText(item.description) ?? '',
           activeForm: asText(item.active_form) ?? '',
           status,
-          sortOrder: count,
+          sortOrder: nextSort++,
         };
         await this.sessionTodoMapper.insert(todo);
         count++;

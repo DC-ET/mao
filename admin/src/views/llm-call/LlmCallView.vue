@@ -29,14 +29,42 @@
               <el-button @click="handleReset">重置</el-button>
             </el-form-item>
           </template>
-          <el-form-item label="用户 ID">
-            <el-input v-model="filters.userId" clearable placeholder="用户 ID" style="width: 120px" @keyup.enter="handleSearch" @clear="handleSearch" />
+          <el-form-item label="用户">
+            <el-select
+              v-model="filters.userId"
+              clearable
+              filterable
+              placeholder="全部"
+              style="width: 160px"
+              @change="handleSearch"
+            >
+              <el-option
+                v-for="u in userOptions"
+                :key="u.id"
+                :label="u.displayName || u.username || `用户 #${u.id}`"
+                :value="u.id"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item label="会话 ID">
             <el-input v-model="filters.sessionId" clearable placeholder="会话 ID" style="width: 120px" @keyup.enter="handleSearch" @clear="handleSearch" />
           </el-form-item>
-          <el-form-item label="模型 ID">
-            <el-input v-model="filters.modelId" clearable placeholder="模型 ID" style="width: 120px" @keyup.enter="handleSearch" @clear="handleSearch" />
+          <el-form-item label="模型">
+            <el-select
+              v-model="filters.modelId"
+              clearable
+              filterable
+              placeholder="全部"
+              style="width: 180px"
+              @change="handleSearch"
+            >
+              <el-option
+                v-for="m in modelOptions"
+                :key="m.id"
+                :label="m.provider ? `${m.name} (${m.provider})` : m.name"
+                :value="m.id"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item label="开始日期">
             <el-date-picker v-model="filters.startDate" type="date" value-format="YYYY-MM-DD" placeholder="开始" style="width: 150px" @change="handleSearch" />
@@ -60,7 +88,7 @@
             <el-tag size="small">{{ llmCallSceneLabel(row.scene) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="模型" min-width="150" show-overflow-tooltip>
+        <el-table-column label="模型" width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ row.modelName || row.providerModelId || '-' }}</template>
         </el-table-column>
         <el-table-column label="入 Token" width="100" align="right">
@@ -69,8 +97,10 @@
         <el-table-column label="出 Token" width="100" align="right">
           <template #default="{ row }">{{ formatNumber(row.completionTokens || 0) }}</template>
         </el-table-column>
-        <el-table-column label="缓存" width="90" align="right" class-name="hide-on-mobile">
-          <template #default="{ row }">{{ formatNumber(row.cachedTokens || 0) }}</template>
+        <el-table-column label="缓存" width="140" align="right" class-name="hide-on-mobile cache-col">
+          <template #default="{ row }">
+            <span class="cache-cell">{{ formatCacheHit(row) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="流式" width="70" align="center">
           <template #default="{ row }">{{ row.stream === 1 ? '是' : '否' }}</template>
@@ -142,7 +172,7 @@
         <el-descriptions-item label="重试">{{ currentRecord.retryCount ?? 0 }}</el-descriptions-item>
         <el-descriptions-item label="入 Token">{{ formatNumber(currentRecord.promptTokens || 0) }}</el-descriptions-item>
         <el-descriptions-item label="出 Token">{{ formatNumber(currentRecord.completionTokens || 0) }}</el-descriptions-item>
-        <el-descriptions-item label="缓存 Token">{{ formatNumber(currentRecord.cachedTokens || 0) }}</el-descriptions-item>
+        <el-descriptions-item label="缓存 Token">{{ formatCacheHit(currentRecord) }}</el-descriptions-item>
         <el-descriptions-item label="合计 Token">{{ formatNumber(currentRecord.totalTokens || 0) }}</el-descriptions-item>
         <el-descriptions-item label="首字耗时">{{ formatMs(currentRecord.firstTokenMs) }}</el-descriptions-item>
         <el-descriptions-item label="总耗时">{{ formatMs(currentRecord.durationMs) }}</el-descriptions-item>
@@ -171,18 +201,29 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const detailVisible = ref(false)
 const currentRecord = ref<any | null>(null)
+const userOptions = ref<Array<{ id: number; username?: string | null; displayName?: string | null }>>([])
+const modelOptions = ref<Array<{ id: number; name: string; provider?: string | null }>>([])
 const filters = reactive({
   scene: '',
   success: undefined as boolean | undefined,
-  userId: '',
+  userId: undefined as number | undefined,
   sessionId: '',
-  modelId: '',
+  modelId: undefined as number | undefined,
   startDate: '',
   endDate: '',
 })
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('zh-CN').format(value)
+}
+
+function formatCacheHit(row: { cachedTokens?: number | null; promptTokens?: number | null }) {
+  const cached = row.cachedTokens || 0
+  const prompt = row.promptTokens || 0
+  if (cached <= 0) return '0'
+  const num = formatNumber(cached)
+  if (prompt <= 0) return num
+  return `${num} (${Math.round((cached / prompt) * 100)}%)`
 }
 
 let fetchSeq = 0
@@ -196,9 +237,12 @@ async function fetchRecords() {
     }
     if (filters.scene) params.scene = filters.scene
     if (filters.success !== undefined) params.success = filters.success
-    if (filters.userId) params.userId = Number(filters.userId)
-    if (filters.sessionId) params.sessionId = Number(filters.sessionId)
-    if (filters.modelId) params.modelId = Number(filters.modelId)
+    if (filters.userId != null) params.userId = filters.userId
+    if (filters.sessionId) {
+      const sessionId = Number(filters.sessionId)
+      if (Number.isFinite(sessionId)) params.sessionId = sessionId
+    }
+    if (filters.modelId != null) params.modelId = filters.modelId
     if (filters.startDate) params.startDate = filters.startDate
     if (filters.endDate) params.endDate = filters.endDate
     const { data } = await api.get('/admin/llm-calls', { params })
@@ -218,9 +262,9 @@ function handleSearch() {
 function handleReset() {
   filters.scene = ''
   filters.success = undefined
-  filters.userId = ''
+  filters.userId = undefined
   filters.sessionId = ''
-  filters.modelId = ''
+  filters.modelId = undefined
   filters.startDate = ''
   filters.endDate = ''
   handleSearch()
@@ -236,7 +280,21 @@ function showDetail(row: any) {
   detailVisible.value = true
 }
 
-onMounted(fetchRecords)
+async function fetchFilterOptions() {
+  try {
+    const [usersRes, modelsRes] = await Promise.all([
+      api.get('/admin/sessions/options/users'),
+      api.get('/models', { params: { page: 1, size: 200 } }),
+    ])
+    userOptions.value = usersRes.data || []
+    modelOptions.value = modelsRes.data?.records || []
+  } catch { /* 拦截器已提示失败 */ }
+}
+
+onMounted(() => {
+  fetchRecords()
+  fetchFilterOptions()
+})
 </script>
 
 <style scoped>
@@ -253,6 +311,10 @@ onMounted(fetchRecords)
 .pagination {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+.cache-col .cache-cell {
+  white-space: nowrap;
 }
 
 .mobile-card-list {

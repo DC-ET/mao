@@ -128,6 +128,7 @@ describe('BackgroundSubagentManager.progress snapshot', () => {
 function buildRetryManager(execution: Record<string, unknown>, opts?: {
   child?: Record<string, unknown>;
   parent?: Record<string, unknown>;
+  assistantContent?: string;
 }) {
   const child = opts?.child ?? { id: 42, sessionType: 'SUBAGENT', parentSessionId: 1 };
   const parent = opts?.parent ?? { id: 1, phase: 'RUNNING' };
@@ -139,8 +140,9 @@ function buildRetryManager(execution: Record<string, unknown>, opts?: {
     Object.assign(execution, data);
     return true;
   });
+  const findById = vi.fn(async () => execution);
   const subagentExecutionMapper = {
-    findById: vi.fn(async () => execution),
+    findById,
     findByChildSessionId: vi.fn(async () => execution),
     listByParent: vi.fn(async () => [execution]),
     updateById,
@@ -149,12 +151,12 @@ function buildRetryManager(execution: Record<string, unknown>, opts?: {
   const sessionMapper = { selectById: vi.fn(async (id: number) => (id === 42 ? child : parent)) };
   const sessionService = {
     getMessages: vi.fn(async () => [
-      { role: 'ASSISTANT', content: '子代理重试后的输出' },
+      { role: 'ASSISTANT', content: opts?.assistantContent ?? '子代理重试后的输出' },
     ]),
     saveMessage: vi.fn(async () => ({ id: 901 })),
   };
   const deps = { subagentExecutionMapper, sessionMapper, sessionService } as never;
-  return { manager: new BackgroundSubagentManager(deps), mocks: { updateById, updateTerminal } };
+  return { manager: new BackgroundSubagentManager(deps), mocks: { updateById, updateTerminal, findById } };
 }
 
 describe('BackgroundSubagentManager retry bookkeeping', () => {
@@ -261,5 +263,56 @@ describe('BackgroundSubagentManager retry bookkeeping', () => {
     expect(execution.status).toBe('CANCELLED');
     expect(execution.result).toBe('后台子代理已随父会话取消');
     expect(await manager.consumeResults(1)).toEqual({});
+  });
+
+  it('completeRetry keeps running track until the result is queued', async () => {
+    const execution = {
+      id: 7, parentSessionId: 1, childSessionId: 42, agentType: 'reviewer',
+      status: 'FAILED', invocationType: 'BACKGROUND', deliveryStatus: 'DELIVERED',
+    };
+    const { manager, mocks } = buildRetryManager(execution, { parent: { id: 1, phase: 'RUNNING' } });
+    await manager.beginRetry(1, 42);
+    expect(manager.hasRunning(1)).toBe(true);
+
+    let releaseFind!: (value: unknown) => void;
+    mocks.findById.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseFind = resolve;
+    }));
+
+    const completing = manager.completeRetry(1, 7, 'COMPLETED');
+    await Promise.resolve();
+    expect(manager.hasRunning(1)).toBe(true);
+    expect(manager.hasPendingResults(1)).toBe(false);
+    expect(await manager.waitForAll(1, null, 20)).toEqual({ completed: false, timedOut: true });
+
+    releaseFind(execution);
+    await completing;
+    expect(manager.hasRunning(1)).toBe(false);
+    expect(manager.hasPendingResults(1)).toBe(true);
+    const payload = JSON.parse((await manager.consumeResults(1))['7']) as Record<string, unknown>;
+    expect(payload.result).toBe('子代理重试后的输出');
+  });
+
+  it('completeRetry delivers the full assistant output instead of the 2000-char preview', async () => {
+    const conclusion = '【结论】关键修复已完成';
+    const full = `${'前部预览'.repeat(600)}${conclusion}`;
+    expect(full.length).toBeGreaterThan(2000);
+    const execution = {
+      id: 7, parentSessionId: 1, childSessionId: 42, agentType: 'reviewer',
+      status: 'FAILED', invocationType: 'BACKGROUND', deliveryStatus: 'DELIVERED',
+    };
+    const { manager } = buildRetryManager(execution, {
+      parent: { id: 1, phase: 'RUNNING' },
+      assistantContent: full,
+    });
+    await manager.beginRetry(1, 42);
+    await manager.completeRetry(1, 7, 'COMPLETED');
+
+    expect(execution.result).toBe(full);
+    const payload = JSON.parse((await manager.consumeResults(1))['7']) as Record<string, unknown>;
+    expect(payload.result).toBe(full);
+    const snap = (await manager.progress(1, 7)) as BackgroundProgress;
+    expect(snap.recentOutput).toBe(`${full.slice(0, 2000)}...`);
+    expect(snap.recentOutput).not.toContain(conclusion);
   });
 });

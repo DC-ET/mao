@@ -162,6 +162,17 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   }
 
   /**
+   * 进度卡「取消任务」：只置取消标志，不写 interrupted 标记——
+   * interrupted 语义是「被下一条指令插队中断」，用户主动取消应显示「任务已取消」。
+   */
+  cancel(sessionId: number): boolean {
+    const flag = this.cancelFlags.get(sessionId);
+    if (flag != null) flag.set(true);
+    this.options.onInterruptRunning?.(sessionId);
+    return flag != null;
+  }
+
+  /**
    * M-6：插队按钮的「中断 + 接力」原子路径。
    * - 命中当前执行：置取消标志，并在下一条消息/队列接力时机由 onExecutionFinished/onMessage 驱动；
    * - 未命中（会话已空闲或仅 DB 残留 RUNNING）：先 resolveIdleRunning 落 CANCELLED，再排空，
@@ -478,9 +489,11 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     } catch (error) {
       console.error(`飞书 Agent 执行失败, sessionId=${sessionId}`, error);
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
-      const cardUpdated = await cardListener?.fail('抱歉，处理您的消息时出现了错误，请稍后再试。');
+      // 与客户端 ExecutionErrorBanner 一致：透传具体 error.message，便于在会话详情里定位根因。
+      const failText = feishuFailureText(error);
+      const cardUpdated = await cardListener?.fail(failText);
       await this.options.onExecutionFinished?.(sessionId, context, executionId, 'FAILED');
-      const replyText = cardListener == null || cardUpdated === false ? '抱歉，处理您的消息时出现了错误，请稍后再试。' : null;
+      const replyText = cardListener == null || cardUpdated === false ? failText : null;
       return { text: replyText, phase: 'FAILED' };
     }
   }
@@ -623,4 +636,13 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       this.options.releaseCancelFlag?.(sessionId);
     }
   }
+}
+
+/** 失败终态文案：优先透传 Error.message（与客户端对话页一致），无信息时回退固定安抚文案。 */
+function feishuFailureText(error: unknown): string {
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (message !== '') return message;
+  }
+  return '抱歉，处理您的消息时出现了错误，请稍后再试。';
 }

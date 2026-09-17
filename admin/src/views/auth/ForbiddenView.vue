@@ -2,7 +2,7 @@
   <div class="forbidden">
     <el-result icon="warning" title="无权限访问" sub-title="当前账号没有访问该页面的权限，请联系管理员分配角色权限。">
       <template #extra>
-        <el-button type="primary" @click="router.push('/dashboard')">返回首页</el-button>
+        <el-button type="primary" @click="router.push('/')">返回首页</el-button>
       </template>
     </el-result>
   </div>

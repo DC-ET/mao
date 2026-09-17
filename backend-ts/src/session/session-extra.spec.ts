@@ -209,9 +209,15 @@ describe('SessionService extra', () => {
 
     messageRepo.listBySession.mockResolvedValue([
       { id: 1, role: 'USER', content: 'q' },
-      { id: 2, role: 'ASSISTANT', content: 'a', toolCalls: JSON.stringify([{ id: 'tc1' }]) },
+      { id: 2, role: 'ASSISTANT', content: 'a', toolCalls: JSON.stringify([{ id: 'tc1' }, { id: 'tc2' }]) },
+      { id: 3, role: 'TOOL', content: 'ok', toolCallId: 'tc1' },
+      { id: 4, role: 'USER', content: 'continue' },
     ]);
     expect(await service.cleanupIncompleteTail(11)).toBeGreaterThan(0);
+    expect(messageRepo.insert).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'TOOL', toolCallId: 'tc2',
+    }));
+    expect(messageRepo.logicalDeleteById).not.toHaveBeenCalled();
     messageRepo.selectMessagesAfterId.mockResolvedValue([]);
     expect(await service.cleanupIncompleteTailAfterId(11, 0)).toBe(0);
 

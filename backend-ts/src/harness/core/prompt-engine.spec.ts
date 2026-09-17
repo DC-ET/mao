@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { AgentExecutionContext } from './agent-execution-context.js';
 import { PromptEngine } from './prompt-engine.js';
+import { MISSING_TOOL_RESULT_PLACEHOLDER } from './message-history-normalizer.js';
+import { SYNTHETIC_ATTACHMENT_PROMPT } from './tool-media-injector.js';
 import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import * as harnessLogModule from '../log.js';
 import type { Tool } from '../tool/tool.js';
@@ -259,6 +261,39 @@ describe('PromptEngine', () => {
     // modelConfig 缺失 → 不设置 reasoning（旧行为）
     const missing = await build(null);
     expect(missing.reasoning).toBeUndefined();
+  });
+
+  it('buildRequestFillsMissingToolOutputAndKeepsParallelToolGroupBeforeImage', async () => {
+    const engine = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const context = new AgentExecutionContext();
+    context.modelConfig = { modelId: 'gpt-5', id: 1, apiProtocol: 'openai-responses', supportsVision: true };
+    context.messages = [
+      { role: 'user', content: '看图并读文件' },
+      {
+        role: 'assistant', content: '', toolCalls: [
+          { id: 'call_01_ET_hVY3McifxdUHAsw5uQcI3406', type: 'function', function: { name: 'page_screenshot', arguments: '{}' } },
+          { id: 'call_2', type: 'function', function: { name: 'read_file', arguments: '{}' } },
+        ],
+      },
+      { role: 'tool', toolCallId: 'call_01_ET_hVY3McifxdUHAsw5uQcI3406', content: 'shot' },
+    ];
+    context.toolAttachments.set('call_01_ET_hVY3McifxdUHAsw5uQcI3406', {
+      mime: 'image/png', path: 'a.png', dataUri: 'data:image/png;base64,abc',
+    });
+    const request = await engine.buildRequest(context);
+    const body = request.messages.slice(1);
+    expect(body.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'tool', 'user']);
+    expect(body[2].toolCallId).toBe('call_01_ET_hVY3McifxdUHAsw5uQcI3406');
+    expect(body[3].toolCallId).toBe('call_2');
+    expect(body[3].content).toBe(MISSING_TOOL_RESULT_PLACEHOLDER);
+    const parts = body[4].content as Array<{ type?: string; text?: string }>;
+    expect(parts[0].text).toBe(SYNTHETIC_ATTACHMENT_PROMPT);
   });
 });
 void mkdirSync;

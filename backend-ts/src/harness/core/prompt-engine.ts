@@ -10,6 +10,7 @@ import type { SkillSyncService } from '../skill/skill-sync-service.js';
 import type { UserCommandService } from '../deps.js';
 import { harnessLog } from '../log.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
+import { MessageHistoryNormalizer } from './message-history-normalizer.js';
 import { ToolMediaInjector } from './tool-media-injector.js';
 
 const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_list', 'task_delete']);
@@ -100,9 +101,12 @@ export class PromptEngine {
     await this.replaceQuickCommandMarkers(historyCopy, context);
     messages.push(...historyCopy);
     const injected = this.toolMediaInjector.inject(messages, context.toolAttachments, context.modelConfig) ?? messages;
+    // 补齐缺失的 tool output、把被图片注入拆开的 tool 组重新挨在 assistant 后面。
+    // 否则 Responses / Chat Completions / Anthropic 都会 400，重试同一段历史会把会话卡死。
+    const normalized = MessageHistoryNormalizer.normalizeChatMessages(injected) ?? injected;
     const tools = this.buildToolDefinitions(context);
     const request: ChatRequest = {
-      messages: injected,
+      messages: normalized,
       tools: tools.length === 0 ? undefined : tools,
       stream: true,
     };

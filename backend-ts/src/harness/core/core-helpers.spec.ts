@@ -200,6 +200,20 @@ describe('ToolMediaInjector', () => {
     expect(injected).toHaveLength(1);
   });
 
+  it('injectsSyntheticUserMessageAfterTheWholeParallelToolGroup', () => {
+    const messages = [
+      { role: 'assistant', content: '', toolCalls: [{ id: 'call-1' }, { id: 'call-2' }] },
+      { role: 'tool', toolCallId: 'call-1', content: '{"content":"ok"}' },
+      { role: 'tool', toolCallId: 'call-2', content: 'text' },
+    ];
+    const attachments = new Map([['call-1', { mime: 'image/png', path: 'a.png', dataUri: 'data:image/png;base64,abc' }]]);
+    const injected = injector.inject(messages, attachments, { supportsVision: true });
+    expect(injected?.map((m) => m.role)).toEqual(['assistant', 'tool', 'tool', 'user']);
+    expect(injected![3].role).toBe('user');
+    const parts = injected![3].content as Array<{ type?: string; text?: string }>;
+    expect(parts[0].text).toBe(SYNTHETIC_ATTACHMENT_PROMPT);
+  });
+
   it('leavesNonToolMessagesUntouched', () => {
     const messages = [{ role: 'user', content: 'hello' }];
     const injected = injector.inject(messages, new Map(), { supportsVision: true });

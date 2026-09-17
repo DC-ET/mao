@@ -15,6 +15,7 @@ vi.mock('../api', () => ({
 
 const mockGet = vi.mocked(api.get)
 const mockPut = vi.mocked(api.put)
+const mockPost = vi.mocked(api.post)
 
 function makeSession(id: string, overrides: Record<string, any> = {}): any {
   return {
@@ -40,6 +41,7 @@ describe('session store 实体/投影模型', () => {
     // 重置 mock（含 mockResolvedValueOnce 队列，避免跨测试串扰）
     mockGet.mockReset()
     mockPut.mockReset()
+    mockPost.mockReset()
   })
 
   it('流重置只清空当前临时 assistant，不影响已完成回复', () => {
@@ -422,5 +424,28 @@ describe('session store 实体/投影模型', () => {
     ], { preserveStreamingAssistant: true })
 
     expect(store.getMessages('1').map(m => m.id)).toEqual(['10', streaming.id])
+  })
+
+  it('聚焦模式已加载时新建任务进入聚焦列表', async () => {
+    const store = useSessionStore()
+    mockGet.mockResolvedValueOnce({ data: [makeSession('1')] })
+    await store.fetchFocusSessions()
+    expect(store.focusSessionIds).toEqual(['1'])
+
+    mockPost.mockResolvedValueOnce({ data: makeSession('2') })
+    await store.createSession('1', 'CLOUD')
+
+    expect(store.standardSessionIds).toContain('2')
+    expect(store.focusSessionIds).toContain('2')
+    expect(store.focusedSessions.map(s => String(s.id))).toContain('2')
+  })
+
+  it('聚焦列表未加载时新建任务不写入聚焦投影', async () => {
+    const store = useSessionStore()
+    mockPost.mockResolvedValueOnce({ data: makeSession('2') })
+    await store.createSession('1', 'CLOUD')
+
+    expect(store.standardSessionIds).toContain('2')
+    expect(store.focusSessionIds).toEqual([])
   })
 })

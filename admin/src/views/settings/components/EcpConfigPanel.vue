@@ -36,6 +36,10 @@
           <el-input v-model="model.adminCallbackUrl" />
           <div class="field-hint">须在 ECP 登记；管理后台飞书回调。</div>
         </el-form-item>
+        <el-form-item label="lark App ID">
+          <el-input v-model="model.larkAppId" placeholder="cli_xxxx" />
+          <div class="field-hint">开启 ECP 后，Agent shell 注入 LARKSUITE_CLI_APP_ID 与用户飞书 UAT，供 lark-cli 使用；须与 ECP 换票返回的 UAT 属同一飞书应用。留空则不注入。</div>
+        </el-form-item>
       </el-form>
       <div class="field-hint">{{ ECP_CONFIG_KEY }} · 单条 JSON 完整快照保存</div>
     </el-card>

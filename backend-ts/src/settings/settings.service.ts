@@ -225,7 +225,7 @@ export class SystemSettingService {
       if (typeof value !== 'string') throw new Error();
       return parseEcpConfig(value);
     } catch {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, 'ECP 配置必须是完整有效的 JSON：enabled、appCode、baseUrl、loginVariant、timeoutMs、desktopCallbackUrl、adminCallbackUrl');
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'ECP 配置必须是完整有效的 JSON：enabled、appCode、baseUrl、loginVariant、timeoutMs、desktopCallbackUrl、adminCallbackUrl、larkAppId');
     }
   }
 

@@ -39,7 +39,7 @@ async function setup(page: Page) {
   await page.getByPlaceholder('用户名', { exact: true }).fill('admin')
   await page.getByPlaceholder('密码', { exact: true }).fill('admin123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await page.waitForURL(/\/admin\/dashboard/)
+  await page.waitForURL(/\/admin\/analytics/)
   await page.goto('/admin/agents')
   await expect(page.getByText('头像测试 Agent', { exact: true })).toBeVisible()
   return { writes, uploads }

@@ -690,20 +690,28 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: File
   }
 }
 
-function handleStop() {
+async function handleStop() {
   const sid = realSessionId.value
-  if (sid > 0) {
-    cancel(String(sid))
+  if (sid <= 0) return
+  const ok = await cancel(String(sid))
+  if (!ok) {
+    ElMessage.error('停止失败，网络连接不可用，请重试')
+    return
   }
   sending.value = false
 }
 
-function handleRetryExecution() {
+async function handleRetryExecution() {
   const sid = realSessionId.value
   if (sid <= 0) return
   sending.value = true
   sessionStore.clearExecutionError(String(sid))
-  retryExecution(String(sid))
+  const ok = await retryExecution(String(sid))
+  if (!ok) {
+    sending.value = false
+    ElMessage.error('重试失败，网络连接不可用，请重试')
+    return
+  }
   sessionStore.ensureStreamingAssistantMessage(String(sid))
 }
 

@@ -642,7 +642,7 @@ function isArchiving(id: string): boolean {
 
 function workspaceLabel(session: Session): string {
   const key = cloudGroupKey(session)
-  return formatGroupLabel(key)
+  return formatGroupLabel(key, session)
 }
 
 function focusStatusLabel(session: Session): string {

@@ -121,7 +121,7 @@ async function openSettings(page: Page, raw: string | null | undefined, canWrite
   await page.locator('input[placeholder="用户名"]').fill('admin')
   await page.locator('input[placeholder="密码"]').fill('admin123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
-  await page.waitForURL(/\/admin\/dashboard/)
+  await page.waitForURL(/\/admin\/analytics/)
   await page.goto('/admin/settings')
   await expect(page.locator('#setting-group-company-sso')).toBeVisible()
   return writes

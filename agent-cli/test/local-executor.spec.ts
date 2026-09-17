@@ -142,30 +142,30 @@ describe('approval gates', () => {
 });
 
 describe('file tools', () => {
-  it('writes, reads and edits in a temp workspace', () => {
+  it('writes, reads and edits in a temp workspace', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-files-'));
     const sessionId = 99;
-    const written = handleWriteFile({ path: 'a.txt', content: 'hello\nworld' }, dir, sessionId);
+    const written = await handleWriteFile({ path: 'a.txt', content: 'hello\nworld' }, dir, sessionId);
     expect(written.success).toBe(true);
     const read = handleReadFile({ path: 'a.txt' }, dir, sessionId);
     expect(read.content).toBe('hello\nworld');
-    const edited = handleEditFile({ path: 'a.txt', old_string: 'world', new_string: 'mao' }, dir, sessionId);
+    const edited = await handleEditFile({ path: 'a.txt', old_string: 'world', new_string: 'mao' }, dir, sessionId);
     expect(edited.success).toBe(true);
     expect(handleReadFile({ path: 'a.txt' }, dir, sessionId).content).toBe('hello\nmao');
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('rejects ambiguous edit_file matches unless replace_all is set', () => {
+  it('rejects ambiguous edit_file matches unless replace_all is set', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-files-'));
     const sessionId = 100;
-    handleWriteFile({ path: 'dup.txt', content: 'old\nmiddle\nold\n' }, dir, sessionId);
-    const rejected = handleEditFile({ path: 'dup.txt', old_string: 'old', new_string: 'new' }, dir, sessionId);
+    await handleWriteFile({ path: 'dup.txt', content: 'old\nmiddle\nold\n' }, dir, sessionId);
+    const rejected = await handleEditFile({ path: 'dup.txt', old_string: 'old', new_string: 'new' }, dir, sessionId);
     expect(rejected.success).toBe(false);
     expect(rejected.occurrences).toBe(2);
     expect(rejected.occurrence_lines).toEqual([1, 3]);
     // 末尾换行不再产生空行（对齐后端 splitLines）
     expect(handleReadFile({ path: 'dup.txt' }, dir, sessionId).content).toBe('old\nmiddle\nold');
-    const replaced = handleEditFile({
+    const replaced = await handleEditFile({
       path: 'dup.txt', old_string: 'old', new_string: 'new', replace_all: true,
     }, dir, sessionId);
     expect(replaced.success).toBe(true);

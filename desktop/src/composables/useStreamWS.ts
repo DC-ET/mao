@@ -43,7 +43,6 @@ let pendingSettle: {
   reject: (err: Error) => void
   socket: WebSocket
 } | null = null
-let isReconnecting = false
 
 // Active execution ID per session — used to discard stale stream events after cancel
 const activeExecutionIds = new Map<string, string>()
@@ -192,8 +191,6 @@ export function useStreamWS() {
     ws = socket
     intentionalClose = false
 
-    let initialConnect = true
-
     connectPromise = new Promise<void>((resolve, reject) => {
       pendingSettle = { resolve, reject, socket }
       socket.onopen = () => {
@@ -203,8 +200,6 @@ export function useStreamWS() {
         reconnectDelay.value = 1000
         connectPromise = null
         pendingSettle = null
-        initialConnect = false
-        isReconnecting = false
         // 鉴权首帧：必须是新连接发出的第一条消息，先于任何 subscribe 等业务帧
         socket.send(JSON.stringify({ type: 'auth', token, client }))
         // Re-subscribe all tracked sessions (main + open side tasks).
@@ -258,7 +253,6 @@ export function useStreamWS() {
         if (event.target !== ws) {
           // 旧 socket 的迟到关闭：若模块级在途 Promise 仍属于本 socket（未被新 connect
           // 取代、未被 disconnect settle），必须就地 settle，否则调用方 await 永久挂起
-          initialConnect = false
           if (connectPromise && pendingSettle?.socket === socket) {
             connectPromise = null
             const settle = pendingSettle
@@ -275,24 +269,16 @@ export function useStreamWS() {
         stopHeartbeat()
         // 断线后内存中的瞬时 LLM 重试状态已不可信，全部清理避免重连后残留过期提示
         sessionStore.clearAllLlmRetry()
-        if (initialConnect && !isReconnecting) {
-          // First-ever connection attempt failed — keep trying via scheduleReconnect.
-          // (M-11) 首连失败不应放弃：服务端临时不可用/重启后应恢复会话。
-          // 若应用处于未登录态，scheduleReconnect 内部会停止重试。
-          initialConnect = false
-          connectPromise = null
-          pendingSettle = null
-          isReconnecting = false
+        const settle = pendingSettle
+        connectPromise = null
+        pendingSettle = null
+        if (intentionalClose) {
+          settle?.resolve()
+        } else {
+          // 首连失败、重连握手失败、已建立连接断开：都必须 settle 本轮 Promise，
+          // 否则发送方 await connect() 会永久挂起，后续连通也无法恢复原发送。
           scheduleReconnect()
-          reject(new Error('WebSocket connection failed'))
-        } else if (!intentionalClose) {
-          // Either a reconnect attempt failed, or an established connection dropped
-          // In both cases, schedule the next reconnect
-          initialConnect = false
-          connectPromise = null
-          pendingSettle = null
-          isReconnecting = false
-          scheduleReconnect()
+          settle?.reject(new Error('WebSocket connection closed'))
         }
       }
 
@@ -306,7 +292,6 @@ export function useStreamWS() {
 
   function disconnect() {
     intentionalClose = true
-    isReconnecting = false
     stopHeartbeat()
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
@@ -349,7 +334,6 @@ export function useStreamWS() {
 
   function scheduleReconnect() {
     if (reconnectTimer) return
-    isReconnecting = true
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
       // 未登录窗口 connect() 会立即 reject，吞掉避免 unhandled rejection

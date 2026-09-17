@@ -255,10 +255,14 @@ export class AdminAnalyticsService {
     private readonly store: AdminAnalyticsStore,
   ) {}
 
-  /** 汇总统计窗口内的趋势、结构与环比；overview 中的阶段数是实时快照而非窗口内数据。 */
-  async summary(days: number): Promise<Record<string, unknown>> {
+  /**
+   * 汇总统计窗口内的趋势、结构与环比；overview 中的阶段数是实时快照而非窗口内数据。
+   * endOffset 将窗口结束日往前偏移 N 天（0=今日结尾，1=昨日结尾），用于「昨日」等固定日窗口。
+   */
+  async summary(days: number, endOffset = 0): Promise<Record<string, unknown>> {
     const safeDays = Math.max(1, Math.min(Math.trunc(days) || 1, 90));
-    const range = buildRange(shanghaiYmd(), safeDays);
+    const safeOffset = Math.max(0, Math.min(Math.trunc(endOffset) || 0, 365));
+    const range = buildRange(addDaysYmd(shanghaiYmd(), -safeOffset), safeDays);
     const previous = buildRange(addDaysYmd(range.startYmd, -1), safeDays);
 
     // 各分支互不依赖，并行取数：message 聚合单条就要数百毫秒，串行会把页面拖到秒级

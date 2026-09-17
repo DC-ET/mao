@@ -378,6 +378,78 @@ describe('AgentFeishuInboundHandler', () => {
     expect(onExecutionFinished).toHaveBeenCalledWith(7, expect.anything(), 'e', 'CANCELLED');
   });
 
+  it('progress cancel shows 任务已取消 not 被下一条指令中断', async () => {
+    const sessionService = makeSessionService({
+      cleanupIncompleteTail: vi.fn(async () => 1),
+    });
+    const flag = makeFlag();
+    let releaseExecute!: () => void;
+    const executeGate = new Promise<void>((resolve) => { releaseExecute = resolve; });
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { await executeGate; }),
+    };
+    const updates: Array<{ status: string; content: string }> = [];
+    const onExecutionFinished = vi.fn(async () => undefined);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: () => flag,
+      releaseCancelFlag: vi.fn(),
+      createProgressCard: vi.fn(async () => ({
+        update: async (status: string, _round: number, content: string) => {
+          updates.push({ status, content });
+        },
+      })),
+      listenerFactory: async () => listener,
+      onExecutionFinished,
+      onInterruptRunning: vi.fn(),
+    });
+    const running = handler.onMessage(makeContext());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // 模拟进度卡「取消任务」：只 cancel，不 interrupt
+    expect(handler.cancel(7)).toBe(true);
+    expect(flag.get()).toBe(true);
+    releaseExecute();
+    await running;
+    expect(updates).toContainEqual({ status: 'CANCELLED', content: '任务已取消。' });
+    expect(updates.some((u) => u.content.includes('中断'))).toBe(false);
+  });
+
+  it('interrupt marks interrupted so next-message wording is used', async () => {
+    const sessionService = makeSessionService({
+      cleanupIncompleteTail: vi.fn(async () => 1),
+    });
+    const flag = makeFlag();
+    let releaseExecute!: () => void;
+    const executeGate = new Promise<void>((resolve) => { releaseExecute = resolve; });
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { await executeGate; }),
+    };
+    const updates: Array<{ status: string; content: string }> = [];
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: () => flag,
+      releaseCancelFlag: vi.fn(),
+      createProgressCard: vi.fn(async () => ({
+        update: async (status: string, _round: number, content: string) => {
+          updates.push({ status, content });
+        },
+      })),
+      listenerFactory: async () => listener,
+      onExecutionFinished: async () => undefined,
+      onInterruptRunning: vi.fn(),
+    });
+    const running = handler.onMessage(makeContext());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(handler.interrupt(7)).toBe(true);
+    releaseExecute();
+    await running;
+    expect(updates).toContainEqual({ status: 'CANCELLED', content: '已被下一条指令中断。' });
+  });
+
   it('releases cancel flag when execution completes', async () => {
     const sessionService = makeSessionService();
     const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
@@ -495,7 +567,61 @@ describe('AgentFeishuInboundHandler', () => {
     await handler.onMessage(makeContext());
     // FAILED 后不应触发队列接力消费
     expect(queueService.claimNext).not.toHaveBeenCalled();
-    expect(onReply).toHaveBeenCalledWith(expect.anything(), '抱歉，处理您的消息时出现了错误，请稍后再试。', 7);
+    // 与客户端一致：透传具体 error.message，而非固定安抚文案
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), 'llm down', 7);
+  });
+
+  it('shows concrete error message on the progress card when execution fails', async () => {
+    const sessionService = makeSessionService();
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { throw new Error('LLM API returned 500: upstream timeout'); }),
+    };
+    const onReply = vi.fn(async () => undefined);
+    const updates: Array<{ status: string; content: string }> = [];
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      createProgressCard: vi.fn(async () => ({
+        update: async (status: string, _round: number, content: string) => {
+          updates.push({ status, content });
+        },
+      })),
+      listenerFactory: async () => listener,
+      onReply,
+    });
+    await handler.onMessage(makeContext());
+    expect(updates).toContainEqual(expect.objectContaining({
+      status: 'FAILED',
+      content: 'LLM API returned 500: upstream timeout',
+    }));
+    // 卡片已更新成功，不再重复发文本兜底
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
+  it('falls back to generic message when error has no message', async () => {
+    const sessionService = makeSessionService();
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { throw 'plain-string-error'; }),
+    };
+    const onReply = vi.fn(async () => undefined);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      onReply,
+    });
+    await handler.onMessage(makeContext());
+    expect(onReply).toHaveBeenCalledWith(
+      expect.anything(),
+      '抱歉，处理您的消息时出现了错误，请稍后再试。',
+      7,
+    );
   });
 
   it('stops draining the queue after a queued message fails', async () => {

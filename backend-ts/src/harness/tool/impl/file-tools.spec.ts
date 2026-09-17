@@ -147,6 +147,15 @@ describe('WriteFileTool', () => {
     const result = JSON.parse(await tool.execute(JSON.stringify({ path: 't.txt', content: 'one\ntwo\n' })));
     expect(result.file_change.total_lines).toBe(2);
   });
+
+  it('preserves original BOM and CRLF when overwriting an existing file', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'legacy.txt'), '\uFEFFold\r\nline\r\n');
+    const tool = new WriteFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({ path: 'legacy.txt', content: 'new\nline\n' })));
+    expect(result.success).toBe(true);
+    expect(readFileSync(join(dir, 'legacy.txt'), 'utf8')).toBe('\uFEFFnew\r\nline\r\n');
+  });
 });
 
 describe('EditFileTool', () => {
@@ -162,6 +171,17 @@ describe('EditFileTool', () => {
     expect(result.file_change.lines_added).toBe(1);
     expect(result[PRIVATE_DIFF_FIELD]).toBeTruthy();
     expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('alpha\nnew\nbeta\n');
+  });
+
+  it('preserves original BOM and CRLF on a unique replacement', async () => {
+    const dir = await tmp();
+    writeFileSync(join(dir, 'a.txt'), '\uFEFFalpha\r\nold\r\nbeta\r\n');
+    const tool = new EditFileTool(new PathSandbox(dir));
+    const result = JSON.parse(await tool.execute(JSON.stringify({
+      path: 'a.txt', old_string: 'old', new_string: 'new',
+    })));
+    expect(result.success).toBe(true);
+    expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('\uFEFFalpha\r\nnew\r\nbeta\r\n');
   });
 
   it('rejectsAmbiguousMatchWithoutReplaceAllAndLeavesFileUnchanged', async () => {

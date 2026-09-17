@@ -118,6 +118,15 @@ export interface TerminalEcpInjector {
   injectForUser(userId: number): Promise<string | null>;
 }
 
+export interface TerminalLarkUatCredentials {
+  uat: string;
+  appId: string;
+}
+
+export interface TerminalLarkUatInjector {
+  injectForUser(userId: number): Promise<TerminalLarkUatCredentials | null>;
+}
+
 export interface TerminalManagerDeps {
   pathSandbox: TerminalPathSandbox;
   runtimeResolver: TerminalRuntimeResolver;
@@ -125,6 +134,7 @@ export interface TerminalManagerDeps {
   shellToken?: TerminalShellTokenIssuer;
   userLookup?: TerminalUserLookup;
   ecpInjector?: TerminalEcpInjector;
+  larkUatInjector?: TerminalLarkUatInjector;
   config: TerminalManagerConfig;
   audit?: TerminalAuditRecorder;
   ptyFactory?: PtyFactory;
@@ -393,6 +403,17 @@ export class TerminalManager {
         if (ecpToken) env.ECP_TOKEN = ecpToken;
       } catch (e) {
         harnessLog('warn', `Failed to inject ECP credentials for user ${userId}`, e);
+      }
+    }
+    if (this.deps.larkUatInjector) {
+      try {
+        const lark = await this.deps.larkUatInjector.injectForUser(userId);
+        if (lark) {
+          env.LARKSUITE_CLI_USER_ACCESS_TOKEN = lark.uat;
+          env.LARKSUITE_CLI_APP_ID = lark.appId;
+        }
+      } catch (e) {
+        harnessLog('warn', `Failed to inject Lark UAT for user ${userId}`, e);
       }
     }
     if (this.deps.shellToken) {

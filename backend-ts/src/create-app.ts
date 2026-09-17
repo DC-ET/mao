@@ -31,7 +31,9 @@ import { registerCompanySsoRoutes } from './auth/company-sso.routes.js';
 import { CompanySsoError } from './auth/company-sso.error.js';
 import { EcpAuthService } from './auth/ecp-auth.service.js';
 import { createEcpCredentialsInjector } from './auth/ecp-credentials-injector.js';
+import { EcpClient } from './auth/ecp.client.js';
 import { EcpIdentityRepository } from './auth/ecp-identity.repository.js';
+import { createLarkUatInjector } from './auth/lark-uat-injector.js';
 import { MysqlEcpOauthStateRepository } from './auth/ecp-oauth.repository.js';
 import { EcpRenewScheduler } from './auth/ecp-renew.scheduler.js';
 import { registerEcpAuthRoutes } from './auth/ecp.routes.js';
@@ -589,6 +591,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     ecpSessionRepo,
     (userId) => runtimeResolver.resolveUserHomeDir(userId),
   );
+  const larkUatInjector = createLarkUatInjector({
+    ecpInjector,
+    ecpClient: new EcpClient(),
+    getConfig: () => settingService.getEcpConfig(),
+  });
   const skillSync = new SkillSyncService(skillLoader, pathSandbox, runtimeResolver, userSkillsDir);
   const userSkillService = new UserSkillService(userSkillsDir);
   const skillDocService = new SkillDocService(skillLoader);
@@ -716,6 +723,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     shellToken: jwt,
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
     ecpInjector,
+    larkUatInjector,
     config: terminalCfg,
     audit: terminalAudit,
   });
@@ -823,6 +831,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     jwtService: jwt,
     shellUserLookup: { findById: (id: number) => userRepo.findById(id) },
     shellEcpInjector: ecpInjector,
+    shellLarkUatInjector: larkUatInjector,
     webSearch: () => settingService.getWebSearchConfig(),
     webPage: harnessTuning.webPage,
     imageModelLookup: modelService,
@@ -1749,8 +1758,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     interruptAndDrain: (sessionId) => feishuInboundHandler.interruptAndDrain(sessionId),
     // 进度卡「取消任务」：置位 AgentLoop / 飞书 handler 取消标志 + 关闭 shell；
     // 重启后续跑尚未挂 flag 时补写 CANCELLED，与桌面端输入框停止同语义。
+    // 用 cancel 而非 interrupt：interrupt 会标记「被下一条指令中断」，取消按钮应显示「任务已取消」。
     cancelRunning: async (sessionId) => {
-      feishuInboundHandler.interrupt(sessionId);
+      feishuInboundHandler.cancel(sessionId);
       const hadLoop = agentLoop.getCancelFlag(sessionId) != null;
       const persisted = await persistCancelledIfActive(sessionId);
       if (!hadLoop && persisted) {

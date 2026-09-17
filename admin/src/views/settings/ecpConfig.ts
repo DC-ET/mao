@@ -8,6 +8,7 @@ export interface EcpConfig {
   timeoutMs: number
   desktopCallbackUrl: string
   adminCallbackUrl: string
+  larkAppId: string
 }
 
 export function defaultEcpConfig(): EcpConfig {
@@ -19,6 +20,7 @@ export function defaultEcpConfig(): EcpConfig {
     timeoutMs: 10000,
     desktopCallbackUrl: 'https://mao.etarch.cn/auth/ecp/feishu-callback',
     adminCallbackUrl: 'https://mao.etarch.cn/admin/auth/ecp/feishu-callback',
+    larkAppId: '',
   }
 }
 
@@ -27,7 +29,7 @@ export function validateEcpConfig(value: unknown): EcpConfig {
     throw new Error('配置必须为 JSON 对象')
   }
   const config = value as Record<string, unknown>
-  const fields = new Set(['enabled', 'appCode', 'baseUrl', 'loginVariant', 'timeoutMs', 'desktopCallbackUrl', 'adminCallbackUrl'])
+  const fields = new Set(['enabled', 'appCode', 'baseUrl', 'loginVariant', 'timeoutMs', 'desktopCallbackUrl', 'adminCallbackUrl', 'larkAppId'])
   const unknownFields = Object.keys(config).filter((key) => !fields.has(key))
   if (unknownFields.length) throw new Error(`配置包含未知字段：${unknownFields.join('、')}`)
   if (typeof config.enabled !== 'boolean') throw new Error('enabled 必须为 boolean')
@@ -43,6 +45,10 @@ export function validateEcpConfig(value: unknown): EcpConfig {
   if (typeof config.adminCallbackUrl !== 'string' || !/^https:\/\//i.test(config.adminCallbackUrl)) {
     throw new Error('adminCallbackUrl 必须为 HTTPS URL')
   }
+  const larkAppIdRaw = config.larkAppId ?? ''
+  if (typeof larkAppIdRaw !== 'string' || larkAppIdRaw.length > 128) {
+    throw new Error('larkAppId 必须是不超过 128 字符的字符串')
+  }
   return {
     enabled: config.enabled,
     appCode: config.appCode.trim(),
@@ -51,6 +57,7 @@ export function validateEcpConfig(value: unknown): EcpConfig {
     timeoutMs: config.timeoutMs,
     desktopCallbackUrl: config.desktopCallbackUrl.trim(),
     adminCallbackUrl: config.adminCallbackUrl.trim(),
+    larkAppId: larkAppIdRaw.trim(),
   }
 }
 
