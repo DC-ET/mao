@@ -75,4 +75,57 @@ describe('EcpClient', () => {
     const client = new EcpClient(http);
     await expect(client.renewSession(config, 'old')).rejects.toThrow(/无法 renew/);
   });
+
+  it('exchanges ECP session for bare OAuth UAT response', async () => {
+    const http = {
+      request: vi.fn(async () => ({
+        status: 200,
+        json: {
+          access_token: 'u-abc',
+          expires_in: 833,
+          scope: 'contact:user.base:readonly',
+          token_type: 'Bearer',
+          issued_token_type: 'urn:ecp:token-type:feishu-user-access-token',
+        },
+      })),
+    };
+    const client = new EcpClient(http);
+    const uat = await client.getUserAccessToken(config, 'ecp-session-token');
+    expect(uat.accessToken).toBe('u-abc');
+    expect(uat.scope).toBe('contact:user.base:readonly');
+    expect(uat.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(String(http.request.mock.calls[0][1])).toContain('appCode=');
+    expect(String(http.request.mock.calls[0][1])).toContain('ecpUserToken=ecp-session-token');
+  });
+
+  it('exchanges ECP session for wrapped UAT response', async () => {
+    const http = {
+      request: vi.fn(async () => ({
+        status: 200,
+        json: { code: 0, data: { access_token: 'u-wrapped', expires_in: 60 } },
+      })),
+    };
+    const client = new EcpClient(http);
+    const uat = await client.getUserAccessToken(config, 'tok');
+    expect(uat.accessToken).toBe('u-wrapped');
+  });
+
+  it('rejects UAT response without access_token', async () => {
+    const http = {
+      request: vi.fn(async () => ({ status: 200, json: { expires_in: 60 } })),
+    };
+    const client = new EcpClient(http);
+    await expect(client.getUserAccessToken(config, 'tok')).rejects.toThrow(/access_token/);
+  });
+
+  it('surfaces OAuth error description on non-2xx', async () => {
+    const http = {
+      request: vi.fn(async () => ({
+        status: 400,
+        json: { error: 'invalid_grant', error_description: 'session expired' },
+      })),
+    };
+    const client = new EcpClient(http);
+    await expect(client.getUserAccessToken(config, 'tok')).rejects.toThrow(/session expired/);
+  });
 });

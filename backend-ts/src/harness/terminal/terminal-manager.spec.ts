@@ -81,6 +81,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
   ptyFactory?: PtyFactory;
   tokenMap?: Record<string, string>;
   ecpInjector?: { injectForUser: (userId: number) => Promise<string | null> };
+  larkUatInjector?: { injectForUser: (userId: number) => Promise<{ uat: string; appId: string } | null> };
 } = {}): Promise<{ manager: TerminalManager; root: string }> {
   const root = await mkdtemp(join(tmpdir(), 'mao-term-'));
   const sandbox = new PathSandbox(root);
@@ -91,6 +92,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
     shellToken: { generateShellToken: (userId, username) => `tok-${userId}-${username}` },
     userLookup: { findById: async (id) => ({ id, username: `user${id}` }) },
     ecpInjector: extra.ecpInjector,
+    larkUatInjector: extra.larkUatInjector,
     config: config(overrides),
     ptyFactory: extra.ptyFactory ?? fakeFactory,
     audit: extra.audit
@@ -147,6 +149,15 @@ describe('TerminalManager', () => {
     });
     await manager.create({ sessionId: 8, userId: 5, workspace: root });
     expect(FakePty.instances[0].options.env.ECP_TOKEN).toBe('ecp-session-token');
+  });
+
+  it('injects LARKSUITE_CLI credentials when lark UAT injector returns a value', async () => {
+    const { manager, root } = await newManager({}, {
+      larkUatInjector: { injectForUser: async () => ({ uat: 'u-lark', appId: 'cli_lark' }) },
+    });
+    await manager.create({ sessionId: 9, userId: 6, workspace: root });
+    expect(FakePty.instances[0].options.env.LARKSUITE_CLI_USER_ACCESS_TOKEN).toBe('u-lark');
+    expect(FakePty.instances[0].options.env.LARKSUITE_CLI_APP_ID).toBe('cli_lark');
   });
 
   it('creates a terminal with task env, virtual HOME and default rc', async () => {

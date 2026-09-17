@@ -31,7 +31,9 @@ import { registerCompanySsoRoutes } from './auth/company-sso.routes.js';
 import { CompanySsoError } from './auth/company-sso.error.js';
 import { EcpAuthService } from './auth/ecp-auth.service.js';
 import { createEcpCredentialsInjector } from './auth/ecp-credentials-injector.js';
+import { EcpClient } from './auth/ecp.client.js';
 import { EcpIdentityRepository } from './auth/ecp-identity.repository.js';
+import { createLarkUatInjector } from './auth/lark-uat-injector.js';
 import { MysqlEcpOauthStateRepository } from './auth/ecp-oauth.repository.js';
 import { EcpRenewScheduler } from './auth/ecp-renew.scheduler.js';
 import { registerEcpAuthRoutes } from './auth/ecp.routes.js';
@@ -589,6 +591,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     ecpSessionRepo,
     (userId) => runtimeResolver.resolveUserHomeDir(userId),
   );
+  const larkUatInjector = createLarkUatInjector({
+    ecpInjector,
+    ecpClient: new EcpClient(),
+    getConfig: () => settingService.getEcpConfig(),
+  });
   const skillSync = new SkillSyncService(skillLoader, pathSandbox, runtimeResolver, userSkillsDir);
   const userSkillService = new UserSkillService(userSkillsDir);
   const skillDocService = new SkillDocService(skillLoader);
@@ -716,6 +723,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     shellToken: jwt,
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
     ecpInjector,
+    larkUatInjector,
     config: terminalCfg,
     audit: terminalAudit,
   });
@@ -823,6 +831,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     jwtService: jwt,
     shellUserLookup: { findById: (id: number) => userRepo.findById(id) },
     shellEcpInjector: ecpInjector,
+    shellLarkUatInjector: larkUatInjector,
     webSearch: () => settingService.getWebSearchConfig(),
     webPage: harnessTuning.webPage,
     imageModelLookup: modelService,

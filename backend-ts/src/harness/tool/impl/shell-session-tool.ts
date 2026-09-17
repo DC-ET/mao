@@ -32,6 +32,15 @@ export interface ShellEcpInjector {
   injectForUser(userId: number): Promise<string | null>;
 }
 
+export interface ShellLarkUatCredentials {
+  uat: string;
+  appId: string;
+}
+
+export interface ShellLarkUatInjector {
+  injectForUser(userId: number): Promise<ShellLarkUatCredentials | null>;
+}
+
 /** bash 单引号转义，避免 JWT 等特殊字符破坏命令 */
 export function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -47,6 +56,7 @@ export class ShellSessionTool extends BaseTool {
     private readonly jwtService?: ShellTokenIssuer | null,
     private readonly userLookup?: ShellUserLookup | null,
     private readonly ecpInjector?: ShellEcpInjector | null,
+    private readonly larkUatInjector?: ShellLarkUatInjector | null,
   ) { super(); }
 
   getName(): string { return 'shell'; }
@@ -398,6 +408,17 @@ export class ShellSessionTool extends BaseTool {
         }
       } catch (e) {
         harnessLog('warn', `Failed to inject ECP credentials for userId=${userId}: ${(e as Error).message}`);
+      }
+    }
+    if (this.larkUatInjector) {
+      try {
+        const lark = await this.larkUatInjector.injectForUser(userId);
+        if (lark) {
+          session.writeStdin('export LARKSUITE_CLI_USER_ACCESS_TOKEN=' + shellSingleQuote(lark.uat) + '\n');
+          session.writeStdin('export LARKSUITE_CLI_APP_ID=' + shellSingleQuote(lark.appId) + '\n');
+        }
+      } catch (e) {
+        harnessLog('warn', `Failed to inject Lark UAT for userId=${userId}: ${(e as Error).message}`);
       }
     }
     if (!this.jwtService || !this.userLookup) return;

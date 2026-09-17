@@ -229,6 +229,54 @@ describe('ShellSessionTool marker and environment handling', () => {
     expect(script.indexOf('export ECP_TOKEN')).toBeLessThan(script.indexOf('echo $ECP_TOKEN'));
   });
 
+  it('exports LARKSUITE_CLI credentials when lark UAT injector returns a value', async () => {
+    const larkUatInjector = {
+      injectForUser: vi.fn(async () => ({ uat: 'u-lark"tok', appId: 'cli_lark' })),
+    };
+    const shellSession = {
+      sessionId: 'sh-lark',
+      writeStdin: vi.fn(),
+      incrementCommandCount: vi.fn(),
+      touch: vi.fn(),
+      currentWorkdir: '/tmp',
+      outputFile: '/tmp/out.log',
+      isAlive: () => true,
+      pendingCommand: null as { marker: string; keepSession: boolean; persist: boolean; taskId: string | null } | null,
+      beginCommand(marker: string, keepSession: boolean, persist = true, taskId: string | null = null) {
+        shellSession.pendingCommand = { marker, keepSession, persist, taskId };
+      },
+    };
+    const sessionManager = {
+      getOrCreate: vi.fn(() => shellSession),
+      getSession: vi.fn(() => shellSession),
+      close: vi.fn(),
+      listByConversation: vi.fn(() => [shellSession]),
+    };
+    const outputManager = {
+      readUntilMarker: vi.fn(async () => {
+        shellSession.pendingCommand = null;
+        return { output: 'ok\n', truncated: false, completed: true, exitCode: 0, matched: null };
+      }),
+    };
+    const withLark = new ShellSessionTool(
+      { resolve: vi.fn((p: string) => p), resolveLenient: vi.fn((p: string) => p) } as never,
+      sessionManager as never,
+      outputManager as never,
+      { submit: vi.fn(() => 'task-1') } as never,
+      null,
+      { generateShellToken: vi.fn(() => 'jwt-to"ken') },
+      { findById: vi.fn(async () => ({ username: 'alice' })) },
+      null,
+      larkUatInjector,
+    );
+    await withLark.execute(JSON.stringify({ command: 'lark-cli --version' }), 11, 7, '/tmp');
+    const script = shellSession.writeStdin.mock.calls.map((c) => String(c[0])).join('');
+    expect(script).toContain(`export LARKSUITE_CLI_USER_ACCESS_TOKEN='u-lark"tok'`);
+    expect(script).toContain(`export LARKSUITE_CLI_APP_ID='cli_lark'`);
+    expect(script.indexOf('export LARKSUITE_CLI_USER_ACCESS_TOKEN')).toBeLessThan(script.indexOf('lark-cli --version'));
+    expect(script.indexOf('export LARKSUITE_CLI_APP_ID')).toBeLessThan(script.indexOf('lark-cli --version'));
+  });
+
   it('injects a fresh MAO_TOKEN before write_stdin commands on a reused session', async () => {
     const { tool, written } = harness();
     await tool.execute(

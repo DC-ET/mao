@@ -15,6 +15,16 @@
 
 ---
 
+## 0.0.144 (2026-09-18)
+
+### 后端
+
+- CLOUD shell / 交互终端在 ECP 飞书登录开启且配置了 `larkAppId` 时，自动注入 `LARKSUITE_CLI_APP_ID` 与 `LARKSUITE_CLI_USER_ACCESS_TOKEN`（用户飞书 UAT），供 lark-cli 以用户身份使用；UAT 走 ECP 换票接口 + 进程内存缓存，ECP 会话失效时不注入。
+
+### 管理后台
+
+- ECP 飞书登录配置新增「lark App ID」；留空则不注入 lark-cli 凭证。
+
 ## 0.0.143 (2026-09-18)
 
 ### 管理后台
