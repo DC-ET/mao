@@ -45,6 +45,8 @@ describe('computeLineDelta', () => {
     expect(computeLineDelta('a\nb\n', '')).toEqual({ linesAdded: 0, linesDeleted: 2 });
     // 中间插入一行不应被算成「整段重写」
     expect(computeLineDelta('a\nb\nc\nd\n', 'a\nb\nx\nc\nd\n')).toEqual({ linesAdded: 1, linesDeleted: 0 });
+    // 末尾换行不计入空行，与 read-file-tool / 云端 FileChangeDiffUtil 同口径
+    expect(computeLineDelta('hello\n', 'hello')).toEqual({ linesAdded: 0, linesDeleted: 0 });
   });
 });
 
@@ -89,23 +91,23 @@ describe('handleReadFile', () => {
 });
 
 describe('handleWriteFile', () => {
-  it('requires content and reports failures with success:false', () => {
-    const res = handleWriteFile({ path: 'x.txt' }, ws, SESSION_ID);
+  it('requires content and reports failures with success:false', async () => {
+    const res = await handleWriteFile({ path: 'x.txt' }, ws, SESSION_ID);
     expect(res).toEqual({ success: false, error: '缺少必填参数 content' });
     expect(fs.existsSync(path.join(ws, 'x.txt'))).toBe(false);
   });
 
-  it('preserves the original BOM and CRLF when rewriting', () => {
+  it('preserves the original BOM and CRLF when rewriting', async () => {
     const target = path.join(ws, 'legacy.txt');
     fs.writeFileSync(target, '\uFEFFold\r\nline\r\n');
-    handleWriteFile({ path: 'legacy.txt', content: 'new\nline\n' }, ws, SESSION_ID);
+    await handleWriteFile({ path: 'legacy.txt', content: 'new\nline\n' }, ws, SESSION_ID);
     const raw = fs.readFileSync(target, 'utf8');
     expect(raw).toBe('\uFEFFnew\r\nline\r\n');
   });
 
-  it('attaches a snapshot file_change_diff for the renderer', () => {
-    handleWriteFile({ path: 'd.txt', content: 'a\nb\n' }, ws, SESSION_ID);
-    const res = handleWriteFile({ path: 'd.txt', content: 'a\nc\n' }, ws, SESSION_ID);
+  it('attaches a snapshot file_change_diff for the renderer', async () => {
+    await handleWriteFile({ path: 'd.txt', content: 'a\nb\n' }, ws, SESSION_ID);
+    const res = await handleWriteFile({ path: 'd.txt', content: 'a\nc\n' }, ws, SESSION_ID);
     expect(res.success).toBe(true);
     expect(res.file_change).toEqual({
       path: 'd.txt', type: 'MODIFIED', total_lines: 2, lines_added: 1, lines_deleted: 1,
@@ -115,41 +117,52 @@ describe('handleWriteFile', () => {
     });
   });
 
-  it('marks new files as CREATED', () => {
-    const res = handleWriteFile({ path: 'sub/fresh.txt', content: 'x\n' }, ws, SESSION_ID);
+  it('marks new files as CREATED', async () => {
+    const res = await handleWriteFile({ path: 'sub/fresh.txt', content: 'x\n' }, ws, SESSION_ID);
     expect((res.file_change as { type: string }).type).toBe('CREATED');
     expect(fs.readFileSync(path.join(ws, 'sub/fresh.txt'), 'utf8')).toBe('x\n');
   });
 });
 
 describe('handleEditFile', () => {
-  it('requires both old_string and new_string as strings', () => {
+  it('requires both old_string and new_string as strings', async () => {
     fs.writeFileSync(path.join(ws, 'e.txt'), 'hello\n');
-    expect(handleEditFile({ path: 'e.txt', old_string: 'hello' }, ws, SESSION_ID))
+    expect(await handleEditFile({ path: 'e.txt', old_string: 'hello' }, ws, SESSION_ID))
       .toEqual({ success: false, replacements: 0, error: '缺少必填参数: old_string, new_string' });
-    expect(handleEditFile({ path: 'e.txt', old_string: 'hello', new_string: null }, ws, SESSION_ID).success).toBe(false);
+    expect((await handleEditFile({ path: 'e.txt', old_string: 'hello', new_string: null }, ws, SESSION_ID)).success).toBe(false);
     expect(fs.readFileSync(path.join(ws, 'e.txt'), 'utf8')).toBe('hello\n');
   });
 
-  it('refuses a no-op edit where old_string === new_string', () => {
+  it('refuses a no-op edit where old_string === new_string', async () => {
     fs.writeFileSync(path.join(ws, 'e.txt'), 'hello\n');
-    const res = handleEditFile({ path: 'e.txt', old_string: 'hello', new_string: 'hello' }, ws, SESSION_ID);
+    const res = await handleEditFile({ path: 'e.txt', old_string: 'hello', new_string: 'hello' }, ws, SESSION_ID);
     expect(res.success).toBe(false);
     expect(String(res.error)).toMatch(/完全相同/);
   });
 
-  it('reports a missing file rather than creating one', () => {
-    const res = handleEditFile({ path: 'ghost.txt', old_string: 'a', new_string: 'b' }, ws, SESSION_ID);
+  it('reports a missing file rather than creating one', async () => {
+    const res = await handleEditFile({ path: 'ghost.txt', old_string: 'a', new_string: 'b' }, ws, SESSION_ID);
     expect(String(res.error)).toMatch(/文件不存在/);
     expect(fs.existsSync(path.join(ws, 'ghost.txt'))).toBe(false);
   });
 
-  it('counts line delta with LCS and keeps CRLF', () => {
+  it('counts line delta with LCS and keeps CRLF', async () => {
     fs.writeFileSync(path.join(ws, 'e.txt'), 'a\r\nb\r\nc\r\n');
-    const res = handleEditFile({ path: 'e.txt', old_string: 'b', new_string: 'B' }, ws, SESSION_ID);
+    const res = await handleEditFile({ path: 'e.txt', old_string: 'b', new_string: 'B' }, ws, SESSION_ID);
     expect(res.success).toBe(true);
     expect(res.file_change).toEqual({ path: 'e.txt', type: 'MODIFIED', lines_added: 1, lines_deleted: 1 });
     expect(fs.readFileSync(path.join(ws, 'e.txt'), 'utf8')).toBe('a\r\nB\r\nc\r\n');
+  });
+
+  it('serializes parallel edits of the same file so both replacements land', async () => {
+    fs.writeFileSync(path.join(ws, 'p.txt'), 'A\nB\n');
+    const [first, second] = await Promise.all([
+      handleEditFile({ path: 'p.txt', old_string: 'A', new_string: 'AA' }, ws, SESSION_ID),
+      handleEditFile({ path: 'p.txt', old_string: 'B', new_string: 'BB' }, ws, SESSION_ID),
+    ]);
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(fs.readFileSync(path.join(ws, 'p.txt'), 'utf8')).toBe('AA\nBB\n');
   });
 });
 

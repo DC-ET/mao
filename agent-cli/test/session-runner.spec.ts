@@ -52,18 +52,27 @@ function session(): SessionVO {
   return { id: 11, phase: 'IDLE', agentName: '通用助手', modelName: 'gpt' };
 }
 
-async function attached(opts?: { printMode?: boolean; onQuestion?: 'ask' | 'fail'; askHandler?: AskHandler }) {
+async function attached(opts?: {
+  printMode?: boolean;
+  onQuestion?: 'ask' | 'fail';
+  askHandler?: AskHandler;
+  ifRunning?: 'wait' | 'cancel' | 'fail';
+  maxDurationSec?: number;
+  snapshot?: WsEvent;
+}) {
   const ws = new FakeWs();
+  if (opts?.snapshot) ws.snapshot = opts.snapshot;
   const renderer = new CollectingRenderer();
   const runner = new SessionRunner({
     rest: restStub(),
     ws: ws as unknown as WsClient,
     renderer,
     printMode: opts?.printMode ?? true,
-    ifRunning: 'wait',
+    ifRunning: opts?.ifRunning ?? 'wait',
     onQuestion: opts?.onQuestion ?? 'fail',
     askHandler: opts?.askHandler,
     includeToolIo: true,
+    maxDurationSec: opts?.maxDurationSec,
   });
   await runner.attach(session());
   return { ws, renderer, runner };
@@ -248,6 +257,44 @@ describe('SessionRunner', () => {
     terminal(ws, eid);
     expect((await p).status).toBe('COMPLETED');
     expect(runner.isRunning()).toBe(false);
+  });
+
+  it('max-duration while waiting for occupant does not cancel them', async () => {
+    const { ws, runner } = await attached({
+      printMode: true,
+      ifRunning: 'wait',
+      maxDurationSec: 1,
+      snapshot: { type: 'session_snapshot', sessionId: 11, data: { phase: 'RUNNING', executionId: 'other-eid' } },
+    });
+    const p = runner.runPrompt('mine');
+    await new Promise((r) => setTimeout(r, 1100));
+    const result = await p;
+    expect(result.status).toBe('CANCELLED');
+    expect(runner.timedOut).toBe(true);
+    expect(ws.sent.some((m) => (m as { type: string }).type === 'cancel')).toBe(false);
+    expect(ws.sent.some((m) => (m as { type: string }).type === 'send_message')).toBe(false);
+  });
+
+  it('max-duration still cancels the CLI own run after occupant finishes', async () => {
+    const { ws, runner } = await attached({
+      printMode: true,
+      ifRunning: 'wait',
+      maxDurationSec: 1,
+      snapshot: { type: 'session_snapshot', sessionId: 11, data: { phase: 'RUNNING', executionId: 'other-eid' } },
+    });
+    const p = runner.runPrompt('mine');
+    await new Promise((r) => setTimeout(r, 20));
+    terminal(ws, 'other-eid', 'COMPLETED');
+    await new Promise((r) => setTimeout(r, 20));
+    const send = ws.sent.find((m) => (m as { type: string }).type === 'send_message') as { data: { eventId: string } };
+    expect(send).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 1100));
+    expect(ws.sent.some((m) => (m as { type: string }).type === 'cancel')).toBe(true);
+    terminal(ws, send.data.eventId, 'CANCELLED');
+    const result = await p;
+    expect(result.status).toBe('CANCELLED');
+    expect(runner.timedOut).toBe(true);
+    expect(ws.sent.some((m) => (m as { type: string }).type === 'cancel')).toBe(true);
   });
 });
 

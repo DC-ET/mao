@@ -63,7 +63,7 @@ export const FLAG_SPECS: readonly FlagSpec[] = [
   { name: 'permission-level', kind: 'value', arg: '<level>', group: '会话', desc: 'READ_ONLY|READ_WRITE|SMART|FULL，写入会话；只影响 LOCAL 审批' },
   { name: 'if-running', kind: 'value', arg: '<wait|cancel|fail>', group: '会话', desc: '目标会话仍在跑时的策略，默认 wait' },
   { name: 'on-question', kind: 'value', arg: '<ask|fail>', group: '会话', desc: '遇到 ask_user_questions：TTY 默认 ask，打印/非 TTY 默认 fail' },
-  { name: 'max-duration', kind: 'value', arg: '<sec>', group: '会话', desc: '单次任务墙钟上限，超时发 cancel 并以 124 退出' },
+  { name: 'max-duration', kind: 'value', arg: '<sec>', group: '会话', desc: '自己这次执行的墙钟上限；等占用方时超时只结束本地等待，不 cancel 对方；超时以 124 退出' },
   { name: 'cloud-project', kind: 'value', arg: '<key>', group: '会话', desc: '复用已存在的服务端项目目录（仅 CLOUD）' },
   { name: 'git-clone', kind: 'value', arg: '<url>', group: '会话', desc: '建会话时克隆仓库到服务端工作区（仅 CLOUD）' },
   { name: 'git-branch', kind: 'value', arg: '<branch>', group: '会话', desc: '配合 --git-clone 指定分支' },

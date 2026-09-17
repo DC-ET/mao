@@ -136,13 +136,18 @@ export class SessionRunner {
       const wasActive = isRunningPhase(this.snapshotPhase ?? this.session?.phase);
       const activeEid = this.executionId;
       this.resetRound();
+      this.timedOutFlag = false;
       this.startedAt = this.now();
-      this.armMaxDuration();
+      // 等占用方期间不武装 --max-duration：超时不应取消他人执行。
+      // 自己的 execution 在 send 成功后再 arm。
 
       if (wasActive) {
         this.executionId = activeEid;
         this.seenRunning = true;
         await this.handleAlreadyActive(this.snapshotPhase ?? this.session?.phase);
+        if (this.cancelledByUserFlag || this.timedOutFlag) {
+          return this.buildResult();
+        }
       }
 
       // 服务端可能以 session_already_running 拒收（会话被别的客户端占用）。
@@ -155,7 +160,10 @@ export class SessionRunner {
         if (!sent) {
           return this.finishWith('FAILED', '发送失败');
         }
+        this.startedAt = this.now();
+        this.armMaxDuration();
         await this.waitUntilSettled();
+        this.disarmMaxDuration();
         if (attempt > 0 || this.terminal?.phase !== 'ALREADY_RUNNING' || !this.busyRetryMode()) {
           return this.buildResult();
         }
@@ -165,6 +173,7 @@ export class SessionRunner {
         }
       }
     } finally {
+      this.disarmMaxDuration();
       this.busy = false;
     }
   }
@@ -180,8 +189,12 @@ export class SessionRunner {
     this.terminal = null;
     this.executionId = busyEid;
     this.seenRunning = true;
-    if (cancelFirst) await this.sendCancel();
-    await this.waitUntilSettled(cancelFirst ? CANCEL_WAIT_MS : undefined);
+    if (cancelFirst) {
+      await this.sendCancel();
+      await this.waitUntilSettled(CANCEL_WAIT_MS);
+      return;
+    }
+    await this.waitOccupantWithOptionalTimeout();
   }
 
   async waitForCurrentRun(): Promise<RunResult> {
@@ -191,11 +204,13 @@ export class SessionRunner {
     this.busy = true;
     try {
       this.startedAt = this.now();
+      this.timedOutFlag = false;
       this.armMaxDuration();
       this.emit({ type: 'session_started', sessionId: this.sessionId, executionId: this.executionId ?? undefined });
       await this.waitUntilSettled();
       return this.buildResult();
     } finally {
+      this.disarmMaxDuration();
       this.busy = false;
     }
   }
@@ -257,23 +272,46 @@ export class SessionRunner {
     this.fileChanges = [];
     this.terminal = null;
     this.cancelledByUserFlag = false;
-    this.timedOutFlag = false;
     this.questionFailedFlag = false;
     this.approvalFailedFlag = false;
     this.asked.clear();
   }
 
-  private armMaxDuration(): void {
+  private disarmMaxDuration(): void {
     if (this.durationTimer) {
       clearTimeout(this.durationTimer);
       this.durationTimer = null;
     }
+  }
+
+  private armMaxDuration(): void {
+    this.disarmMaxDuration();
     const sec = this.opts.maxDurationSec;
     if (!sec || sec <= 0) return;
     this.durationTimer = setTimeout(() => {
       this.timedOutFlag = true;
       void this.sendCancel().then(() => this.waitCancelThenSettle(CANCEL_WAIT_MS));
     }, sec * 1000);
+  }
+
+  /**
+   * 等待占用方结束。若设置了 --max-duration，到期只结束本地等待，不向占用方发 cancel。
+   */
+  private async waitOccupantWithOptionalTimeout(): Promise<void> {
+    const sec = this.opts.maxDurationSec;
+    if (!sec || sec <= 0) {
+      await this.waitUntilSettled();
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.timedOutFlag = true;
+      this.flushWaiters();
+    }, sec * 1000);
+    try {
+      await this.waitUntilSettled();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async sendMessage(content: string, modelId?: number): Promise<boolean> {
@@ -300,8 +338,10 @@ export class SessionRunner {
         this.resetRound();
         return;
       }
-      await this.waitUntilSettled();
-      this.resetRound();
+      await this.waitOccupantWithOptionalTimeout();
+      if (!this.timedOutFlag && !this.cancelledByUserFlag) {
+        this.resetRound();
+      }
       return;
     }
     // REPL：会话忙时消息照常发送；服务端回 session_already_running 后

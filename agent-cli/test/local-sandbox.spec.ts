@@ -89,21 +89,21 @@ describe('isWorkspaceWithin', () => {
 });
 
 describe('file tools honour the sandbox', () => {
-  it('read/write/edit refuse to escape the workspace', () => {
+  it('read/write/edit refuse to escape the workspace', async () => {
     fs.writeFileSync(path.join(outside, 'secret.txt'), 'secret\n');
     const rel = path.relative(workspace, path.join(outside, 'secret.txt'));
     expect(String(handleReadFile({ path: rel }, workspace, SESSION_ID).content)).toMatch(/拒绝访问工作区外路径/);
-    expect(String(handleWriteFile({ path: rel, content: 'x' }, workspace, SESSION_ID).error)).toMatch(/拒绝访问工作区外路径/);
-    expect(String(handleEditFile({ path: rel, old_string: 'secret', new_string: 'x' }, workspace, SESSION_ID).error))
+    expect(String((await handleWriteFile({ path: rel, content: 'x' }, workspace, SESSION_ID)).error)).toMatch(/拒绝访问工作区外路径/);
+    expect(String((await handleEditFile({ path: rel, old_string: 'secret', new_string: 'x' }, workspace, SESSION_ID)).error))
       .toMatch(/拒绝访问工作区外路径/);
     expect(fs.readFileSync(path.join(outside, 'secret.txt'), 'utf8')).toBe('secret\n');
   });
 
-  it('refuses to follow symlinked files', () => {
+  it('refuses to follow symlinked files', async () => {
     fs.writeFileSync(path.join(workspace, 'real.txt'), 'inside\n');
     fs.symlinkSync(path.join(workspace, 'real.txt'), path.join(workspace, 'alias.txt'));
     expect(String(handleReadFile({ path: 'alias.txt' }, workspace, SESSION_ID).content)).toMatch(/拒绝操作符号链接/);
-    expect(String(handleWriteFile({ path: 'alias.txt', content: 'x' }, workspace, SESSION_ID).error)).toMatch(/拒绝操作符号链接/);
+    expect(String((await handleWriteFile({ path: 'alias.txt', content: 'x' }, workspace, SESSION_ID)).error)).toMatch(/拒绝操作符号链接/);
   });
 
   it('search tools refuse roots outside the workspace', async () => {

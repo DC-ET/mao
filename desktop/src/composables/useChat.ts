@@ -164,8 +164,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   const activities = computed(() => sessionStore.activeActivities)
   const contextWindow = computed(() => sessionStore.activeContextWindow)
 
-  async function fetchMessages(options?: { preserveLiveStream?: boolean }) {
-    const sid = sessionId.value
+  async function fetchMessages(options?: { preserveLiveStream?: boolean; sessionId?: string }) {
+    const sid = options?.sessionId ?? sessionId.value
     if (!sid) return
     sessionStore.clearMessagePageState(sid)
     try {
@@ -617,8 +617,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     // 未显式传入图片时保留原消息图片
     const imagesToSend = images.length > 0 ? images : (lastUserMsg.images ?? [])
 
-    // 快照用于失败回滚：乐观截断/更新仅在连接成功后执行，失败时恢复原消息列表
-    const sidMessagesBeforeEdit = [...(sessionStore.getMessages(sid) ?? [])]
+    // 快照用于失败回滚：乐观截断/更新仅在连接成功后执行，失败时恢复原消息列表。
+    // 必须拷贝消息对象，updateMessageContent 会原地改 content。
+    const sidMessagesBeforeEdit = (sessionStore.getMessages(sid) ?? []).map(m => ({
+      ...m,
+      images: m.images ? [...m.images] : m.images,
+    }))
 
     sending.value = true
     startedAt.value = new Date().toISOString()
@@ -670,31 +674,25 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
       sending.value = false
       if (startedAt.value) {
-        const lastMsg = messages.value[messages.value.length - 1]
+        const sidMsgs = sessionStore.getMessages(sid)
+        const lastMsg = sidMsgs[sidMsgs.length - 1]
         if (lastMsg && lastMsg.role === 'assistant') {
           lastMsg.durationMs = Date.now() - new Date(startedAt.value).getTime()
         }
         startedAt.value = null
       }
-      // Refresh session
-      if (sessionId.value) {
-        sessionStore.fetchSession(sessionId.value)
-        if (sessionStore.getQueueMessages(sessionId.value).length === 0) {
-          fetchMessages()
-        }
+      sessionStore.fetchSession(sid)
+      if (sessionStore.getQueueMessages(sid).length === 0) {
+        fetchMessages({ sessionId: sid })
       }
     } catch (error: any) {
       sending.value = false
       // M-10：失败时回滚乐观编辑——恢复截断/更新前的完整消息列表。
-      // messages 为 computed（sessionStore.activeMessages），不能直接赋值，
-      // 统一通过 setMessages 写回 store。
-      if (sessionId.value) {
-        sessionStore.setMessages(sessionId.value, sidMessagesBeforeEdit)
-      }
+      // 必须写回入口捕获的 sid：执行期用户可能已切到别的会话，
+      // 用 sessionId.value 会把当前会话的消息整表换成编辑目标会话的快照。
+      sessionStore.setMessages(sid, sidMessagesBeforeEdit)
       ElMessage.error(error?.message || '编辑重新发送失败')
-      if (sessionId.value) {
-        sessionStore.fetchSession(sessionId.value)
-      }
+      sessionStore.fetchSession(sid)
     }
   }
 

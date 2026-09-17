@@ -6,6 +6,7 @@ import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { harnessLog } from '../../log.js';
 import { applyEditMatch } from './edit-file-match.js';
 import { withFileLock } from './file-write-lock.js';
+import { applyEol, detectEol, stripBom } from './file-eol.js';
 
 export class EditFileTool extends BaseTool {
   constructor(private readonly pathSandbox: PathSandbox) {
@@ -67,7 +68,9 @@ export class EditFileTool extends BaseTool {
         if (!existsSync(filePath)) {
           return toJson({ success: false, replacements: 0, error: '文件不存在：' + filePathArg });
         }
-        const content = readFileSync(filePath, 'utf8');
+        const raw = readFileSync(filePath, 'utf8');
+        const eol = detectEol(raw);
+        const content = stripBom(raw);
         const match = applyEditMatch(content, oldString, newString, replaceAll);
         if (!match.ok) {
           return toJson({
@@ -77,7 +80,7 @@ export class EditFileTool extends BaseTool {
             ...(match.occurrences != null ? { occurrences: match.occurrences, occurrence_lines: match.occurrence_lines } : {}),
           });
         }
-        writeFileSync(filePath, match.updated);
+        writeFileSync(filePath, applyEol(match.updated, eol));
         const lineDelta = FileChangeDiffUtil.computeLineDelta(content, match.updated);
         return toJson({
           success: true,

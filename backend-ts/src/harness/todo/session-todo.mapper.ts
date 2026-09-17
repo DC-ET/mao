@@ -17,6 +17,15 @@ export class SessionTodoMapper {
     );
   }
 
+  /** 当前会话未删除待办的最大 sort_order；没有记录时返回 -1，调用方从 max+1 递增。 */
+  async selectMaxSortOrder(sessionId: number): Promise<number> {
+    const row = await this.db.queryOne<{ maxSort: number | null }>(
+      `SELECT MAX(sort_order) AS max_sort FROM session_todo WHERE session_id = ? AND ${notDeleted()}`,
+      [sessionId],
+    );
+    return row?.maxSort ?? -1;
+  }
+
   async insert(todo: SessionTodo): Promise<number> {
     const id = await this.db.insert('session_todo', {
       sessionId: todo.sessionId,

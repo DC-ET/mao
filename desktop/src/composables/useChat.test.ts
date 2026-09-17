@@ -8,12 +8,16 @@ import { useSessionStore } from '../stores/session'
 const ws = vi.hoisted(() => ({
   connect: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
   pendingCallbacks: new Map(), onMessageSaved: vi.fn(), offMessageSaved: vi.fn(),
+  sendEditMessage: vi.fn(),
 }))
 vi.mock('./useStreamWS', () => ({ useStreamWS: () => ws }))
 vi.mock('./useToolApprovals', () => ({ useToolApprovals: () => ({
   pendingApprovals: ref([]), clearPendingApprovals: vi.fn(),
 }) }))
 vi.mock('../api', () => ({ api: { get: vi.fn() } }))
+vi.mock('element-plus', () => ({ ElMessage: { warning: vi.fn(), error: vi.fn() } }))
+vi.mock('../utils/localSkills', () => ({ collectLocalUnsyncedSkills: vi.fn(async () => []) }))
+vi.mock('../utils/agentsMd', () => ({ collectAgentsMdContent: vi.fn(async () => undefined) }))
 
 describe('restoreSession', () => {
   beforeEach(() => {
@@ -211,5 +215,43 @@ describe('isCurrentChatSession', () => {
     expect(isCurrentChatSession('1304', '1306', '1306', false)).toBe(false)
     expect(isCurrentChatSession('1306', '1304', '1306', false)).toBe(false)
     expect(isCurrentChatSession('1306', '1306', '1306', true)).toBe(false)
+  })
+})
+
+describe('editAndResend', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    ws.connect.mockResolvedValue(undefined)
+    ws.sendEditMessage.mockResolvedValue(true)
+    vi.mocked(api.get).mockResolvedValue({ data: {} } as never)
+  })
+
+  it('失败回滚写入编辑目标会话，不覆盖已切换的会话', async () => {
+    const store = useSessionStore()
+    store.setMessages('A', [
+      { id: 'u1', role: 'user', content: 'old A', createdAt: '2026-09-17 12:00:00' },
+      { id: 'a1', role: 'assistant', content: 'reply A', createdAt: '2026-09-17 12:00:01' },
+    ])
+    store.setMessages('B', [
+      { id: 'ub', role: 'user', content: 'B user', createdAt: '2026-09-17 12:00:00' },
+    ])
+    store.setActiveSession('A')
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+
+    let finishSend!: (ok: boolean) => void
+    ws.sendEditMessage.mockImplementation(() => new Promise<boolean>(resolve => { finishSend = resolve }))
+
+    const pending = chat.editAndResend('u1', 'edited A')
+    await vi.waitFor(() => expect(ws.sendEditMessage).toHaveBeenCalled())
+
+    chat.sessionId.value = 'B'
+    store.setActiveSession('B')
+    finishSend(false)
+    await pending
+
+    expect(store.getMessages('B').map(m => m.content)).toEqual(['B user'])
+    expect(store.getMessages('A').map(m => m.content)).toEqual(['old A', 'reply A'])
   })
 })

@@ -49,6 +49,7 @@ describe('FileChangeDiffUtil', () => {
     expect(append.linesDeleted).toBe(0);
     expect(replace.linesAdded).toBe(1);
     expect(replace.linesDeleted).toBe(1);
+    expect(FileChangeDiffUtil.computeLineDelta('hello\n', 'hello')).toEqual({ linesAdded: 0, linesDeleted: 0 });
   });
 });
 

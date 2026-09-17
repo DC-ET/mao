@@ -167,7 +167,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 | `--permission-level <level>` | READ_ONLY\|READ_WRITE\|SMART\|FULL，写入会话；只影响 LOCAL 审批 |
 | `--if-running <wait\|cancel\|fail>` | 目标会话仍在跑时的策略，默认 wait |
 | `--on-question <ask\|fail>` | 遇到 `ask_user_questions`：TTY 默认 ask，打印/非 TTY 默认 fail |
-| `--max-duration <sec>` | 单次任务墙钟上限，超时发 cancel 并以 124 退出 |
+| `--max-duration <sec>` | 自己这次执行的墙钟上限；等占用方时超时只结束本地等待，不 cancel 对方；超时发 cancel 并以 124 退出 |
 | `--cloud-project <key>` | 复用已存在的服务端项目目录（仅 CLOUD） |
 | `--git-clone <url>` / `--git-branch` | 建会话时克隆仓库到服务端工作区（仅 CLOUD） |
 | `--no-queue` | 执行中禁止预输入下一条 |
@@ -215,6 +215,8 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 
 - **需要 bash**：shell 工具固定通过 bash 执行，启动时按 PATH → `/bin` → `/usr/bin` → `/usr/local/bin` → `/opt/homebrew/bin` 解析绝对路径，找不到即报错。容器镜像需自带可执行 bash。技能包解压为内置 Node 实现，**不需要 python3 或 unzip**
 - **路径沙箱 = 已信任工作区 + 本会话 runtime 目录**：`read_file` / `write_file` / `edit_file`、`glob_search` / `grep_search` 的搜索根、`shell` 的 `workdir` 都必须落在边界内。`../` 越界、边界外的绝对路径、指向外部的符号链接一律拒绝；`~` 展开后同样要在边界内
+- **同文件并行写串行化**：同一轮对同一路径的 `write_file` / `edit_file` 按绝对路径排队，避免后写者基于旧内容覆盖先写者
+- **写回保留原文件行尾**：已有文件的 CRLF / BOM 会在 `write_file` / `edit_file` 时保留（云端工具同样如此）；新建文件按模型给出的 LF 写入
 - **工作区以本地为权威**：服务端下发的 workspace 只能等于本地工作区或位于其内部，否则该次工具调用直接失败（`拒绝服务端下发的工作区 ...`）
 - **shell 内不注入 token**：子进程环境只有登录 shell 的 PATH 加 `TERM=dumb` / `PS1=''`，不含 `MAO_TOKEN` / `MAO_REFRESH_TOKEN`。要在 shell 工具里调 `mao` / `mao-agent`，需先 `mao login`（读 `~/.mao/auth.json`）。这与桌面 Electron（会注入 token）是有意差异
 - **MCP**：本地 stdio 服务器启动前需过审批；子进程环境为白名单（PATH / HOME / LANG / LC_* / TERM / TMPDIR / TZ / USER / LOGNAME + Windows 若干 + 该 server 显式声明的 `env`）；stdio 传输为行分隔 JSON；单服务器连接超时 45s、工具调用 120s；超时或退出杀整个进程组
