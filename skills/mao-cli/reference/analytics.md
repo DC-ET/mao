@@ -15,14 +15,16 @@
 | 参数 | 必填 | 类型 | 默认 | 含义 | 后端字段 |
 |------|------|------|------|------|----------|
 | `--days` | 否 | 整数 | 30 | 统计天数窗口，服务端 clamp 到 1–90 | `days` |
+| `--end-offset` | 否 | 整数 | 0 | 窗口结束日相对今天的前移天数（0=今日结尾，1=昨日结尾），服务端 clamp 到 0–365 | `endOffset` |
 
 `GET /admin/analytics/summary`
 
 ### 统计口径
 
-- 窗口以「今天」结尾，取最近 `days` 天；按半开区间 `[start 00:00:00, end+1 00:00:00)` 过滤 `created_at`
+- 默认窗口以「今天」结尾，取最近 `days` 天；`--end-offset 1 --days 1` 即「昨日」
+- 按半开区间 `[start 00:00:00, end+1 00:00:00)` 过滤 `created_at`
 - 除 `overview` 外所有数字均为**窗口内新增**，不是全表累计
-- 环比窗口是紧邻的上一个等长窗口（如 days=7 时为前 7 天）
+- 环比窗口是紧邻的上一个等长窗口（如 days=7 时为前 7 天；昨日的环比为前日）
 - Token 分两类：`chatTokens` 来自 `message.token_count`（对话消耗），`backgroundTokens` 来自 `llm_usage`（后台调用，如会话标题、Git 提交信息生成），`totalTokens` 为两者之和
 
 ### 返回结构
@@ -49,6 +51,7 @@
 ```bash
 mao analytics summary
 mao analytics summary --days 7 --raw
+mao analytics summary --days 1 --end-offset 1 --raw
 ```
 
 排查建议：只关心趋势时用 `--raw` 配合 `jq '.data.trends'`；核对环比用 `jq '{now:.data.periodTotals, prev:.data.previousTotals}'`。

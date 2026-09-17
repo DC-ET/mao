@@ -107,7 +107,7 @@ CLI：`mao runtime ...`（见 [runtime.md](runtime.md)）。
 
 ## 用量分析
 
-图表看板，按 7 / 30 / 90 天周期统计**窗口内新增**数据，并与紧邻的上一等长窗口做环比：
+图表看板，按今日 / 昨日 / 3 / 7 / 30 / 90 天周期统计**窗口内新增**数据，并与紧邻的上一等长窗口做环比：
 
 - KPI 卡：新增会话、消息数、Token 消耗、会话失败率，各带环比与迷你走势
 - 趋势：会话与消息双轴折线；Token 堆叠柱（对话 Token + 后台调用 Token，后者来自会话标题、Git 提交信息等后台 LLM 调用）
@@ -116,7 +116,7 @@ CLI：`mao runtime ...`（见 [runtime.md](runtime.md)）。
 
 90 天视图默认聚焦最近 30 天，可拖动查看全周期。实时异常（运行中、待审批、卡住会话）与失败会话明细看运行监控，本页阶段分布只统计窗口内创建的会话。
 
-CLI：`mao analytics summary --days 7|30|90` 取同一份数据（见 [analytics.md](analytics.md)）。
+CLI：`mao analytics summary --days 7|30|90` 取同一份数据；今日为 `--days 1`，昨日为 `--days 1 --end-offset 1`（见 [analytics.md](analytics.md)）。
 
 ## 调用流水
 

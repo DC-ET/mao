@@ -28,8 +28,19 @@ export interface AdminRouteDeps {
 export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRouteDeps): void {
   app.get('/v1/admin/analytics/summary', async (req, reply) => {
     await requireAdmin(deps.permissionService, req);
-    const days = Number((req.query as { days?: string }).days ?? 30);
-    sendJson(reply, 200, ok(await deps.analytics.summary(Math.max(1, Math.min(days, 90)))));
+    const q = req.query as { days?: string; endOffset?: string };
+    const days = Number(q.days ?? 30);
+    const endOffset = Number(q.endOffset ?? 0);
+    sendJson(
+      reply,
+      200,
+      ok(
+        await deps.analytics.summary(
+          Math.max(1, Math.min(Number.isFinite(days) ? days : 30, 90)),
+          Math.max(0, Math.min(Number.isFinite(endOffset) ? endOffset : 0, 365)),
+        ),
+      ),
+    );
   });
 }
 

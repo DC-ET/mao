@@ -8,7 +8,7 @@ function help() {
   return `analytics — 分析汇总
 
 命令:
-  mao analytics summary [--days]
+  mao analytics summary [--days] [--end-offset]
 `;
 }
 
@@ -25,6 +25,7 @@ async function run(ctx, subcommand, _rest, flags) {
 
   const result = await get(ctx, '/admin/analytics/summary', pickDefined({
     days: getNumber(flags, 'days'),
+    endOffset: getNumber(flags, 'end-offset'),
   }));
   emitResult(result, { raw: ctx.raw });
 }
