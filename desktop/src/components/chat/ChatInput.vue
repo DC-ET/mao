@@ -1434,10 +1434,10 @@ onBeforeUnmount(() => {
 
 .chat-input-card.layout-centered :deep(.rich-editor),
 .chat-input-card.layout-centered :deep(.rich-editor .ProseMirror) {
-  /* 17px × 1.5 ≈ 25.5px/行，2 行约 52px */
+  /* 与会话态输入框同字号（14px × 1.5 ≈ 21px/行），正文区留 2 行余量 */
   min-height: 52px;
   max-height: 280px;
-  font-size: var(--aw-text-body);
+  font-size: var(--aw-text-caption);
 }
 
 .chat-input-card.layout-centered .toolbar {
