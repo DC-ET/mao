@@ -20,6 +20,7 @@
 ### 后端
 
 - CLOUD shell / 交互终端在 ECP 飞书登录开启且配置了 `larkAppId` 时，自动注入 `LARKSUITE_CLI_APP_ID` 与 `LARKSUITE_CLI_USER_ACCESS_TOKEN`（用户飞书 UAT），供 lark-cli 以用户身份使用；UAT 走 ECP 换票接口 + 进程内存缓存，ECP 会话失效时不注入。
+- 飞书进度卡片执行失败时，正文改为展示具体 `error.message`（与客户端对话页「执行异常」一致）；无错误信息时仍回退「抱歉，处理您的消息时出现了错误，请稍后再试。」
 
 ### 管理后台
 

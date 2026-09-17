@@ -478,9 +478,11 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     } catch (error) {
       console.error(`飞书 Agent 执行失败, sessionId=${sessionId}`, error);
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
-      const cardUpdated = await cardListener?.fail('抱歉，处理您的消息时出现了错误，请稍后再试。');
+      // 与客户端 ExecutionErrorBanner 一致：透传具体 error.message，便于在会话详情里定位根因。
+      const failText = feishuFailureText(error);
+      const cardUpdated = await cardListener?.fail(failText);
       await this.options.onExecutionFinished?.(sessionId, context, executionId, 'FAILED');
-      const replyText = cardListener == null || cardUpdated === false ? '抱歉，处理您的消息时出现了错误，请稍后再试。' : null;
+      const replyText = cardListener == null || cardUpdated === false ? failText : null;
       return { text: replyText, phase: 'FAILED' };
     }
   }
@@ -623,4 +625,13 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       this.options.releaseCancelFlag?.(sessionId);
     }
   }
+}
+
+/** 失败终态文案：优先透传 Error.message（与客户端对话页一致），无信息时回退固定安抚文案。 */
+function feishuFailureText(error: unknown): string {
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (message !== '') return message;
+  }
+  return '抱歉，处理您的消息时出现了错误，请稍后再试。';
 }

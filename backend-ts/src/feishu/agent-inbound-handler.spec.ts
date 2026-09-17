@@ -495,7 +495,61 @@ describe('AgentFeishuInboundHandler', () => {
     await handler.onMessage(makeContext());
     // FAILED 后不应触发队列接力消费
     expect(queueService.claimNext).not.toHaveBeenCalled();
-    expect(onReply).toHaveBeenCalledWith(expect.anything(), '抱歉，处理您的消息时出现了错误，请稍后再试。', 7);
+    // 与客户端一致：透传具体 error.message，而非固定安抚文案
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), 'llm down', 7);
+  });
+
+  it('shows concrete error message on the progress card when execution fails', async () => {
+    const sessionService = makeSessionService();
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { throw new Error('LLM API returned 500: upstream timeout'); }),
+    };
+    const onReply = vi.fn(async () => undefined);
+    const updates: Array<{ status: string; content: string }> = [];
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      createProgressCard: vi.fn(async () => ({
+        update: async (status: string, _round: number, content: string) => {
+          updates.push({ status, content });
+        },
+      })),
+      listenerFactory: async () => listener,
+      onReply,
+    });
+    await handler.onMessage(makeContext());
+    expect(updates).toContainEqual(expect.objectContaining({
+      status: 'FAILED',
+      content: 'LLM API returned 500: upstream timeout',
+    }));
+    // 卡片已更新成功，不再重复发文本兜底
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
+  it('falls back to generic message when error has no message', async () => {
+    const sessionService = makeSessionService();
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { throw 'plain-string-error'; }),
+    };
+    const onReply = vi.fn(async () => undefined);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      onReply,
+    });
+    await handler.onMessage(makeContext());
+    expect(onReply).toHaveBeenCalledWith(
+      expect.anything(),
+      '抱歉，处理您的消息时出现了错误，请稍后再试。',
+      7,
+    );
   });
 
   it('stops draining the queue after a queued message fails', async () => {
