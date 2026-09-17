@@ -305,36 +305,40 @@ export class BackgroundSubagentManager {
     taskId: number,
     status: 'COMPLETED' | 'FAILED' | 'CANCELLED',
   ): Promise<void> {
-    this.untrackRunning(parentSessionId, taskId);
-    this.runningRefsByTask.delete(taskId);
-    const execution = await this.deps.subagentExecutionMapper.findById(taskId);
-    if (!execution || execution.parentSessionId !== parentSessionId) return;
-    // 条件更新：仅 RUNNING/RECOVERING 可收敛为终态。若已被并发收敛
-    // （如父会话取消触发 cancelAllForParent 置 CANCELLED），保持库内现状不覆盖。
-    const resultText = status === 'COMPLETED'
-      ? await this.recentOutput(execution.childSessionId ?? null) ?? '(子代理未产生文本输出)'
-      : status === 'CANCELLED' ? '后台子代理已取消' : '后台子代理重试执行失败';
-    const applied = await this.deps.subagentExecutionMapper.updateTerminal(taskId, {
-      status,
-      result: resultText,
-      completedAt: nowSql(),
-    });
-    if (!applied) return;
-    const parent = await this.deps.sessionMapper.selectById(parentSessionId);
-    if (!parent || isTerminal(parent.phase)) {
-      await this.deps.subagentExecutionMapper.updateById(taskId, { deliveryStatus: 'SUPPRESSED' });
-      return;
+    // 先落库/入队再释放运行跟踪，避免 AgentLoop 在「未运行且无待收结果」窗口提前退出。
+    try {
+      const execution = await this.deps.subagentExecutionMapper.findById(taskId);
+      if (!execution || execution.parentSessionId !== parentSessionId) return;
+      // 条件更新：仅 RUNNING/RECOVERING 可收敛为终态。若已被并发收敛
+      // （如父会话取消触发 cancelAllForParent 置 CANCELLED），保持库内现状不覆盖。
+      const resultText = status === 'COMPLETED'
+        ? await this.lastAssistantOutput(execution.childSessionId ?? null) ?? '(子代理未产生文本输出)'
+        : status === 'CANCELLED' ? '后台子代理已取消' : '后台子代理重试执行失败';
+      const applied = await this.deps.subagentExecutionMapper.updateTerminal(taskId, {
+        status,
+        result: resultText,
+        completedAt: nowSql(),
+      });
+      if (!applied) return;
+      const parent = await this.deps.sessionMapper.selectById(parentSessionId);
+      if (!parent || isTerminal(parent.phase)) {
+        await this.deps.subagentExecutionMapper.updateById(taskId, { deliveryStatus: 'SUPPRESSED' });
+        return;
+      }
+      const entries = this.resultsByParent.get(parentSessionId) ?? [];
+      entries.push({
+        executionId: taskId,
+        resultJson: JSON.stringify(this.buildResultPayload(execution, status, resultText, null, null)),
+      });
+      this.resultsByParent.set(parentSessionId, entries);
+      if (execution.childSessionId != null) {
+        await this.persistCompletionNotice(execution, { id: execution.childSessionId } as Session, status, resultText);
+      }
+      await this.deps.subagentExecutionMapper.updateById(taskId, { deliveryStatus: 'DELIVERED' });
+    } finally {
+      this.untrackRunning(parentSessionId, taskId);
+      this.runningRefsByTask.delete(taskId);
     }
-    const entries = this.resultsByParent.get(parentSessionId) ?? [];
-    entries.push({
-      executionId: taskId,
-      resultJson: JSON.stringify(this.buildResultPayload(execution, status, resultText, null, null)),
-    });
-    this.resultsByParent.set(parentSessionId, entries);
-    if (execution.childSessionId != null) {
-      await this.persistCompletionNotice(execution, { id: execution.childSessionId } as Session, status, resultText);
-    }
-    await this.deps.subagentExecutionMapper.updateById(taskId, { deliveryStatus: 'DELIVERED' });
   }
 
   async cancelAllForParent(parentSessionId: number): Promise<void> {
@@ -390,7 +394,7 @@ export class BackgroundSubagentManager {
     };
   }
 
-  private async recentOutput(childSessionId: number | null): Promise<string | null> {
+  private async lastAssistantOutput(childSessionId: number | null): Promise<string | null> {
     if (childSessionId == null) return null;
     try {
       const messages = this.deps.sessionService.getMessages
@@ -401,11 +405,16 @@ export class BackgroundSubagentManager {
       const last = [...messages].reverse().find((m) => m.role === 'ASSISTANT' && m.content);
       const content = last?.content;
       if (content == null || content.trim() === '') return null;
-      return truncate(content, 2000);
+      return content;
     } catch (e) {
       harnessLog('warn', `Failed to load recent subagent output for session ${childSessionId}: ${(e as Error).message}`);
       return null;
     }
+  }
+
+  private async recentOutput(childSessionId: number | null): Promise<string | null> {
+    const content = await this.lastAssistantOutput(childSessionId);
+    return content == null ? null : truncate(content, 2000);
   }
 
   private async waitTerminal(taskId: number, timeoutMs: number): Promise<boolean> {

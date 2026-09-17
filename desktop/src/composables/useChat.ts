@@ -206,7 +206,7 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const raw: Array<Record<string, unknown>> = data?.messages || []
       const { messages: olderMessages, allChanges } = mapMessagesWithFileChanges(raw)
       sessionStore.prependMessages(sid, olderMessages)
-      const existingChanges = sessionStore.activeFileChanges
+      const existingChanges = sessionStore.getFileChanges(sid)
       sessionStore.setFileChanges(sid, [...allChanges, ...existingChanges])
       sessionStore.setMessagePageState(
         sid,
@@ -222,10 +222,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   }
 
   async function fetchTodos() {
-    if (!sessionId.value) return
+    const sid = sessionId.value
+    if (!sid) return
     try {
-      const { data } = await api.get(`/sessions/${sessionId.value}/todos`)
-      sessionStore.setTodos(sessionId.value, data || [])
+      const { data } = await api.get(`/sessions/${sid}/todos`)
+      sessionStore.setTodos(sid, data || [])
     } catch {
       // session might not exist yet
     }
@@ -803,10 +804,11 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
   }
 
   async function fetchQueue() {
-    if (!sessionId.value) return
+    const sid = sessionId.value
+    if (!sid) return
     try {
-      const { data } = await api.get(`/sessions/${sessionId.value}/queue`)
-      sessionStore.setQueueMessages(sessionId.value, data || [])
+      const { data } = await api.get(`/sessions/${sid}/queue`)
+      sessionStore.setQueueMessages(sid, data || [])
     } catch {
       // ignore
     }
