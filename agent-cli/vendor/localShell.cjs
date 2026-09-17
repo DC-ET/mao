@@ -115,6 +115,8 @@ class LocalShellSession {
     this.emittedUpTo = 0
     this.bufferTrimmed = false
     this.waiters = []
+    /** stdout 'end' 之后才不会再有输出；进程 exit 可能早于管道排空。 */
+    this.stdoutEnded = false
     /** 已写入 stdin 但尚未读到结束标记的命令：{ marker, keepSession, persist, background } */
     this.pendingCommand = null
     /** 最近一次被 finishCommand 消费的 marker：防止过期调用方把它重新登记成永不出现的假 pending。 */
@@ -125,7 +127,10 @@ class LocalShellSession {
     // 常驻读取：没有监听者时 Node 会直接丢弃 stdout 数据，
     // 提前放行（wait_for 命中 / 超时）后剩余输出与结束标记就再也读不到了。
     this.process.stdout.on('data', (data) => this.onData(data))
-    this.process.stdout.on('end', () => this.wake())
+    this.process.stdout.on('end', () => {
+      this.stdoutEnded = true
+      this.wake()
+    })
     this.process.on('exit', () => this.wake())
   }
 
@@ -200,6 +205,23 @@ class LocalShellSession {
 
   async waitForOutput(timeoutMs) {
     if (timeoutMs <= 0 || !this.isAlive()) return
+    await new Promise((resolve) => {
+      let done = false
+      const finish = () => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        this.waiters = this.waiters.filter((w) => w !== finish)
+        resolve()
+      }
+      const timer = setTimeout(finish, timeoutMs)
+      this.waiters.push(finish)
+    })
+  }
+
+  /** 进程已退出后仍可能有未读完的 stdout；短等管道排空。 */
+  async waitForStdoutDrain(timeoutMs) {
+    if (timeoutMs <= 0 || this.stdoutEnded) return
     await new Promise((resolve) => {
       let done = false
       const finish = () => {
@@ -404,7 +426,24 @@ function createLocalShellRuntime(options = {}) {
           break
         }
       }
-      if (!session.isAlive()) break
+      if (!session.isAlive()) {
+        // exit 可能早于 stdout：宽限期内把管道排空，再回头匹配 wait_for / 结束标记。
+        if (!session.stdoutEnded) {
+          const drainDeadline = Date.now() + WAIT_SLICE_MS
+          while (!session.stdoutEnded) {
+            const remain = drainDeadline - Date.now()
+            if (remain <= 0) break
+            await session.waitForStdoutDrain(remain)
+          }
+        }
+        const drained = session.peekBuffer()
+        markerIndex = drained.indexOf(marker)
+        if (markerIndex < 0 && waitFor && matched == null) {
+          const hit = waitFor.exec(drained.slice(session.emittedBoundary()))
+          if (hit) matched = hit[0]
+        }
+        break
+      }
       const remain = deadline - Date.now()
       if (remain <= 0) break
       await session.waitForOutput(Math.min(remain, WAIT_SLICE_MS))
@@ -463,7 +502,8 @@ function createLocalShellRuntime(options = {}) {
       completed: true,
       elapsedMs: Date.now() - start,
       exitCode,
-      matched: null,
+      matched,
+      ...(!session.isAlive() ? { shellExited: true } : {}),
     }
   }
 

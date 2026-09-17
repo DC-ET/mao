@@ -21,6 +21,18 @@
 
 - 新建会话居中输入框字号对齐会话态输入框：正文与占位符由 17px（`--aw-text-body`）改为 14px（`--aw-text-caption`），行距 1.5 不变，快捷指令/文件标签随正文同步缩小；桌面与移动端居中态现在同字号。
 
+### 桌面 Electron
+
+- 本地 shell 在 `wait_for` 命中后立刻 `exit` 时先排空 stdout 再判定结果，避免 Linux 上进程退出早于管道输出导致漏掉匹配。
+
+### 后端
+
+- CLOUD shell 同样等 stdout 排空后再把「wait_for + 立即退出」标为完成，避免误报仍在运行或丢掉匹配文本。
+
+### 终端 CLI（mao-agent）
+
+- 同步 `vendor/localShell.cjs`：与桌面本地 shell 一致，立刻退出的命令不再漏掉 `wait_for` 匹配。
+
 ## 0.0.139 (2026-09-16)
 
 ### 安卓原生

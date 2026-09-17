@@ -38,6 +38,8 @@ export class ShellSession {
   private waiters: Array<() => void> = [];
   private commandQueue: Promise<void> = Promise.resolve();
   private readonly userEnvironmentKeys = new Set<string>();
+  /** stdout 'end' 之后才不会再有输出；进程 exit 可能早于管道排空。 */
+  private stdoutEnded = false;
 
   constructor(
     readonly sessionId: string,
@@ -58,7 +60,10 @@ export class ShellSession {
     // 常驻读取：读取者退出后 stdout 若无监听者，Node 会直接丢弃数据，
     // 提前放行后剩下的输出（含结束标记）就再也读不到了。
     this.process.stdout.on('data', (data: string | Buffer) => this.onData(data));
-    this.process.stdout.on('end', () => this.wake());
+    this.process.stdout.on('end', () => {
+      this.stdoutEnded = true;
+      this.wake();
+    });
     this.process.on('exit', () => this.wake());
   }
 
@@ -129,6 +134,23 @@ export class ShellSession {
     });
   }
 
+  /** 进程已退出后仍可能有未读完的 stdout；短等管道排空。 */
+  async waitForStdoutDrain(timeoutMs: number): Promise<void> {
+    if (timeoutMs <= 0 || this.stdoutEnded) return;
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        this.waiters = this.waiters.filter((w) => w !== finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, timeoutMs);
+      this.waiters.push(finish);
+    });
+  }
+
   private onData(data: string | Buffer): void {
     this.buffer += typeof data === 'string' ? data : data.toString('utf8');
     // 有输出即视为活跃，否则长时间只输出不被读取的命令会被空闲清理杀掉
@@ -181,6 +203,10 @@ export class ShellSession {
 
   isAlive(): boolean {
     return this.alive && this.process.exitCode == null && !this.process.killed;
+  }
+
+  hasStdoutEnded(): boolean {
+    return this.stdoutEnded;
   }
 
   /** 进程已退出时的状态码：正常退出用 bash 的 exit code；被信号杀掉则为 -1。 */
@@ -346,7 +372,24 @@ export class OutputManager {
           break;
         }
       }
-      if (!session.isAlive()) break;
+      if (!session.isAlive()) {
+        // exit 可能早于 stdout：宽限期内把管道排空，再回头匹配 wait_for / 结束标记。
+        if (!session.hasStdoutEnded()) {
+          const drainDeadline = Date.now() + WAIT_SLICE_MS;
+          while (!session.hasStdoutEnded()) {
+            const remain = drainDeadline - Date.now();
+            if (remain <= 0) break;
+            await session.waitForStdoutDrain(remain);
+          }
+        }
+        const drained = session.peekBuffer();
+        markerIndex = drained.indexOf(marker);
+        if (markerIndex < 0 && waitFor && matched == null) {
+          const hit = waitFor.exec(drained.slice(session.emittedBoundary()));
+          if (hit) matched = hit[0];
+        }
+        break;
+      }
       const remain = deadline - Date.now();
       if (remain <= 0) break;
       await session.waitForOutput(Math.min(remain, WAIT_SLICE_MS));
@@ -405,7 +448,8 @@ export class OutputManager {
       completed: true,
       elapsedMs: Date.now() - start,
       exitCode,
-      matched: null,
+      matched,
+      ...(!session.isAlive() ? { shellExited: true } : {}),
     };
   }
 
