@@ -74,7 +74,7 @@ describe('startFeishuChannelAuthLink', () => {
 describe('feishuUnauthorizedGuide', () => {
   it('uses ECP bind copy when ECP is enabled', () => {
     const guide = feishuUnauthorizedGuide(true, 'p2p');
-    expect(guide.body).toBe('请点击下方按钮完成ECP用户绑定');
+    expect(guide.body).toBe('请先点击下方按钮完成用户绑定（3分钟内有效）。');
     expect(guide.buttonLabel).toBe('点我绑定');
     expect(guide.title).toBe('新用户绑定');
   });
@@ -82,7 +82,7 @@ describe('feishuUnauthorizedGuide', () => {
   it('uses the same ECP copy in group chat', () => {
     expect(feishuUnauthorizedGuide(true, 'group')).toEqual({
       title: '新用户绑定',
-      body: '请点击下方按钮完成ECP用户绑定',
+      body: '请先点击下方按钮完成用户绑定（3分钟内有效）。',
       buttonLabel: '点我绑定',
     });
   });
@@ -119,7 +119,7 @@ describe('buildFeishuAuthGuideCard', () => {
     const body = card.body as { elements: Array<Record<string, unknown>> };
     const markdown = body.elements.filter((el) => el.tag === 'markdown');
     expect(JSON.stringify(markdown)).not.toContain(url);
-    expect(JSON.stringify(markdown)).toContain('请点击下方按钮完成ECP用户绑定');
+    expect(JSON.stringify(markdown)).toContain('请先点击下方按钮完成用户绑定（3分钟内有效）。');
     const columnSet = body.elements.find((el) => el.tag === 'column_set') as {
       columns: Array<{ elements: Array<Record<string, unknown>> }>;
     };

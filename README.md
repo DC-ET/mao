@@ -127,7 +127,7 @@ MaoChat.init({
 
 ### ECP 飞书登录（全站 / CLOUD CLI）
 
-需要 CLOUD 定时任务或 Agent shell 调用内部网关 CLI（如 `bigdata-cli`）时，可在管理后台「系统设置 → 集成配置 → ECP 飞书登录」启用。用户通过 ECP 飞书登录 Mao；服务端加密保存 ECP `sessionToken` 并在 12 小时内自动 renew，CLOUD shell 将会话票写入虚拟 HOME 的 AccessOne 兼容目录。开启后不关闭其它登录方式；用户经 ECP 飞书登录后服务端保存 `sessionToken` 供 CLOUD shell 使用。飞书机器人通道在开启后会检查发送者是否有有效 ECP 票，没有则发送卡片「新用户绑定 / 请点击下方按钮完成ECP用户绑定 / 点我绑定」。须在 ECP 登记桌面与管理后台飞书回调 URL。详见 [技术方案](docs/plan/ecp-native-login-technical-design.md) 与 [配置参考](skills/mao-cli/reference/config.md)。
+需要 CLOUD 定时任务或 Agent shell 调用内部网关 CLI（如 `bigdata-cli`）时，可在管理后台「系统设置 → 集成配置 → ECP 飞书登录」启用。用户通过 ECP 飞书登录 Mao；服务端加密保存 ECP `sessionToken` 并在 12 小时内自动 renew，CLOUD shell 将会话票写入虚拟 HOME 的 AccessOne 兼容目录。开启后不关闭其它登录方式；用户经 ECP 飞书登录后服务端保存 `sessionToken` 供 CLOUD shell 使用。飞书机器人通道在开启后会检查发送者是否有有效 ECP 票，没有则发送卡片「新用户绑定 / 请先点击下方按钮完成用户绑定（3分钟内有效）。 / 点我绑定」。须在 ECP 登记桌面与管理后台飞书回调 URL。详见 [技术方案](docs/plan/ecp-native-login-technical-design.md) 与 [配置参考](skills/mao-cli/reference/config.md)。
 
 ### 安全边界（接入前必读）
 
