@@ -43,7 +43,6 @@ let pendingSettle: {
   reject: (err: Error) => void
   socket: WebSocket
 } | null = null
-let isReconnecting = false
 
 // Active execution ID per session — used to discard stale stream events after cancel
 const activeExecutionIds = new Map<string, string>()
@@ -201,7 +200,6 @@ export function useStreamWS() {
         reconnectDelay.value = 1000
         connectPromise = null
         pendingSettle = null
-        isReconnecting = false
         // 鉴权首帧：必须是新连接发出的第一条消息，先于任何 subscribe 等业务帧
         socket.send(JSON.stringify({ type: 'auth', token, client }))
         // Re-subscribe all tracked sessions (main + open side tasks).
@@ -271,7 +269,6 @@ export function useStreamWS() {
         stopHeartbeat()
         // 断线后内存中的瞬时 LLM 重试状态已不可信，全部清理避免重连后残留过期提示
         sessionStore.clearAllLlmRetry()
-        isReconnecting = false
         const settle = pendingSettle
         connectPromise = null
         pendingSettle = null
@@ -295,7 +292,6 @@ export function useStreamWS() {
 
   function disconnect() {
     intentionalClose = true
-    isReconnecting = false
     stopHeartbeat()
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
@@ -338,7 +334,6 @@ export function useStreamWS() {
 
   function scheduleReconnect() {
     if (reconnectTimer) return
-    isReconnecting = true
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
       // 未登录窗口 connect() 会立即 reject，吞掉避免 unhandled rejection
