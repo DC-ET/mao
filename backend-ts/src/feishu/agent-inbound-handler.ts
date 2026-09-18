@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FeishuHarnessService, FeishuInboundContext, FeishuInboundHandler, FeishuReply, CancelFlag, FeishuTaskQueuePort, FeishuQueuePayload, FeishuQueueStoredContext, FeishuInboundQueueRow } from './types.js';
 import { CompositeAgentEventListener } from '../harness/core/composite-agent-event-listener.js';
+import { NoopAgentEventListener } from '../harness/core/agent-event-listener.js';
 import { FeishuCardProgressListener, type FeishuCardProgress } from './card-progress-listener.js';
 
 export interface FeishuSessionAdapter {
@@ -170,6 +171,104 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     if (flag != null) flag.set(true);
     this.options.onInterruptRunning?.(sessionId);
     return flag != null;
+  }
+
+  /**
+   * 失败卡「重试」：与桌面端同语义——清理未完成尾巴，基于会话历史续跑（不插入新用户消息）。
+   * 仅 await 完成「取卡 → 置 busy → 起跑」，实际 execute 后台续跑——飞书卡片回调须在数秒内返回 RUNNING 卡。
+   * @param createProgress 为点击的那张失败卡创建可续更的 progress 闭包（PATCH 原卡片）。
+   */
+  async retryExecution(
+    sessionId: number,
+    createProgress: () => Promise<FeishuCardProgress | null>,
+  ): Promise<{ ok: true } | { ok: false; reason: 'BUSY' | 'NOT_FAILED' | 'NO_PROGRESS' }> {
+    if (this.busy.has(sessionId)) return { ok: false, reason: 'BUSY' };
+    const phase = await this.options.sessionService.getPhase?.(sessionId).catch(() => null);
+    if (phase != null && phase !== 'FAILED') return { ok: false, reason: 'NOT_FAILED' };
+    let outcome: { ok: true } | { ok: false; reason: 'BUSY' | 'NOT_FAILED' | 'NO_PROGRESS' } = { ok: false, reason: 'BUSY' };
+    await this.withLock(sessionId, async () => {
+      if (await this.isBusyOrRecovering(sessionId)) return;
+      this.busy.add(sessionId);
+      let progress: FeishuCardProgress | null = null;
+      try {
+        progress = await createProgress().catch(() => null);
+      } catch {
+        progress = null;
+      }
+      if (progress == null) {
+        this.busy.delete(sessionId);
+        this.interrupted.delete(sessionId);
+        outcome = { ok: false, reason: 'NO_PROGRESS' };
+        return;
+      }
+      outcome = { ok: true };
+      // 不阻塞锁与回调：runRetry 自己收尾 busy / cancelFlag。
+      void this.runRetry(sessionId, progress)
+        .catch((error) => {
+          console.error(`飞书重试后台执行未捕获异常, sessionId=${sessionId}`, error);
+        })
+        .finally(() => {
+          this.busy.delete(sessionId);
+          this.interrupted.delete(sessionId);
+        });
+    });
+    return outcome;
+  }
+
+  /** 重试执行主体：不 saveUserMessage / prepareMessage，直接 execute 续跑历史。 */
+  private async runRetry(sessionId: number, progress: FeishuCardProgress): Promise<void> {
+    const cancelFlag = this.options.createCancelFlag?.(sessionId) ?? NOOP_CANCEL_FLAG;
+    this.cancelFlags.set(sessionId, cancelFlag);
+    let executionId = '';
+    let cardListener: FeishuCardProgressListener | null = null;
+    const stubContext = {
+      accountId: '0', chatType: 'unknown', chatId: null, senderId: null, senderUnionId: null,
+      messageId: null, senderType: 'user', messageType: 'text', text: '', mentions: [],
+      isBotMentioned: false, content: {}, rawEvent: {}, eventId: null,
+    } as unknown as FeishuInboundContext;
+    try {
+      await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
+      await this.options.sessionService.updatePhase?.(sessionId, 'RUNNING');
+      cardListener = new FeishuCardProgressListener(progress);
+      // 立刻把原失败卡刷成执行中，避免用户点击后卡片仍停留在失败态。
+      try {
+        await progress.update('RUNNING', 0, '正在重试，请稍候…', []);
+      } catch (error) {
+        console.warn(`飞书重试进度卡片首次 PATCH 失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      executionId = randomUUID();
+      const listener = await this.options.listenerFactory?.(sessionId, stubContext, executionId)
+        ?? new NoopAgentEventListener();
+      await this.options.harnessService.execute(
+        sessionId, null,
+        CompositeAgentEventListener.of(listener, cardListener),
+        cancelFlag,
+      );
+      if (cancelFlag.get()) {
+        const wasInterrupted = this.interrupted.has(sessionId);
+        await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
+        await cardListener.cancel(wasInterrupted);
+        await this.options.onExecutionFinished?.(sessionId, stubContext, executionId, 'CANCELLED');
+        return;
+      }
+      await this.options.onExecutionFinished?.(sessionId, stubContext, executionId, 'COMPLETED');
+      const text = await this.options.sessionService.getLatestAssistantReply(sessionId);
+      const cardUpdated = await cardListener.complete(text);
+      if (cardUpdated === false && text != null && text !== '') {
+        await this.reply(stubContext, text, sessionId).catch(() => undefined);
+      }
+    } catch (error) {
+      console.error(`飞书重试执行失败, sessionId=${sessionId}`, error);
+      await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
+      const failText = feishuFailureText(error);
+      const cardUpdated = await cardListener?.fail(failText);
+      await this.options.onExecutionFinished?.(sessionId, stubContext, executionId, 'FAILED');
+      if ((cardListener == null || cardUpdated === false) && failText !== '') {
+        await this.reply(stubContext, failText, sessionId).catch(() => undefined);
+      }
+    } finally {
+      this.removeCancelFlag(sessionId, cancelFlag);
+    }
   }
 
   /**

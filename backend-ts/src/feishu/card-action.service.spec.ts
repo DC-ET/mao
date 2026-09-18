@@ -14,13 +14,17 @@ function makeService(overrides: {
   interrupt?: (sessionId: number) => void;
   interruptAndDrain?: (sessionId: number) => void;
   cancelRunning?: (sessionId: number) => boolean;
+  retryFailed?: (sessionId: number, cardMessageId: string) => Promise<
+    | { ok: true }
+    | { ok: false; reason: 'BUSY' | 'NOT_FAILED' | 'NO_PROGRESS' }
+  >;
   patchCard?: (botId: number, cardMessageId: string, card: Record<string, unknown>) => Promise<void>;
   sessionDetailUrl?: (sessionId: number) => Promise<string | undefined> | string | undefined;
 } = {}) {
   const queuePort: FeishuCardActionPort = {
     findByCardMessageId: vi.fn(async () => null),
     jumpToFront: vi.fn(async () => false),
-    cancel: vi.fn(async () => 'CANCELLED'),
+    cancel: vi.fn(async () => 'CANCELLED' as const),
     ...overrides.queuePort,
   };
   const interrupt = overrides.interrupt ?? vi.fn();
@@ -29,6 +33,7 @@ function makeService(overrides: {
   return new FeishuCardActionService({
     queuePort, interrupt, cancelRunning, patchCard,
     ...(overrides.interruptAndDrain != null ? { interruptAndDrain: overrides.interruptAndDrain } : {}),
+    ...(overrides.retryFailed != null ? { retryFailed: overrides.retryFailed } : {}),
     ...(overrides.sessionDetailUrl != null ? { sessionDetailUrl: overrides.sessionDetailUrl } : {}),
   });
 }
@@ -74,7 +79,7 @@ describe('FeishuCardActionService', () => {
   it('cancel returns the updated card in the callback so Feishu does not revert', async () => {
     const patchCard = vi.fn(async () => undefined);
     const service = makeService({
-      queuePort: { findByCardMessageId: vi.fn(async () => row()), cancel: vi.fn(async () => 'CANCELLED') },
+      queuePort: { findByCardMessageId: vi.fn(async () => row()), cancel: vi.fn(async () => 'CANCELLED' as const) },
       patchCard,
     });
     const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'cancel' }), '');
@@ -117,7 +122,7 @@ describe('FeishuCardActionService', () => {
 
   it('cancel returns ALREADY_STARTED toast when already running', async () => {
     const service = makeService({
-      queuePort: { findByCardMessageId: vi.fn(async () => row()), cancel: vi.fn(async () => 'ALREADY_STARTED') },
+      queuePort: { findByCardMessageId: vi.fn(async () => row()), cancel: vi.fn(async () => 'ALREADY_STARTED' as const) },
     });
     const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'cancel' }), '');
     expect(res).toEqual({ toast: { type: 'info', content: '该消息已开始执行' } });
@@ -266,5 +271,44 @@ describe('FeishuCardActionService', () => {
     const res = await service.handle(makeEvent({ kind: 'feishu_progress', act: 'run', sessionId: 7, sender: 'ou_1' }), '');
     expect(res).toBeUndefined();
     expect(cancelRunning).not.toHaveBeenCalled();
+  });
+
+  it('progress retry by original sender starts retry and returns RUNNING card', async () => {
+    const retryFailed = vi.fn(async () => ({ ok: true as const }));
+    const service = makeService({ retryFailed, sessionDetailUrl: () => 'https://mao.example.com/tasks/7' });
+    const value = { kind: 'feishu_progress', act: 'retry', sessionId: 7, sender: 'ou_1' };
+    const res = await service.handle(makeEvent(value, 'ou_1', 'cm_fail'), '');
+    expect(res?.toast).toEqual({ type: 'success', content: '已开始重试' });
+    expect(retryFailed).toHaveBeenCalledWith(7, 'cm_fail');
+    const json = JSON.stringify(res);
+    expect(json).toContain('正在重试');
+    expect(json).toContain('https://mao.example.com/tasks/7');
+  });
+
+  it('progress retry forbids non-owner operator', async () => {
+    const retryFailed = vi.fn(async () => ({ ok: true as const }));
+    const service = makeService({ retryFailed });
+    const value = { kind: 'feishu_progress', act: 'retry', sessionId: 7, sender: 'ou_1' };
+    const res = await service.handle(makeEvent(value, 'ou_other'), '');
+    expect(res).toEqual({ toast: { type: 'error', content: '仅消息发送者可操作' } });
+    expect(retryFailed).not.toHaveBeenCalled();
+  });
+
+  it('progress retry surfaces busy / not-failed / missing-card toasts', async () => {
+    const busy = makeService({ retryFailed: async () => ({ ok: false, reason: 'BUSY' }) });
+    expect(await busy.handle(makeEvent({ kind: 'feishu_progress', act: 'retry', sessionId: 7, sender: 'ou_1' }), ''))
+      .toEqual({ toast: { type: 'info', content: '任务正在执行中' } });
+    const done = makeService({ retryFailed: async () => ({ ok: false, reason: 'NOT_FAILED' }) });
+    expect(await done.handle(makeEvent({ kind: 'feishu_progress', act: 'retry', sessionId: 7, sender: 'ou_1' }), ''))
+      .toEqual({ toast: { type: 'info', content: '任务已结束，无法重试' } });
+    const missing = makeService({ retryFailed: async () => ({ ok: false, reason: 'NO_PROGRESS' }) });
+    expect(await missing.handle(makeEvent({ kind: 'feishu_progress', act: 'retry', sessionId: 7, sender: 'ou_1' }), ''))
+      .toEqual({ toast: { type: 'info', content: '无法定位原进度卡片，请重新发送消息' } });
+  });
+
+  it('progress retry without retryFailed option returns unavailable toast', async () => {
+    const service = makeService();
+    const res = await service.handle(makeEvent({ kind: 'feishu_progress', act: 'retry', sessionId: 7, sender: 'ou_1' }), '');
+    expect(res).toEqual({ toast: { type: 'info', content: '重试功能不可用' } });
   });
 });

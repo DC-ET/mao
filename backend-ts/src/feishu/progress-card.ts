@@ -1,10 +1,12 @@
 /** 飞书进度卡片状态：RUNNING 为执行中，其余为终态。 */
 export type FeishuCardStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
-/** 进度卡「取消任务」按钮携带的执行归属（点击者须为原发送者）。 */
+/** 进度卡操作按钮携带的执行归属（点击者须为原发送者）。 */
 export interface FeishuProgressCancelAction {
   sessionId: number;
   sender: string;
+  /** 失败卡「重试」定位 bot 客户端；缺失时不渲染重试按钮。 */
+  botId?: number;
 }
 
 const STATUS_TITLES: Record<FeishuCardStatus, string> = {
@@ -50,10 +52,11 @@ function sessionDetailButton(sessionDetailUrl: string): Record<string, unknown> 
  * 状态行：执行中为「第 n 轮」，终态为「共 n 轮 · 耗时 8 分 26 秒」（无耗时数据时只展示轮数）。
  * @param elapsedMs 任务耗时；仅终态展示，执行中传 undefined 避免节流下展示过期读数。
  * @param sessionDetailUrl 网页端会话详情深链；非空时始终附「会话详情」按钮（执行中与「取消任务」并排）。
+ * @param action 执行中渲染「取消任务」；FAILED 且带 botId/sender 时渲染「重试」。
  */
 export function buildFeishuProgressCard(
   status: FeishuCardStatus, round: number, content: string, tools: string[],
-  cancelAction?: FeishuProgressCancelAction, elapsedMs?: number, sessionDetailUrl?: string,
+  action?: FeishuProgressCancelAction, elapsedMs?: number, sessionDetailUrl?: string,
 ): Record<string, unknown> {
   const sections: Array<Record<string, unknown>> = [
     { tag: 'markdown', content: statusLineOf(status, round, elapsedMs), text_align: 'left', text_size: 'normal_v2' },
@@ -62,10 +65,17 @@ export function buildFeishuProgressCard(
   if (tools.length > 0) sections.push({ tag: 'markdown', content: `**本轮工具**\n${tools.map((tool) => `- ${tool}`).join('\n').slice(0, 3000)}`, text_align: 'left', text_size: 'normal_v2' });
   const buttons: Array<Record<string, unknown>> = [];
   // 执行中提供「取消任务」按钮（终态 PATCH 不带按钮，随卡片重写自动消失）。
-  if (status === 'RUNNING' && cancelAction != null) {
+  if (status === 'RUNNING' && action != null) {
     buttons.push({
       tag: 'button', text: { tag: 'plain_text', content: '取消任务' }, type: 'danger',
-      value: { kind: 'feishu_progress', act: 'cancel', sessionId: cancelAction.sessionId, sender: cancelAction.sender },
+      value: { kind: 'feishu_progress', act: 'cancel', sessionId: action.sessionId, sender: action.sender },
+    });
+  }
+  // 失败卡提供「重试」：与客户端 ExecutionErrorBanner 同语义，基于会话历史续跑。
+  if (status === 'FAILED' && action != null && action.sender !== '' && action.botId != null) {
+    buttons.push({
+      tag: 'button', text: { tag: 'plain_text', content: '重试' }, type: 'primary',
+      value: { kind: 'feishu_progress', act: 'retry', sessionId: action.sessionId, sender: action.sender },
     });
   }
   const detailUrl = sessionDetailUrl?.trim();

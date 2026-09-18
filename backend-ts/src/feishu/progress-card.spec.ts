@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { buildFeishuProgressCard, feishuSessionDetailUrl, formatFeishuDuration } from './progress-card.js';
 
 type CardElement = {
-  tag: string;
+  tag?: string;
   content?: string;
-  columns?: Array<{ elements: Array<{ value?: Record<string, unknown>; behaviors?: Array<{ type: string; default_url?: string }>; text?: { content?: string } }> }>;
+  columns?: Array<{ elements: Array<{ tag?: string; value?: Record<string, unknown>; behaviors?: Array<{ type: string; default_url?: string }>; text?: { content?: string } }> }>;
 };
 
 function elementsOf(card: Record<string, unknown>): CardElement[] {
@@ -16,11 +16,18 @@ function statusLineOf(card: Record<string, unknown>): string {
 }
 
 function cancelButtonValue(card: Record<string, unknown>): Record<string, unknown> | null {
-  const columnSet = elementsOf(card).find((element) => element.tag === 'column_set');
-  const cancel = columnSet?.columns
-    ?.flatMap((column) => column.elements)
-    .find((element) => element.value?.kind === 'feishu_progress');
-  return cancel?.value ?? null;
+  return progressActionValues(card).find((value) => value.act === 'cancel') ?? null;
+}
+
+function retryButtonValue(card: Record<string, unknown>): Record<string, unknown> | null {
+  return progressActionValues(card).find((value) => value.act === 'retry') ?? null;
+}
+
+function progressActionValues(card: Record<string, unknown>): Array<Record<string, unknown>> {
+  return elementsOf(card)
+    .flatMap((element) => element.columns?.flatMap((column) => column.elements) ?? [])
+    .map((element) => element.value)
+    .filter((value): value is Record<string, unknown> => value != null && value.kind === 'feishu_progress');
 }
 
 function sessionDetailButtons(card: Record<string, unknown>): Array<{ label?: string; url?: string }> {
@@ -62,9 +69,30 @@ describe('飞书进度卡片「取消任务」按钮', () => {
     expect(value).toEqual({ kind: 'feishu_progress', act: 'cancel', sessionId: 7, sender: 'ou_sender' });
   });
 
-  it('终态不带按钮（随卡片重写自动消失）', () => {
+  it('终态不带取消按钮（随卡片重写自动消失）', () => {
     expect(cancelButtonValue(buildFeishuProgressCard('COMPLETED', 1, '', [], cancelAction, 1000))).toBeNull();
     expect(cancelButtonValue(buildFeishuProgressCard('CANCELLED', 1, '', [], cancelAction, 1000))).toBeNull();
+    expect(cancelButtonValue(buildFeishuProgressCard('FAILED', 1, '', [], { ...cancelAction, botId: 1 }, 1000))).toBeNull();
+  });
+});
+
+describe('飞书进度卡片「重试」按钮', () => {
+  const action = { sessionId: 7, sender: 'ou_sender', botId: 3 };
+
+  it('失败卡带重试按钮，绑定会话与发送者', () => {
+    const value = retryButtonValue(buildFeishuProgressCard('FAILED', 1, 'LLM API returned 500', [], action, 1000));
+    expect(value).toEqual({ kind: 'feishu_progress', act: 'retry', sessionId: 7, sender: 'ou_sender' });
+  });
+
+  it('缺少 botId 或 sender 时不渲染重试按钮', () => {
+    expect(retryButtonValue(buildFeishuProgressCard('FAILED', 1, 'err', [], { sessionId: 7, sender: 'ou_sender' }, 1000))).toBeNull();
+    expect(retryButtonValue(buildFeishuProgressCard('FAILED', 1, 'err', [], { sessionId: 7, sender: '', botId: 3 }, 1000))).toBeNull();
+  });
+
+  it('成功/取消终态不带重试按钮', () => {
+    expect(retryButtonValue(buildFeishuProgressCard('COMPLETED', 1, 'ok', [], action, 1000))).toBeNull();
+    expect(retryButtonValue(buildFeishuProgressCard('CANCELLED', 1, 'stop', [], action, 1000))).toBeNull();
+    expect(retryButtonValue(buildFeishuProgressCard('RUNNING', 1, '', [], action))).toBeNull();
   });
 });
 

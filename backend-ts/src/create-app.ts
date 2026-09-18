@@ -1225,7 +1225,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   /** 250ms 节流的进度卡片 PATCH 闭包：正常执行与崩溃恢复续跑共用同一实现。
    *  @param startedAtMs 任务起算时间（毫秒），终态时据此计算卡片上的「耗时」。 */
   const createPatchedProgress = (
-    client: Lark.Client, cardMessageId: string, cancelAction: { sessionId: number; sender: string } | null, startedAtMs: number,
+    client: Lark.Client, cardMessageId: string, cancelAction: { sessionId: number; sender: string; botId?: number } | null, startedAtMs: number,
     sessionDetailUrl?: string,
   ): FeishuCardProgress => {
     let nextUpdateAt = 0;
@@ -1245,7 +1245,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     const botId = Number(context.accountId);
     const client = await getFeishuClient(botId);
     if (client == null) return null;
-    const cancelAction = { sessionId, sender: context.senderId ?? '' };
+    const cancelAction = { sessionId, sender: context.senderId ?? '', botId };
     const sessionDetailUrl = await resolveFeishuSessionDetailUrl(sessionId);
     // 持久化「会话 → 活跃进度卡片」映射：进程重启后崩溃恢复续跑可凭此续更卡片直至终态。
     // 持久化失败不阻断执行，仅丢失该任务的恢复续更能力。
@@ -1298,7 +1298,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         console.warn(`飞书恢复进度卡片无法创建客户端, sessionId=${sessionId} botId=${row.botId}`);
         return null;
       }
-      const cancelAction = row.senderOpenId != null && row.senderOpenId !== '' ? { sessionId, sender: row.senderOpenId } : null;
+      const cancelAction = row.senderOpenId != null && row.senderOpenId !== ''
+        ? { sessionId, sender: row.senderOpenId, botId: row.botId }
+        : null;
       const sessionDetailUrl = await resolveFeishuSessionDetailUrl(sessionId);
       // 续跑任务的耗时以崩溃前会话记录的 startedAt 起算（读不到时退回恢复开始的时刻）。
       const session = await sessionService.getSession(sessionId).catch(() => null);
@@ -1531,7 +1533,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     onExecutionFinished: async (sessionId, _context, executionId, phase) => {
       const session = await sessionService.getSession(sessionId);
       await taskTerminal.finishExecution(sessionId, session.userId!, phase, executionId);
-      // 任务终态后清理活跃进度卡片映射，避免崩溃恢复续跑误更已终态的旧卡片。
+      // FAILED 保留映射：失败卡「重试」需凭映射定位 bot；COMPLETED/CANCELLED 清理，避免崩溃恢复误更旧卡。
+      if (phase === 'FAILED') return;
       try { await feishuProgressCardRepo.deleteBySessionId(sessionId); } catch (error) {
         console.warn(`清理飞书进度卡片映射失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -1765,6 +1768,37 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       }
       return hadLoop || persisted;
     },
+    // 失败卡「重试」：凭仍保留的进度卡片映射定位 bot，PATCH 点击的那张失败卡并基于历史续跑。
+    retryFailed: async (sessionId, cardMessageId) => {
+      const mapping = await feishuProgressCardRepo.findBySessionId(sessionId);
+      if (mapping == null) return { ok: false, reason: 'NO_PROGRESS' };
+      return feishuInboundHandler.retryExecution(sessionId, async () => {
+        const client = await getFeishuClient(mapping.botId);
+        if (client == null) return null;
+        const sender = mapping.senderOpenId ?? '';
+        const sessionDetailUrl = await resolveFeishuSessionDetailUrl(sessionId);
+        const session = await sessionService.getSession(sessionId).catch(() => null);
+        const startedAtMs = parseSqlTimeMs(session?.startedAt) ?? Date.now();
+        // 点到哪张失败卡就续更哪张；映射刷新指向该卡，便于再次失败后仍可重试。
+        try {
+          await feishuProgressCardRepo.upsert({
+            sessionId,
+            botId: mapping.botId,
+            cardMessageId,
+            chatType: mapping.chatType,
+            chatId: mapping.chatId,
+            senderOpenId: mapping.senderOpenId,
+          });
+        } catch (error) {
+          console.warn(`飞书重试进度卡片映射刷新失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        return createPatchedProgress(
+          client, cardMessageId,
+          { sessionId, sender, botId: mapping.botId },
+          startedAtMs, sessionDetailUrl,
+        );
+      });
+    },
     patchCard: async (botId, cardMessageId, card) => {
       const client = await getFeishuClient(botId);
       if (client == null) throw new Error(`飞书客户端不可用, botId=${botId}, cardMessageId=${cardMessageId}`);
@@ -1980,13 +2014,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     async (sessionId, userId, phase) => {
       // 崩溃恢复续跑以 FAILED 结束：上一个任务实际未执行完成，不自动消费下一条消息。
       // 主队列与飞书队列均受此门禁约束；COMPLETED / CANCELLED 照常接力消费。
-      if (phase !== 'FAILED') void wsHandler.autoConsumeQueue(sessionId, userId);
-      // 恢复终态后清理活跃进度卡片映射；必须先于队列接力消费（下一任务会写入新映射）。
-      await feishuProgressCardRepo.deleteBySessionId(sessionId).catch((error) => {
-        console.warn(`清理飞书进度卡片映射失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-      });
-      // 崩溃恢复续跑结束后，若飞书队列仍有排队消息则接力消费（FAILED 时跳过）。
       if (phase !== 'FAILED') {
+        void wsHandler.autoConsumeQueue(sessionId, userId);
+        // 恢复终态后清理活跃进度卡片映射（FAILED 保留，供失败卡「重试」定位 bot）。
+        await feishuProgressCardRepo.deleteBySessionId(sessionId).catch((error) => {
+          console.warn(`清理飞书进度卡片映射失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        // 崩溃恢复续跑结束后，若飞书队列仍有排队消息则接力消费（FAILED 时跳过）。
         await feishuInboundHandler.drainNextIfPending(sessionId).catch((error) => {
           console.error(`飞书崩溃恢复后队列接力消费失败, sessionId=${sessionId}`, error);
         });

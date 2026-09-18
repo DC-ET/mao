@@ -35,6 +35,7 @@ function baseSessionService() {
     getLatestAssistantReply: vi.fn(async () => 'assistant text'),
     updatePhase: vi.fn(async () => undefined),
     cleanupIncompleteTail: vi.fn(async () => 0),
+    getPhase: vi.fn(async (): Promise<string | null> => null),
   };
 }
 
@@ -118,7 +119,7 @@ describe('AgentFeishuInboundHandler', () => {
     };
     const listenerFactory = vi.fn(async () => listener);
     const onExecutionFinished = vi.fn(async () => undefined);
-    const onReply = vi.fn(async () => undefined);
+    const onReply = vi.fn(async (): Promise<string | null> => null);
     const handler = new AgentFeishuInboundHandler({
       sessionService,
       harnessService: harness as never,
@@ -157,7 +158,7 @@ describe('AgentFeishuInboundHandler', () => {
     };
     const flags: CancelFlag[] = [];
     const queueService = makeQueueService();
-    const onReply = vi.fn(async () => undefined);
+    const onReply = vi.fn(async (): Promise<string | null> => null);
     const handler = new AgentFeishuInboundHandler({
       sessionService,
       harnessService: harness as never,
@@ -337,7 +338,7 @@ describe('AgentFeishuInboundHandler', () => {
       prepareMessage: vi.fn(() => 'e'),
       execute: vi.fn(async () => { }),
     };
-    const onReply = vi.fn(async () => undefined);
+    const onReply = vi.fn(async (): Promise<string | null> => null);
     const onExecutionFinished = vi.fn(async () => undefined);
     const handler = new AgentFeishuInboundHandler({
       sessionService,
@@ -362,7 +363,7 @@ describe('AgentFeishuInboundHandler', () => {
       prepareMessage: vi.fn(() => 'e'),
       execute: vi.fn(async () => { flag.set(true); }),
     };
-    const onReply = vi.fn(async () => undefined);
+    const onReply = vi.fn(async (): Promise<string | null> => null);
     const onExecutionFinished = vi.fn(async () => undefined);
     const handler = new AgentFeishuInboundHandler({
       sessionService,
@@ -448,6 +449,109 @@ describe('AgentFeishuInboundHandler', () => {
     releaseExecute();
     await running;
     expect(updates).toContainEqual({ status: 'CANCELLED', content: '已被下一条指令中断。' });
+  });
+
+  it('retryExecution reuses history without saving a new user message', async () => {
+    const sessionService = makeSessionService({
+      getPhase: vi.fn(async () => 'FAILED'),
+      cleanupIncompleteTail: vi.fn(async () => 1),
+      updatePhase: vi.fn(async () => undefined),
+      getLatestAssistantReply: vi.fn(async () => '重试后的答案'),
+    });
+    const saveUserMessage = vi.fn(async () => undefined);
+    sessionService.saveUserMessage = saveUserMessage;
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => undefined),
+    };
+    const onExecutionFinished = vi.fn(async () => undefined);
+    const updates: Array<{ status: string; content: string }> = [];
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      onExecutionFinished,
+    });
+    const result = await handler.retryExecution(7, async () => ({
+      update: async (status: string, _round: number, content: string) => {
+        updates.push({ status, content });
+      },
+    }));
+    // 回调只等「起跑」，execute 在后台跑完
+    expect(result).toEqual({ ok: true });
+    expect(harness.prepareMessage).not.toHaveBeenCalled();
+    expect(saveUserMessage).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(onExecutionFinished).toHaveBeenCalledWith(7, expect.anything(), expect.any(String), 'COMPLETED');
+    });
+    expect(harness.execute).toHaveBeenCalledTimes(1);
+    expect(updates).toContainEqual({ status: 'RUNNING', content: '正在重试，请稍候…' });
+    expect(updates).toContainEqual({ status: 'COMPLETED', content: '重试后的答案' });
+  });
+
+  it('retryExecution returns ok without waiting for the full execution', async () => {
+    const sessionService = makeSessionService({
+      getPhase: vi.fn(async () => 'FAILED'),
+    });
+    let releaseExecute!: () => void;
+    const executeGate = new Promise<void>((resolve) => { releaseExecute = resolve; });
+    const harness = {
+      prepareMessage: vi.fn(() => 'e'),
+      execute: vi.fn(async () => { await executeGate; }),
+    };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      onExecutionFinished: async () => undefined,
+    });
+    const result = await handler.retryExecution(7, async () => ({ update: async () => undefined }));
+    expect(result).toEqual({ ok: true });
+    // 回调不阻塞整次执行；后台 runRetry 会进入 execute 并在 gate 上挂起
+    await vi.waitFor(() => {
+      expect(harness.execute).toHaveBeenCalledTimes(1);
+    });
+    expect(handler['busy'].has(7)).toBe(true);
+    releaseExecute();
+    await vi.waitFor(() => {
+      expect(handler['busy'].has(7)).toBe(false);
+    });
+  });
+
+  it('retryExecution rejects when session is not FAILED', async () => {
+    const sessionService = makeSessionService({
+      getPhase: vi.fn(async () => 'COMPLETED'),
+    });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+    });
+    const result = await handler.retryExecution(7, async () => ({ update: async () => undefined }));
+    expect(result).toEqual({ ok: false, reason: 'NOT_FAILED' });
+    expect(harness.execute).not.toHaveBeenCalled();
+  });
+
+  it('retryExecution reports NO_PROGRESS when card cannot be rebuilt', async () => {
+    const sessionService = makeSessionService({
+      getPhase: vi.fn(async () => 'FAILED'),
+    });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+    });
+    const result = await handler.retryExecution(7, async () => null);
+    expect(result).toEqual({ ok: false, reason: 'NO_PROGRESS' });
+    expect(harness.execute).not.toHaveBeenCalled();
   });
 
   it('releases cancel flag when execution completes', async () => {
@@ -554,7 +658,7 @@ describe('AgentFeishuInboundHandler', () => {
       execute: vi.fn(async () => { throw new Error('llm down'); }),
     };
     const queueService = makeQueueService();
-    const onReply = vi.fn(async () => undefined);
+    const onReply = vi.fn(async (): Promise<string | null> => null);
     const handler = new AgentFeishuInboundHandler({
       sessionService,
       harnessService: harness as never,
@@ -577,7 +681,7 @@ describe('AgentFeishuInboundHandler', () => {
       prepareMessage: vi.fn(() => 'e'),
       execute: vi.fn(async () => { throw new Error('LLM API returned 500: upstream timeout'); }),
     };
-    const onReply = vi.fn(async () => undefined);
+    const onReply = vi.fn(async (): Promise<string | null> => null);
     const updates: Array<{ status: string; content: string }> = [];
     const handler = new AgentFeishuInboundHandler({
       sessionService,
@@ -607,7 +711,7 @@ describe('AgentFeishuInboundHandler', () => {
       prepareMessage: vi.fn(() => 'e'),
       execute: vi.fn(async () => { throw 'plain-string-error'; }),
     };
-    const onReply = vi.fn(async () => undefined);
+    const onReply = vi.fn(async (): Promise<string | null> => null);
     const handler = new AgentFeishuInboundHandler({
       sessionService,
       harnessService: harness as never,

@@ -1,4 +1,5 @@
 import type { FeishuCardActionEvent, FeishuCardActionPort, FeishuCardActionResponse, FeishuCardActionValue, FeishuProgressCardActionValue } from './types.js';
+import { buildFeishuProgressCard } from './progress-card.js';
 
 /** 排队卡片终态/中间态 PATCH 内容构建（可选「会话详情」跳转按钮）。 */
 function buildQueueCardText(bold: string, body: string, sessionDetailUrl?: string): Record<string, unknown> {
@@ -78,6 +79,14 @@ export class FeishuCardActionService {
     interruptAndDrain?: (sessionId: number) => void;
     /** 取消会话当前执行中的任务（进度卡「取消任务」按钮）；返回 false 表示当前无在执行任务。 */
     cancelRunning: (sessionId: number) => boolean | Promise<boolean>;
+    /**
+     * 失败卡「重试」：基于会话历史续跑（不插入新用户消息），并 PATCH 原进度卡片。
+     * cardMessageId 取自回调事件的 open_message_id（点击的那张失败卡）。
+     */
+    retryFailed?: (sessionId: number, cardMessageId: string) => Promise<
+      | { ok: true }
+      | { ok: false; reason: 'BUSY' | 'NOT_FAILED' | 'NO_PROGRESS' }
+    >;
     /** PATCH 卡片内容（botId 用于定位客户端）。仅作群内其他人的补充推送，不得阻塞回调。 */
     patchCard: (botId: number, cardMessageId: string, card: Record<string, unknown>) => Promise<void>;
     /** 拼「会话详情」深链（已含 `/tasks/{id}`）；返回 undefined 时不渲染按钮。 */
@@ -88,7 +97,10 @@ export class FeishuCardActionService {
     const event = unwrapCardActionEvent(raw);
     const action = this.parseActionValue(event.action?.value);
     if (action == null) return undefined;
-    if (action.kind === 'feishu_progress') return this.handleProgressCancel(event, action);
+    if (action.kind === 'feishu_progress') {
+      if (action.act === 'retry') return this.handleProgressRetry(event, action);
+      return this.handleProgressCancel(event, action);
+    }
     const cardMessageId = event.context?.open_message_id ?? event.open_message_id;
     if (cardMessageId == null) return undefined;
     const row = await this.options.queuePort.findByCardMessageId(cardMessageId);
@@ -117,6 +129,34 @@ export class FeishuCardActionService {
     return {
       toast: { type: 'success', content: '正在取消任务' },
       card: { type: 'raw', data: buildQueueCardText('任务已取消', '已停止当前任务。', await this.resolveSessionDetailUrl(action.sessionId)) },
+    };
+  }
+
+  /** 失败卡「重试」：鉴权同取消；成功后回调带回 RUNNING 卡，后续由 progress 闭包续更。 */
+  private async handleProgressRetry(event: FeishuCardActionEvent, action: FeishuProgressCardActionValue): Promise<FeishuCardActionResponse | undefined> {
+    const operatorOpenId = event.operator?.open_id;
+    if (operatorOpenId == null || operatorOpenId !== action.sender) {
+      return { toast: { type: 'error', content: '仅消息发送者可操作' } };
+    }
+    const cardMessageId = event.context?.open_message_id ?? event.open_message_id;
+    if (cardMessageId == null) return undefined;
+    const retryFailed = this.options.retryFailed;
+    if (retryFailed == null) return { toast: { type: 'info', content: '重试功能不可用' } };
+    const result = await retryFailed(action.sessionId, cardMessageId);
+    if (!result.ok) {
+      if (result.reason === 'BUSY') return { toast: { type: 'info', content: '任务正在执行中' } };
+      if (result.reason === 'NOT_FAILED') return { toast: { type: 'info', content: '任务已结束，无法重试' } };
+      return { toast: { type: 'info', content: '无法定位原进度卡片，请重新发送消息' } };
+    }
+    return {
+      toast: { type: 'success', content: '已开始重试' },
+      card: {
+        type: 'raw',
+        data: buildFeishuProgressCard(
+          'RUNNING', 0, '正在重试，请稍候…', [],
+          undefined, undefined, await this.resolveSessionDetailUrl(action.sessionId),
+        ),
+      },
     };
   }
 
@@ -195,8 +235,8 @@ export class FeishuCardActionService {
       const sessionId = Number(obj.sessionId);
       const sender = obj.sender;
       if (!Number.isFinite(sessionId) || typeof sender !== 'string' || sender === '') return null;
-      if (obj.act !== 'cancel') return null;
-      return { kind: 'feishu_progress', act: 'cancel', sessionId, sender };
+      if (obj.act !== 'cancel' && obj.act !== 'retry') return null;
+      return { kind: 'feishu_progress', act: obj.act, sessionId, sender };
     }
     if (obj.kind !== 'feishu_queue') return null;
     const queueId = Number(obj.queueId);
