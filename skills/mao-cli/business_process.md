@@ -65,7 +65,7 @@
 - 不发送对话，不写入/插入/重排消息队列
 - 定时任务**创建**多由 Agent 工具 `create_scheduled_task` 完成
 - `session`：当前用户会话；`admin-session`：全站检索
-- `skill`：个人 `user-skills`；`skill-docs`：全局目录
+- `skill`：个人 `user-skills`；`skill-docs`：全局目录；管理后台个人 Tab 走 `admin/user-skills`（聚合展示）
 - MCP 用户级 `mcp me-*`；全局 `mcp list/create/...` 需管理员
 
 ## 对话 vs REST 选型

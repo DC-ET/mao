@@ -3,11 +3,11 @@ import '@fastify/multipart';
 import { PassThrough } from 'node:stream';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
-import { requireUserId, sendJson } from '../common/http-error.js';
+import { requirePermission, requireUserId, sendJson } from '../common/http-error.js';
 import { pathParam, queryOptInt } from '../common/request.js';
 import { ok } from '../common/result.js';
 import type { SkillSyncService } from '../harness/skill/skill-sync-service.js';
-import type { AgentLookup } from '../session/types.js';
+import type { AgentLookup, UserLookup } from '../session/types.js';
 import type { SessionService } from '../session/session.service.js';
 import type { SkillDocService } from './skill-doc.service.js';
 import type { UploadedSkillFile, UserSkillService } from './user-skill.service.js';
@@ -20,6 +20,8 @@ export interface SkillRouteDeps {
   sessionService: SessionService;
   agentLookup: AgentLookup;
   agentService: AgentService;
+  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
+  userLookup: UserLookup;
 }
 
 export function registerUserSkillRoutes(app: FastifyInstance, deps: Pick<SkillRouteDeps, 'userSkillService'>): void {
@@ -46,6 +48,52 @@ export function registerUserSkillRoutes(app: FastifyInstance, deps: Pick<SkillRo
   app.delete('/v1/user-skills/:name', async (request, reply) => {
     const userId = requireUserId(request);
     const result = userSkillService.deleteUserSkill(userId, pathParam(request, 'name'));
+    return sendJson(reply, 200, result.code === 0 ? ok(null) : result);
+  });
+}
+
+export function registerAdminUserSkillRoutes(
+  app: FastifyInstance,
+  deps: Pick<SkillRouteDeps, 'userSkillService' | 'permissionService' | 'userLookup'>,
+): void {
+  const { userSkillService, permissionService, userLookup } = deps;
+
+  app.get('/v1/admin/user-skills', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'agent:read');
+    const skills = userSkillService.listAllUserSkills();
+    const userIds = [...new Set(skills.map((s) => s.userId))];
+    const users = userIds.length > 0 ? await userLookup.findByIds(userIds) : [];
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    return sendJson(reply, 200, ok(skills.map((skill) => {
+      const user = userMap.get(skill.userId);
+      return {
+        ...skill,
+        username: user?.username ?? null,
+        displayName: user?.displayName ?? null,
+      };
+    })));
+  });
+
+  app.get('/v1/admin/user-skills/:userId/:name', async (request, reply) => {
+    const currentUserId = requireUserId(request);
+    await requirePermission(permissionService, currentUserId, 'agent:read');
+    const targetUserId = Number(pathParam(request, 'userId'));
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+      return sendJson(reply, 200, { code: 400, message: 'Invalid userId' });
+    }
+    const result = userSkillService.getUserSkill(targetUserId, pathParam(request, 'name'));
+    return sendJson(reply, 200, result.code === 0 ? ok(result.data) : result);
+  });
+
+  app.delete('/v1/admin/user-skills/:userId/:name', async (request, reply) => {
+    const currentUserId = requireUserId(request);
+    await requirePermission(permissionService, currentUserId, 'agent:write');
+    const targetUserId = Number(pathParam(request, 'userId'));
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+      return sendJson(reply, 200, { code: 400, message: 'Invalid userId' });
+    }
+    const result = userSkillService.deleteUserSkill(targetUserId, pathParam(request, 'name'));
     return sendJson(reply, 200, result.code === 0 ? ok(null) : result);
   });
 }
@@ -116,6 +164,7 @@ export function registerSkillSyncRoutes(app: FastifyInstance, deps: Pick<SkillRo
 
 export function registerSkillRoutes(app: FastifyInstance, deps: SkillRouteDeps): void {
   registerUserSkillRoutes(app, deps);
+  registerAdminUserSkillRoutes(app, deps);
   registerSkillDocRoutes(app, deps);
   registerSkillSyncRoutes(app, deps);
 }

@@ -8,52 +8,73 @@
         </div>
       </template>
 
+      <el-tabs v-model="activeTab" class="skill-tabs" @tab-change="handleTabChange">
+        <el-tab-pane label="系统 Skills" name="system" />
+        <el-tab-pane label="个人 Skills" name="personal" />
+      </el-tabs>
+
       <el-form :inline="true" class="search-form">
         <el-form-item label="关键词">
           <el-input
             v-model="keyword"
             clearable
-            placeholder="名称 / 描述"
+            :placeholder="activeTab === 'personal' ? '名称 / 描述 / 用户' : '名称 / 描述'"
             style="width: 220px"
           />
         </el-form-item>
       </el-form>
 
-      <!-- Upload area -->
+      <!-- System tab: upload area -->
+      <template v-if="activeTab === 'system'">
+        <el-alert
+          v-if="isMobile"
+          type="info"
+          :closable="false"
+          show-icon
+          title="手机端可查看、删除已有 Skill；上传目录包请在电脑浏览器完成。"
+          style="margin-bottom: 12px"
+        />
+        <div
+          v-else
+          class="upload-zone"
+          :class="{ 'is-dragover': isDragover }"
+          v-loading="uploading"
+          element-loading-text="上传中..."
+          @dragover.prevent="isDragover = true"
+          @dragleave.prevent="isDragover = false"
+          @drop.prevent="handleDrop"
+          @click="triggerFileInput"
+        >
+          <input
+            ref="fileInputRef"
+            type="file"
+            webkitdirectory
+            multiple
+            style="display: none"
+            @change="handleFileInputChange"
+          />
+          <el-icon class="upload-icon"><UploadFilled /></el-icon>
+          <div class="upload-text">拖动或点击上传 Skills 目录</div>
+          <div class="upload-hint">可一次选择或拖入一个或多个包含 SKILL.md 的目录。</div>
+        </div>
+      </template>
       <el-alert
-        v-if="isMobile"
+        v-else
         type="info"
         :closable="false"
         show-icon
-        title="手机端可查看、删除已有 Skill；上传目录包请在电脑浏览器完成。"
+        title="个人 Skills 由用户在桌面端上传，此处可查看与删除；如需上传请由对应用户操作。"
         style="margin-bottom: 12px"
       />
-      <div
-        v-else
-        class="upload-zone"
-        :class="{ 'is-dragover': isDragover }"
-        v-loading="uploading"
-        element-loading-text="上传中..."
-        @dragover.prevent="isDragover = true"
-        @dragleave.prevent="isDragover = false"
-        @drop.prevent="handleDrop"
-        @click="triggerFileInput"
-      >
-        <input
-          ref="fileInputRef"
-          type="file"
-          webkitdirectory
-          multiple
-          style="display: none"
-          @change="handleFileInputChange"
-        />
-        <el-icon class="upload-icon"><UploadFilled /></el-icon>
-        <div class="upload-text">拖动或点击上传 Skills 目录</div>
-        <div class="upload-hint">可一次选择或拖入一个或多个包含 SKILL.md 的目录。</div>
-      </div>
 
-      <!-- Skill table -->
-      <el-table v-if="!isMobile" :data="filteredSkillDocs" v-loading="loading" stripe style="margin-top: 16px">
+      <!-- System skill table -->
+      <el-table
+        v-if="activeTab === 'system' && !isMobile"
+        :data="filteredSkillDocs"
+        v-loading="loading"
+        stripe
+        style="margin-top: 16px"
+      >
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
@@ -94,13 +115,68 @@
         </el-table-column>
       </el-table>
 
-      <div v-else class="mobile-card-list" v-loading="loading" style="margin-top: 16px">
-        <el-card v-for="row in filteredSkillDocs" :key="row.name" shadow="hover">
+      <!-- Personal skill table -->
+      <el-table
+        v-else-if="activeTab === 'personal' && !isMobile"
+        :data="filteredPersonalSkills"
+        v-loading="loading"
+        stripe
+        style="margin-top: 16px"
+      >
+        <template #empty>
+          <el-empty description="暂无数据" :image-size="60" />
+        </template>
+        <el-table-column label="用户" width="140">
+          <template #default="{ row }">
+            <el-tooltip :content="`ID: ${row.userId}`" placement="top">
+              <span>{{ row.displayName || row.username || `用户#${row.userId}` }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column prop="name" label="名称" width="180" />
+        <el-table-column prop="description" label="描述" min-width="260" show-overflow-tooltip />
+        <el-table-column label="校验" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.filePath || row.folderPath ? 'success' : 'danger'" size="small">
+              {{ row.filePath || row.folderPath ? '通过' : '异常' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
+        <el-table-column label="操作" width="160" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="handleView(row)">查看内容</el-button>
+            <el-popconfirm
+              :title="`确认删除「${userLabel(row)}」的 Skill「${row.name}」？`"
+              confirm-button-text="删除"
+              cancel-button-text="取消"
+              @confirm="handleDelete(row)"
+            >
+              <template #reference>
+                <el-button type="danger" link size="small" :disabled="!canWrite">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <!-- Mobile cards -->
+      <div
+        v-else-if="isMobile"
+        class="mobile-card-list"
+        v-loading="loading"
+        style="margin-top: 16px"
+      >
+        <el-card v-for="row in mobileRows" :key="mobileKey(row)" shadow="hover">
           <div class="mobile-card-head">
             <span class="mobile-card-title">{{ row.name }}</span>
             <el-tag :type="isSkillAvailable(row) ? 'success' : 'danger'" size="small">
               {{ isSkillAvailable(row) ? '可用' : '不可用' }}
             </el-tag>
+          </div>
+          <div v-if="activeTab === 'personal'" class="mobile-card-row">
+            <span class="mobile-card-label">用户</span>
+            <span>{{ userLabel(row) }}</span>
           </div>
           <div class="mobile-card-row">
             <span class="mobile-card-label">描述</span>
@@ -121,12 +197,12 @@
               @confirm="handleDelete(row)"
             >
               <template #reference>
-                <el-button type="danger" link>删除</el-button>
+                <el-button type="danger" link :disabled="activeTab === 'personal' && !canWrite">删除</el-button>
               </template>
             </el-popconfirm>
           </div>
         </el-card>
-        <el-empty v-if="!loading && filteredSkillDocs.length === 0" description="暂无数据" />
+        <el-empty v-if="!loading && mobileRows.length === 0" description="暂无数据" />
       </div>
     </el-card>
 
@@ -138,6 +214,7 @@
       width="700px"
     >
       <div v-if="currentDoc" class="skill-detail">
+        <p v-if="currentDoc.userId != null"><strong>用户：</strong>{{ currentDoc.username || currentDoc.displayName || `用户#${currentDoc.userId}` }}</p>
         <p><strong>描述：</strong>{{ currentDoc.description }}</p>
         <p><strong>文件路径：</strong>{{ currentDoc.filePath }}</p>
         <el-divider />
@@ -154,13 +231,18 @@ import { computed, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 const { isMobile } = useBreakpoint()
+const authStore = useAuthStore()
+const canWrite = computed(() => authStore.hasPermission('agent:write'))
 
+const activeTab = ref<'system' | 'personal'>('system')
 const loading = ref(false)
 const skillDocs = ref<any[]>([])
+const personalSkills = ref<any[]>([])
 const agents = ref<any[]>([])
 const keyword = ref('')
 const detailVisible = ref(false)
@@ -183,12 +265,53 @@ async function fetchSkillDocs() {
   }
 }
 
+async function fetchPersonalSkills() {
+  loading.value = true
+  try {
+    const { data } = await api.get('/admin/user-skills')
+    personalSkills.value = data || []
+  } catch { /* 拦截器已提示失败 */ } finally {
+    loading.value = false
+  }
+}
+
+async function fetchActiveTab() {
+  if (activeTab.value === 'personal') {
+    await fetchPersonalSkills()
+  } else {
+    await fetchSkillDocs()
+  }
+}
+
+function handleTabChange(tab: string | number) {
+  void (tab === 'personal' ? fetchPersonalSkills() : fetchSkillDocs())
+}
+
 const filteredSkillDocs = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return skillDocs.value
   return skillDocs.value.filter(doc =>
     `${doc.name || ''} ${doc.description || ''}`.toLowerCase().includes(kw))
 })
+
+const filteredPersonalSkills = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return personalSkills.value
+  return personalSkills.value.filter(row =>
+    `${row.name || ''} ${row.description || ''} ${row.username || ''} ${row.displayName || ''} ${row.userId ?? ''}`
+      .toLowerCase().includes(kw))
+})
+
+const mobileRows = computed(() =>
+  activeTab.value === 'personal' ? filteredPersonalSkills.value : filteredSkillDocs.value)
+
+function mobileKey(row: any) {
+  return activeTab.value === 'personal' ? `${row.userId}-${row.name}` : row.name
+}
+
+function userLabel(row: any) {
+  return row.displayName || row.username || `用户#${row.userId}`
+}
 
 function relatedAgentCount(skillName: string) {
   return agents.value.filter(agent => (agent.skillNames || []).includes(skillName)).length
@@ -200,8 +323,13 @@ function isSkillAvailable(row: { filePath?: string; folderPath?: string }) {
 
 async function handleView(row: any) {
   try {
-    const { data } = await api.get(`/skill-docs/${row.name}`)
-    currentDoc.value = data
+    if (activeTab.value === 'personal') {
+      const { data } = await api.get(`/admin/user-skills/${row.userId}/${encodeURIComponent(row.name)}`)
+      currentDoc.value = { ...data, userId: row.userId, username: row.username, displayName: row.displayName }
+    } else {
+      const { data } = await api.get(`/skill-docs/${row.name}`)
+      currentDoc.value = data
+    }
     detailVisible.value = true
   } catch {
     // Error handled by interceptor
@@ -313,15 +441,19 @@ async function uploadFiles(files: File[]) {
 
 async function handleDelete(row: any) {
   try {
-    await api.delete(`/skill-docs/${row.name}`)
+    if (activeTab.value === 'personal') {
+      await api.delete(`/admin/user-skills/${row.userId}/${encodeURIComponent(row.name)}`)
+    } else {
+      await api.delete(`/skill-docs/${row.name}`)
+    }
     ElMessage.success(`Skill「${row.name}」已删除`)
-    await fetchSkillDocs()
+    await fetchActiveTab()
   } catch {
     // Error handled by interceptor
   }
 }
 
-onMounted(fetchSkillDocs)
+onMounted(fetchActiveTab)
 </script>
 
 <style scoped>
@@ -329,6 +461,10 @@ onMounted(fetchSkillDocs)
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.skill-tabs {
+  margin-bottom: 4px;
 }
 
 .search-form {

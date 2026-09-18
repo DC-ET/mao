@@ -2,7 +2,7 @@
 
 ## 用途
 
-管理服务端全局技能目录（`skill-docs`）：列表、详情、multipart 上传、删除。供 Agent 的 `skillNames` 引用。
+管理服务端全局技能目录（`skill-docs`）：列表、详情、multipart 上传、删除。供 Agent 的 `skillNames` 引用。管理后台同页另有「个人 Skills」Tab，聚合各用户 `/user-skills`（接口 `/admin/user-skills`），本命令不覆盖。
 
 ## 命令选择
 

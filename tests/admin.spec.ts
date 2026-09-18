@@ -222,6 +222,16 @@ test.describe('Skills Management', () => {
     await expect(table).toBeVisible()
     await expect(table.locator('thead th')).toContainText(['名称', '描述', '路径', '操作'])
   })
+
+  test('should switch between system and personal skill tabs', async ({ page }) => {
+    await expect(page.locator('.skill-tabs .el-tabs__item')).toContainText(['系统 Skills', '个人 Skills'])
+    await page.click('.skill-tabs .el-tabs__item:has-text("个人 Skills")')
+    await expect(page.locator('.el-tabs__item.is-active')).toContainText('个人 Skills')
+    await expect(page.locator('.upload-zone')).toHaveCount(0)
+    await expect(page.locator('.el-table thead th')).toContainText(['用户', '名称', '描述'])
+    await page.click('.skill-tabs .el-tabs__item:has-text("系统 Skills")')
+    await expect(page.locator('.upload-zone')).toBeVisible()
+  })
 })
 
 // ─────────────────────────────────────────────────────────

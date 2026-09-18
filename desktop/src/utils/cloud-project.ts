@@ -3,6 +3,30 @@ import type { Session } from '../stores/session'
 /** 飞书群聊工作区路径标记：{workspaceRoot}/feishu-chat/{botId}/{chatId}，每个机器人×群聊独立目录。 */
 const FEISHU_CHAT_SEGMENT = 'feishu-chat'
 
+/** 微信通道固定 projectKey（与后端 WEIXIN_PROJECT_KEY 对齐）。 */
+export const WEIXIN_PROJECT_KEY = 'weixin-bot'
+
+/** 分组图标类型：飞书 / 微信 / 普通云端 / 本地文件夹。 */
+export type GroupIconKind = 'feishu' | 'weixin' | 'cloud' | 'folder'
+
+export function isFeishuGroupKey(key: string): boolean {
+  return key.startsWith('FEISHU_PRIVATE:') || key.startsWith('FEISHU_GROUP:')
+}
+
+export function isWeixinGroupSession(session: Pick<Session, 'projectKey'> | undefined | null): boolean {
+  return session?.projectKey === WEIXIN_PROJECT_KEY
+}
+
+export function groupIconKind(
+  key: string,
+  sessions?: Pick<Session, 'projectKey'>[]
+): GroupIconKind {
+  if (isFeishuGroupKey(key)) return 'feishu'
+  if (sessions?.some(isWeixinGroupSession)) return 'weixin'
+  if (key.startsWith('CLOUD:')) return 'cloud'
+  return 'folder'
+}
+
 export function isFeishuChatWorkspace(workspace: string | undefined | null): boolean {
   if (!workspace) return false
   return workspace.replace(/\\/g, '/').split('/').includes(FEISHU_CHAT_SEGMENT)

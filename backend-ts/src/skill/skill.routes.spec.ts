@@ -40,6 +40,13 @@ describe('skill routes', () => {
       agentLookup: {
         findById: vi.fn(async () => ({ id: 9, name: 'A' })),
       } as unknown as AgentLookup,
+      permissionService: {
+        hasPermission: vi.fn(async () => true),
+      },
+      userLookup: {
+        findByIds: vi.fn(async () => [{ id: 7, username: 'u7', displayName: 'U7' }]),
+        listOptions: vi.fn(async () => [{ id: 7, username: 'u7', displayName: 'U7' }]),
+      },
     });
     const list = JSON.parse((await app.inject({ method: 'GET', url: '/v1/skill-docs' })).body);
     expect(list.data[0].name).toBe('demo');
@@ -49,9 +56,68 @@ describe('skill routes', () => {
     expect(missing.code).toBe(404);
     const users = JSON.parse((await app.inject({ method: 'GET', url: '/v1/user-skills' })).body);
     expect(users.data).toEqual([]);
+    const adminSkills = JSON.parse((await app.inject({ method: 'GET', url: '/v1/admin/user-skills' })).body);
+    expect(adminSkills.data).toEqual([]);
     const zip = await app.inject({ method: 'POST', url: '/v1/skills/sync-package?sessionId=1' });
     expect(zip.statusCode).toBe(200);
     expect(zip.headers['content-type']).toContain('application/zip');
+    await app.close();
+  });
+
+  it('listsAdminUserSkillsWithUsernamesAndChecksPermission', async () => {
+    const skillsDir = await mkdtemp(join(tmpdir(), 'mao-sdoc-'));
+    const userDir = await mkdtemp(join(tmpdir(), 'mao-user-s-'));
+    mkdirSync(join(userDir, '7', 'mine'), { recursive: true });
+    writeFileSync(join(userDir, '7', 'mine', 'SKILL.md'), '---\nname: mine\ndescription: Mine\n---\nBody\n');
+    const loader = new SkillLoader(new PathSandbox(skillsDir), skillsDir, 1);
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => { req.userId = 7; done(); });
+    const permissionService = { hasPermission: vi.fn(async () => true) };
+    registerSkillRoutes(app, {
+      userSkillService: new UserSkillService(userDir),
+      skillDocService: new SkillDocService(loader),
+      skillSyncService: {
+        writeSyncZip: vi.fn(async (_a, _s, out) => { out.end(); }),
+      } as unknown as SkillSyncService,
+      sessionService: {
+        getSession: vi.fn(async () => ({ id: 1, userId: 7, agentId: 9 })),
+      } as unknown as SessionService,
+      agentService: {
+        removeSkillNameFromAll: vi.fn(async () => 0),
+      } as never,
+      agentLookup: {
+        findById: vi.fn(async () => ({ id: 9, name: 'A' })),
+      } as unknown as AgentLookup,
+      permissionService,
+      userLookup: {
+        findByIds: vi.fn(async () => [{ id: 7, username: 'u7', displayName: 'U7' }]),
+        listOptions: vi.fn(async () => [{ id: 7, username: 'u7', displayName: 'U7' }]),
+      },
+    });
+
+    const list = JSON.parse((await app.inject({ method: 'GET', url: '/v1/admin/user-skills' })).body);
+    expect(list.code).toBe(0);
+    expect(list.data).toHaveLength(1);
+    expect(list.data[0]).toMatchObject({
+      name: 'mine',
+      userId: 7,
+      username: 'u7',
+      displayName: 'U7',
+    });
+
+    const detail = JSON.parse((await app.inject({ method: 'GET', url: '/v1/admin/user-skills/7/mine' })).body);
+    expect(detail.data.body).toBe('Body');
+
+    permissionService.hasPermission.mockResolvedValue(false);
+    const denied = JSON.parse((await app.inject({ method: 'GET', url: '/v1/admin/user-skills' })).body);
+    expect(denied.code).toBe(1002);
+
+    permissionService.hasPermission.mockResolvedValue(true);
+    const deleted = JSON.parse((await app.inject({ method: 'DELETE', url: '/v1/admin/user-skills/7/mine' })).body);
+    expect(deleted.code).toBe(0);
+    const afterDelete = JSON.parse((await app.inject({ method: 'GET', url: '/v1/admin/user-skills' })).body);
+    expect(afterDelete.data).toEqual([]);
     await app.close();
   });
 
@@ -77,6 +143,13 @@ describe('skill routes', () => {
       agentLookup: {
         findById: vi.fn(async () => ({ id: 9, name: 'A' })),
       } as unknown as AgentLookup,
+      permissionService: {
+        hasPermission: vi.fn(async () => true),
+      },
+      userLookup: {
+        findByIds: vi.fn(async () => []),
+        listOptions: vi.fn(async () => []),
+      },
     });
     const zip = await app.inject({ method: 'POST', url: '/v1/skills/sync-package?sessionId=1' });
     expect(zip.statusCode).toBe(403);
@@ -106,6 +179,13 @@ describe('skill routes', () => {
       agentLookup: {
         findById: vi.fn(async () => ({ id: 9, name: 'A' })),
       } as unknown as AgentLookup,
+      permissionService: {
+        hasPermission: vi.fn(async () => true),
+      },
+      userLookup: {
+        findByIds: vi.fn(async () => []),
+        listOptions: vi.fn(async () => []),
+      },
     });
 
     const boundary = '----maoSkillUpload';

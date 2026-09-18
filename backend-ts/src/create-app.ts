@@ -1932,6 +1932,19 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         requireDefaultAgent: () => agentService.requireDefaultAgent(),
         listOptions: async () => (await agentRepo.selectList()).map((a) => ({ id: a.id!, name: a.name })),
       } as never,
+      permissionService,
+      userLookup: {
+        findByIds: async (ids: number[]) => (await userRepo.findByIds(ids)).map((u) => ({
+          id: u.id!,
+          username: u.username,
+          displayName: u.displayName,
+        })),
+        listOptions: async () => (await userRepo.listOptions()).map((u) => ({
+          id: u.id!,
+          username: u.username,
+          displayName: u.displayName,
+        })),
+      },
     });
     registerScheduledTaskRoutes(api, { service: scheduledService, jwt, permission: permissionService });
     registerAnalyticsRoutes(api, { analytics: analyticsService, jwt, permissionService });

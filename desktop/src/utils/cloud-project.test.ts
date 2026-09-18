@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cloudGroupKey, cloudWorkspaceIndicator, formatCloudGroupLabel, isFeishuChatWorkspace } from './cloud-project'
+import { cloudGroupKey, cloudWorkspaceIndicator, formatCloudGroupLabel, groupIconKind, isFeishuChatWorkspace, isFeishuGroupKey, isWeixinGroupSession } from './cloud-project'
 
 const cloud = (workspace: string, extra: Partial<{ projectKey: string; agentId: string }> = {}) => ({ executionMode: 'CLOUD' as const, workspace, ...extra })
 
@@ -33,6 +33,29 @@ describe('formatCloudGroupLabel', () => {
   it('labels Feishu groups with Agent and workspace path, not topic session title', () => {
     expect(formatCloudGroupLabel('FEISHU_GROUP:/opt/mao-data/workspace/feishu-chat/1/oc_abc', { agentName: 'Coder', title: '告警群' }))
       .toBe('Coder:飞书群1·oc_abc')
+  })
+})
+
+describe('groupIconKind', () => {
+  it('detects Feishu group keys', () => {
+    expect(isFeishuGroupKey('FEISHU_PRIVATE:7')).toBe(true)
+    expect(isFeishuGroupKey('FEISHU_GROUP:/opt/mao-data/workspace/feishu-chat/1/oc_abc')).toBe(true)
+    expect(isFeishuGroupKey('CLOUD:/tmp')).toBe(false)
+  })
+
+  it('detects Weixin sessions by projectKey', () => {
+    expect(isWeixinGroupSession({ projectKey: 'weixin-bot' })).toBe(true)
+    expect(isWeixinGroupSession({ projectKey: 'mao' })).toBe(false)
+    expect(isWeixinGroupSession(undefined)).toBe(false)
+  })
+
+  it('prefers Feishu over cloud, Weixin over cloud, else cloud/folder', () => {
+    expect(groupIconKind('FEISHU_GROUP:/ws/feishu-chat/1/oc_a')).toBe('feishu')
+    expect(groupIconKind('CLOUD:/opt/1/projects/weixin-bot', [{ projectKey: 'weixin-bot' }])).toBe('weixin')
+    expect(groupIconKind('CLOUD:临时工作区')).toBe('cloud')
+    expect(groupIconKind('CLOUD:/opt/1/projects/mao', [{ projectKey: 'mao' }])).toBe('cloud')
+    expect(groupIconKind('LOCAL:/Users/me/code')).toBe('folder')
+    expect(groupIconKind('UNKNOWN_KEY')).toBe('folder')
   })
 })
 

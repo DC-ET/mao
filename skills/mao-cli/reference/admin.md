@@ -55,9 +55,14 @@ CLI：`mao agent list|get|create|update` 等（见 [agent.md](agent.md)）。
 
 ## Skills 管理
 
-维护平台 Skill 文档目录。为内部规范、排障流程编写独立 Skill；按 Agent 场景关联子集。
+维护平台 Skill 文档目录。为内部规范、排障流程编写独立 Skill；按 Agent 场景关联子集。页面分两个 Tab：
 
-CLI 全局目录：`mao skill-docs`（见 [skill-docs.md](skill-docs.md)）。
+| Tab | 内容 |
+|-----|------|
+| 系统 Skills | 全局目录（`skill-docs`）：搜索、上传目录包、查看正文、删除 |
+| 个人 Skills | 全站用户在桌面端上传的个人技能（`/admin/user-skills`）：按用户展示、关键词搜索、查看正文、删除；不在此上传 |
+
+个人 Skills 列表读需 `agent:read`，删除需 `agent:write`。CLI 全局目录：`mao skill-docs`（见 [skill-docs.md](skill-docs.md)）；个人技能本用户操作：`mao skill`（见 [skill.md](skill.md)）。
 
 ## 用户管理
 

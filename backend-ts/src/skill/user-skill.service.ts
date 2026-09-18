@@ -16,6 +16,12 @@ export interface SkillDocVO {
   filePath?: string;
 }
 
+export interface AdminUserSkillVO extends SkillDocVO {
+  userId: number;
+  username?: string | null;
+  displayName?: string | null;
+}
+
 export interface SkillDocDetailVO {
   name: string;
   description?: string | null;
@@ -58,6 +64,28 @@ export class UserSkillService {
       console.warn(`Failed to scan user skills directory ${userDir}: ${(e as Error).message}`);
     }
     return voList;
+  }
+
+  listAllUserSkills(): AdminUserSkillVO[] {
+    if (!existsSync(this.userSkillsDir) || !statSync(this.userSkillsDir).isDirectory()) {
+      return [];
+    }
+    const result: AdminUserSkillVO[] = [];
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(this.userSkillsDir);
+    } catch (e) {
+      console.warn(`Failed to scan user skills root ${this.userSkillsDir}: ${(e as Error).message}`);
+      return [];
+    }
+    for (const entry of entries) {
+      const userId = Number(entry);
+      if (!Number.isInteger(userId) || userId <= 0) continue;
+      for (const skill of this.listUserSkills(userId)) {
+        result.push({ ...skill, userId });
+      }
+    }
+    return result.sort((a, b) => a.userId - b.userId || a.name.localeCompare(b.name));
   }
 
   getUserSkill(userId: number, name: string): SkillResult<SkillDocDetailVO> {

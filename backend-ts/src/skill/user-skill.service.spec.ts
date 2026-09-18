@@ -20,6 +20,12 @@ describe('UserSkillService', () => {
     const list = service.listUserSkills(7);
     expect(list.map((s) => s.name)).toEqual(['existing']);
 
+    const existingDir = join(dir, '8', 'other-user-skill');
+    mkdirSync(existingDir, { recursive: true });
+    writeFileSync(join(existingDir, 'SKILL.md'), skill('other-user-skill', 'Other', 'Other body'));
+    const all = service.listAllUserSkills();
+    expect(all.map((s) => `${s.userId}:${s.name}`)).toEqual(['7:existing', '8:other-user-skill']);
+
     const detail = service.getUserSkill(7, 'existing');
     expect(detail.code).toBe(0);
     expect(detail.data?.body).toBe('Body');
@@ -67,6 +73,7 @@ describe('UserSkillService', () => {
     const dir = await mkdtemp(join(tmpdir(), 'mao-uskill-'));
     const service = new UserSkillService(dir);
     expect(service.listUserSkills(7)).toEqual([]);
+    expect(service.listAllUserSkills()).toEqual([]);
     expect(service.getUserSkill(7, 'missing').code).toBe(404);
     expect(service.deleteUserSkill(7, 'missing').code).toBe(404);
     expect(service.getUserSkill(7, '../outside').code).toBe(400);

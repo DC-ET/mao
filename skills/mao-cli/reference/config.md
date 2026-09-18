@@ -189,4 +189,4 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 - WebSocket：`/api/ws/stream`
 - Swagger：`<后端>/api/swagger-ui.html`
 
-主要模块：`auth`、`users`、`agents`、`sessions`、`models`、`skills`、`user-skills`、`files`、`scheduled-tasks`、`mcp-servers`、`weixin` 等。
+主要模块：`auth`、`users`、`agents`、`sessions`、`models`、`skills`、`user-skills`（管理端聚合另有 `admin/user-skills`）、`files`、`scheduled-tasks`、`mcp-servers`、`weixin` 等。
