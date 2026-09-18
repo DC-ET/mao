@@ -1,419 +1,285 @@
 <template>
-  <div class="analytics-view" v-loading="loading">
+  <div class="analytics-view">
     <el-card class="toolbar-card">
       <div class="toolbar">
         <div class="toolbar-info">
           <div class="toolbar-title">用量分析</div>
           <div class="toolbar-hint">
-            {{ periodText }}，环比对照 {{ previousText }}；数字均为窗口内新增。
+            {{ periodText }}，环比对照 {{ previousText }}；数字均为窗口内新增。环比色：绿=变好、红=变差。
           </div>
         </div>
         <div class="toolbar-actions">
           <span class="toolbar-label">统计周期</span>
-          <el-segmented v-model="days" :options="periodOptions" @change="fetchSummary" />
-          <el-button :loading="loading" @click="fetchSummary">
+          <el-segmented v-model="period" :options="periodOptions" @change="handlePeriodChange" />
+          <el-button :loading="activeLoading" @click="handleRefresh">
             <el-icon><Refresh /></el-icon>
           </el-button>
         </div>
       </div>
     </el-card>
 
-    <el-row :gutter="16" class="kpi-row">
-      <el-col v-for="kpi in kpis" :key="kpi.label" :xs="12" :sm="12" :md="6">
-        <el-card
-          shadow="hover"
-          :class="{ 'clickable-card': !!kpi.path }"
-          :role="kpi.path ? 'button' : undefined"
-          :tabindex="kpi.path ? 0 : undefined"
-          @click="go(kpi.path)"
-          @keydown.enter="go(kpi.path)"
-          @keydown.space.prevent="go(kpi.path)"
-        >
-          <div class="kpi">
-            <div class="kpi-head">
-              <span class="kpi-label">{{ kpi.label }}</span>
-              <span v-if="kpi.delta !== null" class="kpi-delta" :class="deltaClass(kpi.delta, kpi.inverse)">
-                {{ deltaText(kpi.delta) }}
-              </span>
-            </div>
-            <div class="kpi-value" :title="formatNumber(kpi.value)">
-              {{ formatCompact(kpi.value) }}<span v-if="kpi.unit" class="kpi-unit">{{ kpi.unit }}</span>
-            </div>
-            <div class="kpi-foot">
-              <span class="kpi-sub">{{ kpi.sub }}</span>
-              <BaseChart
-                v-if="kpi.series"
-                class="kpi-spark"
-                :option="sparklineOption(kpi.series, kpi.color)"
-                :height="32"
-              />
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+    <el-tabs v-model="activeTab" class="analytics-tabs" @tab-change="handleTabChange">
+      <el-tab-pane v-for="tab in TABS" :key="tab.value" :label="tab.label" :name="tab.value" />
+    </el-tabs>
 
-    <el-row :gutter="16" class="chart-row">
-      <el-col :xs="24" :md="14">
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>会话与消息趋势</span>
-              <span class="card-hint">双轴：会话（左）/ 消息（右）</span>
-            </div>
-          </template>
-          <BaseChart :option="trafficTrendOption(trends)" :empty="!hasTraffic" :height="300" />
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :md="10">
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>会话结局分布</span>
-              <span class="card-hint">窗口内创建的会话</span>
-            </div>
-          </template>
-          <BaseChart
-            :option="donutOption(phaseItems, '会话总数', formatCompact(phaseTotal))"
-            :empty="phaseItems.length === 0"
-            :height="300"
-          />
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <el-row :gutter="16" class="chart-row">
-      <el-col :xs="24" :md="14">
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>Token 消耗趋势</span>
-              <span class="card-hint">对话消息 + 后台调用（标题生成、提交信息等）</span>
-            </div>
-          </template>
-          <BaseChart :option="tokenTrendOption(trends)" :empty="!hasTokens" :height="300" />
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :md="10">
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>模型 Token 占比</span>
-              <span class="card-hint">Top 10 + 其他</span>
-            </div>
-          </template>
-          <BaseChart
-            :option="donutOption(modelTokenItems, 'Token 总量', formatCompact(periodTotals.totalTokens))"
-            :empty="modelTokenItems.length === 0"
-            :height="300"
-          />
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <el-row :gutter="16" class="chart-row">
-      <el-col :xs="24" :md="12">
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>Agent Token 排行</span>
-              <el-button type="primary" link @click="go('/agents')">Agent 管理</el-button>
-            </div>
-          </template>
-          <BaseChart
-            :option="rankBarOption(agentTokenItems, CHART_PALETTE[0])"
-            :empty="agentTokenItems.length === 0"
-            :height="Math.max(200, agentTokenItems.length * 34 + 32)"
-          />
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :md="12">
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>用户活跃排行</span>
-              <span class="card-hint">按窗口内消息数</span>
-            </div>
-          </template>
-          <BaseChart
-            :option="rankBarOption(userMessageItems, CHART_PALETTE[1])"
-            :empty="userMessageItems.length === 0"
-            :height="Math.max(200, userMessageItems.length * 34 + 32)"
-          />
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <el-card class="detail-card">
-      <template #header>
-        <div class="card-header">
-          <span>模型用量明细</span>
-          <el-button type="primary" link @click="go('/models')">模型管理</el-button>
-        </div>
-      </template>
-      <el-table :data="modelStats" size="small" stripe>
-        <template #empty>
-          <el-empty description="窗口内暂无模型调用" :image-size="48" />
-        </template>
-        <el-table-column prop="modelName" label="模型" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="provider" label="供应商" width="120" class-name="hide-on-mobile" />
-        <el-table-column label="会话" width="80" align="right">
-          <template #default="{ row }">{{ formatNumber(row.sessionCount || 0) }}</template>
-        </el-table-column>
-        <el-table-column label="消息" width="90" align="right">
-          <template #default="{ row }">{{ formatNumber(row.messageCount || 0) }}</template>
-        </el-table-column>
-        <el-table-column label="对话 Token" width="120" align="right">
-          <template #default="{ row }">{{ formatNumber(row.chatTokens || 0) }}</template>
-        </el-table-column>
-        <el-table-column label="后台 Token" width="120" align="right" class-name="hide-on-mobile">
-          <template #default="{ row }">{{ formatNumber(row.backgroundTokens || 0) }}</template>
-        </el-table-column>
-        <el-table-column label="Token 合计" width="120" align="right">
-          <template #default="{ row }">
-            <strong>{{ formatNumber(row.totalTokens || 0) }}</strong>
-          </template>
-        </el-table-column>
-        <el-table-column label="占比" min-width="140">
-          <template #default="{ row }">
-            <el-progress
-              :percentage="tokenShare(row.totalTokens)"
-              :stroke-width="8"
-              :show-text="false"
-              :color="CHART_PALETTE[0]"
-            />
-            <span class="share-text">{{ tokenShare(row.totalTokens) }}%</span>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+    <TabError v-if="activeError" :loading="activeLoading" @retry="handleRefresh" />
+    <div v-else-if="activeLoading && !hasData" class="panel-loading" v-loading="true" />
+    <TabEmpty
+      v-else-if="hasData && isEmpty && activeTab !== 'overview'"
+      :title="emptyCopy.title"
+      :hint="emptyCopy.hint"
+      @relax="relaxPeriod"
+    />
+    <template v-else-if="hasData">
+      <OverviewTab
+        v-if="activeTab === 'overview'"
+        :payload="overviewPayload"
+        :loading="activeLoading"
+        :error="activeError"
+        :period-text="periodText"
+        :previous-text="previousText"
+      />
+      <TrendsTab
+        v-else-if="activeTab === 'trends'"
+        :payload="trendsPayload"
+        :loading="activeLoading"
+        :error="activeError"
+      />
+      <ModelTab
+        v-else-if="activeTab === 'models'"
+        :payload="modelsPayload"
+        :loading="activeLoading"
+        :error="activeError"
+      />
+      <UserTab
+        v-else-if="activeTab === 'users'"
+        :payload="usersPayload"
+        :loading="activeLoading"
+        :error="activeError"
+      />
+      <AgentTab
+        v-else-if="activeTab === 'agents'"
+        :payload="agentsPayload"
+        :loading="activeLoading"
+        :error="activeError"
+      />
+      <SessionTab
+        v-else-if="activeTab === 'sessions'"
+        :payload="sessionsPayload"
+        :loading="activeLoading"
+        :error="activeError"
+      />
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { api } from '../../api'
-import BaseChart from '../../components/BaseChart.vue'
-import { CHART_PALETTE } from '../../utils/echarts'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { invalidateAnalytics, useScopeQuery } from './composables/useScopeQuery'
 import {
-  donutOption,
-  formatCompact,
-  formatNumber,
-  phaseRankItems,
-  rankBarOption,
-  sparklineOption,
-  tokenTrendOption,
-  topWithOthers,
-  trafficTrendOption,
-  type RankItem,
-  type TrendPoint
-} from './chart-options'
+  PERIOD_OPTIONS,
+  buildAnalyticsQuery,
+  periodFromQueryValue,
+  periodToQueryValue
+} from './composables/useAnalyticsPeriod'
+import type {
+  AgentsPayload,
+  ModelsPayload,
+  OverviewPayload,
+  PeriodValue,
+  SessionsPayload,
+  TrendsPayload,
+  UsersPayload
+} from './types'
+import OverviewTab from './tabs/OverviewTab.vue'
+import TrendsTab from './tabs/TrendsTab.vue'
+import ModelTab from './tabs/ModelTab.vue'
+import UserTab from './tabs/UserTab.vue'
+import AgentTab from './tabs/AgentTab.vue'
+import SessionTab from './tabs/SessionTab.vue'
+import TabEmpty from './tabs/TabEmpty.vue'
+import TabError from './tabs/TabError.vue'
 
-interface PeriodTotals {
-  sessions: number
-  messages: number
-  chatTokens: number
-  backgroundTokens: number
-  totalTokens: number
-  backgroundCalls: number
-  activeUsers: number
-  completedSessions: number
-  failedSessions: number
-}
+const TABS = [
+  { label: '总览', value: 'overview' },
+  { label: '趋势', value: 'trends' },
+  { label: '模型', value: 'models' },
+  { label: '用户', value: 'users' },
+  { label: 'Agent', value: 'agents' },
+  { label: '会话', value: 'sessions' }
+] as const
 
-const EMPTY_TOTALS: PeriodTotals = {
-  sessions: 0,
-  messages: 0,
-  chatTokens: 0,
-  backgroundTokens: 0,
-  totalTokens: 0,
-  backgroundCalls: 0,
-  activeUsers: 0,
-  completedSessions: 0,
-  failedSessions: 0
-}
+type TabId = (typeof TABS)[number]['value']
 
-type PeriodValue = number | 'today' | 'yesterday'
-
+const route = useRoute()
 const router = useRouter()
-const days = ref<PeriodValue>('today')
-const loading = ref(false)
-const periodOptions = [
-  { label: '今日', value: 'today' as const },
-  { label: '昨日', value: 'yesterday' as const },
-  { label: '3 天', value: 3 },
-  { label: '7 天', value: 7 },
-  { label: '30 天', value: 30 },
-  { label: '90 天', value: 90 }
-]
 
-/** 今日/昨日用 1 天窗口 + 结束偏移表达，其余为「以今日结尾的近 N 天」。 */
-function resolvePeriod(value: PeriodValue): { days: number; endOffset: number } {
-  if (value === 'today') return { days: 1, endOffset: 0 }
-  if (value === 'yesterday') return { days: 1, endOffset: 1 }
-  return { days: Number(value), endOffset: 0 }
-}
+const period = ref<PeriodValue>(periodFromQueryValue(route.query.period ?? route.query.days ?? 'today'))
+const activeTab = ref<TabId>(normalizeTab(route.query.tab))
+const periodOptions = PERIOD_OPTIONS
 
-function periodLabel(value: PeriodValue): string {
-  if (value === 'today') return '今日'
-  if (value === 'yesterday') return '昨日'
-  return `近 ${value} 天`
-}
-const summary = ref<Record<string, any>>({})
+const overview = useScopeQuery<OverviewPayload>('overview')
+const trends = useScopeQuery<TrendsPayload>('trends')
+const models = useScopeQuery<ModelsPayload>('models')
+const users = useScopeQuery<UsersPayload>('users')
+const agents = useScopeQuery<AgentsPayload>('agents')
+const sessions = useScopeQuery<SessionsPayload>('sessions')
 
-const trends = computed<TrendPoint[]>(() => (summary.value.trends || []) as TrendPoint[])
-const periodTotals = computed<PeriodTotals>(() => ({ ...EMPTY_TOTALS, ...(summary.value.periodTotals || {}) }))
-const previousTotals = computed<Record<string, number>>(() => summary.value.previousTotals || {})
-const modelStats = computed<any[]>(() => summary.value.modelStats || [])
+const scopeMap = {
+  overview,
+  trends,
+  models,
+  users,
+  agents,
+  sessions
+} as const
 
-const hasTraffic = computed(() => trends.value.some((t) => t.sessions > 0 || t.messages > 0))
-const hasTokens = computed(() => trends.value.some((t) => t.totalTokens > 0))
+const activeScope = computed(() => scopeMap[activeTab.value])
+const activeLoading = computed(() => activeScope.value.loading.value)
+const activeError = computed(() => activeScope.value.error.value)
+const hasData = computed(() => activeScope.value.data.value != null)
+
+const overviewPayload = computed(() => overview.data.value)
+const trendsPayload = computed(() => trends.data.value)
+const modelsPayload = computed(() => models.data.value)
+const usersPayload = computed(() => users.data.value)
+const agentsPayload = computed(() => agents.data.value)
+const sessionsPayload = computed(() => sessions.data.value)
 
 const periodText = computed(() => {
-  const period = summary.value.period
-  return period ? `${period.start} ~ ${period.end}（${period.days} 天）` : periodLabel(days.value)
+  const meta = (activeScope.value.data.value as { period?: { start: string; end: string; days: number } } | null)
+    ?.period
+  if (meta) return `${meta.start} ~ ${meta.end}（${meta.days} 天）`
+  const { days, endOffset } = buildAnalyticsQuery(period.value)
+  if (days === 1 && endOffset === 0) return '今日 00:00 起'
+  if (days === 1 && endOffset === 1) return '昨日 00:00 起'
+  return `近 ${days} 天`
 })
+
 const previousText = computed(() => {
-  const period = summary.value.period
-  return period ? `${period.previousStart} ~ ${period.previousEnd}` : '上一周期'
+  const meta = (activeScope.value.data.value as { period?: { previousStart: string; previousEnd: string } } | null)
+    ?.period
+  if (meta) return `${meta.previousStart} ~ ${meta.previousEnd}`
+  return '上一周期'
 })
 
-const phaseItems = computed<RankItem[]>(() => phaseRankItems(summary.value.phaseDistribution || []))
-const phaseTotal = computed(() => phaseItems.value.reduce((sum, item) => sum + item.value, 0))
-
-const modelTokenItems = computed<RankItem[]>(() =>
-  topWithOthers(
-    modelStats.value.map((row) => ({ name: row.modelName || '未命名', value: Number(row.totalTokens || 0) })),
-    10
-  )
-)
-
-const agentTokenItems = computed<RankItem[]>(() =>
-  (summary.value.agentStats || [])
-    .map((row: any) => ({ name: row.agentName || '未知', value: Number(row.totalTokens || 0) }))
-    .filter((item: RankItem) => item.value > 0)
-    .sort((a: RankItem, b: RankItem) => b.value - a.value)
-    .slice(0, 8)
-)
-
-const userMessageItems = computed<RankItem[]>(() =>
-  (summary.value.userActivity || [])
-    .map((row: any) => ({ name: row.displayName || row.username || '未知', value: Number(row.messageCount || 0) }))
-    .filter((item: RankItem) => item.value > 0)
-    .sort((a: RankItem, b: RankItem) => b.value - a.value)
-    .slice(0, 8)
-)
-
-const kpis = computed(() => {
-  const totals = periodTotals.value
-  const previous = previousTotals.value
-  const successBase = totals.completedSessions + totals.failedSessions
-  return [
-    {
-      label: '新增会话',
-      value: totals.sessions,
-      unit: '',
-      delta: delta(totals.sessions, previous.sessions),
-      sub: `活跃用户 ${formatNumber(totals.activeUsers)}`,
-      series: trends.value.map((t) => t.sessions),
-      color: CHART_PALETTE[0],
-      inverse: false,
-      path: '/sessions'
-    },
-    {
-      label: '消息数',
-      value: totals.messages,
-      unit: '',
-      delta: delta(totals.messages, previous.messages),
-      sub: `日均 ${formatCompact(Math.round(totals.messages / Math.max(1, trends.value.length)))}`,
-      series: trends.value.map((t) => t.messages),
-      color: CHART_PALETTE[1],
-      inverse: false,
-      path: ''
-    },
-    {
-      label: 'Token 消耗',
-      value: totals.totalTokens,
-      unit: '',
-      delta: delta(totals.totalTokens, previous.totalTokens),
-      sub: `后台占 ${percent(totals.backgroundTokens, totals.totalTokens)}%`,
-      series: trends.value.map((t) => t.totalTokens),
-      color: CHART_PALETTE[2],
-      inverse: true,
-      path: ''
-    },
-    {
-      label: '会话失败率',
-      value: successBase > 0 ? Math.round((totals.failedSessions / successBase) * 100) : 0,
-      unit: '%',
-      delta: null,
-      sub: `失败 ${formatNumber(totals.failedSessions)} / 完成 ${formatNumber(totals.completedSessions)}`,
-      series: null,
-      color: '#ff3b30',
-      inverse: true,
-      path: '/sessions?phase=FAILED'
-    }
-  ]
-})
-
-/** 上一周期为 0 时无法算环比，返回 null 让 UI 不展示。 */
-function delta(current: number, previous: number | undefined): number | null {
-  if (previous == null || previous === 0) return current > 0 ? null : 0
-  return Math.round(((current - previous) / previous) * 100)
-}
-
-function deltaText(value: number | null): string {
-  if (value === null) return ''
-  if (value === 0) return '持平'
-  return `${value > 0 ? '↑' : '↓'} ${Math.abs(value)}%`
-}
-
-function deltaClass(value: number | null, inverse: boolean) {
-  if (value === null || value === 0) return 'flat'
-  const good = inverse ? value < 0 : value > 0
-  return good ? 'up' : 'down'
-}
-
-function percent(part: number, total: number): number {
-  return total > 0 ? Math.round((part / total) * 100) : 0
-}
-
-function tokenShare(value: unknown): number {
-  return percent(Number(value || 0), periodTotals.value.totalTokens)
-}
-
-function go(path: string) {
-  if (path) router.push(path)
-}
-
-let fetchSummarySeq = 0
-async function fetchSummary() {
-  const seq = ++fetchSummarySeq
-  loading.value = true
-  try {
-    const { days: windowDays, endOffset } = resolvePeriod(days.value)
-    const { data } = await api.get('/admin/analytics/summary', {
-      params: { days: windowDays, endOffset }
-    })
-    if (seq !== fetchSummarySeq) return
-    summary.value = data || {}
-  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
-    if (seq === fetchSummarySeq) loading.value = false
+const isEmpty = computed(() => {
+  const data = activeScope.value.data.value as Record<string, unknown> | null
+  if (!data) return false
+  if (activeTab.value === 'overview') {
+    const totals = (data.periodTotals || {}) as Partial<OverviewPayload['periodTotals']>
+    return (totals.sessions ?? 0) === 0 && (totals.messages ?? 0) === 0 && (totals.totalTokens ?? 0) === 0
   }
+  if (activeTab.value === 'trends') {
+    return ((data.trends as TrendsPayload['trends']) || []).every(
+      (row) => row.sessions === 0 && row.messages === 0 && row.totalTokens === 0
+    )
+  }
+  if (activeTab.value === 'models') return ((data.modelStats as ModelsPayload['modelStats']) || []).length === 0
+  if (activeTab.value === 'users') return ((data.userActivity as UsersPayload['userActivity']) || []).length === 0
+  if (activeTab.value === 'agents') return ((data.agentStats as AgentsPayload['agentStats']) || []).length === 0
+  if (activeTab.value === 'sessions') {
+    return ((data.phaseDistribution as Array<{ count: number }>) || []).every((row) => Number(row.count || 0) === 0)
+  }
+  return false
+})
+
+const emptyCopy = computed(() => {
+  switch (activeTab.value) {
+    case 'models':
+      return { title: '窗口内暂无模型调用', hint: '可放宽统计周期，或先在模型管理中确认可用模型。' }
+    case 'users':
+      return { title: '窗口内暂无用户活跃', hint: '该周期没有创建会话或发送消息的用户。' }
+    case 'agents':
+      return { title: '窗口内暂无 Agent 活跃', hint: '该周期没有创建会话或发送消息的 Agent。' }
+    case 'sessions':
+      return { title: '窗口内暂无会话', hint: '可切换更长周期，或确认是否有用户在使用。' }
+    case 'trends':
+      return { title: '窗口内暂无趋势数据', hint: '可切换更长周期观察波动。' }
+    default:
+      return { title: '当前时间窗内没有数据', hint: '可能周期太短、尚无用户使用，或筛选过严。' }
+  }
+})
+
+function normalizeTab(raw: unknown): TabId {
+  const value = String(raw || 'overview')
+  return (TABS.some((tab) => tab.value === value) ? value : 'overview') as TabId
 }
 
-onMounted(fetchSummary)
+function currentQuery() {
+  const needsLimit = activeTab.value === 'users' || activeTab.value === 'agents'
+  return buildAnalyticsQuery(period.value, needsLimit ? 20 : undefined)
+}
+
+async function loadActive(force = false) {
+  await activeScope.value.fetchScope(currentQuery(), force)
+}
+
+function syncUrl() {
+  const nextTab = activeTab.value
+  const nextPeriod = periodToQueryValue(period.value)
+  if (route.query.tab === nextTab && route.query.period === nextPeriod) return
+  router.replace({
+    query: {
+      ...route.query,
+      tab: nextTab,
+      period: nextPeriod
+    }
+  })
+}
+
+function handleTabChange(name: TabId | string) {
+  activeTab.value = normalizeTab(name)
+  syncUrl()
+  void loadActive(false)
+}
+
+function handlePeriodChange() {
+  invalidateAnalytics()
+  syncUrl()
+  void loadActive(true)
+}
+
+function handleRefresh() {
+  invalidateAnalytics(activeTab.value)
+  void loadActive(true)
+}
+
+function relaxPeriod() {
+  period.value = 7
+  handlePeriodChange()
+}
+
+watch(
+  () => [route.query.tab, route.query.period] as const,
+  ([tabValue, periodValue]) => {
+    const nextTab = normalizeTab(tabValue)
+    const nextPeriod = periodFromQueryValue(periodValue ?? 'today')
+    const periodChanged = nextPeriod !== period.value
+    if (periodChanged) {
+      period.value = nextPeriod
+      invalidateAnalytics()
+    }
+    if (nextTab !== activeTab.value || periodChanged) {
+      activeTab.value = nextTab
+      void loadActive(true)
+    }
+  }
+)
+
+onMounted(() => {
+  syncUrl()
+  void loadActive(false)
+})
 </script>
 
 <style scoped>
-.toolbar-card,
-.kpi-row {
-  margin-bottom: 16px;
+.toolbar-card {
+  margin-bottom: 12px;
 }
 
-.chart-row,
-.detail-card {
+.analytics-tabs {
   margin-bottom: 16px;
 }
 
@@ -448,128 +314,17 @@ onMounted(fetchSummary)
   color: var(--mao-muted);
 }
 
-.clickable-card {
-  cursor: pointer;
-}
-
-.kpi-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.kpi-label {
-  font-size: 13px;
-  color: var(--mao-muted);
-}
-
-.kpi-delta {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 4px;
-}
-
-/* 项目约定：红=好、绿=坏（与默认色觉习惯相反） */
-.kpi-delta.up {
-  color: #c9252d;
-  background: rgba(255, 59, 48, 0.1);
-}
-
-.kpi-delta.down {
-  color: #1a7f37;
-  background: rgba(52, 199, 89, 0.12);
-}
-
-.kpi-delta.flat {
-  color: var(--mao-muted);
-  background: var(--mao-canvas);
-}
-
-.kpi-value {
-  margin-top: 6px;
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--mao-ink);
-}
-
-.kpi-unit {
-  margin-left: 2px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--mao-muted);
-}
-
-.kpi-foot {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.kpi-sub {
-  font-size: 12px;
-  color: var(--mao-muted);
-  white-space: nowrap;
-}
-
-.kpi-spark {
-  width: 84px;
-  flex-shrink: 0;
-}
-
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.card-hint {
-  font-size: 12px;
-  color: var(--mao-muted);
-}
-
-.share-text {
-  margin-left: 8px;
-  font-size: 12px;
-  color: var(--mao-muted);
+.panel-loading {
+  min-height: 280px;
 }
 
 @media (max-width: 768px) {
-  .analytics-view :deep(.el-row) {
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
-
-  .analytics-view :deep(.el-col) {
-    max-width: 100%;
-    flex: 0 0 100%;
-    margin-bottom: 16px;
-  }
-
-  .kpi-row :deep(.el-col) {
-    max-width: 50%;
-    flex: 0 0 50%;
-  }
-
   .toolbar {
     flex-wrap: wrap;
   }
 
   .toolbar-actions {
     width: 100%;
-  }
-
-  .kpi-spark {
-    display: none;
-  }
-
-  .detail-card :deep(.el-table) {
-    overflow-x: auto;
   }
 }
 </style>

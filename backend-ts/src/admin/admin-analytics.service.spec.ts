@@ -46,6 +46,14 @@ function buildStore() {
     selectSessionCountsByModel: vi.fn(async () => [{ id: 3, sessionCount: 2 }]),
     selectMessageStatsByModel: vi.fn(async () => [{ id: 3, messageCount: 4, totalTokens: 400 }]),
     selectUsageStatsByModel: vi.fn(async () => [{ id: 3, totalTokens: 90, callCount: 2 }]),
+    selectSessionTypeCounts: vi.fn(async () => [
+      { key: 'NORMAL', count: 4 },
+      { key: 'SUBAGENT', count: 2 },
+    ]),
+    selectExecutionModeCounts: vi.fn(async () => [
+      { key: 'CLOUD', count: 5 },
+      { key: 'LOCAL', count: 1 },
+    ]),
   };
 }
 
@@ -127,6 +135,129 @@ describe('AdminAnalyticsService', () => {
     expect(result.trends).toHaveLength(1);
     expect(result.trends[0]).toMatchObject({ date: yesterday, sessions: 0, messages: 0 });
   });
+
+  it('overviewReturnsLightPayloadWithSparkAndInsights', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({ totalUsers: 2 })) };
+    const store = buildStore();
+    // 洞察规则：失败率 2/7 ≈ 28.6% 应触发 warn
+    store.selectPhaseCounts = vi.fn(async () => [
+      { phase: 'COMPLETED', count: 5 },
+      { phase: 'FAILED', count: 2 },
+    ]);
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.overview(7)) as Record<string, any>;
+
+    expect(result.period).toMatchObject({ days: 7, end: today });
+    expect(result.overview).toMatchObject({ totalUsers: 2, runningSessions: 2 });
+    expect(result.periodTotals).toMatchObject({
+      sessions: 4,
+      messages: 8,
+      totalTokens: 1000,
+      activeUsers: 2,
+      completedSessions: 5,
+      failedSessions: 2,
+    });
+    expect(result.spark).toHaveLength(7);
+    expect(result.spark.at(-1)).toEqual({ date: today, totalTokens: 1000 });
+    expect(result.insights.length).toBeGreaterThan(0);
+    expect(result.insights.some((item: any) => item.level === 'warn' && String(item.text).includes('失败率'))).toBe(true);
+    // overview 不应拉取模型/用户/Agent 排行
+    expect(store.listModelsOrderByCreatedDesc).not.toHaveBeenCalled();
+    expect(store.listUsers).not.toHaveBeenCalled();
+    expect(store.listAgents).not.toHaveBeenCalled();
+  });
+
+  it('overviewEmptyWindowProducesTeachingInsight', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    store.selectPhaseCounts = vi.fn(async () => []);
+    store.selectDailySessionCounts = vi.fn(async () => []);
+    store.selectDailyMessageStats = vi.fn(async () => []);
+    store.selectDailyUsageStats = vi.fn(async () => []);
+    store.countActiveUsers = vi.fn(async () => 0);
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.overview(7)) as Record<string, any>;
+
+    expect(result.periodTotals).toMatchObject({ sessions: 0, messages: 0, totalTokens: 0 });
+    expect(result.insights[0]).toMatchObject({ level: 'info' });
+    expect(String(result.insights[0].text)).toContain('放宽');
+  });
+
+  it('trendsScopeReturnsDailySeriesWithoutDimensionStats', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.trendsScope(7)) as Record<string, any>;
+
+    expect(result.trends).toHaveLength(7);
+    expect(result.periodTotals).toMatchObject({ sessions: 4, messages: 8, totalTokens: 1000 });
+    expect(result.previousTotals).toMatchObject({ sessions: 3, totalTokens: 700 });
+    expect(store.listUsers).not.toHaveBeenCalled();
+  });
+
+  it('modelsScopeReturnsModelStatsAndTokenTotal', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const service = new AdminAnalyticsService(statistics as never, buildStore() as never);
+
+    const result = (await service.modelsScope(7)) as Record<string, any>;
+
+    expect(result.modelStats).toHaveLength(1);
+    expect(result.modelStats[0]).toMatchObject({ modelId: 3, totalTokens: 490 });
+    expect(result.periodTotals).toEqual({ totalTokens: 1000 });
+  });
+
+  it('usersScopeRespectsLimitAndDropsIdleUsers', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const service = new AdminAnalyticsService(statistics as never, buildStore() as never);
+
+    const result = (await service.usersScope(7, 0, 1)) as Record<string, any>;
+
+    expect(result.userActivity).toHaveLength(1);
+    expect(result.userActivity[0]).toMatchObject({ username: 'ada' });
+    expect(result.periodTotals).toEqual({ activeUsers: 2 });
+  });
+
+  it('agentsScopeReturnsRankedAgents', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const service = new AdminAnalyticsService(statistics as never, buildStore() as never);
+
+    const result = (await service.agentsScope(7)) as Record<string, any>;
+
+    expect(result.agentStats[0]).toMatchObject({ agentId: 9, agentName: 'Coder', sessionCount: 4, totalTokens: 800 });
+  });
+
+  it('sessionsScopeSeparatesPeriodStructureAndLivePhases', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const service = new AdminAnalyticsService(statistics as never, buildStore() as never);
+
+    const result = (await service.sessionsScope(7)) as Record<string, any>;
+
+    expect(result.phaseDistribution).toEqual(expect.arrayContaining([
+      expect.objectContaining({ phase: 'COMPLETED', count: 5 }),
+      expect.objectContaining({ phase: 'FAILED', count: 2 }),
+    ]));
+    expect(result.sessionTypes).toEqual([
+      { sessionType: 'NORMAL', count: 4 },
+      { sessionType: 'SUBAGENT', count: 2 },
+    ]);
+    expect(result.executionModes).toEqual([
+      { executionMode: 'CLOUD', count: 5 },
+      { executionMode: 'LOCAL', count: 1 },
+    ]);
+    expect(result.livePhases).toEqual(expect.arrayContaining([
+      expect.objectContaining({ phase: 'RUNNING', count: 2 }),
+      expect.objectContaining({ phase: 'FAILED', count: 1 }),
+    ]));
+    expect(result.periodTotals).toMatchObject({
+      sessions: 7,
+      completedSessions: 5,
+      failedSessions: 2,
+      activeUsers: 2,
+    });
+  });
 });
 
 describe('AdminAnalyticsDbStore', () => {
@@ -146,11 +277,13 @@ describe('AdminAnalyticsDbStore', () => {
     await store.selectSessionCountsByModel(range);
     await store.selectMessageStatsByModel(range);
     await store.selectUsageStatsByModel(range);
+    await store.selectSessionTypeCounts(range);
+    await store.selectExecutionModeCounts(range);
     await store.listAgents();
     await store.listUsers();
     await store.listModelsOrderByCreatedDesc();
 
-    expect(db.query).toHaveBeenCalledTimes(15);
+    expect(db.query).toHaveBeenCalledTimes(17);
     for (const call of db.query.mock.calls) {
       const params = (call as unknown[])[1] as unknown[] | undefined;
       if (params && params.length >= 2) {

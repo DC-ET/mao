@@ -156,7 +156,6 @@ export function tokenTrendOption(trends: TrendPoint[]): ChartOption {
         type: 'bar',
         stack: 'token',
         barMaxWidth: 26,
-        itemStyle: { borderRadius: [0, 0, 0, 0] },
         data: trends.map((t) => t.chatTokens)
       },
       {
@@ -168,6 +167,42 @@ export function tokenTrendOption(trends: TrendPoint[]): ChartOption {
         data: trends.map((t) => t.backgroundTokens)
       }
     ]
+  }
+}
+
+export interface SingleSeriesSpec {
+  key: 'sessions' | 'messages'
+  name: string
+  color: string
+}
+
+/** 单序列小多图：避免双 y 轴把不同单位的序列画在一起。 */
+export function seriesTrendOption(trends: TrendPoint[], specs: SingleSeriesSpec[]): ChartOption {
+  const dates = trends.map((t) => t.date)
+  const zoom = dataZoom(trends.length)
+  return {
+    color: specs.map((s) => s.color),
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'line' },
+      formatter: (params: unknown) => tooltipRows(params as TooltipParam[], dates)
+    },
+    grid: { ...baseGrid, bottom: zoom ? 28 : 4 },
+    dataZoom: zoom,
+    xAxis: categoryAxis(dates),
+    yAxis: valueAxis(''),
+    series: specs.map((spec) => ({
+      name: spec.name,
+      type: 'line' as const,
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      showSymbol: trends.length <= 31,
+      lineStyle: { width: 2.5 },
+      areaStyle: { opacity: 0.12 },
+      itemStyle: { color: spec.color },
+      data: trends.map((t) => t[spec.key])
+    }))
   }
 }
 

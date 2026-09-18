@@ -102,16 +102,17 @@ CLI：`mao audit ...`（见 [audit.md](audit.md)）。
 
 ## 用量分析（后台首页）
 
-登录后默认进入本页，也是侧边栏 logo 的「返回首页」目标。图表看板按今日 / 昨日 / 3 / 7 / 30 / 90 天周期统计**窗口内新增**数据，并与紧邻的上一等长窗口做环比：
+登录后默认进入本页，也是侧边栏 logo 的「返回首页」目标。页面按**分析维度拆 6 个 Tab**（总览 / 趋势 / 模型 / 用户 / Agent / 会话），壳层统一周期筛选（今日 / 昨日 / 3 / 7 / 30 / 90 天）与刷新；URL 同步 `?tab=&period=`，首屏只拉当前 Tab，切换周期只重拉已访问模块：
 
-- KPI 卡：新增会话、消息数、Token 消耗、会话失败率，各带环比与迷你走势
-- 趋势：会话与消息双轴折线；Token 堆叠柱（对话 Token + 后台调用 Token，后者来自会话标题、Git 提交信息等后台 LLM 调用）
-- 结构：会话结局分布与模型 Token 占比环形图（Top 10 + 其他）；Agent Token 与用户活跃横向排行
-- 明细：模型用量表（会话 / 消息 / 对话与后台 Token / 占比），窗口内未被调用的模型不列出
+- **总览**：主指标 Token 消耗（窗口值 + 环比 + spark）+ 紧凑次指标（新增会话 / 消息 / 活跃用户）；实时运行态快照与规则洞察（失败率、Token 环比等），次指标可下钻对应 Tab
+- **趋势**：会话 / 消息分小多图（取消双 y 轴）+ Token 堆叠柱（对话 Token + 后台调用 Token）
+- **模型**：模型 Token 占比（Top 10 + 其他）+ 用量明细表；窗口内未被调用的模型不列出
+- **用户 / Agent**：横向排行 + 明细表，可下钻会话列表
+- **会话**：窗口 phase 分布 + 会话类型（NORMAL/SUBAGENT/SIDE_TASK）与执行模式（CLOUD/LOCAL）+ 实时运行态
 
-90 天视图默认聚焦最近 30 天，可拖动查看全周期。本页阶段分布只统计窗口内创建的会话；失败会话可点 KPI 下钻会话列表（阶段=FAILED）。
+本页阶段分布只统计窗口内创建的会话；失败会话可点链接下钻会话列表（阶段=FAILED）。环比色约定：绿=变好、红=变差。
 
-CLI：`mao analytics summary --days 7|30|90` 取同一份数据；今日为 `--days 1`，昨日为 `--days 1 --end-offset 1`（见 [analytics.md](analytics.md)）。
+CLI：`mao analytics overview|trends|models|users|agents|sessions` 与各 Tab 对应；旧版一页聚合仍可用 `mao analytics summary --days 7|30|90`（今日 `--days 1`，昨日 `--days 1 --end-offset 1`）。详见 [analytics.md](analytics.md)。
 
 ## 调用流水
 

@@ -68,7 +68,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   skill-docs      全局 Skill 文档
   admin-session   管理端会话检索
   runtime         运行监控
-  analytics       分析汇总
+  analytics       分析汇总 / 分维度
   llm-call        LLM 调用流水
   audit           审计日志
   settings        系统设置

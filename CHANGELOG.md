@@ -15,6 +15,24 @@
 
 ---
 
+## 0.0.148 (2026-09-18)
+
+### 管理后台
+
+- 用量分析页重构为按维度分 Tab 的分析工作台：总览 / 趋势 / 模型 / 用户 / Agent / 会话。壳层统一周期筛选（今日/昨日/3/7/30/90 天）与时间窗提示，URL 同步 `?tab=&period=`，首屏只加载当前 Tab，切换周期标记其他 Tab 待刷新。
+- 总览压缩为「Token 主指标 + 紧凑次指标 + 运行态 + 规则洞察」，不再堆叠全量图表；趋势取消会话/消息双 y 轴，改为小多图；空态说明原因并支持一键放宽到近 7 天。
+- 会话 Tab 新增窗口内会话类型（NORMAL/SUBAGENT/SIDE_TASK）与执行模式（CLOUD/LOCAL）结构拆分；环比色约定统一为绿=变好、红=变差。
+
+### 后端
+
+- 新增管理端分维度分析接口：`GET /api/v1/admin/analytics/{overview,trends,models,users,agents,sessions}`，公共参数 `days`/`endOffset`，users/agents 支持 `limit`。按 scope 取数，overview 不再拉取模型/用户/Agent 排行。
+- 旧接口 `GET /api/v1/admin/analytics/summary` 保留（mao-cli 与兼容调用方），管理后台前端已切换至分维度接口。
+- `llm_usage`/`message` 口径不变：`chatTokens` 来自对话消息，`backgroundTokens` 来自后台调用，合计 `totalTokens`。
+
+### 终端 CLI（mao-cli）
+
+- `mao analytics` 新增分维度子命令：`overview` / `trends` / `models` / `users` / `agents` / `sessions`（users/agents 支持 `--limit`），与管理后台 Tab 一一对应；`summary` 仍可用。
+
 ## 0.0.147 (2026-09-18)
 
 ### 后端

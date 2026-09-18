@@ -25,22 +25,65 @@ export interface AdminRouteDeps {
   permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
 }
 
+interface AnalyticsQueryRaw {
+  days?: string;
+  endOffset?: string;
+  limit?: string;
+}
+
+function parseAnalyticsQuery(raw: AnalyticsQueryRaw): { days: number; endOffset: number; limit: number } {
+  const days = Number(raw.days ?? 30);
+  const endOffset = Number(raw.endOffset ?? 0);
+  const limit = Number(raw.limit ?? 20);
+  return {
+    days: Math.max(1, Math.min(Number.isFinite(days) ? days : 30, 90)),
+    endOffset: Math.max(0, Math.min(Number.isFinite(endOffset) ? endOffset : 0, 365)),
+    limit: Math.max(1, Math.min(Number.isFinite(limit) ? limit : 20, 100)),
+  };
+}
+
 export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRouteDeps): void {
+  // 旧巨型汇总：管理后台已切换 scope 接口，暂留给 mao-cli / 兼容调用方。
   app.get('/v1/admin/analytics/summary', async (req, reply) => {
     await requireAdmin(deps.permissionService, req);
-    const q = req.query as { days?: string; endOffset?: string };
-    const days = Number(q.days ?? 30);
-    const endOffset = Number(q.endOffset ?? 0);
-    sendJson(
-      reply,
-      200,
-      ok(
-        await deps.analytics.summary(
-          Math.max(1, Math.min(Number.isFinite(days) ? days : 30, 90)),
-          Math.max(0, Math.min(Number.isFinite(endOffset) ? endOffset : 0, 365)),
-        ),
-      ),
-    );
+    const { days, endOffset } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
+    sendJson(reply, 200, ok(await deps.analytics.summary(days, endOffset)));
+  });
+
+  app.get('/v1/admin/analytics/overview', async (req, reply) => {
+    await requireAdmin(deps.permissionService, req);
+    const { days, endOffset } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
+    sendJson(reply, 200, ok(await deps.analytics.overview(days, endOffset)));
+  });
+
+  app.get('/v1/admin/analytics/trends', async (req, reply) => {
+    await requireAdmin(deps.permissionService, req);
+    const { days, endOffset } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
+    sendJson(reply, 200, ok(await deps.analytics.trendsScope(days, endOffset)));
+  });
+
+  app.get('/v1/admin/analytics/models', async (req, reply) => {
+    await requireAdmin(deps.permissionService, req);
+    const { days, endOffset } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
+    sendJson(reply, 200, ok(await deps.analytics.modelsScope(days, endOffset)));
+  });
+
+  app.get('/v1/admin/analytics/users', async (req, reply) => {
+    await requireAdmin(deps.permissionService, req);
+    const { days, endOffset, limit } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
+    sendJson(reply, 200, ok(await deps.analytics.usersScope(days, endOffset, limit)));
+  });
+
+  app.get('/v1/admin/analytics/agents', async (req, reply) => {
+    await requireAdmin(deps.permissionService, req);
+    const { days, endOffset, limit } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
+    sendJson(reply, 200, ok(await deps.analytics.agentsScope(days, endOffset, limit)));
+  });
+
+  app.get('/v1/admin/analytics/sessions', async (req, reply) => {
+    await requireAdmin(deps.permissionService, req);
+    const { days, endOffset } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
+    sendJson(reply, 200, ok(await deps.analytics.sessionsScope(days, endOffset)));
   });
 }
 
