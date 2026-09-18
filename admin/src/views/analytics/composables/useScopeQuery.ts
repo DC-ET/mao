@@ -55,8 +55,13 @@ export function useScopeQuery<T>(scope: AnalyticsScope) {
       try {
         const result = await inflight.get(key)
         if (current !== seq) return
-        data.value = result as T
-        error.value = false
+        if (result == null) {
+          error.value = true
+          data.value = null
+        } else {
+          data.value = result as T
+          error.value = false
+        }
       } catch {
         if (current !== seq) return
         error.value = true
@@ -71,7 +76,12 @@ export function useScopeQuery<T>(scope: AnalyticsScope) {
     const request = api
       .get(`/admin/analytics/${scope}`, { params: query })
       .then((res) => {
-        const payload = (res.data?.data ?? null) as T | null
+        // 拦截器已解包为 Result<T>（{ code, data }），不是 AxiosResponse
+        const result = res as unknown as { code?: number; data?: T | null }
+        const payload = (result?.data ?? null) as T | null
+        if (payload == null) {
+          throw new Error('analytics scope payload is empty')
+        }
         slot.data = payload
         slot.loadedKey = key
         return payload
@@ -84,6 +94,7 @@ export function useScopeQuery<T>(scope: AnalyticsScope) {
       const result = await request
       if (current !== seq) return
       data.value = result
+      error.value = false
     } catch {
       if (current !== seq) return
       error.value = true

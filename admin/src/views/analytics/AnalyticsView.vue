@@ -23,14 +23,14 @@
     </el-tabs>
 
     <TabError v-if="activeError" :loading="activeLoading" @retry="handleRefresh" />
-    <div v-else-if="activeLoading && !hasData" class="panel-loading" v-loading="true" />
+    <div v-else-if="!hasData" class="panel-loading" v-loading="true" />
     <TabEmpty
-      v-else-if="hasData && isEmpty && activeTab !== 'overview'"
+      v-else-if="isEmpty && activeTab !== 'overview'"
       :title="emptyCopy.title"
       :hint="emptyCopy.hint"
       @relax="relaxPeriod"
     />
-    <template v-else-if="hasData">
+    <template v-else>
       <OverviewTab
         v-if="activeTab === 'overview'"
         :payload="overviewPayload"
