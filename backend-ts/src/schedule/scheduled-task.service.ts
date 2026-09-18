@@ -30,6 +30,15 @@ export interface ScheduledTask {
   deleted?: number;
 }
 
+export interface ScheduledTaskListFilter {
+  keyword?: string | null;
+  userId?: number | null;
+  agentId?: number | null;
+  status?: string | null;
+  /** true=仅已完结，false=仅进行中；null/undefined=不过滤 */
+  finished?: boolean | null;
+}
+
 export interface ScheduledTaskStore {
   insert(task: ScheduledTask): Promise<number>;
   /** 支持增量 patch：仅更新传入字段，避免调用方用旧快照整行回写覆盖并发修改。 */
@@ -37,7 +46,7 @@ export interface ScheduledTaskStore {
   deleteById(id: number): Promise<void>;
   selectById(id: number): Promise<ScheduledTask | null>;
   listByUser(userId: number): Promise<ScheduledTask[]>;
-  listAll(pageNum: number, pageSize: number): Promise<{ records: ScheduledTask[]; total: number }>;
+  listAll(pageNum: number, pageSize: number, filter?: ScheduledTaskListFilter): Promise<{ records: ScheduledTask[]; total: number }>;
   listDue(now: string): Promise<ScheduledTask[]>;
 }
 
@@ -239,8 +248,8 @@ export class ScheduledTaskService {
     return this.store.listByUser(userId);
   }
 
-  async listAll(pageNum: number, pageSize: number): Promise<MpPage<ScheduledTask>> {
-    const { records, total } = await this.store.listAll(pageNum, pageSize);
+  async listAll(pageNum: number, pageSize: number, filter?: ScheduledTaskListFilter): Promise<MpPage<ScheduledTask>> {
+    const { records, total } = await this.store.listAll(pageNum, pageSize, filter);
     return mpPage(records, total, pageNum, pageSize);
   }
 

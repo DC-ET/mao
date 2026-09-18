@@ -3,6 +3,7 @@ import { requireUserId } from '../common/auth.js';
 import { sendJson } from '../common/http-error.js';
 import { failCode, ok } from '../common/result.js';
 import { ErrorCode } from '../common/error-code.js';
+import { queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { JwtService } from '../crypto/jwt.service.js';
 import type { PermissionService } from '../permission/permission.service.js';
 import { BusinessException } from '../common/business-exception.js';
@@ -30,8 +31,19 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, deps: Schedule
     if (deps.permission && !(await hasManagePermission(userId))) {
       throw new BusinessException(ErrorCode.FORBIDDEN);
     }
-    const q = req.query as { pageNum?: string; pageSize?: string };
-    sendJson(reply, 200, ok(await deps.service.listAll(Number(q.pageNum ?? 1), Number(q.pageSize ?? 20))));
+    const page = queryInt(req, 'pageNum', 1);
+    const size = queryInt(req, 'pageSize', 20);
+    const status = queryOptStr(req, 'status');
+    if (status != null && status !== 'ACTIVE' && status !== 'PAUSED') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'status 只能为 ACTIVE 或 PAUSED');
+    }
+    sendJson(reply, 200, ok(await deps.service.listAll(page, size, {
+      keyword: queryOptStr(req, 'keyword'),
+      userId: queryOptInt(req, 'userId') ?? null,
+      agentId: queryOptInt(req, 'agentId') ?? null,
+      status,
+      finished: queryOptBool(req, 'finished') ?? null,
+    })));
   });
 
   app.get('/v1/scheduled-tasks/:id', async (req, reply) => {

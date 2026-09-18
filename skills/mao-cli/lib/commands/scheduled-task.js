@@ -13,13 +13,14 @@ const { outputResult } = require('../output');
 
 const HELP = `用法:
   mao scheduled-task list
-  mao scheduled-task list-all [--page-num] [--page-size]   全量列表（需 session:read 权限）
+  mao scheduled-task list-all [--page-num] [--page-size] [--keyword] [--user-id] [--agent-id] [--status ACTIVE|PAUSED] [--finished true|false]
   mao scheduled-task get --id <id>
   mao scheduled-task update --id <id> [--name] [--prompt] [--cron-expression] [--status ACTIVE|PAUSED]
   mao scheduled-task delete --id <id>
 
 说明:
   创建定时任务当前由 Agent 内置工具 create_scheduled_task 完成，用户 REST API 暂未暴露 create。
+  list-all 需 session:read 权限；筛选参数与管理后台一致。
 `;
 
 const STATUSES = new Set(['ACTIVE', 'PAUSED']);
@@ -44,6 +45,22 @@ async function handle(ctx) {
       return;
     }
     case 'list-all': {
+      const status = optionalString(flags, 'status');
+      if (status !== undefined) {
+        const normalized = status.toUpperCase();
+        if (!STATUSES.has(normalized)) {
+          throw createCliError('--status 必须是 ACTIVE 或 PAUSED');
+        }
+      }
+      const finishedRaw = optionalString(flags, 'finished');
+      let finished;
+      if (finishedRaw !== undefined) {
+        const normalized = finishedRaw.toLowerCase();
+        if (normalized !== 'true' && normalized !== 'false' && normalized !== '1' && normalized !== '0') {
+          throw createCliError('--finished 必须是 true 或 false');
+        }
+        finished = normalized === '1' ? 'true' : normalized === '0' ? 'false' : normalized;
+      }
       const result = await request({
         ...common,
         method: 'GET',
@@ -51,6 +68,11 @@ async function handle(ctx) {
         query: {
           pageNum: optionalNumber(flags, 'page-num'),
           pageSize: optionalNumber(flags, 'page-size'),
+          keyword: optionalString(flags, 'keyword'),
+          userId: optionalNumber(flags, 'user-id'),
+          agentId: optionalNumber(flags, 'agent-id'),
+          status: status === undefined ? undefined : status.toUpperCase(),
+          finished,
         },
       });
       outputResult(result, globals);

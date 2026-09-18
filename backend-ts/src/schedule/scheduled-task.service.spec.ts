@@ -75,6 +75,8 @@ describe('ScheduledTaskService', () => {
     await service.listByUser(7);
     vi.mocked(store.listAll).mockResolvedValue({ records: [{ id: 1 }], total: 1 });
     expect((await service.listAll(1, 10)).total).toBe(1);
+    await service.listAll(1, 10, { keyword: 'kw', userId: 7, agentId: 5, status: 'PAUSED', finished: false });
+    expect(store.listAll).toHaveBeenLastCalledWith(1, 10, { keyword: 'kw', userId: 7, agentId: 5, status: 'PAUSED', finished: false });
     expect(await service.getById(1)).toBeTruthy();
 
     stubs.getSession.mockResolvedValue({ id: 11, phase: 'IDLE', projectKey: 'weixin-bot' });

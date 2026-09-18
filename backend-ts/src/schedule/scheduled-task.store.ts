@@ -1,6 +1,6 @@
 import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
-import type { ScheduledTask, ScheduledTaskStore } from './scheduled-task.service.js';
+import type { ScheduledTask, ScheduledTaskListFilter, ScheduledTaskStore } from './scheduled-task.service.js';
 
 export class ScheduledTaskDbStore implements ScheduledTaskStore {
   constructor(private readonly db: Db) {}
@@ -28,11 +28,39 @@ export class ScheduledTaskDbStore implements ScheduledTaskStore {
     );
   }
 
-  async listAll(pageNum: number, pageSize: number): Promise<{ records: ScheduledTask[]; total: number }> {
-    const totalRow = await this.db.queryOne<{ c: number }>(`SELECT COUNT(*) AS c FROM scheduled_task WHERE ${notDeleted()}`);
+  private buildListAllWhere(filter: ScheduledTaskListFilter = {}): { whereSql: string; params: unknown[] } {
+    const clauses = [notDeleted()];
+    const params: unknown[] = [];
+    if (filter.userId != null) {
+      clauses.push('user_id = ?');
+      params.push(filter.userId);
+    }
+    if (filter.agentId != null) {
+      clauses.push('agent_id = ?');
+      params.push(filter.agentId);
+    }
+    if (filter.status != null && filter.status.length > 0) {
+      clauses.push('status = ?');
+      params.push(filter.status);
+    }
+    if (filter.finished != null) {
+      clauses.push('finished = ?');
+      params.push(filter.finished ? 1 : 0);
+    }
+    const keyword = filter.keyword?.trim();
+    if (keyword) {
+      clauses.push('(name LIKE ? OR prompt LIKE ?)');
+      params.push(`%${keyword}%`, `%${keyword}%`);
+    }
+    return { whereSql: clauses.join(' AND '), params };
+  }
+
+  async listAll(pageNum: number, pageSize: number, filter?: ScheduledTaskListFilter): Promise<{ records: ScheduledTask[]; total: number }> {
+    const { whereSql, params } = this.buildListAllWhere(filter);
+    const totalRow = await this.db.queryOne<{ c: number }>(`SELECT COUNT(*) AS c FROM scheduled_task WHERE ${whereSql}`, params);
     const records = await this.db.query<ScheduledTask>(
-      `SELECT * FROM scheduled_task WHERE ${notDeleted()} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      [pageSize, (pageNum - 1) * pageSize],
+      `SELECT * FROM scheduled_task WHERE ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [...params, pageSize, (pageNum - 1) * pageSize],
     );
     return { records, total: Number(totalRow?.c ?? 0) };
   }

@@ -51,36 +51,24 @@
             <div class="group-header" @click="toggleGroup(group.key)">
               <div class="group-header-left">
                 <span class="group-icon" :class="`icon-${groupIconKind(group.key, group.sessions)}`">
-                  <svg
+                  <img
                     v-if="groupIconKind(group.key, group.sessions) === 'feishu'"
                     class="brand-icon"
+                    :src="feishuLogo"
                     width="13"
                     height="13"
-                    viewBox="0 0 48 48"
-                    aria-label="飞书"
-                  >
-                    <!-- 简化飞书标识：蓝底圆角方 + 白色飞鸟/纸飞机形 -->
-                    <rect x="4" y="4" width="40" height="40" rx="10" fill="currentColor" />
-                    <path
-                      fill="#fff"
-                      d="M14 30.5c4.2-8.8 10.6-14.6 19.5-17.5-3.4 3.6-5.2 7-5.8 10.2 3.4-.6 6.6-.2 9.6 1.3-5.4 1.4-9.6 3.8-12.7 7.2-2.4 2.6-5.3 4.5-8.8 5.5 1.6-2.3 2.6-4.7 3.1-7.2-1.9.5-3.6 1.4-4.9 2.8v-2.3z"
-                    />
-                  </svg>
-                  <svg
+                    alt="飞书"
+                    draggable="false"
+                  />
+                  <img
                     v-else-if="groupIconKind(group.key, group.sessions) === 'weixin'"
                     class="brand-icon"
+                    :src="weixinLogo"
                     width="13"
                     height="13"
-                    viewBox="0 0 48 48"
-                    aria-label="微信"
-                  >
-                    <!-- 简化微信标识：绿底圆角方 + 双气泡 -->
-                    <rect x="4" y="4" width="40" height="40" rx="10" fill="currentColor" />
-                    <path
-                      fill="#fff"
-                      d="M19.2 12.5c-6.1 0-11 3.9-11 8.7 0 2.7 1.5 5.1 3.9 6.7l-1 3 3.4-1.7c1.1.3 2.3.5 3.5.5.4 0 .8 0 1.2-.1-.4-1.2-.6-2.4-.6-3.7 0-4.6 4.4-8.3 9.8-8.3.3 0 .6 0 .9.1-.8-3.4-4.7-5.9-9.5-5.9zm-3.7 4.3c.7 0 1.2.5 1.2 1.2s-.5 1.2-1.2 1.2-1.2-.5-1.2-1.2.5-1.2 1.2-1.2zm7.3 0c.7 0 1.2.5 1.2 1.2s-.5 1.2-1.2 1.2-1.2-.5-1.2-1.2.5-1.2 1.2-1.2zm7.5 4.6c-5 0-9 3.4-9 7.5 0 4.1 4 7.5 9 7.5.9 0 1.8-.1 2.6-.3l2.9 1.5-.8-2.6c1.9-1.4 3.1-3.3 3.1-5.4 0-4.1-4-7.7-9-7.7zm-2.5 4.1c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .5-1 1-1zm5 0c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .5-1 1-1z"
-                    />
-                  </svg>
+                    alt="微信"
+                    draggable="false"
+                  />
                   <el-icon v-else :size="13">
                     <PartlyCloudy v-if="groupIconKind(group.key, group.sessions) === 'cloud' && !isGroupCollapsed(group.key)" />
                     <Cloudy v-else-if="groupIconKind(group.key, group.sessions) === 'cloud'" />
@@ -458,6 +446,8 @@ import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { cloudGroupKey, formatCloudGroupLabel, groupIconKind, isSharedCloudProject } from '../../utils/cloud-project'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
+import feishuLogo from '../../assets/feishu-logo.svg'
+import weixinLogo from '../../assets/weixin-logo.png'
 
 const props = defineProps<{
   collapsed: boolean
@@ -1418,6 +1408,9 @@ function onGroupDragEnd() {
 
 .group-icon .brand-icon {
   display: block;
+  width: 13px;
+  height: 13px;
+  object-fit: contain;
 }
 
 .group-icon.icon-cloud {
@@ -1426,14 +1419,6 @@ function onGroupDragEnd() {
 
 .group-icon.icon-folder {
   color: #f59e0b;
-}
-
-.group-icon.icon-feishu {
-  color: #3370ff;
-}
-
-.group-icon.icon-weixin {
-  color: #07c160;
 }
 
 .group-toggle {
@@ -1824,14 +1809,6 @@ function onGroupDragEnd() {
 
 [data-theme="dark"] .group-icon.icon-folder {
   color: #fbbf24;
-}
-
-[data-theme="dark"] .group-icon.icon-feishu {
-  color: #6b9bff;
-}
-
-[data-theme="dark"] .group-icon.icon-weixin {
-  color: #2be073;
 }
 
 [data-theme="dark"] .session-group.drag-over::before {

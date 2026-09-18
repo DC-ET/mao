@@ -7,6 +7,49 @@
         </div>
       </template>
 
+      <el-form :inline="true" class="search-form">
+        <FilterPanel>
+          <template #always>
+            <el-form-item label="关键词">
+              <el-input
+                v-model="filters.keyword"
+                placeholder="任务名称/内容"
+                clearable
+                style="width: 180px"
+                @keyup.enter="handleSearch"
+                @clear="handleSearch"
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="handleSearch">查询</el-button>
+              <el-button @click="handleReset">重置</el-button>
+            </el-form-item>
+          </template>
+          <el-form-item label="用户">
+            <el-select v-model="filters.userId" placeholder="全部用户" clearable filterable style="width: 160px">
+              <el-option v-for="u in userOptions" :key="u.id" :label="u.displayName || u.username || `用户 #${u.id}`" :value="u.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Agent">
+            <el-select v-model="filters.agentId" placeholder="全部 Agent" clearable filterable style="width: 160px">
+              <el-option v-for="a in agentOptions" :key="a.id" :label="a.name || `Agent #${a.id}`" :value="a.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
+              <el-option label="启用" value="ACTIVE" />
+              <el-option label="暂停" value="PAUSED" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="完结">
+            <el-select v-model="filters.finished" placeholder="全部" clearable style="width: 120px">
+              <el-option label="进行中" :value="false" />
+              <el-option label="已完结" :value="true" />
+            </el-select>
+          </el-form-item>
+        </FilterPanel>
+      </el-form>
+
       <el-table v-if="!isMobile" :data="tasks" stripe v-loading="loading">
         <template #empty>
           <el-empty description="暂无定时任务" :image-size="60" />
@@ -131,25 +174,27 @@
         <el-empty v-if="!loading && tasks.length === 0" description="暂无定时任务" />
       </div>
 
-      <el-pagination
-        v-if="total > pageSize"
-        class="pagination"
-        :current-page="pageNum"
-        :page-size="pageSize"
+      <ResponsivePagination
+        v-model:current-page="pageNum"
+        v-model:page-size="pageSize"
         :total="total"
-        layout="total, prev, pager, next"
-        @current-change="handlePageChange"
+        :page-sizes="[10, 20, 50, 100]"
+        class="pagination"
+        @current-change="fetchTasks"
+        @size-change="handleSizeChange"
       />
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { ElMessage } from 'element-plus'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import ResponsivePagination from '../../components/ResponsivePagination.vue'
+import FilterPanel from '../../components/FilterPanel.vue'
 
 const { isMobile } = useBreakpoint()
 
@@ -179,6 +224,16 @@ const pageSize = ref(20)
 const total = ref(0)
 const userNames = ref<Record<number, string>>({})
 const agentNames = ref<Record<number, string>>({})
+const userOptions = ref<Array<{ id: number; username?: string; displayName?: string }>>([])
+const agentOptions = ref<Array<{ id: number; name?: string }>>([])
+
+const filters = reactive({
+  keyword: '',
+  userId: null as number | null,
+  agentId: null as number | null,
+  status: '' as string,
+  finished: null as boolean | null
+})
 
 function userName(id: number) {
   return userNames.value[id] || `用户 #${id}`
@@ -199,29 +254,43 @@ async function fetchLookups() {
       nextUsers[u.id] = u.displayName || u.username || `用户 #${u.id}`
     }
     userNames.value = nextUsers
+    userOptions.value = usersRes.data || []
     const nextAgents: Record<number, string> = {}
     for (const a of agentsRes.data || []) {
       nextAgents[a.id] = a.name || `Agent #${a.id}`
     }
     agentNames.value = nextAgents
+    agentOptions.value = agentsRes.data || []
   } catch {
     userNames.value = {}
     agentNames.value = {}
+    userOptions.value = []
+    agentOptions.value = []
   }
 }
 
+let fetchTasksSeq = 0
 async function fetchTasks() {
+  const seq = ++fetchTasksSeq
   loading.value = true
   try {
-    const { data } = await api.get('/scheduled-tasks/all', {
-      params: { pageNum: pageNum.value, pageSize: pageSize.value }
-    })
+    const params: Record<string, unknown> = {
+      pageNum: pageNum.value,
+      pageSize: pageSize.value
+    }
+    if (filters.keyword.trim()) params.keyword = filters.keyword.trim()
+    if (filters.userId != null) params.userId = filters.userId
+    if (filters.agentId != null) params.agentId = filters.agentId
+    if (filters.status) params.status = filters.status
+    if (filters.finished != null) params.finished = filters.finished
+    const { data } = await api.get('/scheduled-tasks/all', { params })
+    if (seq !== fetchTasksSeq) return
     tasks.value = data.records
     total.value = data.total
   } catch {
     // interceptor handles toast
   } finally {
-    loading.value = false
+    if (seq === fetchTasksSeq) loading.value = false
   }
 }
 
@@ -245,8 +314,23 @@ async function handleDelete(id: number) {
   }
 }
 
-function handlePageChange(page: number) {
-  pageNum.value = page
+function handleSearch() {
+  pageNum.value = 1
+  fetchTasks()
+}
+
+function handleReset() {
+  filters.keyword = ''
+  filters.userId = null
+  filters.agentId = null
+  filters.status = ''
+  filters.finished = null
+  pageNum.value = 1
+  fetchTasks()
+}
+
+function handleSizeChange() {
+  pageNum.value = 1
   fetchTasks()
 }
 
@@ -289,6 +373,9 @@ onMounted(() => {
   margin-top: 16px;
   display: flex;
   justify-content: flex-end;
+}
+.search-form {
+  margin-bottom: 8px;
 }
 .text-muted {
   color: var(--el-text-color-secondary);

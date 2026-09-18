@@ -40,7 +40,7 @@ mao scheduled-task list --json
 
 ### 用途
 
-全量列出所有用户的定时任务（分页），需 `session:read` 权限。管理排查用。
+全量列出所有用户的定时任务（分页 + 筛选），需 `session:read` 权限。管理排查用。
 
 ### 参数说明
 
@@ -48,6 +48,11 @@ mao scheduled-task list --json
 |------|------|------|------|------|
 | `--page-num` | 否 | 数字 | 1 | 页码 |
 | `--page-size` | 否 | 数字 | 20 | 每页数量 |
+| `--keyword` | 否 | 字符串 | - | 任务名称/内容模糊匹配 |
+| `--user-id` | 否 | 数字 | - | 按用户过滤 |
+| `--agent-id` | 否 | 数字 | - | 按 Agent 过滤 |
+| `--status` | 否 | 字符串 | - | `ACTIVE` 或 `PAUSED` |
+| `--finished` | 否 | 布尔字符串 | - | `true` 已完结 / `false` 进行中 |
 
 `GET /scheduled-tasks/all`
 
@@ -56,6 +61,8 @@ mao scheduled-task list --json
 ```bash
 mao scheduled-task list-all --json
 mao scheduled-task list-all --page-num 2 --page-size 50
+mao scheduled-task list-all --user-id 7 --status PAUSED
+mao scheduled-task list-all --keyword 报告 --finished false
 ```
 
 ---
