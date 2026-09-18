@@ -2,7 +2,7 @@
 
 > 范围：`admin/` 用量分析首页（`/analytics`）+ `backend-ts` 管理端分析接口。
 > 目标：把「一页塞满所有分析」重构为**按维度分 Tab、按需取数**的生产级分析工作台。
-> 状态：设计方案。Phase 1（壳层 + 6 Tab + 分维度接口 + 懒加载）已实现；Phase 2（`llm_call` 质量维度）待做。相关实现入口：`admin/src/views/analytics/AnalyticsView.vue`、`backend-ts/src/admin/admin-analytics.service.ts`、`backend-ts/src/admin/admin.routes.ts`。
+> 状态：设计方案。Phase 1（壳层 + 6 Tab + 分维度接口 + 懒加载）与 Phase 2（`llm_call` 质量维度：成功率/缓存/延迟/scene/失败切片）已实现；Phase 3（日汇总表、自定义日期范围等）待做。相关实现入口：`admin/src/views/analytics/AnalyticsView.vue`、`backend-ts/src/admin/admin-analytics.service.ts`、`backend-ts/src/admin/admin.routes.ts`。
 
 ---
 

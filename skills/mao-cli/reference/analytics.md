@@ -78,21 +78,26 @@
 
 | 字段 | 说明 |
 |------|------|
-| `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `contextWindowTokens`，按 Token 合计降序；窗口内完全未被调用的模型不返回 |
-| `periodTotals` | `{ totalTokens }` |
+| `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens`（含 llm_call 调用 Token）/ `backgroundCalls` / `contextWindowTokens`，以及质量列：`callCount` / `callFailCount` / `callSuccessRate` / `callTokens` / `promptTokens` / `cachedTokens` / `cacheHitRate` / `avgFirstTokenMs` / `avgDurationMs` / `retryCallCount`。按 Token 合计降序；窗口内完全未被调用的模型不返回 |
+| `periodTotals` | `{ totalTokens }`（模型明细合计） |
+| `sceneStats[]` | `{ key, callCount, failCount, callTokens }`，默认全部模型；可传 `modelId` 按模型过滤 |
+| `protocolStats[]` | 同上，按 `llm_call.protocol` 分组 |
+| `excludeConnectivity` | 是否排除了 `connectivity_test`（默认 true） |
+
+可选查询参数：`excludeConnectivity=true|false`、`modelId`。
 
 ### users
 
 | 字段 | 说明 |
 |------|------|
-| `userActivity[]` | `userId` / `username` / `displayName` / `sessionCount` / `messageCount` / `totalTokens` / `lastLoginAt`，剔除零活跃用户，按消息数降序 |
+| `userActivity[]` | `userId` / `username` / `displayName` / `sessionCount` / `messageCount` / `totalTokens` / `lastLoginAt` / `callCount` / `callFailCount` / `callTokens`，剔除零活跃用户，按消息数降序 |
 | `periodTotals` | `{ activeUsers }` |
 
 ### agents
 
 | 字段 | 说明 |
 |------|------|
-| `agentStats[]` | `agentId` / `agentName` / `sessionCount` / `messageCount` / `totalTokens`，按会话数降序 |
+| `agentStats[]` | `agentId` / `agentName` / `sessionCount` / `messageCount` / `totalTokens` / `callCount` / `callFailCount` / `callTokens` / `callSuccessRate` |
 
 ### sessions
 
@@ -103,10 +108,19 @@
 | `executionModes[]` | `{ executionMode, count }`：CLOUD / LOCAL |
 | `livePhases[]` | 实时 phase 快照（全表，不随周期变） |
 | `periodTotals` | `{ sessions, activeUsers, completedSessions, failedSessions }` |
+| `callQuality` | `callCount` / `successCount` / `failCount` / `retryCallCount` / `promptTokens` / `cachedTokens` / `callTokens` / `successRate` / `retryRatio` / `cacheHitRate` / `firstTokenP50` / `firstTokenP95` / `durationP50` / `durationP95` |
+| `failTop` | `{ byModel[], byScene[] }`：失败次数 Top5，字段 `key` / `name` / `failCount` / `callCount` |
+
+### trends（补充）
+
+| 字段 | 说明 |
+|------|------|
+| `trends[]` 额外字段 | `callCount` / `callFailCount` / `callTokens` / `promptTokens` / `cachedTokens` / `callSuccessRate` / `cacheHitRate` |
+| `callQuality` | 窗口合计的质量摘要，同 sessions 口径（不含延迟分位） |
 
 ### summary（旧）
 
-一页返回 overview + periodTotals + trends + phaseDistribution + agentStats + userActivity + modelStats。管理后台已改走分维度接口；字段与上表对应项一致。
+一页返回 overview + periodTotals + trends + phaseDistribution + agentStats + userActivity + modelStats。管理后台已改走分维度接口；字段与上表对应项一致（不含 Phase 2 质量列）。
 
 ## 成功失败判断
 
@@ -119,10 +133,11 @@
 mao analytics overview
 mao analytics trends --days 7 --raw
 mao analytics models --days 30 --raw
+mao analytics models --days 7 --raw   # 质量列与 sceneStats
 mao analytics users --days 7 --limit 50 --raw
 mao analytics agents --days 7 --raw
 mao analytics sessions --days 1 --end-offset 1 --raw
 mao analytics summary --days 7 --raw
 ```
 
-排查建议：只关心趋势时用 `--raw` 配合 `jq '.data.trends'`；核对环比用 `jq '{now:.data.periodTotals, prev:.data.previousTotals}'`；总览洞察用 `jq '.data.insights'`。
+排查建议：只关心趋势时用 `--raw` 配合 `jq '.data.trends'`；核对环比用 `jq '{now:.data.periodTotals, prev:.data.previousTotals}'`；总览洞察用 `jq '.data.insights'`；模型慢/贵/易失败用 `jq '.data.modelStats[] | {modelName,totalTokens,callSuccessRate,avgDurationMs,cacheHitRate}'`。

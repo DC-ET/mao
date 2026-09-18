@@ -9,6 +9,13 @@ export interface TrendPoint {
   backgroundTokens: number
   totalTokens: number
   backgroundCalls: number
+  callCount?: number
+  callFailCount?: number
+  callTokens?: number
+  promptTokens?: number
+  cachedTokens?: number
+  callSuccessRate?: number | null
+  cacheHitRate?: number | null
 }
 
 export interface RankItem {

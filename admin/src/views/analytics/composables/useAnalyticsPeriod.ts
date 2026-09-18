@@ -40,7 +40,7 @@ export function buildAnalyticsQuery(period: PeriodValue, limit?: number): Analyt
 
 /** 缓存键含周期，换周期自然 miss；force 由调用方先 invalidate。 */
 export function periodKey(scope: string, query: AnalyticsQuery): string {
-  return `${scope}|${query.days}|${query.endOffset}|${query.limit ?? ''}`
+  return `${scope}|${query.days}|${query.endOffset}|${query.limit ?? ''}|${query.modelId ?? ''}|${query.excludeConnectivity ?? ''}`
 }
 
 export function usePeriodMeta(period: Ref<PeriodValue>) {

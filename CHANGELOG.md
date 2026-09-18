@@ -15,6 +15,25 @@
 
 ---
 
+## 0.0.149 (2026-09-18)
+
+### 管理后台
+
+- 用量分析 Phase 2：`llm_call` 成为调用质量权威数据源。模型明细增加调用次数、成功率、调用 Token、缓存命中率、首 token/总耗时均值；场景与协议分布可按选中模型切换。
+- 趋势 Tab 新增「调用 / 质量」视图：调用与失败次数、成功率与缓存命中率日曲线。
+- 会话 Tab 新增调用质量面板（成功率、重试占比、缓存命中、首 token/总耗时 p50/p95）与失败切片 Top（按模型 / 场景）。
+- 用户 / Agent 明细合并调用次数与失败数，支持深链到调用流水（`/llm-call?modelId|userId|agentId|scene|success=`）；流水页支持 query 预置筛选与 Agent ID 过滤。
+- 分析聚合默认排除 `connectivity_test` 自检调用，模型 Tab 可勾选「含自检调用」。
+
+### 后端
+
+- 分维度分析接口接入 `llm_call` 聚合：models / trends / sessions / users / agents 返回调用质量字段；支持 `excludeConnectivity`、models 支持 `modelId`（场景分布按模型过滤）。
+- 会话质量分位（首 token / 总耗时 p50、p95）在服务端用 OFFSET 近似计算；模型延迟为均值，避免逐模型分位拖慢 90 天窗口。
+
+### 终端 CLI（mao-cli）
+
+- analytics 分维度接口返回新增质量字段（`callCount` / `callSuccessRate` / `cacheHitRate` / `callQuality` 等），与管理后台 Tab 对齐。
+
 ## 0.0.148 (2026-09-18)
 
 ### 管理后台

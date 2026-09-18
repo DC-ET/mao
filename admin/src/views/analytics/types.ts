@@ -37,6 +37,13 @@ export interface TrendPoint {
   backgroundTokens: number
   totalTokens: number
   backgroundCalls: number
+  callCount?: number
+  callFailCount?: number
+  callTokens?: number
+  promptTokens?: number
+  cachedTokens?: number
+  callSuccessRate?: number | null
+  cacheHitRate?: number | null
 }
 
 export interface SparkPoint {
@@ -68,8 +75,46 @@ export interface OverviewPayload {
 export interface TrendsPayload {
   period: AnalyticsPeriodMeta
   trends: TrendPoint[]
-  periodTotals: PeriodTotals
+  periodTotals: PeriodTotals & {
+    callCount?: number
+    callFailCount?: number
+    callTokens?: number
+    promptTokens?: number
+    cachedTokens?: number
+  }
   previousTotals: PreviousTotals
+  callQuality?: CallQualitySummary
+}
+
+export interface CallQualitySummary {
+  callCount: number
+  successCount: number
+  failCount: number
+  retryCallCount: number
+  promptTokens: number
+  cachedTokens: number
+  callTokens: number
+  successRate?: number | null
+  retryRatio?: number | null
+  cacheHitRate?: number | null
+  firstTokenP50?: number | null
+  firstTokenP95?: number | null
+  durationP50?: number | null
+  durationP95?: number | null
+}
+
+export interface NamedCallStat {
+  key: string
+  callCount: number
+  failCount: number
+  callTokens: number
+}
+
+export interface FailTopItem {
+  key: string | number
+  name: string
+  failCount: number
+  callCount: number
 }
 
 export interface ModelStatRow {
@@ -85,6 +130,16 @@ export interface ModelStatRow {
   totalTokens: number
   backgroundCalls: number
   contextWindowTokens?: number
+  callCount?: number
+  callFailCount?: number
+  callSuccessRate?: number | null
+  callTokens?: number
+  promptTokens?: number
+  cachedTokens?: number
+  cacheHitRate?: number | null
+  avgFirstTokenMs?: number | null
+  avgDurationMs?: number | null
+  retryCallCount?: number
 }
 
 export interface ModelsPayload {
@@ -92,6 +147,10 @@ export interface ModelsPayload {
   modelStats: ModelStatRow[]
   periodTotals: { totalTokens: number }
   previousTotals: PreviousTotals
+  sceneStats?: NamedCallStat[]
+  protocolStats?: NamedCallStat[]
+  sceneModelId?: number | null
+  excludeConnectivity?: boolean
 }
 
 export interface UserActivityRow {
@@ -102,6 +161,9 @@ export interface UserActivityRow {
   messageCount: number
   totalTokens: number
   lastLoginAt?: string | null
+  callCount?: number
+  callFailCount?: number
+  callTokens?: number
 }
 
 export interface UsersPayload {
@@ -117,6 +179,10 @@ export interface AgentStatRow {
   sessionCount: number
   messageCount: number
   totalTokens: number
+  callCount?: number
+  callFailCount?: number
+  callTokens?: number
+  callSuccessRate?: number | null
 }
 
 export interface AgentsPayload {
@@ -142,10 +208,18 @@ export interface SessionsPayload {
     failedSessions: number
   }
   previousTotals: PreviousTotals
+  callQuality?: CallQualitySummary
+  failTop?: {
+    byModel: FailTopItem[]
+    byScene: FailTopItem[]
+  }
+  excludeConnectivity?: boolean
 }
 
 export interface AnalyticsQuery {
   days: number
   endOffset: number
   limit?: number
+  modelId?: number
+  excludeConnectivity?: boolean
 }

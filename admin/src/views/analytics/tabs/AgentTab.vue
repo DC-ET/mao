@@ -43,9 +43,22 @@
             <strong>{{ formatNumber(row.totalTokens) }}</strong>
           </template>
         </el-table-column>
+        <el-table-column label="调用" width="80" align="right">
+          <template #default="{ row }">{{ formatNumber(row.callCount || 0) }}</template>
+        </el-table-column>
+        <el-table-column label="成功率" width="90" align="right">
+          <template #default="{ row }">
+            {{ row.callSuccessRate == null ? '-' : `${row.callSuccessRate}%` }}
+          </template>
+        </el-table-column>
         <el-table-column label="消息/会话" width="110" align="right" class-name="hide-on-mobile">
           <template #default="{ row }">
             {{ row.sessionCount ? (row.messageCount / row.sessionCount).toFixed(1) : '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100" class-name="hide-on-mobile">
+          <template #default="{ row }">
+            <button class="linkish" type="button" @click="go(`/llm-call?agentId=${row.agentId}`)">调用流水</button>
           </template>
         </el-table-column>
       </el-table>

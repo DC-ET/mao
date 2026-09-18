@@ -57,6 +57,60 @@ export interface NamedCountRow {
   count: number;
 }
 
+export interface LlmCallModelRow {
+  id: number;
+  callCount: number;
+  successCount: number;
+  failCount: number;
+  retryCallCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  callTokens: number;
+  firstTokenMsSum: number;
+  firstTokenMsCount: number;
+  durationMsSum: number;
+}
+
+export interface LlmCallDailyRow {
+  day: string;
+  callCount: number;
+  failCount: number;
+  promptTokens: number;
+  cachedTokens: number;
+  callTokens: number;
+}
+
+export interface LlmCallNamedRow {
+  key: string;
+  callCount: number;
+  failCount: number;
+  callTokens: number;
+}
+
+export interface LlmCallDimRow {
+  id: number;
+  callCount: number;
+  failCount: number;
+  callTokens: number;
+}
+
+export interface LlmCallQualitySummary {
+  callCount: number;
+  successCount: number;
+  failCount: number;
+  retryCallCount: number;
+  promptTokens: number;
+  cachedTokens: number;
+  callTokens: number;
+}
+
+export interface LlmCallFilterOpts {
+  excludeConnectivity?: boolean;
+  modelId?: number | null;
+  successOnly?: boolean;
+}
+
 export interface AdminAnalyticsStore {
   selectDailySessionCounts(range: AnalyticsRange): Promise<DailySessionRow[]>;
   selectDailyMessageStats(range: AnalyticsRange): Promise<DailyMessageRow[]>;
@@ -72,6 +126,20 @@ export interface AdminAnalyticsStore {
   selectUsageStatsByModel(range: AnalyticsRange): Promise<GroupUsageRow[]>;
   selectSessionTypeCounts(range: AnalyticsRange): Promise<NamedCountRow[]>;
   selectExecutionModeCounts(range: AnalyticsRange): Promise<NamedCountRow[]>;
+  selectDailyLlmCallStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDailyRow[]>;
+  selectLlmCallStatsByModel(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallModelRow[]>;
+  selectLlmCallSceneStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallNamedRow[]>;
+  selectLlmCallProtocolStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallNamedRow[]>;
+  selectLlmCallStatsByUser(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDimRow[]>;
+  selectLlmCallStatsByAgent(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDimRow[]>;
+  selectLlmCallQualitySummary(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallQualitySummary>;
+  countLlmCallLatency(range: AnalyticsRange, column: 'first_token_ms' | 'duration_ms', opts?: LlmCallFilterOpts): Promise<number>;
+  selectLlmCallLatencyAtOffset(
+    range: AnalyticsRange,
+    column: 'first_token_ms' | 'duration_ms',
+    offset: number,
+    opts?: LlmCallFilterOpts,
+  ): Promise<number | null>;
   countActiveUsers(range: AnalyticsRange): Promise<number>;
   countSessions(range: AnalyticsRange): Promise<number>;
   sumMessages(range: AnalyticsRange): Promise<{ count: number; tokens: number }>;
@@ -219,6 +287,179 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
        GROUP BY COALESCE(execution_mode, 'CLOUD')`,
       [range.startAt, range.endAtExclusive],
     );
+  }
+
+  private llmCallWhere(range: AnalyticsRange, opts?: LlmCallFilterOpts): { sql: string; params: unknown[] } {
+    const clauses = ['created_at >= ?', 'created_at < ?'];
+    const params: unknown[] = [range.startAt, range.endAtExclusive];
+    if (opts?.excludeConnectivity !== false) {
+      clauses.push(`scene != 'connectivity_test'`);
+    }
+    if (opts?.modelId != null) {
+      clauses.push('model_id = ?');
+      params.push(opts.modelId);
+    }
+    if (opts?.successOnly) {
+      clauses.push('success = 1');
+    }
+    return { sql: clauses.join(' AND '), params };
+  }
+
+  selectDailyLlmCallStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDailyRow[]> {
+    const { sql, params } = this.llmCallWhere(range, opts);
+    return this.db.query(
+      `SELECT DATE(created_at) AS day,
+              COUNT(*) AS callCount,
+              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
+              COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
+              COALESCE(SUM(total_tokens), 0) AS callTokens
+       FROM llm_call
+       WHERE ${sql}
+       GROUP BY DATE(created_at)`,
+      params,
+    );
+  }
+
+  selectLlmCallStatsByModel(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallModelRow[]> {
+    const { sql, params } = this.llmCallWhere(range, { ...opts, modelId: null });
+    return this.db.query(
+      `SELECT COALESCE(model_id, 0) AS id,
+              COUNT(*) AS callCount,
+              COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) AS successCount,
+              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END), 0) AS retryCallCount,
+              COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
+              COALESCE(SUM(completion_tokens), 0) AS completionTokens,
+              COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
+              COALESCE(SUM(total_tokens), 0) AS callTokens,
+              COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL THEN first_token_ms ELSE 0 END), 0) AS firstTokenMsSum,
+              COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL THEN 1 ELSE 0 END), 0) AS firstTokenMsCount,
+              COALESCE(SUM(duration_ms), 0) AS durationMsSum
+       FROM llm_call
+       WHERE ${sql}
+       GROUP BY COALESCE(model_id, 0)`,
+      params,
+    );
+  }
+
+  selectLlmCallSceneStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallNamedRow[]> {
+    const { sql, params } = this.llmCallWhere(range, opts);
+    return this.db.query(
+      `SELECT COALESCE(scene, 'unknown') AS \`key\`,
+              COUNT(*) AS callCount,
+              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(total_tokens), 0) AS callTokens
+       FROM llm_call
+       WHERE ${sql}
+       GROUP BY COALESCE(scene, 'unknown')`,
+      params,
+    );
+  }
+
+  selectLlmCallProtocolStats(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallNamedRow[]> {
+    const { sql, params } = this.llmCallWhere(range, opts);
+    return this.db.query(
+      `SELECT COALESCE(protocol, 'unknown') AS \`key\`,
+              COUNT(*) AS callCount,
+              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(total_tokens), 0) AS callTokens
+       FROM llm_call
+       WHERE ${sql}
+       GROUP BY COALESCE(protocol, 'unknown')`,
+      params,
+    );
+  }
+
+  selectLlmCallStatsByUser(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDimRow[]> {
+    const { sql, params } = this.llmCallWhere(range, opts);
+    return this.db.query(
+      `SELECT user_id AS id,
+              COUNT(*) AS callCount,
+              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(total_tokens), 0) AS callTokens
+       FROM llm_call
+       WHERE ${sql} AND user_id IS NOT NULL
+       GROUP BY user_id`,
+      params,
+    );
+  }
+
+  selectLlmCallStatsByAgent(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDimRow[]> {
+    const { sql, params } = this.llmCallWhere(range, opts);
+    return this.db.query(
+      `SELECT agent_id AS id,
+              COUNT(*) AS callCount,
+              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(total_tokens), 0) AS callTokens
+       FROM llm_call
+       WHERE ${sql} AND agent_id IS NOT NULL
+       GROUP BY agent_id`,
+      params,
+    );
+  }
+
+  async selectLlmCallQualitySummary(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallQualitySummary> {
+    const { sql, params } = this.llmCallWhere(range, opts);
+    const row = await this.db.queryOne<{
+      callCount: number;
+      successCount: number;
+      failCount: number;
+      retryCallCount: number;
+      promptTokens: number;
+      cachedTokens: number;
+      callTokens: number;
+    }>(
+      `SELECT COUNT(*) AS callCount,
+              COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) AS successCount,
+              COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END), 0) AS retryCallCount,
+              COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
+              COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
+              COALESCE(SUM(total_tokens), 0) AS callTokens
+       FROM llm_call
+       WHERE ${sql}`,
+      params,
+    );
+    return {
+      callCount: toNumber(row?.callCount),
+      successCount: toNumber(row?.successCount),
+      failCount: toNumber(row?.failCount),
+      retryCallCount: toNumber(row?.retryCallCount),
+      promptTokens: toNumber(row?.promptTokens),
+      cachedTokens: toNumber(row?.cachedTokens),
+      callTokens: toNumber(row?.callTokens),
+    };
+  }
+
+  async countLlmCallLatency(
+    range: AnalyticsRange,
+    column: 'first_token_ms' | 'duration_ms',
+    opts?: LlmCallFilterOpts,
+  ): Promise<number> {
+    const { sql, params } = this.llmCallWhere(range, opts);
+    const row = await this.db.queryOne<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM llm_call WHERE ${sql} AND ${column} IS NOT NULL AND ${column} > 0`,
+      params,
+    );
+    return toNumber(row?.c);
+  }
+
+  async selectLlmCallLatencyAtOffset(
+    range: AnalyticsRange,
+    column: 'first_token_ms' | 'duration_ms',
+    offset: number,
+    opts?: LlmCallFilterOpts,
+  ): Promise<number | null> {
+    const { sql, params } = this.llmCallWhere(range, opts);
+    const row = await this.db.queryOne<{ v: number }>(
+      `SELECT ${column} AS v FROM llm_call
+       WHERE ${sql} AND ${column} IS NOT NULL AND ${column} > 0
+       ORDER BY ${column} ASC
+       LIMIT 1 OFFSET ?`,
+      [...params, Math.max(0, Math.trunc(offset) || 0)],
+    );
+    return row?.v == null ? null : toNumber(row.v);
   }
 
   async countActiveUsers(range: AnalyticsRange): Promise<number> {
@@ -398,52 +639,87 @@ export class AdminAnalyticsService {
     };
   }
 
-  /** 趋势：日序列 + 窗口合计 + 环比。 */
-  async trendsScope(days: number, endOffset = 0): Promise<Record<string, unknown>> {
+  /** 趋势：日序列（含 llm_call 调用质量）+ 窗口合计 + 环比。 */
+  async trendsScope(days: number, endOffset = 0, opts?: { excludeConnectivity?: boolean }): Promise<Record<string, unknown>> {
     const { range, previous } = this.resolveWindows(days, endOffset);
-    const [trends, activeUsers, previousTotals] = await Promise.all([
-      this.trends(range),
+    const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
+    const [trends, activeUsers, previousTotals, quality, prevQuality] = await Promise.all([
+      this.trends(range, callOpts),
       this.store.countActiveUsers(range),
-      this.previousTotals(previous),
+      this.previousTotals(previous, callOpts),
+      this.store.selectLlmCallQualitySummary(range, callOpts),
+      this.store.selectLlmCallQualitySummary(previous, callOpts),
     ]);
     const periodPhases = phaseMap(await this.store.selectPhaseCounts(range));
+    const periodTotals = {
+      ...sumTrends(trends),
+      activeUsers,
+      completedSessions: periodPhases.get('COMPLETED') ?? 0,
+      failedSessions: periodPhases.get('FAILED') ?? 0,
+      callCount: quality.callCount,
+      callFailCount: quality.failCount,
+      callTokens: quality.callTokens,
+      promptTokens: quality.promptTokens,
+      cachedTokens: quality.cachedTokens,
+    };
     return {
       period: this.periodMeta(range, previous),
       trends,
-      periodTotals: {
-        ...sumTrends(trends),
-        activeUsers,
-        completedSessions: periodPhases.get('COMPLETED') ?? 0,
-        failedSessions: periodPhases.get('FAILED') ?? 0,
+      periodTotals,
+      previousTotals: {
+        ...previousTotals,
+        callCount: prevQuality.callCount,
+        callFailCount: prevQuality.failCount,
+        callTokens: prevQuality.callTokens,
       },
-      previousTotals,
+      callQuality: qualitySummaryFields(quality),
     };
   }
 
-  /** 模型：窗口内有用量的模型聚合 + Token 合计。 */
-  async modelsScope(days: number, endOffset = 0): Promise<Record<string, unknown>> {
+  /** 模型：窗口内有用量的模型聚合 + llm_call 质量列 + scene/protocol 分布。 */
+  async modelsScope(
+    days: number,
+    endOffset = 0,
+    opts?: { excludeConnectivity?: boolean; sceneModelId?: number | null },
+  ): Promise<Record<string, unknown>> {
     const { range, previous } = this.resolveWindows(days, endOffset);
-    const [modelStats, previousTotals, trends] = await Promise.all([
-      this.modelStats(range),
-      this.previousTotals(previous),
-      this.trends(range),
+    const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
+    const sceneModelId = opts?.sceneModelId != null && Number.isFinite(opts.sceneModelId) ? Number(opts.sceneModelId) : null;
+    const [modelStats, previousTotals, trends, sceneRows, protocolRows] = await Promise.all([
+      this.modelStats(range, callOpts),
+      this.previousTotals(previous, callOpts),
+      this.trends(range, callOpts),
+      this.store.selectLlmCallSceneStats(range, { ...callOpts, modelId: sceneModelId }),
+      this.store.selectLlmCallProtocolStats(range, callOpts),
     ]);
     return {
       period: this.periodMeta(range, previous),
       modelStats,
-      periodTotals: { totalTokens: sumTrends(trends).totalTokens },
+      periodTotals: {
+        totalTokens: modelStats.reduce((sum, row) => sum + toNumber((row as { totalTokens?: unknown }).totalTokens), 0),
+      },
       previousTotals,
+      sceneStats: namedCountRows(sceneRows),
+      protocolStats: namedCountRows(protocolRows),
+      sceneModelId,
+      excludeConnectivity: callOpts.excludeConnectivity,
     };
   }
 
-  /** 用户：窗口内活跃用户排行/明细，默认 Top 20。 */
-  async usersScope(days: number, endOffset = 0, limit = RANK_LIMIT): Promise<Record<string, unknown>> {
+  /** 用户：窗口内活跃用户排行/明细，默认 Top 20，附带 llm_call 消耗与失败。 */
+  async usersScope(
+    days: number,
+    endOffset = 0,
+    limit = RANK_LIMIT,
+    opts?: { excludeConnectivity?: boolean },
+  ): Promise<Record<string, unknown>> {
     const { range, previous } = this.resolveWindows(days, endOffset);
     const safeLimit = clampLimit(limit);
+    const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
     const [userActivity, activeUsers, previousTotals] = await Promise.all([
-      this.userActivity(range, safeLimit),
+      this.userActivity(range, safeLimit, callOpts),
       this.store.countActiveUsers(range),
-      this.previousTotals(previous),
+      this.previousTotals(previous, callOpts),
     ]);
     return {
       period: this.periodMeta(range, previous),
@@ -453,13 +729,19 @@ export class AdminAnalyticsService {
     };
   }
 
-  /** Agent：窗口内会话/消息/Token 排行，默认 Top 20。 */
-  async agentsScope(days: number, endOffset = 0, limit = RANK_LIMIT): Promise<Record<string, unknown>> {
+  /** Agent：窗口内会话/消息/Token 排行 + llm_call 成功率/消耗。 */
+  async agentsScope(
+    days: number,
+    endOffset = 0,
+    limit = RANK_LIMIT,
+    opts?: { excludeConnectivity?: boolean },
+  ): Promise<Record<string, unknown>> {
     const { range, previous } = this.resolveWindows(days, endOffset);
     const safeLimit = clampLimit(limit);
+    const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
     const [agentStats, previousTotals] = await Promise.all([
-      this.agentStats(range, safeLimit),
-      this.previousTotals(previous),
+      this.agentStats(range, safeLimit, callOpts),
+      this.previousTotals(previous, callOpts),
     ]);
     return {
       period: this.periodMeta(range, previous),
@@ -468,17 +750,25 @@ export class AdminAnalyticsService {
     };
   }
 
-  /** 会话：窗口 phase 分布 + 类型/执行模式结构 + 实时运行态。 */
-  async sessionsScope(days: number, endOffset = 0): Promise<Record<string, unknown>> {
+  /** 会话：窗口 phase 分布 + 结构 + 实时运行态 + llm_call 质量面板。 */
+  async sessionsScope(
+    days: number,
+    endOffset = 0,
+    opts?: { excludeConnectivity?: boolean },
+  ): Promise<Record<string, unknown>> {
     const { range, previous } = this.resolveWindows(days, endOffset);
-    const [phaseRows, liveRows, typeRows, modeRows, activeUsers, previousTotals] = await Promise.all([
+    const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
+    const [phaseRows, liveRows, typeRows, modeRows, activeUsers, previousTotals, quality] = await Promise.all([
       this.store.selectPhaseCounts(range),
       this.store.selectLivePhaseCounts(),
       this.store.selectSessionTypeCounts(range),
       this.store.selectExecutionModeCounts(range),
       this.store.countActiveUsers(range),
-      this.previousTotals(previous),
+      this.previousTotals(previous, callOpts),
+      this.store.selectLlmCallQualitySummary(range, callOpts),
     ]);
+    const latency = await this.latencyPercentiles(range, callOpts);
+    const failTop = await this.failTopSlices(range, callOpts);
     const periodPhases = phaseMap(phaseRows);
     const livePhases = phaseMap(liveRows);
     const completedSessions = periodPhases.get('COMPLETED') ?? 0;
@@ -496,7 +786,78 @@ export class AdminAnalyticsService {
       livePhases: PHASES.map((phase) => ({ phase, count: livePhases.get(phase) ?? 0 })),
       periodTotals: { sessions, activeUsers, completedSessions, failedSessions },
       previousTotals,
+      callQuality: {
+        ...qualitySummaryFields(quality),
+        firstTokenP50: latency.firstTokenP50,
+        firstTokenP95: latency.firstTokenP95,
+        durationP50: latency.durationP50,
+        durationP95: latency.durationP95,
+      },
+      failTop,
+      excludeConnectivity: callOpts.excludeConnectivity,
     };
+  }
+
+  private async latencyPercentiles(
+    range: AnalyticsRange,
+    callOpts: { excludeConnectivity: boolean },
+  ): Promise<{
+    firstTokenP50: number | null;
+    firstTokenP95: number | null;
+    durationP50: number | null;
+    durationP95: number | null;
+  }> {
+    const [ftCount, durCount] = await Promise.all([
+      this.store.countLlmCallLatency(range, 'first_token_ms', callOpts),
+      this.store.countLlmCallLatency(range, 'duration_ms', callOpts),
+    ]);
+    const pick = async (column: 'first_token_ms' | 'duration_ms', count: number, p: number) => {
+      if (count <= 0) return null;
+      const offset = Math.min(count - 1, Math.max(0, Math.floor((count - 1) * p)));
+      return this.store.selectLlmCallLatencyAtOffset(range, column, offset, callOpts);
+    };
+    const [firstTokenP50, firstTokenP95, durationP50, durationP95] = await Promise.all([
+      pick('first_token_ms', ftCount, 0.5),
+      pick('first_token_ms', ftCount, 0.95),
+      pick('duration_ms', durCount, 0.5),
+      pick('duration_ms', durCount, 0.95),
+    ]);
+    return { firstTokenP50, firstTokenP95, durationP50, durationP95 };
+  }
+
+  private async failTopSlices(
+    range: AnalyticsRange,
+    callOpts: { excludeConnectivity: boolean },
+  ): Promise<{ byModel: Array<Record<string, unknown>>; byScene: Array<Record<string, unknown>> }> {
+    const [modelRows, sceneRows, models] = await Promise.all([
+      this.store.selectLlmCallStatsByModel(range, callOpts),
+      this.store.selectLlmCallSceneStats(range, callOpts),
+      this.store.listModelsOrderByCreatedDesc(),
+    ]);
+    const modelNames = new Map(
+      models.filter((m) => m.id != null).map((m) => [Number(m.id), m.name ?? '未知']),
+    );
+    const byModel = modelRows
+      .filter((row) => toNumber(row.failCount) > 0)
+      .map((row) => ({
+        key: Number(row.id),
+        name: Number(row.id) === 0 ? '未关联模型' : modelNames.get(Number(row.id)) ?? `模型 ${row.id}`,
+        failCount: toNumber(row.failCount),
+        callCount: toNumber(row.callCount),
+      }))
+      .sort((a, b) => b.failCount - a.failCount)
+      .slice(0, 5);
+    const byScene = sceneRows
+      .filter((row) => toNumber(row.failCount) > 0)
+      .map((row) => ({
+        key: String(row.key),
+        name: String(row.key),
+        failCount: toNumber(row.failCount),
+        callCount: toNumber(row.callCount),
+      }))
+      .sort((a, b) => b.failCount - a.failCount)
+      .slice(0, 5);
+    return { byModel, byScene };
   }
 
   private resolveWindows(days: number, endOffset: number): { range: AnalyticsRange; previous: AnalyticsRange } {
@@ -517,23 +878,38 @@ export class AdminAnalyticsService {
     };
   }
 
-  private async trends(range: AnalyticsRange): Promise<Array<Record<string, unknown>>> {
-    const [sessionRows, messageRows, usageRows] = await Promise.all([
+  private async trends(
+    range: AnalyticsRange,
+    callOpts?: { excludeConnectivity?: boolean },
+  ): Promise<Array<Record<string, unknown>>> {
+    const opts = { excludeConnectivity: callOpts?.excludeConnectivity !== false };
+    const [sessionRows, messageRows, usageRows, callRows] = await Promise.all([
       this.store.selectDailySessionCounts(range),
       this.store.selectDailyMessageStats(range),
       this.store.selectDailyUsageStats(range),
+      this.store.selectDailyLlmCallStats(range, opts),
     ]);
     const sessions = dayMap(sessionRows, (r) => r.day, (r) => r.count);
     const messages = dayMap(messageRows, (r) => r.day, (r) => r.count);
     const chatTokens = dayMap(messageRows, (r) => r.day, (r) => r.tokens);
     const backgroundTokens = dayMap(usageRows, (r) => r.day, (r) => r.totalTokens);
     const backgroundCalls = dayMap(usageRows, (r) => r.day, (r) => r.callCount);
+    const callCount = dayMap(callRows, (r) => r.day, (r) => r.callCount);
+    const callFailCount = dayMap(callRows, (r) => r.day, (r) => r.failCount);
+    const callTokens = dayMap(callRows, (r) => r.day, (r) => r.callTokens);
+    const promptTokens = dayMap(callRows, (r) => r.day, (r) => r.promptTokens);
+    const cachedTokens = dayMap(callRows, (r) => r.day, (r) => r.cachedTokens);
 
     const rows: Array<Record<string, unknown>> = [];
     for (let i = 0; i < range.days; i++) {
       const date = addDaysYmd(range.startYmd, i);
       const chat = chatTokens.get(date) ?? 0;
       const background = backgroundTokens.get(date) ?? 0;
+      const calls = callCount.get(date) ?? 0;
+      const fails = callFailCount.get(date) ?? 0;
+      const callTok = callTokens.get(date) ?? 0;
+      const prompt = promptTokens.get(date) ?? 0;
+      const cached = cachedTokens.get(date) ?? 0;
       rows.push({
         date,
         sessions: sessions.get(date) ?? 0,
@@ -542,17 +918,29 @@ export class AdminAnalyticsService {
         backgroundTokens: background,
         totalTokens: chat + background,
         backgroundCalls: backgroundCalls.get(date) ?? 0,
+        callCount: calls,
+        callFailCount: fails,
+        callTokens: callTok,
+        promptTokens: prompt,
+        cachedTokens: cached,
+        callSuccessRate: calls > 0 ? Math.round(((calls - fails) / calls) * 1000) / 10 : null,
+        cacheHitRate: prompt > 0 ? Math.round((cached / prompt) * 1000) / 10 : null,
       });
     }
     return rows;
   }
 
-  private async previousTotals(previous: AnalyticsRange): Promise<Record<string, number>> {
-    const [sessions, messages, backgroundTokens, activeUsers] = await Promise.all([
+  private async previousTotals(
+    previous: AnalyticsRange,
+    callOpts?: { excludeConnectivity?: boolean },
+  ): Promise<Record<string, number>> {
+    const opts = { excludeConnectivity: callOpts?.excludeConnectivity !== false };
+    const [sessions, messages, backgroundTokens, activeUsers, quality] = await Promise.all([
       this.store.countSessions(previous),
       this.store.sumMessages(previous),
       this.store.sumUsageTokens(previous),
       this.store.countActiveUsers(previous),
+      this.store.selectLlmCallQualitySummary(previous, opts),
     ]);
     return {
       sessions,
@@ -561,47 +949,77 @@ export class AdminAnalyticsService {
       backgroundTokens,
       totalTokens: messages.tokens + backgroundTokens,
       activeUsers,
+      callCount: quality.callCount,
+      callFailCount: quality.failCount,
+      callTokens: quality.callTokens,
     };
   }
 
-  private async agentStats(range: AnalyticsRange, limit = RANK_LIMIT): Promise<Array<Record<string, unknown>>> {
-    const [agents, sessionRows, messageRows] = await Promise.all([
+  private async agentStats(
+    range: AnalyticsRange,
+    limit = RANK_LIMIT,
+    callOpts?: { excludeConnectivity?: boolean },
+  ): Promise<Array<Record<string, unknown>>> {
+    const opts = { excludeConnectivity: callOpts?.excludeConnectivity !== false };
+    const [agents, sessionRows, messageRows, callRows] = await Promise.all([
       this.store.listAgents(),
       this.store.selectSessionCountsByAgent(range),
       this.store.selectMessageStatsByAgent(range),
+      this.store.selectLlmCallStatsByAgent(range, opts),
     ]);
     const names = new Map(agents.filter((a) => a.id != null).map((a) => [a.id!, a.name ?? '未知']));
     const sessionCounts = idMap(sessionRows, (r) => r.sessionCount);
     const messageCounts = idMap(messageRows, (r) => r.messageCount);
     const tokens = idMap(messageRows, (r) => r.totalTokens);
+    const callCounts = idMap(callRows, (r) => r.callCount);
+    const failCounts = idMap(callRows, (r) => r.failCount);
+    const callTokens = idMap(callRows, (r) => r.callTokens);
     const rows: Array<Record<string, unknown>> = [];
-    for (const agentId of unionKeys(sessionCounts, messageCounts)) {
+    for (const agentId of unionKeys(sessionCounts, messageCounts, callCounts, failCounts, callTokens)) {
+      const calls = callCounts.get(agentId) ?? 0;
+      const fails = failCounts.get(agentId) ?? 0;
       rows.push({
         agentId,
         agentName: names.get(agentId) ?? '未知',
         sessionCount: sessionCounts.get(agentId) ?? 0,
         messageCount: messageCounts.get(agentId) ?? 0,
         totalTokens: tokens.get(agentId) ?? 0,
+        callCount: calls,
+        callFailCount: fails,
+        callTokens: callTokens.get(agentId) ?? 0,
+        callSuccessRate: calls > 0 ? Math.round(((calls - fails) / calls) * 1000) / 10 : null,
       });
     }
     rows.sort(byNumberDesc('sessionCount', 'messageCount'));
     return rows.slice(0, clampLimit(limit));
   }
 
-  private async userActivity(range: AnalyticsRange, limit = RANK_LIMIT): Promise<Array<Record<string, unknown>>> {
-    const [users, sessionRows, messageRows] = await Promise.all([
+  private async userActivity(
+    range: AnalyticsRange,
+    limit = RANK_LIMIT,
+    callOpts?: { excludeConnectivity?: boolean },
+  ): Promise<Array<Record<string, unknown>>> {
+    const opts = { excludeConnectivity: callOpts?.excludeConnectivity !== false };
+    const [users, sessionRows, messageRows, callRows] = await Promise.all([
       this.store.listUsers(),
       this.store.selectSessionCountsByUser(range),
       this.store.selectMessageStatsByUser(range),
+      this.store.selectLlmCallStatsByUser(range, opts),
     ]);
     const sessionCounts = idMap(sessionRows, (r) => r.sessionCount);
     const messageCounts = idMap(messageRows, (r) => r.messageCount);
     const tokens = idMap(messageRows, (r) => r.totalTokens);
+    const callCounts = idMap(callRows, (r) => r.callCount);
+    const failCounts = idMap(callRows, (r) => r.failCount);
+    const callTokens = idMap(callRows, (r) => r.callTokens);
     const rows: Array<Record<string, unknown>> = [];
     for (const user of users) {
-      const sessionCount = sessionCounts.get(user.id!) ?? 0;
-      const messageCount = messageCounts.get(user.id!) ?? 0;
-      if (sessionCount === 0 && messageCount === 0) {
+      const uid = user.id!;
+      const sessionCount = sessionCounts.get(uid) ?? 0;
+      const messageCount = messageCounts.get(uid) ?? 0;
+      const calls = callCounts.get(uid) ?? 0;
+      const fails = failCounts.get(uid) ?? 0;
+      if (sessionCount === 0 && messageCount === 0 && calls === 0) {
         continue;
       }
       rows.push({
@@ -610,55 +1028,127 @@ export class AdminAnalyticsService {
         displayName: user.displayName,
         sessionCount,
         messageCount,
-        totalTokens: tokens.get(user.id!) ?? 0,
+        totalTokens: tokens.get(uid) ?? 0,
         lastLoginAt: user.lastLoginAt != null ? String(user.lastLoginAt) : null,
+        callCount: calls,
+        callFailCount: fails,
+        callTokens: callTokens.get(uid) ?? 0,
       });
     }
     rows.sort(byNumberDesc('messageCount', 'totalTokens'));
     return rows.slice(0, clampLimit(limit));
   }
 
-  private async modelStats(range: AnalyticsRange): Promise<Array<Record<string, unknown>>> {
-    const [models, sessionRows, messageRows, usageRows] = await Promise.all([
+  private async modelStats(
+    range: AnalyticsRange,
+    callOpts?: { excludeConnectivity?: boolean },
+  ): Promise<Array<Record<string, unknown>>> {
+    const opts = { excludeConnectivity: callOpts?.excludeConnectivity !== false };
+    const [models, sessionRows, messageRows, usageRows, callRows] = await Promise.all([
       this.store.listModelsOrderByCreatedDesc(),
       this.store.selectSessionCountsByModel(range),
       this.store.selectMessageStatsByModel(range),
       this.store.selectUsageStatsByModel(range),
+      this.store.selectLlmCallStatsByModel(range, opts),
     ]);
     const sessionCounts = idMap(sessionRows, (r) => r.sessionCount);
     const messageCounts = idMap(messageRows, (r) => r.messageCount);
     const chatTokens = idMap(messageRows, (r) => r.totalTokens);
     const backgroundTokens = idMap(usageRows, (r) => r.totalTokens);
     const backgroundCalls = idMap(usageRows, (r) => r.callCount);
+    const callByModel = new Map<number, LlmCallModelRow>();
+    for (const row of callRows) {
+      callByModel.set(Number(row.id), row);
+    }
     const rows: Array<Record<string, unknown>> = [];
-    for (const model of models) {
-      const chat = chatTokens.get(model.id!) ?? 0;
-      const background = backgroundTokens.get(model.id!) ?? 0;
-      const sessionCount = sessionCounts.get(model.id!) ?? 0;
-      const messageCount = messageCounts.get(model.id!) ?? 0;
-      const calls = backgroundCalls.get(model.id!) ?? 0;
+    const knownIds = new Set(models.map((m) => Number(m.id)));
+    const allIds = new Set<number>([...knownIds, ...callByModel.keys()]);
+    for (const modelId of allIds) {
+      const model = models.find((m) => Number(m.id) === modelId);
+      const call = callByModel.get(modelId);
+      const chat = chatTokens.get(modelId) ?? 0;
+      const background = backgroundTokens.get(modelId) ?? 0;
+      const sessionCount = sessionCounts.get(modelId) ?? 0;
+      const messageCount = messageCounts.get(modelId) ?? 0;
+      const usageCalls = backgroundCalls.get(modelId) ?? 0;
+      const callCount = toNumber(call?.callCount);
+      const callFailCount = toNumber(call?.failCount);
+      const callTokens = toNumber(call?.callTokens);
+      const promptTokens = toNumber(call?.promptTokens);
+      const cachedTokens = toNumber(call?.cachedTokens);
       // 窗口内完全未被调用的模型不返回，避免明细表被大量全零行淹没
-      if (sessionCount === 0 && messageCount === 0 && chat === 0 && background === 0 && calls === 0) {
+      if (
+        sessionCount === 0 &&
+        messageCount === 0 &&
+        chat === 0 &&
+        background === 0 &&
+        usageCalls === 0 &&
+        callCount === 0 &&
+        callTokens === 0
+      ) {
         continue;
       }
+      const avgFirstTokenMs =
+        toNumber(call?.firstTokenMsCount) > 0
+          ? Math.round(toNumber(call?.firstTokenMsSum) / toNumber(call?.firstTokenMsCount))
+          : null;
+      const avgDurationMs = callCount > 0 ? Math.round(toNumber(call?.durationMsSum) / callCount) : null;
       rows.push({
-        modelId: model.id,
-        modelName: model.name,
-        provider: model.provider,
-        status: model.status,
-        isDefault: model.isDefault,
+        modelId,
+        modelName: model?.name ?? (modelId === 0 ? '未关联模型' : `模型 ${modelId}`),
+        provider: model?.provider,
+        status: model?.status,
+        isDefault: model?.isDefault,
         sessionCount,
         messageCount,
         chatTokens: chat,
         backgroundTokens: background,
-        totalTokens: chat + background,
-        backgroundCalls: calls,
-        contextWindowTokens: model.contextWindowTokens,
+        totalTokens: chat + background + callTokens,
+        backgroundCalls: usageCalls,
+        contextWindowTokens: model?.contextWindowTokens,
+        callCount,
+        callFailCount,
+        callSuccessRate: callCount > 0 ? Math.round(((callCount - callFailCount) / callCount) * 1000) / 10 : null,
+        callTokens,
+        promptTokens,
+        cachedTokens,
+        cacheHitRate: promptTokens > 0 ? Math.round((cachedTokens / promptTokens) * 1000) / 10 : null,
+        avgFirstTokenMs,
+        avgDurationMs,
+        retryCallCount: toNumber(call?.retryCallCount),
       });
     }
     rows.sort(byNumberDesc('totalTokens', 'messageCount'));
     return rows;
   }
+}
+
+function qualitySummaryFields(quality: LlmCallQualitySummary): Record<string, number | null> {
+  return {
+    callCount: quality.callCount,
+    successCount: quality.successCount,
+    failCount: quality.failCount,
+    retryCallCount: quality.retryCallCount,
+    promptTokens: quality.promptTokens,
+    cachedTokens: quality.cachedTokens,
+    callTokens: quality.callTokens,
+    successRate: quality.callCount > 0 ? Math.round((quality.successCount / quality.callCount) * 1000) / 10 : null,
+    retryRatio: quality.callCount > 0 ? Math.round((quality.retryCallCount / quality.callCount) * 1000) / 10 : null,
+    cacheHitRate:
+      quality.promptTokens > 0 ? Math.round((quality.cachedTokens / quality.promptTokens) * 1000) / 10 : null,
+  };
+}
+
+function namedCountRows(rows: LlmCallNamedRow[]): Array<Record<string, unknown>> {
+  return rows
+    .filter((row) => toNumber(row.callCount) > 0 || toNumber(row.callTokens) > 0)
+    .map((row) => ({
+      key: String(row.key),
+      callCount: toNumber(row.callCount),
+      failCount: toNumber(row.failCount),
+      callTokens: toNumber(row.callTokens),
+    }))
+    .sort((a, b) => b.callTokens - a.callTokens || b.callCount - a.callCount);
 }
 
 function buildRange(endYmd: string, days: number): AnalyticsRange {

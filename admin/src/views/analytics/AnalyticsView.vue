@@ -50,6 +50,8 @@
         :payload="modelsPayload"
         :loading="activeLoading"
         :error="activeError"
+        @update:model-id="handleSceneModelChange"
+        @refresh="handleModelsRefresh"
       />
       <UserTab
         v-else-if="activeTab === 'users'"
@@ -117,6 +119,10 @@ const router = useRouter()
 
 const period = ref<PeriodValue>(periodFromQueryValue(route.query.period ?? route.query.days ?? 'today'))
 const activeTab = ref<TabId>(normalizeTab(route.query.tab))
+const sceneModelId = ref<number | undefined>(
+  route.query.modelId != null && route.query.modelId !== '' ? Number(route.query.modelId) : undefined
+)
+const includeConnectivity = ref(true)
 const periodOptions = PERIOD_OPTIONS
 
 const overview = useScopeQuery<OverviewPayload>('overview')
@@ -209,11 +215,29 @@ function normalizeTab(raw: unknown): TabId {
 
 function currentQuery() {
   const needsLimit = activeTab.value === 'users' || activeTab.value === 'agents'
-  return buildAnalyticsQuery(period.value, needsLimit ? 20 : undefined)
+  const query = buildAnalyticsQuery(period.value, needsLimit ? 20 : undefined)
+  const withConnectivity = { ...query, excludeConnectivity: !includeConnectivity.value }
+  if (activeTab.value === 'models' && sceneModelId.value != null && Number.isFinite(sceneModelId.value)) {
+    return { ...withConnectivity, modelId: sceneModelId.value }
+  }
+  return withConnectivity
 }
 
 async function loadActive(force = false) {
   await activeScope.value.fetchScope(currentQuery(), force)
+}
+
+function handleSceneModelChange(modelId: number | undefined) {
+  sceneModelId.value = modelId
+  if (activeTab.value !== 'models') return
+  invalidateAnalytics('models')
+  void loadActive(true)
+}
+
+function handleModelsRefresh(include: boolean) {
+  includeConnectivity.value = include
+  invalidateAnalytics('models')
+  void loadActive(true)
 }
 
 function syncUrl() {

@@ -58,7 +58,18 @@
             <strong>{{ formatNumber(row.totalTokens) }}</strong>
           </template>
         </el-table-column>
+        <el-table-column label="调用" width="80" align="right" class-name="hide-on-mobile">
+          <template #default="{ row }">{{ formatNumber(row.callCount || 0) }}</template>
+        </el-table-column>
+        <el-table-column label="失败调用" width="90" align="right" class-name="hide-on-mobile">
+          <template #default="{ row }">{{ formatNumber(row.callFailCount || 0) }}</template>
+        </el-table-column>
         <el-table-column prop="lastLoginAt" label="最后登录" width="170" class-name="hide-on-mobile" />
+        <el-table-column label="操作" width="100" class-name="hide-on-mobile">
+          <template #default="{ row }">
+            <button class="linkish" type="button" @click="go(`/llm-call?userId=${row.userId}`)">调用流水</button>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
   </div>
