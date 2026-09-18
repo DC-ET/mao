@@ -335,6 +335,25 @@ describe('OpenAiLlmAdapter', () => {
     expect(server.bodies[0]).not.toContain('reasoning_content');
   });
 
+  it('chatAlwaysEchoesReasoningContentKeyForDeepSeekEvenWhenThinkingMissing', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"id":"ok","choices":[]}');
+    await server.start();
+    await adapter(0, 0).chat({
+      messages: [{
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }],
+      }, {
+        role: 'tool',
+        toolCallId: 'call-1',
+        content: 'ok',
+      }],
+      tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
+    }, configOf(server, { modelId: 'deepseek-v4-flash' }));
+    expect(server.bodies[0]).toContain('"reasoning_content":""');
+  });
+
   it('chatIncludesThinkingDisableFieldsWhenPresentOnRequest', async () => {
     server = new QueueServer();
     server.enqueueJson('{"id":"ok","choices":[]}');

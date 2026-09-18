@@ -88,4 +88,36 @@ describe('serializeChatRequest', () => {
       expect(assistant).not.toHaveProperty('reasoning_content');
     }
   });
+
+  it('DeepSeek assistant tool_calls without thinking still carries empty reasoning_content key', () => {
+    const request: ChatRequest = {
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{}' } }],
+        },
+        { role: 'tool', content: '结果', toolCallId: 'call_1' },
+      ],
+      tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
+    };
+    const body = serializeChatRequest(request, 'deepseek-v4-flash', true);
+    const assistant = (body.messages as Record<string, unknown>[])[0];
+    expect(assistant.reasoning_content).toBe('');
+  });
+
+  it('non-DeepSeek models never emit empty reasoning_content key on assistant', () => {
+    const request: ChatRequest = {
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{}' } }],
+        },
+      ],
+    };
+    const body = serializeChatRequest(request, 'glm-5.3', true);
+    const assistant = (body.messages as Record<string, unknown>[])[0];
+    expect(assistant).not.toHaveProperty('reasoning_content');
+  });
 });

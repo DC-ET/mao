@@ -21,6 +21,10 @@
 
 - 修复用量分析各 Tab 空白页：axios 拦截器已将响应解包为 `Result<T>`，分析页 scope 请求误用 `res.data?.data` 导致 payload 恒为空且不进入错误态。改为读取 `result.data`；无数据时回退加载态/空态，避免白屏。
 
+### 后端
+
+- 修复 DeepSeek thinking 模式偶发 400「The reasoning_content in the thinking mode must be passed back to the API」：官方要求携带 `tools` 的请求必须完整回传历史 assistant 的 `reasoning_content`（即使该轮未实际工具调用）。此前仅在字段非空时透传，模型偶发不输出思考时键被省略，导致「点重试续跑同一工具链」稳定失败，而发「继续」新 user 消息能打断校验反而成功。现 DeepSeek 系模型序列化时对 assistant 消息始终带上 `reasoning_content`（缺失补空串）；非 DeepSeek 模型仍剥离，避免 GLM 等网关把该字段视为自家签发载体而 400。非视觉模型替换图片占位时同步保留 `reasoningContent`。
+
 ## 0.0.150 (2026-09-18)
 
 ### 管理后台

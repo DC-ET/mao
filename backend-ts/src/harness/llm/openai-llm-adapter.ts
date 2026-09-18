@@ -493,6 +493,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
         name: msg.name,
         toolCallId: msg.toolCallId,
         toolCalls: msg.toolCalls,
+        reasoningContent: msg.reasoningContent,
       };
     }
   }

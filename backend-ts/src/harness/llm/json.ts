@@ -59,12 +59,12 @@ export function serializeChatMessage(msg: ChatMessage, echoReasoningContent = fa
   if (msg.toolCallId != null) out.tool_call_id = msg.toolCallId;
   if (msg.toolCalls != null) out.tool_calls = msg.toolCalls.map(serializeToolCall);
   if (msg.audio != null) out.audio = msg.audio;
-  // DeepSeek thinking 模式下，带 tools 的多轮请求要求把上一轮 assistant 的 reasoning_content
-  // 原样回传，否则返回 400；而 GLM 等网关把该字段视为自家签发的载体（carrier），客户端回传
-  // 一律 400（"must be a gateway-issued carrier"）。故仅对 DeepSeek 系模型透传，
-  // 其余模型在序列化时剥离，历史链路（session-history-loader）无需感知该差异。
-  if (echoReasoningContent && msg.reasoningContent != null && msg.reasoningContent !== '') {
-    out.reasoning_content = msg.reasoningContent;
+  // DeepSeek thinking 模式：携带 tools 的请求必须完整回传历史 assistant 的 reasoning_content，
+  // 缺失会 400（官方文档：即使该轮模型未实际工具调用也要回传）。模型偶发不输出思考时字段为空，
+  // 仍须带键回传，否则「点重试续跑同一工具链」会稳定复现，发新 user 消息反而能打断校验。
+  // GLM 等网关把该字段视为自家签发载体，客户端回传一律 400，故仅 DeepSeek 系透传。
+  if (echoReasoningContent && msg.role === 'assistant') {
+    out.reasoning_content = msg.reasoningContent ?? '';
   }
   return out;
 }
