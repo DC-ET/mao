@@ -32,6 +32,43 @@
 
 - `mao system-command` 新增 `list-personal` / `get-personal` / `delete-personal`，与管理后台指令管理能力对齐。
 
+## 0.0.149 (2026-09-18)
+
+### 管理后台
+
+- 用量分析 Phase 2：`llm_call` 成为调用质量权威数据源。模型明细增加调用次数、成功率、调用 Token、缓存命中率、首 token/总耗时均值；场景与协议分布可按选中模型切换。
+- 趋势 Tab 新增「调用 / 质量」视图：调用与失败次数、成功率与缓存命中率日曲线。
+- 会话 Tab 新增调用质量面板（成功率、重试占比、缓存命中、首 token/总耗时 p50/p95）与失败切片 Top（按模型 / 场景）。
+- 用户 / Agent 明细合并调用次数与失败数，支持深链到调用流水（`/llm-call?modelId|userId|agentId|scene|success=`）；流水页支持 query 预置筛选与 Agent ID 过滤。
+- 分析聚合默认排除 `connectivity_test` 自检调用，模型 Tab 可勾选「含自检调用」。
+
+### 后端
+
+- 分维度分析接口接入 `llm_call` 聚合：models / trends / sessions / users / agents 返回调用质量字段；支持 `excludeConnectivity`、models 支持 `modelId`（场景分布按模型过滤）。
+- 会话质量分位（首 token / 总耗时 p50、p95）在服务端用 OFFSET 近似计算；模型延迟为均值，避免逐模型分位拖慢 90 天窗口。
+
+### 终端 CLI（mao-cli）
+
+- analytics 分维度接口返回新增质量字段（`callCount` / `callSuccessRate` / `cacheHitRate` / `callQuality` 等），与管理后台 Tab 对齐。
+
+## 0.0.148 (2026-09-18)
+
+### 管理后台
+
+- 用量分析页重构为按维度分 Tab 的分析工作台：总览 / 趋势 / 模型 / 用户 / Agent / 会话。壳层统一周期筛选（今日/昨日/3/7/30/90 天）与时间窗提示，URL 同步 `?tab=&period=`，首屏只加载当前 Tab，切换周期标记其他 Tab 待刷新。
+- 总览压缩为「Token 主指标 + 紧凑次指标 + 运行态 + 规则洞察」，不再堆叠全量图表；趋势取消会话/消息双 y 轴，改为小多图；空态说明原因并支持一键放宽到近 7 天。
+- 会话 Tab 新增窗口内会话类型（NORMAL/SUBAGENT/SIDE_TASK）与执行模式（CLOUD/LOCAL）结构拆分；环比色约定统一为绿=变好、红=变差。
+
+### 后端
+
+- 新增管理端分维度分析接口：`GET /api/v1/admin/analytics/{overview,trends,models,users,agents,sessions}`，公共参数 `days`/`endOffset`，users/agents 支持 `limit`。按 scope 取数，overview 不再拉取模型/用户/Agent 排行。
+- 旧接口 `GET /api/v1/admin/analytics/summary` 保留（mao-cli 与兼容调用方），管理后台前端已切换至分维度接口。
+- `llm_usage`/`message` 口径不变：`chatTokens` 来自对话消息，`backgroundTokens` 来自后台调用，合计 `totalTokens`。
+
+### 终端 CLI（mao-cli）
+
+- `mao analytics` 新增分维度子命令：`overview` / `trends` / `models` / `users` / `agents` / `sessions`（users/agents 支持 `--limit`），与管理后台 Tab 一一对应；`summary` 仍可用。
+
 ## 0.0.147 (2026-09-18)
 
 ### 后端

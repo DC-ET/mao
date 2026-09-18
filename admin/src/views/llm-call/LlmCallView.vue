@@ -46,6 +46,16 @@
               />
             </el-select>
           </el-form-item>
+          <el-form-item label="Agent ID">
+            <el-input
+              v-model="filters.agentId"
+              clearable
+              placeholder="Agent ID"
+              style="width: 110px"
+              @keyup.enter="handleSearch"
+              @clear="handleSearch"
+            />
+          </el-form-item>
           <el-form-item label="会话 ID">
             <el-input v-model="filters.sessionId" clearable placeholder="会话 ID" style="width: 120px" @keyup.enter="handleSearch" @clear="handleSearch" />
           </el-form-item>
@@ -184,6 +194,7 @@
 
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
@@ -193,6 +204,7 @@ import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 import { LLM_CALL_SCENE_OPTIONS, llmCallSceneLabel, formatMs } from '../../utils/llmCallLabels'
 
+const route = useRoute()
 const { isMobile } = useBreakpoint()
 const loading = ref(false)
 const records = ref<any[]>([])
@@ -207,11 +219,28 @@ const filters = reactive({
   scene: '',
   success: undefined as boolean | undefined,
   userId: undefined as number | undefined,
+  agentId: undefined as number | string | undefined,
   sessionId: '',
   modelId: undefined as number | undefined,
   startDate: '',
   endDate: '',
 })
+
+function applyQueryFilters() {
+  const q = route.query
+  if (typeof q.scene === 'string' && q.scene) filters.scene = q.scene
+  if (q.success === 'false' || q.success === '0') filters.success = false
+  if (q.success === 'true' || q.success === '1') filters.success = true
+  const userId = Number(q.userId)
+  if (q.userId != null && q.userId !== '' && Number.isFinite(userId)) filters.userId = userId
+  const agentId = Number(q.agentId)
+  if (q.agentId != null && q.agentId !== '' && Number.isFinite(agentId)) filters.agentId = agentId
+  if (typeof q.sessionId === 'string' && q.sessionId) filters.sessionId = q.sessionId
+  const modelId = Number(q.modelId)
+  if (q.modelId != null && q.modelId !== '' && Number.isFinite(modelId)) filters.modelId = modelId
+  if (typeof q.startDate === 'string' && q.startDate) filters.startDate = q.startDate
+  if (typeof q.endDate === 'string' && q.endDate) filters.endDate = q.endDate
+}
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('zh-CN').format(value)
@@ -238,6 +267,10 @@ async function fetchRecords() {
     if (filters.scene) params.scene = filters.scene
     if (filters.success !== undefined) params.success = filters.success
     if (filters.userId != null) params.userId = filters.userId
+    if (filters.agentId != null && filters.agentId !== '') {
+      const agentId = Number(filters.agentId)
+      if (Number.isFinite(agentId)) params.agentId = agentId
+    }
     if (filters.sessionId) {
       const sessionId = Number(filters.sessionId)
       if (Number.isFinite(sessionId)) params.sessionId = sessionId
@@ -263,6 +296,7 @@ function handleReset() {
   filters.scene = ''
   filters.success = undefined
   filters.userId = undefined
+  filters.agentId = undefined
   filters.sessionId = ''
   filters.modelId = undefined
   filters.startDate = ''
@@ -292,6 +326,7 @@ async function fetchFilterOptions() {
 }
 
 onMounted(() => {
+  applyQueryFilters()
   fetchRecords()
   fetchFilterOptions()
 })
