@@ -12,14 +12,14 @@ export class CreateScheduledTaskTool extends BaseTool {
 
   getName(): string { return 'create_scheduled_task'; }
   getDescription(): string {
-    return '创建定时任务。任务将按照指定的 cron 计划自动执行 Agent。适用于：定时检查新股、每日生成报告、定期巡检等场景。一次性提醒（固定某月某日执行一次）执行后会自动完结。任务创建后绑定当前 Agent，并在创建时的会话中累积执行历史。';
+    return '创建定时任务（仅响应用户直接表达的定时处理需求，禁止在自身任务执行中擅自给自己创建）。任务将按照指定的 cron 计划在创建会话中自动执行 Agent，且在当前对话结束后仍会长期按计划循环触发。适用于用户明确要求的场景：每日生成报告、定期巡检、一次性日期提醒等。执行过程中的轮询/检查（如盯发布状态、等构建完成）不要用本工具，应直接用 Shell 工具处理。一次性提醒（固定某月某日执行一次）执行后会自动完结。任务创建后绑定当前 Agent，并在创建时的会话中累积执行历史。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',
       properties: {
         name: { type: 'string', description: '任务名称，如\'新股申购检查\'' },
-        prompt: { type: 'string', description: '触发时执行的任务本体：只描述要做的具体工作与输出要求，不要包含执行频率或调度措辞（频率由 cron_expression 控制）。' },
+        prompt: { type: 'string', description: '触发时执行的任务本体：只描述要做的具体工作与输出要求，不要包含执行频率或调度措辞（频率由 cron_expression 控制）；也不要在其中要求创建/修改定时任务或做结束后的轮询检查。' },
         cron_expression: { type: 'string', description: 'Spring cron 表达式（6位：秒 分 时 日 月 周），控制执行频率。' },
         once: { type: 'boolean', description: '是否一次性任务（执行一次后自动完结）。固定某月某日的提醒类任务应传 true；不传时按 cron 形态自动判定。' },
       },
@@ -29,6 +29,12 @@ export class CreateScheduledTaskTool extends BaseTool {
   getOutputSchema(): Record<string, unknown> { return { type: 'object' }; }
   getToolPrompt(): string {
     return `## create_scheduled_task 使用指南
+
+### 适用边界（必须遵守）
+- 定时任务功能**仅服务于用户直接表达的定时处理需求**（用户明确说"每天/每周/某日提醒或执行…"时才创建）
+- **禁止在自身任务执行中擅自给自己设置定时任务**：任务一旦创建，会在本次对话/任务结束后仍长期循环执行，不会随当前任务结束而消失
+- 执行过程中若需定时轮询/检查（如检查发布状态、盯部署/构建进度、等待外部系统就绪），**应直接使用 Shell 工具处理**（sleep 循环、await_async、wait_for 等），不要创建定时任务
+- 用户未提出定时需求时，不要主动创建；也不要把"稍后继续查"包装成定时任务
 
 当用户希望创建定时自动执行的任务时使用此工具。
 
@@ -120,7 +126,7 @@ export class ListScheduledTasksTool extends BaseTool {
 export class UpdateScheduledTaskTool extends BaseTool {
   constructor(private readonly scheduledTaskService: ScheduledTaskService) { super(); }
   getName(): string { return 'update_scheduled_task'; }
-  getDescription(): string { return '更新已有定时任务的名称、prompt、cron、once 或状态。'; }
+  getDescription(): string { return '更新已有定时任务的名称、prompt、cron、once 或状态。仅维护用户已创建的任务；不要用本工具把执行中的轮询需求改造成新调度。'; }
   getInputSchema(): Record<string, unknown> {
     return {
       type: 'object',

@@ -19,8 +19,14 @@ describe('ScheduledTaskTools', () => {
     expect(create.getToolPrompt()).toContain('任务本体');
     expect(create.getToolPrompt()).toContain('严禁在 prompt 中要求创建、修改或删除定时任务');
     expect(create.getToolPrompt()).toContain('一次性任务');
+    expect(create.getToolPrompt()).toContain('仅服务于用户直接表达的定时处理需求');
+    expect(create.getToolPrompt()).toContain('禁止在自身任务执行中擅自给自己设置定时任务');
+    expect(create.getToolPrompt()).toContain('应直接使用 Shell 工具处理');
+    expect(create.getDescription()).toContain('仅响应用户直接表达的定时处理需求');
+    expect(create.getDescription()).toContain('禁止在自身任务执行中擅自给自己创建');
     expect(create.getDescription()).toContain('自动完结');
     expect(create.getInputSchema().properties.prompt.description).toContain('不要包含执行频率');
+    expect(create.getInputSchema().properties.prompt.description).toContain('轮询检查');
     expect(create.getInputSchema().properties.once.description).toContain('一次性');
     const created = JSON.parse(await create.execute(JSON.stringify({
       name: 'n', prompt: 'p', cron_expression: '0 0 9 * * *', once: true,

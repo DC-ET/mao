@@ -8,6 +8,8 @@
 
 当前用户 REST API 暂未暴露创建定时任务端点；创建入口是 Agent 内置工具 `create_scheduled_task`。本 CLI 的 `scheduled-task create` 会直接报错提示边界。
 
+`create_scheduled_task` 仅响应用户直接表达的定时处理需求；Agent 不得在自身任务执行中擅自创建（任务结束后仍会循环）。执行期内的轮询/检查走 Shell，不走定时任务。
+
 ## 命令选择
 
 | 场景 | 命令 |
