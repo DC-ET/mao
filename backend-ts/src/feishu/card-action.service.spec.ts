@@ -90,6 +90,25 @@ describe('FeishuCardActionService', () => {
     expect(JSON.stringify(patchCard.mock.calls[0])).toContain('这条消息已取消，未进入执行。');
   });
 
+  it('queue cancel never interrupts or cancels the running execution', async () => {
+    const interrupt = vi.fn();
+    const interruptAndDrain = vi.fn();
+    const cancelRunning = vi.fn(() => true);
+    const queueCancel = vi.fn(async () => 'CANCELLED' as const);
+    const service = makeService({
+      queuePort: { findByCardMessageId: vi.fn(async () => row()), cancel: queueCancel },
+      interrupt,
+      interruptAndDrain,
+      cancelRunning,
+    });
+    const res = await service.handle(makeEvent({ kind: 'feishu_queue', queueId: 1, act: 'cancel' }), '');
+    expect(queueCancel).toHaveBeenCalledWith(1);
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(interruptAndDrain).not.toHaveBeenCalled();
+    expect(cancelRunning).not.toHaveBeenCalled();
+    expect(res?.toast?.content).toBe('这条排队消息已取消，不会进入执行。');
+  });
+
   it('still confirms cancellation when the background card PATCH fails', async () => {
     const cancel = vi.fn(async () => 'CANCELLED' as const);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

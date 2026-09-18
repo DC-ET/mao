@@ -528,9 +528,31 @@ describe('TerminalManager', () => {
     });
     const terminal = await manager.create({ sessionId: 1, userId: 1, workspace: root });
     expect(terminal.isAlive()).toBe(true);
-    // 凭据查询失败不写入 GIT_ASKPASS（继承 process.env 的原值不变）
-    expect(FakePty.instances[0].options.env.GIT_ASKPASS).toBe(process.env.GIT_ASKPASS);
-    expect(FakePty.instances[0].options.env.GIT_TERMINAL_PROMPT).toBe(process.env.GIT_TERMINAL_PROMPT);
+    // 凭据查询失败不写入 GIT_ASKPASS；继承自 process.env 的敏感键已被剥离
+    expect(FakePty.instances[0].options.env.GIT_ASKPASS).toBeUndefined();
+    expect(FakePty.instances[0].options.env.GIT_TERMINAL_PROMPT).toBeUndefined();
+    expect(FakePty.instances[0].options.env.GIT_TOKEN_git_acg_team).toBeUndefined();
+    expect(FakePty.instances[0].options.env.APP_GIT_CREDENTIAL_SECRET).toBeUndefined();
+  });
+
+  it('strips inherited GIT_TOKEN and credential secrets from process.env', async () => {
+    const prevToken = process.env.GIT_TOKEN_git_acg_team;
+    const prevSecret = process.env.APP_GIT_CREDENTIAL_SECRET;
+    process.env.GIT_TOKEN_git_acg_team = 'leaked-from-ops';
+    process.env.APP_GIT_CREDENTIAL_SECRET = 'leaked-secret';
+    try {
+      const { manager, root } = await newManager({}, { tokenMap: { 'git.example.com': 'user-tok' } });
+      await manager.create({ sessionId: 2, userId: 5, workspace: root });
+      const env = FakePty.instances[0].options.env;
+      expect(env.GIT_TOKEN_git_acg_team).toBeUndefined();
+      expect(env.APP_GIT_CREDENTIAL_SECRET).toBeUndefined();
+      expect(env.GIT_TOKEN_git_example_com).toBe('user-tok');
+    } finally {
+      if (prevToken === undefined) delete process.env.GIT_TOKEN_git_acg_team;
+      else process.env.GIT_TOKEN_git_acg_team = prevToken;
+      if (prevSecret === undefined) delete process.env.APP_GIT_CREDENTIAL_SECRET;
+      else process.env.APP_GIT_CREDENTIAL_SECRET = prevSecret;
+    }
   });
 
   it('uses the username from params without touching userLookup', async () => {

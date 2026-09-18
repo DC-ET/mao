@@ -19,11 +19,13 @@
 
 ### 后端
 
+- 修复 CLOUD Shell / 云端终端全量继承 `process.env` 导致的凭据泄漏：创建会话时剥离 `GIT_TOKEN_*`、`GIT_ASKPASS`、`APP_GIT_CREDENTIAL_SECRET`、`JWT_SECRET`、`MYSQL_*`、`MAO_TOKEN` 等敏感键，仅注入当前用户 Git 凭据；刷新会话环境时按前缀清空残留 `GIT_TOKEN_*`，避免未配置 token 的用户看到他人或运维 shell 带入的 token。
 - CLOUD shell / 交互终端在 ECP 飞书登录开启且配置了 `larkAppId` 时，自动注入 `LARKSUITE_CLI_APP_ID` 与 `LARKSUITE_CLI_USER_ACCESS_TOKEN`（用户飞书 UAT），供 lark-cli 以用户身份使用；UAT 走 ECP 换票接口 + 进程内存缓存，ECP 会话失效时不注入。
 - 历史里某个 tool_call 缺少对应输出时（含并行工具结果被图片消息拆开），不再把 `No tool output found for tool call` 的 400 卡死会话：补占位结果、重排 tool 组，原会话可继续或重试。
 - 飞书进度卡片执行失败时，正文改为展示具体 `error.message`（与客户端对话页「执行异常」一致）；无错误信息时仍回退「抱歉，处理您的消息时出现了错误，请稍后再试。」
 - 飞书进度卡点「取消任务」后终态文案由「已被下一条指令中断。」改为「任务已取消。」——取消按钮误用了「立即发送」插队的 interrupted 标记。
 - 飞书失败进度卡新增「重试」按钮：点击后基于会话历史续跑（不插入新用户消息），并 PATCH 原卡片；仅原发送者可点，会话已结束/执行中时提示不可用。
+- 飞书排队卡「取消本次任务」只移出该条排队消息、绝不打断当前执行；回调分派与两类取消路径补打日志（`queue.cancel` / `progress.cancel`），便于线上核对点的是哪张卡；回归用例锁死排队 cancel 不得调用 interrupt / cancelRunning。
 
 ### 管理后台
 

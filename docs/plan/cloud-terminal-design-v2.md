@@ -321,8 +321,9 @@ node-pty 的落地代价与结论：
 │    startCleanup(60s) → idle 2h / maxLifetime 24h → 回收 + 审计                         │
 │                        │                                                             │
 │  RemoteTerminal：node-pty IPty + 环形缓冲(256KB) + lastActiveAt/createdAt              │
-│    env = { …process.env, TERM, HOME(虚拟), GIT_TOKEN_*, GIT_ASKPASS, MAO_TOKEN,        │
+│    env = { sanitize(process.env), TERM, HOME(虚拟), GIT_TOKEN_*, GIT_ASKPASS, MAO_TOKEN, │
 │            MAO_TASK_NAME }，cwd = session.workspace                                   │
+│    sanitize 剥离 GIT_TOKEN_* / APP_GIT_CREDENTIAL_SECRET 等，禁止继承运维 shell 残留   │
 │                                                                                      │
 │  REST：session/terminal.routes.ts（POST / GET / DELETE，逐个 requirePermission）       │
 │  审计：AuditLogService.record（创建 / 关闭 / 回收 / attach）                           │
@@ -462,7 +463,7 @@ export interface AttachWebSocketDeps {
 
 ```ts
 const env: NodeJS.ProcessEnv = {
-  ...process.env,
+  ...sanitizeInheritedEnv(process.env),  // 剥离 GIT_TOKEN_* / 主密钥等，禁止全量继承
   TERM: 'xterm-256color',
   COLORTERM: 'truecolor',
   LANG: process.env.LANG ?? 'en_US.UTF-8',

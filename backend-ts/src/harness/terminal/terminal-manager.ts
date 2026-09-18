@@ -5,6 +5,7 @@ import { harnessLog } from '../log.js';
 import { GitCredentialService } from '../../user/git-credential.service.js';
 import { ASKPASS } from '../../file/git-write-operation.service.js';
 import { RemoteTerminal, nodePtyFactory, type PtyFactory, type RemoteTerminalInfo } from './remote-terminal.js';
+import { sanitizeInheritedEnv } from '../../common/sensitive-env.js';
 
 export const DEFAULT_TERMINAL_SHELL = '/bin/bash';
 export const DEFAULT_TERMINAL_COLS = 80;
@@ -378,8 +379,9 @@ export class TerminalManager {
 
   private async buildEnv(params: CreateTerminalParams): Promise<NodeJS.ProcessEnv> {
     const { userId, sessionId } = params;
+    // 与 Shell 一致：剥离 process.env 中的 GIT_TOKEN_* / 主密钥，避免泄漏给任意用户
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...sanitizeInheritedEnv(process.env),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       LANG: process.env.LANG ?? 'en_US.UTF-8',

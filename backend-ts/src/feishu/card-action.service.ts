@@ -97,7 +97,9 @@ export class FeishuCardActionService {
     const event = unwrapCardActionEvent(raw);
     const action = this.parseActionValue(event.action?.value);
     if (action == null) return undefined;
+    const cardMessageIdForLog = event.context?.open_message_id ?? event.open_message_id ?? 'null';
     if (action.kind === 'feishu_progress') {
+      console.info(`飞书卡片动作 progress.${action.act}, sessionId=${action.sessionId}, openMessageId=${cardMessageIdForLog}`);
       if (action.act === 'retry') return this.handleProgressRetry(event, action);
       return this.handleProgressCancel(event, action);
     }
@@ -111,8 +113,10 @@ export class FeishuCardActionService {
     if (operatorOpenId == null || operatorOpenId !== row.senderOpenId) {
       return { toast: { type: 'error', content: '仅消息发送者可操作' } };
     }
+    console.info(`飞书卡片动作 queue.${action.act}, queueId=${action.queueId}, sessionId=${row.sessionId}, rowStatus=${row.status}, openMessageId=${cardMessageId}`);
     if (action.act === 'run') return this.handleRun(row);
     if (action.act === 'cancel') return this.handleCancel(row);
+    console.warn(`飞书排队卡片未知动作, act=${String(action.act)}, queueId=${action.queueId}`);
     return undefined;
   }
 
@@ -122,6 +126,7 @@ export class FeishuCardActionService {
     if (operatorOpenId == null || operatorOpenId !== action.sender) {
       return { toast: { type: 'error', content: '仅消息发送者可操作' } };
     }
+    console.info(`飞书进度卡取消任务, sessionId=${action.sessionId}`);
     const cancelled = await this.options.cancelRunning(action.sessionId);
     if (!cancelled) {
       return { toast: { type: 'info', content: '该任务已结束' } };
@@ -194,7 +199,8 @@ export class FeishuCardActionService {
     };
   }
 
-  private async handleCancel(row: { id: number; cardMessageId: string | null; botId: number }): Promise<FeishuCardActionResponse | undefined> {
+  private async handleCancel(row: { id: number; sessionId: number; cardMessageId: string | null; botId: number }): Promise<FeishuCardActionResponse | undefined> {
+    console.info(`飞书排队卡片取消, queueId=${row.id}, sessionId=${row.sessionId}, cardMessageId=${row.cardMessageId ?? 'null'}`);
     const result = await this.options.queuePort.cancel(row.id);
     if (result === 'ALREADY_STARTED') return { toast: { type: 'info', content: '该消息已开始执行' } };
     if (result === 'NOT_FOUND') return { toast: { type: 'info', content: '该消息已失效' } };

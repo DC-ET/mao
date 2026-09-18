@@ -5,6 +5,7 @@ import path from 'node:path';
 import { harnessLog } from '../log.js';
 import { GitCredentialService } from '../../user/git-credential.service.js';
 import { ASKPASS } from '../../file/git-write-operation.service.js';
+import { sanitizeInheritedEnv } from '../../common/sensitive-env.js';
 
 /** 已写入 stdin 但尚未读到结束标记的命令。 */
 export interface PendingCommand {
@@ -509,6 +510,8 @@ export class ShellSessionManager {
       env.GIT_ASKPASS = null;
       env.GIT_TERMINAL_PROMPT = null;
     }
+    // 进程启动时继承、未登记进 userEnvironmentKeys 的 GIT_TOKEN_* 清不掉，先按前缀全清再注入当前用户
+    session.writeStdin('for k in ${!GIT_TOKEN_@}; do unset "$k"; done\n');
     session.refreshEnvironment(env);
   }
 
@@ -626,7 +629,8 @@ export class ShellSessionManager {
     this.pathSandbox.addAllowedRoot(this.runtimeDataResolver.resolveSessionRuntimeDir(uid, conversationId));
     const outputFile = path.join(outputDir, `${shellSessionId}.out`);
     writeFileSync(outputFile, '');
-    const env: NodeJS.ProcessEnv = { ...process.env, TERM: 'dumb', PS1: '' };
+    // 禁止继承 process.env 里的 GIT_TOKEN_* / 主密钥等，只注入当前用户凭据
+    const env: NodeJS.ProcessEnv = { ...sanitizeInheritedEnv(process.env), TERM: 'dumb', PS1: '' };
     const initialUserEnvironmentKeys = new Set<string>(['HOME']);
     this.configureUserHome(env, userId);
     if (domainTokenMap && Object.keys(domainTokenMap).length > 0) {

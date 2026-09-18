@@ -81,6 +81,58 @@ describe('ShellSessionManager', () => {
     manager.close('sh-git');
   });
 
+  it('does not inherit GIT_TOKEN or credential secrets from process.env', async () => {
+    const prevToken = process.env.GIT_TOKEN_git_acg_team;
+    const prevSecret = process.env.APP_GIT_CREDENTIAL_SECRET;
+    process.env.GIT_TOKEN_git_acg_team = 'leaked-from-ops';
+    process.env.APP_GIT_CREDENTIAL_SECRET = 'leaked-secret';
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    mkdirSync(join(dir, 'users'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    try {
+      const session = manager.getOrCreate(21, 'sh-no-leak', 7, dir, {});
+      const output = new OutputManager();
+      session.writeStdin('printf "%s\\n" "${GIT_TOKEN_git_acg_team:-}" "${APP_GIT_CREDENTIAL_SECRET:-}"\necho __DONE__\n');
+      const result = await output.readUntilMarker(session, '__DONE__', 5000);
+      const lines = result.output.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+      expect(lines[0] ?? '').toBe('');
+      expect(lines[1] ?? '').toBe('');
+      manager.close('sh-no-leak');
+    } finally {
+      if (prevToken === undefined) delete process.env.GIT_TOKEN_git_acg_team;
+      else process.env.GIT_TOKEN_git_acg_team = prevToken;
+      if (prevSecret === undefined) delete process.env.APP_GIT_CREDENTIAL_SECRET;
+      else process.env.APP_GIT_CREDENTIAL_SECRET = prevSecret;
+    }
+  });
+
+  it('refreshUserEnvironment clears leftover GIT_TOKEN keys from a previous identity', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
+    mkdirSync(join(dir, 'runtime'), { recursive: true });
+    mkdirSync(join(dir, 'users'), { recursive: true });
+    const manager = new ShellSessionManager(
+      new PathSandbox(dir),
+      RuntimeDataResolver.forTest(join(dir, 'runtime'), join(dir, 'users')),
+    );
+    const session = manager.getOrCreate(22, 'sh-refresh-git', 7, dir, { 'git.example.com': 'user-a-token' });
+    // 模拟未登记进 userEnvironmentKeys 的残留（旧会话继承 process.env 的形态）
+    session.writeStdin('export GIT_TOKEN_git_acg_team=leftover-token\n');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    manager.refreshUserEnvironment(session, 8, {});
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const output = new OutputManager();
+    session.writeStdin('printf "%s\\n" "${GIT_TOKEN_git_acg_team:-}" "${GIT_TOKEN_git_example_com:-}"\necho __DONE__\n');
+    const result = await output.readUntilMarker(session, '__DONE__', 5000);
+    const lines = result.output.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+    expect(lines[0] ?? '').toBe('');
+    expect(lines[1] ?? '').toBe('');
+    manager.close('sh-refresh-git');
+  });
+
   it('captures stderr in the response and output file without persisting protocol markers', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mao-shell-'));
     mkdirSync(join(dir, 'runtime'), { recursive: true });
