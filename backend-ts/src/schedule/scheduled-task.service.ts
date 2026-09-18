@@ -182,8 +182,8 @@ export class ScheduledTaskService {
     return task;
   }
 
-  async updateTask(taskId: number, userId: number, name?: string | null, prompt?: string | null, cronExpression?: string | null, status?: string | null, once?: boolean | null): Promise<ScheduledTask> {
-    const task = await this.getTaskOwnedByUser(taskId, userId);
+  async updateTask(taskId: number, userId: number, name?: string | null, prompt?: string | null, cronExpression?: string | null, status?: string | null, once?: boolean | null, opts?: { allowNonOwner?: boolean }): Promise<ScheduledTask> {
+    const task = await this.getTaskOwnedByUser(taskId, userId, opts?.allowNonOwner);
     if (name != null) task.name = name;
     if (prompt != null) task.prompt = prompt;
     if (once != null) task.once = once ? 1 : 0;
@@ -229,8 +229,8 @@ export class ScheduledTaskService {
     return task;
   }
 
-  async deleteTask(taskId: number, userId: number): Promise<void> {
-    const task = await this.getTaskOwnedByUser(taskId, userId);
+  async deleteTask(taskId: number, userId: number, opts?: { allowNonOwner?: boolean }): Promise<void> {
+    const task = await this.getTaskOwnedByUser(taskId, userId, opts?.allowNonOwner);
     await this.store.deleteById(taskId);
     void task;
   }
@@ -483,12 +483,12 @@ export class ScheduledTaskService {
     }
   }
 
-  private async getTaskOwnedByUser(taskId: number, userId: number): Promise<ScheduledTask> {
+  private async getTaskOwnedByUser(taskId: number, userId: number, allowNonOwner = false): Promise<ScheduledTask> {
     const task = await this.store.selectById(taskId);
     if (task == null) {
       throw new BusinessException(ErrorCode.SCHEDULED_TASK_NOT_FOUND);
     }
-    if (task.userId !== userId) {
+    if (!allowNonOwner && task.userId !== userId) {
       throw new BusinessException(ErrorCode.SCHEDULED_TASK_ACCESS_DENIED);
     }
     return task;

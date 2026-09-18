@@ -50,6 +50,18 @@ describe('ScheduledTaskService', () => {
   it('denies update for other users', async () => {
     vi.mocked(store.selectById).mockResolvedValue({ id: 1, userId: 9, cronExpression: '0 0 9 * * *' });
     await expect(service.updateTask(1, 7, 'x', null, null, null)).rejects.toBeInstanceOf(BusinessException);
+    await expect(service.deleteTask(1, 7)).rejects.toBeInstanceOf(BusinessException);
+  });
+
+  it('allows admin update/delete for other users with allowNonOwner', async () => {
+    vi.mocked(store.selectById).mockResolvedValue({
+      id: 1, userId: 9, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', fireCount: 0, prompt: 'hello',
+    });
+    const updated = await service.updateTask(1, 7, null, null, null, 'PAUSED', null, { allowNonOwner: true });
+    expect(updated.status).toBe('PAUSED');
+    expect(store.updateById).toHaveBeenCalled();
+    await service.deleteTask(1, 7, { allowNonOwner: true });
+    expect(store.deleteById).toHaveBeenCalledWith(1);
   });
 
   it('updates deletes lists and executes idle session', async () => {

@@ -59,39 +59,22 @@
         <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
-            <el-tooltip v-if="!isOwner(row)" content="仅任务归属人可操作" placement="top">
-              <span class="op-disabled-hint">
-                <el-switch
-                  v-model="row.status"
-                  active-value="ACTIVE"
-                  inactive-value="PAUSED"
-                  inline-prompt
-                  active-text="启"
-                  inactive-text="停"
-                  disabled
-                  style="margin-right: 8px"
-                />
-                <el-button type="danger" link size="small" disabled>删除</el-button>
-              </span>
-            </el-tooltip>
-            <template v-else>
-              <el-switch
-                v-model="row.status"
-                active-value="ACTIVE"
-                inactive-value="PAUSED"
-                inline-prompt
-                active-text="启"
-                inactive-text="停"
-                :disabled="!!row.finished"
-                style="margin-right: 8px"
-                @change="handleToggleStatus(row)"
-              />
-              <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
-                <template #reference>
-                  <el-button type="danger" link size="small">删除</el-button>
-                </template>
-              </el-popconfirm>
-            </template>
+            <el-switch
+              v-model="row.status"
+              active-value="ACTIVE"
+              inactive-value="PAUSED"
+              inline-prompt
+              active-text="启"
+              inactive-text="停"
+              :disabled="!!row.finished"
+              style="margin-right: 8px"
+              @change="handleToggleStatus(row)"
+            />
+            <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
+              <template #reference>
+                <el-button type="danger" link size="small">删除</el-button>
+              </template>
+            </el-popconfirm>
           </template>
         </el-table-column>
       </el-table>
@@ -128,24 +111,21 @@
             <span>{{ formatDateTime(row.nextFireTime) }}</span>
           </div>
           <div class="mobile-card-actions">
-            <template v-if="isOwner(row)">
-              <el-switch
-                v-model="row.status"
-                active-value="ACTIVE"
-                inactive-value="PAUSED"
-                inline-prompt
-                active-text="启"
-                inactive-text="停"
-                :disabled="!!row.finished"
-                @change="handleToggleStatus(row)"
-              />
-              <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
-                <template #reference>
-                  <el-button type="danger" link>删除</el-button>
-                </template>
-              </el-popconfirm>
-            </template>
-            <span v-else class="text-muted">仅任务归属人可操作</span>
+            <el-switch
+              v-model="row.status"
+              active-value="ACTIVE"
+              inactive-value="PAUSED"
+              inline-prompt
+              active-text="启"
+              inactive-text="停"
+              :disabled="!!row.finished"
+              @change="handleToggleStatus(row)"
+            />
+            <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
+              <template #reference>
+                <el-button type="danger" link>删除</el-button>
+              </template>
+            </el-popconfirm>
           </div>
         </el-card>
         <el-empty v-if="!loading && tasks.length === 0" description="暂无定时任务" />
@@ -170,15 +150,8 @@ import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { ElMessage } from 'element-plus'
 import { useBreakpoint } from '../../composables/useBreakpoint'
-import { useAuthStore } from '../../stores/auth'
 
 const { isMobile } = useBreakpoint()
-const authStore = useAuthStore()
-
-/** 后端仅允许任务归属人启停/删除，非本人任务直接禁用操作入口 */
-function isOwner(row: ScheduledTask): boolean {
-  return authStore.user?.id != null && Number(row.userId) === authStore.user.id
-}
 
 interface ScheduledTask {
   id: number
@@ -319,10 +292,5 @@ onMounted(() => {
 }
 .text-muted {
   color: var(--el-text-color-secondary);
-}
-.op-disabled-hint {
-  display: inline-flex;
-  align-items: center;
-  cursor: not-allowed;
 }
 </style>

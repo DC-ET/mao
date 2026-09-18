@@ -15,6 +15,11 @@ export interface ScheduledTaskRouteDeps {
 }
 
 export function registerScheduledTaskRoutes(app: FastifyInstance, deps: ScheduledTaskRouteDeps): void {
+  /** 持 session:read 可跨用户读写；未接 permission 时视为无管理旁路 */
+  async function hasManagePermission(userId: number): Promise<boolean> {
+    return deps.permission ? await deps.permission.hasPermission(userId, 'session:read') : false;
+  }
+
   app.get('/v1/scheduled-tasks', async (req, reply) => {
     const userId = requireUserId(req, deps.jwt);
     sendJson(reply, 200, ok(await deps.service.listByUser(userId)));
@@ -22,7 +27,7 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, deps: Schedule
 
   app.get('/v1/scheduled-tasks/all', async (req, reply) => {
     const userId = requireUserId(req, deps.jwt);
-    if (deps.permission && !(await deps.permission.hasPermission(userId, 'session:read'))) {
+    if (deps.permission && !(await hasManagePermission(userId))) {
       throw new BusinessException(ErrorCode.FORBIDDEN);
     }
     const q = req.query as { pageNum?: string; pageSize?: string };
@@ -37,7 +42,7 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, deps: Schedule
       sendJson(reply, 200, failCode(ErrorCode.SCHEDULED_TASK_NOT_FOUND));
       return;
     }
-    if (task.userId !== userId) {
+    if (task.userId !== userId && !(await hasManagePermission(userId))) {
       sendJson(reply, 200, failCode(ErrorCode.SCHEDULED_TASK_ACCESS_DENIED));
       return;
     }
@@ -48,13 +53,15 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, deps: Schedule
     const userId = requireUserId(req, deps.jwt);
     const id = Number((req.params as { id: string }).id);
     const body = (req.body ?? {}) as { name?: string; prompt?: string; cronExpression?: string; status?: string; once?: boolean };
-    sendJson(reply, 200, ok(await deps.service.updateTask(id, userId, body.name, body.prompt, body.cronExpression, body.status, body.once)));
+    const allowNonOwner = await hasManagePermission(userId);
+    sendJson(reply, 200, ok(await deps.service.updateTask(id, userId, body.name, body.prompt, body.cronExpression, body.status, body.once, { allowNonOwner })));
   });
 
   app.delete('/v1/scheduled-tasks/:id', async (req, reply) => {
     const userId = requireUserId(req, deps.jwt);
     const id = Number((req.params as { id: string }).id);
-    await deps.service.deleteTask(id, userId);
+    const allowNonOwner = await hasManagePermission(userId);
+    await deps.service.deleteTask(id, userId, { allowNonOwner });
     sendJson(reply, 200, ok(null));
   });
 }

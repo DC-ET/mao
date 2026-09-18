@@ -2,7 +2,7 @@
 
 ## 模块职责
 
-查询和维护当前用户的定时任务：列表、详情、更新名称/提示词/cron/状态、删除。
+查询和维护定时任务：列表、详情、更新名称/提示词/cron/状态、删除。默认仅操作当前用户任务；持 `session:read` 的管理端可跨用户详情/更新/删除（与 `list-all` 同门槛）。
 
 ## 明确不包含
 
@@ -78,7 +78,7 @@ mao scheduled-task get --id 3 --json
 
 ### 用途
 
-更新任务名称、提示词、cron 表达式或状态。服务端会校验 cron 表达式，并在恢复 ACTIVE 时重新计算下次触发时间。
+更新任务名称、提示词、cron 表达式或状态。服务端会校验 cron 表达式，并在恢复 ACTIVE 时重新计算下次触发时间。本人任务直接可改；他人任务需 `session:read`（管理端启停/删除）。
 
 ### 参数说明
 
@@ -102,6 +102,10 @@ mao scheduled-task update --id 3 --cron-expression '0 0 9 * * *'
 ---
 
 ## 命令：mao scheduled-task delete
+
+### 用途
+
+删除定时任务。本人任务直接可删；他人任务需 `session:read`。
 
 ### 参数说明
 
