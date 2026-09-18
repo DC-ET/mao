@@ -109,7 +109,7 @@ mao auth login --username <用户名> --password <密码>
 | 定时任务 | [reference/scheduled-task.md](reference/scheduled-task.md) |
 | 个人 Skill | [reference/skill.md](reference/skill.md) |
 | 全局 Skill 文档 | [reference/skill-docs.md](reference/skill-docs.md) |
-| 个人指令 / 系统指令 | [reference/command.md](reference/command.md) |
+| 个人指令 / 系统指令 / 管理端个人指令 | [reference/command.md](reference/command.md) |
 | 附件与工作区 | [reference/file.md](reference/file.md) |
 | OSS / 上传配置 | [reference/oss.md](reference/oss.md) |
 | 任务面板/通知偏好 | [reference/pref.md](reference/pref.md) |

@@ -101,7 +101,7 @@ const routes: RouteRecordRaw[] = [
         path: 'system-commands',
         name: 'SystemCommands',
         component: () => import('../views/system-commands/SystemCommandListView.vue'),
-        meta: { title: '系统指令', keepAlive: true, adminOnly: true }
+        meta: { title: '指令管理', keepAlive: true, adminOnly: true }
       },
       {
         path: 'feishu-bots',

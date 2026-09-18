@@ -4,7 +4,7 @@
 
 - `quick-command`：聚合可在输入框快速选用的 skills + commands
 - `command`：用户个人指令（user-commands）CRUD
-- `system-command`：系统指令（admin/system-commands）管理 CRUD，需管理员权限
+- `system-command`：管理端指令管理（系统指令 CRUD + 跨用户个人指令查看/删除），需管理员权限
 
 ## 命令选择
 
@@ -16,6 +16,8 @@
 | 新建个人指令 | `command create` |
 | 更新个人指令 | `command update` |
 | 删除个人指令 | `command delete` |
+| 管理端系统指令列表 | `system-command list` |
+| 管理端个人指令列表 | `system-command list-personal` |
 
 ---
 
@@ -133,21 +135,29 @@ mao command delete --id 5
 
 ---
 
-## system-command — 系统指令管理（管理员）
+## system-command — 指令管理（管理员）
 
-`/v1/admin/system-commands` 系列，需管理员权限。系统指令对全体用户可见（用户视角经 `GET /v1/user-commands/system`，CLI 暂未单独封装）。
+管理端指令页对应 API，需管理员权限：
+
+- 系统指令：`/v1/admin/system-commands`（`user_id=0`，全体用户可见；用户视角经 `GET /v1/user-commands/system`）
+- 个人指令：`/v1/admin/user-commands`（跨用户 `user_id>0`，可查看与删除）
 
 ### 命令
 
 | 场景 | 命令 |
 |------|------|
 | 系统指令列表 | `system-command list` |
-| 详情 | `system-command get --id` |
-| 新建 | `system-command create --name --content` |
-| 更新 | `system-command update --id --content [--name]` |
-| 删除 | `system-command delete --id` |
+| 系统指令详情 | `system-command get --id` |
+| 新建系统指令 | `system-command create --name --content` |
+| 更新系统指令 | `system-command update --id --content [--name]` |
+| 删除系统指令 | `system-command delete --id` |
+| 个人指令列表（跨用户） | `system-command list-personal` |
+| 个人指令详情 | `system-command get-personal --user-id --id` |
+| 删除个人指令 | `system-command delete-personal --user-id --id` |
 
 ```bash
 mao system-command list --json
 mao system-command create --name '代码审查' --content '对当前工作区做代码审查'
+mao system-command list-personal --json
+mao system-command delete-personal --user-id 7 --id 21
 ```

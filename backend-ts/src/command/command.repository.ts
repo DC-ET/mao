@@ -12,6 +12,12 @@ export class MysqlUserCommandRepository implements UserCommandRepository {
     );
   }
 
+  listPersonalAll(): Promise<UserCommand[]> {
+    return this.db.query<UserCommand>(
+      `SELECT * FROM user_command WHERE user_id > 0 AND ${notDeleted()} ORDER BY created_at DESC`,
+    );
+  }
+
   findByIdAndUserId(id: number, userId: number): Promise<UserCommand | null> {
     return this.db.queryOne<UserCommand>(
       `SELECT * FROM user_command WHERE id = ? AND user_id = ? AND ${notDeleted()}`,

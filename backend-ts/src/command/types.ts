@@ -17,8 +17,20 @@ export interface UserCommandVO {
   content?: string;
 }
 
+export interface AdminUserCommandVO {
+  id?: number;
+  userId?: number;
+  name?: string;
+  content?: string;
+  username?: string | null;
+  displayName?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
 export interface UserCommandRepository {
   listByUserId(userId: number): Promise<UserCommand[]>;
+  listPersonalAll(): Promise<UserCommand[]>;
   findByIdAndUserId(id: number, userId: number): Promise<UserCommand | null>;
   findByUserIdAndName(userId: number, name: string): Promise<UserCommand | null>;
   insert(command: UserCommand): Promise<number>;

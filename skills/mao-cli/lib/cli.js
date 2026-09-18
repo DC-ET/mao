@@ -72,7 +72,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   llm-call        LLM 调用流水
   audit           审计日志
   settings        系统设置
-  system-command  系统指令管理（管理员）
+  system-command  指令管理：系统指令 CRUD + 跨用户个人指令（管理员）
 
 环境变量:
   MAO_BASE_URL         私有化请设为自己的站点，如 https://mao.example.com

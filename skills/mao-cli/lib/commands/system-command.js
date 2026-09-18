@@ -16,9 +16,13 @@ const HELP = `用法:
   mao system-command create --name <名称> --content <内容>
   mao system-command update --id <id> [--name <名称>] --content <内容>
   mao system-command delete --id <id>
+  mao system-command list-personal
+  mao system-command get-personal --user-id <用户ID> --id <指令ID>
+  mao system-command delete-personal --user-id <用户ID> --id <指令ID>
 
 说明:
-  管理端系统指令（全体用户可见的内置指令）CRUD，需管理员权限。
+  管理端指令管理：系统指令（全体用户可见，user_id=0）CRUD，
+  以及跨用户查看/删除个人指令（user_id>0），需管理员权限。
 `;
 
 async function handle(ctx) {
@@ -76,6 +80,33 @@ async function handle(ctx) {
     case 'delete': {
       const id = requireNumber(flags, 'id', '指令 ID');
       const result = await request({ ...common, method: 'DELETE', path: `/admin/system-commands/${id}` });
+      outputResult(result, globals);
+      return;
+    }
+    case 'list-personal': {
+      const result = await request({ ...common, method: 'GET', path: '/admin/user-commands' });
+      outputResult(result, globals);
+      return;
+    }
+    case 'get-personal': {
+      const userId = requireNumber(flags, 'user-id', '用户 ID');
+      const id = requireNumber(flags, 'id', '指令 ID');
+      const result = await request({
+        ...common,
+        method: 'GET',
+        path: `/admin/user-commands/${userId}/${id}`,
+      });
+      outputResult(result, globals);
+      return;
+    }
+    case 'delete-personal': {
+      const userId = requireNumber(flags, 'user-id', '用户 ID');
+      const id = requireNumber(flags, 'id', '指令 ID');
+      const result = await request({
+        ...common,
+        method: 'DELETE',
+        path: `/admin/user-commands/${userId}/${id}`,
+      });
       outputResult(result, globals);
       return;
     }

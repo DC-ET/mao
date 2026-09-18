@@ -10,6 +10,7 @@ function command(id: number, userId: number, name: string, content: string): Use
 describe('UserCommandService', () => {
   const repo: UserCommandRepository = {
     listByUserId: vi.fn(),
+    listPersonalAll: vi.fn(),
     findByIdAndUserId: vi.fn(),
     findByUserIdAndName: vi.fn(),
     insert: vi.fn(async (c) => {

@@ -15,6 +15,23 @@
 
 ---
 
+## 0.0.150 (2026-09-18)
+
+### 管理后台
+
+- 「系统指令」页升级为「指令管理」：系统指令 / 个人指令双 Tab（对齐 Skills 管理），支持关键词筛选（名称 / 内容 / 用户）与分页。
+- 指令内容列表改为三行截断 + 悬停预览 + 「查看」完整弹窗，避免长提示词撑高列表。
+- 个人指令 Tab 支持跨用户查看与删除；新建/编辑仍由用户在桌面端完成。
+
+### 后端
+
+- 新增 `GET /v1/admin/user-commands`、`GET/DELETE /v1/admin/user-commands/:userId/:id`，管理员可跨用户查看/删除个人指令（`user_id>0`）。
+- 系统指令管理接口返回增加 `userId`/`createdAt`/`updatedAt`，个人指令列表附带 `username`/`displayName`。
+
+### 终端 CLI（mao-cli）
+
+- `mao system-command` 新增 `list-personal` / `get-personal` / `delete-personal`，与管理后台指令管理能力对齐。
+
 ## 0.0.147 (2026-09-18)
 
 ### 后端

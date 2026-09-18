@@ -1956,7 +1956,17 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     };
     registerAdminAnalyticsRoutes(api, adminDeps);
     registerAdminRuntimeRoutes(api, adminDeps);
-    registerAdminSystemCommandRoutes(api, { commandRepo, permissionService });
+    registerAdminSystemCommandRoutes(api, {
+      commandRepo,
+      permissionService,
+      userLookup: {
+        findByIds: async (ids: number[]) => (await userRepo.findByIds(ids)).map((u) => ({
+          id: u.id!,
+          username: u.username,
+          displayName: u.displayName,
+        })),
+      },
+    });
     registerMcpServerRoutes(api, {
       mcpServerService, mcpClientManager: mcpClient, userMcpPreferenceService: mcpPref, permissionService,
     });

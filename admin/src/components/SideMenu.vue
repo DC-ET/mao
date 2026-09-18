@@ -132,7 +132,7 @@ const menuGroups: MenuGroup[] = [
     id: 'system',
     label: '系统',
     items: [
-      { index: '/system-commands', label: '系统指令', icon: Promotion, adminOnly: true },
+      { index: '/system-commands', label: '指令管理', icon: Promotion, adminOnly: true },
       { index: '/feishu-bots', label: '飞书机器人', icon: ChatLineRound, adminOnly: true },
       { index: '/settings', label: '系统设置', icon: Setting, permission: 'settings:read' }
     ]

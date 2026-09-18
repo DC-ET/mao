@@ -2,7 +2,7 @@
 
 管理后台用于平台治理与配置。默认开发地址 `http://localhost:5200/admin/`；生产与桌面 Web 同一域名，路径为 `https://mao.example.com/admin/`（由部署方配置）。
 
-登录与账号见 [config.md](config.md)。REST 运维可用 `mao` CLI（`user`、`role`、`model`、`skill-docs`、`admin-session`、`audit` 等）。
+登录与账号见 [config.md](config.md)。REST 运维可用 `mao` CLI（`user`、`role`、`model`、`skill-docs`、`system-command`、`admin-session`、`audit` 等）。
 
 ## 时间显示约定
 
@@ -63,6 +63,17 @@ CLI：`mao agent list|get|create|update` 等（见 [agent.md](agent.md)）。
 | 个人 Skills | 全站用户在桌面端上传的个人技能（`/admin/user-skills`）：按用户展示、关键词搜索、查看正文、删除；不在此上传 |
 
 个人 Skills 列表读需 `agent:read`，删除需 `agent:write`。CLI 全局目录：`mao skill-docs`（见 [skill-docs.md](skill-docs.md)）；个人技能本用户操作：`mao skill`（见 [skill.md](skill.md)）。
+
+## 指令管理
+
+维护快捷指令。页面分两个 Tab：
+
+| Tab | 内容 |
+|-----|------|
+| 系统指令 | 全局内置指令（`user_id=0`）：新增/编辑/删除，全体用户可见 |
+| 个人指令 | 各用户在桌面端创建的个人指令（`/admin/user-commands`）：按用户展示、关键词筛选、查看正文、删除；不在此新建或编辑 |
+
+两 Tab 均支持关键词筛选与分页；指令内容列表默认三行截断，悬停或点「查看」看完整正文。接口均为管理员权限。CLI：`mao system-command list|list-personal|...`（见 [command.md](command.md)）。
 
 ## 用户管理
 

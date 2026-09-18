@@ -3,16 +3,19 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
 import { requireAdmin, sendJson, sendOk } from '../common/http-error.js';
-import { bodyOf, pathId } from '../common/request.js';
+import { bodyOf, pathId, pathParam } from '../common/request.js';
 import { fail } from '../common/result.js';
 import { SYSTEM_USER_ID } from './command.service.js';
-import type { UserCommand, UserCommandRepository, UserCommandVO } from './types.js';
+import type { AdminUserCommandVO, UserCommand, UserCommandRepository } from './types.js';
 
 const NAME_PATTERN = /^[a-zA-Z0-9\u4e00-\u9fa5_-]+$/;
 
 export interface AdminSystemCommandRouteDeps {
   commandRepo: UserCommandRepository;
   permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
+  userLookup?: {
+    findByIds(ids: number[]): Promise<Array<{ id: number; username: string; displayName?: string | null }>>;
+  };
 }
 
 interface CreateSystemCommandRequest {
@@ -26,13 +29,13 @@ interface UpdateSystemCommandRequest {
 }
 
 export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: AdminSystemCommandRouteDeps): void {
-  const { commandRepo, permissionService } = deps;
+  const { commandRepo, permissionService, userLookup } = deps;
 
   // 列表：查询所有系统指令
   app.get('/v1/admin/system-commands', async (request, reply) => {
     await requireAdmin(permissionService, request);
     const commands = await commandRepo.listByUserId(SYSTEM_USER_ID);
-    return sendOk(reply, commands.map(toVO));
+    return sendOk(reply, commands.map(toAdminVO));
   });
 
   // 详情：查询单条系统指令
@@ -42,7 +45,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
     if (command == null) {
       return sendJson(reply, 200, fail(404, '指令不存在'));
     }
-    return sendOk(reply, toVO(command));
+    return sendOk(reply, toAdminVO(command));
   });
 
   // 新增：创建系统指令
@@ -64,7 +67,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
 
     const command: UserCommand = { userId: SYSTEM_USER_ID, name: body.name!, content: body.content! };
     await commandRepo.insert(command);
-    return sendOk(reply, toVO(command));
+    return sendOk(reply, toAdminVO(command));
   });
 
   // 编辑：更新系统指令
@@ -91,7 +94,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
 
     command.content = body.content!;
     await commandRepo.updateById(command);
-    return sendOk(reply, toVO(command));
+    return sendOk(reply, toAdminVO(command));
   });
 
   // 删除：删除系统指令
@@ -104,6 +107,53 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
     await commandRepo.deleteById(pathId(request));
     return sendOk(reply);
   });
+
+  // 列表：跨用户查看个人指令
+  app.get('/v1/admin/user-commands', async (request, reply) => {
+    await requireAdmin(permissionService, request);
+    const commands = await commandRepo.listPersonalAll();
+    const userIds = [...new Set(commands.map((c) => c.userId))];
+    const users = userIds.length > 0 && userLookup ? await userLookup.findByIds(userIds) : [];
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    return sendOk(reply, commands.map((command) => {
+      const user = userMap.get(command.userId);
+      return {
+        ...toAdminVO(command),
+        userId: command.userId,
+        username: user?.username ?? null,
+        displayName: user?.displayName ?? null,
+      } satisfies AdminUserCommandVO;
+    }));
+  });
+
+  // 详情：查询指定用户的个人指令
+  app.get('/v1/admin/user-commands/:userId/:id', async (request, reply) => {
+    await requireAdmin(permissionService, request);
+    const userId = Number(pathParam(request, 'userId'));
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return sendJson(reply, 200, fail(400, '无效的用户 ID'));
+    }
+    const command = await commandRepo.findByIdAndUserId(pathId(request), userId);
+    if (command == null || command.userId === SYSTEM_USER_ID) {
+      return sendJson(reply, 200, fail(404, '指令不存在'));
+    }
+    return sendOk(reply, toAdminVO(command));
+  });
+
+  // 删除：删除指定用户的个人指令
+  app.delete('/v1/admin/user-commands/:userId/:id', async (request, reply) => {
+    await requireAdmin(permissionService, request);
+    const userId = Number(pathParam(request, 'userId'));
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return sendJson(reply, 200, fail(400, '无效的用户 ID'));
+    }
+    const command = await commandRepo.findByIdAndUserId(pathId(request), userId);
+    if (command == null || command.userId === SYSTEM_USER_ID) {
+      return sendJson(reply, 200, fail(404, '指令不存在'));
+    }
+    await commandRepo.deleteById(pathId(request));
+    return sendOk(reply);
+  });
 }
 
 function validateName(name: string): void {
@@ -112,10 +162,13 @@ function validateName(name: string): void {
   }
 }
 
-function toVO(command: UserCommand): UserCommandVO {
+function toAdminVO(command: UserCommand): AdminUserCommandVO {
   return {
     id: command.id,
+    userId: command.userId,
     name: command.name,
     content: command.content,
+    createdAt: command.createdAt ?? null,
+    updatedAt: command.updatedAt ?? null,
   };
 }
