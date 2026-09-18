@@ -5,6 +5,8 @@ export interface FeishuSendTarget {
   appId: string;
   receiveId: string;
   receiveIdType: 'union_id' | 'open_id' | 'chat_id';
+  /** 可选：回复目标消息 ID。设置时用 message.reply() 发送（话题群中落入当前话题），否则回退 message.create()。 */
+  replyMessageId?: string;
 }
 
 /**
@@ -54,7 +56,7 @@ export function feishuFileTypeOf(fileName: string): 'opus' | 'mp4' | 'pdf' | 'do
   return 'stream';
 }
 
-/** 发送媒体消息；receiveIdType 在建会话时已随 chat_id 前缀确定，失败即抛出真实错误码。成功返回飞书 message_id。 */
+/** 发送媒体消息；群聊优先用 message.reply() 回复触发消息（话题群中落入当前话题），私聊或无 replyMessageId 时回退 message.create()。成功返回飞书 message_id。 */
 async function sendFeishuMediaMessage(
   client: Lark.Client,
   target: FeishuSendTarget,
@@ -62,10 +64,15 @@ async function sendFeishuMediaMessage(
   content: string,
   label: string,
 ): Promise<string | null> {
-  const response = await client.im.v1.message.create({
-    params: { receive_id_type: target.receiveIdType },
-    data: { receive_id: target.receiveId, msg_type: msgType, content },
-  });
+  const response = target.replyMessageId != null && target.replyMessageId !== ''
+    ? await client.im.v1.message.reply({
+        path: { message_id: target.replyMessageId },
+        data: { msg_type: msgType, content },
+      })
+    : await client.im.v1.message.create({
+        params: { receive_id_type: target.receiveIdType },
+        data: { receive_id: target.receiveId, msg_type: msgType, content },
+      });
   if (Number(response.code ?? 0) !== 0) {
     throw new Error(`飞书${label}消息发送失败: code=${response.code ?? 'unknown'}, msg=${response.msg ?? 'no message'}`);
   }

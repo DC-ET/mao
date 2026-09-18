@@ -3,14 +3,14 @@ import type * as Lark from '@larksuiteoapi/node-sdk';
 import { feishuFileTypeOf, feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './media-sender.js';
 
 function makeClient(): Lark.Client & {
-  im: { v1: { image: { create: ReturnType<typeof vi.fn> }; file: { create: ReturnType<typeof vi.fn> }; message: { create: ReturnType<typeof vi.fn> } } };
+  im: { v1: { image: { create: ReturnType<typeof vi.fn> }; file: { create: ReturnType<typeof vi.fn> }; message: { create: ReturnType<typeof vi.fn>; reply: ReturnType<typeof vi.fn> } } };
 } {
   const client = {
     im: {
       v1: {
         image: { create: vi.fn() },
         file: { create: vi.fn() },
-        message: { create: vi.fn() },
+        message: { create: vi.fn(), reply: vi.fn() },
       },
     },
   };
@@ -98,5 +98,52 @@ describe('sendFeishuFile', () => {
     const client = makeClient();
     client.im.v1.file.create.mockResolvedValue(null);
     await expect(sendFeishuFile(client, feishuSendTargetOf('1', 'oc_chat'), 'a.pdf', Buffer.from('pdf'))).rejects.toThrow('飞书文件上传失败');
+  });
+});
+
+describe('reply mode (replyMessageId)', () => {
+  it('sendFeishuImage uses message.reply when replyMessageId is set', async () => {
+    const client = makeClient();
+    client.im.v1.image.create.mockResolvedValue({ image_key: 'img_v2' });
+    client.im.v1.message.reply.mockResolvedValue({ code: 0, data: { message_id: 'om_reply' } });
+
+    const target = { ...feishuSendTargetOf('1', 'oc_chat'), replyMessageId: 'om_trigger' };
+    const messageId = await sendFeishuImage(client, target, Buffer.from('png'));
+
+    expect(client.im.v1.message.reply).toHaveBeenCalledWith({
+      path: { message_id: 'om_trigger' },
+      data: { msg_type: 'image', content: JSON.stringify({ image_key: 'img_v2' }) },
+    });
+    expect(client.im.v1.message.create).not.toHaveBeenCalled();
+    expect(messageId).toBe('om_reply');
+  });
+
+  it('sendFeishuFile uses message.reply when replyMessageId is set', async () => {
+    const client = makeClient();
+    client.im.v1.file.create.mockResolvedValue({ file_key: 'file_v3' });
+    client.im.v1.message.reply.mockResolvedValue({ code: 0, data: { message_id: 'om_reply' } });
+
+    const target = { ...feishuSendTargetOf('1', 'oc_chat'), replyMessageId: 'om_trigger' };
+    const messageId = await sendFeishuFile(client, target, 'a.pdf', Buffer.from('pdf'));
+
+    expect(client.im.v1.message.reply).toHaveBeenCalledWith({
+      path: { message_id: 'om_trigger' },
+      data: { msg_type: 'file', content: JSON.stringify({ file_key: 'file_v3' }) },
+    });
+    expect(client.im.v1.message.create).not.toHaveBeenCalled();
+    expect(messageId).toBe('om_reply');
+  });
+
+  it('falls back to message.create when replyMessageId is absent', async () => {
+    const client = makeClient();
+    client.im.v1.image.create.mockResolvedValue({ image_key: 'img_v2' });
+    client.im.v1.message.create.mockResolvedValue({ code: 0, data: { message_id: 'om_new' } });
+
+    const target = feishuSendTargetOf('1', 'oc_chat'); // no replyMessageId
+    const messageId = await sendFeishuImage(client, target, Buffer.from('png'));
+
+    expect(client.im.v1.message.reply).not.toHaveBeenCalled();
+    expect(client.im.v1.message.create).toHaveBeenCalled();
+    expect(messageId).toBe('om_new');
   });
 });

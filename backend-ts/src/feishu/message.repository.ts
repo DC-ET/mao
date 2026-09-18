@@ -78,6 +78,8 @@ export interface FeishuMessageRepository {
   findSessionChannel(sessionId: number): Promise<{ sessionId: number; appId: string; chatId: string; chatType: 'p2p' | 'group'; awaitingFirstMessageTitle: number } | null>;
   /** 清除「等待首条消息命名」标志（命名完成后调用，幂等）。 */
   clearAwaitingFirstMessageTitle(sessionId: number): Promise<void>;
+  /** 查询会话最新入站消息 ID（用于 reply 发送）。私聊查 feishu_p2p_message，群聊查 feishu_group_message_log，话题查 feishu_thread_session.root_message_id。未找到返回 null。 */
+  findLatestInboundMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null>;
 }
 
 /** Persistence boundary for Feishu conversations. Session creation is deliberately
@@ -276,5 +278,26 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
       'UPDATE feishu_session_channel SET awaiting_first_message_title = 0 WHERE session_id = ?',
       [sessionId],
     );
+  }
+
+  async findLatestInboundMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null> {
+    if (channel.chatType === 'p2p') {
+      const row = await this.db.queryOne<{ messageId: string }>(
+        'SELECT message_id FROM feishu_p2p_message WHERE session_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 1',
+        [sessionId, 'IN'],
+      );
+      return row?.messageId ?? null;
+    }
+    // 群聊：优先查话题根消息（话题群 reply 根消息可落入当前话题），无话题时查最新群消息。
+    const threadRow = await this.db.queryOne<{ rootMessageId: string }>(
+      'SELECT root_message_id FROM feishu_thread_session WHERE session_id = ? LIMIT 1',
+      [sessionId],
+    );
+    if (threadRow?.rootMessageId != null && threadRow.rootMessageId !== '') return threadRow.rootMessageId;
+    const groupRow = await this.db.queryOne<{ messageId: string }>(
+      'SELECT message_id FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ? ORDER BY created_at DESC LIMIT 1',
+      [channel.appId, channel.chatId],
+    );
+    return groupRow?.messageId ?? null;
   }
 }

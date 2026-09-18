@@ -877,7 +877,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         if (sessionId == null) return null;
         // 会话 → 通道绑定（创建时落行、不可变）：多会话并行下活跃指针行查不到非活跃会话，必须走绑定表。
         const channel = await feishuMessageService.findSessionChannel(sessionId);
-        return channel == null ? null : feishuSendTargetOf(channel.appId, channel.chatId);
+        if (channel == null) return null;
+        const target = feishuSendTargetOf(channel.appId, channel.chatId);
+        // 查最新入站消息 ID，用于 reply 发送（群聊话题中落入当前话题、私聊中 reply 到用户消息）。
+        const replyMessageId = await feishuMessageService.findLatestInboundMessageId(sessionId, channel);
+        if (replyMessageId != null) target.replyMessageId = replyMessageId;
+        return target;
       },
       sendImage: async (target, image, sessionId) => {
         const client = await getFeishuClient(Number(target.appId));
