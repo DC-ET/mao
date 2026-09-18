@@ -1,6 +1,6 @@
 # Agent 最佳实践经验 · 双形态展示/编辑技术方案
 
-> 状态：待实现  
+> 状态：已实现  
 > 日期：2026-07-18  
 > 范围：仅管理后台 `admin`（Agent 编辑弹窗「最佳实践」Tab）  
 > 前置：`docs/plan/agent-experience-design.md`（数据模型与注入链路，已上线）

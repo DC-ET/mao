@@ -105,31 +105,65 @@
       </el-form-item>
       </el-tab-pane>
       <el-tab-pane label="最佳实践" name="experience">
-      <el-form-item label="最佳实践经验">
-        <div class="experience-list">
-          <div
-            v-for="(item, index) in form.experiences"
-            :key="item._key"
-            class="experience-item"
+      <div class="experience-panel">
+        <div class="experience-toolbar">
+          <el-segmented v-model="experienceView" :options="experienceViewOptions" @change="handleExperienceViewChange" />
+          <span v-if="experienceView === 'text'" class="experience-hint">一行一条；# 开头表示停用</span>
+        </div>
+        <div v-show="experienceView === 'table'" class="experience-list">
+          <el-table
+            ref="experienceTableRef"
+            :key="experienceTableKey"
+            :data="form.experiences"
+            row-key="_key"
+            size="small"
+            class="experience-table"
+            :row-class-name="experienceRowClass"
           >
-            <el-input
-              v-model="item.content"
-              type="textarea"
-              :rows="2"
-              :maxlength="300"
-              show-word-limit
-              placeholder="请输入经验正文（最长 300 字）"
-            />
-            <div class="experience-actions">
-              <el-switch v-model="item.enabled" active-text="启用" inactive-text="停用" />
-              <el-button link type="primary" :disabled="index === 0" @click="moveExperience(index, -1)">上移</el-button>
-              <el-button link type="primary" :disabled="index === form.experiences.length - 1" @click="moveExperience(index, 1)">下移</el-button>
-              <el-button link type="danger" @click="removeExperience(index)">删除</el-button>
-            </div>
-          </div>
+            <el-table-column width="40" align="center">
+              <template #default>
+                <span class="drag-handle" title="拖拽排序">⠿</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="#" width="48" align="center">
+              <template #default="{ $index }">{{ $index + 1 }}</template>
+            </el-table-column>
+            <el-table-column label="正文">
+              <template #default="{ row }">
+                <el-input
+                  :model-value="row.content"
+                  :maxlength="300"
+                  placeholder="请输入经验正文（最长 300 字）"
+                  @update:model-value="(v: string) => (row.content = sanitizeExperienceContent(v))"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="72" align="center">
+              <template #default="{ row }">
+                <el-tag
+                  :type="row.enabled ? 'success' : 'info'"
+                  class="experience-status"
+                  @click="row.enabled = !row.enabled"
+                >{{ row.enabled ? '启用' : '停用' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="56" align="center">
+              <template #default="{ $index }">
+                <el-button link type="danger" @click="removeExperience($index)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
           <el-button type="primary" link @click="addExperience">+ 添加经验</el-button>
         </div>
-      </el-form-item>
+        <div v-show="experienceView === 'text'" class="experience-text-pane">
+          <el-input
+            v-model="experienceText"
+            type="textarea"
+            class="experience-textarea"
+            placeholder="一行一条经验；# 开头表示停用；空行忽略"
+          />
+        </div>
+      </div>
       </el-tab-pane>
       <el-tab-pane label="推荐问题" name="suggestedQuestions">
       <el-form-item label="推荐问题">
@@ -170,9 +204,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, reactive } from 'vue'
+import { computed, ref, watch, reactive, nextTick, onBeforeUnmount } from 'vue'
 import type { FormInstance, FormRules, UploadRawFile, UploadRequestOptions } from 'element-plus'
 import { ElMessage } from 'element-plus'
+import Sortable from 'sortablejs'
 import { api } from '../../api'
 import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
@@ -220,8 +255,17 @@ const formRef = ref<FormInstance>()
 const skillDocs = ref<any[]>([])
 const mcpServers = ref<any[]>([])
 const models = ref<any[]>([])
+const experienceView = ref<'table' | 'text'>('table')
+const experienceText = ref('')
+const experienceTableRef = ref()
+const experienceTableKey = ref(0)
+const experienceViewOptions = [
+  { label: '表格', value: 'table' },
+  { label: '文本', value: 'text' }
+]
 let experienceKeySeq = 0
 let suggestedQuestionKeySeq = 0
+let experienceSortable: Sortable | null = null
 
 const form = reactive({
   avatarUrl: null as string | null,
@@ -304,16 +348,113 @@ function removeExperience(index: number) {
   })
 }
 
-function moveExperience(index: number, delta: number) {
-  const target = index + delta
-  if (target < 0 || target >= form.experiences.length) return
-  const list = form.experiences
-  const tmp = list[index]
-  list[index] = list[target]
-  list[target] = tmp
-  list.forEach((item, i) => {
-    item.sortOrder = i
+function sanitizeExperienceContent(value: string): string {
+  return value.replace(/\s*[\r\n]+\s*/g, ' ')
+}
+
+function experienceRowClass({ row }: { row: ExperienceFormItem }) {
+  return row.enabled ? '' : 'experience-row-disabled'
+}
+
+function experiencesToText(list: ExperienceFormItem[]): string {
+  return list
+    .map(item => (item.enabled ? item.content : `# ${item.content}`))
+    .join('\n')
+}
+
+type TextParseResult =
+  | { ok: true; items: ExperienceFormItem[] }
+  | { ok: false; error: string }
+
+function textToExperiences(text: string, previous: ExperienceFormItem[]): TextParseResult {
+  const lines = text.split(/\r?\n/)
+  const parsed: { content: string; enabled: boolean }[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (!line.trim()) continue
+    const lineNo = i + 1
+    let enabled = true
+    let content = line.trim()
+    if (content.startsWith('#')) {
+      enabled = false
+      content = content.replace(/^#\s?/, '').trim()
+    }
+    if (!content) {
+      return { ok: false, error: `第 ${lineNo} 行：内容为空` }
+    }
+    if (content.length > 300) {
+      return { ok: false, error: `第 ${lineNo} 行：超过 300 字（当前 ${content.length} 字）` }
+    }
+    if (content.startsWith('#')) {
+      return { ok: false, error: `第 ${lineNo} 行：正文不能以 # 开头` }
+    }
+    parsed.push({ content, enabled })
+  }
+  const items = parsed.map((entry, index) => ({
+    _key: nextExperienceKey(),
+    id: index < previous.length ? previous[index].id ?? null : null,
+    content: entry.content,
+    sortOrder: index,
+    enabled: entry.enabled
+  }))
+  return { ok: true, items }
+}
+
+function handleExperienceViewChange(value: string | number | boolean) {
+  if (value === 'text') {
+    experienceText.value = experiencesToText(form.experiences)
+    return
+  }
+  if (value === 'table') {
+    const result = textToExperiences(experienceText.value, form.experiences)
+    if (!result.ok) {
+      ElMessage.warning(result.error)
+      experienceView.value = 'text'
+      return
+    }
+    form.experiences = result.items
+  }
+}
+
+function syncExperiencesFromTextView(): boolean {
+  const result = textToExperiences(experienceText.value, form.experiences)
+  if (!result.ok) {
+    ElMessage.warning(result.error)
+    return false
+  }
+  form.experiences = result.items
+  return true
+}
+
+async function mountExperienceSortable() {
+  destroyExperienceSortable()
+  if (experienceView.value !== 'table' || !props.visible) return
+  await nextTick()
+  const tableEl = experienceTableRef.value?.$el as HTMLElement | undefined
+  const tbody = tableEl?.querySelector('.el-table__body-wrapper tbody') as HTMLTableSectionElement | null
+  if (!tbody) return
+  experienceSortable = Sortable.create(tbody, {
+    handle: '.drag-handle',
+    animation: 150,
+    onEnd: ({ oldIndex, newIndex }) => {
+      if (oldIndex == null || newIndex == null || oldIndex === newIndex) return
+      const list = [...form.experiences]
+      const [moved] = list.splice(oldIndex, 1)
+      list.splice(newIndex, 0, moved)
+      list.forEach((item, i) => {
+        item.sortOrder = i
+      })
+      form.experiences = list
+      // Sortable 已直接改过 DOM，重建表格使虚拟 DOM 与真实顺序对齐
+      experienceTableKey.value += 1
+      mountExperienceSortable()
+    }
   })
+}
+
+function destroyExperienceSortable() {
+  experienceSortable?.destroy()
+  experienceSortable = null
 }
 
 function addSuggestedQuestion() {
@@ -359,6 +500,10 @@ function validateExperiences(): boolean {
       ElMessage.warning(`第 ${i + 1} 条经验不能超过 300 字`)
       return false
     }
+    if (content.startsWith('#')) {
+      ElMessage.warning(`第 ${i + 1} 条经验正文不能以 # 开头`)
+      return false
+    }
   }
   return true
 }
@@ -383,8 +528,13 @@ function validateSuggestedQuestions(): boolean {
 }
 
 watch(() => props.visible, async (val) => {
-  if (!val) return
+  if (!val) {
+    destroyExperienceSortable()
+    return
+  }
   activeTab.value = 'basic'
+  experienceView.value = 'table'
+  experienceText.value = ''
   if (props.agentData) {
     Object.assign(form, {
       avatarUrl: props.agentData.avatarUrl || null,
@@ -404,7 +554,18 @@ watch(() => props.visible, async (val) => {
 
   formRef.value?.clearValidate()
   await loadOptions()
+  await mountExperienceSortable()
 }, { immediate: true })
+
+watch([experienceView, activeTab], () => {
+  if (experienceView.value === 'table' && activeTab.value === 'experience') {
+    mountExperienceSortable()
+  }
+})
+
+onBeforeUnmount(() => {
+  destroyExperienceSortable()
+})
 
 async function loadOptions() {
   try {
@@ -458,6 +619,10 @@ async function handleSubmit() {
     return false
   })
   if (!valid) return
+  if (experienceView.value === 'text') {
+    activeTab.value = 'experience'
+    if (!syncExperiencesFromTextView()) return
+  }
   if (!validateExperiences()) {
     activeTab.value = 'experience'
     return
@@ -535,13 +700,36 @@ async function handleSubmit() {
   .agent-tabs :deep(.el-tab-pane) { height: calc(100dvh - 240px); }
   .avatar-editor { align-items: flex-start; flex-direction: column; gap: 12px; }
 }
+.experience-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+
+.experience-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.experience-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
 .experience-list {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
 }
 
+/* 推荐问题 Tab 仍用卡片列表 */
 .experience-item {
   display: flex;
   flex-direction: column;
@@ -559,9 +747,65 @@ async function handleSubmit() {
   flex-wrap: wrap;
 }
 
+.experience-table {
+  width: 100%;
+}
+
+.experience-table :deep(.experience-row-disabled .cell),
+.experience-table :deep(.experience-row-disabled .el-input__wrapper) {
+  opacity: 0.65;
+}
+
+.drag-handle {
+  cursor: grab;
+  color: var(--el-text-color-secondary);
+  user-select: none;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.experience-status {
+  cursor: pointer;
+}
+
+.experience-text-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.experience-textarea {
+  flex: 1;
+  min-height: 280px;
+}
+
+.experience-textarea :deep(.el-textarea__inner) {
+  height: 100%;
+  min-height: 280px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.6;
+  resize: none;
+}
+
 .form-hint {
   margin-left: 12px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+
+.agent-tabs :deep(.el-tab-pane:has(.experience-panel)) {
+  height: min(560px, 65vh);
+}
+
+@media (max-width: 767px) {
+  .agent-tabs :deep(.el-tab-pane:has(.experience-panel)) {
+    height: calc(100dvh - 240px);
+  }
+  .experience-textarea,
+  .experience-textarea :deep(.el-textarea__inner) {
+    min-height: 200px;
+  }
 }
 </style>

@@ -1,7 +1,7 @@
 import { test, expect, type Locator, type Page, type Request } from '@playwright/test'
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')
-const tabs = ['基本信息', '角色提示词', '最佳实践']
+const tabs = ['基本信息', '角色提示词', '最佳实践', '推荐问题']
 const promptPlaceholder = '只需填写身份、业务目标与表达方式。页面规则、工具用法和安全边界由系统按会话通道注入。'
 
 async function setup(page: Page) {
@@ -19,7 +19,7 @@ async function setup(page: Page) {
     const path = new URL(request.url()).pathname
     let data: unknown = []
     if (path.endsWith('/auth/admin/login') || path.endsWith('/auth/login')) data = { accessToken: 'test-token', refreshToken: 'test-refresh' }
-    else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', displayName: '管理员', permissions: ['agent:read', 'agent:write'] }
+    else if (path.endsWith('/users/me')) data = { id: 1, username: 'admin', displayName: '管理员', isAdmin: true, permissions: ['agent:read', 'agent:write'] }
     else if (path.endsWith('/agents/avatar') && request.method() === 'POST') {
       uploads.push(request)
       data = { avatarUrl: '/uploads/uuid.png' }
@@ -78,7 +78,7 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
   await selectTab(dialog, '最佳实践')
   await dialog.getByRole('button', { name: '+ 添加经验', exact: true }).click()
   await dialog.getByPlaceholder('请输入经验正文（最长 300 字）').fill('保留经验')
-  await dialog.locator('.el-tab-pane:visible .el-switch').click()
+  await dialog.locator('.el-tab-pane:visible .experience-status').click()
   await selectTab(dialog, '基本信息')
   await chooseOption(page, dialog, 'Skills', 'mock-skill')
   await chooseOption(page, dialog, 'MCP 服务器', 'mock-mcp（HTTP）')
@@ -99,7 +99,7 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
       await expect(dialog.getByPlaceholder(promptPlaceholder)).toHaveAttribute('rows', '15')
     } else {
       await expect(dialog.getByPlaceholder('请输入经验正文（最长 300 字）')).toHaveValue('保留经验')
-      await expect(dialog.getByRole('switch')).not.toBeChecked()
+      await expect(dialog.locator('.experience-status')).toHaveText('停用')
     }
   }
   await dialog.getByRole('button', { name: '创建', exact: true }).click()
@@ -108,6 +108,7 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
     avatarUrl: null, name: '跨页签 Agent', description: '保留描述', systemPrompt: '保留角色定义',
     skillNames: ['mock-skill'], mcpServerIds: [21], isDefault: 1, defaultModelId: 11,
     experiences: [{ id: null, content: '保留经验', sortOrder: 0, enabled: false }],
+    suggestedQuestions: [],
   } }])
 })
 
