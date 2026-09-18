@@ -37,6 +37,7 @@ function sessionDetailButton(sessionDetailUrl: string): Record<string, unknown> 
     tag: 'button',
     text: { tag: 'plain_text', content: '会话详情' },
     type: 'default',
+    size: 'sm',
     behaviors: [{
       type: 'open_url',
       default_url: sessionDetailUrl,
@@ -67,14 +68,14 @@ export function buildFeishuProgressCard(
   // 执行中提供「取消任务」按钮（终态 PATCH 不带按钮，随卡片重写自动消失）。
   if (status === 'RUNNING' && action != null) {
     buttons.push({
-      tag: 'button', text: { tag: 'plain_text', content: '取消任务' }, type: 'danger',
+      tag: 'button', text: { tag: 'plain_text', content: '取消任务' }, type: 'danger', size: 'sm',
       value: { kind: 'feishu_progress', act: 'cancel', sessionId: action.sessionId, sender: action.sender },
     });
   }
   // 失败卡提供「重试」：与客户端 ExecutionErrorBanner 同语义，基于会话历史续跑。
   if (status === 'FAILED' && action != null && action.sender !== '' && action.botId != null) {
     buttons.push({
-      tag: 'button', text: { tag: 'plain_text', content: '重试' }, type: 'primary',
+      tag: 'button', text: { tag: 'plain_text', content: '重试' }, type: 'primary', size: 'sm',
       value: { kind: 'feishu_progress', act: 'retry', sessionId: action.sessionId, sender: action.sender },
     });
   }

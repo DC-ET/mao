@@ -17,6 +17,7 @@ function buildQueueCardText(bold: string, body: string, sessionDetailUrl?: strin
           tag: 'button',
           text: { tag: 'plain_text', content: '会话详情' },
           type: 'default',
+          size: 'sm',
           behaviors: [{
             type: 'open_url',
             default_url: detailUrl,

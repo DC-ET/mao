@@ -57,6 +57,7 @@ export function buildFeishuAuthGuideCard(guide: FeishuUnauthorizedGuide, authUrl
               tag: 'button',
               text: { tag: 'plain_text', content: guide.buttonLabel },
               type: 'primary',
+              size: 'sm',
               behaviors: [{
                 type: 'open_url',
                 default_url: url,
