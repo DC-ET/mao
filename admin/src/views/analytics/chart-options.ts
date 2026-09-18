@@ -24,18 +24,18 @@ export interface RankItem {
   color?: string
 }
 
-const AXIS_LABEL_COLOR = '#86868b'
-const SPLIT_LINE_COLOR = 'rgba(0, 0, 0, 0.06)'
+/** ECharts tooltip formatter 返回值按 HTML 渲染，模型/用户/Agent 等名称必须转义后拼接。 */
+export function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
 
-/** 阶段配色按枚举绑定，零值阶段被过滤后颜色不会错位。 */
-const PHASE_COLORS: Record<string, string> = {
-  IDLE: '#8e8e93',
-  RUNNING: '#0066cc',
-  RESUMING: '#5ac8fa',
-  WAITING_APPROVAL: '#ff9500',
-  COMPLETED: '#34c759',
-  FAILED: '#ff3b30',
-  CANCELLED: '#c7c7cc'
+export function formatNumber(value: number): string {
+  return value.toLocaleString('zh-CN')
 }
 
 /** 大数用中文万/亿，避免坐标轴与卡片被长数字撑开。 */
@@ -46,13 +46,36 @@ export function formatCompact(value: number): string {
   return String(value)
 }
 
-export function formatNumber(value: number): string {
-  return value.toLocaleString('zh-CN')
-}
-
 function trimZero(value: number): string {
   return value.toFixed(1).replace(/\.0$/, '')
 }
+
+/** 阶段配色按枚举绑定，零值阶段被过滤后颜色不会错位。图表与会话 Tab 的 live 标签共用。 */
+export const PHASE_COLORS: Record<string, string> = {
+  IDLE: '#8e8e93',
+  RUNNING: '#0066cc',
+  RESUMING: '#5ac8fa',
+  WAITING_APPROVAL: '#ff9500',
+  COMPLETED: '#34c759',
+  FAILED: '#ff3b30',
+  CANCELLED: '#c7c7cc'
+}
+
+export function phaseColor(phase: string): string {
+  return PHASE_COLORS[phase] || '#86868b'
+}
+
+/* ---- 图表配色从 CSS 变量读取，与页面主题保持一致 ---- */
+
+function cssVar(name: string, fallback: string): string {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return fallback
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+export const AXIS_LABEL_COLOR = () => cssVar('--mao-muted', '#86868b')
+export const SPLIT_LINE_COLOR = () => cssVar('--mao-border', 'rgba(0, 0, 0, 0.06)')
+export const INK_COLOR = () => cssVar('--mao-ink', '#1d1d1f')
+export const SURFACE_COLOR = () => cssVar('--mao-surface', '#ffffff')
 
 function mmdd(date: string): string {
   return date.slice(5)
@@ -66,8 +89,8 @@ function categoryAxis(dates: string[]) {
     data: dates.map(mmdd),
     boundaryGap: false,
     axisTick: { show: false },
-    axisLine: { lineStyle: { color: SPLIT_LINE_COLOR } },
-    axisLabel: { color: AXIS_LABEL_COLOR, fontSize: 11, hideOverlap: true }
+    axisLine: { lineStyle: { color: SPLIT_LINE_COLOR() } },
+    axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 11, hideOverlap: true }
   }
 }
 
@@ -75,14 +98,14 @@ function valueAxis(name: string) {
   return {
     type: 'value' as const,
     name,
-    nameTextStyle: { color: AXIS_LABEL_COLOR, fontSize: 11 },
-    splitLine: { lineStyle: { color: SPLIT_LINE_COLOR } },
-    axisLabel: { color: AXIS_LABEL_COLOR, fontSize: 11, formatter: (v: number) => formatCompact(v) }
+    nameTextStyle: { color: AXIS_LABEL_COLOR(), fontSize: 11 },
+    splitLine: { lineStyle: { color: SPLIT_LINE_COLOR() } },
+    axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 11, formatter: (v: number) => formatCompact(v) }
   }
 }
 
 /** 图例居中，避开左右两侧的坐标轴名称。 */
-const trendLegend = {
+export const trendLegend = {
   top: 0,
   left: 'center' as const,
   icon: 'roundRect',
@@ -98,83 +121,6 @@ function dataZoom(days: number) {
     { type: 'inside' as const, start: Math.max(0, 100 - (30 / days) * 100), end: 100 },
     { type: 'slider' as const, height: 16, bottom: 0, start: Math.max(0, 100 - (30 / days) * 100), end: 100 }
   ]
-}
-
-export function trafficTrendOption(trends: TrendPoint[]): ChartOption {
-  const dates = trends.map((t) => t.date)
-  const zoom = dataZoom(trends.length)
-  return {
-    color: [CHART_PALETTE[0], CHART_PALETTE[1]],
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'line' },
-      formatter: (params: unknown) => tooltipRows(params as TooltipParam[], dates)
-    },
-    legend: trendLegend,
-    grid: { ...baseGrid, bottom: zoom ? 28 : 4 },
-    dataZoom: zoom,
-    xAxis: categoryAxis(dates),
-    yAxis: [valueAxis('会话'), valueAxis('消息')],
-    series: [
-      {
-        name: '会话',
-        type: 'line',
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 6,
-        showSymbol: trends.length <= 31,
-        lineStyle: { width: 2.5 },
-        areaStyle: { opacity: 0.12 },
-        data: trends.map((t) => t.sessions)
-      },
-      {
-        name: '消息',
-        type: 'line',
-        yAxisIndex: 1,
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 6,
-        showSymbol: trends.length <= 31,
-        lineStyle: { width: 2.5 },
-        data: trends.map((t) => t.messages)
-      }
-    ]
-  }
-}
-
-export function tokenTrendOption(trends: TrendPoint[]): ChartOption {
-  const dates = trends.map((t) => t.date)
-  const zoom = dataZoom(trends.length)
-  return {
-    color: [CHART_PALETTE[0], CHART_PALETTE[2]],
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'shadow' },
-      formatter: (params: unknown) => tooltipRows(params as TooltipParam[], dates, true)
-    },
-    legend: trendLegend,
-    grid: { ...baseGrid, bottom: zoom ? 28 : 4 },
-    dataZoom: zoom,
-    xAxis: { ...categoryAxis(dates), boundaryGap: true },
-    yAxis: valueAxis('Token'),
-    series: [
-      {
-        name: '对话 Token',
-        type: 'bar',
-        stack: 'token',
-        barMaxWidth: 26,
-        data: trends.map((t) => t.chatTokens)
-      },
-      {
-        name: '后台 Token',
-        type: 'bar',
-        stack: 'token',
-        barMaxWidth: 26,
-        itemStyle: { borderRadius: [3, 3, 0, 0] },
-        data: trends.map((t) => t.backgroundTokens)
-      }
-    ]
-  }
 }
 
 export interface SingleSeriesSpec {
@@ -213,6 +159,42 @@ export function seriesTrendOption(trends: TrendPoint[], specs: SingleSeriesSpec[
   }
 }
 
+/** Token 堆叠柱状图：对话 Token + 后台调用 Token。 */
+export function tokenTrendOption(trends: TrendPoint[]): ChartOption {
+  const dates = trends.map((t) => t.date)
+  const zoom = dataZoom(trends.length)
+  return {
+    color: [CHART_PALETTE[0], CHART_PALETTE[2]],
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: unknown) => tooltipRows(params as TooltipParam[], dates, true)
+    },
+    legend: trendLegend,
+    grid: { ...baseGrid, bottom: zoom ? 28 : 4 },
+    dataZoom: zoom,
+    xAxis: { ...categoryAxis(dates), boundaryGap: true },
+    yAxis: valueAxis('Token'),
+    series: [
+      {
+        name: '对话 Token',
+        type: 'bar',
+        stack: 'token',
+        barMaxWidth: 26,
+        data: trends.map((t) => t.chatTokens)
+      },
+      {
+        name: '后台 Token',
+        type: 'bar',
+        stack: 'token',
+        barMaxWidth: 26,
+        itemStyle: { borderRadius: [3, 3, 0, 0] },
+        data: trends.map((t) => t.backgroundTokens)
+      }
+    ]
+  }
+}
+
 interface TooltipParam {
   dataIndex: number
   seriesName: string
@@ -224,12 +206,12 @@ function tooltipRows(params: TooltipParam[], dates: string[], withTotal = false)
   if (params.length === 0) return ''
   const date = dates[params[0].dataIndex] ?? ''
   const rows = params
-    .map((p) => `${p.marker}${p.seriesName}<span style="float:right;margin-left:16px;font-weight:600">${formatNumber(p.value ?? 0)}</span>`)
+    .map((p) => `${p.marker}${escapeHtml(p.seriesName)}<span style="float:right;margin-left:16px;font-weight:600">${formatNumber(p.value ?? 0)}</span>`)
     .join('<br/>')
   const total = withTotal && params.length > 1
     ? `<br/>合计<span style="float:right;margin-left:16px;font-weight:600">${formatNumber(params.reduce((s, p) => s + (p.value ?? 0), 0))}</span>`
     : ''
-  return `<div style="min-width:150px"><div style="margin-bottom:4px;color:#86868b">${date}</div>${rows}${total}</div>`
+  return `<div style="min-width:150px"><div style="margin-bottom:4px;color:#86868b">${escapeHtml(date)}</div>${rows}${total}</div>`
 }
 
 /** 环形图：中心显示主指标，legend 右侧竖排；item.color 优先，否则按调色板顺序取色。 */
@@ -240,7 +222,7 @@ export function donutOption(items: RankItem[], centerLabel: string, centerValue:
       trigger: 'item',
       formatter: (p: unknown) => {
         const param = p as { marker: string; name: string; value: number; percent: number }
-        return `${param.marker}${param.name}<br/><b>${formatNumber(param.value)}</b>（${param.percent}%）`
+        return `${param.marker}${escapeHtml(param.name)}<br/><b>${formatNumber(param.value)}</b>（${param.percent}%）`
       }
     },
     legend: {
@@ -251,7 +233,8 @@ export function donutOption(items: RankItem[], centerLabel: string, centerValue:
       itemWidth: 10,
       itemHeight: 10,
       icon: 'roundRect',
-      textStyle: { fontSize: 12, color: AXIS_LABEL_COLOR },
+      textStyle: { fontSize: 12, color: AXIS_LABEL_COLOR() },
+      // legend 是纯文本渲染，但保持统一截断口径；不需要 HTML 转义
       formatter: (name: string) => (name.length > 12 ? `${name.slice(0, 12)}…` : name)
     },
     series: [
@@ -260,14 +243,14 @@ export function donutOption(items: RankItem[], centerLabel: string, centerValue:
         radius: ['55%', '78%'],
         center: ['36%', '50%'],
         avoidLabelOverlap: true,
-        itemStyle: { borderColor: '#fff', borderWidth: 2 },
+        itemStyle: { borderColor: SURFACE_COLOR(), borderWidth: 2 },
         label: {
           show: true,
           position: 'center',
           formatter: () => `{v|${centerValue}}\n{l|${centerLabel}}`,
           rich: {
-            v: { fontSize: 20, fontWeight: 'bold', color: '#1d1d1f', lineHeight: 28 },
-            l: { fontSize: 12, color: AXIS_LABEL_COLOR }
+            v: { fontSize: 20, fontWeight: 'bold', color: INK_COLOR(), lineHeight: 28 },
+            l: { fontSize: 12, color: AXIS_LABEL_COLOR() }
           }
         },
         emphasis: { label: { show: true }, scaleSize: 6 },
@@ -291,17 +274,19 @@ export function rankBarOption(items: RankItem[], color: string): ChartOption {
       axisPointer: { type: 'shadow' },
       formatter: (params: unknown) => {
         const list = params as TooltipParam[]
-        return list.length > 0 ? `${ordered[list[0].dataIndex]?.name ?? ''}<br/><b>${formatNumber(list[0].value ?? 0)}</b>` : ''
+        return list.length > 0
+          ? `${escapeHtml(ordered[list[0].dataIndex]?.name ?? '')}<br/><b>${formatNumber(list[0].value ?? 0)}</b>`
+          : ''
       }
     },
     grid: { left: 8, right: 56, top: 8, bottom: 8, containLabel: true },
-    xAxis: { type: 'value', splitLine: { lineStyle: { color: SPLIT_LINE_COLOR } }, axisLabel: { show: false } },
+    xAxis: { type: 'value', splitLine: { lineStyle: { color: SPLIT_LINE_COLOR() } }, axisLabel: { show: false } },
     yAxis: {
       type: 'category',
       data: ordered.map((item) => (item.name.length > 14 ? `${item.name.slice(0, 14)}…` : item.name)),
       axisTick: { show: false },
       axisLine: { show: false },
-      axisLabel: { color: AXIS_LABEL_COLOR, fontSize: 12 }
+      axisLabel: { color: AXIS_LABEL_COLOR(), fontSize: 12 }
     },
     series: [
       {
@@ -312,7 +297,7 @@ export function rankBarOption(items: RankItem[], color: string): ChartOption {
           show: true,
           position: 'right',
           fontSize: 11,
-          color: AXIS_LABEL_COLOR,
+          color: AXIS_LABEL_COLOR(),
           formatter: (p: unknown) => formatCompact((p as { value: number }).value)
         },
         data: ordered.map((item) => item.value)

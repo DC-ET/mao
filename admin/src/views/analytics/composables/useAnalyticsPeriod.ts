@@ -1,4 +1,3 @@
-import { computed, type Ref } from 'vue'
 import type { AnalyticsPeriod, AnalyticsQuery, PeriodValue } from '../types'
 
 export const PERIOD_OPTIONS = [
@@ -14,12 +13,6 @@ export function resolvePeriod(value: PeriodValue): AnalyticsPeriod {
   if (value === 'today') return { days: 1, endOffset: 0 }
   if (value === 'yesterday') return { days: 1, endOffset: 1 }
   return { days: Number(value), endOffset: 0 }
-}
-
-export function periodLabel(value: PeriodValue): string {
-  if (value === 'today') return '今日'
-  if (value === 'yesterday') return '昨日'
-  return `近 ${value} 天`
 }
 
 export function periodToQueryValue(value: PeriodValue): string {
@@ -41,13 +34,4 @@ export function buildAnalyticsQuery(period: PeriodValue, limit?: number): Analyt
 /** 缓存键含周期，换周期自然 miss；force 由调用方先 invalidate。 */
 export function periodKey(scope: string, query: AnalyticsQuery): string {
   return `${scope}|${query.days}|${query.endOffset}|${query.limit ?? ''}|${query.modelId ?? ''}|${query.excludeConnectivity ?? ''}`
-}
-
-export function usePeriodMeta(period: Ref<PeriodValue>) {
-  return computed(() => {
-    const { days, endOffset } = resolvePeriod(period.value)
-    if (days === 1 && endOffset === 0) return '今日 00:00 起'
-    if (days === 1 && endOffset === 1) return '昨日 00:00 起'
-    return `近 ${days} 天`
-  })
 }

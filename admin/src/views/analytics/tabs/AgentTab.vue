@@ -74,7 +74,7 @@ import { CHART_PALETTE } from '../../../utils/echarts'
 import { formatNumber, rankBarOption, type RankItem } from '../chart-options'
 import type { AgentsPayload } from '../types'
 
-const props = defineProps<{ payload: AgentsPayload | null; loading?: boolean; error?: boolean }>()
+const props = defineProps<{ payload: AgentsPayload | null; loading?: boolean }>()
 const router = useRouter()
 
 const agentStats = computed(() => props.payload?.agentStats || [])

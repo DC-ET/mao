@@ -32,7 +32,7 @@
       <template #header>
         <div class="card-header">
           <span>用户用量明细</span>
-          <span class="card-hint">Top {{ userRows.length }}</span>
+          <span class="card-hint">按窗口内消息数截断的 Top {{ userRows.length }}</span>
         </div>
       </template>
       <el-table :data="userRows" size="small" stripe>
@@ -64,7 +64,9 @@
         <el-table-column label="失败调用" width="90" align="right" class-name="hide-on-mobile">
           <template #default="{ row }">{{ formatNumber(row.callFailCount || 0) }}</template>
         </el-table-column>
-        <el-table-column prop="lastLoginAt" label="最后登录" width="170" class-name="hide-on-mobile" />
+        <el-table-column label="最后登录" width="170" class-name="hide-on-mobile">
+          <template #default="{ row }">{{ formatDateTime(row.lastLoginAt) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="100" class-name="hide-on-mobile">
           <template #default="{ row }">
             <button class="linkish" type="button" @click="go(`/llm-call?userId=${row.userId}`)">调用流水</button>
@@ -81,9 +83,10 @@ import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import { formatNumber, rankBarOption, type RankItem } from '../chart-options'
+import { formatDateTime } from '../../../utils/datetime'
 import type { UsersPayload } from '../types'
 
-const props = defineProps<{ payload: UsersPayload | null; loading?: boolean; error?: boolean }>()
+const props = defineProps<{ payload: UsersPayload | null; loading?: boolean }>()
 const router = useRouter()
 
 const userRows = computed(() => props.payload?.userActivity || [])
@@ -147,5 +150,11 @@ export default { name: 'UserTab' }
 
 .linkish:hover {
   text-decoration: underline;
+}
+
+.linkish:focus-visible {
+  outline: 2px solid var(--mao-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 </style>

@@ -6,8 +6,8 @@
           <span>模型 Token 占比</span>
           <div class="header-actions">
             <el-checkbox
-              v-model="includeConnectivity"
-              @change="handleConnectivityChange"
+              :model-value="includeConnectivity"
+              @update:model-value="handleConnectivityChange"
             >
               含自检调用
             </el-checkbox>
@@ -140,8 +140,11 @@ import { donutOption, formatCompact, formatNumber, topWithOthers, type RankItem 
 import { percent } from '../composables/metrics'
 import type { ModelsPayload } from '../types'
 
-const props = defineProps<{ payload: ModelsPayload | null; loading?: boolean; error?: boolean }>()
-const emit = defineEmits<{ (e: 'update:modelId', value: number | undefined): void; (e: 'refresh', includeConnectivity: boolean): void }>()
+const props = defineProps<{ payload: ModelsPayload | null; loading?: boolean }>()
+const emit = defineEmits<{
+  (e: 'update:modelId', value: number | undefined): void
+  (e: 'update:includeConnectivity', value: boolean): void
+}>()
 const router = useRouter()
 
 const selectedModelId = ref<number | undefined>(undefined)
@@ -203,7 +206,8 @@ function handleRowClick(row: { modelId: number }) {
 }
 
 function handleConnectivityChange(value: boolean | string | number) {
-  emit('refresh', Boolean(value))
+  includeConnectivity.value = Boolean(value)
+  emit('update:includeConnectivity', Boolean(value))
 }
 
 function go(path: string) {
@@ -296,5 +300,11 @@ export default { name: 'ModelTab' }
 
 .linkish:hover {
   text-decoration: underline;
+}
+
+.linkish:focus-visible {
+  outline: 2px solid var(--mao-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 </style>

@@ -55,7 +55,10 @@
         <div class="layout-content">
           <router-view v-slot="{ Component, route: viewRoute }">
             <keep-alive :max="8">
-              <component :is="Component" :key="viewRoute.fullPath" />
+              <component
+                :is="Component"
+                :key="viewRoute.name === 'SessionDetail' ? viewRoute.fullPath : viewRoute.path"
+              />
             </keep-alive>
           </router-view>
         </div>

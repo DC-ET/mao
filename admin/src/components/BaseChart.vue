@@ -55,7 +55,8 @@ onActivated(() => chart?.resize())
 
 onBeforeUnmount(dispose)
 
-watch(() => props.option, render, { deep: true })
+// option 均由 computed 生成新引用，浅比较即可；deep 比较大对象没有收益
+watch(() => props.option, render)
 
 // empty 切换会销毁/重建 DOM 节点，需要在下一帧重新初始化
 watch(

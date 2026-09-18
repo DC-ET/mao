@@ -159,21 +159,11 @@ import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { phaseLabel } from '../../../utils/labels'
 import { llmCallSceneLabel, formatMs } from '../../../utils/llmCallLabels'
-import { donutOption, formatCompact, formatNumber, phaseRankItems, type RankItem } from '../chart-options'
+import { donutOption, formatCompact, formatNumber, phaseColor, phaseRankItems, type RankItem } from '../chart-options'
 import type { SessionsPayload } from '../types'
 
-const props = defineProps<{ payload: SessionsPayload | null; loading?: boolean; error?: boolean }>()
+const props = defineProps<{ payload: SessionsPayload | null; loading?: boolean }>()
 const router = useRouter()
-
-const PHASE_COLORS: Record<string, string> = {
-  IDLE: '#8e8e93',
-  RUNNING: '#0066cc',
-  RESUMING: '#5ac8fa',
-  WAITING_APPROVAL: '#ff9500',
-  COMPLETED: '#34c759',
-  FAILED: '#ff3b30',
-  CANCELLED: '#c7c7cc'
-}
 
 const phaseItems = computed<RankItem[]>(() => phaseRankItems(props.payload?.phaseDistribution || []))
 const typeRows = computed(() => props.payload?.sessionTypes || [])
@@ -208,10 +198,6 @@ const qualityItems = computed(() => {
     { label: '总耗时 p95', value: formatMs(q.durationP95) }
   ]
 })
-
-function phaseColor(phase: string): string {
-  return PHASE_COLORS[phase] || '#86868b'
-}
 
 function typeLabel(type: string): string {
   if (type === 'NORMAL') return '普通会话'

@@ -27,7 +27,8 @@
           role="button"
           tabindex="0"
           @click="go(item.path)"
-          @keydown.enter="go(item.path)"
+          @keydown.enter.prevent="go(item.path)"
+          @keydown.space.prevent="go(item.path)"
         >
           <div class="label">{{ item.label }}</div>
           <div class="value-row">
@@ -105,7 +106,6 @@ import type { OverviewPayload, PeriodTotals, PreviousTotals } from '../types'
 const props = defineProps<{
   payload: OverviewPayload | null
   loading: boolean
-  error: boolean
   periodText: string
   previousText: string
 }>()
@@ -256,6 +256,12 @@ export default {
 
 .metric.clickable:hover .value {
   color: var(--mao-accent);
+}
+
+.metric.clickable:focus-visible {
+  outline: 2px solid var(--mao-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .label {

@@ -8,6 +8,8 @@ interface CacheSlot<T = unknown> {
   loading: boolean
   error: boolean
   loadedKey: string
+  /** 该份数据的实际拉取时刻，用于界面展示数据新鲜度 */
+  fetchedAt: number | null
 }
 
 const cache = new Map<string, CacheSlot>()
@@ -16,7 +18,7 @@ const inflight = new Map<string, Promise<unknown>>()
 function slotOf(key: string): CacheSlot {
   let slot = cache.get(key)
   if (!slot) {
-    slot = { data: null, loading: false, error: false, loadedKey: '' }
+    slot = { data: null, loading: false, error: false, loadedKey: '', fetchedAt: null }
     cache.set(key, slot)
   }
   return slot
@@ -37,7 +39,14 @@ export function useScopeQuery<T>(scope: AnalyticsScope) {
   const data = ref<T | null>(null)
   const loading = ref(false)
   const error = ref(false)
+  const fetchedAt = ref<number | null>(null)
   let seq = 0
+
+  function apply(slot: CacheSlot): void {
+    data.value = slot.data as T | null
+    fetchedAt.value = slot.fetchedAt
+    error.value = slot.data == null
+  }
 
   async function fetchScope(query: AnalyticsQuery, force = false): Promise<void> {
     const key = periodKey(scope, query)
@@ -45,26 +54,20 @@ export function useScopeQuery<T>(scope: AnalyticsScope) {
     const slot = slotOf(key)
 
     if (!force && slot.data != null) {
-      data.value = slot.data as T
+      apply(slot)
       loading.value = false
-      error.value = false
       return
     }
     if (!force && inflight.has(key)) {
       loading.value = true
       try {
-        const result = await inflight.get(key)
+        await inflight.get(key)
         if (current !== seq) return
-        if (result == null) {
-          error.value = true
-          data.value = null
-        } else {
-          data.value = result as T
-          error.value = false
-        }
+        apply(slot)
       } catch {
         if (current !== seq) return
         error.value = true
+        data.value = null
       } finally {
         if (current === seq) loading.value = false
       }
@@ -84,6 +87,7 @@ export function useScopeQuery<T>(scope: AnalyticsScope) {
         }
         slot.data = payload
         slot.loadedKey = key
+        slot.fetchedAt = Date.now()
         return payload
       })
       .finally(() => {
@@ -91,29 +95,18 @@ export function useScopeQuery<T>(scope: AnalyticsScope) {
       })
     inflight.set(key, request)
     try {
-      const result = await request
+      await request
       if (current !== seq) return
-      data.value = result
-      error.value = false
+      apply(slot)
     } catch {
       if (current !== seq) return
       error.value = true
       data.value = null
+      fetchedAt.value = null
     } finally {
       if (current === seq) loading.value = false
     }
   }
 
-  function refresh(query: AnalyticsQuery): Promise<void> {
-    invalidateAnalytics(scope)
-    return fetchScope(query, true)
-  }
-
-  function reset(): void {
-    data.value = null
-    error.value = false
-    loading.value = false
-  }
-
-  return { data, loading, error, fetchScope, refresh, reset }
+  return { data, loading, error, fetchedAt, fetchScope }
 }
