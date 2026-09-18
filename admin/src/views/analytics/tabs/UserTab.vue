@@ -87,6 +87,13 @@ const props = defineProps<{ payload: UsersPayload | null; loading?: boolean; err
 const router = useRouter()
 
 const userRows = computed(() => props.payload?.userActivity || [])
+// Token 排行用后端独立截断的 tokenTop：userActivity 按消息数截断，直接重排会遗漏消息少但 Token 重的用户
+const tokenSource = computed(() =>
+  (props.payload?.tokenTop || []).map((row) => ({
+    name: row.displayName || row.username || '未知',
+    value: Number(row.totalTokens || 0)
+  }))
+)
 
 const messageItems = computed<RankItem[]>(() =>
   userRows.value
@@ -100,14 +107,7 @@ const messageItems = computed<RankItem[]>(() =>
 )
 
 const tokenItems = computed<RankItem[]>(() =>
-  userRows.value
-    .map((row) => ({
-      name: row.displayName || row.username || '未知',
-      value: Number(row.totalTokens || 0)
-    }))
-    .filter((item) => item.value > 0)
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10)
+  [...tokenSource.value].filter((item) => item.value > 0).sort((a, b) => b.value - a.value).slice(0, 10)
 )
 
 function go(path: string) {

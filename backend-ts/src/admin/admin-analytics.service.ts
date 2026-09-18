@@ -251,10 +251,10 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
 
   selectMessageStatsByModel(range: AnalyticsRange): Promise<GroupMessageRow[]> {
     return this.db.query(
-      `SELECT model_id AS id, COUNT(*) AS messageCount, COALESCE(SUM(token_count), 0) AS totalTokens
-       FROM message
-       WHERE created_at >= ? AND created_at < ? AND model_id IS NOT NULL AND deleted = 0
-       GROUP BY model_id`,
+      `SELECT m.model_id AS id, COUNT(*) AS messageCount, COALESCE(SUM(m.token_count), 0) AS totalTokens
+       FROM message m JOIN session s ON m.session_id = s.id
+       WHERE m.created_at >= ? AND m.created_at < ? AND m.model_id IS NOT NULL AND m.deleted = 0 AND s.deleted = 0
+       GROUP BY m.model_id`,
       [range.startAt, range.endAtExclusive],
     );
   }
@@ -716,14 +716,16 @@ export class AdminAnalyticsService {
     const { range, previous } = this.resolveWindows(days, endOffset);
     const safeLimit = clampLimit(limit);
     const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
-    const [userActivity, activeUsers, previousTotals] = await Promise.all([
+    const [userActivity, tokenTop, activeUsers, previousTotals] = await Promise.all([
       this.userActivity(range, safeLimit, callOpts),
+      this.userTokenTop(range, safeLimit),
       this.store.countActiveUsers(range),
       this.previousTotals(previous, callOpts),
     ]);
     return {
       period: this.periodMeta(range, previous),
       userActivity,
+      tokenTop,
       periodTotals: { activeUsers },
       previousTotals,
     };
@@ -739,13 +741,15 @@ export class AdminAnalyticsService {
     const { range, previous } = this.resolveWindows(days, endOffset);
     const safeLimit = clampLimit(limit);
     const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
-    const [agentStats, previousTotals] = await Promise.all([
+    const [agentStats, tokenTop, previousTotals] = await Promise.all([
       this.agentStats(range, safeLimit, callOpts),
+      this.agentTokenTop(range, safeLimit),
       this.previousTotals(previous, callOpts),
     ]);
     return {
       period: this.periodMeta(range, previous),
       agentStats,
+      tokenTop,
       previousTotals,
     };
   }
@@ -1039,6 +1043,52 @@ export class AdminAnalyticsService {
     return rows.slice(0, clampLimit(limit));
   }
 
+  /** Token 排行独立按 totalTokens 排序截断，避免依赖消息数截断的明细集而遗漏重消耗用户。 */
+  private async userTokenTop(
+    range: AnalyticsRange,
+    limit: number,
+  ): Promise<Array<Record<string, unknown>>> {
+    const [users, messageRows] = await Promise.all([
+      this.store.listUsers(),
+      this.store.selectMessageStatsByUser(range),
+    ]);
+    const tokens = idMap(messageRows, (r) => r.totalTokens);
+    const meta = new Map(users.filter((u) => u.id != null).map((u) => [u.id!, u]));
+    const rows: Array<Record<string, unknown>> = [];
+    for (const [userId, totalTokens] of tokens) {
+      if (totalTokens <= 0) continue;
+      const user = meta.get(userId);
+      rows.push({
+        userId,
+        username: user?.username,
+        displayName: user?.displayName,
+        totalTokens,
+      });
+    }
+    rows.sort(byNumberDesc('totalTokens', 'userId'));
+    return rows.slice(0, clampLimit(limit));
+  }
+
+  /** Token 排行独立按 totalTokens 排序截断，避免依赖会话/消息数截断的明细集而遗漏重消耗 Agent。 */
+  private async agentTokenTop(
+    range: AnalyticsRange,
+    limit: number,
+  ): Promise<Array<Record<string, unknown>>> {
+    const [agents, messageRows] = await Promise.all([
+      this.store.listAgents(),
+      this.store.selectMessageStatsByAgent(range),
+    ]);
+    const tokens = idMap(messageRows, (r) => r.totalTokens);
+    const names = new Map(agents.filter((a) => a.id != null).map((a) => [a.id!, a.name ?? '未知']));
+    const rows: Array<Record<string, unknown>> = [];
+    for (const [agentId, totalTokens] of tokens) {
+      if (totalTokens <= 0) continue;
+      rows.push({ agentId, agentName: names.get(agentId) ?? '未知', totalTokens });
+    }
+    rows.sort(byNumberDesc('totalTokens', 'agentId'));
+    return rows.slice(0, clampLimit(limit));
+  }
+
   private async modelStats(
     range: AnalyticsRange,
     callOpts?: { excludeConnectivity?: boolean },
@@ -1103,7 +1153,8 @@ export class AdminAnalyticsService {
         messageCount,
         chatTokens: chat,
         backgroundTokens: background,
-        totalTokens: chat + background + callTokens,
+        // 口径与总览页一致：chat + background（llm_call 与二者为包含关系，不能叠加，否则重复计一倍）
+        totalTokens: chat + background,
         backgroundCalls: usageCalls,
         contextWindowTokens: model?.contextWindowTokens,
         callCount,

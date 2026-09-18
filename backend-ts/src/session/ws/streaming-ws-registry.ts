@@ -59,6 +59,8 @@ export class StreamingWsRegistry {
   private readonly sessionToClientType = new Map<string, string>();
   private readonly userSubscriptions = new Map<number, Set<number>>();
   private readonly activeToolCalls = new Map<number, Map<string, Record<string, unknown>>>();
+  /** 当前处于思考阶段（thinking_start ~ thinking_end）的会话，重连快照恢复用。 */
+  private readonly thinkingSessions = new Set<number>();
   /** agent sessionId → 绑定的 embed 连接（页面执行端）。每个会话只绑定一个页面连接。 */
   private readonly embedSessionBindings = new Map<number, WsSocket>();
   /** embed 连接 → 该连接绑定的 agent sessionId 集合（断线清理用）。 */
@@ -232,6 +234,16 @@ export class StreamingWsRegistry {
 
   clearActiveToolCalls(sessionId: number): void {
     this.activeToolCalls.delete(sessionId);
+  }
+
+  /** 会话当前是否处于模型思考阶段（thinking_start / thinking_end 之间），供断线重连快照恢复。 */
+  isSessionThinking(sessionId: number): boolean {
+    return this.thinkingSessions.has(sessionId);
+  }
+
+  setSessionThinking(sessionId: number, thinking: boolean): void {
+    if (thinking) this.thinkingSessions.add(sessionId);
+    else this.thinkingSessions.delete(sessionId);
   }
 
   send(userId: number, event: WsEvent): void {

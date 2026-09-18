@@ -1,5 +1,6 @@
 import type { ContentPart, Message, Session } from '../domain/types.js';
 import type { StreamingWsRegistry } from '../session/ws/streaming-ws-registry.js';
+import { userMessagePayloadOf } from '../session/ws/streaming-ws-handler.js';
 import { wsEvent } from '../session/ws/ws-event.js';
 import { WsStreamingEventListener, type AgentEventListener, type WsListenerDeps } from '../session/ws/ws-streaming-event-listener.js';
 import type { WeixinAccountRepository } from './account.repository.js';
@@ -249,28 +250,14 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
   }
 
   private buildRemoteUserMessageEvent(saved: Message, messageContent: unknown): Record<string, unknown> {
-    const data: Record<string, unknown> = {
+    const payload = userMessagePayloadOf(messageContent);
+    return {
       messageId: saved.id,
       source: 'weixin',
       tempEventId: '',
+      content: payload.content,
+      ...(payload.images.length > 0 ? { images: payload.images } : {}),
     };
-    if (typeof messageContent === 'string') {
-      data.content = messageContent;
-      return data;
-    }
-    if (Array.isArray(messageContent)) {
-      let text = '';
-      const images: string[] = [];
-      for (const part of messageContent as ContentPart[]) {
-        if (part.type === 'text' && part.text != null) text += part.text;
-        else if (part.type === 'image_url' && part.imageUrl?.url != null) images.push(part.imageUrl.url);
-      }
-      data.content = text;
-      if (images.length > 0) data.images = images;
-      return data;
-    }
-    data.content = saved.content ?? '';
-    return data;
   }
 
   private nextGeneration(sessionId: number): number {

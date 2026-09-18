@@ -1,5 +1,32 @@
 import { randomUUID } from 'node:crypto';
 import type { Agent, ContentPart, LlmModel, LocalSkillRef, Message, MessageQueueItem, McpToolRef, Session } from '../../domain/types.js';
+import { imageUrlFromPart } from '../session-vo.js';
+
+/** user_message_saved 广播用的用户消息内容：text 提取自纯文本或 ContentPart，images 提取自图片 URL。 */
+export interface UserMessagePayload {
+  content: string;
+  images: string[];
+}
+
+export function userMessagePayloadOf(messageContent: unknown): UserMessagePayload {
+  if (typeof messageContent === 'string') {
+    return { content: messageContent, images: [] };
+  }
+  if (Array.isArray(messageContent)) {
+    const content: string[] = [];
+    const images: string[] = [];
+    for (const part of messageContent as ContentPart[]) {
+      const map = part as unknown as Record<string, unknown> | null;
+      if (map?.type === 'text' && map.text != null) content.push(String(map.text));
+      else if (map?.type === 'image_url') {
+        const url = imageUrlFromPart(map);
+        if (url != null) images.push(url);
+      }
+    }
+    return { content: content.join('\n'), images };
+  }
+  return { content: '', images: [] };
+}
 import type { JwtService } from '../../crypto/jwt.service.js';
 import { contentParts, WsStreamingEventListener, type AgentEventListener, type WsListenerDeps } from './ws-streaming-event-listener.js';
 import type { StreamingWsRegistry, WsSocket } from './streaming-ws-registry.js';
@@ -254,6 +281,8 @@ export class StreamingWsHandler {
     const executionId = this.runningExecutionIds.get(sessionId);
     this.deps.registry.send(userId, wsEvent('session_snapshot', sessionId, {
       phase: s.phase === 'RESUMING' ? 'RUNNING' : s.phase,
+      // 会话执行中可能正处于模型思考阶段：随快照带回，前端刷新/重连后才能恢复「思考中」
+      ...(active && this.deps.registry.isSessionThinking(sessionId) ? { thinking: true } : {}),
       ...(executionId ? { executionId } : {}),
     }));
     if (active) {
@@ -377,7 +406,14 @@ export class StreamingWsHandler {
       try {
         const savedMessage = await this.deps.sessionService.saveMessage(sessionId, 'USER', messageContent, null, null, null, 0, null);
         this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, messageContent);
-        this.deps.registry.send(userId, wsEvent('user_message_saved', sessionId, { tempEventId: eventId ?? '', messageId: savedMessage.id }));
+        const payload = userMessagePayloadOf(messageContent);
+        this.deps.registry.send(userId, wsEvent('user_message_saved', sessionId, {
+          tempEventId: eventId ?? '',
+          messageId: savedMessage.id,
+          source: 'desktop',
+          content: payload.content,
+          ...(payload.images.length > 0 ? { images: payload.images } : {}),
+        }));
       } catch (e) {
         // M-4：claim 添加后、执行提交前的异常路径必须释放占位，否则会话永久判定 busy。
         this.executionClaims.delete(sessionId);
@@ -510,6 +546,7 @@ export class StreamingWsHandler {
           console.warn(`Failed to release execution resources for session ${sessionId}`, e);
         }
         this.deps.registry.clearActiveToolCalls(sessionId);
+        this.deps.registry.setSessionThinking(sessionId, false);
         if (this.runningTasks.get(sessionId) === futureRef.current) this.runningTasks.delete(sessionId);
         if (this.runningExecutionIds.get(sessionId) === executionId) this.runningExecutionIds.delete(sessionId);
         this.executionClaims.delete(sessionId);
@@ -553,8 +590,11 @@ export class StreamingWsHandler {
     this.deps.registry.send(userId, wsEvent('user_message_saved', sessionId, {
       messageId: savedMessage.id,
       source: 'scheduled',
-      content: typeof savedMessage.content === 'string' ? savedMessage.content : '',
       tempEventId: '',
+      ...(() => {
+        const payload = userMessagePayloadOf(savedMessage.content);
+        return { content: payload.content, ...(payload.images.length > 0 ? { images: payload.images } : {}) };
+      })(),
     }));
     this.deps.registry.subscribe(userId, sessionId);
     const flag = this.deps.agentLoop.registerCancelFlag(sessionId);
@@ -764,7 +804,13 @@ export class StreamingWsHandler {
       sideSessionId, title: sideSession.title, ...(clientRequestId ? { clientRequestId } : {}),
     }));
     this.deps.titleService.scheduleForFirstUserMessage(sideSessionId, savedMessage.id, messageContent);
-    this.deps.registry.send(userId, wsEvent('user_message_saved', sideSessionId, { messageId: savedMessage.id }));
+    const sidePayload = userMessagePayloadOf(messageContent);
+    this.deps.registry.send(userId, wsEvent('user_message_saved', sideSessionId, {
+      messageId: savedMessage.id,
+      source: 'desktop',
+      content: sidePayload.content,
+      ...(sidePayload.images.length > 0 ? { images: sidePayload.images } : {}),
+    }));
     this.executionClaims.add(sideSessionId);
     const flag = this.deps.agentLoop.registerCancelFlag(sideSessionId);
     this.cancelFlags.set(sideSessionId, flag);
@@ -814,6 +860,7 @@ export class StreamingWsHandler {
             console.warn(`Failed to release execution resources for session ${sideSessionId}`, e);
           }
           this.deps.registry.clearActiveToolCalls(sideSessionId);
+          this.deps.registry.setSessionThinking(sideSessionId, false);
           if (this.runningTasks.get(sideSessionId) === futureRef.current) this.runningTasks.delete(sideSessionId);
           if (this.runningExecutionIds.get(sideSessionId) === sideExecutionId) this.runningExecutionIds.delete(sideSessionId);
           this.executionClaims.delete(sideSessionId);
@@ -922,6 +969,7 @@ export class StreamingWsHandler {
       this.runningExecutionIds.set(sessionId, executionId);
       // 清除残留的 tool calls 和 ask questions 状态
       this.deps.registry.clearActiveToolCalls(sessionId);
+      this.deps.registry.setSessionThinking(sessionId, false);
       this.deps.askUserQuestionsRegistry.failAllForSession(sessionId);
       this.submitExecution(sessionId, userId, executionId, (futureRef) =>
         this.runRetryExecution(session, userId, sessionId, executionId, cancelFlag, futureRef, retryTaskId));
@@ -983,6 +1031,7 @@ export class StreamingWsHandler {
           console.warn(`Failed to release execution resources for session ${sessionId}`, e);
         }
         this.deps.registry.clearActiveToolCalls(sessionId);
+        this.deps.registry.setSessionThinking(sessionId, false);
         if (this.runningTasks.get(sessionId) === futureRef.current) this.runningTasks.delete(sessionId);
         if (this.runningExecutionIds.get(sessionId) === executionId) this.runningExecutionIds.delete(sessionId);
         this.executionClaims.delete(sessionId);

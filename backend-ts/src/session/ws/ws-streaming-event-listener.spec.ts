@@ -8,6 +8,7 @@ function makeListener() {
     updateActiveToolCallArguments: vi.fn(),
     completeActiveToolCall: vi.fn(),
     clearActiveToolCalls: vi.fn(),
+    isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
   };
   const activityService = { record: vi.fn(async () => ({ id: 42 })) };
   const activityHeartbeat = { touch: vi.fn() };
@@ -40,6 +41,14 @@ describe('WsStreamingEventListener', () => {
       .find((e) => e.type === 'tool_call_result');
     expect(event?.data?.status).toBe('error');
   });
+  it('tracks thinking state on the registry for snapshot recovery', () => {
+    const { listener, registry } = makeListener();
+    listener.onThinkingStart();
+    expect(registry.setSessionThinking).toHaveBeenCalledWith(11, true);
+    listener.onThinkingEnd();
+    expect(registry.setSessionThinking).toHaveBeenLastCalledWith(11, false);
+  });
+
   it('forwards stream events with executionId', () => {
     const { listener, registry } = makeListener();
     listener.onContentDelta('hi');

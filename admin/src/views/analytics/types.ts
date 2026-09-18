@@ -169,6 +169,8 @@ export interface UserActivityRow {
 export interface UsersPayload {
   period: AnalyticsPeriodMeta
   userActivity: UserActivityRow[]
+  /** 独立按 Token 排序截断的排行（与按消息数截断的 userActivity 互不影响） */
+  tokenTop?: Array<{ userId: number; username?: string; displayName?: string; totalTokens: number }>
   periodTotals: { activeUsers: number }
   previousTotals: PreviousTotals
 }
@@ -188,6 +190,8 @@ export interface AgentStatRow {
 export interface AgentsPayload {
   period: AnalyticsPeriodMeta
   agentStats: AgentStatRow[]
+  /** 独立按 Token 排序截断的排行（与按会话/消息数截断的 agentStats 互不影响） */
+  tokenTop?: Array<{ agentId: number; agentName: string; totalTokens: number }>
   previousTotals: PreviousTotals
 }
 

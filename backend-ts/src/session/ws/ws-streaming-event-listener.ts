@@ -142,8 +142,16 @@ export class WsStreamingEventListener implements AgentEventListener {
     });
   }
 
-  onThinkingStart(): void { this.send('thinking_start', {}); }
-  onThinkingEnd(): void { this.send('thinking_end', {}); }
+  onThinkingStart(): void {
+    this.deps.registry.setSessionThinking(this.sessionId, true);
+    this.send('thinking_start', {});
+  }
+
+  onThinkingEnd(): void {
+    this.deps.registry.setSessionThinking(this.sessionId, false);
+    this.send('thinking_end', {});
+  }
+
   onThinkingDelta(delta: string): void { this.send('thinking_delta', { delta }); }
   onLlmWaiting(phase: string, elapsedSeconds: number): void {
     const payload = { phase, elapsedSeconds };

@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { FeishuHarnessService, FeishuInboundContext, FeishuInboundHandler, FeishuReply, CancelFlag, FeishuTaskQueuePort, FeishuQueuePayload, FeishuQueueStoredContext, FeishuInboundQueueRow } from './types.js';
+import type { StreamingWsRegistry } from '../session/ws/streaming-ws-registry.js';
+import { userMessagePayloadOf } from '../session/ws/streaming-ws-handler.js';
+import { wsEvent } from '../session/ws/ws-event.js';
 import { CompositeAgentEventListener } from '../harness/core/composite-agent-event-listener.js';
 import { NoopAgentEventListener } from '../harness/core/agent-event-listener.js';
 import { FeishuCardProgressListener, type FeishuCardProgress } from './card-progress-listener.js';
@@ -120,6 +123,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   constructor(private readonly options: {
     sessionService: FeishuSessionAdapter;
     harnessService: FeishuHarnessService;
+    /** 多端同步：用户消息落库后按执行归属用户广播 user_message_saved（未配置时跳过）。 */
+    registry?: StreamingWsRegistry;
     createCancelFlag?: (sessionId: number) => CancelFlag;
     releaseCancelFlag?: (sessionId: number) => void;
     /** 「立即发送」按钮中断当前执行时的回调（如关闭该会话的 shell、置位 AgentLoop 取消标志）。 */
@@ -561,7 +566,20 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       }
       await this.options.sessionService.updatePhase?.(sessionId, 'RUNNING');
       const metadata = queueRow != null ? JSON.stringify({ [AgentFeishuInboundHandler.QUEUE_METADATA_KEY]: queueRow.id }) : null;
+      const messageForEcho = message;
       await this.options.sessionService.saveUserMessage(sessionId, message, metadata);
+      // 多端同步：飞书通道落库的用户消息同步广播给该用户所有已连接端（桌面/Web/安卓），
+      // content/images 由统一提取器解析，桌面端按 messageId 去重后回显。
+      if (executionUserId != null) {
+        const payload = userMessagePayloadOf(messageForEcho);
+        this.options.registry?.send(executionUserId, wsEvent('user_message_saved', sessionId, {
+          messageId: null,
+          source: 'feishu',
+          tempEventId: '',
+          content: payload.content,
+          ...(payload.images.length > 0 ? { images: payload.images } : {}),
+        }));
+      }
       const eventId = await this.options.harnessService.prepareMessage(sessionId, message);
       executionId = eventId || '';
       const listener = await this.options.listenerFactory?.(sessionId, context, executionId);

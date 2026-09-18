@@ -78,9 +78,9 @@ const props = defineProps<{ payload: AgentsPayload | null; loading?: boolean; er
 const router = useRouter()
 
 const agentStats = computed(() => props.payload?.agentStats || [])
-
+// Token 排行用后端独立截断的 tokenTop：agentStats 按会话/消息数截断，直接重排会遗漏 Token 重的 Agent
 const tokenItems = computed<RankItem[]>(() =>
-  agentStats.value
+  (props.payload?.tokenTop || [])
     .map((row) => ({ name: row.agentName || '未知', value: Number(row.totalTokens || 0) }))
     .filter((item) => item.value > 0)
     .sort((a, b) => b.value - a.value)

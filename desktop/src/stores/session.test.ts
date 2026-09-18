@@ -82,8 +82,19 @@ describe('session store 实体/投影模型', () => {
     expect(live?.segments?.map(s => s.type)).toEqual(['text', 'tool'])
   })
 
-  it('工具结果缺少对应开始事件时仍使用结果携带的工具名', () => {
+  it('addUserMessage 对同一 ID 幂等，远端回显（微信/飞书/其他端）不会重复追加', () => {
     const store = useSessionStore()
+    store.addUserMessage('1', { id: '77', role: 'user', content: '微信消息', createdAt: '2026-09-18 10:00:00' })
+    // 飞书路径 messageId 为 null 时前端以临时 ID 兜底，不应与真实 ID 冲突
+    store.addUserMessage('1', { id: 'msg_1_user', role: 'user', content: '飞书消息', createdAt: '2026-09-18 10:01:00' })
+    store.addUserMessage('1', { id: 'msg_1_user', role: 'user', content: '飞书消息', createdAt: '2026-09-18 10:01:00' })
+    const list = store.getMessages('1')
+    expect(list).toHaveLength(2)
+    expect(list[0].id).toBe('77')
+    expect(list[1].id).toBe('msg_1_user')
+  })
+
+  it('工具结果缺少对应开始事件时仍使用结果携带的工具名', () => {    const store = useSessionStore()
 
     store.updateToolCallResult('1', {
       tool_call_id: 'call-read',

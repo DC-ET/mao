@@ -38,6 +38,7 @@ describe('StreamingWsHandler', () => {
     getUserId: vi.fn(), send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
     sendToLocalClients: vi.fn(), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
+    isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
     getClientType: vi.fn(() => 'browser'), bindEmbedSession: vi.fn(), unbindEmbedSession: vi.fn(),
     getEmbedSessionsForConnection: vi.fn(() => []), getEmbedSessionConnection: vi.fn(() => null),
     getEmbedSessionBinding: vi.fn(() => null),
@@ -109,6 +110,16 @@ describe('StreamingWsHandler', () => {
     await executor.runAll();
     expect(sessionService.saveMessage).toHaveBeenCalled();
     expect(titleService.scheduleForFirstUserMessage).toHaveBeenCalledWith(11, 99, 'hello');
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'user_message_saved',
+      sessionId: 11,
+      data: expect.objectContaining({
+        tempEventId: 'event-1',
+        messageId: 99,
+        source: 'desktop',
+        content: 'hello',
+      }),
+    }));
     expect(registry.subscribe).toHaveBeenCalledWith(7, 11);
     expect(skillSyncService.syncToSession).toHaveBeenCalled();
     expect(harnessService.executeFromEvent).toHaveBeenCalled();
@@ -343,6 +354,30 @@ describe('StreamingWsHandler', () => {
     expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
       type: 'session_snapshot', sessionId: 11, data: expect.objectContaining({ phase: 'WAITING_APPROVAL' }),
     }));
+  });
+
+  it('subscribeSnapshotIncludesThinkingWhileModelIsThinking', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+    registry.isSessionThinking.mockReturnValue(true);
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'session_snapshot', sessionId: 11,
+      data: expect.objectContaining({ phase: 'RUNNING', thinking: true }),
+    }));
+  });
+
+  it('subscribeSnapshotOmitsThinkingOutsideThinkingPhase', async () => {
+    vi.clearAllMocks();
+    registry.isSessionThinking.mockReturnValue(false);
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    const snapshot = vi.mocked(registry.send).mock.calls
+      .map((c) => c[1] as { type: string; data?: Record<string, unknown> })
+      .find((e) => e.type === 'session_snapshot');
+    expect(snapshot?.data).not.toHaveProperty('thinking');
   });
 
   it('sessionOperationsRejectNonOwner', async () => {

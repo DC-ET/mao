@@ -143,7 +143,7 @@ describe('AdminAnalyticsService', () => {
       chatTokens: 400,
       backgroundTokens: 90,
       callTokens: 1000,
-      totalTokens: 1490,
+      totalTokens: 490,
       callCount: 8,
       callFailCount: 1,
       callSuccessRate: 87.5,
@@ -265,13 +265,13 @@ describe('AdminAnalyticsService', () => {
     expect(result.modelStats).toHaveLength(1);
     expect(result.modelStats[0]).toMatchObject({
       modelId: 3,
-      totalTokens: 1490,
+      totalTokens: 490,
       callCount: 8,
       cacheHitRate: 12.5,
       avgFirstTokenMs: 500,
       avgDurationMs: 5000,
     });
-    expect(result.periodTotals).toEqual({ totalTokens: 1490 });
+    expect(result.periodTotals).toEqual({ totalTokens: 490 });
     expect(result.sceneStats[0]).toMatchObject({ key: 'agent', callTokens: 800 });
     expect(result.protocolStats[0]).toMatchObject({ key: 'openai-compatible', callCount: 10 });
   });
@@ -363,6 +363,48 @@ describe('AdminAnalyticsService', () => {
     expect(result.failTop.byModel[0]).toMatchObject({ name: 'gpt', failCount: 1 });
     expect(result.failTop.byScene[0]).toMatchObject({ name: 'compaction', failCount: 1 });
     expect(result.excludeConnectivity).toBe(true);
+  });
+
+  it('usersAndAgentsScopeReturnTokenTopSortedIndependently', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    // 明细集（按消息数截断）只含 ada；tokenTop 数据源需覆盖未进入明细集的重消耗用户/Agent
+    store.selectMessageStatsByUser = vi.fn(async () => [
+      { id: 1, messageCount: 7, totalTokens: 700 },
+      { id: 2, messageCount: 1, totalTokens: 9000 },
+    ]);
+    store.selectMessageStatsByAgent = vi.fn(async () => [
+      { id: 9, messageCount: 8, totalTokens: 800 },
+      { id: 10, messageCount: 1, totalTokens: 12000 },
+    ]);
+    store.listAgents = vi.fn(async () => [
+      { id: 9, name: 'Coder' },
+      { id: 10, name: 'Heavy' },
+    ]);
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const users = (await service.usersScope(7)) as Record<string, any>;
+    expect(users.tokenTop).toEqual([
+      expect.objectContaining({ userId: 2, totalTokens: 9000 }),
+      expect.objectContaining({ userId: 1, totalTokens: 700 }),
+    ]);
+
+    const agents = (await service.agentsScope(7)) as Record<string, any>;
+    expect(agents.tokenTop).toEqual([
+      expect.objectContaining({ agentId: 10, agentName: 'Heavy', totalTokens: 12000 }),
+      expect.objectContaining({ agentId: 9, totalTokens: 800 }),
+    ]);
+  });
+
+  it('modelMessageStatsSqlFiltersSoftDeletedRowsAndSessions', async () => {
+    const db = { query: vi.fn(async () => []), queryOne: vi.fn(async () => ({ c: 0 })) };
+    const store = new AdminAnalyticsDbStore(db as never);
+
+    await store.selectMessageStatsByModel(range);
+
+    const sql = (db.query.mock.calls[0] as unknown[])[0] as string;
+    expect(sql).toContain('m.deleted = 0');
+    expect(sql).toContain('s.deleted = 0');
   });
 });
 

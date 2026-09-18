@@ -757,30 +757,45 @@ export function useStreamWS() {
         }
         break
 
-      case 'user_message_saved':
-        // Desktop send: update optimistic temp ID.
-        // Weixin/remote: append the inbound user message so open sessions stream live.
-        if (sessionId && data?.messageId) {
-          if (data.source === 'weixin' || data.source === 'scheduled') {
-            sessionStore.addUserMessage(sessionId, {
-              id: String(data.messageId),
-              role: 'user',
-              content: typeof data.content === 'string' ? data.content : '',
-              createdAt: nowDateTime(),
-              images: Array.isArray(data.images) && data.images.length > 0
-                ? data.images as string[]
-                : undefined
+      case 'user_message_saved': {
+        // 本端发送：把乐观消息的临时 ID（msg_*）替换为服务端真实 ID；
+        // 远端来源（微信/飞书/定时任务/其他端）：按内容回显新消息。
+        // 判定不依赖 source 白名单——桌面端广播现在也带 source/content，其他端（多标签页/
+        // Electron+浏览器/安卓）需要同样实时看到远端发来的消息；messageId 可能为 null（飞书）。
+        if (sessionId) {
+          const sid = sessionId
+          const content = typeof data?.content === 'string' ? data.content : ''
+          const images = Array.isArray(data?.images) && data.images.length > 0 ? data.images as string[] : undefined
+          const remoteMsgId = data?.messageId != null ? String(data.messageId) : null
+          const hasRemoteEcho = content !== '' || (images != null && images.length > 0)
+
+          // 本端刚发送的乐观消息：最后一条 msg_* 用户消息，其内容与本事件一致 → 只替换 ID。
+          const list = sessionStore.getMessages(sid) ?? []
+          const lastUser = [...list].reverse().find(m => m.role === 'user')
+          const isLocalOptimistic = lastUser != null
+            && String(lastUser.id).startsWith('msg_')
+            && (lastUser.content === content || lastUser.content.trim() === '')
+
+          if (isLocalOptimistic && remoteMsgId != null) {
+            sessionStore.updateLastMessageId(sid, 'user', remoteMsgId)
+            // 消息保存确认回调：仅本端发送链路使用，远端事件不得误配本端在途发送。
+            messageSavedCallbacks.forEach((callback) => {
+              callback(sid, remoteMsgId)
             })
-            sessionStore.ensureStreamingAssistantMessage(sessionId)
-          } else {
-            sessionStore.updateLastMessageId(sessionId, 'user', String(data.messageId))
+          } else if (hasRemoteEcho) {
+            // 远端消息（无本端乐观消息可匹配）：追加回显并占位流式 assistant 消息。
+            sessionStore.addUserMessage(sid, {
+              id: remoteMsgId ?? `msg_${Date.now()}_user`,
+              role: 'user',
+              content,
+              createdAt: nowDateTime(),
+              images
+            })
+            sessionStore.ensureStreamingAssistantMessage(sid)
           }
-          // 调用注册的消息保存回调
-          messageSavedCallbacks.forEach((callback) => {
-            callback(sessionId, String(data.messageId))
-          })
         }
         break
+      }
 
       case 'session_snapshot':
         // Subscribe also reconciles a terminal state missed while the socket was disconnected.
@@ -805,6 +820,10 @@ export function useStreamWS() {
             sessionStore.clearLlmRetry(sessionId)
             sessionStore.clearAskQuestions(sessionId)
             if (phase !== 'IDLE') clearActiveExecution(sessionId)
+          } else if (data.thinking === true) {
+            // 会话执行中恰好处于模型思考阶段：刷新/重连后恢复「思考中」，
+            // 否则思考块会错误显示「思考完成」而内容仍在持续追加
+            sessionStore.setThinking(sessionId, true)
           }
         }
         break

@@ -216,11 +216,16 @@ function normalizeTab(raw: unknown): TabId {
 function currentQuery() {
   const needsLimit = activeTab.value === 'users' || activeTab.value === 'agents'
   const query = buildAnalyticsQuery(period.value, needsLimit ? 20 : undefined)
-  const withConnectivity = { ...query, excludeConnectivity: !includeConnectivity.value }
-  if (activeTab.value === 'models' && sceneModelId.value != null && Number.isFinite(sceneModelId.value)) {
-    return { ...withConnectivity, modelId: sceneModelId.value }
+  // 连通性开关仅属于模型 Tab；其余 Tab 不传该参数，走后端默认口径（排除连通性测试），
+  // 避免模型页的勾选状态静默改变其他 Tab 的质量指标
+  if (activeTab.value === 'models') {
+    const withConnectivity = { ...query, excludeConnectivity: !includeConnectivity.value }
+    if (sceneModelId.value != null && Number.isFinite(sceneModelId.value)) {
+      return { ...withConnectivity, modelId: sceneModelId.value }
+    }
+    return withConnectivity
   }
-  return withConnectivity
+  return query
 }
 
 async function loadActive(force = false) {
@@ -243,14 +248,28 @@ function handleModelsRefresh(include: boolean) {
 function syncUrl() {
   const nextTab = activeTab.value
   const nextPeriod = periodToQueryValue(period.value)
-  if (route.query.tab === nextTab && route.query.period === nextPeriod) return
-  router.replace({
-    query: {
-      ...route.query,
-      tab: nextTab,
-      period: nextPeriod
-    }
-  })
+  const nextModelId =
+    nextTab === 'models' && sceneModelId.value != null && Number.isFinite(sceneModelId.value)
+      ? String(sceneModelId.value)
+      : null
+  if (
+    route.query.tab === nextTab &&
+    route.query.period === nextPeriod &&
+    (route.query.modelId ?? null) === nextModelId
+  ) {
+    return
+  }
+  const query: Record<string, string> = {
+    ...route.query,
+    tab: nextTab,
+    period: nextPeriod
+  }
+  if (nextModelId != null) {
+    query.modelId = nextModelId
+  } else {
+    delete query.modelId
+  }
+  router.replace({ query })
 }
 
 function handleTabChange(name: TabId | string) {
@@ -276,16 +295,25 @@ function relaxPeriod() {
 }
 
 watch(
-  () => [route.query.tab, route.query.period] as const,
-  ([tabValue, periodValue]) => {
+  () => [route.query.tab, route.query.period, route.query.modelId] as const,
+  ([tabValue, periodValue, modelIdValue]) => {
     const nextTab = normalizeTab(tabValue)
     const nextPeriod = periodFromQueryValue(periodValue ?? 'today')
+    const nextModelId =
+      modelIdValue != null && modelIdValue !== '' && Number.isFinite(Number(modelIdValue))
+        ? Number(modelIdValue)
+        : undefined
     const periodChanged = nextPeriod !== period.value
+    const modelChanged = nextModelId !== sceneModelId.value
     if (periodChanged) {
       period.value = nextPeriod
       invalidateAnalytics()
     }
-    if (nextTab !== activeTab.value || periodChanged) {
+    if (modelChanged && nextTab === 'models') {
+      sceneModelId.value = nextModelId
+      invalidateAnalytics('models')
+    }
+    if (nextTab !== activeTab.value || periodChanged || (modelChanged && nextTab === 'models')) {
       activeTab.value = nextTab
       void loadActive(true)
     }

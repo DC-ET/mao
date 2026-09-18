@@ -53,6 +53,29 @@ function makeQueueService(overrides: Partial<FeishuTaskQueuePort> = {}): FeishuT
 }
 
 describe('AgentFeishuInboundHandler', () => {
+  it('broadcasts user_message_saved with content to all connected clients after saving the user message', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'exec-1'), execute: vi.fn(async () => undefined) };
+    const registry = { send: vi.fn(), sendToLocalClients: vi.fn() };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      registry: registry as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+    });
+    await handler.onMessage(makeContext({ text: '飞书提问', maoUserId: 42 }));
+    // 群聊消息会包装「【用户消息】\n发送人：文本」上下文（与 LLM 输入一致），断言以内容包含文本为准。
+    expect(registry.send).toHaveBeenCalledWith(42, expect.objectContaining({
+      type: 'user_message_saved',
+      sessionId: 7,
+      data: expect.objectContaining({
+        source: 'feishu',
+        content: expect.stringContaining('飞书提问'),
+      }),
+    }));
+  });
+
   it('passes the triggering Mao user to the harness without changing session ownership', async () => {
     const sessionService = makeSessionService();
     const harness = { prepareMessage: vi.fn(() => 'exec-1'), execute: vi.fn(async () => undefined) };

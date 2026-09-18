@@ -165,8 +165,9 @@ const liveItems = computed(() => {
   const live = (key: string) => Number(overview[key] ?? 0)
   const fromPhase = (name: string) => phase.find((p) => p.phase === name)?.count ?? 0
   return [
-    { label: '运行中', value: live('runningSessions') || fromPhase('RUNNING'), tone: 'run' },
-    { label: '等待审批', value: live('waitingSessions') || fromPhase('WAITING_APPROVAL'), tone: 'wait' },
+    // 实时快照 0 是合法值；仅在字段缺失时回退到窗口统计，避免把周期数据误当实时展示
+    { label: '运行中', value: overview['runningSessions'] != null ? live('runningSessions') : fromPhase('RUNNING'), tone: 'run' },
+    { label: '等待审批', value: overview['waitingSessions'] != null ? live('waitingSessions') : fromPhase('WAITING_APPROVAL'), tone: 'wait' },
     { label: '失败（窗口）', value: fromPhase('FAILED'), tone: 'fail' },
     { label: '已取消（窗口）', value: fromPhase('CANCELLED'), tone: 'muted' }
   ]

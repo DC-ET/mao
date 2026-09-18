@@ -155,14 +155,16 @@ router.beforeEach(async (to, _from, next) => {
       try {
         await authStore.fetchUserInfo()
       } catch (error: any) {
-        // 401/403：token 失效，清理后进登录页；网络异常：放行由页面内请求提示，
-        // 避免在 /login 与目标页之间无限重定向卡死
+        // 401/403：token 失效，清理后进登录页
         if (error?.response?.status === 401 || error?.response?.status === 403) {
           authStore.clearAuth()
           next('/login')
-        } else {
-          next()
+          return
         }
+        // 其他异常（网络抖动等）：用户信息不可得则无法校验权限，
+        // 受保护路由一律 fail-closed 进登录页，避免跳过权限检查
+        authStore.clearAuth()
+        next('/login')
         return
       }
     }
