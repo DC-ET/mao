@@ -24,6 +24,15 @@ describe('Agent avatar validation', () => {
     expect(output.includes(Buffer.from('<script>'))).toBe(false);
   });
 
+  it('accepts WeChat editor uploads with missing or generic MIME based on magic bytes', async () => {
+    const jpeg = await image().jpeg().toBuffer();
+    for (const mime of ['', 'application/octet-stream']) {
+      const output = await normalizeAgentAvatar(jpeg, mime);
+      expect((await sharp(output).metadata()).format).toBe('png');
+    }
+    await expect(normalizeAgentAvatar(jpeg, 'image/png')).rejects.toThrow('一致');
+  });
+
   it('rejects empty, oversized, SVG, fake, mismatched and truncated images', async () => {
     const png = await image().png().toBuffer();
     for (const [bytes, mime] of [

@@ -31,7 +31,10 @@ export async function normalizeAgentAvatar(bytes: Buffer, mime: string): Promise
     : bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? 'jpeg'
       : bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP' ? 'webp'
         : null;
-  if (!format || mime !== `image/${format}`) throw invalid('头像仅支持 PNG、JPEG、WebP，类型必须与内容一致');
+  // Some WebViews (e.g. WeChat's built-in image editor) return files with an empty or
+  // generic MIME type; trust the magic bytes instead and only reject explicit mismatches.
+  const declared = mime !== '' && mime !== 'application/octet-stream' ? mime : null;
+  if (!format || (declared && declared !== `image/${format}`)) throw invalid('头像仅支持 PNG、JPEG、WebP，类型必须与内容一致');
   // libvips may decode APNG as a still PNG, so reject its animation control chunk explicitly.
   if (format === 'png') {
     for (let offset = 8; offset + 12 <= bytes.length;) {

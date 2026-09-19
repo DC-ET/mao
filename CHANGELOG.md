@@ -15,6 +15,16 @@
 
 ---
 
+## 0.0.157 (2026-09-19)
+
+### 管理后台
+
+- 修复微信内置浏览器上传 Agent 头像报「请选择 PNG、JPEG 或 WebP 图片」的问题：微信图片编辑器回传的文件 MIME 类型为空或为 `application/octet-stream`，前端改为回退文件扩展名判断。
+
+### 后端
+
+- 头像上传接口兼容 MIME 缺失/通用类型的文件（微信编辑器场景）：MIME 为空或 `application/octet-stream` 时按文件魔数判断格式，声明了具体 MIME 但与内容不符时仍拒绝。
+
 ## 0.0.156 (2026-09-19)
 
 依据 `docs/plan/admin-ux-management-review.md` 评审，对管理后台 44 项 UX 与管理功能问题集中修复。

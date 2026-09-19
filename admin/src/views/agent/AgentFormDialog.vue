@@ -654,7 +654,11 @@ async function loadOptions() {
 }
 
 function validateAvatar(file: UploadRawFile) {
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+  // WeChat's in-app image editor returns files with an empty or generic MIME type;
+  // fall back to the filename extension when file.type is not a usable image type.
+  const mimeOk = ['image/png', 'image/jpeg', 'image/webp'].includes(file.type)
+  const extOk = /\.(png|jpe?g|webp)$/i.test(file.name)
+  if (!(mimeOk || (['', 'application/octet-stream'].includes(file.type) && extOk))) {
     ElMessage.warning('请选择 PNG、JPEG 或 WebP 图片')
     return false
   }
