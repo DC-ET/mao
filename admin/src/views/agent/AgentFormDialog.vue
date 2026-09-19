@@ -854,7 +854,8 @@ async function handleSubmit() {
   overflow: hidden;
   border-radius: 4px;
   pointer-events: none;
-  background: var(--el-disabled-bg-color);
+  /* 与 textarea 底色一致；启用行/停用行/空行在此之上呈现三态 */
+  background: var(--el-fill-color-blank);
 }
 
 .experience-text-line {
@@ -864,11 +865,11 @@ async function handleSubmit() {
 }
 
 .experience-text-line.active {
-  background: var(--el-fill-color-light);
+  background: var(--el-fill-color);
 }
 
 .experience-text-line.disabled {
-  background: var(--el-color-warning-light-9);
+  background: var(--el-color-warning-light-8);
 }
 
 .experience-textarea {

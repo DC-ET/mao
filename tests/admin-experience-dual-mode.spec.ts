@@ -58,19 +58,22 @@ async function switchView(dialog: Locator, label: '表格' | '文本') {
   await dialog.locator('.experience-toolbar .el-segmented__item', { hasText: label }).click()
 }
 
-test('table view shows dense rows with clickable status and drag handle', async ({ page }) => {
+test('table view shows dense rows with switch status and drag handle', async ({ page }) => {
   await setup(page)
   const dialog = await openExperienceTab(page)
   await expect(dialog.getByPlaceholder('请输入经验正文（最长 300 字）')).toHaveCount(2)
   await expect(dialog.getByPlaceholder('请输入经验正文（最长 300 字）').first()).toHaveValue('第一条启用经验')
-  await expect(dialog.locator('.experience-status').first()).toHaveText('启用')
-  await expect(dialog.locator('.experience-status').nth(1)).toHaveText('停用')
+  const switches = dialog.locator('.experience-panel .el-switch')
+  await expect(switches).toHaveCount(2)
+  await expect(switches.nth(0)).toHaveClass(/is-checked/)
+  await expect(switches.nth(1)).not.toHaveClass(/is-checked/)
   await expect(dialog.locator('.drag-handle')).toHaveCount(2)
-  await expect(dialog.locator('.experience-panel .el-switch')).toHaveCount(0)
   await expect(dialog.getByRole('button', { name: /上移|下移/ })).toHaveCount(0)
 
-  await dialog.locator('.experience-status').first().click()
-  await expect(dialog.locator('.experience-status').first()).toHaveText('停用')
+  await switches.nth(0).click()
+  await expect(switches.nth(0)).not.toHaveClass(/is-checked/)
+  await switches.nth(0).click()
+  await expect(switches.nth(0)).toHaveClass(/is-checked/)
 })
 
 test('text view encodes disabled lines with # and round-trips on switch back', async ({ page }) => {
@@ -87,8 +90,23 @@ test('text view encodes disabled lines with # and round-trips on switch back', a
   await expect(inputs.nth(0)).toHaveValue('新启用经验')
   await expect(inputs.nth(1)).toHaveValue('新停用经验')
   await expect(inputs.nth(2)).toHaveValue('第三条')
-  await expect(dialog.locator('.experience-status').nth(1)).toHaveText('停用')
-  await expect(dialog.locator('.experience-status').nth(2)).toHaveText('启用')
+  const switches = dialog.locator('.experience-panel .el-switch')
+  await expect(switches.nth(1)).not.toHaveClass(/is-checked/)
+  await expect(switches.nth(2)).toHaveClass(/is-checked/)
+
+  // 文本模式逐行跳色：启用行与停用行底色不同、空行不着色
+  await switchView(dialog, '文本')
+  const lines = dialog.locator('.experience-text-line')
+  await expect(lines).toHaveCount(3)
+  await expect(lines.nth(0)).toHaveClass(/active/)
+  await expect(lines.nth(1)).toHaveClass(/disabled/)
+  await expect(lines.nth(2)).toHaveClass(/active/)
+  const bg0 = await lines.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor)
+  const bg1 = await lines.nth(1).evaluate((el) => getComputedStyle(el).backgroundColor)
+  const bgBlank = await dialog.locator('.experience-text-backdrop')
+    .evaluate((el) => getComputedStyle(el).backgroundColor)
+  expect(bg0).not.toBe(bg1)
+  expect(bg0).not.toBe(bgBlank)
 })
 
 test('invalid text lines block switching back and empty save from text is rejected', async ({ page }) => {
