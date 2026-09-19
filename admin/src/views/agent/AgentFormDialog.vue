@@ -165,7 +165,7 @@
                 v-for="(line, index) in experienceBackdropLines"
                 :key="index"
                 class="experience-text-line"
-                :class="line.kind"
+                :class="[line.kind, { 'stripe': line.stripe }]"
               >&#8203;</div>
             </div>
             <el-input
@@ -284,11 +284,11 @@ let experienceSortable: Sortable | null = null
 let experienceScrollTimer: ReturnType<typeof setInterval> | null = null
 
 const experienceBackdropLines = computed(() =>
-  experienceText.value.split(/\r?\n/).map((line) => {
+  experienceText.value.split(/\r?\n/).map((line, index) => {
     const trimmed = line.trim()
-    if (!trimmed) return { kind: 'empty' }
-    if (trimmed.startsWith('#')) return { kind: 'disabled' }
-    return { kind: 'active' }
+    if (!trimmed) return { kind: 'empty', stripe: false }
+    if (trimmed.startsWith('#')) return { kind: 'disabled', stripe: false }
+    return { kind: 'active', stripe: index % 2 === 1 }
   })
 )
 
@@ -864,8 +864,13 @@ async function handleSubmit() {
   font-size: 13px;
 }
 
+/* 斑马纹：启用行按行号奇偶交替，停用行警示黄，空行不着色 */
 .experience-text-line.active {
-  background: var(--el-fill-color);
+  background: var(--el-fill-color-blank);
+}
+
+.experience-text-line.active.stripe {
+  background: var(--el-fill-color-light);
 }
 
 .experience-text-line.disabled {

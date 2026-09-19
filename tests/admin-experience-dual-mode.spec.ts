@@ -94,19 +94,28 @@ test('text view encodes disabled lines with # and round-trips on switch back', a
   await expect(switches.nth(1)).not.toHaveClass(/is-checked/)
   await expect(switches.nth(2)).toHaveClass(/is-checked/)
 
-  // 文本模式逐行跳色：启用行与停用行底色不同、空行不着色
+  // 文本模式逐行斑马跳色：启用行按奇偶交替、停用行警示色、空行不着色
   await switchView(dialog, '文本')
+  await dialog.locator('.experience-textarea textarea').fill('第一条\n第二条\n# 停用行\n\n第三条')
   const lines = dialog.locator('.experience-text-line')
-  await expect(lines).toHaveCount(3)
+  await expect(lines).toHaveCount(5)
   await expect(lines.nth(0)).toHaveClass(/active/)
-  await expect(lines.nth(1)).toHaveClass(/disabled/)
-  await expect(lines.nth(2)).toHaveClass(/active/)
+  await expect(lines.nth(0)).not.toHaveClass(/stripe/)
+  await expect(lines.nth(1)).toHaveClass(/active/)
+  await expect(lines.nth(1)).toHaveClass(/stripe/)
+  await expect(lines.nth(2)).toHaveClass(/disabled/)
+  await expect(lines.nth(3)).toHaveClass(/empty/)
+  await expect(lines.nth(4)).toHaveClass(/active/)
+  await expect(lines.nth(4)).not.toHaveClass(/stripe/)
   const bg0 = await lines.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor)
   const bg1 = await lines.nth(1).evaluate((el) => getComputedStyle(el).backgroundColor)
+  const bg2 = await lines.nth(2).evaluate((el) => getComputedStyle(el).backgroundColor)
   const bgBlank = await dialog.locator('.experience-text-backdrop')
     .evaluate((el) => getComputedStyle(el).backgroundColor)
+  // 相邻启用行底色交替（斑马），停用行与空白底各不相同
   expect(bg0).not.toBe(bg1)
-  expect(bg0).not.toBe(bgBlank)
+  expect(bg1).not.toBe(bg2)
+  expect(bg0).toBe(bgBlank)
 })
 
 test('invalid text lines block switching back and empty save from text is rejected', async ({ page }) => {
