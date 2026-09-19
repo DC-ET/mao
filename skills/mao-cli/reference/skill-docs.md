@@ -43,7 +43,7 @@ mao skill-docs get --name bigdata-cli
 |------|------|------|------|
 | `--dir` | 是 | 路径 | 本地技能目录或技能根目录 |
 
-`POST /skill-docs/upload`，multipart 字段名 `files`。每个 part 的 filename 为相对路径，例如 `my-skill/SKILL.md`。
+`POST /skill-docs/upload`，multipart 字段名 `files`。每个 part 的 filename 为相对路径，例如 `my-skill/SKILL.md`。需 `agent:write` 权限。
 
 目录规则：
 
@@ -63,7 +63,7 @@ mao skill-docs upload --dir ./skills-root
 |------|------|------|------|
 | `--name` | 是 | 字符串 | 技能名 |
 
-`DELETE /skill-docs/{name}`
+`DELETE /skill-docs/{name}`，需 `agent:write` 权限。
 
 ```bash
 mao skill-docs delete --name my-skill

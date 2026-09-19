@@ -1976,6 +1976,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       repository: feishuBots,
       secretKey: cfg.feishu.bot.appSecretKey,
       permissionService,
+      monitorStatus: { getStatus: (botId: number) => feishuMonitor.getStatus(botId) },
+      monitorReconnect: { reconnect: (botId: number) => feishuMonitor.reconnect(botId) },
     });
     registerFeishuBindingRoutes(api, { jwt, repository: feishuBinding, auth: feishu });
     registerTaskNotificationPreferenceRoutes(api, { preference: notifPref, jwt });

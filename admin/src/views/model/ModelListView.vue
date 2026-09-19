@@ -70,6 +70,7 @@
           <template #default="{ row }">
             <div class="model-name-cell">
               <span>{{ row.name }}</span>
+              <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
               <el-icon v-if="row.supportsVision" class="name-badge is-vision" title="支持视觉"><Picture /></el-icon>
               <el-icon v-if="row.status === 1" class="name-badge is-enabled" title="已启用"><CircleCheckFilled /></el-icon>
               <el-icon v-else class="name-badge is-disabled" title="已停用"><CircleCloseFilled /></el-icon>
@@ -119,7 +120,7 @@
       <div v-else class="mobile-card-list" v-loading="loading">
         <el-card v-for="row in state.models" :key="row.id" shadow="hover">
           <div class="mobile-card-head">
-            <span class="mobile-card-title">{{ row.name }}</span>
+            <span class="mobile-card-title">{{ row.name }}<el-tag v-if="row.isDefault" type="warning" size="small" style="margin-left: 6px">默认</el-tag></span>
             <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
               {{ row.status === 1 ? '启用' : '禁用' }}
             </el-tag>

@@ -98,8 +98,11 @@ export function registerAdminUserSkillRoutes(
   });
 }
 
-export function registerSkillDocRoutes(app: FastifyInstance, deps: Pick<SkillRouteDeps, 'skillDocService' | 'agentService'>): void {
-  const { skillDocService, agentService } = deps;
+export function registerSkillDocRoutes(
+  app: FastifyInstance,
+  deps: Pick<SkillRouteDeps, 'skillDocService' | 'agentService' | 'permissionService'>,
+): void {
+  const { skillDocService, agentService, permissionService } = deps;
 
   app.get('/v1/skill-docs', async (request, reply) => {
     requireUserId(request);
@@ -113,14 +116,18 @@ export function registerSkillDocRoutes(app: FastifyInstance, deps: Pick<SkillRou
   });
 
   app.post('/v1/skill-docs/upload', async (request, reply) => {
-    requireUserId(request);
+    const userId = requireUserId(request);
+    // 系统级技能库写操作（覆盖系统技能），与个人 Skill 删除一致要求 agent:write
+    await requirePermission(permissionService, userId, 'agent:write');
     const files = await collectNamedFiles(request, 'files');
     const result = skillDocService.uploadSkill(files);
     return sendJson(reply, 200, result.code === 0 ? ok(result.data) : result);
   });
 
   app.delete('/v1/skill-docs/:name', async (request, reply) => {
-    requireUserId(request);
+    const userId = requireUserId(request);
+    // 删除会级联清理所有 Agent 的 skillName，破坏面大，须 agent:write
+    await requirePermission(permissionService, userId, 'agent:write');
     const skillName = pathParam(request, 'name');
     const result = skillDocService.deleteSkill(skillName);
     if (result.code === 0) {

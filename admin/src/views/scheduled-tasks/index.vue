@@ -16,6 +16,7 @@
                 placeholder="任务名称/内容"
                 clearable
                 style="width: 180px"
+                @input="onKeywordInput"
                 @keyup.enter="handleSearch"
                 @clear="handleSearch"
               />
@@ -100,7 +101,7 @@
         <el-table-column prop="lastFireTime" label="上次触发" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column prop="nextFireTime" label="下次触发" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-switch
               v-model="row.status"
@@ -110,9 +111,17 @@
               active-text="启"
               inactive-text="停"
               :disabled="!!row.finished"
-              style="margin-right: 8px"
+              style="margin-right: 12px"
               @change="handleToggleStatus(row)"
             />
+            <el-button
+              v-if="row.sessionId"
+              type="primary"
+              link
+              size="small"
+              @click="router.push(`/sessions/${row.sessionId}`)"
+            >查看会话</el-button>
+            <el-divider direction="vertical" />
             <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
               <template #reference>
                 <el-button type="danger" link size="small">删除</el-button>
@@ -164,6 +173,13 @@
               :disabled="!!row.finished"
               @change="handleToggleStatus(row)"
             />
+            <el-button
+              v-if="row.sessionId"
+              type="primary"
+              link
+              @click="router.push(`/sessions/${row.sessionId}`)"
+            >查看会话</el-button>
+            <el-divider direction="vertical" />
             <el-popconfirm title="确认删除此定时任务？" @confirm="handleDelete(row.id)">
               <template #reference>
                 <el-button type="danger" link>删除</el-button>
@@ -188,8 +204,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { api } from '../../api'
+import { useRouter } from 'vue-router'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { ElMessage } from 'element-plus'
 import { useBreakpoint } from '../../composables/useBreakpoint'
@@ -197,6 +214,20 @@ import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 
 const { isMobile } = useBreakpoint()
+const router = useRouter()
+
+// 关键词输入 300ms 防抖，输入即查（对齐 McpServerListView）
+let keywordDebounceTimer: ReturnType<typeof setTimeout> | null = null
+function onKeywordInput() {
+  if (keywordDebounceTimer) clearTimeout(keywordDebounceTimer)
+  keywordDebounceTimer = setTimeout(() => {
+    keywordDebounceTimer = null
+    handleSearch()
+  }, 300)
+}
+onUnmounted(() => {
+  if (keywordDebounceTimer) clearTimeout(keywordDebounceTimer)
+})
 
 interface ScheduledTask {
   id: number

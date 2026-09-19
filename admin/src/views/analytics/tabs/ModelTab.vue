@@ -69,11 +69,19 @@
           <span>模型用量明细</span>
           <div class="header-actions">
             <span class="card-hint">质量列来自 llm_call，延迟为均值</span>
+            <el-button v-if="selectedModelId != null" link type="danger" @click="clearSelection">清除选中</el-button>
+            <el-button :disabled="modelStats.length === 0" @click="exportRows">导出 CSV</el-button>
             <el-button type="primary" link @click="go('/llm-call')">调用流水</el-button>
           </div>
         </div>
       </template>
-      <el-table :data="modelStats" size="small" stripe @row-click="handleRowClick">
+      <el-table
+        :data="modelStats"
+        size="small"
+        stripe
+        :row-class-name="rowClassName"
+        @row-click="handleRowClick"
+      >
         <template #empty>
           <el-empty description="窗口内暂无模型调用" :image-size="48" />
         </template>
@@ -137,6 +145,7 @@ import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import { llmCallSceneLabel, formatMs } from '../../../utils/llmCallLabels'
 import { donutOption, formatCompact, formatNumber, topWithOthers, type RankItem } from '../chart-options'
+import { exportCsv } from '../utils/csv'
 import { percent } from '../composables/metrics'
 import type { ModelsPayload } from '../types'
 
@@ -200,9 +209,38 @@ function sceneLabel(scene: string): string {
   return llmCallSceneLabel(scene)
 }
 
+function exportRows() {
+  exportCsv(
+    `analytics-models-${new Date().toISOString().slice(0, 10)}.csv`,
+    ['模型', '供应商', '会话', '调用', '成功率', '对话 Token', '调用 Token', 'Token 合计', '缓存命中', '首 token 均值(ms)', '耗时均值(ms)'],
+    modelStats.value.map((row) => [
+      row.modelName || '未命名',
+      row.provider ?? '',
+      row.sessionCount || 0,
+      row.callCount || 0,
+      row.callSuccessRate == null ? '' : `${row.callSuccessRate}%`,
+      row.chatTokens || 0,
+      row.callTokens || 0,
+      row.totalTokens || 0,
+      row.cacheHitRate == null ? '' : `${row.cacheHitRate}%`,
+      row.avgFirstTokenMs == null ? '' : Math.round(Number(row.avgFirstTokenMs)),
+      row.avgDurationMs == null ? '' : Math.round(Number(row.avgDurationMs))
+    ])
+  )
+}
+
 function handleRowClick(row: { modelId: number }) {
   selectedModelId.value = row.modelId
   emit('update:modelId', row.modelId)
+}
+
+function rowClassName({ row }: { row: { modelId: number } }): string {
+  return selectedModelId.value != null && row.modelId === selectedModelId.value ? 'selected-row' : ''
+}
+
+function clearSelection() {
+  selectedModelId.value = undefined
+  emit('update:modelId', undefined)
 }
 
 function handleConnectivityChange(value: boolean | string | number) {
@@ -247,6 +285,14 @@ export default { name: 'ModelTab' }
   margin-left: 8px;
   font-size: 12px;
   color: var(--mao-muted);
+}
+
+:deep(.el-table .selected-row) {
+  --el-table-tr-bg-color: var(--el-color-primary-light-9);
+}
+
+:deep(.el-table .selected-row > td.el-table__cell) {
+  background-color: var(--el-color-primary-light-9);
 }
 
 .dist-rows {

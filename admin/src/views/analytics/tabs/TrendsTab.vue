@@ -113,11 +113,13 @@ const tokenTrendChartOption = computed(() => tokenTrendOption(trends.value))
 
 const callTrendChartOption = computed(() => {
   const dates = trends.value.map((t) => t.date)
+  const zoom = dataZoom(trends.value.length)
   return {
     color: [CHART_PALETTE[0], CHART_PALETTE[5]],
     tooltip: { trigger: 'axis' as const },
     legend: { top: 0, left: 'center' as const },
-    grid: { left: 8, right: 8, top: 32, bottom: 4, containLabel: true },
+    grid: { left: 8, right: 8, top: 32, bottom: zoom ? 28 : 4, containLabel: true },
+    dataZoom: zoom,
     xAxis: {
       type: 'category' as const,
       data: dates.map((d) => d.slice(5)),
@@ -149,11 +151,13 @@ const callTrendChartOption = computed(() => {
 
 const qualityTrendChartOption = computed(() => {
   const dates = trends.value.map((t) => t.date)
+  const zoom = dataZoom(trends.value.length)
   return {
     color: [CHART_PALETTE[1], CHART_PALETTE[4]],
     tooltip: { trigger: 'axis' as const },
     legend: { top: 0, left: 'center' as const },
-    grid: { left: 8, right: 8, top: 32, bottom: 4, containLabel: true },
+    grid: { left: 8, right: 8, top: 32, bottom: zoom ? 28 : 4, containLabel: true },
+    dataZoom: zoom,
     xAxis: {
       type: 'category' as const,
       data: dates.map((d) => d.slice(5)),
@@ -188,6 +192,16 @@ const qualityTrendChartOption = computed(() => {
 
 const AXIS_MUTED = '#86868b'
 const SPLIT_MUTED = 'rgba(0, 0, 0, 0.06)'
+
+/** 与 chart-options.ts 对齐：天数 >30 时默认聚焦最近 30 天，仍可拖动查看全周期。 */
+function dataZoom(days: number) {
+  if (days <= 30) return undefined
+  const start = Math.max(0, 100 - (30 / days) * 100)
+  return [
+    { type: 'inside' as const, start, end: 100 },
+    { type: 'slider' as const, height: 16, bottom: 0, start, end: 100 }
+  ]
+}
 
 function rateText(value: unknown): string {
   return value == null ? '-' : `${value}%`

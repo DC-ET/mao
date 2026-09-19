@@ -13,6 +13,8 @@
 | 按轮次拉消息 | `admin-session messages` |
 | 用户筛选项 | `admin-session options-users` |
 | Agent 筛选项 | `admin-session options-agents` |
+| 清理失败会话 | `admin-session delete`（运行中会话被拒绝） |
+| 归档会话 | `admin-session archive` |
 
 ## 命令：admin-session list
 
@@ -80,6 +82,30 @@ mao admin-session options-users
 
 ```bash
 mao admin-session options-agents
+```
+
+## 命令：admin-session delete
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--id` | 是 | 整数 | 会话 ID |
+
+`DELETE /admin/sessions/{id}`（管理员）。运行中（RUNNING/WAITING_APPROVAL/RESUMING/CANCELLING）的会话会被拒绝（code 2001）；删除级联清理消息、上下文压缩与运行文件。
+
+```bash
+mao admin-session delete --id 100
+```
+
+## 命令：admin-session archive
+
+| 参数 | 必填 | 类型 | 含义 |
+|------|------|------|------|
+| `--id` | 是 | 整数 | 会话 ID |
+
+`PUT /admin/sessions/{id}/archive`（管理员），将状态置为 ARCHIVED。
+
+```bash
+mao admin-session archive --id 100
 ```
 
 ## 成功失败判断

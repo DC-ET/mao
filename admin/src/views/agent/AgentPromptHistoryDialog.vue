@@ -23,8 +23,8 @@
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="保存时间" min-width="180" :formatter="formatDateTimeColumn" />
-        <el-table-column label="操作人 ID" width="110">
-          <template #default="{ row }">{{ row.operatorId ?? '—' }}</template>
+        <el-table-column label="操作人" width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.operatorName || (row.operatorId != null ? `ID: ${row.operatorId}` : '—') }}</template>
         </el-table-column>
         <el-table-column label="来源" min-width="130">
           <template #default="{ row }">{{ row.sourceVersion ? `回滚自 v${row.sourceVersion}` : '保存' }}</template>
@@ -67,6 +67,7 @@ interface PromptVersion {
   version: number
   systemPrompt: string
   operatorId: number | null
+  operatorName?: string | null
   sourceVersion: number | null
   createdAt: string
 }

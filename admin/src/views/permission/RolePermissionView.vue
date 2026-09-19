@@ -17,8 +17,9 @@
             <el-table-column prop="name" label="角色" min-width="120" />
             <el-table-column prop="code" label="编码" width="110" />
             <el-table-column prop="userCount" label="用户数" width="80" align="right" />
-            <el-table-column label="操作" width="80">
+            <el-table-column label="操作" width="140" fixed="right">
               <template #default="{ row }">
+                <el-button type="primary" link size="small" @click.stop="handleViewMembers(row)">成员</el-button>
                 <el-button type="primary" link size="small" @click.stop="handleEditRole(row)">编辑</el-button>
               </template>
             </el-table-column>
@@ -31,7 +32,14 @@
           <template #header>
             <div class="card-header">
               <span>权限分配</span>
-              <el-button type="primary" :disabled="!currentRole" :loading="savingPermissions" @click="savePermissions">保存权限</el-button>
+              <el-button
+                :type="dirtyPermissions ? 'primary' : 'default'"
+                :disabled="!currentRole"
+                :loading="savingPermissions"
+                @click="savePermissions"
+              >
+                保存权限{{ dirtyPermissions ? '*' : '' }}
+              </el-button>
             </div>
           </template>
 
@@ -41,22 +49,39 @@
               <strong>{{ currentRole.name }}</strong>
               <el-tag size="small">{{ currentRole.code }}</el-tag>
             </div>
-            <el-checkbox-group
-              v-model="selectedPermissionIds"
-              class="permission-grid"
-              :disabled="savingPermissions"
-              @change="onPermissionChange"
-            >
-              <el-checkbox
-                v-for="permission in permissions"
-                :key="permission.id"
-                :value="permission.id"
-                border
-              >
-                <span>{{ permission.name }}</span>
-                <small>{{ permission.code }}</small>
-              </el-checkbox>
-            </el-checkbox-group>
+            <el-collapse v-model="expandedGroups" class="permission-groups">
+              <el-collapse-item v-for="group in permissionGroups" :key="group.prefix" :name="group.prefix">
+                <template #title>
+                  <div class="group-title" @click.stop>
+                    <el-checkbox
+                      :model-value="isGroupAllSelected(group)"
+                      :indeterminate="isGroupIndeterminate(group)"
+                      :disabled="savingPermissions"
+                      @change="toggleGroup(group, $event as boolean)"
+                    >
+                      {{ group.label }}
+                    </el-checkbox>
+                    <span class="group-count">{{ group.items.length }}</span>
+                  </div>
+                </template>
+                <el-checkbox-group
+                  :model-value="selectedPermissionIds"
+                  class="permission-grid"
+                  :disabled="savingPermissions"
+                  @update:model-value="onPermissionChange($event as number[])"
+                >
+                  <el-checkbox
+                    v-for="permission in group.items"
+                    :key="permission.id"
+                    :value="permission.id"
+                    border
+                  >
+                    <span>{{ permission.name }}</span>
+                    <small>{{ permission.code }}</small>
+                  </el-checkbox>
+                </el-checkbox-group>
+              </el-collapse-item>
+            </el-collapse>
           </div>
         </el-card>
       </el-col>
@@ -68,7 +93,7 @@
           <el-input v-model="roleForm.name" placeholder="例如：运营管理员" />
         </el-form-item>
         <el-form-item label="角色编码" prop="code">
-          <el-input v-model="roleForm.code" :disabled="dialogMode === 'edit'" placeholder="例如：OPS_ADMIN" />
+          <el-input v-model="roleForm.code" :disabled="dialogMode === 'edit'" placeholder="例如：OPS_ADMIN（2-32 位大写字母/数字/下划线）" />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="roleForm.description" type="textarea" :rows="3" />
@@ -83,7 +108,8 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue'
+import { computed, reactive, ref, onMounted, onUnmounted } from 'vue'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
@@ -111,11 +137,11 @@ const savingPermissions = ref(false)
 const roles = ref<Role[]>([])
 const permissions = ref<Permission[]>([])
 const currentRole = ref<Role | null>(null)
-const selectedPermissionIds = ref<number[]>([])
 const dirtyPermissions = ref(false)
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
 const roleFormRef = ref<FormInstance>()
+const router = useRouter()
 const roleForm = reactive({
   id: 0,
   name: '',
@@ -123,9 +149,67 @@ const roleForm = reactive({
   description: ''
 })
 
+// 后端 createRole 对编码无格式约束，前端按建议 pattern 统一约束（评审 #28）
+const roleCodePattern = /^[A-Z0-9_]{2,32}$/
+
 const roleFormRules: FormRules = {
   name: [{ required: true, message: '请输入角色名称', trigger: 'blur' }],
-  code: [{ required: true, message: '请输入角色编码', trigger: 'blur' }]
+  code: [
+    { required: true, message: '请输入角色编码', trigger: 'blur' },
+    {
+      validator: (_rule, value: string, callback: (error?: Error) => void) => {
+        if (!roleCodePattern.test(value || '')) {
+          callback(new Error('编码须为 2-32 位大写字母、数字或下划线'))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur'
+    }
+  ]
+}
+
+/** 按权限码前缀（domain）分组，如 user:read → user */
+interface PermissionGroup {
+  prefix: string
+  label: string
+  items: Permission[]
+}
+
+const permissionGroups = computed<PermissionGroup[]>(() => {
+  const map = new Map<string, Permission[]>()
+  for (const perm of permissions.value) {
+    const prefix = perm.code.split(':')[0] || 'other'
+    if (!map.has(prefix)) map.set(prefix, [])
+    map.get(prefix)!.push(perm)
+  }
+  return Array.from(map.entries()).map(([prefix, items]) => ({
+    prefix,
+    label: `${prefix}:*`,
+    items
+  }))
+})
+
+const expandedGroups = ref<string[]>([])
+const selectedPermissionIds = ref<number[]>([])
+
+function isGroupAllSelected(group: PermissionGroup): boolean {
+  return group.items.every((p) => selectedPermissionIds.value.includes(p.id))
+}
+
+function isGroupIndeterminate(group: PermissionGroup): boolean {
+  const selected = group.items.filter((p) => selectedPermissionIds.value.includes(p.id)).length
+  return selected > 0 && selected < group.items.length
+}
+
+function toggleGroup(group: PermissionGroup, checked: boolean) {
+  const groupIds = group.items.map((p) => p.id)
+  if (checked) {
+    selectedPermissionIds.value = Array.from(new Set([...selectedPermissionIds.value, ...groupIds]))
+  } else {
+    selectedPermissionIds.value = selectedPermissionIds.value.filter((id) => !groupIds.includes(id))
+  }
+  dirtyPermissions.value = true
 }
 
 async function fetchAll() {
@@ -137,6 +221,9 @@ async function fetchAll() {
     ])
     roles.value = roleRes.data || []
     permissions.value = permissionRes.data || []
+    if (expandedGroups.value.length === 0 && permissions.value.length > 0) {
+      expandedGroups.value = permissionGroups.value.map((g) => g.prefix)
+    }
     if (!currentRole.value && roles.value.length > 0) {
       selectRole(roles.value[0])
     }
@@ -152,7 +239,8 @@ function selectRole(role: Role) {
 }
 
 /** 勾选变化置脏；row-click 切换角色时如有未保存修改先确认 */
-function onPermissionChange() {
+function onPermissionChange(next: number[]) {
+  selectedPermissionIds.value = next
   dirtyPermissions.value = true
 }
 
@@ -194,6 +282,11 @@ function handleEditRole(role: Role) {
   dialogVisible.value = true
 }
 
+function handleViewMembers(role: Role) {
+  // 后端 listUsers 暂不支持 roleId 参数，先传 query 表达筛选意图（评审 #7）
+  router.push({ path: '/users', query: { roleId: String(role.id) } })
+}
+
 async function saveRole() {
   if (savingRole.value) return
   const valid = await roleFormRef.value?.validate().catch(() => false)
@@ -233,7 +326,39 @@ async function savePermissions() {
   }
 }
 
-onMounted(fetchAll)
+onMounted(() => {
+  fetchAll()
+  // 路由离开守卫之外，浏览器刷新/关闭也需要拦截（评审 #29）
+  window.addEventListener('beforeunload', handleBeforeUnload)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+})
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!dirtyPermissions.value) return
+  event.preventDefault()
+  // Chrome 需要 returnValue 才会弹出确认
+  event.returnValue = ''
+}
+
+onBeforeRouteLeave(async (_to, _from) => {
+  if (!dirtyPermissions.value) return true
+  try {
+    await ElMessageBox.confirm('当前角色的权限修改尚未保存，离开后将丢失，确认离开吗？', '未保存的修改', {
+      confirmButtonText: '放弃修改并离开',
+      cancelButtonText: '留在当前页',
+      type: 'warning'
+    })
+    return true
+  } catch {
+    return false
+  }
+})
+
+// TODO: 需后端补 DELETE /roles/:id（校验角色下无用户）后再提供删除角色按钮，
+// 见评审文档 #7（permission.routes.ts 目前仅有 create/update/assign 端点）。
 </script>
 
 <style scoped>
@@ -254,6 +379,23 @@ onMounted(fetchAll)
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  padding: 4px 0;
+}
+
+.permission-groups :deep(.el-collapse-item__header) {
+  height: auto;
+  padding: 6px 0;
+}
+
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-count {
+  color: var(--mao-muted, #909399);
+  font-size: 12px;
 }
 
 .permission-grid :deep(.el-checkbox) {

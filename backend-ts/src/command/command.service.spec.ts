@@ -11,6 +11,8 @@ describe('UserCommandService', () => {
   const repo: UserCommandRepository = {
     listByUserId: vi.fn(),
     listPersonalAll: vi.fn(),
+    listPersonalFiltered: vi.fn(),
+    listPersonalPaged: vi.fn(async () => ({ records: [], total: 0 })),
     findByIdAndUserId: vi.fn(),
     findByUserIdAndName: vi.fn(),
     insert: vi.fn(async (c) => {

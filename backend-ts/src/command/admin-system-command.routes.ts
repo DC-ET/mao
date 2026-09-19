@@ -3,7 +3,7 @@ import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
 import { requireAdmin, sendJson, sendOk } from '../common/http-error.js';
-import { bodyOf, pathId, pathParam } from '../common/request.js';
+import { bodyOf, pathId, pathParam, queryOptInt, queryOptStr } from '../common/request.js';
 import { fail } from '../common/result.js';
 import { SYSTEM_USER_ID } from './command.service.js';
 import type { AdminUserCommandVO, UserCommand, UserCommandRepository } from './types.js';
@@ -108,22 +108,26 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
     return sendOk(reply);
   });
 
-  // 列表：跨用户查看个人指令
+  // 列表：跨用户查看个人指令。支持 pageNum/pageSize/keyword（keyword 匹配指令名/内容，LIKE 已转义）。
+  // 兼容约定：不传任何新参数时返回全量数组；传入分页/关键词后按条件过滤分页，返回结构仍为数组（前端按数组消费），
+  // 条件过滤时的总数通过响应头 x-total-count 透出。
   app.get('/v1/admin/user-commands', async (request, reply) => {
     await requireAdmin(permissionService, request);
-    const commands = await commandRepo.listPersonalAll();
-    const userIds = [...new Set(commands.map((c) => c.userId))];
-    const users = userIds.length > 0 && userLookup ? await userLookup.findByIds(userIds) : [];
-    const userMap = new Map(users.map((u) => [u.id, u]));
-    return sendOk(reply, commands.map((command) => {
-      const user = userMap.get(command.userId);
-      return {
-        ...toAdminVO(command),
-        userId: command.userId,
-        username: user?.username ?? null,
-        displayName: user?.displayName ?? null,
-      } satisfies AdminUserCommandVO;
-    }));
+    const pageNum = queryOptInt(request, 'pageNum');
+    const pageSize = queryOptInt(request, 'pageSize');
+    const keyword = queryOptStr(request, 'keyword');
+    const filtered = pageNum != null || pageSize != null || keyword != null;
+    if (!filtered) {
+      const commands = await commandRepo.listPersonalAll();
+      return sendOk(reply, await toAdminUserVOList(commands, userLookup));
+    }
+    const page = await commandRepo.listPersonalPaged(
+      Math.max(1, pageNum ?? 1),
+      Math.min(200, Math.max(1, pageSize ?? 20)),
+      keyword,
+    );
+    reply.header('x-total-count', String(page.total));
+    return sendOk(reply, await toAdminUserVOList(page.records, userLookup));
   });
 
   // 详情：查询指定用户的个人指令
@@ -171,4 +175,22 @@ function toAdminVO(command: UserCommand): AdminUserCommandVO {
     createdAt: command.createdAt ?? null,
     updatedAt: command.updatedAt ?? null,
   };
+}
+
+async function toAdminUserVOList(
+  records: UserCommand[],
+  userLookup: AdminSystemCommandRouteDeps['userLookup'],
+): Promise<AdminUserCommandVO[]> {
+  const userIds = [...new Set(records.map((c) => c.userId))];
+  const users = userIds.length > 0 && userLookup ? await userLookup.findByIds(userIds) : [];
+  const userMap = new Map(users.map((u) => [u.id, u]));
+  return records.map((command) => {
+    const user = userMap.get(command.userId);
+    return {
+      ...toAdminVO(command),
+      userId: command.userId,
+      username: user?.username ?? null,
+      displayName: user?.displayName ?? null,
+    } satisfies AdminUserCommandVO;
+  });
 }

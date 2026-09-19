@@ -7,7 +7,7 @@ const {
   pickDefined,
   hasFlag,
 } = require('../args');
-const { get } = require('../http');
+const { get, put, del } = require('../http');
 const { emitResult, printError } = require('../output');
 
 function help() {
@@ -17,6 +17,8 @@ function help() {
   mao admin-session list [--page] [--size] [--user-id] [--agent-id] [--execution-mode] [--phase] [--keyword] [--status]
   mao admin-session get --id
   mao admin-session messages --id [--round-limit] [--before-message-id]
+  mao admin-session archive --id
+  mao admin-session delete --id
   mao admin-session options-users
   mao admin-session options-agents
 `;
@@ -59,6 +61,18 @@ async function run(ctx, subcommand, _rest, flags) {
         roundLimit: getNumber(flags, 'round-limit'),
         beforeMessageId: getNumber(flags, 'before-message-id'),
       }));
+      emitResult(result, { raw: ctx.raw });
+      return;
+    }
+    case 'archive': {
+      const id = requireNumber(flags, 'id', '会话 ID');
+      const result = await put(ctx, `/admin/sessions/${id}/archive`);
+      emitResult(result, { raw: ctx.raw });
+      return;
+    }
+    case 'delete': {
+      const id = requireNumber(flags, 'id', '会话 ID');
+      const result = await del(ctx, `/admin/sessions/${id}`);
       emitResult(result, { raw: ctx.raw });
       return;
     }

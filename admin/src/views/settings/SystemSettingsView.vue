@@ -122,7 +122,16 @@
                       :placeholder="row.isSecret === 1 && row.value ? '已设置，留空表示不修改' : ''"
                       :disabled="!canWrite"
                       autocomplete="new-password"
-                    />
+                    >
+                      <template v-if="row.isSecret === 1 && row.value" #append>
+                        <el-button
+                          v-if="!pendingClearKeys.has(row.settingKey)"
+                          :disabled="!canWrite"
+                          @click="markSecretClear(row.settingKey)"
+                        >清除</el-button>
+                        <el-tag v-else type="danger" size="small" closable @close="unmarkSecretClear(row.settingKey)">将清除</el-tag>
+                      </template>
+                    </el-input>
                     <div class="field-hint">{{ row.settingKey }}</div>
                   </template>
                 </el-form-item>
@@ -197,6 +206,20 @@ const activeSection = ref('')
 /** 分类卡片表单编辑副本：进入/刷新时从 rows 拷贝，保存成功后回写。secret 留空 = 不修改。 */
 const plainModel = reactive<Record<string, string>>({})
 const savingKeys = ref(new Set<string>())
+/** 待清除的 secret key 集合：保存时提交空串（后端 isSecret=1 空串=显式清空），从已设置 secret 的输入框旁触发 */
+const pendingClearKeys = ref(new Set<string>())
+
+function markSecretClear(key: string) {
+  const next = new Set(pendingClearKeys.value)
+  next.add(key)
+  pendingClearKeys.value = next
+}
+
+function unmarkSecretClear(key: string) {
+  const next = new Set(pendingClearKeys.value)
+  next.delete(key)
+  pendingClearKeys.value = next
+}
 
 /** 数值类配置键：渲染为数字输入。 */
 const NUMERIC_KEYS = new Set(['audit.retentionDays', 'agent.threadPoolSize', 'agent.threadPoolMax', 'agent.threadPoolQueue', 'ws.idleTimeoutMs', 'notify.workerDelayMs', 'notify.batchSize', 'notify.maxAttempts', 'file.maxSizeMb'])
@@ -233,6 +256,11 @@ async function saveCategory(category: string) {
     if (row.editable !== 1) continue
     const raw = plainModel[row.settingKey] ?? ''
     if (row.isSecret === 1) {
+      if (pendingClearKeys.value.has(row.settingKey)) {
+        // 显式清除：提交空串，后端对 isSecret=1 的空串做清空落库
+        items.push({ key: row.settingKey, value: '' })
+        continue
+      }
       // secret 语义：非空=保存新值；空串=不修改（null）
       items.push({ key: row.settingKey, value: raw !== '' ? raw : null })
       continue
@@ -250,12 +278,21 @@ async function saveCategory(category: string) {
   savingKeys.value = new Set([...savingKeys.value, category])
   try {
     await api.put('/system-settings/batch', { items })
+    const clearedKeys = new Set(pendingClearKeys.value)
+    pendingClearKeys.value = new Set()
     for (const item of items) {
       const row = rows.find((r: any) => r.settingKey === item.key)
       if (row) {
         if (row.isSecret === 1) {
-          row.value = item.value == null ? row.value : '******'
-          plainModel[row.settingKey] = ''
+          if (clearedKeys.has(row.settingKey)) {
+            row.value = ''
+            plainModel[row.settingKey] = ''
+          } else if (item.value == null) {
+            // 留空未修改，保留已设置标记
+          } else {
+            row.value = '******'
+            plainModel[row.settingKey] = ''
+          }
         } else {
           row.value = item.value ?? ''
           plainModel[row.settingKey] = item.value ?? ''

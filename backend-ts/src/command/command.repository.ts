@@ -2,6 +2,11 @@ import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
 import type { UserCommand, UserCommandRepository } from './types.js';
 
+/** 转义 LIKE 通配符（与 session.service escapeLike 语义一致），配合默认反斜杠转义。 */
+function escapeLike(keyword: string): string {
+  return keyword.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
 export class MysqlUserCommandRepository implements UserCommandRepository {
   constructor(private readonly db: Db) {}
 
@@ -16,6 +21,36 @@ export class MysqlUserCommandRepository implements UserCommandRepository {
     return this.db.query<UserCommand>(
       `SELECT * FROM user_command WHERE user_id > 0 AND ${notDeleted()} ORDER BY created_at DESC`,
     );
+  }
+
+  private buildPersonalWhere(keyword?: string): { whereSql: string; params: unknown[] } {
+    const clauses = ['user_id > 0', notDeleted()];
+    const params: unknown[] = [];
+    const trimmed = keyword?.trim();
+    if (trimmed) {
+      const escaped = escapeLike(trimmed);
+      clauses.push('(name LIKE ? OR content LIKE ?)');
+      params.push(`%${escaped}%`, `%${escaped}%`);
+    }
+    return { whereSql: clauses.join(' AND '), params };
+  }
+
+  listPersonalFiltered(keyword?: string): Promise<UserCommand[]> {
+    const { whereSql, params } = this.buildPersonalWhere(keyword);
+    return this.db.query<UserCommand>(
+      `SELECT * FROM user_command WHERE ${whereSql} ORDER BY created_at DESC`,
+      params,
+    );
+  }
+
+  async listPersonalPaged(pageNum: number, pageSize: number, keyword?: string): Promise<{ records: UserCommand[]; total: number }> {
+    const { whereSql, params } = this.buildPersonalWhere(keyword);
+    const totalRow = await this.db.queryOne<{ c: number }>(`SELECT COUNT(*) AS c FROM user_command WHERE ${whereSql}`, params);
+    const records = await this.db.query<UserCommand>(
+      `SELECT * FROM user_command WHERE ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [...params, pageSize, (pageNum - 1) * pageSize],
+    );
+    return { records, total: Number(totalRow?.c ?? 0) };
   }
 
   findByIdAndUserId(id: number, userId: number): Promise<UserCommand | null> {

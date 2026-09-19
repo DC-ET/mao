@@ -4,9 +4,15 @@
       <template #header>
         <div class="card-header">
           <span>审计日志</span>
-          <el-button @click="fetchLogs">
-            <el-icon><Refresh /></el-icon>
-          </el-button>
+          <div class="header-actions">
+            <span class="auto-refresh">
+              <span class="auto-refresh-label">自动刷新</span>
+              <el-switch v-model="autoRefresh" @change="handleAutoRefreshChange" />
+            </span>
+            <el-button @click="fetchLogs">
+              <el-icon><Refresh /></el-icon>
+            </el-button>
+          </div>
         </div>
       </template>
 
@@ -22,6 +28,23 @@
                   :value="opt.value"
                 />
               </el-select>
+            </el-form-item>
+            <el-form-item label="用户">
+              <el-select v-model="filters.userId" clearable filterable placeholder="全部" style="width: 160px" @change="handleSearch">
+                <el-option v-for="u in userOptions" :key="u.id" :label="u.displayName || u.username" :value="u.id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="日期">
+              <el-date-picker
+                v-model="dateRange"
+                type="daterange"
+                value-format="YYYY-MM-DD"
+                range-separator="至"
+                start-placeholder="开始日期"
+                end-placeholder="结束日期"
+                style="width: 260px"
+                @change="handleSearch"
+              />
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="handleSearch">查询</el-button>
@@ -45,7 +68,11 @@
           <el-empty description="暂无数据" :image-size="60" />
         </template>
         <el-table-column prop="createdAt" label="时间" width="180" :formatter="formatDateTimeColumn" />
-        <el-table-column prop="username" label="用户" width="120" />
+        <el-table-column prop="username" label="用户" width="120">
+          <template #default="{ row }">
+            <el-link type="primary" :underline="false" @click="goUserSessions(row)">{{ row.username || '-' }}</el-link>
+          </template>
+        </el-table-column>
         <el-table-column prop="action" label="动作" width="100">
           <template #default="{ row }">
             <el-tag size="small" :type="actionType(row.action)">{{ auditActionLabel(row.action) }}</el-tag>
@@ -121,6 +148,7 @@
         <el-descriptions-item label="IP">{{ currentLog.ip || '-' }}</el-descriptions-item>
         <el-descriptions-item label="动作">{{ auditActionLabel(currentLog.action) }}</el-descriptions-item>
         <el-descriptions-item label="对象">{{ currentLog.objectType }}</el-descriptions-item>
+        <el-descriptions-item label="对象 ID">{{ currentLog.objectId || '-' }}</el-descriptions-item>
         <el-descriptions-item label="路径" :span="2">{{ currentLog.path }}</el-descriptions-item>
         <el-descriptions-item label="参数" :span="2">{{ currentLog.queryString || '-' }}</el-descriptions-item>
         <el-descriptions-item label="错误" :span="2">{{ currentLog.errorMessage || '-' }}</el-descriptions-item>
@@ -131,7 +159,9 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, onDeactivated, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
+import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
@@ -141,6 +171,7 @@ import FilterPanel from '../../components/FilterPanel.vue'
 import { AUDIT_ACTION_OPTIONS, auditActionLabel } from '../../utils/labels'
 
 const { isMobile } = useBreakpoint()
+const router = useRouter()
 const loading = ref(false)
 const logs = ref<any[]>([])
 const total = ref(0)
@@ -148,11 +179,45 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const detailVisible = ref(false)
 const currentLog = ref<any | null>(null)
+const userOptions = ref<Array<{ id: number; username: string; displayName?: string | null }>>([])
+const dateRange = ref<[string, string] | null>(null)
+const autoRefresh = ref(false)
+let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
+const AUTO_REFRESH_INTERVAL_MS = 60_000
+
 const filters = reactive({
   action: '',
   objectType: '',
-  success: undefined as boolean | undefined
+  success: undefined as boolean | undefined,
+  userId: undefined as number | undefined
 })
+
+async function fetchOptions() {
+  try {
+    const { data } = await api.get('/admin/sessions/options/users')
+    userOptions.value = data || []
+  } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ }
+}
+
+function goUserSessions(row: { userId?: number | null }) {
+  if (row.userId == null) return
+  router.push({ path: '/sessions', query: { userId: String(row.userId) } })
+}
+
+function handleAutoRefreshChange(enabled: string | number | boolean) {
+  if (enabled) {
+    autoRefreshTimer = setInterval(() => fetchLogs(), AUTO_REFRESH_INTERVAL_MS)
+  } else {
+    stopAutoRefresh()
+  }
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshTimer != null) {
+    clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
+}
 
 function actionType(action: string) {
   if (action === 'DELETE') return 'danger'
@@ -173,6 +238,9 @@ async function fetchLogs() {
     if (filters.action) params.action = filters.action
     if (filters.objectType) params.objectType = filters.objectType
     if (filters.success !== undefined) params.success = filters.success
+    if (filters.userId != null) params.userId = filters.userId
+    if (dateRange.value?.[0]) params.startDate = dateRange.value[0]
+    if (dateRange.value?.[1]) params.endDate = dateRange.value[1]
     const { data } = await api.get('/audit/logs', { params })
     if (seq !== fetchLogsSeq) return
     logs.value = data?.records || []
@@ -191,6 +259,8 @@ function handleReset() {
   filters.action = ''
   filters.objectType = ''
   filters.success = undefined
+  filters.userId = undefined
+  dateRange.value = null
   handleSearch()
 }
 
@@ -207,7 +277,14 @@ async function showDetail(row: any) {
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ }
 }
 
-onMounted(fetchLogs)
+onMounted(() => {
+  fetchOptions()
+  fetchLogs()
+})
+
+onDeactivated(stopAutoRefresh)
+
+onBeforeUnmount(stopAutoRefresh)
 </script>
 
 <style scoped>
@@ -215,6 +292,23 @@ onMounted(fetchLogs)
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.auto-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auto-refresh-label {
+  font-size: 13px;
+  color: var(--mao-muted);
 }
 
 .search-form {

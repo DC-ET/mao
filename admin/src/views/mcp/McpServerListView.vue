@@ -32,7 +32,7 @@
         </FilterPanel>
       </el-form>
 
-      <el-table v-if="!isMobile" :data="servers" v-loading="loading" stripe>
+      <el-table v-if="!isMobile" :data="pagedServers" v-loading="loading" stripe>
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
@@ -115,7 +115,7 @@
       </el-table>
 
       <div v-else class="mobile-card-list" v-loading="loading">
-        <el-card v-for="row in servers" :key="row.id" shadow="hover">
+        <el-card v-for="row in pagedServers" :key="row.id" shadow="hover">
           <div class="mobile-card-head">
             <span class="mobile-card-title">{{ row.name }}</span>
             <el-tag :type="row.status === 'ENABLED' ? 'success' : 'info'" size="small">
@@ -175,6 +175,15 @@
         </el-card>
         <el-empty v-if="!loading && servers.length === 0" description="暂无数据" />
       </div>
+
+      <ResponsivePagination
+        class="pagination"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50, 100]"
+        :total="servers.length"
+        @size-change="currentPage = 1"
+      />
     </el-card>
 
     <!-- Create / Edit dialog -->
@@ -310,13 +319,14 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
+import ResponsivePagination from '../../components/ResponsivePagination.vue'
 
 const { isMobile } = useBreakpoint()
 
@@ -329,6 +339,14 @@ const loading = ref(false)
 const servers = ref<any[]>([])
 const keyword = ref('')
 const statusFilter = ref('')
+
+// 后端 /mcp-servers 返回全量数组（无分页参数），前端做客户端分页
+const currentPage = ref(1)
+const pageSize = ref(20)
+const pagedServers = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return servers.value.slice(start, start + pageSize.value)
+})
 
 const formVisible = ref(false)
 const isEdit = ref(false)
@@ -386,6 +404,8 @@ async function loadData() {
     })
     if (seq !== loadDataSeq) return
     servers.value = data || []
+    // 数据集变化后页码可能越界，回到第一页
+    currentPage.value = 1
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     if (seq === loadDataSeq) loading.value = false
   }
@@ -559,6 +579,12 @@ loadData()
 
 .search-form {
   margin-bottom: 4px;
+}
+
+.pagination {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .conn-text {

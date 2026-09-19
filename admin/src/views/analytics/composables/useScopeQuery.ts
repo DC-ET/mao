@@ -15,6 +15,13 @@ interface CacheSlot<T = unknown> {
 const cache = new Map<string, CacheSlot>()
 const inflight = new Map<string, Promise<unknown>>()
 
+/** 模块级缓存 TTL：切走再切回时超过 5 分钟的数据视为过期，强制重新拉取 */
+const CACHE_TTL_MS = 5 * 60 * 1000
+
+function isStale(slot: CacheSlot): boolean {
+  return slot.fetchedAt == null || Date.now() - slot.fetchedAt > CACHE_TTL_MS
+}
+
 function slotOf(key: string): CacheSlot {
   let slot = cache.get(key)
   if (!slot) {
@@ -53,7 +60,7 @@ export function useScopeQuery<T>(scope: AnalyticsScope) {
     const current = ++seq
     const slot = slotOf(key)
 
-    if (!force && slot.data != null) {
+    if (!force && slot.data != null && !isStale(slot)) {
       apply(slot)
       loading.value = false
       return

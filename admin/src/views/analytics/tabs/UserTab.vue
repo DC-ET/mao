@@ -32,7 +32,10 @@
       <template #header>
         <div class="card-header">
           <span>用户用量明细</span>
-          <span class="card-hint">按窗口内消息数截断的 Top {{ userRows.length }}</span>
+          <div class="header-actions">
+            <span class="card-hint">按窗口内消息数截断的 Top {{ userRows.length }}</span>
+            <el-button :disabled="userRows.length === 0" @click="exportRows">导出 CSV</el-button>
+          </div>
         </div>
       </template>
       <el-table :data="userRows" size="small" stripe>
@@ -83,6 +86,7 @@ import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import { formatNumber, rankBarOption, type RankItem } from '../chart-options'
+import { exportCsv } from '../utils/csv'
 import { formatDateTime } from '../../../utils/datetime'
 import type { UsersPayload } from '../types'
 
@@ -116,6 +120,23 @@ const tokenItems = computed<RankItem[]>(() =>
 function go(path: string) {
   router.push(path)
 }
+
+function exportRows() {
+  exportCsv(
+    `analytics-users-${new Date().toISOString().slice(0, 10)}.csv`,
+    ['用户', '账号', '会话', '消息', 'Token', '调用', '失败调用', '最后登录'],
+    userRows.value.map((row) => [
+      row.displayName || row.username || '未知',
+      row.username,
+      row.sessionCount,
+      row.messageCount,
+      row.totalTokens,
+      row.callCount ?? 0,
+      row.callFailCount ?? 0,
+      row.lastLoginAt ? formatDateTime(row.lastLoginAt) : ''
+    ])
+  )
+}
 </script>
 
 <script lang="ts">
@@ -137,6 +158,12 @@ export default { name: 'UserTab' }
 .card-hint {
   font-size: 12px;
   color: var(--mao-muted);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .linkish {

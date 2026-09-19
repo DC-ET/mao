@@ -136,7 +136,11 @@ const processSummary = computed(() => {
   return parts.join('，')
 })
 
-const isUserLong = computed(() => (props.userMessage?.content || '').split('\n').length > 10)
+// 行数 > 10 或字符数 > 800：单行超长粘贴内容（无换行）也需折叠
+const isUserLong = computed(() => {
+  const content = props.userMessage?.content || ''
+  return content.split('\n').length > 10 || content.length > 800
+})
 </script>
 
 <style scoped>

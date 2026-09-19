@@ -45,6 +45,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Select, CloseBold, ArrowDown, CopyDocument } from '@element-plus/icons-vue'
 import type { ToolCall } from '../types/chat'
 
@@ -130,6 +131,17 @@ const truncatedResult = computed(() => {
 
 function copyText(text: string) {
   navigator.clipboard.writeText(text)
+    .then(() => {
+      const raw = props.toolCall.result || ''
+      if (raw.length > 4000) {
+        ElMessage.success(`已复制截断内容（原文 ${raw.length} 字符）`)
+      } else {
+        ElMessage.success('已复制')
+      }
+    })
+    .catch(() => {
+      ElMessage.error('复制失败，请手动选择文本复制')
+    })
 }
 
 function toggleExpand() {

@@ -42,7 +42,8 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+                <el-dropdown-item v-if="canWrite" command="change-password">修改密码</el-dropdown-item>
+                <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -64,17 +65,25 @@
         </div>
       </el-main>
     </el-container>
+
+    <ChangePasswordDialog
+      v-if="changePasswordVisible"
+      :visible="changePasswordVisible"
+      @update:visible="changePasswordVisible = $event"
+    />
   </el-container>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import { useTabStore } from '../stores/tabs'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import TabBar from './TabBar.vue'
 import SideMenu from './SideMenu.vue'
+import ChangePasswordDialog from '../views/user/ChangePasswordDialog.vue'
 
 const SIDEBAR_KEY = 'admin-sidebar-collapsed'
 
@@ -121,10 +130,27 @@ watch(route, (newRoute) => {
   tabStore.addTab(newRoute)
 }, { immediate: true })
 
+const changePasswordVisible = ref(false)
+
+const canWrite = computed(() => authStore.hasPermission('user:write'))
+
 async function handleCommand(command: string) {
   if (command === 'logout') {
+    try {
+      await ElMessageBox.confirm('确定要退出登录吗？', '退出登录', {
+        confirmButtonText: '退出',
+        cancelButtonText: '取消',
+        type: 'warning'
+      })
+    } catch {
+      return
+    }
     await authStore.logout()
     router.push('/login')
+    return
+  }
+  if (command === 'change-password') {
+    changePasswordVisible.value = true
   }
 }
 </script>

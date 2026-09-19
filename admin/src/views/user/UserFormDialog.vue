@@ -60,11 +60,18 @@
         </el-select>
       </el-form-item>
       <el-form-item label="状态">
-        <el-switch
-          v-model="form.enabled"
-          active-text="启用"
-          inactive-text="禁用"
-        />
+        <el-tooltip
+          :disabled="!isEditingSelf"
+          content="不能在编辑自己的对话框中禁用当前登录账号"
+          placement="top"
+        >
+          <el-switch
+            v-model="form.enabled"
+            :disabled="isEditingSelf"
+            active-text="启用"
+            inactive-text="禁用"
+          />
+        </el-tooltip>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -82,6 +89,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
+import { useAuthStore } from '../../stores/auth'
 
 interface RoleOption {
   id: number
@@ -103,6 +111,9 @@ const emit = defineEmits<{
 }>()
 
 const isEdit = computed(() => props.mode === 'edit')
+const authStore = useAuthStore()
+/** 编辑对象是否为当前登录用户：此时禁用状态开关，避免后置报错（评审 #30） */
+const isEditingSelf = computed(() => isEdit.value && props.userData?.id === authStore.user?.id)
 const dialogTitle = computed(() => (isEdit.value ? '编辑用户' : '新建用户'))
 const submitButtonText = computed(() => (isEdit.value ? '保存' : '创建'))
 const submitting = ref(false)

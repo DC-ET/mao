@@ -9,17 +9,28 @@
     </div>
     <div v-if="isExpanded" class="thinking-body">
       <pre class="thinking-content">{{ thinking }}</pre>
+      <button class="thinking-copy-btn" title="复制" @click.stop="copyThinking">
+        <el-icon :size="14"><CopyDocument /></el-icon>
+        <span>复制</span>
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { ChatDotRound, ArrowDown, CopyDocument } from '@element-plus/icons-vue'
 
-defineProps<{ thinking: string }>()
+const props = defineProps<{ thinking: string }>()
 
 const isExpanded = ref(false)
+
+function copyThinking() {
+  navigator.clipboard.writeText(props.thinking)
+    .then(() => ElMessage.success('已复制'))
+    .catch(() => ElMessage.error('复制失败，请手动选择文本复制'))
+}
 </script>
 
 <style scoped>
@@ -80,6 +91,26 @@ const isExpanded = ref(false)
 .thinking-body {
   max-height: 400px;
   overflow-y: auto;
+}
+
+.thinking-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 5px 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  background: none;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.thinking-copy-btn:hover {
+  color: var(--el-text-color-primary);
+  border-color: var(--el-text-color-secondary);
 }
 
 .thinking-content {

@@ -249,4 +249,40 @@ describe('session and admin routes', () => {
     expect(missing.code).toBe(2001);
     await fastify.close();
   });
+
+  it('supports admin session delete and archive operations', async () => {
+    const { fastify, sessionService } = await app();
+    expect((await fastify.inject({ method: 'DELETE', url: '/v1/admin/sessions/1' })).statusCode).toBe(200);
+    expect(vi.mocked(sessionService.deleteSession)).toHaveBeenCalledWith(1);
+    expect((await fastify.inject({ method: 'PUT', url: '/v1/admin/sessions/1/archive' })).statusCode).toBe(200);
+    expect(vi.mocked(sessionService.archiveSession)).toHaveBeenCalledWith(1);
+    await fastify.close();
+  });
+
+  it('rejects admin session operations without admin permission', async () => {
+    const fastify = Fastify();
+    fastify.setErrorHandler(handleError);
+    fastify.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const sessionService = {
+      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
+    } as unknown as SessionService;
+    registerAdminSessionRoutes(fastify, {
+      sessionService,
+      userLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => []) } as unknown as UserLookup,
+      agentLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => []) } as unknown as AgentLookup,
+      modelLookup: { findByIds: vi.fn(async () => []) } as unknown as LlmModelLookup,
+      permissionService: { isAdmin: vi.fn(async () => false) },
+    });
+    const deleted = JSON.parse((await fastify.inject({ method: 'DELETE', url: '/v1/admin/sessions/1' })).body);
+    expect(deleted.code).toBe(1002);
+    const archived = JSON.parse((await fastify.inject({ method: 'PUT', url: '/v1/admin/sessions/1/archive' })).body);
+    expect(archived.code).toBe(1002);
+    expect(vi.mocked(sessionService.deleteSession)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionService.archiveSession)).not.toHaveBeenCalled();
+    await fastify.close();
+  });
 });

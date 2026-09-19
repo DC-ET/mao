@@ -18,6 +18,7 @@
             v-model="searchQuery"
             placeholder="Agent 名称"
             clearable
+            @keyup.enter="handleSearch"
             @clear="handleSearch"
           />
         </el-form-item>
@@ -41,6 +42,9 @@
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
+        <el-table-column label="创建人" width="120" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile">
+          <template #default="{ row }">{{ row.creatorName || '-' }}</template>
+        </el-table-column>
         <el-table-column label="Skills" width="110" align="right">
           <template #default="{ row }">{{ row.skillNames?.length || 0 }}</template>
         </el-table-column>
@@ -54,7 +58,12 @@
               <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-button type="primary" link size="small" @click="historyAgent = row">提示词版本</el-button>
-              <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+              <el-tooltip v-if="row.isDefault" content="默认 Agent 不可删除" placement="top">
+                <span class="disabled-btn-wrap">
+                  <el-button type="danger" link size="small" disabled>删除</el-button>
+                </span>
+              </el-tooltip>
+              <el-button v-else type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
             </template>
             <span v-else class="op-muted">—</span>
           </template>
@@ -81,7 +90,12 @@
               <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
               <el-button type="primary" link @click="historyAgent = row">提示词版本</el-button>
-              <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+              <el-tooltip v-if="row.isDefault" content="默认 Agent 不可删除" placement="top">
+                <span class="disabled-btn-wrap">
+                  <el-button type="danger" link disabled>删除</el-button>
+                </span>
+              </el-tooltip>
+              <el-button v-else type="danger" link @click="handleDelete(row)">删除</el-button>
             </template>
           </div>
         </el-card>
@@ -245,6 +259,11 @@ onMounted(fetchAgents)
 }
 .op-muted {
   color: var(--el-text-color-secondary);
+}
+
+.disabled-btn-wrap {
+  display: inline-flex;
+  margin: 0 12px 0 0;
 }
 
 .search-form {

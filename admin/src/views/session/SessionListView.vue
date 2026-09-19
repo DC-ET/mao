@@ -1,16 +1,5 @@
 <template>
   <div class="session-list">
-    <el-row :gutter="16" class="session-metrics">
-      <el-col :span="6">
-        <el-card>
-          <div class="metric">
-            <span>匹配会话</span>
-            <strong>{{ total }}</strong>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
-
     <el-card>
       <template #header>
         <div class="card-header">
@@ -102,9 +91,11 @@
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column prop="lastActivityAt" label="最后活动" width="180" :formatter="formatDateTimeColumn" />
-        <el-table-column label="操作" width="80" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleView(row)">查看</el-button>
+            <el-button link size="small" @click="handleArchive(row)">归档</el-button>
+            <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -146,6 +137,8 @@
           </div>
           <div class="mobile-card-actions">
             <el-button type="primary" link @click="handleView(row)">查看</el-button>
+            <el-button link @click="handleArchive(row)">归档</el-button>
+            <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
           </div>
         </el-card>
         <el-empty v-if="!loading && sessions.length === 0" description="暂无数据" />
@@ -168,6 +161,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onActivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
@@ -281,6 +275,51 @@ function handleView(row: any) {
   router.push(`/sessions/${row.id}`)
 }
 
+/** 运行中的会话不允许删除（后端拒绝），提前禁用并说明。 */
+const RUNNING_DELETE_PHASES = new Set(['RUNNING', 'WAITING_APPROVAL', 'RESUMING', 'CANCELLING'])
+
+function canDelete(row: any): boolean {
+  return !RUNNING_DELETE_PHASES.has(row?.phase)
+}
+
+async function handleArchive(row: any) {
+  try {
+    await ElMessageBox.confirm(`确认归档会话「${row.title || `#${row.id}`}」？归档后可在会话列表按状态筛选查看。`, '归档会话', {
+      confirmButtonText: '归档',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+  } catch {
+    return
+  }
+  try {
+    await api.put(`/admin/sessions/${row.id}/archive`)
+    ElMessage.success('已归档')
+    fetchSessions()
+  } catch { /* 拦截器已提示失败 */ }
+}
+
+async function handleDelete(row: any) {
+  if (!canDelete(row)) {
+    ElMessage.warning('会话运行中，无法删除；请先等待其结束或取消')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认删除会话「${row.title || `#${row.id}`}」？将级联清理消息、上下文与运行文件，不可恢复。`, '删除会话', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'error'
+    })
+  } catch {
+    return
+  }
+  try {
+    await api.delete(`/admin/sessions/${row.id}`)
+    ElMessage.success('已删除')
+    fetchSessions()
+  } catch { /* 拦截器已提示失败 */ }
+}
+
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 256000
 
 function tokenPercent(row: { contextTokens?: number; contextWindowTokens?: number }) {
@@ -314,25 +353,6 @@ onActivated(() => {
   width: 100%;
 }
 
-.session-metrics {
-  margin-bottom: 16px;
-}
-
-.metric {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.metric span {
-  color: #606266;
-}
-
-.metric strong {
-  font-size: 22px;
-  color: #303133;
-}
-
 .card-header {
   font-size: 16px;
   font-weight: 600;
@@ -353,15 +373,8 @@ onActivated(() => {
 }
 
 @media (max-width: 768px) {
-  .session-list :deep(.session-metrics.el-row) {
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
-
-  .session-metrics :deep(.el-col) {
-    max-width: 50%;
-    flex: 0 0 50%;
-    margin-bottom: 12px;
+  .search-form {
+    margin-bottom: 8px;
   }
 }
 </style>

@@ -4,10 +4,27 @@
       <template #header>
         <div class="card-header">
           <span>用户管理</span>
-          <el-button v-if="canWrite" type="primary" @click="handleCreate">
-            <el-icon><Plus /></el-icon>
-            新建用户
-          </el-button>
+          <div v-if="canWrite" class="card-header-actions">
+            <el-button
+              type="success"
+              :disabled="selectedUsers.length === 0 || batchLoading"
+              @click="handleBatchSetStatus(1)"
+            >
+              批量启用
+            </el-button>
+            <el-button
+              type="danger"
+              :disabled="selectedUsers.length === 0 || batchLoading"
+              @click="handleBatchSetStatus(0)"
+            >
+              批量禁用
+            </el-button>
+            <el-button type="primary" @click="handleCreate">
+              <el-icon><Plus /></el-icon>
+              新建用户
+            </el-button>
+          </div>
+          <el-button v-else type="primary" disabled>新建用户</el-button>
         </div>
       </template>
 
@@ -29,6 +46,18 @@
               <el-button @click="handleReset">重置</el-button>
             </el-form-item>
           </template>
+          <el-form-item label="账号类型">
+            <el-select
+              v-model="filters.authSource"
+              placeholder="全部"
+              clearable
+              style="width: 130px"
+              @change="handleSearch"
+            >
+              <el-option label="本地" value="LOCAL" />
+              <el-option label="LDAP" value="LDAP" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="状态">
             <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px" @change="handleSearch">
               <el-option label="启用" :value="1" />
@@ -38,10 +67,21 @@
         </FilterPanel>
       </el-form>
 
-      <el-table v-if="!isMobile" :data="users" v-loading="loading" stripe>
+      <el-alert
+        v-if="roleFilterName"
+        type="warning"
+        :closable="true"
+        show-icon
+        class="role-filter-alert"
+      >
+        按角色「{{ roleFilterName }}」筛选需要后端支持 roleId 查询参数（当前 listUsers 仅支持 keyword/status），已在评审文档 #6/#7 中记录；本页暂未做角色过滤。
+      </el-alert>
+
+      <el-table v-if="!isMobile" :data="displayedUsers" v-loading="loading" stripe @selection-change="handleSelectionChange">
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
+        <el-table-column type="selection" width="46" :selectable="isRowSelectable" />
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="username" label="用户名" width="120" />
         <el-table-column prop="displayName" label="显示名称" width="120" />
@@ -208,6 +248,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
@@ -220,16 +261,21 @@ import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 
 const authStore = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const { isMobile } = useBreakpoint()
 const loading = ref(false)
 const users = ref<any[]>([])
+const selectedUsers = ref<any[]>([])
+const batchLoading = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 
 const filters = reactive({
   keyword: '',
-  status: undefined as number | undefined
+  status: undefined as number | undefined,
+  authSource: undefined as string | undefined
 })
 
 const formDialogVisible = ref(false)
@@ -242,8 +288,31 @@ const resetDialogVisible = ref(false)
 const resetUserId = ref<number | null>(null)
 const resetUsername = ref('')
 
+/** route.query.roleId 仅作为筛选意图提示（后端 listUsers 不支持 roleId，评审文档 #6/#7 已记录） */
+const queryRoleId = ref<number | null>(null)
+const roleFilterName = ref('')
+const rolesCache = ref<Array<{ id: number; name: string }>>([])
+
 function isCurrentUser(row: any) {
   return row.id === authStore.user?.id
+}
+
+/** 行级批量选择限制：当前登录用户不可被禁用 */
+function isRowSelectable(row: any) {
+  return !(isCurrentUser(row) && row.status === 1)
+}
+
+/** 账号类型为前端过滤（后端 listUsers 无 authType 参数），仅作用于当前页 */
+const displayedUsers = computed(() => {
+  if (!filters.authSource) return users.value
+  return users.value.filter((u) => (u.authSource || 'LOCAL') === filters.authSource)
+})
+
+async function fetchRolesOptions() {
+  try {
+    const { data } = await api.get('/roles')
+    rolesCache.value = data || []
+  } catch { /* 拦截器已提示失败 */ }
 }
 
 let fetchUsersSeq = 0
@@ -277,6 +346,12 @@ function handleSearch() {
 function handleReset() {
   filters.keyword = ''
   filters.status = undefined
+  filters.authSource = undefined
+  queryRoleId.value = null
+  roleFilterName.value = ''
+  if (route.query.roleId) {
+    router.replace({ path: '/users' })
+  }
   currentPage.value = 1
   fetchUsers()
 }
@@ -284,6 +359,66 @@ function handleReset() {
 function handleSizeChange() {
   currentPage.value = 1
   fetchUsers()
+}
+
+function handleSelectionChange(rows: any[]) {
+  selectedUsers.value = rows
+}
+
+/** 简单 Promise 池：并发上限 batchSize，保持提交顺序 */
+async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>) {
+  let cursor = 0
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor++]
+      await worker(item)
+    }
+  })
+  await Promise.all(runners)
+}
+
+async function handleBatchSetStatus(targetStatus: number) {
+  if (batchLoading.value || selectedUsers.value.length === 0) return
+  const action = targetStatus === 1 ? '启用' : '禁用'
+  // 过滤掉当前登录用户与已是目标状态的行
+  const targets = selectedUsers.value.filter(
+    (u) => !(isCurrentUser(u) && targetStatus === 0) && u.status !== targetStatus
+  )
+  if (targets.length === 0) {
+    ElMessage.info('所选用户均已处于目标状态（当前登录用户不可禁用）')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定要批量${action} ${targets.length} 个用户吗？`,
+      `批量${action}`,
+      { confirmButtonText: `确认${action}`, cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  batchLoading.value = true
+  let success = 0
+  let failed = 0
+  try {
+    await runWithConcurrency(targets, 3, async (u) => {
+      try {
+        await api.put(`/users/${u.id}/status`, { status: targetStatus })
+        success++
+      } catch {
+        failed++
+      }
+    })
+    if (failed === 0) {
+      ElMessage.success(`批量${action}完成：成功 ${success} 个`)
+    } else {
+      ElMessage.warning(`批量${action}完成：成功 ${success} 个，失败 ${failed} 个`)
+    }
+    selectedUsers.value = []
+    fetchUsers()
+  } finally {
+    batchLoading.value = false
+  }
 }
 
 function handleCreate() {
@@ -324,6 +459,18 @@ async function handleToggleStatus(row: any) {
 }
 
 onMounted(async () => {
+  // 支持 /users?roleId=x：后端暂不支持按角色过滤，仅解析意图给出提示
+  const roleIdRaw = route.query.roleId
+  if (roleIdRaw) {
+    const parsed = Number(roleIdRaw)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      queryRoleId.value = parsed
+      await fetchRolesOptions()
+      roleFilterName.value = rolesCache.value.find((r) => r.id === parsed)?.name || `#${parsed}`
+    } else {
+      router.replace({ path: '/users' })
+    }
+  }
   if (!authStore.user) {
     await authStore.fetchUserInfo()
   }
@@ -339,6 +486,16 @@ onMounted(async () => {
 }
 
 .search-form {
+  margin-bottom: 16px;
+}
+
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.role-filter-alert {
   margin-bottom: 16px;
 }
 

@@ -80,22 +80,16 @@
         </template>
         <el-table-column prop="name" label="名称" width="180" />
         <el-table-column prop="description" label="描述" min-width="300" show-overflow-tooltip />
-        <el-table-column label="校验" width="90">
+        <el-table-column label="状态" width="90">
           <template #default="{ row }">
-            <el-tag :type="row.filePath || row.folderPath ? 'success' : 'danger'" size="small">
-              {{ row.filePath || row.folderPath ? '通过' : '异常' }}
-            </el-tag>
+            <el-tooltip v-if="!isSkillAvailable(row)" content="缺少 SKILL.md 或目录包不完整，运行时无法加载" placement="top">
+              <el-tag type="danger" size="small">不可用</el-tag>
+            </el-tooltip>
+            <el-tag v-else type="success" size="small">可用</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="关联 Agent" width="110" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">{{ relatedAgentCount(row.name) }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="90" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
-          <template #default="{ row }">
-            <el-tag :type="isSkillAvailable(row) ? 'success' : 'danger'" size="small">
-              {{ isSkillAvailable(row) ? '可用' : '不可用' }}
-            </el-tag>
-          </template>
         </el-table-column>
         <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column label="操作" width="160" fixed="right">
@@ -108,7 +102,7 @@
               @confirm="handleDelete(row)"
             >
               <template #reference>
-                <el-button type="danger" link size="small">删除</el-button>
+                <el-button type="danger" link size="small" :disabled="!canWrite">删除</el-button>
               </template>
             </el-popconfirm>
           </template>
@@ -135,11 +129,12 @@
         </el-table-column>
         <el-table-column prop="name" label="名称" width="180" />
         <el-table-column prop="description" label="描述" min-width="260" show-overflow-tooltip />
-        <el-table-column label="校验" width="90">
+        <el-table-column label="状态" width="90">
           <template #default="{ row }">
-            <el-tag :type="row.filePath || row.folderPath ? 'success' : 'danger'" size="small">
-              {{ row.filePath || row.folderPath ? '通过' : '异常' }}
-            </el-tag>
+            <el-tooltip v-if="!isSkillAvailable(row)" content="缺少 SKILL.md 或目录包不完整，运行时无法加载" placement="top">
+              <el-tag type="danger" size="small">不可用</el-tag>
+            </el-tooltip>
+            <el-tag v-else type="success" size="small">可用</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
@@ -183,10 +178,11 @@
             <span>{{ row.description || '-' }}</span>
           </div>
           <div class="mobile-card-row">
-            <span class="mobile-card-label">校验</span>
-            <el-tag :type="row.filePath || row.folderPath ? 'success' : 'danger'" size="small">
-              {{ row.filePath || row.folderPath ? '通过' : '异常' }}
-            </el-tag>
+            <span class="mobile-card-label">状态</span>
+            <el-tooltip v-if="!isSkillAvailable(row)" content="缺少 SKILL.md 或目录包不完整，运行时无法加载" placement="top">
+              <el-tag type="danger" size="small">不可用</el-tag>
+            </el-tooltip>
+            <el-tag v-else type="success" size="small">可用</el-tag>
           </div>
           <div class="mobile-card-actions">
             <el-button type="primary" link @click="handleView(row)">查看</el-button>

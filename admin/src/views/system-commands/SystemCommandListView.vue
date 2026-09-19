@@ -7,7 +7,7 @@
             <div class="card-title">指令管理</div>
             <div class="card-hint">管理全局系统指令，以及各用户的个人快捷指令。</div>
           </div>
-          <el-button v-if="activeTab === 'system'" type="primary" @click="openCreate">新增指令</el-button>
+          <el-button v-if="isAdmin && activeTab === 'system'" type="primary" @click="openCreate">新增指令</el-button>
         </div>
       </template>
 
@@ -67,17 +67,19 @@
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="openDetail(row)">查看</el-button>
-            <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
-            <el-popconfirm
-              :title="`确认删除指令「${row.name}」？`"
-              confirm-button-text="删除"
-              cancel-button-text="取消"
-              @confirm="handleDeleteSystem(row)"
-            >
-              <template #reference>
-                <el-button type="danger" link size="small">删除</el-button>
-              </template>
-            </el-popconfirm>
+            <template v-if="isAdmin">
+              <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
+              <el-popconfirm
+                :title="`确认删除指令「${row.name}」？`"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm="handleDeleteSystem(row)"
+              >
+                <template #reference>
+                  <el-button type="danger" link size="small">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -115,6 +117,7 @@
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="openDetail(row)">查看</el-button>
             <el-popconfirm
+              v-if="isAdmin"
               :title="`确认删除「${userLabel(row)}」的指令「${row.name}」？`"
               confirm-button-text="删除"
               cancel-button-text="取消"
@@ -141,7 +144,7 @@
           <div class="mobile-card-content">{{ row.content }}</div>
           <div class="mobile-card-actions">
             <el-button type="primary" link size="small" @click="openDetail(row)">查看</el-button>
-            <template v-if="activeTab === 'system'">
+            <template v-if="activeTab === 'system' && isAdmin">
               <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
               <el-popconfirm
                 :title="`确认删除指令「${row.name}」？`"
@@ -154,18 +157,17 @@
                 </template>
               </el-popconfirm>
             </template>
-            <template v-else>
-              <el-popconfirm
-                :title="`确认删除「${userLabel(row)}」的指令「${row.name}」？`"
-                confirm-button-text="删除"
-                cancel-button-text="取消"
-                @confirm="handleDeletePersonal(row)"
-              >
-                <template #reference>
-                  <el-button type="danger" link size="small">删除</el-button>
-                </template>
-              </el-popconfirm>
-            </template>
+            <el-popconfirm
+              v-else-if="activeTab === 'personal' && isAdmin"
+              :title="`确认删除「${userLabel(row)}」的指令「${row.name}」？`"
+              confirm-button-text="删除"
+              cancel-button-text="取消"
+              @confirm="handleDeletePersonal(row)"
+            >
+              <template #reference>
+                <el-button type="danger" link size="small">删除</el-button>
+              </template>
+            </el-popconfirm>
           </div>
         </el-card>
         <el-empty v-if="!loading && pagedRows.length === 0" :description="emptyText" />
@@ -176,8 +178,9 @@
         v-model:current-page="state.currentPage"
         v-model:page-size="state.pageSize"
         :page-sizes="[10, 20, 50, 100]"
-        :total="state.filtered.length"
+        :total="paginationTotal"
         @size-change="handleSizeChange"
+        @current-change="handlePageChange"
       />
     </el-card>
 
@@ -234,11 +237,15 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useAuthStore } from '../../stores/auth'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 
 const { isMobile } = useBreakpoint()
+const authStore = useAuthStore()
+// 后端 /admin/system-commands 与 /admin/user-commands 均要求管理员，前端按 isAdmin 控制按钮显隐
+const isAdmin = computed(() => authStore.isAdmin)
 
 type TabType = 'system' | 'personal'
 
@@ -281,8 +288,18 @@ const state = computed(() => tabStates[activeTab.value])
 const loading = ref(false)
 const emptyText = computed(() => activeTab.value === 'personal' ? '暂无个人指令' : '暂无系统指令')
 
+/**
+ * 个人指令为服务端分页（keyword/pageNum/pageSize，总数在 x-total-count 响应头）；
+ * 系统指令为全量加载 + 前端过滤分页。serverTotal 仅在个人 tab 有值。
+ */
+const serverTotal = ref<number | null>(null)
+const paginationTotal = computed(() =>
+  activeTab.value === 'personal' ? (serverTotal.value ?? 0) : state.value.filtered.length
+)
+
 const pagedRows = computed(() => {
   const s = state.value
+  if (activeTab.value === 'personal') return s.rows
   const start = (s.currentPage - 1) * s.pageSize
   return s.filtered.slice(start, start + s.pageSize)
 })
@@ -335,12 +352,25 @@ async function loadActiveTab() {
   const tab = activeTab.value
   loading.value = true
   try {
-    const url = tab === 'personal' ? '/admin/user-commands' : '/admin/system-commands'
-    const { data } = await api.get(url)
-    if (seq !== fetchSeq) return
-    const s = tabStates[tab]
-    s.rows = data || []
-    applyFilter()
+    if (tab === 'personal') {
+      // 服务端分页 + keyword 过滤（后端对 name/content 做 LIKE），总数在 x-total-count 响应头
+      const { data, headers } = await api.get('/admin/user-commands', {
+        params: {
+          pageNum: tabStates.personal.currentPage,
+          pageSize: tabStates.personal.pageSize,
+          keyword: tabStates.personal.keyword.trim() || undefined,
+        },
+      })
+      if (seq !== fetchSeq) return
+      const headerTotal = Number(headers?.['x-total-count'])
+      serverTotal.value = Number.isFinite(headerTotal) ? headerTotal : (data || []).length
+      tabStates.personal.rows = data || []
+    } else {
+      const { data } = await api.get('/admin/system-commands')
+      if (seq !== fetchSeq) return
+      tabStates.system.rows = data || []
+      applyFilter()
+    }
   } catch {
     // interceptor handles toast
   } finally {
@@ -349,6 +379,7 @@ async function loadActiveTab() {
 }
 
 function handleTabChange(tab: string | number) {
+  serverTotal.value = null
   void (tab === 'personal' ? loadPersonal() : loadSystem())
 }
 
@@ -364,17 +395,35 @@ function loadPersonal() {
 
 function handleSearch() {
   state.value.currentPage = 1
-  applyFilter()
+  if (activeTab.value === 'personal') {
+    serverTotal.value = null
+    loadActiveTab()
+  } else {
+    applyFilter()
+  }
 }
 
 function handleReset() {
   state.value.keyword = ''
   state.value.currentPage = 1
-  applyFilter()
+  if (activeTab.value === 'personal') {
+    serverTotal.value = null
+    loadActiveTab()
+  } else {
+    applyFilter()
+  }
 }
 
 function handleSizeChange() {
   state.value.currentPage = 1
+  if (activeTab.value === 'personal') {
+    serverTotal.value = null
+    loadActiveTab()
+  }
+}
+
+function handlePageChange() {
+  if (activeTab.value === 'personal') loadActiveTab()
 }
 
 function userLabel(row: CommandRow) {

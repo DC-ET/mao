@@ -5,8 +5,8 @@
       <h2>Mao 管理后台</h2>
       <p class="login-hint">平台配置、会话排障与权限治理</p>
 
-      <el-form :model="form" @submit.prevent="handleLogin">
-        <el-form-item>
+      <el-form ref="formRef" :model="form" :rules="rules" @submit.prevent="handleLogin">
+        <el-form-item prop="username">
           <el-input
             v-model="form.username"
             placeholder="用户名"
@@ -15,7 +15,7 @@
             @keyup.enter="handleLogin"
           />
         </el-form-item>
-        <el-form-item>
+        <el-form-item prop="password">
           <el-input
             v-model="form.password"
             type="password"
@@ -58,6 +58,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
@@ -66,6 +67,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const logoSrc = `${import.meta.env.BASE_URL}app-icon-small.png`
 
+const formRef = ref<FormInstance>()
 const loading = ref(false)
 const feishuLoading = ref(false)
 const feishuStatusText = ref('请使用飞书登录')
@@ -75,6 +77,17 @@ const form = ref({
   username: localStorage.getItem('rememberedUsername') ?? '',
   password: ''
 })
+
+const rules: FormRules = {
+  username: [
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    { min: 3, message: '用户名至少 3 个字符', trigger: 'blur' }
+  ],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 8, message: '密码至少 8 位', trigger: 'blur' }
+  ]
+}
 
 let pollTimer: number | null = null
 let feishuState = ''
@@ -97,10 +110,8 @@ onBeforeUnmount(() => {
 
 async function handleLogin() {
   if (loading.value) return
-  if (!form.value.username || !form.value.password) {
-    ElMessage.warning('请输入用户名和密码')
-    return
-  }
+  const valid = await formRef.value?.validate().catch(() => false)
+  if (!valid) return
 
   loading.value = true
   try {

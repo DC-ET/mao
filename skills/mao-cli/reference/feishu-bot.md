@@ -57,6 +57,8 @@
 | PUT | `/v1/admin/feishu-bots/:id` | 更新（`appSecret` 传空串不修改） |
 | DELETE | `/v1/admin/feishu-bots/:id` | 软删除 |
 | POST | `/v1/admin/feishu-bots/:id/enable` / `disable` | 启用 / 停用 |
+| GET | `/v1/admin/feishu-bots/status` | 全部机器人连接运行状态：`botId`、`status`（ready/reconnecting/failed/disabled）、`lastFailureReason`、`lastFailureAt`、`lastReadyAt`（无记录时字段缺省） |
+| POST | `/v1/admin/feishu-bots/:id/reconnect` | 触发重连（仅已启用的 bot；停用或不存在的 bot 返回 2001） |
 
 ### 用户端（需登录）
 

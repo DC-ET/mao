@@ -135,7 +135,18 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
 
   app.get('/v1/agents/:id/prompt-versions', async (request, reply) => {
     await requireAgentWrite(request);
-    return sendOk(reply, await agentService.listPromptVersions(pathId(request)));
+    const versions = await agentService.listPromptVersions(pathId(request));
+    const operatorIds = [...new Set(versions.map((v) => v.operatorId).filter((id): id is number => id != null))];
+    const users = await Promise.all(operatorIds.map((id) => userRepo.findById(id)));
+    const nameMap = new Map<number, string>();
+    operatorIds.forEach((id, i) => {
+      const user = users[i];
+      if (user) nameMap.set(id, user.displayName || user.username || `用户#${id}`);
+    });
+    return sendOk(reply, versions.map((v) => ({
+      ...v,
+      operatorName: v.operatorId != null ? nameMap.get(v.operatorId) ?? null : null,
+    })));
   });
 
   app.post('/v1/agents/:id/prompt-versions/:version/rollback', async (request, reply) => {

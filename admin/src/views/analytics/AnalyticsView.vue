@@ -24,7 +24,9 @@
     </el-tabs>
 
     <TabError v-if="activeError" :loading="activeLoading" @retry="handleRefresh" />
-    <div v-else-if="!activeHasData" class="panel-loading" v-loading="true" />
+    <div v-else-if="!activeHasData" class="panel-loading">
+      <el-skeleton :rows="5" animated />
+    </div>
     <TabEmpty
       v-else-if="activeTab !== 'overview' && isEmpty"
       :title="emptyCopy.title"
@@ -228,7 +230,8 @@ function normalizeTrendView(raw: unknown): TrendView {
 
 function currentQuery() {
   const needsLimit = activeTab.value === 'users' || activeTab.value === 'agents'
-  const query = buildAnalyticsQuery(period.value, needsLimit ? 20 : undefined)
+  // 后端 scope 上限 100：用户/Agent 明细尽量拉满，减少 Top 20 截断
+  const query = buildAnalyticsQuery(period.value, needsLimit ? 100 : undefined)
   // 连通性开关仅属于模型 Tab；其余 Tab 不传该参数，走后端默认口径（排除连通性测试），
   // 避免模型页的勾选状态静默改变其他 Tab 的质量指标
   if (activeTab.value === 'models') {
@@ -416,6 +419,9 @@ watch(
 
 .panel-loading {
   min-height: 280px;
+  padding: 16px;
+  background: var(--mao-surface, #fff);
+  border-radius: 8px;
 }
 
 @media (max-width: 768px) {

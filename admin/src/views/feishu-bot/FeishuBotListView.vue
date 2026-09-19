@@ -7,7 +7,7 @@
             <div class="card-title">飞书机器人</div>
             <div class="card-hint">管理飞书自建应用机器人，并为每个机器人配置独立的 Agent 和模型。</div>
           </div>
-          <el-button type="primary" @click="openCreate">
+          <el-button v-if="isAdmin" type="primary" @click="openCreate">
             <el-icon><Plus /></el-icon>
             添加机器人
           </el-button>
@@ -40,18 +40,40 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="210" fixed="right">
+        <el-table-column label="连接状态" width="110" align="center">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button
-              :type="row.enabled ? 'warning' : 'success'"
-              link
-              size="small"
-              @click="handleEnabledChange(row)"
+            <el-tooltip
+              :disabled="!runtimeStatusMap[row.id]?.lastFailureReason"
+              :content="`最近失败：${runtimeStatusMap[row.id]?.lastFailureReason}（${formatTime(runtimeStatusMap[row.id]?.lastFailureAt)}）`"
+              placement="top"
             >
-              {{ row.enabled ? '停用' : '启用' }}
-            </el-button>
-            <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+              <el-tag :type="runtimeTagType(runtimeStatusMap[row.id]?.status)" size="small">
+                {{ runtimeStatusLabel(runtimeStatusMap[row.id]?.status) }}
+              </el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="260" fixed="right">
+          <template #default="{ row }">
+            <template v-if="isAdmin">
+              <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
+              <el-button
+                :type="row.enabled ? 'warning' : 'success'"
+                link
+                size="small"
+                @click="handleEnabledChange(row)"
+              >
+                {{ row.enabled ? '停用' : '启用' }}
+              </el-button>
+              <el-button
+                link
+                size="small"
+                :disabled="!row.enabled"
+                @click="handleReconnect(row)"
+              >重连</el-button>
+              <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            </template>
+            <span v-else class="op-muted">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -68,12 +90,21 @@
           <div class="mobile-card-row"><span>Agent</span><span>{{ agentName(row.agentId) }}</span></div>
           <div class="mobile-card-row"><span>模型</span><span>{{ modelName(row.modelId) }}</span></div>
           <div class="mobile-card-row"><span>Secret</span><span>{{ row.appSecretConfigured ? '已配置' : '未配置' }}</span></div>
+          <div class="mobile-card-row">
+            <span>连接状态</span>
+            <el-tag :type="runtimeTagType(runtimeStatusMap[row.id]?.status)" size="small">
+              {{ runtimeStatusLabel(runtimeStatusMap[row.id]?.status) }}
+            </el-tag>
+          </div>
           <div class="mobile-card-actions">
-            <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
-            <el-button :type="row.enabled ? 'warning' : 'success'" link @click="handleEnabledChange(row)">
-              {{ row.enabled ? '停用' : '启用' }}
-            </el-button>
-            <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+            <template v-if="isAdmin">
+              <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
+              <el-button :type="row.enabled ? 'warning' : 'success'" link @click="handleEnabledChange(row)">
+                {{ row.enabled ? '停用' : '启用' }}
+              </el-button>
+              <el-button link :disabled="!row.enabled" @click="handleReconnect(row)">重连</el-button>
+              <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+            </template>
           </div>
         </el-card>
         <el-empty v-if="!loading && bots.length === 0" description="暂无飞书机器人" />
@@ -86,7 +117,13 @@
           <el-input v-model="form.name" maxlength="128" show-word-limit placeholder="例如：研发助手" />
         </el-form-item>
         <el-form-item label="App Key" prop="appKey">
-          <el-input v-model="form.appKey" maxlength="64" placeholder="例如：feishu-bot-1" />
+          <el-tooltip
+            :disabled="!isEdit"
+            content="唯一标识不可修改"
+            placement="top"
+          >
+            <el-input v-model="form.appKey" maxlength="64" placeholder="例如：feishu-bot-1" :disabled="isEdit" />
+          </el-tooltip>
           <div class="form-hint">机器人内部唯一标识。</div>
         </el-form-item>
         <el-form-item label="App ID" prop="appId">
@@ -120,6 +157,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useAuthStore } from '../../stores/auth'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 
 interface FeishuBot {
@@ -133,10 +171,22 @@ interface FeishuBot {
   appSecretConfigured: boolean
 }
 
+interface FeishuBotRuntimeState {
+  status?: string
+  lastFailureReason?: string
+  lastFailureAt?: string
+  lastReadyAt?: string
+}
+
 const { isMobile } = useBreakpoint()
+const authStore = useAuthStore()
+// 后端 /admin/feishu-bots 写接口要求管理员，前端按 isAdmin 控制按钮显隐
+const isAdmin = computed(() => authStore.isAdmin)
 const loading = ref(false)
 const submitting = ref(false)
 const bots = ref<FeishuBot[]>([])
+/** botId → 运行连接状态（来自 /admin/feishu-bots/status，内存态，无记录时不显示）。 */
+const runtimeStatusMap = ref<Record<number, FeishuBotRuntimeState>>({})
 const agents = ref<any[]>([])
 const models = ref<any[]>([])
 const formVisible = ref(false)
@@ -182,6 +232,52 @@ async function loadData() {
   } catch { /* 拦截器已提示失败，吞掉避免误报页面异常 */ } finally {
     loading.value = false
   }
+}
+
+async function loadRuntimeStatus() {
+  try {
+    const { data } = await api.get('/admin/feishu-bots/status')
+    const next: Record<number, FeishuBotRuntimeState> = {}
+    for (const item of data || []) next[item.botId] = item
+    runtimeStatusMap.value = next
+  } catch { /* 状态加载失败不影响主列表，静默依赖拦截器提示 */ }
+}
+
+function runtimeTagType(status?: string): 'success' | 'warning' | 'danger' | 'info' {
+  switch (status) {
+    case 'ready': return 'success'
+    case 'reconnecting': return 'warning'
+    case 'failed': return 'danger'
+    case 'disabled': return 'info'
+    default: return 'info'
+  }
+}
+
+function runtimeStatusLabel(status?: string) {
+  switch (status) {
+    case 'ready': return '已连接'
+    case 'reconnecting': return '重连中'
+    case 'failed': return '连接失败'
+    case 'disabled': return '未运行'
+    default: return '-'
+  }
+}
+
+function formatTime(value?: string) {
+  if (!value) return '-'
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return value
+  }
+}
+
+async function handleReconnect(bot: FeishuBot) {
+  try {
+    await api.post(`/admin/feishu-bots/${bot.id}/reconnect`)
+    ElMessage.success('已触发重连')
+    await loadRuntimeStatus()
+  } catch { /* 拦截器已提示失败 */ }
 }
 
 function resetForm() {
@@ -283,7 +379,10 @@ async function handleDelete(bot: FeishuBot) {
   }
 }
 
-onActivated(loadData)
+onActivated(() => {
+  loadData()
+  loadRuntimeStatus()
+})
 </script>
 
 <style scoped>
@@ -305,4 +404,5 @@ onActivated(loadData)
 .mobile-card-row span:first-child { color: var(--mao-muted); flex-shrink: 0; }
 .mobile-card-row span:last-child { overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .mobile-card-actions { display: flex; gap: 8px; margin-top: 8px; }
+.op-muted { color: var(--mao-muted); }
 </style>

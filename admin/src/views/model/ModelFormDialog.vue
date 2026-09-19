@@ -14,18 +14,28 @@
       label-position="right"
     >
       <el-form-item label="模型类型" prop="modelType">
-        <el-radio-group v-model="form.modelType">
+        <el-radio-group v-model="form.modelType" :disabled="isEdit">
           <el-radio value="text">文本模型</el-radio>
           <el-radio value="audio">语音模型</el-radio>
           <el-radio value="image">文生图</el-radio>
         </el-radio-group>
-        <span style="margin-left: 8px; color: #909399; font-size: 12px;">语音模型用于 TTS 等音频合成，文生图用于图片生成</span>
+        <span v-if="!isEdit" style="margin-left: 8px; color: #909399; font-size: 12px;">语音模型用于 TTS 等音频合成，文生图用于图片生成</span>
+        <span v-else style="margin-left: 8px; color: #909399; font-size: 12px;">编辑时不可切换模型类型</span>
       </el-form-item>
       <el-form-item label="名称" prop="name">
         <el-input v-model="form.name" placeholder="例如: GPT-4o, Claude Opus" />
       </el-form-item>
       <el-form-item label="供应商" prop="provider">
-        <el-input v-model="form.provider" placeholder="例如: OpenAI, Anthropic" />
+        <el-select
+          v-model="form.provider"
+          filterable
+          allow-create
+          default-first-option
+          placeholder="选择或输入供应商，例如: OpenAI, Anthropic"
+          style="width: 100%"
+        >
+          <el-option v-for="provider in providerOptions" :key="provider" :label="provider" :value="provider" />
+        </el-select>
       </el-form-item>
       <el-form-item label="模型标识" prop="modelId">
         <el-input v-model="form.modelId" placeholder="例如: gpt-4o, mimo-v2.5-tts" />
@@ -94,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, reactive } from 'vue'
+import { computed, onMounted, ref, watch, reactive } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
@@ -115,6 +125,8 @@ const emit = defineEmits<{
   'update:visible': [value: boolean]
   saved: []
 }>()
+
+onMounted(loadProviderOptions)
 
 const isEdit = computed(() => props.mode === 'edit')
 const dialogTitle = computed(() => {
@@ -137,6 +149,14 @@ const apiProtocolSuffix = computed(() => {
 })
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
+const providerOptions = ref<string[]>([])
+
+async function loadProviderOptions() {
+  try {
+    const { data } = await api.get('/models/providers')
+    providerOptions.value = data || []
+  } catch { /* 拦截器已提示失败，仍可手动输入供应商 */ }
+}
 
 // 后端掩码格式固定为 ****xxxx（或 ****），以此区分明文 Key 与掩码串
 function isMaskedApiKey(apiKey?: string | null): boolean {
@@ -161,7 +181,10 @@ const form = reactive({
 const rules = computed<FormRules>(() => ({
   name: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
   modelId: [{ required: true, message: '请输入模型标识', trigger: 'blur' }],
-  baseUrl: [{ pattern: /^https?:\/\//, message: '需以 http:// 或 https:// 开头', trigger: 'blur' }],
+  baseUrl: [
+    { required: true, message: '请输入 API 地址', trigger: 'blur' },
+    { pattern: /^https?:\/\//, message: '需以 http:// 或 https:// 开头', trigger: 'blur' }
+  ],
   apiKey: isEdit.value
     ? []
     : [{ required: true, message: '请输入 API Key', trigger: 'blur' }]

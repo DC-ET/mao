@@ -4,9 +4,12 @@
       <template #header>
         <div class="card-header">
           <span>调用流水</span>
-          <el-button @click="fetchRecords">
-            <el-icon><Refresh /></el-icon>
-          </el-button>
+          <div class="header-actions">
+            <el-button :loading="exporting" @click="handleExportCsv">导出 CSV</el-button>
+            <el-button @click="fetchRecords">
+              <el-icon><Refresh /></el-icon>
+            </el-button>
+          </div>
         </div>
       </template>
 
@@ -46,15 +49,17 @@
               />
             </el-select>
           </el-form-item>
-          <el-form-item label="Agent ID">
-            <el-input
+          <el-form-item label="Agent">
+            <el-select
               v-model="filters.agentId"
               clearable
-              placeholder="Agent ID"
-              style="width: 110px"
-              @keyup.enter="handleSearch"
-              @clear="handleSearch"
-            />
+              filterable
+              placeholder="全部 Agent"
+              style="width: 160px"
+              @change="handleSearch"
+            >
+              <el-option v-for="a in agentOptions" :key="a.id" :label="a.name" :value="a.id" />
+            </el-select>
           </el-form-item>
           <el-form-item label="会话 ID">
             <el-input v-model="filters.sessionId" clearable placeholder="会话 ID" style="width: 120px" @keyup.enter="handleSearch" @clear="handleSearch" />
@@ -64,6 +69,9 @@
               v-model="filters.modelId"
               clearable
               filterable
+              remote
+              :remote-method="searchModels"
+              :loading="modelSearching"
               placeholder="全部"
               style="width: 180px"
               @change="handleSearch"
@@ -128,9 +136,12 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="80" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="showDetail(row)">详情</el-button>
+            <el-button v-if="row.sessionId" type="primary" link size="small" @click="goSession(row.sessionId)">
+              查看会话
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -147,8 +158,15 @@
           <div class="call-card-row"><span class="call-card-label">用户</span><span>{{ row.displayName || row.username || row.userId || '-' }}</span></div>
           <div class="call-card-row"><span class="call-card-label">模型</span><span>{{ row.modelName || '-' }}</span></div>
           <div class="call-card-row"><span class="call-card-label">Token</span><span>{{ formatNumber(row.promptTokens || 0) }} / {{ formatNumber(row.completionTokens || 0) }}</span></div>
+          <div class="call-card-row"><span class="call-card-label">缓存</span><span>{{ formatCacheHit(row) }}</span></div>
+          <div class="call-card-row"><span class="call-card-label">耗时</span><span>首字 {{ formatMs(row.firstTokenMs) }} / 总 {{ formatMs(row.durationMs) }}</span></div>
+          <div class="call-card-row"><span class="call-card-label">重试</span><span>{{ row.retryCount ?? 0 }}</span></div>
+          <div v-if="row.errorMessage" class="call-card-row"><span class="call-card-label">错误</span><span class="call-card-error">{{ row.errorMessage }}</span></div>
           <div class="call-card-actions">
             <el-button type="primary" link size="small" @click="showDetail(row)">详情</el-button>
+            <el-button v-if="row.sessionId" type="primary" link size="small" @click="goSession(row.sessionId)">
+              查看会话
+            </el-button>
           </div>
         </el-card>
         <el-empty v-if="!loading && records.length === 0" description="暂无数据" />
@@ -194,8 +212,9 @@
 
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
@@ -205,8 +224,10 @@ import FilterPanel from '../../components/FilterPanel.vue'
 import { LLM_CALL_SCENE_OPTIONS, llmCallSceneLabel, formatMs } from '../../utils/llmCallLabels'
 
 const route = useRoute()
+const router = useRouter()
 const { isMobile } = useBreakpoint()
 const loading = ref(false)
+const exporting = ref(false)
 const records = ref<any[]>([])
 const total = ref(0)
 const currentPage = ref(1)
@@ -214,7 +235,11 @@ const pageSize = ref(20)
 const detailVisible = ref(false)
 const currentRecord = ref<any | null>(null)
 const userOptions = ref<Array<{ id: number; username?: string | null; displayName?: string | null }>>([])
+const agentOptions = ref<Array<{ id: number; name: string }>>([])
 const modelOptions = ref<Array<{ id: number; name: string; provider?: string | null }>>([])
+const modelSearching = ref(false)
+const EXPORT_PAGE_SIZE = 500
+const EXPORT_MAX_ROWS = 10000
 const filters = reactive({
   scene: '',
   success: undefined as boolean | undefined,
@@ -255,30 +280,33 @@ function formatCacheHit(row: { cachedTokens?: number | null; promptTokens?: numb
   return `${num} (${Math.round((cached / prompt) * 100)}%)`
 }
 
+function buildFilterParams(page: number, size: number): Record<string, unknown> {
+  const params: Record<string, unknown> = { page, size }
+  if (filters.scene) params.scene = filters.scene
+  if (filters.success !== undefined) params.success = filters.success
+  if (filters.userId != null) params.userId = filters.userId
+  if (filters.agentId != null && filters.agentId !== '') {
+    const agentId = Number(filters.agentId)
+    if (Number.isFinite(agentId)) params.agentId = agentId
+  }
+  if (filters.sessionId) {
+    const sessionId = Number(filters.sessionId)
+    if (Number.isFinite(sessionId)) params.sessionId = sessionId
+  }
+  if (filters.modelId != null) params.modelId = filters.modelId
+  if (filters.startDate) params.startDate = filters.startDate
+  if (filters.endDate) params.endDate = filters.endDate
+  return params
+}
+
 let fetchSeq = 0
 async function fetchRecords() {
   const seq = ++fetchSeq
   loading.value = true
   try {
-    const params: Record<string, unknown> = {
-      page: currentPage.value,
-      size: pageSize.value,
-    }
-    if (filters.scene) params.scene = filters.scene
-    if (filters.success !== undefined) params.success = filters.success
-    if (filters.userId != null) params.userId = filters.userId
-    if (filters.agentId != null && filters.agentId !== '') {
-      const agentId = Number(filters.agentId)
-      if (Number.isFinite(agentId)) params.agentId = agentId
-    }
-    if (filters.sessionId) {
-      const sessionId = Number(filters.sessionId)
-      if (Number.isFinite(sessionId)) params.sessionId = sessionId
-    }
-    if (filters.modelId != null) params.modelId = filters.modelId
-    if (filters.startDate) params.startDate = filters.startDate
-    if (filters.endDate) params.endDate = filters.endDate
-    const { data } = await api.get('/admin/llm-calls', { params })
+    const { data } = await api.get('/admin/llm-calls', {
+      params: buildFilterParams(currentPage.value, pageSize.value)
+    })
     if (seq !== fetchSeq) return
     records.value = data?.records || []
     total.value = data?.total || 0
@@ -309,6 +337,78 @@ function handleSizeChange() {
   fetchRecords()
 }
 
+function goSession(sessionId: number | string) {
+  router.push(`/sessions/${sessionId}`)
+}
+
+function csvCell(value: unknown): string {
+  const text = value == null ? '' : String(value)
+  return `"${text.replace(/"/g, '""')}"`
+}
+
+function handleExportCsv() {
+  if (total.value > EXPORT_MAX_ROWS) {
+    ElMessage.warning(`当前筛选共 ${total.value} 条，超出导出上限 ${EXPORT_MAX_ROWS} 条，请缩小筛选范围后重试`)
+    return
+  }
+  doExportCsv()
+}
+
+async function doExportCsv() {
+  exporting.value = true
+  try {
+    const rows: any[] = []
+    let pageNum = 1
+    while (rows.length < total.value && rows.length < EXPORT_MAX_ROWS) {
+      const { data } = await api.get('/admin/llm-calls', {
+        params: buildFilterParams(pageNum, EXPORT_PAGE_SIZE)
+      })
+      const records: any[] = data?.records || []
+      if (records.length === 0) break
+      rows.push(...records)
+      pageNum += 1
+    }
+    const header = ['时间', '用户', '模型', '输入 Token', '输出 Token', '耗时(ms)', '缓存 Token', '状态', '错误信息', '会话 ID', 'Agent ID']
+    const lines = [header.map(csvCell).join(',')]
+    for (const row of rows) {
+      lines.push([
+        row.createdAt,
+        row.displayName || row.username || row.userId || '',
+        row.modelName || row.providerModelId || '',
+        row.promptTokens || 0,
+        row.completionTokens || 0,
+        row.durationMs ?? '',
+        row.cachedTokens || 0,
+        row.success === 1 ? '成功' : '失败',
+        row.errorMessage || '',
+        row.sessionId ?? '',
+        row.agentId ?? ''
+      ].map(csvCell).join(','))
+    }
+    const blob = new Blob([`\uFEFF${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `llm-calls-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  } catch { /* 拦截器已提示失败 */ } finally {
+    exporting.value = false
+  }
+}
+
+async function searchModels(keyword: string) {
+  modelSearching.value = true
+  try {
+    const { data } = await api.get('/models', { params: { page: 1, size: 50, keyword: keyword || undefined } })
+    modelOptions.value = data?.records || []
+  } catch { /* 拦截器已提示失败 */ } finally {
+    modelSearching.value = false
+  }
+}
+
 function showDetail(row: any) {
   currentRecord.value = row
   detailVisible.value = true
@@ -316,11 +416,13 @@ function showDetail(row: any) {
 
 async function fetchFilterOptions() {
   try {
-    const [usersRes, modelsRes] = await Promise.all([
+    const [usersRes, agentsRes, modelsRes] = await Promise.all([
       api.get('/admin/sessions/options/users'),
-      api.get('/models', { params: { page: 1, size: 200 } }),
+      api.get('/admin/sessions/options/agents'),
+      api.get('/models', { params: { page: 1, size: 50 } }),
     ])
     userOptions.value = usersRes.data || []
+    agentOptions.value = agentsRes.data || []
     modelOptions.value = modelsRes.data?.records || []
   } catch { /* 拦截器已提示失败 */ }
 }
@@ -337,6 +439,12 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .search-form {
@@ -376,6 +484,11 @@ onMounted(() => {
   width: 48px;
   flex-shrink: 0;
   color: var(--mao-muted);
+}
+
+.call-card-error {
+  color: var(--el-color-danger);
+  word-break: break-all;
 }
 
 .call-card-actions {

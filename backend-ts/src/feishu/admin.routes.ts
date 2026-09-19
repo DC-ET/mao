@@ -5,12 +5,24 @@ import { ErrorCode } from '../common/error-code.js';
 import { requireAdmin, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId } from '../common/request.js';
 import { encryptAesGcm } from '../crypto/aes-gcm.js';
+import type { FeishuBotRuntimeStatus } from './monitor.service.js';
 import type { FeishuBot, FeishuBotRepository, FeishuBotView } from './types.js';
+
+/** monitor 运行状态端口（生产为 FeishuMonitorService，测试注入 stub）。 */
+export interface FeishuMonitorStatusPort {
+  getStatus(botId: number): FeishuBotRuntimeStatus | null;
+}
+
+export interface FeishuMonitorReconnectPort {
+  reconnect(botId: number): Promise<boolean>;
+}
 
 export interface FeishuBotRouteDeps {
   repository: FeishuBotRepository;
   secretKey: string;
   permissionService: { isAdmin(userId: number | null | undefined): Promise<boolean> };
+  monitorStatus?: FeishuMonitorStatusPort;
+  monitorReconnect?: FeishuMonitorReconnectPort;
 }
 
 interface FeishuBotRequest {
@@ -93,6 +105,51 @@ export function registerFeishuBotRoutes(app: FastifyInstance, deps: FeishuBotRou
 
   app.post('/v1/admin/feishu-bots/:id/disable', async (request, reply) => {
     return setEnabled(request, reply, repository, permissionService, pathId(request), 0);
+  });
+
+  // 连接运行状态：每个 bot 的长连接状态与最近失败原因（内存记录，进程重启后重建）。
+  app.get('/v1/admin/feishu-bots/status', async (request, reply) => {
+    await requireAdmin(permissionService, request);
+    const bots = await repository.list();
+    return sendOk(reply, bots.map((bot) => {
+      const runtime = bot.id != null ? deps.monitorStatus?.getStatus(bot.id) ?? null : null;
+      return {
+        botId: bot.id,
+        appId: bot.appId,
+        name: bot.name,
+        enabled: bot.enabled,
+        // 未被 monitor 接管的 bot（如长连接未启用）统一标记 disabled。
+        status: bot.enabled !== 1 ? 'disabled' : runtime?.status ?? 'disabled',
+        lastFailureReason: runtime?.lastFailureReason ?? null,
+        lastFailureAt: runtime?.lastFailureAt ?? null,
+        lastReadyAt: runtime?.lastReadyAt ?? null,
+      };
+    }));
+  });
+
+  // 触发立即重连：丢弃当前长连接 handle 并由 monitor 下一轮 reconcile 重建。
+  app.post('/v1/admin/feishu-bots/:id/reconnect', async (request, reply) => {
+    await requireAdmin(permissionService, request);
+    const id = pathId(request);
+    const bot = await requireBot(repository, id);
+    if (bot.enabled !== 1) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '飞书机器人已停用，无法重连');
+    }
+    if (deps.monitorReconnect == null) {
+      throw new BusinessException(ErrorCode.INTERNAL_ERROR, '飞书Bot监控未启用，无法触发重连');
+    }
+    const scheduled = await deps.monitorReconnect.reconnect(id);
+    if (!scheduled) {
+      throw new BusinessException(ErrorCode.INTERNAL_ERROR, '飞书Bot监控未运行，无法触发重连');
+    }
+    const runtime = deps.monitorStatus?.getStatus(id) ?? null;
+    return sendOk(reply, {
+      botId: id,
+      status: runtime?.status ?? 'reconnecting',
+      lastFailureReason: runtime?.lastFailureReason ?? null,
+      lastFailureAt: runtime?.lastFailureAt ?? null,
+      lastReadyAt: runtime?.lastReadyAt ?? null,
+    });
   });
 }
 

@@ -42,6 +42,7 @@
           v-model="form.skillNames"
           multiple
           filterable
+          :loading="optionsLoading"
           placeholder="请选择关联的 Skill 知识文档（留空则加载全部）"
           style="width: 100%"
         >
@@ -52,6 +53,10 @@
             :value="s.name"
           />
         </el-select>
+        <div v-if="optionsLoadFailed" class="options-error">
+          <span>选项加载失败</span>
+          <el-button type="primary" link size="small" :loading="optionsLoading" @click="loadOptions">重试</el-button>
+        </div>
       </el-form-item>
       <el-form-item label="MCP 服务器">
         <el-select
@@ -59,6 +64,7 @@
           multiple
           filterable
           clearable
+          :loading="optionsLoading"
           placeholder="请选择启用的 MCP 服务器（留空则不启用 MCP）"
           style="width: 100%"
         >
@@ -80,6 +86,7 @@
           v-model="form.defaultModelId"
           filterable
           clearable
+          :loading="optionsLoading"
           placeholder="跟随系统默认模型"
           style="width: 100%"
         >
@@ -255,6 +262,8 @@ const formRef = ref<FormInstance>()
 const skillDocs = ref<any[]>([])
 const mcpServers = ref<any[]>([])
 const models = ref<any[]>([])
+const optionsLoading = ref(false)
+const optionsLoadFailed = ref(false)
 const experienceView = ref<'table' | 'text'>('table')
 const experienceText = ref('')
 const experienceTableRef = ref()
@@ -568,21 +577,34 @@ onBeforeUnmount(() => {
 })
 
 async function loadOptions() {
+  optionsLoading.value = true
+  optionsLoadFailed.value = false
+  const failed: string[] = []
   try {
     const { data } = await api.get('/skill-docs')
     skillDocs.value = data || []
-  } catch { /* 拦截器已提示失败，技能下拉留空 */ }
+  } catch {
+    skillDocs.value = []
+    failed.push('Skills')
+  }
   try {
     const { data: mcpData } = await api.get('/mcp-servers/enabled')
     mcpServers.value = mcpData || []
   } catch {
     mcpServers.value = []
+    failed.push('MCP')
   }
   try {
     const { data: modelData } = await api.get('/models/active')
     models.value = modelData || []
   } catch {
     models.value = []
+    failed.push('模型')
+  }
+  optionsLoading.value = false
+  if (failed.length > 0) {
+    optionsLoadFailed.value = true
+    ElMessage.warning(`${failed.join('、')}选项加载失败，请重试`)
   }
 }
 
@@ -607,6 +629,8 @@ async function uploadAvatar(options: UploadRequestOptions) {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
     form.avatarUrl = data.avatarUrl
+  } catch {
+    ElMessage.error('头像上传失败，请重试')
   } finally {
     uploading.value = false
   }
@@ -793,6 +817,15 @@ async function handleSubmit() {
   margin-left: 12px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+
+.options-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-color-danger);
 }
 
 .agent-tabs :deep(.el-tab-pane:has(.experience-panel)) {

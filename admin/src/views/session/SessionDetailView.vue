@@ -5,6 +5,12 @@
       <template #content>
         <span class="page-title">{{ sessionInfo?.title || '会话详情' }}</span>
       </template>
+      <template #extra>
+        <el-button :loading="exporting" @click="exportMessages">导出记录</el-button>
+        <el-button :loading="loading" @click="fetchDetail">
+          <el-icon><Refresh /></el-icon>
+        </el-button>
+      </template>
     </el-page-header>
 
     <div class="detail-layout">
@@ -15,8 +21,18 @@
         </template>
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="ID">{{ sessionInfo.id }}</el-descriptions-item>
-          <el-descriptions-item label="用户">{{ sessionInfo.userName }}</el-descriptions-item>
-          <el-descriptions-item label="Agent">{{ sessionInfo.agentName }}</el-descriptions-item>
+          <el-descriptions-item label="用户">
+            <router-link v-if="sessionInfo.userId != null" class="drill-link" :to="`/sessions?userId=${sessionInfo.userId}`">
+              {{ sessionInfo.userName || `用户 ${sessionInfo.userId}` }}
+            </router-link>
+            <span v-else>{{ sessionInfo.userName || '-' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="Agent">
+            <router-link v-if="sessionInfo.agentId != null" class="drill-link" to="/agents">
+              {{ sessionInfo.agentName || `Agent ${sessionInfo.agentId}` }}
+            </router-link>
+            <span v-else>{{ sessionInfo.agentName || '-' }}</span>
+          </el-descriptions-item>
           <el-descriptions-item label="模型">{{ sessionInfo.modelName || '-' }}</el-descriptions-item>
           <el-descriptions-item label="执行模式">
             <el-tag :type="sessionInfo.executionMode === 'CLOUD' ? 'primary' : 'warning'" size="small">
@@ -64,6 +80,8 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onActivated, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { formatDateTime } from '../../utils/datetime'
 import { executionModeLabel, phaseLabel } from '../../utils/labels'
@@ -80,6 +98,7 @@ const sessionInfo = ref<any>(null)
 const messages = ref<ChatMessage[]>([])
 const hasMore = ref(false)
 const nextBeforeMessageId = ref<string | null>(null)
+const exporting = ref(false)
 const ROUND_LIMIT = 5
 
 interface MessageTurn {
@@ -176,6 +195,47 @@ function mergeMessages(olderMessages: ChatMessage[], currentMessages: ChatMessag
   return olderMessages.concat(currentMessages.filter(msg => !seen.has(msg.id)))
 }
 
+/** 循环 beforeMessageId 拉全量消息（含工具调用、思考过程），导出 JSON 文件留存证据 */
+async function exportMessages() {
+  const id = route.params.id
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const allMessages: ChatMessage[] = []
+    let beforeId: string | null = null
+    const pageOf = (payload: unknown): { messages?: Array<Record<string, unknown>>; hasMore?: boolean; nextBeforeMessageId?: number | string | null } =>
+      (payload ?? {}) as { messages?: Array<Record<string, unknown>>; hasMore?: boolean; nextBeforeMessageId?: number | string | null }
+    for (;;) {
+      const res = await api.get(`/admin/sessions/${id}/messages`, {
+        params: { roundLimit: 50, ...(beforeId ? { beforeMessageId: beforeId } : {}) }
+      })
+      const page = pageOf((res as { data?: unknown }).data)
+      const pageMessages = mapApiMessagesToChat(page.messages || [])
+      allMessages.unshift(...pageMessages)
+      if (!page.hasMore || !page.nextBeforeMessageId || pageMessages.length === 0) break
+      beforeId = String(page.nextBeforeMessageId)
+    }
+    const payload = {
+      sessionId: sessionInfo.value?.id ?? id,
+      title: sessionInfo.value?.title ?? '',
+      exportedAt: new Date().toISOString(),
+      messages: allMessages
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `session-${id}-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success(`已导出 ${allMessages.length} 条消息`)
+  } catch {
+    /* 拦截器已提示失败 */
+  } finally {
+    exporting.value = false
+  }
+}
+
 async function scrollChatToBottom() {
   await nextTick()
   const container = chatContainerRef.value
@@ -263,6 +323,15 @@ onActivated(() => {
 .card-header {
   font-size: 16px;
   font-weight: 600;
+}
+
+.drill-link {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+
+.drill-link:hover {
+  text-decoration: underline;
 }
 
 .chat-container {

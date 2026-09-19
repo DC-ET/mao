@@ -115,4 +115,16 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
       nextBeforeMessageId: page.nextBeforeMessageId,
     });
   });
+
+  app.delete('/v1/admin/sessions/:id', async (request, reply) => {
+    await requireAdminUser(request);
+    await sessionService.deleteSession(pathId(request));
+    return sendOk(reply);
+  });
+
+  app.put('/v1/admin/sessions/:id/archive', async (request, reply) => {
+    await requireAdminUser(request);
+    await sessionService.archiveSession(pathId(request));
+    return sendOk(reply);
+  });
 }

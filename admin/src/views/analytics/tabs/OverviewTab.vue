@@ -52,7 +52,16 @@
             </div>
           </template>
           <div class="live-grid">
-            <div v-for="item in liveItems" :key="item.label" class="live-item" :class="item.tone">
+            <div
+              v-for="item in liveItems"
+              :key="item.label"
+              class="live-item"
+              :class="[item.tone, { clickable: !!item.path }]"
+              role="button"
+              :tabindex="item.path ? 0 : -1"
+              @click="go(item.path)"
+              @keydown.enter.prevent="go(item.path)"
+            >
               <span class="live-label">{{ item.label }}</span>
               <span class="live-value">{{ formatNumber(item.value) }}</span>
             </div>
@@ -166,10 +175,10 @@ const liveItems = computed(() => {
   const fromPhase = (name: string) => phase.find((p) => p.phase === name)?.count ?? 0
   return [
     // 实时快照 0 是合法值；仅在字段缺失时回退到窗口统计，避免把周期数据误当实时展示
-    { label: '运行中', value: overview['runningSessions'] != null ? live('runningSessions') : fromPhase('RUNNING'), tone: 'run' },
-    { label: '等待审批', value: overview['waitingSessions'] != null ? live('waitingSessions') : fromPhase('WAITING_APPROVAL'), tone: 'wait' },
-    { label: '失败（窗口）', value: fromPhase('FAILED'), tone: 'fail' },
-    { label: '已取消（窗口）', value: fromPhase('CANCELLED'), tone: 'muted' }
+    { label: '运行中', value: overview['runningSessions'] != null ? live('runningSessions') : fromPhase('RUNNING'), tone: 'run', path: '/sessions?phase=RUNNING' },
+    { label: '等待审批', value: overview['waitingSessions'] != null ? live('waitingSessions') : fromPhase('WAITING_APPROVAL'), tone: 'wait', path: '/sessions?phase=WAITING_APPROVAL' },
+    { label: '失败（窗口）', value: fromPhase('FAILED'), tone: 'fail', path: '/sessions?phase=FAILED' },
+    { label: '已取消（窗口）', value: fromPhase('CANCELLED'), tone: 'muted', path: undefined }
   ]
 })
 
@@ -331,6 +340,15 @@ export default {
   padding: 12px;
   background: var(--mao-canvas);
   border-radius: 8px;
+}
+
+.live-item.clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+}
+
+.live-item.clickable:hover {
+  box-shadow: 0 0 0 1px var(--mao-accent);
 }
 
 .live-label {

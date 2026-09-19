@@ -18,7 +18,10 @@
       <template #header>
         <div class="card-header">
           <span>Agent 用量明细</span>
-          <span class="card-hint">按窗口内会话数 / 消息数排序</span>
+          <div class="header-actions">
+            <span class="card-hint">按窗口内会话数 / 消息数排序</span>
+            <el-button :disabled="agentStats.length === 0" @click="exportRows">导出 CSV</el-button>
+          </div>
         </div>
       </template>
       <el-table :data="agentStats" size="small" stripe>
@@ -72,6 +75,7 @@ import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import { formatNumber, rankBarOption, type RankItem } from '../chart-options'
+import { exportCsv } from '../utils/csv'
 import type { AgentsPayload } from '../types'
 
 const props = defineProps<{ payload: AgentsPayload | null; loading?: boolean }>()
@@ -89,6 +93,22 @@ const tokenItems = computed<RankItem[]>(() =>
 
 function go(path: string) {
   router.push(path)
+}
+
+function exportRows() {
+  exportCsv(
+    `analytics-agents-${new Date().toISOString().slice(0, 10)}.csv`,
+    ['Agent', '会话', '消息', 'Token', '调用', '成功率', '消息/会话'],
+    agentStats.value.map((row) => [
+      row.agentName || '未知',
+      row.sessionCount,
+      row.messageCount,
+      row.totalTokens,
+      row.callCount ?? 0,
+      row.callSuccessRate == null ? '' : `${row.callSuccessRate}%`,
+      row.sessionCount ? (row.messageCount / row.sessionCount).toFixed(1) : ''
+    ])
+  )
 }
 </script>
 
@@ -111,6 +131,12 @@ export default { name: 'AgentTab' }
 .card-hint {
   font-size: 12px;
   color: var(--mao-muted);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .linkish {

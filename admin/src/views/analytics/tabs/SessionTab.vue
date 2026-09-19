@@ -38,7 +38,7 @@
             <div class="struct-title">执行模式</div>
             <div class="struct-rows">
               <div v-for="item in modeRows" :key="item.executionMode" class="struct-row">
-                <span class="name">{{ item.executionMode }}</span>
+                <span class="name">{{ executionModeLabel(item.executionMode) }}</span>
                 <span class="value">{{ formatNumber(item.count) }}</span>
               </div>
               <div v-if="modeRows.length === 0" class="struct-empty">窗口内暂无会话</div>
@@ -81,7 +81,7 @@
       </div>
       <div class="actions">
         <el-button type="primary" link @click="go('/sessions?phase=FAILED')">查看失败会话</el-button>
-        <el-button link @click="go('/llm-call?success=false')">查看失败调用</el-button>
+        <el-button link @click="go(withWindow('/llm-call?success=false'))">查看失败调用</el-button>
       </div>
     </el-card>
 
@@ -117,7 +117,7 @@
                 v-if="typeof item.key === 'number' && item.key > 0"
                 class="linkish"
                 type="button"
-                @click="go(`/llm-call?success=false&modelId=${item.key}`)"
+                @click="go(withWindow(`/llm-call?success=false&modelId=${item.key}`))"
               >
                 {{ item.name }}
               </button>
@@ -139,7 +139,7 @@
           </template>
           <div class="fail-rows">
             <div v-for="item in failByScene" :key="`s-${item.key}`" class="fail-row">
-              <button class="linkish" type="button" @click="go(`/llm-call?success=false&scene=${item.key}`)">
+              <button class="linkish" type="button" @click="go(withWindow(`/llm-call?success=false&scene=${item.key}`))">
                 {{ sceneLabel(String(item.key)) }}
               </button>
               <span class="fail">{{ formatNumber(item.failCount) }}</span>
@@ -157,7 +157,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseChart from '../../../components/BaseChart.vue'
-import { phaseLabel } from '../../../utils/labels'
+import { phaseLabel, executionModeLabel } from '../../../utils/labels'
 import { llmCallSceneLabel, formatMs } from '../../../utils/llmCallLabels'
 import { donutOption, formatCompact, formatNumber, phaseColor, phaseRankItems, type RankItem } from '../chart-options'
 import type { SessionsPayload } from '../types'
@@ -208,6 +208,14 @@ function typeLabel(type: string): string {
 
 function sceneLabel(scene: string): string {
   return llmCallSceneLabel(scene)
+}
+
+/** 后端统计窗口是 YYYY-MM-DD 日期区间；SessionListView 不消费时间参数，仅 llm-call 支持透传 */
+function withWindow(path: string): string {
+  const meta = props.payload?.period
+  if (!meta) return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}startDate=${meta.start}&endDate=${meta.end}`
 }
 
 function go(path: string) {
