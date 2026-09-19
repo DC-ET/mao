@@ -115,9 +115,10 @@
         </el-table-column>
         <el-table-column prop="lastLoginAt" label="最后登录" width="180" :formatter="formatDateTimeColumn" />
         <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="formatDateTimeColumn" />
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <template v-if="canWrite">
+              <el-button type="primary" link size="small" @click="handleDetail(row)">详情</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-tooltip
                 :disabled="row.authSource === 'LOCAL'"
@@ -190,6 +191,7 @@
           </div>
           <div class="user-card-actions">
             <template v-if="canWrite">
+              <el-button type="primary" link size="small" @click="handleDetail(row)">详情</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-button
                 type="primary"
@@ -243,6 +245,12 @@
       @update:visible="resetDialogVisible = $event"
       @saved="fetchUsers"
     />
+
+    <UserDetailDrawer
+      :visible="detailVisible"
+      :user="detailUser"
+      @update:visible="detailVisible = $event"
+    />
   </div>
 </template>
 
@@ -257,6 +265,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import UserFormDialog from './UserFormDialog.vue'
 import ResetPasswordDialog from './ResetPasswordDialog.vue'
+import UserDetailDrawer from './UserDetailDrawer.vue'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 
@@ -287,6 +296,9 @@ const canWrite = computed(() => authStore.hasPermission('user:write'))
 const resetDialogVisible = ref(false)
 const resetUserId = ref<number | null>(null)
 const resetUsername = ref('')
+
+const detailVisible = ref(false)
+const detailUser = ref<any | null>(null)
 
 /** route.query.roleId 仅作为筛选意图提示（后端 listUsers 不支持 roleId，评审文档 #6/#7 已记录） */
 const queryRoleId = ref<number | null>(null)
@@ -444,6 +456,11 @@ function handleResetPassword(row: any) {
   resetUserId.value = row.id
   resetUsername.value = row.username
   resetDialogVisible.value = true
+}
+
+function handleDetail(row: any) {
+  detailUser.value = row
+  detailVisible.value = true
 }
 
 async function handleToggleStatus(row: any) {

@@ -108,15 +108,16 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
     return sendOk(reply);
   });
 
-  // 列表：跨用户查看个人指令。支持 pageNum/pageSize/keyword（keyword 匹配指令名/内容，LIKE 已转义）。
-  // 兼容约定：不传任何新参数时返回全量数组；传入分页/关键词后按条件过滤分页，返回结构仍为数组（前端按数组消费），
-  // 条件过滤时的总数通过响应头 x-total-count 透出。
+  // 列表：跨用户查看个人指令。支持 pageNum/pageSize/keyword/userId（keyword 匹配指令名/内容，LIKE 已转义；
+  // userId 过滤指定用户的个人指令）。兼容约定：不传任何新参数时返回全量数组；传入分页/关键词/用户后按条件过滤分页，
+  // 返回结构仍为数组（前端按数组消费），条件过滤时的总数通过响应头 x-total-count 透出。
   app.get('/v1/admin/user-commands', async (request, reply) => {
     await requireAdmin(permissionService, request);
     const pageNum = queryOptInt(request, 'pageNum');
     const pageSize = queryOptInt(request, 'pageSize');
     const keyword = queryOptStr(request, 'keyword');
-    const filtered = pageNum != null || pageSize != null || keyword != null;
+    const userId = queryOptInt(request, 'userId');
+    const filtered = pageNum != null || pageSize != null || keyword != null || userId != null;
     if (!filtered) {
       const commands = await commandRepo.listPersonalAll();
       return sendOk(reply, await toAdminUserVOList(commands, userLookup));
@@ -125,6 +126,7 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
       Math.max(1, pageNum ?? 1),
       Math.min(200, Math.max(1, pageSize ?? 20)),
       keyword,
+      userId,
     );
     reply.header('x-total-count', String(page.total));
     return sendOk(reply, await toAdminUserVOList(page.records, userLookup));

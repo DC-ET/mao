@@ -4,8 +4,7 @@ import { PassThrough } from 'node:stream';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { requirePermission, requireUserId, sendJson } from '../common/http-error.js';
-import { pathParam, queryOptInt } from '../common/request.js';
-import { ok } from '../common/result.js';
+import { pathParam, queryOptInt } from '../common/request.js';import { ok } from '../common/result.js';
 import type { SkillSyncService } from '../harness/skill/skill-sync-service.js';
 import type { AgentLookup, UserLookup } from '../session/types.js';
 import type { SessionService } from '../session/session.service.js';
@@ -58,9 +57,14 @@ export function registerAdminUserSkillRoutes(
 ): void {
   const { userSkillService, permissionService, userLookup } = deps;
 
+  // 列表：不传 userId 返回全部用户技能；传 userId 时仅返回该用户的技能（用户详情视图用）。
   app.get('/v1/admin/user-skills', async (request, reply) => {
     const userId = requireUserId(request);
     await requirePermission(permissionService, userId, 'agent:read');
+    const targetUserId = queryOptInt(request, 'userId');
+    if (targetUserId != null) {
+      return sendJson(reply, 200, ok(userSkillService.listUserSkills(targetUserId)));
+    }
     const skills = userSkillService.listAllUserSkills();
     const userIds = [...new Set(skills.map((s) => s.userId))];
     const users = userIds.length > 0 ? await userLookup.findByIds(userIds) : [];

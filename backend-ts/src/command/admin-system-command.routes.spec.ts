@@ -38,10 +38,10 @@ async function createApp(options: {
   const commandRepo = options.commandRepo ?? createRepo({
     listByUserId: vi.fn(async (userId: number) => (userId === 0 ? system : [])),
     listPersonalAll: vi.fn(async () => personal),
-    listPersonalPaged: vi.fn(async (pageNum: number, pageSize: number, keyword?: string) => {
-      const filtered = keyword
-        ? personal.filter((c) => c.name.includes(keyword) || c.content.includes(keyword))
-        : personal;
+    listPersonalPaged: vi.fn(async (pageNum: number, pageSize: number, keyword?: string, userId?: number) => {
+      const filtered = personal.filter((c) =>
+        (!keyword || c.name.includes(keyword) || c.content.includes(keyword))
+        && (userId == null || c.userId === userId));
       const start = (pageNum - 1) * pageSize;
       return { records: filtered.slice(start, start + pageSize), total: filtered.length };
     }),
@@ -216,6 +216,23 @@ describe('admin system/user command routes', () => {
 
     // 仅 keyword（无分页参数）也走过滤路径
     expect(vi.mocked(commandRepo.listPersonalPaged).mock.calls.every((call) => call[0] >= 1 && call[1] >= 1)).toBe(true);
+    await app.close();
+  });
+
+  it('filtersPersonalCommandsByUserIdWhenParamPresent', async () => {
+    const personal: UserCommand[] = [
+      { id: 1, userId: 7, name: 'cmd_a7', content: '内容A' },
+      { id: 2, userId: 8, name: 'cmd_b8', content: '内容B' },
+    ];
+    const { app, commandRepo } = await createApp({ commands: { personal } });
+
+    // 仅 userId（无分页参数）也走过滤路径，并透出 x-total-count
+    const res = await app.inject({ method: 'GET', url: '/v1/admin/user-commands?userId=7' });
+    const body = JSON.parse(res.body);
+    expect(body.code).toBe(0);
+    expect(body.data.map((c: { username: string | null }) => c.username)).toEqual(['user7']);
+    expect(res.headers['x-total-count']).toBe('1');
+    expect(commandRepo.listPersonalPaged).toHaveBeenCalledWith(1, 20, undefined, 7);
     await app.close();
   });
 

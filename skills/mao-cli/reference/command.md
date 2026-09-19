@@ -140,7 +140,7 @@ mao command delete --id 5
 管理端指令页对应 API，需管理员权限：
 
 - 系统指令：`/v1/admin/system-commands`（`user_id=0`，全体用户可见；用户视角经 `GET /v1/user-commands/system`）
-- 个人指令：`/v1/admin/user-commands`（跨用户 `user_id>0`，可查看与删除；支持可选 `pageNum`/`pageSize`/`keyword` 服务端分页，总数经 `x-total-count` 响应头返回，不传参数时返回全量数组）
+- 个人指令：`/v1/admin/user-commands`（跨用户 `user_id>0`，可查看与删除；支持可选 `pageNum`/`pageSize`/`keyword`/`userId` 服务端分页与过滤，总数经 `x-total-count` 响应头返回，不传参数时返回全量数组）
 
 ### 命令
 

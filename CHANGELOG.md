@@ -24,7 +24,8 @@
 - 安全修复：系统技能库 `POST /v1/skill-docs/upload`、`DELETE /v1/skill-docs/:name` 增加 `agent:write` 权限校验（原先任何登录用户可删除/覆盖系统技能并级联清理 Agent 引用）。
 - 新增管理端会话运维接口：`DELETE /v1/admin/sessions/:id`、`PUT /v1/admin/sessions/:id/archive`（admin 鉴权，自动落审计）。
 - 新增飞书机器人连接状态接口：`GET /v1/admin/feishu-bots/status`（ready/reconnecting/failed/disabled + 最近失败原因）与 `POST /v1/admin/feishu-bots/:id/reconnect`。
-- 个人指令列表 `GET /v1/admin/user-commands` 支持 `pageNum`/`pageSize`/`keyword` 服务端分页与过滤，总数经 `x-total-count` 响应头透出；不传参数时行为不变。
+- 个人指令列表 `GET /v1/admin/user-commands` 支持 `pageNum`/`pageSize`/`keyword`/`userId` 服务端分页与过滤，总数经 `x-total-count` 响应头透出；不传参数时行为不变。
+- 新增管理端用户关联数据接口：Git 凭证 `GET /v1/admin/users/:id/git-credentials`（`user:read`）与 `DELETE /v1/admin/users/:id/git-credentials/:credentialId`（`user:write`，Token 始终脱敏）；用户 MCP 服务器 `GET /v1/admin/users/:id/mcp-servers`（admin 鉴权，env 不透出）；个人技能 `GET /v1/admin/user-skills?userId=`（返回该用户技能列表）。
 - Agent 提示词版本历史 VO 补充 `operatorName`（操作人名称）。
 
 ### 管理后台
@@ -36,7 +37,7 @@
 - 会话管理：列表新增归档/删除运维操作（运行中会话禁删）；详情页新增手动刷新、用户/Agent 下钻链接与全量记录 JSON 导出；移除冗余指标卡。
 - 会话查看组件：修复单行超长消息不折叠；思考内容补复制按钮；工具调用复制补成功/失败反馈并明示截断。
 - 用量分析：运行态卡（运行中/等待审批）可点击下钻；分析下钻链接透传统计周期到调用流水；明细 Top 列表 limit 提至 100 并支持导出 CSV；scope 缓存加 5 分钟 TTL；加载改骨架屏；趋势图补缩放；模型场景分布支持行选中高亮与清除；执行模式显示中文。
-- 用户管理：新增批量启用/禁用、账号类型筛选、修改密码入口（顶栏下拉）；编辑当前登录用户时禁用状态开关。
+- 用户管理：新增批量启用/禁用、账号类型筛选、修改密码入口（顶栏下拉）；编辑当前登录用户时禁用状态开关；操作列新增「详情」抽屉，以用户视角聚合查看其会话（可下钻详情）、定时任务、快捷指令、个人技能、Git 凭证（可删除）与个人 MCP 服务器。
 - 角色权限：权限勾选按域分组并支持全选/清空；角色编码加格式校验；未保存修改在离开页面时拦截确认；支持跳转按角色查看成员（完整按角色筛选待后端支持）。
 - Agent 管理：列表补创建人列、搜索支持回车、默认 Agent 禁止删除并前置禁用；提示词历史展示操作人名称；表单下拉加载失败可重试。
 - 模型管理：默认模型加标识；供应商改为可创建下拉（复用 providers 接口）；baseUrl 必填校验；编辑时禁止切换模型类型。

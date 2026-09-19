@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { BusinessException } from '../../../common/business-exception.js';
+import { ErrorCode } from '../../../common/error-code.js';
 import { requireUserId, sendJson, sendOk } from '../../../common/http-error.js';
 import { bodyOf, pathId, queryOptStr } from '../../../common/request.js';
 import { fail } from '../../../common/result.js';
@@ -117,6 +118,17 @@ export function registerMcpServerRoutes(app: FastifyInstance, deps: McpServerRou
     const userId = requireUserId(request);
     await assertAdmin(permissionService, userId);
     return sendOk(reply, await mcpServerService.list(queryOptStr(request, 'keyword'), queryOptStr(request, 'status')));
+  });
+
+  // 管理端：查看指定用户创建的个人 MCP 服务器（env 不透出）。
+  app.get('/v1/admin/users/:id/mcp-servers', async (request, reply) => {
+    const adminId = requireUserId(request);
+    await assertAdmin(permissionService, adminId);
+    const targetUserId = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '无效的用户 ID');
+    }
+    return sendOk(reply, await mcpServerService.listMine(targetUserId));
   });
 
   app.get('/v1/mcp-servers/enabled', async (request, reply) => {

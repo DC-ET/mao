@@ -43,6 +43,18 @@ export class GitCredentialService {
     );
   }
 
+  /** 管理端：删除指定用户的凭证（不校验归属，调用方负责权限）。 */
+  async deleteByAdmin(id: number, userId: number): Promise<void> {
+    const credential = await this.db.queryOne<GitCredential>(
+      'SELECT * FROM user_git_credential WHERE id = ? AND user_id = ?',
+      [id, userId],
+    );
+    if (!credential) {
+      throw new BusinessException(ErrorCode.GIT_CREDENTIAL_NOT_FOUND);
+    }
+    await this.db.execute('DELETE FROM user_git_credential WHERE id = ?', [id]);
+  }
+
   async getByIdAndUserId(id: number, userId: number): Promise<GitCredential | null> {
     return this.db.queryOne<GitCredential>(
       'SELECT * FROM user_git_credential WHERE id = ? AND user_id = ?',

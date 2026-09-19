@@ -42,7 +42,7 @@ import { MysqlUserRepository } from './user/user.repository.js';
 import { UserService } from './user/user.service.js';
 import { registerUserRoutes } from './user/user.routes.js';
 import { GitCredentialService, assertGitCredentialSecret } from './user/git-credential.service.js';
-import { registerGitCredentialRoutes } from './user/git-credential.routes.js';
+import { registerAdminGitCredentialRoutes, registerGitCredentialRoutes } from './user/git-credential.routes.js';
 import {
   MysqlPermissionRepository,
   MysqlRolePermissionRepository,
@@ -1849,6 +1849,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     registerUserRoutes(api, userService, userRepo, permissionService);
     registerPermissionRoutes(api, permissionService);
     registerGitCredentialRoutes(api, gitCredentials);
+    registerAdminGitCredentialRoutes(api, { gitCredentialService: gitCredentials, permissionService });
     registerAgentAvatarRoutes(api, fileService, permissionService);
     registerAgentRoutes(api, {
       agentService, experienceService, suggestedQuestionService, userRepo, mcpServerValidator: mcpValidator,

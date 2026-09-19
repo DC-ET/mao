@@ -13,6 +13,9 @@
 | 更新 | `git update` |
 | 删除 | `git delete` |
 
+管理端另有按用户查看/删除凭证的接口：`GET /v1/admin/users/:id/git-credentials`（`user:read`）、
+`DELETE /v1/admin/users/:id/git-credentials/:credentialId`（`user:write`），Token 同样脱敏，供用户详情视图使用。
+
 ---
 
 ## 命令：mao git list

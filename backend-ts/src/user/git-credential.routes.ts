@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireUserId, sendOk } from '../common/http-error.js';
+import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId } from '../common/request.js';
 import type { GitCredential, GitCredentialService } from './git-credential.service.js';
 
@@ -27,6 +27,31 @@ export function registerGitCredentialRoutes(app: FastifyInstance, service: GitCr
   app.delete('/v1/user/git-credentials/:id', async (request, reply) => {
     const userId = requireUserId(request);
     await service.delete(userId, pathId(request));
+    return sendOk(reply);
+  });
+}
+
+export interface AdminGitCredentialRouteDeps {
+  gitCredentialService: GitCredentialService;
+  permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
+}
+
+/** 管理端：以用户视角查看/删除 Git 凭证（token 始终脱敏，不透出明文）。 */
+export function registerAdminGitCredentialRoutes(app: FastifyInstance, deps: AdminGitCredentialRouteDeps): void {
+  const { gitCredentialService, permissionService } = deps;
+
+  app.get('/v1/admin/users/:id/git-credentials', async (request, reply) => {
+    const adminId = requireUserId(request);
+    await requirePermission(permissionService, adminId, 'user:read');
+    const list = await gitCredentialService.listByUserId(pathId(request));
+    return sendOk(reply, list.map(toVO));
+  });
+
+  app.delete('/v1/admin/users/:id/git-credentials/:credentialId', async (request, reply) => {
+    const adminId = requireUserId(request);
+    await requirePermission(permissionService, adminId, 'user:write');
+    const credentialId = Number((request.params as { credentialId: string }).credentialId);
+    await gitCredentialService.deleteByAdmin(credentialId, pathId(request));
     return sendOk(reply);
   });
 }

@@ -23,9 +23,13 @@ export class MysqlUserCommandRepository implements UserCommandRepository {
     );
   }
 
-  private buildPersonalWhere(keyword?: string): { whereSql: string; params: unknown[] } {
+  private buildPersonalWhere(keyword?: string, userId?: number): { whereSql: string; params: unknown[] } {
     const clauses = ['user_id > 0', notDeleted()];
     const params: unknown[] = [];
+    if (userId != null && Number.isInteger(userId) && userId > 0) {
+      clauses.push('user_id = ?');
+      params.push(userId);
+    }
     const trimmed = keyword?.trim();
     if (trimmed) {
       const escaped = escapeLike(trimmed);
@@ -35,16 +39,16 @@ export class MysqlUserCommandRepository implements UserCommandRepository {
     return { whereSql: clauses.join(' AND '), params };
   }
 
-  listPersonalFiltered(keyword?: string): Promise<UserCommand[]> {
-    const { whereSql, params } = this.buildPersonalWhere(keyword);
+  listPersonalFiltered(keyword?: string, userId?: number): Promise<UserCommand[]> {
+    const { whereSql, params } = this.buildPersonalWhere(keyword, userId);
     return this.db.query<UserCommand>(
       `SELECT * FROM user_command WHERE ${whereSql} ORDER BY created_at DESC`,
       params,
     );
   }
 
-  async listPersonalPaged(pageNum: number, pageSize: number, keyword?: string): Promise<{ records: UserCommand[]; total: number }> {
-    const { whereSql, params } = this.buildPersonalWhere(keyword);
+  async listPersonalPaged(pageNum: number, pageSize: number, keyword?: string, userId?: number): Promise<{ records: UserCommand[]; total: number }> {
+    const { whereSql, params } = this.buildPersonalWhere(keyword, userId);
     const totalRow = await this.db.queryOne<{ c: number }>(`SELECT COUNT(*) AS c FROM user_command WHERE ${whereSql}`, params);
     const records = await this.db.query<UserCommand>(
       `SELECT * FROM user_command WHERE ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
