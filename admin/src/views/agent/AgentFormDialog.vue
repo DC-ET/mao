@@ -145,13 +145,9 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column label="状态" width="72" align="center">
+            <el-table-column label="状态" width="64" align="center">
               <template #default="{ row }">
-                <el-tag
-                  :type="row.enabled ? 'success' : 'info'"
-                  class="experience-status"
-                  @click="row.enabled = !row.enabled"
-                >{{ row.enabled ? '启用' : '停用' }}</el-tag>
+                <el-switch v-model="row.enabled" />
               </template>
             </el-table-column>
             <el-table-column label="操作" width="56" align="center">
@@ -163,12 +159,22 @@
           <el-button type="primary" link @click="addExperience">+ 添加经验</el-button>
         </div>
         <div v-show="experienceView === 'text'" class="experience-text-pane">
-          <el-input
-            v-model="experienceText"
-            type="textarea"
-            class="experience-textarea"
-            placeholder="一行一条经验；# 开头表示停用；空行忽略"
-          />
+          <div class="experience-text-editor">
+            <div class="experience-text-backdrop" aria-hidden="true">
+              <div
+                v-for="(line, index) in experienceBackdropLines"
+                :key="index"
+                class="experience-text-line"
+                :class="line.kind"
+              >&#8203;</div>
+            </div>
+            <el-input
+              v-model="experienceText"
+              type="textarea"
+              class="experience-textarea"
+              placeholder="一行一条经验；# 开头表示停用；空行忽略"
+            />
+          </div>
         </div>
       </div>
       </el-tab-pane>
@@ -275,6 +281,38 @@ const experienceViewOptions = [
 let experienceKeySeq = 0
 let suggestedQuestionKeySeq = 0
 let experienceSortable: Sortable | null = null
+let experienceScrollTimer: ReturnType<typeof setInterval> | null = null
+
+const experienceBackdropLines = computed(() =>
+  experienceText.value.split(/\r?\n/).map((line) => {
+    const trimmed = line.trim()
+    if (!trimmed) return { kind: 'empty' }
+    if (trimmed.startsWith('#')) return { kind: 'disabled' }
+    return { kind: 'active' }
+  })
+)
+
+function syncExperienceScroll() {
+  const editorEl = document.querySelector('.experience-text-editor') as HTMLElement | null
+  const textarea = editorEl?.querySelector('textarea')
+  const backdrop = editorEl?.querySelector('.experience-text-backdrop') as HTMLElement | null
+  if (!textarea || !backdrop) return
+  backdrop.scrollTop = textarea.scrollTop
+  backdrop.scrollLeft = textarea.scrollLeft
+}
+
+function startExperienceScrollSync() {
+  stopExperienceScrollSync()
+  // textarea 的 scroll 事件不总是冒泡，轮询兜底保证垫层跟随
+  experienceScrollTimer = setInterval(syncExperienceScroll, 80)
+}
+
+function stopExperienceScrollSync() {
+  if (experienceScrollTimer) {
+    clearInterval(experienceScrollTimer)
+    experienceScrollTimer = null
+  }
+}
 
 const form = reactive({
   avatarUrl: null as string | null,
@@ -539,6 +577,7 @@ function validateSuggestedQuestions(): boolean {
 watch(() => props.visible, async (val) => {
   if (!val) {
     destroyExperienceSortable()
+    stopExperienceScrollSync()
     return
   }
   activeTab.value = 'basic'
@@ -570,10 +609,16 @@ watch([experienceView, activeTab], () => {
   if (experienceView.value === 'table' && activeTab.value === 'experience') {
     mountExperienceSortable()
   }
+  if (experienceView.value === 'text' && activeTab.value === 'experience' && props.visible) {
+    nextTick(startExperienceScrollSync)
+  } else {
+    stopExperienceScrollSync()
+  }
 })
 
 onBeforeUnmount(() => {
   destroyExperienceSortable()
+  stopExperienceScrollSync()
 })
 
 async function loadOptions() {
@@ -790,18 +835,46 @@ async function handleSubmit() {
   cursor: grabbing;
 }
 
-.experience-status {
-  cursor: pointer;
-}
-
 .experience-text-pane {
   flex: 1;
   min-height: 0;
   display: flex;
 }
 
-.experience-textarea {
+/* 底层斑马纹垫层 + 透明 textarea 叠加，实现逐行跳色 */
+.experience-text-editor {
+  position: relative;
   flex: 1;
+  min-height: 280px;
+}
+
+.experience-text-backdrop {
+  position: absolute;
+  inset: 5px 11px 5px 11px;
+  overflow: hidden;
+  border-radius: 4px;
+  pointer-events: none;
+  background: var(--el-disabled-bg-color);
+}
+
+.experience-text-line {
+  height: 24px;
+  line-height: 24px;
+  font-size: 13px;
+}
+
+.experience-text-line.active {
+  background: var(--el-fill-color-light);
+}
+
+.experience-text-line.disabled {
+  background: var(--el-color-warning-light-9);
+}
+
+.experience-textarea {
+  position: relative;
+  z-index: 1;
+  height: 100%;
   min-height: 280px;
 }
 
@@ -809,8 +882,17 @@ async function handleSubmit() {
   height: 100%;
   min-height: 280px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  line-height: 1.6;
+  line-height: 24px;
+  background: transparent;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
   resize: none;
+}
+
+.experience-textarea :deep(.el-textarea__inner)::placeholder {
+  background: var(--el-bg-color);
+  color: var(--el-text-color-placeholder);
 }
 
 .form-hint {
@@ -836,6 +918,7 @@ async function handleSubmit() {
   .agent-tabs :deep(.el-tab-pane:has(.experience-panel)) {
     height: calc(100dvh - 240px);
   }
+  .experience-text-editor,
   .experience-textarea,
   .experience-textarea :deep(.el-textarea__inner) {
     min-height: 200px;
