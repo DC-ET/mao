@@ -6,7 +6,7 @@
           <div class="label">Token 消耗</div>
           <div class="value-row">
             <span class="value">{{ formatCompact(totalTokens) }}</span>
-            <span v-if="tokenDelta !== null" class="delta" :class="deltaClass(tokenDelta, true)">
+            <span v-if="tokenDelta !== null" class="delta" :class="deltaClass(tokenDelta)">
               {{ deltaText(tokenDelta) }}
             </span>
           </div>
@@ -33,7 +33,7 @@
           <div class="label">{{ item.label }}</div>
           <div class="value-row">
             <span class="value">{{ item.display }}</span>
-            <span v-if="item.delta !== null" class="delta" :class="deltaClass(item.delta, item.inverse)">
+            <span v-if="item.delta !== null" class="delta" :class="deltaClass(item.delta)">
               {{ deltaText(item.delta) }}
             </span>
           </div>
@@ -92,7 +92,7 @@
             <div v-for="row in compareRows" :key="row.label" class="compare-row">
               <span class="label">{{ row.label }}</span>
               <span class="current">{{ formatNumber(row.current) }}</span>
-              <span class="delta" :class="deltaClass(row.delta, row.inverse)">
+              <span class="delta" :class="deltaClass(row.delta)">
                 {{ deltaText(row.delta) }}
               </span>
             </div>
@@ -146,7 +146,6 @@ const secondaryMetrics = computed(() => [
     label: '新增会话',
     display: formatCompact(totals.value.sessions),
     delta: delta(totals.value.sessions, previous.value.sessions),
-    inverse: false,
     sub: `活跃用户 ${formatNumber(totals.value.activeUsers)}`,
     path: '/analytics?tab=trends'
   },
@@ -154,7 +153,6 @@ const secondaryMetrics = computed(() => [
     label: '消息数',
     display: formatCompact(totals.value.messages),
     delta: delta(totals.value.messages, previous.value.messages),
-    inverse: false,
     sub: `失败会话 ${formatNumber(totals.value.failedSessions)}`,
     path: '/analytics?tab=sessions'
   },
@@ -162,7 +160,6 @@ const secondaryMetrics = computed(() => [
     label: '活跃用户',
     display: formatCompact(totals.value.activeUsers),
     delta: delta(totals.value.activeUsers, previous.value.activeUsers),
-    inverse: false,
     sub: '窗口内有会话或消息',
     path: '/analytics?tab=users'
   }
@@ -186,26 +183,22 @@ const compareRows = computed(() => [
   {
     label: '会话',
     current: totals.value.sessions,
-    delta: delta(totals.value.sessions, previous.value.sessions),
-    inverse: false
+    delta: delta(totals.value.sessions, previous.value.sessions)
   },
   {
     label: '消息',
     current: totals.value.messages,
-    delta: delta(totals.value.messages, previous.value.messages),
-    inverse: false
+    delta: delta(totals.value.messages, previous.value.messages)
   },
   {
     label: 'Token',
     current: totals.value.totalTokens,
-    delta: delta(totals.value.totalTokens, previous.value.totalTokens),
-    inverse: true
+    delta: delta(totals.value.totalTokens, previous.value.totalTokens)
   },
   {
     label: '活跃用户',
     current: totals.value.activeUsers,
-    delta: delta(totals.value.activeUsers, previous.value.activeUsers),
-    inverse: false
+    delta: delta(totals.value.activeUsers, previous.value.activeUsers)
   }
 ])
 
@@ -303,14 +296,14 @@ export default {
   border-radius: 4px;
 }
 
-.delta.good {
-  color: #1a7f37;
-  background: rgba(52, 199, 89, 0.12);
-}
-
-.delta.bad {
+.delta.up {
   color: #c9252d;
   background: rgba(255, 59, 48, 0.1);
+}
+
+.delta.down {
+  color: #1a7f37;
+  background: rgba(52, 199, 89, 0.12);
 }
 
 .delta.flat {

@@ -5,7 +5,7 @@
         <div class="toolbar-info">
           <div class="toolbar-title">用量分析</div>
           <div class="toolbar-hint">
-            {{ periodText }}，环比对照 {{ previousText }}；数字均为窗口内新增。环比色：绿=变好、红=变差。
+            {{ periodText }}，环比对照 {{ previousText }}；数字均为窗口内新增。环比色：红=上升、绿=下降。
             <span v-if="fetchedAtText">· 数据获取于 {{ fetchedAtText }}</span>
           </div>
         </div>

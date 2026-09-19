@@ -12,11 +12,10 @@ export function deltaText(value: number | null): string {
   return `${value > 0 ? '↑' : '↓'} ${Math.abs(value)}%`
 }
 
-/** 项目约定：绿=变好、红=变差；token/失败率等 inverse 指标下降才算好。 */
-export function deltaClass(value: number | null, inverse = false): 'good' | 'bad' | 'flat' {
+/** 展示口径统一：上升=红、下降=绿（只表示方向，不区分指标好坏）。 */
+export function deltaClass(value: number | null): 'up' | 'down' | 'flat' {
   if (value === null || value === 0) return 'flat'
-  const good = inverse ? value < 0 : value > 0
-  return good ? 'good' : 'bad'
+  return value > 0 ? 'up' : 'down'
 }
 
 export function percent(part: number, total: number): number {

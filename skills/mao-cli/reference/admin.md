@@ -121,7 +121,7 @@ CLI：`mao audit ...`（见 [audit.md](audit.md)）。
 - **用户 / Agent**：横向排行 + 明细表（含调用次数/失败），可下钻会话列表与调用流水
 - **会话**：窗口 phase 分布 + 会话类型与执行模式 + 实时运行态 + 调用质量面板（p50/p95）+ 失败切片 Top（模型/场景）
 
-本页阶段分布只统计窗口内创建的会话；失败会话可点链接下钻会话列表（阶段=FAILED）。环比色约定：绿=变好、红=变差。
+本页阶段分布只统计窗口内创建的会话；失败会话可点链接下钻会话列表（阶段=FAILED）。环比色约定：红=上升、绿=下降。
 
 CLI：`mao analytics overview|trends|models|users|agents|sessions` 与各 Tab 对应；旧版一页聚合仍可用 `mao analytics summary --days 7|30|90`（今日 `--days 1`，昨日 `--days 1 --end-offset 1`）。详见 [analytics.md](analytics.md)。
 
