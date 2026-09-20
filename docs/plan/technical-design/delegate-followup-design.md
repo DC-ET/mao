@@ -1,7 +1,7 @@
 # 子代理追问（delegate_followup）技术方案
 
 > 状态：需求已与用户逐项确认，本文为可执行方案（未改任何代码）
-> 关联文档：[subagent-visibility.md](./subagent-visibility.md)、[loop-compaction-reuse-session-design.md](../loop-compaction-reuse-session-design.md)
+> 关联文档：[subagent-visibility.md](./subagent-visibility.md)、[2026-08-04-loop-compaction-reuse-session-design.md](../2026-08-04-loop-compaction-reuse-session-design.md)
 
 ## 1. 需求背景
 
@@ -263,4 +263,4 @@
 
 - `subagent-visibility.md` 9.3「明确不做」中的「子会话追问」由本文档落地实现，其余冻结项（弹窗主方案、admin UI、子 Tab 独立取消、delegate 后台模式等）仍不做；
 - `subagent-visibility.md` 中「只读中央 Tab，不可追问」的表述在本需求落地后更新为「只读中央 Tab，可被主代理追问（工具层）」；
-- 复用 `loop-compaction-reuse-session-design.md` 确认的子会话压缩机制，不新增压缩策略。
+- 复用 `2026-08-04-loop-compaction-reuse-session-design.md` 确认的子会话压缩机制，不新增压缩策略。

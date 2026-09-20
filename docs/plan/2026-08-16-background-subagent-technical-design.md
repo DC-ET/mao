@@ -232,7 +232,7 @@ backgroundSubagentManager.consumeResults(sessionId)
 
 ### 5.7 文件变更归集
 
-后台子代理产生的 `message_file_change` 归属其 child session（与现有子代理一致）。归集到父任务时，按「父会话 id + 关联 `BACKGROUND` execution 的 `execution_start_message_id` / `final_message_id`」聚合，追加到主任务变更清单；不绑定到某一条父工具调用（因为完成时机异步）。复用现有 `subagent-file-change-aggregation-fix-plan.md` 的归集服务，扩展支持 `BACKGROUND` invocation。
+后台子代理产生的 `message_file_change` 归属其 child session（与现有子代理一致）。归集到父任务时，按「父会话 id + 关联 `BACKGROUND` execution 的 `execution_start_message_id` / `final_message_id`」聚合，追加到主任务变更清单；不绑定到某一条父工具调用（因为完成时机异步）。复用现有 `2026-08-13-subagent-file-change-aggregation-fix-plan.md` 的归集服务，扩展支持 `BACKGROUND` invocation。
 
 ### 5.8 父会话取消级联
 

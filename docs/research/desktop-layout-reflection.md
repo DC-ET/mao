@@ -1,6 +1,6 @@
 # 桌面客户端布局反思：普通用户需要什么？
 
-> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `2026-06-03-shell-unification-design.md`.
 
 > 基于当前 Mao 桌面端（Electron + Vue）的界面现状，从**普通用户**视角反思布局问题，并提出适合大众使用者的信息架构方向。  
 > 本文是**设计反思**，不替代 `desktop-ux-refactor-plan.md` 中的技术实施清单。

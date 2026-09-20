@@ -40,7 +40,7 @@
 | 2 | 新增 `AnthropicLlmAdapter`：完整实现 Messages API 的非流式 + 流式调用，含重试/退避/取消/超时，行为对齐现有 OpenAI 实现 |
 | 3 | `create-app.ts` 改为组装 Facade 并注入；`weixin/voice-synthesis.service.ts` 依赖类型改为 `LlmAdapter` 接口 |
 | 4 | 新增 `AnthropicChatClient`（连通性测试用），`ModelService.testConnectivity` 按 apiProtocol 选择客户端 |
-| 5 | 新增 `api_protocol` DB 列承载协议路由；admin 模型表单「供应商」保持渠道名文本框，新增「API 协议」下拉（OpenAI 兼容 / `anthropic` / `openai-responses` 预留；Responses 已由 0.0.67 实现，详见 `docs/plan/openai-responses-adapter-design.md`） |
+| 5 | 新增 `api_protocol` DB 列承载协议路由；admin 模型表单「供应商」保持渠道名文本框，新增「API 协议」下拉（OpenAI 兼容 / `anthropic` / `openai-responses` 预留；Responses 已由 0.0.67 实现，详见 `docs/plan/2026-08-29-openai-responses-adapter-design.md`） |
 | 6 | 新增 `anthropic-llm-adapter.spec.ts`、`llm-adapter-facade.spec.ts`，现有测试全量回归 |
 | 7 | 根 CHANGELOG.md 记录本次用户可见变更（新协议支持） |
 
@@ -52,7 +52,7 @@
 | 2 | 不改统一类型 `ChatRequest`/`StreamChunk`/`ChatUsage`/`LlmAdapter`，不新增 DB 列、不做存量数据迁移 |
 | 3 | 不动 AgentLoop / ToolDispatcher / PromptEngine / ContextManager / WebSocket 协议 / 四端任何代码 |
 | 4 | 不启用 Anthropic extended thinking 主动开启（`thinking` 请求参数），签名（signature）回传问题不在本期解决 |
-| 5 | 不实现 OpenAI Responses API（仅预留 `openai-responses` 协议 code）——历史决策，已由 0.0.67 实现并放开，详见 `docs/plan/openai-responses-adapter-design.md` |
+| 5 | 不实现 OpenAI Responses API（仅预留 `openai-responses` 协议 code）——历史决策，已由 0.0.67 实现并放开，详见 `docs/plan/2026-08-29-openai-responses-adapter-design.md` |
 | 6 | 不对 `provider` 做白名单强校验，不迁移存量 provider 值 |
 | 7 | 不引入任何 LLM SDK 依赖，继续使用 Node 原生 http/https（与现有实现一致） |
 | 8 | 不做 LOCAL 模式适配、不做第二套工具执行循环 |
@@ -69,7 +69,7 @@
 | max_tokens（Anthropic 必填） | Adapter 内常量默认 16384，不落库 |
 | thinking | 不主动开启；响应中若出现 thinking block 则解析为 `reasoningContent` 兼容 |
 | 认证头 | 同时携带 `x-api-key` 与 `Authorization: Bearer`（同值），兼容官方与网关类渠道 |
-| Responses API | 已实现（0.0.67）：`ResponsesLlmAdapter` + `ResponsesChatClient`，写入口白名单与 admin 下拉已放开 `openai-responses`。详见 `docs/plan/openai-responses-adapter-design.md` |
+| Responses API | 已实现（0.0.67）：`ResponsesLlmAdapter` + `ResponsesChatClient`，写入口白名单与 admin 下拉已放开 `openai-responses`。详见 `docs/plan/2026-08-29-openai-responses-adapter-design.md` |
 | 展示名 | **修订（2026-08-28）**：初版"供应商展示与协议 code 合一"决策作废。`provider` 保持渠道名自由文本（如 "OpenAI"、"Anthropic"、渠道商名），协议由独立的「API 协议」下拉承载 |
 
 ## 三、总体设计

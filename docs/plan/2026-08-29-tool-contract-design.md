@@ -21,7 +21,7 @@
 
 ### 1.2 报告过时项：Provider Normalizer 已存在
 
-`llm/` 下已落地三种协议 Adapter（见 `docs/plan/llm-provider-adapter-design.md` 与 `docs/plan/openai-responses-adapter-design.md`）：
+`llm/` 下已落地三种协议 Adapter（见 `docs/plan/2026-08-28-llm-provider-adapter-design.md` 与 `docs/plan/2026-08-29-openai-responses-adapter-design.md`）：
 
 - `openai-llm-adapter.ts`（Chat Completions，默认分支）
 - `anthropic-llm-adapter.ts`（Messages API：工具出站转 `{name, description, input_schema}`，见 `:540-545`；入站 `tool_use` 事件归一化为 OpenAI 形状 delta，见 `:315-323`）

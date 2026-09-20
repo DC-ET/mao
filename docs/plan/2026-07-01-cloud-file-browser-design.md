@@ -503,9 +503,9 @@ export interface Tab {
 
 | 文档 | 关系 |
 |------|------|
-| `workspace-file-browser-design.md` | LOCAL 实现规格；本方案是其 CLOUD 扩展 |
-| `cloud-workspace-project-design.md` | 共享项目 workspace 已落地；本方案直接受益（多会话看到同一文件树） |
-| `file-reference-design.md` | `@` 引用已支持 CLOUD API；本方案与其 I/O 模式一致 |
+| `2026-06-25-workspace-file-browser-design.md` | LOCAL 实现规格；本方案是其 CLOUD 扩展 |
+| `2026-07-01-cloud-workspace-project-design.md` | 共享项目 workspace 已落地；本方案直接受益（多会话看到同一文件树） |
+| `2026-06-18-file-reference-design.md` | `@` 引用已支持 CLOUD API；本方案与其 I/O 模式一致 |
 
 ---
 

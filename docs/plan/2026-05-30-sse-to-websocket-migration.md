@@ -1,6 +1,6 @@
 # SSE → WebSocket 多任务流式输出改造方案
 
-> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `2026-06-03-shell-unification-design.md`.
 
 > 解决桌面客户端切换任务时流式输出断连、无法并行监听多任务的问题。
 

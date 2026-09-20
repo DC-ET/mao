@@ -515,7 +515,7 @@ admin/src/views/analytics/
 | `admin/src/views/analytics/` | 壳 + tabs + composables |
 | `admin/src/utils/echarts.ts` | 按需增加图表类型注册 |
 | `admin/src/router/index.ts` | 路由仍 `/analytics`，meta 不变 |
-| `docs/plan/admin-analytics-redesign-design.md` | 本文档 |
+| `docs/plan/2026-09-18-admin-analytics-redesign-design.md` | 本文档 |
 | 根 `CHANGELOG.md` | 管理后台可见改动 |
 
 ---

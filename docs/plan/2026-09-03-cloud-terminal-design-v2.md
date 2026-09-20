@@ -2,8 +2,8 @@
 
 > 版本：v2.0 | 日期：2026-09-03 | 状态：**待评审**
 > 关联文档：
-> - `docs/plan/cloud-terminal-design.md`（v1.0，2026-08-06 已驳回，仅作归档，不再实施）
-> - `docs/plan/terminal-design.md`（Electron 本地终端设计，已上线，本期不改）
+> - `docs/plan/2026-08-06-cloud-terminal-design.md`（v1.0，2026-08-06 已驳回，仅作归档，不再实施）
+> - `docs/plan/2026-06-08-terminal-design.md`（Electron 本地终端设计，已上线，本期不改）
 >
 > 本文档完全替代 v1.0。所有实现以本文为准；v1.0 中的接口表、配置项、验收标准均已作废。
 >

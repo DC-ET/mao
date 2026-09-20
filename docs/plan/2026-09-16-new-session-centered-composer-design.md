@@ -392,6 +392,6 @@ Tips 数据源首版可 **静态配置**；后续可接技能/推荐 API（非�
 
 | 文档 | 关系 |
 |------|------|
-| `docs/plan/new-task-flow-redesign.md` | 前序：去弹窗、延迟创建、底部内联配置。**本方案在其数据流上重做视觉布局**，不回退懒创建。 |
-| `docs/plan/desktop-login-page-design.md` | 无关（登录页）。 |
+| `docs/plan/2026-06-08-new-task-flow-redesign.md` | 前序：去弹窗、延迟创建、底部内联配置。**本方案在其数据流上重做视觉布局**，不回退懒创建。 |
+| `docs/plan/2026-08-24-desktop-login-page-design.md` | 无关（登录页）。 |
 | AGENTS.md desktop 规范 | 前端 Vue3 + 严格 TS；改动限 desktop 共用 UI，不碰安卓专用逻辑。 |

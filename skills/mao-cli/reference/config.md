@@ -64,7 +64,7 @@
 | 桌面回调 URL | `https://mao.example.com/auth/ecp/feishu-callback` | 须与对外站点同源，并在 ECP 登记 |
 | 管理后台回调 URL | `https://mao.example.com/admin/auth/ecp/feishu-callback` | 同上 |
 
-升级需执行 V111 迁移。`mao-cli` 本期不提供浏览器飞书登录，仅 Web/管理后台/Electron 入口。设计见 `docs/plan/ecp-native-login-technical-design.md`。
+升级需执行 V111 迁移。`mao-cli` 本期不提供浏览器飞书登录，仅 Web/管理后台/Electron 入口。设计见 `docs/plan/2026-09-14-ecp-native-login-technical-design.md`。
 
 ### 公司 SSO（Web Embed SDK）
 

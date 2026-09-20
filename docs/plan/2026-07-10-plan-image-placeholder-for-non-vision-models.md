@@ -320,8 +320,8 @@ private Request buildRequest(ChatRequest request, LlmModelConfig config, boolean
 
 ## 7. 参考
 
-- [plan-read-image-tool.md](./plan-read-image-tool.md) — read_file 图片读取工具方案（`ToolMediaInjector` 设计来源）
-- [image-upload-tech-design.md](./image-upload-tech-design.md) — 图片上传与多模态消息设计
+- [2026-07-08-plan-read-image-tool.md](./2026-07-08-plan-read-image-tool.md) — read_file 图片读取工具方案（`ToolMediaInjector` 设计来源）
+- [2026-06-01-image-upload-tech-design.md](./2026-06-01-image-upload-tech-design.md) — 图片上传与多模态消息设计
 - `LlmModel` 实体：`backend/src/main/java/cn/etarch/mao/model/entity/LlmModel.java`
 - `ChatRequest` 模型：`backend/src/main/java/cn/etarch/mao/harness/llm/ChatRequest.java`
 - `OpenAiLlmAdapter`：`backend/src/main/java/cn/etarch/mao/harness/llm/OpenAiLlmAdapter.java`

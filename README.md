@@ -208,7 +208,7 @@ mao agent list
 | [USER_GUIDE.md](USER_GUIDE.md) | 各端使用手册索引 |
 | [troubleshooting.md](skills/mao-cli/reference/troubleshooting.md) | 排障 |
 | [CHANGELOG.md](CHANGELOG.md) | 发版说明 |
-| [docs/plan/technical-design.md](docs/plan/technical-design.md) | 早期技术方案（部分已过时，以源码与 mao-cli 为准） |
+| [docs/plan/2026-05-20-technical-design.md](docs/plan/2026-05-20-technical-design.md) | 早期技术方案（部分已过时，以源码与 mao-cli 为准） |
 
 ## 开发
 

@@ -336,7 +336,7 @@ workspace: last.executionMode === 'LOCAL' ? last.workspace : undefined,
 | 项目管理 CRUD | 无独立项目实体；无创建/删除/重命名项目 API |
 | 删除会话时清理 workspace 目录 | 与现状一致，目录保留 |
 | 项目目录清理/归档运维工具 | 超出本次范围 |
-| 云端文件浏览器 | 见 `workspace-file-browser-design.md`，V2 范围 |
+| 云端文件浏览器 | 见 `2026-06-25-workspace-file-browser-design.md`，V2 范围 |
 | 管理后台展示云端项目路径 | admin 无改动 |
 | CLOUD 模式客户端传绝对路径 | 统一由 `cloudProjectKey` 解析，禁止直传 `workspace` |
 

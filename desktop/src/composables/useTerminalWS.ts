@@ -3,7 +3,7 @@ import { getToken } from '../utils/auth-storage'
 
 /**
  * 云端终端 WS 单例：一条连接多路复用多个 terminalId，与 useStreamWS 完全独立。
- * 协议见 docs/plan/cloud-terminal-design-v2.md 7.3：首帧 auth，之后 attach/detach/input/resize/ping。
+ * 协议见 docs/plan/2026-09-03-cloud-terminal-design-v2.md 7.3：首帧 auth，之后 attach/detach/input/resize/ping。
  */
 export interface TerminalHandlers {
   onOutput: (data: string) => void

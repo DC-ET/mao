@@ -379,7 +379,7 @@ Nginx 不必改：`/login` 无静态文件，与其它前端路由一样落到 `
 | 删除 | `desktop/src/components/auth/LoginDialog.vue` |
 | 删除 | `desktop/src/composables/useLoginDialog.ts` |
 | 修改 | `tests/desktop.spec.ts` |
-| 修改 | `docs/plan/session-message-search-design.md` §4.7 一句（未登录改为进不了主界面，不再弹窗） |
+| 修改 | `docs/plan/2026-08-07-session-message-search-design.md` §4.7 一句（未登录改为进不了主界面，不再弹窗） |
 | 修改 | 根 `CHANGELOG.md`（实现时写入当时版本） |
 
 产品文档：`skills/mao-cli` 几乎没写弹窗细节，实现时扫一眼 `desktop.md` / `troubleshooting.md` / `android.md`，若出现「登录对话框」则改成登录页。不必为登录页新建手册章节。

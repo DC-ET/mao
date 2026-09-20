@@ -333,9 +333,9 @@ Shell 命令输出超长
 ## 10. 相关文档
 
 - [Skills 工作区同步方案](./skill-workspace-sync.md) — 旧方案（`.skills/` / `.mao/skills` 在工作区内），**由本文档替代**；其第 11 节记录了下方「本地未同步 Skill」的详细实现
-- [Shell 会话系统技术方案](../shell-session-design.md) — shellOutput 落盘机制
+- [Shell 会话系统技术方案](../2026-05-29-shell-session-design.md) — shellOutput 落盘机制
 - [用户 Git 凭证设计](../design/user-git-credential-design.md) — git-askpass 脚本（路径将迁至 runtime）
-- [云端模式可选工作区](../cloud-workspace-project-design.md) — `Session.workspace` 与项目共享
+- [云端模式可选工作区](../2026-07-01-cloud-workspace-project-design.md) — `Session.workspace` 与项目共享
 
 ---
 

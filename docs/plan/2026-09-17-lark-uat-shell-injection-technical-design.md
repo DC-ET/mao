@@ -3,7 +3,7 @@
 - 日期：2026-09-18
 - 状态：已实现
 - 范围：后端 ECP 客户端与 UAT 注入器、CLOUD shell / 交互终端 env 注入、管理后台 ECP 配置扩展
-- 关联：`docs/plan/ecp-native-login-technical-design.md`；参考外部方案《lark-cli 接入 Mao 方案》方案 B
+- 关联：`docs/plan/2026-09-14-ecp-native-login-technical-design.md`；参考外部方案《lark-cli 接入 Mao 方案》方案 B
 
 ## 1. 需求背景与目标
 

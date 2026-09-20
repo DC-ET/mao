@@ -10,7 +10,7 @@
 
 ## 2. 需求背景
 
-当前会话压缩采用「全量上下文交接」机制（见 `docs/plan/session-handoff-compaction-technical-design.md`）：请求开始（`harness-service.ts`）与 Agent Loop 每轮结束（`agent-loop.ts:403-425`）两条触发路径，最终都汇聚到 `SessionCompactionOrchestrator.compact()`，由 `CompactionService` 让主模型生成 `<handoff>` 交接摘要，CAS 写入 `session_compaction` 表，随后把摘要作为首条 user 消息注入上下文。
+当前会话压缩采用「全量上下文交接」机制（见 `docs/plan/2026-08-13-session-handoff-compaction-technical-design.md`）：请求开始（`harness-service.ts`）与 Agent Loop 每轮结束（`agent-loop.ts:403-425`）两条触发路径，最终都汇聚到 `SessionCompactionOrchestrator.compact()`，由 `CompactionService` 让主模型生成 `<handoff>` 交接摘要，CAS 写入 `session_compaction` 表，随后把摘要作为首条 user 消息注入上下文。
 
 该机制存在一个结构性问题：
 

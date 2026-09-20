@@ -2,7 +2,7 @@
 
 > 评审对象：`sdk/embed`（`@mao/chat-embed` v0.1.1，产物 `desktop/public/embed/mao-chat.js`）
 > 评审日期：2026-09-04　评审方式：全量源码通读 + 后端契约逐条核对 + desktop 参考实现对比 + 9 批 Playwright 运行时验证
-> 参考文档：`docs/plan/embed-sdk-technical-design.md`
+> 参考文档：`docs/plan/2026-09-04-embed-sdk-technical-design.md`
 > 本报告只做评审，未修改任何 SDK 源码。
 
 ## 0. 结论摘要
@@ -495,7 +495,7 @@ expect(tc.argsText).toBe('{"q":"mao"}');     // ← 断言了错误的累加语�
 - **构建产物入 git**：`desktop/public/embed/*.js` 两份共约 360 KB 已被 git 跟踪。`.gitignore` 有全局 `dist/` 规则但未覆盖 public 下的产物。这会让每次 SDK 改动都产生大 diff，且存在"产物与源码不同步"的风险。建议改为部署时构建（`scripts/deploy-desktop.sh` 目前无 embed 相关校验，可加一步产物存在性/版本校验）。
 - `vite.config.ts:16` 与 `vitest.config.ts:9` 都用了 `__dirname`，vite 8 构建/测试时各有一条警告（`configLoader: 'native'` 不支持），建议改 `import.meta.dirname`。
 - `sdk/embed/.npmrc` 设了 `legacy-peer-deps=true`，建议注明原因或移除。
-- **`docs/plan/embed-sdk-technical-design.md` 首行状态仍写"设计定稿，未开工"**，而实现已完成并上线产物。按 CLAUDE.md 的文档同步约定应更新状态。
+- **`docs/plan/2026-09-04-embed-sdk-technical-design.md` 首行状态仍写"设计定稿，未开工"**，而实现已完成并上线产物。按 CLAUDE.md 的文档同步约定应更新状态。
 
 ## 9. 功能设计缺口对照设计文档
 
@@ -545,6 +545,6 @@ expect(tc.argsText).toBe('{"q":"mao"}');     // ← 断言了错误的累加语�
 13. P1-10 / P1-11 selection 两处（清引用生效 + 排除浮窗内选中）、P2-28 上下文 hash 覆盖 url/title
 14. P1-9 停止按钮乐观切换、P1-14 窄视口宽度、P2-17 滚动跟随、P2-18 思考默认展开、P2-19 链接 target、P2-20 Escape + 自动聚焦 + aria-live
 15. CORS `allowedHeaders`（后端一行）
-16. 死代码清理、`embed-sdk-technical-design.md` 状态更新、README 接入章节补安全声明（§6 三条）
+16. 死代码清理、`2026-09-04-embed-sdk-technical-design.md` 状态更新、README 接入章节补安全声明（§6 三条）
 
 **建议先行的基建**：补 `happy-dom` 测试环境。第一、二批的绝大多数修复都落在 controller / ws-client / store 上，没有测试环境的话每一条都只能靠手工验证，而这次评审已经证明手工验证的成本（9 批脚本）远高于补一次环境。

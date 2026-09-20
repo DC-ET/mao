@@ -1,7 +1,7 @@
 /**
  * 回前台恢复（仅安卓 Capacitor 平台）。
  *
- * 简化路线（docs/android-stability-heat-optimization-design.md）：
+ * 简化路线（docs/plan/2026-08-08-android-stability-heat-optimization-design.md）：
  * 删除原生保活后，后台 WebView 被系统冻结，JS 定时器停摆，连接在服务端 90s 空闲超时后断开。
  * 回前台时若检测到连接已断开（WS readyState 为 CLOSED/CLOSING），静默整页刷新恢复：
  * - 刷新后由现有 mao_last_session_id 还原最后会话并拉取最新状态；

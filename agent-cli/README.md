@@ -34,4 +34,4 @@ npm link            # 本地安装 mao-agent 命令
 
 交互层的两条硬约束：Ink 在「非 static 树高度 ≥ 终端行数」时会整屏重绘并清掉 scrollback，所以活动区高度必须先由 `layout.ts` 裁剪；Ink 3 的 `useInput` 把一次 data chunk 当成单键，所以按键必须走自研 `keydecode.ts`。改动这两处前先看 `test/ink-renderer.spec.ts` 与 `test/keydecode.spec.ts`。
 
-设计文档（维护者）：[docs/plan/mao-agent-cli-technical-design.md](../docs/plan/mao-agent-cli-technical-design.md)、[docs/plan/mao-agent-cli-ux-design.md](../docs/plan/mao-agent-cli-ux-design.md)。两份均为历史设计记录，当前行为以根 `CHANGELOG.md` 与产品文档为准。
+设计文档（维护者）：[docs/plan/2026-08-20-mao-agent-cli-technical-design.md](../docs/plan/2026-08-20-mao-agent-cli-technical-design.md)、[docs/plan/2026-08-20-mao-agent-cli-ux-design.md](../docs/plan/2026-08-20-mao-agent-cli-ux-design.md)。两份均为历史设计记录，当前行为以根 `CHANGELOG.md` 与产品文档为准。

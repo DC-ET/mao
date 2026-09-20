@@ -1,6 +1,6 @@
 # Embed SDK（Web 嵌入式对话组件）技术方案
 
-> 状态：**已实现并上线**（产物 `desktop/public/embed/mao-chat.js`）。本文档为设计依据；实现细节以源码 `sdk/embed/` 为准，行为差异见 `docs/plan/embed-sdk-review.md`。
+> 状态：**已实现并上线**（产物 `desktop/public/embed/mao-chat.js`）。本文档为设计依据；实现细节以源码 `sdk/embed/` 为准，行为差异见 `docs/plan/2026-09-04-embed-sdk-review.md`。
 
 ## 1. 需求背景
 
@@ -152,7 +152,7 @@ data: {"page":"order-detail","orderId":"12345"}
 | `packages/protocol-types/` | WS 帧 / 事件 payload / 关键 REST 类型的 TS 定义包（package.json + src + vitest 类型测试） |
 | `sdk/embed/` | 完整 SDK 包：`src/{index,core,ui,context,protocol}`、`demo/index.html`、vite lib 构建配置、size-limit 配置、vitest 单测 |
 | `desktop/public/embed/` | 构建产物落点：`mao-chat.v{version}.js` + `mao-chat.js`（latest） |
-| `docs/plan/embed-sdk-technical-design.md` | 本文档 |
+| `docs/plan/2026-09-04-embed-sdk-technical-design.md` | 本文档 |
 | 根 CI workflow | 新增 sdk/embed 的 build + test job（与 agent-cli 同级） |
 
 ### 6.2 修改（要做）

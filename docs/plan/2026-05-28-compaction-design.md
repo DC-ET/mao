@@ -1,6 +1,6 @@
 # Mao 会话上下文压缩设计方案
 
-> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `shell-unification-design.md`.
+> Note: The `bash` tool has been removed. `shell` is now the only command execution tool. See `2026-06-03-shell-unification-design.md`.
 
 ## 1. 背景与问题
 

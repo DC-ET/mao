@@ -15,6 +15,13 @@
 
 ---
 
+## 0.0.165 (2026-09-20)
+
+### 文档
+
+- `docs/plan/` 根目录历史方案文档统一增加 git 首次提交日期前缀（如 `2026-09-20-desktop-multi-server-baseurl-design.md`）；子目录（`best-agent-spec/`、`technical-design/`、`design/`、`todolist-design/`）文件名保持不变。
+- README、DEPLOY、AGENTS/CLAUDE、mao-cli、agent-cli、docs/code-review 及源码注释中的 `docs/plan/` 路径引用已同步更新。
+
 ## 0.0.164 (2026-09-20)
 
 ### 桌面 Electron
@@ -92,7 +99,7 @@
 
 ## 0.0.156 (2026-09-19)
 
-依据 `docs/plan/admin-ux-management-review.md` 评审，对管理后台 44 项 UX 与管理功能问题集中修复。
+依据 `docs/plan/2026-09-19-admin-ux-management-review.md` 评审，对管理后台 44 项 UX 与管理功能问题集中修复。
 
 ### 后端
 
@@ -553,7 +560,7 @@
 
 ### 后端
 
-- 新增 ECP 原生飞书登录：管理后台「集成配置 → ECP 飞书登录」开启后，密码/LDAP/Mao 飞书/公司 SSO 换票入口关闭；飞书授权经 ECP `feishu-authorizations` + `sessions` 换票，按邮箱映射 Mao 用户并加密存储 `sessionToken`；常驻 `EcpRenewScheduler` 在到期前约 30 分钟 renew；CLOUD shell/云端终端向虚拟 HOME 写入 AccessOne 兼容目录供 `bigdata-cli` 等读取 Bearer。迁移 V111（`auth.ecp.config`、`user_ecp_session`、`ecp_oauth_state`）。设计见 `docs/plan/ecp-native-login-technical-design.md`。
+- 新增 ECP 原生飞书登录：管理后台「集成配置 → ECP 飞书登录」开启后，密码/LDAP/Mao 飞书/公司 SSO 换票入口关闭；飞书授权经 ECP `feishu-authorizations` + `sessions` 换票，按邮箱映射 Mao 用户并加密存储 `sessionToken`；常驻 `EcpRenewScheduler` 在到期前约 30 分钟 renew；CLOUD shell/云端终端向虚拟 HOME 写入 AccessOne 兼容目录供 `bigdata-cli` 等读取 Bearer。迁移 V111（`auth.ecp.config`、`user_ecp_session`、`ecp_oauth_state`）。设计见 `docs/plan/2026-09-14-ecp-native-login-technical-design.md`。
 - ECP 开启时飞书 Bot 未绑定引导改为 ECP 飞书授权链接；登录成功后按消息事件中的 `union_id` 写入 `feishu_binding` 并重放原消息。设置页飞书绑定仍走 Mao 飞书 OAuth（仅绑定、非登录），ECP 模式下回调豁免。
 - 新增 `POST /v1/auth/admin/login`：ECP 开启时管理后台仍可用账号密码登录；`POST /v1/auth/login` 继续对桌面端拒绝。
 

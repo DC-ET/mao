@@ -3,7 +3,7 @@
 > 版本: v0.1 | 更新时间: 2026-08-20  
 > 状态: **本文档为历史设计记录，当前实现以根 `CHANGELOG.md` 与 `skills/mao-cli/reference/mao-agent.md` 为准。** U0/U1/U2 已落地；U3 的「不引入 ink」结论后续被推翻——交互层已改为 ink + React（自研按键解码器 + 行编辑器 + 布局预算，见 `agent-cli/src/tui/`），下文 §8.1 / §9 / §11 相关判断已过时  
 > 定位: 在协议闭环已跑通的前提下，专项提升**交互式 REPL**的可读性、可控性与「像在对话」的体感  
-> 关联文档: [mao-agent-cli-technical-design.md](./mao-agent-cli-technical-design.md)、[ask-user-questions-design.md](./ask-user-questions-design.md)、[center-panel-approval-design.md](./center-panel-approval-design.md)  
+> 关联文档: [2026-08-20-mao-agent-cli-technical-design.md](./2026-08-20-mao-agent-cli-technical-design.md)、[2026-06-25-ask-user-questions-design.md](./2026-06-25-ask-user-questions-design.md)、[2026-06-08-center-panel-approval-design.md](./2026-06-08-center-panel-approval-design.md)  
 > 实现目录: `agent-cli/`（`repl/`、`render/`、`commands/`）
 
 ---
@@ -477,9 +477,9 @@ CLI 覆盖：`--verbose-tools`、`--ascii`、`--no-queue`。
 
 | 文档 | 关系 |
 |---|---|
-| `mao-agent-cli-technical-design.md` | 协议/架构 SSOT；本文不修改其 Phase 1～3 结论，只把 §9「体验后置」展开为可执行 UX 专项 |
-| `ask-user-questions-design.md` | 后端/产品语义；本文定义 CLI 侧交互壳 |
-| `center-panel-approval-design.md` | desktop 审批 UX 参考；CLI 模态对齐其决策语义，不抄 GUI 布局 |
+| `2026-08-20-mao-agent-cli-technical-design.md` | 协议/架构 SSOT；本文不修改其 Phase 1～3 结论，只把 §9「体验后置」展开为可执行 UX 专项 |
+| `2026-06-25-ask-user-questions-design.md` | 后端/产品语义；本文定义 CLI 侧交互壳 |
+| `2026-06-08-center-panel-approval-design.md` | desktop 审批 UX 参考；CLI 模态对齐其决策语义，不抄 GUI 布局 |
 
 建议在技术设计文首「关联文档」中增加本文链接；发版用户可见改动写入根 `CHANGELOG.md` → `### 终端 CLI（mao-agent）`。
 

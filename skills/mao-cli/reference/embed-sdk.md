@@ -167,4 +167,4 @@ npm run size    # size-limit，gzip 预算 200KB
 
 上线验证与独立 MySQL 测试见仓库 [company-sso-validation.md](../../../docs/guides/company-sso-validation.md)，默认跳过的数据库测试不能算通过。
 
-设计文档：仓库 `docs/plan/embed-sdk-technical-design.md`；评审记录：`docs/plan/embed-sdk-review.md`。
+设计文档：仓库 `docs/plan/2026-09-04-embed-sdk-technical-design.md`；评审记录：`docs/plan/2026-09-04-embed-sdk-review.md`。

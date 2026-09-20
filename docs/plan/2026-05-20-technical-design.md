@@ -198,7 +198,7 @@ mao/
 │
 └── docs/                           # 文档
     ├── requirement.md
-    └── technical-design.md
+    └── 2026-05-20-technical-design.md
 ```
 
 ---

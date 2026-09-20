@@ -10,9 +10,9 @@
 > - 本轮不做 desktop 中文角色映射
 > 适用范围：`backend-ts/`、`desktop/`（共用 UI 预览文案）、`skills/mao-cli/`（文档同步）、历史数据 Flyway 迁移
 > 关联文档：
-> - [后台子代理技术方案](./background-subagent-technical-design.md)
-> - [移除同步 delegate 技术方案](./subagent-tools-delegate-removal-technical-plan.md)
-> - [子代理崩溃恢复](./subagent-crash-recovery-technical-design.md)
+> - [后台子代理技术方案](./2026-08-16-background-subagent-technical-design.md)
+> - [移除同步 delegate 技术方案](./2026-08-17-subagent-tools-delegate-removal-technical-plan.md)
+> - [子代理崩溃恢复](./2026-08-15-subagent-crash-recovery-technical-design.md)
 > - 外部参考：Codex 子代理角色 `default` / `explorer` / `worker`（见 `~/Downloads/subagent-roles.md` 摘要，非仓内文件）
 
 ---
