@@ -482,10 +482,10 @@ async function handleDelete(row: any) {
       await api.delete(`/skill-docs/${row.name}`)
     }
     ElMessage.success(`Skill「${row.name}」已删除`)
-    // 当前页删空时回退页码，避免停留在空白页
-    const maxPage = Math.max(1, Math.ceil((total.value - 1) / pageSize.value))
-    if (currentPage.value > maxPage) currentPage.value = maxPage
     await fetchActiveTab()
+    // 当前页删空时回退页码，避免停留在空白页
+    const maxPage = Math.max(1, Math.ceil(total.value / pageSize.value))
+    if (currentPage.value > maxPage) currentPage.value = maxPage
   } catch {
     // Error handled by interceptor
   }
@@ -508,7 +508,6 @@ onMounted(fetchActiveTab)
 .search-form {
   margin-bottom: 16px;
 }
-
 .pagination {
   margin-top: 20px;
   justify-content: flex-end;
