@@ -178,6 +178,7 @@ import {
 import { buildSegmentsFromContentAndTools } from '../../utils/chatMessage'
 import { formatDateTime } from '../../utils/datetime'
 import { copyText } from '../../utils/clipboard'
+import { isActiveSessionPhase } from '../../utils/sessionPhase'
 import { useSessionStore } from '../../stores/session'
 
 const props = withDefaults(defineProps<{
@@ -277,14 +278,21 @@ const visibleToolCalls = computed(() =>
   props.message.toolCalls?.filter(tc => !HIDDEN_TOOL_NAMES.has(tc.name)) || []
 )
 
+// 会话级活动 phase：首轮 LLM 即被限流时无任何流式/思考事件，
+// 只有 phase 能证明会话仍在执行（重试条因此能正常显示）
 const isAssistantRunning = computed(() => {
   if (role.value !== 'assistant') return false
   if (props.message.toolCalls?.some(tc => tc.status === 'pending' || tc.status === 'running')) return true
   if (!props.isLast) return false
   // 按消息所属会话读取流式/思考状态，避免边路/子代理会话重试时漏显
-  return props.sessionId
-    ? (sessionStore.isSessionStreaming(props.sessionId) || sessionStore.isSessionThinking(props.sessionId))
-    : (sessionStore.activeStreaming || sessionStore.activeThinking)
+  if (props.sessionId) {
+    return sessionStore.isSessionStreaming(props.sessionId)
+      || sessionStore.isSessionThinking(props.sessionId)
+      || isActiveSessionPhase(sessionStore.getSessionPhase(props.sessionId))
+  }
+  return sessionStore.activeStreaming
+    || sessionStore.activeThinking
+    || isActiveSessionPhase(sessionStore.activeSession?.phase)
 })
 
 const showStreamIndicator = computed(() =>
