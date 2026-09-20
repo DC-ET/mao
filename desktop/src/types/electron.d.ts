@@ -159,10 +159,52 @@ interface AppUpdateError {
   stack?: string
 }
 
+type ServerUpdateFeedMode = 'follow-site' | 'package-default' | 'disabled'
+
+interface ServerConfigInfo {
+  serverBaseUrl: string
+  updateFeedMode: ServerUpdateFeedMode
+  allowHttp: boolean
+  configured: boolean
+  envOverride: boolean
+  appVersion: string
+  hostKey: string
+  apiBase: string
+  updateFeed: { mode: string; url: string | null }
+}
+
+interface ServerConfigSetResult {
+  ok: boolean
+  serverBaseUrl?: string
+  hostChanged?: boolean
+  updateFeedMode?: ServerUpdateFeedMode
+  error?: string
+  probe?: { ok: boolean; error?: string; detail?: string }
+}
+
+interface ServerConfigProbeResult {
+  ok: boolean
+  baseUrl?: string
+  detail?: string
+  error?: string
+}
+
 interface ElectronAPI {
   getAuthTokens(): Promise<AuthTokens>
   setAuthTokens(tokens: { token: string; refreshToken: string }): Promise<void>
   clearAuthTokens(): Promise<void>
+
+  serverConfig: {
+    get(): Promise<ServerConfigInfo>
+    set(payload: {
+      serverBaseUrl: string
+      updateFeedMode?: ServerUpdateFeedMode
+      allowHttp?: boolean
+      skipProbe?: boolean
+    }): Promise<ServerConfigSetResult>
+    probe(serverBaseUrl: string, options?: { allowHttp?: boolean }): Promise<ServerConfigProbeResult>
+    openPicker(): Promise<{ ok: boolean }>
+  }
 
   getAppVersion(): Promise<string>
   getPlatform(): Promise<string>

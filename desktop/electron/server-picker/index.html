@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mao · 服务器设置</title>
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --surface: #ffffff;
+      --ink: #1d1d1f;
+      --muted: #6e6e73;
+      --line: #e5e5ea;
+      --primary: #0066cc;
+      --primary-hover: #0055aa;
+      --danger: #c62828;
+      --ok: #2e7d32;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+      padding: 24px;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 28px 28px 24px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 20px;
+      font-weight: 600;
+    }
+    .sub {
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+    input[type="text"] {
+      width: 100%;
+      height: 40px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      background: #fff;
+    }
+    input[type="text"]:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.12);
+    }
+    .hint {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .row {
+      margin-top: 14px;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--ink);
+    }
+    .row input { margin-top: 2px; }
+    .actions {
+      margin-top: 22px;
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      height: 38px;
+      padding: 0 16px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button.primary {
+      flex: 1;
+      background: var(--primary);
+      color: #fff;
+    }
+    button.primary:hover { background: var(--primary-hover); }
+    button.primary:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    button.ghost {
+      background: transparent;
+      border-color: var(--line);
+      color: var(--ink);
+    }
+    .msg {
+      margin-top: 12px;
+      min-height: 20px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .msg.error { color: var(--danger); }
+    .msg.ok { color: var(--ok); }
+    .meta {
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      font-size: 12px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>连接 Mao 服务器</h1>
+    <p class="sub">填写要连接的站点地址。同一客户端可切换不同私有化部署，无需重新打包。</p>
+
+    <label for="serverUrl">服务器地址</label>
+    <input id="serverUrl" type="text" spellcheck="false" autocomplete="off"
+           placeholder="https://mao.example.com" />
+    <div class="hint">支持站点根、<code>/api</code> 或 <code>/api/v1</code>，将自动归一化为站点根。</div>
+
+    <div class="row">
+      <input id="allowHttp" type="checkbox" />
+      <label for="allowHttp" style="margin:0;font-weight:400">允许 HTTP（仅内网自建环境，有安全风险）</label>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="saveBtn" type="button">连接并保存</button>
+      <button class="ghost" id="probeBtn" type="button">仅检测</button>
+    </div>
+    <div class="msg" id="msg" aria-live="polite"></div>
+    <div class="meta" id="meta"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id)
+    const hasApi = () => typeof window !== 'undefined' && window.electronAPI && window.electronAPI.serverConfig
+
+    function setMsg(text, type) {
+      const el = $('msg')
+      el.textContent = text || ''
+      el.className = 'msg' + (type ? ' ' + type : '')
+    }
+
+    async function loadCurrent() {
+      if (!hasApi()) {
+        setMsg('未检测到桌面客户端桥接，请从 Mao 桌面应用打开本页', 'error')
+        return
+      }
+      try {
+        const info = await window.electronAPI.serverConfig.get()
+        $('serverUrl').value = info.serverBaseUrl || ''
+        $('allowHttp').checked = !!info.allowHttp
+        const parts = []
+        if (info.appVersion) parts.push('壳版本 ' + info.appVersion)
+        if (info.updateFeedMode) parts.push('更新源 ' + info.updateFeedMode)
+        if (info.envOverride) parts.push('环境变量覆盖已启用')
+        $('meta').textContent = parts.join(' · ')
+      } catch (e) {
+        setMsg(e?.message || '读取配置失败', 'error')
+      }
+    }
+
+    async function probeOnly() {
+      if (!hasApi()) return
+      const url = $('serverUrl').value
+      const allowHttp = $('allowHttp').checked
+      setMsg('正在检测…')
+      $('probeBtn').disabled = true
+      try {
+        const result = await window.electronAPI.serverConfig.probe(url, { allowHttp })
+        if (result.ok) {
+          setMsg(`检测通过：${result.baseUrl}${result.detail ? '（' + result.detail + '）' : ''}`, 'ok')
+        } else {
+          setMsg(result.error || '检测失败', 'error')
+        }
+      } catch (e) {
+        setMsg(e?.message || '检测失败', 'error')
+      } finally {
+        $('probeBtn').disabled = false
+      }
+    }
+
+    async function saveAndConnect() {
+      if (!hasApi()) return
+      const url = $('serverUrl').value
+      const allowHttp = $('allowHttp').checked
+      if (allowHttp && /^http:\/\//i.test(url.trim())) {
+        const ok = window.confirm('将使用不安全的 HTTP 连接服务器，确认继续？')
+        if (!ok) return
+      }
+      setMsg('正在连接…')
+      $('saveBtn').disabled = true
+      try {
+        const result = await window.electronAPI.serverConfig.set({
+          serverBaseUrl: url,
+          allowHttp,
+          updateFeedMode: 'follow-site',
+        })
+        if (result && result.ok) {
+          setMsg(`已连接 ${result.serverBaseUrl}`, 'ok')
+        } else {
+          setMsg(result?.error || '保存失败', 'error')
+          $('saveBtn').disabled = false
+        }
+      } catch (e) {
+        setMsg(e?.message || '保存失败', 'error')
+        $('saveBtn').disabled = false
+      }
+    }
+
+    $('probeBtn').addEventListener('click', probeOnly)
+    $('saveBtn').addEventListener('click', saveAndConnect)
+    $('serverUrl').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveAndConnect()
+    })
+    loadCurrent()
+  </script>
+</body>
+</html>

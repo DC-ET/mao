@@ -29,7 +29,8 @@ API 地址由 `desktop/.env.development` 配置（默认 `http://localhost:9080/
 
 ```bash
 cd desktop
-# 修改 .env.production 为部署域名，如 https://mao.example.com/api/v1
+# 通用包：无需为每套 Mao 改域名；运行时在客户端内配置服务器
+# 若仍要出厂绑定默认站：可设置 MAO_DESKTOP_SERVER_URL，或首次启动在配置页填写
 npm ci
 npm run build
 npm run dist
@@ -37,9 +38,29 @@ npm run dist
 
 产物在 `desktop/release/`。代码签名与内部分发自行处理。
 
+### 多服务器 / 通用安装包（0.0.164+）
+
+一个桌面安装包可连接多套 Mao 私有化部署：
+
+| 项 | 说明 |
+|----|------|
+| 配置存储 | Electron `userData/server-config.json`（站点根、更新源策略、是否允许 HTTP） |
+| 首次启动 | 未配置时展示本地服务器配置页，填写站点地址并保存 |
+| 配置入口 | 应用菜单「服务器设置…」；桌面端设置 →「服务器」 |
+| 环境变量 | `MAO_DESKTOP_SERVER_URL` 锁定站点（优先于配置文件）；`MAO_DESKTOP_UPDATE_URL` 覆盖更新源 |
+| 地址归一化 | 接受站点根、`/api`、`/api/v1`；无协议默认 `https://` |
+| 切换行为 | 清除登录态；关闭终端/MCP/本地 Shell；LOCAL 目录按 host 隔离：`~/.mao/runtime/<host>/<sessionId>` |
+| 自动更新 | `follow-site`（默认，跟随当前站 `/api/uploads/releases/`）/ `package-default` / `disabled` |
+
+**私有部署前提**：每套 Mao 仍需在本域构建并部署桌面 Web（`VITE_API_BASE_URL=https://<本域>/api/v1`），壳只负责加载该站 SPA。各站 `version.json` 与前端资源同域即可。
+
+API 地址由该站前端构建产物注入；壳内 skill-sync 等主进程请求从当前站点推导 `{origin}/api`。
+
 ## 自动更新
 
 Electron 壳支持自动更新。默认检查 `https://mao.example.com/uploads/releases/`（与 Web 同域 `uploads`）。私有部署修改 `desktop/package.json` 的 `build.publish[0].url` 后再打包。
+
+通用包推荐更新源策略 `follow-site`：从**当前配置的服务器**拉取壳安装包；若某站未托管 releases，更新会失败并降级提示，可在设置中改为 `package-default` 或关闭。
 
 Web 前端更新：部署 `desktop/dist` 后刷新；Electron 壳更新需用户安装新包（或走自动更新）。
 

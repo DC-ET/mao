@@ -10,6 +10,14 @@
         <router-link to="/settings/profile" class="settings-nav-item" active-class="active">
           个人信息
         </router-link>
+        <router-link
+          v-if="showServerNav"
+          to="/settings/server"
+          class="settings-nav-item"
+          active-class="active"
+        >
+          服务器
+        </router-link>
         <router-link to="/settings/usage" class="settings-nav-item" active-class="active">
           使用记录
         </router-link>
@@ -41,12 +49,15 @@
 
 <script setup lang="ts">
 import { ArrowLeft } from '@element-plus/icons-vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
+import { isElectronClient } from '../../utils/platform'
 
 const sessionStore = useSessionStore()
 const router = useRouter()
+const showServerNav = computed(() => isElectronClient())
 
 function goBack() {
   const active = sessionStore.activeSession

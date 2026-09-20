@@ -21,7 +21,20 @@ npm run dist    # Electron 打包（需自行处理代码签名）
 
 ## 自动更新
 
-桌面壳使用 `electron-updater` + `electron-builder` 的 generic provider。私有部署请先把 `package.json` 中 `build.publish[0].url` 改成你的更新地址（例如 `https://mao.example.com/downloads/desktop/`），再重新打包。发布新版本时需要：
+桌面壳使用 `electron-updater` + `electron-builder` 的 generic provider。**通用安装包**在运行时配置服务器（首次启动配置页 / 菜单「服务器设置…」/ 设置 → 服务器），配置存于 Electron `userData/server-config.json`。可用环境变量：
+
+- `MAO_DESKTOP_SERVER_URL` — 锁定站点根（优先于配置文件）
+- `MAO_DESKTOP_UPDATE_URL` — 覆盖自动更新源
+
+更新源策略（配置文件 `updateFeedMode`）：
+
+| 值 | 行为 |
+|----|------|
+| `follow-site`（默认） | 从当前服务器 `{site}/api/uploads/releases/` 检查壳更新 |
+| `package-default` | 使用 `package.json` 中 `build.publish[0].url`（打包时写死） |
+| `disabled` | 不检查壳自动更新 |
+
+私有部署若仍要出厂绑定域名，可改 `package.json` 的 `build.publish[0].url` 或构建时注入上述环境变量。发布新版本时需要：
 
 1. 修改 `package.json` 的 `version`。
 2. 执行 `npm run build && npm run dist`。

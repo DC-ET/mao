@@ -8,6 +8,7 @@ const { autoUpdater } = require('electron-updater')
 const { TerminalManager } = require('./terminalManager.cjs')
 const { createLocalShellRuntime, shellSingleQuote } = require('./localShell.cjs')
 const promptImageResizer = require('./promptImageResizer.cjs')
+const serverConfigLib = require('./serverConfig.cjs')
 
 
 app.setName('Mao')
@@ -468,6 +469,13 @@ function buildUpdateMenuItem() {
   }
 }
 
+function buildServerMenuItem() {
+  return {
+    label: '服务器设置…',
+    click: () => openServerPickerWindow(),
+  }
+}
+
 function buildApplicationMenu() {
   if (!app.isReady()) return
 
@@ -478,6 +486,8 @@ function buildApplicationMenu() {
       label: 'Mao',
       submenu: [
         { role: 'about', label: '关于 Mao' },
+        { type: 'separator' },
+        buildServerMenuItem(),
         { type: 'separator' },
         buildUpdateMenuItem(),
         { type: 'separator' },
@@ -494,6 +504,8 @@ function buildApplicationMenu() {
     template.push({
       label: 'Mao',
       submenu: [
+        buildServerMenuItem(),
+        { type: 'separator' },
         buildUpdateMenuItem(),
         { type: 'separator' },
         { role: 'quit', label: '退出 Mao' }
@@ -552,6 +564,21 @@ function getUpdateFeedUrlOverride() {
   return process.env.MAO_DESKTOP_UPDATE_URL || ''
 }
 
+function applyUpdateFeedUrl() {
+  const feed = serverConfigLib.resolveUpdateFeedUrl(getServerConfig(), getUpdateFeedUrlOverride())
+  if (!feed.url) return { mode: feed.mode, url: null }
+  try {
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: feed.url,
+    })
+    return feed
+  } catch (e) {
+    console.warn('[updater] setFeedURL failed:', e?.message)
+    return { mode: feed.mode, url: feed.url, error: e?.message }
+  }
+}
+
 function setupAutoUpdater() {
   if (updaterInitialized) return
   updaterInitialized = true
@@ -559,17 +586,12 @@ function setupAutoUpdater() {
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
-  const feedUrlOverride = getUpdateFeedUrlOverride()
-  if (feedUrlOverride) {
-    autoUpdater.setFeedURL({
-      provider: 'generic',
-      url: feedUrlOverride
-    })
-  }
+  applyUpdateFeedUrl()
 
   autoUpdater.on('checking-for-update', () => {
     setUpdaterStatus('checking', null)
-    sendToRenderer('update-checking', { feedUrl: feedUrlOverride || null })
+    const feed = serverConfigLib.resolveUpdateFeedUrl(getServerConfig(), getUpdateFeedUrlOverride())
+    sendToRenderer('update-checking', { feedUrl: feed.url || null })
   })
 
   autoUpdater.on('update-available', (info) => {
@@ -606,7 +628,13 @@ async function checkForAppUpdate() {
     setUpdaterStatus('unsupported', null)
     return { skipped: true, reason: 'Auto update is only available in packaged builds.' }
   }
+  const feed = serverConfigLib.resolveUpdateFeedUrl(getServerConfig(), getUpdateFeedUrlOverride())
+  if (feed.mode === 'disabled') {
+    setUpdaterStatus('idle', null)
+    return { skipped: true, reason: 'Auto update is disabled by server config.' }
+  }
   setupAutoUpdater()
+  applyUpdateFeedUrl()
   if (!updateCheckPromise) {
     setUpdaterStatus('checking', null)
     updateCheckPromise = autoUpdater.checkForUpdates()
@@ -655,18 +683,68 @@ ipcMain.handle('tool-approval-response', (event, { requestId, approved }) => {
   }
 })
 
+// ========== Multi-server baseUrl config ==========
+
+/** @type {{ config: any, fromFile: boolean } | null} */
+let serverConfigCache = null
+let serverPickerWindow = null
+
+function getServerConfigStorePath() {
+  return serverConfigLib.getServerConfigPath(app.getPath('userData'))
+}
+
+function loadServerConfig(force = false) {
+  if (serverConfigCache && !force) return serverConfigCache
+  serverConfigCache = serverConfigLib.readServerConfig(app.getPath('userData'))
+  return serverConfigCache
+}
+
+function getServerConfig() {
+  return loadServerConfig().config
+}
+
+function getServerBaseUrlEnvOverride() {
+  return (process.env.MAO_DESKTOP_SERVER_URL || '').trim()
+}
+
+function getEffectiveServerBaseUrl() {
+  const envBase = getServerBaseUrlEnvOverride()
+  if (envBase) {
+    const normalized = serverConfigLib.normalizeServerBaseUrl(envBase, { allowHttp: true })
+    if (normalized.ok) return normalized.baseUrl
+  }
+  return getServerConfig().serverBaseUrl || serverConfigLib.DEFAULT_SERVER_BASE_URL
+}
+
+function isServerConfigured() {
+  if (getServerBaseUrlEnvOverride()) return true
+  return getServerConfig().configured === true
+}
+
 function getApiBaseUrl() {
-  // 生产环境加载远程 URL，API 地址从页面 URL 推导
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.NODE_ENV === 'development' && !app.isPackaged) {
     return 'http://localhost:9080/api'
   }
-  return 'https://mao.etarch.cn/api'
+  return serverConfigLib.deriveApiBase(getEffectiveServerBaseUrl())
+}
+
+function getServerHostKey() {
+  return serverConfigLib.serverHostKey(getEffectiveServerBaseUrl())
+}
+
+function getServerPickerHtmlPath() {
+  return path.join(__dirname, 'server-picker', 'index.html')
+}
+
+function loadServerPicker() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.loadFile(getServerPickerHtmlPath())
 }
 
 const LOCAL_RUNTIME_ROOT = path.join(os.homedir(), '.mao', 'runtime')
 
 function resolveLocalRuntimeDir(sessionId) {
-  return path.join(LOCAL_RUNTIME_ROOT, String(sessionId))
+  return path.join(LOCAL_RUNTIME_ROOT, getServerHostKey(), String(sessionId))
 }
 
 function resolveLocalSkillsDir(sessionId) {
@@ -678,7 +756,7 @@ function resolveLocalShellOutputDir(sessionId) {
 }
 
 function formatLocalRuntimePath(sessionId, ...segments) {
-  return ['~/.mao/runtime', String(sessionId), ...segments].join('/')
+  return ['~/.mao/runtime', getServerHostKey(), String(sessionId), ...segments].join('/')
 }
 
 const localShell = createLocalShellRuntime({
@@ -962,14 +1040,134 @@ const { getGitStatus, refreshGitStatus, getGitFileDiff, listGitRepos } = require
 const { buildCommitInput, commit: gitCommit, pull: gitPull, push: gitPush } = require('./gitOperations.cjs')
 
 function loadMainContent() {
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.NODE_ENV === 'development' && !app.isPackaged) {
     mainWindow.loadURL('http://localhost:5201')
     mainWindow.webContents.openDevTools()
     return
   }
 
-  // 生产环境加载远程 SPA（Nginx 托管），Electron 仅提供原生壳与本地工具能力
-  mainWindow.loadURL('https://mao.etarch.cn')
+  // 生产：远程 SPA；未配置服务器时先展示本地配置页
+  if (!isServerConfigured()) {
+    loadServerPicker()
+    return
+  }
+
+  const target = getEffectiveServerBaseUrl()
+  mainWindow.loadURL(target).catch((err) => {
+    console.error('[server] loadURL failed:', target, err)
+    loadServerPicker()
+  })
+}
+
+async function cleanupSiteScopedResources() {
+  try {
+    terminalManager.killAll()
+  } catch (e) {
+    console.warn('[server] terminal cleanup failed:', e?.message)
+  }
+  try {
+    localShell.closeAll()
+  } catch (e) {
+    console.warn('[server] local shell cleanup failed:', e?.message)
+  }
+  const sessionIds = Array.from(mcpClients.keys())
+  await Promise.all(
+    sessionIds.map((sid) =>
+      closeMcpSession(sid).catch((e) => console.warn('[server] mcp cleanup failed:', e?.message))
+    )
+  )
+}
+
+/**
+ * 切换服务器：校验 → 可选探测 → host 变化时清 auth/本地资源 → 写配置 → 加载目标站。
+ * @param {{ serverBaseUrl: string, updateFeedMode?: string, allowHttp?: boolean, skipProbe?: boolean }} payload
+ */
+async function applyServerConfig(payload = {}) {
+  const allowHttp = payload.allowHttp === true
+  const normalized = serverConfigLib.normalizeServerBaseUrl(payload.serverBaseUrl, { allowHttp })
+  if (!normalized.ok) {
+    return { ok: false, error: normalized.error }
+  }
+
+  const targetBase = normalized.baseUrl
+  const previousBase = getEffectiveServerBaseUrl()
+  const previousHost = serverConfigLib.serverHostKey(previousBase)
+  const nextHost = serverConfigLib.serverHostKey(targetBase)
+  const hostChanged = previousHost !== nextHost
+
+  if (payload.skipProbe !== true) {
+    const probe = await serverConfigLib.probeServer(targetBase)
+    if (!probe.ok) {
+      return { ok: false, error: probe.error || '服务器检测失败', probe }
+    }
+  }
+
+  if (hostChanged) {
+    writeAuthStore({ token: null, refreshToken: null })
+    await cleanupSiteScopedResources()
+  }
+
+  const writeResult = serverConfigLib.writeServerConfig(app.getPath('userData'), {
+    serverBaseUrl: targetBase,
+    updateFeedMode: payload.updateFeedMode || getServerConfig().updateFeedMode || 'follow-site',
+    allowHttp,
+    configured: true,
+  })
+  if (!writeResult.ok) {
+    return { ok: false, error: writeResult.error }
+  }
+
+  serverConfigCache = null
+  loadServerConfig(true)
+
+  // 更新源跟随站点时重新绑定 feed
+  const feed = serverConfigLib.resolveUpdateFeedUrl(getServerConfig(), getUpdateFeedUrlOverride())
+  if (feed.url) {
+    try {
+      autoUpdater.setFeedURL({ provider: 'generic', url: feed.url })
+    } catch (e) {
+      console.warn('[updater] setFeedURL failed:', e?.message)
+    }
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    loadMainContent()
+  }
+  return {
+    ok: true,
+    serverBaseUrl: targetBase,
+    hostChanged,
+    updateFeedMode: writeResult.config.updateFeedMode,
+  }
+}
+
+function openServerPickerWindow() {
+  if (serverPickerWindow && !serverPickerWindow.isDestroyed()) {
+    serverPickerWindow.focus()
+    return
+  }
+  serverPickerWindow = new BrowserWindow({
+    width: 480,
+    height: 560,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: 'Mao · 服务器设置',
+    parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+    modal: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  serverPickerWindow.loadFile(getServerPickerHtmlPath())
+  serverPickerWindow.on('closed', () => {
+    serverPickerWindow = null
+  })
 }
 
 function createWindow() {
@@ -1055,6 +1253,11 @@ function readAuthStore() {
     const authPath = getAuthStorePath()
     if (fs.existsSync(authPath)) {
       const data = JSON.parse(fs.readFileSync(authPath, 'utf8'))
+      // 服务端 host 变化后旧 token 不可用，避免串站
+      const currentHost = getServerHostKey()
+      if (data.serverHost && data.serverHost !== currentHost) {
+        return { token: null, refreshToken: null }
+      }
       return {
         token: data.token || null,
         refreshToken: data.refreshToken || null
@@ -1070,7 +1273,12 @@ function writeAuthStore(data) {
   try {
     const authPath = getAuthStorePath()
     fs.mkdirSync(path.dirname(authPath), { recursive: true })
-    fs.writeFileSync(authPath, JSON.stringify(data), 'utf8')
+    const payload = {
+      token: data.token || null,
+      refreshToken: data.refreshToken || null,
+      serverHost: data.token || data.refreshToken ? getServerHostKey() : null,
+    }
+    fs.writeFileSync(authPath, JSON.stringify(payload), 'utf8')
   } catch (e) {
     console.error('[auth] Failed to write auth store:', e.message)
   }
@@ -1084,6 +1292,41 @@ ipcMain.handle('auth-set-tokens', (_event, { token, refreshToken }) => {
 
 ipcMain.handle('auth-clear-tokens', () => {
   writeAuthStore({ token: null, refreshToken: null })
+})
+
+// ========== Server baseUrl config IPC ==========
+
+ipcMain.handle('server-config-get', () => {
+  const config = getServerConfig()
+  const envOverride = getServerBaseUrlEnvOverride()
+  const feed = serverConfigLib.resolveUpdateFeedUrl(config, getUpdateFeedUrlOverride())
+  return {
+    serverBaseUrl: getEffectiveServerBaseUrl(),
+    updateFeedMode: config.updateFeedMode || 'follow-site',
+    allowHttp: config.allowHttp === true,
+    configured: isServerConfigured(),
+    envOverride: Boolean(envOverride),
+    appVersion: app.getVersion(),
+    hostKey: getServerHostKey(),
+    apiBase: getApiBaseUrl(),
+    updateFeed: feed,
+  }
+})
+
+ipcMain.handle('server-config-probe', async (_event, payload = {}) => {
+  const allowHttp = payload.allowHttp === true
+  const normalized = serverConfigLib.normalizeServerBaseUrl(payload.serverBaseUrl, { allowHttp })
+  if (!normalized.ok) return { ok: false, error: normalized.error }
+  return serverConfigLib.probeServer(normalized.baseUrl)
+})
+
+ipcMain.handle('server-config-set', async (_event, payload = {}) => {
+  return applyServerConfig(payload || {})
+})
+
+ipcMain.handle('server-config-open-picker', () => {
+  openServerPickerWindow()
+  return { ok: true }
 })
 
 // ========== Window control IPC handlers ==========

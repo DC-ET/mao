@@ -12,6 +12,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setAuthTokens: (tokens) => ipcRenderer.invoke('auth-set-tokens', tokens),
   clearAuthTokens: () => ipcRenderer.invoke('auth-clear-tokens'),
 
+  // Multi-server baseUrl configuration
+  serverConfig: {
+    get: () => ipcRenderer.invoke('server-config-get'),
+    set: (payload) => ipcRenderer.invoke('server-config-set', payload),
+    probe: (serverBaseUrl, options) =>
+      ipcRenderer.invoke('server-config-probe', {
+        serverBaseUrl,
+        allowHttp: options?.allowHttp === true,
+      }),
+    openPicker: () => ipcRenderer.invoke('server-config-open-picker'),
+  },
+
   // Original APIs
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getPlatform: () => ipcRenderer.invoke('get-platform'),

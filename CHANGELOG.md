@@ -15,6 +15,24 @@
 
 ---
 
+## 0.0.164 (2026-09-20)
+
+### 桌面 Electron
+
+- 通用安装包支持配置/切换 Mao 服务器 `baseUrl`：首次启动展示本地服务器配置页；应用菜单新增「服务器设置…」；设置页（Electron）可查看与修改当前站点。
+- 生产 `loadURL`、skill-sync API 回落不再写死 `https://mao.etarch.cn`，改读 `userData/server-config.json`（可用环境变量 `MAO_DESKTOP_SERVER_URL` 锁定）。
+- 切换服务器时清除登录态、关闭终端/MCP/本地 Shell；LOCAL runtime 目录按服务器 host 命名空间隔离（`~/.mao/runtime/<host>/<sessionId>`）；`auth.json` 记录 `serverHost`，跨站 token 不会被误用。
+- 自动更新源支持 `follow-site`（跟随当前站点 `/api/uploads/releases/`）/ `package-default`（安装包内置）/ `disabled`，仍兼容 `MAO_DESKTOP_UPDATE_URL`。
+- 地址归一化接受站点根、`/api`、`/api/v1`；保存前可探测 `version.json` / 首页；默认仅 HTTPS，内网 HTTP 需显式允许。
+
+### 前端（桌面 / Web / 安卓）
+
+- 设置侧栏在桌面客户端增加「服务器」入口（`/settings/server`），用于展示/切换连接的 Mao 站点；浏览器端不显示该项。
+
+### 终端 CLI（mao-cli）
+
+- `reference/electron.md` 补充桌面客户端多服务器配置说明与私有部署前提。
+
 ## 0.0.163 (2026-09-20)
 
 ### 后端
