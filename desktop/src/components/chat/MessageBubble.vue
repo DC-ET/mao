@@ -137,26 +137,10 @@
 </template>
 
 <script lang="ts">
-import { shallowRef } from 'vue'
-import { api } from '../../api'
-
-// Module-level shared cache for user command content
-const commandContentMap = shallowRef<Record<string, string>>({})
-let commandsFetched = false
-async function ensureCommandContent() {
-  if (commandsFetched) return
-  commandsFetched = true
-  try {
-    const { data } = await api.get('/user-commands')
-    const map: Record<string, string> = {}
-    for (const cmd of data || []) {
-      map[cmd.name] = cmd.content
-    }
-    commandContentMap.value = map
-  } catch {
-    // ignore fetch errors
-  }
-}
+import {
+  ensureCommandContent,
+  getCommandContent as lookupCommandContent
+} from '../../utils/commandContent'
 </script>
 
 <script setup lang="ts">
@@ -421,7 +405,7 @@ const hasCommandSegments = computed(() =>
 watch(hasCommandSegments, (val) => { if (val) ensureCommandContent() }, { immediate: true })
 
 function getCommandContent(name: string): string | undefined {
-  return commandContentMap.value[name]
+  return lookupCommandContent(name)
 }
 
 function getToolCall(callId: string): ToolCall | undefined {

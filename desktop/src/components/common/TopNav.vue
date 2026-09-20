@@ -36,16 +36,6 @@
           </svg>
         </div>
       </el-tooltip>
-      <el-tooltip content="我的技能/Skills" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-        <div class="theme-toggle" @click="toggleSkillDrawer()">
-          <el-icon><MagicStick /></el-icon>
-        </div>
-      </el-tooltip>
-      <el-tooltip content="我的指令/Commands" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-        <div class="theme-toggle" @click="toggleCommandDrawer()">
-          <el-icon><Reading /></el-icon>
-        </div>
-      </el-tooltip>
       <el-tooltip :content="updateTooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div
           class="theme-toggle refresh-btn"
@@ -102,8 +92,6 @@ import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
 import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout, isMobileDevice } from '../../composables/usePanelLayout'
-import { useSkillDrawer } from '../../composables/useSkillDrawer'
-import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 import { isElectronClient } from '../../utils/platform'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
@@ -125,8 +113,6 @@ const sessionStore = useSessionStore()
 const authStore = useAuthStore()
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
 const { leftCollapsed, rightCollapsed, toggleLeft, toggleRight } = usePanelLayout()
-const { toggle: toggleSkillDrawer } = useSkillDrawer()
-const { toggle: toggleCommandDrawer } = useCommandDrawer()
 
 /** 终端按钮可用性矩阵：CLOUD 走云端终端（需 terminal:use），LOCAL 仅 Electron 可用。 */
 const terminalAvailability = computed<{ enabled: boolean; tooltip: string }>(() => {

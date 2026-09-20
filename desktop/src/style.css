@@ -176,20 +176,7 @@ html.android-capacitor .nav-user > .el-icon {
   display: none;
 }
 
-/* 安卓管理抽屉使用完整可用宽度，内容区独立滚动。 */
-html.android-capacitor .management-drawer {
-  width: 100% !important;
-  max-width: 100vw;
-}
-
-html.android-capacitor .management-drawer .el-drawer__body {
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-}
-
+/* 安卓管理弹窗宽度适配（弹窗由设置页技能/指令管理、Bot 绑定等共用）。 */
 html.android-capacitor .management-dialog {
   width: calc(100vw - 24px) !important;
   max-width: calc(100vw - 24px);

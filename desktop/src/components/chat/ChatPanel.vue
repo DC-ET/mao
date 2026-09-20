@@ -95,7 +95,7 @@
           @edit="startEdit"
           @cancel-edit="cancelEdit"
           @confirm-edit="confirmEdit"
-          @add-to-command="openWithContent"
+          @add-to-command="(content: string) => commandEditDialogRef?.open({ content })"
         />
 
         <div v-if="showTypingIndicator" class="typing-indicator">
@@ -185,6 +185,8 @@
         @update:git-branch="handleNewTaskGitBranchChange"
       />
     </template>
+
+    <CommandEditDialog ref="commandEditDialogRef" />
   </div>
 </template>
 
@@ -196,7 +198,6 @@ import { useChat, normalizeMessageRole, type ChatMessage } from '../../composabl
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
-import { useCommandDrawer } from '../../composables/useCommandDrawer'
 import { useDraftStore } from '../../stores/draft'
 import { api } from '../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -206,6 +207,7 @@ import ChatRoundList from './ChatRoundList.vue'
 import ChatInput from './ChatInput.vue'
 import QueuePanel from './QueuePanel.vue'
 import ApprovalStack from './ApprovalStack.vue'
+import CommandEditDialog from '../command/CommandEditDialog.vue'
 import QuestionPanel from './QuestionPanel.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 import StarterPrompts from './StarterPrompts.vue'
@@ -246,7 +248,7 @@ const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const draftStore = useDraftStore()
 const router = useRouter()
-const { openWithContent } = useCommandDrawer()
+const commandEditDialogRef = ref<InstanceType<typeof CommandEditDialog>>()
 
 const chatInputRef = ref<InstanceType<typeof ChatInput>>()
 const models = ref<Array<{ id: number; supportsVision: boolean }>>([])
